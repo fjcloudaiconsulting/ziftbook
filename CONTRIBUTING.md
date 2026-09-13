@@ -40,5 +40,11 @@ first, then to `nl` and `pt` with the same `{placeholders}`; `node scripts/check
 
 ## Configuration
 
+Every environment variable our own code reads starts with `ZIF_` (`ZIF_API_URL`, `ZIF_APP_VERSION`,
+`ZIF_DATABASE_URL`), so it is obvious which variables belong to ziftbook when configuring an environment. The API
+sets this once with `env_prefix="ZIF_"` on its settings class. Variables defined by other tools keep their own
+names (`NODE_ENV`, `POSTGRES_*`, `PG*`, `CLOUDFLARE_API_TOKEN`). `node scripts/check-env-names.mjs` (part of
+`make lint`) enforces it.
+
 Deployment settings are environment variables read at runtime; never add `NEXT_PUBLIC_*` variables, which Next.js
 bakes into the build. Infrastructure is code in this repository; only secrets are set by hand.

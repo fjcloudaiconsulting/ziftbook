@@ -19,7 +19,7 @@ function stubApi(version) {
 async function startWeb(apiUrl, port) {
   const child = spawn("node_modules/.bin/next", ["start", "-p", String(port), "-H", "127.0.0.1"], {
     cwd: WEB_DIR,
-    env: { ...process.env, API_URL: apiUrl },
+    env: { ...process.env, ZIF_API_URL: apiUrl },
     stdio: "ignore",
   });
   for (let attempt = 0; attempt < 100; attempt++) {
@@ -36,7 +36,7 @@ async function startWeb(apiUrl, port) {
 
 const stop = (child) => new Promise((resolve) => child.once("exit", resolve).kill());
 
-describe("one build, API_URL read at runtime", () => {
+describe("one build, ZIF_API_URL read at runtime", () => {
   let apiA, apiB;
   before(async () => {
     apiA = await stubApi("A");

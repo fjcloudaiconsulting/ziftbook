@@ -3,9 +3,12 @@ name = "ziftbook-api"
 version = "0.0.0"
 requires-python = "==3.14.*"
 dependencies = [
+    "alembic==1.20.0",
     "fastapi==0.141.1",
+    "psycopg[binary]==3.3.5",
     "pydantic==2.13.5",
     "pydantic-settings==2.15.0",
+    "sqlalchemy==2.0.52",
     "uvicorn==0.52.4",
 ]
 
@@ -38,3 +41,8 @@ filterwarnings = [
     # Raised inside starlette.testclient itself, not our code; drop once Starlette updates.
     "ignore:The anyio.abc.BlockingPortal alias is deprecated:DeprecationWarning",
 ]
+
+[tool.alembic]
+script_location = "%(here)s/migrations"
+prepend_sys_path = ["."]
+file_template = "%%(rev)s_%%(slug)s"

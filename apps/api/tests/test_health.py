@@ -5,7 +5,7 @@ from app.main import create_app
 
 
 def test_healthz_reports_ok_and_running_version(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("APP_VERSION", "1.2.3")
+    monkeypatch.setenv("ZIF_APP_VERSION", "1.2.3")
 
     response = TestClient(create_app()).get("/api/healthz")
 
@@ -14,7 +14,7 @@ def test_healthz_reports_ok_and_running_version(monkeypatch: pytest.MonkeyPatch)
 
 
 def test_healthz_version_defaults_to_dev_when_unset(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("APP_VERSION", raising=False)
+    monkeypatch.delenv("ZIF_APP_VERSION", raising=False)
 
     response = TestClient(create_app()).get("/api/healthz")
 
