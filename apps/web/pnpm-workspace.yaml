@@ -1,0 +1,6 @@
+# pnpm settings only (no workspace packages). Prebuilt binaries are used; install scripts stay disabled.
+allowBuilds:
+  sharp: false
+  unrs-resolver: false
+  "@parcel/watcher": false
+  "@swc/core": false
