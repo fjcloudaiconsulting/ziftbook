@@ -1,0 +1,12 @@
+{
+  "name": "ziftbook-landing",
+  "compatibility_date": "2026-09-01",
+  "main": "worker.js",
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    // Only the bare root runs the Worker (language redirect); all other paths are plain static assets with _headers.
+    "run_worker_first": ["/"]
+  },
+  "routes": [{ "pattern": "ziftbook.com", "custom_domain": true }]
+}
