@@ -37,6 +37,7 @@ jobs:
       - run: sh .githooks/commit-msg.test.sh
       - run: node --test "scripts/*.test.mjs"
       - run: node scripts/check-catalogs.mjs
+      - run: node scripts/check-env-names.mjs
       - name: No build-time public env vars in the web app
         run: |
           if grep -rn "NEXT_PUBLIC_" apps/web --include='*.ts' --include='*.tsx' --include='*.mjs' --include='*.json' \

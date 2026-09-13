@@ -28,8 +28,8 @@ services:
       PGUSER: ziftbook
       PGPASSWORD: ziftbook
       PGDATABASE: ziftbook
-      ZIFTBOOK_MIGRATE_PASSWORD: ziftbook_migrate
-      ZIFTBOOK_APP_PASSWORD: ziftbook_app
+      ZIF_MIGRATE_PASSWORD: ziftbook_migrate
+      ZIF_APP_PASSWORD: ziftbook_app
     volumes:
       - ./apps/api/migrations/bootstrap.sql:/bootstrap.sql:ro
     command: ["psql", "-v", "ON_ERROR_STOP=1", "-f", "/bootstrap.sql"]

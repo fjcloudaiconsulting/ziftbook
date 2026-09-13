@@ -7,7 +7,7 @@ const localize = createMiddleware(routing);
 
 // Read per request, never at build time: one image runs against any API.
 function apiUrl(): string | undefined {
-  return process.env.API_URL ?? (process.env.NODE_ENV === "development" ? "http://127.0.0.1:8000" : undefined);
+  return process.env.ZIF_API_URL ?? (process.env.NODE_ENV === "development" ? "http://127.0.0.1:8000" : undefined);
 }
 
 export default function proxy(request: NextRequest) {
@@ -16,7 +16,7 @@ export default function proxy(request: NextRequest) {
   if (pathname === "/api" || pathname.startsWith("/api/")) {
     const upstream = apiUrl();
     if (!upstream) {
-      console.error("API_URL is not set; cannot forward", pathname);
+      console.error("ZIF_API_URL is not set; cannot forward", pathname);
       return NextResponse.json({ code: "api_unavailable" }, { status: 502 });
     }
     return NextResponse.rewrite(new URL(`${pathname}${search}`, upstream));

@@ -30,10 +30,10 @@ RUN useradd --system --uid 10001 --no-create-home app
 WORKDIR /app
 COPY --from=build /app/.venv /app/.venv
 COPY app ./app
-ARG APP_VERSION=dev
+ARG ZIF_APP_VERSION=dev
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
-    APP_VERSION=$APP_VERSION
+    ZIF_APP_VERSION=$ZIF_APP_VERSION
 USER app
 EXPOSE 8000
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
