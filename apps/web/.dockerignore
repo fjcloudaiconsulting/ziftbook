@@ -1,0 +1,5 @@
+node_modules
+.next
+api-client
+*.tsbuildinfo
+next-env.d.ts
