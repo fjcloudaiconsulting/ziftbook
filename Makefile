@@ -1,4 +1,4 @@
-.PHONY: setup up down web openapi lint typecheck test test-hooks
+.PHONY: setup up down web migrate migration openapi lint typecheck test test-hooks
 
 API := uv run --directory apps/api
 PNPM ?= pnpm
@@ -18,6 +18,12 @@ down:
 web: ## Run the web app on the host (http://localhost:3000); /api is forwarded to the api from `make up`
 	$(WEB) dev
 
+migrate: ## Apply database migrations (as ziftbook_migrate)
+	docker compose run --rm --build migrate
+
+migration: ## Create a migration file: make migration name="add bookings"
+	$(API) alembic revision -m "$(name)"
+
 openapi: ## Regenerate the committed API contract (apps/api/openapi.json)
 	$(API) python -m app.main > apps/api/openapi.json
 
@@ -29,12 +35,13 @@ lint:
 	$(WEB) lint
 
 typecheck:
-	$(API) mypy app tests
+	$(API) mypy app tests migrations
 	$(WEB) typecheck
 
 test: test-hooks
 	node --test "scripts/*.test.mjs"
 	npm --prefix landing test
+	docker compose run --rm db-init
 	$(API) pytest
 	$(WEB) build
 	$(WEB) test
