@@ -35,7 +35,7 @@ jobs:
         with:
           node-version: 24
       - run: sh .githooks/commit-msg.test.sh
-      - run: node --test scripts
+      - run: node --test "scripts/*.test.mjs"
       - run: node scripts/check-catalogs.mjs
       - name: No build-time public env vars in the web app
         run: |
@@ -52,7 +52,7 @@ jobs:
         working-directory: apps/api
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.1.0
         with:
           version: "0.12.13"
           enable-cache: true

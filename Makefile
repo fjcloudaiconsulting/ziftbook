@@ -32,7 +32,7 @@ typecheck:
 	$(WEB) typecheck
 
 test: test-hooks
-	node --test scripts
+	node --test "scripts/*.test.mjs"
 	npm --prefix landing test
 	$(API) pytest
 	$(WEB) build
