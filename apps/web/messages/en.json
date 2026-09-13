@@ -4,6 +4,9 @@
     "description": "Appointments, booked in three taps."
   },
   "HomePage": {
-    "tagline": "Appointments, booked in three taps."
+    "tagline": "Appointments, booked in three taps.",
+    "apiChecking": "Checking the API…",
+    "apiVersion": "API version {version}",
+    "apiUnavailable": "The API is not reachable right now."
   }
 }

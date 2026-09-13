@@ -2,11 +2,13 @@
   "name": "ziftbook-web",
   "private": true,
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
+    "generate": "openapi-ts -s",
+    "dev": "openapi-ts -s && next dev",
+    "build": "openapi-ts -s && next build",
     "start": "next start",
     "lint": "eslint",
-    "typecheck": "next typegen && tsc --noEmit"
+    "typecheck": "openapi-ts -s && next typegen && tsc --noEmit",
+    "test": "node --test tests"
   },
   "dependencies": {
     "next": "16.3.5",
@@ -15,6 +17,7 @@
     "react-dom": "19.3.0"
   },
   "devDependencies": {
+    "@hey-api/openapi-ts": "0.99.0",
     "@types/node": "^24",
     "@types/react": "^19",
     "@types/react-dom": "^19",

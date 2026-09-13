@@ -4,6 +4,9 @@
     "description": "Een afspraak maken in drie tikken."
   },
   "HomePage": {
-    "tagline": "Een afspraak maken in drie tikken."
+    "tagline": "Een afspraak maken in drie tikken.",
+    "apiChecking": "API wordt gecontroleerd…",
+    "apiVersion": "API-versie {version}",
+    "apiUnavailable": "De API is nu niet bereikbaar."
   }
 }
