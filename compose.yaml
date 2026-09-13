@@ -34,14 +34,28 @@ services:
       - ./apps/api/migrations/bootstrap.sql:/bootstrap.sql:ro
     command: ["psql", "-v", "ON_ERROR_STOP=1", "-f", "/bootstrap.sql"]
 
+  # Applies Alembic migrations as ziftbook_migrate, then exits. Never part of app startup.
+  migrate:
+    build:
+      context: apps/api
+      target: dev
+    image: ziftbook-api:dev
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+    environment:
+      ZIF_MIGRATE_DATABASE_URL: postgresql+psycopg://ziftbook_migrate:ziftbook_migrate@postgres:5432/ziftbook
+    command: ["alembic", "upgrade", "head"]
+
   api:
     build:
       context: apps/api
       target: dev
+    image: ziftbook-api:dev
     ports:
       - "127.0.0.1:8000:8000"
     depends_on:
-      db-init:
+      migrate:
         condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/healthz')"]

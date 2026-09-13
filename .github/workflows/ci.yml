@@ -51,6 +51,26 @@ jobs:
     defaults:
       run:
         working-directory: apps/api
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: ziftbook
+          POSTGRES_PASSWORD: ziftbook
+          POSTGRES_DB: ziftbook
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ziftbook -d ziftbook"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    env:
+      # CI-only credentials for the throwaway service container, matching the local dev defaults.
+      ZIF_MIGRATE_PASSWORD: ziftbook_migrate
+      ZIF_APP_PASSWORD: ziftbook_app
+      ZIF_MIGRATE_DATABASE_URL: postgresql+psycopg://ziftbook_migrate:ziftbook_migrate@localhost:5432/ziftbook
+      ZIF_DATABASE_URL: postgresql+psycopg://ziftbook_app:ziftbook_app@localhost:5432/ziftbook
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.1.0
@@ -59,9 +79,17 @@ jobs:
           enable-cache: true
           cache-dependency-glob: apps/api/uv.lock
       - run: uv sync --locked
+      # Same role bootstrap as local dev and future hosting, using the service container's own psql.
+      - name: Bootstrap database roles
+        run: >-
+          docker exec -i
+          -e ZIF_MIGRATE_PASSWORD -e ZIF_APP_PASSWORD
+          ${{ job.services.postgres.id }}
+          psql -v ON_ERROR_STOP=1 -U ziftbook -d ziftbook -f -
+          < migrations/bootstrap.sql
       - run: uv run ruff check .
       - run: uv run ruff format --check .
-      - run: uv run mypy app tests
+      - run: uv run mypy app tests migrations
       - run: uv run pytest
 
   api-image:
