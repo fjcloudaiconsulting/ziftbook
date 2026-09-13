@@ -2,8 +2,14 @@ import json
 
 from fastapi import APIRouter, FastAPI
 from fastapi.routing import APIRoute
+from pydantic import BaseModel
 
 from app.config import Settings
+
+
+class Health(BaseModel):
+    status: str
+    version: str
 
 
 def operation_id(route: APIRoute) -> str:
@@ -17,8 +23,8 @@ def create_app() -> FastAPI:
     router = APIRouter(prefix="/api")
 
     @router.get("/healthz", tags=["health"])
-    def healthz() -> dict[str, str]:
-        return {"status": "ok", "version": settings.app_version}
+    def healthz() -> Health:
+        return Health(status="ok", version=settings.app_version)
 
     # No deploy version in the OpenAPI document: it is a committed contract
     # and must not vary per environment.

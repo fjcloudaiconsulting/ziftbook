@@ -23,3 +23,12 @@ def test_openapi_document_is_stable_json() -> None:
 
     assert document.endswith("\n")
     assert json.loads(document)["info"]["title"] == "ziftbook"
+
+
+def test_healthz_response_is_a_named_schema_with_required_fields() -> None:
+    spec = create_app().openapi()
+    response = spec["paths"]["/api/healthz"]["get"]["responses"]["200"]
+    ref = response["content"]["application/json"]["schema"]["$ref"]
+
+    schema = spec["components"]["schemas"][ref.rsplit("/", 1)[-1]]
+    assert schema["required"] == ["status", "version"]
