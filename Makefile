@@ -22,6 +22,7 @@ openapi: ## Regenerate the committed API contract (apps/api/openapi.json)
 	$(API) python -m app.main > apps/api/openapi.json
 
 lint:
+	node scripts/check-catalogs.mjs
 	$(API) ruff check .
 	$(API) ruff format --check .
 	$(WEB) lint
@@ -31,6 +32,8 @@ typecheck:
 	$(WEB) typecheck
 
 test: test-hooks
+	node --test scripts
+	npm --prefix landing test
 	$(API) pytest
 	$(WEB) build
 	$(WEB) test
