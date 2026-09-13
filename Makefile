@@ -1,4 +1,4 @@
-.PHONY: setup up down lint typecheck test test-hooks
+.PHONY: setup up down openapi lint typecheck test test-hooks
 
 API := uv run --directory apps/api
 
@@ -11,6 +11,9 @@ up: ## Start postgres and the api, syncing source changes into the container
 
 down:
 	docker compose down
+
+openapi: ## Regenerate the committed API contract (apps/api/openapi.json)
+	$(API) python -m app.main > apps/api/openapi.json
 
 lint:
 	$(API) ruff check .
