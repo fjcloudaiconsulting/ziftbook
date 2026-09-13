@@ -67,10 +67,10 @@ jobs:
           --health-retries 30
     env:
       # CI-only credentials for the throwaway service container, matching the local dev defaults.
-      ZIFTBOOK_MIGRATE_PASSWORD: ziftbook_migrate
-      ZIFTBOOK_APP_PASSWORD: ziftbook_app
-      MIGRATE_DATABASE_URL: postgresql+psycopg://ziftbook_migrate:ziftbook_migrate@localhost:5432/ziftbook
-      DATABASE_URL: postgresql+psycopg://ziftbook_app:ziftbook_app@localhost:5432/ziftbook
+      ZIF_MIGRATE_PASSWORD: ziftbook_migrate
+      ZIF_APP_PASSWORD: ziftbook_app
+      ZIF_MIGRATE_DATABASE_URL: postgresql+psycopg://ziftbook_migrate:ziftbook_migrate@localhost:5432/ziftbook
+      ZIF_DATABASE_URL: postgresql+psycopg://ziftbook_app:ziftbook_app@localhost:5432/ziftbook
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.1.0
@@ -83,7 +83,7 @@ jobs:
       - name: Bootstrap database roles
         run: >-
           docker exec -i
-          -e ZIFTBOOK_MIGRATE_PASSWORD -e ZIFTBOOK_APP_PASSWORD
+          -e ZIF_MIGRATE_PASSWORD -e ZIF_APP_PASSWORD
           ${{ job.services.postgres.id }}
           psql -v ON_ERROR_STOP=1 -U ziftbook -d ziftbook -f -
           < migrations/bootstrap.sql

@@ -44,7 +44,7 @@ services:
       db-init:
         condition: service_completed_successfully
     environment:
-      MIGRATE_DATABASE_URL: postgresql+psycopg://ziftbook_migrate:ziftbook_migrate@postgres:5432/ziftbook
+      ZIF_MIGRATE_DATABASE_URL: postgresql+psycopg://ziftbook_migrate:ziftbook_migrate@postgres:5432/ziftbook
     command: ["alembic", "upgrade", "head"]
 
   api:

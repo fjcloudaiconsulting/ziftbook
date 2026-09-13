@@ -14,7 +14,7 @@ MIGRATION_LOCK_ID = 7_428_211_906
 
 # Read directly, not via set_main_option: URL-encoded passwords contain "%",
 # which config interpolation mangles.
-engine = create_engine(os.environ["MIGRATE_DATABASE_URL"], poolclass=NullPool)
+engine = create_engine(os.environ["ZIF_MIGRATE_DATABASE_URL"], poolclass=NullPool)
 
 with engine.connect() as connection:
     # Session-level lock: a second migration run waits here instead of racing. It is

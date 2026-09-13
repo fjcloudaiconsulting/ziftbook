@@ -12,11 +12,11 @@ API_DIR = Path(__file__).parent.parent
 
 # Local dev defaults (compose.yaml / bootstrap.sql); CI sets the same values explicitly.
 os.environ.setdefault(
-    "MIGRATE_DATABASE_URL",
+    "ZIF_MIGRATE_DATABASE_URL",
     "postgresql+psycopg://ziftbook_migrate:ziftbook_migrate@localhost:5432/ziftbook",
 )
 os.environ.setdefault(
-    "DATABASE_URL",
+    "ZIF_DATABASE_URL",
     "postgresql+psycopg://ziftbook_app:ziftbook_app@localhost:5432/ziftbook",
 )
 
@@ -28,13 +28,13 @@ def migrated() -> None:
 
 @pytest.fixture
 def migrate_engine(migrated: None) -> Iterator[Engine]:
-    engine = create_engine(os.environ["MIGRATE_DATABASE_URL"], poolclass=NullPool)
+    engine = create_engine(os.environ["ZIF_MIGRATE_DATABASE_URL"], poolclass=NullPool)
     yield engine
     engine.dispose()
 
 
 @pytest.fixture
 def app_engine(migrated: None) -> Iterator[Engine]:
-    engine = create_engine(os.environ["DATABASE_URL"], poolclass=NullPool)
+    engine = create_engine(os.environ["ZIF_DATABASE_URL"], poolclass=NullPool)
     yield engine
     engine.dispose()
