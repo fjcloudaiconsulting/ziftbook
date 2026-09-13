@@ -7,3 +7,10 @@ docs/specs/
 !.env.example
 
 .DS_Store
+
+# Python
+.venv/
+__pycache__/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/

@@ -1,9 +1,20 @@
-.PHONY: setup test test-hooks
+.PHONY: setup lint typecheck test test-hooks
 
-setup: ## One-time: enable the repo git hooks
+API := uv run --directory apps/api
+
+setup: ## One-time: enable the repo git hooks and install api dependencies
 	git config core.hooksPath .githooks
+	uv sync --directory apps/api
+
+lint:
+	$(API) ruff check .
+	$(API) ruff format --check .
+
+typecheck:
+	$(API) mypy app tests
 
 test: test-hooks
+	$(API) pytest
 
 test-hooks:
 	sh .githooks/commit-msg.test.sh
