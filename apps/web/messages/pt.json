@@ -4,6 +4,9 @@
     "description": "Agendamentos feitos em três toques."
   },
   "HomePage": {
-    "tagline": "Agendamentos feitos em três toques."
+    "tagline": "Agendamentos feitos em três toques.",
+    "apiChecking": "Verificando a API…",
+    "apiVersion": "Versão da API {version}",
+    "apiUnavailable": "A API não está acessível no momento."
   }
 }
