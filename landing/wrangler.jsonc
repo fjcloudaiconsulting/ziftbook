@@ -1,12 +1,18 @@
 {
   "name": "ziftbook-landing",
+  // Not a secret: account IDs identify an account but grant no access. The API token is the only secret.
+  "account_id": "fb5eb042529f2621c6de3f34c6801174",
   "compatibility_date": "2026-09-01",
   "main": "worker.js",
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",
-    // Only the bare root runs the Worker (language redirect); all other paths are plain static assets with _headers.
-    "run_worker_first": ["/"]
+    // Every request hits worker.js first so www and plain http are redirected on every path, not just "/".
+    "run_worker_first": true
   },
-  "routes": [{ "pattern": "ziftbook.com", "custom_domain": true }]
+  // Custom domains: wrangler creates and owns the DNS records and certificates for both hostnames.
+  "routes": [
+    { "pattern": "ziftbook.com", "custom_domain": true },
+    { "pattern": "www.ziftbook.com", "custom_domain": true }
+  ]
 }
