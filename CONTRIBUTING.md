@@ -68,6 +68,20 @@ every table that holds a tenant's data:
 between tenant-owned tables that does not pair `tenant_id`. `jobs` is exempt on purpose: it is global and
 claimed across tenants.
 
+## Background jobs
+
+Deferred and scheduled work goes through the `jobs` table (`app/jobs.py`); there is no broker or scheduler.
+
+- Enqueue with `enqueue(session, kind, dedupe_key, payload)` in the same transaction as the change that needs it.
+  The key runs once, ever: build it as `kind:tenant_id:natural id`, adding the due time when the same thing can be
+  rescheduled (`booking.reminder:<tenant>:<booking>:<starts_at>`).
+- Payloads hold ids only; the handler loads what it needs inside `tenant_context(job.tenant_id)`.
+- Handlers may run more than once for a job (a crash after the work but before it is recorded, or a timeout that
+  finishes late): make them safe to repeat. Every network or database call in a handler has its own timeout.
+- Register a kind as `JobKind(handler, timeout, grace)`: `timeout` in seconds under 60 (the claim lease), `grace`
+  longer than the retry backoff (about 15 minutes, five attempts), after which an overdue job is skipped.
+- A new kind ships in one release and is enqueued from the next, so workers that don't know it yet never see it.
+
 ## API contract
 
 `backend/openapi.json` is committed and the web client is generated from it. After changing an API route or
