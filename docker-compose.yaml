@@ -81,6 +81,9 @@ services:
         condition: service_completed_successfully
     environment:
       ZIF_DATABASE_URL: postgresql+psycopg://ziftbook_app:ziftbook_app@postgres:5432/ziftbook
+      ZIF_SMTP_HOST: mailpit
+      ZIF_SMTP_PORT: "1025"
+      ZIF_SMTP_STARTTLS: "false"
     develop:
       watch:
         - action: sync+restart
@@ -115,6 +118,13 @@ services:
         # A changed API contract regenerates the typed client.
         - action: rebuild
           path: backend/openapi.json
+
+  # Catches every email sent locally: http://localhost:8025
+  mailpit:
+    image: axllent/mailpit:v1.31.1
+    ports:
+      - "127.0.0.1:1025:1025"
+      - "127.0.0.1:8025:8025"
 
 volumes:
   pgdata:

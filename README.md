@@ -16,6 +16,7 @@ source changes synced and reloaded:
 
 ```sh
 make up     # http://localhost:3000 (backend directly: http://localhost:8000/api/healthz)
+            # emails sent locally land in Mailpit: http://localhost:8025
 make down
 ```
 
