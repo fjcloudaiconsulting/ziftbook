@@ -10,7 +10,7 @@ UNSAFE = ["POST", "PUT", "PATCH", "DELETE"]
 def client() -> TestClient:
     app = create_app()
     app.add_api_route("/api/probe", lambda: None, methods=["GET", "HEAD", *UNSAFE], tags=["probe"])
-    return TestClient(app, base_url="https://testserver")
+    return TestClient(app)
 
 
 @pytest.mark.parametrize("method", UNSAFE)
@@ -38,13 +38,13 @@ def test_state_changing_requests_that_are_not_json_are_rejected(
 
 
 @pytest.mark.parametrize("method", UNSAFE)
-def test_json_with_parameters_is_accepted(client: TestClient, method: str) -> None:
-    response = client.request(
-        method,
-        "/api/probe",
-        content="{}",
-        headers={"content-type": "Application/JSON; charset=utf-8"},
-    )
+@pytest.mark.parametrize(
+    "content_type", ["Application/JSON; charset=utf-8", "application/json ; x=y"]
+)
+def test_json_with_parameters_is_accepted(
+    client: TestClient, method: str, content_type: str
+) -> None:
+    response = client.request(method, "/api/probe", headers={"content-type": content_type})
 
     assert response.status_code == 200
 
