@@ -9,13 +9,13 @@ setup: ## One-time: enable the repo git hooks and install api and web dependenci
 	uv sync --directory backend
 	$(WEB) install
 
-up: ## Start postgres and the api, syncing source changes into the container
+up: ## Start the whole app (http://localhost:3000), syncing source changes into the containers
 	docker compose up --build --watch
 
 down:
 	docker compose down
 
-web: ## Run the web app on the host (http://localhost:3000); /api is forwarded to the api from `make up`
+web: ## Alternative to the frontend container: run it on the host (stop that container first)
 	$(WEB) dev
 
 migrate: ## Apply database migrations (as ziftbook_migrate)

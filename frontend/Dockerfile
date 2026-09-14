@@ -1,7 +1,8 @@
 # syntax=docker/dockerfile:1
 # Build with the backend directory as a named context, for the committed OpenAPI contract:
 #   docker build --build-context backend=backend frontend
-FROM node:24-alpine AS build
+# Local development: `next dev` with hot reload, source synced by `docker compose up --watch`.
+FROM node:24-alpine AS dev
 ENV NEXT_TELEMETRY_DISABLED=1
 WORKDIR /src/frontend
 RUN corepack enable
@@ -11,6 +12,10 @@ RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
 COPY . .
 # openapi-ts reads ../backend/openapi.json, the same relative path as in the repo.
 COPY --from=backend openapi.json /src/backend/openapi.json
+EXPOSE 3000
+CMD ["pnpm", "dev", "--hostname", "0.0.0.0"]
+
+FROM dev AS build
 RUN pnpm build && mkdir -p public
 
 # Release image: Next standalone server only, non-root.

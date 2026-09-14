@@ -34,7 +34,7 @@ services:
       - ./backend/migrations/bootstrap.sql:/bootstrap.sql:ro
     command: ["psql", "-v", "ON_ERROR_STOP=1", "-f", "/bootstrap.sql"]
 
-  # Init container: applies migrations as ziftbook_migrate with the migrations image, then exits. The api starts only if it succeeds.
+  # Init container: applies migrations as ziftbook_migrate with the migrations image, then exits. The backend starts only if it succeeds.
   migrate:
     build:
       context: backend
@@ -45,11 +45,10 @@ services:
     environment:
       ZIF_MIGRATE_DATABASE_URL: postgresql+psycopg://ziftbook_migrate:ziftbook_migrate@postgres:5432/ziftbook
 
-  api:
+  backend:
     build:
       context: backend
       target: dev
-    image: ziftbook-api:dev
     ports:
       - "127.0.0.1:8000:8000"
     depends_on:
@@ -70,6 +69,35 @@ services:
           path: backend/pyproject.toml
         - action: rebuild
           path: backend/uv.lock
+
+  frontend:
+    build:
+      context: frontend
+      additional_contexts:
+        backend: backend
+      target: dev
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      - backend
+    environment:
+      ZIF_API_URL: http://backend:8000
+    develop:
+      watch:
+        - action: sync
+          path: frontend
+          target: /src/frontend
+          ignore:
+            - node_modules/
+            - .next/
+            - api-client/
+        - action: rebuild
+          path: frontend/package.json
+        - action: rebuild
+          path: frontend/pnpm-lock.yaml
+        # A changed API contract regenerates the typed client.
+        - action: rebuild
+          path: backend/openapi.json
 
 volumes:
   pgdata:
