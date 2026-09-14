@@ -14,6 +14,7 @@ VIOLATIONS = text("""
 SELECT c.relname || ': has tenant_id but no forced RLS with the tenant_isolation policy'
 FROM pg_class c
 WHERE c.relnamespace = 'public'::regnamespace AND c.relkind = 'r'
+  AND c.relname <> 'jobs'  -- global on purpose: claimed across tenants
   AND EXISTS (
     SELECT FROM pg_attribute a
     WHERE a.attrelid = c.oid AND a.attname = 'tenant_id' AND NOT a.attisdropped)

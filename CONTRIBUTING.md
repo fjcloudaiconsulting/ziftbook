@@ -65,7 +65,8 @@ every table that holds a tenant's data:
   `set_config('app.tenant_id', :id, true)` before each tenant's statements. Never grant `BYPASSRLS`.
 
 `tests/test_tenant_schema.py` fails for a table with `tenant_id` that is not isolated, and for a foreign key
-between tenant-owned tables that does not pair `tenant_id`.
+between tenant-owned tables that does not pair `tenant_id`. `jobs` is exempt on purpose: it is global and
+claimed across tenants.
 
 ## API contract
 
