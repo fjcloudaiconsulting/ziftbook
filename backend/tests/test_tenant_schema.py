@@ -8,16 +8,13 @@ from sqlalchemy import Engine, text
 
 from app.db import enable_tenant_isolation, metadata
 
-# Global tables that carry an optional tenant_id but are read across tenants on purpose.
-GLOBAL_TABLES = ["jobs"]
-
-# Every other table with a tenant_id column must be isolated, and every foreign key between isolated
+# Every table with a tenant_id column must be isolated, and every foreign key between isolated
 # tables must pair tenant_id with tenant_id (Postgres checks foreign keys with RLS bypassed).
 VIOLATIONS = text("""
 SELECT c.relname || ': has tenant_id but no forced RLS with the tenant_isolation policy'
 FROM pg_class c
 WHERE c.relnamespace = 'public'::regnamespace AND c.relkind = 'r'
-  AND c.relname <> ALL(:global_tables)
+  AND c.relname <> 'jobs'  -- global on purpose: claimed across tenants
   AND EXISTS (
     SELECT FROM pg_attribute a
     WHERE a.attrelid = c.oid AND a.attname = 'tenant_id' AND NOT a.attisdropped)
@@ -41,7 +38,7 @@ WHERE con.contype = 'f' AND src.relrowsecurity AND dst.relrowsecurity
 
 def violations(engine: Engine) -> list[str]:
     with engine.connect() as conn:
-        return list(conn.scalars(VIOLATIONS, {"global_tables": GLOBAL_TABLES}))
+        return list(conn.scalars(VIOLATIONS))
 
 
 def test_schema_has_no_tenant_isolation_violations(migrate_engine: Engine) -> None:
