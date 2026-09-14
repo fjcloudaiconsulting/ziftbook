@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.2.0...v0.3.0) (2026-09-14)
+
+
+### Features
+
+* **backend:** add a jobs table with idempotent enqueue ([#34](https://github.com/fjcloudaiconsulting/ziftbook/issues/34)) ([8c513bd](https://github.com/fjcloudaiconsulting/ziftbook/commit/8c513bde985902625ecaec19b1d787d076abda74))
+* **backend:** run due jobs with backoff, timeouts and staleness skips ([#35](https://github.com/fjcloudaiconsulting/ziftbook/issues/35)) ([3323fee](https://github.com/fjcloudaiconsulting/ziftbook/commit/3323fee61902b8c5c0b3c75be65afec79850c2df))
+
 ## [0.2.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.1.1...v0.2.0) (2026-09-14)
 
 
