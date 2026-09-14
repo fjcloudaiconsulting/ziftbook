@@ -10,6 +10,7 @@ from app.db import enable_tenant_isolation, metadata
 
 # Every table with a tenant_id column must be isolated, and every foreign key between isolated
 # tables must pair tenant_id with tenant_id (Postgres checks foreign keys with RLS bypassed).
+# Isolated means forced RLS: users has RLS too, but it is global and has no tenant_id to pair.
 VIOLATIONS = text("""
 SELECT c.relname || ': has tenant_id but no forced RLS with the tenant_isolation policy'
 FROM pg_class c
@@ -27,7 +28,7 @@ SELECT con.conname || ': foreign key between tenant-owned tables without tenant_
 FROM pg_constraint con
 JOIN pg_class src ON src.oid = con.conrelid
 JOIN pg_class dst ON dst.oid = con.confrelid
-WHERE con.contype = 'f' AND src.relrowsecurity AND dst.relrowsecurity
+WHERE con.contype = 'f' AND src.relforcerowsecurity AND dst.relforcerowsecurity
   AND NOT EXISTS (
     SELECT FROM unnest(con.conkey, con.confkey) AS k(src_col, dst_col)
     JOIN pg_attribute s ON s.attrelid = con.conrelid AND s.attnum = k.src_col
