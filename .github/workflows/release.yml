@@ -3,6 +3,12 @@ name: Release
 on:
   push:
     branches: [main]
+  # Publishes the images for a release that already exists, e.g. after a failed publish.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Released version without the v (e.g. 0.1.0); its tag must exist
+        required: true
 
 permissions:
   contents: read
@@ -14,6 +20,7 @@ concurrency:
 jobs:
   release-please:
     name: Release PR and tag
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     # Opens or updates the Release PR from Conventional Commits; merging that PR tags vX.Y.Z and creates the release.
     # Uses GITHUB_TOKEN, so the repo setting "Allow GitHub Actions to create and approve pull requests" must be on.
@@ -21,8 +28,96 @@ jobs:
       contents: write
       pull-requests: write
       issues: write
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      version: ${{ steps.release.outputs.version }}
     steps:
-      - uses: googleapis/release-please-action@v5
+      - id: release
+        uses: googleapis/release-please-action@v5
         with:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+  # Built in the same run as the release: a tag pushed with GITHUB_TOKEN does not trigger other workflows.
+  # The first push of each image creates its GitHub package (private), linked to this repository.
+  images:
+    name: Publish ${{ matrix.image }} image
+    needs: release-please
+    if: >-
+      !cancelled() && (needs.release-please.outputs.release_created == 'true' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        include:
+          - image: backend
+            context: apps/api
+            description: ziftbook backend (FastAPI)
+          - image: frontend
+            context: apps/web
+            description: ziftbook frontend (Next.js)
+    env:
+      VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || needs.release-please.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: v${{ env.VERSION }}
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # context: git takes the commit from the checked-out tag, so sha-<short> and the revision label match the release.
+      # org.opencontainers.image.source links the package to this repository.
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          context: git
+          images: ghcr.io/${{ github.repository_owner }}/ziftbook/${{ matrix.image }}
+          flavor: latest=false
+          tags: |
+            type=semver,pattern=v{{version}},value=${{ env.VERSION }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ env.VERSION }}
+            type=sha
+          labels: |
+            org.opencontainers.image.title=ziftbook/${{ matrix.image }}
+            org.opencontainers.image.description=${{ matrix.description }}
+      - uses: docker/build-push-action@v7
+        with:
+          context: ${{ matrix.context }}
+          # The frontend build reads the committed OpenAPI contract from the backend directory.
+          build-contexts: api=apps/api
+          target: prod
+          platforms: linux/amd64
+          build-args: ZIF_APP_VERSION=${{ env.VERSION }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+  smoke:
+    name: Smoke test published images
+    needs: [release-please, images]
+    if: ${{ !cancelled() && needs.images.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      packages: read
+    env:
+      VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || needs.release-please.outputs.version }}
+      IMAGES: ghcr.io/${{ github.repository_owner }}/ziftbook
+    steps:
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # One request through the frontend proxy checks both images and the version baked into the backend.
+      - run: |
+          docker network create smoke
+          docker run -d --name backend --network smoke "$IMAGES/backend:v$VERSION"
+          docker run -d --name frontend --network smoke -p 3000:3000 -e ZIF_API_URL=http://backend:8000 "$IMAGES/frontend:v$VERSION"
+          body=$(curl -sf --retry 30 --retry-all-errors --retry-delay 2 http://localhost:3000/api/healthz) || { docker logs backend; docker logs frontend; exit 1; }
+          echo "$body"
+          jq -e --arg v "$VERSION" '.status == "ok" and .version == $v' <<<"$body"
