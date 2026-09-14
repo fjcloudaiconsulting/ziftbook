@@ -10,3 +10,11 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="ZIF_")
 
     app_version: str = "dev"
+
+
+class WorkerSettings(Settings):
+    """The worker's configuration; the API does not need a database URL yet."""
+
+    database_url: str
+    # Pinged after every successful loop, so a dead or stuck worker raises an alert. Unset in dev.
+    healthcheck_url: str | None = None
