@@ -42,3 +42,7 @@ next-env.d.ts
 
 # generated from backend/openapi.json
 /api-client/
+
+# written by `next dev` when it detects a coding agent; regenerated if deleted
+/AGENTS.md
+/CLAUDE.md
