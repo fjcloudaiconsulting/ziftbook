@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.5.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.4.0...v0.5.0) (2026-09-14)
+
+
+### Features
+
+* **backend:** connect the API to the database (ZIF-24) ([#43](https://github.com/fjcloudaiconsulting/ziftbook/issues/43)) ([c561f3a](https://github.com/fjcloudaiconsulting/ziftbook/commit/c561f3acd0d47c304147a2e5a13a353d846ec26d))
+* **backend:** reject state-changing requests that aren't JSON (ZIF-24) ([#44](https://github.com/fjcloudaiconsulting/ziftbook/issues/44)) ([7227596](https://github.com/fjcloudaiconsulting/ziftbook/commit/72275966dc0e23b270ad0af62f5962b9ec56bdcf))
+
 ## [0.4.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.3.0...v0.4.0) (2026-09-14)
 
 
