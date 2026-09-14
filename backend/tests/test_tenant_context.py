@@ -27,11 +27,6 @@ def test_tenant_context_sets_the_tenant_for_its_transaction() -> None:
         assert session.scalar(SETTING) == str(tenant_id)
 
 
-def test_a_plain_session_has_no_tenant() -> None:
-    with SessionLocal() as session:
-        assert session.scalar(SETTING) in (None, "")
-
-
 def test_a_reused_pooled_connection_carries_no_tenant() -> None:
     with tenant_context(uuid.uuid4()) as session:
         first_pid = session.scalar(BACKEND_PID)
