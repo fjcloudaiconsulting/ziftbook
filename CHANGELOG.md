@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.3.0...v0.4.0) (2026-09-14)
+
+
+### Features
+
+* **backend:** add the worker process ([#38](https://github.com/fjcloudaiconsulting/ziftbook/issues/38)) ([d11e3f5](https://github.com/fjcloudaiconsulting/ziftbook/commit/d11e3f59086eae62d20b16f8180f7ed037788e48))
+* **backend:** send email through a tenant-isolated outbox ([#39](https://github.com/fjcloudaiconsulting/ziftbook/issues/39)) ([396024b](https://github.com/fjcloudaiconsulting/ziftbook/commit/396024b0b74a76c3b8d98ba34775b1d8640008dc))
+
 ## [0.3.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.2.0...v0.3.0) (2026-09-14)
 
 
