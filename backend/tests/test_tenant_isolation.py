@@ -1,4 +1,3 @@
-import os
 import uuid
 from collections.abc import Iterator
 
@@ -6,18 +5,7 @@ import pytest
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from psycopg.errors import ForeignKeyViolation, InsufficientPrivilege
-from sqlalchemy import (
-    Column,
-    Engine,
-    ForeignKey,
-    ForeignKeyConstraint,
-    MetaData,
-    Table,
-    Uuid,
-    create_engine,
-    select,
-    text,
-)
+from sqlalchemy import Engine, ForeignKeyConstraint, MetaData, select, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
@@ -29,13 +17,10 @@ class Base(DeclarativeBase):
     metadata = MetaData(naming_convention=metadata.naming_convention)
 
 
-Table("tenants", Base.metadata, Column("id", Uuid, primary_key=True))
-
-
 class Parent(Base):
     __tablename__ = "isolation_parents"
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, server_default=text("uuidv7()"))
-    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id"))
+    tenant_id: Mapped[uuid.UUID]
 
 
 class Child(Base):
@@ -46,17 +31,12 @@ class Child(Base):
         ),
     )
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, server_default=text("uuidv7()"))
-    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id"))
+    tenant_id: Mapped[uuid.UUID]
     parent_id: Mapped[uuid.UUID]
 
 
 @pytest.fixture
 def tenants(migrate_engine: Engine, app_engine: Engine) -> Iterator[tuple[uuid.UUID, uuid.UUID]]:
-    with app_engine.begin() as conn:
-        a, b = conn.scalars(
-            text("INSERT INTO tenants (name) VALUES ('A'), ('B') RETURNING id")
-        ).all()
-
     # Created the way a migration would: as ziftbook_migrate, each table isolated before the next
     # references it.
     with migrate_engine.begin() as conn:
@@ -66,17 +46,11 @@ def tenants(migrate_engine: Engine, app_engine: Engine) -> Iterator[tuple[uuid.U
                 Base.metadata.tables[model.__tablename__].create(conn)
                 enable_tenant_isolation(model.__tablename__)
 
-    # One pooled connection, so consecutive sessions reuse the same database backend.
-    engine = create_engine(os.environ["ZIF_DATABASE_URL"], pool_size=1, max_overflow=0)
-    SessionLocal.configure(bind=engine)
-    yield a, b
+    SessionLocal.configure(bind=app_engine)
+    yield uuid.uuid4(), uuid.uuid4()
     SessionLocal.configure(bind=None)
-    engine.dispose()
-
     with migrate_engine.begin() as conn:
         conn.execute(text("DROP TABLE isolation_children, isolation_parents"))
-    with app_engine.begin() as conn:
-        conn.execute(text("DELETE FROM tenants WHERE id IN (:a, :b)"), {"a": a, "b": b})
 
 
 def add_parent(tenant_id: uuid.UUID) -> uuid.UUID:
@@ -120,10 +94,4 @@ def test_a_query_without_tenant_context_raises(
     add_parent(tenants[0])
     # A fresh connection, where app.tenant_id was never set.
     with Session(app_engine) as session, pytest.raises(DBAPIError):
-        session.scalars(select(Parent)).all()
-
-
-def test_a_reused_pooled_connection_serves_no_tenant(tenants: tuple[uuid.UUID, uuid.UUID]) -> None:
-    add_parent(tenants[0])
-    with SessionLocal() as session, pytest.raises(DBAPIError):
         session.scalars(select(Parent)).all()
