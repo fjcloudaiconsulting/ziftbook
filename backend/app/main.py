@@ -27,8 +27,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Read at startup, not in create_app(), so the OpenAPI document builds without a database.
     engine = create_engine(DatabaseSettings().database_url, pool_pre_ping=True)
     SessionLocal.configure(bind=engine)
-    yield
-    engine.dispose()
+    try:
+        yield
+    finally:
+        SessionLocal.configure(bind=None)
+        engine.dispose()
 
 
 def create_app() -> FastAPI:
