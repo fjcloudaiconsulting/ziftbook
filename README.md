@@ -18,10 +18,10 @@ make up     # postgres, role bootstrap, migrations, api: http://localhost:8000/a
 make down
 ```
 
-Database migrations (Alembic, in `apps/api/migrations`). Read the expand/contract rule in CONTRIBUTING.md first:
+Database migrations (Alembic, in `backend/migrations`). Read the expand/contract rule in CONTRIBUTING.md first:
 
 ```sh
-make migration name="add bookings"   # new file in apps/api/migrations/versions
+make migration name="add bookings"   # new file in backend/migrations/versions
 make migrate                         # apply
 ```
 

@@ -40,5 +40,5 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# generated from apps/api/openapi.json
+# generated from backend/openapi.json
 /api-client/

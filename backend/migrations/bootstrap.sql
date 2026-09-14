@@ -1,6 +1,6 @@
 -- Creates the two database roles and their database-level grants. Idempotent: safe to run on every deploy.
 -- Run as an admin role (a superuser locally, the provider's admin role when hosted):
---   psql -v ON_ERROR_STOP=1 -f apps/api/migrations/bootstrap.sql
+--   psql -v ON_ERROR_STOP=1 -f backend/migrations/bootstrap.sql
 -- Requires ZIF_MIGRATE_PASSWORD and ZIF_APP_PASSWORD in the environment. If either is unset, the
 -- password statement fails and the run stops non-zero (a role created without a password cannot log in).
 --

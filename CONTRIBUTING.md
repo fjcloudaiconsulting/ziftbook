@@ -28,13 +28,13 @@ Specifics:
 
 ## API contract
 
-`apps/api/openapi.json` is committed and the web client is generated from it. After changing an API route or
+`backend/openapi.json` is committed and the web client is generated from it. After changing an API route or
 schema, run `make openapi` and commit the result; a test fails if it is stale. Never hand-write API types in the
 web app.
 
 ## Translations
 
-English (`en`) is the source for every catalog (`apps/web/messages`, `landing/strings`). Add a key to English
+English (`en`) is the source for every catalog (`frontend/messages`, `landing/strings`). Add a key to English
 first, then to `nl` and `pt` with the same `{placeholders}`; `node scripts/check-catalogs.mjs` (part of
 `make lint`) enforces it.
 

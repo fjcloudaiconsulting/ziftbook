@@ -14,7 +14,7 @@ def test_operation_ids_are_tag_and_route_name() -> None:
 
 def test_committed_openapi_json_matches_the_app() -> None:
     # The web client is generated from this file. If this fails, run `make openapi` and commit.
-    stale = "apps/api/openapi.json is stale: run `make openapi`"
+    stale = "backend/openapi.json is stale: run `make openapi`"
     assert CONTRACT.read_text() == openapi_document(), stale
 
 
