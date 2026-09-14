@@ -24,11 +24,14 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
     uv sync --locked --no-install-project --no-dev
 
-# Release image: runtime dependencies and app code only, non-root. The worker reuses it with another command.
+# Release image: runtime dependencies, app code and migrations, non-root. The worker and the migration run
+# (`alembic upgrade head`, configured in pyproject.toml) reuse it with another command.
 FROM python:3.14-slim AS prod
 RUN useradd --system --uid 10001 --no-create-home app
 WORKDIR /app
 COPY --from=build /app/.venv /app/.venv
+COPY pyproject.toml ./
+COPY migrations ./migrations
 COPY app ./app
 ARG ZIF_APP_VERSION=dev
 ENV PATH="/app/.venv/bin:$PATH" \
