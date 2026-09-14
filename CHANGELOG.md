@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.1.1...v0.2.0) (2026-09-14)
+
+
+### Features
+
+* **backend:** add tenants table with UUIDv7 ids ([#28](https://github.com/fjcloudaiconsulting/ziftbook/issues/28)) ([e0f69b8](https://github.com/fjcloudaiconsulting/ziftbook/commit/e0f69b8bf213dba5f07a14e3dbf5607b378dd115))
+* **backend:** set tenant context per transaction with tenant_context ([#29](https://github.com/fjcloudaiconsulting/ziftbook/issues/29)) ([5692944](https://github.com/fjcloudaiconsulting/ziftbook/commit/5692944af1ad647d52c570d90335249a6ac1b2a0))
+
 ## [0.1.1](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.1.0...v0.1.1) (2026-09-14)
 
 
