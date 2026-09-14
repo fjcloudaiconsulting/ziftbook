@@ -19,7 +19,9 @@ make down
 ```
 
 `docker-compose.yaml` is this local stack. `docker-compose-prod.yaml` runs a released version from GHCR
-(`ghcr.io/fjcloudaiconsulting/ziftbook/{backend,frontend}`); its header lists the variables it needs:
+(`ghcr.io/fjcloudaiconsulting/ziftbook/{backend,frontend,migrations}`); its header lists the variables it needs.
+The `migrations` image runs `alembic upgrade head` as an init container: the backend starts only if it succeeds, and
+rerunning it is a no-op. The same image is meant for the Kubernetes init container.
 
 ```sh
 docker login ghcr.io

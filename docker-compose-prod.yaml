@@ -2,7 +2,7 @@
 # Run from a checkout of the release tag, after `docker login ghcr.io` (the packages are private):
 #   docker compose -f docker-compose-prod.yaml up -d
 # Required variables, from the environment or a .env file next to this file (never committed):
-#   ZIF_IMAGE_TAG           release tag (vX.Y.Z); releases before this file existed lack migrations in the image
+#   ZIF_IMAGE_TAG           release tag (vX.Y.Z); the migrations image exists from the release after v0.1.1
 #   ZIF_POSTGRES_PASSWORD   Postgres superuser password
 #   ZIF_MIGRATE_PASSWORD    ziftbook_migrate password (URL-safe characters: it is part of a database URL)
 #   ZIF_APP_PASSWORD        ziftbook_app password
@@ -42,15 +42,15 @@ services:
       - ./backend/migrations/bootstrap.sql:/bootstrap.sql:ro
     command: ["psql", "-v", "ON_ERROR_STOP=1", "-f", "/bootstrap.sql"]
 
-  # Applies migrations as ziftbook_migrate with the backend image, then exits. Never part of backend startup.
+  # Init container: applies migrations as ziftbook_migrate with the migrations image, then exits. The backend starts
+  # only if it succeeds; rerunning at head is a no-op.
   migrate:
-    image: ghcr.io/fjcloudaiconsulting/ziftbook/backend:${ZIF_IMAGE_TAG:?set ZIF_IMAGE_TAG}
+    image: ghcr.io/fjcloudaiconsulting/ziftbook/migrations:${ZIF_IMAGE_TAG:?set ZIF_IMAGE_TAG}
     depends_on:
       db-init:
         condition: service_completed_successfully
     environment:
       ZIF_MIGRATE_DATABASE_URL: postgresql+psycopg://ziftbook_migrate:${ZIF_MIGRATE_PASSWORD:?set ZIF_MIGRATE_PASSWORD}@postgres:5432/ziftbook
-    command: ["alembic", "upgrade", "head"]
 
   backend:
     image: ghcr.io/fjcloudaiconsulting/ziftbook/backend:${ZIF_IMAGE_TAG:?set ZIF_IMAGE_TAG}

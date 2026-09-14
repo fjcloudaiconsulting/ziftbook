@@ -34,18 +34,16 @@ services:
       - ./backend/migrations/bootstrap.sql:/bootstrap.sql:ro
     command: ["psql", "-v", "ON_ERROR_STOP=1", "-f", "/bootstrap.sql"]
 
-  # Applies Alembic migrations as ziftbook_migrate, then exits. Never part of app startup.
+  # Init container: applies migrations as ziftbook_migrate with the migrations image, then exits. The api starts only if it succeeds.
   migrate:
     build:
       context: backend
-      target: dev
-    image: ziftbook-api:dev
+      target: migrations
     depends_on:
       db-init:
         condition: service_completed_successfully
     environment:
       ZIF_MIGRATE_DATABASE_URL: postgresql+psycopg://ziftbook_migrate:ziftbook_migrate@postgres:5432/ziftbook
-    command: ["alembic", "upgrade", "head"]
 
   api:
     build:
