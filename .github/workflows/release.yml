@@ -54,9 +54,15 @@ jobs:
         include:
           - image: backend
             context: backend
+            target: prod
             description: ziftbook backend (FastAPI)
+          - image: migrations
+            context: backend
+            target: migrations
+            description: ziftbook database migrations (Alembic), run as an init container before the backend
           - image: frontend
             context: frontend
+            target: prod
             description: ziftbook frontend (Next.js)
     env:
       VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || needs.release-please.outputs.version }}
@@ -90,7 +96,7 @@ jobs:
           context: ${{ matrix.context }}
           # The frontend build reads the committed OpenAPI contract from the backend directory.
           build-contexts: backend=backend
-          target: prod
+          target: ${{ matrix.target }}
           platforms: linux/amd64
           build-args: ZIF_APP_VERSION=${{ env.VERSION }}
           push: true
@@ -108,14 +114,35 @@ jobs:
       VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || needs.release-please.outputs.version }}
       IMAGES: ghcr.io/${{ github.repository_owner }}/ziftbook
     steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: v${{ env.VERSION }}
       - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - run: docker network create smoke
+      # The migrations image against a fresh database: it must succeed, and a second run at head must be a no-op.
+      - name: Migrations
+        env:
+          ZIF_MIGRATE_PASSWORD: smoke_migrate
+          ZIF_APP_PASSWORD: smoke_app
+        run: |
+          docker run -d --name postgres --network smoke -e POSTGRES_USER=ziftbook -e POSTGRES_PASSWORD=smoke -e POSTGRES_DB=ziftbook postgres:18
+          # TCP only answers once initialisation is finished and the real server is up.
+          timeout 60 sh -c 'until docker exec postgres pg_isready -h 127.0.0.1 -U ziftbook -d ziftbook; do sleep 1; done'
+          docker exec -i -e ZIF_MIGRATE_PASSWORD -e ZIF_APP_PASSWORD postgres \
+            psql -v ON_ERROR_STOP=1 -U ziftbook -d ziftbook -f - < backend/migrations/bootstrap.sql
+          for _ in 1 2; do
+            docker run --rm --network smoke \
+              -e ZIF_MIGRATE_DATABASE_URL="postgresql+psycopg://ziftbook_migrate:$ZIF_MIGRATE_PASSWORD@postgres:5432/ziftbook" \
+              "$IMAGES/migrations:v$VERSION"
+          done
+          docker exec postgres psql -U ziftbook -d ziftbook -tAc 'SELECT version_num FROM alembic_version' | grep -q .
       # One request through the frontend proxy checks both images and the version baked into the backend.
-      - run: |
-          docker network create smoke
+      - name: Backend and frontend
+        run: |
           docker run -d --name backend --network smoke "$IMAGES/backend:v$VERSION"
           docker run -d --name frontend --network smoke -p 3000:3000 -e ZIF_API_URL=http://backend:8000 "$IMAGES/frontend:v$VERSION"
           body=$(curl -sf --retry 30 --retry-all-errors --retry-delay 2 http://localhost:3000/api/healthz) || { docker logs backend; docker logs frontend; exit 1; }

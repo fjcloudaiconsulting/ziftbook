@@ -24,19 +24,26 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
     uv sync --locked --no-install-project --no-dev
 
-# Release image: runtime dependencies, app code and migrations, non-root. The worker and the migration run
-# (`alembic upgrade head`, configured in pyproject.toml) reuse it with another command.
-FROM python:3.14-slim AS prod
+# Release images: runtime dependencies and app code only, non-root.
+FROM python:3.14-slim AS runtime
 RUN useradd --system --uid 10001 --no-create-home app
 WORKDIR /app
 COPY --from=build /app/.venv /app/.venv
+COPY app ./app
+ENV PATH="/app/.venv/bin:$PATH" \
+    PYTHONUNBUFFERED=1
+USER app
+
+# Migrations image: the init container (Kubernetes, Compose) that must succeed before the backend starts.
+# `alembic upgrade head` is a no-op at head, and env.py's advisory lock makes concurrent runs wait their turn.
+FROM runtime AS migrations
 COPY pyproject.toml ./
 COPY migrations ./migrations
-COPY app ./app
+CMD ["alembic", "upgrade", "head"]
+
+# Backend image. The worker reuses it with another command.
+FROM runtime AS prod
 ARG ZIF_APP_VERSION=dev
-ENV PATH="/app/.venv/bin:$PATH" \
-    PYTHONUNBUFFERED=1 \
-    ZIF_APP_VERSION=$ZIF_APP_VERSION
-USER app
+ENV ZIF_APP_VERSION=$ZIF_APP_VERSION
 EXPOSE 8000
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

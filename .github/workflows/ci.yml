@@ -93,24 +93,27 @@ jobs:
       - run: uv run pytest
 
   image:
-    name: ${{ matrix.dir }} image builds
+    name: ${{ matrix.image }} image builds
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        dir: [backend, frontend]
+        include:
+          - { image: backend, context: backend, target: prod }
+          - { image: migrations, context: backend, target: migrations }
+          - { image: frontend, context: frontend, target: prod }
     steps:
       - uses: actions/checkout@v7
       - uses: docker/setup-buildx-action@v4
       - uses: docker/build-push-action@v7
         with:
-          context: ${{ matrix.dir }}
+          context: ${{ matrix.context }}
           # The frontend build reads the committed OpenAPI contract from the backend directory.
           build-contexts: backend=backend
-          target: prod
+          target: ${{ matrix.target }}
           platforms: linux/amd64
           push: false
-          cache-from: type=gha,scope=${{ matrix.dir }}
-          cache-to: type=gha,scope=${{ matrix.dir }},mode=max
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,scope=${{ matrix.image }},mode=max
 
   web:
     name: Web
