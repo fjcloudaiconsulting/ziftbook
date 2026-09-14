@@ -92,19 +92,25 @@ jobs:
       - run: uv run mypy app tests migrations
       - run: uv run pytest
 
-  api-image:
-    name: API image builds
+  image:
+    name: ${{ matrix.app }} image builds
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        app: [api, web]
     steps:
       - uses: actions/checkout@v7
       - uses: docker/setup-buildx-action@v4
       - uses: docker/build-push-action@v7
         with:
-          context: apps/api
+          context: apps/${{ matrix.app }}
+          # The web build reads the committed OpenAPI contract from the api directory.
+          build-contexts: api=apps/api
           target: prod
+          platforms: linux/amd64
           push: false
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=${{ matrix.app }}
+          cache-to: type=gha,scope=${{ matrix.app }},mode=max
 
   web:
     name: Web
