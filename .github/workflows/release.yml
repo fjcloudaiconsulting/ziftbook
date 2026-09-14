@@ -1,8 +1,8 @@
 name: Release
 
 on:
-  push:
-    branches: [main]
+  # Called by ci.yml on main, after every CI job has passed on that commit. Never on a plain push.
+  workflow_call:
   # Publishes the images for a release that already exists, e.g. after a failed publish.
   workflow_dispatch:
     inputs:
@@ -13,8 +13,9 @@ on:
 permissions:
   contents: read
 
+# Manual runs only; the CI caller serialises its own release job.
 concurrency:
-  group: release
+  group: release-manual
   cancel-in-progress: false
 
 jobs:
@@ -32,7 +33,16 @@ jobs:
       release_created: ${{ steps.release.outputs.release_created }}
       version: ${{ steps.release.outputs.version }}
     steps:
+      # release-please acts on main as it is now, not on this commit. If main has moved on, a merged Release PR there
+      # has not passed CI yet, so leave it to the newer commit's run.
+      - id: head
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          head=$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)
+          if [ "$head" = "$GITHUB_SHA" ]; then echo "latest=true" >> "$GITHUB_OUTPUT"; else echo "main is at $head; skipping"; fi
       - id: release
+        if: steps.head.outputs.latest == 'true'
         uses: googleapis/release-please-action@v5
         with:
           config-file: release-please-config.json
