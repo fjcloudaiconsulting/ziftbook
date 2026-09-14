@@ -1,8 +1,9 @@
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
-from fastapi import APIRouter, FastAPI
+from fastapi import APIRouter, FastAPI, Request, Response
+from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from pydantic import BaseModel
 from sqlalchemy import create_engine
@@ -46,6 +47,19 @@ def create_app() -> FastAPI:
     # and must not vary per environment.
     app = FastAPI(title="ziftbook", generate_unique_id_function=operation_id, lifespan=lifespan)
     app.include_router(router)
+
+    @app.middleware("http")
+    async def json_only(
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
+        # CSRF defence: browsers send JSON cross-origin only after a CORS preflight, never granted.
+        # Parse the media type: "text/plain; application/json" is still a plain form type.
+        if request.method not in ("GET", "HEAD", "OPTIONS"):
+            media_type = request.headers.get("content-type", "").split(";")[0].strip().lower()
+            if media_type != "application/json":
+                return JSONResponse({"code": "unsupported_media_type"}, status_code=415)
+        return await call_next(request)
+
     return app
 
 
