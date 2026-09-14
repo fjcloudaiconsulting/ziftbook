@@ -53,10 +53,10 @@ jobs:
       matrix:
         include:
           - image: backend
-            context: apps/api
+            context: backend
             description: ziftbook backend (FastAPI)
           - image: frontend
-            context: apps/web
+            context: frontend
             description: ziftbook frontend (Next.js)
     env:
       VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || needs.release-please.outputs.version }}
@@ -89,7 +89,7 @@ jobs:
         with:
           context: ${{ matrix.context }}
           # The frontend build reads the committed OpenAPI contract from the backend directory.
-          build-contexts: api=apps/api
+          build-contexts: backend=backend
           target: prod
           platforms: linux/amd64
           build-args: ZIF_APP_VERSION=${{ env.VERSION }}
