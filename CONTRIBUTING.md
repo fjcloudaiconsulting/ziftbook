@@ -48,6 +48,25 @@ Specifics:
 - Migrations run as `ziftbook_migrate`, never on app startup. The app connects as `ziftbook_app`, which owns
   nothing: never grant it ownership, `BYPASSRLS` or DDL rights.
 
+## Tenant-owned tables
+
+Tenant isolation is enforced by Postgres row-level security, not by remembering a `WHERE tenant_id = ...`. For
+every table that holds a tenant's data:
+
+- Columns `id uuid PRIMARY KEY DEFAULT uuidv7()` and `tenant_id uuid NOT NULL REFERENCES tenants (id)`.
+- Call `enable_tenant_isolation("table")` (from `app.db`) in the migration, right after creating the table.
+- A reference to another tenant-owned table is a composite foreign key, `(tenant_id, x_id) REFERENCES
+  parent (tenant_id, id)`, never a plain one: foreign key checks bypass row-level security. For an optional
+  reference use `ON DELETE SET NULL (x_id)`, since plain `SET NULL` would also null `tenant_id`.
+- Every `UNIQUE` or `EXCLUDE` constraint includes `tenant_id`; otherwise a violation reveals another tenant's rows.
+- Read and write inside `tenant_context(tenant_id)` (jobs, webhooks). A query without a tenant raises instead of
+  returning nothing.
+- Data migrations: row-level security binds `ziftbook_migrate` too. Loop over `SELECT id FROM tenants` and run
+  `set_config('app.tenant_id', :id, true)` before each tenant's statements. Never grant `BYPASSRLS`.
+
+`tests/test_tenant_schema.py` fails for a table with `tenant_id` that is not isolated, and for a foreign key
+between tenant-owned tables that does not pair `tenant_id`.
+
 ## API contract
 
 `backend/openapi.json` is committed and the web client is generated from it. After changing an API route or
