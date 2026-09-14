@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.1](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.1.0...v0.1.1) (2026-09-14)
+
+
+### Miscellaneous Chores
+
+* release 0.1.1 to publish the first images ([#23](https://github.com/fjcloudaiconsulting/ziftbook/issues/23)) ([a1e1efa](https://github.com/fjcloudaiconsulting/ziftbook/commit/a1e1efac6c4edf0477f7878286aca0b722f1b6d4))
+
 ## 0.1.0 (2026-09-14)
 
 
