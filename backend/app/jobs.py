@@ -73,22 +73,20 @@ class JobKind:
     grace: timedelta
 
 
-MAX_ATTEMPTS = 5
-
 # One statement claims a batch: SKIP LOCKED keeps concurrent workers apart while claiming, and the
 # bumped next_attempt_at keeps them apart afterwards. It is both the lease and the backoff
 # (1, 2, 4, 8, 16 minutes), so a crashed worker's jobs come back on their own. = ANY(ARRAY(...)),
 # not IN (...): the planner may run an IN subquery with LIMIT more than once and claim extra rows.
-CLAIM = text(f"""
+CLAIM = text("""
 UPDATE jobs
 SET attempts = attempts + 1,
     next_attempt_at = now() + interval '1 minute' * 2 ^ attempts
 WHERE id = ANY(ARRAY(
     SELECT id FROM jobs
-    WHERE completed_at IS NULL AND attempts < {MAX_ATTEMPTS}
+    WHERE completed_at IS NULL AND attempts < 5
       AND next_attempt_at <= now() AND kind = ANY(:kinds)
     ORDER BY next_attempt_at
-    LIMIT :limit
+    LIMIT 20
     FOR UPDATE SKIP LOCKED))
 RETURNING id, kind, tenant_id, payload, now() - due_at AS overdue
 """)
@@ -96,9 +94,9 @@ RETURNING id, kind, tenant_id, payload, now() - due_at AS overdue
 logger = logging.getLogger(__name__)
 
 
-def _claim(kinds: list[str], limit: int) -> list[tuple[Job, timedelta]]:
+def _claim(kinds: list[str]) -> list[tuple[Job, timedelta]]:
     with SessionLocal.begin() as session:
-        rows = session.execute(CLAIM, {"kinds": kinds, "limit": limit}).all()
+        rows = session.execute(CLAIM, {"kinds": kinds}).all()
     return [(Job(row.id, row.kind, row.tenant_id, row.payload), row.overdue) for row in rows]
 
 
@@ -129,8 +127,11 @@ async def _run(kind: JobKind, job: Job, overdue: timedelta) -> None:
         )
 
 
-async def run_once(kinds: dict[str, JobKind], limit: int = 20) -> int:
-    """Claim up to limit due jobs of the given kinds and run them concurrently. Returns how many."""
-    claimed = await asyncio.to_thread(_claim, list(kinds), limit)
+async def run_once(kinds: dict[str, JobKind]) -> int:
+    """Claim up to 20 due jobs of the given kinds (5 attempts at most) and run them concurrently.
+
+    Returns how many were claimed.
+    """
+    claimed = await asyncio.to_thread(_claim, list(kinds))
     await asyncio.gather(*(_run(kinds[job.kind], job, overdue) for job, overdue in claimed))
     return len(claimed)

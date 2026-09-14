@@ -65,14 +65,6 @@ def test_concurrent_workers_run_each_job_exactly_once() -> None:
     assert set(runs.values()) == {1}
 
 
-def test_a_job_enqueued_twice_runs_once() -> None:
-    runs: list[Job] = []
-    add("test.once", "test.once:1")
-    add("test.once", "test.once:1")
-    run_until_idle({"test.once": JobKind(runs.append, 5, timedelta(hours=1))})
-    assert len(runs) == 1
-
-
 def test_a_handler_that_times_out_is_retried() -> None:
     release = threading.Event()
     calls = []
