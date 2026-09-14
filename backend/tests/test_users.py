@@ -1,13 +1,11 @@
-import os
 import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass
 
 import pytest
 from psycopg.errors import CheckViolation, UniqueViolation
-from sqlalchemy import Engine, create_engine, text
+from sqlalchemy import Engine, text
 from sqlalchemy.exc import DBAPIError, IntegrityError
-from sqlalchemy.pool import NullPool
 
 from app.db import SessionLocal, tenant_context
 
@@ -16,9 +14,9 @@ from app.db import SessionLocal, tenant_context
 class People:
     a: uuid.UUID  # tenant
     b: uuid.UUID  # tenant
-    only_a: uuid.UUID  # user, member of a
-    only_b: uuid.UUID  # user, member of b
-    both: uuid.UUID  # user, member of a and b
+    only_a: uuid.UUID  # user, worker in a
+    only_b: uuid.UUID  # user, worker in b
+    both: uuid.UUID  # user, owner in a and worker in b
 
 
 def add_user(engine: Engine, email: str | None = None, locale: str | None = None) -> uuid.UUID:
@@ -42,17 +40,21 @@ def add_membership(tenant_id: uuid.UUID, user_id: uuid.UUID, role: str = "worker
 
 @pytest.fixture
 def people(app_engine: Engine, migrate_engine: Engine) -> Iterator[People]:
-    engine = create_engine(os.environ["ZIF_DATABASE_URL"], poolclass=NullPool)
-    SessionLocal.configure(bind=engine)
+    SessionLocal.configure(bind=app_engine)
     with app_engine.begin() as conn:
-        a, b = (
-            conn.scalar(text("INSERT INTO tenants (name) VALUES ('x') RETURNING id")) for _ in "ab"
-        )
-    people = People(a, b, add_user(app_engine), add_user(app_engine), add_user(app_engine))
+        a = conn.scalar(text("INSERT INTO tenants (name) VALUES ('a') RETURNING id"))
+        b = conn.scalar(text("INSERT INTO tenants (name) VALUES ('b') RETURNING id"))
+    people = People(
+        a=a,
+        b=b,
+        only_a=add_user(app_engine),
+        only_b=add_user(app_engine),
+        both=add_user(app_engine, locale="nl"),
+    )
     add_membership(a, people.only_a)
     add_membership(b, people.only_b)
-    add_membership(a, people.both)
-    add_membership(b, people.both, "owner")
+    add_membership(a, people.both, "owner")
+    add_membership(b, people.both)
     yield people
     for tenant_id in (a, b):
         with tenant_context(tenant_id) as session:
@@ -65,7 +67,6 @@ def people(app_engine: Engine, migrate_engine: Engine) -> Iterator[People]:
         )
         conn.execute(text("DELETE FROM tenants WHERE id IN (:a, :b)"), {"a": a, "b": b})
     SessionLocal.configure(bind=None)
-    engine.dispose()
 
 
 @pytest.mark.parametrize(
@@ -77,6 +78,12 @@ def test_users_hold_a_lowercase_email_and_a_supported_locale(
     with pytest.raises(IntegrityError) as error:
         add_user(app_engine, f"{uuid.uuid4()}{email}", locale)
     assert isinstance(error.value.orig, CheckViolation)
+
+
+def test_an_email_belongs_to_one_user(people: People, app_engine: Engine) -> None:
+    with pytest.raises(IntegrityError) as error:
+        add_user(app_engine, f"{people.only_a}@example.com")
+    assert isinstance(error.value.orig, UniqueViolation)
 
 
 def test_a_membership_has_a_known_role_and_exists_once_per_tenant(people: People) -> None:
@@ -104,15 +111,16 @@ def test_a_tenant_cannot_change_or_delete_a_user_it_shares(people: People) -> No
     # A user's email is their identity in every tenant: tenant a must not be able to redirect it.
     with tenant_context(people.a) as session:
         params = {"id": people.both}
-        changed = session.execute(
+        session.execute(
             text("UPDATE users SET email = 'attacker@example.com' WHERE id = :id"), params
         )
-        deleted = session.execute(text("DELETE FROM users WHERE id = :id"), params)
-        assert (changed.rowcount, deleted.rowcount) == (0, 0)  # type: ignore[attr-defined]
+        session.execute(text("DELETE FROM users WHERE id = :id"), params)
 
     with tenant_context(people.b) as session:
-        email = session.scalar(text("SELECT email FROM users WHERE id = :id"), {"id": people.both})
-    assert email == f"{people.both}@example.com"
+        row = session.execute(
+            text("SELECT email, locale FROM users WHERE id = :id"), {"id": people.both}
+        ).one()
+    assert tuple(row) == (f"{people.both}@example.com", "nl")
 
 
 def test_reading_users_without_a_tenant_context_raises(people: People, app_engine: Engine) -> None:

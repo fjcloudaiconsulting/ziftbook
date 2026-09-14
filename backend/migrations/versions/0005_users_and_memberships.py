@@ -30,6 +30,9 @@ def upgrade() -> None:
         "memberships",
         sa.Column("id", sa.Uuid(), server_default=sa.text("uuidv7()"), primary_key=True),
         sa.Column("tenant_id", sa.Uuid(), sa.ForeignKey("tenants.id"), nullable=False),
+        # Checked with RLS bypassed: a tenant that knows a user's id could add them and then read
+        # their email. Memberships come only from trusted flows (sign-up, invites), never from a
+        # client-supplied user_id.
         sa.Column("user_id", sa.Uuid(), sa.ForeignKey("users.id"), nullable=False),
         sa.Column("role", sa.Text(), nullable=False),
         sa.CheckConstraint("role IN ('owner', 'worker')", name="role"),
@@ -38,11 +41,15 @@ def upgrade() -> None:
         sa.UniqueConstraint("tenant_id", "user_id", "role"),
     )
     enable_tenant_isolation("memberships")
+    # A user's tenants, and the foreign key check when a user is deleted.
+    op.create_index(None, "memberships", ["user_id"])
 
     # The app role reads a user only through a membership in the current tenant, so one tenant can't
     # read another's staff by id; with no tenant, the memberships subquery raises. It may add users
-    # but never change or delete one: an email is the person's identity in every tenant. Not FORCE,
-    # so sign-in functions owned by ziftbook_migrate can look a user up before a tenant is known.
+    # but never change or delete one: an email is the person's identity in every tenant (so
+    # SELECT ... FOR UPDATE on users returns nothing). Not FORCE, so sign-in functions owned by
+    # ziftbook_migrate can look a user up before a tenant is known; for the same reason a view over
+    # users needs security_invoker.
     op.execute("ALTER TABLE users ENABLE ROW LEVEL SECURITY")
     op.execute(
         "CREATE POLICY tenant_members ON users FOR SELECT "
