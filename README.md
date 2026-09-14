@@ -11,8 +11,8 @@ make setup   # enable git hooks, install api and web dependencies
 make lint typecheck test
 ```
 
-Run the whole app locally (Postgres 18, migrations, backend and the frontend in English, Dutch and Portuguese), with
-source changes synced and reloaded:
+Run the whole app locally (Postgres 18, migrations, backend, background worker, Mailpit and the frontend in English,
+Dutch and Portuguese), with source changes synced and reloaded:
 
 ```sh
 make up     # http://localhost:3000 (backend directly: http://localhost:8000/api/healthz)
@@ -37,7 +37,7 @@ make migration name="add bookings"   # new file in backend/migrations/versions
 make migrate                         # apply
 ```
 
-Tests need Docker running: `make test` starts Postgres and bootstraps the roles.
+Tests need Docker running: `make test` starts Postgres and Mailpit and bootstraps the roles.
 
 After changing an api route, regenerate the committed contract the web client is built from:
 

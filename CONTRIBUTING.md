@@ -103,4 +103,5 @@ names (`NODE_ENV`, `POSTGRES_*`, `PG*`, `CLOUDFLARE_API_TOKEN`). `node scripts/c
 `make lint`) enforces it.
 
 Deployment settings are environment variables read at runtime; never add `NEXT_PUBLIC_*` variables, which Next.js
-bakes into the build. Infrastructure is code in this repository; only secrets are set by hand.
+bakes into the build. Configuration that code already covers stays in code (`landing/wrangler.jsonc`, the compose
+files); managing hosting infrastructure with Terraform is deferred until the platform is chosen (ZIF-20).
