@@ -43,7 +43,7 @@ export function unprefixedNames(path, source) {
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const files = execFileSync("git", ["ls-files", "apps", "landing", "scripts"], { encoding: "utf8" })
+  const files = execFileSync("git", ["ls-files", "backend", "frontend", "landing", "scripts"], { encoding: "utf8" })
     .split("\n")
     // The checker's own tests contain unprefixed names on purpose.
     .filter((path) => languageOf(path) && path !== "scripts/check-env-names.test.mjs");

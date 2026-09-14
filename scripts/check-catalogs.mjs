@@ -3,7 +3,7 @@
 import { readFileSync } from "node:fs";
 
 const CATALOG_SETS = [
-  { dir: "apps/web/messages", source: "en", translations: ["nl", "pt"] },
+  { dir: "frontend/messages", source: "en", translations: ["nl", "pt"] },
   { dir: "landing/strings", source: "en", translations: ["nl", "pt"] },
 ];
 

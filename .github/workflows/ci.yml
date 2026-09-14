@@ -40,7 +40,7 @@ jobs:
       - run: node scripts/check-env-names.mjs
       - name: No build-time public env vars in the web app
         run: |
-          if grep -rn "NEXT_PUBLIC_" apps/web --include='*.ts' --include='*.tsx' --include='*.mjs' --include='*.json' \
+          if grep -rn "NEXT_PUBLIC_" frontend --include='*.ts' --include='*.tsx' --include='*.mjs' --include='*.json' \
                --exclude-dir=node_modules --exclude-dir=.next; then
             echo "NEXT_PUBLIC_* is baked in at build time; read configuration at runtime instead." && exit 1
           fi
@@ -50,7 +50,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: apps/api
+        working-directory: backend
     services:
       postgres:
         image: postgres:18
@@ -77,7 +77,7 @@ jobs:
         with:
           version: "0.12.13"
           enable-cache: true
-          cache-dependency-glob: apps/api/uv.lock
+          cache-dependency-glob: backend/uv.lock
       - run: uv sync --locked
       # Same role bootstrap as local dev and future hosting, using the service container's own psql.
       - name: Bootstrap database roles
@@ -93,44 +93,44 @@ jobs:
       - run: uv run pytest
 
   image:
-    name: ${{ matrix.app }} image builds
+    name: ${{ matrix.dir }} image builds
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        app: [api, web]
+        dir: [backend, frontend]
     steps:
       - uses: actions/checkout@v7
       - uses: docker/setup-buildx-action@v4
       - uses: docker/build-push-action@v7
         with:
-          context: apps/${{ matrix.app }}
-          # The web build reads the committed OpenAPI contract from the api directory.
-          build-contexts: api=apps/api
+          context: ${{ matrix.dir }}
+          # The frontend build reads the committed OpenAPI contract from the backend directory.
+          build-contexts: backend=backend
           target: prod
           platforms: linux/amd64
           push: false
-          cache-from: type=gha,scope=${{ matrix.app }}
-          cache-to: type=gha,scope=${{ matrix.app }},mode=max
+          cache-from: type=gha,scope=${{ matrix.dir }}
+          cache-to: type=gha,scope=${{ matrix.dir }},mode=max
 
   web:
     name: Web
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: apps/web
+        working-directory: frontend
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version: 24
-      # pnpm version comes from packageManager in apps/web/package.json.
+      # pnpm version comes from packageManager in frontend/package.json.
       - run: corepack enable
       - id: pnpm-store
         run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@v6
         with:
           path: ${{ steps.pnpm-store.outputs.path }}
-          key: pnpm-${{ runner.os }}-${{ hashFiles('apps/web/pnpm-lock.yaml') }}
+          key: pnpm-${{ runner.os }}-${{ hashFiles('frontend/pnpm-lock.yaml') }}
           restore-keys: pnpm-${{ runner.os }}-
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
