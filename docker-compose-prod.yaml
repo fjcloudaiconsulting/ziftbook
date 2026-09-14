@@ -60,6 +60,8 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
+    environment:
+      ZIF_DATABASE_URL: postgresql+psycopg://ziftbook_app:${ZIF_APP_PASSWORD:?set ZIF_APP_PASSWORD}@postgres:5432/ziftbook
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/healthz')"]
       interval: 30s
