@@ -10,7 +10,7 @@ from sqlalchemy.pool import NullPool
 
 API_DIR = Path(__file__).parent.parent
 
-# Local dev defaults (compose.yaml / bootstrap.sql); CI sets the same values explicitly.
+# Local dev defaults (docker-compose.yaml / bootstrap.sql); CI sets the same values explicitly.
 os.environ.setdefault(
     "ZIF_MIGRATE_DATABASE_URL",
     "postgresql+psycopg://ziftbook_migrate:ziftbook_migrate@localhost:5432/ziftbook",

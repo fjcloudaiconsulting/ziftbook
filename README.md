@@ -18,6 +18,14 @@ make up     # postgres, role bootstrap, migrations, api: http://localhost:8000/a
 make down
 ```
 
+`docker-compose.yaml` is this local stack. `docker-compose-prod.yaml` runs a released version from GHCR
+(`ghcr.io/fjcloudaiconsulting/ziftbook/{backend,frontend}`); its header lists the variables it needs:
+
+```sh
+docker login ghcr.io
+ZIF_IMAGE_TAG=vX.Y.Z docker compose -f docker-compose-prod.yaml up -d   # http://localhost:3000
+```
+
 Database migrations (Alembic, in `backend/migrations`). Read the expand/contract rule in CONTRIBUTING.md first:
 
 ```sh
