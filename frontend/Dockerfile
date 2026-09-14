@@ -12,7 +12,6 @@ RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
 COPY . .
 # openapi-ts reads ../backend/openapi.json, the same relative path as in the repo.
 COPY --from=backend openapi.json /src/backend/openapi.json
-EXPOSE 3000
 CMD ["pnpm", "dev", "--hostname", "0.0.0.0"]
 
 FROM dev AS build

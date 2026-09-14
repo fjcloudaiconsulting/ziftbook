@@ -1,4 +1,4 @@
-.PHONY: setup up down web migrate migration openapi lint typecheck test test-hooks
+.PHONY: setup up down migrate migration openapi lint typecheck test test-hooks
 
 API := uv run --directory backend
 PNPM ?= pnpm
@@ -14,9 +14,6 @@ up: ## Start the whole app (http://localhost:3000), syncing source changes into 
 
 down:
 	docker compose down
-
-web: ## Alternative to the frontend container: run it on the host (stop that container first)
-	$(WEB) dev
 
 migrate: ## Apply database migrations (as ziftbook_migrate)
 	docker compose run --rm --build migrate

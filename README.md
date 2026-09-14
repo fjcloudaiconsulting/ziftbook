@@ -38,8 +38,6 @@ make migrate                         # apply
 
 Tests need Docker running: `make test` starts Postgres and bootstraps the roles.
 
-To run the frontend on the host instead (faster reloads), stop its container and use `make web`.
-
 After changing an api route, regenerate the committed contract the web client is built from:
 
 ```sh
