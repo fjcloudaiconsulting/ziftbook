@@ -70,6 +70,25 @@ services:
         - action: rebuild
           path: backend/uv.lock
 
+  # Background jobs, from the backend image with another command.
+  worker:
+    build:
+      context: backend
+      target: dev
+    command: ["python", "-m", "app.worker"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      ZIF_DATABASE_URL: postgresql+psycopg://ziftbook_app:ziftbook_app@postgres:5432/ziftbook
+    develop:
+      watch:
+        - action: sync+restart
+          path: backend/app
+          target: /app/app
+        - action: rebuild
+          path: backend/uv.lock
+
   frontend:
     build:
       context: frontend

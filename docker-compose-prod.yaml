@@ -6,6 +6,7 @@
 #   ZIF_POSTGRES_PASSWORD   Postgres superuser password
 #   ZIF_MIGRATE_PASSWORD    ziftbook_migrate password (URL-safe characters: it is part of a database URL)
 #   ZIF_APP_PASSWORD        ziftbook_app password
+# Optional: ZIF_HEALTHCHECK_URL, pinged by the worker after every successful loop.
 name: ziftbook
 
 services:
@@ -64,6 +65,19 @@ services:
       timeout: 3s
       start_period: 30s
       start_interval: 1s
+
+  # Background jobs, from the backend image with another command. SIGTERM lets the current batch finish.
+  worker:
+    image: ghcr.io/fjcloudaiconsulting/ziftbook/backend:${ZIF_IMAGE_TAG:?set ZIF_IMAGE_TAG}
+    restart: unless-stopped
+    command: ["python", "-m", "app.worker"]
+    stop_grace_period: 90s
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      ZIF_DATABASE_URL: postgresql+psycopg://ziftbook_app:${ZIF_APP_PASSWORD:?set ZIF_APP_PASSWORD}@postgres:5432/ziftbook
+      ZIF_HEALTHCHECK_URL: ${ZIF_HEALTHCHECK_URL:-}
 
   # The only published port; /api is forwarded to the backend on the internal network.
   frontend:
