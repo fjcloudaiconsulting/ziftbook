@@ -1,10 +1,14 @@
 import json
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 from fastapi import APIRouter, FastAPI
 from fastapi.routing import APIRoute
 from pydantic import BaseModel
+from sqlalchemy import create_engine
 
-from app.config import Settings
+from app.config import DatabaseSettings, Settings
+from app.db import SessionLocal
 
 
 class Health(BaseModel):
@@ -18,6 +22,15 @@ def operation_id(route: APIRoute) -> str:
     return f"{route.tags[0]}-{route.name}"
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    # Read at startup, not in create_app(), so the OpenAPI document builds without a database.
+    engine = create_engine(DatabaseSettings().database_url, pool_pre_ping=True)
+    SessionLocal.configure(bind=engine)
+    yield
+    engine.dispose()
+
+
 def create_app() -> FastAPI:
     settings = Settings()
     router = APIRouter(prefix="/api")
@@ -28,7 +41,7 @@ def create_app() -> FastAPI:
 
     # No deploy version in the OpenAPI document: it is a committed contract
     # and must not vary per environment.
-    app = FastAPI(title="ziftbook", generate_unique_id_function=operation_id)
+    app = FastAPI(title="ziftbook", generate_unique_id_function=operation_id, lifespan=lifespan)
     app.include_router(router)
     return app
 
