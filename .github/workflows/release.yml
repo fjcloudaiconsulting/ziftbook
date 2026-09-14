@@ -153,7 +153,9 @@ jobs:
       # One request through the frontend proxy checks both images and the version baked into the backend.
       - name: Backend and frontend
         run: |
-          docker run -d --name backend --network smoke "$IMAGES/backend:v$VERSION"
+          docker run -d --name backend --network smoke \
+            -e ZIF_DATABASE_URL="postgresql+psycopg://ziftbook_app:smoke_app@postgres:5432/ziftbook" \
+            "$IMAGES/backend:v$VERSION"
           docker run -d --name frontend --network smoke -p 3000:3000 -e ZIF_API_URL=http://backend:8000 "$IMAGES/frontend:v$VERSION"
           body=$(curl -sf --retry 30 --retry-all-errors --retry-delay 2 http://localhost:3000/api/healthz) || { docker logs backend; docker logs frontend; exit 1; }
           echo "$body"

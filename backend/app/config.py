@@ -12,10 +12,15 @@ class Settings(BaseSettings):
     app_version: str = "dev"
 
 
-class WorkerSettings(Settings):
-    """The worker's configuration; the API does not need a database URL yet."""
+class DatabaseSettings(Settings):
+    """Configuration of the processes that use the database: the API and the worker."""
 
     database_url: str
+
+
+class WorkerSettings(DatabaseSettings):
+    """The worker's configuration."""
+
     # Pinged after every successful loop, so a dead or stuck worker raises an alert. Unset in dev.
     healthcheck_url: str | None = None
 

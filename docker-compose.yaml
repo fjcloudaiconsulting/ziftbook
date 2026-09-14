@@ -51,6 +51,8 @@ services:
       target: dev
     ports:
       - "127.0.0.1:8000:8000"
+    environment:
+      ZIF_DATABASE_URL: postgresql+psycopg://ziftbook_app:ziftbook_app@postgres:5432/ziftbook
     depends_on:
       migrate:
         condition: service_completed_successfully
