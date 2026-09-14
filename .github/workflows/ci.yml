@@ -8,9 +8,10 @@ on:
 permissions:
   contents: read
 
+# A newer commit cancels a superseded pull request run, but never a main run that may be releasing.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   pr-title:
@@ -153,3 +154,18 @@ jobs:
         with:
           node-version: 24
       - run: npm test
+
+  # Releases only when every check above passed on this commit of main.
+  release:
+    name: Release
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [repo, api, image, web, landing]
+    concurrency:
+      group: release
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      packages: write
+    uses: ./.github/workflows/release.yml
