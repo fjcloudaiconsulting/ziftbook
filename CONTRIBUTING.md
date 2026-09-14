@@ -8,6 +8,28 @@
   `make setup` installs the same check as a local commit hook.
 - `make lint typecheck test` runs locally what CI runs.
 
+## Releases
+
+One version for the whole app: backend, frontend and migrations images are always released together with the same
+tag. [release-please](https://github.com/googleapis/release-please) derives the version and `CHANGELOG.md` from the
+commits on `main` (`feat` bumps the minor version while we are below 1.0, `fix` the patch; `ci`, `build`, `docs`,
+`refactor` and `chore` release nothing on their own).
+
+| Step | You do | What runs | Releases? |
+|---|---|---|---|
+| 1 | Merge a PR | CI on `main`. If every check passes, release-please opens or updates the Release PR (`chore(main): release X.Y.Z`) | No |
+| 2 | Nothing | The Release PR update starts CI on its branch. GitHub holds it for approval (bot-created PR); approving only runs the checks | No |
+| 3 | Merge the Release PR | CI on `main`. If every check passes: tag `vX.Y.Z`, GitHub Release, publish the three images to GHCR, smoke test | **Yes** |
+
+- There is no need to approve CI on Release PRs: step 3 runs every check on `main` before anything is released. A
+  failed check on `main` means no release.
+- Every merge refreshes the Release PR, which always contains everything merged so far. Merge it when you want to
+  ship. A superseded, never-approved run on its branch shows as failed with no jobs; that is harmless.
+- Images: `ghcr.io/fjcloudaiconsulting/ziftbook/{backend,frontend,migrations}`, tagged `vX.Y.Z`, `X.Y` and
+  `sha-<short>` (private packages).
+- If publishing fails after the tag exists, rerun the failed jobs, or run the Release workflow manually with that
+  version.
+
 ## Database migrations: expand, then contract
 
 During a deploy, old and new versions of the app run against the same database at the same time. A migration
