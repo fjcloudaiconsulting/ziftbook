@@ -6,7 +6,8 @@
 #   ZIF_POSTGRES_PASSWORD   Postgres superuser password
 #   ZIF_MIGRATE_PASSWORD    ziftbook_migrate password (URL-safe characters: it is part of a database URL)
 #   ZIF_APP_PASSWORD        ziftbook_app password
-# Optional: ZIF_HEALTHCHECK_URL, pinged by the worker after every successful loop.
+# Optional: ZIF_HEALTHCHECK_URL, pinged by the worker after every successful loop; ZIF_SMTP_USERNAME and
+#   ZIF_SMTP_PASSWORD for sending email (Mailgun EU SMTP credentials).
 name: ziftbook
 
 services:
@@ -78,6 +79,9 @@ services:
     environment:
       ZIF_DATABASE_URL: postgresql+psycopg://ziftbook_app:${ZIF_APP_PASSWORD:?set ZIF_APP_PASSWORD}@postgres:5432/ziftbook
       ZIF_HEALTHCHECK_URL: ${ZIF_HEALTHCHECK_URL:-}
+      # Mailgun EU SMTP by default (see MailSettings).
+      ZIF_SMTP_USERNAME: ${ZIF_SMTP_USERNAME:-}
+      ZIF_SMTP_PASSWORD: ${ZIF_SMTP_PASSWORD:-}
 
   # The only published port; /api is forwarded to the backend on the internal network.
   frontend:

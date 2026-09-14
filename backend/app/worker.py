@@ -5,15 +5,19 @@ import logging
 import signal
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
+from datetime import timedelta
 
 from sqlalchemy import create_engine
 
+from app import mail
 from app.config import WorkerSettings
 from app.db import SessionLocal
 from app.jobs import JobKind, run_once
 
 # Registered job kinds. A new kind ships one release before anything enqueues it.
-KINDS: dict[str, JobKind] = {}
+KINDS: dict[str, JobKind] = {
+    "email.send": JobKind(mail.send, timeout=30, grace=timedelta(hours=24)),
+}
 
 POLL_SECONDS = 30
 

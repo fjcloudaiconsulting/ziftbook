@@ -66,12 +66,20 @@ jobs:
           --health-interval 2s
           --health-timeout 3s
           --health-retries 30
+      mailpit:
+        image: axllent/mailpit:v1.31.1
+        ports:
+          - 1025:1025
+          - 8025:8025
     env:
       # CI-only credentials for the throwaway service container, matching the local dev defaults.
       ZIF_MIGRATE_PASSWORD: ziftbook_migrate
       ZIF_APP_PASSWORD: ziftbook_app
       ZIF_MIGRATE_DATABASE_URL: postgresql+psycopg://ziftbook_migrate:ziftbook_migrate@localhost:5432/ziftbook
       ZIF_DATABASE_URL: postgresql+psycopg://ziftbook_app:ziftbook_app@localhost:5432/ziftbook
+      ZIF_SMTP_HOST: localhost
+      ZIF_SMTP_PORT: "1025"
+      ZIF_SMTP_STARTTLS: "false"
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.1.0

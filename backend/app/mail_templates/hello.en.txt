@@ -1,0 +1,6 @@
+Hello from ziftbook
+Hello,
+
+This message confirms that ziftbook can send you email.
+
+ziftbook

@@ -19,6 +19,10 @@ os.environ.setdefault(
     "ZIF_DATABASE_URL",
     "postgresql+psycopg://ziftbook_app:ziftbook_app@localhost:5432/ziftbook",
 )
+# Mailpit from docker-compose.yaml.
+os.environ.setdefault("ZIF_SMTP_HOST", "localhost")
+os.environ.setdefault("ZIF_SMTP_PORT", "1025")
+os.environ.setdefault("ZIF_SMTP_STARTTLS", "false")
 
 
 @pytest.fixture(scope="session")
