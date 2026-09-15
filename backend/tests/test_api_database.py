@@ -37,6 +37,8 @@ def test_the_worker_still_requires_a_database_url(monkeypatch: pytest.MonkeyPatc
 def test_the_api_is_bound_to_its_database_while_it_runs(migrated: None) -> None:
     with TestClient(create_app()):
         with SessionLocal() as session:
+            # No statement values (password hashes, emails) in error messages or logs.
+            assert session.get_bind().engine.hide_parameters
             # The role from ZIF_DATABASE_URL, not the migrate URL.
             assert session.scalar(text("SELECT current_user")) == "ziftbook_app"
     # Unbound after shutdown, so later code can't use a disposed engine by accident.

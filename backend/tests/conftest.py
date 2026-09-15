@@ -1,4 +1,6 @@
+import hashlib
 import os
+import secrets
 import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -7,6 +9,8 @@ from pathlib import Path
 import pytest
 from alembic import command
 from alembic.config import Config
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.pool import NullPool
 
@@ -49,6 +53,26 @@ def app_engine(migrated: None) -> Iterator[Engine]:
     engine.dispose()
 
 
+PASSWORD = "lavender-harbour-19"
+EXPIRE = "UPDATE email_tokens SET expires_at = now() - interval '1 second' WHERE token_hash = :h"
+
+
+@pytest.fixture
+def bound(app_engine: Engine) -> Iterator[None]:
+    """SessionLocal bound to the app role for the test; fixtures that need it depend on this."""
+    SessionLocal.configure(bind=app_engine)
+    yield
+    SessionLocal.configure(bind=None)
+
+
+def new_client(app: FastAPI) -> TestClient:
+    # A fresh IPv6 /64 per client, so per-IP rate limits never carry over between tests or runs.
+    address = f"2001:db8:{secrets.randbelow(65536):x}:{secrets.randbelow(65536):x}::1"
+    return TestClient(
+        app, base_url="https://testserver", client=(address, 1), raise_server_exceptions=False
+    )
+
+
 @dataclass(frozen=True)
 class People:
     a: uuid.UUID  # tenant
@@ -74,6 +98,20 @@ def email_of(user_id: uuid.UUID) -> str:
     return f"{user_id}@example.com"
 
 
+def issue_link(app_engine: Engine, purpose: str, email: str, locale: str = "en") -> str | None:
+    """A request plus its email job: the token a link would carry, or None if nothing was sent."""
+    token = secrets.token_urlsafe(32)
+    with app_engine.begin() as conn:
+        token_id = conn.scalar(
+            text("SELECT start_email_token(:p, :e, :l)"), {"p": purpose, "e": email, "l": locale}
+        )
+        minted = conn.execute(
+            text("SELECT * FROM mint_email_token(:id, :h)"),
+            {"id": token_id, "h": hashlib.sha256(token.encode()).digest()},
+        ).first()
+    return token if minted and not minted.registered else None
+
+
 def add_password(migrate_engine: Engine, user_id: uuid.UUID, password: str) -> None:
     with migrate_engine.begin() as conn:
         conn.execute(
@@ -91,8 +129,7 @@ def add_membership(tenant_id: uuid.UUID, user_id: uuid.UUID, role: str = "worker
 
 
 @pytest.fixture
-def people(app_engine: Engine, migrate_engine: Engine) -> Iterator[People]:
-    SessionLocal.configure(bind=app_engine)
+def people(app_engine: Engine, migrate_engine: Engine, bound: None) -> Iterator[People]:
     with app_engine.begin() as conn:
         a = conn.scalar(text("INSERT INTO tenants (name) VALUES ('a') RETURNING id"))
         b = conn.scalar(text("INSERT INTO tenants (name) VALUES ('b') RETURNING id"))
@@ -122,4 +159,3 @@ def people(app_engine: Engine, migrate_engine: Engine) -> Iterator[People]:
             {"x": people.only_a, "y": people.only_b, "z": people.both},
         )
         conn.execute(text("DELETE FROM tenants WHERE id IN (:a, :b)"), {"a": a, "b": b})
-    SessionLocal.configure(bind=None)

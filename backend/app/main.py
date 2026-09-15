@@ -9,7 +9,7 @@ from fastapi.routing import APIRoute
 from pydantic import BaseModel
 from sqlalchemy import create_engine
 
-from app import auth
+from app import accounts, auth
 from app.config import DatabaseSettings, Settings
 from app.db import SessionLocal
 from app.errors import ApiError
@@ -29,7 +29,11 @@ def operation_id(route: APIRoute) -> str:
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Read at startup, not in create_app(), so the OpenAPI document builds without a database.
-    engine = create_engine(DatabaseSettings().database_url, pool_pre_ping=True)
+    # hide_parameters: a failed statement's message would otherwise carry its values, password
+    # hashes included, into the logs.
+    engine = create_engine(
+        DatabaseSettings().database_url, pool_pre_ping=True, hide_parameters=True
+    )
     SessionLocal.configure(bind=engine)
     try:
         yield
@@ -51,6 +55,7 @@ def create_app() -> FastAPI:
     app = FastAPI(title="ziftbook", generate_unique_id_function=operation_id, lifespan=lifespan)
     app.include_router(router)
     app.include_router(auth.router)
+    app.include_router(accounts.router)
 
     @app.middleware("http")
     async def json_only(

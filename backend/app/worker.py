@@ -70,6 +70,7 @@ def main() -> None:
     engine = create_engine(
         settings.database_url,
         pool_pre_ping=True,
+        hide_parameters=True,  # no statement values (emails, token hashes) in logs
         pool_size=21,  # 20 handler threads and the claim
         max_overflow=0,
         # Hard limits for handlers that outlive their timeout: their threads can't be killed.

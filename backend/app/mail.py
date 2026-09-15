@@ -8,6 +8,7 @@ import ssl
 from email.message import EmailMessage
 from pathlib import Path
 from string import Template
+from typing import Literal, get_args
 
 from sqlalchemy import text
 
@@ -16,7 +17,8 @@ from app.db import SessionLocal, tenant_context
 from app.jobs import Job
 
 TEMPLATES = Path(__file__).parent / "mail_templates"
-LOCALES = ("en", "nl", "pt")
+Locale = Literal["en", "nl", "pt"]
+LOCALES = get_args(Locale)
 
 
 def render(template: str, locale: str, values: dict[str, str] | None = None) -> tuple[str, str]:

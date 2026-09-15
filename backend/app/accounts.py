@@ -1,0 +1,112 @@
+"""Creating an account: sign up with an email, then complete it from the emailed link."""
+
+import unicodedata
+from datetime import timedelta
+from typing import Annotated
+
+from fastapi import APIRouter, Request, Response
+from pydantic import AfterValidator, BaseModel, Field, StringConstraints
+from sqlalchemy import text
+
+from app import auth, limits, passwords
+from app.db import SessionLocal, tenant_context
+from app.errors import ApiError, Error
+from app.jobs import enqueue
+from app.mail import Locale
+
+SIGN_UP_WINDOW = timedelta(hours=1)
+
+router = APIRouter(prefix="/api", tags=["account"])
+
+
+class SignUp(BaseModel):
+    email: passwords.Email
+    locale: Locale  # the page the person signed up on
+
+
+@router.post("/sign-up", status_code=202, responses={s: {"model": Error} for s in (415, 422, 429)})
+def sign_up(details: SignUp, request: Request) -> None:
+    """Send a link that sets up a business. The same answer whether or not the email has an account:
+    the email itself tells the owner of the inbox (a link, or a note to sign in instead)."""
+    ip = request.client.host if request.client else None
+    if limits.hit(
+        {
+            limits.email_key("sign_up", details.email): 3,
+            limits.ip_key("sign_up", ip): 10,
+        },
+        SIGN_UP_WINDOW,
+    ):
+        raise ApiError(429, "rate_limited")
+    with SessionLocal.begin() as session:
+        token_id = session.scalar(
+            text("SELECT start_email_token('sign_up', :email, :locale)"),
+            {"email": details.email, "locale": details.locale},
+        )
+        enqueue(session, "email.token", f"email.token:{token_id}", {"token_id": str(token_id)})
+
+
+def printable(name: str) -> str:
+    # No control, format (zero-width) or unassigned characters: a name that looks empty, or that
+    # the database refuses (NUL), is a 422, not a blank business or a 500.
+    if any(unicodedata.category(c).startswith("C") for c in name):
+        raise ValueError("unprintable characters")
+    return name
+
+
+BusinessName = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=100),
+    AfterValidator(printable),
+]
+
+
+class CompleteSignUp(BaseModel):
+    token: str = Field(min_length=1, max_length=100)  # from the link's fragment
+    password: str
+    business_name: BusinessName
+
+
+def live_token(token: str, purpose: str) -> bytes:
+    """The token's hash if it can still be used. Checked before any password is hashed, so a dead or
+    made-up link costs nothing."""
+    digest = auth.hash_token(token)
+    with SessionLocal.begin() as session:
+        if not session.scalar(
+            text("SELECT email_token_live(:hash, :purpose)"), {"hash": digest, "purpose": purpose}
+        ):
+            raise ApiError(400, "invalid_token")
+    return digest
+
+
+@router.post(
+    "/sign-up/complete",
+    status_code=201,
+    responses={s: {"model": Error} for s in (400, 409, 415, 422, 503)},
+)
+def complete_sign_up(
+    details: CompleteSignUp, request: Request, response: Response
+) -> auth.SessionOut:
+    """Create the business and its owner from a sign-up link, and sign the owner in."""
+    password = passwords.check_new_password(details.password)
+    digest = live_token(details.token, "sign_up")
+    password_hash = passwords.hash_password(password)
+    with SessionLocal.begin() as session:
+        created = session.execute(
+            text("SELECT * FROM complete_sign_up(:hash, :password_hash, :business_name)"),
+            {
+                "hash": digest,
+                "password_hash": password_hash,
+                "business_name": details.business_name,
+            },
+        ).one()
+    if created.outcome == "invalid_token":  # used up since the liveness check
+        raise ApiError(400, "invalid_token")
+    if created.outcome == "already_registered":
+        raise ApiError(409, "account_exists")
+    # Two steps: if this one fails, the account exists and the person signs in normally.
+    with tenant_context(created.tenant_id) as session:
+        token = auth.start(session, request, created.user_id)
+        signed_in_as = auth.describe(session, created.user_id)
+    auth.set_cookie(response, token)
+    response.headers["Cache-Control"] = "no-store"
+    return signed_in_as
