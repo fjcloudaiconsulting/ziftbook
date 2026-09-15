@@ -8,8 +8,10 @@ from fastapi.routing import APIRoute
 from pydantic import BaseModel
 from sqlalchemy import create_engine
 
+from app import auth
 from app.config import DatabaseSettings, Settings
 from app.db import SessionLocal
+from app.errors import ApiError
 
 
 class Health(BaseModel):
@@ -47,6 +49,7 @@ def create_app() -> FastAPI:
     # and must not vary per environment.
     app = FastAPI(title="ziftbook", generate_unique_id_function=operation_id, lifespan=lifespan)
     app.include_router(router)
+    app.include_router(auth.router)
 
     @app.middleware("http")
     async def json_only(
@@ -59,6 +62,10 @@ def create_app() -> FastAPI:
             if media_type != "application/json":
                 return JSONResponse({"code": "unsupported_media_type"}, status_code=415)
         return await call_next(request)
+
+    @app.exception_handler(ApiError)
+    async def api_error(request: Request, error: ApiError) -> JSONResponse:
+        return JSONResponse({"code": error.code}, status_code=error.status_code)
 
     return app
 
