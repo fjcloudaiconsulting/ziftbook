@@ -32,6 +32,7 @@ def render(template: str, locale: str, values: dict[str, str] | None = None) -> 
 
 
 def deliver(to: str, subject: str, body: str, headers: dict[str, str] | None = None) -> None:
+    """Hand one plain-text message for one address to the SMTP server."""
     settings = MailSettings()
     message = EmailMessage()
     message["From"] = settings.smtp_from
@@ -40,12 +41,20 @@ def deliver(to: str, subject: str, body: str, headers: dict[str, str] | None = N
     for name, value in (headers or {}).items():
         message[name] = value
     message.set_content(body)
-    with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=10) as smtp:
+    smtp = smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=10)
+    try:
         if settings.smtp_starttls:
             smtp.starttls(context=ssl.create_default_context())
         if settings.smtp_username:
             smtp.login(settings.smtp_username, settings.smtp_password)
-        smtp.send_message(message)
+        # to_addrs: exactly the one stored address, even if its text reads as a list ("a, b").
+        smtp.send_message(message, to_addrs=[to])
+    finally:
+        # Once the server accepted the message, a failed goodbye must not undo it (and resend).
+        try:
+            smtp.quit()
+        except smtplib.SMTPException, OSError:
+            smtp.close()
 
 
 # The page each purpose's link opens; the token rides in the fragment, which no server ever sees.
@@ -59,7 +68,7 @@ def send_token(job: Job) -> None:
     transaction, so a failed send leaves the request for the retry, which mints a new token.
     """
     token = secrets.token_urlsafe(32)
-    app_url = MailSettings().app_url
+    app_url = MailSettings().app_url.rstrip("/")
     with SessionLocal.begin() as session:
         row = session.execute(
             text("SELECT * FROM mint_email_token(:id, :hash)"),

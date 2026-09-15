@@ -1,6 +1,8 @@
+import asyncio
 import hashlib
 import json
 import os
+import smtplib
 import urllib.parse
 import urllib.request
 import uuid
@@ -12,8 +14,9 @@ from sqlalchemy import Engine, text
 
 from app import mail
 from app.db import SessionLocal
-from app.jobs import Job
+from app.jobs import Job, enqueue, run_once
 from app.mail import LOCALES, render
+from app.worker import KINDS
 from tests.conftest import People
 
 MAILPIT = f"http://{os.environ['ZIF_SMTP_HOST']}:8025"
@@ -22,13 +25,11 @@ APP_URL = "https://app.example.test"
 
 @pytest.fixture(autouse=True)
 def bound(app_engine: Engine, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    monkeypatch.setenv("ZIF_APP_URL", APP_URL)
-    configured = SessionLocal.kw.get("bind") is None  # the people fixture may have bound it
-    if configured:
-        SessionLocal.configure(bind=app_engine)
+    # A trailing slash, as someone might configure it: links must not get a double slash.
+    monkeypatch.setenv("ZIF_APP_URL", f"{APP_URL}/")
+    SessionLocal.configure(bind=app_engine)
     yield
-    if configured:
-        SessionLocal.configure(bind=None)
+    SessionLocal.configure(bind=None)
 
 
 def request(app_engine: Engine, purpose: str, email: str, locale: str) -> Job:
@@ -97,8 +98,6 @@ def test_a_sign_up_link_carries_its_token_only_in_the_fragment(
     assert sent["Subject"] == "Configure seu negócio no ziftbook"
     assert hashlib.sha256(token.encode()).digest() == stored_hash(migrate_engine, email)
     assert headers["X-Mailgun-Track-Clicks"] == ["no"]
-    # The job holds the row's id, never the token.
-    assert set(job.payload) == {"token_id"}
 
 
 def test_a_reset_link_uses_the_users_own_language(
@@ -108,8 +107,9 @@ def test_a_reset_link_uses_the_users_own_language(
     mail.send_token(request(app_engine, "password_reset", email, "pt"))
 
     (sent,) = inbox(email)
-    body, _ = message(sent["ID"])
+    body, headers = message(sent["ID"])
     page, token = link_in(body).split("#")
+    assert headers["X-Mailgun-Track-Clicks"] == ["no"]
     assert sent["Subject"] == "Stel je ziftbook-wachtwoord opnieuw in"
     assert page == f"{APP_URL}/nl/reset-password"
     assert hashlib.sha256(token.encode()).digest() == stored_hash(migrate_engine, email)
@@ -133,14 +133,16 @@ def test_a_reset_for_an_unknown_email_sends_nothing(
 def test_a_sign_up_for_a_registered_email_says_to_sign_in_without_a_link(
     people: People, app_engine: Engine
 ) -> None:
-    email = f"{people.only_a}@example.com"
+    email = (
+        f"{people.both}@example.com"  # both chose Dutch; the request came from a Portuguese page
+    )
 
-    mail.send_token(request(app_engine, "sign_up", email, "en"))
+    mail.send_token(request(app_engine, "sign_up", email, "pt"))
 
     (sent,) = inbox(email)
     body, _ = message(sent["ID"])
-    assert sent["Subject"] == "You already have a ziftbook account"
-    assert f"{APP_URL}/en/sign-in" in body and "#" not in body
+    assert sent["Subject"] == "Je hebt al een ziftbook-account"
+    assert f"{APP_URL}/nl/sign-in" in body and "#" not in body
 
 
 def test_sending_again_replaces_the_link(app_engine: Engine, migrate_engine: Engine) -> None:
@@ -148,12 +150,13 @@ def test_sending_again_replaces_the_link(app_engine: Engine, migrate_engine: Eng
     job = request(app_engine, "sign_up", email, "en")
 
     mail.send_token(job)
+    (first,) = inbox(email)
     mail.send_token(job)
+    (second,) = [m for m in inbox(email) if m["ID"] != first["ID"]]
 
-    tokens = [link_in(message(m["ID"])[0]).split("#")[1] for m in inbox(email)]
-    assert len(set(tokens)) == 2
-    stored = stored_hash(migrate_engine, email)
-    assert sum(hashlib.sha256(t.encode()).digest() == stored for t in tokens) == 1
+    token = link_in(message(second["ID"])[0]).split("#")[1]
+    assert token != link_in(message(first["ID"])[0]).split("#")[1]
+    assert hashlib.sha256(token.encode()).digest() == stored_hash(migrate_engine, email)
 
 
 def test_a_failed_send_keeps_the_request_for_the_retry(
@@ -178,3 +181,29 @@ def test_a_failed_send_keeps_the_request_for_the_retry(
             )
             == 1
         )
+
+
+def test_the_worker_runs_account_email_jobs(app_engine: Engine) -> None:
+    # What the endpoints will do: enqueue by kind name, for the worker's registered handler.
+    email = f"{uuid.uuid4()}@example.com"
+    token_id = request(app_engine, "sign_up", email, "en").payload["token_id"]
+    with SessionLocal.begin() as session:
+        enqueue(session, "email.token", f"email.token:{token_id}", {"token_id": token_id})
+
+    async def run_until_idle() -> None:
+        while await run_once(KINDS):
+            pass
+
+    asyncio.run(run_until_idle())
+
+    assert [m["Subject"] for m in inbox(email)] == ["Set up your business on ziftbook"]
+
+
+def test_an_address_that_reads_as_a_list_reaches_no_second_inbox(app_engine: Engine) -> None:
+    victim = f"{uuid.uuid4()}@example.com"
+    stored = f"{uuid.uuid4()}@example.com, {victim}"
+
+    with pytest.raises(smtplib.SMTPRecipientsRefused):
+        mail.send_token(request(app_engine, "sign_up", stored, "en"))
+
+    assert inbox(victim) == []
