@@ -371,8 +371,9 @@ def test_two_reset_links_used_at_the_same_moment_do_not_deadlock(
     assert results == [True, True]
 
 
+@pytest.mark.parametrize("function", ["reset_password", "complete_password_reset"])
 def test_a_password_reset_ends_every_session_and_every_other_reset_link(
-    people: People, app_engine: Engine, migrate_engine: Engine
+    people: People, app_engine: Engine, migrate_engine: Engine, function: str
 ) -> None:
     sessions = {}
     for tenant_id, user_id in (
@@ -391,14 +392,13 @@ def test_a_password_reset_ends_every_session_and_every_other_reset_link(
         )
 
     with app_engine.begin() as conn:
-        done = conn.scalar(
-            text("SELECT complete_password_reset(:h, :p)"), {"h": digest(used), "p": NEW_HASH}
-        )
-        again = conn.scalar(
-            text("SELECT complete_password_reset(:h, :p)"), {"h": digest(other), "p": HASH}
-        )
+        done = conn.scalar(text(f"SELECT {function}(:h, :p)"), {"h": digest(used), "p": NEW_HASH})
+        again = conn.scalar(text(f"SELECT {function}(:h, :p)"), {"h": digest(other), "p": HASH})
 
-    assert (done, again) == (True, False)
+    # reset_password says whose password changed; the older name, kept for running apps, only
+    # whether one did.
+    expected = (people.both, None) if function == "reset_password" else (True, False)
+    assert (done, again) == expected
     with migrate_engine.begin() as conn:
         assert (
             conn.scalar(

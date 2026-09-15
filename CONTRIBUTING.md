@@ -99,8 +99,12 @@ we can show which businesses were not affected.
   Events written outside a business (failed sign-ins, password resets) belong to none, and the app can't read them.
 - Never write passwords, tokens, token hashes, cookie values or emails. `target` names what the event is about
   (`user:<id>`).
+- It is the one table with a `tenant_id` that is neither `NOT NULL REFERENCES tenants` nor set up with
+  `enable_tenant_isolation`: events outlive removed businesses and erased users, and some belong to no business.
 - Operators read every event as `ziftbook_migrate`, in a transaction:
   `BEGIN; SET LOCAL app.audit_review = 'on'; SELECT DISTINCT tenant_id FROM audit_events WHERE created_at > ...;`
+- The app role can set `app.audit_review` too. A definer function owned by `ziftbook_migrate` that reads
+  `audit_events` must clear it first, or it shows the caller every business's events.
 - Nothing purges events yet. The ZIF-5 sweeper will remove failed sign-ins after 30 days and the rest after a year.
 
 ## Background jobs

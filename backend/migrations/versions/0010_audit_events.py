@@ -81,6 +81,8 @@ END $$"""
 
 
 def upgrade() -> None:
+    # ponytail: kept forever until the ZIF-5 sweeper purges sign_in_failed after 30 days and the
+    # rest after a year (a definer function with its own DELETE policy).
     op.execute("""
     CREATE TABLE audit_events (
       id uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -99,7 +101,8 @@ def upgrade() -> None:
     op.execute("ALTER TABLE audit_events ENABLE ROW LEVEL SECURITY")
     op.execute("ALTER TABLE audit_events FORCE ROW LEVEL SECURITY")
     # Not enable_tenant_isolation: its check refuses events of no business. TO ziftbook_app, so an
-    # operator's review isn't stopped by a missing app.tenant_id.
+    # operator's review isn't stopped by a missing app.tenant_id. The name is what
+    # tests/test_tenant_schema.py looks for on every table with a tenant_id.
     op.execute(
         "CREATE POLICY tenant_isolation ON audit_events FOR SELECT TO ziftbook_app "
         "USING (tenant_id = current_setting('app.tenant_id')::uuid)"
@@ -112,8 +115,6 @@ def upgrade() -> None:
         "CREATE POLICY audit_review ON audit_events FOR SELECT TO ziftbook_migrate "
         "USING (current_setting('app.audit_review', true) = 'on')"
     )
-    # ponytail: kept forever until the ZIF-5 sweeper purges sign_in_failed after 30 days and the
-    # rest after a year (a definer function with its own DELETE policy).
     op.execute("REVOKE ALL ON audit_events FROM ziftbook_app")
     op.execute("GRANT SELECT ON audit_events TO ziftbook_app")
     op.execute(
