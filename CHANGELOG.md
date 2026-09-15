@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.6.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.5.0...v0.6.0) (2026-09-15)
+
+
+### Features
+
+* **backend:** add server-side sessions (ZIF-24) ([#48](https://github.com/fjcloudaiconsulting/ziftbook/issues/48)) ([8299b09](https://github.com/fjcloudaiconsulting/ziftbook/commit/8299b090b61af1c7fa8ad1e616895124cc889e94))
+* **backend:** add users and memberships (ZIF-24) ([#45](https://github.com/fjcloudaiconsulting/ziftbook/issues/45)) ([7e5b268](https://github.com/fjcloudaiconsulting/ziftbook/commit/7e5b268082ffdafcfb41f45778a8f88448815b42))
+* **backend:** resolve the session cookie and sign out (ZIF-24) ([#50](https://github.com/fjcloudaiconsulting/ziftbook/issues/50)) ([3cf82ea](https://github.com/fjcloudaiconsulting/ziftbook/commit/3cf82eacf0966d2ec453a11826c398f079d8d309))
+
 ## [0.5.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.4.0...v0.5.0) (2026-09-14)
 
 
