@@ -140,7 +140,10 @@ BEGIN
   INSERT INTO password_credentials AS c (user_id, hash) VALUES (v_user, p_password_hash)
   ON CONFLICT (user_id) DO UPDATE SET hash = excluded.hash;
   DELETE FROM sessions s WHERE s.user_id = v_user;
-  DELETE FROM email_tokens e WHERE e.email = t.email AND e.purpose = 'password_reset';
+  -- SKIP LOCKED: a second link being used at this moment holds its row; waiting on it deadlocks.
+  DELETE FROM email_tokens e WHERE e.id IN (
+    SELECT x.id FROM email_tokens x WHERE x.email = t.email AND x.purpose = 'password_reset'
+    FOR UPDATE SKIP LOCKED);
   RETURN true;
 END $$""",
 }

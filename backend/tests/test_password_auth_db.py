@@ -4,6 +4,7 @@ SECURITY DEFINER functions that are its only way in."""
 import hashlib
 import secrets
 import threading
+import time
 import uuid
 from collections.abc import Iterator
 from datetime import timedelta
@@ -89,7 +90,9 @@ def created(migrate_engine: Engine, app_engine: Engine) -> Iterator[list[str]]:
 
 
 @pytest.mark.parametrize("table", ["password_credentials", "email_tokens"])
-@pytest.mark.parametrize("statement", ["SELECT * FROM {}", "DELETE FROM {}"])
+@pytest.mark.parametrize(
+    "statement", ["SELECT * FROM {}", "INSERT INTO {} DEFAULT VALUES", "DELETE FROM {}"]
+)
 def test_the_app_role_cannot_touch_credentials_or_tokens(
     app_engine: Engine, table: str, statement: str
 ) -> None:
@@ -117,6 +120,12 @@ def broken_functions(migrate_engine: Engine) -> Iterator[None]:
     yield
     with migrate_engine.begin() as conn:
         conn.execute(text("DROP FUNCTION broken_no_path(), broken_temp_first(), broken_public()"))
+
+
+def test_the_app_role_cannot_create_objects_in_the_public_schema(app_engine: Engine) -> None:
+    # Pinned search paths only help while nobody but ziftbook_migrate can add functions there.
+    with app_engine.connect() as conn:
+        assert conn.scalar(text("SELECT has_schema_privilege('public', 'CREATE')")) is False
 
 
 def test_definer_functions_pin_their_search_path_and_are_not_public(
@@ -328,6 +337,51 @@ def test_a_token_only_works_for_its_own_purpose(people: People, app_engine: Engi
                 {"h": digest(sign_up), "p": NEW_HASH},
             )
             is False
+        )
+
+
+def test_two_reset_links_used_at_the_same_moment_do_not_deadlock(
+    people: People, app_engine: Engine, migrate_engine: Engine
+) -> None:
+    links = [issue(app_engine, "password_reset", email_of(people.only_b)) for _ in range(2)]
+    assert None not in links
+    with migrate_engine.begin() as conn:
+        conn.execute(
+            text("INSERT INTO password_credentials VALUES (:u, :h)"),
+            {"u": people.only_b, "h": HASH},
+        )
+    results: list[object] = []
+
+    def use(link: bytes) -> None:
+        try:
+            with app_engine.begin() as conn:
+                results.append(
+                    conn.scalar(
+                        text("SELECT complete_password_reset(:h, :p)"),
+                        {"h": digest(link), "p": NEW_HASH},
+                    )
+                )
+        except Exception as error:  # a deadlock lands here
+            results.append(error)
+
+    # Hold the password row so both completions take their own link, then queue on the row: once
+    # it's released, each also tries to delete the other's still-locked link.
+    with migrate_engine.begin() as gate:
+        gate.execute(
+            text("SELECT FROM password_credentials WHERE user_id = :u FOR UPDATE"),
+            {"u": people.only_b},
+        )
+        threads = [threading.Thread(target=use, args=(link,)) for link in links]
+        for thread in threads:
+            thread.start()
+        time.sleep(1)
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert results == [True, True]
+    with migrate_engine.begin() as conn:
+        conn.execute(
+            text("DELETE FROM password_credentials WHERE user_id = :u"), {"u": people.only_b}
         )
 
 
