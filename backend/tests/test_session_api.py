@@ -87,6 +87,8 @@ def test_a_signed_in_user_sees_their_session(people: People, client: TestClient)
         "user_id": str(people.both),
         "tenant_id": str(people.a),
         "role": "owner",
+        "email": f"{people.both}@example.com",
+        "business_name": "a",
     }
 
 

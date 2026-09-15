@@ -10,10 +10,11 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app import limits, passwords
 from app.db import SessionLocal, tenant_context
 from app.errors import ApiError, Error
 
@@ -137,13 +138,88 @@ class SessionOut(BaseModel):
     user_id: UUID
     tenant_id: UUID
     role: str
+    email: str
+    business_name: str
+
+
+def describe(db: Session, user_id: UUID) -> SessionOut:
+    """The signed-in person as the web app shows them; db is a tenant_context for their business."""
+    row = db.execute(
+        text("""
+        SELECT m.user_id, m.tenant_id, m.role, u.email, t.name AS business_name
+        FROM memberships m JOIN users u ON u.id = m.user_id JOIN tenants t ON t.id = m.tenant_id
+        WHERE m.user_id = :user_id
+        """),
+        {"user_id": user_id},
+    ).one()
+    return SessionOut.model_validate(row, from_attributes=True)
 
 
 @router.get("/session", responses={401: {"model": Error}})
 def read(current: CurrentSession, response: Response) -> SessionOut:
     # One person's identity: never for a shared cache.
     response.headers["Cache-Control"] = "no-store"
-    return SessionOut(user_id=current.user_id, tenant_id=current.tenant_id, role=current.role)
+    return describe(current.db, current.user_id)
+
+
+class Credentials(BaseModel):
+    email: str
+    password: str = Field(min_length=1, max_length=passwords.MAX_PASSWORD)
+
+    @field_validator("email")
+    @classmethod
+    def normalise(cls, email: str) -> str:
+        return passwords.normalise_email(email)
+
+
+SIGN_IN_WINDOW = timedelta(minutes=15)
+
+
+@router.post(
+    "/session",
+    responses={status: {"model": Error} for status in (401, 403, 415, 422, 429, 503)},
+)
+def sign_in(credentials: Credentials, request: Request, response: Response) -> SessionOut:
+    """Sign in with email and password, into the oldest business the person belongs to.
+
+    An unknown email and a wrong password get the same answer, and cost the same time.
+    """
+    ip = request.client.host if request.client else None
+    # Every attempt counts, before anything else, so a correct password doesn't get past the limit.
+    if limits.hit(
+        {
+            limits.email_key("sign_in", credentials.email): 10,
+            limits.ip_key("sign_in", ip): 50,
+        },
+        SIGN_IN_WINDOW,
+    ):
+        raise ApiError(429, "rate_limited")
+    with SessionLocal.begin() as session:
+        account = session.execute(
+            text("SELECT * FROM account_by_email(:email)"), {"email": credentials.email}
+        ).first()
+    # No database connection is held while hashing.
+    if not passwords.verify(account.password_hash if account else None, credentials.password):
+        raise ApiError(401, "invalid_credentials")
+    assert account is not None
+    if account.tenant_id is None:
+        raise ApiError(403, "no_tenant")
+    with tenant_context(account.tenant_id) as session:
+        # Whatever session this browser had ends here, whoever it belonged to.
+        if old := request.cookies.get(COOKIE):
+            session.execute(
+                text("DELETE FROM sessions WHERE id_hash = :id_hash"), {"id_hash": hash_token(old)}
+            )
+        try:
+            token = create(
+                session, account.user_id, ip=ip, user_agent=request.headers.get("user-agent")
+            )
+        except ValueError:  # the membership went away since the lookup
+            raise ApiError(403, "no_tenant") from None
+        signed_in_as = describe(session, account.user_id)
+    set_cookie(response, token)
+    response.headers["Cache-Control"] = "no-store"
+    return signed_in_as
 
 
 @router.delete("/session", status_code=204, responses={415: {"model": Error}})

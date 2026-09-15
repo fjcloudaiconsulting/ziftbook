@@ -3,6 +3,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
 from fastapi import APIRouter, FastAPI, Request, Response
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from pydantic import BaseModel
@@ -63,14 +64,31 @@ def create_app() -> FastAPI:
                 return JSONResponse({"code": "unsupported_media_type"}, status_code=415)
         return await call_next(request)
 
+    # Outermost of the two, so the 415 above gets it too. No API response is a page to link from.
+    @app.middleware("http")
+    async def no_referrer(
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
+        response = await call_next(request)
+        response.headers["Referrer-Policy"] = "no-referrer"
+        return response
+
     @app.exception_handler(ApiError)
     async def api_error(request: Request, error: ApiError) -> JSONResponse:
         return JSONResponse({"code": error.code}, status_code=error.status_code)
 
-    # Anything unexpected, including a commit that fails after the endpoint returned.
+    @app.exception_handler(RequestValidationError)
+    async def invalid_request(request: Request, error: RequestValidationError) -> JSONResponse:
+        # A code, not FastAPI's description of the body: errors are codes.
+        return JSONResponse({"code": "invalid_request"}, status_code=422)
+
+    # Anything unexpected, including a commit that fails after the endpoint returned. This runs
+    # outside the middleware above, so it sets Referrer-Policy itself.
     @app.exception_handler(Exception)
     async def internal_error(request: Request, error: Exception) -> JSONResponse:
-        return JSONResponse({"code": "internal"}, status_code=500)
+        return JSONResponse(
+            {"code": "internal"}, status_code=500, headers={"Referrer-Policy": "no-referrer"}
+        )
 
     return app
 
