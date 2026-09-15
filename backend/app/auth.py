@@ -217,6 +217,11 @@ def sign_in(credentials: Credentials, request: Request, response: Response) -> S
     if account.tenant_id is None:
         raise ApiError(403, "no_tenant")
     with tenant_context(account.tenant_id) as session:
+        if not session.scalar(
+            text("SELECT password_unchanged(:user_id, :hash)"),
+            {"user_id": account.user_id, "hash": account.password_hash},
+        ):  # reset while it was being checked
+            raise ApiError(401, "invalid_credentials")
         try:
             token = start(session, request, account.user_id)
         except ValueError:  # the membership went away since the lookup

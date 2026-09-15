@@ -1,10 +1,8 @@
-import asyncio
 import json
-import os
 import secrets
-import urllib.parse
-import urllib.request
+import threading
 import uuid
+from collections.abc import Callable
 from http.cookies import SimpleCookie
 
 import pytest
@@ -15,12 +13,22 @@ from sqlalchemy import Engine, text
 
 from app import auth, passwords
 from app.db import tenant_context
-from app.jobs import run_once
 from app.main import create_app
-from app.worker import KINDS
-from tests.conftest import EXPIRE, PASSWORD, People, add_password, email_of, issue_link, new_client
+from tests.conftest import (
+    EXPIRE,
+    PASSWORD,
+    People,
+    add_password,
+    email_of,
+    fresh_email,
+    issue_link,
+    jobs_for,
+    live,
+    mailed,
+    new_client,
+    token_in,
+)
 
-MAILPIT = f"http://{os.environ['ZIF_SMTP_HOST']}:8025"
 NEW_PASSWORD = "quiet-copper-kettle-7"
 
 
@@ -54,42 +62,18 @@ def sign_in(app: FastAPI, email: str, password: str) -> int:
     return response.status_code
 
 
-def live(app_engine: Engine, token: str) -> bool:
+def sessions_of(app_engine: Engine, user_id: uuid.UUID) -> int:
     with app_engine.connect() as conn:
-        result: bool = conn.scalar(
-            text("SELECT email_token_live(:h, 'password_reset')"), {"h": auth.hash_token(token)}
-        )
-    return result
-
-
-def jobs_for(migrate_engine: Engine, email: str) -> int:
-    with migrate_engine.connect() as conn:
         count: int = conn.scalar(
-            text("""
-            SELECT count(*) FROM jobs j JOIN email_tokens t ON j.payload->>'token_id' = t.id::text
-            WHERE t.email = :e AND j.kind = 'email.token'
-            """),
-            {"e": email},
+            text("SELECT count(*) FROM sessions WHERE user_id = :u"), {"u": user_id}
         )
     return count
-
-
-@pytest.fixture
-def no_hashing(monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    hashed: list[str] = []
-
-    def spy(password: str) -> str:
-        hashed.append(password)
-        return ""
-
-    monkeypatch.setattr(passwords, "hash_password", spy)
-    return hashed
 
 
 def test_asking_for_a_reset_answers_the_same_whether_or_not_the_account_exists(
     people: People, app: FastAPI, migrate_engine: Engine
 ) -> None:
-    known, unknown = email_of(people.both), f"{uuid.uuid4()}@example.com"
+    known, unknown = email_of(people.both), fresh_email()
 
     answers = [request_reset(new_client(app), email) for email in (known, unknown)]
 
@@ -102,26 +86,21 @@ def test_asking_for_a_reset_answers_the_same_whether_or_not_the_account_exists(
     assert (jobs_for(migrate_engine, known), jobs_for(migrate_engine, unknown)) == (1, 1)
 
 
-def test_the_emailed_link_sets_a_new_password(people: People, app: FastAPI) -> None:
+def test_the_emailed_link_sets_a_new_password(
+    people: People, app: FastAPI, migrate_engine: Engine
+) -> None:
     email = email_of(people.both)
+    with migrate_engine.begin() as conn:  # no language of their own: the page's is used
+        conn.execute(text("UPDATE users SET locale = NULL WHERE id = :u"), {"u": people.both})
     assert request_reset(new_client(app), email, "pt").status_code == 202
 
-    async def run_until_idle() -> None:
-        while await run_once(KINDS):
-            pass
-
-    asyncio.run(run_until_idle())
-    query = urllib.parse.urlencode({"query": f"to:{email}"})
-    with urllib.request.urlopen(f"{MAILPIT}/api/v1/search?{query}", timeout=5) as found:
-        (sent,) = json.load(found)["messages"]
-    with urllib.request.urlopen(f"{MAILPIT}/api/v1/message/{sent['ID']}", timeout=5) as body:
-        token = json.load(body)["Text"].split("#")[1].split()[0]
-
-    response = complete(new_client(app), token)
+    message = mailed(email)
+    response = complete(new_client(app), token_in(message))
 
     assert response.status_code == 204
     assert sign_in(app, email, PASSWORD) == 401
     assert sign_in(app, email, NEW_PASSWORD) == 200
+    assert message["Subject"] == "Redefina sua senha do ziftbook"
 
 
 def test_a_reset_signs_the_person_out_everywhere_and_ends_their_other_links(
@@ -132,6 +111,7 @@ def test_a_reset_signs_the_person_out_everywhere_and_ends_their_other_links(
         (people.a, people.both),
         (people.b, people.both),
         (people.a, people.only_a),
+        (people.b, people.only_b),
     ):
         with tenant_context(tenant_id) as session:
             sessions[(tenant_id, user_id)] = auth.create(session, user_id, ip=None, user_agent=None)
@@ -139,7 +119,8 @@ def test_a_reset_signs_the_person_out_everywhere_and_ends_their_other_links(
     other = issue_link(app_engine, "password_reset", email_of(people.both))
     assert used is not None and other is not None
     client = new_client(app)
-    client.cookies.set(auth.COOKIE, sessions[(people.a, people.both)])
+    # Someone else is signed in on the browser the link was opened in.
+    client.cookies.set(auth.COOKIE, sessions[(people.b, people.only_b)])
 
     response = complete(client, used)
 
@@ -154,7 +135,7 @@ def test_a_reset_signs_the_person_out_everywhere_and_ends_their_other_links(
             )
         )
     assert remaining == {people.only_a}
-    assert not live(app_engine, other)
+    assert not live(app_engine, other, "password_reset")
 
 
 def test_a_link_works_once(people: People, app: FastAPI, app_engine: Engine) -> None:
@@ -182,7 +163,7 @@ def test_only_a_live_reset_link_is_accepted(
         with migrate_engine.begin() as conn:
             conn.execute(text(EXPIRE), {"h": auth.hash_token(token)})
     elif wrong == "sign_up_link":
-        token = issue_link(app_engine, "sign_up", f"{uuid.uuid4()}@example.com")
+        token = issue_link(app_engine, "sign_up", fresh_email())
         assert token is not None
     else:
         token = secrets.token_urlsafe(32)
@@ -241,7 +222,7 @@ def test_a_weak_password_is_refused_without_hashing_and_the_link_still_works(
     response = complete(new_client(app), token, password)
 
     assert (response.status_code, response.json(), no_hashing) == (422, {"code": code}, [])
-    assert live(app_engine, token)
+    assert live(app_engine, token, "password_reset")
 
 
 def test_the_complete_step_is_never_a_get(
@@ -251,12 +232,12 @@ def test_the_complete_step_is_never_a_get(
     assert token is not None
 
     assert client.get(f"/api/password-reset/complete?token={token}").status_code == 405
-    assert live(app_engine, token)
+    assert live(app_engine, token, "password_reset")
 
 
 @pytest.mark.parametrize("who", ["known", "unknown"])
 def test_reset_requests_for_one_email_are_limited(people: People, app: FastAPI, who: str) -> None:
-    email = email_of(people.both) if who == "known" else f"{uuid.uuid4()}@example.com"
+    email = email_of(people.both) if who == "known" else fresh_email()
 
     statuses = [
         request_reset(new_client(app), typed).status_code
@@ -267,6 +248,67 @@ def test_reset_requests_for_one_email_are_limited(people: People, app: FastAPI, 
 
 
 def test_reset_requests_from_one_address_are_limited(client: TestClient) -> None:
-    statuses = [request_reset(client, f"{uuid.uuid4()}@example.com").status_code for _ in range(11)]
+    statuses = [request_reset(client, fresh_email()).status_code for _ in range(11)]
 
     assert statuses == [202] * 10 + [429]
+
+
+def test_sign_ups_do_not_use_up_reset_requests(people: People, client: TestClient) -> None:
+    email = email_of(people.both)
+    # Enough sign-ups to reach both the per-email and the per-address limit.
+    emails = [email] * 3 + [fresh_email() for _ in range(7)]
+    sign_ups = [
+        client.post("/api/sign-up", json={"email": e, "locale": "en"}).status_code for e in emails
+    ]
+
+    assert sign_ups == [202] * 10
+    assert request_reset(client, email).status_code == 202
+
+
+@pytest.mark.parametrize("when", ["while the password is checked", "before the session is stored"])
+def test_a_reset_during_sign_in_leaves_no_session_behind(
+    people: People, app: FastAPI, app_engine: Engine, monkeypatch: pytest.MonkeyPatch, when: str
+) -> None:
+    email = email_of(people.both)
+    new_hash = passwords.hash_password(NEW_PASSWORD)
+    resets: list[bool] = []
+
+    def reset() -> None:
+        token = issue_link(app_engine, "password_reset", email)
+        assert token is not None
+        with app_engine.begin() as conn:
+            resets.append(
+                conn.scalar(
+                    text("SELECT complete_password_reset(:h, :p)"),
+                    {"h": auth.hash_token(token), "p": new_hash},
+                )
+            )
+
+    resetting = threading.Thread(target=reset)
+    if when == "while the password is checked":
+        verify = passwords.verify
+
+        def verify_then_reset(stored: str | None, password: str) -> bool:
+            matched = verify(stored, password)
+            reset()
+            return matched
+
+        monkeypatch.setattr(passwords, "verify", verify_then_reset)
+    else:
+        start: Callable[..., str] = auth.start
+
+        def start_while_resetting(*args: object) -> str:
+            resetting.start()
+            resetting.join(timeout=1)  # a reset that isn't held back finishes here
+            return start(*args)
+
+        monkeypatch.setattr(auth, "start", start_while_resetting)
+
+    response = new_client(app).post("/api/session", json={"email": email, "password": PASSWORD})
+    if resetting.ident is not None:
+        resetting.join(timeout=10)
+
+    # Either the old password is refused, or the reset waits and then ends the new session.
+    assert response.status_code == (401 if when == "while the password is checked" else 200)
+    assert resets == [True]
+    assert sessions_of(app_engine, people.both) == 0

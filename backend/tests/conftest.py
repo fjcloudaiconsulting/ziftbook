@@ -1,10 +1,15 @@
+import asyncio
 import hashlib
+import json
 import os
 import secrets
+import urllib.parse
+import urllib.request
 import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import pytest
 from alembic import command
@@ -14,8 +19,10 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.pool import NullPool
 
-from app import passwords
+from app import auth, passwords
 from app.db import SessionLocal, tenant_context
+from app.jobs import run_once
+from app.worker import KINDS
 
 API_DIR = Path(__file__).parent.parent
 
@@ -32,6 +39,7 @@ os.environ.setdefault(
 os.environ.setdefault("ZIF_SMTP_HOST", "localhost")
 os.environ.setdefault("ZIF_SMTP_PORT", "1025")
 os.environ.setdefault("ZIF_SMTP_STARTTLS", "false")
+MAILPIT = f"http://{os.environ['ZIF_SMTP_HOST']}:8025"
 
 
 @pytest.fixture(scope="session")
@@ -110,6 +118,66 @@ def issue_link(app_engine: Engine, purpose: str, email: str, locale: str = "en")
             {"id": token_id, "h": hashlib.sha256(token.encode()).digest()},
         ).first()
     return token if minted and not minted.registered else None
+
+
+def fresh_email() -> str:
+    return f"{uuid.uuid4()}@example.com"
+
+
+def live(app_engine: Engine, token: str, purpose: str) -> bool:
+    with app_engine.connect() as conn:
+        result: bool = conn.scalar(
+            text("SELECT email_token_live(:h, :p)"), {"h": auth.hash_token(token), "p": purpose}
+        )
+    return result
+
+
+def jobs_for(migrate_engine: Engine, email: str) -> int:
+    """Email jobs queued for an email address."""
+    with migrate_engine.connect() as conn:
+        count: int = conn.scalar(
+            text("""
+            SELECT count(*) FROM jobs j JOIN email_tokens t ON j.payload->>'token_id' = t.id::text
+            WHERE t.email = :e AND j.kind = 'email.token'
+            """),
+            {"e": email},
+        )
+    return count
+
+
+def mailed(email: str) -> dict[str, Any]:
+    """Runs the queued jobs, then returns the one message Mailpit got for email."""
+
+    async def run_until_idle() -> None:
+        while await run_once(KINDS):
+            pass
+
+    asyncio.run(run_until_idle())
+    query = urllib.parse.urlencode({"query": f"to:{email}"})
+    with urllib.request.urlopen(f"{MAILPIT}/api/v1/search?{query}", timeout=5) as found:
+        (sent,) = json.load(found)["messages"]
+    with urllib.request.urlopen(f"{MAILPIT}/api/v1/message/{sent['ID']}", timeout=5) as body:
+        message: dict[str, Any] = json.load(body)
+    return message
+
+
+def token_in(message: dict[str, Any]) -> str:
+    """The token in the fragment of the message's link."""
+    token: str = message["Text"].split("#")[1].split()[0]
+    return token
+
+
+@pytest.fixture
+def no_hashing(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Passwords that would have been hashed; nothing is."""
+    hashed: list[str] = []
+
+    def spy(password: str) -> str:
+        hashed.append(password)
+        return ""
+
+    monkeypatch.setattr(passwords, "hash_password", spy)
+    return hashed
 
 
 def add_password(migrate_engine: Engine, user_id: uuid.UUID, password: str) -> None:

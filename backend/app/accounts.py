@@ -14,35 +14,36 @@ from app.errors import ApiError, Error
 from app.jobs import enqueue
 from app.mail import Locale
 
-SIGN_UP_WINDOW = timedelta(hours=1)
+LINK_WINDOW = timedelta(hours=1)
 
 router = APIRouter(prefix="/api", tags=["account"])
 
 
-class SignUp(BaseModel):
+class LinkRequest(BaseModel):
     email: passwords.Email
-    locale: Locale  # the page the person signed up on
+    locale: Locale  # the page the person asked on; the email's language if the account has none
 
 
-@router.post("/sign-up", status_code=202, responses={s: {"model": Error} for s in (415, 422, 429)})
-def sign_up(details: SignUp, request: Request) -> None:
-    """Send a link that sets up a business. The same answer whether or not the email has an account:
-    the email itself tells the owner of the inbox (a link, or a note to sign in instead)."""
+def send_link(purpose: str, details: LinkRequest, request: Request) -> None:
+    """Queue the email for a link. The same answer and the same work whether or not the email has an
+    account: the email job decides what the inbox gets."""
     ip = request.client.host if request.client else None
     if limits.hit(
-        {
-            limits.email_key("sign_up", details.email): 3,
-            limits.ip_key("sign_up", ip): 10,
-        },
-        SIGN_UP_WINDOW,
+        {limits.email_key(purpose, details.email): 3, limits.ip_key(purpose, ip): 10}, LINK_WINDOW
     ):
         raise ApiError(429, "rate_limited")
     with SessionLocal.begin() as session:
         token_id = session.scalar(
-            text("SELECT start_email_token('sign_up', :email, :locale)"),
-            {"email": details.email, "locale": details.locale},
+            text("SELECT start_email_token(:purpose, :email, :locale)"),
+            {"purpose": purpose, "email": details.email, "locale": details.locale},
         )
         enqueue(session, "email.token", f"email.token:{token_id}", {"token_id": str(token_id)})
+
+
+@router.post("/sign-up", status_code=202, responses={s: {"model": Error} for s in (415, 422, 429)})
+def sign_up(details: LinkRequest, request: Request) -> None:
+    """Send a link that sets up a business, or, if the email has an account, a note to sign in."""
+    send_link("sign_up", details, request)
 
 
 def printable(name: str) -> str:
@@ -112,35 +113,12 @@ def complete_sign_up(
     return signed_in_as
 
 
-RESET_WINDOW = timedelta(hours=1)
-
-
-class ResetRequest(BaseModel):
-    email: passwords.Email
-    locale: Locale
-
-
 @router.post(
     "/password-reset", status_code=202, responses={s: {"model": Error} for s in (415, 422, 429)}
 )
-def request_password_reset(details: ResetRequest, request: Request) -> None:
-    """Send a reset link. The same answer and the same work whether or not the account exists: the
-    email job sends nothing for an unknown email, so neither the response nor its timing tells."""
-    ip = request.client.host if request.client else None
-    if limits.hit(
-        {
-            limits.email_key("reset", details.email): 3,
-            limits.ip_key("reset", ip): 10,
-        },
-        RESET_WINDOW,
-    ):
-        raise ApiError(429, "rate_limited")
-    with SessionLocal.begin() as session:
-        token_id = session.scalar(
-            text("SELECT start_email_token('password_reset', :email, :locale)"),
-            {"email": details.email, "locale": details.locale},
-        )
-        enqueue(session, "email.token", f"email.token:{token_id}", {"token_id": str(token_id)})
+def request_password_reset(details: LinkRequest, request: Request) -> None:
+    """Send a reset link; for an unknown email the email job sends nothing, after this answer."""
+    send_link("password_reset", details, request)
 
 
 class CompleteReset(BaseModel):
@@ -153,9 +131,9 @@ class CompleteReset(BaseModel):
     status_code=204,
     responses={s: {"model": Error} for s in (400, 415, 422, 503)},
 )
-def complete_password_reset(details: CompleteReset, response: Response) -> None:
-    """Set a new password from a reset link. The person is signed out everywhere, this browser
-    included, and signs in again with the new password."""
+def complete_password_reset(details: CompleteReset, request: Request, response: Response) -> None:
+    """Set a new password from a reset link. The person is signed out everywhere, and so is this
+    browser, whoever was signed in on it; they sign in again with the new password."""
     password = passwords.check_new_password(details.password)
     digest = live_token(details.token, "password_reset")
     password_hash = passwords.hash_password(password)
@@ -165,4 +143,4 @@ def complete_password_reset(details: CompleteReset, response: Response) -> None:
             {"hash": digest, "password_hash": password_hash},
         ):
             raise ApiError(400, "invalid_token")
-    auth.clear_cookie(response)
+    auth.sign_out(request, response)

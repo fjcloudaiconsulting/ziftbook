@@ -211,13 +211,13 @@
           "account"
         ],
         "summary": "Sign Up",
-        "description": "Send a link that sets up a business. The same answer whether or not the email has an account:\nthe email itself tells the owner of the inbox (a link, or a note to sign in instead).",
+        "description": "Send a link that sets up a business, or, if the email has an account, a note to sign in.",
         "operationId": "account-sign_up",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/SignUp"
+                "$ref": "#/components/schemas/LinkRequest"
               }
             }
           },
@@ -353,13 +353,13 @@
           "account"
         ],
         "summary": "Request Password Reset",
-        "description": "Send a reset link. The same answer and the same work whether or not the account exists: the\nemail job sends nothing for an unknown email, so neither the response nor its timing tells.",
+        "description": "Send a reset link; for an unknown email the email job sends nothing, after this answer.",
         "operationId": "account-request_password_reset",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ResetRequest"
+                "$ref": "#/components/schemas/LinkRequest"
               }
             }
           },
@@ -413,7 +413,7 @@
           "account"
         ],
         "summary": "Complete Password Reset",
-        "description": "Set a new password from a reset link. The person is signed out everywhere, this browser\nincluded, and signs in again with the new password.",
+        "description": "Set a new password from a reset link. The person is signed out everywhere, and so is this\nbrowser, whoever was signed in on it; they sign in again with the new password.",
         "operationId": "account-complete_password_reset",
         "requestBody": {
           "content": {
@@ -574,7 +574,7 @@
         ],
         "title": "Health"
       },
-      "ResetRequest": {
+      "LinkRequest": {
         "properties": {
           "email": {
             "type": "string",
@@ -595,7 +595,7 @@
           "email",
           "locale"
         ],
-        "title": "ResetRequest"
+        "title": "LinkRequest"
       },
       "SessionOut": {
         "properties": {
@@ -631,29 +631,6 @@
           "business_name"
         ],
         "title": "SessionOut"
-      },
-      "SignUp": {
-        "properties": {
-          "email": {
-            "type": "string",
-            "title": "Email"
-          },
-          "locale": {
-            "type": "string",
-            "enum": [
-              "en",
-              "nl",
-              "pt"
-            ],
-            "title": "Locale"
-          }
-        },
-        "type": "object",
-        "required": [
-          "email",
-          "locale"
-        ],
-        "title": "SignUp"
       }
     }
   }
