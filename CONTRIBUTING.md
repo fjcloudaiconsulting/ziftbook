@@ -95,7 +95,8 @@ Deferred and scheduled work goes through the `jobs` table (`app/jobs.py`); there
 - Enqueue with `enqueue(session, kind, dedupe_key, payload)` in the same transaction as the change that needs it.
   The key runs once, ever: build it as `kind:tenant_id:natural id`, adding the due time when the same thing can be
   rescheduled (`booking.reminder:<tenant>:<booking>:<starts_at>`).
-- Payloads hold ids only; the handler loads what it needs inside `tenant_context(job.tenant_id)`.
+- Payloads hold ids only; the handler loads what it needs inside `tenant_context(job.tenant_id)`. A job with no tenant
+  (such as `email.token`, for sign-up and reset links) touches only global tables, through `SessionLocal.begin()`.
 - Handlers may run more than once for a job (a crash after the work but before it is recorded, or a timeout that
   finishes late): make them safe to repeat. Every network or database call in a handler has its own timeout.
 - Register a kind as `JobKind(handler, timeout, grace)`: `timeout` in seconds under 60 (the claim lease), `grace`

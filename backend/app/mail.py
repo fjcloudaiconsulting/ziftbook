@@ -1,27 +1,90 @@
 """Email over SMTP: Mailpit in development, Mailgun's EU endpoint when deployed. One code path."""
 
+import hashlib
 import re
+import secrets
 import smtplib
 import ssl
 from email.message import EmailMessage
 from pathlib import Path
+from string import Template
 
 from sqlalchemy import text
 
 from app.config import MailSettings
-from app.db import tenant_context
+from app.db import SessionLocal, tenant_context
 from app.jobs import Job
 
 TEMPLATES = Path(__file__).parent / "mail_templates"
 LOCALES = ("en", "nl", "pt")
 
 
-def render(template: str, locale: str) -> tuple[str, str]:
-    """A template is one text file per locale: the first line is the subject, the rest the body."""
+def render(template: str, locale: str, values: dict[str, str] | None = None) -> tuple[str, str]:
+    """A template is one text file per locale: the first line is the subject, the rest the body.
+
+    With values, $placeholders in the body are filled in; a missing one raises.
+    """
     if not re.fullmatch(r"[a-z_]+", template):
         raise ValueError(f"invalid template name {template!r}")
     lines = (TEMPLATES / f"{template}.{locale}.txt").read_text().splitlines()
-    return lines[0], "\n".join(lines[1:]).strip() + "\n"
+    body = "\n".join(lines[1:]).strip() + "\n"
+    return lines[0], Template(body).substitute(values) if values is not None else body
+
+
+def deliver(to: str, subject: str, body: str, headers: dict[str, str] | None = None) -> None:
+    """Hand one plain-text message for one address to the SMTP server."""
+    settings = MailSettings()
+    message = EmailMessage()
+    message["From"] = settings.smtp_from
+    message["To"] = to
+    message["Subject"] = subject
+    for name, value in (headers or {}).items():
+        message[name] = value
+    message.set_content(body)
+    smtp = smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=10)
+    try:
+        if settings.smtp_starttls:
+            smtp.starttls(context=ssl.create_default_context())
+        if settings.smtp_username:
+            smtp.login(settings.smtp_username, settings.smtp_password)
+        # to_addrs: exactly the one stored address, even if its text reads as a list ("a, b").
+        smtp.send_message(message, to_addrs=[to])
+    finally:
+        # Once the server accepted the message, a failed goodbye must not undo it (and resend).
+        try:
+            smtp.quit()
+        except smtplib.SMTPException, OSError:
+            smtp.close()
+
+
+# The page each purpose's link opens; the token rides in the fragment, which no server ever sees.
+PAGES = {"sign_up": "sign-up/complete", "password_reset": "reset-password"}
+
+
+def send_token(job: Job) -> None:
+    """The email.token job: mail a single-use sign-up or password-reset link. Payload: token_id.
+
+    The token exists only in this email; the database keeps its hash. Minting and sending share a
+    transaction, so a failed send leaves the request for the retry, which mints a new token.
+    """
+    token = secrets.token_urlsafe(32)
+    app_url = MailSettings().app_url.rstrip("/")
+    with SessionLocal.begin() as session:
+        row = session.execute(
+            text("SELECT * FROM mint_email_token(:id, :hash)"),
+            {"id": job.payload["token_id"], "hash": hashlib.sha256(token.encode()).digest()},
+        ).first()
+        if row is None:  # gone, expired, or a reset for an email with no account
+            return
+        if row.registered:
+            subject, body = render(
+                "sign_up_registered", row.locale, {"sign_in": f"{app_url}/{row.locale}/sign-in"}
+            )
+        else:
+            link = f"{app_url}/{row.locale}/{PAGES[row.purpose]}#{token}"
+            subject, body = render(row.purpose, row.locale, {"link": link})
+        # Mailgun would otherwise rewrite the link, token included, through its tracking domain.
+        deliver(row.email, subject, body, {"X-Mailgun-Track-Clicks": "no"})
 
 
 def send(job: Job) -> None:
@@ -64,18 +127,7 @@ def send(job: Job) -> None:
     if status == "sent":
         return
 
-    settings = MailSettings()
-    message = EmailMessage()
-    message["From"] = settings.smtp_from
-    message["To"] = recipient.email
-    message["Subject"] = subject
-    message.set_content(body)
-    with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=10) as smtp:
-        if settings.smtp_starttls:
-            smtp.starttls(context=ssl.create_default_context())
-        if settings.smtp_username:
-            smtp.login(settings.smtp_username, settings.smtp_password)
-        smtp.send_message(message)
+    deliver(recipient.email, subject, body)
 
     with tenant_context(job.tenant_id) as session:
         session.execute(

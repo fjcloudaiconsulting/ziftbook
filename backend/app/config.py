@@ -34,3 +34,5 @@ class MailSettings(Settings):
     smtp_username: str | None = None
     smtp_password: str = ""
     smtp_from: str = "ziftbook <no-reply@ziftbook.com>"
+    # Where links in emails point: the web app, as people reach it.
+    app_url: str = "http://localhost:3000"

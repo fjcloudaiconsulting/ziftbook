@@ -17,6 +17,8 @@ from app.jobs import JobKind, run_once
 # Registered job kinds. A new kind ships one release before anything enqueues it.
 KINDS: dict[str, JobKind] = {
     "email.send": JobKind(mail.send, timeout=30, grace=timedelta(hours=24)),
+    # A pending request lives an hour; a link mailed later than this would be mostly spent.
+    "email.token": JobKind(mail.send_token, timeout=30, grace=timedelta(minutes=30)),
 }
 
 POLL_SECONDS = 30
