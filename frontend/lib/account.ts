@@ -14,27 +14,19 @@ export function clock(seconds: number): string {
 type Place = {
   location: { hash: string; pathname: string; search: string };
   history: { replaceState(data: unknown, unused: string, url: string): void };
-  sessionStorage: { getItem(key: string): string | null; setItem(key: string, value: string): void };
+  setTimeout(callback: () => void): unknown;
 };
 
 /**
- * The token from an emailed link's fragment. The fragment leaves the address bar first, so it can't end up in
- * history, a bookmark or a shared screenshot; sessionStorage keeps it for a reload of this tab.
+ * The token from an emailed link's fragment, or null. The fragment then leaves the address bar, so it can't
+ * stay in history, a bookmark or a shared screenshot. It is kept nowhere else: a reload asks for a new link.
  */
-export function takeToken(place: Place, key: string): string | null {
+export function takeToken(place: Place): string | null {
   const token = place.location.hash.slice(1);
-  if (token) {
-    place.history.replaceState(null, "", place.location.pathname + place.location.search);
-    try {
-      place.sessionStorage.setItem(key, token);
-    } catch {
-      // Storage blocked: the token still works until the page is reloaded.
-    }
-    return token;
-  }
-  try {
-    return place.sessionStorage.getItem(key);
-  } catch {
-    return null;
-  }
+  if (!token) return null;
+  const clean = place.location.pathname + place.location.search;
+  // Deferred: this runs while the page hydrates, before Next's router wraps history.replaceState. A direct call
+  // would leave the router holding the #token address, and a refresh or Back would bring it back.
+  place.setTimeout(() => place.history.replaceState(null, "", clean));
+  return token;
 }

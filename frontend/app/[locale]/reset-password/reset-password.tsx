@@ -6,7 +6,8 @@ import { type FormEvent, useState } from "react";
 import { accountCompletePasswordReset } from "@/api-client";
 import { Link } from "@/i18n/navigation";
 
-import { Banner, forgetToken, Mark, PasswordField, problem, send, styles, Submit, useLinkToken } from "../_ui/parts";
+import { Banner, forgetToken, NoScript, Outcome, PasswordField, problem, send, Submit, useLinkToken } from "../_ui/parts";
+import styles from "../_ui/ui.module.css";
 
 const TOKEN_KEY = "reset-link";
 const PASSWORD_CODES = ["password_too_short", "password_too_long", "password_too_common"] as const;
@@ -46,39 +47,32 @@ export function ResetPassword() {
     return (
       <>
         <h1 className={styles.heading}>{t("title")}</h1>
-        <noscript>
-          <Banner tone="info">{form("noScript")}</Banner>
-        </noscript>
+        <NoScript>{form("noScript")}</NoScript>
       </>
     );
   }
 
   if (ended === "done") {
     return (
-      <>
-        <Mark icon="done" />
-        <h1 className={styles.heading}>{t("doneTitle")}</h1>
-        <p className={styles.lede}>{t("doneLede")}</p>
+      <Outcome icon="done" title={t("doneTitle")} lede={t("doneLede")}>
         <Link className={`${styles.button} ${styles.primary}`} href="/sign-in">
           {t("signIn")}
         </Link>
-      </>
+      </Outcome>
     );
   }
 
-  if (token === null || ended === "expired") {
+  // Longer than any link we send: mangled on the way, so it can't work either.
+  if (token === null || token.length > 100 || ended === "expired") {
     return (
-      <>
-        <Mark icon="expired" />
-        <h1 className={styles.heading}>{t("expiredTitle")}</h1>
-        <p className={styles.lede}>{t("expiredLede")}</p>
+      <Outcome icon="expired" title={t("expiredTitle")} lede={t("expiredLede")}>
         <Link className={`${styles.button} ${styles.primary}`} href="/forgot-password">
           {t("newLink")}
         </Link>
         <p className={styles.aside}>
           <Link href="/sign-in">{t("back")}</Link>
         </p>
-      </>
+      </Outcome>
     );
   }
 

@@ -9,6 +9,7 @@
   },
   "Form": {
     "email": "E-mailadres",
+    "emailPlaceholder": "jij@jouwbedrijf.nl",
     "password": "Wachtwoord",
     "newPassword": "Nieuw wachtwoord",
     "show": "Tonen",
@@ -22,9 +23,11 @@
     "password_too_common": "Dit wachtwoord is te makkelijk te raden. Probeer een paar losse woorden achter elkaar.",
     "invalidEmail": "Vul een e-mailadres in, zoals naam@jouwbedrijf.nl.",
     "invalidRequest": "Sommige gegevens kunnen niet worden gebruikt. Controleer ze en probeer het opnieuw.",
-    "busy": "Er melden zich nu veel mensen aan. Probeer het zo nog eens.",
+    "busy": "Het is nu erg druk bij ziftbook. Probeer het zo nog eens.",
     "unreachable": "We konden ziftbook niet bereiken. Controleer je verbinding en probeer het opnieuw.",
-    "noScript": "Deze pagina heeft JavaScript nodig om je link privé te houden. Zet het aan in je browser en open de link uit de e-mail opnieuw."
+    "unexpected": "Er ging bij ons iets mis. Probeer het zo nog eens.",
+    "noScript": "Deze pagina heeft JavaScript nodig om je link privé te houden. Zet het aan in je browser en open de link uit de e-mail opnieuw.",
+    "needsJavaScript": "Deze pagina heeft JavaScript nodig. Zet het aan in je browser en laad de pagina opnieuw."
   },
   "Inbox": {
     "title": "Kijk in je inbox",
@@ -50,6 +53,7 @@
     "lede": "Je e-mailadres is bevestigd. Nog twee gegevens en je kunt beginnen.",
     "businessName": "Bedrijfsnaam",
     "businessHint": "Klanten zien deze naam als ze boeken. Je kunt hem later wijzigen.",
+    "nameRequired": "Vul je bedrijfsnaam in.",
     "submit": "Bedrijf aanmaken",
     "creating": "Bezig met aanmaken…",
     "expiredTitle": "Deze link is verlopen",

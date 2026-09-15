@@ -6,7 +6,8 @@ import { useEffect, useState } from "react";
 import { type SessionOut, sessionRead, sessionSignOut, sessionSignOutEverywhere } from "@/api-client";
 import { useRouter } from "@/i18n/navigation";
 
-import { Banner, send, styles } from "./_ui/parts";
+import { Banner, NoScript, problem, send } from "./_ui/parts";
+import styles from "./_ui/ui.module.css";
 
 // The API only accepts JSON writes (its CSRF defence), and the client drops Content-Type from a request with
 // no body: these DELETEs send an empty JSON object.
@@ -18,13 +19,13 @@ export function Home() {
   const form = useTranslations("Form");
   const router = useRouter();
   const [session, setSession] = useState<SessionOut | null>(null);
-  const [failed, setFailed] = useState(false);
+  const [failure, setFailure] = useState<ReturnType<typeof problem> | null>(null);
 
   useEffect(() => {
     send(sessionRead()).then((outcome) => {
       if (outcome.status === 200 && outcome.data) setSession(outcome.data);
       else if (outcome.status === 401) router.replace("/sign-in");
-      else setFailed(true);
+      else setFailure(problem(outcome));
     });
   }, [router]);
 
@@ -32,14 +33,16 @@ export function Home() {
     const outcome = await send(everywhere ? sessionSignOutEverywhere(JSON_WRITE) : sessionSignOut(JSON_WRITE));
     // 401: the session had already ended, which is where signing out leads anyway.
     if (outcome.status === 204 || outcome.status === 401) router.replace("/sign-in");
-    else setFailed(true);
+    else setFailure(problem(outcome));
   }
 
-  if (failed) return <Banner tone="error">{form("unreachable")}</Banner>;
-  if (!session) return null;
+  // Sign-out failures keep the page, so the buttons are still there to try again.
+  const banner = failure && <Banner tone="error">{form(failure)}</Banner>;
+  if (!session) return banner ?? <NoScript>{form("needsJavaScript")}</NoScript>;
 
   return (
     <>
+      {banner}
       <h1 className={styles.heading}>{session.business_name}</h1>
       <p className={styles.meta}>{t.rich("signedInAs", { email: session.email, chip: (chunks) => <span className={styles.chip}>{chunks}</span> })}</p>
       <span className={styles.role}>{t(session.role === "owner" ? "owner" : "worker")}</span>

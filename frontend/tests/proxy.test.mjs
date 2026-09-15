@@ -127,6 +127,15 @@ describe("account pages", () => {
     }
   });
 
+  test("forms post, so a submit before the page runs never puts a password in the address bar", async () => {
+    for (const path of ["/en/sign-in", "/en/sign-up", "/en/forgot-password"]) {
+      const html = await (await fetch(`${origin}${path}`)).text();
+      const forms = html.match(/<form[^>]*>/g) ?? [];
+      assert.equal(forms.length, 1, `${path} has one form`);
+      assert.match(forms[0], /method="post"/, `${path} form method`);
+    }
+  });
+
   test("a link page without JavaScript explains itself and has no form to submit", async () => {
     for (const [path, words] of [
       ["/en/sign-up/complete", "This page needs JavaScript to keep your link private."],

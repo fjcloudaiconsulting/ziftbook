@@ -5,7 +5,8 @@ import { type FormEvent, type ReactNode, useState } from "react";
 
 import { accountRequestPasswordReset, accountSignUp } from "@/api-client";
 
-import { Banner, CheckInbox, EmailField, problem, send, styles, Submit } from "./parts";
+import { Banner, CheckInbox, EmailField, NoScript, problem, send, Submit } from "./parts";
+import styles from "./ui.module.css";
 
 type Props = {
   purpose: "sign_up" | "password_reset";
@@ -69,6 +70,7 @@ export function LinkRequest({ purpose, intro, submit, aside }: Props) {
   return (
     <>
       {intro}
+      <NoScript>{form("needsJavaScript")}</NoScript>
       {message && <Banner tone={message.tone}>{message.text}</Banner>}
       <form className={styles.form} method="post" onSubmit={onSubmit}>
         <EmailField value={email} onChange={setEmail} error={emailError} />

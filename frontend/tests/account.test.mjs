@@ -24,71 +24,45 @@ describe("resend countdown", () => {
   });
 });
 
-function fakeWindow(url, stored = {}) {
-  const calls = [];
+function fakeWindow(url) {
+  const later = [];
   const place = {
     location: new URL(url),
     history: {
       replaceState(_data, _unused, next) {
-        calls.push(["replaceState", next]);
         place.location = new URL(next, place.location);
       },
     },
-    sessionStorage: {
-      getItem: (key) => stored[key] ?? null,
-      setItem: (key, value) => {
-        calls.push(["setItem", key]);
-        stored[key] = value;
-      },
-    },
+    setTimeout: (callback) => later.push(callback),
   };
-  return { place, calls, stored };
+  return { place, runLater: () => later.splice(0).forEach((callback) => callback()) };
 }
 
 describe("taking the token from the link", () => {
-  test("removes the fragment from the address bar before handing the token over", () => {
-    const { place, calls } = fakeWindow("https://app.example/en/reset-password?x=1#tok-EN_123");
+  test("hands the token over and then removes the fragment, keeping the path and query", () => {
+    const { place, runLater } = fakeWindow("https://app.example/en/reset-password?x=1#tok-EN_123");
 
-    const token = takeToken(place, "reset");
+    assert.equal(takeToken(place), "tok-EN_123");
+    runLater();
 
-    assert.equal(token, "tok-EN_123");
     assert.equal(place.location.href, "https://app.example/en/reset-password?x=1");
-    assert.deepEqual(calls[0], ["replaceState", "/en/reset-password?x=1"]);
   });
 
-  test("a reload of the cleaned page still has the token", () => {
-    const first = fakeWindow("https://app.example/en/reset-password#tok-1");
-    takeToken(first.place, "reset");
+  test("leaves the address bar alone until the page's router is ready", () => {
+    // Next wraps history.replaceState after hydration; a call made while hydrating must wait for it.
+    const { place } = fakeWindow("https://app.example/en/reset-password#tok-1");
 
-    const reloaded = fakeWindow("https://app.example/en/reset-password", first.stored);
+    takeToken(place);
 
-    assert.equal(takeToken(reloaded.place, "reset"), "tok-1");
-    assert.deepEqual(reloaded.calls, [], "nothing to clean");
+    assert.equal(place.location.hash, "#tok-1");
   });
 
-  test("a newer link replaces the token kept from an older one", () => {
-    const { place, stored } = fakeWindow("https://app.example/en/reset-password#new", { reset: "old" });
+  test("no fragment means no token, and nothing is kept for a reload", () => {
+    const first = fakeWindow("https://app.example/en/sign-up/complete#tok-2");
+    takeToken(first.place);
+    first.runLater();
 
-    assert.equal(takeToken(place, "reset"), "new");
-    assert.equal(stored.reset, "new");
-  });
-
-  test("no fragment and nothing kept means no token", () => {
-    assert.equal(takeToken(fakeWindow("https://app.example/en/reset-password").place, "reset"), null);
-  });
-
-  test("works when storage is blocked", () => {
-    const { place } = fakeWindow("https://app.example/en/sign-up/complete#tok-2");
-    place.sessionStorage = {
-      getItem() {
-        throw new Error("blocked");
-      },
-      setItem() {
-        throw new Error("blocked");
-      },
-    };
-
-    assert.equal(takeToken(place, "sign-up"), "tok-2");
-    assert.equal(place.location.hash, "");
+    assert.equal(takeToken(first.place), null);
+    assert.equal(takeToken(fakeWindow("https://app.example/en/sign-up/complete").place), null);
   });
 });

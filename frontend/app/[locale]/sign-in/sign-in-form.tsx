@@ -6,7 +6,8 @@ import { type FormEvent, useRef, useState } from "react";
 import { sessionSignIn } from "@/api-client";
 import { Link, useRouter } from "@/i18n/navigation";
 
-import { Banner, EmailField, PasswordField, problem, Screen, send, styles, Submit } from "../_ui/parts";
+import { Banner, EmailField, NoScript, PasswordField, problem, Screen, send, Submit } from "../_ui/parts";
+import styles from "../_ui/ui.module.css";
 
 type Message = { tone: "error" | "note"; text: string };
 
@@ -50,6 +51,7 @@ export function SignInForm() {
   return (
     <Screen>
       <h1 className={styles.heading}>{t("title")}</h1>
+      <NoScript>{form("needsJavaScript")}</NoScript>
       {message && <Banner tone={message.tone}>{message.text}</Banner>}
       <form className={styles.form} method="post" onSubmit={onSubmit}>
         <EmailField value={email} onChange={setEmail} error={emailError} />

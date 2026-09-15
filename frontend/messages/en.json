@@ -9,6 +9,7 @@
   },
   "Form": {
     "email": "Email",
+    "emailPlaceholder": "you@yourbusiness.com",
     "password": "Password",
     "newPassword": "New password",
     "show": "Show",
@@ -22,9 +23,11 @@
     "password_too_common": "This password is too easy to guess. Try a few unrelated words together.",
     "invalidEmail": "Enter an email address, like name@yourbusiness.com.",
     "invalidRequest": "Some details can't be used. Check them and try again.",
-    "busy": "Lots of people are signing in right now. Try again in a moment.",
+    "busy": "ziftbook is busy right now. Try again in a moment.",
     "unreachable": "We couldn't reach ziftbook. Check your connection and try again.",
-    "noScript": "This page needs JavaScript to keep your link private. Turn it on in your browser, then open the link from the email again."
+    "unexpected": "Something went wrong on our side. Try again in a moment.",
+    "noScript": "This page needs JavaScript to keep your link private. Turn it on in your browser, then open the link from the email again.",
+    "needsJavaScript": "This page needs JavaScript. Turn it on in your browser, then reload the page."
   },
   "Inbox": {
     "title": "Check your inbox",
@@ -50,6 +53,7 @@
     "lede": "Your email is confirmed. Two last details and you're in.",
     "businessName": "Business name",
     "businessHint": "Clients see this when they book. You can change it later.",
+    "nameRequired": "Enter your business name.",
     "submit": "Create business",
     "creating": "Creating…",
     "expiredTitle": "This link has expired",

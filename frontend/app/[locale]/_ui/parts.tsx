@@ -1,13 +1,11 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-import { type ReactNode, type Ref, useEffect, useId, useState, useSyncExternalStore } from "react";
+import { type ReactNode, type Ref, useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 
 import { clock, RESEND_AFTER_MS, secondsLeft, takeToken } from "@/lib/account";
 
 import styles from "./ui.module.css";
-
-export { styles };
 
 /** What an API call came back with: status 0 means the request never got an answer. */
 export type Outcome<T> = { status: number; code?: string; data?: T };
@@ -22,10 +20,11 @@ export async function send<T>(request: Promise<{ data?: T; error?: unknown; resp
 }
 
 /** The message for an answer no screen handles itself. */
-export function problem(outcome: Outcome<unknown>): "busy" | "unreachable" | "invalidRequest" {
+export function problem(outcome: Outcome<unknown>): "busy" | "unreachable" | "invalidRequest" | "unexpected" {
+  if (outcome.status === 0) return "unreachable";
   if (outcome.status === 503) return "busy";
   if (outcome.status === 422) return "invalidRequest";
-  return "unreachable";
+  return "unexpected";
 }
 
 export function Screen({ children }: { children: ReactNode }) {
@@ -88,6 +87,43 @@ export function Mark({ icon }: { icon: keyof typeof MARKS }) {
   );
 }
 
+/**
+ * A screen's heading. focus: the screen replaced another one without a page load, so move focus here and
+ * screen readers announce where the person is now.
+ */
+export function Heading({ focus, children }: { focus?: boolean; children: ReactNode }) {
+  const ref = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    if (focus) ref.current?.focus();
+  }, [focus]);
+  return (
+    <h1 ref={ref} className={styles.heading} tabIndex={focus ? -1 : undefined}>
+      {children}
+    </h1>
+  );
+}
+
+/** Where a flow ends: a mark, what happened, and the one way forward. */
+export function Outcome({ icon, title, lede, children }: { icon: keyof typeof MARKS; title: string; lede: string; children: ReactNode }) {
+  return (
+    <>
+      <Mark icon={icon} />
+      <Heading focus>{title}</Heading>
+      <p className={styles.lede}>{lede}</p>
+      <div className={styles.stack}>{children}</div>
+    </>
+  );
+}
+
+/** Pages whose forms only work with JavaScript say so when it's off. */
+export function NoScript({ children }: { children: ReactNode }) {
+  return (
+    <noscript>
+      <Banner tone="info">{children}</Banner>
+    </noscript>
+  );
+}
+
 /** Stays focusable while a request runs, so focus isn't lost; a second press does nothing. */
 export function Submit({ busy, busyLabel, children }: { busy: boolean; busyLabel: string; children: ReactNode }) {
   return (
@@ -98,7 +134,7 @@ export function Submit({ busy, busyLabel, children }: { busy: boolean; busyLabel
   );
 }
 
-function FieldError({ id, children }: { id: string; children: ReactNode }) {
+export function FieldError({ id, children }: { id: string; children: ReactNode }) {
   return (
     <p className={styles.fieldError} id={id}>
       <svg aria-hidden="true" viewBox="0 0 16 16" width="14" height="14">
@@ -126,6 +162,7 @@ export function EmailField({ value, onChange, error }: { value: string; onChange
           autoComplete="email"
           required
           maxLength={254}
+          placeholder={t("emailPlaceholder")}
           value={value}
           onChange={(event) => onChange(event.target.value)}
           aria-invalid={error ? true : undefined}
@@ -174,7 +211,6 @@ export function PasswordField({ label, value, onChange, autoComplete, error, lab
           type={shown ? "text" : "password"}
           autoComplete={autoComplete}
           required
-          maxLength={isNew ? undefined : 256}
           value={value}
           onChange={(event) => onChange(event.target.value)}
           aria-invalid={error ? true : undefined}
@@ -248,9 +284,7 @@ export function CheckInbox({ email, lede, resend, differentEmail, sentAt, error 
   return (
     <>
       <Mark icon="mail" />
-      <h1 className={styles.heading} tabIndex={-1}>
-        {t("title")}
-      </h1>
+      <Heading focus>{t("title")}</Heading>
       <p className={styles.lede}>{t.rich(lede, { email, chip: (chunks) => <span className={styles.chip}>{chunks}</span> })}</p>
       <p className={styles.hint}>{t("hint")}</p>
       {error}
@@ -298,29 +332,31 @@ export function CheckInbox({ email, lede, resend, differentEmail, sentAt, error 
   );
 }
 
-const taken = new Map<string, string | null>();
-const unchanging = () => () => {};
+const taken = new Map<string, string>();
+
+function onHashChange(changed: () => void) {
+  window.addEventListener("hashchange", changed);
+  return () => window.removeEventListener("hashchange", changed);
+}
 
 /**
  * The token from the link that opened this page: undefined on the server and while hydrating, so the
- * server-rendered page is the no-JavaScript one. Taken once per page load, before any request.
+ * server-rendered page is the no-JavaScript one. A new link pasted into the same tab only changes the
+ * fragment, so the page listens for that too.
  */
 export function useLinkToken(key: string): string | null | undefined {
   return useSyncExternalStore(
-    unchanging,
+    onHashChange,
     () => {
-      if (!taken.has(key)) taken.set(key, takeToken(window, key));
+      const token = takeToken(window);
+      if (token) taken.set(key, token);
       return taken.get(key) ?? null;
     },
     () => undefined,
   );
 }
 
-/** Once a link has been used, this tab doesn't keep its token. */
+/** Once a link has been used, the page doesn't offer its form again. */
 export function forgetToken(key: string) {
-  try {
-    sessionStorage.removeItem(key);
-  } catch {
-    // Storage blocked: nothing was kept.
-  }
+  taken.delete(key);
 }

@@ -9,6 +9,7 @@
   },
   "Form": {
     "email": "E-mail",
+    "emailPlaceholder": "voce@seunegocio.com.br",
     "password": "Senha",
     "newPassword": "Nova senha",
     "show": "Mostrar",
@@ -22,9 +23,11 @@
     "password_too_common": "Essa senha é fácil demais de adivinhar. Tente juntar algumas palavras sem relação entre si.",
     "invalidEmail": "Digite um e-mail, como nome@seunegocio.com.br.",
     "invalidRequest": "Alguns dados não podem ser usados. Confira e tente de novo.",
-    "busy": "Muita gente está entrando agora. Tente de novo em instantes.",
+    "busy": "O ziftbook está com muito movimento agora. Tente de novo em instantes.",
     "unreachable": "Não conseguimos acessar o ziftbook. Confira sua conexão e tente de novo.",
-    "noScript": "Esta página precisa de JavaScript para manter seu link privado. Ative no navegador e abra de novo o link do e-mail."
+    "unexpected": "Algo deu errado do nosso lado. Tente de novo em instantes.",
+    "noScript": "Esta página precisa de JavaScript para manter seu link privado. Ative no navegador e abra de novo o link do e-mail.",
+    "needsJavaScript": "Esta página precisa de JavaScript. Ative no navegador e recarregue a página."
   },
   "Inbox": {
     "title": "Confira seu e-mail",
@@ -50,6 +53,7 @@
     "lede": "Seu e-mail está confirmado. Faltam só dois dados.",
     "businessName": "Nome do negócio",
     "businessHint": "Os clientes veem esse nome ao agendar. Você pode mudar depois.",
+    "nameRequired": "Digite o nome do seu negócio.",
     "submit": "Criar negócio",
     "creating": "Criando…",
     "expiredTitle": "Este link expirou",

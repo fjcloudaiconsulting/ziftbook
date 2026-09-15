@@ -7,7 +7,8 @@ import { accountCompleteSignUp } from "@/api-client";
 import { Link, useRouter } from "@/i18n/navigation";
 
 import { LinkRequest } from "../../_ui/link-request";
-import { Banner, forgetToken, Mark, PasswordField, problem, send, styles, Submit, useLinkToken } from "../../_ui/parts";
+import { Banner, FieldError, forgetToken, Heading, Mark, NoScript, Outcome, PasswordField, problem, send, Submit, useLinkToken } from "../../_ui/parts";
+import styles from "../../_ui/ui.module.css";
 
 const TOKEN_KEY = "sign-up-link";
 const PASSWORD_CODES = ["password_too_short", "password_too_long", "password_too_common"] as const;
@@ -23,11 +24,18 @@ export function CompleteSignUp() {
   const [busy, setBusy] = useState(false);
   const [ended, setEnded] = useState<"expired" | "exists" | null>(null);
   const [passwordError, setPasswordError] = useState<string>();
+  const [nameError, setNameError] = useState<string>();
   const [message, setMessage] = useState<{ tone: "error" | "note"; text: string } | null>(null);
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
     if (busy || !token) return;
+    // The server strips spaces too; a blank name would only come back as a vague "invalid request".
+    if (!name.trim()) {
+      setNameError(t("nameRequired"));
+      return;
+    }
+    setNameError(undefined);
     setBusy(true);
     const outcome = await send(accountCompleteSignUp({ body: { token, password, business_name: name } }));
     setBusy(false);
@@ -36,7 +44,6 @@ export function CompleteSignUp() {
 
     const code = PASSWORD_CODES.find((c) => c === outcome.code);
     if (outcome.status === 201) {
-      forgetToken(TOKEN_KEY);
       router.replace("/");
     } else if (outcome.status === 400 || outcome.status === 409) {
       forgetToken(TOKEN_KEY);
@@ -53,21 +60,20 @@ export function CompleteSignUp() {
     return (
       <>
         <h1 className={styles.heading}>{t("title")}</h1>
-        <noscript>
-          <Banner tone="info">{form("noScript")}</Banner>
-        </noscript>
+        <NoScript>{form("noScript")}</NoScript>
       </>
     );
   }
 
-  if (token === null || ended === "expired") {
+  // Longer than any link we send: mangled on the way, so it can't work either.
+  if (token === null || token.length > 100 || ended === "expired") {
     return (
       <LinkRequest
         purpose="sign_up"
         intro={
           <>
             <Mark icon="expired" />
-            <h1 className={styles.heading}>{t("expiredTitle")}</h1>
+            <Heading focus>{t("expiredTitle")}</Heading>
             <p className={styles.lede}>{t("expiredLede")}</p>
           </>
         }
@@ -78,19 +84,14 @@ export function CompleteSignUp() {
 
   if (ended === "exists") {
     return (
-      <>
-        <Mark icon="person" />
-        <h1 className={styles.heading}>{t("existsTitle")}</h1>
-        <p className={styles.lede}>{t("existsLede")}</p>
-        <div className={styles.stack}>
-          <Link className={`${styles.button} ${styles.primary}`} href="/sign-in">
-            {t("signIn")}
-          </Link>
-          <p className={styles.aside}>
-            <Link href="/forgot-password">{t("forgot")}</Link>
-          </p>
-        </div>
-      </>
+      <Outcome icon="person" title={t("existsTitle")} lede={t("existsLede")}>
+        <Link className={`${styles.button} ${styles.primary}`} href="/sign-in">
+          {t("signIn")}
+        </Link>
+        <p className={styles.aside}>
+          <Link href="/forgot-password">{t("forgot")}</Link>
+        </p>
+      </Outcome>
     );
   }
 
@@ -113,12 +114,17 @@ export function CompleteSignUp() {
               maxLength={100}
               value={name}
               onChange={(event) => setName(event.target.value)}
+              aria-invalid={nameError ? true : undefined}
               aria-describedby={`${nameId}-hint`}
             />
           </div>
-          <p className={styles.hint} id={`${nameId}-hint`}>
-            {t("businessHint")}
-          </p>
+          {nameError ? (
+            <FieldError id={`${nameId}-hint`}>{nameError}</FieldError>
+          ) : (
+            <p className={styles.hint} id={`${nameId}-hint`}>
+              {t("businessHint")}
+            </p>
+          )}
         </div>
         <PasswordField
           label={form("password")}

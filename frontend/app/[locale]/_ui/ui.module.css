@@ -31,6 +31,7 @@
   anchor-name: --language-button;
 }
 .languageButton:hover { border-color: var(--muted); }
+.languageButton:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
 .chevron { color: var(--muted); transition: rotate 200ms var(--ease-out); }
 .languageButton:has(+ .languageMenu:popover-open) .chevron { rotate: 180deg; }
 .languageMenu {
