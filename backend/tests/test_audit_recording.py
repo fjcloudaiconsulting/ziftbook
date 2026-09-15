@@ -22,9 +22,11 @@ from tests.conftest import (
     People,
     add_password,
     email_of,
+    fresh_address,
     fresh_email,
     issue_link,
     live,
+    new_client,
 )
 
 NEW_PASSWORD = "quiet-copper-kettle-7"
@@ -32,11 +34,8 @@ NEW_PASSWORD = "quiet-copper-kettle-7"
 
 def client_at(app: FastAPI) -> tuple[TestClient, str]:
     """A client with its own IPv6 address, so its events can be found by address alone."""
-    address = f"2001:db8:{secrets.randbelow(65536):x}:{secrets.randbelow(65536):x}::1"
-    client = TestClient(
-        app, base_url="https://testserver", client=(address, 1), raise_server_exceptions=False
-    )
-    return client, address
+    address = fresh_address()
+    return new_client(app, address), address
 
 
 def events(migrate_engine: Engine, **match: Any) -> list[dict[str, Any]]:
@@ -331,6 +330,7 @@ def test_a_reset_that_changes_no_password_records_nothing(
     assert complete_reset(client, token).status_code == 400
 
     assert events(migrate_engine, ip=address) == []
+    assert not live(app_engine, token, "password_reset")  # used up all the same
 
 
 def test_a_reset_whose_event_fails_changes_nothing(
@@ -367,6 +367,10 @@ def test_no_event_holds_a_password_email_token_or_cookie(
     signed_in = sign_in(client_at(app)[0], email)
     cookies.append(SimpleCookie(signed_in.headers["set-cookie"])[auth.COOKIE].value)
     assert sign_in(client_at(app)[0], email, "not-the-password-1").status_code == 401
+    for path, cookie in (("/api/session", cookies[1]), ("/api/sessions", cookies[0])):
+        signing_out = client_at(app)[0]
+        signing_out.cookies.set(auth.COOKIE, cookie)
+        assert signing_out.request("DELETE", path, json={}).status_code == 204
     reset_token = issue_link(app_engine, "password_reset", email)
     assert reset_token is not None
     assert complete_reset(client_at(app)[0], reset_token).status_code == 204
@@ -382,7 +386,8 @@ def test_no_event_holds_a_password_email_token_or_cookie(
                 {"t": tenant_id, "u": user_id},
             )
         )
-    assert len(rows) == 5  # created, signed in twice, a failed sign-in, a reset
+    # Created, signed in twice, a failed sign-in, signed out, signed out everywhere, a reset.
+    assert len(rows) == 7
     secrets_ = [PASSWORD, NEW_PASSWORD, email, sign_up_token, reset_token, *cookies]
     secrets_ += [
         hashlib.sha256(s.encode()).hexdigest() for s in (sign_up_token, reset_token, *cookies)

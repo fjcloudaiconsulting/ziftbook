@@ -97,6 +97,9 @@ we can show which businesses were not affected.
   `created_at`.
 - An event belongs to the business of the transaction it is written in. The database refuses any other `tenant_id`.
   Events written outside a business (failed sign-ins, password resets) belong to none, and the app can't read them.
+- Add an event with `auth.record(session, request, action, actor_user_id=..., target=...)` in the transaction of
+  what it records, after adding the action to `auth.Action`. When the business is only found inside that
+  transaction (a session's, a new one), call `join_tenant(session, tenant_id)` first.
 - Never write passwords, tokens, token hashes, cookie values or emails. `target` names what the event is about
   (`user:<id>`).
 - It is the one table with a `tenant_id` that is neither `NOT NULL REFERENCES tenants` nor set up with
