@@ -102,3 +102,50 @@ describe("locale routing", () => {
     }
   });
 });
+
+describe("account pages", () => {
+  let api, web;
+  const port = 3204;
+  const origin = `http://127.0.0.1:${port}`;
+  before(async () => {
+    api = await stubApi("D");
+    web = await startWeb(`http://127.0.0.1:${api.address().port}`, port);
+  });
+  after(async () => {
+    await stop(web);
+    api.close();
+  });
+
+  const pages = ["/en", "/en/sign-in", "/en/sign-up", "/en/sign-up/complete", "/en/forgot-password", "/nl/reset-password"];
+
+  test("no page sends a Referer or can be framed", async () => {
+    for (const path of pages) {
+      const response = await fetch(`${origin}${path}`, { redirect: "manual" });
+      assert.equal(response.status, 200, path);
+      assert.equal(response.headers.get("referrer-policy"), "no-referrer", `${path} Referrer-Policy`);
+      assert.match(response.headers.get("content-security-policy") ?? "", /frame-ancestors 'none'/, `${path} CSP`);
+    }
+  });
+
+  test("forms post, so a submit before the page runs never puts a password in the address bar", async () => {
+    for (const path of ["/en/sign-in", "/en/sign-up", "/en/forgot-password"]) {
+      const html = await (await fetch(`${origin}${path}`)).text();
+      const forms = html.match(/<form[^>]*>/g) ?? [];
+      assert.equal(forms.length, 1, `${path} has one form`);
+      assert.match(forms[0], /method="post"/, `${path} form method`);
+    }
+  });
+
+  test("a link page without JavaScript explains itself and has no form to submit", async () => {
+    for (const [path, words] of [
+      ["/en/sign-up/complete", "This page needs JavaScript to keep your link private."],
+      ["/nl/reset-password", "Deze pagina heeft JavaScript nodig om je link privé te houden."],
+    ]) {
+      const html = await (await fetch(`${origin}${path}`)).text();
+      // Inside the element: the page's message catalogue also carries the words.
+      const noscript = html.match(/<noscript>([\s\S]*?)<\/noscript>/)?.[1] ?? "";
+      assert.ok(noscript.includes(words), `${path} noscript message`);
+      assert.doesNotMatch(html, /<form|type="password"/, `${path} renders a form before it has read its link`);
+    }
+  });
+});

@@ -1,12 +1,108 @@
 {
   "Metadata": {
     "title": "ziftbook",
-    "description": "Een afspraak maken in drie tikken."
+    "description": "Afspraken, geboekt in drie tikken."
   },
-  "HomePage": {
-    "tagline": "Een afspraak maken in drie tikken.",
-    "apiChecking": "API wordt gecontroleerd…",
-    "apiVersion": "API-versie {version}",
-    "apiUnavailable": "De API is nu niet bereikbaar."
+  "Header": {
+    "language": "Taal",
+    "languageName": "Nederlands"
+  },
+  "Form": {
+    "email": "E-mailadres",
+    "emailPlaceholder": "jij@jouwbedrijf.nl",
+    "password": "Wachtwoord",
+    "newPassword": "Nieuw wachtwoord",
+    "show": "Tonen",
+    "hide": "Verbergen",
+    "sending": "Bezig met sturen…",
+    "rules": "Wachtwoordregels",
+    "ruleLength": "Minstens 12 tekens",
+    "ruleUnique": "Een wachtwoord dat je nergens anders gebruikt",
+    "password_too_short": "Gebruik minstens 12 tekens.",
+    "password_too_long": "Gebruik maximaal 256 tekens.",
+    "password_too_common": "Dit wachtwoord is te makkelijk te raden. Probeer een paar losse woorden achter elkaar.",
+    "invalidEmail": "Vul een e-mailadres in, zoals naam@jouwbedrijf.nl.",
+    "invalidRequest": "Sommige gegevens kunnen niet worden gebruikt. Controleer ze en probeer het opnieuw.",
+    "busy": "Het is nu erg druk bij ziftbook. Probeer het zo nog eens.",
+    "unreachable": "We konden ziftbook niet bereiken. Controleer je verbinding en probeer het opnieuw.",
+    "unexpected": "Er ging bij ons iets mis. Probeer het zo nog eens.",
+    "noScript": "Deze pagina heeft JavaScript nodig om je link privé te houden. Zet het aan in je browser en open de link uit de e-mail opnieuw.",
+    "needsJavaScript": "Deze pagina heeft JavaScript nodig. Zet het aan in je browser en laad de pagina opnieuw."
+  },
+  "Inbox": {
+    "title": "Kijk in je inbox",
+    "signUpLede": "We hebben een link gestuurd naar <chip>{email}</chip>. Open hem binnen 24 uur op een willekeurig apparaat om je bedrijf in te stellen.",
+    "resetLede": "Als er een account bestaat met <chip>{email}</chip>, is er een link onderweg. Die werkt 15 minuten.",
+    "hint": "Na een paar minuten nog niets? Kijk in je spammap, of stuur hem opnieuw.",
+    "resendIn": "Opnieuw sturen over {time}",
+    "resend": "Stuur de link opnieuw",
+    "resendReady": "Je kunt de link opnieuw sturen.",
+    "differentEmail": "Een ander e-mailadres gebruiken"
+  },
+  "SignUp": {
+    "title": "Je bedrijf aanmaken",
+    "heading": "Maak je ziftbook aan",
+    "lede": "Begin met je e-mailadres. We sturen een link om te bevestigen dat het van jou is.",
+    "submit": "Bevestigingslink sturen",
+    "tooMany": "Je hebt in korte tijd al een paar links aangevraagd. Wacht een uur en probeer het opnieuw.",
+    "haveAccount": "Heb je al een account?",
+    "signIn": "Inloggen"
+  },
+  "CompleteSignUp": {
+    "title": "Stel je bedrijf in",
+    "lede": "Je e-mailadres is bevestigd. Nog twee gegevens en je kunt beginnen.",
+    "businessName": "Bedrijfsnaam",
+    "businessHint": "Klanten zien deze naam als ze boeken. Je kunt hem later wijzigen.",
+    "nameRequired": "Vul je bedrijfsnaam in.",
+    "submit": "Bedrijf aanmaken",
+    "creating": "Bezig met aanmaken…",
+    "expiredTitle": "Deze link is verlopen",
+    "expiredLede": "Bevestigingslinks werken één keer, 24 uur lang. Vul je e-mailadres in en we sturen een nieuwe.",
+    "newLink": "Nieuwe link sturen",
+    "existsTitle": "Je hebt al een account",
+    "existsLede": "Dit e-mailadres is al geregistreerd bij ziftbook, dus er is niets aangemaakt of gewijzigd. Log in om bij je bedrijf te komen.",
+    "signIn": "Inloggen",
+    "forgot": "Wachtwoord vergeten?"
+  },
+  "SignIn": {
+    "title": "Inloggen",
+    "forgot": "Wachtwoord vergeten?",
+    "submit": "Inloggen",
+    "signingIn": "Bezig met inloggen…",
+    "invalid": "Dit e-mailadres en wachtwoord horen niet bij elkaar. Controleer ze allebei, of stel je wachtwoord opnieuw in.",
+    "tooMany": "Te veel pogingen. Wacht 15 minuten en probeer het opnieuw, of stel je wachtwoord opnieuw in.",
+    "noBusiness": "Dit account hoort niet meer bij een bedrijf. Vraag de eigenaar om je opnieuw toe te voegen.",
+    "newHere": "Nieuw bij ziftbook?",
+    "createBusiness": "Maak je bedrijf aan"
+  },
+  "ForgotPassword": {
+    "title": "Stel je wachtwoord opnieuw in",
+    "lede": "Vul het e-mailadres in waarmee je inlogt. We sturen een link om een nieuw wachtwoord te kiezen.",
+    "submit": "Resetlink sturen",
+    "tooMany": "Je hebt in korte tijd al een paar resetlinks aangevraagd. Wacht een uur en probeer het opnieuw.",
+    "back": "Terug naar inloggen"
+  },
+  "ResetPassword": {
+    "title": "Kies een nieuw wachtwoord",
+    "lede": "Zodra het is opgeslagen, word je op elk apparaat uitgelogd, dus iedereen die toegang had, is er ook uit.",
+    "submit": "Nieuw wachtwoord opslaan",
+    "saving": "Bezig met opslaan…",
+    "doneTitle": "Wachtwoord gewijzigd",
+    "doneLede": "Je bent overal uitgelogd, ook op dit apparaat. Log in met je nieuwe wachtwoord.",
+    "signIn": "Inloggen",
+    "expiredTitle": "Deze resetlink is verlopen",
+    "expiredLede": "Resetlinks werken één keer, 15 minuten lang. Je wachtwoord is niet gewijzigd. Vraag een nieuwe link aan om het opnieuw te proberen.",
+    "newLink": "Nieuwe link sturen",
+    "back": "Terug naar inloggen"
+  },
+  "Home": {
+    "signedInAs": "Ingelogd als <chip>{email}</chip>",
+    "owner": "Eigenaar",
+    "worker": "Medewerker",
+    "emptyTitle": "Hier komen je boekingen",
+    "emptyBody": "Diensten, openingstijden en de afspraken van vandaag komen hierna. Je account en bedrijf staan al klaar.",
+    "signOut": "Uitloggen",
+    "everywhereHint": "Telefoon kwijt, of ingelogd op een gedeelde computer?",
+    "signOutEverywhere": "Uitloggen op alle apparaten"
   }
 }

@@ -1,12 +1,108 @@
 {
   "Metadata": {
     "title": "ziftbook",
-    "description": "Agendamentos feitos em três toques."
+    "description": "Agendamentos em três toques."
   },
-  "HomePage": {
-    "tagline": "Agendamentos feitos em três toques.",
-    "apiChecking": "Verificando a API…",
-    "apiVersion": "Versão da API {version}",
-    "apiUnavailable": "A API não está acessível no momento."
+  "Header": {
+    "language": "Idioma",
+    "languageName": "Português"
+  },
+  "Form": {
+    "email": "E-mail",
+    "emailPlaceholder": "voce@seunegocio.com.br",
+    "password": "Senha",
+    "newPassword": "Nova senha",
+    "show": "Mostrar",
+    "hide": "Ocultar",
+    "sending": "Enviando…",
+    "rules": "Regras da senha",
+    "ruleLength": "Pelo menos 12 caracteres",
+    "ruleUnique": "Uma senha que você não usa em outro lugar",
+    "password_too_short": "Use pelo menos 12 caracteres.",
+    "password_too_long": "Use no máximo 256 caracteres.",
+    "password_too_common": "Essa senha é fácil demais de adivinhar. Tente juntar algumas palavras sem relação entre si.",
+    "invalidEmail": "Digite um e-mail, como nome@seunegocio.com.br.",
+    "invalidRequest": "Alguns dados não podem ser usados. Confira e tente de novo.",
+    "busy": "O ziftbook está com muito movimento agora. Tente de novo em instantes.",
+    "unreachable": "Não conseguimos acessar o ziftbook. Confira sua conexão e tente de novo.",
+    "unexpected": "Algo deu errado do nosso lado. Tente de novo em instantes.",
+    "noScript": "Esta página precisa de JavaScript para manter seu link privado. Ative no navegador e abra de novo o link do e-mail.",
+    "needsJavaScript": "Esta página precisa de JavaScript. Ative no navegador e recarregue a página."
+  },
+  "Inbox": {
+    "title": "Confira seu e-mail",
+    "signUpLede": "Enviamos um link para <chip>{email}</chip>. Abra em qualquer aparelho em até 24 horas para configurar seu negócio.",
+    "resetLede": "Se houver uma conta com <chip>{email}</chip>, um link está a caminho. Ele vale por 15 minutos.",
+    "hint": "Nada depois de alguns minutos? Veja a pasta de spam ou envie de novo.",
+    "resendIn": "Enviar de novo em {time}",
+    "resend": "Enviar o link de novo",
+    "resendReady": "Você já pode enviar o link de novo.",
+    "differentEmail": "Usar outro e-mail"
+  },
+  "SignUp": {
+    "title": "Cadastrar seu negócio",
+    "heading": "Crie seu ziftbook",
+    "lede": "Comece pelo seu e-mail. Enviamos um link para confirmar que ele é seu.",
+    "submit": "Enviar link de confirmação",
+    "tooMany": "Você pediu vários links em pouco tempo. Espere uma hora e tente de novo.",
+    "haveAccount": "Já tem uma conta?",
+    "signIn": "Entrar"
+  },
+  "CompleteSignUp": {
+    "title": "Configure seu negócio",
+    "lede": "Seu e-mail está confirmado. Faltam só dois dados.",
+    "businessName": "Nome do negócio",
+    "businessHint": "Os clientes veem esse nome ao agendar. Você pode mudar depois.",
+    "nameRequired": "Digite o nome do seu negócio.",
+    "submit": "Criar negócio",
+    "creating": "Criando…",
+    "expiredTitle": "Este link expirou",
+    "expiredLede": "Os links de confirmação valem uma vez, por 24 horas. Digite seu e-mail e enviamos um novo.",
+    "newLink": "Enviar um novo link",
+    "existsTitle": "Você já tem uma conta",
+    "existsLede": "Este e-mail já está cadastrado no ziftbook, então nada foi criado ou alterado. Entre para acessar seu negócio.",
+    "signIn": "Entrar",
+    "forgot": "Esqueceu a senha?"
+  },
+  "SignIn": {
+    "title": "Entrar",
+    "forgot": "Esqueceu a senha?",
+    "submit": "Entrar",
+    "signingIn": "Entrando…",
+    "invalid": "O e-mail e a senha não conferem. Confira os dois ou redefina sua senha.",
+    "tooMany": "Tentativas demais por agora. Espere 15 minutos e tente de novo, ou redefina sua senha.",
+    "noBusiness": "Esta conta não faz mais parte de um negócio. Peça ao responsável para adicionar você de novo.",
+    "newHere": "Novo no ziftbook?",
+    "createBusiness": "Cadastre seu negócio"
+  },
+  "ForgotPassword": {
+    "title": "Redefina sua senha",
+    "lede": "Digite o e-mail que você usa para entrar. Enviamos um link para escolher uma nova senha.",
+    "submit": "Enviar link de redefinição",
+    "tooMany": "Você pediu vários links de redefinição em pouco tempo. Espere uma hora e tente de novo.",
+    "back": "Voltar para entrar"
+  },
+  "ResetPassword": {
+    "title": "Escolha uma nova senha",
+    "lede": "Quando ela for salva, você sai de todos os aparelhos, e qualquer outra pessoa com acesso também sai.",
+    "submit": "Salvar nova senha",
+    "saving": "Salvando…",
+    "doneTitle": "Senha alterada",
+    "doneLede": "Você saiu de todos os aparelhos, inclusive deste. Entre com sua nova senha.",
+    "signIn": "Entrar",
+    "expiredTitle": "Este link de redefinição expirou",
+    "expiredLede": "Os links de redefinição valem uma vez, por 15 minutos. Sua senha não mudou. Peça um novo link para tentar de novo.",
+    "newLink": "Enviar um novo link",
+    "back": "Voltar para entrar"
+  },
+  "Home": {
+    "signedInAs": "Conectado como <chip>{email}</chip>",
+    "owner": "Responsável",
+    "worker": "Equipe",
+    "emptyTitle": "Seus agendamentos vão aparecer aqui",
+    "emptyBody": "Serviços, horário de funcionamento e os agendamentos do dia vêm a seguir. Por enquanto sua conta e seu negócio estão prontos.",
+    "signOut": "Sair",
+    "everywhereHint": "Perdeu o celular ou entrou num computador compartilhado?",
+    "signOutEverywhere": "Sair de todos os aparelhos"
   }
 }
