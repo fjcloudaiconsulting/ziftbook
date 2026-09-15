@@ -192,6 +192,26 @@ def test_only_a_live_reset_link_is_accepted(
     assert (response.status_code, response.json()) == (400, {"code": "invalid_token"})
 
 
+def test_a_link_for_an_account_that_is_gone_says_so(
+    app: FastAPI, app_engine: Engine, migrate_engine: Engine
+) -> None:
+    # The link is live, but the account went away before it was used: nothing was reset.
+    user_id = uuid.uuid7()
+    with app_engine.begin() as conn:
+        conn.execute(
+            text("INSERT INTO users (id, email) VALUES (:id, :e)"),
+            {"id": user_id, "e": email_of(user_id)},
+        )
+    token = issue_link(app_engine, "password_reset", email_of(user_id))
+    assert token is not None
+    with migrate_engine.begin() as conn:
+        conn.execute(text("DELETE FROM users WHERE id = :u"), {"u": user_id})
+
+    response = complete(new_client(app), token)
+
+    assert (response.status_code, response.json()) == (400, {"code": "invalid_token"})
+
+
 def test_a_dead_link_costs_no_password_hash(client: TestClient, no_hashing: list[str]) -> None:
     response = complete(client, secrets.token_urlsafe(32))
 
