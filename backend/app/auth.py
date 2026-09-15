@@ -3,14 +3,23 @@
 import hashlib
 import ipaddress
 import secrets
+from collections.abc import Iterator
+from dataclasses import dataclass
 from datetime import timedelta
+from typing import Annotated
 from uuid import UUID
 
-from fastapi import Response
+from fastapi import APIRouter, Depends, Request, Response
+from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.db import SessionLocal, tenant_context
+from app.errors import ApiError, Error
+
+IDLE = timedelta(days=7)
 ABSOLUTE = timedelta(days=30)
+TOUCH_EVERY = timedelta(minutes=5)
 COOKIE = "__Host-session"  # __Host-: Secure, Path=/ and no Domain, so no subdomain can set it
 
 
@@ -76,3 +85,84 @@ def set_cookie(response: Response, token: str) -> None:
 
 def clear_cookie(response: Response) -> None:
     response.delete_cookie(COOKIE, path="/", secure=True, httponly=True, samesite="lax")
+
+
+# One statement: the live session (neither idle nor past its absolute expiry), and last_seen_at
+# refreshed only when older than TOUCH_EVERY, so an active user doesn't write on every request.
+RESOLVE = text("""
+WITH live AS (
+    SELECT id_hash, tenant_id, user_id, role, last_seen_at FROM sessions
+    WHERE id_hash = :id_hash AND expires_at > now() AND last_seen_at > now() - :idle
+), touched AS (
+    UPDATE sessions SET last_seen_at = now() FROM live
+    WHERE sessions.id_hash = live.id_hash AND live.last_seen_at < now() - :touch_every
+)
+SELECT tenant_id, user_id, role FROM live
+""")
+
+
+@dataclass(frozen=True)
+class SignedIn:
+    user_id: UUID
+    tenant_id: UUID
+    role: str
+    db: Session  # a tenant_context for the session's tenant
+
+
+def signed_in(request: Request) -> Iterator[SignedIn]:
+    token = request.cookies.get(COOKIE)
+    row = None
+    if token:
+        # Its own transaction: the tenant for the endpoint's transaction is only known after it.
+        # Accepted: a sign-out or membership removal committing while this runs lets this one
+        # request through; the next is rejected.
+        with SessionLocal.begin() as session:
+            row = session.execute(
+                RESOLVE, {"id_hash": hash_token(token), "idle": IDLE, "touch_every": TOUCH_EVERY}
+            ).first()
+    if row is None:
+        raise ApiError(401, "unauthenticated")
+    with tenant_context(row.tenant_id) as db:
+        yield SignedIn(row.user_id, row.tenant_id, row.role, db)
+
+
+# scope="function": the endpoint's transaction commits before the response is sent, so a failed
+# commit is an error response instead of a success that didn't happen.
+CurrentSession = Annotated[SignedIn, Depends(signed_in, scope="function")]
+
+router = APIRouter(prefix="/api", tags=["session"])
+
+
+class SessionOut(BaseModel):
+    user_id: UUID
+    tenant_id: UUID
+    role: str
+
+
+@router.get("/session", responses={401: {"model": Error}})
+def read(current: CurrentSession, response: Response) -> SessionOut:
+    # One person's identity: never for a shared cache.
+    response.headers["Cache-Control"] = "no-store"
+    return SessionOut(user_id=current.user_id, tenant_id=current.tenant_id, role=current.role)
+
+
+@router.delete("/session", status_code=204, responses={415: {"model": Error}})
+def sign_out(request: Request, response: Response) -> None:
+    """Sign out this browser. Needs no live session: an expired cookie is cleared all the same."""
+    token = request.cookies.get(COOKIE)
+    if token:
+        with SessionLocal.begin() as session:
+            session.execute(
+                text("DELETE FROM sessions WHERE id_hash = :id_hash"),
+                {"id_hash": hash_token(token)},
+            )
+    clear_cookie(response)
+
+
+@router.delete(
+    "/sessions", status_code=204, responses={401: {"model": Error}, 415: {"model": Error}}
+)
+def sign_out_everywhere(current: CurrentSession, response: Response) -> None:
+    """Sign the user out of every session, in every tenant."""
+    current.db.execute(text("DELETE FROM sessions WHERE user_id = :id"), {"id": current.user_id})
+    clear_cookie(response)
