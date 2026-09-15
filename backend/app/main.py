@@ -9,7 +9,7 @@ from fastapi.routing import APIRoute
 from pydantic import BaseModel
 from sqlalchemy import create_engine
 
-from app import accounts, auth
+from app import accounts, audit, auth
 from app.config import DatabaseSettings, Settings
 from app.db import SessionLocal
 from app.errors import ApiError
@@ -56,6 +56,7 @@ def create_app() -> FastAPI:
     app.include_router(router)
     app.include_router(auth.router)
     app.include_router(accounts.router)
+    app.include_router(audit.router)
 
     @app.middleware("http")
     async def json_only(
