@@ -67,6 +67,11 @@ def create_app() -> FastAPI:
     async def api_error(request: Request, error: ApiError) -> JSONResponse:
         return JSONResponse({"code": error.code}, status_code=error.status_code)
 
+    # Anything unexpected, including a commit that fails after the endpoint returned.
+    @app.exception_handler(Exception)
+    async def internal_error(request: Request, error: Exception) -> JSONResponse:
+        return JSONResponse({"code": "internal"}, status_code=500)
+
     return app
 
 

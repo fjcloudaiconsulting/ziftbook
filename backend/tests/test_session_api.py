@@ -1,4 +1,3 @@
-import hashlib
 import uuid
 from collections.abc import Iterator
 from datetime import datetime, timedelta
@@ -44,7 +43,7 @@ def age(app_engine: Engine, token: str, column: str, by: timedelta) -> None:
     with app_engine.begin() as conn:
         conn.execute(
             text(f"UPDATE sessions SET {column} = now() - :by WHERE id_hash = :h"),
-            {"by": by, "h": hashlib.sha256(token.encode()).digest()},
+            {"by": by, "h": auth.hash_token(token)},
         )
 
 
@@ -52,13 +51,14 @@ def last_seen(app_engine: Engine, token: str) -> datetime | None:
     with app_engine.connect() as conn:
         seen: datetime | None = conn.scalar(
             text("SELECT last_seen_at FROM sessions WHERE id_hash = :h"),
-            {"h": hashlib.sha256(token.encode()).digest()},
+            {"h": auth.hash_token(token)},
         )
     return seen
 
 
 def cleared(response: Response) -> bool:
-    cookie = SimpleCookie(response.headers["set-cookie"])[auth.COOKIE]
+    (header,) = response.headers.get_list("set-cookie")
+    cookie = SimpleCookie(header)[auth.COOKIE]
     return cookie["max-age"] == "0" and bool(cookie["secure"])
 
 
@@ -68,7 +68,7 @@ def unauthenticated(response: Response) -> bool:
 
 @pytest.mark.parametrize("cookie", [None, "garbage"])
 def test_without_a_valid_cookie_the_request_is_unauthenticated(
-    people: People, client: TestClient, cookie: str | None
+    client: TestClient, cookie: str | None
 ) -> None:
     if cookie:
         client.cookies.set(auth.COOKIE, cookie)
@@ -82,6 +82,7 @@ def test_a_signed_in_user_sees_their_session(people: People, client: TestClient)
     response = client.get("/api/session")
 
     assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
     assert response.json() == {
         "user_id": str(people.both),
         "tenant_id": str(people.a),
@@ -112,13 +113,13 @@ def test_last_seen_is_written_at_most_every_few_minutes(
 ) -> None:
     token = sign_in(client, people.a, people.only_a)
 
-    age(app_engine, token, "last_seen_at", timedelta(minutes=10))
+    age(app_engine, token, "last_seen_at", timedelta(minutes=6))
     stale = last_seen(app_engine, token)
     client.get("/api/session")
     touched = last_seen(app_engine, token)
     client.get("/api/session")
     assert stale is not None and touched is not None
-    assert touched > stale + timedelta(minutes=9)
+    assert touched > stale + timedelta(minutes=5)
     assert last_seen(app_engine, token) == touched
 
     age(app_engine, token, "last_seen_at", timedelta(minutes=4))
@@ -146,7 +147,10 @@ def test_the_request_runs_in_the_sessions_tenant(people: People, client: TestCli
     assert client.get("/api/probe/tenant").json() == str(people.b)
 
 
-def test_signing_out_ends_the_session(people: People, client: TestClient) -> None:
+def test_signing_out_ends_only_this_browsers_session(
+    people: People, client: TestClient, app: FastAPI, app_engine: Engine
+) -> None:
+    other_device = sign_in(TestClient(app), people.a, people.only_a)
     token = sign_in(client, people.a, people.only_a)
 
     response = client.request("DELETE", "/api/session", json={})
@@ -155,9 +159,10 @@ def test_signing_out_ends_the_session(people: People, client: TestClient) -> Non
     assert cleared(response)
     client.cookies.set(auth.COOKIE, token)  # a copy of the cookie kept somewhere else
     assert unauthenticated(client.get("/api/session"))
+    assert last_seen(app_engine, other_device) is not None
 
 
-def test_signing_out_works_without_a_live_session(people: People, client: TestClient) -> None:
+def test_signing_out_works_without_a_live_session(client: TestClient) -> None:
     client.cookies.set(auth.COOKIE, "expired-or-unknown")
 
     response = client.request("DELETE", "/api/session", json={})
@@ -182,7 +187,7 @@ def test_signing_out_everywhere_ends_every_session_of_that_user_only(
     assert unauthenticated(client.get("/api/session"))
 
 
-def test_signing_out_everywhere_needs_a_live_session(people: People, client: TestClient) -> None:
+def test_signing_out_everywhere_needs_a_live_session(client: TestClient) -> None:
     assert unauthenticated(client.request("DELETE", "/api/sessions", json={}))
 
 
@@ -224,4 +229,5 @@ def test_a_failed_commit_is_an_error_response_not_a_success(
     client = TestClient(app, base_url="https://testserver", raise_server_exceptions=False)
     sign_in(client, people.a, people.only_a)
 
-    assert client.post("/api/probe/commit", json={}).status_code == 500
+    response = client.post("/api/probe/commit", json={})
+    assert (response.status_code, response.json()) == (500, {"code": "internal"})

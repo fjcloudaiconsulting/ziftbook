@@ -113,7 +113,9 @@ def signed_in(request: Request) -> Iterator[SignedIn]:
     token = request.cookies.get(COOKIE)
     row = None
     if token:
-        # Its own transaction, committed now: the refresh sticks even if the endpoint fails.
+        # Its own transaction: the tenant for the endpoint's transaction is only known after it.
+        # Accepted: a sign-out or membership removal committing while this runs lets this one
+        # request through; the next is rejected.
         with SessionLocal.begin() as session:
             row = session.execute(
                 RESOLVE, {"id_hash": hash_token(token), "idle": IDLE, "touch_every": TOUCH_EVERY}
@@ -138,11 +140,13 @@ class SessionOut(BaseModel):
 
 
 @router.get("/session", responses={401: {"model": Error}})
-def read(current: CurrentSession) -> SessionOut:
+def read(current: CurrentSession, response: Response) -> SessionOut:
+    # One person's identity: never for a shared cache.
+    response.headers["Cache-Control"] = "no-store"
     return SessionOut(user_id=current.user_id, tenant_id=current.tenant_id, role=current.role)
 
 
-@router.delete("/session", status_code=204)
+@router.delete("/session", status_code=204, responses={415: {"model": Error}})
 def sign_out(request: Request, response: Response) -> None:
     """Sign out this browser. Needs no live session: an expired cookie is cleared all the same."""
     token = request.cookies.get(COOKIE)
@@ -155,7 +159,9 @@ def sign_out(request: Request, response: Response) -> None:
     clear_cookie(response)
 
 
-@router.delete("/sessions", status_code=204, responses={401: {"model": Error}})
+@router.delete(
+    "/sessions", status_code=204, responses={401: {"model": Error}, 415: {"model": Error}}
+)
 def sign_out_everywhere(current: CurrentSession, response: Response) -> None:
     """Sign the user out of every session, in every tenant."""
     current.db.execute(text("DELETE FROM sessions WHERE user_id = :id"), {"id": current.user_id})
