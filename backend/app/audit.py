@@ -24,7 +24,7 @@ class AuditEventOut(BaseModel):
     user_agent: str | None  # only on the owner's own events
 
 
-@router.get("/audit-events", responses={401: {"model": Error}, 403: {"model": Error}})
+@router.get("/audit-events", responses={s: {"model": Error} for s in (401, 403, 422)})
 def list_events(
     current: CurrentSession,
     response: Response,
@@ -43,7 +43,7 @@ def list_events(
                CASE WHEN actor_user_id = :me THEN user_agent END AS user_agent
         FROM audit_events
         WHERE CAST(:before AS uuid) IS NULL OR id < :before
-        ORDER BY id DESC
+        ORDER BY id DESC  -- uuidv7: newest first
         LIMIT :limit
         """),
         {"me": current.user_id, "before": before, "limit": limit},
