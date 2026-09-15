@@ -19,20 +19,22 @@ MAILPIT = f"http://{os.environ['ZIF_SMTP_HOST']}:8025"
 
 
 @pytest.fixture
-def outbox(people: People) -> Iterator[People]:
-    yield people
+def clean_outbox(people: People) -> Iterator[None]:
+    yield
     for tenant_id in (people.a, people.b):
         with tenant_context(tenant_id) as session:
             session.execute(text("DELETE FROM email_outbox"))
 
 
-def send_hello(tenant_id: uuid.UUID, recipient_id: uuid.UUID) -> None:
+def send_hello(tenant_id: uuid.UUID, recipient_id: uuid.UUID) -> uuid.UUID:
+    job_key = f"email.send:{tenant_id}:hello:{recipient_id}:{uuid.uuid4()}"
     with SessionLocal.begin() as session:
         enqueue(
             session,
             "email.send",
-            f"email.send:{tenant_id}:hello:{recipient_id}:{uuid.uuid4()}",
-            {"recipient_id": str(recipient_id), "template": "hello"},
+            job_key,
+            # "to" as older payloads carried it: ignored, the address comes from users.
+            {"recipient_id": str(recipient_id), "template": "hello", "to": "old@example.com"},
             tenant_id=tenant_id,
         )
 
@@ -41,6 +43,11 @@ def send_hello(tenant_id: uuid.UUID, recipient_id: uuid.UUID) -> None:
             pass
 
     asyncio.run(run_until_idle())
+    with SessionLocal.begin() as session:
+        job_id: uuid.UUID = session.scalar(
+            text("SELECT id FROM jobs WHERE dedupe_key = :k"), {"k": job_key}
+        )
+    return job_id
 
 
 def subjects_sent_to(user_id: uuid.UUID) -> list[str]:
@@ -56,14 +63,21 @@ def test_every_template_exists_in_every_locale() -> None:
             assert subject and body.strip()
 
 
-def test_an_email_goes_to_the_recipients_address_in_their_language(outbox: People) -> None:
+@pytest.mark.parametrize(
+    ("recipient", "subject"),
+    [("both", "Hallo van ziftbook"), ("only_a", "Hello from ziftbook")],  # nl; no language set
+)
+def test_an_email_goes_to_the_recipients_address_in_their_language(
+    people: People, clean_outbox: None, recipient: str, subject: str
+) -> None:
     # The payload holds only the recipient's id: the address and language come from users.
-    send_hello(outbox.a, outbox.both)
+    user_id = getattr(people, recipient)
+    send_hello(people.a, user_id)
 
-    assert subjects_sent_to(outbox.both) == ["Hallo van ziftbook"]
-    with tenant_context(outbox.a) as session:
+    assert subjects_sent_to(user_id) == [subject]
+    with tenant_context(people.a) as session:
         row = session.execute(text("SELECT * FROM email_outbox")).mappings().one()
-    assert (row["recipient_id"], row["template"], row["status"]) == (outbox.both, "hello", "sent")
+    assert (row["recipient_id"], row["template"], row["status"]) == (user_id, "hello", "sent")
     assert set(row) == {
         "id",
         "tenant_id",
@@ -76,9 +90,15 @@ def test_an_email_goes_to_the_recipients_address_in_their_language(outbox: Peopl
     }
 
 
-def test_no_email_goes_to_someone_outside_the_tenant(outbox: People) -> None:
-    send_hello(outbox.a, outbox.only_b)
+def test_no_email_goes_to_someone_outside_the_tenant(people: People, clean_outbox: None) -> None:
+    job_id = send_hello(people.a, people.only_b)
 
-    assert subjects_sent_to(outbox.only_b) == []
-    with tenant_context(outbox.a) as session:
+    assert subjects_sent_to(people.only_b) == []
+    with tenant_context(people.a) as session:
         assert session.scalar(text("SELECT count(*) FROM email_outbox")) == 0
+    with SessionLocal.begin() as session:
+        # Completed, not failed: retrying can't make them a member.
+        completed = session.scalar(
+            text("SELECT completed_at FROM jobs WHERE id = :id"), {"id": job_id}
+        )
+    assert completed is not None

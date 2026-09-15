@@ -41,6 +41,8 @@ def send(job: Job) -> None:
             text("SELECT email, locale FROM users WHERE id = :id"), {"id": payload["recipient_id"]}
         ).first()
         if recipient is None:
+            # Not (or no longer) a member of this tenant. If a crash left a 'pending' row after the
+            # SMTP handoff, it stays pending: only the audit trail is off, nobody is emailed.
             return
         # ponytail: English when the user has no language; the tenant default comes with settings.
         subject, body = render(payload["template"], recipient.locale or "en")
