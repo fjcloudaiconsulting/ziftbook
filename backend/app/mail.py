@@ -25,20 +25,25 @@ def render(template: str, locale: str) -> tuple[str, str]:
 
 
 def send(job: Job) -> None:
-    """The email.send job. Payload: recipient_id, to, template, locale.
+    """The email.send job. Payload: recipient_id (a user), template.
 
-    Delivery is at least once: a crash between the SMTP handoff and recording it sends again.
+    The address and language come from users, inside the job's tenant: someone who isn't a member of
+    that tenant (any more) gets nothing. Delivery is at least once: a crash between the SMTP handoff
+    and recording it sends again.
     """
     if job.tenant_id is None:
         raise ValueError("email.send needs a tenant")
     payload = job.payload
-    locale = str(payload.get("locale", "en"))
-    if locale not in LOCALES:
-        locale = "en"
-    subject, body = render(payload["template"], locale)
 
     # The outbox keeps who, which template and the subject; never the rendered body.
     with tenant_context(job.tenant_id) as session:
+        recipient = session.execute(
+            text("SELECT email, locale FROM users WHERE id = :id"), {"id": payload["recipient_id"]}
+        ).first()
+        if recipient is None:
+            return
+        # ponytail: English when the user has no language; the tenant default comes with settings.
+        subject, body = render(payload["template"], recipient.locale or "en")
         status = session.execute(
             text("""
             INSERT INTO email_outbox (tenant_id, job_id, recipient_id, template, subject)
@@ -60,7 +65,7 @@ def send(job: Job) -> None:
     settings = MailSettings()
     message = EmailMessage()
     message["From"] = settings.smtp_from
-    message["To"] = payload["to"]
+    message["To"] = recipient.email
     message["Subject"] = subject
     message.set_content(body)
     with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=10) as smtp:
