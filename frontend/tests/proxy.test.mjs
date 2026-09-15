@@ -133,8 +133,9 @@ describe("account pages", () => {
       ["/nl/reset-password", "Deze pagina heeft JavaScript nodig om je link privé te houden."],
     ]) {
       const html = await (await fetch(`${origin}${path}`)).text();
-      assert.match(html, /<noscript>/, `${path} noscript`);
-      assert.ok(html.includes(words), `${path} message`);
+      // Inside the element: the page's message catalogue also carries the words.
+      const noscript = html.match(/<noscript>([\s\S]*?)<\/noscript>/)?.[1] ?? "";
+      assert.ok(noscript.includes(words), `${path} noscript message`);
       assert.doesNotMatch(html, /<form|type="password"/, `${path} renders a form before it has read its link`);
     }
   });
