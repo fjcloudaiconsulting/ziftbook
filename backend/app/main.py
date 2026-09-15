@@ -3,6 +3,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
 from fastapi import APIRouter, FastAPI, Request, Response
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from pydantic import BaseModel
@@ -57,20 +58,31 @@ def create_app() -> FastAPI:
     ) -> Response:
         # CSRF defence: browsers send JSON cross-origin only after a CORS preflight, never granted.
         # Parse the media type: "text/plain; application/json" is still a plain form type.
-        if request.method not in ("GET", "HEAD", "OPTIONS"):
-            media_type = request.headers.get("content-type", "").split(";")[0].strip().lower()
-            if media_type != "application/json":
-                return JSONResponse({"code": "unsupported_media_type"}, status_code=415)
-        return await call_next(request)
+        media_type = request.headers.get("content-type", "").split(";")[0].strip().lower()
+        if request.method not in ("GET", "HEAD", "OPTIONS") and media_type != "application/json":
+            response: Response = JSONResponse({"code": "unsupported_media_type"}, status_code=415)
+        else:
+            response = await call_next(request)
+        # No API response is a page to link from.
+        response.headers["Referrer-Policy"] = "no-referrer"
+        return response
 
     @app.exception_handler(ApiError)
     async def api_error(request: Request, error: ApiError) -> JSONResponse:
         return JSONResponse({"code": error.code}, status_code=error.status_code)
 
-    # Anything unexpected, including a commit that fails after the endpoint returned.
+    @app.exception_handler(RequestValidationError)
+    async def invalid_request(request: Request, error: RequestValidationError) -> JSONResponse:
+        # A code, not FastAPI's description of the body: errors are codes.
+        return JSONResponse({"code": "invalid_request"}, status_code=422)
+
+    # Anything unexpected, including a commit that fails after the endpoint returned. This runs
+    # outside the middleware above, so it sets Referrer-Policy itself.
     @app.exception_handler(Exception)
     async def internal_error(request: Request, error: Exception) -> JSONResponse:
-        return JSONResponse({"code": "internal"}, status_code=500)
+        return JSONResponse(
+            {"code": "internal"}, status_code=500, headers={"Referrer-Policy": "no-referrer"}
+        )
 
     return app
 

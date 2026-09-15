@@ -56,6 +56,96 @@
           }
         }
       },
+      "post": {
+        "tags": [
+          "session"
+        ],
+        "summary": "Sign In",
+        "description": "Sign in with email and password, into the oldest business the person belongs to.\n\nAn unknown email and a wrong password get the same answer, and cost the same time.",
+        "operationId": "session-sign_in",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Credentials"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionOut"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Content",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
       "delete": {
         "tags": [
           "session"
@@ -118,6 +208,26 @@
   },
   "components": {
     "schemas": {
+      "Credentials": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "title": "Email"
+          },
+          "password": {
+            "type": "string",
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Password"
+          }
+        },
+        "type": "object",
+        "required": [
+          "email",
+          "password"
+        ],
+        "title": "Credentials"
+      },
       "Error": {
         "properties": {
           "code": {
@@ -165,13 +275,23 @@
           "role": {
             "type": "string",
             "title": "Role"
+          },
+          "email": {
+            "type": "string",
+            "title": "Email"
+          },
+          "business_name": {
+            "type": "string",
+            "title": "Business Name"
           }
         },
         "type": "object",
         "required": [
           "user_id",
           "tenant_id",
-          "role"
+          "role",
+          "email",
+          "business_name"
         ],
         "title": "SessionOut"
       }
