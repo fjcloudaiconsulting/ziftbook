@@ -88,6 +88,21 @@ Passwords and sign-in tokens live in tables the app role can't read or write (`p
   function that relies on it sets and restores `app.sign_in` itself; any other definer function that reads memberships
   must clear it, because a caller can set it.
 
+## Audit log
+
+`audit_events` records who signed in, out, or reset a password, and when a business was created, so after an incident
+we can show which businesses were not affected.
+
+- The app role can add events and read its own business's. It can never change or delete one, or set `id` or
+  `created_at`.
+- An event belongs to the business of the transaction it is written in. The database refuses any other `tenant_id`.
+  Events written outside a business (failed sign-ins, password resets) belong to none, and the app can't read them.
+- Never write passwords, tokens, token hashes, cookie values or emails. `target` names what the event is about
+  (`user:<id>`).
+- Operators read every event as `ziftbook_migrate`, in a transaction:
+  `BEGIN; SET LOCAL app.audit_review = 'on'; SELECT DISTINCT tenant_id FROM audit_events WHERE created_at > ...;`
+- Nothing purges events yet. The ZIF-5 sweeper will remove failed sign-ins after 30 days and the rest after a year.
+
 ## Background jobs
 
 Deferred and scheduled work goes through the `jobs` table (`app/jobs.py`); there is no broker or scheduler.
