@@ -1,0 +1,11 @@
+You already have a ziftbook account
+Hello,
+
+Someone asked to create a ziftbook account with this email, but it already has one, so nothing was changed.
+
+Sign in here: $sign_in
+Forgot your password? You can reset it from the sign-in page.
+
+If this wasn't you, you can ignore this email.
+
+ziftbook

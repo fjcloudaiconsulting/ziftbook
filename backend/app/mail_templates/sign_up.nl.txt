@@ -1,0 +1,10 @@
+Stel je bedrijf in op ziftbook
+Hallo,
+
+Open deze link om je e-mailadres te bevestigen en je bedrijf in te stellen:
+
+$link
+
+De link werkt één keer, 24 uur lang. Heb je niet gevraagd om je aan te melden bij ziftbook? Dan kun je deze e-mail negeren.
+
+ziftbook
