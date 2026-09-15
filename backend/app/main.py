@@ -29,7 +29,11 @@ def operation_id(route: APIRoute) -> str:
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Read at startup, not in create_app(), so the OpenAPI document builds without a database.
-    engine = create_engine(DatabaseSettings().database_url, pool_pre_ping=True)
+    # hide_parameters: a failed statement's message would otherwise carry its values, password
+    # hashes included, into the logs.
+    engine = create_engine(
+        DatabaseSettings().database_url, pool_pre_ping=True, hide_parameters=True
+    )
     SessionLocal.configure(bind=engine)
     try:
         yield

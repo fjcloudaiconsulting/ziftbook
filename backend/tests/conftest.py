@@ -9,6 +9,8 @@ from pathlib import Path
 import pytest
 from alembic import command
 from alembic.config import Config
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.pool import NullPool
 
@@ -49,6 +51,26 @@ def app_engine(migrated: None) -> Iterator[Engine]:
     engine = create_engine(os.environ["ZIF_DATABASE_URL"], poolclass=NullPool)
     yield engine
     engine.dispose()
+
+
+PASSWORD = "lavender-harbour-19"
+EXPIRE = "UPDATE email_tokens SET expires_at = now() - interval '1 second' WHERE token_hash = :h"
+
+
+@pytest.fixture
+def bound(app_engine: Engine) -> Iterator[None]:
+    """SessionLocal bound to the app role for the test; fixtures that need it depend on this."""
+    SessionLocal.configure(bind=app_engine)
+    yield
+    SessionLocal.configure(bind=None)
+
+
+def new_client(app: FastAPI) -> TestClient:
+    # A fresh IPv6 /64 per client, so per-IP rate limits never carry over between tests or runs.
+    address = f"2001:db8:{secrets.randbelow(65536):x}:{secrets.randbelow(65536):x}::1"
+    return TestClient(
+        app, base_url="https://testserver", client=(address, 1), raise_server_exceptions=False
+    )
 
 
 @dataclass(frozen=True)
@@ -107,8 +129,7 @@ def add_membership(tenant_id: uuid.UUID, user_id: uuid.UUID, role: str = "worker
 
 
 @pytest.fixture
-def people(app_engine: Engine, migrate_engine: Engine) -> Iterator[People]:
-    SessionLocal.configure(bind=app_engine)
+def people(app_engine: Engine, migrate_engine: Engine, bound: None) -> Iterator[People]:
     with app_engine.begin() as conn:
         a = conn.scalar(text("INSERT INTO tenants (name) VALUES ('a') RETURNING id"))
         b = conn.scalar(text("INSERT INTO tenants (name) VALUES ('b') RETURNING id"))
@@ -138,4 +159,3 @@ def people(app_engine: Engine, migrate_engine: Engine) -> Iterator[People]:
             {"x": people.only_a, "y": people.only_b, "z": people.both},
         )
         conn.execute(text("DELETE FROM tenants WHERE id IN (:a, :b)"), {"a": a, "b": b})
-    SessionLocal.configure(bind=None)

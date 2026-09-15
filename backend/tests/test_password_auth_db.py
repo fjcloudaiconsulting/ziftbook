@@ -16,8 +16,8 @@ from sqlalchemy import Engine, text
 from sqlalchemy.exc import ProgrammingError
 
 from app import auth
-from app.db import SessionLocal, tenant_context
-from tests.conftest import People, add_user
+from app.db import tenant_context
+from tests.conftest import EXPIRE, People, add_user
 
 
 @dataclass(frozen=True)
@@ -27,7 +27,6 @@ class Created:
     user_id: uuid.UUID
 
 
-EXPIRE = "UPDATE email_tokens SET expires_at = now() - interval '1 second' WHERE token_hash = :h"
 HASH = "$argon2id$v=19$m=19456,t=2,p=1$c2FsdHNhbHQ$aGFzaGhhc2hoYXNoaGFzaA"
 NEW_HASH = "$argon2id$v=19$m=19456,t=2,p=1$bmV3c2FsdA$bmV3aGFzaG5ld2hhc2g"
 
@@ -75,11 +74,8 @@ def wait_until_blocked(engine: Engine, backends: int) -> None:
 
 
 @pytest.fixture
-def created(migrate_engine: Engine, app_engine: Engine) -> Iterator[list[Created]]:
+def created(migrate_engine: Engine, bound: None) -> Iterator[list[Created]]:
     """Accounts complete_sign_up creates in a test; removed afterwards by id."""
-    binds = SessionLocal.kw.get("bind") is None  # unless the people fixture already did
-    if binds:
-        SessionLocal.configure(bind=app_engine)
     accounts: list[Created] = []
     yield accounts
     for account in accounts:
@@ -90,8 +86,6 @@ def created(migrate_engine: Engine, app_engine: Engine) -> Iterator[list[Created
         conn.execute(text("DELETE FROM password_credentials WHERE user_id = ANY(:users)"), ids)
         conn.execute(text("DELETE FROM users WHERE id = ANY(:users)"), ids)
         conn.execute(text("DELETE FROM tenants WHERE id = ANY(:tenants)"), ids)
-    if binds:
-        SessionLocal.configure(bind=None)
 
 
 @pytest.mark.parametrize("table", ["password_credentials", "email_tokens"])

@@ -1,5 +1,4 @@
 import asyncio
-import hashlib
 import json
 import os
 import secrets
@@ -17,23 +16,13 @@ from httpx2 import Response
 from sqlalchemy import Engine, text
 
 from app import auth, passwords
-from app.db import SessionLocal, tenant_context
+from app.db import tenant_context
 from app.jobs import run_once
 from app.main import create_app
 from app.worker import KINDS
-from tests.conftest import People, email_of, issue_link
+from tests.conftest import EXPIRE, PASSWORD, People, email_of, issue_link, new_client
 
 MAILPIT = f"http://{os.environ['ZIF_SMTP_HOST']}:8025"
-PASSWORD = "lavender-harbour-19"
-EXPIRE = "UPDATE email_tokens SET expires_at = now() - interval '1 second' WHERE token_hash = :h"
-
-
-def new_client(app: FastAPI) -> TestClient:
-    # A fresh IPv6 /64 per client, so per-IP counts never carry over between tests or runs.
-    address = f"2001:db8:{secrets.randbelow(65536):x}:{secrets.randbelow(65536):x}::1"
-    return TestClient(
-        app, base_url="https://testserver", client=(address, 1), raise_server_exceptions=False
-    )
 
 
 def fresh_email() -> str:
@@ -41,13 +30,8 @@ def fresh_email() -> str:
 
 
 @pytest.fixture
-def app(app_engine: Engine) -> Iterator[FastAPI]:
-    binds = SessionLocal.kw.get("bind") is None  # unless the people fixture already did
-    if binds:
-        SessionLocal.configure(bind=app_engine)
-    yield create_app()
-    if binds:
-        SessionLocal.configure(bind=None)
+def app(bound: None) -> FastAPI:
+    return create_app()
 
 
 @pytest.fixture
@@ -56,13 +40,10 @@ def client(app: FastAPI) -> TestClient:
 
 
 @pytest.fixture
-def businesses(migrate_engine: Engine, app_engine: Engine) -> Iterator[list[dict[str, Any]]]:
+def businesses(migrate_engine: Engine, bound: None) -> Iterator[list[dict[str, Any]]]:
     """Sessions returned by completed sign-ups; their accounts and businesses go afterwards."""
     created: list[dict[str, Any]] = []
     yield created
-    binds = SessionLocal.kw.get("bind") is None
-    if binds:
-        SessionLocal.configure(bind=app_engine)
     for business in created:
         with tenant_context(business["tenant_id"]) as session:
             session.execute(text("DELETE FROM memberships"))
@@ -71,24 +52,29 @@ def businesses(migrate_engine: Engine, app_engine: Engine) -> Iterator[list[dict
         conn.execute(text("DELETE FROM password_credentials WHERE user_id::text = ANY(:u)"), ids)
         conn.execute(text("DELETE FROM users WHERE id::text = ANY(:u)"), ids)
         conn.execute(text("DELETE FROM tenants WHERE id::text = ANY(:t)"), ids)
-    if binds:
-        SessionLocal.configure(bind=None)
 
 
 def complete(
     client: TestClient, token: str, password: str = PASSWORD, business: str = "Studio Ana"
 ) -> Response:
+    # Encoded here: json.dumps escapes a lone surrogate the way a browser can send it.
+    body = json.dumps({"token": token, "password": password, "business_name": business})
     return client.post(
-        "/api/sign-up/complete",
-        json={"token": token, "password": password, "business_name": business},
+        "/api/sign-up/complete", content=body, headers={"content-type": "application/json"}
     )
+
+
+def created(response: Response, businesses: list[dict[str, Any]]) -> dict[str, Any]:
+    assert response.status_code == 201, response.content
+    session: dict[str, Any] = response.json()
+    businesses.append(session)
+    return session
 
 
 def live(app_engine: Engine, token: str) -> bool:
     with app_engine.connect() as conn:
         result: bool = conn.scalar(
-            text("SELECT email_token_live(:h, 'sign_up')"),
-            {"h": hashlib.sha256(token.encode()).digest()},
+            text("SELECT email_token_live(:h, 'sign_up')"), {"h": auth.hash_token(token)}
         )
     return result
 
@@ -103,6 +89,18 @@ def jobs_for(migrate_engine: Engine, email: str) -> int:
             {"e": email},
         )
     return count
+
+
+@pytest.fixture
+def no_hashing(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    hashed: list[str] = []
+
+    def spy(password: str) -> str:
+        hashed.append(password)
+        return ""
+
+    monkeypatch.setattr(passwords, "hash_password", spy)
+    return hashed
 
 
 def test_signing_up_answers_the_same_for_a_new_and_a_registered_email(
@@ -123,8 +121,8 @@ def test_signing_up_answers_the_same_for_a_new_and_a_registered_email(
     assert (jobs_for(migrate_engine, new), jobs_for(migrate_engine, registered)) == (1, 1)
 
 
-def test_the_emailed_link_sets_up_the_business_and_signs_the_owner_in(
-    app: FastAPI, app_engine: Engine, businesses: list[dict[str, Any]]
+def test_the_emailed_link_sets_up_the_business_and_the_owner_can_sign_in_again(
+    app: FastAPI, businesses: list[dict[str, Any]]
 ) -> None:
     email = fresh_email()
     client = new_client(app)
@@ -143,10 +141,8 @@ def test_the_emailed_link_sets_up_the_business_and_signs_the_owner_in(
 
     response = complete(client, token, business="  Studio Ana Nails  ")
 
-    assert response.status_code == 201
+    session = created(response, businesses)
     assert response.headers["cache-control"] == "no-store"
-    session = response.json()
-    businesses.append(session)
     assert (session["email"], session["role"], session["business_name"]) == (
         email,
         "owner",
@@ -156,9 +152,34 @@ def test_the_emailed_link_sets_up_the_business_and_signs_the_owner_in(
     assert client.get("/api/session").json()["tenant_id"] == session["tenant_id"]
     with tenant_context(uuid.UUID(session["tenant_id"])) as db:
         # The language of the page the owner signed up on.
+        locale = db.scalar(
+            text("SELECT locale FROM users WHERE id = :u"), {"u": session["user_id"]}
+        )
+    assert locale == "nl"
+    # The password they chose is the one stored.
+    again = new_client(app).post("/api/session", json={"email": email, "password": PASSWORD})
+    assert again.status_code == 200
+
+
+def test_completing_sign_up_replaces_the_session_the_browser_already_had(
+    people: People, app: FastAPI, app_engine: Engine, businesses: list[dict[str, Any]]
+) -> None:
+    with tenant_context(people.b) as session:
+        planted = auth.create(session, people.only_b, ip=None, user_agent=None)
+    token = issue_link(app_engine, "sign_up", fresh_email())
+    assert token is not None
+    client = new_client(app)
+    client.cookies.set(auth.COOKIE, planted)
+
+    created(complete(client, token), businesses)
+
+    with app_engine.connect() as conn:
         assert (
-            db.scalar(text("SELECT locale FROM users WHERE id = :u"), {"u": session["user_id"]})
-            == "nl"
+            conn.scalar(
+                text("SELECT count(*) FROM sessions WHERE id_hash = :h"),
+                {"h": auth.hash_token(planted)},
+            )
+            == 0
         )
 
 
@@ -167,17 +188,11 @@ def test_a_link_works_once(
 ) -> None:
     token = issue_link(app_engine, "sign_up", fresh_email())
     assert token is not None
-    client = new_client(app)
 
-    first = complete(client, token)
-    businesses.append(first.json())
+    created(complete(new_client(app), token), businesses)
     again = complete(new_client(app), token)
 
-    assert (first.status_code, again.status_code, again.json()) == (
-        201,
-        400,
-        {"code": "invalid_token"},
-    )
+    assert (again.status_code, again.json()) == (400, {"code": "invalid_token"})
 
 
 @pytest.mark.parametrize("wrong", ["expired", "reset_link", "made_up"])
@@ -188,7 +203,7 @@ def test_only_a_live_sign_up_link_is_accepted(
         token = issue_link(app_engine, "sign_up", fresh_email())
         assert token is not None
         with migrate_engine.begin() as conn:
-            conn.execute(text(EXPIRE), {"h": hashlib.sha256(token.encode()).digest()})
+            conn.execute(text(EXPIRE), {"h": auth.hash_token(token)})
     elif wrong == "reset_link":
         token = issue_link(app_engine, "password_reset", email_of(people.only_a))
         assert token is not None
@@ -200,20 +215,10 @@ def test_only_a_live_sign_up_link_is_accepted(
     assert (response.status_code, response.json()) == (400, {"code": "invalid_token"})
 
 
-def test_a_dead_link_costs_no_password_hash(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    hashed: list[str] = []
-
-    def spy(password: str) -> str:
-        hashed.append(password)
-        return ""
-
-    monkeypatch.setattr(passwords, "hash_password", spy)
-
+def test_a_dead_link_costs_no_password_hash(client: TestClient, no_hashing: list[str]) -> None:
     response = complete(client, secrets.token_urlsafe(32))
 
-    assert (response.status_code, hashed) == (400, [])
+    assert (response.status_code, no_hashing) == (400, [])
 
 
 @pytest.mark.parametrize(
@@ -222,22 +227,25 @@ def test_a_dead_link_costs_no_password_hash(
         ("short-pw-11", "password_too_short"),
         ("x" * 257, "password_too_long"),
         ("Q1W2E3R4T5Y6", "password_too_common"),  # on the list, in any case
+        ("lavender-harbour-19\ud800", "invalid_request"),  # a lone surrogate argon2 can't hash
     ],
 )
-def test_a_weak_password_is_refused_and_the_link_still_works(
-    app: FastAPI, app_engine: Engine, password: str, code: str
+def test_a_weak_password_is_refused_without_hashing_and_the_link_still_works(
+    app: FastAPI, app_engine: Engine, no_hashing: list[str], password: str, code: str
 ) -> None:
     token = issue_link(app_engine, "sign_up", fresh_email())
     assert token is not None
 
     response = complete(new_client(app), token, password)
 
-    assert (response.status_code, response.json()) == (422, {"code": code})
+    assert (response.status_code, response.json(), no_hashing) == (422, {"code": code}, [])
     assert live(app_engine, token)
 
 
-@pytest.mark.parametrize("business", ["", "   ", "x" * 101])
-def test_a_business_needs_a_name(app: FastAPI, app_engine: Engine, business: str) -> None:
+@pytest.mark.parametrize(
+    "business", ["", "   ", "x" * 101, "\u200b", "Studio\x00Ana", "Studio\x07"]
+)
+def test_a_business_needs_a_printable_name(app: FastAPI, app_engine: Engine, business: str) -> None:
     token = issue_link(app_engine, "sign_up", fresh_email())
     assert token is not None
 
@@ -253,10 +261,9 @@ def test_a_business_name_of_a_hundred_characters_is_kept_without_its_spaces(
     token = issue_link(app_engine, "sign_up", fresh_email())
     assert token is not None
 
-    response = complete(new_client(app), token, business=f"  {'x' * 100}  ")
+    session = created(complete(new_client(app), token, business=f"  {'x' * 100}  "), businesses)
 
-    businesses.append(response.json())
-    assert response.json()["business_name"] == "x" * 100
+    assert session["business_name"] == "x" * 100
 
 
 def test_an_email_registered_after_the_link_went_out_creates_nothing(
@@ -290,12 +297,12 @@ def test_the_complete_step_is_never_a_get(client: TestClient, app_engine: Engine
     assert live(app_engine, token)
 
 
-def test_sign_up_requests_for_one_email_are_limited(app: FastAPI) -> None:
+def test_sign_up_requests_for_one_email_are_limited_whatever_its_case(app: FastAPI) -> None:
     email = fresh_email()
 
     statuses = [
-        new_client(app).post("/api/sign-up", json={"email": email, "locale": "en"}).status_code
-        for _ in range(4)
+        new_client(app).post("/api/sign-up", json={"email": typed, "locale": "en"}).status_code
+        for typed in (email, email.upper(), f" {email} ", email)
     ]
 
     assert statuses == [202, 202, 202, 429]

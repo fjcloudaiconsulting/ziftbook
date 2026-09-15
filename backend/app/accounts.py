@@ -1,17 +1,18 @@
 """Creating an account: sign up with an email, then complete it from the emailed link."""
 
-import hashlib
+import unicodedata
 from datetime import timedelta
-from typing import Annotated, Literal
+from typing import Annotated
 
 from fastapi import APIRouter, Request, Response
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import AfterValidator, BaseModel, Field, StringConstraints
 from sqlalchemy import text
 
 from app import auth, limits, passwords
 from app.db import SessionLocal, tenant_context
 from app.errors import ApiError, Error
 from app.jobs import enqueue
+from app.mail import Locale
 
 SIGN_UP_WINDOW = timedelta(hours=1)
 
@@ -20,7 +21,7 @@ router = APIRouter(prefix="/api", tags=["account"])
 
 class SignUp(BaseModel):
     email: passwords.Email
-    locale: Literal["en", "nl", "pt"]  # the page the person signed up on
+    locale: Locale  # the page the person signed up on
 
 
 @router.post("/sign-up", status_code=202, responses={s: {"model": Error} for s in (415, 422, 429)})
@@ -44,22 +45,31 @@ def sign_up(details: SignUp, request: Request) -> None:
         enqueue(session, "email.token", f"email.token:{token_id}", {"token_id": str(token_id)})
 
 
+def printable(name: str) -> str:
+    # No control, format (zero-width) or unassigned characters: a name that looks empty, or that
+    # the database refuses (NUL), is a 422, not a blank business or a 500.
+    if any(unicodedata.category(c).startswith("C") for c in name):
+        raise ValueError("unprintable characters")
+    return name
+
+
+BusinessName = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=100),
+    AfterValidator(printable),
+]
+
+
 class CompleteSignUp(BaseModel):
     token: str = Field(min_length=1, max_length=100)  # from the link's fragment
     password: str
-    business_name: Annotated[
-        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)
-    ]
-
-
-def token_hash(token: str) -> bytes:
-    return hashlib.sha256(token.encode()).digest()
+    business_name: BusinessName
 
 
 def live_token(token: str, purpose: str) -> bytes:
     """The token's hash if it can still be used. Checked before any password is hashed, so a dead or
     made-up link costs nothing."""
-    digest = token_hash(token)
+    digest = auth.hash_token(token)
     with SessionLocal.begin() as session:
         if not session.scalar(
             text("SELECT email_token_live(:hash, :purpose)"), {"hash": digest, "purpose": purpose}

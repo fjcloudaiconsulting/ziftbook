@@ -17,7 +17,9 @@ MIN_PASSWORD = 12
 MAX_PASSWORD = 256
 # Passwords of 12 or more characters from the NCSC's 100,000 most common (via SecLists, MIT).
 # Shorter ones are already refused by length.
-COMMON = frozenset(Path(__file__).with_name("common_passwords.txt").read_text().split())
+COMMON = frozenset(
+    Path(__file__).with_name("common_passwords.txt").read_text(encoding="utf-8").split()
+)
 
 # 19 MiB and two passes (OWASP's minimum for argon2id): the library default of 64 MiB per hash
 # would run a small pod out of memory under a handful of concurrent sign-ins.
@@ -64,6 +66,10 @@ def check_new_password(password: str) -> str:
     never locks anyone out.
     """
     password = normalise_password(password)
+    try:
+        password.encode()
+    except UnicodeEncodeError:  # a lone surrogate from JSON: argon2 couldn't hash it
+        raise ApiError(422, "invalid_request") from None
     if len(password) < MIN_PASSWORD:
         raise ApiError(422, "password_too_short")
     if len(password) > MAX_PASSWORD:

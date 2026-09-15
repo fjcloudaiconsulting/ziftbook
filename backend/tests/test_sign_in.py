@@ -1,4 +1,3 @@
-import secrets
 import threading
 import time
 import unicodedata
@@ -16,17 +15,7 @@ from app import auth, passwords
 from app.db import SessionLocal, tenant_context
 from app.errors import ApiError
 from app.main import create_app
-from tests.conftest import People, add_password, add_user, email_of
-
-PASSWORD = "lavender-harbour-19"
-
-
-def new_client(app: FastAPI) -> TestClient:
-    # A fresh IPv6 /64 per client, so per-IP counts never carry over between tests or runs.
-    address = f"2001:db8:{secrets.randbelow(65536):x}:{secrets.randbelow(65536):x}::1"
-    return TestClient(
-        app, base_url="https://testserver", client=(address, 1), raise_server_exceptions=False
-    )
+from tests.conftest import PASSWORD, People, add_password, add_user, email_of, new_client
 
 
 @pytest.fixture
