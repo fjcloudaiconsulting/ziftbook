@@ -7,6 +7,7 @@ import threading
 import time
 import uuid
 from collections.abc import Iterator
+from dataclasses import dataclass
 from datetime import timedelta
 
 import pytest
@@ -17,6 +18,14 @@ from sqlalchemy.exc import ProgrammingError
 from app import auth
 from app.db import SessionLocal, tenant_context
 from tests.conftest import People, add_user
+
+
+@dataclass(frozen=True)
+class Created:
+    outcome: str
+    tenant_id: uuid.UUID
+    user_id: uuid.UUID
+
 
 EXPIRE = "UPDATE email_tokens SET expires_at = now() - interval '1 second' WHERE token_hash = :h"
 HASH = "$argon2id$v=19$m=19456,t=2,p=1$c2FsdHNhbHQ$aGFzaGhhc2hoYXNoaGFzaA"
@@ -39,8 +48,7 @@ def issue(app_engine: Engine, purpose: str, email: str, locale: str = "en") -> b
             text("SELECT start_email_token(:p, :e, :l)"), {"p": purpose, "e": email, "l": locale}
         )
         minted = conn.execute(
-            text("SELECT * FROM mint_email_token(:id, :h)"),
-            {"id": token_id, "h": hashlib.sha256(token).digest()},
+            text("SELECT * FROM mint_email_token(:id, :h)"), {"id": token_id, "h": digest(token)}
         ).first()
     return token if minted else None
 
@@ -53,39 +61,36 @@ def email_of(user_id: uuid.UUID) -> str:
     return f"{user_id}@example.com"
 
 
+def wait_until_blocked(engine: Engine, backends: int) -> None:
+    """Wait until that many sessions block on a lock: the interleaving the test needs."""
+    for _ in range(100):
+        with engine.connect() as conn:
+            waiting = conn.scalar(
+                text("SELECT count(DISTINCT pid) FROM pg_locks WHERE NOT granted")
+            )
+        if waiting >= backends:
+            return
+        time.sleep(0.05)
+    raise AssertionError(f"{backends} sessions never waited on a lock")
+
+
 @pytest.fixture
-def created(migrate_engine: Engine, app_engine: Engine) -> Iterator[list[str]]:
-    """Emails of accounts complete_sign_up creates; their rows are removed afterwards."""
-    bound = SessionLocal.kw.get("bind") is None  # the people fixture may have bound it already
-    if bound:
+def created(migrate_engine: Engine, app_engine: Engine) -> Iterator[list[Created]]:
+    """Accounts complete_sign_up creates in a test; removed afterwards by id."""
+    binds = SessionLocal.kw.get("bind") is None  # unless the people fixture already did
+    if binds:
         SessionLocal.configure(bind=app_engine)
-    emails: list[str] = []
-    yield emails
+    accounts: list[Created] = []
+    yield accounts
+    for account in accounts:
+        with tenant_context(account.tenant_id) as session:
+            session.execute(text("DELETE FROM memberships"))
     with migrate_engine.begin() as conn:
-        rows = conn.execute(
-            text("""
-            SELECT u.id AS user_id, t.id AS tenant_id FROM users u
-            JOIN password_credentials c ON c.user_id = u.id
-            LEFT JOIN tenants t ON t.name = 'Studio ' || u.email
-            WHERE u.email = ANY(:emails)
-            """),
-            {"emails": emails},
-        ).all()
-    for row in rows:
-        if row.tenant_id:
-            with tenant_context(row.tenant_id) as session:
-                session.execute(text("DELETE FROM memberships"))
-    with migrate_engine.begin() as conn:
-        conn.execute(
-            text("DELETE FROM password_credentials WHERE user_id = ANY(:ids)"),
-            {"ids": [r.user_id for r in rows]},
-        )
-        conn.execute(text("DELETE FROM users WHERE email = ANY(:emails)"), {"emails": emails})
-        conn.execute(
-            text("DELETE FROM tenants WHERE id = ANY(:ids)"),
-            {"ids": [r.tenant_id for r in rows if r.tenant_id]},
-        )
-    if bound:
+        ids = {"users": [a.user_id for a in accounts], "tenants": [a.tenant_id for a in accounts]}
+        conn.execute(text("DELETE FROM password_credentials WHERE user_id = ANY(:users)"), ids)
+        conn.execute(text("DELETE FROM users WHERE id = ANY(:users)"), ids)
+        conn.execute(text("DELETE FROM tenants WHERE id = ANY(:tenants)"), ids)
+    if binds:
         SessionLocal.configure(bind=None)
 
 
@@ -101,27 +106,6 @@ def test_the_app_role_cannot_touch_credentials_or_tokens(
     assert isinstance(error.value.orig, InsufficientPrivilege)
 
 
-@pytest.fixture
-def broken_functions(migrate_engine: Engine) -> Iterator[None]:
-    with migrate_engine.begin() as conn:
-        conn.execute(
-            text("""
-            CREATE FUNCTION broken_no_path() RETURNS int LANGUAGE sql SECURITY DEFINER
-              AS 'SELECT 1';
-            REVOKE EXECUTE ON FUNCTION broken_no_path() FROM PUBLIC;
-            -- Without pg_temp last, a caller's temp table shadows the real one.
-            CREATE FUNCTION broken_temp_first() RETURNS int LANGUAGE sql SECURITY DEFINER
-              SET search_path = public AS 'SELECT 1';
-            REVOKE EXECUTE ON FUNCTION broken_temp_first() FROM PUBLIC;
-            CREATE FUNCTION broken_public() RETURNS int LANGUAGE sql SECURITY DEFINER
-              SET search_path = pg_catalog, public, pg_temp AS 'SELECT 1';
-            """)
-        )
-    yield
-    with migrate_engine.begin() as conn:
-        conn.execute(text("DROP FUNCTION broken_no_path(), broken_temp_first(), broken_public()"))
-
-
 def test_the_app_role_cannot_create_objects_in_the_public_schema(app_engine: Engine) -> None:
     # Pinned search paths only help while nobody but ziftbook_migrate can add functions there.
     with app_engine.connect() as conn:
@@ -135,15 +119,25 @@ def test_definer_functions_pin_their_search_path_and_are_not_public(
         assert list(conn.scalars(VIOLATIONS)) == []
 
 
-def test_the_definer_check_catches_unsafe_functions(
-    migrate_engine: Engine, broken_functions: None
-) -> None:
-    with migrate_engine.connect() as conn:
-        assert list(conn.scalars(VIOLATIONS)) == [
-            "broken_no_path",
-            "broken_public",
-            "broken_temp_first",
-        ]
+def test_the_definer_check_catches_unsafe_functions(migrate_engine: Engine) -> None:
+    # Created and rolled back in one transaction, so a killed run leaves nothing behind.
+    with migrate_engine.connect() as conn, conn.begin() as transaction:
+        conn.execute(
+            text("""
+            CREATE FUNCTION broken_no_path() RETURNS int LANGUAGE sql SECURITY DEFINER
+              AS 'SELECT 1';
+            REVOKE EXECUTE ON FUNCTION broken_no_path() FROM PUBLIC;
+            -- Without pg_temp last, a caller's temp table shadows the real one.
+            CREATE FUNCTION broken_temp_first() RETURNS int LANGUAGE sql SECURITY DEFINER
+              SET search_path = public AS 'SELECT 1';
+            REVOKE EXECUTE ON FUNCTION broken_temp_first() FROM PUBLIC;
+            CREATE FUNCTION broken_public() RETURNS int LANGUAGE sql SECURITY DEFINER
+              SET search_path = pg_catalog, public, pg_temp AS 'SELECT 1';
+            """)
+        )
+        found = list(conn.scalars(VIOLATIONS))
+        transaction.rollback()
+    assert found == ["broken_no_path", "broken_public", "broken_temp_first"]
 
 
 def test_sign_in_lookup_finds_the_oldest_membership_without_a_tenant(
@@ -202,54 +196,52 @@ def test_the_app_role_gains_nothing_by_setting_sign_in(people: People) -> None:
     assert tenants == {people.a}
 
 
-def complete_sign_up(engine: Engine, token: bytes, email: str) -> str:
+def complete_sign_up(engine: Engine, token: bytes, email: str) -> Created:
     with engine.begin() as conn:
-        outcome: str = conn.scalar(
-            text("SELECT outcome FROM complete_sign_up(:h, :p, :n)"),
+        row = conn.execute(
+            text("SELECT * FROM complete_sign_up(:h, :p, :n)"),
             {"h": digest(token), "p": HASH, "n": f"Studio {email}"},
-        )
-    return outcome
+        ).one()
+    return Created(*row)
 
 
 def test_completing_sign_up_creates_the_business_once(
-    app_engine: Engine, migrate_engine: Engine, created: list[str]
+    app_engine: Engine, migrate_engine: Engine, created: list[Created]
 ) -> None:
     email = f"{uuid.uuid4()}@example.com"
-    created.append(email)
     token = issue(app_engine, "sign_up", email, "pt")
     assert token is not None
 
-    assert complete_sign_up(app_engine, token, email) == "created"
-    assert complete_sign_up(app_engine, token, email) == "invalid_token"
+    account = complete_sign_up(app_engine, token, email)
+    created.append(account)
+    assert account.outcome == "created"
+    assert complete_sign_up(app_engine, token, email).outcome == "invalid_token"
 
     with migrate_engine.connect() as conn:
         user = conn.execute(
             text("""
-            SELECT u.locale, c.hash, t.id AS tenant_id FROM users u
-            JOIN password_credentials c ON c.user_id = u.id
-            JOIN tenants t ON t.name = :name
-            WHERE u.email = :e
+            SELECT u.email, u.locale, c.hash, t.name FROM users u
+            JOIN password_credentials c ON c.user_id = u.id, tenants t
+            WHERE u.id = :u AND t.id = :t
             """),
-            {"e": email, "name": f"Studio {email}"},
+            {"u": account.user_id, "t": account.tenant_id},
         ).one()
-    with tenant_context(user.tenant_id) as session:
-        role = session.scalar(text("SELECT role FROM memberships"))
-    assert (user.locale, user.hash, role) == ("pt", HASH, "owner")
+    with tenant_context(account.tenant_id) as session:
+        membership = session.execute(text("SELECT user_id, role FROM memberships")).one()
+    assert tuple(user) == (email, "pt", HASH, f"Studio {email}")
+    assert tuple(membership) == (account.user_id, "owner")
 
 
 def test_an_expired_sign_up_link_creates_nothing(
-    app_engine: Engine, migrate_engine: Engine, created: list[str]
+    app_engine: Engine, migrate_engine: Engine
 ) -> None:
     email = f"{uuid.uuid4()}@example.com"
     token = issue(app_engine, "sign_up", email)
     assert token is not None
     with migrate_engine.begin() as conn:
-        conn.execute(
-            text(EXPIRE),
-            {"h": digest(token)},
-        )
+        conn.execute(text(EXPIRE), {"h": digest(token)})
 
-    assert complete_sign_up(app_engine, token, email) == "invalid_token"
+    assert complete_sign_up(app_engine, token, email).outcome == "invalid_token"
 
 
 def test_completing_sign_up_for_an_email_registered_since_changes_nothing(
@@ -264,7 +256,7 @@ def test_completing_sign_up_for_an_email_registered_since_changes_nothing(
         tenants_before = conn.scalar(text("SELECT count(*) FROM tenants"))
 
     try:
-        assert complete_sign_up(app_engine, token, email) == "already_registered"
+        assert complete_sign_up(app_engine, token, email).outcome == "already_registered"
         with migrate_engine.connect() as conn:
             assert conn.scalar(text("SELECT count(*) FROM tenants")) == tenants_before
             assert (
@@ -280,48 +272,52 @@ def test_completing_sign_up_for_an_email_registered_since_changes_nothing(
 
 
 def test_two_links_for_one_email_completed_together_create_one_account(
-    app_engine: Engine, migrate_engine: Engine, created: list[str]
+    app_engine: Engine, migrate_engine: Engine, created: list[Created]
 ) -> None:
     email = f"{uuid.uuid4()}@example.com"
-    created.append(email)
     first, second = issue(app_engine, "sign_up", email), issue(app_engine, "sign_up", email)
     assert first is not None and second is not None
-    outcomes: dict[str, str] = {}
+    outcomes: dict[str, Created] = {}
 
     def complete_second() -> None:
         outcomes["second"] = complete_sign_up(app_engine, second, email)
 
     with app_engine.begin() as conn:
-        outcomes["first"] = conn.scalar(
-            text("SELECT outcome FROM complete_sign_up(:h, :p, :n)"),
-            {"h": digest(first), "p": HASH, "n": f"Studio {email}"},
+        outcomes["first"] = Created(
+            *conn.execute(
+                text("SELECT * FROM complete_sign_up(:h, :p, :n)"),
+                {"h": digest(first), "p": HASH, "n": f"Studio {email}"},
+            ).one()
         )
-        # The second completion runs while the first is uncommitted, and waits on its user row.
+        # The second completion must be waiting on the first's uncommitted user row.
         thread = threading.Thread(target=complete_second)
         thread.start()
-        thread.join(timeout=1)
-        assert thread.is_alive()
+        wait_until_blocked(migrate_engine, 1)
     thread.join(timeout=10)
+    created.append(outcomes["first"])
 
-    assert outcomes == {"first": "created", "second": "already_registered"}
+    assert (outcomes["first"].outcome, outcomes["second"].outcome) == (
+        "created",
+        "already_registered",
+    )
     with migrate_engine.connect() as conn:
         assert conn.scalar(text("SELECT count(*) FROM users WHERE email = :e"), {"e": email}) == 1
 
 
 def test_completing_sign_up_leaves_the_callers_tenant_as_it_was(
-    people: People, app_engine: Engine, created: list[str]
+    people: People, app_engine: Engine, created: list[Created]
 ) -> None:
     email = f"{uuid.uuid4()}@example.com"
-    created.append(email)
     token = issue(app_engine, "sign_up", email)
     assert token is not None
 
     with tenant_context(people.a) as session:
-        session.execute(
-            text("SELECT complete_sign_up(:h, :p, :n)"),
+        row = session.execute(
+            text("SELECT * FROM complete_sign_up(:h, :p, :n)"),
             {"h": digest(token), "p": HASH, "n": f"Studio {email}"},
-        )
+        ).one()
         assert session.scalar(text("SELECT current_setting('app.tenant_id')")) == str(people.a)
+    created.append(Created(*row))
 
 
 def test_a_token_only_works_for_its_own_purpose(people: People, app_engine: Engine) -> None:
@@ -329,7 +325,7 @@ def test_a_token_only_works_for_its_own_purpose(people: People, app_engine: Engi
     sign_up = issue(app_engine, "sign_up", f"{uuid.uuid4()}@example.com")
     assert reset is not None and sign_up is not None
 
-    assert complete_sign_up(app_engine, reset, "x@example.com") == "invalid_token"
+    assert complete_sign_up(app_engine, reset, "x@example.com").outcome == "invalid_token"
     with app_engine.begin() as conn:
         assert (
             conn.scalar(
@@ -374,15 +370,11 @@ def test_two_reset_links_used_at_the_same_moment_do_not_deadlock(
         threads = [threading.Thread(target=use, args=(link,)) for link in links]
         for thread in threads:
             thread.start()
-        time.sleep(1)
+        wait_until_blocked(migrate_engine, 2)
     for thread in threads:
         thread.join(timeout=10)
 
     assert results == [True, True]
-    with migrate_engine.begin() as conn:
-        conn.execute(
-            text("DELETE FROM password_credentials WHERE user_id = :u"), {"u": people.only_b}
-        )
 
 
 def test_a_password_reset_ends_every_session_and_every_other_reset_link(
@@ -399,6 +391,10 @@ def test_a_password_reset_ends_every_session_and_every_other_reset_link(
     used = issue(app_engine, "password_reset", email_of(people.both))
     other = issue(app_engine, "password_reset", email_of(people.both))
     assert used is not None and other is not None
+    with migrate_engine.begin() as conn:  # an existing password: the reset has to replace it
+        conn.execute(
+            text("INSERT INTO password_credentials VALUES (:u, :h)"), {"u": people.both, "h": HASH}
+        )
 
     with app_engine.begin() as conn:
         done = conn.scalar(
@@ -423,8 +419,25 @@ def test_a_password_reset_ends_every_session_and_every_other_reset_link(
             )
         )
         assert remaining == {people.only_a}
+
+
+def test_starting_a_request_purges_expired_ones(app_engine: Engine, migrate_engine: Engine) -> None:
+    expired = f"{uuid.uuid4()}@example.com"
+    with migrate_engine.begin() as conn:
         conn.execute(
-            text("DELETE FROM password_credentials WHERE user_id = :u"), {"u": people.both}
+            text("""
+            INSERT INTO email_tokens (purpose, email, locale, expires_at)
+            VALUES ('sign_up', :e, 'en', now() - interval '1 second')
+            """),
+            {"e": expired},
+        )
+
+    issue(app_engine, "sign_up", f"{uuid.uuid4()}@example.com")
+
+    with migrate_engine.connect() as conn:
+        assert (
+            conn.scalar(text("SELECT count(*) FROM email_tokens WHERE email = :e"), {"e": expired})
+            == 0
         )
 
 

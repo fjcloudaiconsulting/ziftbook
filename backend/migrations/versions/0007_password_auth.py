@@ -8,7 +8,9 @@ Revision ID: 0007
 Revises: 0006
 """
 
+import sqlalchemy as sa
 from alembic import op
+from sqlalchemy.dialects.postgresql import BYTEA
 
 revision = "0007"
 down_revision = "0006"
@@ -156,28 +158,27 @@ def upgrade() -> None:
         "CREATE POLICY sign_in ON memberships FOR SELECT TO ziftbook_migrate "
         "USING (current_setting('app.sign_in', true) = 'on')"
     )
-    op.execute("""
-        CREATE TABLE password_credentials (
-          user_id uuid CONSTRAINT pk_password_credentials PRIMARY KEY
-            CONSTRAINT fk_password_credentials_user_id_users REFERENCES users (id),
-          hash text NOT NULL
-            CONSTRAINT ck_password_credentials_argon2id CHECK (hash LIKE '$argon2id$%'))
-    """)
-    op.execute("""
-        CREATE TABLE email_tokens (
-          id uuid CONSTRAINT pk_email_tokens PRIMARY KEY DEFAULT uuidv7(),
-          purpose text NOT NULL
-            CONSTRAINT ck_email_tokens_purpose CHECK (purpose IN ('sign_up', 'password_reset')),
-          email text NOT NULL
-            CONSTRAINT ck_email_tokens_email_lowercase CHECK (email = lower(email)),
-          locale text NOT NULL
-            CONSTRAINT ck_email_tokens_locale CHECK (locale IN ('en', 'nl', 'pt')),
-          -- NULL until the email job mints the token it sends.
-          token_hash bytea CONSTRAINT uq_email_tokens_token_hash UNIQUE
-            CONSTRAINT ck_email_tokens_token_hash_length CHECK (octet_length(token_hash) = 32),
-          expires_at timestamptz NOT NULL)
-    """)
-    op.execute("CREATE INDEX ix_email_tokens_expires_at ON email_tokens (expires_at)")
+    op.create_table(
+        "password_credentials",
+        sa.Column("user_id", sa.Uuid(), sa.ForeignKey("users.id"), primary_key=True),
+        sa.Column("hash", sa.Text(), nullable=False),
+        sa.CheckConstraint("hash LIKE '$argon2id$%'", name="argon2id"),
+    )
+    op.create_table(
+        "email_tokens",
+        sa.Column("id", sa.Uuid(), server_default=sa.text("uuidv7()"), primary_key=True),
+        sa.Column("purpose", sa.Text(), nullable=False),
+        sa.Column("email", sa.Text(), nullable=False),
+        sa.Column("locale", sa.Text(), nullable=False),
+        # NULL until the email job mints the token it sends.
+        sa.Column("token_hash", BYTEA(), unique=True),
+        sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
+        sa.CheckConstraint("purpose IN ('sign_up', 'password_reset')", name="purpose"),
+        sa.CheckConstraint("email = lower(email)", name="email_lowercase"),
+        sa.CheckConstraint("locale IN ('en', 'nl', 'pt')", name="locale"),
+        sa.CheckConstraint("octet_length(token_hash) = 32", name="token_hash_length"),
+    )
+    op.create_index(None, "email_tokens", ["expires_at"])
     # Default privileges from 0001 gave the app role DML on every new table.
     op.execute("REVOKE ALL ON password_credentials, email_tokens FROM ziftbook_app")
     for signature, definition in FUNCTIONS.items():
