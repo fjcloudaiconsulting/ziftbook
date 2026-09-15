@@ -7,8 +7,8 @@ CONTRACT = Path(__file__).parent.parent / "openapi.json"
 
 
 def test_every_error_in_the_contract_is_a_code() -> None:
-    # The validation handler answers {"code": "invalid_request"}; a route that doesn't declare its 422
-    # would publish FastAPI's {"detail": [...]} shape to the generated client instead.
+    # The validation handler answers {"code": "invalid_request"}. A route that doesn't declare its
+    # 422 publishes FastAPI's {"detail": [...]} shape to the generated client instead.
     spec = create_app().openapi()
 
     wrong = [

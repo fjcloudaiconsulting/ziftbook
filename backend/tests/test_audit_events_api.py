@@ -30,7 +30,7 @@ def signed_in(app: FastAPI, tenant_id: uuid.UUID, user_id: uuid.UUID) -> TestCli
 def add_event(
     app_engine: Engine,
     tenant_id: uuid.UUID,
-    actor_user_id: uuid.UUID,
+    actor_user_id: uuid.UUID | None,
     action: str,
     ip: str = "192.0.2.10",
     user_agent: str = "Firefox",
@@ -78,12 +78,14 @@ def test_an_owner_sees_the_address_and_browser_only_of_their_own_events(
 ) -> None:
     add_event(app_engine, people.a, people.both, "mine", ip="2001:db8::1", user_agent="Safari")
     add_event(app_engine, people.a, people.only_a, "staff", ip="192.0.2.20", user_agent="Edge")
+    add_event(app_engine, people.a, None, "nobody", ip="192.0.2.30", user_agent="Chrome")
 
     events = signed_in(app, people.a, people.both).get("/api/audit-events").json()
 
     assert {e["action"]: (e["actor_user_id"], e["ip"], e["user_agent"]) for e in events} == {
         "mine": (str(people.both), "2001:db8::1", "Safari"),
         "staff": (str(people.only_a), None, None),
+        "nobody": (None, None, None),
     }
 
 
@@ -98,7 +100,9 @@ def test_only_an_owner_reads_the_log(people: People, app: FastAPI, who: str) -> 
 
 
 def test_the_log_needs_a_session(app: FastAPI) -> None:
-    assert new_client(app).get("/api/audit-events").status_code == 401
+    response = new_client(app).get("/api/audit-events")
+
+    assert (response.status_code, response.json()) == (401, {"code": "unauthenticated"})
 
 
 def test_the_log_comes_in_pages_before_an_event(
