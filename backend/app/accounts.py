@@ -110,3 +110,59 @@ def complete_sign_up(
     auth.set_cookie(response, token)
     response.headers["Cache-Control"] = "no-store"
     return signed_in_as
+
+
+RESET_WINDOW = timedelta(hours=1)
+
+
+class ResetRequest(BaseModel):
+    email: passwords.Email
+    locale: Locale
+
+
+@router.post(
+    "/password-reset", status_code=202, responses={s: {"model": Error} for s in (415, 422, 429)}
+)
+def request_password_reset(details: ResetRequest, request: Request) -> None:
+    """Send a reset link. The same answer and the same work whether or not the account exists: the
+    email job sends nothing for an unknown email, so neither the response nor its timing tells."""
+    ip = request.client.host if request.client else None
+    if limits.hit(
+        {
+            limits.email_key("reset", details.email): 3,
+            limits.ip_key("reset", ip): 10,
+        },
+        RESET_WINDOW,
+    ):
+        raise ApiError(429, "rate_limited")
+    with SessionLocal.begin() as session:
+        token_id = session.scalar(
+            text("SELECT start_email_token('password_reset', :email, :locale)"),
+            {"email": details.email, "locale": details.locale},
+        )
+        enqueue(session, "email.token", f"email.token:{token_id}", {"token_id": str(token_id)})
+
+
+class CompleteReset(BaseModel):
+    token: str = Field(min_length=1, max_length=100)  # from the link's fragment
+    password: str
+
+
+@router.post(
+    "/password-reset/complete",
+    status_code=204,
+    responses={s: {"model": Error} for s in (400, 415, 422, 503)},
+)
+def complete_password_reset(details: CompleteReset, response: Response) -> None:
+    """Set a new password from a reset link. The person is signed out everywhere, this browser
+    included, and signs in again with the new password."""
+    password = passwords.check_new_password(details.password)
+    digest = live_token(details.token, "password_reset")
+    password_hash = passwords.hash_password(password)
+    with SessionLocal.begin() as session:
+        if not session.scalar(
+            text("SELECT complete_password_reset(:hash, :password_hash)"),
+            {"hash": digest, "password_hash": password_hash},
+        ):
+            raise ApiError(400, "invalid_token")
+    auth.clear_cookie(response)
