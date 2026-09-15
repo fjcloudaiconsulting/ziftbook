@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.7.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.6.0...v0.7.0) (2026-09-15)
+
+
+### Features
+
+* **backend:** count rate limits in Postgres (ZIF-25) ([#54](https://github.com/fjcloudaiconsulting/ziftbook/issues/54)) ([2f9bb62](https://github.com/fjcloudaiconsulting/ziftbook/commit/2f9bb62ec70bf408af08ed118da654c7876af4d5))
+* **backend:** send single-use account links by email (ZIF-25) ([#55](https://github.com/fjcloudaiconsulting/ziftbook/issues/55)) ([31d8152](https://github.com/fjcloudaiconsulting/ziftbook/commit/31d81527d6596a2e8e2e39ab350e1a7f50ed99de))
+* **backend:** store password credentials and email tokens (ZIF-25) ([#53](https://github.com/fjcloudaiconsulting/ziftbook/issues/53)) ([527d5a4](https://github.com/fjcloudaiconsulting/ziftbook/commit/527d5a4de2e51a4dc56d15d6255329ead58c3d2a))
+
 ## [0.6.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.5.0...v0.6.0) (2026-09-15)
 
 
