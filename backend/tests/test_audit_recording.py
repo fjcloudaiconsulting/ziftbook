@@ -312,10 +312,23 @@ def test_a_password_reset_is_recorded_against_the_account(
     ]
 
 
-def test_a_dead_reset_link_records_nothing(app: FastAPI, migrate_engine: Engine) -> None:
+def test_a_reset_that_changes_no_password_records_nothing(
+    app: FastAPI, app_engine: Engine, migrate_engine: Engine
+) -> None:
+    # A live link whose account was removed before it was used: the reset itself finds no one.
+    user_id = uuid.uuid7()
+    with app_engine.begin() as conn:
+        conn.execute(
+            text("INSERT INTO users (id, email) VALUES (:id, :e)"),
+            {"id": user_id, "e": email_of(user_id)},
+        )
+    token = issue_link(app_engine, "password_reset", email_of(user_id))
+    assert token is not None
+    with migrate_engine.begin() as conn:
+        conn.execute(text("DELETE FROM users WHERE id = :u"), {"u": user_id})
     client, address = client_at(app)
 
-    assert complete_reset(client, secrets.token_urlsafe(32)).status_code == 400
+    assert complete_reset(client, token).status_code == 400
 
     assert events(migrate_engine, ip=address) == []
 
