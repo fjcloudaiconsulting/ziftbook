@@ -477,8 +477,8 @@
         "tags": [
           "settings"
         ],
-        "summary": "Read Settings",
-        "operationId": "settings-read_settings",
+        "summary": "Read",
+        "operationId": "settings-read",
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -506,9 +506,9 @@
         "tags": [
           "settings"
         ],
-        "summary": "Update Settings",
+        "summary": "Update",
         "description": "Save the keys sent; keys left out keep their value.",
-        "operationId": "settings-update_settings",
+        "operationId": "settings-update",
         "requestBody": {
           "content": {
             "application/json": {

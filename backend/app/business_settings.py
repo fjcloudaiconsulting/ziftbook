@@ -8,13 +8,13 @@ import importlib.resources
 import json
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Response
 from pydantic import AfterValidator, BaseModel, ConfigDict
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.auth import CurrentSession, SignedIn
-from app.errors import ApiError, Error
+from app.auth import CurrentOwner, CurrentSession
+from app.errors import Error
 
 # The tzdata package's own list: zoneinfo.available_timezones() also adds the system's files, so the
 # accepted names would differ between machines.
@@ -53,26 +53,21 @@ def read(db: Session) -> BusinessSettings:
     )
 
 
-def owner(current: CurrentSession) -> SignedIn:
-    # A dependency: FastAPI runs it before validating the body, so a worker gets 403 for any body.
-    if current.role != "owner":
-        raise ApiError(403, "owner_only")
-    return current
-
-
 router = APIRouter(prefix="/api", tags=["settings"])
 
 
-@router.get("/settings", responses={401: {"model": Error}})
+@router.get("/settings", name="read", responses={401: {"model": Error}})
 def read_settings(current: CurrentSession, response: Response) -> BusinessSettings:
     response.headers["Cache-Control"] = "no-store"
     return read(current.db)
 
 
-@router.put("/settings", responses={s: {"model": Error} for s in (401, 403, 415, 422)})
+@router.put(
+    "/settings", name="update", responses={s: {"model": Error} for s in (401, 403, 415, 422)}
+)
 def update_settings(
     changes: BusinessSettings,
-    current: Annotated[SignedIn, Depends(owner)],
+    current: CurrentOwner,
     response: Response,
 ) -> BusinessSettings:
     """Save the keys sent; keys left out keep their value."""
