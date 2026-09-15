@@ -58,18 +58,12 @@ def create_app() -> FastAPI:
     ) -> Response:
         # CSRF defence: browsers send JSON cross-origin only after a CORS preflight, never granted.
         # Parse the media type: "text/plain; application/json" is still a plain form type.
-        if request.method not in ("GET", "HEAD", "OPTIONS"):
-            media_type = request.headers.get("content-type", "").split(";")[0].strip().lower()
-            if media_type != "application/json":
-                return JSONResponse({"code": "unsupported_media_type"}, status_code=415)
-        return await call_next(request)
-
-    # Outermost of the two, so the 415 above gets it too. No API response is a page to link from.
-    @app.middleware("http")
-    async def no_referrer(
-        request: Request, call_next: Callable[[Request], Awaitable[Response]]
-    ) -> Response:
-        response = await call_next(request)
+        media_type = request.headers.get("content-type", "").split(";")[0].strip().lower()
+        if request.method not in ("GET", "HEAD", "OPTIONS") and media_type != "application/json":
+            response: Response = JSONResponse({"code": "unsupported_media_type"}, status_code=415)
+        else:
+            response = await call_next(request)
+        # No API response is a page to link from.
         response.headers["Referrer-Policy"] = "no-referrer"
         return response
 

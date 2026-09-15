@@ -10,6 +10,7 @@ from alembic.config import Config
 from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.pool import NullPool
 
+from app import passwords
 from app.db import SessionLocal, tenant_context
 
 API_DIR = Path(__file__).parent.parent
@@ -66,6 +67,19 @@ def add_user(engine: Engine, email: str | None = None, locale: str | None = None
             {"id": user_id, "email": email or f"{user_id}@example.com", "locale": locale},
         )
     return user_id
+
+
+def email_of(user_id: uuid.UUID) -> str:
+    """The email add_user gives a user."""
+    return f"{user_id}@example.com"
+
+
+def add_password(migrate_engine: Engine, user_id: uuid.UUID, password: str) -> None:
+    with migrate_engine.begin() as conn:
+        conn.execute(
+            text("INSERT INTO password_credentials VALUES (:u, :h)"),
+            {"u": user_id, "h": passwords.hash_password(password)},
+        )
 
 
 def add_membership(tenant_id: uuid.UUID, user_id: uuid.UUID, role: str = "worker") -> None:

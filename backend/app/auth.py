@@ -10,7 +10,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request, Response
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -21,6 +21,7 @@ from app.errors import ApiError, Error
 IDLE = timedelta(days=7)
 ABSOLUTE = timedelta(days=30)
 TOUCH_EVERY = timedelta(minutes=5)
+SIGN_IN_WINDOW = timedelta(minutes=15)
 COOKIE = "__Host-session"  # __Host-: Secure, Path=/ and no Domain, so no subdomain can set it
 
 
@@ -151,7 +152,9 @@ def describe(db: Session, user_id: UUID) -> SessionOut:
         WHERE m.user_id = :user_id
         """),
         {"user_id": user_id},
-    ).one()
+    ).first()
+    if row is None:  # the membership was removed while this request was under way
+        raise ApiError(401, "unauthenticated")
     return SessionOut.model_validate(row, from_attributes=True)
 
 
@@ -163,16 +166,8 @@ def read(current: CurrentSession, response: Response) -> SessionOut:
 
 
 class Credentials(BaseModel):
-    email: str
+    email: passwords.Email
     password: str = Field(min_length=1, max_length=passwords.MAX_PASSWORD)
-
-    @field_validator("email")
-    @classmethod
-    def normalise(cls, email: str) -> str:
-        return passwords.normalise_email(email)
-
-
-SIGN_IN_WINDOW = timedelta(minutes=15)
 
 
 @router.post(

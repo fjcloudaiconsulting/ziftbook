@@ -12,7 +12,7 @@ from sqlalchemy import Engine, text
 from app import auth
 from app.db import tenant_context
 from app.main import create_app
-from tests.conftest import People
+from tests.conftest import People, email_of
 
 
 @pytest.fixture
@@ -87,7 +87,7 @@ def test_a_signed_in_user_sees_their_session(people: People, client: TestClient)
         "user_id": str(people.both),
         "tenant_id": str(people.a),
         "role": "owner",
-        "email": f"{people.both}@example.com",
+        "email": email_of(people.both),
         "business_name": "a",
     }
 
