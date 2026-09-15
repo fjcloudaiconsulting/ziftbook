@@ -20,7 +20,8 @@ ON CONFLICT (key) DO UPDATE SET
 RETURNING key, hits
 """)
 
-# ponytail: purges on every attempt, a batch at a time; move to the ZIF-5 sweeper.
+# ponytail: purged opportunistically, 100 rows per attempt, so after a quiet spell old rows (hashed
+# emails) outlive the one-day retention; the ZIF-5 sweeper enforces it.
 PURGE = text("""
 DELETE FROM rate_limits WHERE key IN (
   SELECT key FROM rate_limits WHERE window_start < now() - interval '1 day'
@@ -32,27 +33,36 @@ def hit(limits: dict[str, int], window: timedelta) -> bool:
     """Count one attempt against each key; True if any key is now over its limit.
 
     Commits in its own transaction, before the request does anything else: the attempt counts even
-    if the request then fails.
+    if the request then fails. Keys are locked in sorted order, so two attempts sharing keys can't
+    deadlock whatever order their callers list them in. The purge stays in this transaction: it
+    skips locked rows, so it never makes anyone wait, and a second commit would cost every request.
     """
     with SessionLocal.begin() as session:
-        rows = session.execute(HIT, {"keys": list(limits), "window": window}).all()
+        rows = session.execute(HIT, {"keys": sorted(limits), "window": window}).all()
         session.execute(PURGE)
     return any(hits > limits[key] for key, hits in rows)
 
 
 def email_key(action: str, email: str) -> str:
-    # Hashed, so the table holds no addresses; still personal data, kept for at most a day.
-    return f"{action}:email:{hashlib.sha256(email.encode()).hexdigest()}"
+    """The caller normalises the email first. Hashed, so the table holds no addresses."""
+    # surrogatepass: a lone surrogate from a JSON body must not turn into a 500 here.
+    digest = hashlib.sha256(email.encode("utf-8", "surrogatepass")).hexdigest()
+    return f"{action}:email:{digest}"
 
 
-def ip_key(action: str, host: str | None) -> str | None:
-    """IPv4 per address, IPv6 per /64 (one household or server). None if there is no address."""
+def ip_key(action: str, host: str | None) -> str:
+    """IPv4 per address, IPv6 per /64 (one household or server).
+
+    Every address that doesn't parse shares one key, so it is still limited.
+    """
     try:
         address = ipaddress.ip_address(host or "")
     except ValueError:
-        return None
+        return f"{action}:ip:unknown"
     if isinstance(address, ipaddress.IPv6Address):
         if address.ipv4_mapped is None:
+            # ponytail: a /48 holder can rotate 65,536 /64s; the per-email limit still caps each
+            # account. Widen to /56 if credential stuffing from IPv6 shows up.
             return f"{action}:ip:{ipaddress.IPv6Network((int(address), 64), strict=False)}"
         address = address.ipv4_mapped
     return f"{action}:ip:{address}"
