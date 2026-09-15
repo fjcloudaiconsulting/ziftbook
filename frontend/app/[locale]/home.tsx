@@ -8,8 +8,9 @@ import { useRouter } from "@/i18n/navigation";
 
 import { Banner, send, styles } from "./_ui/parts";
 
-// DELETE has no body, but the API only accepts JSON writes (its CSRF defence).
-const JSON_WRITE = { headers: { "Content-Type": "application/json" } };
+// The API only accepts JSON writes (its CSRF defence), and the client drops Content-Type from a request with
+// no body: these DELETEs send an empty JSON object.
+const JSON_WRITE = { body: {} as never };
 
 /** A placeholder home until the booking screens exist: the business, the person, and signing out. */
 export function Home() {
