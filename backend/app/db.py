@@ -46,6 +46,14 @@ def tenant_context(tenant_id: UUID) -> Iterator[Session]:
         yield session
 
 
+def join_tenant(session: Session, tenant_id: UUID) -> None:
+    """Scope the rest of this transaction to a tenant found inside it, such as a session's or a new
+    business's. Transaction-local, like tenant_context."""
+    session.execute(
+        text("SELECT set_config('app.tenant_id', :tenant_id, true)"), {"tenant_id": str(tenant_id)}
+    )
+
+
 def enable_tenant_isolation(table: str) -> None:
     """Isolate a tenant-owned table by tenant. Call it in the migration that creates the table.
 
