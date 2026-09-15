@@ -107,6 +107,27 @@ we can show which businesses were not affected.
   `audit_events` must clear it first, or it shows the caller every business's events.
 - Nothing purges events yet. The ZIF-5 sweeper will remove failed sign-ins after 30 days and the rest after a year.
 
+## Business settings
+
+A business's settings are typed and defaulted in one model, `BusinessSettings` in `app/business_settings.py`; the
+`settings` table keeps only the values an owner saved. Read them with `business_settings.read(session)`. If changing a
+value needs a redeploy it is an environment variable; otherwise it is a setting.
+
+- **Add a key:** a field with a default and a JSON-native type (str, bool, int, `Literal`). The model is strict, so a
+  `time`, `UUID` or `Enum` field needs a per-field lax override. No migration.
+- **Remove a key:** first the web app stops sending it; in a later release the field goes (`read` ignores saved keys
+  it doesn't know); then a data migration deletes its rows, looping over tenants. Removing the field in the same
+  release makes every save from an old tab a 422.
+- **Rename a key:** add the new key with a migration that copies the rows, then remove the old key as above. A save
+  from an instance still on the old key during the rollout is lost.
+- **Tighten a type or range:** ship a data migration that fixes saved rows. A saved value that no longer validates
+  makes reads fail (500) on purpose, rather than quietly using the default.
+- A saved value equal to the default stays saved: changing a default later only reaches businesses that never saved
+  that key.
+- Every member can read settings, so never make a secret or personal data a setting.
+- Convert a business's local times with `zoneinfo`, never with SQL `AT TIME ZONE`: Postgres doesn't know every name
+  the `tzdata` package accepts (`US/Pacific`, `Asia/Calcutta`).
+
 ## Background jobs
 
 Deferred and scheduled work goes through the `jobs` table (`app/jobs.py`); there is no broker or scheduler.
