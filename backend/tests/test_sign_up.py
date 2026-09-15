@@ -1,9 +1,5 @@
-import asyncio
 import json
-import os
 import secrets
-import urllib.parse
-import urllib.request
 import uuid
 from collections.abc import Iterator
 from http.cookies import SimpleCookie
@@ -15,18 +11,22 @@ from fastapi.testclient import TestClient
 from httpx2 import Response
 from sqlalchemy import Engine, text
 
-from app import auth, passwords
+from app import auth
 from app.db import tenant_context
-from app.jobs import run_once
 from app.main import create_app
-from app.worker import KINDS
-from tests.conftest import EXPIRE, PASSWORD, People, email_of, issue_link, new_client
-
-MAILPIT = f"http://{os.environ['ZIF_SMTP_HOST']}:8025"
-
-
-def fresh_email() -> str:
-    return f"{uuid.uuid4()}@example.com"
+from tests.conftest import (
+    EXPIRE,
+    PASSWORD,
+    People,
+    email_of,
+    fresh_email,
+    issue_link,
+    jobs_for,
+    live,
+    mailed,
+    new_client,
+    token_in,
+)
 
 
 @pytest.fixture
@@ -71,38 +71,6 @@ def created(response: Response, businesses: list[dict[str, Any]]) -> dict[str, A
     return session
 
 
-def live(app_engine: Engine, token: str) -> bool:
-    with app_engine.connect() as conn:
-        result: bool = conn.scalar(
-            text("SELECT email_token_live(:h, 'sign_up')"), {"h": auth.hash_token(token)}
-        )
-    return result
-
-
-def jobs_for(migrate_engine: Engine, email: str) -> int:
-    with migrate_engine.connect() as conn:
-        count: int = conn.scalar(
-            text("""
-            SELECT count(*) FROM jobs j JOIN email_tokens t ON j.payload->>'token_id' = t.id::text
-            WHERE t.email = :e AND j.kind = 'email.token'
-            """),
-            {"e": email},
-        )
-    return count
-
-
-@pytest.fixture
-def no_hashing(monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    hashed: list[str] = []
-
-    def spy(password: str) -> str:
-        hashed.append(password)
-        return ""
-
-    monkeypatch.setattr(passwords, "hash_password", spy)
-    return hashed
-
-
 def test_signing_up_answers_the_same_for_a_new_and_a_registered_email(
     people: People, app: FastAPI, migrate_engine: Engine
 ) -> None:
@@ -128,16 +96,7 @@ def test_the_emailed_link_sets_up_the_business_and_the_owner_can_sign_in_again(
     client = new_client(app)
     assert client.post("/api/sign-up", json={"email": email, "locale": "nl"}).status_code == 202
 
-    async def run_until_idle() -> None:
-        while await run_once(KINDS):
-            pass
-
-    asyncio.run(run_until_idle())
-    query = urllib.parse.urlencode({"query": f"to:{email}"})
-    with urllib.request.urlopen(f"{MAILPIT}/api/v1/search?{query}", timeout=5) as found:
-        (sent,) = json.load(found)["messages"]
-    with urllib.request.urlopen(f"{MAILPIT}/api/v1/message/{sent['ID']}", timeout=5) as body:
-        token = json.load(body)["Text"].split("#")[1].split()[0]
+    token = token_in(mailed(email))
 
     response = complete(client, token, business="  Studio Ana Nails  ")
 
@@ -239,7 +198,7 @@ def test_a_weak_password_is_refused_without_hashing_and_the_link_still_works(
     response = complete(new_client(app), token, password)
 
     assert (response.status_code, response.json(), no_hashing) == (422, {"code": code}, [])
-    assert live(app_engine, token)
+    assert live(app_engine, token, "sign_up")
 
 
 @pytest.mark.parametrize(
@@ -252,7 +211,7 @@ def test_a_business_needs_a_printable_name(app: FastAPI, app_engine: Engine, bus
     response = complete(new_client(app), token, business=business)
 
     assert (response.status_code, response.json()) == (422, {"code": "invalid_request"})
-    assert live(app_engine, token)
+    assert live(app_engine, token, "sign_up")
 
 
 def test_a_business_name_of_a_hundred_characters_is_kept_without_its_spaces(
@@ -294,7 +253,7 @@ def test_the_complete_step_is_never_a_get(client: TestClient, app_engine: Engine
     assert token is not None
 
     assert client.get(f"/api/sign-up/complete?token={token}").status_code == 405
-    assert live(app_engine, token)
+    assert live(app_engine, token, "sign_up")
 
 
 def test_sign_up_requests_for_one_email_are_limited_whatever_its_case(app: FastAPI) -> None:

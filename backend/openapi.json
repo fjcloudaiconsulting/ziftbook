@@ -211,13 +211,13 @@
           "account"
         ],
         "summary": "Sign Up",
-        "description": "Send a link that sets up a business. The same answer whether or not the email has an account:\nthe email itself tells the owner of the inbox (a link, or a note to sign in instead).",
+        "description": "Send a link that sets up a business, or, if the email has an account, a note to sign in.",
         "operationId": "account-sign_up",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/SignUp"
+                "$ref": "#/components/schemas/LinkRequest"
               }
             }
           },
@@ -346,10 +346,155 @@
           }
         }
       }
+    },
+    "/api/password-reset": {
+      "post": {
+        "tags": [
+          "account"
+        ],
+        "summary": "Request Password Reset",
+        "description": "Send a reset link; for an unknown email the email job sends nothing, after this answer.",
+        "operationId": "account-request_password_reset",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LinkRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Content",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/password-reset/complete": {
+      "post": {
+        "tags": [
+          "account"
+        ],
+        "summary": "Complete Password Reset",
+        "description": "Set a new password from a reset link. The person is signed out everywhere, and so is this\nbrowser, whoever was signed in on it; they sign in again with the new password.",
+        "operationId": "account-complete_password_reset",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompleteReset"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Content",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
     "schemas": {
+      "CompleteReset": {
+        "properties": {
+          "token": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Token"
+          },
+          "password": {
+            "type": "string",
+            "title": "Password"
+          }
+        },
+        "type": "object",
+        "required": [
+          "token",
+          "password"
+        ],
+        "title": "CompleteReset"
+      },
       "CompleteSignUp": {
         "properties": {
           "token": {
@@ -429,6 +574,29 @@
         ],
         "title": "Health"
       },
+      "LinkRequest": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "title": "Email"
+          },
+          "locale": {
+            "type": "string",
+            "enum": [
+              "en",
+              "nl",
+              "pt"
+            ],
+            "title": "Locale"
+          }
+        },
+        "type": "object",
+        "required": [
+          "email",
+          "locale"
+        ],
+        "title": "LinkRequest"
+      },
       "SessionOut": {
         "properties": {
           "user_id": {
@@ -463,29 +631,6 @@
           "business_name"
         ],
         "title": "SessionOut"
-      },
-      "SignUp": {
-        "properties": {
-          "email": {
-            "type": "string",
-            "title": "Email"
-          },
-          "locale": {
-            "type": "string",
-            "enum": [
-              "en",
-              "nl",
-              "pt"
-            ],
-            "title": "Locale"
-          }
-        },
-        "type": "object",
-        "required": [
-          "email",
-          "locale"
-        ],
-        "title": "SignUp"
       }
     }
   }
