@@ -64,9 +64,19 @@ every table that holds a tenant's data:
 - Data migrations: row-level security binds `ziftbook_migrate` too. Loop over `SELECT id FROM tenants` and run
   `set_config('app.tenant_id', :id, true)` before each tenant's statements. Never grant `BYPASSRLS`.
 
-`tests/test_tenant_schema.py` fails for a table with `tenant_id` that is not isolated, and for a foreign key
-between tenant-owned tables that does not pair `tenant_id`. `jobs` is exempt on purpose: it is global and
-claimed across tenants.
+`tests/test_tenant_schema.py` fails for a table with `tenant_id` that is not isolated (forced row-level security),
+and for a foreign key between tenant-owned tables that does not pair `tenant_id`. `jobs` is exempt on purpose: it
+is global and claimed across tenants.
+
+`users` is global, with row-level security that is enabled but not forced: the app role sees a user only through a
+membership in the current tenant, may insert users, and can never change or delete one.
+
+- Insert users with an id from `uuid.uuid7()` and no `RETURNING`: a new user isn't visible to its own policy yet.
+- Never add an UPDATE or DELETE policy on `users`; changes to a person's account go through functions owned by
+  `ziftbook_migrate`. `ziftbook_migrate` sees every user, including in data migrations.
+- A view over `users` needs `WITH (security_invoker = true)`, or it shows every user.
+- Create memberships only in trusted flows (sign-up, invites), never from a `user_id` the client sends: the foreign
+  key to `users` is checked with row-level security bypassed.
 
 ## Background jobs
 
