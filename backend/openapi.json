@@ -204,10 +204,179 @@
           }
         }
       }
+    },
+    "/api/sign-up": {
+      "post": {
+        "tags": [
+          "account"
+        ],
+        "summary": "Sign Up",
+        "description": "Send a link that sets up a business. The same answer whether or not the email has an account:\nthe email itself tells the owner of the inbox (a link, or a note to sign in instead).",
+        "operationId": "account-sign_up",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SignUp"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Content",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sign-up/complete": {
+      "post": {
+        "tags": [
+          "account"
+        ],
+        "summary": "Complete Sign Up",
+        "description": "Create the business and its owner from a sign-up link, and sign the owner in.",
+        "operationId": "account-complete_sign_up",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompleteSignUp"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionOut"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Content",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
     "schemas": {
+      "CompleteSignUp": {
+        "properties": {
+          "token": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Token"
+          },
+          "password": {
+            "type": "string",
+            "title": "Password"
+          },
+          "business_name": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Business Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "token",
+          "password",
+          "business_name"
+        ],
+        "title": "CompleteSignUp"
+      },
       "Credentials": {
         "properties": {
           "email": {
@@ -294,6 +463,29 @@
           "business_name"
         ],
         "title": "SessionOut"
+      },
+      "SignUp": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "title": "Email"
+          },
+          "locale": {
+            "type": "string",
+            "enum": [
+              "en",
+              "nl",
+              "pt"
+            ],
+            "title": "Locale"
+          }
+        },
+        "type": "object",
+        "required": [
+          "email",
+          "locale"
+        ],
+        "title": "SignUp"
       }
     }
   }

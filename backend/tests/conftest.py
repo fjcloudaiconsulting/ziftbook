@@ -1,4 +1,6 @@
+import hashlib
 import os
+import secrets
 import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -72,6 +74,20 @@ def add_user(engine: Engine, email: str | None = None, locale: str | None = None
 def email_of(user_id: uuid.UUID) -> str:
     """The email add_user gives a user."""
     return f"{user_id}@example.com"
+
+
+def issue_link(app_engine: Engine, purpose: str, email: str, locale: str = "en") -> str | None:
+    """A request plus its email job: the token a link would carry, or None if nothing was sent."""
+    token = secrets.token_urlsafe(32)
+    with app_engine.begin() as conn:
+        token_id = conn.scalar(
+            text("SELECT start_email_token(:p, :e, :l)"), {"p": purpose, "e": email, "l": locale}
+        )
+        minted = conn.execute(
+            text("SELECT * FROM mint_email_token(:id, :h)"),
+            {"id": token_id, "h": hashlib.sha256(token.encode()).digest()},
+        ).first()
+    return token if minted and not minted.registered else None
 
 
 def add_password(migrate_engine: Engine, user_id: uuid.UUID, password: str) -> None:

@@ -165,6 +165,23 @@ def read(current: CurrentSession, response: Response) -> SessionOut:
     return describe(current.db, current.user_id)
 
 
+def start(session: Session, request: Request, user_id: UUID) -> str:
+    """Sign user_id in on this browser: whatever session it had ends here, whoever it belonged to.
+
+    session is a tenant_context for the business; returns the new cookie's token.
+    """
+    if old := request.cookies.get(COOKIE):
+        session.execute(
+            text("DELETE FROM sessions WHERE id_hash = :id_hash"), {"id_hash": hash_token(old)}
+        )
+    return create(
+        session,
+        user_id,
+        ip=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+    )
+
+
 class Credentials(BaseModel):
     email: passwords.Email
     password: str = Field(min_length=1, max_length=passwords.MAX_PASSWORD)
@@ -200,15 +217,8 @@ def sign_in(credentials: Credentials, request: Request, response: Response) -> S
     if account.tenant_id is None:
         raise ApiError(403, "no_tenant")
     with tenant_context(account.tenant_id) as session:
-        # Whatever session this browser had ends here, whoever it belonged to.
-        if old := request.cookies.get(COOKIE):
-            session.execute(
-                text("DELETE FROM sessions WHERE id_hash = :id_hash"), {"id_hash": hash_token(old)}
-            )
         try:
-            token = create(
-                session, account.user_id, ip=ip, user_agent=request.headers.get("user-agent")
-            )
+            token = start(session, request, account.user_id)
         except ValueError:  # the membership went away since the lookup
             raise ApiError(403, "no_tenant") from None
         signed_in_as = describe(session, account.user_id)

@@ -9,7 +9,7 @@ from fastapi.routing import APIRoute
 from pydantic import BaseModel
 from sqlalchemy import create_engine
 
-from app import auth
+from app import accounts, auth
 from app.config import DatabaseSettings, Settings
 from app.db import SessionLocal
 from app.errors import ApiError
@@ -51,6 +51,7 @@ def create_app() -> FastAPI:
     app = FastAPI(title="ziftbook", generate_unique_id_function=operation_id, lifespan=lifespan)
     app.include_router(router)
     app.include_router(auth.router)
+    app.include_router(accounts.router)
 
     @app.middleware("http")
     async def json_only(
