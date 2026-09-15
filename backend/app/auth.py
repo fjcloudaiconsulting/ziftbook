@@ -10,9 +10,7 @@ from fastapi import Response
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-IDLE = timedelta(days=7)
 ABSOLUTE = timedelta(days=30)
-TOUCH_EVERY = timedelta(minutes=5)
 COOKIE = "__Host-session"  # __Host-: Secure, Path=/ and no Domain, so no subdomain can set it
 
 
@@ -25,15 +23,13 @@ def create(session: Session, user_id: UUID, *, ip: str | None, user_agent: str |
 
     `session` is a tenant_context: the membership (and so the tenant and role) comes from it.
     """
-    # ponytail: purges on every sign-in; move to the ZIF-5 sweeper. Rows that went idle stay until
-    # their absolute expiry.
-    session.execute(text("DELETE FROM sessions WHERE expires_at <= now()"))
     token = secrets.token_urlsafe(32)
-    inserted = session.execute(
+    inserted = session.scalar(
         text("""
         INSERT INTO sessions (id_hash, tenant_id, user_id, role, expires_at, ip, user_agent)
         SELECT :id_hash, tenant_id, user_id, role, now() + :lifetime, :ip, :user_agent
         FROM memberships WHERE user_id = :user_id
+        RETURNING true
         """),
         {
             "id_hash": hash_token(token),
@@ -43,8 +39,17 @@ def create(session: Session, user_id: UUID, *, ip: str | None, user_agent: str |
             "user_agent": user_agent[:512] if user_agent else None,
         },
     )
-    if inserted.rowcount != 1:  # type: ignore[attr-defined]
+    if inserted is None:
         raise ValueError("the user is not a member of this tenant")
+    # ponytail: purges on every sign-in; move to the ZIF-5 sweeper. Rows that went idle stay until
+    # their absolute expiry. After the insert and SKIP LOCKED: waiting on rows another transaction
+    # holds (a membership being removed) would queue sign-ins or deadlock.
+    session.execute(
+        text("""
+        DELETE FROM sessions WHERE id_hash IN (
+            SELECT id_hash FROM sessions WHERE expires_at <= now() FOR UPDATE SKIP LOCKED)
+        """)
+    )
     return token
 
 

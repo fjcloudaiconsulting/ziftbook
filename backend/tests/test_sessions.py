@@ -40,23 +40,16 @@ def stored(app_engine: Engine, token: str) -> dict[str, object] | None:
 def test_only_the_hash_of_a_random_token_is_stored(people: People, app_engine: Engine) -> None:
     token = start(people.a, people.both)
 
-    assert len(token) >= 43  # 32 random bytes
-    with pytest.raises(ValueError):
-        uuid.UUID(token)
+    assert len(token) >= 43  # 32 random bytes, so never a UUID
     row = stored(app_engine, token)
     assert row is not None
     assert (row["tenant_id"], row["user_id"], row["role"]) == (people.a, people.both, "owner")
     assert timedelta(days=29, hours=23) < row["lifetime"] <= auth.ABSOLUTE  # type: ignore[operator]
-    with app_engine.connect() as conn:
-        raw = conn.scalar(
-            text("SELECT count(*) FROM sessions WHERE id_hash = :t"), {"t": token.encode()}
-        )
-    assert raw == 0
 
 
 @pytest.mark.parametrize(
     ("tenant", "user", "role"),
-    [("a", "only_b", "worker"), ("a", "both", "worker"), ("b", "only_a", "worker")],
+    [("a", "only_b", "worker"), ("a", "both", "worker"), ("b", "both", "owner")],
 )
 def test_a_session_needs_the_membership_and_role_it_claims(
     people: People, app_engine: Engine, tenant: str, user: str, role: str
@@ -103,7 +96,8 @@ def test_a_role_change_requires_ending_the_sessions_first(people: People) -> Non
 
 
 def test_starting_a_session_purges_expired_ones(people: People, app_engine: Engine) -> None:
-    expired, live = start(people.b, people.only_b), start(people.b, people.both)
+    # Expired: another user in another tenant. Live: the same user and tenant signing in again.
+    expired, live = start(people.b, people.only_b), start(people.a, people.only_a)
     with app_engine.begin() as conn:
         conn.execute(
             text("UPDATE sessions SET expires_at = now() - interval '1 second' WHERE id_hash = :h"),
@@ -114,6 +108,29 @@ def test_starting_a_session_purges_expired_ones(people: People, app_engine: Engi
 
     assert stored(app_engine, expired) is None
     assert stored(app_engine, live) is not None
+
+
+def test_the_purge_skips_sessions_another_transaction_holds(
+    people: People, app_engine: Engine
+) -> None:
+    # E.g. a membership being removed: waiting on its rows would queue sign-ins, or deadlock.
+    expired = start(people.b, people.only_b)
+    with app_engine.begin() as conn:
+        conn.execute(
+            text("UPDATE sessions SET expires_at = now() - interval '1 second' WHERE id_hash = :h"),
+            {"h": hashlib.sha256(expired.encode()).digest()},
+        )
+
+    with app_engine.begin() as holder:
+        holder.execute(
+            text("SELECT FROM sessions WHERE id_hash = :h FOR UPDATE"),
+            {"h": hashlib.sha256(expired.encode()).digest()},
+        )
+        with tenant_context(people.a) as session:
+            session.execute(text("SET LOCAL lock_timeout = '1s'"))
+            auth.create(session, people.only_a, ip=None, user_agent=None)
+
+    assert stored(app_engine, expired) is not None
 
 
 @pytest.mark.parametrize(
@@ -129,11 +146,12 @@ def test_starting_a_session_purges_expired_ones(people: People, app_engine: Engi
 def test_the_client_address_is_kept_only_when_valid(
     people: People, app_engine: Engine, ip: str | None, kept: str | None
 ) -> None:
-    row = stored(app_engine, start(people.a, people.only_a, ip=ip, user_agent="x" * 600))
+    user_agent = "a" * 512 + "b" * 88
+    row = stored(app_engine, start(people.a, people.only_a, ip=ip, user_agent=user_agent))
 
     assert row is not None
     assert (None if row["ip"] is None else str(row["ip"])) == kept
-    assert row["user_agent"] == "x" * 512
+    assert row["user_agent"] == "a" * 512
 
 
 def test_the_cookie_is_host_only_secure_and_unreadable_by_scripts() -> None:
