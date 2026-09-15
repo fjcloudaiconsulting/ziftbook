@@ -558,6 +558,107 @@
           }
         }
       }
+    },
+    "/api/settings": {
+      "get": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Read Settings",
+        "operationId": "settings-read_settings",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessSettings-Output"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Update Settings",
+        "description": "Save the keys sent; keys left out keep their value.",
+        "operationId": "settings-update_settings",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BusinessSettings-Input"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessSettings-Output"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Content",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -635,6 +736,44 @@
           "user_agent"
         ],
         "title": "AuditEventOut"
+      },
+      "BusinessSettings-Input": {
+        "properties": {
+          "timezone": {
+            "type": "string",
+            "title": "Timezone",
+            "default": "Europe/Amsterdam"
+          },
+          "auto_confirm": {
+            "type": "boolean",
+            "title": "Auto Confirm",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "BusinessSettings"
+      },
+      "BusinessSettings-Output": {
+        "properties": {
+          "timezone": {
+            "type": "string",
+            "title": "Timezone",
+            "default": "Europe/Amsterdam"
+          },
+          "auto_confirm": {
+            "type": "boolean",
+            "title": "Auto Confirm",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "timezone",
+          "auto_confirm"
+        ],
+        "title": "BusinessSettings"
       },
       "CompleteReset": {
         "properties": {
