@@ -5,6 +5,8 @@ import { notFound } from "next/navigation";
 
 import { routing } from "@/i18n/routing";
 
+import { Header } from "./_ui/header";
+
 import "../tokens.css";
 
 const display = localFont({
@@ -28,7 +30,7 @@ export function generateStaticParams() {
 
 export async function generateMetadata() {
   const t = await getTranslations("Metadata");
-  return { title: t("title"), description: t("description") };
+  return { title: { default: t("title"), template: `%s · ${t("title")}` }, description: t("description") };
 }
 
 export default async function LocaleLayout({ children, params }: LayoutProps<"/[locale]">) {
@@ -38,7 +40,10 @@ export default async function LocaleLayout({ children, params }: LayoutProps<"/[
   return (
     <html lang={locale} className={`${display.variable} ${body.variable}`}>
       <body>
-        <NextIntlClientProvider>{children}</NextIntlClientProvider>
+        <NextIntlClientProvider>
+          <Header />
+          {children}
+        </NextIntlClientProvider>
       </body>
     </html>
   );

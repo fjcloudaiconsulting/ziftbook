@@ -3,10 +3,102 @@
     "title": "ziftbook",
     "description": "Appointments, booked in three taps."
   },
-  "HomePage": {
-    "tagline": "Appointments, booked in three taps.",
-    "apiChecking": "Checking the API…",
-    "apiVersion": "API version {version}",
-    "apiUnavailable": "The API is not reachable right now."
+  "Header": {
+    "language": "Language",
+    "languageName": "English"
+  },
+  "Form": {
+    "email": "Email",
+    "password": "Password",
+    "newPassword": "New password",
+    "show": "Show",
+    "hide": "Hide",
+    "sending": "Sending…",
+    "rules": "Password rules",
+    "ruleLength": "At least 12 characters",
+    "ruleUnique": "One you don't use anywhere else",
+    "password_too_short": "Use at least 12 characters.",
+    "password_too_long": "Use 256 characters or fewer.",
+    "password_too_common": "This password is too easy to guess. Try a few unrelated words together.",
+    "invalidEmail": "Enter an email address, like name@yourbusiness.com.",
+    "invalidRequest": "Some details can't be used. Check them and try again.",
+    "busy": "Lots of people are signing in right now. Try again in a moment.",
+    "unreachable": "We couldn't reach ziftbook. Check your connection and try again.",
+    "noScript": "This page needs JavaScript to keep your link private. Turn it on in your browser, then open the link from the email again."
+  },
+  "Inbox": {
+    "title": "Check your inbox",
+    "signUpLede": "We sent a link to <chip>{email}</chip>. Open it on any device within 24 hours to set up your business.",
+    "resetLede": "If an account uses <chip>{email}</chip>, a link is on its way. It works for 15 minutes.",
+    "hint": "Nothing after a few minutes? Look in your spam folder, or send it again.",
+    "resendIn": "Send again in {time}",
+    "resend": "Send the link again",
+    "resendReady": "You can send the link again.",
+    "differentEmail": "Use a different email"
+  },
+  "SignUp": {
+    "title": "Create your business",
+    "heading": "Create your ziftbook",
+    "lede": "Start with your email. We send a link to confirm it's yours.",
+    "submit": "Send confirmation link",
+    "tooMany": "You've asked for several links in a short time. Wait an hour and try again.",
+    "haveAccount": "Already have an account?",
+    "signIn": "Sign in"
+  },
+  "CompleteSignUp": {
+    "title": "Set up your business",
+    "lede": "Your email is confirmed. Two last details and you're in.",
+    "businessName": "Business name",
+    "businessHint": "Clients see this when they book. You can change it later.",
+    "submit": "Create business",
+    "creating": "Creating…",
+    "expiredTitle": "This link has expired",
+    "expiredLede": "Confirmation links work once, for 24 hours. Enter your email and we'll send a fresh one.",
+    "newLink": "Send a new link",
+    "existsTitle": "You already have an account",
+    "existsLede": "This email is already registered with ziftbook, so nothing was created or changed. Sign in to reach your business.",
+    "signIn": "Sign in",
+    "forgot": "Forgot your password?"
+  },
+  "SignIn": {
+    "title": "Sign in",
+    "forgot": "Forgot your password?",
+    "submit": "Sign in",
+    "signingIn": "Signing in…",
+    "invalid": "That email and password don't match. Check both, or reset your password.",
+    "tooMany": "Too many attempts for now. Wait 15 minutes and try again, or reset your password.",
+    "noBusiness": "This account isn't part of a business any more. Ask the owner to add you again.",
+    "newHere": "New to ziftbook?",
+    "createBusiness": "Create your business"
+  },
+  "ForgotPassword": {
+    "title": "Reset your password",
+    "lede": "Enter the email you sign in with. We'll send a link to choose a new password.",
+    "submit": "Send reset link",
+    "tooMany": "You've asked for several reset links in a short time. Wait an hour and try again.",
+    "back": "Back to sign in"
+  },
+  "ResetPassword": {
+    "title": "Choose a new password",
+    "lede": "Once it's saved, you're signed out on every device, so anyone else who had access is out too.",
+    "submit": "Save new password",
+    "saving": "Saving…",
+    "doneTitle": "Password changed",
+    "doneLede": "You've been signed out everywhere, this device included. Sign in with your new password.",
+    "signIn": "Sign in",
+    "expiredTitle": "This reset link has expired",
+    "expiredLede": "Reset links work once, for 15 minutes. Your password hasn't changed. Ask for a new link to try again.",
+    "newLink": "Send a new link",
+    "back": "Back to sign in"
+  },
+  "Home": {
+    "signedInAs": "Signed in as <chip>{email}</chip>",
+    "owner": "Owner",
+    "worker": "Staff",
+    "emptyTitle": "Your bookings will show here",
+    "emptyBody": "Services, opening hours and today's appointments come next. For now your account and business are ready.",
+    "signOut": "Sign out",
+    "everywhereHint": "Lost a phone, or signed in on a shared computer?",
+    "signOutEverywhere": "Sign out on every device"
   }
 }

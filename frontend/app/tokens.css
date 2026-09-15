@@ -10,6 +10,14 @@
   --on-primary: oklch(1 0 0);
   --on-primary-soft: oklch(0.9 0.035 28);
   --accent: oklch(0.87 0.11 80);
+  /* Forms (ZIF-25 account screens) */
+  --field-line: oklch(0.66 0.02 28);
+  --error: oklch(0.47 0.17 20);
+  --error-soft: oklch(0.97 0.018 20);
+  --error-line: oklch(0.84 0.06 20);
+  --ok: oklch(0.47 0.11 152);
+  --note-soft: oklch(0.97 0.012 80);
+  --note-line: oklch(0.88 0.05 80);
 
   --gutter: clamp(1.25rem, 0.6rem + 3vw, 3.5rem);
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);

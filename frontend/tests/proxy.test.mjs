@@ -102,3 +102,40 @@ describe("locale routing", () => {
     }
   });
 });
+
+describe("account pages", () => {
+  let api, web;
+  const port = 3204;
+  const origin = `http://127.0.0.1:${port}`;
+  before(async () => {
+    api = await stubApi("D");
+    web = await startWeb(`http://127.0.0.1:${api.address().port}`, port);
+  });
+  after(async () => {
+    await stop(web);
+    api.close();
+  });
+
+  const pages = ["/en", "/en/sign-in", "/en/sign-up", "/en/sign-up/complete", "/en/forgot-password", "/nl/reset-password"];
+
+  test("no page sends a Referer or can be framed", async () => {
+    for (const path of pages) {
+      const response = await fetch(`${origin}${path}`, { redirect: "manual" });
+      assert.equal(response.status, 200, path);
+      assert.equal(response.headers.get("referrer-policy"), "no-referrer", `${path} Referrer-Policy`);
+      assert.match(response.headers.get("content-security-policy") ?? "", /frame-ancestors 'none'/, `${path} CSP`);
+    }
+  });
+
+  test("a link page without JavaScript explains itself and has no form to submit", async () => {
+    for (const [path, words] of [
+      ["/en/sign-up/complete", "This page needs JavaScript to keep your link private."],
+      ["/nl/reset-password", "Deze pagina heeft JavaScript nodig om je link privé te houden."],
+    ]) {
+      const html = await (await fetch(`${origin}${path}`)).text();
+      assert.match(html, /<noscript>/, `${path} noscript`);
+      assert.ok(html.includes(words), `${path} message`);
+      assert.doesNotMatch(html, /<form|type="password"/, `${path} renders a form before it has read its link`);
+    }
+  });
+});
