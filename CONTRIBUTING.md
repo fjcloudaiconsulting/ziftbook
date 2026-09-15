@@ -78,6 +78,16 @@ membership in the current tenant, may insert users, and can never change or dele
 - Create memberships only in trusted flows (sign-up, invites), never from a `user_id` the client sends: the foreign
   key to `users` is checked with row-level security bypassed.
 
+Passwords and sign-in tokens live in tables the app role can't read or write (`password_credentials`,
+`email_tokens`). The app reaches them only through `SECURITY DEFINER` functions owned by `ziftbook_migrate`:
+
+- Every such function declares `SET search_path = pg_catalog, public, pg_temp` (pg_temp last, or a caller's temporary
+  table can stand in for a real one) and is revoked from PUBLIC. `tests/test_password_auth_db.py` checks both.
+- None changes a password without a token.
+- The `sign_in` policy lets `ziftbook_migrate` read memberships across tenants only while `app.sign_in` is `on`. A
+  function that relies on it sets and restores `app.sign_in` itself; any other definer function that reads memberships
+  must clear it, because a caller can set it.
+
 ## Background jobs
 
 Deferred and scheduled work goes through the `jobs` table (`app/jobs.py`); there is no broker or scheduler.

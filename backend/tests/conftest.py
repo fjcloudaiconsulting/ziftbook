@@ -100,6 +100,10 @@ def people(app_engine: Engine, migrate_engine: Engine) -> Iterator[People]:
     # The app role can't delete users; the test cleans up as the migrate role.
     with migrate_engine.begin() as conn:
         conn.execute(
+            text("DELETE FROM password_credentials WHERE user_id IN (:x, :y, :z)"),
+            {"x": people.only_a, "y": people.only_b, "z": people.both},
+        )
+        conn.execute(
             text("DELETE FROM users WHERE id IN (:x, :y, :z)"),
             {"x": people.only_a, "y": people.only_b, "z": people.both},
         )
