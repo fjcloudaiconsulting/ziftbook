@@ -5,6 +5,9 @@ and the new session would outlive it. Called in the transaction that stores the 
 reset that already happened, and makes one that is under way wait until the session is there to be
 deleted.
 
+The app role can hold that lock for any user whose hash it has (account_by_email returns it), which
+delays their reset but changes and reveals nothing.
+
 Revision ID: 0009
 Revises: 0008
 """

@@ -307,6 +307,7 @@ def test_a_reset_during_sign_in_leaves_no_session_behind(
     response = new_client(app).post("/api/session", json={"email": email, "password": PASSWORD})
     if resetting.ident is not None:
         resetting.join(timeout=10)
+        assert not resetting.is_alive()
 
     # Either the old password is refused, or the reset waits and then ends the new session.
     assert response.status_code == (401 if when == "while the password is checked" else 200)

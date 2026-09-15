@@ -143,4 +143,6 @@ def complete_password_reset(details: CompleteReset, request: Request, response: 
             {"hash": digest, "password_hash": password_hash},
         ):
             raise ApiError(400, "invalid_token")
+    # Its own transaction: deleting this browser's session inside the reset's deadlocks with a
+    # sign-in that holds the password row and deletes the same session.
     auth.sign_out(request, response)
