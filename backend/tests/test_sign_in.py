@@ -246,9 +246,7 @@ def test_unusable_emails_are_refused_as_invalid(client: TestClient, email: str) 
 
 def test_every_answer_keeps_the_page_address_to_itself(client: TestClient) -> None:
     responses = [
-        client.post(
-            "/api/session", json={"email": "ana@studioana.nl", "password": "wrong-password-1"}
-        ),
+        sign_in(client, f"{uuid.uuid4()}@example.com"),
         client.post("/api/session", content="x", headers={"content-type": "text/plain"}),
         client.get("/api/probe/boom"),
     ]
