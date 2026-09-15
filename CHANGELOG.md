@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.8.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.7.0...v0.8.0) (2026-09-15)
+
+
+### Features
+
+* **backend:** reset a forgotten password by email link (ZIF-25) ([#60](https://github.com/fjcloudaiconsulting/ziftbook/issues/60)) ([ad31972](https://github.com/fjcloudaiconsulting/ziftbook/commit/ad319726053101c59eb67c2c20092741e7488b2e))
+* **backend:** sign in with email and password (ZIF-25) ([#58](https://github.com/fjcloudaiconsulting/ziftbook/issues/58)) ([46e9474](https://github.com/fjcloudaiconsulting/ziftbook/commit/46e9474a535d3a63ffcd52ab3bc800c34bf63d7b))
+* **backend:** sign up with an email link that sets up the business (ZIF-25) ([#59](https://github.com/fjcloudaiconsulting/ziftbook/issues/59)) ([57747fd](https://github.com/fjcloudaiconsulting/ziftbook/commit/57747fddb0b6b166fcba9eb4f2e4056877f02de8))
+* **frontend:** account screens (ZIF-25) ([#62](https://github.com/fjcloudaiconsulting/ziftbook/issues/62)) ([4a48c33](https://github.com/fjcloudaiconsulting/ziftbook/commit/4a48c333f5f439f544c3dad055bcc23020c0b24f))
+
 ## [0.7.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.6.0...v0.7.0) (2026-09-15)
 
 
