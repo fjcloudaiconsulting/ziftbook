@@ -591,6 +591,7 @@ def test_a_save_that_changes_the_week_is_recorded_once(
 def test_a_failed_recording_leaves_the_week_unchanged(
     people: People, app: FastAPI, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    seed(people.a, people.only_a, [(3, "08:00", "09:00")])
     owner = signed_in(app, people.a, people.both)
     only_a_member = member_id(people.a, people.only_a)
     failing(monkeypatch, auth, "record")
@@ -600,7 +601,7 @@ def test_a_failed_recording_leaves_the_week_unchanged(
     )
 
     assert (response.status_code, response.json()) == (500, {"code": "internal"})
-    assert stored(people.a, people.only_a) == []
+    assert stored(people.a, people.only_a) == [(3, "08:00", "09:00")]
 
 
 # Any member may read; no cookie is 401; a non-JSON write is 415 and changes nothing.
