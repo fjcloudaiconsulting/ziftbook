@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 import secrets
+import time
 import urllib.parse
 import urllib.request
 import uuid
@@ -87,6 +88,19 @@ def new_client(app: FastAPI, address: str | None = None) -> TestClient:
         client=(address or fresh_address(), 1),
         raise_server_exceptions=False,
     )
+
+
+def wait_until_blocked(engine: Engine, backends: int) -> None:
+    """Wait until that many sessions block on a lock: the interleaving the test needs."""
+    for _ in range(100):
+        with engine.connect() as conn:
+            waiting = conn.scalar(
+                text("SELECT count(DISTINCT pid) FROM pg_locks WHERE NOT granted")
+            )
+        if waiting >= backends:
+            return
+        time.sleep(0.05)
+    raise AssertionError(f"{backends} sessions never waited on a lock")
 
 
 @dataclass(frozen=True)
@@ -266,6 +280,21 @@ def add_membership(tenant_id: uuid.UUID, user_id: uuid.UUID, role: str = "worker
         session.execute(
             text("INSERT INTO memberships (tenant_id, user_id, role) VALUES (:t, :u, :r)"),
             {"t": tenant_id, "u": user_id, "r": role},
+        )
+
+
+def member_id(tenant_id: uuid.UUID, user_id: uuid.UUID) -> uuid.UUID:
+    with tenant_context(tenant_id) as session:
+        found: uuid.UUID = session.scalar(
+            text("SELECT id FROM memberships WHERE user_id = :u"), {"u": user_id}
+        )
+    return found
+
+
+def set_role(tenant_id: uuid.UUID, user_id: uuid.UUID, role: str) -> None:
+    with tenant_context(tenant_id) as session:
+        session.execute(
+            text("UPDATE memberships SET role = :r WHERE user_id = :u"), {"u": user_id, "r": role}
         )
 
 

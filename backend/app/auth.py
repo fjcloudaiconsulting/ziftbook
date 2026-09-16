@@ -75,6 +75,8 @@ Action = Literal[
     "business_created",
     "service_created",
     "service_changed",
+    "member_role_changed",
+    "member_removed",
 ]
 
 
@@ -196,6 +198,7 @@ router = APIRouter(prefix="/api", tags=["session"])
 class SessionOut(BaseModel):
     user_id: UUID
     tenant_id: UUID
+    member_id: UUID
     role: str
     email: str
     business_name: str
@@ -206,7 +209,8 @@ def describe(db: Session, user_id: UUID) -> SessionOut:
     """The signed-in person as the web app shows them; db is a tenant_context for their business."""
     row = db.execute(
         text("""
-        SELECT m.user_id, m.tenant_id, m.role, u.email, t.name AS business_name, t.currency
+        SELECT m.user_id, m.tenant_id, m.id AS member_id, m.role, u.email,
+               t.name AS business_name, t.currency
         FROM memberships m JOIN users u ON u.id = m.user_id JOIN tenants t ON t.id = m.tenant_id
         WHERE m.user_id = :user_id
         """),

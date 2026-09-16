@@ -69,6 +69,12 @@ every table that holds a tenant's data:
   revoke `DELETE` on the table from the app role in the migration that creates it.
 - A test fixture that deletes businesses must delete that tenant's other tenant-owned rows first, as the migrate
   role (the app role may lack `DELETE`); see `delete_services` in `tests/conftest.py`.
+- A business with members always keeps an owner (the `keep_an_owner` trigger on `memberships`). Endpoints never
+  lock `tenants`: the trigger locks it, so an endpoint that locked it first would take the locks in the opposite
+  order and deadlock with another request. A writer that removes or demotes owners first locks the caller's and
+  the target's memberships in one `ORDER BY id ... FOR UPDATE OF m` statement, as `app.members.target` does, so
+  two owners acting on each other serialize instead of both passing. Changes to memberships run in READ
+  COMMITTED: the trigger's re-check after its lock wait needs a fresh snapshot.
 
 `tests/test_tenant_schema.py` fails for a table with `tenant_id` that is not isolated (forced row-level security),
 and for a foreign key between tenant-owned tables that does not pair `tenant_id`. `jobs` is exempt on purpose: it
