@@ -32,7 +32,7 @@ def languages(column: str) -> str:
 def upgrade() -> None:
     op.execute(f"""
     CREATE TABLE services (
-      id uuid PRIMARY KEY DEFAULT uuidv7(),
+      id uuid CONSTRAINT pk_services PRIMARY KEY DEFAULT uuidv7(),
       tenant_id uuid NOT NULL
         CONSTRAINT fk_services_tenant_id_tenants REFERENCES tenants (id),
       name jsonb NOT NULL

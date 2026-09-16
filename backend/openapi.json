@@ -666,7 +666,7 @@
           "services"
         ],
         "summary": "List",
-        "description": "Every service of the business, archived ones included; the booking flow (ZIF-51) is what\nfilters those out for new bookings.",
+        "description": "Every service of the business, archived ones included; the booking flow (ZIF-51) is what\nfilters those out for new bookings.\n\nponytail: no pagination, since a business has tens of services. Add before= as in audit.py if\none ever has hundreds.",
         "operationId": "services-list",
         "responses": {
           "200": {
@@ -1308,7 +1308,7 @@
         "additionalProperties": false,
         "type": "object",
         "title": "ServiceChange",
-        "description": "Only the fields sent change. buffer_minutes may be null (back to the business's default); no\nother field may."
+        "description": "Only the fields sent change. buffer_minutes may be null (back to the business's default); no\nother field may. name and description are replaced whole, not merged per language: the web app\nalways sends every language it holds."
       },
       "ServiceIn": {
         "properties": {

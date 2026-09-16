@@ -25,7 +25,7 @@ from app.errors import ApiError, Error
 
 # Line and paragraph separators are Zl/Zp, not a C* category, so printable() alone lets them
 # through; a textarea's value never carries them.
-LINE_BREAKS = frozenset({" ", " "})
+LINE_BREAKS = frozenset({"\u2028", "\u2029"})
 
 
 def multiline(value: str) -> str:
@@ -79,7 +79,8 @@ class ServiceIn(BaseModel):
 
 class ServiceChange(BaseModel):
     """Only the fields sent change. buffer_minutes may be null (back to the business's default); no
-    other field may."""
+    other field may. name and description are replaced whole, not merged per language: the web app
+    always sends every language it holds."""
 
     model_config = STRICT
     name: Name | SkipJsonSchema[None] = None
@@ -114,7 +115,7 @@ jsonb_build_object('amount_minor', price_amount_minor, 'currency', price_currenc
 duration_minutes, buffer_minutes, archived_at IS NOT NULL AS archived
 """
 
-TEXT = frozenset({"name", "description"})  # recorded as "changed", never with their text
+LOGGED_AS_CHANGED = frozenset({"name", "description"})  # recorded as "changed", never their text
 
 router = APIRouter(prefix="/api", tags=["services"])
 
@@ -132,7 +133,11 @@ def found(current: SignedIn, service_id: UUID, lock: str = "") -> ServiceOut:
 @router.get("/services", name="list", responses={401: {"model": Error}})
 def list_services(current: CurrentSession, response: Response) -> list[ServiceOut]:
     """Every service of the business, archived ones included; the booking flow (ZIF-51) is what
-    filters those out for new bookings."""
+    filters those out for new bookings.
+
+    ponytail: no pagination, since a business has tens of services. Add before= as in audit.py if
+    one ever has hundreds.
+    """
     rows = current.db.execute(text(f"SELECT {FIELDS} FROM services ORDER BY id")).all()
     response.headers["Cache-Control"] = "no-store"
     return [ServiceOut.model_validate(row, from_attributes=True) for row in rows]
@@ -206,7 +211,7 @@ def update_service(
     sent = change.model_dump(exclude_unset=True)
     # The business's own text never goes in the log (it may name a person): only that it changed.
     changed: dict[str, object] = {
-        key: "changed" if key in TEXT else {"old": before[key], "new": value}
+        key: "changed" if key in LOGGED_AS_CHANGED else {"old": before[key], "new": value}
         for key, value in sent.items()
         if before[key] != value
     }
