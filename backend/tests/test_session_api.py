@@ -89,6 +89,7 @@ def test_a_signed_in_user_sees_their_session(people: People, client: TestClient)
         "role": "owner",
         "email": email_of(people.both),
         "business_name": "a",
+        "currency": "EUR",
     }
 
 

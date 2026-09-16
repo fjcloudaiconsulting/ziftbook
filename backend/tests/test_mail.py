@@ -13,7 +13,7 @@ from app.db import SessionLocal, tenant_context
 from app.jobs import enqueue, run_once
 from app.mail import LOCALES, TEMPLATES, render
 from app.worker import KINDS
-from tests.conftest import People
+from tests.conftest import People, save_setting
 
 MAILPIT = f"http://{os.environ['ZIF_SMTP_HOST']}:8025"
 
@@ -65,7 +65,8 @@ def test_every_template_exists_in_every_locale() -> None:
 
 @pytest.mark.parametrize(
     ("recipient", "subject"),
-    [("both", "Hallo van ziftbook"), ("only_a", "Hello from ziftbook")],  # nl; no language set
+    # nl; neither the person nor the business has a language
+    [("both", "Hallo van ziftbook"), ("only_a", "Hello from ziftbook")],
 )
 def test_an_email_goes_to_the_recipients_address_in_their_language(
     people: People, clean_outbox: None, recipient: str, subject: str
@@ -102,3 +103,15 @@ def test_no_email_goes_to_someone_outside_the_tenant(people: People, clean_outbo
             text("SELECT completed_at FROM jobs WHERE id = :id"), {"id": job_id}
         )
     assert completed is not None
+
+
+def test_a_recipient_with_no_language_gets_the_business_languages_mail(
+    people: People, clean_outbox: None
+) -> None:
+    save_setting(people.a, "language", "pt")
+
+    send_hello(people.a, people.only_a)  # only_a has no language of their own
+    send_hello(people.a, people.both)  # both chose nl themselves
+
+    assert subjects_sent_to(people.only_a) == ["Olá do ziftbook"]
+    assert subjects_sent_to(people.both) == ["Hallo van ziftbook"]

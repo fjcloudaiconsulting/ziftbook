@@ -68,6 +68,15 @@ every table that holds a tenant's data:
 and for a foreign key between tenant-owned tables that does not pair `tenant_id`. `jobs` is exempt on purpose: it
 is global and claimed across tenants.
 
+`tenants` is the root table: it isn't isolated with `enable_tenant_isolation` and has no row-level security of its
+own.
+
+- The app role may only `INSERT` and `UPDATE (name)`; a migration's `REVOKE UPDATE, DELETE` must run before its
+  column `GRANT`, or the revoke wipes the grant too.
+- With no RLS, any `UPDATE` on `tenants` must filter `WHERE id = current_setting('app.tenant_id')::uuid` itself.
+- `country` and `currency` change only through a `SECURITY DEFINER` function; a business is deleted only as
+  `ziftbook_migrate`.
+
 `users` is global, with row-level security that is enabled but not forced: the app role sees a user only through a
 membership in the current tenant, may insert users, and can never change or delete one.
 

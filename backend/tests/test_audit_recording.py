@@ -224,33 +224,37 @@ def test_signing_out_everywhere_is_recorded(
     ] == [("signed_out_everywhere", people.a, people.both)]
 
 
-def complete_sign_up(client: TestClient, token: str) -> Response:
-    return client.post(
-        "/api/sign-up/complete",
-        json={"token": token, "password": PASSWORD, "business_name": "Studio Audit"},
-    )
+def complete_sign_up(client: TestClient, token: str, country: str | None = None) -> Response:
+    body = {"token": token, "password": PASSWORD, "business_name": "Studio Audit"}
+    if country is not None:
+        body["country"] = country
+    return client.post("/api/sign-up/complete", json=body)
 
 
+@pytest.mark.parametrize("country", [None, "BR"])
 def test_a_new_business_is_recorded_with_its_first_sign_in(
-    app: FastAPI, app_engine: Engine, migrate_engine: Engine, businesses: list[uuid.UUID]
+    app: FastAPI,
+    app_engine: Engine,
+    migrate_engine: Engine,
+    businesses: list[uuid.UUID],
+    country: str | None,
 ) -> None:
     token = issue_link(app_engine, "sign_up", fresh_email())
     assert token is not None
     client, address = client_at(app)
 
-    response = complete_sign_up(client, token)
+    response = complete_sign_up(client, token, country)
 
     assert response.status_code == 201
     session = response.json()
     tenant_id, user_id = uuid.UUID(session["tenant_id"]), uuid.UUID(session["user_id"])
     businesses.append(tenant_id)
-    assert [
-        (e["action"], e["tenant_id"], e["actor_user_id"])
-        for e in events(migrate_engine, ip=address)
-    ] == [
+    recorded = events(migrate_engine, ip=address)
+    assert [(e["action"], e["tenant_id"], e["actor_user_id"]) for e in recorded] == [
         ("business_created", tenant_id, user_id),
         ("sign_in_succeeded", tenant_id, user_id),
     ]
+    assert [e["details"] for e in recorded] == [None, None]
 
 
 def test_a_business_whose_event_fails_is_not_created(

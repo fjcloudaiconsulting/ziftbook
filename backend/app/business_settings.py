@@ -6,7 +6,7 @@ has the rules for removing, renaming and tightening one.
 
 import importlib.resources
 import json
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Request, Response
 from pydantic import AfterValidator, BaseModel, ConfigDict
@@ -16,6 +16,8 @@ from sqlalchemy.orm import Session
 from app import auth
 from app.auth import CurrentOwner, CurrentSession
 from app.errors import Error
+
+Locale = Literal["en", "nl", "pt"]
 
 # The tzdata package's own list: zoneinfo.available_timezones() also adds the system's files, so the
 # accepted names would differ between machines.
@@ -40,6 +42,8 @@ class BusinessSettings(BaseModel):
     # every name tzdata accepts (US/Pacific, Asia/Calcutta).
     timezone: Annotated[str, AfterValidator(known_zone)] = "Europe/Amsterdam"
     auto_confirm: bool = False
+    # The language of emails to someone who chose none. Sign-up sets it from the country.
+    language: Locale = "en"
 
 
 def read(db: Session) -> BusinessSettings:
@@ -52,6 +56,19 @@ def read(db: Session) -> BusinessSettings:
     return BusinessSettings.model_validate(
         {key: value for key, value in saved if key in BusinessSettings.model_fields}
     )
+
+
+def save(db: Session, key: str, value: object) -> object:
+    """Save one key for the transaction's business. Returns the value it replaced, None if none."""
+    return db.execute(
+        text("""
+        INSERT INTO settings (tenant_id, key, value)
+        VALUES (current_setting('app.tenant_id')::uuid, :key, CAST(:value AS jsonb))
+        ON CONFLICT (tenant_id, key) DO UPDATE SET value = excluded.value
+        RETURNING old.value AS old
+        """),
+        {"key": key, "value": json.dumps(value)},
+    ).scalar()
 
 
 router = APIRouter(prefix="/api", tags=["settings"])
@@ -76,15 +93,7 @@ def update_settings(
     defaults = BusinessSettings()
     # Field order, not the set of sent keys: two saves must lock rows in the same order.
     for key, value in changes.model_dump(exclude_unset=True).items():
-        replaced = current.db.execute(
-            text("""
-            INSERT INTO settings (tenant_id, key, value)
-            VALUES (current_setting('app.tenant_id')::uuid, :key, CAST(:value AS jsonb))
-            ON CONFLICT (tenant_id, key) DO UPDATE SET value = excluded.value
-            RETURNING old.value AS old
-            """),
-            {"key": key, "value": json.dumps(value)},
-        ).scalar()
+        replaced = save(current.db, key, value)
         old = getattr(defaults, key) if replaced is None else replaced
         if old != value:
             auth.record(

@@ -62,6 +62,7 @@ def test_signing_in_starts_a_session_in_the_business(people: People, client: Tes
         "role": "worker",
         "email": email_of(people.only_a),
         "business_name": "a",
+        "currency": "EUR",
     }
     client.cookies.set(auth.COOKIE, SimpleCookie(response.headers["set-cookie"])[auth.COOKIE].value)
     assert client.get("/api/session").json()["business_name"] == "a"

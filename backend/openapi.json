@@ -761,6 +761,16 @@
             "type": "boolean",
             "title": "Auto Confirm",
             "default": false
+          },
+          "language": {
+            "type": "string",
+            "enum": [
+              "en",
+              "nl",
+              "pt"
+            ],
+            "title": "Language",
+            "default": "en"
           }
         },
         "additionalProperties": false,
@@ -778,13 +788,24 @@
             "type": "boolean",
             "title": "Auto Confirm",
             "default": false
+          },
+          "language": {
+            "type": "string",
+            "enum": [
+              "en",
+              "nl",
+              "pt"
+            ],
+            "title": "Language",
+            "default": "en"
           }
         },
         "additionalProperties": false,
         "type": "object",
         "required": [
           "timezone",
-          "auto_confirm"
+          "auto_confirm",
+          "language"
         ],
         "title": "BusinessSettings"
       },
@@ -825,6 +846,24 @@
             "maxLength": 100,
             "minLength": 1,
             "title": "Business Name"
+          },
+          "country": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "NL",
+                  "PT",
+                  "BR",
+                  "GB",
+                  "US"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Country"
           }
         },
         "type": "object",
@@ -933,6 +972,10 @@
           "business_name": {
             "type": "string",
             "title": "Business Name"
+          },
+          "currency": {
+            "type": "string",
+            "title": "Currency"
           }
         },
         "type": "object",
@@ -941,7 +984,8 @@
           "tenant_id",
           "role",
           "email",
-          "business_name"
+          "business_name",
+          "currency"
         ],
         "title": "SessionOut"
       }

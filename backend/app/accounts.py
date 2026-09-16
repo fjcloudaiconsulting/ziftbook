@@ -8,11 +8,12 @@ from fastapi import APIRouter, Request, Response
 from pydantic import AfterValidator, BaseModel, Field, StringConstraints
 from sqlalchemy import text
 
-from app import auth, limits, passwords
+from app import auth, business_settings, limits, passwords
+from app.business_settings import BusinessSettings, Locale
+from app.countries import COUNTRIES, Country
 from app.db import SessionLocal, join_tenant, tenant_context
 from app.errors import ApiError, Error
 from app.jobs import enqueue
-from app.mail import Locale
 
 LINK_WINDOW = timedelta(hours=1)
 
@@ -65,6 +66,8 @@ class CompleteSignUp(BaseModel):
     token: str = Field(min_length=1, max_length=100)  # from the link's fragment
     password: str
     business_name: BusinessName
+    # None until the sign-up page sends one (a later PR makes it required): the Netherlands.
+    country: Country | None = None
 
 
 def live_token(token: str, purpose: str) -> bytes:
@@ -91,17 +94,26 @@ def complete_sign_up(
     password = passwords.check_new_password(details.password)
     digest = live_token(details.token, "sign_up")
     password_hash = passwords.hash_password(password)
+    country = details.country or "NL"
+    defaults = COUNTRIES[country]
     with SessionLocal.begin() as session:
         created = session.execute(
-            text("SELECT * FROM complete_sign_up(:hash, :password_hash, :business_name)"),
+            text("""SELECT * FROM complete_sign_up(
+                    :hash, :password_hash, :business_name, :country, :currency)"""),
             {
                 "hash": digest,
                 "password_hash": password_hash,
                 "business_name": details.business_name,
+                "country": country,
+                "currency": defaults.currency,
             },
         ).one()
         if created.outcome == "created":
             join_tenant(session, created.tenant_id)
+            # Validated by the registry; only what the country decides, others keep their default.
+            starting = BusinessSettings(timezone=defaults.timezone, language=defaults.language)
+            for key, value in starting.model_dump(exclude_unset=True).items():
+                business_settings.save(session, key, value)
             auth.record(session, request, "business_created", actor_user_id=created.user_id)
     # Outside the transaction: raising inside would roll back using up the link.
     if created.outcome == "invalid_token":  # used up since the liveness check
