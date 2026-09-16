@@ -8,16 +8,17 @@ import ssl
 from email.message import EmailMessage
 from pathlib import Path
 from string import Template
-from typing import Literal, get_args
+from typing import get_args
 
 from sqlalchemy import text
 
+from app import business_settings
+from app.business_settings import Locale
 from app.config import MailSettings
 from app.db import SessionLocal, tenant_context
 from app.jobs import Job
 
 TEMPLATES = Path(__file__).parent / "mail_templates"
-Locale = Literal["en", "nl", "pt"]
 LOCALES = get_args(Locale)
 
 
@@ -109,8 +110,9 @@ def send(job: Job) -> None:
             # Not (or no longer) a member of this tenant. If a crash left a 'pending' row after the
             # SMTP handoff, it stays pending: only the audit trail is off, nobody is emailed.
             return
-        # ponytail: English when the user has no language; the tenant default comes with settings.
-        subject, body = render(payload["template"], recipient.locale or "en")
+        # The person's own language, else their business's.
+        locale = recipient.locale or business_settings.read(session).language
+        subject, body = render(payload["template"], locale)
         status = session.execute(
             text("""
             INSERT INTO email_outbox (tenant_id, job_id, recipient_id, template, subject)

@@ -222,8 +222,16 @@ def test_completing_sign_up_creates_the_business_once(
         ).one()
     with tenant_context(account.tenant_id) as session:
         membership = session.execute(text("SELECT user_id, role FROM memberships")).one()
+        settings_rows = session.scalar(text("SELECT count(*) FROM settings"))
     assert tuple(user) == (email, "pt", HASH, f"Studio {email}")
     assert tuple(membership) == (account.user_id, "owner")
+    with migrate_engine.connect() as conn:
+        business = conn.execute(
+            text("SELECT country, currency FROM tenants WHERE id = :t"), {"t": account.tenant_id}
+        ).one()
+    # The 3-arg overload (kept for the rollout) never sets country, currency or settings.
+    assert (business.country, business.currency) == ("NL", "EUR")
+    assert settings_rows == 0
 
 
 def test_an_expired_sign_up_link_creates_nothing(

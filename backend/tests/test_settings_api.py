@@ -5,13 +5,13 @@ from typing import Any
 
 import pytest
 from fastapi import FastAPI
-from sqlalchemy import text
+from sqlalchemy import Engine, text
 
 from app.db import tenant_context
 from app.main import create_app
-from tests.conftest import People, put_settings, save_setting, saved_settings, signed_in
+from tests.conftest import People, events, put_settings, save_setting, saved_settings, signed_in
 
-DEFAULTS = {"timezone": "Europe/Amsterdam", "auto_confirm": False}
+DEFAULTS = {"timezone": "Europe/Amsterdam", "auto_confirm": False, "language": "en"}
 
 
 @pytest.fixture
@@ -48,6 +48,9 @@ def test_only_an_owner_changes_settings(people: People, app: FastAPI, body: Any)
         {"auto_confirm": "true"},
         {"auto_confirm": 1},
         {"auto_confirm": None},
+        {"language": "de"},
+        {"language": "PT"},
+        {"language": None},
         {"nope": 1},
         [],
     ],
@@ -61,6 +64,9 @@ def test_only_an_owner_changes_settings(people: People, app: FastAPI, body: Any)
         "string true",
         "number one",
         "null auto_confirm",
+        "unknown language",
+        "uppercase language",
+        "null language",
         "unknown key",
         "list body",
     ],
@@ -78,7 +84,7 @@ def test_a_change_leaves_the_other_settings_as_they_were(people: People, app: Fa
     first = put_settings(owner, {"auto_confirm": True})
     second = put_settings(owner, {"timezone": "America/Sao_Paulo"})
 
-    expected = {"timezone": "America/Sao_Paulo", "auto_confirm": True}
+    expected = {**DEFAULTS, "timezone": "America/Sao_Paulo", "auto_confirm": True}
     assert (first.status_code, first.json()) == (200, {**DEFAULTS, "auto_confirm": True})
     assert (second.status_code, second.json()) == (200, expected)
     assert owner.get("/api/settings").json() == expected
@@ -100,7 +106,8 @@ def test_a_saved_setting_can_be_changed_and_set_back_to_its_default(
 
     assert response.json() == DEFAULTS
     # Saving the default keeps it saved: a later change of default doesn't reach this business.
-    assert saved_settings(people.a) == DEFAULTS
+    # language was never sent here, so it was never saved.
+    assert saved_settings(people.a) == {"timezone": "Europe/Amsterdam", "auto_confirm": False}
 
 
 def test_each_business_has_its_own_settings(people: People, app: FastAPI) -> None:
@@ -156,5 +163,25 @@ def test_an_old_timezone_name_is_kept_as_sent(people: People, app: FastAPI) -> N
 def test_the_contract_requires_every_setting_back_and_none_sent() -> None:
     schemas = create_app().openapi()["components"]["schemas"]
 
-    assert sorted(schemas["BusinessSettings-Output"]["required"]) == ["auto_confirm", "timezone"]
+    assert sorted(schemas["BusinessSettings-Output"]["required"]) == [
+        "auto_confirm",
+        "language",
+        "timezone",
+    ]
     assert "required" not in schemas["BusinessSettings-Input"]
+
+
+def test_changing_the_language_is_recorded(
+    people: People, app: FastAPI, migrate_engine: Engine
+) -> None:
+    owner = signed_in(app, people.a, people.both)
+
+    response = put_settings(owner, {"language": "pt"})
+
+    assert (response.status_code, response.json()["language"]) == (200, "pt")
+    changed = [
+        e["details"]
+        for e in events(migrate_engine, tenant_id=people.a)
+        if e["action"] == "setting_changed"
+    ]
+    assert changed == [{"old": "en", "new": "pt"}]

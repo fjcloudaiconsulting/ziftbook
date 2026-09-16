@@ -3,7 +3,7 @@ import secrets
 import uuid
 from collections.abc import Iterator
 from http.cookies import SimpleCookie
-from typing import Any
+from typing import Any, get_args
 
 import pytest
 from fastapi import FastAPI
@@ -11,7 +11,8 @@ from fastapi.testclient import TestClient
 from httpx2 import Response
 from sqlalchemy import Engine, text
 
-from app import auth
+from app import auth, business_settings
+from app.countries import COUNTRIES, Country
 from app.db import tenant_context
 from app.main import create_app
 from tests.conftest import (
@@ -19,14 +20,19 @@ from tests.conftest import (
     PASSWORD,
     People,
     email_of,
+    failing,
     fresh_email,
     issue_link,
     jobs_for,
     live,
     mailed,
     new_client,
+    saved_settings,
+    signed_in,
     token_in,
 )
+
+MISSING = object()
 
 
 @pytest.fixture
@@ -46,6 +52,7 @@ def businesses(migrate_engine: Engine, bound: None) -> Iterator[list[dict[str, A
     yield created
     for business in created:
         with tenant_context(business["tenant_id"]) as session:
+            session.execute(text("DELETE FROM settings"))  # they reference the business
             session.execute(text("DELETE FROM memberships"))
     with migrate_engine.begin() as conn:
         ids = {"u": [b["user_id"] for b in created], "t": [b["tenant_id"] for b in created]}
@@ -55,12 +62,20 @@ def businesses(migrate_engine: Engine, bound: None) -> Iterator[list[dict[str, A
 
 
 def complete(
-    client: TestClient, token: str, password: str = PASSWORD, business: str = "Studio Ana"
+    client: TestClient,
+    token: str,
+    password: str = PASSWORD,
+    business: str = "Studio Ana",
+    country: str | None | object = MISSING,
 ) -> Response:
+    body: dict[str, Any] = {"token": token, "password": password, "business_name": business}
+    if country is not MISSING:
+        body["country"] = country
     # Encoded here: json.dumps escapes a lone surrogate the way a browser can send it.
-    body = json.dumps({"token": token, "password": password, "business_name": business})
     return client.post(
-        "/api/sign-up/complete", content=body, headers={"content-type": "application/json"}
+        "/api/sign-up/complete",
+        content=json.dumps(body),
+        headers={"content-type": "application/json"},
     )
 
 
@@ -284,3 +299,106 @@ def test_a_malformed_sign_up_gets_a_code(client: TestClient, body: dict[str, str
     response = client.post("/api/sign-up", json=body)
 
     assert (response.status_code, response.json()) == (422, {"code": "invalid_request"})
+
+
+def test_every_country_literal_has_defaults() -> None:
+    # The registry backs every value of the API's enum, and nothing else.
+    assert COUNTRIES.keys() == set(get_args(Country))
+
+
+@pytest.mark.parametrize("country", [MISSING, None], ids=["absent", "null"])
+def test_completing_sign_up_with_no_country_creates_a_dutch_business(
+    app: FastAPI,
+    app_engine: Engine,
+    migrate_engine: Engine,
+    businesses: list[dict[str, Any]],
+    country: str | None | object,
+) -> None:
+    token = issue_link(app_engine, "sign_up", fresh_email())
+    assert token is not None
+
+    session = created(complete(new_client(app), token, country=country), businesses)
+
+    with migrate_engine.connect() as conn:
+        business = conn.execute(
+            text("SELECT country, currency FROM tenants WHERE id = :t"),
+            {"t": session["tenant_id"]},
+        ).one()
+    assert (business.country, business.currency) == ("NL", "EUR")
+    assert saved_settings(uuid.UUID(session["tenant_id"])) == {
+        "timezone": "Europe/Amsterdam",
+        "language": "nl",
+    }
+    owner = signed_in(app, uuid.UUID(session["tenant_id"]), uuid.UUID(session["user_id"]))
+    assert owner.get("/api/settings").json()["language"] == "nl"
+
+
+@pytest.mark.parametrize(
+    ("country", "currency", "timezone", "language"),
+    [
+        ("BR", "BRL", "America/Sao_Paulo", "pt"),
+        ("PT", "EUR", "Europe/Lisbon", "pt"),
+        ("GB", "GBP", "Europe/London", "en"),
+        ("US", "USD", "America/New_York", "en"),
+    ],
+)
+def test_completing_sign_up_uses_the_countrys_defaults(
+    app: FastAPI,
+    app_engine: Engine,
+    migrate_engine: Engine,
+    businesses: list[dict[str, Any]],
+    country: str,
+    currency: str,
+    timezone: str,
+    language: str,
+) -> None:
+    token = issue_link(app_engine, "sign_up", fresh_email())
+    assert token is not None
+
+    session = created(complete(new_client(app), token, country=country), businesses)
+
+    with migrate_engine.connect() as conn:
+        business = conn.execute(
+            text("SELECT country, currency FROM tenants WHERE id = :t"),
+            {"t": session["tenant_id"]},
+        ).one()
+    assert (business.country, business.currency) == (country, currency)
+    # Written explicitly, even where it equals the default (GB, US): a later default change must
+    # not silently reach a business that already chose it.
+    assert saved_settings(uuid.UUID(session["tenant_id"])) == {
+        "timezone": timezone,
+        "language": language,
+    }
+
+
+@pytest.mark.parametrize("bad", ["br", "DE", "", "NLD", 5, ["NL"]])
+def test_an_invalid_country_is_refused_without_hashing_and_the_link_still_works(
+    app: FastAPI, app_engine: Engine, no_hashing: list[str], bad: Any
+) -> None:
+    token = issue_link(app_engine, "sign_up", fresh_email())
+    assert token is not None
+
+    response = complete(new_client(app), token, country=bad)
+
+    assert (response.status_code, response.json(), no_hashing) == (
+        422,
+        {"code": "invalid_request"},
+        [],
+    )
+    assert live(app_engine, token, "sign_up")
+
+
+def test_a_failure_saving_starting_settings_leaves_no_business(
+    app: FastAPI, app_engine: Engine, migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    email = fresh_email()
+    token = issue_link(app_engine, "sign_up", email)
+    assert token is not None
+    failing(monkeypatch, business_settings, "save")
+
+    response = complete(new_client(app), token)
+
+    assert response.status_code == 500
+    with migrate_engine.connect() as conn:
+        assert conn.scalar(text("SELECT count(*) FROM users WHERE email = :e"), {"e": email}) == 0
+    assert live(app_engine, token, "sign_up")
