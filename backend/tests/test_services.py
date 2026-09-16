@@ -45,7 +45,7 @@ def worker(app: FastAPI, people: People) -> TestClient:
     return signed_in(app, people.a, people.only_a)
 
 
-# 1. an owner creates a service; any member reads it
+# an owner creates a service; any member reads it
 
 
 def test_an_owner_creates_a_service_and_any_member_reads_it(
@@ -68,12 +68,22 @@ def test_an_owner_creates_a_service_and_any_member_reads_it(
 
     listed = worker.get("/api/services")
     assert (listed.status_code, listed.json()) == (200, [{"id": service_id, **body}])
+    assert listed.headers["cache-control"] == "no-store"
 
     read = worker.get(f"/api/services/{service_id}")
     assert (read.status_code, read.json()) == (200, {"id": service_id, **body})
+    assert read.headers["cache-control"] == "no-store"
 
 
-# 2. a worker never writes a service
+def test_an_explicit_null_buffer_is_the_same_as_leaving_it_out(
+    people: People, owner: TestClient
+) -> None:
+    response = service(owner, buffer_minutes=None)
+
+    assert (response.status_code, response.json()["buffer_minutes"]) == (201, None)
+
+
+# a worker never writes a service
 
 
 @pytest.mark.parametrize(
@@ -106,7 +116,7 @@ def test_a_worker_never_writes_a_service(
     assert [e["action"] for e in events(migrate_engine, tenant_id=people.a)] == ["service_created"]
 
 
-# 3. every route needs a session and JSON; there is no DELETE
+# every route needs a session and JSON; there is no DELETE
 
 
 def test_the_routes_require_a_session_and_json(
@@ -142,7 +152,7 @@ def test_the_routes_require_a_session_and_json(
     assert stored(people.a) == before
 
 
-# 4. tenant isolation
+# tenant isolation
 
 
 @pytest.mark.parametrize("target", ["b_service", "random"])
@@ -171,7 +181,7 @@ def test_a_business_cannot_reach_another_businesss_service(
     assert owner.get("/api/services").json() == []
 
 
-# 5. the price's currency comes from the business, not the client
+# the price's currency comes from the business, not the client
 
 
 def test_the_price_currency_comes_from_the_business(
@@ -199,7 +209,7 @@ def test_the_price_currency_comes_from_the_business(
     assert created_a.json()["price"]["currency"] == "EUR"
 
 
-# 6. a client cannot set currency, tenant_id or id
+# a client cannot set currency, tenant_id or id
 
 
 def extra_field(people: People, key: str) -> dict[str, Any]:
@@ -235,7 +245,7 @@ def test_a_client_cannot_set_currency_tenant_or_id_on_update(
     assert (len(rows), rows[0]["duration_minutes"]) == (1, 30)
 
 
-# 7. a business's currency is fixed once it has services
+# a business's currency is fixed once it has services
 
 
 def test_a_businesss_currency_cannot_change_while_it_has_services(
@@ -252,14 +262,16 @@ def test_a_businesss_currency_cannot_change_while_it_has_services(
         conn.rollback()
 
 
-# 8. archiving
+# archiving
 
 
 def test_archiving_keeps_a_service_listed_and_remembers_when(
     people: People, owner: TestClient
 ) -> None:
-    first = service(owner).json()
-    second = service(owner, name={"en": "Wash"}).json()
+    # "Wash" created first, "Cut" second: id order and name order disagree, so a list sorted by
+    # name instead of id would still pass a check that only compares sets.
+    first = service(owner, name={"en": "Wash"}).json()
+    second = service(owner).json()
 
     archived = owner.patch(f"/api/services/{first['id']}", json={"archived": True})
     assert (archived.status_code, archived.json()["archived"]) == (200, True)
@@ -271,7 +283,17 @@ def test_archiving_keeps_a_service_listed_and_remembers_when(
     assert [s["id"] for s in listed] == [first["id"], second["id"]]
     assert [s["archived"] for s in listed] == [True, False]
 
-    owner.patch(f"/api/services/{first['id']}", json={"archived": True, "duration_minutes": 45})
+    reput = owner.patch(
+        f"/api/services/{first['id']}", json={"archived": True, "duration_minutes": 45}
+    )
+    assert (reput.status_code, reput.json()["duration_minutes"]) == (200, 45)
+    rows_by_id = {str(row["id"]): row for row in stored(people.a)}
+    assert rows_by_id[first["id"]]["archived_at"] == first_archived_at
+
+    # An unrelated field alone, with no "archived" key at all, must not unarchive the service.
+    unrelated = owner.patch(f"/api/services/{first['id']}", json={"duration_minutes": 50})
+    assert (unrelated.status_code, unrelated.json()["duration_minutes"]) == (200, 50)
+    assert unrelated.json()["archived"] is True
     rows_by_id = {str(row["id"]): row for row in stored(people.a)}
     assert rows_by_id[first["id"]]["archived_at"] == first_archived_at
 
@@ -281,7 +303,7 @@ def test_archiving_keeps_a_service_listed_and_remembers_when(
     assert rows_by_id[first["id"]]["archived_at"] is None
 
 
-# 9. omitted vs null
+# omitted vs null
 
 
 def test_an_omitted_field_keeps_its_value_and_null_is_refused_except_for_buffer(
@@ -291,10 +313,21 @@ def test_an_omitted_field_keeps_its_value_and_null_is_refused_except_for_buffer(
     sid = created["id"]
 
     kept = owner.patch(f"/api/services/{sid}", json={"duration_minutes": 45})
-    assert (kept.json()["buffer_minutes"], kept.json()["description"]) == (
+    assert (
+        kept.json()["duration_minutes"],
+        kept.json()["buffer_minutes"],
+        kept.json()["description"],
+    ) == (
+        45,
         10,
         {"en": "Wash\nand cut"},
     )
+    assert stored(people.a)[0]["duration_minutes"] == 45
+    assert kept.headers["cache-control"] == "no-store"
+
+    repriced = owner.patch(f"/api/services/{sid}", json={"price": {"amount_minor": 3000}})
+    assert repriced.json()["price"]["amount_minor"] == 3000
+    assert stored(people.a)[0]["price_amount_minor"] == 3000
 
     nulled = owner.patch(f"/api/services/{sid}", json={"buffer_minutes": None})
     assert nulled.json()["buffer_minutes"] is None
@@ -310,7 +343,7 @@ def test_an_omitted_field_keeps_its_value_and_null_is_refused_except_for_buffer(
     assert unchanged["description"] == {}
 
 
-# 10. every field's validation
+# every field's validation
 
 
 @pytest.mark.parametrize(
@@ -398,7 +431,7 @@ def test_an_update_is_also_refused_for_the_wrong_kind_of_value(
     assert stored(people.a)[0]["duration_minutes"] == 30
 
 
-# 11. boundaries
+# boundaries
 
 
 def test_boundary_values_are_accepted_and_text_is_stripped(
@@ -414,6 +447,10 @@ def test_boundary_values_are_accepted_and_text_is_stripped(
     description = "x" * 499 + "\n" + "x" * 500  # 1000 chars, \n in the middle so it isn't stripped
     long_description = service(owner, description={"en": description}).json()
     assert long_description["description"]["en"] == description
+
+    full_description = {"en": "Wash", "nl": "Wassen", "pt": "Lavar"}
+    every_description = service(owner, description=full_description).json()
+    assert every_description["description"] == full_description
 
     limits = service(
         owner, price={"amount_minor": 1000000}, duration_minutes=720, buffer_minutes=240
@@ -435,7 +472,7 @@ def test_boundary_values_are_accepted_and_text_is_stripped(
     )
 
 
-# 12. audit: changed fields only, never on a no-op
+# audit: changed fields only, never on a no-op
 
 
 def test_service_changes_are_audited_only_when_something_changed(
@@ -456,12 +493,13 @@ def test_service_changes_are_audited_only_when_something_changed(
     rows = events(migrate_engine, tenant_id=people.a, target=f"service:{sid}")
     assert [r["action"] for r in rows] == ["service_created", "service_changed"]
     assert (rows[0]["details"], rows[0]["actor_user_id"]) == (None, people.both)
+    assert rows[1]["actor_user_id"] == people.both
     assert rows[1]["details"] == {
         "price": {"old": {"amount_minor": 2500}, "new": {"amount_minor": 3000}}
     }
 
 
-# 12a. no text ever reaches the log
+# no text ever reaches the log
 
 
 def test_the_audit_log_never_holds_a_services_name_or_description_text(
@@ -474,7 +512,9 @@ def test_the_audit_log_never_holds_a_services_name_or_description_text(
     )
     sid = created.json()["id"]
 
-    owner.patch(f"/api/services/{sid}", json={"name": {"en": "Cut with Rita"}})
+    renamed = owner.patch(f"/api/services/{sid}", json={"name": {"en": "Cut with Rita"}})
+    # Replace semantics: sending only "en" drops "nl", it doesn't merge into the existing object.
+    assert renamed.json()["name"] == {"en": "Cut with Rita"}
     owner.patch(f"/api/services/{sid}", json={"description": {"pt": "Nota Ana"}})
     owner.patch(f"/api/services/{sid}", json={"duration_minutes": 45})
 
@@ -497,7 +537,7 @@ def test_the_audit_log_never_holds_a_services_name_or_description_text(
     assert detail_rows[3]["details"] == {"duration_minutes": {"old": 30, "new": 45}}
 
 
-# 13. a failed audit write rolls back the change
+# a failed audit write rolls back the change
 
 
 def test_a_failed_audit_write_rolls_back_the_create(
@@ -523,7 +563,7 @@ def test_a_failed_audit_write_rolls_back_the_update(
     assert stored(people.a)[0]["duration_minutes"] == 30
 
 
-# 14. the app role can never delete a service
+# the app role can never delete a service
 
 
 def test_the_app_role_cannot_delete_services(people: People, owner: TestClient) -> None:
@@ -534,7 +574,7 @@ def test_the_app_role_cannot_delete_services(people: People, owner: TestClient) 
     assert isinstance(error.value.orig, InsufficientPrivilege)
 
 
-# 15. the database's own checks
+# the database's own checks
 
 
 BASE_INSERT = """
