@@ -15,8 +15,8 @@ from sqlalchemy import Connection, Engine, text
 from sqlalchemy.exc import DBAPIError, IntegrityError
 
 from app.db import SessionLocal, tenant_context
-from tests.conftest import People, add_password, email_of, fresh_email
-from tests.test_password_auth_db import HASH, wait_until_blocked
+from tests.conftest import People, add_password, email_of, fresh_email, wait_until_blocked
+from tests.test_password_auth_db import HASH
 
 
 def pending(tenant_id: uuid.UUID, email: str, expires: str = "1 hour") -> uuid.UUID:
