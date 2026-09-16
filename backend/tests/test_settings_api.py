@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 from fastapi import FastAPI
-from sqlalchemy import Engine, text
+from sqlalchemy import Engine
 
 from app.main import create_app
 from tests.conftest import (
