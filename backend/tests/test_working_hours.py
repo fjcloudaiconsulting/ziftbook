@@ -99,8 +99,8 @@ def valid_shifts(n: int) -> list[dict[str, Any]]:
     return out
 
 
-# 1. fence: split shifts across weekdays are saved sorted by (weekday, starts_at); everyone reads
-# the same week back.
+# Split shifts across weekdays are saved sorted by (weekday, starts_at); everyone reads the same
+# week back.
 def test_split_shifts_across_weekdays_are_saved_sorted(people: People, app: FastAPI) -> None:
     owner = signed_in(app, people.a, people.both)
     worker = signed_in(app, people.a, people.only_a)
@@ -127,7 +127,7 @@ def test_split_shifts_across_weekdays_are_saved_sorted(people: People, app: Fast
     assert owner.get(hours_path(only_a_member)).json() == expected
 
 
-# 2. guard: the schema has no extra unique index, and the right column types.
+# The schema has no extra unique index, and the right column types.
 def test_working_hours_schema_has_no_extra_unique_index(migrate_engine: Engine) -> None:
     with migrate_engine.connect() as conn:
         unique_indexes = sorted(
@@ -159,8 +159,8 @@ def test_working_hours_schema_has_no_extra_unique_index(migrate_engine: Engine) 
     }
 
 
-# 3. fence (parametrised over the real `overlapping` and one monkeypatched to always say False):
-# touching shifts don't overlap.
+# Touching shifts don't overlap, checked with both the real `overlapping` and one monkeypatched to
+# always say False.
 @pytest.mark.parametrize("patch_overlapping", [False, True])
 def test_touching_shifts_do_not_overlap(
     people: People, app: FastAPI, monkeypatch: pytest.MonkeyPatch, patch_overlapping: bool
@@ -182,7 +182,7 @@ def test_touching_shifts_do_not_overlap(
     assert stored(people.a, people.only_a) == [(1, "09:00", "12:00"), (1, "12:00", "15:00")]
 
 
-# 4. fence: overlapping shifts on one weekday are refused, nothing is stored, nothing recorded.
+# Overlapping shifts on one weekday are refused, nothing is stored, nothing recorded.
 @pytest.mark.parametrize(
     "shifts",
     [
@@ -220,7 +220,7 @@ def test_overlapping_shifts_on_one_weekday_are_refused(
     assert events(migrate_engine, tenant_id=people.a, action="working_hours_changed") == []
 
 
-# 4 (pure): overlapping() is a sorted-neighbour check, checked directly, unsorted input included.
+# overlapping() is a sorted-neighbour check, checked directly (pure), unsorted input included.
 @pytest.mark.parametrize(
     ("rows", "expected"),
     [
@@ -241,8 +241,8 @@ def test_overlapping_is_a_pure_sorted_neighbour_check(
     assert schedule.overlapping(rows) is expected
 
 
-# 5. fence (constraint mapping): with the Python check patched out, the exclusion constraint still
-# answers 422 overlapping_hours; an unrelated exclusion violation stays a 500.
+# With the Python check patched out, the exclusion constraint still answers 422 overlapping_hours;
+# an unrelated exclusion violation stays a 500.
 def test_the_overlap_mapping_only_matches_our_own_constraint(
     people: People, app: FastAPI, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -294,7 +294,7 @@ def test_the_overlap_mapping_does_not_catch_an_unrelated_exclusion_violation(
             conn.execute(text("DROP FUNCTION zz_refuse_hours()"))
 
 
-# 6. fence: a shift that doesn't end after it starts is refused with its own code.
+# A shift that doesn't end after it starts is refused with its own code.
 @pytest.mark.parametrize(
     ("starts", "ends"), [("22:00", "02:00"), ("09:00", "09:00"), ("17:00", "09:00")]
 )
@@ -314,7 +314,7 @@ def test_a_shift_must_end_after_it_starts(
     assert stored(people.a, people.only_a) == [(3, "08:00", "09:00")]
 
 
-# 7. fence: a malformed body, at any level, is refused with invalid_request and changes nothing.
+# A malformed body, at any level, is refused with invalid_request and changes nothing.
 INVALID_BODIES = [
     pytest.param([shift(weekday=0)], id="weekday-0"),
     pytest.param([shift(weekday=8)], id="weekday-8"),
@@ -360,7 +360,7 @@ def test_a_non_uuid_path_is_refused(people: People, app: FastAPI) -> None:
     assert (response.status_code, response.json()) == (422, {"code": "invalid_request"})
 
 
-# 8. guard: 50 non-overlapping rows are accepted and returned sorted; pins the boundary of 51.
+# 50 non-overlapping rows are accepted and returned sorted; pins the boundary of 51.
 def test_fifty_rows_is_the_accepted_boundary(people: People, app: FastAPI) -> None:
     owner = signed_in(app, people.a, people.both)
     only_a_member = member_id(people.a, people.only_a)
@@ -372,7 +372,7 @@ def test_fifty_rows_is_the_accepted_boundary(people: People, app: FastAPI) -> No
     assert response.json() == sorted(rows, key=lambda r: (r["weekday"], r["starts_at"]))
 
 
-# 9. fence: a worker may edit their own hours only once the business allows it.
+# A worker may edit their own hours only once the business allows it.
 def test_a_worker_may_edit_their_own_hours_only_once_the_setting_allows_it(
     people: People, app: FastAPI, migrate_engine: Engine
 ) -> None:
@@ -395,7 +395,7 @@ def test_a_worker_may_edit_their_own_hours_only_once_the_setting_allows_it(
     assert recorded[0]["target"] == f"user:{people.only_a}"
 
 
-# 10. fence: the setting only ever lets a worker change their own hours, never another member's.
+# The setting only ever lets a worker change their own hours, never another member's.
 @pytest.mark.parametrize("hours_allowed", [False, True])
 def test_a_worker_may_not_edit_another_members_hours(
     people: People, app: FastAPI, hours_allowed: bool
@@ -414,7 +414,7 @@ def test_a_worker_may_not_edit_another_members_hours(
     assert stored(people.a, people.both) == [(2, "08:00", "09:00")]
 
 
-# 11. fence: an owner is never bound by the worker setting, for anyone's hours, their own included.
+# An owner is never bound by the worker setting, for anyone's hours, their own included.
 def test_an_owner_is_never_bound_by_the_worker_setting(people: People, app: FastAPI) -> None:
     owner = signed_in(app, people.a, people.both)
     only_a_member = member_id(people.a, people.only_a)
@@ -431,8 +431,8 @@ def test_an_owner_is_never_bound_by_the_worker_setting(people: People, app: Fast
     assert own.status_code == 200
 
 
-# 12. fence: a member outside the business, or a random id, is 404 for both GET and PUT, whoever
-# calls; nothing changes, nothing is recorded.
+# A member outside the business, or a random id, is 404 for both GET and PUT, whoever calls;
+# nothing changes, nothing is recorded.
 @pytest.mark.parametrize("caller", ["owner", "worker"])
 @pytest.mark.parametrize("method", ["GET", "PUT"])
 @pytest.mark.parametrize("bogus", ["other_business", "random"])
@@ -461,7 +461,7 @@ def test_a_member_outside_the_business_is_not_found(
     assert events(migrate_engine, tenant_id=people.a, action="working_hours_changed") == []
 
 
-# 13. fence (concurrent saves): a second save waits for the first's row lock, not for a merged read.
+# A second save waits for the first's row lock, not for a merged read.
 def test_two_concurrent_saves_of_one_member_serialize_through_the_row_lock(
     people: People,
     app: FastAPI,
@@ -512,7 +512,7 @@ def test_two_concurrent_saves_of_one_member_serialize_through_the_row_lock(
     assert len(events(migrate_engine, tenant_id=people.a, action="working_hours_changed")) == 2
 
 
-# 14. fence: removing a member cascades their working hours, and only theirs.
+# Removing a member cascades their working hours, and only theirs.
 def test_removing_a_member_cascades_their_working_hours(people: People, app: FastAPI) -> None:
     seed(people.a, people.only_a, [(1, "09:00", "10:00")])
     seed(people.a, people.both, [(2, "09:00", "10:00")])
@@ -530,8 +530,8 @@ def test_removing_a_member_cascades_their_working_hours(people: People, app: Fas
     assert stored(people.a, people.both) == [(2, "09:00", "10:00")]
 
 
-# 15. fence: a save that changes the week is recorded once; an unchanged or already-empty save
-# writes nothing.
+# A save that changes the week is recorded once; an unchanged or already-empty save writes
+# nothing.
 def test_a_save_that_changes_the_week_is_recorded_once(
     people: People, app: FastAPI, migrate_engine: Engine
 ) -> None:
@@ -564,7 +564,7 @@ def test_a_save_that_changes_the_week_is_recorded_once(
     assert len(events(migrate_engine, tenant_id=people.a, action="working_hours_changed")) == 2
 
 
-# 16. fence: a save whose event fails to record leaves the week unchanged.
+# A save whose event fails to record leaves the week unchanged.
 def test_a_failed_recording_leaves_the_week_unchanged(
     people: People, app: FastAPI, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -580,7 +580,7 @@ def test_a_failed_recording_leaves_the_week_unchanged(
     assert stored(people.a, people.only_a) == []
 
 
-# 17. fence: any member may read; no cookie is 401; a non-JSON write is 415 and changes nothing.
+# Any member may read; no cookie is 401; a non-JSON write is 415 and changes nothing.
 def test_any_member_may_read_but_only_json_writes_are_accepted(
     people: People, app: FastAPI
 ) -> None:
@@ -602,7 +602,7 @@ def test_any_member_may_read_but_only_json_writes_are_accepted(
     assert stored(people.a, people.both) == [(1, "09:00", "10:00")]
 
 
-# 18. fence (pure, parametrised): to_utc converts with the business's own clock, DST included.
+# to_utc converts with the business's own clock, DST included (pure, parametrised).
 @pytest.mark.parametrize(
     ("zone", "day", "expected"),
     [
@@ -627,8 +627,8 @@ def test_to_utc_converts_with_the_businesss_own_clock(
     assert result.astimezone(ZoneInfo(zone)).time() == time(9)
 
 
-# 19. fence (the AC's DST test, through the API): the same stored local time converts differently
-# once the business's timezone changes.
+# The AC's DST test, through the API: the same stored local time converts differently once the
+# business's timezone changes.
 def test_the_dst_acceptance_case_runs_through_the_api(people: People, app: FastAPI) -> None:
     owner = signed_in(app, people.a, people.both)
     only_a_member = member_id(people.a, people.only_a)
@@ -667,7 +667,8 @@ def test_the_dst_acceptance_case_runs_through_the_api(people: People, app: FastA
         assert schedule.to_utc(day, time.fromisoformat(row["starts_at"]), zone) == expected
 
 
-# 20. guard (pure): the DST edges ZIF-48 inherits from to_utc.
+# A shift starting inside a skipped hour converts to an interval that ends before it starts;
+# ZIF-48 must drop or clamp such an interval. Pins the DST edges it inherits from to_utc.
 def test_to_utc_pins_the_dst_edges_zif_48_inherits() -> None:
     assert schedule.to_utc(date(2026, 3, 29), time(2, 30), "Europe/Amsterdam") == datetime(
         2026, 3, 29, 1, 30, tzinfo=UTC
@@ -677,8 +678,8 @@ def test_to_utc_pins_the_dst_edges_zif_48_inherits() -> None:
     )
 
 
-# 21. guard (migrate role): the range type is owned by ziftbook_migrate, and usable by the app role
-# with no grant; memberships' UPDATE, which the row lock needs, is still granted.
+# The range type is owned by ziftbook_migrate, and usable by the app role with no grant;
+# memberships' UPDATE, which the row lock needs, is still granted.
 def test_the_migrate_role_owns_the_range_type_the_app_role_may_use_it(
     migrate_engine: Engine, app_engine: Engine
 ) -> None:
@@ -703,8 +704,9 @@ def test_the_migrate_role_owns_the_range_type_the_app_role_may_use_it(
     assert overlap is False
 
 
-# 22. guard (app role, tenant_context(a), each statement its own rolled-back transaction): the
-# database checks the Python code relies on as backstops are really there.
+# As the app role, in tenant_context(a): the database checks the Python code relies on as backstops
+# are really there. Each failing statement rolls back on its own; the one insert that succeeds
+# commits and is removed by the membership-cascade teardown.
 @pytest.mark.parametrize(
     ("weekday", "starts", "ends", "constraint"),
     [
