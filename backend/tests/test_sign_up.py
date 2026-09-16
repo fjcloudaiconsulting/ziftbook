@@ -388,6 +388,21 @@ def test_an_invalid_country_is_refused_without_hashing_and_the_link_still_works(
     assert live(app_engine, token, "sign_up")
 
 
+def test_a_business_created_with_a_country_reports_its_currency(
+    app: FastAPI, app_engine: Engine, businesses: list[dict[str, Any]]
+) -> None:
+    token = issue_link(app_engine, "sign_up", fresh_email())
+    assert token is not None
+    client = new_client(app)
+
+    response = complete(client, token, country="BR")
+    session = created(response, businesses)
+
+    assert session["currency"] == "BRL"
+    client.cookies.set(auth.COOKIE, SimpleCookie(response.headers["set-cookie"])[auth.COOKIE].value)
+    assert client.get("/api/session").json()["currency"] == "BRL"
+
+
 def test_a_failure_saving_starting_settings_leaves_no_business(
     app: FastAPI, app_engine: Engine, migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
