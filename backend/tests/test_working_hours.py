@@ -127,6 +127,27 @@ def test_split_shifts_across_weekdays_are_saved_sorted(people: People, app: Fast
     assert owner.get(hours_path(only_a_member)).json() == expected
 
 
+# Rows seeded out of order still come back sorted Monday first.
+def test_the_week_is_returned_sorted_even_when_seeded_out_of_order(
+    people: People, app: FastAPI
+) -> None:
+    seed(
+        people.a,
+        people.only_a,
+        [(2, "10:00", "11:00"), (1, "13:00", "14:00"), (1, "09:00", "10:00")],
+    )
+    owner = signed_in(app, people.a, people.both)
+    only_a_member = member_id(people.a, people.only_a)
+
+    response = owner.get(hours_path(only_a_member))
+
+    assert response.json() == [
+        {"weekday": 1, "starts_at": "09:00", "ends_at": "10:00"},
+        {"weekday": 1, "starts_at": "13:00", "ends_at": "14:00"},
+        {"weekday": 2, "starts_at": "10:00", "ends_at": "11:00"},
+    ]
+
+
 # The schema has no extra unique index, and the right column types.
 def test_working_hours_schema_has_no_extra_unique_index(migrate_engine: Engine) -> None:
     with migrate_engine.connect() as conn:
