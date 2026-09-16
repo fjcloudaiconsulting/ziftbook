@@ -44,6 +44,8 @@ class BusinessSettings(BaseModel):
     auto_confirm: bool = False
     # The language of emails to someone who chose none. Sign-up sets it from the country.
     language: Locale = "en"
+    # Whether a worker may change their own working hours; owners always may.
+    workers_edit_own_hours: bool = False
 
 
 def read(db: Session) -> BusinessSettings:
