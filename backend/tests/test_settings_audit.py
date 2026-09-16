@@ -8,12 +8,9 @@ import pytest
 from fastapi import FastAPI
 from sqlalchemy import Engine, text
 
-from app import auth
-from app.db import tenant_context
+from app import auth, business_settings
 from app.main import create_app
-from tests.conftest import People, signed_in
-from tests.test_audit_recording import events, failing
-from tests.test_settings_api import put, stored
+from tests.conftest import People, events, failing, put_settings, saved_settings, signed_in
 
 
 @pytest.fixture
@@ -34,7 +31,7 @@ def test_a_changed_setting_is_recorded_with_its_old_and_new_value(
 ) -> None:
     owner = signed_in(app, people.a, people.both)
 
-    assert put(owner, {"timezone": "Asia/Tokyo", "auto_confirm": True}).status_code == 200
+    assert put_settings(owner, {"timezone": "Asia/Tokyo", "auto_confirm": True}).status_code == 200
 
     assert changes(migrate_engine, people.a) == [
         ("setting:timezone", {"old": "Europe/Amsterdam", "new": "Asia/Tokyo"}),
@@ -49,8 +46,8 @@ def test_a_second_change_records_what_it_replaced(
 ) -> None:
     owner = signed_in(app, people.a, people.both)
 
-    assert put(owner, {"timezone": "Asia/Tokyo"}).status_code == 200
-    assert put(owner, {"timezone": "Africa/Lagos"}).status_code == 200
+    assert put_settings(owner, {"timezone": "Asia/Tokyo"}).status_code == 200
+    assert put_settings(owner, {"timezone": "Africa/Lagos"}).status_code == 200
 
     assert changes(migrate_engine, people.a) == [
         ("setting:timezone", {"old": "Europe/Amsterdam", "new": "Asia/Tokyo"}),
@@ -63,9 +60,9 @@ def test_a_setting_saved_as_it_already_was_is_not_recorded(
 ) -> None:
     owner = signed_in(app, people.a, people.both)
 
-    assert put(owner, {"timezone": "Asia/Tokyo"}).status_code == 200
+    assert put_settings(owner, {"timezone": "Asia/Tokyo"}).status_code == 200
     # The same timezone again, alongside a change: only the change is worth an event.
-    assert put(owner, {"timezone": "Asia/Tokyo", "auto_confirm": True}).status_code == 200
+    assert put_settings(owner, {"timezone": "Asia/Tokyo", "auto_confirm": True}).status_code == 200
 
     assert changes(migrate_engine, people.a) == [
         ("setting:timezone", {"old": "Europe/Amsterdam", "new": "Asia/Tokyo"}),
@@ -79,9 +76,9 @@ def test_a_change_whose_event_fails_is_not_saved(
     owner = signed_in(app, people.a, people.both)
     failing(monkeypatch, auth, "record")
 
-    assert put(owner, {"timezone": "Asia/Tokyo"}).status_code == 500
+    assert put_settings(owner, {"timezone": "Asia/Tokyo"}).status_code == 500
 
-    assert stored(people.a) == {}
+    assert saved_settings(people.a) == {}
     assert changes(migrate_engine, people.a) == []
 
 
@@ -89,7 +86,7 @@ def test_an_owner_reads_what_changed_in_their_log(
     people: People, app: FastAPI, migrate_engine: Engine
 ) -> None:
     owner = signed_in(app, people.a, people.both)
-    assert put(owner, {"auto_confirm": True}).status_code == 200
+    assert put_settings(owner, {"auto_confirm": True}).status_code == 200
 
     log = owner.get("/api/audit-events").json()
 
@@ -98,41 +95,35 @@ def test_an_owner_reads_what_changed_in_their_log(
     ]
 
 
-def test_events_without_details_keep_none(
+def test_an_event_that_changed_nothing_has_no_details_at_all(
     people: People, app: FastAPI, migrate_engine: Engine
 ) -> None:
-    # SQL NULL, not a JSON null: the column is empty for every event that carries no values.
-    with tenant_context(people.a) as session:
-        session.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(people.a)})
-        auth.record(
-            session,
-            _request(),
-            "signed_out_everywhere",
-            actor_user_id=people.both,
-        )
+    # SQL NULL, not a JSON null: json.dumps(None) would store the string "null" instead.
+    owner = signed_in(app, people.a, people.both)
+
+    assert owner.request("DELETE", "/api/sessions", json={}).status_code == 204
 
     with migrate_engine.begin() as conn:
         conn.execute(text("SET LOCAL app.audit_review = 'on'"))
-        assert (
-            conn.scalar(
-                text("""
+        empty = conn.scalar(
+            text("""
             SELECT count(*) FROM audit_events
-            WHERE tenant_id = :t AND details IS NOT NULL
+            WHERE tenant_id = :t AND action = 'signed_out_everywhere' AND details IS NULL
             """),
-                {"t": people.a},
-            )
-            == 0
+            {"t": people.a},
         )
+    assert empty == 1
 
 
-def _request() -> Any:
-    """The little of a request that record() reads."""
+def test_a_change_that_fails_after_its_event_records_nothing(
+    people: People, app: FastAPI, migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # read() runs after the events are written, so only this direction catches an event committed
+    # on its own: the change is gone, and its event must be gone with it.
+    owner = signed_in(app, people.a, people.both)
+    failing(monkeypatch, business_settings, "read")
 
-    class Client:
-        host = "192.0.2.1"
+    assert put_settings(owner, {"timezone": "Asia/Tokyo"}).status_code == 500
 
-    class Request:
-        client = Client()
-        headers: dict[str, str] = {}
-
-    return Request()
+    assert saved_settings(people.a) == {}
+    assert changes(migrate_engine, people.a) == []

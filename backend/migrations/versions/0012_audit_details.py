@@ -2,6 +2,9 @@
 
 Never personal data or a secret: an owner reads these values in their own log.
 
+Apply this before the app that writes it: record() names every column, so a new app against the old
+schema would fail on every event, not only on the ones carrying details.
+
 Revision ID: 0012
 Revises: 0011
 """
