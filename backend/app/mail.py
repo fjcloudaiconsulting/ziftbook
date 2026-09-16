@@ -90,6 +90,35 @@ def send_token(job: Job) -> None:
         deliver(row.email, subject, body, {"X-Mailgun-Track-Clicks": "no"})
 
 
+def send_invite(job: Job) -> None:
+    """The email.invite job: mail the link that accepts an invite. Payload: invite_id.
+
+    Runs in the invite's business. A resent or revoked invite has another id or none, so a queued
+    job for the old one sends nothing. Minting and sending share a transaction, as in send_token:
+    a failed send leaves no hash, and the retry mints a new one.
+    """
+    if job.tenant_id is None:
+        raise ValueError("email.invite needs a tenant")
+    token = secrets.token_urlsafe(32)
+    app_url = MailSettings().app_url.rstrip("/")
+    with tenant_context(job.tenant_id) as session:
+        invite = session.execute(
+            text("""
+            UPDATE invites i SET token_hash = :hash, expires_at = now() + interval '7 days'
+            WHERE i.id = :id
+            RETURNING i.email, (SELECT t.name FROM tenants t WHERE t.id = i.tenant_id) AS business
+            """),
+            {"id": job.payload["invite_id"], "hash": hashlib.sha256(token.encode()).digest()},
+        ).first()
+        if invite is None:  # revoked, resent (new id) or accepted
+            return
+        language = business_settings.read(session).language
+        link = f"{app_url}/{language}/invite#{job.tenant_id}.{token}"
+        subject, body = render("invite", language, {"link": link, "business": invite.business})
+        # Mailgun would otherwise rewrite the link, secret included, through its tracking domain.
+        deliver(invite.email, subject, body, {"X-Mailgun-Track-Clicks": "no"})
+
+
 def send(job: Job) -> None:
     """The email.send job. Payload: recipient_id (a user), template.
 

@@ -1,0 +1,14 @@
+Você recebeu um convite para um negócio no ziftbook
+Olá,
+
+Você recebeu um convite para fazer parte deste negócio no ziftbook:
+
+$business
+
+Abra este link para aceitar o convite:
+
+$link
+
+O link funciona uma vez, por 7 dias. Se você não esperava este convite, pode ignorar este e-mail.
+
+ziftbook

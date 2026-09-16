@@ -19,6 +19,8 @@ KINDS: dict[str, JobKind] = {
     "email.send": JobKind(mail.send, timeout=30, grace=timedelta(hours=24)),
     # A pending request lives an hour; a link mailed later than this would be mostly spent.
     "email.token": JobKind(mail.send_token, timeout=30, grace=timedelta(minutes=30)),
+    # The owner's page shows the invite as sent-but-waiting until then; a resend starts over.
+    "email.invite": JobKind(mail.send_invite, timeout=30, grace=timedelta(hours=24)),
 }
 
 POLL_SECONDS = 30

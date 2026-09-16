@@ -1,0 +1,14 @@
+Je bent uitgenodigd voor een bedrijf op ziftbook
+Hallo,
+
+Je bent uitgenodigd om lid te worden van dit bedrijf op ziftbook:
+
+$business
+
+Open deze link om de uitnodiging te accepteren:
+
+$link
+
+De link werkt één keer, 7 dagen lang. Verwacht je deze uitnodiging niet? Dan kun je deze e-mail negeren.
+
+ziftbook
