@@ -336,6 +336,7 @@ def test_completing_sign_up_with_no_country_creates_a_dutch_business(
 @pytest.mark.parametrize(
     ("country", "currency", "timezone", "language"),
     [
+        ("NL", "EUR", "Europe/Amsterdam", "nl"),
         ("BR", "BRL", "America/Sao_Paulo", "pt"),
         ("PT", "EUR", "Europe/Lisbon", "pt"),
         ("GB", "GBP", "Europe/London", "en"),
@@ -369,6 +370,27 @@ def test_completing_sign_up_uses_the_countrys_defaults(
         "timezone": timezone,
         "language": language,
     }
+
+
+@pytest.mark.parametrize(
+    ("link_locale", "country", "language"), [("pt", "GB", "en"), ("nl", "BR", "pt")]
+)
+def test_the_starting_language_comes_from_the_country_not_the_sign_up_link(
+    app: FastAPI,
+    app_engine: Engine,
+    businesses: list[dict[str, Any]],
+    link_locale: str,
+    country: str,
+    language: str,
+) -> None:
+    # The link's locale is the page the person signed up on; the business's language is the
+    # country's, not that page.
+    token = issue_link(app_engine, "sign_up", fresh_email(), link_locale)
+    assert token is not None
+
+    session = created(complete(new_client(app), token, country=country), businesses)
+
+    assert saved_settings(uuid.UUID(session["tenant_id"]))["language"] == language
 
 
 @pytest.mark.parametrize("bad", ["br", "DE", "", "NLD", 5, ["NL"]])

@@ -50,7 +50,7 @@ def test_the_app_role_can_rename_a_business_and_lock_its_row(
     assert locked == people.a
 
 
-@pytest.mark.parametrize("country", ["nl", "NLD", "NL\n"])
+@pytest.mark.parametrize("country", ["nl", "N", "NLD", "NL\n"])
 def test_a_business_country_must_be_two_uppercase_letters(app_engine: Engine, country: str) -> None:
     with pytest.raises(IntegrityError) as error, app_engine.begin() as conn:
         conn.execute(
@@ -60,7 +60,7 @@ def test_a_business_country_must_be_two_uppercase_letters(app_engine: Engine, co
     assert isinstance(error.value.orig, CheckViolation)
 
 
-@pytest.mark.parametrize("currency", ["eur", "EURO", "EUR\n"])
+@pytest.mark.parametrize("currency", ["eur", "EU", "EURO", "EUR\n"])
 def test_a_business_currency_must_be_three_uppercase_letters(
     app_engine: Engine, currency: str
 ) -> None:

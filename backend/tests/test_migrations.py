@@ -1,5 +1,9 @@
 """A migration's downgrade must undo exactly what its upgrade did, grants included."""
 
+import os
+from urllib.parse import urlencode
+
+import pytest
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import Engine, text
@@ -17,9 +21,13 @@ THREE_ARG = "SELECT to_regprocedure('complete_sign_up(bytea,text,text)')"
 
 
 def test_downgrading_and_upgrading_0013_restores_its_columns_and_grants(
-    migrated: None, migrate_engine: Engine
+    migrated: None, migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     cfg = Config(toml_file=str(API_DIR / "pyproject.toml"))
+    # A lock held elsewhere (another test, a stray session) must not hang this one forever.
+    url = os.environ["ZIF_MIGRATE_DATABASE_URL"]
+    options = urlencode({"options": "-c lock_timeout=5s"})
+    monkeypatch.setenv("ZIF_MIGRATE_DATABASE_URL", f"{url}{'&' if '?' in url else '?'}{options}")
     command.downgrade(cfg, "0012")
     try:
         with migrate_engine.connect() as conn:

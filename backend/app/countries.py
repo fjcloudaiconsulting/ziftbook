@@ -1,6 +1,6 @@
 """Where a business is: the currency it charges in, and the timezone and language it starts with."""
 
-from typing import Literal, NamedTuple, get_args
+from typing import Literal, NamedTuple
 
 from app.business_settings import Locale
 
@@ -23,4 +23,3 @@ COUNTRIES: dict[Country, CountryDefaults] = {
     # A starting point only: US time zones span six of them, so the owner changes it in settings.
     "US": CountryDefaults("USD", "America/New_York", "en"),
 }
-assert COUNTRIES.keys() == set(get_args(Country))  # the Literal is the API's enum

@@ -4,6 +4,9 @@ A business's currency is fixed once it exists: prices will reference tenants (id
 app role can no longer update it, nor delete a business. Existing businesses, and sign-ups from an
 app that sends no country yet, are Dutch and charge in euros.
 
+The old app never issues UPDATE or DELETE on tenants (checked in the spec), so revoking both is
+safe in this same release, ahead of the usual expand-then-contract split.
+
 Apply this before the app that calls the five-argument complete_sign_up.
 
 Revision ID: 0013

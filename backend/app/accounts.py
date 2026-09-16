@@ -110,8 +110,7 @@ def complete_sign_up(
         ).one()
         if created.outcome == "created":
             join_tenant(session, created.tenant_id)
-            # Validated by the registry. Only what the country decides; other keys keep their
-            # defaults.
+            # Validated by the registry; only what the country decides, others keep their default.
             starting = BusinessSettings(timezone=defaults.timezone, language=defaults.language)
             for key, value in starting.model_dump(exclude_unset=True).items():
                 business_settings.save(session, key, value)
