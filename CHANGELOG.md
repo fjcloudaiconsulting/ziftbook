@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.9.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.8.0...v0.9.0) (2026-09-16)
+
+
+### Features
+
+* **backend:** an append-only audit log table (ZIF-28) ([#63](https://github.com/fjcloudaiconsulting/ziftbook/issues/63)) ([e50b662](https://github.com/fjcloudaiconsulting/ziftbook/commit/e50b662d6d9f140283e46c74d4ec58e4719103d0))
+* **backend:** business settings with typed defaults (ZIF-23) ([#66](https://github.com/fjcloudaiconsulting/ziftbook/issues/66)) ([dc302d2](https://github.com/fjcloudaiconsulting/ziftbook/commit/dc302d2dde06063bec749dc87347532b5b90bea9))
+* **backend:** owners read their business's audit log (ZIF-28) ([#65](https://github.com/fjcloudaiconsulting/ziftbook/issues/65)) ([223bbf2](https://github.com/fjcloudaiconsulting/ziftbook/commit/223bbf23981225b2ed57f46e64d188e81645aebb))
+* **backend:** record sign-ins, sign-outs, new businesses and resets in the audit log (ZIF-28) ([#64](https://github.com/fjcloudaiconsulting/ziftbook/issues/64)) ([2791319](https://github.com/fjcloudaiconsulting/ziftbook/commit/2791319b6410268e9ba807f608bf3b5014386878))
+
 ## [0.8.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.7.0...v0.8.0) (2026-09-15)
 
 
