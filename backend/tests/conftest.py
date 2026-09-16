@@ -16,6 +16,7 @@ from alembic import command
 from alembic.config import Config
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from httpx2 import Response
 from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.pool import NullPool
 
@@ -187,6 +188,63 @@ def no_hashing(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     return hashed
 
 
+def events(migrate_engine: Engine, **match: Any) -> list[dict[str, Any]]:
+    """Audit events read as an operator, oldest first, matched on the given columns."""
+    where = " AND ".join(
+        f"ip = cast(:{column} AS inet)" if column == "ip" else f"{column} = :{column}"
+        for column in match
+    )
+    with migrate_engine.begin() as conn:
+        conn.execute(text("SET LOCAL app.audit_review = 'on'"))
+        rows = conn.execute(
+            text(f"""
+            SELECT action, tenant_id, actor_user_id, target, details, host(ip) AS ip, user_agent
+            FROM audit_events WHERE {where} ORDER BY id
+            """),
+            match,
+        ).mappings()
+        return [dict(row) for row in rows]
+
+
+def failing(monkeypatch: pytest.MonkeyPatch, module: Any, name: str) -> None:
+    """Make one function raise, to check what its caller leaves behind."""
+
+    def broken(*args: object, **kwargs: object) -> None:
+        raise RuntimeError(f"{name} failed")
+
+    monkeypatch.setattr(module, name, broken)
+
+
+def put_settings(client: TestClient, body: Any) -> Response:
+    return client.put("/api/settings", json=body)
+
+
+def saved_settings(tenant_id: uuid.UUID) -> dict[str, Any]:
+    with tenant_context(tenant_id) as session:
+        return dict(session.execute(text("SELECT key, value FROM settings")).tuples().all())
+
+
+def save_setting(tenant_id: uuid.UUID, key: str, value: Any) -> None:
+    """A saved value straight in the table, including one the registry would refuse today."""
+    with tenant_context(tenant_id) as session:
+        session.execute(
+            text("""
+            INSERT INTO settings (tenant_id, key, value)
+            VALUES (current_setting('app.tenant_id')::uuid, :key, CAST(:value AS jsonb))
+            """),
+            {"key": key, "value": json.dumps(value)},
+        )
+
+
+def signed_in(app: FastAPI, tenant_id: uuid.UUID, user_id: uuid.UUID) -> TestClient:
+    """A client holding a session in that business, as that person."""
+    with tenant_context(tenant_id) as session:
+        token = auth.create(session, user_id, ip=None, user_agent=None)
+    client = new_client(app)
+    client.cookies.set(auth.COOKIE, token)
+    return client
+
+
 def add_password(migrate_engine: Engine, user_id: uuid.UUID, password: str) -> None:
     with migrate_engine.begin() as conn:
         conn.execute(
@@ -222,6 +280,7 @@ def people(app_engine: Engine, migrate_engine: Engine, bound: None) -> Iterator[
     yield people
     for tenant_id in (a, b):
         with tenant_context(tenant_id) as session:
+            session.execute(text("DELETE FROM settings"))  # they reference the business
             session.execute(text("DELETE FROM memberships"))
     # The app role can't delete users; the test cleans up as the migrate role.
     with migrate_engine.begin() as conn:

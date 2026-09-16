@@ -2,6 +2,7 @@
 
 import hashlib
 import ipaddress
+import json
 import secrets
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -65,6 +66,7 @@ def create(session: Session, user_id: UUID, *, ip: str | None, user_agent: str |
 
 
 Action = Literal[
+    "setting_changed",
     "sign_in_succeeded",
     "sign_in_failed",
     "signed_out",
@@ -81,22 +83,26 @@ def record(
     *,
     actor_user_id: UUID | None,
     target: str | None = None,
+    details: dict[str, object] | None = None,
 ) -> None:
     """Add an audit event to this transaction, in its tenant (none outside tenant_context).
 
-    target names what the event is about ("user:<id>"); never a password, token, cookie or email.
+    target names what the event is about ("user:<id>", "setting:<key>"); details holds what changed,
+    such as a setting's old and new value. Never a password, token, cookie, email or personal data.
     """
     user_agent = request.headers.get("user-agent")
     # No RETURNING: an event of no tenant isn't visible to the app, not even to the one adding it.
     session.execute(
         text("""
-        INSERT INTO audit_events (actor_user_id, action, target, ip, user_agent)
-        VALUES (:actor_user_id, :action, :target, :ip, :user_agent)
+        INSERT INTO audit_events (actor_user_id, action, target, details, ip, user_agent)
+        VALUES (:actor_user_id, :action, :target, CAST(:details AS jsonb), :ip, :user_agent)
         """),
         {
             "actor_user_id": actor_user_id,
             "action": action,
             "target": target,
+            # Left as SQL NULL, not a JSON null, when the event carries no values.
+            "details": None if details is None else json.dumps(details),
             "ip": _inet(request.client.host if request.client else None),
             "user_agent": user_agent[:512] if user_agent else None,
         },

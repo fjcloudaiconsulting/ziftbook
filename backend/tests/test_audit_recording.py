@@ -6,7 +6,6 @@ import secrets
 import uuid
 from collections.abc import Iterator
 from http.cookies import SimpleCookie
-from typing import Any
 
 import pytest
 from fastapi import FastAPI
@@ -22,11 +21,15 @@ from tests.conftest import (
     People,
     add_password,
     email_of,
+    events,
+    failing,
     fresh_address,
     fresh_email,
     issue_link,
     live,
     new_client,
+    put_settings,
+    signed_in,
 )
 
 NEW_PASSWORD = "quiet-copper-kettle-7"
@@ -36,24 +39,6 @@ def client_at(app: FastAPI) -> tuple[TestClient, str]:
     """A client with its own IPv6 address, so its events can be found by address alone."""
     address = fresh_address()
     return new_client(app, address), address
-
-
-def events(migrate_engine: Engine, **match: Any) -> list[dict[str, Any]]:
-    """Events read as an operator, oldest first, matched on the given columns."""
-    where = " AND ".join(
-        f"ip = cast(:{column} AS inet)" if column == "ip" else f"{column} = :{column}"
-        for column in match
-    )
-    with migrate_engine.begin() as conn:
-        conn.execute(text("SET LOCAL app.audit_review = 'on'"))
-        rows = conn.execute(
-            text(f"""
-            SELECT action, tenant_id, actor_user_id, target, host(ip) AS ip, user_agent
-            FROM audit_events WHERE {where} ORDER BY id
-            """),
-            match,
-        ).mappings()
-        return [dict(row) for row in rows]
 
 
 def sessions_of(app_engine: Engine, user_id: uuid.UUID) -> int:
@@ -66,13 +51,6 @@ def sessions_of(app_engine: Engine, user_id: uuid.UUID) -> int:
 
 def sign_in(client: TestClient, email: str, password: str = PASSWORD) -> Response:
     return client.post("/api/session", json={"email": email, "password": password})
-
-
-def failing(monkeypatch: pytest.MonkeyPatch, module: Any, name: str) -> None:
-    def broken(*args: object, **kwargs: object) -> None:
-        raise RuntimeError(f"{name} failed")
-
-    monkeypatch.setattr(module, name, broken)
 
 
 @pytest.fixture
@@ -90,6 +68,7 @@ def businesses(migrate_engine: Engine, bound: None) -> Iterator[list[uuid.UUID]]
     for tenant_id in tenants:
         with tenant_context(tenant_id) as session:
             owners = list(session.scalars(text("SELECT user_id FROM memberships")))
+            session.execute(text("DELETE FROM settings"))  # they reference the business
             session.execute(text("DELETE FROM memberships"))
         with migrate_engine.begin() as conn:
             conn.execute(
@@ -112,6 +91,7 @@ def test_signing_in_is_recorded_in_the_business(
             "tenant_id": people.a,
             "actor_user_id": people.only_a,
             "target": None,
+            "details": None,
             "ip": address,
             "user_agent": "testclient",
         }
@@ -151,7 +131,12 @@ def test_failed_sign_ins_look_the_same_whether_or_not_the_account_exists(
     assert {k: v for k, v in unknown.headers.items() if k != "date"} == {
         k: v for k, v in wrong.headers.items() if k != "date"
     }
-    no_account = {"action": "sign_in_failed", "tenant_id": None, "actor_user_id": None}
+    no_account = {
+        "action": "sign_in_failed",
+        "tenant_id": None,
+        "actor_user_id": None,
+        "details": None,
+    }
     assert events(migrate_engine, ip=unknown_address) == [
         {**no_account, "target": None, "ip": unknown_address, "user_agent": "testclient"}
     ]
@@ -305,6 +290,7 @@ def test_a_password_reset_is_recorded_against_the_account(
             "tenant_id": None,
             "actor_user_id": None,
             "target": f"user:{people.both}",
+            "details": None,
             "ip": address,
             "user_agent": "testclient",
         }
@@ -364,8 +350,8 @@ def test_no_event_holds_a_password_email_token_or_cookie(
     tenant_id, user_id = signed_up.json()["tenant_id"], signed_up.json()["user_id"]
     businesses.append(uuid.UUID(tenant_id))
     cookies = [SimpleCookie(signed_up.headers["set-cookie"])[auth.COOKIE].value]
-    signed_in = sign_in(client_at(app)[0], email)
-    cookies.append(SimpleCookie(signed_in.headers["set-cookie"])[auth.COOKIE].value)
+    again = sign_in(client_at(app)[0], email)
+    cookies.append(SimpleCookie(again.headers["set-cookie"])[auth.COOKIE].value)
     assert sign_in(client_at(app)[0], email, "not-the-password-1").status_code == 401
     for path, cookie in (("/api/session", cookies[1]), ("/api/sessions", cookies[0])):
         signing_out = client_at(app)[0]
@@ -374,6 +360,9 @@ def test_no_event_holds_a_password_email_token_or_cookie(
     reset_token = issue_link(app_engine, "password_reset", email)
     assert reset_token is not None
     assert complete_reset(client_at(app)[0], reset_token).status_code == 204
+    # A settings change is the one event that carries values of its own, in details.
+    owner = signed_in(app, uuid.UUID(tenant_id), uuid.UUID(user_id))
+    assert put_settings(owner, {"timezone": "Asia/Tokyo"}).status_code == 200
 
     with migrate_engine.begin() as conn:
         conn.execute(text("SET LOCAL app.audit_review = 'on'"))
@@ -386,8 +375,9 @@ def test_no_event_holds_a_password_email_token_or_cookie(
                 {"t": tenant_id, "u": user_id},
             )
         )
-    # Created, signed in twice, a failed sign-in, signed out, signed out everywhere, a reset.
-    assert len(rows) == 7
+    # Created, signed in twice, a failed sign-in, signed out, signed out everywhere, a reset, and
+    # a settings change.
+    assert len(rows) == 8
     secrets_ = [PASSWORD, NEW_PASSWORD, email, sign_up_token, reset_token, *cookies]
     secrets_ += [
         hashlib.sha256(s.encode()).hexdigest() for s in (sign_up_token, reset_token, *cookies)

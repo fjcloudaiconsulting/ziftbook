@@ -20,6 +20,7 @@ class AuditEventOut(BaseModel):
     action: str
     actor_user_id: UUID | None
     target: str | None
+    details: dict[str, object] | None  # what changed, for the events that carry values
     ip: str | None  # only on the owner's own events
     user_agent: str | None  # only on the owner's own events
 
@@ -38,7 +39,7 @@ def list_events(
     # still have them. Row-level security limits the rows to the session's business.
     rows = current.db.execute(
         text("""
-        SELECT id, created_at, action, actor_user_id, target,
+        SELECT id, created_at, action, actor_user_id, target, details,
                CASE WHEN actor_user_id = :me THEN host(ip) END AS ip,
                CASE WHEN actor_user_id = :me THEN user_agent END AS user_agent
         FROM audit_events

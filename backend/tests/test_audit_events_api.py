@@ -5,26 +5,15 @@ import uuid
 
 import pytest
 from fastapi import FastAPI
-from fastapi.testclient import TestClient
 from sqlalchemy import Engine, text
 
-from app import auth
-from app.db import tenant_context
 from app.main import create_app
-from tests.conftest import People, new_client
+from tests.conftest import People, new_client, signed_in
 
 
 @pytest.fixture
 def app(people: People) -> FastAPI:
     return create_app()
-
-
-def signed_in(app: FastAPI, tenant_id: uuid.UUID, user_id: uuid.UUID) -> TestClient:
-    with tenant_context(tenant_id) as session:
-        token = auth.create(session, user_id, ip=None, user_agent=None)
-    client = new_client(app)
-    client.cookies.set(auth.COOKIE, token)
-    return client
 
 
 def add_event(

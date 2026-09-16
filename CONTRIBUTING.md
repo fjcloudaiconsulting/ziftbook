@@ -97,10 +97,11 @@ we can show which businesses were not affected.
   `created_at`.
 - An event belongs to the business of the transaction it is written in. The database refuses any other `tenant_id`.
   Events written outside a business (failed sign-ins, password resets) belong to none, and the app can't read them.
-- Add an event with `auth.record(session, request, action, actor_user_id=..., target=...)` in the transaction of
-  what it records, after adding the action to `auth.Action`. When the business is only found inside that
+- Add an event with `auth.record(session, request, action, actor_user_id=..., target=..., details=...)` in the
+  transaction of what it records, after adding the action to `auth.Action`. `details` holds what changed. When the business is only found inside that
   transaction (a session's, a new one), call `join_tenant(session, tenant_id)` first.
-- Never write passwords, tokens, token hashes, cookie values or emails. `target` names what the event is about
+- Never write passwords, tokens, token hashes, cookie values or emails. `details` holds what an event changed
+  (a setting's old and new value), which the business's owner reads, so never personal data either. `target` names what the event is about
   (`user:<id>`).
 - It is the one table with a `tenant_id` that is neither `NOT NULL REFERENCES tenants` nor set up with
   `enable_tenant_isolation`: events outlive removed businesses and erased users, and some belong to no business.
@@ -108,6 +109,9 @@ we can show which businesses were not affected.
   `BEGIN; SET LOCAL app.audit_review = 'on'; SELECT DISTINCT tenant_id FROM audit_events WHERE created_at > ...;`
 - The app role can set `app.audit_review` too. A definer function owned by `ziftbook_migrate` that reads
   `audit_events` must clear it first, or it shows the caller every business's events.
+- A new column on `audit_events` needs its own `GRANT INSERT (column) ON audit_events TO ziftbook_app`, because the
+  table's INSERT grant lists columns. Its migration must be applied **before** the app that writes it: `record`
+  names every column, so a new app against the old schema fails on every event, not only the new one.
 - Nothing purges events yet. The ZIF-5 sweeper will remove failed sign-ins after 30 days and the rest after a year.
 
 ## Business settings
@@ -123,6 +127,8 @@ value needs a redeploy it is an environment variable; otherwise it is a setting.
   release makes every save from an old tab a 422.
 - **Rename a key:** add the new key with a migration that copies the rows, then remove the old key as above. A save
   from an instance still on the old key during the rollout is lost.
+- **Retype a key** (say bool to int) only with a data migration that rewrites saved rows: `1` and `True` compare
+  equal in Python, so a saved `True` changed to `1` would otherwise save with no audit event.
 - **Tighten a type or range:** ship a data migration that fixes saved rows. A saved value that no longer validates
   makes reads fail (500) on purpose, rather than quietly using the default.
 - A saved value equal to the default stays saved: changing a default later only reaches businesses that never saved
