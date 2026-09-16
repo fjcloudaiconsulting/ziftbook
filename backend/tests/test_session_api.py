@@ -94,6 +94,18 @@ def test_a_signed_in_user_sees_their_session(people: People, client: TestClient)
     }
 
 
+def test_the_session_reports_that_businesss_own_membership_id(
+    people: People, client: TestClient
+) -> None:
+    # both is a member of both a and b; signed in to b, member_id must be their membership in b,
+    # not (say) their oldest membership across every business, which is the one in a.
+    sign_in(client, people.b, people.both)
+
+    response = client.get("/api/session")
+
+    assert response.json()["member_id"] == str(member_id(people.b, people.both))
+
+
 def test_a_session_idle_too_long_is_rejected(
     people: People, client: TestClient, app_engine: Engine
 ) -> None:

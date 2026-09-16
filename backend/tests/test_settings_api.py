@@ -7,9 +7,16 @@ import pytest
 from fastapi import FastAPI
 from sqlalchemy import Engine, text
 
-from app.db import tenant_context
 from app.main import create_app
-from tests.conftest import People, events, put_settings, save_setting, saved_settings, signed_in
+from tests.conftest import (
+    People,
+    events,
+    put_settings,
+    save_setting,
+    saved_settings,
+    set_role,
+    signed_in,
+)
 
 DEFAULTS = {"timezone": "Europe/Amsterdam", "auto_confirm": False, "language": "en"}
 
@@ -111,10 +118,7 @@ def test_a_saved_setting_can_be_changed_and_set_back_to_its_default(
 
 
 def test_each_business_has_its_own_settings(people: People, app: FastAPI) -> None:
-    with tenant_context(people.b) as session:
-        session.execute(
-            text("UPDATE memberships SET role = 'owner' WHERE user_id = :u"), {"u": people.only_b}
-        )
+    set_role(people.b, people.only_b, "owner")
     owner_a = signed_in(app, people.a, people.both)
     owner_b = signed_in(app, people.b, people.only_b)
 

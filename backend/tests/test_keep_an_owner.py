@@ -174,7 +174,43 @@ def test_a_non_read_committed_change_is_refused(
     assert isinstance(error.value.orig, FeatureNotSupported)
 
 
-# Test 21 (guard): no new test needed. test_tenant_schema.py's isolation check, the definer check
-# in test_password_auth_db.py (keep_an_owner is SECURITY INVOKER, so it never appears there), and
+def test_the_trigger_lock_lets_a_new_membership_through(
+    people: People, app_engine: Engine, migrate_engine: Engine
+) -> None:
+    # FOR NO KEY UPDATE, not FOR UPDATE: a demotion's tenants lock must not block an unrelated new
+    # membership in the same business, whose foreign key check only ever needs FOR KEY SHARE.
+    set_role(people.a, people.only_a, "owner")  # a second owner, so the demotion below succeeds
+    new_user = add_user(app_engine)
+    try:
+        with app_engine.connect() as holder:
+            tx = holder.begin()
+            holder.execute(
+                text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(people.a)}
+            )
+            holder.execute(
+                text("UPDATE memberships SET role = 'worker' WHERE user_id = :u"),
+                {"u": people.both},
+            )
+            try:
+                with tenant_context(people.a) as session:
+                    session.execute(text("SET LOCAL lock_timeout = '500ms'"))
+                    session.execute(
+                        text(
+                            "INSERT INTO memberships (tenant_id, user_id, role) "
+                            "VALUES (:t, :u, 'worker')"
+                        ),
+                        {"t": people.a, "u": new_user},
+                    )
+            finally:
+                tx.rollback()
+    finally:
+        with tenant_context(people.a) as session:
+            session.execute(text("DELETE FROM memberships WHERE user_id = :u"), {"u": new_user})
+        with migrate_engine.begin() as conn:
+            conn.execute(text("DELETE FROM users WHERE id = :u"), {"u": new_user})
+
+
+# No new test needed here: test_tenant_schema.py's isolation check, the definer check in
+# test_password_auth_db.py (keep_an_owner is SECURITY INVOKER, so it never appears there), and
 # test_openapi.py's stale-contract and Error-schema tests already cover this migration and its
 # trigger; they are unaffected by it and keep passing.

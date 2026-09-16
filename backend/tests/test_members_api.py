@@ -15,6 +15,7 @@ from app.db import tenant_context
 from app.main import create_app
 from tests.conftest import (
     People,
+    add_membership,
     email_of,
     events,
     failing,
@@ -35,8 +36,11 @@ def unauthenticated(response: Response) -> bool:
     return response.status_code == 401 and response.json() == {"code": "unauthenticated"}
 
 
-# 1. fence: the listing, ordered, scoped to the business, with the joined email.
+# The listing, ordered by member id, scoped to the business, with the joined email.
 def test_the_owner_lists_members_of_their_business(people: People, app: FastAPI) -> None:
+    # A third member, added after the other two, so an ordering by email or by user id (both
+    # assigned in a different sequence than the memberships below) would be caught.
+    add_membership(people.a, people.only_b)
     owner = signed_in(app, people.a, people.both)
 
     response = owner.get("/api/members")
@@ -57,37 +61,38 @@ def test_the_owner_lists_members_of_their_business(people: People, app: FastAPI)
                 "email": email_of(people.both),
                 "role": "owner",
             },
+            {
+                "member_id": str(member_id(people.a, people.only_b)),
+                "user_id": str(people.only_b),
+                "email": email_of(people.only_b),
+                "role": "worker",
+            },
         ],
         key=lambda m: str(m["member_id"]),
     )
     assert response.json() == expected
 
 
-# 2. fence: a worker is refused every endpoint, whatever it sends.
+# A worker is refused every endpoint, whatever it sends.
 @pytest.mark.parametrize(
-    ("method", "target_both", "body"),
+    ("method", "path", "body"),
     [
-        ("GET", False, None),
-        ("PATCH", True, {"role": "worker"}),
-        ("PATCH", True, {"role": "nope"}),
-        ("PATCH", True, []),
-        ("PATCH", False, {"role": "worker"}),  # path "not-a-uuid"
-        ("DELETE", True, {}),
-        ("DELETE", True, []),
+        ("GET", "/api/members", None),
+        ("PATCH", "/api/members/{both}", {"role": "worker"}),
+        ("PATCH", "/api/members/{both}", {"role": "nope"}),
+        ("PATCH", "/api/members/{both}", []),
+        ("PATCH", "/api/members/not-a-uuid", {"role": "worker"}),
+        ("DELETE", "/api/members/{both}", {}),
+        ("DELETE", "/api/members/{both}", []),
     ],
 )
 def test_a_worker_is_refused_every_members_endpoint(
-    people: People, app: FastAPI, method: str, target_both: bool, body: Any
+    people: People, app: FastAPI, method: str, path: str, body: Any
 ) -> None:
     worker = signed_in(app, people.a, people.only_a)
     owner_session = signed_in(app, people.a, people.both)
     assert owner_session.get("/api/session").status_code == 200
-    if method == "GET":
-        path = "/api/members"
-    elif target_both:
-        path = f"/api/members/{member_id(people.a, people.both)}"
-    else:
-        path = "/api/members/not-a-uuid"
+    path = path.format(both=member_id(people.a, people.both))
 
     response = worker.request(method, path, json=body)
 
@@ -100,7 +105,7 @@ def test_a_worker_is_refused_every_members_endpoint(
     assert owner_session.get("/api/session").status_code == 200
 
 
-# 3. guard: no cookie is 401 on every endpoint; a non-JSON write is 415 before auth.
+# No cookie is 401 on every endpoint; a non-JSON write is 415 before auth.
 def test_without_a_cookie_every_endpoint_is_unauthenticated(people: People, app: FastAPI) -> None:
     client = new_client(app)
     both_member = member_id(people.a, people.both)
@@ -116,10 +121,11 @@ def test_without_a_cookie_every_endpoint_is_unauthenticated(people: People, app:
 
 @pytest.mark.parametrize("method", ["PATCH", "DELETE"])
 def test_a_non_json_write_is_refused_before_auth(people: People, app: FastAPI, method: str) -> None:
-    owner = signed_in(app, people.a, people.both)
+    # No cookie at all: this proves 415 fires before auth, not merely before an owner check.
+    client = new_client(app)
     only_a_member = member_id(people.a, people.only_a)
 
-    response = owner.request(
+    response = client.request(
         method,
         f"/api/members/{only_a_member}",
         content="x",
@@ -134,7 +140,7 @@ def test_a_non_json_write_is_refused_before_auth(people: People, app: FastAPI, m
     assert roles == {people.only_a: "worker", people.both: "owner"}
 
 
-# 4. fence: demoting ends the member's sessions in this business only.
+# Demoting ends the member's sessions in this business only.
 def test_demoting_a_member_ends_their_sessions_in_this_business_only(
     people: People, app: FastAPI
 ) -> None:
@@ -147,6 +153,7 @@ def test_demoting_a_member_ends_their_sessions_in_this_business_only(
     response = owner.patch(f"/api/members/{both_member}", json={"role": "worker"})
 
     assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
     assert response.json()["role"] == "worker"
     assert unauthenticated(both_in_a.get("/api/session"))
     assert both_in_b.get("/api/session").status_code == 200
@@ -154,7 +161,24 @@ def test_demoting_a_member_ends_their_sessions_in_this_business_only(
     assert new_session.get("/api/session").json()["role"] == "worker"
 
 
-# 5. fence (deterministic race): two owners acting on each other serialize through target()'s
+# Removing ends the member's sessions in this business only (the DELETE twin of the above).
+def test_removing_a_member_ends_their_sessions_in_this_business_only(
+    people: People, app: FastAPI
+) -> None:
+    set_role(people.a, people.only_a, "owner")
+    both_in_a = signed_in(app, people.a, people.both)
+    both_in_b = signed_in(app, people.b, people.both)
+    owner = signed_in(app, people.a, people.only_a)
+    both_member = member_id(people.a, people.both)
+
+    response = owner.request("DELETE", f"/api/members/{both_member}", json={})
+
+    assert response.status_code == 204
+    assert unauthenticated(both_in_a.get("/api/session"))
+    assert both_in_b.get("/api/session").status_code == 200
+
+
+# Deterministic race: two owners acting on each other serialize through target()'s
 # caller-plus-target locks, taken in one ORDER BY id statement.
 @pytest.mark.parametrize("method", ["PATCH", "DELETE"])
 def test_two_owners_acting_on_each_other_serialize_through_the_member_locks(
@@ -212,15 +236,14 @@ def test_two_owners_acting_on_each_other_serialize_through_the_member_locks(
         assert len(events(migrate_engine, tenant_id=people.a, action="member_role_changed")) == 1
 
 
-# 5b. fence (deterministic race): a stale owner is rechecked after the lock, not before.
+# Deterministic race: a stale owner is rechecked after the lock, not before.
 @pytest.mark.parametrize("holder_action", ["demoted", "removed"])
 def test_a_stale_owner_is_rechecked_after_the_lock(
     people: People, app: FastAPI, app_engine: Engine, migrate_engine: Engine, holder_action: str
 ) -> None:
-    # uuidv7 ids follow fixture insertion order: only_a's membership (inserted first, as a worker)
-    # sorts before both's (inserted second, as owner). target()'s "ORDER BY m.id FOR UPDATE"
-    # therefore locks only_a's row first (uncontended) and then blocks on both's row below, which
-    # the holder locks alone -- never the whole table, or this test's wait would be undetectable.
+    # The holder locks only both's row, never the whole table (the test passes whichever of the
+    # two rows target()'s "ORDER BY m.id FOR UPDATE" happens to lock first): it blocks on both's
+    # row regardless, since that is the one row the holder holds.
     set_role(people.a, people.only_a, "owner")  # so the holder's change below passes the trigger
     both_client = signed_in(app, people.a, people.both)
     only_a_member = member_id(people.a, people.only_a)
@@ -272,7 +295,7 @@ def test_a_stale_owner_is_rechecked_after_the_lock(
     assert events(migrate_engine, tenant_id=people.a, action="member_role_changed") == []
 
 
-# 6. fence: promoting a member rotates their session and grants owner access immediately.
+# Promoting a member rotates their session and grants owner access immediately.
 def test_promoting_a_member_rotates_their_session(people: People, app: FastAPI) -> None:
     only_a_client = signed_in(app, people.a, people.only_a)
     owner = signed_in(app, people.a, people.both)
@@ -288,7 +311,7 @@ def test_promoting_a_member_rotates_their_session(people: People, app: FastAPI) 
     assert new_session.get("/api/members").status_code == 200
 
 
-# 7. fence: the unchanged-role no-op doesn't rotate sessions or record anything.
+# The unchanged-role no-op doesn't rotate sessions or record anything.
 def test_setting_the_same_role_is_a_no_op(
     people: People, app: FastAPI, migrate_engine: Engine
 ) -> None:
@@ -309,7 +332,7 @@ def test_setting_the_same_role_is_a_no_op(
     assert events(migrate_engine, tenant_id=people.a, action="member_role_changed") == []
 
 
-# 8. fence: removal is a hard delete of the membership only, and it ends the member's sessions.
+# Removal is a hard delete of the membership only, and it ends the member's sessions.
 def test_removing_a_member_deletes_the_membership_not_the_account(
     people: People, app: FastAPI, migrate_engine: Engine
 ) -> None:
@@ -329,7 +352,7 @@ def test_removing_a_member_deletes_the_membership_not_the_account(
     assert alive == 1
 
 
-# 9. fence: a member id outside the business, or a random one, is 404, never a leak.
+# A member id outside the business, or a random one, is 404, never a leak.
 @pytest.mark.parametrize("method", ["PATCH", "DELETE"])
 @pytest.mark.parametrize("bogus", ["other_business", "random"])
 def test_a_member_outside_the_business_is_not_found(
@@ -355,7 +378,7 @@ def test_a_member_outside_the_business_is_not_found(
     assert events(migrate_engine, tenant_id=people.a, action="member_removed") == []
 
 
-# 10. fence: an owner can't change or remove their own membership through these endpoints.
+# An owner can't change or remove their own membership through these endpoints.
 @pytest.mark.parametrize("method", ["PATCH", "DELETE"])
 def test_an_owner_cannot_change_their_own_membership(
     people: People, app: FastAPI, method: str
@@ -378,7 +401,7 @@ def test_an_owner_cannot_change_their_own_membership(
     assert both_client.get("/api/session").status_code == 200
 
 
-# 11. fence: a malformed role, extra keys, or a non-UUID path are all 422, nothing changed.
+# A malformed role, extra keys, or a non-UUID path are all 422, nothing changed.
 @pytest.mark.parametrize(
     "body",
     [
@@ -419,7 +442,7 @@ def test_a_non_uuid_path_is_refused(people: People, app: FastAPI, method: str) -
     assert (response.status_code, response.json()) == (422, {"code": "invalid_request"})
 
 
-# 12. fence: a role change is recorded with the user's id, and the old and new role.
+# A role change is recorded with the user's id, and the old and new role.
 def test_a_role_change_is_recorded_with_the_users_id_and_old_new_values(
     people: People, app: FastAPI, migrate_engine: Engine
 ) -> None:
@@ -435,7 +458,7 @@ def test_a_role_change_is_recorded_with_the_users_id_and_old_new_values(
     assert recorded[0]["details"] == {"old": "worker", "new": "owner"}
 
 
-# 12b. fence: a removal is recorded with the user's id and no details.
+# A removal is recorded with the user's id and no details.
 def test_a_removal_is_recorded_with_no_details(
     people: People, app: FastAPI, migrate_engine: Engine
 ) -> None:
@@ -451,7 +474,7 @@ def test_a_removal_is_recorded_with_no_details(
     assert recorded[0]["details"] is None
 
 
-# 13. fence: a change whose event fails to record leaves nothing changed.
+# A change whose event fails to record leaves nothing changed.
 @pytest.mark.parametrize("method", ["PATCH", "DELETE"])
 def test_a_change_whose_event_fails_leaves_nothing_changed(
     people: People, app: FastAPI, monkeypatch: pytest.MonkeyPatch, method: str
@@ -475,7 +498,7 @@ def test_a_change_whose_event_fails_leaves_nothing_changed(
     assert only_a_client.get("/api/session").status_code == 200
 
 
-# 14. fence: the 409 mapping matches only the trigger's own last_owner constraint.
+# The 409 mapping matches only the trigger's own last_owner constraint.
 @pytest.mark.parametrize(("constraint", "expected"), [("last_owner", 409), ("other_rule", 500)])
 def test_the_409_mapping_only_matches_last_owner(
     people: People, app: FastAPI, migrate_engine: Engine, constraint: str, expected: int
