@@ -1,0 +1,85 @@
+"""A business's settings: every key typed and defaulted here, saved values in the settings table.
+
+Add a key as a field with a default and a JSON-native type (str, bool, int, Literal). CONTRIBUTING
+has the rules for removing, renaming and tightening one.
+"""
+
+import importlib.resources
+import json
+from typing import Annotated
+
+from fastapi import APIRouter, Response
+from pydantic import AfterValidator, BaseModel, ConfigDict
+from sqlalchemy import text
+from sqlalchemy.orm import Session
+
+from app.auth import CurrentOwner, CurrentSession
+from app.errors import Error
+
+# The tzdata package's own list: zoneinfo.available_timezones() also adds the system's files, so the
+# accepted names would differ between machines.
+ZONES = frozenset(importlib.resources.files("tzdata").joinpath("zones").read_text().split())
+
+
+def known_zone(name: str) -> str:
+    # Membership, not ZoneInfo(name): on a case-insensitive disk that accepts "europe/amsterdam".
+    if name not in ZONES:
+        raise ValueError("unknown timezone")
+    return name
+
+
+class BusinessSettings(BaseModel):
+    # strict: "true" or 1 is not a boolean. The same model reads a PUT body, where every key may be
+    # left out, and answers with every key filled in.
+    model_config = ConfigDict(
+        strict=True, extra="forbid", json_schema_serialization_defaults_required=True
+    )
+
+    # Convert a business's local times with zoneinfo, never AT TIME ZONE: Postgres doesn't know
+    # every name tzdata accepts (US/Pacific, Asia/Calcutta).
+    timezone: Annotated[str, AfterValidator(known_zone)] = "Europe/Amsterdam"
+    auto_confirm: bool = False
+
+
+def read(db: Session) -> BusinessSettings:
+    """The transaction's business's settings, defaults filled in.
+
+    A saved key no longer in the registry is ignored; a saved value that no longer validates raises
+    rather than quietly becoming the default.
+    """
+    saved = db.execute(text("SELECT key, value FROM settings")).tuples()
+    return BusinessSettings.model_validate(
+        {key: value for key, value in saved if key in BusinessSettings.model_fields}
+    )
+
+
+router = APIRouter(prefix="/api", tags=["settings"])
+
+
+@router.get("/settings", name="read", responses={401: {"model": Error}})
+def read_settings(current: CurrentSession, response: Response) -> BusinessSettings:
+    response.headers["Cache-Control"] = "no-store"
+    return read(current.db)
+
+
+@router.put(
+    "/settings", name="update", responses={s: {"model": Error} for s in (401, 403, 415, 422)}
+)
+def update_settings(
+    changes: BusinessSettings,
+    current: CurrentOwner,
+    response: Response,
+) -> BusinessSettings:
+    """Save the keys sent; keys left out keep their value."""
+    # Field order, not the set of sent keys: two saves must lock rows in the same order.
+    for key, value in changes.model_dump(exclude_unset=True).items():
+        current.db.execute(
+            text("""
+            INSERT INTO settings (tenant_id, key, value)
+            VALUES (current_setting('app.tenant_id')::uuid, :key, CAST(:value AS jsonb))
+            ON CONFLICT (tenant_id, key) DO UPDATE SET value = excluded.value
+            """),
+            {"key": key, "value": json.dumps(value)},
+        )
+    response.headers["Cache-Control"] = "no-store"
+    return read(current.db)

@@ -171,6 +171,17 @@ def signed_in(request: Request) -> Iterator[SignedIn]:
 # commit is an error response instead of a success that didn't happen.
 CurrentSession = Annotated[SignedIn, Depends(signed_in, scope="function")]
 
+
+def owner(current: CurrentSession) -> SignedIn:
+    # A dependency, not a check in the handler: FastAPI runs it before validating the body, so
+    # anyone else gets 403 whatever they send.
+    if current.role != "owner":
+        raise ApiError(403, "owner_only")
+    return current
+
+
+CurrentOwner = Annotated[SignedIn, Depends(owner)]
+
 router = APIRouter(prefix="/api", tags=["session"])
 
 
