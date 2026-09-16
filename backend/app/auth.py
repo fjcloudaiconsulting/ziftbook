@@ -6,7 +6,7 @@ import secrets
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request, Response
@@ -15,7 +15,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app import limits, passwords
-from app.db import SessionLocal, tenant_context
+from app.db import SessionLocal, join_tenant, tenant_context
 from app.errors import ApiError, Error
 
 IDLE = timedelta(days=7)
@@ -62,6 +62,45 @@ def create(session: Session, user_id: UUID, *, ip: str | None, user_agent: str |
         """)
     )
     return token
+
+
+Action = Literal[
+    "sign_in_succeeded",
+    "sign_in_failed",
+    "signed_out",
+    "signed_out_everywhere",
+    "password_reset_completed",
+    "business_created",
+]
+
+
+def record(
+    session: Session,
+    request: Request,
+    action: Action,
+    *,
+    actor_user_id: UUID | None,
+    target: str | None = None,
+) -> None:
+    """Add an audit event to this transaction, in its tenant (none outside tenant_context).
+
+    target names what the event is about ("user:<id>"); never a password, token, cookie or email.
+    """
+    user_agent = request.headers.get("user-agent")
+    # No RETURNING: an event of no tenant isn't visible to the app, not even to the one adding it.
+    session.execute(
+        text("""
+        INSERT INTO audit_events (actor_user_id, action, target, ip, user_agent)
+        VALUES (:actor_user_id, :action, :target, :ip, :user_agent)
+        """),
+        {
+            "actor_user_id": actor_user_id,
+            "action": action,
+            "target": target,
+            "ip": _inet(request.client.host if request.client else None),
+            "user_agent": user_agent[:512] if user_agent else None,
+        },
+    )
 
 
 def _inet(host: str | None) -> str | None:
@@ -174,12 +213,14 @@ def start(session: Session, request: Request, user_id: UUID) -> str:
         session.execute(
             text("DELETE FROM sessions WHERE id_hash = :id_hash"), {"id_hash": hash_token(old)}
         )
-    return create(
+    token = create(
         session,
         user_id,
         ip=request.client.host if request.client else None,
         user_agent=request.headers.get("user-agent"),
     )
+    record(session, request, "sign_in_succeeded", actor_user_id=user_id)
+    return token
 
 
 class Credentials(BaseModel):
@@ -212,6 +253,10 @@ def sign_in(credentials: Credentials, request: Request, response: Response) -> S
         ).first()
     # No database connection is held while hashing.
     if not passwords.verify(account.password_hash if account else None, credentials.password):
+        # One insert either way; the account, if any, only as its id. Never the email typed.
+        with SessionLocal.begin() as session:
+            target = f"user:{account.user_id}" if account else None
+            record(session, request, "sign_in_failed", actor_user_id=None, target=target)
         raise ApiError(401, "invalid_credentials")
     assert account is not None
     if account.tenant_id is None:
@@ -238,17 +283,21 @@ def sign_out(request: Request, response: Response) -> None:
     token = request.cookies.get(COOKIE)
     if token:
         with SessionLocal.begin() as session:
-            session.execute(
-                text("DELETE FROM sessions WHERE id_hash = :id_hash"),
+            ended = session.execute(
+                text("DELETE FROM sessions WHERE id_hash = :id_hash RETURNING tenant_id, user_id"),
                 {"id_hash": hash_token(token)},
-            )
+            ).first()
+            if ended:
+                join_tenant(session, ended.tenant_id)
+                record(session, request, "signed_out", actor_user_id=ended.user_id)
     clear_cookie(response)
 
 
 @router.delete(
     "/sessions", status_code=204, responses={401: {"model": Error}, 415: {"model": Error}}
 )
-def sign_out_everywhere(current: CurrentSession, response: Response) -> None:
+def sign_out_everywhere(current: CurrentSession, request: Request, response: Response) -> None:
     """Sign the user out of every session, in every tenant."""
     current.db.execute(text("DELETE FROM sessions WHERE user_id = :id"), {"id": current.user_id})
+    record(current.db, request, "signed_out_everywhere", actor_user_id=current.user_id)
     clear_cookie(response)
