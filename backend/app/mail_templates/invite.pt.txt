@@ -3,7 +3,7 @@ Olá,
 
 Você recebeu um convite para fazer parte deste negócio no ziftbook:
 
-$business
+“$business”
 
 Abra este link para aceitar o convite:
 

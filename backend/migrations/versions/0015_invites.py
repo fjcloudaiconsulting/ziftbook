@@ -74,7 +74,7 @@ END $$"""
 def upgrade() -> None:
     op.execute("""
     CREATE TABLE invites (
-      id uuid PRIMARY KEY DEFAULT uuidv7(),
+      id uuid CONSTRAINT pk_invites PRIMARY KEY DEFAULT uuidv7(),
       tenant_id uuid NOT NULL CONSTRAINT fk_invites_tenant_id_tenants REFERENCES tenants (id),
       email text NOT NULL CONSTRAINT ck_invites_email_lowercase CHECK (email = lower(email)),
       -- NULL until the email job mints the link it sends.
