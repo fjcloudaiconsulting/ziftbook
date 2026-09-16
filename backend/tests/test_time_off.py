@@ -144,7 +144,8 @@ def test_a_worker_may_not_manage_another_members_block(
     else:
         response = worker.request("DELETE", block_path(existing_id), json={})
 
-    assert (response.status_code, response.json()) == (403, {"code": "owner_only"})
+    assert response.status_code == 403
+    assert response.json() == {"code": "owner_only"}
     assert len(rows(people.a)) == 1
     assert (
         events(migrate_engine, tenant_id=people.a, action="time_off_changed")
@@ -318,10 +319,13 @@ def test_a_block_may_not_exceed_366_days(people: People, app: FastAPI) -> None:
 # ordering are both pinned.
 def test_window_edges_are_half_open_and_ordered(people: People, app: FastAPI) -> None:
     only_a_member = member_id(people.a, people.only_a)
-    r_id = insert_block(people.a, only_a_member, "2026-10-01T12:00:00Z", "2026-10-01T14:00:00Z")
-    s_id = insert_block(people.a, only_a_member, "2026-10-01T06:00:00Z", "2026-10-01T20:00:00Z")
-    p_id = insert_block(people.a, only_a_member, "2026-10-01T08:00:00Z", "2026-10-01T10:00:00Z")
+    # Inserted so that, within every retained subset below, insertion order differs from the
+    # expected starts_at order: a missing ORDER BY (heap/insertion order) must be distinguishable
+    # from the correct, sorted answer.
     q_id = insert_block(people.a, only_a_member, "2026-10-01T10:00:00Z", "2026-10-01T12:00:00Z")
+    r_id = insert_block(people.a, only_a_member, "2026-10-01T12:00:00Z", "2026-10-01T14:00:00Z")
+    p_id = insert_block(people.a, only_a_member, "2026-10-01T08:00:00Z", "2026-10-01T10:00:00Z")
+    s_id = insert_block(people.a, only_a_member, "2026-10-01T06:00:00Z", "2026-10-01T20:00:00Z")
     owner = signed_in(app, people.a, people.both)
 
     middle = owner.get(
