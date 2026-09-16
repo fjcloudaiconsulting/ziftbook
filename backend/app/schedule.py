@@ -28,7 +28,11 @@ def to_utc(day: date, at: time, zone: str) -> datetime:
 
     Convert here, never with SQL AT TIME ZONE (CONTRIBUTING). A time the clock skips (02:30 as
     summer time starts) takes the offset from before the change, so it lands at 03:30 summer time.
-    A time the clock shows twice is the first of the two.
+    A time the clock shows twice is the first of the two. A shift starting inside a skipped hour
+    (02:30-03:15 on 2026-03-29 Amsterdam) converts to an interval that ends before it starts, and a
+    caller (availability, ZIF-48) must drop or clamp an interval whose end isn't after its start.
+
+    Availability (ZIF-48) is its first caller; until then only tests use it.
     """
     return datetime.combine(day, at, ZoneInfo(zone)).astimezone(UTC)
 
@@ -92,7 +96,7 @@ def replace_week(
     """Replace a member's whole week. An owner changes anyone's; a worker only their own, and only
     if the business allows it."""
     # First, before any other statement: two saves of one week run one after the other. Never lock
-    # tenants here: keep_an_owner locks memberships and then tenants (PR 2).
+    # tenants here: keep_an_owner locks memberships and then tenants (migration 0014).
     user_id = members.member_user(current, member_id, lock=True)
     if current.role != "owner" and not (
         user_id == current.user_id and business_settings.read(current.db).workers_edit_own_hours
