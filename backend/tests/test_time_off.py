@@ -13,7 +13,7 @@ from httpx2 import Response
 from sqlalchemy import Engine, text
 from sqlalchemy.exc import IntegrityError
 
-from app import auth, time_off
+from app import auth, members
 from app.auth import SignedIn
 from app.db import tenant_context
 from app.main import create_app
@@ -120,6 +120,7 @@ def test_worker_manages_their_own_block(people: People, app: FastAPI) -> None:
 
     patched = worker.patch(block_path(body["id"]), json={"reason": "Dentist"})
     assert (patched.status_code, patched.json()["reason"]) == (200, "Dentist")
+    assert patched.headers["cache-control"] == "no-store"
 
     deleted = worker.request("DELETE", block_path(body["id"]), json={})
     assert deleted.status_code == 204
@@ -152,6 +153,21 @@ def test_a_worker_may_not_manage_another_members_block(
         == events(migrate_engine, tenant_id=people.a, action="time_off_deleted")
         == []
     )
+
+
+# fence: permission is checked before the times, so a worker's invalid body for a colleague still
+# gets owner_only, not the validation error.
+def test_a_worker_posting_invalid_times_for_a_colleague_gets_owner_only(
+    people: People, app: FastAPI
+) -> None:
+    both_member = member_id(people.a, people.both)
+    worker = signed_in(app, people.a, people.only_a)
+
+    response = block(
+        worker, both_member, starts_at="2026-10-01T08:00:00Z", ends_at="2026-10-01T08:00:00Z"
+    )
+
+    assert (response.status_code, response.json()) == (403, {"code": "owner_only"})
 
 
 # 3. fence: an owner manages anyone's block, including their own.
@@ -219,7 +235,7 @@ def test_a_malformed_instant_is_refused(people: People, app: FastAPI, bad: Any) 
     patch_r = owner.patch(block_path(created["id"]), json={"starts_at": bad})
     assert (patch_r.status_code, patch_r.json()) == (422, {"code": "invalid_request"})
 
-    if bad is not None:  # httpx drops a None param; that's just "missing from" (test 10)
+    if bad is not None:  # httpx drops a None param; that's just "missing from"
         get_r = owner.get(path(only_a_member), params={"from": bad, "to": WIDE["to"]})
         assert (get_r.status_code, get_r.json()) == (422, {"code": "invalid_request"})
 
@@ -251,6 +267,45 @@ def test_offset_instants_are_stored_as_utc_and_year_bounds_are_accepted(
         path(only_a_member), params={"from": "2999-12-30T00:00:00Z", "to": "2999-12-31T00:00:00Z"}
     )
     assert upper.status_code == 200
+
+
+# fence (parametrised POST/PATCH): the reason has the same bounds at the API as the database.
+@pytest.mark.parametrize(
+    "bad_reason",
+    [
+        pytest.param("x" * 501, id="too-long"),
+        pytest.param("nope\x07", id="control-char"),
+        pytest.param("   ", id="whitespace-only"),
+    ],
+)
+@pytest.mark.parametrize("route", ["POST", "PATCH"])
+def test_reason_bounds_are_enforced_at_the_api(
+    people: People, app: FastAPI, route: str, bad_reason: str
+) -> None:
+    owner = signed_in(app, people.a, people.both)
+    only_a_member = member_id(people.a, people.only_a)
+    existing = block(owner, only_a_member).json()
+
+    if route == "POST":
+        response = block(owner, only_a_member, reason=bad_reason)
+    else:
+        response = owner.patch(block_path(existing["id"]), json={"reason": bad_reason})
+
+    assert (response.status_code, response.json()) == (422, {"code": "invalid_request"})
+
+
+# guard: a reason's surrounding whitespace is trimmed, on POST and PATCH.
+def test_reason_is_stripped_of_surrounding_whitespace(people: People, app: FastAPI) -> None:
+    owner = signed_in(app, people.a, people.both)
+    only_a_member = member_id(people.a, people.only_a)
+
+    created = block(owner, only_a_member, reason="  Dentist  ")
+    assert created.status_code == 201
+    assert created.json()["reason"] == "Dentist"
+
+    patched = owner.patch(block_path(created.json()["id"]), json={"reason": "  Surgery  "})
+    assert patched.status_code == 200
+    assert patched.json()["reason"] == "Surgery"
 
 
 # 7. fence (parametrised POST, and PATCH of ends_at only): end must be strictly after start, and the
@@ -361,6 +416,13 @@ def test_the_window_must_be_valid(people: People, app: FastAPI) -> None:
     )
     assert (reversed_.status_code, reversed_.json()) == (422, {"code": "invalid_window"})
 
+    # The window is checked before the member is even looked up: an unknown id still gets
+    # invalid_window, not not_found.
+    unknown_member = owner.get(
+        path(uuid.uuid7()), params={"from": "2026-02-01T00:00:00Z", "to": "2026-01-01T00:00:00Z"}
+    )
+    assert (unknown_member.status_code, unknown_member.json()) == (422, {"code": "invalid_window"})
+
     too_long = owner.get(
         path(only_a_member),
         params={"from": "2026-01-01T00:00:00Z", "to": "2027-01-02T00:00:00.000001Z"},
@@ -384,10 +446,12 @@ def test_reason_is_visible_only_to_the_member_and_owners(people: People, app: Fa
     only_a_member = member_id(people.a, people.only_a)
     owners_block = block(owner, both_member, reason="Chemo")
     workers_block = block(worker, only_a_member, reason="Dentist")
+    owners_block_id = owners_block.json()["id"]
     assert owners_block.json()["reason"] == "Chemo"
     assert workers_block.json()["reason"] == "Dentist"
 
     own_view = worker.get(path(only_a_member), params=WIDE)
+    assert own_view.headers["cache-control"] == "no-store"
     assert any(b["reason"] == "Dentist" for b in own_view.json())
 
     owner_view_of_worker = owner.get(path(only_a_member), params=WIDE)
@@ -396,7 +460,9 @@ def test_reason_is_visible_only_to_the_member_and_owners(people: People, app: Fa
     assert any(b["reason"] == "Chemo" for b in owner_view_of_self.json())
 
     workers_view_of_owner = worker.get(path(both_member), params=WIDE)
-    assert all(b["reason"] is None for b in workers_view_of_owner.json())
+    body = workers_view_of_owner.json()
+    # Redacted, not hidden: the block is listed, with its reason nulled.
+    assert [(b["id"], b["reason"]) for b in body] == [(owners_block_id, None)]
     assert "Chemo" not in workers_view_of_owner.text
 
 
@@ -591,7 +657,7 @@ def test_a_write_and_a_removal_of_the_same_member_never_deadlock(
     owner = signed_in(app, people.a, people.both)
     locked = threading.Event()
     release = threading.Event()
-    real_member_user = time_off.member_user
+    real_member_user = members.member_user
     first_lock_seen: list[bool] = []
 
     def wrapper(current: SignedIn, target: uuid.UUID, *, lock: bool) -> uuid.UUID:
@@ -602,7 +668,7 @@ def test_a_write_and_a_removal_of_the_same_member_never_deadlock(
             assert release.wait(10)
         return result
 
-    monkeypatch.setattr(time_off, "member_user", wrapper)
+    monkeypatch.setattr(members, "member_user", wrapper)
     results: dict[str, Response] = {}
 
     def do_patch() -> None:
