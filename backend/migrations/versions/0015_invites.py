@@ -5,7 +5,7 @@ which mints it. accept_invite is here, not with the endpoints, so it is deployed
 the app that calls it (the email job ships the same way).
 
 Revision ID: 0015
-Revises: 0016
+Revises: 0014
 """
 
 from alembic import op
@@ -13,7 +13,7 @@ from alembic import op
 from app.db import enable_tenant_isolation
 
 revision = "0015"
-down_revision = "0016"
+down_revision = "0014"
 branch_labels = None
 depends_on = None
 
