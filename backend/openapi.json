@@ -594,7 +594,7 @@
           "settings"
         ],
         "summary": "Update",
-        "description": "Save the keys sent; keys left out keep their value.",
+        "description": "Save the keys sent; keys left out keep their value. Every change goes in the audit log.",
         "operationId": "settings-update",
         "requestBody": {
           "content": {
@@ -702,6 +702,18 @@
             ],
             "title": "Target"
           },
+          "details": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Details"
+          },
           "ip": {
             "anyOf": [
               {
@@ -732,6 +744,7 @@
           "action",
           "actor_user_id",
           "target",
+          "details",
           "ip",
           "user_agent"
         ],

@@ -48,7 +48,7 @@ def events(migrate_engine: Engine, **match: Any) -> list[dict[str, Any]]:
         conn.execute(text("SET LOCAL app.audit_review = 'on'"))
         rows = conn.execute(
             text(f"""
-            SELECT action, tenant_id, actor_user_id, target, host(ip) AS ip, user_agent
+            SELECT action, tenant_id, actor_user_id, target, details, host(ip) AS ip, user_agent
             FROM audit_events WHERE {where} ORDER BY id
             """),
             match,
@@ -112,6 +112,7 @@ def test_signing_in_is_recorded_in_the_business(
             "tenant_id": people.a,
             "actor_user_id": people.only_a,
             "target": None,
+            "details": None,
             "ip": address,
             "user_agent": "testclient",
         }
@@ -151,7 +152,12 @@ def test_failed_sign_ins_look_the_same_whether_or_not_the_account_exists(
     assert {k: v for k, v in unknown.headers.items() if k != "date"} == {
         k: v for k, v in wrong.headers.items() if k != "date"
     }
-    no_account = {"action": "sign_in_failed", "tenant_id": None, "actor_user_id": None}
+    no_account = {
+        "action": "sign_in_failed",
+        "tenant_id": None,
+        "actor_user_id": None,
+        "details": None,
+    }
     assert events(migrate_engine, ip=unknown_address) == [
         {**no_account, "target": None, "ip": unknown_address, "user_agent": "testclient"}
     ]
@@ -305,6 +311,7 @@ def test_a_password_reset_is_recorded_against_the_account(
             "tenant_id": None,
             "actor_user_id": None,
             "target": f"user:{people.both}",
+            "details": None,
             "ip": address,
             "user_agent": "testclient",
         }

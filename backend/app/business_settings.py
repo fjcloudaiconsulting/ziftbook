@@ -8,11 +8,12 @@ import importlib.resources
 import json
 from typing import Annotated
 
-from fastapi import APIRouter, Response
+from fastapi import APIRouter, Request, Response
 from pydantic import AfterValidator, BaseModel, ConfigDict
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app import auth
 from app.auth import CurrentOwner, CurrentSession
 from app.errors import Error
 
@@ -68,18 +69,31 @@ def read_settings(current: CurrentSession, response: Response) -> BusinessSettin
 def update_settings(
     changes: BusinessSettings,
     current: CurrentOwner,
+    request: Request,
     response: Response,
 ) -> BusinessSettings:
-    """Save the keys sent; keys left out keep their value."""
+    """Save the keys sent; keys left out keep their value. Every change goes in the audit log."""
+    defaults = BusinessSettings()
     # Field order, not the set of sent keys: two saves must lock rows in the same order.
     for key, value in changes.model_dump(exclude_unset=True).items():
-        current.db.execute(
+        replaced = current.db.execute(
             text("""
             INSERT INTO settings (tenant_id, key, value)
             VALUES (current_setting('app.tenant_id')::uuid, :key, CAST(:value AS jsonb))
             ON CONFLICT (tenant_id, key) DO UPDATE SET value = excluded.value
+            RETURNING old.value AS old
             """),
             {"key": key, "value": json.dumps(value)},
-        )
+        ).scalar()
+        old = getattr(defaults, key) if replaced is None else replaced
+        if old != value:
+            auth.record(
+                current.db,
+                request,
+                "setting_changed",
+                actor_user_id=current.user_id,
+                target=f"setting:{key}",
+                details={"old": old, "new": value},
+            )
     response.headers["Cache-Control"] = "no-store"
     return read(current.db)

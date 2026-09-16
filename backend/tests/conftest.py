@@ -187,6 +187,15 @@ def no_hashing(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     return hashed
 
 
+def signed_in(app: FastAPI, tenant_id: uuid.UUID, user_id: uuid.UUID) -> TestClient:
+    """A client holding a session in that business, as that person."""
+    with tenant_context(tenant_id) as session:
+        token = auth.create(session, user_id, ip=None, user_agent=None)
+    client = new_client(app)
+    client.cookies.set(auth.COOKIE, token)
+    return client
+
+
 def add_password(migrate_engine: Engine, user_id: uuid.UUID, password: str) -> None:
     with migrate_engine.begin() as conn:
         conn.execute(
@@ -222,6 +231,7 @@ def people(app_engine: Engine, migrate_engine: Engine, bound: None) -> Iterator[
     yield people
     for tenant_id in (a, b):
         with tenant_context(tenant_id) as session:
+            session.execute(text("DELETE FROM settings"))  # they reference the business
             session.execute(text("DELETE FROM memberships"))
     # The app role can't delete users; the test cleans up as the migrate role.
     with migrate_engine.begin() as conn:
