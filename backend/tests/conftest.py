@@ -73,11 +73,18 @@ def bound(app_engine: Engine) -> Iterator[None]:
     SessionLocal.configure(bind=None)
 
 
-def new_client(app: FastAPI) -> TestClient:
-    # A fresh IPv6 /64 per client, so per-IP rate limits never carry over between tests or runs.
-    address = f"2001:db8:{secrets.randbelow(65536):x}:{secrets.randbelow(65536):x}::1"
+def fresh_address() -> str:
+    """A new IPv6 /64, so per-IP rate limits never carry over between tests or runs. No zero groups:
+    Postgres would print 2001:db8:abc:0::1 as 2001:db8:abc::1."""
+    return f"2001:db8:{secrets.randbelow(65535) + 1:x}:{secrets.randbelow(65535) + 1:x}::1"
+
+
+def new_client(app: FastAPI, address: str | None = None) -> TestClient:
     return TestClient(
-        app, base_url="https://testserver", client=(address, 1), raise_server_exceptions=False
+        app,
+        base_url="https://testserver",
+        client=(address or fresh_address(), 1),
+        raise_server_exceptions=False,
     )
 
 

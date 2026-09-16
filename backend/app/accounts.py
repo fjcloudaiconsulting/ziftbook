@@ -9,7 +9,7 @@ from pydantic import AfterValidator, BaseModel, Field, StringConstraints
 from sqlalchemy import text
 
 from app import auth, limits, passwords
-from app.db import SessionLocal, tenant_context
+from app.db import SessionLocal, join_tenant, tenant_context
 from app.errors import ApiError, Error
 from app.jobs import enqueue
 from app.mail import Locale
@@ -100,6 +100,10 @@ def complete_sign_up(
                 "business_name": details.business_name,
             },
         ).one()
+        if created.outcome == "created":
+            join_tenant(session, created.tenant_id)
+            auth.record(session, request, "business_created", actor_user_id=created.user_id)
+    # Outside the transaction: raising inside would roll back using up the link.
     if created.outcome == "invalid_token":  # used up since the liveness check
         raise ApiError(400, "invalid_token")
     if created.outcome == "already_registered":
@@ -138,11 +142,18 @@ def complete_password_reset(details: CompleteReset, request: Request, response: 
     digest = live_token(details.token, "password_reset")
     password_hash = passwords.hash_password(password)
     with SessionLocal.begin() as session:
-        if not session.scalar(
-            text("SELECT complete_password_reset(:hash, :password_hash)"),
+        user_id = session.scalar(
+            text("SELECT reset_password(:hash, :password_hash)"),
             {"hash": digest, "password_hash": password_hash},
-        ):
-            raise ApiError(400, "invalid_token")
+        )
+        if user_id:
+            target = f"user:{user_id}"
+            auth.record(
+                session, request, "password_reset_completed", actor_user_id=None, target=target
+            )
+    # Outside the transaction: a link for an account that's gone stays used up.
+    if not user_id:
+        raise ApiError(400, "invalid_token")
     # Its own transaction: deleting this browser's session inside the reset's deadlocks with a
     # sign-in that holds the password row and deletes the same session.
     auth.sign_out(request, response)
