@@ -89,8 +89,8 @@ def test_send_invite_uses_the_business_language(
     assert link_in(body).startswith(f"{APP_URL}/{page}/invite#")
 
 
-# A deleted invite, or one upserted to a new id, sends nothing and the job still
-# completes cleanly.
+# A deleted invite (a resend gives it a new id, the same case) sends nothing and the job
+# still completes cleanly.
 def test_send_invite_for_a_gone_invite_sends_nothing(
     people: People, app_engine: Engine, migrate_engine: Engine
 ) -> None:

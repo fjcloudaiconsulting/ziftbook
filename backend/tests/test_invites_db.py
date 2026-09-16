@@ -1,5 +1,5 @@
 """invites and accept_invite: the table's constraints, its tenant isolation, and the definer
-function the invite-accept endpoint (PR 7) will call."""
+function the invite-accept endpoint will call."""
 
 import hashlib
 import secrets
