@@ -12,7 +12,7 @@ from sqlalchemy import Engine, text
 from app import auth
 from app.db import tenant_context
 from app.main import create_app
-from tests.conftest import People, email_of
+from tests.conftest import People, email_of, member_id
 
 
 @pytest.fixture
@@ -86,6 +86,7 @@ def test_a_signed_in_user_sees_their_session(people: People, client: TestClient)
     assert response.json() == {
         "user_id": str(people.both),
         "tenant_id": str(people.a),
+        "member_id": str(member_id(people.a, people.both)),
         "role": "owner",
         "email": email_of(people.both),
         "business_name": "a",

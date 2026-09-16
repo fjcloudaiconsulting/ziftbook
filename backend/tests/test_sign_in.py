@@ -15,7 +15,15 @@ from app import auth, passwords
 from app.db import SessionLocal, tenant_context
 from app.errors import ApiError
 from app.main import create_app
-from tests.conftest import PASSWORD, People, add_password, add_user, email_of, new_client
+from tests.conftest import (
+    PASSWORD,
+    People,
+    add_password,
+    add_user,
+    email_of,
+    member_id,
+    new_client,
+)
 
 
 @pytest.fixture
@@ -59,6 +67,7 @@ def test_signing_in_starts_a_session_in_the_business(people: People, client: Tes
     assert response.json() == {
         "user_id": str(people.only_a),
         "tenant_id": str(people.a),
+        "member_id": str(member_id(people.a, people.only_a)),
         "role": "worker",
         "email": email_of(people.only_a),
         "business_name": "a",

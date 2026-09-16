@@ -11,7 +11,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app import auth
 from app.db import tenant_context
-from tests.conftest import People
+from tests.conftest import People, set_role
 
 
 def start(tenant_id: uuid.UUID, user_id: uuid.UUID, **request: str | None) -> str:
@@ -76,6 +76,9 @@ def test_a_session_cannot_start_for_someone_outside_the_tenant(people: People) -
 
 
 def test_removing_a_membership_ends_only_its_sessions(people: People, app_engine: Engine) -> None:
+    # both is a's only owner: promote only_a first, or the keep_an_owner trigger refuses the
+    # DELETE below (both stays a's only owner otherwise) and the IntegrityError propagates here.
+    set_role(people.a, people.only_a, "owner")
     in_a, in_b = start(people.a, people.both), start(people.b, people.both)
 
     with tenant_context(people.a) as session:
@@ -86,6 +89,10 @@ def test_removing_a_membership_ends_only_its_sessions(people: People, app_engine
 
 
 def test_a_role_change_requires_ending_the_sessions_first(people: People) -> None:
+    # With another owner present, only the sessions foreign key can refuse the change: without
+    # this, the test would pass either way (RI_ConstraintTrigger_* fires before keep_an_owner in
+    # name order), making it depend on trigger names rather than the foreign key itself.
+    set_role(people.a, people.only_a, "owner")
     start(people.a, people.both)
 
     with pytest.raises(IntegrityError) as error, tenant_context(people.a) as session:

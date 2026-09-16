@@ -4,7 +4,6 @@ SECURITY DEFINER functions that are its only way in."""
 import hashlib
 import secrets
 import threading
-import time
 import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -17,7 +16,7 @@ from sqlalchemy.exc import ProgrammingError
 
 from app import auth
 from app.db import tenant_context
-from tests.conftest import EXPIRE, People, add_user, delete_services
+from tests.conftest import EXPIRE, People, add_user, delete_services, wait_until_blocked
 
 
 @dataclass(frozen=True)
@@ -58,19 +57,6 @@ def digest(token: bytes) -> bytes:
 
 def email_of(user_id: uuid.UUID) -> str:
     return f"{user_id}@example.com"
-
-
-def wait_until_blocked(engine: Engine, backends: int) -> None:
-    """Wait until that many sessions block on a lock: the interleaving the test needs."""
-    for _ in range(100):
-        with engine.connect() as conn:
-            waiting = conn.scalar(
-                text("SELECT count(DISTINCT pid) FROM pg_locks WHERE NOT granted")
-            )
-        if waiting >= backends:
-            return
-        time.sleep(0.05)
-    raise AssertionError(f"{backends} sessions never waited on a lock")
 
 
 @pytest.fixture
