@@ -95,13 +95,14 @@ def _insert(conn: Connection, tenant_id: uuid.UUID, email: str, token_hash: byte
     )
 
 
-# T1 fence: missing CHECKs, or a UNIQUE without tenant_id, let a violation through, or refuse a
+# Missing CHECKs, or a UNIQUE without tenant_id, let a violation through, or refuse a
 # combination the schema should accept.
 def test_invites_check_and_unique_constraints(app_engine: Engine, people: People) -> None:
     hash32 = secrets.token_bytes(32)
     violations: list[tuple[type[Exception], list[tuple[uuid.UUID, str, bytes | None]]]] = [
         (CheckViolation, [(people.a, fresh_email().upper(), None)]),
         (CheckViolation, [(people.a, fresh_email(), secrets.token_bytes(31))]),
+        (CheckViolation, [(people.a, fresh_email(), secrets.token_bytes(33))]),
         (
             UniqueViolation,
             [(people.a, e := fresh_email(), None), (people.a, e, None)],
@@ -160,7 +161,7 @@ def test_accept_invite_is_a_pinned_and_non_public_definer(migrate_engine: Engine
         )
 
 
-# A1 fence: a fresh email, accepted with a password, becomes an account, a worker membership, and
+# A fresh email, accepted with a password, becomes an account, a worker membership, and
 # uses up the invite.
 def test_accept_creates_an_account_and_a_membership(
     migrate_engine: Engine, people: People, new_accounts: list[NewAccount]
@@ -172,7 +173,7 @@ def test_accept_creates_an_account_and_a_membership(
         result = session.execute(
             text("SELECT * FROM accept_invite(:h, :p)"), {"h": digest(secret), "p": HASH}
         ).one()
-        # A9 guard: accept_invite never changes the caller's tenant.
+        # accept_invite never changes the caller's tenant.
         assert session.scalar(text("SELECT current_setting('app.tenant_id')")) == str(people.a)
     assert result.outcome == "accepted"
     new_accounts.append(NewAccount(people.a, result.account_id))
@@ -196,7 +197,7 @@ def test_accept_creates_an_account_and_a_membership(
     assert gone == 0
 
 
-# A2 fence: no live invite (replayed, expired, or unsent) is ever accepted, and nothing is written.
+# No live invite (replayed, expired, or unsent) is ever accepted, and nothing is written.
 def test_accept_refuses_a_replayed_expired_or_unsent_invite(
     migrate_engine: Engine, people: People, new_accounts: list[NewAccount]
 ) -> None:
@@ -240,7 +241,7 @@ def test_accept_refuses_a_replayed_expired_or_unsent_invite(
     assert unsent_still_there == 1
 
 
-# A3 fence: a token only works under the tenant id it was minted for.
+# A token only works under the tenant id it was minted for.
 def test_accept_binds_to_its_own_tenant(migrate_engine: Engine, people: People) -> None:
     email = fresh_email()
     invite_id, secret = minted(people.a, email)
@@ -258,7 +259,7 @@ def test_accept_binds_to_its_own_tenant(migrate_engine: Engine, people: People) 
         )
 
 
-# A4 fence: an invite never sets an existing account's password.
+# An invite never sets an existing account's password.
 def test_accept_never_touches_an_existing_accounts_password(
     migrate_engine: Engine, people: People
 ) -> None:
@@ -288,7 +289,7 @@ def test_accept_never_touches_an_existing_accounts_password(
     assert still_there == 1
 
 
-# A5 fence: an existing account accepting with no password only gains a membership.
+# An existing account accepting with no password only gains a membership.
 def test_accept_for_an_existing_account_only_adds_a_membership(
     migrate_engine: Engine, people: People
 ) -> None:
@@ -321,7 +322,7 @@ def test_accept_for_an_existing_account_only_adds_a_membership(
     assert unchanged == original
 
 
-# A6 fence: accepting for someone already a member is a no-op on their role, and uses up the link.
+# Accepting for someone already a member is a no-op on their role, and uses up the link.
 @pytest.mark.parametrize("attr,expected_role", [("only_a", "worker"), ("both", "owner")])
 def test_accept_for_an_already_member_leaves_the_role_unchanged(
     people: People, attr: str, expected_role: str
@@ -341,7 +342,7 @@ def test_accept_for_an_already_member_leaves_the_role_unchanged(
     assert gone == 0
 
 
-# A7 fence: two accepts of the same new-account link serialize on FOR UPDATE; the loser finds
+# Two accepts of the same new-account link serialize on FOR UPDATE; the loser finds
 # nothing, and only one account is ever created.
 def test_concurrent_accepts_of_the_same_link_serialize(
     migrate_engine: Engine, people: People, new_accounts: list[NewAccount]

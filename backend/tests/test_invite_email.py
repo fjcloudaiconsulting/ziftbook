@@ -36,7 +36,7 @@ def invite_row(
         ).one()
 
 
-# B1 fence: the job mints a token, mails its link with no query string, resets the expiry, and
+# The job mints a token, mails its link with no query string, resets the expiry, and
 # tags the message so Mailgun doesn't rewrite the link.
 def test_send_invite_mints_and_mails_a_link(
     people: People, app_engine: Engine, migrate_engine: Engine
@@ -53,6 +53,7 @@ def test_send_invite_mints_and_mails_a_link(
     assert page == f"{APP_URL}/en/invite" and "?" not in link
     tenant, _, secret = fragment.partition(".")
     assert tenant == str(people.a)
+    assert len(secret) >= 43  # 32 random bytes, so never a UUID
     token_hash, lifetime = invite_row(
         migrate_engine, people.a, invite_id, "token_hash, expires_at - now()"
     )
@@ -62,7 +63,7 @@ def test_send_invite_mints_and_mails_a_link(
     assert sent["Subject"] == "You're invited to join a business on ziftbook"
 
 
-# B2 fence: the link, page and subject follow the business's language, not the recipient's (a
+# The link, page and subject follow the business's language, not the recipient's (a
 # fresh email has none).
 @pytest.mark.parametrize(
     "language,page,subject",
@@ -88,19 +89,22 @@ def test_send_invite_uses_the_business_language(
     assert link_in(body).startswith(f"{APP_URL}/{page}/invite#")
 
 
-# B3 fence: a deleted invite, or one upserted to a new id, sends nothing and the job still
+# A deleted invite, or one upserted to a new id, sends nothing and the job still
 # completes cleanly.
 def test_send_invite_for_a_gone_invite_sends_nothing(
     people: People, app_engine: Engine, migrate_engine: Engine
 ) -> None:
     email = fresh_email()
-    missing_invite_id = uuid4()
+    invite_id = pending(people.a, email)
+    with migrate_engine.begin() as conn:
+        conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(people.a)})
+        conn.execute(text("DELETE FROM invites WHERE id = :i"), {"i": invite_id})
     with SessionLocal.begin() as session:
         enqueue(
             session,
             "email.invite",
-            f"email.invite:{people.a}:{missing_invite_id}",
-            {"invite_id": str(missing_invite_id)},
+            f"email.invite:{people.a}:{invite_id}",
+            {"invite_id": str(invite_id)},
             tenant_id=people.a,
         )
 
@@ -113,13 +117,13 @@ def test_send_invite_for_a_gone_invite_sends_nothing(
             SELECT completed_at, last_error FROM jobs
             WHERE dedupe_key = :key
             """),
-            {"key": f"email.invite:{people.a}:{missing_invite_id}"},
+            {"key": f"email.invite:{people.a}:{invite_id}"},
         ).one()
     assert row.completed_at is not None
     assert row.last_error is None
 
 
-# B4 fence: an owner-chosen business name never breaks the template or duplicates the link.
+# An owner-chosen business name never breaks the template or duplicates the link.
 def test_send_invite_puts_the_business_name_on_its_own_line(
     people: People, app_engine: Engine, migrate_engine: Engine
 ) -> None:
@@ -133,12 +137,12 @@ def test_send_invite_puts_the_business_name_on_its_own_line(
 
     (sent,) = inbox(email)
     body, _ = message(sent["ID"])
-    assert name in body.splitlines()
+    assert f"“{name}”" in body.splitlines()
     assert body.count("http") == 1
     assert name not in sent["Subject"]
 
 
-# B5 fence: the job only mints inside its own tenant; an invite of another business is untouched.
+# The job only mints inside its own tenant; an invite of another business is untouched.
 def test_send_invite_only_mints_within_its_own_tenant(
     people: People, app_engine: Engine, migrate_engine: Engine
 ) -> None:
@@ -152,7 +156,7 @@ def test_send_invite_only_mints_within_its_own_tenant(
     assert token_hash is None
 
 
-# B6 fence: running the job again mints and sends a new link; only the newest one still works.
+# Running the job again mints and sends a new link; only the newest one still works.
 def test_running_the_job_again_sends_a_new_link(
     people: People, app_engine: Engine, migrate_engine: Engine
 ) -> None:
@@ -172,7 +176,7 @@ def test_running_the_job_again_sends_a_new_link(
     assert stored != hashlib.sha256(first_secret.encode()).digest()
 
 
-# B7 fence: minting and sending share a transaction; a failed send leaves no hash for the retry.
+# Minting and sending share a transaction; a failed send leaves no hash for the retry.
 def test_a_failed_send_leaves_no_hash(
     people: People,
     app_engine: Engine,
@@ -193,7 +197,7 @@ def test_a_failed_send_leaves_no_hash(
     assert token_hash is None
 
 
-# B8 guard: registration bounds, the no-tenant guard, and the kind reachable through the worker.
+# Registration bounds, the no-tenant guard, and the kind reachable through the worker.
 def test_email_invite_kind_is_registered_with_safe_bounds() -> None:
     kind = KINDS["email.invite"]
     assert kind.timeout < 60

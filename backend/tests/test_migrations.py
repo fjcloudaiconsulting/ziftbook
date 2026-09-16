@@ -20,6 +20,10 @@ FIVE_ARG = "SELECT to_regprocedure('complete_sign_up(bytea,text,text,text,text)'
 THREE_ARG = "SELECT to_regprocedure('complete_sign_up(bytea,text,text)')"
 INVITES_TABLE = "SELECT to_regclass('invites')"
 ACCEPT_INVITE = "SELECT to_regprocedure('accept_invite(bytea,text)')"
+INVITES_PK = """
+SELECT conname FROM pg_constraint
+WHERE conrelid = 'invites'::regclass AND contype = 'p'
+"""
 
 
 def test_downgrading_and_upgrading_0013_restores_its_columns_and_grants(
@@ -54,3 +58,4 @@ def test_downgrading_and_upgrading_0013_restores_its_columns_and_grants(
         assert conn.scalar(text(FIVE_ARG)) is not None
         assert conn.scalar(text(INVITES_TABLE)) is not None
         assert conn.scalar(text(ACCEPT_INVITE)) is not None
+        assert conn.scalar(text(INVITES_PK)) == "pk_invites"
