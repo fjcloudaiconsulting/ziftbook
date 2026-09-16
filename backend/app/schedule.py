@@ -98,8 +98,9 @@ def replace_week(
     # First, before any other statement: two saves of one week run one after the other. Never lock
     # tenants here: keep_an_owner locks memberships and then tenants (migration 0014).
     user_id = members.member_user(current, member_id, lock=True)
+    settings = business_settings.read(current.db)
     if current.role != "owner" and not (
-        user_id == current.user_id and business_settings.read(current.db).workers_edit_own_hours
+        user_id == current.user_id and settings.workers_edit_own_hours
     ):
         raise ApiError(403, "owner_only")
     rows = sorted(
