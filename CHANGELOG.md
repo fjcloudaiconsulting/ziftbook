@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.9.0...v0.10.0) (2026-09-16)
+
+
+### Features
+
+* **backend:** record settings changes in the audit log (ZIF-23) ([#68](https://github.com/fjcloudaiconsulting/ziftbook/issues/68)) ([d49b078](https://github.com/fjcloudaiconsulting/ziftbook/commit/d49b078534b9aac053d253c3d38f1b6bcef20018))
+
 ## [0.9.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.8.0...v0.9.0) (2026-09-16)
 
 
