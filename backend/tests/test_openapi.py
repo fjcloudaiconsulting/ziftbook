@@ -6,6 +6,23 @@ from app.main import create_app, openapi_document
 CONTRACT = Path(__file__).parent.parent / "openapi.json"
 
 
+def test_every_error_in_the_contract_is_a_code() -> None:
+    # The validation handler answers {"code": "invalid_request"}. A route that doesn't declare its
+    # 422 publishes FastAPI's {"detail": [...]} shape to the generated client instead.
+    spec = create_app().openapi()
+
+    wrong = [
+        f"{method.upper()} {path} {status}"
+        for path, operations in spec["paths"].items()
+        for method, operation in operations.items()
+        for status, answer in operation["responses"].items()
+        if status.startswith(("4", "5"))
+        and answer.get("content", {}).get("application/json", {}).get("schema")
+        != {"$ref": "#/components/schemas/Error"}
+    ]
+    assert wrong == []
+
+
 def test_operation_ids_are_tag_and_route_name() -> None:
     spec = create_app().openapi()
 
