@@ -552,7 +552,7 @@ def test_removing_a_member_cascades_their_working_hours(people: People, app: Fas
 
 
 # A save that changes the week is recorded once; an unchanged or already-empty save writes
-# nothing.
+# nothing, and an empty save that does change the week clears its stored rows.
 def test_a_save_that_changes_the_week_is_recorded_once(
     people: People, app: FastAPI, migrate_engine: Engine
 ) -> None:
@@ -580,9 +580,11 @@ def test_a_save_that_changes_the_week_is_recorded_once(
     assert owner.put(hours_path(both_member), json=[]).status_code == 200
     assert len(events(migrate_engine, tenant_id=people.a, action="working_hours_changed")) == 1
 
-    # An empty PUT on only_a's non-empty week: one more event.
+    # An empty PUT on only_a's non-empty week: one more event, and its rows are gone.
     assert owner.put(hours_path(only_a_member), json=[]).status_code == 200
     assert len(events(migrate_engine, tenant_id=people.a, action="working_hours_changed")) == 2
+    assert stored(people.a, people.only_a) == []
+    assert owner.get(hours_path(only_a_member)).json() == []
 
 
 # A save whose event fails to record leaves the week unchanged.
