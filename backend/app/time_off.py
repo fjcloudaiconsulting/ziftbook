@@ -20,11 +20,10 @@ from pydantic import (
 from pydantic.json_schema import SkipJsonSchema
 from sqlalchemy import text
 
-from app import auth
+from app import auth, members
 from app.accounts import printable
 from app.auth import CurrentSession, SignedIn
 from app.errors import ApiError, Error
-from app.members import member_user as member_user  # re-exported: tests monkeypatch it here
 
 LONGEST = timedelta(days=366)  # migration 0018, ck_time_off_at_most_366_days
 
@@ -118,8 +117,9 @@ def manual_block(current: SignedIn, time_off_id: UUID) -> tuple[UUID, UUID]:
     if member_id is None:
         raise ApiError(404, "not_found")
     # The member first, then their blocks: the same order as removing a member (membership row,
-    # then the cascade to time_off), so the two never deadlock. Never lock tenants (PR 2).
-    user_id = member_user(current, member_id, lock=True)
+    # then the cascade to time_off), so the two never deadlock. Never lock tenants: keep_an_owner
+    # locks memberships and then tenants (migration 0014).
+    user_id = members.member_user(current, member_id, lock=True)
     if not may_manage(current, user_id):
         raise ApiError(403, "owner_only")
     return member_id, user_id
@@ -142,7 +142,7 @@ def list_time_off(
     the reason only the member and owners."""
     if to <= from_ or to - from_ > LONGEST:
         raise ApiError(422, "invalid_window")
-    user_id = member_user(current, member_id, lock=False)
+    user_id = members.member_user(current, member_id, lock=False)
     rows = current.db.execute(
         text(f"""
         SELECT {fields(may_manage(current, user_id))} FROM time_off
@@ -165,7 +165,7 @@ def create_time_off(
     member_id: UUID, new: TimeOffIn, current: CurrentSession, request: Request, response: Response
 ) -> TimeOffOut:
     # Locked: a member removed meanwhile is a 404 here, not a foreign key 500 at the insert.
-    user_id = member_user(current, member_id, lock=True)
+    user_id = members.member_user(current, member_id, lock=True)
     if not may_manage(current, user_id):
         raise ApiError(403, "owner_only")
     checked(new.starts_at, new.ends_at)
