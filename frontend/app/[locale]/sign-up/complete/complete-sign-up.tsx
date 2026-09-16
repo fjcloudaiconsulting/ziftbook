@@ -1,10 +1,11 @@
 "use client";
 
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { type FormEvent, useId, useState } from "react";
 
 import { accountCompleteSignUp } from "@/api-client";
 import { Link, useRouter } from "@/i18n/navigation";
+import { byName, type Country, likelyCountry } from "@/lib/account";
 
 import { LinkRequest } from "../../_ui/link-request";
 import { Banner, FieldError, forgetToken, Heading, Mark, NoScript, Outcome, PasswordField, problem, send, Submit, useLinkToken } from "../../_ui/parts";
@@ -18,26 +19,28 @@ export function CompleteSignUp() {
   const form = useTranslations("Form");
   const router = useRouter();
   const token = useLinkToken(TOKEN_KEY);
+  const locale = useLocale();
   const nameId = useId();
+  const countryId = useId();
   const [name, setName] = useState("");
+  const [country, setCountry] = useState<Country | "">(() => likelyCountry(locale));
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [ended, setEnded] = useState<"expired" | "exists" | null>(null);
   const [passwordError, setPasswordError] = useState<string>();
   const [nameError, setNameError] = useState<string>();
+  const [countryError, setCountryError] = useState<string>();
   const [message, setMessage] = useState<{ tone: "error" | "note"; text: string } | null>(null);
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
     if (busy || !token) return;
     // The server strips spaces too; a blank name would only come back as a vague "invalid request".
-    if (!name.trim()) {
-      setNameError(t("nameRequired"));
-      return;
-    }
-    setNameError(undefined);
+    setNameError(name.trim() ? undefined : t("nameRequired"));
+    setCountryError(country ? undefined : t("countryRequired"));
+    if (!name.trim() || !country) return;
     setBusy(true);
-    const outcome = await send(accountCompleteSignUp({ body: { token, password, business_name: name } }));
+    const outcome = await send(accountCompleteSignUp({ body: { token, password, business_name: name, country } }));
     setBusy(false);
     setPasswordError(undefined);
     setMessage(null);
@@ -123,6 +126,42 @@ export function CompleteSignUp() {
           ) : (
             <p className={styles.hint} id={`${nameId}-hint`}>
               {t("businessHint")}
+            </p>
+          )}
+        </div>
+        <div className={styles.field}>
+          <label className={styles.label} htmlFor={countryId}>
+            {t("country")}
+          </label>
+          <div className={styles.input}>
+            <select
+              id={countryId}
+              name="country"
+              autoComplete="country"
+              required
+              value={country}
+              onChange={(event) => setCountry(event.target.value as Country)}
+              aria-invalid={countryError ? true : undefined}
+              aria-describedby={`${countryId}-hint`}
+            >
+              <option value="" disabled>
+                {t("countryPlaceholder")}
+              </option>
+              {byName(locale, (c) => t(`countries.${c}`)).map((c) => (
+                <option key={c} value={c}>
+                  {t(`countries.${c}`)}
+                </option>
+              ))}
+            </select>
+            <svg aria-hidden="true" className={styles.selectChevron} viewBox="0 0 12 12" width="12" height="12">
+              <path d="M3 4.5l3 3 3-3" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </div>
+          {countryError ? (
+            <FieldError id={`${countryId}-hint`}>{countryError}</FieldError>
+          ) : (
+            <p className={styles.hint} id={`${countryId}-hint`}>
+              {t("countryHint")}
             </p>
           )}
         </div>

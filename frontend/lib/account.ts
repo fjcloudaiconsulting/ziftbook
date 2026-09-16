@@ -30,3 +30,17 @@ export function takeToken(place: Place): string | null {
   place.setTimeout(() => place.history.replaceState(null, "", clean));
   return token;
 }
+
+/** The countries a business can be in; the server sets its currency, time zone and language from it. */
+export const COUNTRIES = ["NL", "PT", "BR", "GB", "US"] as const;
+export type Country = (typeof COUNTRIES)[number];
+
+/** Dutch is only spoken in one of them; Portuguese and English each fit two, so those don't guess. */
+export function likelyCountry(locale: string): Country | "" {
+  return locale === "nl" ? "NL" : "";
+}
+
+/** The countries in the reader's alphabetical order of their names. */
+export function byName(locale: string, name: (country: Country) => string): Country[] {
+  return [...COUNTRIES].sort((a, b) => name(a).localeCompare(name(b), locale));
+}

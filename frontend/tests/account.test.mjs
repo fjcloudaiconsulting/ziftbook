@@ -1,8 +1,9 @@
-// Logic behind the account screens: the resend countdown and taking a link's token out of the address bar.
+// Logic behind the account screens: the resend countdown, taking a link's token out of the address bar, and
+// the country list.
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { clock, RESEND_AFTER_MS, secondsLeft, takeToken } from "../lib/account.ts";
+import { byName, clock, likelyCountry, RESEND_AFTER_MS, secondsLeft, takeToken } from "../lib/account.ts";
 
 describe("resend countdown", () => {
   const sentAt = 1_000_000;
@@ -64,5 +65,18 @@ describe("taking the token from the link", () => {
 
     assert.equal(takeToken(first.place), null);
     assert.equal(takeToken(fakeWindow("https://app.example/en/sign-up/complete").place), null);
+  });
+});
+
+describe("choosing a country", () => {
+  test("guesses only where the language points at one country", () => {
+    assert.deepEqual(["nl", "pt", "en"].map(likelyCountry), ["NL", "", ""]);
+  });
+
+  test("lists the countries by their name in the reader's language", () => {
+    const nl = { NL: "Nederland", PT: "Portugal", BR: "Brazilië", GB: "Verenigd Koninkrijk", US: "Verenigde Staten" };
+    assert.deepEqual(byName("nl", (c) => nl[c]), ["BR", "NL", "PT", "GB", "US"]);
+    const pt = { NL: "Países Baixos", PT: "Portugal", BR: "Brasil", GB: "Reino Unido", US: "Estados Unidos" };
+    assert.deepEqual(byName("pt", (c) => pt[c]), ["BR", "US", "NL", "PT", "GB"]);
   });
 });

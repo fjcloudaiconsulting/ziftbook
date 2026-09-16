@@ -109,7 +109,7 @@
 .label { font: 600 0.9375rem/1.3 var(--font-body), system-ui, sans-serif; }
 .labelRow a { font-size: 0.875rem; }
 .input { position: relative; }
-.input input {
+.input input, .input select {
   width: 100%;
   min-height: 48px;
   padding: 0 0.9rem;
@@ -119,8 +119,13 @@
   color: var(--ink);
   font: 400 1rem/1 var(--font-body), system-ui, sans-serif;
 }
-.input input:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; border-color: var(--primary); }
-.input input[aria-invalid="true"] { border-color: var(--error); border-width: 2px; padding-left: calc(0.9rem - 1px); }
+/* A native select, drawn like the text inputs; the chevron is a sibling because a select can't hold one. */
+.input select { appearance: none; padding-right: 2.5rem; cursor: pointer; }
+.input select:invalid { color: var(--muted); }
+.input option { color: var(--ink); }
+.selectChevron { position: absolute; right: 1rem; top: 50%; translate: 0 -50%; color: var(--muted); pointer-events: none; }
+.input input:focus-visible, .input select:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; border-color: var(--primary); }
+.input :is(input, select)[aria-invalid="true"] { border-color: var(--error); border-width: 2px; padding-left: calc(0.9rem - 1px); }
 .input .withToggle { padding-right: 5.5rem; }
 .toggle {
   position: absolute;
