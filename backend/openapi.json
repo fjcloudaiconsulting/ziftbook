@@ -659,6 +659,265 @@
           }
         }
       }
+    },
+    "/api/services": {
+      "get": {
+        "tags": [
+          "services"
+        ],
+        "summary": "List",
+        "description": "Every service of the business, archived ones included; the booking flow (ZIF-51) is what\nfilters those out for new bookings.\n\nponytail: no pagination, since a business has tens of services. Add before= as in audit.py if\none ever has hundreds.",
+        "operationId": "services-list",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ServiceOut"
+                  },
+                  "type": "array",
+                  "title": "Response Services-List"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "services"
+        ],
+        "summary": "Create",
+        "operationId": "services-create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ServiceIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServiceOut"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Content",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/services/{service_id}": {
+      "get": {
+        "tags": [
+          "services"
+        ],
+        "summary": "Read",
+        "operationId": "services-read",
+        "parameters": [
+          {
+            "name": "service_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Service Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServiceOut"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "services"
+        ],
+        "summary": "Update",
+        "operationId": "services-update",
+        "parameters": [
+          {
+            "name": "service_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Service Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ServiceChange"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServiceOut"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -948,6 +1207,245 @@
           "locale"
         ],
         "title": "LinkRequest"
+      },
+      "Price": {
+        "properties": {
+          "amount_minor": {
+            "type": "integer",
+            "title": "Amount Minor"
+          },
+          "currency": {
+            "type": "string",
+            "title": "Currency"
+          }
+        },
+        "type": "object",
+        "required": [
+          "amount_minor",
+          "currency"
+        ],
+        "title": "Price"
+      },
+      "PriceIn": {
+        "properties": {
+          "amount_minor": {
+            "type": "integer",
+            "maximum": 1000000.0,
+            "minimum": 0.0,
+            "title": "Amount Minor"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "amount_minor"
+        ],
+        "title": "PriceIn"
+      },
+      "ServiceChange": {
+        "properties": {
+          "name": {
+            "additionalProperties": {
+              "type": "string",
+              "maxLength": 100,
+              "minLength": 1
+            },
+            "propertyNames": {
+              "enum": [
+                "en",
+                "nl",
+                "pt"
+              ]
+            },
+            "type": "object",
+            "minProperties": 1,
+            "title": "Name"
+          },
+          "description": {
+            "additionalProperties": {
+              "type": "string",
+              "maxLength": 1000,
+              "minLength": 1
+            },
+            "propertyNames": {
+              "enum": [
+                "en",
+                "nl",
+                "pt"
+              ]
+            },
+            "type": "object",
+            "title": "Description"
+          },
+          "price": {
+            "$ref": "#/components/schemas/PriceIn",
+            "title": "Price"
+          },
+          "duration_minutes": {
+            "type": "integer",
+            "maximum": 720.0,
+            "minimum": 5.0,
+            "title": "Duration Minutes"
+          },
+          "buffer_minutes": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 240.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Buffer Minutes"
+          },
+          "archived": {
+            "type": "boolean",
+            "title": "Archived"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "ServiceChange",
+        "description": "Only the fields sent change. buffer_minutes may be null (back to the business's default); no\nother field may. name and description are replaced whole, not merged per language: the web app\nalways sends every language it holds."
+      },
+      "ServiceIn": {
+        "properties": {
+          "name": {
+            "additionalProperties": {
+              "type": "string",
+              "maxLength": 100,
+              "minLength": 1
+            },
+            "propertyNames": {
+              "enum": [
+                "en",
+                "nl",
+                "pt"
+              ]
+            },
+            "type": "object",
+            "minProperties": 1,
+            "title": "Name"
+          },
+          "description": {
+            "additionalProperties": {
+              "type": "string",
+              "maxLength": 1000,
+              "minLength": 1
+            },
+            "propertyNames": {
+              "enum": [
+                "en",
+                "nl",
+                "pt"
+              ]
+            },
+            "type": "object",
+            "title": "Description"
+          },
+          "price": {
+            "$ref": "#/components/schemas/PriceIn"
+          },
+          "duration_minutes": {
+            "type": "integer",
+            "maximum": 720.0,
+            "minimum": 5.0,
+            "title": "Duration Minutes"
+          },
+          "buffer_minutes": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 240.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Buffer Minutes"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name",
+          "price",
+          "duration_minutes"
+        ],
+        "title": "ServiceIn"
+      },
+      "ServiceOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "name": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "enum": [
+                "en",
+                "nl",
+                "pt"
+              ]
+            },
+            "type": "object",
+            "title": "Name"
+          },
+          "description": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "enum": [
+                "en",
+                "nl",
+                "pt"
+              ]
+            },
+            "type": "object",
+            "title": "Description"
+          },
+          "price": {
+            "$ref": "#/components/schemas/Price"
+          },
+          "duration_minutes": {
+            "type": "integer",
+            "title": "Duration Minutes"
+          },
+          "buffer_minutes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Buffer Minutes"
+          },
+          "archived": {
+            "type": "boolean",
+            "title": "Archived"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "description",
+          "price",
+          "duration_minutes",
+          "buffer_minutes",
+          "archived"
+        ],
+        "title": "ServiceOut"
       },
       "SessionOut": {
         "properties": {

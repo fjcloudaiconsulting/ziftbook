@@ -63,6 +63,12 @@ every table that holds a tenant's data:
   returning nothing.
 - Data migrations: row-level security binds `ziftbook_migrate` too. Loop over `SELECT id FROM tenants` and run
   `set_config('app.tenant_id', :id, true)` before each tenant's statements. Never grant `BYPASSRLS`.
+- Money is `<x>_amount_minor integer` and `<x>_currency text`, with `FOREIGN KEY (tenant_id, <x>_currency)
+  REFERENCES tenants (id, currency)`: a business's currency, never the client's. The client sends only the amount.
+- A row a future feature will reference (a booking, say) is archived (`archived_at timestamptz`), never deleted:
+  revoke `DELETE` on the table from the app role in the migration that creates it.
+- A test fixture that deletes businesses must delete that tenant's other tenant-owned rows first, as the migrate
+  role (the app role may lack `DELETE`); see `delete_services` in `tests/conftest.py`.
 
 `tests/test_tenant_schema.py` fails for a table with `tenant_id` that is not isolated (forced row-level security),
 and for a foreign key between tenant-owned tables that does not pair `tenant_id`. `jobs` is exempt on purpose: it

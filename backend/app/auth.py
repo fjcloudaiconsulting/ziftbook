@@ -73,6 +73,8 @@ Action = Literal[
     "signed_out_everywhere",
     "password_reset_completed",
     "business_created",
+    "service_created",
+    "service_changed",
 ]
 
 
