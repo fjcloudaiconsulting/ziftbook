@@ -176,3 +176,24 @@ def test_the_sign_up_bucket_is_keyed_on_the_trusted_forwarded_address(
 
     assert statuses == [202] * 10 + [429]
     assert from_b.status_code == 202
+
+
+def test_the_sign_in_bucket_and_audit_ignore_a_forged_header_from_an_untrusted_peer(
+    monkeypatch: pytest.MonkeyPatch, bound: None, migrate_engine: Engine
+) -> None:
+    peer = fresh_address()
+    user_agent = f"zif82-{uuid.uuid4()}"
+    app = app_trusting(monkeypatch, fresh_address())  # trusted = someone else
+    client = new_client(app, peer)
+
+    statuses = [
+        client.post(
+            "/api/session",
+            json={"email": fresh_email(), "password": "x"},
+            headers={"X-Forwarded-For": fresh_address(), "User-Agent": user_agent},
+        ).status_code
+        for _ in range(51)
+    ]
+
+    assert statuses == [401] * 50 + [429]
+    assert {e["ip"] for e in events(migrate_engine, user_agent=user_agent)} == {peer}
