@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.11.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.10.0...v0.11.0) (2026-09-16)
+
+
+### Features
+
+* **backend:** business country, currency and language at sign-up (ZIF-27) ([#70](https://github.com/fjcloudaiconsulting/ziftbook/issues/70)) ([7573b94](https://github.com/fjcloudaiconsulting/ziftbook/commit/7573b9473d78ab0640a6ef3d6306c8c4cc3a142e))
+* **backend:** list, promote, demote and remove members (ZIF-27) ([#72](https://github.com/fjcloudaiconsulting/ziftbook/issues/72)) ([2726fe2](https://github.com/fjcloudaiconsulting/ziftbook/commit/2726fe27ca5a71e664276b9aacb0efce70523c9f))
+* **backend:** owners manage their business's services (ZIF-44) ([#71](https://github.com/fjcloudaiconsulting/ziftbook/issues/71)) ([08df698](https://github.com/fjcloudaiconsulting/ziftbook/commit/08df69897e0be0e81fb96cb7d915f89f2202e337))
+
 ## [0.10.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.9.0...v0.10.0) (2026-09-16)
 
 
