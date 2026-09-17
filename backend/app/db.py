@@ -60,13 +60,14 @@ def join_tenant(session: Session, tenant_id: UUID) -> None:
     )
 
 
-def enable_tenant_isolation(table: str) -> None:
+def enable_tenant_isolation(table: str, *, referenced: bool = True) -> None:
     """Isolate a tenant-owned table by tenant. Call it in the migration that creates the table.
 
     The table needs `id` and `tenant_id` (REFERENCES tenants (id)) columns. Every reference to it
     from another tenant-owned table must be a composite foreign key, (tenant_id, x_id) REFERENCES
     table (tenant_id, id): Postgres checks foreign keys with row-level security bypassed, so a
-    plain one would let a row point at another tenant's data.
+    plain one would let a row point at another tenant's data. A link table nothing references has
+    no id: pass referenced=False.
     """
     tenant_matches = "tenant_id = current_setting('app.tenant_id')::uuid"
     op.execute(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY")
@@ -76,5 +77,7 @@ def enable_tenant_isolation(table: str) -> None:
         f"CREATE POLICY tenant_isolation ON {table} "
         f"USING ({tenant_matches}) WITH CHECK ({tenant_matches})"
     )
-    # The target of the composite foreign keys above.
-    op.create_unique_constraint(None, table, ["tenant_id", "id"])
+    # The target of the composite foreign keys above. A link table (service_workers) is never
+    # referenced and has no id: its primary key already leads with tenant_id.
+    if referenced:
+        op.create_unique_constraint(None, table, ["tenant_id", "id"])

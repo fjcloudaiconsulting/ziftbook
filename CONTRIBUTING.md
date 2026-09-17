@@ -58,6 +58,8 @@ Tenant isolation is enforced by Postgres row-level security, not by remembering 
 every table that holds a tenant's data:
 
 - Columns `id uuid PRIMARY KEY DEFAULT uuidv7()` and `tenant_id uuid NOT NULL REFERENCES tenants (id)`.
+- A pure link table (`service_workers`) has no `id`: its primary key is `(tenant_id, a_id, b_id)`, and it calls
+  `enable_tenant_isolation(table, referenced=False)`. Nothing may reference it.
 - Call `enable_tenant_isolation("table")` (from `app.db`) in the migration, right after creating the table.
 - A reference to another tenant-owned table is a composite foreign key, `(tenant_id, x_id) REFERENCES
   parent (tenant_id, id)`, never a plain one: foreign key checks bypass row-level security. For an optional

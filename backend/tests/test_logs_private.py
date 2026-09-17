@@ -165,17 +165,19 @@ def test_no_personal_data_ever_reaches_a_log(
     # 6: POST /api/services with a distinctive name.
     service_name = "Service Qwyx-4"
     secret(service_name)
-    assert (
-        owner.post(
-            "/api/services",
-            json={
-                "name": {"en": service_name},
-                "price": {"amount_minor": 1000},
-                "duration_minutes": 15,
-            },
-        ).status_code
-        == 201
+    created = owner.post(
+        "/api/services",
+        json={
+            "name": {"en": service_name},
+            "price": {"amount_minor": 1000},
+            "duration_minutes": 15,
+        },
     )
+    assert created.status_code == 201
+
+    # 6b: PUT /api/services/{id}/workers, assigning a member.
+    workers = owner.put(f"/api/services/{created.json()['id']}/workers", json=[str(target)])
+    assert workers.status_code == 200
 
     # 7: invite flow — send, list, a wrong token, then accept with a brand-new account.
     invite_email = fresh_email()

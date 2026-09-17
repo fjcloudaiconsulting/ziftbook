@@ -5,7 +5,7 @@ import json
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Request, Response
+from fastapi import APIRouter, Body, Request, Response
 from pydantic import (
     AfterValidator,
     BaseModel,
@@ -107,12 +107,15 @@ class ServiceOut(BaseModel):
     duration_minutes: int
     buffer_minutes: int | None
     archived: bool
+    worker_ids: list[UUID]  # member ids, in id order; [] for none
 
 
 FIELDS = """
 id, name, description,
 jsonb_build_object('amount_minor', price_amount_minor, 'currency', price_currency) AS price,
-duration_minutes, buffer_minutes, archived_at IS NOT NULL AS archived
+duration_minutes, buffer_minutes, archived_at IS NOT NULL AS archived,
+ARRAY(SELECT sw.member_id FROM service_workers sw
+      WHERE sw.service_id = services.id ORDER BY sw.member_id) AS worker_ids
 """
 
 LOGGED_AS_CHANGED = frozenset({"name", "description"})  # recorded as "changed", never their text
@@ -248,3 +251,81 @@ def update_service(
         details=changed,
     )
     return ServiceOut.model_validate(row, from_attributes=True)
+
+
+MAX_WORKERS = 200  # ponytail: a business has tens of members; raise it if one ever has more
+
+
+def lock_members(current: SignedIn, member_ids: list[UUID]) -> dict[UUID, UUID]:
+    """The user behind each member id of this business, locked; ids of no current member are left
+    out."""
+    # One statement, in id order, like members.target, so there is no cycle with a removal or role
+    # change. A member removed while we waited is simply not returned (READ COMMITTED), which is a
+    # 422 in replace_workers instead of a foreign key 500 at the insert.
+    return dict(
+        current.db.execute(
+            text("""
+            SELECT id, user_id FROM memberships
+            WHERE id = ANY(CAST(:ids AS uuid[])) ORDER BY id FOR NO KEY UPDATE
+            """),
+            {"ids": member_ids},
+        )
+        .tuples()
+        .all()
+    )
+
+
+@router.put(
+    "/services/{service_id}/workers",
+    name="replace_workers",
+    responses={s: {"model": Error} for s in (401, 403, 404, 415, 422)},
+)
+def replace_workers(
+    service_id: UUID,
+    member_ids: Annotated[list[UUID], Body(max_length=MAX_WORKERS)],
+    current: CurrentOwner,
+    request: Request,
+    response: Response,
+) -> ServiceOut:
+    """Set who performs a service: every member id, owners included. Members left out are
+    unassigned. An archived service keeps its workers."""
+    # The service first, as update_service locks it: two saves of one service queue here.
+    found(current, service_id, "FOR NO KEY UPDATE")
+    response.headers["Cache-Control"] = "no-store"
+    ids = sorted(set(member_ids))
+    # Then the members (lock_members). Arrays go as CAST(:ids AS uuid[]): psycopg sends an empty
+    # list as an untyped '{}'.
+    users = lock_members(current, ids)
+    if len(users) != len(ids):
+        raise ApiError(422, "unknown_member")  # another business's, removed, or made up
+    removed = current.db.scalars(
+        text("""
+        DELETE FROM service_workers sw USING memberships m
+        WHERE sw.service_id = :service_id AND m.id = sw.member_id
+          AND sw.member_id <> ALL(CAST(:ids AS uuid[]))
+        RETURNING m.user_id
+        """),
+        {"service_id": service_id, "ids": ids},
+    ).all()
+    added = current.db.scalars(
+        text("""
+        INSERT INTO service_workers (tenant_id, service_id, member_id)
+        SELECT :tenant_id, :service_id, unnest(CAST(:ids AS uuid[]))
+        ON CONFLICT DO NOTHING
+        RETURNING member_id
+        """),
+        {"tenant_id": current.tenant_id, "service_id": service_id, "ids": ids},
+    ).all()
+    if added or removed:  # the same list again: nothing written, nothing recorded
+        auth.record(
+            current.db,
+            request,
+            "service_workers_changed",
+            actor_user_id=current.user_id,
+            target=f"service:{service_id}",
+            details={
+                "added": sorted(str(users[m]) for m in added),
+                "removed": sorted(str(u) for u in removed),
+            },
+        )
+    return found(current, service_id)
