@@ -45,11 +45,6 @@ export function acceptOutcome(answer: { status: number; code?: string }): Accept
   return "other";
 }
 
-/** The accept request: the password goes exactly as typed, spaces and all, as sign-up and sign-in send it. */
-export function acceptBody(token: string, password: string): { token: string; password: string } {
-  return { token, password };
-}
-
 /** The link the page shows: its token, and which opening of a link (a hashchange) brought it. */
 export type OpenedLink = { token: string; opened: number };
 

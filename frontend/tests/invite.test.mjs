@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { acceptBody, acceptOutcome, inviteScreen, isInviteToken, firstStage, openedLink } from "../lib/invite.ts";
+import { acceptOutcome, inviteScreen, isInviteToken, firstStage, openedLink } from "../lib/invite.ts";
 
 const TENANT = "0192f3a4-5b6c-7d8e-9f01-23456789abcd";
 const SECRET = "Ab3_-".repeat(8) + "xyz"; // 43 URL-safe characters
@@ -84,12 +84,6 @@ describe("what an accept answer means", () => {
     ]) {
       assert.equal(acceptOutcome(answer), "other", JSON.stringify(answer));
     }
-  });
-});
-
-describe("the accept request", () => {
-  test("sends the token and the password exactly as typed", () => {
-    assert.deepEqual(acceptBody("t.s", "  two words  "), { token: "t.s", password: "  two words  " });
   });
 });
 

@@ -6,7 +6,7 @@ import { type FormEvent, useCallback, useEffect, useId, useRef, useState, useSyn
 import { type InviteDetails, invitesAccept, invitesLookup } from "@/api-client";
 import { Link, useRouter } from "@/i18n/navigation";
 import { takeToken } from "@/lib/account";
-import { acceptBody, acceptOutcome, firstStage, inviteScreen, type OpenedLink, openedLink } from "@/lib/invite";
+import { acceptOutcome, firstStage, inviteScreen, type OpenedLink, openedLink } from "@/lib/invite";
 
 import { Banner, Heading, NoScript, Outcome, PasswordField, problem, send, Submit } from "../_ui/parts";
 import styles from "../_ui/ui.module.css";
@@ -110,7 +110,7 @@ function Invite({ token }: { token: string | null }) {
     if (busy || !token || stage.is !== "form") return;
     const invite = stage.invite;
     setBusy(true);
-    const outcome = await send(invitesAccept({ body: acceptBody(token, password) }));
+    const outcome = await send(invitesAccept({ body: { token, password } }));
     setBusy(false);
     setPasswordError(undefined);
     setMessage(null);
