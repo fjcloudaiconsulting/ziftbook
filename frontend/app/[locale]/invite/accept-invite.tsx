@@ -33,6 +33,11 @@ function useInviteLink(): OpenedLink | null | undefined {
   );
 }
 
+/** A link that has ended (expired, joined, already a member): coming back to the page doesn't look it up again. */
+function forgetLink() {
+  shown = null;
+}
+
 type Message = { tone: "error" | "note" | "info"; text: string };
 type Stage =
   | { is: "checking" }
@@ -85,6 +90,7 @@ function Invite({ token }: { token: string | null }) {
     if (!token || firstStage(token) !== "checking") return;
     send(invitesLookup({ body: { token } })).then((outcome) => {
       const screen = inviteScreen(outcome);
+      if (screen === "expired") forgetLink();
       setStage(
         screen === "new" || screen === "existing"
           ? { is: "form", invite: outcome.data! }
@@ -110,6 +116,7 @@ function Invite({ token }: { token: string | null }) {
     setMessage(null);
 
     const meaning = acceptOutcome(outcome);
+    if (meaning === "joined" || meaning === "expired" || meaning === "alreadyMember") forgetLink();
     if (meaning === "joined") {
       router.replace("/");
     } else if (meaning === "expired") {
