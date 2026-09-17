@@ -43,3 +43,17 @@ export function acceptOutcome(answer: { status: number; code?: string }): Accept
 export function acceptBody(token: string, password: string): { token: string; password: string } {
   return { token, password };
 }
+
+/** The link the page shows: its token, and which opening of a link (a hashchange) brought it. */
+export type OpenedLink = { token: string; opened: number };
+
+/**
+ * What to show once the fragment has been read. Every opening of a link starts over, even with the same token
+ * (the email clicked again after the invite ended); reading the same opening twice keeps the same object, as
+ * React's useSyncExternalStore needs.
+ */
+export function openedLink(shown: OpenedLink | null, fragment: string | null, opened: number): OpenedLink | null {
+  if (fragment === null) return shown;
+  if (shown?.token === fragment && shown.opened === opened) return shown;
+  return { token: fragment, opened };
+}

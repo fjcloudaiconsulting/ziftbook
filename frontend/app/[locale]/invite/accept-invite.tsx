@@ -1,16 +1,37 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-import { type FormEvent, useCallback, useEffect, useId, useRef, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 
 import { type InviteDetails, invitesAccept, invitesLookup } from "@/api-client";
 import { Link, useRouter } from "@/i18n/navigation";
-import { acceptBody, acceptOutcome, inviteScreen, isInviteToken } from "@/lib/invite";
+import { takeToken } from "@/lib/account";
+import { acceptBody, acceptOutcome, inviteScreen, isInviteToken, type OpenedLink, openedLink } from "@/lib/invite";
 
-import { Banner, forgetToken, NoScript, Outcome, PasswordField, problem, send, Submit, useLinkToken } from "../_ui/parts";
+import { Banner, NoScript, Outcome, PasswordField, problem, send, Submit } from "../_ui/parts";
 import styles from "../_ui/ui.module.css";
 
-const TOKEN_KEY = "invite-link";
+let shown: OpenedLink | null = null;
+let opened = 0;
+
+// Only a new link in the address bar fires hashchange: taking the token out uses replaceState, which doesn't.
+function onLinkOpened(changed: () => void) {
+  const opening = () => {
+    opened += 1;
+    changed();
+  };
+  window.addEventListener("hashchange", opening);
+  return () => window.removeEventListener("hashchange", opening);
+}
+
+/** The link that opened this page, or the one opened since; undefined on the server and while hydrating. */
+function useInviteLink(): OpenedLink | null | undefined {
+  return useSyncExternalStore(
+    onLinkOpened,
+    () => (shown = openedLink(shown, takeToken(window), opened)),
+    () => undefined,
+  );
+}
 
 type Message = { tone: "error" | "note" | "info"; text: string };
 type Stage =
@@ -21,11 +42,11 @@ type Stage =
   | { is: "member"; business: string };
 
 export function AcceptInvite() {
-  const token = useLinkToken(TOKEN_KEY);
+  const link = useInviteLink();
   const t = useTranslations("Invite");
   const form = useTranslations("Form");
 
-  if (token === undefined) {
+  if (link === undefined) {
     // Server-rendered and before the page runs: without JavaScript the link can't be used.
     return (
       <>
@@ -34,8 +55,8 @@ export function AcceptInvite() {
       </>
     );
   }
-  // Keyed: a new link pasted into the same tab starts over.
-  return <Invite key={token ?? ""} token={token && isInviteToken(token) ? token : null} />;
+  // Keyed: every link opened in this tab starts over.
+  return <Invite key={link?.opened ?? -1} token={link && isInviteToken(link.token) ? link.token : null} />;
 }
 
 function Invite({ token }: { token: string | null }) {
@@ -63,7 +84,6 @@ function Invite({ token }: { token: string | null }) {
     if (!token) return;
     send(invitesLookup({ body: { token } })).then((outcome) => {
       const screen = inviteScreen(outcome);
-      if (screen === "expired") forgetToken(TOKEN_KEY);
       setStage(
         screen === "new" || screen === "existing"
           ? { is: "form", invite: outcome.data! }
@@ -90,13 +110,10 @@ function Invite({ token }: { token: string | null }) {
 
     const meaning = acceptOutcome(outcome);
     if (meaning === "joined") {
-      forgetToken(TOKEN_KEY);
       router.replace("/");
     } else if (meaning === "expired") {
-      forgetToken(TOKEN_KEY);
       setStage({ is: "expired" });
     } else if (meaning === "alreadyMember") {
-      forgetToken(TOKEN_KEY);
       setStage({ is: "member", business: invite.business_name });
     } else if (meaning === "wrongPassword") {
       setMessage({ tone: "error", text: signIn("invalid") });

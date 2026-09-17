@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { acceptBody, acceptOutcome, inviteScreen, isInviteToken } from "../lib/invite.ts";
+import { acceptBody, acceptOutcome, inviteScreen, isInviteToken, openedLink } from "../lib/invite.ts";
 
 const TENANT = "0192f3a4-5b6c-7d8e-9f01-23456789abcd";
 const SECRET = "Ab3_-".repeat(8) + "xyz"; // 43 URL-safe characters
@@ -81,5 +81,33 @@ describe("what an accept answer means", () => {
 describe("the accept request", () => {
   test("sends the token and the password exactly as typed", () => {
     assert.deepEqual(acceptBody("t.s", "  two words  "), { token: "t.s", password: "  two words  " });
+  });
+});
+
+describe("opening a link while the page is open", () => {
+  const first = { token: "a.1", opened: 0 };
+
+  test("the first link is shown", () => {
+    assert.deepEqual(openedLink(null, "a.1", 0), first);
+  });
+
+  test("a different link starts over", () => {
+    assert.deepEqual(openedLink(first, "b.2", 1), { token: "b.2", opened: 1 });
+  });
+
+  test("the same link opened again also starts over", () => {
+    const again = openedLink(first, "a.1", 1);
+    assert.deepEqual(again, { token: "a.1", opened: 1 });
+    assert.notEqual(again, first);
+  });
+
+  test("reading the same opening twice changes nothing", () => {
+    assert.equal(openedLink(first, "a.1", 0), first);
+  });
+
+  test("no fragment keeps what is shown", () => {
+    assert.equal(openedLink(first, null, 0), first);
+    assert.equal(openedLink(first, null, 3), first);
+    assert.equal(openedLink(null, null, 0), null);
   });
 });
