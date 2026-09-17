@@ -8,7 +8,7 @@ import { Link, useRouter } from "@/i18n/navigation";
 import { takeToken } from "@/lib/account";
 import { acceptBody, acceptOutcome, firstStage, inviteScreen, type OpenedLink, openedLink } from "@/lib/invite";
 
-import { Banner, NoScript, Outcome, PasswordField, problem, send, Submit } from "../_ui/parts";
+import { Banner, Heading, NoScript, Outcome, PasswordField, problem, send, Submit } from "../_ui/parts";
 import styles from "../_ui/ui.module.css";
 
 let shown: OpenedLink | null = null;
@@ -37,7 +37,7 @@ type Message = { tone: "error" | "note" | "info"; text: string };
 type Stage =
   | { is: "checking" }
   | { is: "missing" }
-  | { is: "retry"; message: Message }
+  | { is: "retry"; message: Message; retrying?: boolean }
   | { is: "form"; invite: InviteDetails }
   | { is: "expired" }
   | { is: "member"; business: string };
@@ -153,30 +153,40 @@ function Invite({ token }: { token: string | null }) {
     );
   }
 
+  if (stage.is === "retry") {
+    // The heading takes focus when this stage appears; while trying again, focus stays on the button.
+    return (
+      <>
+        <Heading focus key="retry">
+          {t("title")}
+        </Heading>
+        <Banner tone={stage.message.tone}>{stage.message.text}</Banner>
+        <button
+          className={`${styles.button} ${styles.secondary}`}
+          type="button"
+          aria-disabled={stage.retrying || undefined}
+          onClick={() => {
+            if (stage.retrying) return;
+            setStage({ ...stage, retrying: true });
+            lookUp();
+          }}
+        >
+          {stage.retrying ? t("checking") : t("tryAgain")}
+        </button>
+      </>
+    );
+  }
+
   if (stage.is !== "form") {
     return (
       <>
         <h1 className={styles.heading}>{t("title")}</h1>
         {stage.is === "missing" ? (
           <Banner tone="info">{t("noLink")}</Banner>
-        ) : stage.is === "checking" ? (
+        ) : (
           <p className={styles.lede} role="status">
             {t("checking")}
           </p>
-        ) : (
-          <>
-            <Banner tone={stage.message.tone}>{stage.message.text}</Banner>
-            <button
-              className={`${styles.button} ${styles.secondary}`}
-              type="button"
-              onClick={() => {
-                setStage({ is: "checking" });
-                lookUp();
-              }}
-            >
-              {t("tryAgain")}
-            </button>
-          </>
         )}
       </>
     );
@@ -187,7 +197,9 @@ function Invite({ token }: { token: string | null }) {
   return (
     <>
       {/* The business name is text someone typed: only ever rendered as text. */}
-      <h1 className={styles.heading}>{t("joinTitle", { business: invite.business_name })}</h1>
+      <Heading focus key="form">
+        {t("joinTitle", { business: invite.business_name })}
+      </Heading>
       <p className={styles.lede}>{existing ? t("existingLede") : t("newLede")}</p>
       {message && <Banner tone={message.tone}>{message.text}</Banner>}
       <form className={styles.form} method="post" onSubmit={onSubmit}>
