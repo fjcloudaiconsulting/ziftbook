@@ -125,6 +125,29 @@ def test_resending_an_invite_kills_the_old_link(people: People, app: FastAPI) ->
     assert owner.post("/api/invites/lookup", json={"token": token1}).status_code == 400
 
 
+# I2b: resending an already-expired invite is live again, in both the 201 body and the listing.
+def test_resending_an_expired_invite_is_live_again(
+    people: People, app: FastAPI, migrate_engine: Engine
+) -> None:
+    owner = signed_in(app, people.a, people.both)
+    email = fresh_email()
+    first = owner.post("/api/invites", json={"email": email}).json()
+    with migrate_engine.begin() as conn:
+        conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(people.a)})
+        conn.execute(
+            text("UPDATE invites SET expires_at = now() - interval '1 minute' WHERE id = :i"),
+            {"i": first["id"]},
+        )
+
+    resend = owner.post("/api/invites", json={"email": email})
+
+    assert resend.status_code == 201
+    assert resend.json()["expired"] is False
+    listing = owner.get("/api/invites").json()
+    (item,) = [i for i in listing if i["id"] == resend.json()["id"]]
+    assert item["expired"] is False
+
+
 # I3: a worker gets 403 on every invite endpoint, and nothing is written.
 @pytest.mark.parametrize(
     ("method", "path", "body"),
@@ -149,7 +172,9 @@ def test_a_worker_cannot_manage_invites(
 
 
 # I4: inviting an existing member of this business is 409; a member of another business is fine.
-def test_inviting_an_existing_member_is_refused(people: People, app: FastAPI) -> None:
+def test_inviting_an_existing_member_is_refused(
+    people: People, app: FastAPI, migrate_engine: Engine
+) -> None:
     owner = signed_in(app, people.a, people.both)
 
     same_business = owner.post("/api/invites", json={"email": email_of(people.only_a)})
@@ -158,6 +183,8 @@ def test_inviting_an_existing_member_is_refused(people: People, app: FastAPI) ->
         {"code": "already_member"},
     )
     assert owner.post("/api/invites", json={"email": email_of(people.both)}).status_code == 409
+    assert invite_row_count(people.a) == 0
+    assert invite_jobs(migrate_engine) == 0
     assert owner.post("/api/invites", json={"email": email_of(people.only_b)}).status_code == 201
 
 
@@ -267,6 +294,14 @@ def test_revoking_an_invite(people: People, app: FastAPI, monkeypatch: pytest.Mo
         )
     assert still_there is True
 
+    # A real POST (its own queued job, not mint()'s spy), revoked before the job ever runs: the
+    # job finds no row and sends nothing.
+    queued_email = fresh_email()
+    queued = owner.post("/api/invites", json={"email": queued_email}).json()
+    assert owner.request("DELETE", f"/api/invites/{queued['id']}", json={}).status_code == 204
+    run_jobs()
+    assert inbox(queued_email) == []
+
 
 # I9: audit events for invite, revoke and accept, and no email anywhere in them.
 def test_invite_audit_events(
@@ -285,13 +320,16 @@ def test_invite_audit_events(
     assert invited[-1]["actor_user_id"] == people.both
     assert invited[-1]["details"] is None
 
-    second = owner.post("/api/invites", json={"email": fresh_email()}).json()
+    revoked_email = fresh_email()
+    second = owner.post("/api/invites", json={"email": revoked_email}).json()
     assert owner.request("DELETE", f"/api/invites/{second['id']}", json={}).status_code == 204
     revoked = events(migrate_engine, tenant_id=people.a, action="invite_revoked")
     assert revoked[-1]["target"] == f"invite:{second['id']}"
     assert revoked[-1]["actor_user_id"] == people.both
+    assert revoked[-1]["details"] is None
 
-    third = owner.post("/api/invites", json={"email": fresh_email()}).json()
+    accepted_email = fresh_email()
+    third = owner.post("/api/invites", json={"email": accepted_email}).json()
     token = mint(monkeypatch, people.a, uuid.UUID(third["id"]))
     accepted = new_client(app).post(
         "/api/invites/accept", json={"token": token, "password": PASSWORD}
@@ -306,7 +344,10 @@ def test_invite_audit_events(
     assert sign_ins[-1]["actor_user_id"] == new_user_id
 
     every_event = events(migrate_engine, tenant_id=people.a)
-    assert email not in json.dumps(every_event, default=str)
+    dumped = json.dumps(every_event, default=str)
+    assert email not in dumped
+    assert revoked_email not in dumped
+    assert accepted_email not in dumped
 
 
 # I10: recording and enqueueing share the create transaction.
@@ -432,13 +473,14 @@ def test_lookup_does_not_consume_the_link(
     )
 
 
-# L4: lookup is limited per IP, not globally.
+# L4: lookup is limited per IP, not globally, and never touches the sign-in budget.
 def test_lookup_is_rate_limited_per_ip(
-    people: People, app: FastAPI, monkeypatch: pytest.MonkeyPatch
+    people: People, app: FastAPI, migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    add_password(migrate_engine, people.only_b, PASSWORD)
     created = (
         signed_in(app, people.a, people.both)
-        .post("/api/invites", json={"email": fresh_email()})
+        .post("/api/invites", json={"email": email_of(people.only_b)})
         .json()
     )
     token = mint(monkeypatch, people.a, uuid.UUID(created["id"]))
@@ -450,6 +492,12 @@ def test_lookup_is_rate_limited_per_ip(
 
     other = new_client(app)
     assert other.post("/api/invites/lookup", json={"token": token}).status_code == 200
+
+    # The 10 lookups of only_b's link must not have spent any of its per-account sign-in budget.
+    sign_in = new_client(app).post(
+        "/api/session", json={"email": email_of(people.only_b), "password": PASSWORD}
+    )
+    assert sign_in.status_code == 200
 
 
 # ---------------------------------------------------------------------------
@@ -494,11 +542,12 @@ def test_accepting_creates_an_account_and_signs_in(
     assert replay.status_code == 400
 
 
-# C2: an existing account, correct password, joins a second business without touching their hash.
+# C2: an existing account, correct password, joins a second business without touching their hash,
+# and (weak as it is) without ever running the new-password policy on it.
 def test_accepting_with_an_existing_account_and_correct_password(
     people: People, app: FastAPI, migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    add_password(migrate_engine, people.only_b, "short-pass-1")
+    add_password(migrate_engine, people.only_b, "short")
     with migrate_engine.connect() as conn:
         before = conn.scalar(
             text("SELECT hash FROM password_credentials WHERE user_id = :u"), {"u": people.only_b}
@@ -518,7 +567,7 @@ def test_accepting_with_an_existing_account_and_correct_password(
 
     monkeypatch.setattr(passwords, "hash_password", spy)
 
-    response = client.post("/api/invites/accept", json={"token": token, "password": "short-pass-1"})
+    response = client.post("/api/invites/accept", json={"token": token, "password": "short"})
 
     assert response.status_code == 201
     assert response.json()["tenant_id"] == str(people.a)
@@ -538,6 +587,14 @@ def test_accepting_with_an_existing_account_and_correct_password(
             text("SELECT hash FROM password_credentials WHERE user_id = :u"), {"u": people.only_b}
         )
     assert after == before
+    # only_b's oldest business is b (added before a in `people`): the new session must be in the
+    # invite's business, not wherever account_by_email would have put a plain sign-in.
+    session_check = client.get("/api/session")
+    assert session_check.status_code == 200
+    assert (session_check.json()["tenant_id"], session_check.json()["role"]) == (
+        str(people.a),
+        "worker",
+    )
 
 
 # C3: an existing account, wrong password, is refused and changes nothing.
@@ -545,6 +602,10 @@ def test_accepting_with_an_existing_account_and_wrong_password(
     people: People, app: FastAPI, migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     add_password(migrate_engine, people.only_b, PASSWORD)
+    with migrate_engine.connect() as conn:
+        before = conn.scalar(
+            text("SELECT hash FROM password_credentials WHERE user_id = :u"), {"u": people.only_b}
+        )
     created = (
         signed_in(app, people.a, people.both)
         .post("/api/invites", json={"email": email_of(people.only_b)})
@@ -570,6 +631,11 @@ def test_accepting_with_an_existing_account_and_wrong_password(
             text("SELECT true FROM invites WHERE id = :i"), {"i": created["id"]}
         )
     assert invite_gone is True
+    with migrate_engine.connect() as conn:
+        after = conn.scalar(
+            text("SELECT hash FROM password_credentials WHERE user_id = :u"), {"u": people.only_b}
+        )
+    assert after == before
     matching = [e for e in events(migrate_engine, ip=address) if e["action"] == "sign_in_failed"]
     assert len(matching) == 1
     assert matching[0]["target"] == f"user:{people.only_b}"
@@ -577,6 +643,30 @@ def test_accepting_with_an_existing_account_and_wrong_password(
 
     ok = client.post("/api/invites/accept", json={"token": token, "password": PASSWORD})
     assert ok.status_code == 201
+
+
+# C3b: an empty password is refused exactly like any other wrong one; verify() is not skipped.
+def test_accepting_with_an_existing_account_and_an_empty_password(
+    people: People, app: FastAPI, migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    add_password(migrate_engine, people.only_b, PASSWORD)
+    created = (
+        signed_in(app, people.a, people.both)
+        .post("/api/invites", json={"email": email_of(people.only_b)})
+        .json()
+    )
+    token = mint(monkeypatch, people.a, uuid.UUID(created["id"]))
+    client = new_client(app)
+
+    response = client.post("/api/invites/accept", json={"token": token, "password": ""})
+
+    assert (response.status_code, response.json()) == (401, {"code": "invalid_credentials"})
+    assert "__Host-session" not in response.cookies
+    with tenant_context(people.a) as session:
+        member = session.scalar(
+            text("SELECT true FROM memberships WHERE user_id = :u"), {"u": people.only_b}
+        )
+    assert member is None
 
 
 # C4: a password reset mid-accept is refused.
@@ -701,7 +791,7 @@ def test_accepting_when_already_a_member(
     assert role == "worker"
 
 
-# C7: password checks happen before find(); a dead link costs no hash.
+# C7: a dead link is refused before any password is checked or hashed.
 def test_accepting_checks_the_password_before_the_link(
     people: People, app: FastAPI, monkeypatch: pytest.MonkeyPatch, no_hashing: list[str]
 ) -> None:
