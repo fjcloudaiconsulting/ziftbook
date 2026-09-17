@@ -8,23 +8,25 @@
 # test this script against a free high port without touching the real stack.
 set -eu
 
-project="${COMPOSE_PROJECT_NAME:-ziftbook}"
-
+# The project's name (compose derives it from the directory or COMPOSE_PROJECT_NAME) and its
+# published ports, from one `docker compose config` read.
+config=$(docker compose config --format json | node -e '
+  let d = "";
+  process.stdin.on("data", (c) => (d += c));
+  process.stdin.on("end", () => {
+    const cfg = JSON.parse(d);
+    const ports = new Set();
+    for (const svc of Object.values(cfg.services || {})) {
+      for (const p of svc.ports || []) ports.add(p.published);
+    }
+    console.log(cfg.name + " " + [...ports].join(" "));
+  });
+')
+project=${config%% *}
 if [ "$#" -gt 0 ]; then
   ports="$*"
 else
-  ports=$(docker compose config --format json | node -e '
-    let d = "";
-    process.stdin.on("data", (c) => (d += c));
-    process.stdin.on("end", () => {
-      const cfg = JSON.parse(d);
-      const ports = new Set();
-      for (const svc of Object.values(cfg.services || {})) {
-        for (const p of svc.ports || []) ports.add(p.published);
-      }
-      console.log([...ports].join(" "));
-    });
-  ')
+  ports=${config#* }
 fi
 
 fail=0
