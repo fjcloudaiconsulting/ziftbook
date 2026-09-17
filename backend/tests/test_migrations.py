@@ -69,9 +69,13 @@ VALUES ('test.zif93', :key, '{}'::jsonb, now(), now(), :last_error)
 
 
 def test_upgrading_0020_rewrites_last_error_to_the_class_only(
-    migrated: None, migrate_engine: Engine
+    migrated: None, migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     cfg = Config(toml_file=str(API_DIR / "pyproject.toml"))
+    # As above: a lock held elsewhere must not hang this test.
+    url = os.environ["ZIF_MIGRATE_DATABASE_URL"]
+    options = urlencode({"options": "-c lock_timeout=5s"})
+    monkeypatch.setenv("ZIF_MIGRATE_DATABASE_URL", f"{url}{'&' if '?' in url else '?'}{options}")
     key = f"test.zif93:{uuid.uuid4()}"
     address = "someone@example.com"
     command.downgrade(cfg, "0019")

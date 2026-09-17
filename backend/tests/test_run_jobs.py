@@ -84,7 +84,7 @@ def test_a_handler_that_times_out_is_retried() -> None:
         release.set()  # let the abandoned thread finish
         attempts, last_error, completed, _ = job("test.slow:1")
         assert (attempts, completed) == (1, False)
-        assert last_error is not None and "TimeoutError" in last_error
+        assert last_error == "TimeoutError"
 
         assert await run_once(kinds) == 0  # backing off
         with SessionLocal.begin() as session:

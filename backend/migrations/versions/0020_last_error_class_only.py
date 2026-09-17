@@ -17,7 +17,7 @@ depends_on = None
 
 def upgrade() -> None:
     op.execute("""
-    UPDATE jobs SET last_error = substring(last_error from '^[A-Za-z_][A-Za-z0-9_.]*')
+    UPDATE jobs SET last_error = substring(last_error from '^[A-Za-z_][A-Za-z0-9_]*')
     WHERE last_error IS NOT NULL
     """)
 
