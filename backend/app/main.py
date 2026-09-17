@@ -1,3 +1,4 @@
+import ipaddress
 import json
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
@@ -8,6 +9,7 @@ from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from pydantic import BaseModel
 from sqlalchemy import create_engine
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from app import (
     accounts,
@@ -105,6 +107,14 @@ def create_app() -> FastAPI:
         return JSONResponse(
             {"code": "internal"}, status_code=500, headers={"Referrer-Policy": "no-referrer"}
         )
+
+    # Last, so it is outermost: every middleware and handler sees the visitor's address as
+    # request.client. A typo (or "*") stops startup, rather than trusting nobody (or everybody)
+    # without a word.
+    trusted = [entry.strip() for entry in settings.trusted_proxies.split(",") if entry.strip()]
+    for entry in trusted:
+        ipaddress.ip_network(entry)
+    app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=trusted)
 
     return app
 

@@ -144,6 +144,25 @@ we can show which businesses were not affected.
   names every column, so a new app against the old schema fails on every event, not only the new one.
 - Nothing purges events yet. The ZIF-5 sweeper will remove failed sign-ins after 30 days and the rest after a year.
 
+## Client IP
+
+Rate limits and audit events key on the visitor's address. Each deployment has exactly one trusted source for it:
+
+- The web app (`frontend/proxy.ts`) drops every forwarding header the browser sent. If `ZIF_CLIENT_IP_HEADER`
+  is set (staging: `cf-connecting-ip`), it forwards that header's value, when it is a valid IP address, as
+  `X-Forwarded-For`. Set it only where every request reaches the web app through a proxy that overwrites that
+  header; otherwise anyone can pick their address.
+- The API believes `X-Forwarded-For` only from the addresses in `ZIF_TRUSTED_PROXIES` (compose: the frontend's
+  fixed `172.28.0.10`; staging: the pod network, with NetworkPolicies that only let the web app reach the API).
+  Empty trusts nobody. The images run uvicorn with `--no-proxy-headers`, and so should you when running it
+  outside Docker.
+- In app code, read `request.client.host`. Never read `X-Forwarded-For`, `X-Real-IP`, `Forwarded` or
+  `CF-Connecting-IP` yourself.
+- **Staging SNAT:** in k3s with flannel, a pod calling the backend's ClusterIP isn't SNATed, so the backend
+  sees the calling pod's own address (inside the trusted pod CIDR, so trust stays on). Where SNAT does apply,
+  the source becomes the node's cluster-internal address (`10.42.x.1`), which is also inside that CIDR. Either
+  way trust stays on; it is not a fail-closed case.
+
 ## Business settings
 
 A business's settings are typed and defaulted in one model, `BusinessSettings` in `app/business_settings.py`; the

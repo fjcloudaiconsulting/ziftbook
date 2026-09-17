@@ -1,4 +1,15 @@
 # Local development stack. Credentials here are for localhost only and never used elsewhere.
+
+# Fixed addresses, so the backend can trust exactly the frontend (ZIF_TRUSTED_PROXIES). If this subnet
+# collides with a local network or VPN, change it here, in ip_range, and in both addresses below.
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24
+          # Other containers get addresses from here, so none can take the frontend's before it starts.
+          ip_range: 172.28.0.128/25
+
 services:
   postgres:
     image: postgres:18
@@ -53,6 +64,7 @@ services:
       - "127.0.0.1:8000:8000"
     environment:
       ZIF_DATABASE_URL: postgresql+psycopg://ziftbook_app:ziftbook_app@postgres:5432/ziftbook
+      ZIF_TRUSTED_PROXIES: 172.28.0.10
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -104,6 +116,9 @@ services:
       - "127.0.0.1:3000:3000"
     environment:
       ZIF_API_URL: http://backend:8000
+    networks:
+      default:
+        ipv4_address: 172.28.0.10
     develop:
       watch:
         - action: sync
