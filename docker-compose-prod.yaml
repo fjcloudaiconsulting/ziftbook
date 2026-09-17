@@ -11,14 +11,16 @@
 #   passed through here on purpose. Port 3000 is published directly, so any header can be forged.
 name: ziftbook
 
-# Fixed addresses, so the backend can trust exactly the frontend (ZIF_TRUSTED_PROXIES). If this subnet
-# collides with a local network or VPN, change it here, in ip_range, and in both addresses below.
+# Fixed addresses, so the backend can trust exactly the frontend (ZIF_TRUSTED_PROXIES). If this
+# subnet collides with a local network or VPN, change it here, in ip_range, and in both addresses
+# below.
 networks:
   default:
     ipam:
       config:
         - subnet: 172.28.0.0/24
-          # Other containers get addresses from here, so none can take the frontend's before it starts.
+          # Other containers get addresses from here, so none can take the frontend's before it
+          # starts.
           ip_range: 172.28.0.128/25
 
 services:

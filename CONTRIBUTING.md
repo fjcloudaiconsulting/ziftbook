@@ -158,10 +158,12 @@ Rate limits and audit events key on the visitor's address. Each deployment has e
   outside Docker.
 - In app code, read `request.client.host`. Never read `X-Forwarded-For`, `X-Real-IP`, `Forwarded` or
   `CF-Connecting-IP` yourself.
-- **Staging SNAT:** in k3s with flannel, a pod calling the backend's ClusterIP isn't SNATed, so the backend
-  sees the calling pod's own address (inside the trusted pod CIDR, so trust stays on). Where SNAT does apply,
-  the source becomes the node's cluster-internal address (`10.42.x.1`), which is also inside that CIDR. Either
-  way trust stays on; it is not a fail-closed case.
+- **Staging risk:** the trusted CIDR is the whole pod network (`10.42.0.0/16`), so anything that reaches the
+  backend from inside it is trusted, including traffic SNATed to a node's cluster-internal address
+  (`10.42.x.1`): a NodePort or LoadBalancer Service, a hostNetwork pod, or any other node-local caller, and
+  any of those could set its own `X-Forwarded-For`. k3s/flannel doesn't SNAT pod-to-ClusterIP traffic, but
+  that is not the safeguard: the backend Service must never be exposed via NodePort, LoadBalancer or
+  Ingress, and NetworkPolicies must admit only the web app's pods.
 
 ## Business settings
 

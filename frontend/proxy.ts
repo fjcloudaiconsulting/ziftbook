@@ -7,11 +7,13 @@ import { routing } from "./i18n/routing";
 
 const localize = createMiddleware(routing);
 
-// Headers that name the visitor. Only the one this deployment trusts is forwarded, as X-Forwarded-For.
+// Headers that name the visitor. Only the one this deployment trusts is forwarded, as
+// X-Forwarded-For.
 const FORWARDING = ["x-forwarded-for", "x-real-ip", "forwarded", "x-forwarded-proto"];
 
-// Read per request, like apiUrl(). Set only where every request reaches this server through a proxy
-// that overwrites the header (staging: cf-connecting-ip). Unset: the API sees this server's address.
+// Read per request, like apiUrl(). Set only where every request reaches this server through a
+// proxy that overwrites the header (staging: cf-connecting-ip). Unset: the API sees this
+// server's address.
 function clientIp(request: NextRequest): string | undefined {
   const name = process.env.ZIF_CLIENT_IP_HEADER;
   const value = name ? (request.headers.get(name) ?? "").trim().replace(/^::ffff:(?=\d+\.)/i, "") : "";
