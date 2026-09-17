@@ -272,6 +272,15 @@ def test_listing_invites(people: People, app: FastAPI, migrate_engine: Engine) -
 # I8: revoking kills the link and any not-yet-run job; a foreign or unknown id is 404.
 def test_revoking_an_invite(people: People, app: FastAPI, monkeypatch: pytest.MonkeyPatch) -> None:
     owner = signed_in(app, people.a, people.both)
+
+    # A real POST (its own queued job, unlike mint()'s spy below, which would swallow the send),
+    # revoked before the job ever runs: the job finds no row and sends nothing.
+    queued_email = fresh_email()
+    queued = owner.post("/api/invites", json={"email": queued_email}).json()
+    assert owner.request("DELETE", f"/api/invites/{queued['id']}", json={}).status_code == 204
+    run_jobs()
+    assert inbox(queued_email) == []
+
     created = owner.post("/api/invites", json={"email": fresh_email()}).json()
     invite_id = created["id"]
     token = mint(monkeypatch, people.a, uuid.UUID(invite_id))
@@ -293,14 +302,6 @@ def test_revoking_an_invite(people: People, app: FastAPI, monkeypatch: pytest.Mo
             text("SELECT true FROM invites WHERE id = :i"), {"i": other["id"]}
         )
     assert still_there is True
-
-    # A real POST (its own queued job, not mint()'s spy), revoked before the job ever runs: the
-    # job finds no row and sends nothing.
-    queued_email = fresh_email()
-    queued = owner.post("/api/invites", json={"email": queued_email}).json()
-    assert owner.request("DELETE", f"/api/invites/{queued['id']}", json={}).status_code == 204
-    run_jobs()
-    assert inbox(queued_email) == []
 
 
 # I9: audit events for invite, revoke and accept, and no email anywhere in them.
