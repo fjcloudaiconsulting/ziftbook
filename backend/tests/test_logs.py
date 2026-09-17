@@ -444,6 +444,9 @@ def test_configure_is_idempotent_and_polite_to_other_handlers() -> None:
 # 17: uvicorn's own loggers are silenced; the access logger never even builds its line.
 def test_uvicorn_loggers_are_silenced_after_configure() -> None:
     logging.config.dictConfig(uvicorn.config.LOGGING_CONFIG)
+    # dictConfig already sets propagate False on uvicorn.access; force it back on so the
+    # assertion below only passes if configure() itself disables it.
+    logging.getLogger("uvicorn.access").propagate = True
 
     logs.configure()
 
@@ -452,6 +455,7 @@ def test_uvicorn_loggers_are_silenced_after_configure() -> None:
     assert not logging.getLogger("uvicorn.error").handlers
     assert logging.getLogger("uvicorn.error").propagate
     access = logging.getLogger("uvicorn.access")
+    assert not access.propagate
     assert not access.hasHandlers()
 
     captured: list[str] = []
