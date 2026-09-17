@@ -25,7 +25,7 @@ from app.accounts import printable
 from app.auth import CurrentSession, SignedIn
 from app.errors import ApiError, Error
 
-LONGEST = timedelta(days=366)  # migration 0018, ck_time_off_at_most_366_days
+LONGEST = timedelta(days=366)  # migration 0019, ck_time_off_at_most_366_days
 
 
 def iso_text(value: object) -> object:
