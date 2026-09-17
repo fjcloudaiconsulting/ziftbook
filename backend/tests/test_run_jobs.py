@@ -1,6 +1,8 @@
 import asyncio
 import os
+import smtplib
 import threading
+import uuid
 from collections import Counter
 from collections.abc import Iterator
 from datetime import timedelta
@@ -82,7 +84,7 @@ def test_a_handler_that_times_out_is_retried() -> None:
         release.set()  # let the abandoned thread finish
         attempts, last_error, completed, _ = job("test.slow:1")
         assert (attempts, completed) == (1, False)
-        assert last_error is not None and "TimeoutError" in last_error
+        assert last_error == "TimeoutError"
 
         assert await run_once(kinds) == 0  # backing off
         with SessionLocal.begin() as session:
@@ -94,6 +96,35 @@ def test_a_handler_that_times_out_is_retried() -> None:
     asyncio.run(scenario())
     attempts, _, completed, _ = job("test.slow:1")
     assert (attempts, completed, len(calls)) == (2, True, 2)
+
+
+def test_a_failed_smtp_job_stores_the_class_never_the_address() -> None:
+    address = f"{uuid.uuid4()}@example.com"
+
+    def refuse(job: Job) -> None:
+        raise smtplib.SMTPRecipientsRefused({address: (550, b"unknown")})
+
+    add("test.smtp_fail", "test.smtp_fail:1")
+    run_until_idle({"test.smtp_fail": JobKind(refuse, 5, timedelta(hours=1))})
+
+    _, last_error, _, _ = job("test.smtp_fail:1")
+    assert last_error == "SMTPRecipientsRefused"
+    assert address not in (last_error or "")
+
+
+def test_a_failed_db_job_stores_sqlstate_and_constraint_never_the_row() -> None:
+    address = f"{uuid.uuid4()}@example.com"
+
+    def duplicate(job: Job) -> None:
+        with SessionLocal.begin() as session:
+            session.execute(text("INSERT INTO users (email) VALUES (:e), (:e)"), {"e": address})
+
+    add("test.db_fail", "test.db_fail:1")
+    run_until_idle({"test.db_fail": JobKind(duplicate, 5, timedelta(hours=1))})
+
+    _, last_error, _, _ = job("test.db_fail:1")
+    assert last_error == "IntegrityError sqlstate=23505 constraint=uq_users_email"
+    assert address not in (last_error or "")
 
 
 def test_a_job_past_its_grace_is_skipped() -> None:
