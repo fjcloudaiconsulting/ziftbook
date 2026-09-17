@@ -20,6 +20,10 @@ make up     # http://localhost:3000 (backend directly: http://localhost:8000/api
 make down
 ```
 
+`make up` needs host ports 3000, 8000, 5432, 1025 and 8025 free, and fails naming whatever holds one it isn't already
+using itself. If another project's Mailpit (or anything else) is squatting on 1025/8025, stop it, or free just that
+port and recreate Mailpit: `docker compose up -d --force-recreate --no-deps mailpit`.
+
 `docker-compose.yaml` is this local stack. `docker-compose-prod.yaml` runs a released version from GHCR
 (`ghcr.io/fjcloudaiconsulting/ziftbook/{backend,frontend,migrations}`); its header lists the variables it needs.
 The `migrations` image runs `alembic upgrade head` as an init container: the backend starts only if it succeeds, and

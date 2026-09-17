@@ -74,6 +74,8 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
+      mailpit:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/healthz')"]
       start_period: 60s
@@ -99,6 +101,8 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
+      mailpit:
+        condition: service_healthy
     environment:
       ZIF_DATABASE_URL: postgresql+psycopg://ziftbook_app:ziftbook_app@postgres:5432/ziftbook
       ZIF_SMTP_HOST: mailpit
@@ -150,6 +154,13 @@ services:
     ports:
       - "127.0.0.1:1025:1025"
       - "127.0.0.1:8025:8025"
+    # The image's own check plus a network: a retry after a failed port bind can leave Mailpit
+    # running with no network at all, which readyz alone reports as healthy (ZIF-91).
+    healthcheck:
+      test: ["CMD-SHELL", "/mailpit readyz && test -e /sys/class/net/eth0"]
+      start_period: 10s
+      start_interval: 1s
+      interval: 15s
 
 volumes:
   pgdata:
