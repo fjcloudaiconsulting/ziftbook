@@ -9,7 +9,7 @@ import json
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Request, Response
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field
+from pydantic import AfterValidator, BaseModel, BeforeValidator, ConfigDict, Field
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -22,6 +22,13 @@ Locale = Literal["en", "nl", "pt"]
 # The tzdata package's own list: zoneinfo.available_timezones() also adds the system's files, so the
 # accepted names would differ between machines.
 ZONES = frozenset(importlib.resources.files("tzdata").joinpath("zones").read_text().split())
+
+
+def whole(value: object) -> object:
+    # A Literal of ints matches by equality, so 15.0 and True would pass even in strict mode.
+    if type(value) is not int:
+        raise ValueError("not an integer")
+    return value
 
 
 def known_zone(name: str) -> str:
@@ -53,7 +60,7 @@ class BusinessSettings(BaseModel):
     # 60, so the grid stays on local quarter-hours across whole-hour clock changes.
     # ponytail: a 30-minute DST shift (Lord Howe) with step 20 misaligns by 10 minutes; nobody books
     # there yet.
-    slot_step_minutes: Literal[5, 10, 15, 20, 30, 60] = 15
+    slot_step_minutes: Annotated[Literal[5, 10, 15, 20, 30, 60], BeforeValidator(whole)] = 15
     # How soon, and how many days ahead (counted from today in the business's timezone), a client
     # may book.
     min_notice_minutes: Annotated[int, Field(ge=0, le=10080)] = 60

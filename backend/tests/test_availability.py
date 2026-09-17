@@ -181,6 +181,22 @@ def test_a_shift_across_the_autumn_change_has_five_hours() -> None:
     ]
 
 
+def test_a_shift_opening_in_the_repeated_hour_offers_the_grid_before_its_anchor() -> None:
+    # 02:10 is its first occurrence (00:10Z); 01:00Z is the second 02:00, on the grid.
+    assert slots(rows(7, ("02:10", "05:00")), date(2026, 10, 25)) == [
+        utc("2026-10-25T01:00"),
+        utc("2026-10-25T02:00"),
+        utc("2026-10-25T03:00"),
+    ]
+
+
+def test_shifts_around_the_skipped_hour_give_each_start_once_in_order() -> None:
+    # 02:10-02:40 converts to 01:10Z-01:40Z, inside 03:00-04:00 (01:00Z-02:00Z).
+    around = rows(7, ("02:10", "02:40"), ("03:00", "04:00"))
+    found = slots(around, date(2026, 3, 29), duration=10, step=10)
+    assert found == [utc(f"2026-03-29T01:{m}0") for m in range(6)]
+
+
 def test_a_shift_inside_the_skipped_hour_is_dropped() -> None:
     assert slots(rows(7, ("02:30", "03:15")), date(2026, 3, 29), duration=15, step=15) == []
 

@@ -2162,7 +2162,7 @@
           "availability"
         ],
         "summary": "Read",
-        "description": "Bookable starts for a service on local days from..to (at most 31), for one worker or anyone.\nPublic: no session.",
+        "description": "Bookable starts for a service on local days from..to (at most 14), for one worker or anyone.\nPublic: no session.",
         "operationId": "availability-read",
         "parameters": [
           {
@@ -2229,7 +2229,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Availability"
+                  "$ref": "#/components/schemas/AvailabilityOut"
                 }
               }
             }
@@ -2377,7 +2377,7 @@
         ],
         "title": "AuditEventOut"
       },
-      "Availability": {
+      "AvailabilityOut": {
         "properties": {
           "timezone": {
             "type": "string",
@@ -2389,7 +2389,7 @@
           },
           "workers": {
             "items": {
-              "$ref": "#/components/schemas/Worker"
+              "$ref": "#/components/schemas/WorkerOut"
             },
             "type": "array",
             "title": "Workers"
@@ -2410,7 +2410,7 @@
           "workers",
           "slots"
         ],
-        "title": "Availability"
+        "title": "AvailabilityOut"
       },
       "BusinessSettings-Input": {
         "properties": {
@@ -3262,7 +3262,7 @@
         ],
         "title": "TimeOffOut"
       },
-      "Worker": {
+      "WorkerOut": {
         "properties": {
           "id": {
             "type": "string",
@@ -3274,7 +3274,7 @@
         "required": [
           "id"
         ],
-        "title": "Worker"
+        "title": "WorkerOut"
       }
     }
   }

@@ -118,8 +118,10 @@ def member_slots(
             t = schedule.to_utc(day, at, zone)
             while t < opens:  # an anchor the clock skipped can land before the shift opens
                 t += stride
-            # ponytail: ~180k iterations at worst (20 workers, 31 days, 5-minute step); add a
-            # per-day cutoff if profiling says so.
+            while t - stride >= opens:  # a repeated hour: on-grid time before the anchor
+                t -= stride
+            # ponytail: ~80k iterations at worst (20 workers, 14 days, 5-minute step; measured
+            # ~160 ms for 31 days); add a per-request iteration cap if profiling says so.
             while t + length <= closes:
                 if (
                     t >= earliest
@@ -129,7 +131,8 @@ def member_slots(
                     out.append(t)
                 t += stride
         day += timedelta(days=1)
-    return out
+    # Shifts in a skipped hour can overlap once converted: ascending and unique all the same.
+    return sorted(set(out))
 
 
 def booked(
@@ -145,7 +148,7 @@ def now() -> datetime:
 
 
 router = APIRouter(prefix="/api/public", tags=["availability"])
-MAX_DAYS = 31
+MAX_DAYS = 14  # the booking page loads a week at a time
 LIMIT, LIMIT_WINDOW = 60, timedelta(minutes=1)
 
 
@@ -160,14 +163,14 @@ def ymd(value: object) -> object:
 Day = Annotated[date, Field(strict=False), BeforeValidator(ymd)]
 
 
-class Worker(BaseModel):
+class WorkerOut(BaseModel):
     id: UUID  # memberships.id; no email, no user id (display name: ruling 1)
 
 
-class Availability(BaseModel):
+class AvailabilityOut(BaseModel):
     timezone: str  # the business's, for showing the slots in local time
     duration_minutes: int
-    workers: list[Worker]  # assigned to the service and with working hours
+    workers: list[WorkerOut]  # assigned to the service and with working hours
     slots: list[datetime]  # UTC starts, ascending, unique
 
 
@@ -184,8 +187,8 @@ def read_availability(
     request: Request,
     response: Response,
     member_id: UUID | None = None,
-) -> Availability:
-    """Bookable starts for a service on local days from..to (at most 31), for one worker or anyone.
+) -> AvailabilityOut:
+    """Bookable starts for a service on local days from..to (at most 14), for one worker or anyone.
     Public: no session."""
     ip = request.client.host if request.client else None
     # Per IP only: a per-business key would let anyone block a business's page.
@@ -211,7 +214,8 @@ def read_availability(
         for m, weekday, starts_at, ends_at in db.execute(
             text("""
             SELECT w.member_id, w.weekday, w.starts_at, w.ends_at
-            FROM working_hours w JOIN service_workers s ON s.member_id = w.member_id
+            FROM working_hours w JOIN service_workers s
+              ON s.tenant_id = w.tenant_id AND s.member_id = w.member_id
             WHERE s.service_id = :service_id
             """),
             {"service_id": service_id},
@@ -269,9 +273,9 @@ def read_availability(
                         earliest=earliest,
                     )
                 )
-    return Availability(
+    return AvailabilityOut(
         timezone=zone,
         duration_minutes=service.duration_minutes,
-        workers=[Worker(id=m) for m in workers],
+        workers=[WorkerOut(id=m) for m in workers],
         slots=sorted(found),
     )

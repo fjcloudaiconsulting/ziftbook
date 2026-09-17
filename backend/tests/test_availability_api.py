@@ -252,7 +252,7 @@ def test_an_unknown_or_foreign_service_or_business_is_not_found(
     ("start", "end", "code"),
     [
         ("2026-03-30", "2026-03-29", "invalid_range"),
-        ("2026-03-30", "2026-04-30", "invalid_range"),  # 32 days
+        ("2026-03-30", "2026-04-13", "invalid_range"),  # 15 days
         ("1789000000", "2026-03-30", "invalid_request"),
         ("2026-3-1", "2026-03-30", "invalid_request"),
         ("2026-03-01T00:00", "2026-03-30", "invalid_request"),
@@ -277,11 +277,11 @@ def test_a_bad_id_is_refused(people: People, app: FastAPI, ready: str) -> None:
         assert (response.status_code, response.json()) == (422, {"code": "invalid_request"})
 
 
-def test_thirty_one_days_is_the_longest_range(people: People, app: FastAPI, ready: str) -> None:
-    response = get(new_client(app), people.a, ready, MONDAY, "2026-04-29")
+def test_fourteen_days_is_the_longest_range(people: People, app: FastAPI, ready: str) -> None:
+    response = get(new_client(app), people.a, ready, MONDAY, "2026-04-12")
 
     assert response.status_code == 200
-    assert response.json()["slots"][-1] == local("2026-04-29", "11:30")
+    assert response.json()["slots"][-1] == local("2026-04-12", "11:30")
 
 
 @pytest.mark.parametrize(
@@ -398,7 +398,7 @@ def test_a_long_range_runs_as_many_queries_as_a_short_one(
         client = new_client(app)
         short = get(client, people.a, ready)
         one_day = len(statements)
-        long = get(client, people.a, ready, MONDAY, "2026-04-29")
+        long = get(client, people.a, ready, MONDAY, "2026-04-12")
         many_days = len(statements) - one_day
     finally:
         event.remove(app_engine, "before_cursor_execute", count)
