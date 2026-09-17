@@ -12,6 +12,10 @@ test("TypeScript: framework variables are allowed", () => {
   assert.deepEqual(unprefixedNames("proxy.ts", 'if (process.env.NODE_ENV === "development") {}'), []);
 });
 
+test("Python: TZ is allowed (a test sets it to exercise tzset(), not app config)", () => {
+  assert.deepEqual(unprefixedNames("test_logs.py", 'monkeypatch.setenv("TZ", "America/Sao_Paulo")'), []);
+});
+
 test("Python: os.environ, getenv and monkeypatch reads, including across lines", () => {
   const source = [
     'os.environ["ZIF_DATABASE_URL"]',
