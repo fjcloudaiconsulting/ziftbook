@@ -49,8 +49,12 @@ def sign_up(details: LinkRequest, request: Request) -> None:
 
 def printable(name: str) -> str:
     # No control, format (zero-width) or unassigned characters: a name that looks empty, or that
-    # the database refuses (NUL), is a 422, not a blank business or a 500.
-    if any(unicodedata.category(c).startswith("C") for c in name):
+    # the database refuses (NUL), is a 422, not a blank business or a 500. Zl/Zp (U+2028, U+2029)
+    # are refused too: without them a business name could put a line break into an emailed invite.
+    if any(
+        unicodedata.category(c).startswith("C") or unicodedata.category(c) in ("Zl", "Zp")
+        for c in name
+    ):
         raise ValueError("unprintable characters")
     return name
 

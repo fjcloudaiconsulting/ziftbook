@@ -72,14 +72,17 @@ def link_in(body: str) -> str:
 
 
 def test_every_account_template_puts_its_link_in_every_locale() -> None:
-    for template, placeholder in (
-        ("sign_up", "link"),
-        ("password_reset", "link"),
-        ("sign_up_registered", "sign_in"),
+    for template, values in (
+        ("sign_up", {"link": "https://x.test/marker"}),
+        ("password_reset", {"link": "https://x.test/marker"}),
+        ("sign_up_registered", {"sign_in": "https://x.test/marker"}),
+        ("invite", {"link": "https://x.test/marker", "business": "Studio Ana"}),
     ):
         for locale in LOCALES:
-            subject, body = render(template, locale, {placeholder: "https://x.test/marker"})
-            assert subject and "https://x.test/marker" in body and "$" not in body
+            subject, body = render(template, locale, values)
+            assert subject and "$" not in body
+            for value in values.values():
+                assert value in body
 
 
 def test_a_sign_up_link_carries_its_token_only_in_the_fragment(
