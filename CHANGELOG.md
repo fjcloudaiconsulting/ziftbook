@@ -10,6 +10,7 @@
 * **backend:** list, promote, demote and remove members (ZIF-27) ([#72](https://github.com/fjcloudaiconsulting/ziftbook/issues/72)) ([2726fe2](https://github.com/fjcloudaiconsulting/ziftbook/commit/2726fe27ca5a71e664276b9aacb0efce70523c9f))
 * **backend:** owners manage their business's services (ZIF-44) ([#71](https://github.com/fjcloudaiconsulting/ziftbook/issues/71)) ([08df698](https://github.com/fjcloudaiconsulting/ziftbook/commit/08df69897e0be0e81fb96cb7d915f89f2202e337))
 * **backend:** working hours with split shifts (ZIF-46) ([#73](https://github.com/fjcloudaiconsulting/ziftbook/issues/73)) ([5459afe](https://github.com/fjcloudaiconsulting/ziftbook/commit/5459afe5a915cee9f7a5673f7cc91671b2f885a4))
+* **backend:** workers block time off (ZIF-47) ([#76](https://github.com/fjcloudaiconsulting/ziftbook/issues/76), shipped inside [#77](https://github.com/fjcloudaiconsulting/ziftbook/issues/77)) ([6e00019](https://github.com/fjcloudaiconsulting/ziftbook/commit/6e00019df6bba91e2e56e6ba6c02feaa38e356db))
 
 
 ### Bug Fixes
