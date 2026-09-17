@@ -17,6 +17,7 @@ from sqlalchemy import Engine, text
 
 from app import auth
 from app.jobs import run_once
+from app.mail import render
 from app.main import create_app
 from app.worker import KINDS
 from tests.conftest import (
@@ -54,6 +55,8 @@ def test_no_personal_data_ever_reaches_a_log(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     never: list[str] = ["2001:db8:", "@example.com", UA["User-Agent"]]
+    templates = ("sign_up", "sign_up_registered", "password_reset", "invite")
+    never += [render(template, "en")[0] for template in templates]
 
     def secret(value: str) -> None:
         never.append(value)
@@ -108,6 +111,15 @@ def test_no_personal_data_ever_reaches_a_log(
     )
     assert right.status_code == 200
     cookie_secret(right)
+
+    # 2b: a sign-up for an address that already has an account gets the "registered" mail.
+    assert (
+        client_for(app)
+        .post("/api/sign-up", json={"email": email_of(people.only_a), "locale": "en"})
+        .status_code
+        == 202
+    )
+    mailed(email_of(people.only_a))
 
     # 3: password reset for a second account.
     reset_old_password = "Old-Pw3-77"
@@ -237,3 +249,9 @@ def test_no_personal_data_ever_reaches_a_log(
     failed = [line for line in lines if line["msg"] == "job failed"]
     assert len(failed) == 1
     assert failed[0]["error"] == "SMTPRecipientsRefused"
+    sent = {line["template"] for line in lines if line["msg"] == "email sent"}
+    assert {"sign_up", "sign_up_registered", "password_reset", "invite"} <= sent
+    email_failed = [line for line in lines if line["msg"] == "email failed"]
+    assert [(line["template"], line["error"]) for line in email_failed] == [
+        ("sign_up", "SMTPRecipientsRefused")
+    ]

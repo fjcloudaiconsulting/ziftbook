@@ -1,6 +1,7 @@
 """Email over SMTP: Mailpit in development, Mailgun's EU endpoint when deployed. One code path."""
 
 import hashlib
+import logging
 import re
 import secrets
 import smtplib
@@ -21,6 +22,8 @@ from app.jobs import Job
 TEMPLATES = Path(__file__).parent / "mail_templates"
 LOCALES = get_args(Locale)
 
+logger = logging.getLogger(__name__)
+
 
 def render(template: str, locale: str, values: dict[str, str] | None = None) -> tuple[str, str]:
     """A template is one text file per locale: the first line is the subject, the rest the body.
@@ -34,8 +37,24 @@ def render(template: str, locale: str, values: dict[str, str] | None = None) -> 
     return lines[0], Template(body).substitute(values) if values is not None else body
 
 
-def deliver(to: str, subject: str, body: str, headers: dict[str, str] | None = None) -> None:
-    """Hand one plain-text message for one address to the SMTP server."""
+def deliver(
+    template: str, to: str, subject: str, body: str, headers: dict[str, str] | None = None
+) -> None:
+    """Hand one plain-text message for one address to the SMTP server, and log it by template.
+
+    The job's id comes from its bound context. Never the address, subject or body, and on failure
+    the error's class only (SMTPRecipientsRefused quotes the address); the error still propagates,
+    so the job is retried.
+    """
+    try:
+        _send(to, subject, body, headers)
+    except Exception as error:
+        logger.warning("email failed", extra={"template": template, "error": type(error).__name__})
+        raise
+    logger.info("email sent", extra={"template": template})
+
+
+def _send(to: str, subject: str, body: str, headers: dict[str, str] | None) -> None:
     settings = MailSettings()
     message = EmailMessage()
     message["From"] = settings.smtp_from
@@ -80,14 +99,16 @@ def send_token(job: Job) -> None:
         if row is None:  # gone, expired, or a reset for an email with no account
             return
         if row.registered:
+            template = "sign_up_registered"
             subject, body = render(
-                "sign_up_registered", row.locale, {"sign_in": f"{app_url}/{row.locale}/sign-in"}
+                template, row.locale, {"sign_in": f"{app_url}/{row.locale}/sign-in"}
             )
         else:
+            template = row.purpose
             link = f"{app_url}/{row.locale}/{PAGES[row.purpose]}#{token}"
-            subject, body = render(row.purpose, row.locale, {"link": link})
+            subject, body = render(template, row.locale, {"link": link})
         # Mailgun would otherwise rewrite the link, token included, through its tracking domain.
-        deliver(row.email, subject, body, {"X-Mailgun-Track-Clicks": "no"})
+        deliver(template, row.email, subject, body, {"X-Mailgun-Track-Clicks": "no"})
 
 
 def send_invite(job: Job) -> None:
@@ -116,7 +137,7 @@ def send_invite(job: Job) -> None:
         link = f"{app_url}/{language}/invite#{job.tenant_id}.{token}"
         subject, body = render("invite", language, {"link": link, "business": invite.business})
         # Mailgun would otherwise rewrite the link, secret included, through its tracking domain.
-        deliver(invite.email, subject, body, {"X-Mailgun-Track-Clicks": "no"})
+        deliver("invite", invite.email, subject, body, {"X-Mailgun-Track-Clicks": "no"})
 
 
 def send(job: Job) -> None:
@@ -160,7 +181,7 @@ def send(job: Job) -> None:
     if status == "sent":
         return
 
-    deliver(recipient.email, subject, body)
+    deliver(payload["template"], recipient.email, subject, body)
 
     with tenant_context(job.tenant_id) as session:
         session.execute(

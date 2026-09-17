@@ -200,6 +200,17 @@ def _unraisable_hook(args: sys.UnraisableHookArgs) -> None:
     uncaught_logger.error("unraisable error", exc_info=info)
 
 
+def settings_fields() -> dict[str, Any]:
+    """The effective settings every process's startup line carries."""
+    settings = LogSettings()
+    return {
+        "version": settings.app_version,
+        "log_level": settings.log_level,
+        "log_format": settings.log_format,
+        "log_sql": settings.log_sql,
+    }
+
+
 def configure() -> None:
     """Idempotent. Emits nothing: `python -m app.main` prints the OpenAPI document to stdout."""
     try:
@@ -228,13 +239,15 @@ def configure() -> None:
     root.addHandler(handler)
     # Third-party DEBUG never shows; their INFO (alembic's "Running upgrade") does.
     root.setLevel(max(level, logging.INFO))
+    # INFO, never DEBUG: sqlalchemy.engine logs result rows at DEBUG.
+    sql = logging.INFO if settings.log_sql and level == logging.DEBUG else logging.WARNING
 
     for name, value in {
         "app": level,
         "uvicorn": level,
         "uvicorn.error": logging.NOTSET,  # follows "uvicorn"; never below DEBUG: no TRACE (5)
         "sqlalchemy": logging.WARNING,
-        "sqlalchemy.engine": logging.WARNING,
+        "sqlalchemy.engine": sql,
         "psycopg": logging.WARNING,
         "httpx2": logging.WARNING,  # the test client; its INFO line has the URL and query
     }.items():

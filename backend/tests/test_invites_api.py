@@ -43,7 +43,9 @@ def mint(monkeypatch: pytest.MonkeyPatch, tenant_id: uuid.UUID, invite_id: uuid.
     Mailpit round trip."""
     captured: dict[str, str] = {}
 
-    def spy(to: str, subject: str, body: str, headers: dict[str, str] | None = None) -> None:
+    def spy(
+        template: str, to: str, subject: str, body: str, headers: dict[str, str] | None = None
+    ) -> None:
         captured["body"] = body
 
     monkeypatch.setattr(mail, "deliver", spy)

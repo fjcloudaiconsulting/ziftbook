@@ -1,16 +1,20 @@
 import asyncio
 import json
 import os
+import socket
 import urllib.parse
 import urllib.request
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+from datetime import timedelta
+from typing import Any
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import Engine, text
 
+from app import mail
 from app.db import SessionLocal, tenant_context
-from app.jobs import enqueue, run_once
+from app.jobs import JobKind, enqueue, run_once
 from app.mail import LOCALES, TEMPLATES, render
 from app.worker import KINDS
 from tests.conftest import People, save_setting
@@ -115,3 +119,83 @@ def test_a_recipient_with_no_language_gets_the_business_languages_mail(
 
     assert subjects_sent_to(people.only_a) == ["Olá do ziftbook"]
     assert subjects_sent_to(people.both) == ["Hallo van ziftbook"]
+
+
+Lines = Callable[[], list[dict[str, Any]]]
+
+
+def email_events(lines: Lines, job_id: uuid.UUID) -> list[dict[str, Any]]:
+    return [
+        {k: v for k, v in line.items() if k not in ("ts", "logger")}
+        for line in lines()
+        if line["msg"].startswith("email") and line.get("job_id") == str(job_id)
+    ]
+
+
+# ZIF-95: a sent email logs its template and job, never the address, subject or body.
+def test_a_sent_email_logs_its_template_and_job(
+    people: People, clean_outbox: None, log_lines: Lines
+) -> None:
+    job_id = send_hello(people.a, people.only_a)
+
+    assert email_events(log_lines, job_id) == [
+        {
+            "level": "INFO",
+            "msg": "email sent",
+            "job_id": str(job_id),
+            "job_kind": "email.send",
+            "tenant_id": str(people.a),
+            "template": "hello",
+        }
+    ]
+
+
+# ZIF-95: a failed send logs its template and the error's class, and still fails the job, so it
+# is retried. Its own kind: a broken SMTP port must not fail anyone else's queued email.
+def test_a_failed_email_logs_the_error_class_and_the_job_retries(
+    people: People,
+    clean_outbox: None,
+    app_engine: Engine,
+    log_lines: Lines,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with socket.socket() as probe:  # a port nothing listens on once closed
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    monkeypatch.setenv("ZIF_SMTP_HOST", "127.0.0.1")
+    monkeypatch.setenv("ZIF_SMTP_PORT", str(port))
+    kind = f"test.mail.{uuid.uuid4().hex}"
+    with SessionLocal.begin() as session:
+        enqueue(
+            session,
+            kind,
+            f"{kind}:1",
+            {"recipient_id": str(people.only_a), "template": "hello"},
+            tenant_id=people.a,
+        )
+    try:
+        asyncio.run(run_once({kind: JobKind(mail.send, 30, timedelta(hours=1))}))
+        with SessionLocal() as session:
+            job_id, completed = session.execute(
+                text("SELECT id, completed_at FROM jobs WHERE kind = :kind"), {"kind": kind}
+            ).one()
+
+        assert email_events(log_lines, job_id) == [
+            {
+                "level": "WARNING",
+                "msg": "email failed",
+                "job_id": str(job_id),
+                "job_kind": kind,
+                "tenant_id": str(people.a),
+                "template": "hello",
+                "error": "ConnectionRefusedError",
+            }
+        ]
+        assert completed is None
+        assert [line["error"] for line in log_lines() if line["msg"] == "job failed"] == [
+            "ConnectionRefusedError"
+        ]
+        assert subjects_sent_to(people.only_a) == []
+    finally:
+        with app_engine.begin() as conn:
+            conn.execute(text("DELETE FROM jobs WHERE kind = :kind"), {"kind": kind})

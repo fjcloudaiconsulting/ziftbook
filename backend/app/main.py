@@ -64,6 +64,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception:
         logger.critical("startup failed", exc_info=True)
         raise RuntimeError("startup failed") from None
+    # Here, not at import: `python -m app.main` prints the OpenAPI document to stdout.
+    logger.info(
+        "api started",
+        extra={**logs.settings_fields(), "trusted_proxies": Settings().trusted_proxies},
+    )
     try:
         yield
     finally:

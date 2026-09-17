@@ -10,7 +10,7 @@ from datetime import timedelta
 from sqlalchemy import create_engine
 
 from app import logs, mail
-from app.config import WorkerSettings
+from app.config import MailSettings, WorkerSettings
 from app.db import SessionLocal
 from app.jobs import JobKind, run_once
 
@@ -62,7 +62,17 @@ async def serve(settings: WorkerSettings) -> None:
     # SIGTERM (Kubernetes, compose) finishes the current batch, at most one job timeout, then exits.
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, stop.set)
-    logger.info("worker started with kinds %s", sorted(KINDS))
+    mail_settings = MailSettings()
+    # Never the SMTP credentials or the healthcheck URL.
+    logger.info(
+        "worker started",
+        extra={
+            **logs.settings_fields(),
+            "kinds": sorted(KINDS),
+            "smtp_host": mail_settings.smtp_host,
+            "smtp_port": mail_settings.smtp_port,
+        },
+    )
     await work(KINDS, settings.healthcheck_url, stop)
     logger.info("worker stopped")
 
