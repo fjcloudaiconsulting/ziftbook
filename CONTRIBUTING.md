@@ -43,6 +43,10 @@ must never break the version that is still running.
 Specifics:
 
 - A new `NOT NULL` column needs a default, or is added nullable, backfilled, then tightened in a later release.
+- Migrations form one chain. Two open PRs that add a migration revise the same head: the one merged second must
+  be rebased onto `main` first, with its `down_revision` set to the new head (`alembic heads` must print one line).
+  If both are already merged, add a merge revision (`down_revision = ("a", "b")`, empty upgrade and downgrade)
+  rather than editing a merged migration.
 - `CREATE INDEX CONCURRENTLY` cannot run inside a transaction; put it in its own migration using Alembic's
   `autocommit_block()`.
 - Migrations run as `ziftbook_migrate`, never on app startup. The app connects as `ziftbook_app`, which owns
