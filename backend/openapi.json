@@ -1445,7 +1445,7 @@
           "invites"
         ],
         "summary": "Accept",
-        "description": "Join the business from an invite link, creating the account or proving the existing one's\npassword, and sign in to that business.",
+        "description": "Join the business from an invite link, creating the account or proving the existing one's\npassword, and sign in to that business.\n\nAn existing account is signed into this business now, but its next plain sign-in still lands\nin its oldest business (known gap, ZIF-81). A newly created account has no language of its\nown, so its emails use the business's language until it signs in and sets one.",
         "operationId": "invites-accept",
         "requestBody": {
           "content": {
