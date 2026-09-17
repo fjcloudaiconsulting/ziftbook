@@ -13,6 +13,7 @@ from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.pool import NullPool
 
 from app import logs, worker
+from app.config import WorkerSettings
 from app.db import SessionLocal
 from app.jobs import Job, JobKind, enqueue
 from app.worker import work
@@ -75,23 +76,31 @@ def test_worker_runs_due_jobs_pings_and_stops(
 
 
 # B3: worker.main() must call logs.configure() before anything else, or its logging never gets
-# set up. Stub everything past that point and let a sentinel exception through it.
+# set up. Make both configure() and WorkerSettings() raise and record who went first, so a
+# reorder (settings built before logging is configured) fails on the order, not just on `raises`.
 def test_worker_main_configures_logging_first(monkeypatch: pytest.MonkeyPatch) -> None:
-    class Configured(Exception):
-        pass
+    order: list[str] = []
 
     def configure() -> None:
-        raise Configured
+        order.append("configure")
+        raise SystemExit("stop after configure")
+
+    def settings_init(self: WorkerSettings, **kw: object) -> None:
+        order.append("settings")
+        raise SystemExit("stop after settings")
 
     async def serve(settings: object) -> None:
         return None
 
     monkeypatch.setattr(logs, "configure", configure)
+    monkeypatch.setattr(WorkerSettings, "__init__", settings_init)
     monkeypatch.setattr(worker, "serve", serve)
     monkeypatch.setattr(SessionLocal, "configure", lambda **kw: None)
 
-    with pytest.raises(Configured):
+    with pytest.raises(SystemExit):
         worker.main()
+
+    assert order[0] == "configure", order
 
 
 # B7: a failed healthcheck ping logs the error's class only, never the URL (worker.py:49).

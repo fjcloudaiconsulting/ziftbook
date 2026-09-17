@@ -133,18 +133,20 @@ def test_extra_and_context_keys_never_overwrite_the_standard_fields(log_lines: L
     assert line["logger"] == "app.tests.logs"
 
 
-# B5: ts is always UTC, whatever the host's local timezone.
-def test_ts_is_utc_whatever_the_host_zone(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("TZ", "America/Sao_Paulo")
-    time.tzset()
-    try:
-        record = logging.makeLogRecord({"msg": "m", "created": 0.0})
-        line = json.loads(logs.Formatter("json").format(record))
-    finally:
-        monkeypatch.delenv("TZ", raising=False)
-        time.tzset()
+# B5: ts is always UTC, whatever the host's local timezone. A subprocess (its own TZ, never
+# touching this process's) so check-env-names.mjs sees a plain dict literal, not a monkeypatch
+# call, and needs no ZIF_ exemption; it also means no time.tzset() leak into other tests.
+def test_ts_is_utc_whatever_the_host_zone() -> None:
+    output = _run_uncaught_script(
+        "import json\n"
+        "import logging\n"
+        "import app.logs as logs\n"
+        "record = logging.makeLogRecord({'msg': 'm', 'created': 0.0})\n"
+        "print(json.loads(logs.Formatter('json').format(record))['ts'])\n",
+        {"TZ": "America/Sao_Paulo"},
+    )
 
-    assert line["ts"] == "1970-01-01T00:00:00.000Z"
+    assert output.strip() == "1970-01-01T00:00:00.000Z"
 
 
 # 3: exc never holds an exception's message, only its class and frames.
@@ -646,6 +648,65 @@ def test_an_uncaught_validation_error_names_the_missing_variable() -> None:
         timeout=15,
         env={k: v for k, v in os.environ.items() if k != "ZIF_DATABASE_URL"},
     )
+
+    output = result.stdout + result.stderr
+    lines = [json.loads(rec) for rec in output.splitlines() if rec.startswith("{")]
+    assert any(
+        rec["level"] == "CRITICAL" and "ZIF_DATABASE_URL" in rec.get("invalid_env", [])
+        for rec in lines
+    )
+
+
+# R2-B1 (a): a ValidationError with an empty loc, from something other than one of our Settings
+# classes, must not crash the excepthook itself (the old `e["loc"][0]` raised IndexError there,
+# and Python's own "Error in sys.excepthook" fallback then printed the message, sentinel and all).
+def test_an_uncaught_non_settings_validation_error_is_still_one_safe_json_line() -> None:
+    sentinel = uuid.uuid4().hex
+    output = _run_uncaught_script(
+        "import os\n"
+        "from pydantic import TypeAdapter\n"
+        "import app.logs as logs\n"
+        "logs.configure()\n"
+        "TypeAdapter(int).validate_python(os.environ['ZIF_TEST_SENTINEL'])\n",
+        {"ZIF_TEST_SENTINEL": sentinel},
+    )
+
+    lines = [rec for rec in output.splitlines() if rec.strip()]
+    assert len(lines) == 1, output
+    record = json.loads(lines[0])
+    assert record["level"] == "CRITICAL"
+    assert "invalid_env" not in record
+    assert sentinel not in output
+    assert "Error in sys.excepthook" not in output
+
+
+# R2-B1 (b): a manual __cause__ cycle through a Settings ValidationError must terminate, not hang
+# the excepthook forever (the old _invalid_env walk had no seen-id guard).
+def test_a_cyclic_cause_chain_through_a_settings_error_terminates() -> None:
+    body = (
+        "import app.logs as logs\n"
+        "from app.config import WorkerSettings\n"
+        "from pydantic import ValidationError\n"
+        "logs.configure()\n"
+        "try:\n"
+        "    WorkerSettings()\n"
+        "except ValidationError as settings_error:\n"
+        "    other = RuntimeError('other')\n"
+        "    other.__cause__ = settings_error\n"
+        "    settings_error.__cause__ = other\n"
+        "    raise other\n"
+    )
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", body],
+            cwd=API_DIR,
+            capture_output=True,
+            text=True,
+            timeout=15,
+            env={k: v for k, v in os.environ.items() if k != "ZIF_DATABASE_URL"},
+        )
+    except subprocess.TimeoutExpired:
+        pytest.fail("excepthook hung on a cyclic __cause__ chain")
 
     output = result.stdout + result.stderr
     lines = [json.loads(rec) for rec in output.splitlines() if rec.startswith("{")]

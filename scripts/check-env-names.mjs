@@ -3,8 +3,7 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 
-// TZ: the POSIX timezone name, set (in tests only) to exercise time.tzset(), not app config.
-const ALLOWED = new Set(["NODE_ENV", "TZ"]);
+const ALLOWED = new Set(["NODE_ENV"]);
 const NAME = "([A-Za-z_][A-Za-z0-9_]*)";
 
 const READERS = {

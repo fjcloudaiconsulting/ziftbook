@@ -56,29 +56,36 @@ def _add_context(record: logging.LogRecord) -> bool:
     return True
 
 
-def _chain(error: BaseException | None) -> list[dict[str, Any]]:
-    links: list[dict[str, Any]] = []
+def _causes(error: BaseException | None) -> Iterator[BaseException]:
+    """Walk __cause__/__context__ (honoring __suppress_context__), each error at most once: a
+    manual __cause__ cycle (see test_an_uncaught_error_...cycle) must still terminate."""
     seen: set[int] = set()
     while error is not None and id(error) not in seen:
         seen.add(id(error))
-        kind = type(error)
+        yield error
+        suppressed = error.__suppress_context__
+        error = error.__cause__ or (None if suppressed else error.__context__)
+
+
+def _chain(error: BaseException | None) -> list[dict[str, Any]]:
+    links: list[dict[str, Any]] = []
+    for cause in _causes(error):
+        kind = type(cause)
         link: dict[str, Any] = {
             "type": f"{kind.__module__}.{kind.__qualname__}",
             "frames": [
                 {"file": f.filename, "line": f.lineno, "function": f.name, "code": f.line}
-                for f in traceback.extract_tb(error.__traceback__)
+                for f in traceback.extract_tb(cause.__traceback__)
             ],
         }
         # psycopg errors (sqlalchemy's DBAPIError has one as __cause__): identifiers only,
         # never diag.message_detail, which quotes row values ("Key (email)=(...)").
-        if sqlstate := getattr(error, "sqlstate", None):
+        if sqlstate := getattr(cause, "sqlstate", None):
             link["sqlstate"] = sqlstate
-        if diag := getattr(error, "diag", None):
+        if diag := getattr(cause, "diag", None):
             link["constraint"] = diag.constraint_name
             link["table"] = diag.table_name
         links.append(link)
-        suppressed = error.__suppress_context__
-        error = error.__cause__ or (None if suppressed else error.__context__)
     return links
 
 
@@ -144,14 +151,14 @@ def stream_handler(stream: Any, kind: Literal["json", "text"]) -> logging.Handle
 
 
 def _invalid_env(error: BaseException) -> list[str]:
-    """ZIF_<FIELD> names for a ValidationError in the chain (as configure() reports for
-    LogSettings), names only, never the rejected input."""
+    """ZIF_<FIELD> names for a *Settings ValidationError in the chain (as configure() reports for
+    LogSettings), names only, never the rejected input. A ValidationError from something other
+    than one of our Settings classes (an ad hoc TypeAdapter, say) names nothing, and so does a
+    model-level error with no field location."""
     names: set[str] = set()
-    seen: BaseException | None = error
-    while seen is not None:
-        if isinstance(seen, ValidationError):
-            names |= {f"ZIF_{str(e['loc'][0]).upper()}" for e in seen.errors()}
-        seen = seen.__cause__ or seen.__context__
+    for cause in _causes(error):
+        if isinstance(cause, ValidationError) and cause.title.endswith("Settings"):
+            names |= {f"ZIF_{str(e['loc'][0]).upper()}" for e in cause.errors() if e["loc"]}
     return sorted(names)
 
 
@@ -159,7 +166,12 @@ def _excepthook(kind: type[BaseException], error: BaseException, tb: TracebackTy
     if issubclass(kind, KeyboardInterrupt):
         sys.__excepthook__(kind, error, tb)  # a deliberate interrupt, not a crash
         return
-    extra = {"invalid_env": names} if (names := _invalid_env(error)) else {}
+    try:
+        extra = {"invalid_env": names} if (names := _invalid_env(error)) else {}
+    except Exception:
+        # Never let building extras fall through to Python's own excepthook, which prints the
+        # message (and, for a ValidationError, the rejected input).
+        extra = {}
     uncaught_logger.critical("uncaught error", exc_info=(kind, error, tb), extra=extra)
 
 

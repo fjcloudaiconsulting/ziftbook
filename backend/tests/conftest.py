@@ -64,9 +64,11 @@ MAILPIT = f"http://{os.environ['ZIF_SMTP_HOST']}:8025"
 def _keep_pytest_thread_hook() -> Iterator[None]:
     """Put pytest's threading.excepthook back before and after every test.
 
-    logs.configure() (an app.main import at collection, log_lines below, the worker, migrations)
-    reassigns threading.excepthook process-wide, so without this an uncaught exception in a
-    thread would silently stop failing tests under filterwarnings=error.
+    logs.configure() (an app.main import at collection, the worker, migrations) reassigns
+    threading.excepthook process-wide, so without this an uncaught exception in a thread would
+    silently stop failing tests. This only covers the test boundaries: log_lines below calls
+    configure() itself during the test, and restores the hook right after so the test body still
+    runs under pytest's own hook.
     """
     threading.excepthook = _pytest_thread_hook
     yield
@@ -79,6 +81,7 @@ def log_lines(monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[[], list[dic
     dict per line."""
     monkeypatch.setenv("ZIF_LOG_LEVEL", "DEBUG")
     logs.configure()
+    threading.excepthook = _pytest_thread_hook  # configure() just reassigned it; put it back
     stream = io.StringIO()
     handler = logs.stream_handler(stream, "json")
     root = logging.getLogger()
@@ -94,6 +97,7 @@ def log_lines(monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[[], list[dic
         monkeypatch.delenv("ZIF_LOG_LEVEL", raising=False)
         monkeypatch.delenv("ZIF_LOG_FORMAT", raising=False)
         logs.configure()
+        threading.excepthook = _pytest_thread_hook  # ditto, for finalizers still to come
 
 
 @pytest.fixture(scope="session")
