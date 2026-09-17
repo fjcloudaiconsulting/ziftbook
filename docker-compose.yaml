@@ -57,6 +57,8 @@ services:
         condition: service_completed_successfully
     environment:
       ZIF_MIGRATE_DATABASE_URL: postgresql+psycopg://ziftbook_migrate:ziftbook_migrate@postgres:5432/ziftbook
+      ZIF_LOG_LEVEL: DEBUG
+      ZIF_LOG_FORMAT: text
 
   backend:
     build:
@@ -67,6 +69,8 @@ services:
     environment:
       ZIF_DATABASE_URL: postgresql+psycopg://ziftbook_app:ziftbook_app@postgres:5432/ziftbook
       ZIF_TRUSTED_PROXIES: 172.28.0.10
+      ZIF_LOG_LEVEL: DEBUG
+      ZIF_LOG_FORMAT: text
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -100,6 +104,8 @@ services:
       ZIF_SMTP_HOST: mailpit
       ZIF_SMTP_PORT: "1025"
       ZIF_SMTP_STARTTLS: "false"
+      ZIF_LOG_LEVEL: DEBUG
+      ZIF_LOG_FORMAT: text
     develop:
       watch:
         - action: sync+restart

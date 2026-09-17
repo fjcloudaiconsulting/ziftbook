@@ -6,6 +6,8 @@ from alembic import op
 from sqlalchemy import Connection, MetaData, event, text
 from sqlalchemy.orm import Session, SessionTransaction, sessionmaker
 
+from app import logs
+
 # Deterministic constraint names, so migrations can reference (and later drop) them by name. All
 # columns are in uq and fk names, so composite (tenant_id, ...) constraints never collide.
 metadata = MetaData(
@@ -42,7 +44,11 @@ def tenant_context(tenant_id: UUID) -> Iterator[Session]:
     Commits on exit and rolls back on error. Row-level security reads the tenant from this
     transaction; outside one, queries on tenant tables raise.
     """
-    with SessionLocal(info={"tenant_id": tenant_id}) as session, session.begin():
+    with (
+        logs.bound(tenant_id=str(tenant_id)),
+        SessionLocal(info={"tenant_id": tenant_id}) as session,
+        session.begin(),
+    ):
         yield session
 
 

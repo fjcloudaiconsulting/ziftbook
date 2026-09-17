@@ -180,6 +180,9 @@ def signed_in(request: Request) -> Iterator[SignedIn]:
             ).first()
     if row is None:
         raise ApiError(401, "unauthenticated")
+    # For the access line: this dependency runs in a worker thread whose context the middleware
+    # never sees.
+    request.state.tenant_id = row.tenant_id
     with tenant_context(row.tenant_id) as db:
         yield SignedIn(row.user_id, row.tenant_id, row.role, db)
 

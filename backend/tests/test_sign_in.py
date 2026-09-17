@@ -87,8 +87,8 @@ def test_an_unknown_email_and_a_wrong_password_get_the_same_answer(
         assert response.status_code == 401
         assert "set-cookie" not in response.headers
     assert unknown.content == wrong.content == b'{"code":"invalid_credentials"}'
-    assert {k: v for k, v in unknown.headers.items() if k != "date"} == {
-        k: v for k, v in wrong.headers.items() if k != "date"
+    assert {k: v for k, v in unknown.headers.items() if k not in ("date", "x-request-id")} == {
+        k: v for k, v in wrong.headers.items() if k not in ("date", "x-request-id")
     }
 
 

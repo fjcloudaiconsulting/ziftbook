@@ -1,13 +1,15 @@
 import asyncio
 import hashlib
+import io
 import json
+import logging
 import os
 import secrets
 import time
 import urllib.parse
 import urllib.request
 import uuid
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -21,7 +23,7 @@ from httpx2 import Response
 from sqlalchemy import Connection, Engine, create_engine, text
 from sqlalchemy.pool import NullPool
 
-from app import auth, passwords
+from app import auth, logs, passwords
 from app.db import SessionLocal, tenant_context
 from app.jobs import run_once
 from app.worker import KINDS
@@ -42,6 +44,28 @@ os.environ.setdefault("ZIF_SMTP_HOST", "localhost")
 os.environ.setdefault("ZIF_SMTP_PORT", "1025")
 os.environ.setdefault("ZIF_SMTP_STARTTLS", "false")
 MAILPIT = f"http://{os.environ['ZIF_SMTP_HOST']}:8025"
+
+
+@pytest.fixture
+def log_lines(monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[[], list[dict[str, Any]]]]:
+    """Captured JSON log records at ZIF_LOG_LEVEL (default DEBUG), parsed one dict per line."""
+    monkeypatch.setenv("ZIF_LOG_LEVEL", "DEBUG")
+    logs.configure()
+    stream = io.StringIO()
+    handler = logs.stream_handler(stream, "json")
+    root = logging.getLogger()
+    root.addHandler(handler)
+    try:
+
+        def lines() -> list[dict[str, Any]]:
+            return [json.loads(line) for line in stream.getvalue().splitlines() if line]
+
+        yield lines
+    finally:
+        root.removeHandler(handler)
+        monkeypatch.delenv("ZIF_LOG_LEVEL", raising=False)
+        monkeypatch.delenv("ZIF_LOG_FORMAT", raising=False)
+        logs.configure()
 
 
 @pytest.fixture(scope="session")

@@ -100,8 +100,8 @@ def test_signing_up_answers_the_same_for_a_new_and_a_registered_email(
 
     assert [a.status_code for a in answers] == [202, 202]
     assert answers[0].content == answers[1].content
-    assert {k: v for k, v in answers[0].headers.items() if k != "date"} == {
-        k: v for k, v in answers[1].headers.items() if k != "date"
+    assert {k: v for k, v in answers[0].headers.items() if k not in ("date", "x-request-id")} == {
+        k: v for k, v in answers[1].headers.items() if k not in ("date", "x-request-id")
     }
     assert (jobs_for(migrate_engine, new), jobs_for(migrate_engine, registered)) == (1, 1)
 

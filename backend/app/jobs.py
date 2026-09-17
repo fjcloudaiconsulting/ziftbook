@@ -10,6 +10,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app import logs
 from app.db import SessionLocal
 
 ENQUEUE = text("""
@@ -106,25 +107,35 @@ def _record(job_id: UUID, statement: str, **params: Any) -> None:
 
 
 async def _run(kind: JobKind, job: Job, overdue: timedelta) -> None:
-    if overdue > kind.grace:
-        await asyncio.to_thread(
-            _record, job.id, "UPDATE jobs SET completed_at = now(), skipped = true WHERE id = :id"
-        )
-        return
-    try:
-        # A timed-out handler thread cannot be stopped and keeps running; its own I/O timeouts
-        # bound it. The job was already claimed, so it is retried after its backoff.
-        async with asyncio.timeout(kind.timeout):
-            await asyncio.to_thread(kind.handler, job)
-    except Exception as error:
-        logger.warning("job %s (%s) failed on attempt: %r", job.id, job.kind, error)
-        await asyncio.to_thread(
-            _record, job.id, "UPDATE jobs SET last_error = :error WHERE id = :id", error=repr(error)
-        )
-    else:
-        await asyncio.to_thread(
-            _record, job.id, "UPDATE jobs SET completed_at = now() WHERE id = :id"
-        )
+    context = {"job_id": str(job.id), "job_kind": job.kind}
+    if job.tenant_id is not None:
+        context["tenant_id"] = str(job.tenant_id)
+    with logs.bound(**context):
+        if overdue > kind.grace:
+            await asyncio.to_thread(
+                _record,
+                job.id,
+                "UPDATE jobs SET completed_at = now(), skipped = true WHERE id = :id",
+            )
+            return
+        try:
+            # A timed-out handler thread cannot be stopped and keeps running; its own I/O timeouts
+            # bound it. The job was already claimed, so it is retried after its backoff.
+            async with asyncio.timeout(kind.timeout):
+                await asyncio.to_thread(kind.handler, job)
+        except Exception as error:
+            # The class only: an error's text can quote an address or a row (ZIF-93: last_error).
+            logger.warning("job failed", extra={"error": type(error).__name__}, exc_info=error)
+            await asyncio.to_thread(
+                _record,
+                job.id,
+                "UPDATE jobs SET last_error = :error WHERE id = :id",
+                error=repr(error),
+            )
+        else:
+            await asyncio.to_thread(
+                _record, job.id, "UPDATE jobs SET completed_at = now() WHERE id = :id"
+            )
 
 
 async def run_once(kinds: dict[str, JobKind]) -> int:

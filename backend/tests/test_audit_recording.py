@@ -130,8 +130,8 @@ def test_failed_sign_ins_look_the_same_whether_or_not_the_account_exists(
 
     assert (unknown.status_code, wrong.status_code) == (401, 401)
     assert unknown.content == wrong.content
-    assert {k: v for k, v in unknown.headers.items() if k != "date"} == {
-        k: v for k, v in wrong.headers.items() if k != "date"
+    assert {k: v for k, v in unknown.headers.items() if k not in ("date", "x-request-id")} == {
+        k: v for k, v in wrong.headers.items() if k not in ("date", "x-request-id")
     }
     no_account = {
         "action": "sign_in_failed",
