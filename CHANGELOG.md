@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.13.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.12.0...v0.13.0) (2026-09-17)
+
+
+### Features
+
+* log job, email and startup events, and an opt-in SQL switch (ZIF-95) ([#87](https://github.com/fjcloudaiconsulting/ziftbook/issues/87)) ([2e1357e](https://github.com/fjcloudaiconsulting/ziftbook/commit/2e1357e8822984bfeeb006609edbdc941adb585c))
+
+
+### Bug Fixes
+
+* make up names the port that's taken and waits for Mailpit (ZIF-91) ([#86](https://github.com/fjcloudaiconsulting/ziftbook/issues/86)) ([8e0c2a5](https://github.com/fjcloudaiconsulting/ziftbook/commit/8e0c2a539fcb130c1bb5e7d14a498f28a5c7b695))
+
 ## [0.12.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.11.0...v0.12.0) (2026-09-17)
 
 
