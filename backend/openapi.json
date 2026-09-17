@@ -1153,6 +1153,175 @@
           }
         }
       }
+    },
+    "/api/members/{member_id}/working-hours": {
+      "get": {
+        "tags": [
+          "working-hours"
+        ],
+        "summary": "Read",
+        "description": "A member's working hours, Monday first. Anyone in the business may read them.",
+        "operationId": "working-hours-read",
+        "parameters": [
+          {
+            "name": "member_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Member Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Shift"
+                  },
+                  "title": "Response Working-Hours-Read"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "working-hours"
+        ],
+        "summary": "Replace",
+        "description": "Replace a member's whole week. An owner changes anyone's; a worker only their own, and only\nif the business allows it.",
+        "operationId": "working-hours-replace",
+        "parameters": [
+          {
+            "name": "member_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Member Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Shift"
+                },
+                "maxItems": 50,
+                "title": "Shifts"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Shift"
+                  },
+                  "title": "Response Working-Hours-Replace"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1265,6 +1434,11 @@
             ],
             "title": "Language",
             "default": "en"
+          },
+          "workers_edit_own_hours": {
+            "type": "boolean",
+            "title": "Workers Edit Own Hours",
+            "default": false
           }
         },
         "additionalProperties": false,
@@ -1292,6 +1466,11 @@
             ],
             "title": "Language",
             "default": "en"
+          },
+          "workers_edit_own_hours": {
+            "type": "boolean",
+            "title": "Workers Edit Own Hours",
+            "default": false
           }
         },
         "additionalProperties": false,
@@ -1299,7 +1478,8 @@
         "required": [
           "timezone",
           "auto_confirm",
-          "language"
+          "language",
+          "workers_edit_own_hours"
         ],
         "title": "BusinessSettings"
       },
@@ -1779,6 +1959,34 @@
           "currency"
         ],
         "title": "SessionOut"
+      },
+      "Shift": {
+        "properties": {
+          "weekday": {
+            "type": "integer",
+            "maximum": 7.0,
+            "minimum": 1.0,
+            "title": "Weekday"
+          },
+          "starts_at": {
+            "type": "string",
+            "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+            "title": "Starts At"
+          },
+          "ends_at": {
+            "type": "string",
+            "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+            "title": "Ends At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "weekday",
+          "starts_at",
+          "ends_at"
+        ],
+        "title": "Shift"
       }
     }
   }

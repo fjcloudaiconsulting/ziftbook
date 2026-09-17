@@ -82,6 +82,23 @@ def target(current: SignedIn, member_id: UUID) -> MemberOut:
     return MemberOut.model_validate(found, from_attributes=True)
 
 
+def member_user(current: SignedIn, member_id: UUID, *, lock: bool) -> UUID:
+    """The user behind a member of this business; 404 for any other id.
+
+    Shared with the working hours (ZIF-46) and time off (ZIF-47) endpoints, which reuse this lookup
+    instead of writing their own.
+    """
+    # NO KEY UPDATE: a sign-in's session insert (a foreign key check, KEY SHARE) isn't blocked, and
+    # target()'s FOR UPDATE on the same row waits for us, or we for it.
+    locking = " FOR NO KEY UPDATE" if lock else ""
+    user_id: UUID | None = current.db.scalar(
+        text("SELECT user_id FROM memberships WHERE id = :id" + locking), {"id": member_id}
+    )
+    if user_id is None:
+        raise ApiError(404, "not_found")
+    return user_id
+
+
 def guarded(current: SignedIn, statement: str, member_id: UUID, **values: object) -> None:
     """Run a change the keep_an_owner trigger may refuse; its refusal is a 409."""
     try:
