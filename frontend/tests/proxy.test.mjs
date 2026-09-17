@@ -11,15 +11,17 @@ function stubApi(version) {
   return new Promise((resolve) => {
     const server = createServer((req, res) => {
       res.setHeader("Content-Type", "application/json");
-      res.end(JSON.stringify({ status: "ok", version, path: req.url }));
+      res.end(JSON.stringify({ status: "ok", version, path: req.url, headers: req.headers }));
     }).listen(0, "127.0.0.1", () => resolve(server));
   });
 }
 
-async function startWeb(apiUrl, port) {
+async function startWeb(apiUrl, port, env = {}) {
   const child = spawn("node_modules/.bin/next", ["start", "-p", String(port), "-H", "127.0.0.1"], {
     cwd: WEB_DIR,
-    env: { ...process.env, ZIF_API_URL: apiUrl },
+    // undefined values are skipped by spawn, so ZIF_CLIENT_IP_HEADER defaults to unset even if a
+    // developer's shell happens to export it.
+    env: { ...process.env, ZIF_API_URL: apiUrl, ZIF_CLIENT_IP_HEADER: undefined, ...env },
     stdio: "ignore",
   });
   for (let attempt = 0; attempt < 100; attempt++) {
@@ -148,5 +150,72 @@ describe("account pages", () => {
       assert.ok(noscript.includes(words), `${path} noscript message`);
       assert.doesNotMatch(html, /<form|type="password"/, `${path} renders a form before it has read its link`);
     }
+  });
+});
+
+describe("the visitor's address", () => {
+  let api, unset, withHeader;
+  const forged = {
+    "X-Forwarded-For": "198.51.100.1",
+    "X-Real-IP": "198.51.100.2",
+    Forwarded: "for=198.51.100.3",
+    "X-Forwarded-Proto": "https",
+  };
+
+  before(async () => {
+    api = await stubApi("E");
+    const target = `http://127.0.0.1:${api.address().port}`;
+    unset = await startWeb(target, 3205);
+    withHeader = await startWeb(target, 3206, { ZIF_CLIENT_IP_HEADER: "cf-connecting-ip" });
+  });
+  after(async () => {
+    await stop(unset);
+    await stop(withHeader);
+    api.close();
+  });
+
+  test("unset: nothing the client sent reaches the API", async () => {
+    const response = await fetch("http://127.0.0.1:3205/api/healthz", {
+      headers: { ...forged, "CF-Connecting-IP": "203.0.113.7" },
+    });
+    const { headers } = await response.json();
+
+    for (const name of ["x-forwarded-for", "x-real-ip", "forwarded", "x-forwarded-proto"]) {
+      assert.equal(headers[name], undefined, name);
+    }
+  });
+
+  test("set: the trusted header's value is forwarded as X-Forwarded-For alone", async () => {
+    const response = await fetch("http://127.0.0.1:3206/api/healthz", {
+      headers: { ...forged, "CF-Connecting-IP": "203.0.113.7" },
+    });
+    const { headers } = await response.json();
+
+    assert.equal(headers["x-forwarded-for"], "203.0.113.7");
+    assert.equal(headers["x-real-ip"], undefined);
+    assert.equal(headers["forwarded"], undefined);
+  });
+
+  for (const [label, value] of [
+    ["not an IP", "nope"],
+    ["a list", "203.0.113.7, 198.51.100.9"],
+    ["missing", undefined],
+  ]) {
+    test(`set: ${label} forwards no X-Forwarded-For`, async () => {
+      const headers = value === undefined ? { ...forged } : { ...forged, "CF-Connecting-IP": value };
+      const response = await fetch("http://127.0.0.1:3206/api/healthz", { headers });
+      const { headers: seen } = await response.json();
+
+      assert.equal(seen["x-forwarded-for"], undefined);
+    });
+  }
+
+  test("set: an IPv4-mapped address loses its ::ffff: prefix", async () => {
+    const response = await fetch("http://127.0.0.1:3206/api/healthz", {
+      headers: { ...forged, "CF-Connecting-IP": "::ffff:203.0.113.8" },
+    });
+    const { headers } = await response.json();
+
+    assert.equal(headers["x-forwarded-for"], "203.0.113.8");
   });
 });

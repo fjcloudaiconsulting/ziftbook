@@ -7,8 +7,21 @@
 #   ZIF_MIGRATE_PASSWORD    ziftbook_migrate password (URL-safe characters: it is part of a database URL)
 #   ZIF_APP_PASSWORD        ziftbook_app password
 # Optional: ZIF_HEALTHCHECK_URL, pinged by the worker after every successful loop; ZIF_SMTP_USERNAME and
-#   ZIF_SMTP_PASSWORD for sending email (Mailgun EU SMTP credentials).
+#   ZIF_SMTP_PASSWORD for sending email (Mailgun EU SMTP credentials). ZIF_CLIENT_IP_HEADER is not
+#   passed through here on purpose. Port 3000 is published directly, so any header can be forged.
 name: ziftbook
+
+# Fixed addresses, so the backend can trust exactly the frontend (ZIF_TRUSTED_PROXIES). If this
+# subnet collides with a local network or VPN, change it here, in ip_range, and in both addresses
+# below.
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24
+          # Other containers get addresses from here, so none can take the frontend's before it
+          # starts.
+          ip_range: 172.28.0.128/25
 
 services:
   postgres:
@@ -62,6 +75,7 @@ services:
         condition: service_completed_successfully
     environment:
       ZIF_DATABASE_URL: postgresql+psycopg://ziftbook_app:${ZIF_APP_PASSWORD:?set ZIF_APP_PASSWORD}@postgres:5432/ziftbook
+      ZIF_TRUSTED_PROXIES: 172.28.0.10
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/healthz')"]
       interval: 30s
@@ -96,6 +110,9 @@ services:
       ZIF_API_URL: http://backend:8000
     ports:
       - "3000:3000"
+    networks:
+      default:
+        ipv4_address: 172.28.0.10
 
 volumes:
   pgdata:

@@ -14,3 +14,7 @@ __pycache__/
 .mypy_cache/
 .pytest_cache/
 .ruff_cache/
+
+# pnpm store created by `docker run ... pnpm install` from the repo root (frontend has its own for
+# non-Docker installs)
+.pnpm-store/
