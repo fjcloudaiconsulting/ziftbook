@@ -74,6 +74,9 @@ class JobKind:
     grace: timedelta
 
 
+# Attempts per job. The jobs_due index (migration 0003) repeats it as a literal.
+MAX_ATTEMPTS = 5
+
 # One statement claims a batch: SKIP LOCKED keeps concurrent workers apart while claiming, and the
 # bumped next_attempt_at keeps them apart afterwards. It is both the lease and the backoff
 # (1, 2, 4, 8, 16 minutes), so a crashed worker's jobs come back on their own. = ANY(ARRAY(...)),
@@ -84,21 +87,24 @@ SET attempts = attempts + 1,
     next_attempt_at = now() + interval '1 minute' * 2 ^ attempts
 WHERE id = ANY(ARRAY(
     SELECT id FROM jobs
-    WHERE completed_at IS NULL AND attempts < 5
+    WHERE completed_at IS NULL AND attempts < :max_attempts
       AND next_attempt_at <= now() AND kind = ANY(:kinds)
     ORDER BY next_attempt_at
     LIMIT 20
     FOR UPDATE SKIP LOCKED))
-RETURNING id, kind, tenant_id, payload, now() - due_at AS overdue
+RETURNING id, kind, tenant_id, payload, attempts, now() - due_at AS overdue
 """)
 
 logger = logging.getLogger(__name__)
 
 
-def _claim(kinds: list[str]) -> list[tuple[Job, timedelta]]:
+def _claim(kinds: list[str]) -> list[tuple[Job, int, timedelta]]:
     with SessionLocal.begin() as session:
-        rows = session.execute(CLAIM, {"kinds": kinds}).all()
-    return [(Job(row.id, row.kind, row.tenant_id, row.payload), row.overdue) for row in rows]
+        rows = session.execute(CLAIM, {"kinds": kinds, "max_attempts": MAX_ATTEMPTS}).all()
+    return [
+        (Job(row.id, row.kind, row.tenant_id, row.payload), row.attempts, row.overdue)
+        for row in rows
+    ]
 
 
 def _record(job_id: UUID, statement: str, **params: Any) -> None:
@@ -106,11 +112,14 @@ def _record(job_id: UUID, statement: str, **params: Any) -> None:
         session.execute(text(statement), {"id": job_id, **params})
 
 
-async def _run(kind: JobKind, job: Job, overdue: timedelta) -> None:
+async def _run(kind: JobKind, job: Job, attempts: int, overdue: timedelta) -> None:
     context = {"job_id": str(job.id), "job_kind": job.kind}
     if job.tenant_id is not None:
         context["tenant_id"] = str(job.tenant_id)
+    # attempts rides on the job events only, not on everything the handler logs.
+    attempt = {"attempts": attempts}
     with logs.bound(**context):
+        logger.debug("job claimed", extra=attempt)
         if overdue > kind.grace:
             await asyncio.to_thread(
                 _record,
@@ -125,7 +134,13 @@ async def _run(kind: JobKind, job: Job, overdue: timedelta) -> None:
                 await asyncio.to_thread(kind.handler, job)
         except Exception as error:
             # The class only: an error's text can quote an address or a row (ZIF-93: last_error).
-            logger.warning("job failed", extra={"error": type(error).__name__}, exc_info=error)
+            last = attempts >= MAX_ATTEMPTS  # never retried: that needs a human
+            logger.log(
+                logging.ERROR if last else logging.WARNING,
+                "job gave up" if last else "job failed",
+                extra={"error": type(error).__name__, **attempt},
+                exc_info=error,
+            )
             await asyncio.to_thread(
                 _record,
                 job.id,
@@ -136,13 +151,16 @@ async def _run(kind: JobKind, job: Job, overdue: timedelta) -> None:
             await asyncio.to_thread(
                 _record, job.id, "UPDATE jobs SET completed_at = now() WHERE id = :id"
             )
+            logger.info("job done", extra=attempt)
 
 
 async def run_once(kinds: dict[str, JobKind]) -> int:
-    """Claim up to 20 due jobs of the given kinds (5 attempts at most) and run them concurrently.
+    """Claim up to 20 due jobs of the given kinds (MAX_ATTEMPTS at most) and run them concurrently.
 
     Returns how many were claimed.
     """
     claimed = await asyncio.to_thread(_claim, list(kinds))
-    await asyncio.gather(*(_run(kinds[job.kind], job, overdue) for job, overdue in claimed))
+    await asyncio.gather(
+        *(_run(kinds[job.kind], job, attempts, overdue) for job, attempts, overdue in claimed)
+    )
     return len(claimed)

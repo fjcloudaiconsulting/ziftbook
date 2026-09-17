@@ -1,3 +1,4 @@
+import logging
 import os
 
 from alembic import context
@@ -8,6 +9,7 @@ from app import logs
 from app.db import metadata
 
 logs.configure()
+logging.getLogger("app.migrations").info("migrations started", extra=logs.settings_fields())
 
 # Any fixed value works; it only has to be the same for every migration run against this database.
 MIGRATION_LOCK_ID = 7_428_211_906

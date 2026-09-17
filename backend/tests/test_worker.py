@@ -103,6 +103,47 @@ def test_worker_main_configures_logging_first(monkeypatch: pytest.MonkeyPatch) -
     assert order[0] == "configure", order
 
 
+# ZIF-95: one startup line with the effective settings, never the SMTP password or the
+# healthcheck URL (a secret-ish check id).
+def test_the_worker_logs_its_settings_once_at_startup(
+    log_lines: Lines, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    secret = uuid.uuid4().hex
+    monkeypatch.setenv("ZIF_APP_VERSION", "9.8.7")
+    monkeypatch.setenv("ZIF_SMTP_HOST", "smtp.example.test")
+    monkeypatch.setenv("ZIF_SMTP_PORT", "2525")
+    monkeypatch.setenv("ZIF_SMTP_PASSWORD", secret)
+    monkeypatch.setenv("ZIF_HEALTHCHECK_URL", f"https://hc.example.test/{secret}")
+
+    async def work(*args: object) -> None:
+        return None
+
+    monkeypatch.setattr(worker, "work", work)
+    asyncio.run(worker.serve(WorkerSettings()))
+
+    started = [
+        {k: v for k, v in line.items() if k not in ("ts", "logger")}
+        for line in log_lines()
+        if line["msg"] == "worker started"
+    ]
+    assert started == [
+        {
+            "level": "INFO",
+            "msg": "worker started",
+            "version": "9.8.7",
+            "log_level": "DEBUG",
+            "log_format": "json",
+            "log_sql": False,
+            "kinds": sorted(worker.KINDS),
+            "smtp_host": "smtp.example.test",
+            "smtp_port": 2525,
+        }
+    ]
+    dumped = json.dumps(log_lines())
+    assert secret not in dumped
+    assert "postgresql" not in dumped
+
+
 # B7: a failed healthcheck ping logs the error's class only, never the URL (worker.py:49).
 def test_a_failed_ping_logs_the_class_only(
     bound_session: None, log_lines: Lines, monkeypatch: pytest.MonkeyPatch

@@ -21,7 +21,7 @@ from fastapi import FastAPI
 from sqlalchemy import Engine, text
 from sqlalchemy.exc import IntegrityError
 
-from app import logs
+from app import jobs, logs
 from app.db import SessionLocal, tenant_context
 from app.jobs import Job, JobKind, enqueue, run_once
 from app.main import create_app
@@ -524,6 +524,146 @@ def test_job_context_matches_its_own_job_and_a_failure_never_leaks(
             conn.execute(text("DELETE FROM jobs WHERE kind LIKE 'test.logs.%'"))
 
 
+def _fields(line: dict[str, Any]) -> dict[str, Any]:
+    """A record without what every record has (ts, logger) and the error chain."""
+    return {k: v for k, v in line.items() if k not in ("ts", "logger", "exc")}
+
+
+# ZIF-95: job claimed (DEBUG), done (INFO), failed (WARNING, retried) and gave up (ERROR, the last
+# attempt), each with the job's id, kind, tenant (only when it has one) and attempt.
+def test_job_events_have_their_level_and_fields(
+    people: People, bound: None, app_engine: Engine, log_lines: Lines
+) -> None:
+    kind = f"test.logs.{uuid.uuid4().hex}"
+    ok, failing = f"{kind}.ok", f"{kind}.fail"
+
+    def fail(job: Job) -> None:
+        raise RuntimeError("x")
+
+    with SessionLocal.begin() as session:
+        enqueue(session, ok, f"{kind}:t", {}, tenant_id=people.a)
+        enqueue(session, ok, f"{kind}:none", {})
+        enqueue(session, failing, f"{kind}:retry", {})
+        enqueue(session, failing, f"{kind}:last", {})
+        session.execute(
+            text("UPDATE jobs SET attempts = :n WHERE dedupe_key = :key"),
+            {"n": jobs.MAX_ATTEMPTS - 1, "key": f"{kind}:last"},
+        )
+    try:
+        asyncio.run(
+            run_once(
+                {
+                    ok: JobKind(lambda job: None, 5, timedelta(hours=1)),
+                    failing: JobKind(fail, 5, timedelta(hours=1)),
+                }
+            )
+        )
+        with SessionLocal() as session:
+            rows = session.execute(
+                text("SELECT id, dedupe_key FROM jobs WHERE kind LIKE :kind"), {"kind": f"{kind}.%"}
+            )
+            ids = {row.dedupe_key.split(":")[1]: str(row.id) for row in rows}
+
+        def job(name: str, level: str, msg: str, attempts: int, **more: str) -> dict[str, Any]:
+            kind_of = ok if name in ("t", "none") else failing
+            fields = {"level": level, "msg": msg, "job_id": ids[name], "job_kind": kind_of}
+            return {**fields, **more, "attempts": attempts}
+
+        def logged(msg: str) -> list[dict[str, Any]]:
+            found = [
+                _fields(line)
+                for line in log_lines()
+                if line["msg"] == msg and line.get("job_kind", "").startswith(kind)
+            ]
+            return sorted(found, key=lambda line: line["job_id"])
+
+        def by_id(*events: dict[str, Any]) -> list[dict[str, Any]]:
+            return sorted(events, key=lambda line: line["job_id"])
+
+        tenant = {"tenant_id": str(people.a)}
+        assert logged("job claimed") == by_id(
+            job("t", "DEBUG", "job claimed", 1, **tenant),
+            job("none", "DEBUG", "job claimed", 1),
+            job("retry", "DEBUG", "job claimed", 1),
+            job("last", "DEBUG", "job claimed", jobs.MAX_ATTEMPTS),
+        )
+        assert logged("job done") == by_id(
+            job("t", "INFO", "job done", 1, **tenant), job("none", "INFO", "job done", 1)
+        )
+        assert logged("job failed") == [
+            job("retry", "WARNING", "job failed", 1, error="RuntimeError")
+        ]
+        assert logged("job gave up") == [
+            job("last", "ERROR", "job gave up", jobs.MAX_ATTEMPTS, error="RuntimeError")
+        ]
+    finally:
+        with app_engine.begin() as conn:
+            conn.execute(text("DELETE FROM jobs WHERE kind LIKE :kind"), {"kind": f"{kind}.%"})
+
+
+# ZIF-95: SQL is logged only with ZIF_LOG_SQL at DEBUG, through the API's own engine, and never
+# with its bound values.
+@pytest.mark.parametrize(
+    ("log_sql", "level", "logged"),
+    [
+        (None, "DEBUG", False),
+        (None, "INFO", False),
+        ("true", "INFO", False),
+        ("true", "DEBUG", True),
+    ],
+)
+def test_sql_is_logged_only_when_asked_at_debug_and_never_its_values(
+    log_lines: Lines,
+    monkeypatch: pytest.MonkeyPatch,
+    log_sql: str | None,
+    level: str,
+    logged: bool,
+) -> None:
+    if log_sql is None:
+        monkeypatch.delenv("ZIF_LOG_SQL", raising=False)
+    else:
+        monkeypatch.setenv("ZIF_LOG_SQL", log_sql)
+    monkeypatch.setenv("ZIF_LOG_LEVEL", level)
+    logs.configure()
+    sentinel = uuid.uuid4().hex
+
+    with new_client(create_app()), SessionLocal() as session:  # the lifespan binds its engine
+        assert session.scalar(text("SELECT CAST(:v AS text)"), {"v": sentinel}) == sentinel
+
+    sql = [line for line in log_lines() if line["logger"].startswith("sqlalchemy")]
+    assert any("SELECT CAST" in line["msg"] for line in sql) is logged
+    assert any("parameters hidden" in line["msg"] for line in sql) is logged
+    assert sentinel not in json.dumps(log_lines())
+
+
+# ZIF-95: the API logs one startup line with its effective settings, from its lifespan: never on
+# import or create_app(), which `python -m app.main` runs to print the OpenAPI document.
+def test_the_api_logs_its_settings_once_at_startup(
+    log_lines: Lines, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ZIF_APP_VERSION", "9.8.7")
+    monkeypatch.setenv("ZIF_TRUSTED_PROXIES", "10.1.0.0/16")
+    app = create_app()
+    assert not any(line["msg"] == "api started" for line in log_lines())
+
+    with new_client(app):
+        pass
+
+    started = [_fields(line) for line in log_lines() if line["msg"] == "api started"]
+    assert started == [
+        {
+            "level": "INFO",
+            "msg": "api started",
+            "version": "9.8.7",
+            "log_level": "DEBUG",
+            "log_format": "json",
+            "log_sql": False,
+            "trusted_proxies": "10.1.0.0/16",
+        }
+    ]
+    assert "postgresql" not in json.dumps(log_lines())
+
+
 # 16: configure() is idempotent and polite to handlers it doesn't own.
 def test_configure_is_idempotent_and_polite_to_other_handlers() -> None:
     root = logging.getLogger()
@@ -824,12 +964,30 @@ def test_migrations_log_json_lines() -> None:
         capture_output=True,
         text=True,
         timeout=30,
-        env={**os.environ, "ZIF_LOG_FORMAT": "json", "ZIF_LOG_LEVEL": "INFO"},
+        env={
+            **os.environ,
+            "ZIF_LOG_FORMAT": "json",
+            "ZIF_LOG_LEVEL": "INFO",
+            "ZIF_APP_VERSION": "9.8.7",
+        },
     )
 
     assert result.returncode == 0, result.stderr
     records = [json.loads(line) for line in result.stdout.splitlines() if line.startswith("{")]
     assert any(r["logger"].startswith("alembic") and r["level"] == "INFO" for r in records)
+    # ZIF-95: one startup line with the effective settings, never the database URL.
+    started = [_fields(r) for r in records if r["msg"] == "migrations started"]
+    assert started == [
+        {
+            "level": "INFO",
+            "msg": "migrations started",
+            "version": "9.8.7",
+            "log_level": "INFO",
+            "log_format": "json",
+            "log_sql": False,
+        }
+    ]
+    assert "postgresql" not in result.stdout + result.stderr
     assert "INFO  [alembic" not in result.stdout + result.stderr
 
 

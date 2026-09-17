@@ -17,6 +17,7 @@ from sqlalchemy import Engine, text
 
 from app import auth
 from app.jobs import run_once
+from app.mail import render
 from app.main import create_app
 from app.worker import KINDS
 from tests.conftest import (
@@ -54,6 +55,7 @@ def test_no_personal_data_ever_reaches_a_log(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     never: list[str] = ["2001:db8:", "@example.com", UA["User-Agent"]]
+    never += [render(template, "en")[0] for template in ("sign_up", "password_reset", "invite")]
 
     def secret(value: str) -> None:
         never.append(value)
@@ -237,3 +239,9 @@ def test_no_personal_data_ever_reaches_a_log(
     failed = [line for line in lines if line["msg"] == "job failed"]
     assert len(failed) == 1
     assert failed[0]["error"] == "SMTPRecipientsRefused"
+    sent = {line["template"] for line in lines if line["msg"] == "email sent"}
+    assert {"sign_up", "password_reset", "invite"} <= sent
+    email_failed = [line for line in lines if line["msg"] == "email failed"]
+    assert [(line["template"], line["error"]) for line in email_failed] == [
+        ("sign_up", "SMTPRecipientsRefused")
+    ]

@@ -35,6 +35,8 @@ class LogSettings(Settings):
 
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     log_format: Literal["json", "text"] = "json"
+    # SQL statements (never their values: every engine has hide_parameters), at DEBUG only.
+    log_sql: bool = False
 
 
 class MailSettings(Settings):
