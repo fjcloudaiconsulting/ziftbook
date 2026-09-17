@@ -10,6 +10,7 @@ setup: ## One-time: enable the repo git hooks and install api and web dependenci
 	$(WEB) install
 
 up: ## Start the whole app (http://localhost:3000), syncing source changes into the containers
+	sh scripts/check-ports.sh
 	docker compose up --build --watch
 
 down:
