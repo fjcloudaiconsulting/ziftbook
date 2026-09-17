@@ -82,13 +82,19 @@ def test_creating_an_invite_queues_its_email_job(
     assert body["email"] == "new@example.com"
     assert body["expired"] is False
     invite_id = body["id"]
+    # By tenant and kind, not dedupe_key: a wrong key must fail the assertions below, not vanish
+    # from a WHERE clause and raise NoResultFound instead.
     with migrate_engine.connect() as conn:
         job = conn.execute(
-            text("SELECT kind, tenant_id, dedupe_key, payload FROM jobs WHERE dedupe_key = :k"),
-            {"k": f"email.invite:{people.a}:{invite_id}"},
+            text("""
+            SELECT kind, tenant_id, dedupe_key, payload FROM jobs
+            WHERE tenant_id = :t AND kind = 'email.invite' ORDER BY id DESC LIMIT 1
+            """),
+            {"t": people.a},
         ).one()
     assert job.kind == "email.invite"
     assert str(job.tenant_id) == str(people.a)
+    assert job.dedupe_key == f"email.invite:{people.a}:{invite_id}"
     assert job.payload == {"invite_id": invite_id}
 
 
