@@ -19,6 +19,12 @@ SELECT attacl FROM pg_attribute WHERE attrelid = 'tenants'::regclass AND attname
 """
 FIVE_ARG = "SELECT to_regprocedure('complete_sign_up(bytea,text,text,text,text)')"
 THREE_ARG = "SELECT to_regprocedure('complete_sign_up(bytea,text,text)')"
+THREE_ARG_TO_APP = (
+    "SELECT has_function_privilege('ziftbook_app', 'complete_sign_up(bytea,text,text)', 'EXECUTE')"
+)
+THREE_ARG_TO_PUBLIC = (
+    "SELECT has_function_privilege('public', 'complete_sign_up(bytea,text,text)', 'EXECUTE')"
+)
 INVITES_TABLE = "SELECT to_regclass('invites')"
 ACCEPT_INVITE = "SELECT to_regprocedure('accept_invite(bytea,text)')"
 INVITES_PK = """
@@ -57,9 +63,33 @@ def test_downgrading_and_upgrading_0013_restores_its_columns_and_grants(
         assert conn.scalar(text(COLUMN_PRIVILEGE))
         assert conn.scalar(text(NAME_ACL)) is not None
         assert conn.scalar(text(FIVE_ARG)) is not None
+        # 0022 (above 0013 in the chain) drops it again once undone here.
+        assert conn.scalar(text(THREE_ARG)) is None
         assert conn.scalar(text(INVITES_TABLE)) is not None
         assert conn.scalar(text(ACCEPT_INVITE)) is not None
         assert conn.scalar(text(INVITES_PK)) == "pk_invites"
+
+
+def test_downgrading_and_upgrading_0022_restores_the_three_arg_complete_sign_up_and_its_grants(
+    migrated: None, migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = Config(toml_file=str(API_DIR / "pyproject.toml"))
+    # A lock held elsewhere (another test, a stray session) must not hang this one forever.
+    url = os.environ["ZIF_MIGRATE_DATABASE_URL"]
+    options = urlencode({"options": "-c lock_timeout=5s"})
+    monkeypatch.setenv("ZIF_MIGRATE_DATABASE_URL", f"{url}{'&' if '?' in url else '?'}{options}")
+    command.downgrade(cfg, "0021")
+    try:
+        with migrate_engine.connect() as conn:
+            assert conn.scalar(text(THREE_ARG)) is not None
+            assert conn.scalar(text(FIVE_ARG)) is not None
+            assert conn.scalar(text(THREE_ARG_TO_APP))
+            assert not conn.scalar(text(THREE_ARG_TO_PUBLIC))
+    finally:
+        command.upgrade(cfg, "head")
+    with migrate_engine.connect() as conn:
+        assert conn.scalar(text(THREE_ARG)) is None
+        assert conn.scalar(text(FIVE_ARG)) is not None
 
 
 ADD_JOB = """
