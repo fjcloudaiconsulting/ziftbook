@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.12.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.11.0...v0.12.0) (2026-09-17)
+
+
+### Features
+
+* **backend:** send, list, revoke and accept invites (ZIF-27) ([#82](https://github.com/fjcloudaiconsulting/ziftbook/issues/82)) ([ce5d652](https://github.com/fjcloudaiconsulting/ziftbook/commit/ce5d652e68ecd3ad7f0f2829dc2dbc55b9c65777))
+* **frontend:** accept an invite to a business (ZIF-27) ([#83](https://github.com/fjcloudaiconsulting/ziftbook/issues/83)) ([c5bd2d1](https://github.com/fjcloudaiconsulting/ziftbook/commit/c5bd2d11e4fd8133527cfe3b34e956212deb1519))
+* **frontend:** ask for the business's country at sign-up (ZIF-27) ([#80](https://github.com/fjcloudaiconsulting/ziftbook/issues/80)) ([51ce853](https://github.com/fjcloudaiconsulting/ziftbook/commit/51ce853e502248c970cc5f9c7bb51268feee9aca))
+* structured, levelled logs for the API, worker and migrations (ZIF-85) ([#85](https://github.com/fjcloudaiconsulting/ziftbook/issues/85)) ([95f1797](https://github.com/fjcloudaiconsulting/ziftbook/commit/95f1797108e7469f1d6f7d688a8e4aa15daf0f5a))
+
+
+### Bug Fixes
+
+* rate limits and audit events see the visitor's address (ZIF-82) ([#84](https://github.com/fjcloudaiconsulting/ziftbook/issues/84)) ([ab91434](https://github.com/fjcloudaiconsulting/ziftbook/commit/ab914341ef6fbbff55209f2f4dc304d3f091da3c))
+
 ## [0.11.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.10.0...v0.11.0) (2026-09-17)
 
 
