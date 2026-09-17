@@ -19,6 +19,7 @@ from app import (
     accounts,
     audit,
     auth,
+    availability,
     business_settings,
     invites,
     logs,
@@ -101,6 +102,7 @@ def create_app() -> FastAPI:
     app.include_router(invites.router)
     app.include_router(schedule.router)
     app.include_router(time_off.router)
+    app.include_router(availability.router)
 
     @app.middleware("http")
     async def json_only(
