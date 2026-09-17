@@ -31,7 +31,8 @@ export function takeToken(place: Place): string | null {
   return token;
 }
 
-/** The countries a business can be in; the server sets its currency, time zone and language from it. */
+/** The countries a business can be in; the server sets its currency, time zone and language from it.
+ * Must match backend/app/countries.py: the API enum only catches extra codes here, not missing ones. */
 export const COUNTRIES = ["NL", "PT", "BR", "GB", "US"] as const;
 export type Country = (typeof COUNTRIES)[number];
 
@@ -43,4 +44,21 @@ export function likelyCountry(locale: string): Country | "" {
 /** The countries in the reader's alphabetical order of their names. */
 export function byName(locale: string, name: (country: Country) => string): Country[] {
   return [...COUNTRIES].sort((a, b) => name(a).localeCompare(name(b), locale));
+}
+
+type SignUpRequestErrors = { name?: "nameRequired"; country?: "countryRequired" };
+
+/**
+ * Validates the sign-up form and builds the request body, or reports which fields are missing.
+ * The server strips spaces too; a blank name would only come back as a vague "invalid request".
+ */
+export function signUpRequest(
+  name: string,
+  country: Country | "",
+): { errors: SignUpRequestErrors } | { body: { business_name: string; country: Country } } {
+  const errors: SignUpRequestErrors = {};
+  if (!name.trim()) errors.name = "nameRequired";
+  if (!country) errors.country = "countryRequired";
+  if (errors.name || errors.country) return { errors };
+  return { body: { business_name: name, country } };
 }

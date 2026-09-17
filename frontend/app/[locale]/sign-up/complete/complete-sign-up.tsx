@@ -5,7 +5,7 @@ import { type FormEvent, useId, useState } from "react";
 
 import { accountCompleteSignUp } from "@/api-client";
 import { Link, useRouter } from "@/i18n/navigation";
-import { byName, type Country, likelyCountry } from "@/lib/account";
+import { byName, type Country, likelyCountry, signUpRequest } from "@/lib/account";
 
 import { LinkRequest } from "../../_ui/link-request";
 import { Banner, FieldError, forgetToken, Heading, Mark, NoScript, Outcome, PasswordField, problem, send, Submit, useLinkToken } from "../../_ui/parts";
@@ -35,12 +35,16 @@ export function CompleteSignUp() {
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
     if (busy || !token) return;
-    // The server strips spaces too; a blank name would only come back as a vague "invalid request".
-    setNameError(name.trim() ? undefined : t("nameRequired"));
-    setCountryError(country ? undefined : t("countryRequired"));
-    if (!name.trim() || !country) return;
+    const request = signUpRequest(name, country);
+    if ("errors" in request) {
+      setNameError(request.errors.name && t(request.errors.name));
+      setCountryError(request.errors.country && t(request.errors.country));
+      return;
+    }
+    setNameError(undefined);
+    setCountryError(undefined);
     setBusy(true);
-    const outcome = await send(accountCompleteSignUp({ body: { token, password, business_name: name, country } }));
+    const outcome = await send(accountCompleteSignUp({ body: { ...request.body, token, password } }));
     setBusy(false);
     setPasswordError(undefined);
     setMessage(null);
