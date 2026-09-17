@@ -31,6 +31,7 @@ STANDARD = set(vars(logging.makeLogRecord({}))) | {
     "color_message",
     "context",
 }
+RESERVED = {"ts", "level", "logger", "msg"}  # set by _head(); context/extras never overwrite them
 uncaught_logger = logging.getLogger("app.uncaught")
 
 
@@ -97,8 +98,10 @@ class Formatter(logging.Formatter):
             message = record.getMessage() if isinstance(record.msg, str) else template
             fields: dict[str, Any] = {
                 **self._head(record, message),
-                **getattr(record, "context", {}),
-                **{k: v for k, v in vars(record).items() if k not in STANDARD},
+                **{k: v for k, v in getattr(record, "context", {}).items() if k not in RESERVED},
+                **{
+                    k: v for k, v in vars(record).items() if k not in STANDARD and k not in RESERVED
+                },
             }
             if record.exc_info and record.exc_info[1] is not None:
                 fields["exc"] = _chain(record.exc_info[1])
@@ -140,8 +143,24 @@ def stream_handler(stream: Any, kind: Literal["json", "text"]) -> logging.Handle
     return handler
 
 
+def _invalid_env(error: BaseException) -> list[str]:
+    """ZIF_<FIELD> names for a ValidationError in the chain (as configure() reports for
+    LogSettings), names only, never the rejected input."""
+    names: set[str] = set()
+    seen: BaseException | None = error
+    while seen is not None:
+        if isinstance(seen, ValidationError):
+            names |= {f"ZIF_{str(e['loc'][0]).upper()}" for e in seen.errors()}
+        seen = seen.__cause__ or seen.__context__
+    return sorted(names)
+
+
 def _excepthook(kind: type[BaseException], error: BaseException, tb: TracebackType | None) -> None:
-    uncaught_logger.critical("uncaught error", exc_info=(kind, error, tb))
+    if issubclass(kind, KeyboardInterrupt):
+        sys.__excepthook__(kind, error, tb)  # a deliberate interrupt, not a crash
+        return
+    extra = {"invalid_env": names} if (names := _invalid_env(error)) else {}
+    uncaught_logger.critical("uncaught error", exc_info=(kind, error, tb), extra=extra)
 
 
 def _thread_excepthook(args: threading.ExceptHookArgs) -> None:

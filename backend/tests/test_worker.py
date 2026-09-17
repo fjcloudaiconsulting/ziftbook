@@ -1,17 +1,23 @@
 import asyncio
+import json
 import os
 import threading
-from collections.abc import Iterator
+import uuid
+from collections.abc import Callable, Iterator
 from datetime import timedelta
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from typing import Any
 
 import pytest
 from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.pool import NullPool
 
+from app import logs, worker
 from app.db import SessionLocal
 from app.jobs import Job, JobKind, enqueue
 from app.worker import work
+
+Lines = Callable[[], list[dict[str, Any]]]
 
 
 @pytest.fixture
@@ -66,3 +72,51 @@ def test_worker_runs_due_jobs_pings_and_stops(
     asyncio.run(scenario())
     assert len(ran) == 1
     assert pinged.is_set()
+
+
+# B3: worker.main() must call logs.configure() before anything else, or its logging never gets
+# set up. Stub everything past that point and let a sentinel exception through it.
+def test_worker_main_configures_logging_first(monkeypatch: pytest.MonkeyPatch) -> None:
+    class Configured(Exception):
+        pass
+
+    def configure() -> None:
+        raise Configured
+
+    async def serve(settings: object) -> None:
+        return None
+
+    monkeypatch.setattr(logs, "configure", configure)
+    monkeypatch.setattr(worker, "serve", serve)
+    monkeypatch.setattr(SessionLocal, "configure", lambda **kw: None)
+
+    with pytest.raises(Configured):
+        worker.main()
+
+
+# B7: a failed healthcheck ping logs the error's class only, never the URL (worker.py:49).
+def test_a_failed_ping_logs_the_class_only(
+    bound_session: None, log_lines: Lines, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sentinel = uuid.uuid4().hex
+    tried = threading.Event()
+
+    def ping(url: str) -> None:
+        tried.set()
+        raise OSError(sentinel)
+
+    monkeypatch.setattr(worker, "ping", ping)
+
+    async def scenario() -> None:
+        stop = asyncio.Event()
+        task = asyncio.create_task(worker.work({}, f"http://127.0.0.1:9/{sentinel}", stop))
+        await asyncio.to_thread(tried.wait, 10)
+        stop.set()
+        await asyncio.wait_for(task, 5)
+
+    asyncio.run(scenario())
+
+    line = next((rec for rec in log_lines() if rec.get("msg") == "healthcheck ping failed"), None)
+    assert line is not None
+    assert line["error"] == "OSError"
+    assert sentinel not in json.dumps(log_lines())

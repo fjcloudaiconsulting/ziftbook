@@ -5,9 +5,11 @@ import contextvars
 import json
 import logging
 import logging.config
+import os
 import re
 import subprocess
 import sys
+import time
 import uuid
 from collections.abc import Callable, MutableMapping
 from datetime import timedelta
@@ -119,15 +121,44 @@ def test_a_json_record_has_exactly_the_expected_keys_in_order(log_lines: Lines) 
     assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z", line["ts"])
 
 
+# extra/context keys never overwrite the standard head fields.
+def test_extra_and_context_keys_never_overwrite_the_standard_fields(log_lines: Lines) -> None:
+    logger = logging.getLogger("app.tests.logs")
+    with logs.bound(msg="evil-context"):
+        logger.info("m", extra={"level": "CRITICAL", "logger": "evil-extra"})
+
+    line = log_lines()[-1]
+    assert line["msg"] == "m"
+    assert line["level"] == "INFO"
+    assert line["logger"] == "app.tests.logs"
+
+
+# B5: ts is always UTC, whatever the host's local timezone.
+def test_ts_is_utc_whatever_the_host_zone(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TZ", "America/Sao_Paulo")
+    time.tzset()
+    try:
+        record = logging.makeLogRecord({"msg": "m", "created": 0.0})
+        line = json.loads(logs.Formatter("json").format(record))
+    finally:
+        monkeypatch.delenv("TZ", raising=False)
+        time.tzset()
+
+    assert line["ts"] == "1970-01-01T00:00:00.000Z"
+
+
 # 3: exc never holds an exception's message, only its class and frames.
 def test_the_exc_chain_never_holds_a_message(log_lines: Lines) -> None:
     secret_a = "".join(["sec", "ret-a-", uuid.uuid4().hex[:8]])
     secret_b = "".join(["sec", "ret-b-", uuid.uuid4().hex[:8]])
+    secret_c = "".join(["sec", "ret-c-", uuid.uuid4().hex[:8]])
     try:
         try:
             raise KeyError(secret_b)
         except KeyError as cause:
-            raise ValueError(secret_a) from cause
+            error = ValueError(secret_a)
+            error.add_note(secret_c)  # notes never reach the log either
+            raise error from cause
     except ValueError as error:
         logging.getLogger("app.tests.logs").error("m", exc_info=error)
 
@@ -139,6 +170,7 @@ def test_the_exc_chain_never_holds_a_message(log_lines: Lines) -> None:
     dumped = json.dumps(line)
     assert secret_a not in dumped
     assert secret_b not in dumped
+    assert secret_c not in dumped
 
 
 # 4: a database error's identifiers, never the row values it quotes.
@@ -156,7 +188,7 @@ def test_a_database_error_never_quotes_the_row(migrate_engine: Engine, log_lines
 
     assert link["sqlstate"] == "23505"
     assert link["table"] == "users"
-    assert "constraint" in link
+    assert link["constraint"] == "uq_users_email"
     assert email not in json.dumps(line)
 
 
@@ -208,7 +240,8 @@ def test_a_valid_request_id_is_echoed_and_matches_the_access_line(log_lines: Lin
 
     assert status == 200
     assert headers["x-request-id"] == "abc-123.X:y_z"
-    line = next(rec for rec in reversed(log_lines()) if rec["msg"] == "access")
+    line = next((rec for rec in reversed(log_lines()) if rec.get("msg") == "access"), None)
+    assert line is not None
     assert line["request_id"] == "abc-123.X:y_z"
 
 
@@ -224,7 +257,8 @@ def test_an_invalid_request_id_is_replaced_with_a_fresh_one(log_lines: Lines, gi
     request_id = headers["x-request-id"]
     assert request_id != given
     assert re.fullmatch(r"[0-9a-f]{32}", request_id)
-    line = next(rec for rec in reversed(log_lines()) if rec["msg"] == "access")
+    line = next((rec for rec in reversed(log_lines()) if rec.get("msg") == "access"), None)
+    assert line is not None
     assert line["request_id"] == request_id
 
 
@@ -293,6 +327,39 @@ def test_the_500_response_and_its_log_line_share_the_request_id(log_lines: Lines
     assert "exc" in error_lines[0]
 
 
+# B6: the access line has method, status and duration_ms.
+def test_access_line_has_method_status_and_duration_in_ms(log_lines: Lines) -> None:
+    app = create_app()
+
+    def slow() -> None:
+        time.sleep(0.06)
+
+    app.add_api_route("/api/slow", slow, methods=["GET"], tags=["test"], status_code=204)
+    response = new_client(app).get("/api/slow")
+
+    assert response.status_code == 204
+    line = next((rec for rec in log_lines() if rec.get("route") == "/api/slow"), None)
+    assert line is not None
+    assert line["method"] == "GET"
+    assert line["status"] == 204
+    assert 60 <= line.get("duration_ms", -1) < 5000
+
+
+# B8: a request never inherits a stale context left over by unrelated code (a job, another
+# request in the same event loop iteration). raw_request's fake receive() signals a disconnect
+# up front, which makes Starlette's BaseHTTPMiddleware re-raise instead of returning a response.
+def test_a_request_never_inherits_a_stale_context(log_lines: Lines) -> None:
+    app = _with_boom_route(create_app())
+
+    with logs.bound(job_id="stale", tenant_id="stale"), pytest.raises(RuntimeError):
+        raw_request(app, "GET", "/api/boom", [])
+
+    line = next((rec for rec in log_lines() if rec.get("msg") == "unhandled error"), None)
+    assert line is not None
+    assert "job_id" not in line
+    assert "tenant_id" not in line
+
+
 # 12: healthz only logs an access line at DEBUG; /api/session logs one at both levels.
 def test_healthz_is_debug_only_while_session_always_logs(
     log_lines: Lines, monkeypatch: pytest.MonkeyPatch
@@ -306,8 +373,11 @@ def test_healthz_is_debug_only_while_session_always_logs(
     assert healthz_lines[0]["level"] == "DEBUG"
 
     client.get("/api/session")
-    session_lines = [rec for rec in log_lines() if rec.get("route") == "/api/session"]
-    assert session_lines[-1]["level"] == "INFO"
+    last_session = next(
+        (rec for rec in reversed(log_lines()) if rec.get("route") == "/api/session"), None
+    )
+    assert last_session is not None
+    assert last_session["level"] == "INFO"
 
     before = len(log_lines())
     monkeypatch.setenv("ZIF_LOG_LEVEL", "INFO")
@@ -316,8 +386,11 @@ def test_healthz_is_debug_only_while_session_always_logs(
     assert len(log_lines()) == before  # nothing new: no access line at INFO
 
     client.get("/api/session")
-    session_lines = [rec for rec in log_lines() if rec.get("route") == "/api/session"]
-    assert session_lines[-1]["level"] == "INFO"
+    last_session = next(
+        (rec for rec in reversed(log_lines()) if rec.get("route") == "/api/session"), None
+    )
+    assert last_session is not None
+    assert last_session["level"] == "INFO"
 
 
 # 13: tenant_id on the access line matches the session's tenant; absent when anonymous.
@@ -359,6 +432,34 @@ def test_tenant_context_restores_after_being_entered_and_exited_in_different_con
 
     contextvars.Context().run(cm.__enter__)
     contextvars.Context().run(cm.__exit__, None, None, None)  # must not raise
+
+
+def test_tenant_context_restores_after_an_error(people: People) -> None:
+    with pytest.raises(RuntimeError), tenant_context(people.a):
+        raise RuntimeError("x")
+
+    assert "tenant_id" not in logs.CONTEXT.get({})
+
+
+# A real exc_info rendered as text: the class shows, the message never does.
+def test_text_format_with_an_error_never_holds_the_message() -> None:
+    sentinel = "".join(["sec", "ret-", uuid.uuid4().hex[:8]])
+    try:
+        raise ValueError(sentinel)
+    except ValueError as error:
+        record = logging.LogRecord(
+            "app.tests.logs",
+            logging.ERROR,
+            __file__,
+            1,
+            "m",
+            (),
+            (ValueError, error, error.__traceback__),
+        )
+        text_line = logs.Formatter("text").format(record)
+
+    assert sentinel not in text_line
+    assert "builtins.ValueError" in text_line
 
 
 # 15: job context matches its own job; a failing handler logs the class, never %r.
@@ -485,8 +586,6 @@ def test_levels_at_debug(log_lines: Lines) -> None:
 
 
 def _run_uncaught_script(body: str, env_extra: dict[str, str]) -> str:
-    import os
-
     result = subprocess.run(
         [sys.executable, "-c", body],
         cwd=API_DIR,
@@ -518,6 +617,44 @@ def test_an_uncaught_error_in_the_main_thread_is_one_json_line() -> None:
     assert sentinel not in output
 
 
+# A deliberate Ctrl-C is not a crash: defer to Python's default handler, no CRITICAL line.
+def test_keyboard_interrupt_defers_to_the_default_excepthook(
+    monkeypatch: pytest.MonkeyPatch, log_lines: Lines
+) -> None:
+    calls: list[BaseException | None] = []
+    monkeypatch.setattr(
+        sys, "__excepthook__", lambda kind, error, tb: calls.append(error), raising=False
+    )
+
+    try:
+        raise KeyboardInterrupt
+    except KeyboardInterrupt:
+        logs._excepthook(*sys.exc_info())
+
+    assert len(calls) == 1
+    assert isinstance(calls[0], KeyboardInterrupt)
+    assert not any(line["msg"] == "uncaught error" for line in log_lines())
+
+
+# ALSO FOLD: an uncaught ValidationError also names its missing/invalid ZIF_* variables.
+def test_an_uncaught_validation_error_names_the_missing_variable() -> None:
+    result = subprocess.run(
+        [sys.executable, "-m", "app.worker"],
+        cwd=API_DIR,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        env={k: v for k, v in os.environ.items() if k != "ZIF_DATABASE_URL"},
+    )
+
+    output = result.stdout + result.stderr
+    lines = [json.loads(rec) for rec in output.splitlines() if rec.startswith("{")]
+    assert any(
+        rec["level"] == "CRITICAL" and "ZIF_DATABASE_URL" in rec.get("invalid_env", [])
+        for rec in lines
+    )
+
+
 def test_an_uncaught_error_in_a_thread_is_one_json_line() -> None:
     sentinel = uuid.uuid4().hex
     output = _run_uncaught_script(
@@ -542,6 +679,24 @@ def test_an_uncaught_error_in_a_thread_is_one_json_line() -> None:
     assert sentinel not in output
 
 
+# B4: migrations/env.py calls configure() too, so `alembic current` logs JSON through it, not
+# through alembic's own logging.basicConfig-style handler.
+def test_migrations_log_json_lines() -> None:
+    result = subprocess.run(
+        [sys.executable, "-m", "alembic", "current"],
+        cwd=API_DIR,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env={**os.environ, "ZIF_LOG_FORMAT": "json", "ZIF_LOG_LEVEL": "INFO"},
+    )
+
+    assert result.returncode == 0, result.stderr
+    records = [json.loads(line) for line in result.stdout.splitlines() if line.startswith("{")]
+    assert any(r["logger"].startswith("alembic") and r["level"] == "INFO" for r in records)
+    assert "INFO  [alembic" not in result.stdout + result.stderr
+
+
 # 20 (guard): configure() writes nothing on its own; `python -m app.main`'s stdout is still the
 # OpenAPI document, valid JSON.
 def test_configure_writes_nothing_and_python_dash_m_app_main_is_still_json(
@@ -555,3 +710,38 @@ def test_configure_writes_nothing_and_python_dash_m_app_main_is_still_json(
     )
 
     json.loads(result.stdout)  # parses without raising
+
+    # Reconfigure with real stdout: this test's own handler wrote into capsys's now-closed
+    # capture stream, and any later test that logs would otherwise hit it.
+    with capsys.disabled():
+        logs.configure()
+
+
+# B1: a startup failure never leaks the exception message. Starlette sends str(exc) (here a
+# malformed database URL) as the lifespan.startup.failed ASGI message and uvicorn logs it with no
+# exc_info, bypassing our formatter.
+def test_a_startup_failure_never_leaks_the_bad_url() -> None:
+    sentinel = "zz" + uuid.uuid4().hex[:10]  # non-numeric: fails int(port) in create_engine
+    port = 18700 + (uuid.uuid4().int % 300)
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "uvicorn",
+            "app.main:app",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(port),
+        ],
+        cwd=API_DIR,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        env={**os.environ, "ZIF_DATABASE_URL": f"postgresql+psycopg://app@db:{sentinel}/zb"},
+    )
+
+    output = result.stdout + result.stderr
+    assert sentinel not in output
+    lines = [json.loads(line) for line in output.splitlines() if line.startswith("{")]
+    assert any(line["level"] == "CRITICAL" and line["msg"] == "startup failed" for line in lines)

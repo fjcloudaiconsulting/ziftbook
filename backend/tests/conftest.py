@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import secrets
+import threading
 import time
 import urllib.parse
 import urllib.request
@@ -28,6 +29,19 @@ from app.db import SessionLocal, tenant_context
 from app.jobs import run_once
 from app.worker import KINDS
 
+# pytest's own threading.excepthook (installed in its pytest_configure, which every
+# conftest.py's pytest_configure hooks run alongside): captured with trylast so it runs after
+# pytest's, and before collection imports app.main and calls logs.configure(), which reassigns
+# threading.excepthook process-wide for the rest of the session.
+_pytest_thread_hook: Callable[[threading.ExceptHookArgs], object] = threading.excepthook
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_configure(config: pytest.Config) -> None:
+    global _pytest_thread_hook
+    _pytest_thread_hook = threading.excepthook
+
+
 API_DIR = Path(__file__).parent.parent
 
 # Local dev defaults (docker-compose.yaml / bootstrap.sql); CI sets the same values explicitly.
@@ -46,9 +60,23 @@ os.environ.setdefault("ZIF_SMTP_STARTTLS", "false")
 MAILPIT = f"http://{os.environ['ZIF_SMTP_HOST']}:8025"
 
 
+@pytest.fixture(autouse=True)
+def _keep_pytest_thread_hook() -> Iterator[None]:
+    """Put pytest's threading.excepthook back before and after every test.
+
+    logs.configure() (an app.main import at collection, log_lines below, the worker, migrations)
+    reassigns threading.excepthook process-wide, so without this an uncaught exception in a
+    thread would silently stop failing tests under filterwarnings=error.
+    """
+    threading.excepthook = _pytest_thread_hook
+    yield
+    threading.excepthook = _pytest_thread_hook
+
+
 @pytest.fixture
 def log_lines(monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[[], list[dict[str, Any]]]]:
-    """Captured JSON log records at ZIF_LOG_LEVEL (default DEBUG), parsed one dict per line."""
+    """Captured JSON log records at ZIF_LOG_LEVEL (DEBUG unless the test reconfigures), parsed one
+    dict per line."""
     monkeypatch.setenv("ZIF_LOG_LEVEL", "DEBUG")
     logs.configure()
     stream = io.StringIO()

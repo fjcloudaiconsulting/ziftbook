@@ -7,8 +7,9 @@
 #   ZIF_MIGRATE_PASSWORD    ziftbook_migrate password (URL-safe characters: it is part of a database URL)
 #   ZIF_APP_PASSWORD        ziftbook_app password
 # Optional: ZIF_HEALTHCHECK_URL, pinged by the worker after every successful loop; ZIF_SMTP_USERNAME and
-#   ZIF_SMTP_PASSWORD for sending email (Mailgun EU SMTP credentials). ZIF_CLIENT_IP_HEADER is not
-#   passed through here on purpose. Port 3000 is published directly, so any header can be forged.
+#   ZIF_SMTP_PASSWORD for sending email (Mailgun EU SMTP credentials); ZIF_LOG_LEVEL (default INFO) and
+#   ZIF_LOG_FORMAT (default json). ZIF_CLIENT_IP_HEADER is not passed through here on purpose. Port
+#   3000 is published directly, so any header can be forged.
 name: ziftbook
 
 # Fixed addresses, so the backend can trust exactly the frontend (ZIF_TRUSTED_PROXIES). If this

@@ -52,15 +52,27 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Read at startup, not in create_app(), so the OpenAPI document builds without a database.
     # hide_parameters: a failed statement's message would otherwise carry its values, password
     # hashes included, into the logs.
-    engine = create_engine(
-        DatabaseSettings().database_url, pool_pre_ping=True, hide_parameters=True
-    )
-    SessionLocal.configure(bind=engine)
+    # Starlette sends str(exc) as the lifespan.startup.failed / .shutdown.failed ASGI message, and
+    # uvicorn logs that message with no exc_info, bypassing our formatter (a malformed database URL
+    # would otherwise leak straight to stdout). Log the real error safely ourselves, then raise a
+    # message-free one so nothing repeats the leak.
+    try:
+        engine = create_engine(
+            DatabaseSettings().database_url, pool_pre_ping=True, hide_parameters=True
+        )
+        SessionLocal.configure(bind=engine)
+    except Exception:
+        logger.critical("startup failed", exc_info=True)
+        raise RuntimeError("startup failed") from None
     try:
         yield
     finally:
-        SessionLocal.configure(bind=None)
-        engine.dispose()
+        try:
+            SessionLocal.configure(bind=None)
+            engine.dispose()
+        except Exception:
+            logger.critical("shutdown failed", exc_info=True)
+            raise RuntimeError("shutdown failed") from None
 
 
 def create_app() -> FastAPI:

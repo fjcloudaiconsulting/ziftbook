@@ -211,8 +211,9 @@ object per line when deployed (`ZIF_LOG_FORMAT=json`, the default) and readable 
 process at startup.
 
 - Levels: `DEBUG` diagnostic detail; `INFO` lifecycle and business events (one access line per request);
-  `WARNING` recovered problems (a job that will be retried); `ERROR` needs a human; `CRITICAL` the process
-  can't continue (an uncaught error).
+  `WARNING` recovered problems (a job that will be retried); `ERROR` needs a human; `CRITICAL` an uncaught
+  error, nothing catches it (a thread's is fatal to that thread alone; the process itself may still
+  survive, but the error needs a human just as much).
 - Use `logger = logging.getLogger(__name__)`; never `print` (stdout of `python -m app.main` is the
   OpenAPI document) and never configure logging anywhere else.
 - Standard fields come for free: `ts`, `level`, `logger`, `msg`, `request_id`, `tenant_id`, `job_id`,
@@ -221,8 +222,9 @@ process at startup.
 - Ids only: never a password, token or its hash, cookie, email address, name, business or service name,
   IP address, user agent, request body, query string or header.
 - Errors: log the class (`type(error).__name__`) or pass `exc_info`, never `%r`/`str(error)` and never
-  `logger.warning(error)`: an error's text can quote an address or a row. `exc` holds the class, frames
-  (with their source line) and database constraint names, never the message.
+  `logger.warning(error)`: an error's text can quote an address or a row. `exc` holds the chain's class
+  names, frames (with their source line), and for a database error, its SQLSTATE and table/constraint
+  names, never the message.
 - `tests/test_logs_private.py` runs the real flows at DEBUG and fails if personal data reaches a log; add
   new flows to it. Build test secrets at runtime, never as literals on the line that raises: `exc` shows
   that line.
