@@ -106,6 +106,27 @@
     "newLink": "Send a new link",
     "back": "Back to sign in"
   },
+  "Invite": {
+    "title": "Accept your invite",
+    "checking": "Checking your invite…",
+    "noLink": "This page only works from the link in your invite email, to keep it private. Open that link again.",
+    "tryAgain": "Try again",
+    "tooMany": "Too many attempts for now. Wait 15 minutes and try again.",
+    "joinTitle": "Join {business}",
+    "newLede": "Choose a password to see your appointments and working hours.",
+    "existingLede": "Sign in with your ziftbook password to see your appointments here too.",
+    "newSubmit": "Join the team",
+    "signInSubmit": "Sign in to accept",
+    "joining": "Joining…",
+    "wrongPassword": "That password isn't right. Try again, or reset it.",
+    "accountExists": "This email now has a ziftbook account. Enter its password to accept.",
+    "expiredTitle": "This invite has expired",
+    "expiredLede": "Invite links work once, for 7 days. Ask the business owner to send you a new invite.",
+    "joinedBefore": "Already joined?",
+    "signIn": "Sign in",
+    "memberTitle": "You're already part of {business}",
+    "memberLede": "You already work there, so nothing changed. Sign in to see your appointments."
+  },
   "Home": {
     "signedInAs": "Signed in as <chip>{email}</chip>",
     "owner": "Owner",
