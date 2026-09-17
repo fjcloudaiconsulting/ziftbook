@@ -118,7 +118,7 @@ describe("account pages", () => {
     api.close();
   });
 
-  const pages = ["/en", "/en/sign-in", "/en/sign-up", "/en/sign-up/complete", "/en/forgot-password", "/nl/reset-password"];
+  const pages = ["/en", "/en/sign-in", "/en/sign-up", "/en/sign-up/complete", "/en/forgot-password", "/nl/reset-password", "/pt/invite"];
 
   test("no page sends a Referer or can be framed", async () => {
     for (const path of pages) {
@@ -142,6 +142,7 @@ describe("account pages", () => {
     for (const [path, words] of [
       ["/en/sign-up/complete", "This page needs JavaScript to keep your link private."],
       ["/nl/reset-password", "Deze pagina heeft JavaScript nodig om je link privé te houden."],
+      ["/pt/invite", "Esta página precisa de JavaScript para manter seu link privado."],
     ]) {
       const html = await (await fetch(`${origin}${path}`)).text();
       // Inside the element: the page's message catalogue also carries the words.

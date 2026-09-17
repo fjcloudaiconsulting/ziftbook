@@ -126,6 +126,7 @@
 .selectChevron { position: absolute; right: 1rem; top: 50%; translate: 0 -50%; color: var(--muted); pointer-events: none; }
 .input input:focus-visible, .input select:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; border-color: var(--primary); }
 .input :is(input, select)[aria-invalid="true"] { border-color: var(--error); border-width: 2px; padding-left: calc(0.9rem - 1px); }
+.input input:read-only { background: var(--surface); border-color: var(--line); }
 .input .withToggle { padding-right: 5.5rem; }
 .toggle {
   position: absolute;
