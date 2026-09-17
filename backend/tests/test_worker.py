@@ -112,6 +112,7 @@ def test_the_worker_logs_its_settings_once_at_startup(
     monkeypatch.setenv("ZIF_APP_VERSION", "9.8.7")
     monkeypatch.setenv("ZIF_SMTP_HOST", "smtp.example.test")
     monkeypatch.setenv("ZIF_SMTP_PORT", "2525")
+    monkeypatch.setenv("ZIF_SMTP_USERNAME", f"user-{secret}")
     monkeypatch.setenv("ZIF_SMTP_PASSWORD", secret)
     monkeypatch.setenv("ZIF_HEALTHCHECK_URL", f"https://hc.example.test/{secret}")
 

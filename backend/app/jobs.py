@@ -74,20 +74,22 @@ class JobKind:
     grace: timedelta
 
 
-# Attempts per job. The jobs_due index (migration 0003) repeats it as a literal.
+# Attempts per job. The ix_jobs_claimable index (migration 0003) repeats it as a literal.
 MAX_ATTEMPTS = 5
 
 # One statement claims a batch: SKIP LOCKED keeps concurrent workers apart while claiming, and the
 # bumped next_attempt_at keeps them apart afterwards. It is both the lease and the backoff
 # (1, 2, 4, 8, 16 minutes), so a crashed worker's jobs come back on their own. = ANY(ARRAY(...)),
 # not IN (...): the planner may run an IN subquery with LIMIT more than once and claim extra rows.
-CLAIM = text("""
+# MAX_ATTEMPTS is a literal, not a parameter: a prepared statement's generic plan can only use the
+# partial index when its condition is in the statement itself.
+CLAIM = text(f"""
 UPDATE jobs
 SET attempts = attempts + 1,
     next_attempt_at = now() + interval '1 minute' * 2 ^ attempts
 WHERE id = ANY(ARRAY(
     SELECT id FROM jobs
-    WHERE completed_at IS NULL AND attempts < :max_attempts
+    WHERE completed_at IS NULL AND attempts < {MAX_ATTEMPTS}
       AND next_attempt_at <= now() AND kind = ANY(:kinds)
     ORDER BY next_attempt_at
     LIMIT 20
@@ -100,7 +102,7 @@ logger = logging.getLogger(__name__)
 
 def _claim(kinds: list[str]) -> list[tuple[Job, int, timedelta]]:
     with SessionLocal.begin() as session:
-        rows = session.execute(CLAIM, {"kinds": kinds, "max_attempts": MAX_ATTEMPTS}).all()
+        rows = session.execute(CLAIM, {"kinds": kinds}).all()
     return [
         (Job(row.id, row.kind, row.tenant_id, row.payload), row.attempts, row.overdue)
         for row in rows
@@ -126,6 +128,7 @@ async def _run(kind: JobKind, job: Job, attempts: int, overdue: timedelta) -> No
                 job.id,
                 "UPDATE jobs SET completed_at = now(), skipped = true WHERE id = :id",
             )
+            logger.info("job skipped", extra=attempt)
             return
         try:
             # A timed-out handler thread cannot be stopped and keeps running; its own I/O timeouts

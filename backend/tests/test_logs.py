@@ -529,25 +529,34 @@ def _fields(line: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in line.items() if k not in ("ts", "logger", "exc")}
 
 
-# ZIF-95: job claimed (DEBUG), done (INFO), failed (WARNING, retried) and gave up (ERROR, the last
-# attempt), each with the job's id, kind, tenant (only when it has one) and attempt.
+# ZIF-95: job claimed (DEBUG), done and skipped (INFO), failed (WARNING, retried) and gave up
+# (ERROR, the last attempt, a timeout included), each with the job's id, kind, tenant (only when it
+# has one) and attempt.
 def test_job_events_have_their_level_and_fields(
     people: People, bound: None, app_engine: Engine, log_lines: Lines
 ) -> None:
     kind = f"test.logs.{uuid.uuid4().hex}"
-    ok, failing = f"{kind}.ok", f"{kind}.fail"
+    ok, failing, slow = f"{kind}.ok", f"{kind}.fail", f"{kind}.slow"
+    kinds_of = {"t": ok, "none": ok, "stale": ok, "retry": failing, "almost": failing}
+    kinds_of |= {"last": failing, "timeout": slow}
+    before = {"almost": jobs.MAX_ATTEMPTS - 2, "last": jobs.MAX_ATTEMPTS - 1}
+    before["timeout"] = jobs.MAX_ATTEMPTS - 1
 
     def fail(job: Job) -> None:
         raise RuntimeError("x")
 
     with SessionLocal.begin() as session:
-        enqueue(session, ok, f"{kind}:t", {}, tenant_id=people.a)
-        enqueue(session, ok, f"{kind}:none", {})
-        enqueue(session, failing, f"{kind}:retry", {})
-        enqueue(session, failing, f"{kind}:last", {})
+        for name, kind_of in kinds_of.items():
+            tenant_id = people.a if name == "t" else None
+            enqueue(session, kind_of, f"{kind}:{name}", {}, tenant_id=tenant_id)
+        for name, attempts in before.items():
+            session.execute(
+                text("UPDATE jobs SET attempts = :n WHERE dedupe_key = :key"),
+                {"n": attempts, "key": f"{kind}:{name}"},
+            )
         session.execute(
-            text("UPDATE jobs SET attempts = :n WHERE dedupe_key = :key"),
-            {"n": jobs.MAX_ATTEMPTS - 1, "key": f"{kind}:last"},
+            text("UPDATE jobs SET due_at = now() - interval '2 hours' WHERE dedupe_key = :key"),
+            {"key": f"{kind}:stale"},
         )
     try:
         asyncio.run(
@@ -555,6 +564,7 @@ def test_job_events_have_their_level_and_fields(
                 {
                     ok: JobKind(lambda job: None, 5, timedelta(hours=1)),
                     failing: JobKind(fail, 5, timedelta(hours=1)),
+                    slow: JobKind(lambda job: time.sleep(0.3), 0.05, timedelta(hours=1)),
                 }
             )
         )
@@ -564,10 +574,11 @@ def test_job_events_have_their_level_and_fields(
             )
             ids = {row.dedupe_key.split(":")[1]: str(row.id) for row in rows}
 
-        def job(name: str, level: str, msg: str, attempts: int, **more: str) -> dict[str, Any]:
-            kind_of = ok if name in ("t", "none") else failing
-            fields = {"level": level, "msg": msg, "job_id": ids[name], "job_kind": kind_of}
-            return {**fields, **more, "attempts": attempts}
+        def job(name: str, level: str, msg: str, **more: str) -> dict[str, Any]:
+            fields = {"level": level, "msg": msg, "job_id": ids[name], "job_kind": kinds_of[name]}
+            if name == "t":
+                fields["tenant_id"] = str(people.a)
+            return {**fields, **more, "attempts": before.get(name, 0) + 1}
 
         def logged(msg: str) -> list[dict[str, Any]]:
             found = [
@@ -580,22 +591,21 @@ def test_job_events_have_their_level_and_fields(
         def by_id(*events: dict[str, Any]) -> list[dict[str, Any]]:
             return sorted(events, key=lambda line: line["job_id"])
 
-        tenant = {"tenant_id": str(people.a)}
         assert logged("job claimed") == by_id(
-            job("t", "DEBUG", "job claimed", 1, **tenant),
-            job("none", "DEBUG", "job claimed", 1),
-            job("retry", "DEBUG", "job claimed", 1),
-            job("last", "DEBUG", "job claimed", jobs.MAX_ATTEMPTS),
+            *(job(name, "DEBUG", "job claimed") for name in kinds_of)
         )
         assert logged("job done") == by_id(
-            job("t", "INFO", "job done", 1, **tenant), job("none", "INFO", "job done", 1)
+            job("t", "INFO", "job done"), job("none", "INFO", "job done")
         )
-        assert logged("job failed") == [
-            job("retry", "WARNING", "job failed", 1, error="RuntimeError")
-        ]
-        assert logged("job gave up") == [
-            job("last", "ERROR", "job gave up", jobs.MAX_ATTEMPTS, error="RuntimeError")
-        ]
+        assert logged("job skipped") == [job("stale", "INFO", "job skipped")]
+        assert logged("job failed") == by_id(
+            job("retry", "WARNING", "job failed", error="RuntimeError"),
+            job("almost", "WARNING", "job failed", error="RuntimeError"),
+        )
+        assert logged("job gave up") == by_id(
+            job("last", "ERROR", "job gave up", error="RuntimeError"),
+            job("timeout", "ERROR", "job gave up", error="TimeoutError"),
+        )
     finally:
         with app_engine.begin() as conn:
             conn.execute(text("DELETE FROM jobs WHERE kind LIKE :kind"), {"kind": f"{kind}.%"})

@@ -219,9 +219,10 @@ process at startup.
 - Standard fields come for free: `ts`, `level`, `logger`, `msg`, `request_id`, `tenant_id`, `job_id`,
   `job_kind`, `exc`. Add others with `extra={...}`; keep `msg` a constant ("access", "job failed") and put
   values in fields.
-- Events: `job claimed` (DEBUG), `job done` (INFO), `job failed` (WARNING, retried) and `job gave up`
-  (ERROR, last attempt), with `attempts`; `email sent` (INFO) and `email failed` (WARNING) with `template`
-  only. Each process logs one startup line (`api started`, `worker started`, `migrations started`) with its
+- Events: `job claimed` (DEBUG), `job done` and `job skipped` (INFO, past its grace), `job failed`
+  (WARNING, retried) and `job gave up` (ERROR, last attempt), with `attempts`; `email sent` (INFO) and
+  `email failed` (WARNING) with `template` (and `error` on failure) plus the job context; never the
+  address, subject or body. Each process logs one startup line (`api started`, `worker started`, `migrations started`) with its
   non-secret settings.
 - `ZIF_LOG_SQL=true` logs SQL statements, never their values, when `ZIF_LOG_LEVEL` is `DEBUG`; off by
   default.
