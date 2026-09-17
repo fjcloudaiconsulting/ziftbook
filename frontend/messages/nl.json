@@ -56,7 +56,7 @@
     "nameRequired": "Vul je bedrijfsnaam in.",
     "country": "Land",
     "countryPlaceholder": "Kies je land",
-    "countryHint": "Bepaalt je valuta, plus een eerste tijdzone en taal. De valuta kun je later niet meer wijzigen.",
+    "countryHint": "Bepaalt je valuta en stelt alvast een tijdzone en taal in. De valuta kun je later niet meer wijzigen.",
     "countryRequired": "Kies je land.",
     "countries": {
       "NL": "Nederland",
