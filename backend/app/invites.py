@@ -210,7 +210,12 @@ def lookup(body: InviteToken, request: Request, response: Response) -> InviteDet
 )
 def accept(body: AcceptInvite, request: Request, response: Response) -> auth.SessionOut:
     """Join the business from an invite link, creating the account or proving the existing one's
-    password, and sign in to that business."""
+    password, and sign in to that business.
+
+    An existing account is signed into this business now, but its next plain sign-in still lands
+    in its oldest business (known gap, ZIF-81). A newly created account has no language of its
+    own, so its emails use the business's language until it signs in and sets one.
+    """
     ip = request.client.host if request.client else None
     if limits.hit({limits.ip_key("invite_accept", ip): 10}, LINK_WINDOW):
         raise ApiError(429, "rate_limited")
