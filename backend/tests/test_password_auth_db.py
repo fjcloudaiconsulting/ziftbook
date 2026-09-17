@@ -178,7 +178,7 @@ def test_the_app_role_gains_nothing_by_setting_sign_in(people: People) -> None:
 
 
 def complete_sign_up(
-    engine: Engine, token: bytes, email: str, country: str = "NL", currency: str = "EUR"
+    engine: Engine, token: bytes, email: str, country: str = "PT", currency: str = "BRL"
 ) -> Created:
     with engine.begin() as conn:
         row = conn.execute(
@@ -224,8 +224,9 @@ def test_completing_sign_up_creates_the_business_once(
         business = conn.execute(
             text("SELECT country, currency FROM tenants WHERE id = :t"), {"t": account.tenant_id}
         ).one()
-    # complete_sign_up sets the business's country and currency; it never touches settings.
-    assert (business.country, business.currency) == ("NL", "EUR")
+    # complete_sign_up writes the country and currency it is given (not the column defaults
+    # NL/EUR); it never touches settings.
+    assert (business.country, business.currency) == ("PT", "BRL")
     assert settings_rows == 0
 
 

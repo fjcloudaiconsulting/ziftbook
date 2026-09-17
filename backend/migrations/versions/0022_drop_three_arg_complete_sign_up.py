@@ -1,4 +1,4 @@
-"""Drop the 3-argument complete_sign_up, dead since ZIF-96 made country required.
+"""Drop the three-argument complete_sign_up, dead since ZIF-96 made country required.
 
 Contract step for ZIF-96 (#90): 0013 kept 0007's three-argument complete_sign_up beside the new
 five-argument one so an app that didn't yet send a country could still sign up, with the plan to
