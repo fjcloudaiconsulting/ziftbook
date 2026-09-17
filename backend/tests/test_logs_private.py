@@ -87,7 +87,12 @@ def test_no_personal_data_ever_reaches_a_log(
     response = anon.post(
         "/api/sign-up/complete",
         content=json.dumps(
-            {"token": signup_token, "password": sign_up_password, "business_name": business_name}
+            {
+                "token": signup_token,
+                "password": sign_up_password,
+                "business_name": business_name,
+                "country": "NL",
+            }
         ),
         headers={"content-type": "application/json"},
     )

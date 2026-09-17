@@ -70,8 +70,7 @@ class CompleteSignUp(BaseModel):
     token: str = Field(min_length=1, max_length=100)  # from the link's fragment
     password: str
     business_name: BusinessName
-    # None until the sign-up page sends one (a later PR makes it required): the Netherlands.
-    country: Country | None = None
+    country: Country
 
 
 def live_token(token: str, purpose: str) -> bytes:
@@ -98,7 +97,7 @@ def complete_sign_up(
     password = passwords.check_new_password(details.password)
     digest = live_token(details.token, "sign_up")
     password_hash = passwords.hash_password(password)
-    country = details.country or "NL"
+    country = details.country
     defaults = COUNTRIES[country]
     with SessionLocal.begin() as session:
         created = session.execute(

@@ -29,7 +29,6 @@ from tests.conftest import (
     mailed,
     new_client,
     saved_settings,
-    signed_in,
     token_in,
 )
 
@@ -115,7 +114,7 @@ def test_the_emailed_link_sets_up_the_business_and_the_owner_can_sign_in_again(
 
     token = token_in(mailed(email))
 
-    response = complete(client, token, business="  Studio Ana Nails  ")
+    response = complete(client, token, business="  Studio Ana Nails  ", country="NL")
 
     session = created(response, businesses)
     assert response.headers["cache-control"] == "no-store"
@@ -147,7 +146,7 @@ def test_completing_sign_up_replaces_the_session_the_browser_already_had(
     client = new_client(app)
     client.cookies.set(auth.COOKIE, planted)
 
-    created(complete(client, token), businesses)
+    created(complete(client, token, country="NL"), businesses)
 
     with app_engine.connect() as conn:
         assert (
@@ -165,8 +164,8 @@ def test_a_link_works_once(
     token = issue_link(app_engine, "sign_up", fresh_email())
     assert token is not None
 
-    created(complete(new_client(app), token), businesses)
-    again = complete(new_client(app), token)
+    created(complete(new_client(app), token, country="NL"), businesses)
+    again = complete(new_client(app), token, country="NL")
 
     assert (again.status_code, again.json()) == (400, {"code": "invalid_token"})
 
@@ -186,13 +185,13 @@ def test_only_a_live_sign_up_link_is_accepted(
     else:
         token = secrets.token_urlsafe(32)
 
-    response = complete(client, token)
+    response = complete(client, token, country="NL")
 
     assert (response.status_code, response.json()) == (400, {"code": "invalid_token"})
 
 
 def test_a_dead_link_costs_no_password_hash(client: TestClient, no_hashing: list[str]) -> None:
-    response = complete(client, secrets.token_urlsafe(32))
+    response = complete(client, secrets.token_urlsafe(32), country="NL")
 
     assert (response.status_code, no_hashing) == (400, [])
 
@@ -212,7 +211,7 @@ def test_a_weak_password_is_refused_without_hashing_and_the_link_still_works(
     token = issue_link(app_engine, "sign_up", fresh_email())
     assert token is not None
 
-    response = complete(new_client(app), token, password)
+    response = complete(new_client(app), token, password, country="NL")
 
     assert (response.status_code, response.json(), no_hashing) == (422, {"code": code}, [])
     assert live(app_engine, token, "sign_up")
@@ -235,7 +234,7 @@ def test_a_business_needs_a_printable_name(app: FastAPI, app_engine: Engine, bus
     token = issue_link(app_engine, "sign_up", fresh_email())
     assert token is not None
 
-    response = complete(new_client(app), token, business=business)
+    response = complete(new_client(app), token, business=business, country="NL")
 
     assert (response.status_code, response.json()) == (422, {"code": "invalid_request"})
     assert live(app_engine, token, "sign_up")
@@ -248,7 +247,7 @@ def test_a_business_with_an_ordinary_international_name_is_kept_as_sent(
     token = issue_link(app_engine, "sign_up", fresh_email())
     assert token is not None
 
-    session = created(complete(new_client(app), token, business=business), businesses)
+    session = created(complete(new_client(app), token, business=business, country="NL"), businesses)
 
     assert session["business_name"] == business
 
@@ -259,7 +258,9 @@ def test_a_business_name_of_a_hundred_characters_is_kept_without_its_spaces(
     token = issue_link(app_engine, "sign_up", fresh_email())
     assert token is not None
 
-    session = created(complete(new_client(app), token, business=f"  {'x' * 100}  "), businesses)
+    session = created(
+        complete(new_client(app), token, business=f"  {'x' * 100}  ", country="NL"), businesses
+    )
 
     assert session["business_name"] == "x" * 100
 
@@ -278,7 +279,7 @@ def test_an_email_registered_after_the_link_went_out_creates_nothing(
         tenants = conn.scalar(text("SELECT count(*) FROM tenants"))
 
     try:
-        response = complete(new_client(app), token)
+        response = complete(new_client(app), token, country="NL")
         assert (response.status_code, response.json()) == (409, {"code": "account_exists"})
         with migrate_engine.connect() as conn:
             assert conn.scalar(text("SELECT count(*) FROM tenants")) == tenants
@@ -328,33 +329,6 @@ def test_a_malformed_sign_up_gets_a_code(client: TestClient, body: dict[str, str
 def test_every_country_literal_has_defaults() -> None:
     # The registry backs every value of the API's enum, and nothing else.
     assert COUNTRIES.keys() == set(get_args(Country))
-
-
-@pytest.mark.parametrize("country", [MISSING, None], ids=["absent", "null"])
-def test_completing_sign_up_with_no_country_creates_a_dutch_business(
-    app: FastAPI,
-    app_engine: Engine,
-    migrate_engine: Engine,
-    businesses: list[dict[str, Any]],
-    country: str | None | object,
-) -> None:
-    token = issue_link(app_engine, "sign_up", fresh_email())
-    assert token is not None
-
-    session = created(complete(new_client(app), token, country=country), businesses)
-
-    with migrate_engine.connect() as conn:
-        business = conn.execute(
-            text("SELECT country, currency FROM tenants WHERE id = :t"),
-            {"t": session["tenant_id"]},
-        ).one()
-    assert (business.country, business.currency) == ("NL", "EUR")
-    assert saved_settings(uuid.UUID(session["tenant_id"])) == {
-        "timezone": "Europe/Amsterdam",
-        "language": "nl",
-    }
-    owner = signed_in(app, uuid.UUID(session["tenant_id"]), uuid.UUID(session["user_id"]))
-    assert owner.get("/api/settings").json()["language"] == "nl"
 
 
 @pytest.mark.parametrize(
@@ -417,7 +391,11 @@ def test_the_starting_language_comes_from_the_country_not_the_sign_up_link(
     assert saved_settings(uuid.UUID(session["tenant_id"]))["language"] == language
 
 
-@pytest.mark.parametrize("bad", ["br", "DE", "", "NLD", 5, ["NL"]])
+@pytest.mark.parametrize(
+    "bad",
+    [MISSING, None, "br", "DE", "", "NLD", 5, ["NL"]],
+    ids=["absent", "null", "lowercase", "unmapped", "empty", "three_letter", "number", "list"],
+)
 def test_an_invalid_country_is_refused_without_hashing_and_the_link_still_works(
     app: FastAPI, app_engine: Engine, no_hashing: list[str], bad: Any
 ) -> None:
@@ -457,7 +435,7 @@ def test_a_failure_saving_starting_settings_leaves_no_business(
     assert token is not None
     failing(monkeypatch, business_settings, "save")
 
-    response = complete(new_client(app), token)
+    response = complete(new_client(app), token, country="NL")
 
     assert response.status_code == 500
     with migrate_engine.connect() as conn:
