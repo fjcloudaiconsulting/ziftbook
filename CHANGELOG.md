@@ -1,13 +1,20 @@
 # Changelog
 
-## [0.11.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.10.0...v0.11.0) (2026-09-16)
+## [0.11.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.10.0...v0.11.0) (2026-09-17)
 
 
 ### Features
 
 * **backend:** business country, currency and language at sign-up (ZIF-27) ([#70](https://github.com/fjcloudaiconsulting/ziftbook/issues/70)) ([7573b94](https://github.com/fjcloudaiconsulting/ziftbook/commit/7573b9473d78ab0640a6ef3d6306c8c4cc3a142e))
+* **backend:** invites table and invite email (ZIF-27) ([#75](https://github.com/fjcloudaiconsulting/ziftbook/issues/75)) ([5f48fea](https://github.com/fjcloudaiconsulting/ziftbook/commit/5f48fea57c43e6f69476c7b6c92eca8f53cd7ef7))
 * **backend:** list, promote, demote and remove members (ZIF-27) ([#72](https://github.com/fjcloudaiconsulting/ziftbook/issues/72)) ([2726fe2](https://github.com/fjcloudaiconsulting/ziftbook/commit/2726fe27ca5a71e664276b9aacb0efce70523c9f))
 * **backend:** owners manage their business's services (ZIF-44) ([#71](https://github.com/fjcloudaiconsulting/ziftbook/issues/71)) ([08df698](https://github.com/fjcloudaiconsulting/ziftbook/commit/08df69897e0be0e81fb96cb7d915f89f2202e337))
+* **backend:** working hours with split shifts (ZIF-46) ([#73](https://github.com/fjcloudaiconsulting/ziftbook/issues/73)) ([5459afe](https://github.com/fjcloudaiconsulting/ziftbook/commit/5459afe5a915cee9f7a5673f7cc91671b2f885a4))
+
+
+### Bug Fixes
+
+* **backend:** merge the two migration heads (ZIF-27, ZIF-46) ([#77](https://github.com/fjcloudaiconsulting/ziftbook/issues/77)) ([6e00019](https://github.com/fjcloudaiconsulting/ziftbook/commit/6e00019df6bba91e2e56e6ba6c02feaa38e356db))
 
 ## [0.10.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.9.0...v0.10.0) (2026-09-16)
 
