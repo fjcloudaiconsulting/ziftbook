@@ -75,6 +75,9 @@ every table that holds a tenant's data:
   the target's memberships in one `ORDER BY id ... FOR UPDATE OF m` statement, as `app.members.target` does, so
   two owners acting on each other serialize instead of both passing. Changes to memberships run in READ
   COMMITTED: the trigger's re-check after its lock wait needs a fresh snapshot.
+- An endpoint that writes a member's data first calls `members.member_user(current, id, lock=True)` (`NO KEY
+  UPDATE` on the membership), and never locks `tenants` beyond the `KEY SHARE` its foreign keys take: `keep_an_owner`
+  locks memberships, then tenants.
 
 `tests/test_tenant_schema.py` fails for a table with `tenant_id` that is not isolated (forced row-level security),
 and for a foreign key between tenant-owned tables that does not pair `tenant_id`. `jobs` is exempt on purpose: it
