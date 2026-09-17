@@ -116,7 +116,8 @@ def create_app() -> FastAPI:
     async def access_log(
         request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
-        # Registered last, so outermost: it logs json_only's 415s too.
+        # Registered after json_only, so outside it (only ProxyHeadersMiddleware is further out):
+        # it logs json_only's 415s too.
         given = request.headers.get("x-request-id", "")
         request_id = given if REQUEST_ID.fullmatch(given) else uuid.uuid4().hex
         # A fresh context, set and not reset: the 500 handler and uvicorn's error line run
