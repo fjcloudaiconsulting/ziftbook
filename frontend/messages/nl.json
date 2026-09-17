@@ -109,6 +109,7 @@
   "Invite": {
     "title": "Accepteer je uitnodiging",
     "checking": "Je uitnodiging wordt gecontroleerd…",
+    "noLink": "Deze pagina werkt alleen via de link in je uitnodigingsmail, zodat die privé blijft. Open die link opnieuw.",
     "tryAgain": "Opnieuw proberen",
     "tooMany": "Te veel pogingen. Wacht 15 minuten en probeer het opnieuw.",
     "joinTitle": "Sluit je aan bij {business}",

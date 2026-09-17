@@ -109,6 +109,7 @@
   "Invite": {
     "title": "Aceite seu convite",
     "checking": "Verificando seu convite…",
+    "noLink": "Esta página só funciona pelo link do e-mail de convite, para mantê-lo privado. Abra esse link de novo.",
     "tryAgain": "Tentar de novo",
     "tooMany": "Tentativas demais por agora. Espere 15 minutos e tente de novo.",
     "joinTitle": "Junte-se à equipe de {business}",

@@ -109,6 +109,7 @@
   "Invite": {
     "title": "Accept your invite",
     "checking": "Checking your invite…",
+    "noLink": "This page only works from the link in your invite email, to keep it private. Open that link again.",
     "tryAgain": "Try again",
     "tooMany": "Too many attempts for now. Wait 15 minutes and try again.",
     "joinTitle": "Join {business}",

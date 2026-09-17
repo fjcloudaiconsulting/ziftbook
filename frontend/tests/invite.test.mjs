@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { acceptBody, acceptOutcome, inviteScreen, isInviteToken, openedLink } from "../lib/invite.ts";
+import { acceptBody, acceptOutcome, inviteScreen, isInviteToken, firstStage, openedLink } from "../lib/invite.ts";
 
 const TENANT = "0192f3a4-5b6c-7d8e-9f01-23456789abcd";
 const SECRET = "Ab3_-".repeat(8) + "xyz"; // 43 URL-safe characters
@@ -28,6 +28,15 @@ describe("invite link token", () => {
     assert.equal(isInviteToken(`x${TENANT}.${SECRET}`), false);
     assert.equal(isInviteToken(`${TENANT}.${SECRET}\n`), false);
     assert.equal(isInviteToken(`${TENANT}.${SECRET}.${SECRET}`), false);
+  });
+});
+
+describe("where the page starts", () => {
+  test("no link asks for the email link again; a mangled one has expired; a good one is looked up", () => {
+    assert.equal(firstStage(null), "missing");
+    assert.equal(firstStage("garbage"), "expired");
+    assert.equal(firstStage(""), "expired");
+    assert.equal(firstStage(`${TENANT}.${SECRET}`), "checking");
   });
 });
 

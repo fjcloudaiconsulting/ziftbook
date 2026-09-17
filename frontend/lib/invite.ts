@@ -8,6 +8,12 @@ export function isInviteToken(token: string): boolean {
   return TOKEN.test(token);
 }
 
+/** Where the page starts: no link (reloaded, or opened without one), a mangled link, or one worth looking up. */
+export function firstStage(token: string | null): "missing" | "expired" | "checking" {
+  if (token === null) return "missing";
+  return isInviteToken(token) ? "checking" : "expired";
+}
+
 /** Which screen a lookup leads to: a form for a new or an existing account, the expired link, or a retry. */
 export function inviteScreen(lookup: { status: number; data?: { has_account: boolean } }): "new" | "existing" | "expired" | "retry" {
   if (lookup.status === 200 && lookup.data) return lookup.data.has_account ? "existing" : "new";

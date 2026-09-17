@@ -6,7 +6,7 @@ import { type FormEvent, useCallback, useEffect, useId, useRef, useState, useSyn
 import { type InviteDetails, invitesAccept, invitesLookup } from "@/api-client";
 import { Link, useRouter } from "@/i18n/navigation";
 import { takeToken } from "@/lib/account";
-import { acceptBody, acceptOutcome, inviteScreen, isInviteToken, type OpenedLink, openedLink } from "@/lib/invite";
+import { acceptBody, acceptOutcome, firstStage, inviteScreen, type OpenedLink, openedLink } from "@/lib/invite";
 
 import { Banner, NoScript, Outcome, PasswordField, problem, send, Submit } from "../_ui/parts";
 import styles from "../_ui/ui.module.css";
@@ -36,6 +36,7 @@ function useInviteLink(): OpenedLink | null | undefined {
 type Message = { tone: "error" | "note" | "info"; text: string };
 type Stage =
   | { is: "checking" }
+  | { is: "missing" }
   | { is: "retry"; message: Message }
   | { is: "form"; invite: InviteDetails }
   | { is: "expired" }
@@ -56,7 +57,7 @@ export function AcceptInvite() {
     );
   }
   // Keyed: every link opened in this tab starts over.
-  return <Invite key={link?.opened ?? -1} token={link && isInviteToken(link.token) ? link.token : null} />;
+  return <Invite key={link?.opened ?? -1} token={link?.token ?? null} />;
 }
 
 function Invite({ token }: { token: string | null }) {
@@ -66,7 +67,7 @@ function Invite({ token }: { token: string | null }) {
   const router = useRouter();
   const emailId = useId();
   const passwordInput = useRef<HTMLInputElement>(null);
-  const [stage, setStage] = useState<Stage>(token ? { is: "checking" } : { is: "expired" });
+  const [stage, setStage] = useState<Stage>({ is: firstStage(token) });
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [passwordError, setPasswordError] = useState<string>();
@@ -81,7 +82,7 @@ function Invite({ token }: { token: string | null }) {
   );
 
   const lookUp = useCallback(() => {
-    if (!token) return;
+    if (!token || firstStage(token) !== "checking") return;
     send(invitesLookup({ body: { token } })).then((outcome) => {
       const screen = inviteScreen(outcome);
       setStage(
@@ -156,7 +157,9 @@ function Invite({ token }: { token: string | null }) {
     return (
       <>
         <h1 className={styles.heading}>{t("title")}</h1>
-        {stage.is === "checking" ? (
+        {stage.is === "missing" ? (
+          <Banner tone="info">{t("noLink")}</Banner>
+        ) : stage.is === "checking" ? (
           <p className={styles.lede} role="status">
             {t("checking")}
           </p>
