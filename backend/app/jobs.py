@@ -148,7 +148,7 @@ async def _run(kind: JobKind, job: Job, attempts: int, overdue: timedelta) -> No
                 _record,
                 job.id,
                 "UPDATE jobs SET last_error = :error WHERE id = :id",
-                error=repr(error),
+                error=logs.error_summary(error),
             )
         else:
             await asyncio.to_thread(

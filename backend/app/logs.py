@@ -98,6 +98,22 @@ def _chain(error: BaseException | None) -> list[dict[str, Any]]:
     return links
 
 
+def error_summary(error: BaseException) -> str:
+    """Short and human-readable, never the message: the error's class, plus SQLSTATE and
+    constraint for a database error (ZIF-93: jobs.last_error, which erasure doesn't cover).
+    Reuses _chain's walk so this and a log record find the same sqlstate/constraint.
+
+    e.g. "SMTPRecipientsRefused" or "IntegrityError sqlstate=23505 constraint=uq_users_email".
+    """
+    for link in _chain(error):
+        if sqlstate := link.get("sqlstate"):
+            summary = f"{type(error).__name__} sqlstate={sqlstate}"
+            if constraint := link.get("constraint"):
+                summary += f" constraint={constraint}"
+            return summary
+    return type(error).__name__
+
+
 def _escape(value: object) -> str:
     return str(value).replace("\r", "\\r").replace("\n", "\\n")
 
