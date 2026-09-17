@@ -9,7 +9,17 @@ from fastapi.routing import APIRoute
 from pydantic import BaseModel
 from sqlalchemy import create_engine
 
-from app import accounts, audit, auth, business_settings, members, schedule, services, time_off
+from app import (
+    accounts,
+    audit,
+    auth,
+    business_settings,
+    invites,
+    members,
+    schedule,
+    services,
+    time_off,
+)
 from app.config import DatabaseSettings, Settings
 from app.db import SessionLocal
 from app.errors import ApiError
@@ -60,6 +70,7 @@ def create_app() -> FastAPI:
     app.include_router(business_settings.router)
     app.include_router(services.router)
     app.include_router(members.router)
+    app.include_router(invites.router)
     app.include_router(schedule.router)
     app.include_router(time_off.router)
 

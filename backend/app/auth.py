@@ -81,6 +81,9 @@ Action = Literal[
     "time_off_created",
     "time_off_changed",
     "time_off_deleted",
+    "member_invited",
+    "invite_revoked",
+    "invite_accepted",
 ]
 
 
