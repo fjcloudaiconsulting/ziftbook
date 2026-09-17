@@ -177,11 +177,19 @@ def test_the_app_role_gains_nothing_by_setting_sign_in(people: People) -> None:
     assert tenants == {people.a}
 
 
-def complete_sign_up(engine: Engine, token: bytes, email: str) -> Created:
+def complete_sign_up(
+    engine: Engine, token: bytes, email: str, country: str = "NL", currency: str = "EUR"
+) -> Created:
     with engine.begin() as conn:
         row = conn.execute(
-            text("SELECT * FROM complete_sign_up(:h, :p, :n)"),
-            {"h": digest(token), "p": HASH, "n": f"Studio {email}"},
+            text("SELECT * FROM complete_sign_up(:h, :p, :n, :c, :cur)"),
+            {
+                "h": digest(token),
+                "p": HASH,
+                "n": f"Studio {email}",
+                "c": country,
+                "cur": currency,
+            },
         ).one()
     return Created(*row)
 
@@ -216,7 +224,7 @@ def test_completing_sign_up_creates_the_business_once(
         business = conn.execute(
             text("SELECT country, currency FROM tenants WHERE id = :t"), {"t": account.tenant_id}
         ).one()
-    # The 3-arg overload (kept for the rollout) never sets country, currency or settings.
+    # complete_sign_up sets the business's country and currency; it never touches settings.
     assert (business.country, business.currency) == ("NL", "EUR")
     assert settings_rows == 0
 
@@ -274,8 +282,8 @@ def test_two_links_for_one_email_completed_together_create_one_account(
     with app_engine.begin() as conn:
         outcomes["first"] = Created(
             *conn.execute(
-                text("SELECT * FROM complete_sign_up(:h, :p, :n)"),
-                {"h": digest(first), "p": HASH, "n": f"Studio {email}"},
+                text("SELECT * FROM complete_sign_up(:h, :p, :n, :c, :cur)"),
+                {"h": digest(first), "p": HASH, "n": f"Studio {email}", "c": "NL", "cur": "EUR"},
             ).one()
         )
         # The second completion must be waiting on the first's uncommitted user row.
@@ -302,8 +310,8 @@ def test_completing_sign_up_leaves_the_callers_tenant_as_it_was(
 
     with tenant_context(people.a) as session:
         row = session.execute(
-            text("SELECT * FROM complete_sign_up(:h, :p, :n)"),
-            {"h": digest(token), "p": HASH, "n": f"Studio {email}"},
+            text("SELECT * FROM complete_sign_up(:h, :p, :n, :c, :cur)"),
+            {"h": digest(token), "p": HASH, "n": f"Studio {email}", "c": "NL", "cur": "EUR"},
         ).one()
         assert session.scalar(text("SELECT current_setting('app.tenant_id')")) == str(people.a)
     created.append(Created(*row))
