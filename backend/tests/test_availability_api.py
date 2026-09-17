@@ -461,7 +461,6 @@ def test_with_no_display_name_the_public_answer_is_null_and_carries_no_email(
     assert response.status_code == 200
     body = response.json()
     assert body["workers"] == [{"id": str(both), "display_name": None}]
-    assert body["workers"][0]["display_name"] is None
     assert email_of(people.both) not in response.text
     assert str(people.both) not in response.text
 
@@ -469,6 +468,9 @@ def test_with_no_display_name_the_public_answer_is_null_and_carries_no_email(
 def test_the_display_name_comes_from_this_business_s_membership(
     people: People, app: FastAPI, ready: str
 ) -> None:
+    # Not a test of the join's tenant pair: row-level security already scopes memberships, so
+    # dropping `m.tenant_id = w.tenant_id` is unreachable from here. It kills keying the name by
+    # user_id instead of membership id, and resolving it outside the request's tenant_context.
     both_in_a = member_id(people.a, people.both)
     both_in_b = member_id(people.b, people.both)
     set_display_name(people.b, both_in_b, "Wrong Business")
@@ -478,7 +480,6 @@ def test_the_display_name_comes_from_this_business_s_membership(
     assert response.status_code == 200
     workers = response.json()["workers"]
     assert workers == [{"id": str(both_in_a), "display_name": None}]
-    assert workers[0]["display_name"] is None
     assert "Wrong Business" not in response.text
 
 
@@ -500,4 +501,3 @@ def test_the_display_name_costs_no_extra_query(
     naming_memberships = [s for s in statements if "memberships" in s]
     assert len(naming_memberships) == 1
     assert "working_hours" in naming_memberships[0]
-    assert "JOIN memberships" in naming_memberships[0]

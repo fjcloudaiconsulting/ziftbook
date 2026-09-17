@@ -7,7 +7,9 @@ from urllib.parse import urlencode
 import pytest
 from alembic import command
 from alembic.config import Config
+from psycopg.errors import CheckViolation
 from sqlalchemy import Engine, text
+from sqlalchemy.exc import IntegrityError
 
 from tests.conftest import API_DIR
 
@@ -98,11 +100,11 @@ MEMBERSHIP_COLUMNS = text(
 CONSTRAINT_NAME = """
 SELECT conname FROM pg_constraint
 WHERE conrelid = 'memberships'::regclass AND contype = 'c'
-  AND conname = 'ck_memberships_display_name'
+  AND conname = 'ck_memberships_display_name_length'
 """
 
 
-def test_downgrading_and_upgrading_0023_restores_the_display_name_column_and_its_check(
+def test_downgrading_and_upgrading_0023_restores_the_display_name_column_and_a_check_that_bites(
     migrated: None, migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     cfg = Config(toml_file=str(API_DIR / "pyproject.toml"))
@@ -118,7 +120,24 @@ def test_downgrading_and_upgrading_0023_restores_the_display_name_column_and_its
         command.upgrade(cfg, "head")
     with migrate_engine.connect() as conn:
         assert "display_name" in set(conn.scalars(MEMBERSHIP_COLUMNS))
-        assert conn.scalar(text(CONSTRAINT_NAME)) == "ck_memberships_display_name"
+        # The name, not merely some check: without the downgrade's op.f() the convention is
+        # applied twice and it asks to drop ck_memberships_ck_memberships_display_name_length.
+        assert conn.scalar(text(CONSTRAINT_NAME)) == "ck_memberships_display_name_length"
+    # And it bites: 61 characters is refused by the database, not only by the API's max_length.
+    tenant, user = uuid.uuid7(), uuid.uuid7()
+    with pytest.raises(IntegrityError) as error, migrate_engine.begin() as conn:
+        conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(tenant)})
+        conn.execute(text("INSERT INTO tenants (id, name) VALUES (:t, '0023')"), {"t": tenant})
+        conn.execute(
+            text("INSERT INTO users (id, email) VALUES (:u, :e)"),
+            {"u": user, "e": f"{user}@example.com"},
+        )
+        conn.execute(
+            text("INSERT INTO memberships (tenant_id, user_id, role) VALUES (:t, :u, 'owner')"),
+            {"t": tenant, "u": user},
+        )
+        conn.execute(text("UPDATE memberships SET display_name = repeat('x', 61)"))
+    assert isinstance(error.value.orig, CheckViolation)
 
 
 ADD_JOB = """

@@ -1,4 +1,5 @@
-"""A business's members, listed and changed by its owners."""
+"""A business's members: listed, promoted, demoted and removed by its owners, and each member's
+display name set by an owner or by that member."""
 
 from typing import Annotated, Literal
 from uuid import UUID
@@ -33,11 +34,12 @@ class RoleChange(BaseModel):
     role: Role
 
 
-# ponytail: printable() blocks C* and Zl/Zp, so ZWJ, RLO and BOM are 422 and an NBSP-only name
-# strips to empty. It does not block 60 combining marks (Zalgo), blank-rendering glyphs
-# (U+2800 Braille blank, U+3164 Hangul filler) or homoglyphs. Accepted: it takes an authenticated
-# member of that business, it damages only that business's own page, and any owner can overwrite
-# it. Add a normalisation/blocklist only if a real business is hit.
+# ponytail: printable() blocks C* and Zl/Zp, so ZWJ, RLO and BOM are 422; strip_whitespace is what
+# empties an NBSP-only name (and min_length then refuses it). It does not block 60 combining
+# marks (Zalgo), blank-rendering glyphs (U+2800 Braille blank, U+3164 Hangul filler) or
+# homoglyphs. Accepted: it takes an authenticated member of that business, it damages only that
+# business's own page, and any owner can overwrite it. Add a normalisation/blocklist only if a
+# real business is hit.
 DisplayNameText = Annotated[
     str,
     StringConstraints(strip_whitespace=True, min_length=1, max_length=60),
@@ -110,8 +112,8 @@ def target(current: SignedIn, member_id: UUID) -> MemberOut:
 def member_user(current: SignedIn, member_id: UUID, *, lock: bool) -> UUID:
     """The user behind a member of this business; 404 for any other id.
 
-    Shared with the working hours (ZIF-46) and time off (ZIF-47) endpoints, which reuse this lookup
-    instead of writing their own.
+    Shared with the working hours (ZIF-46), time off (ZIF-47) and display name (ZIF-97)
+    endpoints, which reuse this lookup instead of writing their own.
     """
     # NO KEY UPDATE: a sign-in's session insert (a foreign key check, KEY SHARE) isn't blocked, and
     # target()'s FOR UPDATE on the same row waits for us, or we for it.

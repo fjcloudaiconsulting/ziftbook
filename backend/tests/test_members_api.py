@@ -1,4 +1,5 @@
-"""GET/PATCH/DELETE /api/members: owners list, promote, demote and remove members."""
+"""/api/members: owners list, promote, demote and remove members; anyone sets their own
+display name."""
 
 import json
 import threading
@@ -608,6 +609,7 @@ def test_the_display_name_answer_never_carries_the_email(people: People, app: Fa
     )
 
     assert set(response.json()) == {"display_name"}
+    assert response.headers["cache-control"] == "no-store"
     assert email_of(people.only_a) not in response.text
     assert str(people.only_a) not in response.text
 
@@ -651,6 +653,15 @@ def test_a_display_name_must_be_one_to_sixty_printable_characters(
 
     assert (response.status_code, response.json()) == (422, {"code": "invalid_request"})
     assert stored_name(people.a, only_a_member) is None
+
+
+def test_sixty_characters_is_accepted_and_the_edges_are_trimmed(
+    people: People, app: FastAPI
+) -> None:
+    # The other side of the validator, kept out of the parametrized test above so that a failure
+    # there names the case that broke rather than these two writes at its tail.
+    owner = signed_in(app, people.a, people.both)
+    only_a_member = member_id(people.a, people.only_a)
 
     at_max = owner.put(
         f"/api/members/{only_a_member}/display-name", json={"display_name": "x" * 60}
@@ -740,6 +751,23 @@ def test_a_member_of_another_business_is_not_found(people: People, app: FastAPI)
     assert (unknown.status_code, unknown.json()) == (404, {"code": "not_found"})
 
 
+def test_a_worker_probing_another_business_is_not_found_not_forbidden(
+    people: People, app: FastAPI
+) -> None:
+    # The actor must be a worker: for an owner may_manage is always True, so only a worker tells
+    # 404-before-403 from 403-before-404. Membership probing is what the order prevents
+    # (CONTRIBUTING.md:84-86).
+    worker = signed_in(app, people.a, people.only_a)
+    other_business_member = member_id(people.b, people.only_b)
+
+    response = worker.put(
+        f"/api/members/{other_business_member}/display-name", json={"display_name": "Ada"}
+    )
+
+    assert (response.status_code, response.json()) == (404, {"code": "not_found"})
+    assert stored_name(people.b, other_business_member) is None
+
+
 @pytest.mark.parametrize(
     "name",
     ["⠀", "a" + "́" * 40],  # Braille blank; 40 combining acute accents
@@ -752,4 +780,6 @@ def test_the_accepted_ceiling_of_the_display_name_validator(
 
     response = owner.put(f"/api/members/{only_a_member}/display-name", json={"display_name": name})
 
+    # Not a happy path: this pins the ceiling the `ponytail:` comment on DisplayNameText accepts.
+    # Tightening the validator to reject these is a defensible change — delete this test then.
     assert response.status_code == 200
