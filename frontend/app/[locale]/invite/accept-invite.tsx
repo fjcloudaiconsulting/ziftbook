@@ -124,7 +124,7 @@ function Invite({ token }: { token: string | null }) {
     } else if (meaning === "alreadyMember") {
       setStage({ is: "member", business: invite.business_name });
     } else if (meaning === "wrongPassword") {
-      setMessage({ tone: "error", text: signIn("invalid") });
+      setMessage({ tone: "error", text: t("wrongPassword") });
       setPassword("");
       passwordInput.current?.focus();
     } else if (meaning === "accountExists") {

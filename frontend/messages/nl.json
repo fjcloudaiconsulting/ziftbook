@@ -118,13 +118,14 @@
     "newSubmit": "Lid worden van het team",
     "signInSubmit": "Inloggen en accepteren",
     "joining": "Bezig met aansluiten…",
+    "wrongPassword": "Dat wachtwoord klopt niet. Probeer het opnieuw of stel een nieuw in.",
     "accountExists": "Dit e-mailadres heeft nu een ziftbook-account. Vul het wachtwoord daarvan in om te accepteren.",
     "expiredTitle": "Deze uitnodiging is verlopen",
     "expiredLede": "Uitnodigingslinks werken één keer, 7 dagen lang. Vraag de eigenaar van het bedrijf om een nieuwe uitnodiging.",
     "joinedBefore": "Al aangesloten?",
     "signIn": "Inloggen",
     "memberTitle": "Je hoort al bij {business}",
-    "memberLede": "Dit account werkt er al, dus er is niets gewijzigd. Log in om je afspraken te zien."
+    "memberLede": "Je werkt er al, dus er is niets gewijzigd. Log in om je afspraken te zien."
   },
   "Home": {
     "signedInAs": "Ingelogd als <chip>{email}</chip>",

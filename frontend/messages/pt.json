@@ -118,13 +118,14 @@
     "newSubmit": "Entrar na equipe",
     "signInSubmit": "Entrar e aceitar",
     "joining": "Entrando na equipe…",
+    "wrongPassword": "Essa senha não está certa. Tente de novo ou redefina.",
     "accountExists": "Este e-mail agora tem uma conta no ziftbook. Digite a senha dela para aceitar.",
     "expiredTitle": "Este convite expirou",
     "expiredLede": "Os links de convite valem uma vez, por 7 dias. Peça um novo convite ao responsável pelo negócio.",
     "joinedBefore": "Já entrou na equipe?",
     "signIn": "Entrar",
     "memberTitle": "Você já faz parte da equipe de {business}",
-    "memberLede": "Esta conta já trabalha lá, então nada mudou. Entre para ver seus agendamentos."
+    "memberLede": "Você já trabalha lá, então nada mudou. Entre para ver seus agendamentos."
   },
   "Home": {
     "signedInAs": "Conectado como <chip>{email}</chip>",

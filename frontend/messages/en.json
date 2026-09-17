@@ -118,13 +118,14 @@
     "newSubmit": "Join the team",
     "signInSubmit": "Sign in to accept",
     "joining": "Joining…",
+    "wrongPassword": "That password isn't right. Try again, or reset it.",
     "accountExists": "This email now has a ziftbook account. Enter its password to accept.",
     "expiredTitle": "This invite has expired",
     "expiredLede": "Invite links work once, for 7 days. Ask the business owner to send you a new invite.",
     "joinedBefore": "Already joined?",
     "signIn": "Sign in",
     "memberTitle": "You're already part of {business}",
-    "memberLede": "This account already works there, so nothing changed. Sign in to see your appointments."
+    "memberLede": "You already work there, so nothing changed. Sign in to see your appointments."
   },
   "Home": {
     "signedInAs": "Signed in as <chip>{email}</chip>",
