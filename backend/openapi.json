@@ -2155,6 +2155,117 @@
           }
         }
       }
+    },
+    "/api/public/businesses/{tenant_id}/services/{service_id}/availability": {
+      "get": {
+        "tags": [
+          "availability"
+        ],
+        "summary": "Read",
+        "description": "Bookable starts for a service on local days from..to (at most 31), for one worker or anyone.\nPublic: no session.",
+        "operationId": "availability-read",
+        "parameters": [
+          {
+            "name": "tenant_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Tenant Id"
+            }
+          },
+          {
+            "name": "service_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Service Id"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date",
+              "title": "From"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date",
+              "title": "To"
+            }
+          },
+          {
+            "name": "member_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Member Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Availability"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -2266,6 +2377,41 @@
         ],
         "title": "AuditEventOut"
       },
+      "Availability": {
+        "properties": {
+          "timezone": {
+            "type": "string",
+            "title": "Timezone"
+          },
+          "duration_minutes": {
+            "type": "integer",
+            "title": "Duration Minutes"
+          },
+          "workers": {
+            "items": {
+              "$ref": "#/components/schemas/Worker"
+            },
+            "type": "array",
+            "title": "Workers"
+          },
+          "slots": {
+            "items": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "type": "array",
+            "title": "Slots"
+          }
+        },
+        "type": "object",
+        "required": [
+          "timezone",
+          "duration_minutes",
+          "workers",
+          "slots"
+        ],
+        "title": "Availability"
+      },
       "BusinessSettings-Input": {
         "properties": {
           "timezone": {
@@ -2292,6 +2438,40 @@
             "type": "boolean",
             "title": "Workers Edit Own Hours",
             "default": false
+          },
+          "buffer_pct": {
+            "type": "integer",
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Buffer Pct",
+            "default": 10
+          },
+          "slot_step_minutes": {
+            "type": "integer",
+            "enum": [
+              5,
+              10,
+              15,
+              20,
+              30,
+              60
+            ],
+            "title": "Slot Step Minutes",
+            "default": 15
+          },
+          "min_notice_minutes": {
+            "type": "integer",
+            "maximum": 10080.0,
+            "minimum": 0.0,
+            "title": "Min Notice Minutes",
+            "default": 60
+          },
+          "booking_horizon_days": {
+            "type": "integer",
+            "maximum": 365.0,
+            "minimum": 1.0,
+            "title": "Booking Horizon Days",
+            "default": 60
           }
         },
         "additionalProperties": false,
@@ -2324,6 +2504,40 @@
             "type": "boolean",
             "title": "Workers Edit Own Hours",
             "default": false
+          },
+          "buffer_pct": {
+            "type": "integer",
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Buffer Pct",
+            "default": 10
+          },
+          "slot_step_minutes": {
+            "type": "integer",
+            "enum": [
+              5,
+              10,
+              15,
+              20,
+              30,
+              60
+            ],
+            "title": "Slot Step Minutes",
+            "default": 15
+          },
+          "min_notice_minutes": {
+            "type": "integer",
+            "maximum": 10080.0,
+            "minimum": 0.0,
+            "title": "Min Notice Minutes",
+            "default": 60
+          },
+          "booking_horizon_days": {
+            "type": "integer",
+            "maximum": 365.0,
+            "minimum": 1.0,
+            "title": "Booking Horizon Days",
+            "default": 60
           }
         },
         "additionalProperties": false,
@@ -2332,7 +2546,11 @@
           "timezone",
           "auto_confirm",
           "language",
-          "workers_edit_own_hours"
+          "workers_edit_own_hours",
+          "buffer_pct",
+          "slot_step_minutes",
+          "min_notice_minutes",
+          "booking_horizon_days"
         ],
         "title": "BusinessSettings"
       },
@@ -3043,6 +3261,20 @@
           "source"
         ],
         "title": "TimeOffOut"
+      },
+      "Worker": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "title": "Worker"
       }
     }
   }

@@ -23,6 +23,10 @@ DEFAULTS = {
     "auto_confirm": False,
     "language": "en",
     "workers_edit_own_hours": False,
+    "buffer_pct": 10,
+    "slot_step_minutes": 15,
+    "min_notice_minutes": 60,
+    "booking_horizon_days": 60,
 }
 
 
@@ -67,6 +71,17 @@ def test_only_an_owner_changes_settings(people: People, app: FastAPI, body: Any)
         {"workers_edit_own_hours": "true"},
         {"workers_edit_own_hours": 1},
         {"workers_edit_own_hours": None},
+        {"buffer_pct": 101},
+        {"buffer_pct": -1},
+        {"buffer_pct": "10"},
+        {"buffer_pct": 10.5},
+        {"buffer_pct": None},
+        {"slot_step_minutes": 7},
+        {"slot_step_minutes": "15"},
+        {"min_notice_minutes": -1},
+        {"min_notice_minutes": 10081},
+        {"booking_horizon_days": 0},
+        {"booking_horizon_days": 366},
         [],
     ],
     ids=[
@@ -86,6 +101,17 @@ def test_only_an_owner_changes_settings(people: People, app: FastAPI, body: Any)
         "string true hours",
         "number one hours",
         "null hours",
+        "buffer over 100",
+        "negative buffer",
+        "string buffer",
+        "fractional buffer",
+        "null buffer",
+        "off-grid step",
+        "string step",
+        "negative notice",
+        "notice over a week",
+        "zero horizon",
+        "horizon over a year",
         "list body",
     ],
 )
@@ -124,7 +150,7 @@ def test_a_saved_setting_can_be_changed_and_set_back_to_its_default(
 
     assert response.json() == DEFAULTS
     # Saving the default keeps it saved: a later change of default doesn't reach this business.
-    # Only what this test wrote: language and workers_edit_own_hours were never saved.
+    # Only what this test wrote: the other keys were never saved.
     assert saved_settings(people.a) == {"timezone": "Europe/Amsterdam", "auto_confirm": False}
 
 
@@ -178,11 +204,15 @@ def test_an_old_timezone_name_is_kept_as_sent(people: People, app: FastAPI) -> N
 def test_the_contract_requires_every_setting_back_and_none_sent() -> None:
     schemas = create_app().openapi()["components"]["schemas"]
 
-    assert sorted(schemas["BusinessSettings-Output"]["required"]) == [
+    assert schemas["BusinessSettings-Output"]["required"] == [
+        "timezone",
         "auto_confirm",
         "language",
-        "timezone",
         "workers_edit_own_hours",
+        "buffer_pct",
+        "slot_step_minutes",
+        "min_notice_minutes",
+        "booking_horizon_days",
     ]
     assert "required" not in schemas["BusinessSettings-Input"]
 

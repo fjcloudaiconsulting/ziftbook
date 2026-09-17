@@ -1,0 +1,287 @@
+"""The availability core (ZIF-48): pure functions, no database. Local times are written local,
+expectations in UTC; the business is in Europe/Amsterdam."""
+
+from datetime import UTC, date, datetime, time, timedelta
+
+import pytest
+
+from app import availability
+from app.availability import Booked, Interval, anchor, buffer_for, member_slots, merged, overlaps
+from app.schedule import Row, to_utc
+
+ZONE = "Europe/Amsterdam"
+LONG_AGO = datetime(2000, 1, 1, tzinfo=UTC)
+MONDAY = date(2026, 3, 30)  # summer time: local = UTC + 2
+
+
+def utc(text: str) -> datetime:
+    return datetime.fromisoformat(text).replace(tzinfo=UTC)
+
+
+def local(day: date, at: str) -> datetime:
+    """A local wall-clock time on day, as UTC."""
+    return to_utc(day, time.fromisoformat(at), ZONE)
+
+
+def rows(weekday: int, *shifts: tuple[str, str]) -> list[Row]:
+    return [(weekday, time.fromisoformat(s), time.fromisoformat(e)) for s, e in shifts]
+
+
+def slots(
+    shift_rows: list[Row],
+    first: date,
+    last: date | None = None,
+    *,
+    time_off: list[Interval] | None = None,
+    booked: list[Booked] | None = None,
+    duration: int = 60,
+    buffer: int = 0,
+    pct: int = 0,
+    step: int = 60,
+    earliest: datetime = LONG_AGO,
+) -> list[datetime]:
+    return member_slots(
+        shift_rows,
+        time_off or [],
+        booked or [],
+        zone=ZONE,
+        first=first,
+        last=last or first,
+        duration=duration,
+        buffer=buffer,
+        pct=pct,
+        step=step,
+        earliest=earliest,
+    )
+
+
+def at(day: date, *times: str) -> list[datetime]:
+    return [local(day, t) for t in times]
+
+
+# 1. buffer_for
+
+
+@pytest.mark.parametrize(
+    ("duration", "override", "pct", "expected"),
+    [
+        (30, None, 10, 3),
+        (45, None, 10, 5),
+        (60, 0, 10, 0),
+        (60, 15, 10, 15),
+        (5, None, 0, 0),
+        (720, None, 100, 720),
+    ],
+    ids=["pct", "rounded up", "zero override wins", "override", "zero pct", "whole"],
+)
+def test_the_buffer_is_the_override_else_a_percentage_rounded_up(
+    duration: int, override: int | None, pct: int, expected: int
+) -> None:
+    assert buffer_for(duration, override, pct) == expected
+
+
+# 2. anchor
+
+
+@pytest.mark.parametrize(
+    ("start", "step", "expected"),
+    [
+        ("10:00", 15, "10:00"),
+        ("10:07", 15, "10:15"),
+        ("10:07", 5, "10:10"),
+        ("13:10", 15, "13:15"),
+        ("00:00", 60, "00:00"),
+        ("23:50", 15, None),
+    ],
+)
+def test_a_shift_s_first_slot_is_its_start_rounded_up_to_the_step(
+    start: str, step: int, expected: str | None
+) -> None:
+    result = anchor(time.fromisoformat(start), step)
+    assert result == (None if expected is None else time.fromisoformat(expected))
+
+
+# 3. merged
+
+
+def test_merged_sorts_and_joins_overlapping_and_touching_intervals() -> None:
+    a, b, c, d, e, f = (utc(f"2026-03-30T{h:02}:00") for h in (8, 9, 10, 11, 12, 14))
+    g = utc("2026-03-30T15:00")
+    assert merged([(e, f), (c, d), (a, c), (b, c), (f, g)]) == [(a, d), (e, g)]
+    assert merged([(d, e), (a, b)]) == [(a, b), (d, e)]
+    assert merged([]) == []
+
+
+# 4. overlaps
+
+
+def test_overlaps_counts_containment_and_partial_overlap_but_not_touching() -> None:
+    nine, ten, eleven, noon = (utc(f"2026-03-30T{h:02}:00") for h in (9, 10, 11, 12))
+    half = timedelta(minutes=30)
+    blocks = [(ten, eleven)]
+    assert not overlaps(blocks, nine, ten)  # touching before
+    assert not overlaps(blocks, eleven, noon)  # touching after
+    assert overlaps(blocks, ten + timedelta(minutes=10), ten + half)  # contained
+    assert overlaps(blocks, nine, noon)  # contains
+    assert overlaps(blocks, nine + half, ten + half)  # partial, before
+    assert overlaps(blocks, ten + half, eleven + half)  # partial, after
+    assert not overlaps([], nine, noon)
+
+
+# 5. window
+
+
+NOW = utc("2026-07-15T23:00")  # 01:00 on 2026-07-16 in Amsterdam
+
+
+def test_the_window_starts_today_in_the_business_s_timezone() -> None:
+    result = availability.window(NOW, ZONE, date(2026, 7, 15), date(2026, 7, 20), 60, 1)
+    assert result == (date(2026, 7, 16), date(2026, 7, 17), utc("2026-07-16T00:00"))
+
+
+def test_a_window_ending_before_today_is_empty() -> None:
+    first, last, _ = availability.window(NOW, ZONE, date(2026, 7, 10), date(2026, 7, 15), 60, 60)
+    assert first > last
+
+
+# 6. member_slots
+
+
+def test_plain_slots_on_one_shift() -> None:
+    assert slots(rows(1, ("09:00", "12:00")), MONDAY) == [
+        utc("2026-03-30T07:00"),
+        utc("2026-03-30T08:00"),
+        utc("2026-03-30T09:00"),
+    ]
+
+
+def test_each_day_uses_its_own_offset_around_the_change() -> None:
+    week = rows(6, ("09:00", "10:00")) + rows(7, ("09:00", "10:00"))
+    assert slots(week, date(2026, 3, 28), date(2026, 3, 29)) == [
+        utc("2026-03-28T08:00"),
+        utc("2026-03-29T07:00"),
+    ]
+
+
+def test_a_shift_across_the_spring_change_has_three_hours() -> None:
+    assert slots(rows(7, ("01:00", "05:00")), date(2026, 3, 29)) == [
+        utc("2026-03-29T00:00"),
+        utc("2026-03-29T01:00"),
+        utc("2026-03-29T02:00"),
+    ]
+
+
+def test_a_shift_across_the_autumn_change_has_five_hours() -> None:
+    assert slots(rows(7, ("01:00", "05:00")), date(2026, 10, 25)) == [
+        utc("2026-10-24T23:00"),
+        utc("2026-10-25T00:00"),
+        utc("2026-10-25T01:00"),
+        utc("2026-10-25T02:00"),
+        utc("2026-10-25T03:00"),
+    ]
+
+
+def test_a_shift_inside_the_skipped_hour_is_dropped() -> None:
+    assert slots(rows(7, ("02:30", "03:15")), date(2026, 3, 29), duration=15, step=15) == []
+
+
+def test_an_anchor_the_clock_skipped_never_lands_before_the_shift_opens() -> None:
+    found = slots(rows(7, ("02:50", "05:00")), date(2026, 3, 29), duration=15, step=15)
+    assert found[0] == utc("2026-03-29T02:00")  # 04:00 summer time
+    assert min(found) >= utc("2026-03-29T01:50")  # 02:50 converts to 01:50Z
+
+
+def test_a_split_shift_has_no_slot_in_the_gap() -> None:
+    split = rows(1, ("09:00", "12:00"), ("13:00", "15:00"))
+    assert slots(split, MONDAY) == at(MONDAY, "09:00", "10:00", "11:00", "13:00", "14:00")
+
+
+def test_an_odd_second_start_has_its_own_anchor() -> None:
+    split = rows(1, ("09:00", "10:00"), ("13:10", "15:00"))
+    found = slots(split, MONDAY, duration=30, step=15)
+    assert [t for t in found if t > local(MONDAY, "12:00")][0] == local(MONDAY, "13:15")
+
+
+def test_touching_shifts_are_joined() -> None:
+    joined = rows(1, ("09:00", "10:30"), ("10:30", "12:00"))
+    assert slots(joined, MONDAY, step=30) == at(MONDAY, "09:00", "09:30", "10:00", "10:30", "11:00")
+
+
+def test_slots_stay_on_the_grid_from_the_rounded_start() -> None:
+    found = slots(rows(1, ("10:07", "11:00")), MONDAY, duration=15, step=15)
+    assert found == at(MONDAY, "10:15", "10:30", "10:45")
+
+
+def test_a_slot_ending_exactly_at_the_shift_end_is_offered() -> None:
+    assert slots(rows(1, ("09:00", "10:00")), MONDAY) == at(MONDAY, "09:00")
+
+
+DAY_SHIFT = rows(1, ("09:00", "12:00"))
+
+
+def test_time_off_blocks_what_it_overlaps_and_nothing_it_touches() -> None:
+    off = [(local(MONDAY, "10:00"), local(MONDAY, "10:30"))]
+    found = slots(DAY_SHIFT, MONDAY, time_off=off, duration=30, step=15)
+    assert local(MONDAY, "09:30") in found
+    assert local(MONDAY, "10:30") in found
+    for blocked in at(MONDAY, "09:45", "10:00", "10:15"):
+        assert blocked not in found
+
+
+def test_a_booking_blocks_its_own_override_buffer() -> None:
+    booking = (local(MONDAY, "10:00"), local(MONDAY, "10:30"), 10)
+    found = slots(DAY_SHIFT, MONDAY, booked=[booking], duration=30, step=15)
+    assert local(MONDAY, "10:30") not in found
+    assert local(MONDAY, "10:45") in found
+    assert local(MONDAY, "09:30") in found
+
+
+def test_a_booking_without_an_override_blocks_a_percentage_of_its_length() -> None:
+    booking = (local(MONDAY, "10:00"), local(MONDAY, "10:45"), None)
+    found = slots(DAY_SHIFT, MONDAY, booked=[booking], duration=15, pct=10, step=5)
+    assert local(MONDAY, "10:45") not in found
+    assert local(MONDAY, "10:50") in found
+
+
+def test_a_new_slot_needs_its_own_buffer_before_the_next_booking() -> None:
+    booking = (local(MONDAY, "11:00"), local(MONDAY, "11:30"), 0)
+    found = slots(DAY_SHIFT, MONDAY, booked=[booking], duration=30, buffer=10, step=15)
+    assert local(MONDAY, "10:15") in found
+    assert local(MONDAY, "10:30") not in found
+
+
+def test_a_new_slot_s_buffer_may_run_past_the_shift_end_or_into_time_off() -> None:
+    assert slots(rows(1, ("09:00", "10:00")), MONDAY, buffer=10) == at(MONDAY, "09:00")
+    off = [(local(MONDAY, "10:00"), local(MONDAY, "12:00"))]
+    assert local(MONDAY, "09:00") in slots(DAY_SHIFT, MONDAY, time_off=off, buffer=10)
+
+
+def test_minimum_notice_moves_the_first_slot() -> None:
+    later = slots(DAY_SHIFT, MONDAY, duration=15, step=15, earliest=local(MONDAY, "10:10"))
+    assert later[0] == local(MONDAY, "10:15")
+    exact = slots(DAY_SHIFT, MONDAY, duration=15, step=15, earliest=local(MONDAY, "10:15"))
+    assert exact[0] == local(MONDAY, "10:15")
+
+
+# 7. end to end, at 01:00 in Amsterdam
+
+
+def test_today_is_the_business_s_local_date_end_to_end() -> None:
+    first, last, earliest = availability.window(
+        NOW, ZONE, date(2026, 7, 15), date(2026, 7, 20), 60, 1
+    )
+    every_day = [r for weekday in range(1, 8) for r in rows(weekday, ("09:00", "10:00"))]
+    found = member_slots(
+        every_day,
+        [],
+        [],
+        zone=ZONE,
+        first=first,
+        last=last,
+        duration=60,
+        buffer=0,
+        pct=0,
+        step=60,
+        earliest=earliest,
+    )
+    assert found == [utc("2026-07-16T07:00"), utc("2026-07-17T07:00")]

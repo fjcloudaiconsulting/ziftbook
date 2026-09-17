@@ -179,6 +179,13 @@ def test_no_personal_data_ever_reaches_a_log(
     workers = owner.put(f"/api/services/{created.json()['id']}/workers", json=[str(target)])
     assert workers.status_code == 200
 
+    # 6c: public availability for that service, no session.
+    availability = client_for(app).get(
+        f"/api/public/businesses/{people.a}/services/{created.json()['id']}/availability",
+        params={"from": "2026-09-17", "to": "2026-09-18"},
+    )
+    assert availability.status_code == 200
+
     # 7: invite flow — send, list, a wrong token, then accept with a brand-new account.
     invite_email = fresh_email()
     invite_password = "Invite-Pw7-55"

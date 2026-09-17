@@ -9,7 +9,7 @@ import json
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Request, Response
-from pydantic import AfterValidator, BaseModel, ConfigDict
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -46,6 +46,18 @@ class BusinessSettings(BaseModel):
     language: Locale = "en"
     # Whether a worker may change their own working hours; owners always may.
     workers_edit_own_hours: bool = False
+    # Availability (ZIF-48). The buffer after an appointment when its service has no override,
+    # as a whole percentage of its duration, rounded up to a minute.
+    buffer_pct: Annotated[int, Field(ge=0, le=100)] = 10
+    # Slots start on this grid, counted from each shift's start rounded up to it. Every step divides
+    # 60, so the grid stays on local quarter-hours across whole-hour clock changes.
+    # ponytail: a 30-minute DST shift (Lord Howe) with step 20 misaligns by 10 minutes; nobody books
+    # there yet.
+    slot_step_minutes: Literal[5, 10, 15, 20, 30, 60] = 15
+    # How soon, and how many days ahead (counted from today in the business's timezone), a client
+    # may book.
+    min_notice_minutes: Annotated[int, Field(ge=0, le=10080)] = 60
+    booking_horizon_days: Annotated[int, Field(ge=1, le=365)] = 60
 
 
 def read(db: Session) -> BusinessSettings:
