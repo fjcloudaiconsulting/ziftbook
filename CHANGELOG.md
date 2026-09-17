@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.14.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.13.0...v0.14.0) (2026-09-17)
+
+
+### ⚠ BREAKING CHANGES
+
+* web apps older than 0.12.0 can no longer complete a sign-up; they must send a country.
+
+### Features
+
+* **backend:** owners choose which workers perform each service (ZIF-45) ([#91](https://github.com/fjcloudaiconsulting/ziftbook/issues/91)) ([8a34709](https://github.com/fjcloudaiconsulting/ziftbook/commit/8a347097b2f259892c20c118e3248400e8465073))
+* **backend:** public availability per service with automatic buffers (ZIF-48) ([#92](https://github.com/fjcloudaiconsulting/ziftbook/issues/92)) ([275b287](https://github.com/fjcloudaiconsulting/ziftbook/commit/275b287be92336154a0edd6eb41c838cbb18a3ac))
+* require the business country at sign-up (ZIF-96) ([#90](https://github.com/fjcloudaiconsulting/ziftbook/issues/90)) ([904a5ed](https://github.com/fjcloudaiconsulting/ziftbook/commit/904a5eda382ec39d5d58e60f7ecfe2073c23170e))
+
+
+### Bug Fixes
+
+* failed jobs store the error class, never its message (ZIF-93) ([#89](https://github.com/fjcloudaiconsulting/ziftbook/issues/89)) ([3c4c8ee](https://github.com/fjcloudaiconsulting/ziftbook/commit/3c4c8ee08da679561a6c23dac5d1bcc91cf987a9))
+
 ## [0.13.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.12.0...v0.13.0) (2026-09-17)
 
 
