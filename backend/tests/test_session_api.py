@@ -12,7 +12,7 @@ from sqlalchemy import Engine, text
 from app import auth
 from app.db import tenant_context
 from app.main import create_app
-from tests.conftest import People, email_of, member_id
+from tests.conftest import People, email_of, member_id, signed_in
 
 
 @pytest.fixture
@@ -91,7 +91,34 @@ def test_a_signed_in_user_sees_their_session(people: People, client: TestClient)
         "email": email_of(people.both),
         "business_name": "a",
         "currency": "EUR",
+        "display_name": None,
     }
+
+
+def test_the_session_carries_the_member_s_display_name(people: People, app: FastAPI) -> None:
+    owner = signed_in(app, people.a, people.both)
+    only_a_member = member_id(people.a, people.only_a)
+    both_member_in_a = member_id(people.a, people.both)
+
+    assert (
+        owner.put(
+            f"/api/members/{only_a_member}/display-name", json={"display_name": "Ada"}
+        ).status_code
+        == 200
+    )
+    assert (
+        owner.put(
+            f"/api/members/{both_member_in_a}/display-name", json={"display_name": "Grace"}
+        ).status_code
+        == 200
+    )
+
+    only_a_session = signed_in(app, people.a, people.only_a)
+    both_in_b = signed_in(app, people.b, people.both)
+
+    assert only_a_session.get("/api/session").json()["display_name"] == "Ada"
+    assert owner.get("/api/session").json()["display_name"] == "Grace"
+    assert both_in_b.get("/api/session").json()["display_name"] is None
 
 
 def test_the_session_reports_that_businesss_own_membership_id(

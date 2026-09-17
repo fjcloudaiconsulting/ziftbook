@@ -92,6 +92,35 @@ def test_downgrading_and_upgrading_0022_restores_the_three_arg_complete_sign_up_
         assert conn.scalar(text(FIVE_ARG)) is not None
 
 
+MEMBERSHIP_COLUMNS = text(
+    "SELECT column_name FROM information_schema.columns WHERE table_name = 'memberships'"
+)
+CONSTRAINT_NAME = """
+SELECT conname FROM pg_constraint
+WHERE conrelid = 'memberships'::regclass AND contype = 'c'
+  AND conname = 'ck_memberships_display_name'
+"""
+
+
+def test_downgrading_and_upgrading_0023_restores_the_display_name_column_and_its_check(
+    migrated: None, migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = Config(toml_file=str(API_DIR / "pyproject.toml"))
+    url = os.environ["ZIF_MIGRATE_DATABASE_URL"]
+    options = urlencode({"options": "-c lock_timeout=5s"})
+    monkeypatch.setenv("ZIF_MIGRATE_DATABASE_URL", f"{url}{'&' if '?' in url else '?'}{options}")
+    command.downgrade(cfg, "0022")
+    try:
+        with migrate_engine.connect() as conn:
+            assert "display_name" not in set(conn.scalars(MEMBERSHIP_COLUMNS))
+            assert conn.scalar(text(CONSTRAINT_NAME)) is None
+    finally:
+        command.upgrade(cfg, "head")
+    with migrate_engine.connect() as conn:
+        assert "display_name" in set(conn.scalars(MEMBERSHIP_COLUMNS))
+        assert conn.scalar(text(CONSTRAINT_NAME)) == "ck_memberships_display_name"
+
+
 ADD_JOB = """
 INSERT INTO jobs (kind, dedupe_key, payload, due_at, next_attempt_at, last_error)
 VALUES ('test.zif93', :key, '{}'::jsonb, now(), now(), :last_error)

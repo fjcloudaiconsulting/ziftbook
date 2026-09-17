@@ -1,16 +1,17 @@
 """A business's members, listed and changed by its owners."""
 
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Request, Response
 from psycopg.errors import CheckViolation
-from pydantic import BaseModel, ConfigDict
+from pydantic import AfterValidator, BaseModel, ConfigDict, StringConstraints
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
 from app import auth
-from app.auth import CurrentOwner, SignedIn
+from app.accounts import printable
+from app.auth import CurrentOwner, CurrentSession, SignedIn
 from app.errors import ApiError, Error
 
 Role = Literal["owner", "worker"]
@@ -23,6 +24,7 @@ class MemberOut(BaseModel):
     user_id: UUID
     email: str
     role: Role
+    display_name: str | None
 
 
 class RoleChange(BaseModel):
@@ -31,8 +33,31 @@ class RoleChange(BaseModel):
     role: Role
 
 
+# ponytail: printable() blocks C* and Zl/Zp, so ZWJ, RLO and BOM are 422 and an NBSP-only name
+# strips to empty. It does not block 60 combining marks (Zalgo), blank-rendering glyphs
+# (U+2800 Braille blank, U+3164 Hangul filler) or homoglyphs. Accepted: it takes an authenticated
+# member of that business, it damages only that business's own page, and any owner can overwrite
+# it. Add a normalisation/blocklist only if a real business is hit.
+DisplayNameText = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=60),
+    AfterValidator(printable),
+]
+
+
+class DisplayNameChange(BaseModel):
+    # Its own model, field by field: nothing a client sends can name a user or a business.
+    model_config = ConfigDict(strict=True, extra="forbid")
+    display_name: DisplayNameText | None  # required; null clears the name
+
+
+class DisplayNameOut(BaseModel):
+    # Deliberately not MemberOut: MemberOut carries the email, and a worker calls this route.
+    display_name: str | None
+
+
 MEMBERS = """
-SELECT m.id AS member_id, m.user_id, u.email, m.role
+SELECT m.id AS member_id, m.user_id, u.email, m.role, m.display_name
 FROM memberships m JOIN users u ON u.id = m.user_id
 """
 
@@ -97,6 +122,12 @@ def member_user(current: SignedIn, member_id: UUID, *, lock: bool) -> UUID:
     if user_id is None:
         raise ApiError(404, "not_found")
     return user_id
+
+
+def may_manage(current: SignedIn, user_id: UUID) -> bool:
+    """An owner manages everyone's data; anyone else only their own. Shared with time off
+    (ZIF-47) and the display name (ZIF-97)."""
+    return current.role == "owner" or user_id == current.user_id
 
 
 def guarded(current: SignedIn, statement: str, member_id: UUID, **values: object) -> None:
@@ -164,3 +195,49 @@ def remove(member_id: UUID, current: CurrentOwner, request: Request) -> None:
         actor_user_id=current.user_id,
         target=f"user:{member.user_id}",
     )
+
+
+@router.put(
+    "/members/{member_id}/display-name",
+    name="set_display_name",
+    responses={s: {"model": Error} for s in (401, 403, 404, 415, 422)},
+)
+def set_display_name(
+    member_id: UUID,
+    change: DisplayNameChange,
+    current: CurrentSession,
+    request: Request,
+    response: Response,
+) -> DisplayNameOut:
+    """Set or clear the name clients see when booking this member. An owner changes
+    anyone's, a member their own. Never MemberOut: that carries the email, and a worker
+    calls this route."""
+    # The member first (404 outside this business), then the authorization check: CONTRIBUTING.md
+    # :84-86. NO KEY UPDATE, and never a lock on tenants.
+    user_id = member_user(current, member_id, lock=True)
+    if not may_manage(current, user_id):
+        raise ApiError(403, "owner_only")
+    response.headers["Cache-Control"] = "no-store"
+    # One statement, and never naming role in the SET list: keep_an_owner is AFTER UPDATE OF role
+    # and would take a lock CONTRIBUTING.md forbids. Not wrapped in guarded(): the trigger cannot
+    # fire. No row back means the name was already exactly this: no event. RETURNING, not rowcount:
+    # Session.execute gives a Result, which has no rowcount (mypy).
+    changed = current.db.execute(
+        text(
+            "UPDATE memberships SET display_name = :name "
+            "WHERE id = :id AND display_name IS DISTINCT FROM :name "
+            "RETURNING id"
+        ),
+        {"id": member_id, "name": change.display_name},
+    ).first()
+    if changed is not None:
+        auth.record(
+            current.db,
+            request,
+            "member_display_name_changed",
+            actor_user_id=current.user_id,
+            target=f"user:{user_id}",
+            # The name itself never reaches the event, the logs or any 4xx body.
+            details={"display_name": "set" if change.display_name else "cleared"},
+        )
+    return DisplayNameOut(display_name=change.display_name)

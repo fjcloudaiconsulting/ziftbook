@@ -108,7 +108,7 @@ def test_anyone_reads_a_service_s_free_slots_without_a_session(
     assert set(body) == {"timezone", "duration_minutes", "workers", "slots"}
     assert body["timezone"] == ZONE
     assert body["duration_minutes"] == 30
-    assert body["workers"] == [{"id": str(member_id(people.a, people.both))}]
+    assert body["workers"] == [{"id": str(member_id(people.a, people.both)), "display_name": None}]
     # From 09:00 (an hour's notice from 08:00) to 11:30, every 15 minutes.
     assert body["slots"][0] == "2026-03-30T07:00:00Z"
     assert body["slots"][-1] == "2026-03-30T09:30:00Z"
@@ -164,7 +164,7 @@ def test_only_assigned_workers_with_hours_are_listed(
 
     response = get(new_client(app), people.a, service_id)
 
-    assert response.json()["workers"] == [{"id": str(both)}]
+    assert response.json()["workers"] == [{"id": str(both), "display_name": None}]
 
 
 def test_an_unassigned_worker_is_neither_listed_nor_bookable(
@@ -181,7 +181,7 @@ def test_an_unassigned_worker_is_neither_listed_nor_bookable(
     unassigned = get(client, people.a, service_id, member_id=only_a)
     unknown = get(client, people.a, service_id, member_id=uuid.uuid4())
 
-    assert anyone.json()["workers"] == [{"id": str(both)}]
+    assert anyone.json()["workers"] == [{"id": str(both), "display_name": None}]
     assert local(MONDAY, "11:00") not in anyone.json()["slots"]
     assert (unassigned.status_code, unassigned.json()["slots"]) == (200, [])
     assert (unknown.status_code, unknown.json()["slots"]) == (200, [])
@@ -202,7 +202,11 @@ def test_one_worker_or_anyone(people: People, app: FastAPI, owner: TestClient) -
     anyone = get(client, people.a, service_id).json()
     assert anyone["slots"] == mornings + lates
     assert anyone["workers"] == sorted(
-        [{"id": str(both)}, {"id": str(only_a)}], key=lambda w: w["id"]
+        [
+            {"id": str(both), "display_name": None},
+            {"id": str(only_a), "display_name": None},
+        ],
+        key=lambda w: str(w["id"]),
     )
 
 
@@ -421,3 +425,79 @@ def test_sixty_requests_a_minute_per_address(people: People, app: FastAPI, ready
 
     assert (over.status_code, over.json()) == (429, {"code": "rate_limited"})
     assert get(new_client(app), people.a, ready).status_code == 200
+
+
+# 10. the display name (ZIF-97)
+
+
+def set_display_name(tenant_id: uuid.UUID, member: uuid.UUID, name: str | None) -> None:
+    with tenant_context(tenant_id) as session:
+        session.execute(
+            text("UPDATE memberships SET display_name = :name WHERE id = :id"),
+            {"id": member, "name": name},
+        )
+
+
+def test_the_public_page_shows_the_display_name_never_the_email(
+    people: People, app: FastAPI, ready: str
+) -> None:
+    both = member_id(people.a, people.both)
+    set_display_name(people.a, both, "Ada Lovelace")
+
+    response = get(new_client(app), people.a, ready)
+
+    assert response.status_code == 200
+    assert response.json()["workers"] == [{"id": str(both), "display_name": "Ada Lovelace"}]
+    assert email_of(people.both) not in response.text
+
+
+def test_with_no_display_name_the_public_answer_is_null_and_carries_no_email(
+    people: People, app: FastAPI, ready: str
+) -> None:
+    both = member_id(people.a, people.both)
+
+    response = get(new_client(app), people.a, ready)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["workers"] == [{"id": str(both), "display_name": None}]
+    assert body["workers"][0]["display_name"] is None
+    assert email_of(people.both) not in response.text
+    assert str(people.both) not in response.text
+
+
+def test_the_display_name_comes_from_this_business_s_membership(
+    people: People, app: FastAPI, ready: str
+) -> None:
+    both_in_a = member_id(people.a, people.both)
+    both_in_b = member_id(people.b, people.both)
+    set_display_name(people.b, both_in_b, "Wrong Business")
+
+    response = get(new_client(app), people.a, ready)
+
+    assert response.status_code == 200
+    workers = response.json()["workers"]
+    assert workers == [{"id": str(both_in_a), "display_name": None}]
+    assert workers[0]["display_name"] is None
+    assert "Wrong Business" not in response.text
+
+
+def test_the_display_name_costs_no_extra_query(
+    people: People, app: FastAPI, ready: str, app_engine: Engine
+) -> None:
+    statements: list[str] = []
+
+    def count(conn: object, cursor: object, statement: str, *args: object) -> None:
+        statements.append(statement)
+
+    event.listen(app_engine, "before_cursor_execute", count)
+    try:
+        response = get(new_client(app), people.a, ready)
+    finally:
+        event.remove(app_engine, "before_cursor_execute", count)
+
+    assert response.status_code == 200
+    naming_memberships = [s for s in statements if "memberships" in s]
+    assert len(naming_memberships) == 1
+    assert "working_hours" in naming_memberships[0]
+    assert "JOIN memberships" in naming_memberships[0]
