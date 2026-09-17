@@ -43,6 +43,10 @@ must never break the version that is still running.
 Specifics:
 
 - A new `NOT NULL` column needs a default, or is added nullable, backfilled, then tightened in a later release.
+- Migrations form one chain, and their numbers are identifiers, not an order. Before merging a PR that adds a
+  migration, rebase it onto `main` and set its `down_revision` to the current head; `alembic heads` must print one line.
+  If both are already merged, add a merge revision (`down_revision = ("a", "b")`, empty upgrade and downgrade)
+  rather than editing a merged migration.
 - `CREATE INDEX CONCURRENTLY` cannot run inside a transaction; put it in its own migration using Alembic's
   `autocommit_block()`.
 - Migrations run as `ziftbook_migrate`, never on app startup. The app connects as `ziftbook_app`, which owns
@@ -78,6 +82,8 @@ every table that holds a tenant's data:
 - An endpoint that writes a member's data first calls `members.member_user(current, id, lock=True)` (`NO KEY
   UPDATE` on the membership), and never locks `tenants` beyond the `KEY SHARE` its foreign keys take: `keep_an_owner`
   locks memberships, then tenants.
+- A column private to one member, such as `time_off.reason`, is redacted in SQL for every other caller; public or
+  customer-facing endpoints never select it.
 
 `tests/test_tenant_schema.py` fails for a table with `tenant_id` that is not isolated (forced row-level security),
 and for a foreign key between tenant-owned tables that does not pair `tenant_id`. `jobs` is exempt on purpose: it
