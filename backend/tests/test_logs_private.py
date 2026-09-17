@@ -160,6 +160,33 @@ def test_no_personal_data_ever_reaches_a_log(
         == 201
     )
 
+    # 7: invite flow — send, list, a wrong token, then accept with a brand-new account.
+    invite_email = fresh_email()
+    invite_password = "Invite-Pw7-55"
+    secret(invite_email)
+    secret(invite_password)
+
+    assert owner.post("/api/invites", json={"email": invite_email}).status_code == 201
+    assert owner.get("/api/invites").status_code == 200
+
+    invite_token = token_in(mailed(invite_email))
+    token_secret(invite_token)
+
+    # Same shape, wrong digest: exercises the "no matching invite" path, not just the regex one.
+    tenant_part, _, secret_part = invite_token.partition(".")
+    flipped = "A" if secret_part[-1] != "A" else "B"
+    wrong_token = f"{tenant_part}.{secret_part[:-1]}{flipped}"
+    wrong_accept = client_for(app).post(
+        "/api/invites/accept", json={"token": wrong_token, "password": invite_password}
+    )
+    assert wrong_accept.status_code == 400
+
+    accepted = client_for(app).post(
+        "/api/invites/accept", json={"token": invite_token, "password": invite_password}
+    )
+    assert accepted.status_code == 201
+    cookie_secret(accepted)
+
     # 8: forced 500, a real duplicate-email error, the email known only at runtime.
     def duplicate_email() -> None:
         with migrate_engine.begin() as conn:
