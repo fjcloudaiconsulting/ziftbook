@@ -28,6 +28,9 @@ describe("invite link token", () => {
     assert.equal(isInviteToken(`x${TENANT}.${SECRET}`), false);
     assert.equal(isInviteToken(`${TENANT}.${SECRET}\n`), false);
     assert.equal(isInviteToken(`${TENANT}.${SECRET}.${SECRET}`), false);
+    assert.equal(isInviteToken(`${TENANT}x${SECRET}`), false, "anything in place of the dot");
+    assert.equal(isInviteToken(`0192f3a45-b6c-7d8e-9f01-23456789abcd.${SECRET}`), false, "36 characters, dashes misplaced");
+    assert.equal(isInviteToken(`0192f3a4-5b6c-7d8e-9f01-23456789abcg.${SECRET}`), false, "not hexadecimal");
   });
 });
 
@@ -49,7 +52,7 @@ describe("which screen a lookup leads to", () => {
 
   test("a dead link ends the flow; anything else can be tried again", () => {
     assert.equal(inviteScreen({ status: 400, code: "invalid_token" }), "expired");
-    for (const status of [0, 422, 429, 500, 502, 503]) {
+    for (const status of [0, 401, 404, 415, 422, 429, 500, 502, 503]) {
       assert.equal(inviteScreen({ status }), "retry", `status ${status}`);
     }
     assert.equal(inviteScreen({ status: 200 }), "retry", "a 200 without a body");
@@ -72,6 +75,10 @@ describe("what an accept answer means", () => {
     for (const [answer, meaning] of cases) assert.equal(acceptOutcome(answer), meaning, JSON.stringify(answer));
   });
 
+  test("a dead link is expired whatever else the answer says", () => {
+    assert.equal(acceptOutcome({ status: 400, code: "password_too_short" }), "expired");
+  });
+
   test("anything else is a general problem, never a password or membership message", () => {
     for (const answer of [
       { status: 0 },
@@ -81,6 +88,8 @@ describe("what an accept answer means", () => {
       { status: 422, code: "invalid_request" },
       { status: 503, code: "password_too_short" },
       { status: 500 },
+      { status: 200 },
+      { status: 204 },
     ]) {
       assert.equal(acceptOutcome(answer), "other", JSON.stringify(answer));
     }
