@@ -56,9 +56,11 @@ export function signUpRequest(
   name: string,
   country: Country | "",
 ): { errors: SignUpRequestErrors } | { body: { business_name: string; country: Country } } {
-  const errors: SignUpRequestErrors = {};
-  if (!name.trim()) errors.name = "nameRequired";
-  if (!country) errors.country = "countryRequired";
-  if (errors.name || errors.country) return { errors };
+  if (!name.trim() || !country) {
+    const errors: SignUpRequestErrors = {};
+    if (!name.trim()) errors.name = "nameRequired";
+    if (!country) errors.country = "countryRequired";
+    return { errors };
+  }
   return { body: { business_name: name, country } };
 }
