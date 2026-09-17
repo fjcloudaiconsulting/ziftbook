@@ -919,6 +919,106 @@
         }
       }
     },
+    "/api/services/{service_id}/workers": {
+      "put": {
+        "tags": [
+          "services"
+        ],
+        "summary": "Replace Workers",
+        "description": "Set who performs a service: every member id, owners included. Members left out are\nunassigned. An archived service keeps its workers.",
+        "operationId": "services-replace_workers",
+        "parameters": [
+          {
+            "name": "service_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Service Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "maxItems": 200,
+                "title": "Member Ids"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServiceOut"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          }
+        }
+      }
+    },
     "/api/members": {
       "get": {
         "tags": [
@@ -2735,6 +2835,14 @@
           "archived": {
             "type": "boolean",
             "title": "Archived"
+          },
+          "worker_ids": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "title": "Worker Ids"
           }
         },
         "type": "object",
@@ -2745,7 +2853,8 @@
           "price",
           "duration_minutes",
           "buffer_minutes",
-          "archived"
+          "archived",
+          "worker_ids"
         ],
         "title": "ServiceOut"
       },

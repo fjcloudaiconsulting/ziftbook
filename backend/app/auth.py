@@ -75,6 +75,7 @@ Action = Literal[
     "business_created",
     "service_created",
     "service_changed",
+    "service_workers_changed",
     "member_role_changed",
     "member_removed",
     "working_hours_changed",
