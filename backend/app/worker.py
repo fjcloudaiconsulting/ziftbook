@@ -9,7 +9,7 @@ from datetime import timedelta
 
 from sqlalchemy import create_engine
 
-from app import mail
+from app import logs, mail
 from app.config import WorkerSettings
 from app.db import SessionLocal
 from app.jobs import JobKind, run_once
@@ -46,7 +46,8 @@ async def work(kinds: dict[str, JobKind], healthcheck_url: str | None, stop: asy
                 try:
                     await asyncio.to_thread(ping, healthcheck_url)
                 except OSError as error:
-                    logger.warning("healthcheck ping failed: %r", error)
+                    # The URL is a secret-ish check id.
+                    logger.warning("healthcheck ping failed", extra={"error": type(error).__name__})
         try:
             await asyncio.wait_for(stop.wait(), POLL_SECONDS)
         except TimeoutError:
@@ -67,7 +68,7 @@ async def serve(settings: WorkerSettings) -> None:
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    logs.configure()
     settings = WorkerSettings()
     engine = create_engine(
         settings.database_url,

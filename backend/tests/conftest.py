@@ -1,13 +1,16 @@
 import asyncio
 import hashlib
+import io
 import json
+import logging
 import os
 import secrets
+import threading
 import time
 import urllib.parse
 import urllib.request
 import uuid
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -21,10 +24,23 @@ from httpx2 import Response
 from sqlalchemy import Connection, Engine, create_engine, text
 from sqlalchemy.pool import NullPool
 
-from app import auth, passwords
+from app import auth, logs, passwords
 from app.db import SessionLocal, tenant_context
 from app.jobs import run_once
 from app.worker import KINDS
+
+# pytest's own threading.excepthook (installed in its pytest_configure, which every
+# conftest.py's pytest_configure hooks run alongside): captured with trylast so it runs after
+# pytest's, and before collection imports app.main and calls logs.configure(), which reassigns
+# threading.excepthook process-wide for the rest of the session.
+_pytest_thread_hook: Callable[[threading.ExceptHookArgs], object] = threading.excepthook
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_configure(config: pytest.Config) -> None:
+    global _pytest_thread_hook
+    _pytest_thread_hook = threading.excepthook
+
 
 API_DIR = Path(__file__).parent.parent
 
@@ -42,6 +58,46 @@ os.environ.setdefault("ZIF_SMTP_HOST", "localhost")
 os.environ.setdefault("ZIF_SMTP_PORT", "1025")
 os.environ.setdefault("ZIF_SMTP_STARTTLS", "false")
 MAILPIT = f"http://{os.environ['ZIF_SMTP_HOST']}:8025"
+
+
+@pytest.fixture(autouse=True)
+def _keep_pytest_thread_hook() -> Iterator[None]:
+    """Put pytest's threading.excepthook back before and after every test.
+
+    logs.configure() (an app.main import at collection, the worker, migrations) reassigns
+    threading.excepthook process-wide, so without this an uncaught exception in a thread would
+    silently stop failing tests. This only covers the test boundaries: log_lines below calls
+    configure() itself during the test, and restores the hook right after so the test body still
+    runs under pytest's own hook.
+    """
+    threading.excepthook = _pytest_thread_hook
+    yield
+    threading.excepthook = _pytest_thread_hook
+
+
+@pytest.fixture
+def log_lines(monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[[], list[dict[str, Any]]]]:
+    """Captured JSON log records at ZIF_LOG_LEVEL (DEBUG unless the test reconfigures), parsed one
+    dict per line."""
+    monkeypatch.setenv("ZIF_LOG_LEVEL", "DEBUG")
+    logs.configure()
+    threading.excepthook = _pytest_thread_hook  # configure() just reassigned it; put it back
+    stream = io.StringIO()
+    handler = logs.stream_handler(stream, "json")
+    root = logging.getLogger()
+    root.addHandler(handler)
+    try:
+
+        def lines() -> list[dict[str, Any]]:
+            return [json.loads(line) for line in stream.getvalue().splitlines() if line]
+
+        yield lines
+    finally:
+        root.removeHandler(handler)
+        monkeypatch.delenv("ZIF_LOG_LEVEL", raising=False)
+        monkeypatch.delenv("ZIF_LOG_FORMAT", raising=False)
+        logs.configure()
+        threading.excepthook = _pytest_thread_hook  # ditto, for finalizers still to come
 
 
 @pytest.fixture(scope="session")

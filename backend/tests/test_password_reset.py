@@ -79,8 +79,8 @@ def test_asking_for_a_reset_answers_the_same_whether_or_not_the_account_exists(
 
     assert [a.status_code for a in answers] == [202, 202]
     assert answers[0].content == answers[1].content
-    assert {k: v for k, v in answers[0].headers.items() if k != "date"} == {
-        k: v for k, v in answers[1].headers.items() if k != "date"
+    assert {k: v for k, v in answers[0].headers.items() if k not in ("date", "x-request-id")} == {
+        k: v for k, v in answers[1].headers.items() if k not in ("date", "x-request-id")
     }
     # Both do the same work; the email job drops the unknown one.
     assert (jobs_for(migrate_engine, known), jobs_for(migrate_engine, unknown)) == (1, 1)

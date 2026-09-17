@@ -442,7 +442,8 @@ def test_lookup_of_an_unusable_link(
         response = new_client(app).post("/api/invites/lookup", json={"token": token})
         assert (response.status_code, response.json()) == (400, {"code": "invalid_token"})
         for header in baseline.headers:
-            if header.lower() != "date":
+            # date and x-request-id (ZIF-85) are per-request, never a side channel on the answer.
+            if header.lower() not in ("date", "x-request-id"):
                 assert response.headers.get(header) == baseline.headers.get(header)
 
     long_response = new_client(app).post("/api/invites/lookup", json={"token": "y" * 101})

@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -26,6 +28,13 @@ class WorkerSettings(DatabaseSettings):
 
     # Pinged after every successful loop, so a dead or stuck worker raises an alert. Unset in dev.
     healthcheck_url: str | None = None
+
+
+class LogSettings(Settings):
+    """Logging, read by app.logs.configure(). Development runs DEBUG/text (docker-compose.yaml)."""
+
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
+    log_format: Literal["json", "text"] = "json"
 
 
 class MailSettings(Settings):

@@ -7,8 +7,9 @@
 #   ZIF_MIGRATE_PASSWORD    ziftbook_migrate password (URL-safe characters: it is part of a database URL)
 #   ZIF_APP_PASSWORD        ziftbook_app password
 # Optional: ZIF_HEALTHCHECK_URL, pinged by the worker after every successful loop; ZIF_SMTP_USERNAME and
-#   ZIF_SMTP_PASSWORD for sending email (Mailgun EU SMTP credentials). ZIF_CLIENT_IP_HEADER is not
-#   passed through here on purpose. Port 3000 is published directly, so any header can be forged.
+#   ZIF_SMTP_PASSWORD for sending email (Mailgun EU SMTP credentials); ZIF_LOG_LEVEL (default INFO) and
+#   ZIF_LOG_FORMAT (default json). ZIF_CLIENT_IP_HEADER is not passed through here on purpose. Port
+#   3000 is published directly, so any header can be forged.
 name: ziftbook
 
 # Fixed addresses, so the backend can trust exactly the frontend (ZIF_TRUSTED_PROXIES). If this
@@ -66,6 +67,8 @@ services:
         condition: service_completed_successfully
     environment:
       ZIF_MIGRATE_DATABASE_URL: postgresql+psycopg://ziftbook_migrate:${ZIF_MIGRATE_PASSWORD:?set ZIF_MIGRATE_PASSWORD}@postgres:5432/ziftbook
+      ZIF_LOG_LEVEL: ${ZIF_LOG_LEVEL:-INFO}
+      ZIF_LOG_FORMAT: ${ZIF_LOG_FORMAT:-json}
 
   backend:
     image: ghcr.io/fjcloudaiconsulting/ziftbook/backend:${ZIF_IMAGE_TAG:?set ZIF_IMAGE_TAG}
@@ -75,6 +78,8 @@ services:
         condition: service_completed_successfully
     environment:
       ZIF_DATABASE_URL: postgresql+psycopg://ziftbook_app:${ZIF_APP_PASSWORD:?set ZIF_APP_PASSWORD}@postgres:5432/ziftbook
+      ZIF_LOG_LEVEL: ${ZIF_LOG_LEVEL:-INFO}
+      ZIF_LOG_FORMAT: ${ZIF_LOG_FORMAT:-json}
       ZIF_TRUSTED_PROXIES: 172.28.0.10
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/healthz')"]
@@ -94,6 +99,8 @@ services:
         condition: service_completed_successfully
     environment:
       ZIF_DATABASE_URL: postgresql+psycopg://ziftbook_app:${ZIF_APP_PASSWORD:?set ZIF_APP_PASSWORD}@postgres:5432/ziftbook
+      ZIF_LOG_LEVEL: ${ZIF_LOG_LEVEL:-INFO}
+      ZIF_LOG_FORMAT: ${ZIF_LOG_FORMAT:-json}
       ZIF_HEALTHCHECK_URL: ${ZIF_HEALTHCHECK_URL:-}
       # Mailgun EU SMTP by default (see MailSettings).
       ZIF_SMTP_USERNAME: ${ZIF_SMTP_USERNAME:-}
