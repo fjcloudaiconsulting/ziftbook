@@ -226,20 +226,23 @@ def test_signing_out_everywhere_is_recorded(
     ] == [("signed_out_everywhere", people.a, people.both)]
 
 
-def complete_sign_up(client: TestClient, token: str, country: str | None = None) -> Response:
-    body = {"token": token, "password": PASSWORD, "business_name": "Studio Audit"}
-    if country is not None:
-        body["country"] = country
+def complete_sign_up(client: TestClient, token: str, country: str = "NL") -> Response:
+    body = {
+        "token": token,
+        "password": PASSWORD,
+        "business_name": "Studio Audit",
+        "country": country,
+    }
     return client.post("/api/sign-up/complete", json=body)
 
 
-@pytest.mark.parametrize("country", [None, "BR"])
+@pytest.mark.parametrize("country", ["NL", "BR"])
 def test_a_new_business_is_recorded_with_its_first_sign_in(
     app: FastAPI,
     app_engine: Engine,
     migrate_engine: Engine,
     businesses: list[uuid.UUID],
-    country: str | None,
+    country: str,
 ) -> None:
     token = issue_link(app_engine, "sign_up", fresh_email())
     assert token is not None

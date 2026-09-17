@@ -2375,20 +2375,13 @@
             "title": "Business Name"
           },
           "country": {
-            "anyOf": [
-              {
-                "type": "string",
-                "enum": [
-                  "NL",
-                  "PT",
-                  "BR",
-                  "GB",
-                  "US"
-                ]
-              },
-              {
-                "type": "null"
-              }
+            "type": "string",
+            "enum": [
+              "NL",
+              "PT",
+              "BR",
+              "GB",
+              "US"
             ],
             "title": "Country"
           }
@@ -2397,7 +2390,8 @@
         "required": [
           "token",
           "password",
-          "business_name"
+          "business_name",
+          "country"
         ],
         "title": "CompleteSignUp"
       },
