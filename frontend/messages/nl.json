@@ -50,10 +50,21 @@
   },
   "CompleteSignUp": {
     "title": "Stel je bedrijf in",
-    "lede": "Je e-mailadres is bevestigd. Nog twee gegevens en je kunt beginnen.",
+    "lede": "Je e-mailadres is bevestigd. Nog een paar gegevens en je kunt beginnen.",
     "businessName": "Bedrijfsnaam",
     "businessHint": "Klanten zien deze naam als ze boeken. Je kunt hem later wijzigen.",
     "nameRequired": "Vul je bedrijfsnaam in.",
+    "country": "Land",
+    "countryPlaceholder": "Kies je land",
+    "countryHint": "Bepaalt je valuta en stelt alvast een tijdzone en taal in. De valuta kun je later niet meer wijzigen.",
+    "countryRequired": "Kies je land.",
+    "countries": {
+      "NL": "Nederland",
+      "PT": "Portugal",
+      "BR": "Brazilië",
+      "GB": "Verenigd Koninkrijk",
+      "US": "Verenigde Staten"
+    },
     "submit": "Bedrijf aanmaken",
     "creating": "Bezig met aanmaken…",
     "expiredTitle": "Deze link is verlopen",

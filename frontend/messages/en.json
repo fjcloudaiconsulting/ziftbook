@@ -50,10 +50,21 @@
   },
   "CompleteSignUp": {
     "title": "Set up your business",
-    "lede": "Your email is confirmed. Two last details and you're in.",
+    "lede": "Your email is confirmed. A few last details and you're in.",
     "businessName": "Business name",
     "businessHint": "Clients see this when they book. You can change it later.",
     "nameRequired": "Enter your business name.",
+    "country": "Country",
+    "countryPlaceholder": "Choose your country",
+    "countryHint": "Sets your currency, plus a starting time zone and language. The currency can't be changed later.",
+    "countryRequired": "Choose your country.",
+    "countries": {
+      "NL": "Netherlands",
+      "PT": "Portugal",
+      "BR": "Brazil",
+      "GB": "United Kingdom",
+      "US": "United States"
+    },
     "submit": "Create business",
     "creating": "Creating…",
     "expiredTitle": "This link has expired",

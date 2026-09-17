@@ -1,8 +1,12 @@
-// Logic behind the account screens: the resend countdown and taking a link's token out of the address bar.
+// Logic behind the account screens: the resend countdown, taking a link's token out of the address bar, and
+// the country list.
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { describe, test } from "node:test";
 
-import { clock, RESEND_AFTER_MS, secondsLeft, takeToken } from "../lib/account.ts";
+import { byName, clock, likelyCountry, RESEND_AFTER_MS, secondsLeft, signUpRequest, takeToken } from "../lib/account.ts";
+
+const countryNames = (locale) => JSON.parse(readFileSync(new URL(`../messages/${locale}.json`, import.meta.url))).CompleteSignUp.countries;
 
 describe("resend countdown", () => {
   const sentAt = 1_000_000;
@@ -64,5 +68,44 @@ describe("taking the token from the link", () => {
 
     assert.equal(takeToken(first.place), null);
     assert.equal(takeToken(fakeWindow("https://app.example/en/sign-up/complete").place), null);
+  });
+});
+
+describe("choosing a country", () => {
+  test("guesses only where the language points at one country", () => {
+    assert.deepEqual(["nl", "pt", "en"].map(likelyCountry), ["NL", "", ""]);
+  });
+
+  test("lists the countries by their name in the reader's language", () => {
+    for (const [locale, expected] of [
+      ["en", ["BR", "NL", "PT", "GB", "US"]],
+      ["nl", ["BR", "NL", "PT", "GB", "US"]],
+      ["pt", ["BR", "US", "NL", "PT", "GB"]],
+    ]) {
+      const names = countryNames(locale);
+      assert.deepEqual(byName(locale, (c) => names[c]), expected);
+    }
+  });
+});
+
+describe("building the sign-up request", () => {
+  test("rejects a blank name", () => {
+    assert.deepEqual(signUpRequest("", "NL"), { errors: { name: "nameRequired" } });
+  });
+
+  test("rejects a whitespace-only name", () => {
+    assert.deepEqual(signUpRequest("   ", "NL"), { errors: { name: "nameRequired" } });
+  });
+
+  test("rejects no country", () => {
+    assert.deepEqual(signUpRequest("Acme", ""), { errors: { country: "countryRequired" } });
+  });
+
+  test("reports both errors at once", () => {
+    assert.deepEqual(signUpRequest("  ", ""), { errors: { name: "nameRequired", country: "countryRequired" } });
+  });
+
+  test("builds the request body from valid input", () => {
+    assert.deepEqual(signUpRequest("Acme", "NL"), { body: { business_name: "Acme", country: "NL" } });
   });
 });

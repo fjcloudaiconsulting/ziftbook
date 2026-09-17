@@ -50,10 +50,21 @@
   },
   "CompleteSignUp": {
     "title": "Configure seu negócio",
-    "lede": "Seu e-mail está confirmado. Faltam só dois dados.",
+    "lede": "Seu e-mail está confirmado. Faltam só alguns dados.",
     "businessName": "Nome do negócio",
     "businessHint": "Os clientes veem esse nome ao agendar. Você pode mudar depois.",
     "nameRequired": "Digite o nome do seu negócio.",
+    "country": "País",
+    "countryPlaceholder": "Selecione seu país",
+    "countryHint": "Define sua moeda, além do fuso horário e do idioma iniciais. A moeda não pode ser alterada depois.",
+    "countryRequired": "Selecione seu país.",
+    "countries": {
+      "NL": "Países Baixos",
+      "PT": "Portugal",
+      "BR": "Brasil",
+      "GB": "Reino Unido",
+      "US": "Estados Unidos"
+    },
     "submit": "Criar negócio",
     "creating": "Criando…",
     "expiredTitle": "Este link expirou",
