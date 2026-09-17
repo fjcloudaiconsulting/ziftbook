@@ -18,7 +18,12 @@ from tests.conftest import (
     signed_in,
 )
 
-DEFAULTS = {"timezone": "Europe/Amsterdam", "auto_confirm": False, "language": "en"}
+DEFAULTS = {
+    "timezone": "Europe/Amsterdam",
+    "auto_confirm": False,
+    "language": "en",
+    "workers_edit_own_hours": False,
+}
 
 
 @pytest.fixture
@@ -59,6 +64,9 @@ def test_only_an_owner_changes_settings(people: People, app: FastAPI, body: Any)
         {"language": "PT"},
         {"language": None},
         {"nope": 1},
+        {"workers_edit_own_hours": "true"},
+        {"workers_edit_own_hours": 1},
+        {"workers_edit_own_hours": None},
         [],
     ],
     ids=[
@@ -75,6 +83,9 @@ def test_only_an_owner_changes_settings(people: People, app: FastAPI, body: Any)
         "uppercase language",
         "null language",
         "unknown key",
+        "string true hours",
+        "number one hours",
+        "null hours",
         "list body",
     ],
 )
@@ -113,7 +124,7 @@ def test_a_saved_setting_can_be_changed_and_set_back_to_its_default(
 
     assert response.json() == DEFAULTS
     # Saving the default keeps it saved: a later change of default doesn't reach this business.
-    # language was never sent here, so it was never saved.
+    # Only what this test wrote: language and workers_edit_own_hours were never saved.
     assert saved_settings(people.a) == {"timezone": "Europe/Amsterdam", "auto_confirm": False}
 
 
@@ -171,6 +182,7 @@ def test_the_contract_requires_every_setting_back_and_none_sent() -> None:
         "auto_confirm",
         "language",
         "timezone",
+        "workers_edit_own_hours",
     ]
     assert "required" not in schemas["BusinessSettings-Input"]
 

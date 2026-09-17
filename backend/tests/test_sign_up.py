@@ -219,7 +219,17 @@ def test_a_weak_password_is_refused_without_hashing_and_the_link_still_works(
 
 
 @pytest.mark.parametrize(
-    "business", ["", "   ", "x" * 101, "\u200b", "Studio\x00Ana", "Studio\x07"]
+    "business",
+    [
+        "",
+        "   ",
+        "x" * 101,
+        "\u200b",
+        "Studio\x00Ana",
+        "Studio\x07",
+        "Studio\u2028Ana",  # U+2028 line separator: a line break in an emailed invite
+        "Studio\u2029Ana",  # U+2029 paragraph separator: same
+    ],
 )
 def test_a_business_needs_a_printable_name(app: FastAPI, app_engine: Engine, business: str) -> None:
     token = issue_link(app_engine, "sign_up", fresh_email())
@@ -229,6 +239,18 @@ def test_a_business_needs_a_printable_name(app: FastAPI, app_engine: Engine, bus
 
     assert (response.status_code, response.json()) == (422, {"code": "invalid_request"})
     assert live(app_engine, token, "sign_up")
+
+
+@pytest.mark.parametrize("business", ["Est\u00fadio S\u00e3o Jo\u00e3o", "Studio\u00a0Ana"])
+def test_a_business_with_an_ordinary_international_name_is_kept_as_sent(
+    app: FastAPI, app_engine: Engine, businesses: list[dict[str, Any]], business: str
+) -> None:
+    token = issue_link(app_engine, "sign_up", fresh_email())
+    assert token is not None
+
+    session = created(complete(new_client(app), token, business=business), businesses)
+
+    assert session["business_name"] == business
 
 
 def test_a_business_name_of_a_hundred_characters_is_kept_without_its_spaces(

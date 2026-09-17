@@ -318,6 +318,7 @@ def people(app_engine: Engine, migrate_engine: Engine, bound: None) -> Iterator[
     for tenant_id in (a, b):
         with tenant_context(tenant_id) as session:
             session.execute(text("DELETE FROM settings"))  # they reference the business
+            session.execute(text("DELETE FROM invites"))
             session.execute(text("DELETE FROM memberships"))
     # The app role can't delete users; the test cleans up as the migrate role.
     with migrate_engine.begin() as conn:
