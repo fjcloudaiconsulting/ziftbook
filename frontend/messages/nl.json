@@ -106,6 +106,25 @@
     "newLink": "Nieuwe link sturen",
     "back": "Terug naar inloggen"
   },
+  "Invite": {
+    "title": "Accepteer je uitnodiging",
+    "checking": "Je uitnodiging wordt gecontroleerd…",
+    "tryAgain": "Opnieuw proberen",
+    "tooMany": "Te veel pogingen. Wacht 15 minuten en probeer het opnieuw.",
+    "joinTitle": "Sluit je aan bij {business}",
+    "newLede": "Kies een wachtwoord om je afspraken en werktijden te zien.",
+    "existingLede": "Log in met je ziftbook-wachtwoord om ook hier je afspraken te zien.",
+    "newSubmit": "Lid worden van het team",
+    "signInSubmit": "Inloggen en accepteren",
+    "joining": "Bezig met aansluiten…",
+    "accountExists": "Dit e-mailadres heeft nu een ziftbook-account. Vul het wachtwoord daarvan in om te accepteren.",
+    "expiredTitle": "Deze uitnodiging is verlopen",
+    "expiredLede": "Uitnodigingslinks werken één keer, 7 dagen lang. Vraag de eigenaar van het bedrijf om een nieuwe uitnodiging.",
+    "joinedBefore": "Al aangesloten?",
+    "signIn": "Inloggen",
+    "memberTitle": "Je hoort al bij {business}",
+    "memberLede": "Dit account werkt er al, dus er is niets gewijzigd. Log in om je afspraken te zien."
+  },
   "Home": {
     "signedInAs": "Ingelogd als <chip>{email}</chip>",
     "owner": "Eigenaar",

@@ -106,6 +106,25 @@
     "newLink": "Enviar um novo link",
     "back": "Voltar para entrar"
   },
+  "Invite": {
+    "title": "Aceite seu convite",
+    "checking": "Verificando seu convite…",
+    "tryAgain": "Tentar de novo",
+    "tooMany": "Tentativas demais por agora. Espere 15 minutos e tente de novo.",
+    "joinTitle": "Junte-se à equipe de {business}",
+    "newLede": "Escolha uma senha para ver seus agendamentos e horários de trabalho.",
+    "existingLede": "Entre com sua senha do ziftbook para ver seus agendamentos aqui também.",
+    "newSubmit": "Entrar na equipe",
+    "signInSubmit": "Entrar e aceitar",
+    "joining": "Entrando na equipe…",
+    "accountExists": "Este e-mail agora tem uma conta no ziftbook. Digite a senha dela para aceitar.",
+    "expiredTitle": "Este convite expirou",
+    "expiredLede": "Os links de convite valem uma vez, por 7 dias. Peça um novo convite ao responsável pelo negócio.",
+    "joinedBefore": "Já entrou na equipe?",
+    "signIn": "Entrar",
+    "memberTitle": "Você já faz parte da equipe de {business}",
+    "memberLede": "Esta conta já trabalha lá, então nada mudou. Entre para ver seus agendamentos."
+  },
   "Home": {
     "signedInAs": "Conectado como <chip>{email}</chip>",
     "owner": "Responsável",
