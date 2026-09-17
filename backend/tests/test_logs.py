@@ -134,8 +134,7 @@ def test_extra_and_context_keys_never_overwrite_the_standard_fields(log_lines: L
 
 
 # B5: ts is always UTC, whatever the host's local timezone. A subprocess (its own TZ, never
-# touching this process's) so check-env-names.mjs sees a plain dict literal, not a monkeypatch
-# call, and needs no ZIF_ exemption; it also means no time.tzset() leak into other tests.
+# touching this process's) means no time.tzset() leak into other tests.
 def test_ts_is_utc_whatever_the_host_zone() -> None:
     output = _run_uncaught_script(
         "import json\n"
@@ -680,6 +679,54 @@ def test_an_uncaught_non_settings_validation_error_is_still_one_safe_json_line()
     assert "Error in sys.excepthook" not in output
 
 
+# R2-B1 (a'): a *real* Settings class's error can still have an empty loc (model_validate on
+# something other than a dict is a model-level error, not a per-field one) — the guard above must
+# hold there too, not just for a non-Settings ValidationError.
+def test_an_uncaught_settings_validation_error_with_no_field_location_is_still_safe() -> None:
+    sentinel = uuid.uuid4().hex
+    output = _run_uncaught_script(
+        "import os\n"
+        "from app.config import MailSettings\n"
+        "import app.logs as logs\n"
+        "logs.configure()\n"
+        "MailSettings.model_validate(os.environ['ZIF_TEST_SENTINEL'])\n",
+        {"ZIF_TEST_SENTINEL": sentinel},
+    )
+
+    lines = [rec for rec in output.splitlines() if rec.strip()]
+    assert len(lines) == 1, output
+    record = json.loads(lines[0])
+    assert record["level"] == "CRITICAL"
+    assert "invalid_env" not in record
+    assert sentinel not in output
+    assert "Error in sys.excepthook" not in output
+
+
+# R3-B1: a lookalike class whose title also ends in "Settings" (BusinessSettings, a plain BaseModel
+# holding a business's UI settings, not one of our pydantic-settings deployment classes) must never
+# leak a rejected field's name: _invalid_env matches the title against our own Settings classes
+# exactly, not any class whose name happens to end in "Settings".
+def test_an_uncaught_lookalike_settings_error_names_nothing() -> None:
+    sentinel = uuid.uuid4().hex
+    output = _run_uncaught_script(
+        "import os\n"
+        "from app.business_settings import BusinessSettings\n"
+        "import app.logs as logs\n"
+        "logs.configure()\n"
+        "sentinel = os.environ['ZIF_TEST_SENTINEL']\n"
+        "BusinessSettings.model_validate({sentinel: 1, 'timezone': sentinel})\n",
+        {"ZIF_TEST_SENTINEL": sentinel},
+    )
+
+    lines = [rec for rec in output.splitlines() if rec.strip()]
+    assert len(lines) == 1, output
+    record = json.loads(lines[0])
+    assert record["level"] == "CRITICAL"
+    assert "invalid_env" not in record
+    assert sentinel not in output
+    assert sentinel.upper() not in output
+
+
 # R2-B1 (b): a manual __cause__ cycle through a Settings ValidationError must terminate, not hang
 # the excepthook forever (the old _invalid_env walk had no seen-id guard).
 def test_a_cyclic_cause_chain_through_a_settings_error_terminates() -> None:
@@ -736,6 +783,34 @@ def test_an_uncaught_error_in_a_thread_is_one_json_line() -> None:
     record = json.loads(lines[0])
     assert record["level"] == "CRITICAL"
     assert record["msg"] == "uncaught error"
+    assert record["exc"][0]["type"] == "builtins.ValueError"
+    assert sentinel not in output
+
+
+# R2-B3: a finalizer's error (__del__, uncatchable any other way) goes through the same logger, at
+# ERROR (it doesn't take the process down) not CRITICAL, class and frames only — never
+# args.err_msg or repr(args.object), either of which can carry a value.
+def test_an_unraisable_error_is_one_error_json_line_with_no_repr() -> None:
+    sentinel = uuid.uuid4().hex
+    output = _run_uncaught_script(
+        "import gc\n"
+        "import os\n"
+        "import app.logs as logs\n"
+        "logs.configure()\n"
+        "sentinel = os.environ['ZIF_TEST_SENTINEL']\n"
+        "class D:\n"
+        "    def __del__(self):\n"
+        "        raise ValueError(sentinel)\n"
+        "D()\n"
+        "gc.collect()\n",
+        {"ZIF_TEST_SENTINEL": sentinel},
+    )
+
+    lines = [rec for rec in output.splitlines() if rec.strip()]
+    assert len(lines) == 1, output
+    record = json.loads(lines[0])
+    assert record["level"] == "ERROR"
+    assert record["msg"] == "unraisable error"
     assert record["exc"][0]["type"] == "builtins.ValueError"
     assert sentinel not in output
 

@@ -19,11 +19,20 @@ from types import TracebackType
 from typing import Any, Literal
 
 from pydantic import ValidationError
+from pydantic_settings import BaseSettings
 
+from app import config
 from app.config import LogSettings
 
 CONTEXT: ContextVar[dict[str, str]] = ContextVar("log_context")  # no default: ruff B039
 HANDLER = "zif"
+# Our own deployment-config classes (Settings, WorkerSettings, ...), not lookalikes like
+# BusinessSettings (a plain BaseModel with UI data, whose title also ends in "Settings").
+_SETTINGS_NAMES = {
+    name
+    for name, obj in vars(config).items()
+    if isinstance(obj, type) and issubclass(obj, BaseSettings) and obj.__module__ == config.__name__
+}
 # Everything a LogRecord has on its own; any other attribute came from extra=.
 STANDARD = set(vars(logging.makeLogRecord({}))) | {
     "message",
@@ -151,13 +160,14 @@ def stream_handler(stream: Any, kind: Literal["json", "text"]) -> logging.Handle
 
 
 def _invalid_env(error: BaseException) -> list[str]:
-    """ZIF_<FIELD> names for a *Settings ValidationError in the chain (as configure() reports for
-    LogSettings), names only, never the rejected input. A ValidationError from something other
-    than one of our Settings classes (an ad hoc TypeAdapter, say) names nothing, and so does a
-    model-level error with no field location."""
+    """ZIF_<FIELD> names for one of our Settings classes' ValidationError in the chain (as
+    configure() reports for LogSettings), names only, never the rejected input. A ValidationError
+    from something other than one of our Settings classes (an ad hoc TypeAdapter, or a lookalike
+    like BusinessSettings, a plain BaseModel) names nothing, and so does a model-level error with
+    no field location."""
     names: set[str] = set()
     for cause in _causes(error):
-        if isinstance(cause, ValidationError) and cause.title.endswith("Settings"):
+        if isinstance(cause, ValidationError) and cause.title in _SETTINGS_NAMES:
             names |= {f"ZIF_{str(e['loc'][0]).upper()}" for e in cause.errors() if e["loc"]}
     return sorted(names)
 
@@ -181,6 +191,15 @@ def _thread_excepthook(args: threading.ExceptHookArgs) -> None:
         uncaught_logger.critical("uncaught error", exc_info=info)
 
 
+def _unraisable_hook(args: sys.UnraisableHookArgs) -> None:
+    # Not CRITICAL: a finalizer/__del__ error doesn't take the process down. Never args.err_msg
+    # or repr(args.object): either can carry a value (e.g. a row's __repr__).
+    if args.exc_value is None:
+        return
+    info = (args.exc_type, args.exc_value, args.exc_traceback)
+    uncaught_logger.error("unraisable error", exc_info=info)
+
+
 def configure() -> None:
     """Idempotent. Emits nothing: `python -m app.main` prints the OpenAPI document to stdout."""
     try:
@@ -199,6 +218,7 @@ def configure() -> None:
     # class and frames only. Plain assignment, so a second configure() doesn't wrap twice.
     sys.excepthook = _excepthook
     threading.excepthook = _thread_excepthook
+    sys.unraisablehook = _unraisable_hook
 
     root = logging.getLogger()
     for old in [h for h in root.handlers if h.name == HANDLER]:  # ours only: pytest's stay
