@@ -32,6 +32,7 @@ from tests.conftest import (
     signed_in,
     token_in,
 )
+from tests.test_working_hours import seed
 
 UA = {"User-Agent": "zif-never-log-agent/7"}
 
@@ -161,6 +162,18 @@ def test_no_personal_data_ever_reaches_a_log(
     # 5: PATCH /api/members/{id} role change, as the owner.
     target = member_id(people.a, people.only_a)
     assert owner.patch(f"/api/members/{target}", json={"role": "owner"}).status_code == 200
+
+    # 5b: PUT /api/members/{id}/display-name with a distinctive name, and working hours so the
+    # public availability call below (6c) actually renders it.
+    member_name = "Vivi Qzx-3"
+    secret(member_name)
+    assert (
+        owner.put(
+            f"/api/members/{target}/display-name", json={"display_name": member_name}
+        ).status_code
+        == 200
+    )
+    seed(people.a, people.only_a, [(d, "09:00", "17:00") for d in range(1, 8)])
 
     # 6: POST /api/services with a distinctive name.
     service_name = "Service Qwyx-4"

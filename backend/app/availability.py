@@ -164,7 +164,8 @@ Day = Annotated[date, Field(strict=False), BeforeValidator(ymd)]
 
 
 class WorkerOut(BaseModel):
-    id: UUID  # memberships.id; no email, no user id (display name: ruling 1)
+    id: UUID  # memberships.id; no email, no user id
+    display_name: str | None  # null when unset: the client renders the neutral label (ZIF-56)
 
 
 class AvailabilityOut(BaseModel):
@@ -211,16 +212,19 @@ def read_availability(
             raise ApiError(404, "not_found")
         settings = business_settings.read(db)
         hours: dict[UUID, list[schedule.Row]] = defaultdict(list)
-        for m, weekday, starts_at, ends_at in db.execute(
+        names: dict[UUID, str | None] = {}
+        for m, display_name, weekday, starts_at, ends_at in db.execute(
             text("""
-            SELECT w.member_id, w.weekday, w.starts_at, w.ends_at
+            SELECT w.member_id, m.display_name, w.weekday, w.starts_at, w.ends_at
             FROM working_hours w JOIN service_workers s
               ON s.tenant_id = w.tenant_id AND s.member_id = w.member_id
+            JOIN memberships m ON m.tenant_id = w.tenant_id AND m.id = w.member_id
             WHERE s.service_id = :service_id
             """),
             {"service_id": service_id},
         ).tuples():
             hours[m].append((weekday, starts_at, ends_at))
+            names[m] = display_name
         workers = sorted(hours)
         # An unassigned or unknown member_id: no slots, never a 404 (no membership probing).
         chosen = [m for m in workers if member_id in (None, m)]
@@ -276,6 +280,6 @@ def read_availability(
     return AvailabilityOut(
         timezone=zone,
         duration_minutes=service.duration_minutes,
-        workers=[WorkerOut(id=m) for m in workers],
+        workers=[WorkerOut(id=m, display_name=names[m]) for m in workers],
         slots=sorted(found),
     )

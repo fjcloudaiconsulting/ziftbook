@@ -1,5 +1,7 @@
-"""GET/PATCH/DELETE /api/members: owners list, promote, demote and remove members."""
+"""/api/members: owners list, promote, demote and remove members; anyone sets their own
+display name."""
 
+import json
 import threading
 import uuid
 from typing import Any
@@ -54,18 +56,21 @@ def test_the_owner_lists_members_of_their_business(people: People, app: FastAPI)
                 "user_id": str(people.only_a),
                 "email": email_of(people.only_a),
                 "role": "worker",
+                "display_name": None,
             },
             {
                 "member_id": str(member_id(people.a, people.both)),
                 "user_id": str(people.both),
                 "email": email_of(people.both),
                 "role": "owner",
+                "display_name": None,
             },
             {
                 "member_id": str(member_id(people.a, people.only_b)),
                 "user_id": str(people.only_b),
                 "email": email_of(people.only_b),
                 "role": "worker",
+                "display_name": None,
             },
         ],
         key=lambda m: str(m["member_id"]),
@@ -114,20 +119,25 @@ def test_without_a_cookie_every_endpoint_is_unauthenticated(people: People, app:
         ("GET", "/api/members", None),
         ("PATCH", f"/api/members/{both_member}", {"role": "worker"}),
         ("DELETE", f"/api/members/{both_member}", {}),
+        ("PUT", f"/api/members/{both_member}/display-name", {"display_name": "Ada"}),
     ]:
         response = client.request(method, path, json=body)
         assert (response.status_code, response.json()) == (401, {"code": "unauthenticated"})
 
 
-@pytest.mark.parametrize("method", ["PATCH", "DELETE"])
-def test_a_non_json_write_is_refused_before_auth(people: People, app: FastAPI, method: str) -> None:
+@pytest.mark.parametrize(
+    ("method", "suffix"), [("PATCH", ""), ("DELETE", ""), ("PUT", "/display-name")]
+)
+def test_a_non_json_write_is_refused_before_auth(
+    people: People, app: FastAPI, method: str, suffix: str
+) -> None:
     # No cookie at all: this proves 415 fires before auth, not merely before an owner check.
     client = new_client(app)
     only_a_member = member_id(people.a, people.only_a)
 
     response = client.request(
         method,
-        f"/api/members/{only_a_member}",
+        f"/api/members/{only_a_member}{suffix}",
         content="x",
         headers={"content-type": "text/plain"},
     )
@@ -327,6 +337,7 @@ def test_setting_the_same_role_is_a_no_op(
         "user_id": str(people.only_a),
         "email": email_of(people.only_a),
         "role": "worker",
+        "display_name": None,
     }
     assert worker_client.get("/api/session").status_code == 200
     assert events(migrate_engine, tenant_id=people.a, action="member_role_changed") == []
@@ -531,3 +542,244 @@ def test_the_409_mapping_only_matches_last_owner(
         with migrate_engine.begin() as conn:
             conn.execute(text("DROP TRIGGER zz_refuse ON memberships"))
             conn.execute(text("DROP FUNCTION zz_refuse()"))
+
+
+# PUT /api/members/{member_id}/display-name (ZIF-97): the name clients see when booking.
+
+
+def stored_name(tenant_id: uuid.UUID, member: uuid.UUID) -> str | None:
+    with tenant_context(tenant_id) as session:
+        name: str | None = session.scalar(
+            text("SELECT display_name FROM memberships WHERE id = :id"), {"id": member}
+        )
+        return name
+
+
+def test_an_owner_sets_and_clears_another_member_s_display_name(
+    people: People, app: FastAPI
+) -> None:
+    owner = signed_in(app, people.a, people.both)
+    only_a_member = member_id(people.a, people.only_a)
+
+    response = owner.put(
+        f"/api/members/{only_a_member}/display-name", json={"display_name": "  Ada Lovelace  "}
+    )
+
+    assert (response.status_code, response.json()) == (200, {"display_name": "Ada Lovelace"})
+    assert stored_name(people.a, only_a_member) == "Ada Lovelace"
+    listed = {m["member_id"]: m["display_name"] for m in owner.get("/api/members").json()}
+    assert listed[str(only_a_member)] == "Ada Lovelace"
+
+    cleared = owner.put(f"/api/members/{only_a_member}/display-name", json={"display_name": None})
+
+    assert (cleared.status_code, cleared.json()) == (200, {"display_name": None})
+    assert stored_name(people.a, only_a_member) is None
+    listed = {m["member_id"]: m["display_name"] for m in owner.get("/api/members").json()}
+    assert listed[str(only_a_member)] is None
+
+
+def test_an_owner_sets_their_own_display_name(people: People, app: FastAPI) -> None:
+    owner = signed_in(app, people.a, people.both)
+    both_member = member_id(people.a, people.both)
+
+    response = owner.put(f"/api/members/{both_member}/display-name", json={"display_name": "Ada"})
+
+    assert (response.status_code, response.json()) == (200, {"display_name": "Ada"})
+    assert stored_name(people.a, both_member) == "Ada"
+
+
+def test_a_worker_sets_and_reads_back_their_own_display_name(people: People, app: FastAPI) -> None:
+    worker = signed_in(app, people.a, people.only_a)
+    only_a_member = member_id(people.a, people.only_a)
+
+    response = worker.put(
+        f"/api/members/{only_a_member}/display-name", json={"display_name": "Ada"}
+    )
+
+    assert (response.status_code, response.json()) == (200, {"display_name": "Ada"})
+    assert worker.get("/api/session").json()["display_name"] == "Ada"
+
+
+def test_the_display_name_answer_never_carries_the_email(people: People, app: FastAPI) -> None:
+    worker = signed_in(app, people.a, people.only_a)
+    only_a_member = member_id(people.a, people.only_a)
+
+    response = worker.put(
+        f"/api/members/{only_a_member}/display-name", json={"display_name": "Ada"}
+    )
+
+    assert set(response.json()) == {"display_name"}
+    assert response.headers["cache-control"] == "no-store"
+    assert email_of(people.only_a) not in response.text
+    assert str(people.only_a) not in response.text
+
+
+def test_a_third_member_may_not_touch_another_s_display_name(
+    people: People, app: FastAPI, migrate_engine: Engine
+) -> None:
+    worker = signed_in(app, people.a, people.only_a)
+    both_member = member_id(people.a, people.both)
+
+    response = worker.put(f"/api/members/{both_member}/display-name", json={"display_name": "Ada"})
+
+    assert (response.status_code, response.json()) == (403, {"code": "owner_only"})
+    assert stored_name(people.a, both_member) is None
+    assert events(migrate_engine, tenant_id=people.a, action="member_display_name_changed") == []
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"display_name": "x" * 61},
+        {"display_name": ""},
+        {"display_name": "   "},
+        {"display_name": " "},  # NBSP: strips to empty
+        {"display_name": "Ada‍Lovelace"},  # ZWJ
+        {"display_name": "Ada Lovelace"},  # U+2028 line separator
+        {"display_name": "\x00"},
+        {"display_name": 5},
+        {"display_name": True},
+        {},
+        {"display_name": "Ada", "role": "owner"},
+    ],
+)
+def test_a_display_name_must_be_one_to_sixty_printable_characters(
+    people: People, app: FastAPI, body: Any
+) -> None:
+    owner = signed_in(app, people.a, people.both)
+    only_a_member = member_id(people.a, people.only_a)
+
+    response = owner.put(f"/api/members/{only_a_member}/display-name", json=body)
+
+    assert (response.status_code, response.json()) == (422, {"code": "invalid_request"})
+    assert stored_name(people.a, only_a_member) is None
+
+
+def test_sixty_characters_is_accepted_and_the_edges_are_trimmed(
+    people: People, app: FastAPI
+) -> None:
+    # The other side of the validator, kept out of the parametrized test above so that a failure
+    # there names the case that broke rather than these two writes at its tail.
+    owner = signed_in(app, people.a, people.both)
+    only_a_member = member_id(people.a, people.only_a)
+
+    at_max = owner.put(
+        f"/api/members/{only_a_member}/display-name", json={"display_name": "x" * 60}
+    )
+    assert (at_max.status_code, at_max.json()) == (200, {"display_name": "x" * 60})
+
+    trimmed = owner.put(
+        f"/api/members/{only_a_member}/display-name", json={"display_name": "  Ada  "}
+    )
+    assert (trimmed.status_code, trimmed.json()) == (200, {"display_name": "Ada"})
+    assert stored_name(people.a, only_a_member) == "Ada"
+
+
+def test_the_display_name_event_names_no_name(
+    people: People, app: FastAPI, migrate_engine: Engine
+) -> None:
+    owner = signed_in(app, people.a, people.both)
+    only_a_member = member_id(people.a, people.only_a)
+
+    assert (
+        owner.put(
+            f"/api/members/{only_a_member}/display-name", json={"display_name": "Ada Lovelace"}
+        ).status_code
+        == 200
+    )
+    assert (
+        owner.put(
+            f"/api/members/{only_a_member}/display-name", json={"display_name": None}
+        ).status_code
+        == 200
+    )
+
+    recorded = events(migrate_engine, tenant_id=people.a, action="member_display_name_changed")
+    assert len(recorded) == 2
+    assert recorded[0]["target"] == f"user:{people.only_a}"
+    assert recorded[1]["target"] == f"user:{people.only_a}"
+    assert recorded[0]["details"] == {"display_name": "set"}
+    assert recorded[1]["details"] == {"display_name": "cleared"}
+    assert "Ada Lovelace" not in json.dumps(recorded, default=str)
+
+
+def test_setting_the_same_display_name_records_nothing(
+    people: People, app: FastAPI, migrate_engine: Engine
+) -> None:
+    owner = signed_in(app, people.a, people.both)
+    only_a_member = member_id(people.a, people.only_a)
+
+    assert (
+        owner.put(
+            f"/api/members/{only_a_member}/display-name", json={"display_name": "Ada"}
+        ).status_code
+        == 200
+    )
+    again = owner.put(f"/api/members/{only_a_member}/display-name", json={"display_name": "Ada"})
+    assert (again.status_code, again.json()) == (200, {"display_name": "Ada"})
+    assert (
+        len(events(migrate_engine, tenant_id=people.a, action="member_display_name_changed")) == 1
+    )
+
+    assert (
+        owner.put(
+            f"/api/members/{only_a_member}/display-name", json={"display_name": None}
+        ).status_code
+        == 200
+    )
+    again_null = owner.put(
+        f"/api/members/{only_a_member}/display-name", json={"display_name": None}
+    )
+    assert (again_null.status_code, again_null.json()) == (200, {"display_name": None})
+    assert (
+        len(events(migrate_engine, tenant_id=people.a, action="member_display_name_changed")) == 2
+    )
+
+
+def test_a_member_of_another_business_is_not_found(people: People, app: FastAPI) -> None:
+    owner = signed_in(app, people.a, people.both)
+    other_business_member = member_id(people.b, people.only_b)
+
+    response = owner.put(
+        f"/api/members/{other_business_member}/display-name", json={"display_name": "Ada"}
+    )
+
+    assert (response.status_code, response.json()) == (404, {"code": "not_found"})
+    assert stored_name(people.b, other_business_member) is None
+
+    unknown = owner.put(f"/api/members/{uuid.uuid7()}/display-name", json={"display_name": "Ada"})
+    assert (unknown.status_code, unknown.json()) == (404, {"code": "not_found"})
+
+
+def test_a_worker_probing_another_business_is_not_found_not_forbidden(
+    people: People, app: FastAPI
+) -> None:
+    # The actor must be a worker: for an owner may_manage is always True, so only a worker tells
+    # 404-before-403 from 403-before-404. Membership probing is what the order prevents
+    # (CONTRIBUTING.md:84-86).
+    worker = signed_in(app, people.a, people.only_a)
+    other_business_member = member_id(people.b, people.only_b)
+
+    response = worker.put(
+        f"/api/members/{other_business_member}/display-name", json={"display_name": "Ada"}
+    )
+
+    assert (response.status_code, response.json()) == (404, {"code": "not_found"})
+    assert stored_name(people.b, other_business_member) is None
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["⠀", "a" + "́" * 40],  # Braille blank; 40 combining acute accents
+)
+def test_the_accepted_ceiling_of_the_display_name_validator(
+    people: People, app: FastAPI, name: str
+) -> None:
+    owner = signed_in(app, people.a, people.both)
+    only_a_member = member_id(people.a, people.only_a)
+
+    response = owner.put(f"/api/members/{only_a_member}/display-name", json={"display_name": name})
+
+    # Not a happy path: this pins the ceiling the `ponytail:` comment on DisplayNameText accepts.
+    # Tightening the validator to reject these is a defensible change — delete this test then.
+    assert response.status_code == 200

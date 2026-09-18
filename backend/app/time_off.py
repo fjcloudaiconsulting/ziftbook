@@ -93,10 +93,6 @@ def fields(sees_reason: bool) -> str:
     )
 
 
-def may_manage(current: SignedIn, user_id: UUID) -> bool:
-    return current.role == "owner" or user_id == current.user_id
-
-
 def checked(starts_at: datetime, ends_at: datetime) -> None:
     if ends_at <= starts_at:
         raise ApiError(422, "end_not_after_start")
@@ -120,7 +116,7 @@ def manual_block(current: SignedIn, time_off_id: UUID) -> tuple[UUID, UUID]:
     # then the cascade to time_off), so the two never deadlock. Never lock tenants: keep_an_owner
     # locks memberships and then tenants (migration 0014).
     user_id = members.member_user(current, member_id, lock=True)
-    if not may_manage(current, user_id):
+    if not members.may_manage(current, user_id):
         raise ApiError(403, "owner_only")
     return member_id, user_id
 
@@ -145,7 +141,7 @@ def list_time_off(
     user_id = members.member_user(current, member_id, lock=False)
     rows = current.db.execute(
         text(f"""
-        SELECT {fields(may_manage(current, user_id))} FROM time_off
+        SELECT {fields(members.may_manage(current, user_id))} FROM time_off
         WHERE member_id = :id AND starts_at < :to AND ends_at > :from
         ORDER BY starts_at, id
         """),
@@ -166,7 +162,7 @@ def create_time_off(
 ) -> TimeOffOut:
     # Locked: a member removed meanwhile is a 404 here, not a foreign key 500 at the insert.
     user_id = members.member_user(current, member_id, lock=True)
-    if not may_manage(current, user_id):
+    if not members.may_manage(current, user_id):
         raise ApiError(403, "owner_only")
     checked(new.starts_at, new.ends_at)
     row = current.db.execute(

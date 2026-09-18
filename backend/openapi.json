@@ -1254,6 +1254,100 @@
         }
       }
     },
+    "/api/members/{member_id}/display-name": {
+      "put": {
+        "tags": [
+          "members"
+        ],
+        "summary": "Set Display Name",
+        "description": "Set or clear the name clients see when booking this member. An owner changes\nanyone's, a member their own. Never MemberOut: that carries the email, and a worker\ncalls this route.",
+        "operationId": "members-set_display_name",
+        "parameters": [
+          {
+            "name": "member_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Member Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DisplayNameChange"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DisplayNameOut"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          }
+        }
+      }
+    },
     "/api/invites": {
       "get": {
         "tags": [
@@ -2633,6 +2727,49 @@
         ],
         "title": "Credentials"
       },
+      "DisplayNameChange": {
+        "properties": {
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 60,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "display_name"
+        ],
+        "title": "DisplayNameChange"
+      },
+      "DisplayNameOut": {
+        "properties": {
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "display_name"
+        ],
+        "title": "DisplayNameOut"
+      },
       "Error": {
         "properties": {
           "code": {
@@ -2779,6 +2916,17 @@
               "worker"
             ],
             "title": "Role"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
           }
         },
         "type": "object",
@@ -2786,7 +2934,8 @@
           "member_id",
           "user_id",
           "email",
-          "role"
+          "role",
+          "display_name"
         ],
         "title": "MemberOut"
       },
@@ -3095,6 +3244,17 @@
             "type": "string",
             "title": "Email"
           },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
           "business_name": {
             "type": "string",
             "title": "Business Name"
@@ -3111,6 +3271,7 @@
           "member_id",
           "role",
           "email",
+          "display_name",
           "business_name",
           "currency"
         ],
@@ -3268,11 +3429,23 @@
             "type": "string",
             "format": "uuid",
             "title": "Id"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
           }
         },
         "type": "object",
         "required": [
-          "id"
+          "id",
+          "display_name"
         ],
         "title": "WorkerOut"
       }

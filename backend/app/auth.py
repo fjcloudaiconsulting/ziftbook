@@ -78,6 +78,7 @@ Action = Literal[
     "service_workers_changed",
     "member_role_changed",
     "member_removed",
+    "member_display_name_changed",
     "working_hours_changed",
     "time_off_created",
     "time_off_changed",
@@ -212,6 +213,7 @@ class SessionOut(BaseModel):
     member_id: UUID
     role: str
     email: str
+    display_name: str | None
     business_name: str
     currency: str
 
@@ -220,7 +222,7 @@ def describe(db: Session, user_id: UUID) -> SessionOut:
     """The signed-in person as the web app shows them; db is a tenant_context for their business."""
     row = db.execute(
         text("""
-        SELECT m.user_id, m.tenant_id, m.id AS member_id, m.role, u.email,
+        SELECT m.user_id, m.tenant_id, m.id AS member_id, m.role, m.display_name, u.email,
                t.name AS business_name, t.currency
         FROM memberships m JOIN users u ON u.id = m.user_id JOIN tenants t ON t.id = m.tenant_id
         WHERE m.user_id = :user_id
