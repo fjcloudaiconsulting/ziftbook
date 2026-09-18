@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.14.0...v0.15.0) (2026-09-18)
+
+
+### Features
+
+* **backend:** members have a display name that clients see when booking (ZIF-97) ([#97](https://github.com/fjcloudaiconsulting/ziftbook/issues/97)) ([e2f27de](https://github.com/fjcloudaiconsulting/ziftbook/commit/e2f27defc110ec37bf616a7d7c963bc87c26778d))
+
 ## [0.14.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.13.0...v0.14.0) (2026-09-17)
 
 
