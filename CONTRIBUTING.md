@@ -87,6 +87,33 @@ every table that holds a tenant's data:
 - A column private to one member, such as `time_off.reason`, is redacted in SQL for every other caller; public or
   customer-facing endpoints never select it.
 
+### Client records
+
+A business's clients (`clients`) are the business's own copy of a person's name and contact
+details, not a view of that person's platform account (ZIF-99).
+
+- The copy is refreshed on each booking and never read live from `users`. No table owned by a
+  business may join to `users`, and `clients.user_id` carries no foreign key and no index on
+  purpose: a foreign key check bypasses row-level security, so the constraint alone would tell a
+  business whether an account id exists. A pointer left dangling by a platform erasure is
+  correct.
+- Name and contact only: never a postal address.
+- Marketing consent (`consents`) is per business. Nothing writes a platform-level consent, and one
+  business's consent never grants another anything.
+- `consents` is append-only: one row per grant or withdrawal per purpose, holding the exact text
+  shown and its policy version. The app role has `SELECT` and an `INSERT` limited to a column
+  list, so it can neither edit a row nor backdate one. As with `audit_events`, a column added
+  later needs its own `GRANT INSERT (column) ON consents TO ziftbook_app`, or every consent write
+  fails, not only writes of the new column.
+- The wording and the version stored with a consent come from the server
+  (`app.clients.CONSENT_TEXTS`); an unknown version is a 422. A caller never supplies the text it claims
+  to have shown.
+- The refresh has two consequences on the public booking page, both deliberate. The name on the booking
+  overwrites the business's record of that person's name, so anyone who guesses a client's address can
+  change it — the booking POST is rate limited per IP for that reason. And `find_or_create` returns the
+  phone and locale as *stored*, not as sent, so a public answer must never echo them back: that would
+  hand an unauthenticated stranger a third party's phone number.
+
 `tests/test_tenant_schema.py` fails for a table with `tenant_id` that is not isolated (forced row-level security),
 and for a foreign key between tenant-owned tables that does not pair `tenant_id`. `jobs` is exempt on purpose: it
 is global and claimed across tenants.

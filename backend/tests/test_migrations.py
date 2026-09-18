@@ -140,6 +140,38 @@ def test_downgrading_and_upgrading_0023_restores_the_display_name_column_and_a_c
     assert isinstance(error.value.orig, CheckViolation)
 
 
+def test_downgrading_and_upgrading_0024_restores_the_tables_and_their_grants(
+    migrated: None, migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = Config(toml_file=str(API_DIR / "pyproject.toml"))
+    url = os.environ["ZIF_MIGRATE_DATABASE_URL"]
+    options = urlencode({"options": "-c lock_timeout=5s"})
+    monkeypatch.setenv("ZIF_MIGRATE_DATABASE_URL", f"{url}{'&' if '?' in url else '?'}{options}")
+    command.downgrade(cfg, "0023")
+    try:
+        with migrate_engine.connect() as conn:
+            assert conn.scalar(text("SELECT to_regclass('clients')")) is None
+            assert conn.scalar(text("SELECT to_regclass('consents')")) is None
+    finally:
+        command.upgrade(cfg, "head")
+    with migrate_engine.connect() as conn:
+        assert not conn.scalar(
+            text("SELECT has_table_privilege('ziftbook_app', 'consents', 'UPDATE')")
+        )
+        assert not conn.scalar(
+            text("SELECT has_table_privilege('ziftbook_app', 'consents', 'DELETE')")
+        )
+        assert not conn.scalar(
+            text("SELECT has_table_privilege('ziftbook_app', 'clients', 'DELETE')")
+        )
+        assert not conn.scalar(
+            text("SELECT has_column_privilege('ziftbook_app', 'consents', 'created_at', 'INSERT')")
+        )
+        assert conn.scalar(
+            text("SELECT has_column_privilege('ziftbook_app', 'consents', 'purpose', 'INSERT')")
+        )
+
+
 ADD_JOB = """
 INSERT INTO jobs (kind, dedupe_key, payload, due_at, next_attempt_at, last_error)
 VALUES ('test.zif93', :key, '{}'::jsonb, now(), now(), :last_error)

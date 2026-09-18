@@ -266,6 +266,15 @@ def delete_services(conn: Connection, tenant_ids: Iterable[object]) -> None:
         conn.execute(text("DELETE FROM services"))
 
 
+def delete_clients(conn: Connection, tenant_ids: Iterable[object]) -> None:
+    """The app role can delete neither consents nor clients; fixtures remove them as the migrate
+    role, one business at a time (forced row-level security), consents first for the foreign key."""
+    for tenant_id in tenant_ids:
+        conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(tenant_id)})
+        conn.execute(text("DELETE FROM consents"))
+        conn.execute(text("DELETE FROM clients"))
+
+
 def events(migrate_engine: Engine, **match: Any) -> list[dict[str, Any]]:
     """Audit events read as an operator, oldest first, matched on the given columns."""
     where = " AND ".join(
@@ -386,5 +395,6 @@ def people(app_engine: Engine, migrate_engine: Engine, bound: None) -> Iterator[
             text("DELETE FROM users WHERE id IN (:x, :y, :z)"),
             {"x": people.only_a, "y": people.only_b, "z": people.both},
         )
+        delete_clients(conn, (a, b))
         delete_services(conn, (a, b))
         conn.execute(text("DELETE FROM tenants WHERE id IN (:a, :b)"), {"a": a, "b": b})
