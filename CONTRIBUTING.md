@@ -244,6 +244,10 @@ process at startup.
 schema, run `make openapi` and commit the result; a test fails if it is stale. Never hand-write API types in the
 web app.
 
+- Routes a client uses without signing in, for a business named in the path, live under `/api/public` (the
+  availability route is the first). They open `tenant_context` from the path's tenant id, are rate limited per IP,
+  answer 404 for anything the business doesn't own, and return no personal data beyond what a client must see.
+
 ## Translations
 
 English (`en`) is the source for every catalog (`frontend/messages`, `landing/strings`). Add a key to English
