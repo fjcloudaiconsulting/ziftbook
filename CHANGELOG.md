@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.15.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.14.0...v0.15.0) (2026-09-21)
+
+
+### Features
+
+* **backend:** clients and provable marketing consent per business (ZIF-49) ([#99](https://github.com/fjcloudaiconsulting/ziftbook/issues/99)) ([b13a3ed](https://github.com/fjcloudaiconsulting/ziftbook/commit/b13a3ed69df30a26f06da4ad77fb530f45067ae4))
+* **backend:** members have a display name that clients see when booking (ZIF-97) ([#97](https://github.com/fjcloudaiconsulting/ziftbook/issues/97)) ([e2f27de](https://github.com/fjcloudaiconsulting/ziftbook/commit/e2f27defc110ec37bf616a7d7c963bc87c26778d))
+
 ## [0.14.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.13.0...v0.14.0) (2026-09-17)
 
 
