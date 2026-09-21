@@ -205,6 +205,11 @@ def test_no_personal_data_ever_reaches_a_log(
     client_phone = "+31 6 55 44 33 22"
     client_note = "Note Wvx-5"
     internal_note = "Private Vbn-6"
+    # Registered on its own: the search below sends this, not the whole name, and a log line that
+    # echoed the raw query string would not contain "Client Zqx-8" for secret(client_name) to find
+    # (a space is %20 on the wire anyway). CONTRIBUTING "Logging" forbids the query string.
+    client_search = "Zqx-8"
+    secret(client_search)
     secret(client_name)
     secret(client_email)
     secret(client_phone)
@@ -229,7 +234,7 @@ def test_no_personal_data_ever_reaches_a_log(
         ).status_code
         == 201
     )
-    assert owner.get("/api/clients", params={"q": "Zqx"}).status_code == 200
+    assert owner.get("/api/clients", params={"q": client_search}).status_code == 200
 
     # 7: invite flow — send, list, a wrong token, then accept with a brand-new account.
     invite_email = fresh_email()

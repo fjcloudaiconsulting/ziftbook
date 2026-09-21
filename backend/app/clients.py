@@ -8,7 +8,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Query, Request, Response
 from psycopg.errors import UniqueViolation
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import AfterValidator, BaseModel, Field, StringConstraints
 from sqlalchemy import Row, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -18,13 +18,13 @@ from app.accounts import printable
 from app.auth import CurrentSession
 from app.business_settings import Locale
 from app.errors import ApiError, Error
-from app.services import multiline
+from app.services import STRICT, multiline
 
 Purpose = Literal["marketing_email", "sms", "whatsapp"]
 Source = Literal["booking_page", "merchant", "import"]
 
-STRICT = ConfigDict(strict=True, extra="forbid")  # as app/services.py:58
-
+# Byte-identical to app.services.NameText today, and separate on purpose: what a business may call
+# a client and what it may call a service are independent product decisions, free to diverge.
 ClientName = Annotated[
     str,
     StringConstraints(strip_whitespace=True, min_length=1, max_length=100),
@@ -62,13 +62,18 @@ CONSENT_TEXTS: dict[str, dict[Purpose, str]] = {
 
 def texts_for(policy_version: str, purposes: Iterable[Purpose]) -> dict[Purpose, str]:
     """The wording a version published for these purposes, or 422. Never the caller's own text:
-    that would make the Art. 7(1) evidence attacker-controlled."""
+    that would make the Art. 7(1) evidence attacker-controlled.
+
+    Two codes, not one: a caller who named a version we publish has not named an unknown version,
+    and telling them so would send them hunting for the wrong bug."""
     texts = CONSENT_TEXTS.get(policy_version)
-    # The second check is unreachable while every version publishes all three purposes, and goes
-    # live the day one doesn't: purposes are caller-supplied, so a subset version would otherwise
-    # turn texts[purpose] into a KeyError - a 500 where this ticket's answer is a 422.
-    if texts is None or not set(purposes) <= set(texts):
+    if texts is None:
         raise ApiError(422, "unknown_policy_version")
+    # Unreachable while every version publishes all three purposes, and live the day one doesn't:
+    # purposes are caller-supplied, so a subset version would otherwise turn texts[purpose] into a
+    # KeyError - a 500 where this ticket's answer is a 422.
+    if not set(purposes) <= set(texts):
+        raise ApiError(422, "purpose_not_in_policy_version")
     return texts
 
 
@@ -108,13 +113,28 @@ def find_or_create(
     row. That is intended: two walk-ins named "Jan" are two clients, and merging them is the
     merchant's job, not a guess we make from a name.
 
-    CALLER'S DUTY (ZIF-51): phone and locale come back as *stored*, because coalesce keeps the old
-    value when the booker left the field empty. On the public booking page the requester is not
-    authenticated, so echoing Found.phone or Found.locale into the response would hand anyone who
-    guesses an address that person's stored phone number. Use them to write the booking, never to
-    fill a public answer. For the same reason `name = excluded.name` means a stranger who guesses
-    an address can rewrite the merchant's record of that person's name: that is inherent to the
-    refresh-per-booking rule (ZIF-99), and the booking POST is rate limited per IP because of it.
+    CALLER'S DUTY (ZIF-51). This docstring is the one home for the three rules below; CONTRIBUTING
+    points here rather than restating them.
+
+    Reading. phone and locale come back as *stored*, because coalesce keeps the old value when the
+    booker left the field empty. On the public booking page the requester is not authenticated, so
+    echoing Found.phone or Found.locale into the response would hand anyone who guesses an address
+    that person's stored phone number. Use them to write the booking, never to fill a public
+    answer.
+
+    Writing, the dangerous direction. A booker who *does* type a phone replaces the number the
+    merchant had for that address, and the same for locale and, through `name = excluded.name`,
+    for the name. So a stranger who guesses a client's email can point that client's appointment
+    reminders at a phone they own while the appointment stays the victim's. All three follow from
+    the refresh-per-booking rule (ZIF-99), and ZIF-51 must rate limit the booking POST per IP
+    because of it.
+
+    user_id. This function takes no user_id and must not grow one: ZIF-51 adds the column to the
+    INSERT list, from the booker's own session and never from a request body, and NEVER to the
+    DO UPDATE SET list - there, an anonymous booking would null a client's platform link, and a
+    signed-in stranger's booking would claim a client row as their own account. test 2 in
+    tests/test_clients_db.py fences the SET list; tests/test_openapi.py fences user_id out of
+    every request schema.
     """
     row = db.execute(
         FIND_OR_CREATE, {"name": name, "email": email, "phone": phone, "locale": locale}
@@ -176,9 +196,13 @@ def record_consents(
 CURRENT_CONSENTS = text("""
 SELECT DISTINCT ON (client_id, purpose) client_id, purpose, granted, source
 FROM consents
-WHERE client_id = ANY(CAST(:client_ids AS uuid[]))
+WHERE tenant_id = current_setting('app.tenant_id')::uuid
+  AND client_id = ANY(CAST(:client_ids AS uuid[]))
 ORDER BY client_id, purpose, id DESC
 """)
+# The tenant predicate is not what isolates the rows - row-level security does that - but the id
+# list is an argument, so without it the helper is only safe because both callers happen to feed
+# it ids they already read under that policy. It costs nothing: the index leads with tenant_id.
 
 
 def mailable(granted: bool, source: str) -> bool:
@@ -335,7 +359,7 @@ def create_client(
             {"name": new.name, "email": new.email, "phone": new.phone, "locale": new.locale},
         ).one()
     except IntegrityError as error:
-        # Only the email conflict; any other integrity error stays a 500 (app/members.py:135-146).
+        # Only the email conflict; any other integrity error stays a 500 (app.members.guarded).
         if (
             isinstance(error.orig, UniqueViolation)
             and error.orig.diag.constraint_name == "uq_clients_tenant_id_email"
@@ -367,8 +391,8 @@ def update_client(
     response: Response,
 ) -> ClientOut:
     """Change client_note and/or internal_note. Only the fields sent change; both are bound from
-    the merged state (app/services.py:212-223), never from the request model directly, or a PATCH
-    of one note would silently null the other."""
+    the merged state, as app.services.update_service does, never from the request model directly,
+    or a PATCH of one note would silently null the other."""
     row = current.db.execute(
         text(f"SELECT {FIELDS} FROM clients WHERE id = :id FOR NO KEY UPDATE"), {"id": client_id}
     ).first()
@@ -401,7 +425,8 @@ def update_client(
         "client_changed",
         actor_user_id=current.user_id,
         target=f"client:{client_id}",
-        details=changed,  # the field names only, never the note text (app/services.py:121)
+        # The field names only, never the note text, as app.services.LOGGED_AS_CHANGED does.
+        details=changed,
     )
     return as_clients([updated], current_consents(current.db, [client_id]))[0]
 

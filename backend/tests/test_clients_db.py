@@ -133,6 +133,9 @@ def test_find_or_create_never_touches_the_notes_or_the_user_id(people: People) -
         )
 
     assert found.id == client_id
+    # Found reports the row as stored; ZIF-51 writes the booking from these, never from what the
+    # booker sent. Returning None here would pass every other test in this file.
+    assert (found.phone, found.locale) == ("+31611111111", "nl")
     row = row_of(people.a, client_id)
     assert row["name"] == "New Name"
     assert row["phone"] == "+31611111111"
@@ -140,6 +143,26 @@ def test_find_or_create_never_touches_the_notes_or_the_user_id(people: People) -
     assert row["client_note"] == "Client note"
     assert row["internal_note"] == "Internal note"
     assert row["user_id"] == seeded_user
+
+
+# 2b: FENCE. Wrong impl: drop either coalesce from the DO UPDATE SET list (`phone = excluded.phone`,
+# `locale = excluded.locale`), so a booking that leaves the field empty erases the stored value.
+def test_find_or_create_keeps_the_stored_phone_and_locale_when_the_booker_sends_none(
+    people: People,
+) -> None:
+    email = fresh_email()
+    client_id = seed_client(people.a, name="Old Name", email=email, phone="+31600000000")
+
+    with tenant_context(people.a) as session:
+        clients.find_or_create(session, name="Typed", email=email, phone=None, locale="pt")
+        found = clients.find_or_create(session, name="Empty", email=email, phone=None, locale=None)
+
+    assert found.id == client_id
+    assert (found.phone, found.locale) == ("+31600000000", "pt")
+    row = row_of(people.a, client_id)
+    assert row["name"] == "Empty"  # the name has no coalesce: the booker's name always wins
+    assert row["phone"] == "+31600000000"
+    assert row["locale"] == "pt"
 
 
 # 3: GUARD.
@@ -358,8 +381,9 @@ def test_a_client_of_another_business_is_invisible(people: People) -> None:
 def test_two_businesses_can_hold_the_same_client_email(people: People) -> None:
     email = fresh_email()
     a_id = seed_client(people.a, email=email)
-    b_id = seed_client(people.b, email=email)
-    assert a_id != b_id
+    b_id = seed_client(people.b, email=email)  # the second insert not raising is the assertion
+    assert row_of(people.a, a_id)["email"] == email
+    assert row_of(people.b, b_id)["email"] == email
 
 
 # 13: GUARD.
@@ -388,7 +412,8 @@ def test_the_database_refuses_an_uppercase_email_and_an_over_long_note(
     assert isinstance(note_error.value.orig, CheckViolation)
 
 
-# 13b: GUARD.
+# 13b: GUARD. The code is its own, not unknown_policy_version: the version the caller named is one
+# we publish, and telling them it is unknown would send them hunting for the wrong bug.
 def test_a_version_that_omits_a_purpose_is_a_422_not_a_500(
     people: People, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -404,4 +429,8 @@ def test_a_version_that_omits_a_purpose_is_a_422_not_a_500(
             ip=None,
             user_agent=None,
         )
-    assert (error.value.status_code, error.value.code) == (422, "unknown_policy_version")
+    assert (error.value.status_code, error.value.code) == (422, "purpose_not_in_policy_version")
+
+    # The purpose that version does publish is accepted, which is what makes the code above a
+    # statement about the purpose and not about the version.
+    assert clients.texts_for("test-subset", ["sms"]) == {"sms": "You may text me."}

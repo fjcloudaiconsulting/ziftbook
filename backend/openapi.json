@@ -830,7 +830,7 @@
           "clients"
         ],
         "summary": "Update",
-        "description": "Change client_note and/or internal_note. Only the fields sent change; both are bound from\nthe merged state (app/services.py:212-223), never from the request model directly, or a PATCH\nof one note would silently null the other.",
+        "description": "Change client_note and/or internal_note. Only the fields sent change; both are bound from\nthe merged state, as app.services.update_service does, never from the request model directly,\nor a PATCH of one note would silently null the other.",
         "operationId": "clients-update",
         "parameters": [
           {

@@ -87,33 +87,6 @@ every table that holds a tenant's data:
 - A column private to one member, such as `time_off.reason`, is redacted in SQL for every other caller; public or
   customer-facing endpoints never select it.
 
-### Client records
-
-A business's clients (`clients`) are the business's own copy of a person's name and contact
-details, not a view of that person's platform account (ZIF-99).
-
-- The copy is refreshed on each booking and never read live from `users`. No table owned by a
-  business may join to `users`, and `clients.user_id` carries no foreign key and no index on
-  purpose: a foreign key check bypasses row-level security, so the constraint alone would tell a
-  business whether an account id exists. A pointer left dangling by a platform erasure is
-  correct.
-- Name and contact only: never a postal address.
-- Marketing consent (`consents`) is per business. Nothing writes a platform-level consent, and one
-  business's consent never grants another anything.
-- `consents` is append-only: one row per grant or withdrawal per purpose, holding the exact text
-  shown and its policy version. The app role has `SELECT` and an `INSERT` limited to a column
-  list, so it can neither edit a row nor backdate one. As with `audit_events`, a column added
-  later needs its own `GRANT INSERT (column) ON consents TO ziftbook_app`, or every consent write
-  fails, not only writes of the new column.
-- The wording and the version stored with a consent come from the server
-  (`app.clients.CONSENT_TEXTS`); an unknown version is a 422. A caller never supplies the text it claims
-  to have shown.
-- The refresh has two consequences on the public booking page, both deliberate. The name on the booking
-  overwrites the business's record of that person's name, so anyone who guesses a client's address can
-  change it — the booking POST is rate limited per IP for that reason. And `find_or_create` returns the
-  phone and locale as *stored*, not as sent, so a public answer must never echo them back: that would
-  hand an unauthenticated stranger a third party's phone number.
-
 `tests/test_tenant_schema.py` fails for a table with `tenant_id` that is not isolated (forced row-level security),
 and for a foreign key between tenant-owned tables that does not pair `tenant_id`. `jobs` is exempt on purpose: it
 is global and claimed across tenants.
@@ -146,6 +119,30 @@ Passwords and sign-in tokens live in tables the app role can't read or write (`p
 - The `sign_in` policy lets `ziftbook_migrate` read memberships across tenants only while `app.sign_in` is `on`. A
   function that relies on it sets and restores `app.sign_in` itself; any other definer function that reads memberships
   must clear it, because a caller can set it.
+
+## Client records
+
+A business's clients (`clients`) are the business's own copy of a person's name and contact details, not a view of
+that person's platform account (ZIF-99). ZIF-49 ships the tables, the console routes and `find_or_create`; the
+booking flow that calls it is ZIF-51's.
+
+- The copy is never read live from `users`. No table owned by a business may join to `users`, and `clients.user_id`
+  carries no foreign key and no index on purpose: a foreign key check bypasses row-level security, so the constraint
+  alone would tell a business whether an account id exists. A pointer left dangling by a platform erasure is correct.
+- Name and contact only: never a postal address.
+- Marketing consent (`consents`) is per business. Nothing writes a platform-level consent, and one business's consent
+  never grants another anything.
+- `consents` is append-only: one row per grant or withdrawal per purpose, holding the exact text shown and its policy
+  version. The app role has `SELECT` and an `INSERT` limited to a column list, so it can neither edit a row nor
+  backdate one. As with `audit_events`, a column added later needs its own `GRANT INSERT (column) ON consents TO
+  ziftbook_app`, or every consent write fails, not only writes of the new column.
+- The wording and the version stored with a consent come from the server (`app.clients.CONSENT_TEXTS`). An unknown
+  version is a 422, and so is a known version that publishes no wording for a purpose the caller named. A caller
+  never supplies the text it claims to have shown.
+- `app.clients.find_or_create` refreshes the copy from what a booker typed, and its docstring is the one home for
+  what that costs: the phone and locale it returns are the *stored* ones, a booker who fills those fields overwrites
+  the merchant's, and `user_id` belongs in its INSERT list and never in its `DO UPDATE SET`. The duties it lists are
+  ZIF-51's, rate limiting the booking POST per IP among them. Read it before writing that route.
 
 ## Audit log
 

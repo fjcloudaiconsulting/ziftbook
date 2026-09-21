@@ -170,6 +170,12 @@ def test_downgrading_and_upgrading_0024_restores_the_tables_and_their_grants(
         assert conn.scalar(
             text("SELECT has_column_privilege('ziftbook_app', 'consents', 'purpose', 'INSERT')")
         )
+        # The re-upgrade must also restore what the app still needs: the REVOKE ALL runs before
+        # the GRANTs, and a downgrade/upgrade that lost them breaks every read and every write.
+        assert conn.scalar(text("SELECT has_table_privilege('ziftbook_app', 'consents', 'SELECT')"))
+        assert conn.scalar(text("SELECT has_table_privilege('ziftbook_app', 'clients', 'SELECT')"))
+        assert conn.scalar(text("SELECT has_table_privilege('ziftbook_app', 'clients', 'INSERT')"))
+        assert conn.scalar(text("SELECT has_table_privilege('ziftbook_app', 'clients', 'UPDATE')"))
 
 
 ADD_JOB = """

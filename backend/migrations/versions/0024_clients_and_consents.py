@@ -44,7 +44,8 @@ def upgrade() -> None:
       -- so a constraint here would turn this column into an existence oracle over the global users
       -- table; nothing ever joins clients to users (ZIF-99); and a pointer left dangling by a
       -- platform erasure is the wanted behaviour, not a bug (audit_events, 0010:91). Written only
-      -- by ZIF-51, from the booker's own session, never from a request body.
+      -- by ZIF-51, from the booker's own session, never from a request body: in the find-or-create
+      -- INSERT column list, and never in its DO UPDATE SET list - see app.clients.find_or_create.
       user_id uuid,
       name text NOT NULL
         CONSTRAINT ck_clients_name_length CHECK (char_length(name) BETWEEN 1 AND 100),
@@ -113,11 +114,15 @@ def upgrade() -> None:
         FOREIGN KEY (tenant_id, client_id) REFERENCES clients (tenant_id, id)
     )""")
     # referenced=True (the default): the flag is about a table having an id, which consents does
-    # (app/db.py:88-90). Nothing references consents today, so its uq_consents_tenant_id_id is one
-    # spare index - cheaper than a variant call whose reason does not apply here.
+    # (see app.db.enable_tenant_isolation). Nothing references consents today, so its
+    # uq_consents_tenant_id_id is one spare index - cheaper than a variant call whose reason does
+    # not apply here.
     enable_tenant_isolation("consents")
-    # The current state per purpose: DISTINCT ON (client_id, purpose) ... ORDER BY ..., id DESC.
-    op.execute("CREATE INDEX ON consents (tenant_id, client_id, purpose, id DESC)")
+    # The current state per purpose: DISTINCT ON (client_id, purpose) ... ORDER BY ..., id DESC,
+    # under app.clients.CURRENT_CONSENTS' tenant predicate.
+    op.execute("""
+    CREATE INDEX ix_consents_tenant_id_client_id_purpose_id
+      ON consents (tenant_id, client_id, purpose, id DESC)""")
     # Append-only by privilege, not by a trigger: no UPDATE, no DELETE, and an INSERT that cannot
     # name id or created_at. The REVOKE runs before the GRANTs, or it would wipe them.
     op.execute("REVOKE ALL ON consents FROM ziftbook_app")

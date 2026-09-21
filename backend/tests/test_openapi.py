@@ -78,7 +78,16 @@ def test_healthz_response_is_a_named_schema_with_required_fields() -> None:
 
 # 31: FENCE. Wrong impl: add internal_note to a public schema (or publish ClientOut from a
 # /api/public route) and run `make openapi`.
-def test_no_public_schema_exposes_an_internal_note() -> None:
+#
+# phone, email and locale are fenced alongside it, so ZIF-51's "never echo these publicly" is
+# executable rather than prose: find_or_create returns the *stored* phone and locale, so a public
+# answer carrying either hands an unauthenticated stranger a third party's contact details. A
+# public route that genuinely needs one of these names it in its own schema and edits this list,
+# deliberately, in that ticket.
+PRIVATE_TO_THE_CONSOLE = ("internal_note", "phone", "email", "locale")
+
+
+def test_no_public_schema_exposes_a_clients_private_field() -> None:
     spec = json.loads(CONTRACT.read_text())
     public_operations = [
         operation
@@ -88,9 +97,10 @@ def test_no_public_schema_exposes_an_internal_note() -> None:
     ]
     reachable = schemas_reachable_from(spec, *public_operations)
     offending = [
-        name
+        (name, field)
         for name in reachable
-        if "internal_note" in spec["components"]["schemas"][name].get("properties", {})
+        for field in PRIVATE_TO_THE_CONSOLE
+        if field in spec["components"]["schemas"][name].get("properties", {})
     ]
     assert offending == []
 

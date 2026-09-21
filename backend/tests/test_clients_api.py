@@ -31,26 +31,27 @@ def add_client(client: TestClient, body: dict[str, Any]) -> dict[str, Any]:
 
 
 # 14: FENCE. Wrong impl: CurrentOwner in place of CurrentSession on any of the four routes.
+# Second wrong impl: drop `response.headers["Cache-Control"] = "no-store"` from any of the four.
+# All four answer with names, emails, phones and private notes, so none may sit in a cache.
 def test_a_worker_lists_searches_and_edits_notes_like_an_owner(
     people: People, app: FastAPI
 ) -> None:
     worker = signed_in(app, people.a, people.only_a)
 
-    assert worker.get("/api/clients").status_code == 200
-
+    listed = worker.get("/api/clients")
     created = worker.post("/api/clients", json={"name": "Worker Client"})
-    assert created.status_code == 201
+    assert (listed.status_code, created.status_code) == (200, 201)
     client_id = created.json()["id"]
 
-    assert (
-        worker.patch(f"/api/clients/{client_id}", json={"client_note": "note"}).status_code == 200
-    )
-
+    patched = worker.patch(f"/api/clients/{client_id}", json={"client_note": "note"})
     consented = worker.post(
         f"/api/clients/{client_id}/consents",
         json={"policy_version": "2026-09-01", "purposes": {"sms": True}},
     )
-    assert consented.status_code == 201
+    assert (patched.status_code, consented.status_code) == (200, 201)
+
+    for response in (listed, created, patched, consented):
+        assert response.headers["cache-control"] == "no-store", response.request.url
 
 
 # 15: FENCE. Wrong impl: drop before/limit and return every row (the `services` shape).
@@ -125,7 +126,11 @@ def test_a_client_of_another_business_is_not_found(
 
 
 # 19: FENCE. Wrong impl: bind change.client_note/change.internal_note straight into the UPDATE.
-def test_patching_one_note_leaves_the_other_note_alone(people: People, app: FastAPI) -> None:
+# Second wrong impl: drop the `if not changed:` short-circuit, so a PATCH that changes nothing
+# still writes a row and records a client_changed event.
+def test_patching_one_note_leaves_the_other_note_alone(
+    people: People, app: FastAPI, migrate_engine: Engine
+) -> None:
     owner = signed_in(app, people.a, people.both)
     client_id = add_client(owner, {"name": "Note Client"})["id"]
     assert (
@@ -160,8 +165,13 @@ def test_patching_one_note_leaves_the_other_note_alone(people: People, app: Fast
     assert row["locale"] is None
     assert row["user_id"] is None
 
+    recorded = len(events(migrate_engine, tenant_id=people.a, action="client_changed"))
     empty = owner.patch(f"/api/clients/{client_id}", json={})
-    assert empty.status_code == 200
+    same = owner.patch(f"/api/clients/{client_id}", json={"internal_note": "Private Mzt-3"})
+    assert (empty.status_code, same.status_code) == (200, 200)
+    # An empty body and a body that repeats the stored value both write nothing and record
+    # nothing; without the short-circuit each of them is a row and an event.
+    assert len(events(migrate_engine, tenant_id=people.a, action="client_changed")) == recorded
 
 
 # 20: FENCE. Wrong impl: details={"client_note": change.client_note}.
@@ -292,6 +302,46 @@ def test_the_console_consent_route_records_one_event_naming_the_purposes(
     assert recorded[0]["actor_user_id"] == people.both
 
 
+# 25b: FENCE. record_consents unnests three parallel arrays. Wrong impl 1: `reversed(ordered)` for
+# the granted array, which stores a withdrawal as a grant. Wrong impl 2: the same for the texts
+# array, which files the wrong Art. 7(1) wording against a purpose. Neither is visible unless one
+# call disagrees with itself across purposes.
+def test_each_purpose_stores_its_own_answer_and_its_own_wording(
+    people: People, app: FastAPI
+) -> None:
+    owner = signed_in(app, people.a, people.both)
+    client_id = add_client(owner, {"name": "Mixed Answer Client"})["id"]
+
+    response = owner.post(
+        f"/api/clients/{client_id}/consents",
+        json={
+            "policy_version": "2026-09-01",
+            "purposes": {"sms": True, "marketing_email": False, "whatsapp": True},
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.json()["consents"] == {
+        "marketing_email": {"granted": False, "source": "merchant", "mailable": False},
+        "sms": {"granted": True, "source": "merchant", "mailable": True},
+        "whatsapp": {"granted": True, "source": "merchant", "mailable": True},
+    }
+    with tenant_context(people.a) as session:
+        stored = session.execute(
+            text("""
+            SELECT purpose, granted, text_shown FROM consents
+            WHERE client_id = :c ORDER BY purpose
+            """),
+            {"c": uuid.UUID(client_id)},
+        ).all()
+    texts = clients.CONSENT_TEXTS["2026-09-01"]
+    assert [tuple(row) for row in stored] == [
+        ("marketing_email", False, texts["marketing_email"]),
+        ("sms", True, texts["sms"]),
+        ("whatsapp", True, texts["whatsapp"]),
+    ]
+
+
 # 26: FENCE (structural). Wrong impl: move auth.record(..., "consent_recorded", ...) out of the
 # route and into record_consents, forcing a Request parameter onto it.
 def test_the_booking_path_cannot_record_an_audit_event(
@@ -402,6 +452,14 @@ def test_a_client_answer_carries_the_current_consent_per_purpose(
         "sms": {"granted": True, "source": "merchant", "mailable": True},
         "whatsapp": {"granted": False, "source": "merchant", "mailable": False},
     }
+    # The withdrawal did not replace the grant: both rows are kept, which is what append-only
+    # means for a reader. The privilege tests only say an UPDATE is refused.
+    with tenant_context(people.a) as session:
+        kept = session.scalar(
+            text("SELECT count(*) FROM consents WHERE client_id = :c AND purpose = 'whatsapp'"),
+            {"c": uuid.UUID(client_id)},
+        )
+    assert kept == 2
 
     unchanged = owner.patch(f"/api/clients/{client_id}", json={})
     assert unchanged.status_code == 200
@@ -418,11 +476,23 @@ def test_creating_a_client_records_one_event_naming_the_client(
 ) -> None:
     owner = signed_in(app, people.a, people.both)
 
+    email = fresh_email()
     created = owner.post(
         "/api/clients",
-        json={"name": "Event Client Qzx", "email": fresh_email(), "phone": "+31 6 99 88 77 66"},
+        json={
+            "name": "Event Client Qzx",
+            "email": email,
+            "phone": "+31 6 99 88 77 66",
+            "locale": "nl",
+        },
     )
     assert created.status_code == 201
+    # The answer echoes what was sent: ClientOut could return null for any of these with every
+    # other test in this file still green.
+    assert created.json()["name"] == "Event Client Qzx"
+    assert created.json()["email"] == email
+    assert created.json()["phone"] == "+31 6 99 88 77 66"
+    assert created.json()["locale"] == "nl"
 
     recorded = events(migrate_engine, tenant_id=people.a, action="client_created")
     assert len(recorded) == 1
@@ -452,3 +522,39 @@ def test_a_consent_call_must_name_at_least_one_purpose(people: People, app: Fast
             {"c": uuid.UUID(client_id)},
         )
     assert count == 0
+
+
+# 30d: FENCE. Wrong impl: type ClientName, Phone, NoteText and PolicyVersion as bare `str` and run
+# `make openapi`. Nothing else in the suite sends a value any of the four constraints would refuse,
+# so the only witness today is the committed contract - which `make openapi` rewrites.
+def test_the_request_constraints_are_enforced(people: People, app: FastAPI) -> None:
+    owner = signed_in(app, people.a, people.both)
+    client_id = add_client(owner, {"name": "Constraints Client"})["id"]
+    refused = (422, {"code": "invalid_request"})
+
+    def post(body: dict[str, Any]) -> tuple[int, Any]:
+        response = owner.post("/api/clients", json=body)
+        return response.status_code, response.json()
+
+    def patch(body: dict[str, Any]) -> tuple[int, Any]:
+        response = owner.patch(f"/api/clients/{client_id}", json=body)
+        return response.status_code, response.json()
+
+    assert post({"name": "x" * 101}) == refused  # ClientName's max_length
+    assert post({"name": "Zero​width"}) == refused  # ClientName's printable validator
+    assert post({"name": "Ok", "phone": "+31 6 "}) == refused  # Phone's printable validator
+    assert patch({"internal_note": "x" * 2001}) == refused  # NoteText's max_length
+    assert patch({"client_note": "a\tb"}) == refused  # NoteText's multiline validator: \n only
+    # PolicyVersion's max_length. A 40-character version we don't publish is a different 422
+    # (unknown_policy_version), so this one has to be over-length to say anything.
+    over_long_version = owner.post(
+        f"/api/clients/{client_id}/consents",
+        json={"policy_version": "x" * 41, "purposes": {"sms": True}},
+    )
+    assert (over_long_version.status_code, over_long_version.json()) == refused
+
+    # A note may still hold a newline, and a mixed-case address is normalised rather than refused:
+    # the five refusals above are not a blanket "anything unusual is a 422".
+    assert patch({"client_note": "line one\nline two"})[0] == 200
+    address = fresh_email()
+    assert add_client(owner, {"name": "Mixed Case", "email": address.upper()})["email"] == address
