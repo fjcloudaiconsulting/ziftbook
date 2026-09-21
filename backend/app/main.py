@@ -21,6 +21,7 @@ from app import (
     auth,
     availability,
     business_settings,
+    clients,
     invites,
     logs,
     members,
@@ -97,6 +98,7 @@ def create_app() -> FastAPI:
     app.include_router(accounts.router)
     app.include_router(audit.router)
     app.include_router(business_settings.router)
+    app.include_router(clients.router)
     app.include_router(services.router)
     app.include_router(members.router)
     app.include_router(invites.router)

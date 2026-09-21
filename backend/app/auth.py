@@ -86,7 +86,21 @@ Action = Literal[
     "member_invited",
     "invite_revoked",
     "invite_accepted",
+    "client_created",
+    "client_changed",
+    "consent_recorded",
 ]
+
+
+def origin(request: Request) -> tuple[str | None, str | None]:
+    """The requester's address and browser, from the connection and the header, never from a
+    forwarding header (CONTRIBUTING.md, "Client IP"). Shared with the consent record (ZIF-49),
+    whose Art. 7(1) evidence must come from the same source an audit event's does."""
+    user_agent = request.headers.get("user-agent")
+    return (
+        _inet(request.client.host if request.client else None),
+        user_agent[:512] if user_agent else None,
+    )
 
 
 def record(
@@ -103,7 +117,7 @@ def record(
     target names what the event is about ("user:<id>", "setting:<key>"); details holds what changed,
     such as a setting's old and new value. Never a password, token, cookie, email or personal data.
     """
-    user_agent = request.headers.get("user-agent")
+    ip, user_agent = origin(request)
     # No RETURNING: an event of no tenant isn't visible to the app, not even to the one adding it.
     session.execute(
         text("""
@@ -116,8 +130,8 @@ def record(
             "target": target,
             # Left as SQL NULL, not a JSON null, when the event carries no values.
             "details": None if details is None else json.dumps(details),
-            "ip": _inet(request.client.host if request.client else None),
-            "user_agent": user_agent[:512] if user_agent else None,
+            "ip": ip,
+            "user_agent": user_agent,
         },
     )
 

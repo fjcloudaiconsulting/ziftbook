@@ -120,6 +120,27 @@ Passwords and sign-in tokens live in tables the app role can't read or write (`p
   function that relies on it sets and restores `app.sign_in` itself; any other definer function that reads memberships
   must clear it, because a caller can set it.
 
+## Client records
+
+A business's clients (`clients`) are the business's own copy of a person's name and contact details, not a view of
+that person's platform account (ZIF-99).
+
+- The copy is never read live from `users`. No table owned by a business may join to `users`, and `clients.user_id`
+  carries no foreign key and no index on purpose: a foreign key check bypasses row-level security, so the constraint
+  alone would tell a business whether an account id exists. A pointer left dangling by a platform erasure is correct.
+- Name and contact only: never a postal address.
+- Marketing consent (`consents`) is per business. Nothing writes a platform-level consent, and one business's consent
+  never grants another anything.
+- `consents` is append-only: one row per grant or withdrawal per purpose, holding the exact text shown and its policy
+  version. The app role has `SELECT` and an `INSERT` limited to a column list, so it can neither edit a row nor
+  backdate one. As with `audit_events`, a column added later needs its own `GRANT INSERT (column) ON consents TO
+  ziftbook_app`, or every consent write fails, not only writes of the new column.
+- The wording and the version stored with a consent come from the server (`app.clients.CONSENT_TEXTS`). An unknown
+  version is a 422, and so is a known version that publishes no wording for a purpose the caller named. A caller
+  never supplies the text it claims to have shown.
+- `app.clients.find_or_create` refreshes the copy from what a booker typed, and its docstring is the one home for
+  what that costs and for the duties it puts on the route that calls it. Read it before writing that route.
+
 ## Audit log
 
 `audit_events` records who signed in, out, or reset a password, and when a business was created, so after an incident
