@@ -12,6 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app import schedule
+from app.auth import SignedIn
 from app.db import tenant_context
 from app.main import create_app
 from tests.conftest import People, events, member_id, new_client, signed_in, wait_until_blocked
@@ -79,6 +80,7 @@ def test_the_week_is_returned_sorted_monday_first(people: People, app: FastAPI) 
         {"weekday": 1, "starts_at": "07:00", "ends_at": "08:00"},
         {"weekday": 2, "starts_at": "08:00", "ends_at": "09:00"},
     ]
+    assert replaced.headers["cache-control"] == "no-store"
 
 
 # G2: a subset of test_working_hours.py's INVALID_BODIES, pinning that Shift, HH_MM and MAX_SHIFTS
@@ -118,7 +120,8 @@ def test_each_business_has_its_own_opening_hours(people: People) -> None:
     assert stored_opening(people.b) == [(2, "11:00", "12:00")]
 
 
-# G4: no member_id column, and the right column types and unique indexes.
+# G4: no member_id column, the right column types and unique indexes, and only the privileges a
+# wholesale DELETE + INSERT needs. FENCE for the REVOKE: drop it and UPDATE comes back.
 def test_the_schema_has_no_member_id_and_the_right_types(migrate_engine: Engine) -> None:
     with migrate_engine.connect() as conn:
         columns = set(
@@ -150,6 +153,14 @@ def test_the_schema_has_no_member_id_and_the_right_types(migrate_engine: Engine)
                 """)
             ).scalars()
         )
+        granted = {
+            privilege: conn.scalar(
+                text("SELECT has_table_privilege('ziftbook_app', 'opening_hours', :priv)"),
+                {"priv": privilege},
+            )
+            for privilege in ("SELECT", "INSERT", "UPDATE", "DELETE")
+        }
+    assert granted == {"SELECT": True, "INSERT": True, "UPDATE": False, "DELETE": True}
     assert columns == {"id", "tenant_id", "weekday", "starts_at", "ends_at"}
     assert types == {
         "weekday": "smallint",
@@ -191,7 +202,8 @@ def test_the_contract_names_both_opening_hours_operations() -> None:
     assert doc["components"]["schemas"]["Error"]["required"] == ["code"]
 
 
-# G9: the *working* week may still be emptied while the *opening* week may not (ruling 2's line).
+# G9: the empty-week refusal is the OPENING week's alone. A working week may still be cleared - its
+# emptiness means "this member works no hours", not "never configured".
 def test_a_worker_may_still_clear_their_week_while_opening_hours_exist(
     people: People, app: FastAPI, migrate_engine: Engine
 ) -> None:
@@ -331,7 +343,8 @@ def test_an_error_that_names_no_weekday_carries_no_weekday_key(
     assert refused.json() == {"code": "owner_only"}
 
 
-# F13: the envelope is checked only after the 403 - an unauthorised caller must not learn it.
+# F13: authorise first, then do the work. A worker forbidden to edit this week gets owner_only, not
+# the outside_opening_hours their body would also have earned.
 def test_the_envelope_is_checked_only_after_the_403(people: People, app: FastAPI) -> None:
     seed_opening(people.a, [(1, "09:00", "12:00")])
     worker = signed_in(app, people.a, people.only_a)
@@ -449,78 +462,74 @@ def test_a_saved_week_is_read_back(people: People, app: FastAPI) -> None:
     assert response.json() == [{"weekday": 1, "starts_at": "09:00", "ends_at": "12:00"}]
 
 
-def _replace_sequence(session: Session, with_lock: bool, rows: list[tuple[int, str, str]]) -> None:
-    """The PUT's own statement sequence, run by hand from two sessions to force the interleaving
-    ruling 9 gets wrong (spec 6.0). 105 is OPENING_LOCK (app.schedule)."""
-    if with_lock:
-        session.execute(
-            text("SELECT pg_advisory_xact_lock(:key, hashtext(current_setting('app.tenant_id')))"),
-            {"key": 105},
-        )
-    session.execute(text("DELETE FROM opening_hours RETURNING weekday, starts_at, ends_at"))
+def _another_owner_replaces(
+    session: Session, people: People, rows: list[tuple[int, str, str]]
+) -> None:
+    """A second owner's replace, in a transaction the test can hold open past the INSERT.
+
+    Held by hand only because a real request cannot be frozen between its INSERT and its commit.
+    The lock is the route's own schedule.lock_week, not a copy of its SQL, so weakening that lock
+    (a shared one, say) fails the test below instead of sliding past a substring match.
+    """
+    schedule.lock_week(SignedIn(people.both, people.a, "owner", session))
+    session.execute(text("DELETE FROM opening_hours"))
     session.execute(
-        text("""
-        INSERT INTO opening_hours (tenant_id, weekday, starts_at, ends_at)
-        VALUES (current_setting('app.tenant_id')::uuid, :weekday, :starts_at, :ends_at)
-        """),
-        [{"weekday": w, "starts_at": s, "ends_at": e} for w, s, e in rows],
+        text(INSERT_OPENING), [{"t": people.a, "w": w, "s": s, "e": e} for w, s, e in rows]
     )
 
 
-# F20a: the ruling-9 override, at SQL level and deterministic. Without the lock, two concurrent
-# saves interleave into the union of both weeks - never last-writer-wins.
+# F20a: two owners saving at once, one of them the real PUT. With the lock this is genuine
+# last-writer-wins; with it stubbed out (the positive control) the same race stores the union of
+# both weeks, which is exactly the stale-hours hole the envelope exists to close.
 @pytest.mark.parametrize("with_lock", [True, False])
 def test_two_concurrent_saves_never_store_a_union_of_both_weeks(
-    people: People, app_engine: Engine, with_lock: bool
+    people: People,
+    app: FastAPI,
+    app_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+    with_lock: bool,
 ) -> None:
+    if not with_lock:
+        monkeypatch.setattr(schedule, "lock_week", lambda current: None)
     seed_opening(people.a, [(1, "09:00", "12:00")])
+    owner = signed_in(app, people.a, people.both)
     week_a = [(2, "08:00", "09:00")]
-    week_b = [(3, "10:00", "11:00")]
-    ready_2 = threading.Event()
-    allow_commit_1 = threading.Event()
+    week_b = [{"weekday": 3, "starts_at": "10:00", "ends_at": "11:00"}]
+    statuses: list[int] = []
 
-    def session_1() -> None:
-        with tenant_context(people.a) as session:
-            _replace_sequence(session, with_lock, week_a)
-            ready_2.set()
-            assert allow_commit_1.wait(10)
+    def put() -> None:
+        statuses.append(owner.put(open_path, json=week_b).status_code)
 
-    def session_2() -> None:
-        assert ready_2.wait(10)
-        with tenant_context(people.a) as session:
-            _replace_sequence(session, with_lock, week_b)
+    with tenant_context(people.a) as held:
+        _another_owner_replaces(held, people, week_a)
+        thread = threading.Thread(target=put)
+        thread.start()
+        # With the lock, the request waits on it; without it, on the row the held session deleted.
+        wait_until_blocked(app_engine, 1)
+        # held commits here, letting the request through.
+    thread.join(timeout=10)
 
-    thread_1 = threading.Thread(target=session_1)
-    thread_1.start()
-    assert ready_2.wait(10)
-    thread_2 = threading.Thread(target=session_2)
-    thread_2.start()
-    wait_until_blocked(app_engine, 1)
-    allow_commit_1.set()
-    thread_1.join(timeout=10)
-    thread_2.join(timeout=10)
-
-    assert not thread_1.is_alive()
-    assert not thread_2.is_alive()
+    assert not thread.is_alive()
+    assert statuses == [200]
     if with_lock:
-        # Genuine last-writer-wins: session 2 waits for the lock, so it deletes and inserts only
-        # after session 1's commit is visible - whoever commits last (session 2) wins outright.
+        # The request deletes and inserts only after the other owner's commit is visible, so
+        # whoever commits last wins outright.
         assert stored_opening(people.a) == [(3, "10:00", "11:00")]
     else:
-        # The bug this table exists to fence off, documented as much as fenced: a union wider
-        # than either owner submitted.
+        # The request's DELETE woke to find the row it blocked on already gone, and its snapshot
+        # predates the other week's INSERT: it deletes nothing and adds its own rows.
         assert stored_opening(people.a) == [(2, "08:00", "09:00"), (3, "10:00", "11:00")]
 
 
-# F20b: the route really takes the lock, before touching the table - deterministic, no threads.
+# F20b: the route takes OUR lock - exclusive, in our namespace - before touching the table.
 def test_the_put_takes_the_tenant_lock_before_touching_the_table(
     people: People, app: FastAPI, app_engine: Engine
 ) -> None:
     owner = signed_in(app, people.a, people.both)
-    statements: list[str] = []
+    executed: list[tuple[str, Any]] = []
 
-    def count(conn: object, cursor: object, statement: str, *args: object) -> None:
-        statements.append(statement)
+    def count(conn: object, cursor: object, statement: str, parameters: Any, *args: Any) -> None:
+        executed.append((statement, parameters))
 
     event.listen(app_engine, "before_cursor_execute", count)
     try:
@@ -531,8 +540,13 @@ def test_the_put_takes_the_tenant_lock_before_touching_the_table(
         event.remove(app_engine, "before_cursor_execute", count)
 
     assert response.status_code == 200
-    lock_indexes = [i for i, s in enumerate(statements) if "pg_advisory_xact_lock" in s]
-    delete_indexes = [i for i, s in enumerate(statements) if "DELETE FROM opening_hours" in s]
-    assert len(lock_indexes) == 1
-    assert len(delete_indexes) == 1
-    assert lock_indexes[0] < delete_indexes[0]
+    # startswith, not `in`: "pg_advisory_xact_lock" is also a prefix of the SHARED variant, which
+    # two owners can hold at once and so would not serialise them at all.
+    locks = [
+        (i, p) for i, (s, p) in enumerate(executed) if s.startswith("SELECT pg_advisory_xact_lock(")
+    ]
+    deletes = [i for i, (s, _) in enumerate(executed) if s.startswith("DELETE FROM opening_hours")]
+    assert len(locks) == 1
+    assert len(deletes) == 1
+    assert locks[0][0] < deletes[0]
+    assert locks[0][1] == {"key": schedule.OPENING_LOCK}

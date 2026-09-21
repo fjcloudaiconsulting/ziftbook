@@ -5,10 +5,14 @@ The envelope every member's working hours (0017) and every bookable slot (ZIF-48
 still opens at 09:00 when summer time starts or ends. The app turns them into instants with the
 business's timezone (app/schedule.py), never the database.
 
-No member_id: these are the business's own hours, not a person's. No composite foreign key either -
-the table references nothing tenant-owned and nothing references it - and no archived_at and no
-REVOKE DELETE, because nothing ever points at an opening hour: a week is replaced wholesale
-(DELETE + INSERT) on 0001's default privileges.
+No member_id: these are the business's own hours, not a person's. No composite foreign key out of
+the table either - it references nothing tenant-owned. Nothing references it *yet*; the
+uq_opening_hours_tenant_id_id that enable_tenant_isolation leaves behind (referenced=True, the
+default) is the target a future composite foreign key would need, and costs one index until then.
+
+No archived_at and no REVOKE DELETE, because nothing ever points at an opening hour: a week is
+replaced wholesale (DELETE + INSERT) on 0001's default privileges. UPDATE is revoked - a wholesale
+replace never updates a row.
 
 "Closed every day" is deliberately not expressible here: the API refuses an empty week
 (opening_hours_required), so no rows can only ever mean "never configured". A business that wants to
@@ -54,6 +58,8 @@ def upgrade() -> None:
       tenant_id WITH =, weekday WITH =, timerange(starts_at, ends_at) WITH &&)
     """)
     enable_tenant_isolation("opening_hours")
+    # 0001's default privileges granted UPDATE; a week is replaced wholesale, never updated.
+    op.execute("REVOKE UPDATE ON opening_hours FROM ziftbook_app")
 
 
 def downgrade() -> None:

@@ -4,7 +4,7 @@ Also opening_hours (ZIF-105): the business's own weekly envelope every member's 
 every bookable slot must fall inside.
 """
 
-from collections.abc import Iterable
+from collections.abc import Sequence
 from datetime import UTC, date, datetime, time
 from itertools import pairwise
 from typing import Annotated, Any
@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Body, Request, Response
 from psycopg.errors import ExclusionViolation
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import Row as SqlRow  # aliased: this module's own Row is the (weekday, from, to)
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
@@ -73,6 +74,17 @@ def day_shifts(rows: list[Row], weekday: int) -> list[tuple[time, time]]:
     return joined
 
 
+def by_weekday(rows: list[Row]) -> dict[int, list[tuple[time, time]]]:
+    """Every weekday's joined shifts at once, keyed by weekday; a weekday with no rows is absent.
+
+    day_shifts scans the whole list, so callers that ask about many weekdays (availability: up to
+    14 days x 20 workers) build this once instead. Empty in, empty out: `{}` is falsy, exactly like
+    the row list it came from, so "the business never configured opening hours" still reads as a
+    plain truth test on it.
+    """
+    return {weekday: day_shifts(rows, weekday) for weekday in {r[0] for r in rows}}
+
+
 def within(shift: tuple[time, time], envelope: list[tuple[time, time]]) -> bool:
     """Whether a shift fits entirely inside one of a weekday's joined opening shifts."""
     start, end = shift
@@ -86,11 +98,11 @@ def week(current: SignedIn, member_id: UUID) -> list[Shift]:
         WHERE member_id = :id ORDER BY weekday, starts_at
         """),
         {"id": member_id},
-    )
+    ).all()
     return to_shifts(rows)
 
 
-def to_shifts(rows: Iterable[Any]) -> list[Shift]:
+def to_shifts(rows: Sequence[SqlRow[Any]]) -> list[Shift]:
     return [
         Shift(weekday=r.weekday, starts_at=f"{r.starts_at:%H:%M}", ends_at=f"{r.ends_at:%H:%M}")
         for r in rows
@@ -136,7 +148,8 @@ def replace_week(
         raise ApiError(422, "end_not_after_start")
     if overlapping(rows):
         raise ApiError(422, "overlapping_hours")
-    # After the 403, never before: an unauthorised caller must not learn the shop's opening hours.
+    # After the 403, never before: authorise first, then do the endpoint's work. (Not a secrecy
+    # rule - any signed-in member reads the identical envelope from GET /api/opening-hours.)
     # One statement; no rows means the business never configured opening hours, and behaves exactly
     # as it did before ZIF-105. Checked against the JOINED shifts, so 09:00-15:00 fits opening rows
     # 09:00-12:00 + 12:00-15:00. Not a trigger: a trigger fires per row, cannot name the weekday,
@@ -148,9 +161,10 @@ def replace_week(
             text("SELECT weekday, starts_at, ends_at FROM opening_hours")
         ).tuples()
     ]
-    if envelope:
+    open_days = by_weekday(envelope)
+    if open_days:
         for weekday, start, end in rows:
-            if not within((start, end), day_shifts(envelope, weekday)):
+            if not within((start, end), open_days.get(weekday, [])):
                 raise ApiError(422, "outside_opening_hours", weekday=weekday)
     old = (
         current.db.execute(
@@ -215,7 +229,7 @@ def opening_week(current: SignedIn) -> list[Shift]:
             text("""
             SELECT weekday, starts_at, ends_at FROM opening_hours ORDER BY weekday, starts_at
             """)
-        )
+        ).all()
     )
 
 
@@ -234,6 +248,11 @@ def lock_week(current: SignedIn) -> None:
     Its own function, so the concurrency test has the same seam ZIF-46's test takes on
     members.member_user.
     """
+    # hashtext is 32-bit, so two unrelated tenants can in principle share a key: that costs one of
+    # them a wait, never a wrong answer, since every holder replaces only its own rows. It is also
+    # an internal Postgres function whose hash is not promised to be stable across major versions -
+    # harmless here, because a key only ever has to agree with other live sessions, never with a
+    # value stored anywhere.
     current.db.execute(
         text("SELECT pg_advisory_xact_lock(:key, hashtext(current_setting('app.tenant_id')))"),
         {"key": OPENING_LOCK},
@@ -248,6 +267,21 @@ def read_opening_hours(current: CurrentSession, response: Response) -> list[Shif
     return opening_week(current)
 
 
+# Design notes, deliberately a comment and not a docstring: a docstring here ships verbatim into
+# openapi.json as the operation's description, and from there into the generated web client.
+#
+# An empty week is refused (opening_hours_required), not stored: row count is the only sentinel
+# this table has, so "no rows" must keep meaning "never configured". A shop that removed its last
+# open day would otherwise silently lose its envelope and re-expose every worker's stale hours -
+# failing open. To stop taking bookings, clear working hours, archive the services, or block the
+# period as time off (ZIF-101). "Closed every day" is deliberately not expressible here.
+#
+# Narrowing the week is accepted and never touches working_hours (ZIF-105, accept-and-narrow):
+# availability clips. Two visible costs: the console may show a worker working past closing (a
+# ZIF-50 hint), and that worker's next PUT of their unchanged week is a 422 naming the day - which
+# is the acceptance criterion, not a bug. Reject loses because a {"code": str} body cannot name the
+# blocking members and naming them would be personal data; clamp loses because replace_week
+# replaces a week wholesale, so a clamp is silent data loss with no history.
 @opening_router.put(
     OPENING_PATH, name="replace", responses={s: {"model": Error} for s in (401, 403, 415, 422)}
 )
@@ -257,21 +291,8 @@ def replace_opening_hours(
     request: Request,
     response: Response,
 ) -> list[Shift]:
-    """Replace the business's whole opening week. Owners only.
-
-    An empty week is refused (opening_hours_required), not stored: row count is the only sentinel
-    this table has, so "no rows" must keep meaning "never configured". A shop that removed its last
-    open day would otherwise silently lose its envelope and re-expose every worker's stale hours -
-    failing open. To stop taking bookings, clear working hours, archive the services, or block the
-    period as time off (ZIF-101). "Closed every day" is deliberately not expressible here.
-
-    Narrowing the week is accepted and never touches working_hours (ZIF-105, accept-and-narrow):
-    availability clips. Two visible costs: the console may show a worker working past closing (a
-    ZIF-50 hint), and that worker's next PUT of their unchanged week is a 422 naming the day - which
-    is the acceptance criterion, not a bug. Reject loses because a {"code": str} body cannot name
-    the blocking members and naming them would be personal data; clamp loses because replace_week
-    replaces a week wholesale, so a clamp is silent data loss with no history.
-    """
+    """Replace the business's whole opening week. Owners only; an empty week is refused, because no
+    rows is how this table says "never configured"."""
     # First, before any other statement, exactly as replace_week locks the membership first: two
     # saves of one week run one after the other. Without this they interleave into a union of both
     # weeks - see lock_week's docstring.
@@ -285,8 +306,16 @@ def replace_opening_hours(
         raise ApiError(422, "end_not_after_start")
     if overlapping(rows):
         raise ApiError(422, "overlapping_hours")
+    # The WHERE is redundant - row-level security already scopes it - and deliberate: this exact
+    # statement copied into a psql session as a superuser would otherwise wipe every tenant's week.
     old = (
-        current.db.execute(text("DELETE FROM opening_hours RETURNING weekday, starts_at, ends_at"))
+        current.db.execute(
+            text(
+                "DELETE FROM opening_hours "
+                "WHERE tenant_id = current_setting('app.tenant_id')::uuid "
+                "RETURNING weekday, starts_at, ends_at"
+            )
+        )
         .tuples()
         .all()
     )

@@ -6,8 +6,17 @@ from datetime import UTC, date, datetime, time, timedelta
 import pytest
 
 from app import availability
-from app.availability import Booked, Interval, anchor, buffer_for, member_slots, merged, overlaps
-from app.schedule import Row, to_utc
+from app.availability import (
+    Booked,
+    Interval,
+    anchor,
+    buffer_for,
+    clip,
+    member_slots,
+    merged,
+    overlaps,
+)
+from app.schedule import Row, by_weekday, to_utc
 
 ZONE = "Europe/Amsterdam"
 LONG_AGO = datetime(2000, 1, 1, tzinfo=UTC)
@@ -25,6 +34,11 @@ def local(day: date, at: str) -> datetime:
 
 def rows(weekday: int, *shifts: tuple[str, str]) -> list[Row]:
     return [(weekday, time.fromisoformat(s), time.fromisoformat(e)) for s, e in shifts]
+
+
+def spans(*shifts: tuple[str, str]) -> list[tuple[time, time]]:
+    """One weekday's local shifts, the shape clip takes and returns."""
+    return [(time.fromisoformat(s), time.fromisoformat(e)) for s, e in shifts]
 
 
 def slots(
@@ -45,7 +59,7 @@ def slots(
         shift_rows,
         time_off or [],
         booked or [],
-        opening=opening or [],
+        opening=by_weekday(opening or []),
         zone=ZONE,
         first=first,
         last=last or first,
@@ -293,7 +307,7 @@ def test_today_is_the_business_s_local_date_end_to_end() -> None:
         every_day,
         [],
         [],
-        opening=[],
+        opening={},
         zone=ZONE,
         first=first,
         last=last,
@@ -309,11 +323,82 @@ def test_today_is_the_business_s_local_date_end_to_end() -> None:
 # 8. the opening-hours envelope (ZIF-105)
 
 
+# F22: clip's whole geometry, in one place. Each case kills a different wrong implementation:
+# never cutting the end, keeping only the first envelope piece a shift meets, dropping the second
+# worker shift, and relaxing the strict `<` that makes a touching pair produce nothing.
+@pytest.mark.parametrize(
+    ("shifts", "envelope", "expected"),
+    [
+        ([("09:00", "17:00")], [("09:00", "12:00")], [("09:00", "12:00")]),
+        ([("08:00", "12:00")], [("09:00", "17:00")], [("09:00", "12:00")]),
+        ([("08:00", "18:00")], [("10:00", "12:00")], [("10:00", "12:00")]),
+        ([("09:00", "12:00")], [("12:00", "17:00")], []),
+        ([("14:00", "16:00")], [("09:00", "12:00")], []),
+        (
+            [("09:00", "17:00")],
+            [("09:00", "12:00"), ("13:00", "17:00")],
+            [("09:00", "12:00"), ("13:00", "17:00")],
+        ),
+        (
+            [("09:00", "11:00"), ("14:00", "18:00")],
+            [("10:00", "16:00")],
+            [("10:00", "11:00"), ("14:00", "16:00")],
+        ),
+        ([("09:00", "17:00")], [], []),
+    ],
+    ids=[
+        "end clipped",
+        "start clipped",
+        "both ends clipped",
+        "touching, so nothing",
+        "disjoint",
+        "one shift split by a lunch closure",
+        "two shifts, both clipped",
+        "shut that weekday",
+    ],
+)
+def test_clip_cuts_a_day_s_shifts_to_that_day_s_envelope(
+    shifts: list[tuple[str, str]],
+    envelope: list[tuple[str, str]],
+    expected: list[tuple[str, str]],
+) -> None:
+    assert clip(spans(*shifts), spans(*envelope)) == spans(*expected)
+
+
+def test_a_shift_running_past_closing_sells_nothing_after_closing() -> None:
+    # F23: the ticket's headline scenario, through member_slots. Shop open 09:00-12:00, worker
+    # rostered 09:00-17:00. Without clip's min(end, closes) this is 09:00-16:00, eight slots.
+    found = slots(
+        rows(1, ("09:00", "17:00")),
+        MONDAY,
+        opening=rows(1, ("09:00", "12:00")),
+        duration=60,
+        step=60,
+    )
+    assert found == at(MONDAY, "09:00", "10:00", "11:00")
+
+
+def test_a_lunch_closure_splits_the_day_and_sells_nothing_in_the_gap() -> None:
+    # F24: a genuinely split envelope - 09:00-12:00 + 13:00-17:00, which day_shifts cannot join -
+    # against one worker shift spanning both. The afternoon must survive (an implementation taking
+    # only the first piece a shift meets would lose it) and the closure must sell nothing.
+    found = slots(
+        rows(1, ("09:00", "17:00")),
+        MONDAY,
+        opening=rows(1, ("09:00", "12:00"), ("13:00", "17:00")),
+        duration=60,
+        step=60,
+    )
+    assert found == at(MONDAY, "09:00", "10:00", "11:00", "13:00", "14:00", "15:00", "16:00")
+
+
 def test_the_envelope_is_clipped_in_local_time_not_in_utc() -> None:
-    # F3: the spring-forward DST fence (spec 9.1). Europe/Amsterdam, 2026-03-29, 02:00 CET -> 03:00
-    # CEST. Worker 02:30-05:00, opening 03:00-05:00. Clipped in local wall clock: max(02:30, 03:00)
+    # F3: the spring-forward DST fence. Europe/Amsterdam, 2026-03-29, 02:00 CET -> 03:00 CEST.
+    # Worker 02:30-05:00, opening 03:00-05:00. Clipped in local wall clock: max(02:30, 03:00)
     # = 03:00 -> piece (03:00, 05:00) -> opens=01:00Z, closes=03:00Z, anchor(03:00, 60)=03:00 ->
-    # t=01:00Z, neither walk loop moves it. A UTC clip instead loses the 01:00Z slot (spec 9.1).
+    # t=01:00Z, neither walk loop moves it. Clipping in UTC instead would compare 02:30 local
+    # (01:30Z, still on winter time) with 03:00 local (01:00Z) and keep the later 01:30Z as the
+    # start, losing this 01:00Z slot.
     found = slots(
         rows(7, ("02:30", "05:00")),
         date(2026, 3, 29),
@@ -325,9 +410,9 @@ def test_the_envelope_is_clipped_in_local_time_not_in_utc() -> None:
 
 
 def test_the_envelope_takes_the_first_of_a_repeated_local_hour() -> None:
-    # F4 (GUARD, spec finding 1): fall-back 2026-10-25. Worker 01:00-05:00, opening 02:00-05:00.
-    # The clipped envelope's ambiguous 02:00 is the *first* 02:00 (to_utc's documented rule), so the
-    # repeated hour is inside opening hours. A UTC clip gives the same answer on this date.
+    # F4 (GUARD): the fall-back day, 2026-10-25. Worker 01:00-05:00, opening 02:00-05:00. The
+    # clipped envelope's ambiguous 02:00 is the *first* 02:00 (to_utc's documented rule), so both
+    # passes of the repeated hour are inside opening hours and all four slots sell.
     found = slots(
         rows(7, ("01:00", "05:00")),
         date(2026, 10, 25),

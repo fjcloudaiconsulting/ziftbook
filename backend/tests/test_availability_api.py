@@ -561,7 +561,8 @@ def test_the_opening_hours_envelope_is_read_once_per_request(
 def test_the_envelope_is_read_even_when_no_worker_is_assigned(
     people: People, app: FastAPI, owner: TestClient, app_engine: Engine
 ) -> None:
-    # F21: pins section 3.4's placement, outside the `if chosen and first <= last:` guard.
+    # F21: the envelope read belongs outside the `if chosen and first <= last:` guard, so its
+    # statement count never depends on whether anyone is assigned (which F7 would not notice).
     service_id = new_service(owner)  # nobody assigned: chosen is empty
     seed_opening(people.a, [(1, "09:00", "17:00")])
     statements: list[str] = []
@@ -597,7 +598,9 @@ def test_the_envelope_narrows_a_worker_who_starts_before_opening(
 def test_a_worker_entirely_outside_the_envelope_is_still_listed_with_no_slots(
     people: People, app: FastAPI, ready: str
 ) -> None:
-    # G8: ruling 4's first visible cost, made executable.
+    # G8: accept-and-narrow's first visible cost, made executable. Narrowing the envelope never
+    # edits working_hours, so a worker whose whole week now falls outside it keeps their hours and
+    # stays in `workers` - they simply sell nothing.
     both = member_id(people.a, people.both)
     seed_opening(people.a, [(1, "13:00", "17:00")])
 
@@ -606,3 +609,22 @@ def test_a_worker_entirely_outside_the_envelope_is_still_listed_with_no_slots(
     body = response.json()
     assert body["workers"] == [{"id": str(both), "display_name": None}]
     assert body["slots"] == []
+
+
+def test_a_worker_rostered_past_closing_sells_nothing_after_closing(
+    people: People, app: FastAPI, owner: TestClient
+) -> None:
+    # F23: the ticket's headline scenario, end to end. Shop open 09:00-12:00, worker rostered
+    # 09:00-17:00: the last 30-minute slot starts at 11:30 and nothing sells at or after noon.
+    # Without the end of the clip this is 09:00-16:30, 31 slots.
+    service_id = new_service(owner)
+    seed(people.a, people.both, weekdays("09:00", "17:00"))
+    assign(people.a, service_id, member_id(people.a, people.both))
+    seed_opening(people.a, [(1, "09:00", "12:00")])
+
+    slots = get(new_client(app), people.a, service_id).json()["slots"]
+
+    assert slots[0] == local(MONDAY, "09:00")
+    assert slots[-1] == local(MONDAY, "11:30")
+    assert [s for s in slots if s >= local(MONDAY, "12:00")] == []
+    assert len(slots) == 11

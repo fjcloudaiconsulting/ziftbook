@@ -52,9 +52,10 @@ def clip(
     anchor would then have to be rebuilt from an instant that has two local names on the fall-back
     day.
 
-    Both inputs come from day_shifts, so both are sorted, disjoint and non-touching; so is the
-    result (see the spec's invariant argument). An envelope with no shifts this weekday cuts
-    everything away: the business is shut that day.
+    Both inputs come from day_shifts, so both are sorted, disjoint and non-touching, and so is the
+    result: each shift meets the pieces in order, each piece is cut to that shift, and two cuts of
+    one shift are separated by the gap between the pieces that produced them. An envelope with no
+    shifts this weekday cuts everything away: the business is shut that day.
     """
     return [
         (max(start, opens), min(end, closes))
@@ -95,7 +96,7 @@ def member_slots(
     time_off: list[Interval],
     booked: list[Booked],
     *,
-    opening: list[schedule.Row],
+    opening: dict[int, list[tuple[time, time]]],
     zone: str,
     first: date,
     last: date,
@@ -125,10 +126,10 @@ def member_slots(
         weekday = day.isoweekday()
         shifts = schedule.day_shifts(rows, weekday)
         # A business with no opening hours at all behaves exactly as before (ZIF-105 AC). Tested on
-        # the whole envelope, never per weekday: an empty *weekday* means shut that day, not
-        # unconfigured.
+        # the whole envelope, never per weekday: a weekday MISSING from the mapping means shut that
+        # day, not unconfigured.
         if opening:
-            shifts = clip(shifts, schedule.day_shifts(opening, weekday))
+            shifts = clip(shifts, opening.get(weekday, []))
         for local_start, local_end in shifts:
             opens = schedule.to_utc(day, local_start, zone)
             closes = schedule.to_utc(day, local_end, zone)
@@ -232,13 +233,15 @@ def read_availability(
             raise ApiError(404, "not_found")
         settings = business_settings.read(db)
         # The business's envelope: one statement per request, never per day or per worker. No
-        # WHERE tenant_id: row-level security scopes it. No ORDER BY: day_shifts sorts.
-        opening: list[schedule.Row] = [
+        # WHERE tenant_id: row-level security scopes it. No ORDER BY: day_shifts sorts. Joined into
+        # a weekday mapping here too, once per request rather than once per worker per day.
+        opening_rows: list[schedule.Row] = [
             (weekday, starts_at, ends_at)
             for weekday, starts_at, ends_at in db.execute(
                 text("SELECT weekday, starts_at, ends_at FROM opening_hours")
             ).tuples()
         ]
+        opening = schedule.by_weekday(opening_rows)
         hours: dict[UUID, list[schedule.Row]] = defaultdict(list)
         names: dict[UUID, str | None] = {}
         for m, display_name, weekday, starts_at, ends_at in db.execute(
