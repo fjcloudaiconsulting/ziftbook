@@ -1,8 +1,13 @@
-"""A member's working week, in local time, and turning local times into instants (ZIF-46)."""
+"""A member's working week, in local time, and turning local times into instants (ZIF-46).
 
+Also opening_hours (ZIF-105): the business's own weekly envelope every member's working hours and
+every bookable slot must fall inside.
+"""
+
+from collections.abc import Iterable
 from datetime import UTC, date, datetime, time
 from itertools import pairwise
-from typing import Annotated
+from typing import Annotated, Any
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -13,7 +18,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
 from app import auth, business_settings, members
-from app.auth import CurrentSession, SignedIn
+from app.auth import CurrentOwner, CurrentSession, SignedIn
 from app.errors import ApiError, Error
 
 OVERLAP = "ex_working_hours_overlap"  # migration 0017
@@ -57,6 +62,23 @@ def overlapping(rows: list[Row]) -> bool:
     )
 
 
+def day_shifts(rows: list[Row], weekday: int) -> list[tuple[time, time]]:
+    """One weekday's shifts in local time, touching ones joined (09:00-10:30 + 10:30-12:00)."""
+    joined: list[tuple[time, time]] = []
+    for _, start, end in sorted(r for r in rows if r[0] == weekday):
+        if joined and start == joined[-1][1]:
+            joined[-1] = (joined[-1][0], end)
+        else:
+            joined.append((start, end))
+    return joined
+
+
+def within(shift: tuple[time, time], envelope: list[tuple[time, time]]) -> bool:
+    """Whether a shift fits entirely inside one of a weekday's joined opening shifts."""
+    start, end = shift
+    return any(opens <= start and end <= closes for opens, closes in envelope)
+
+
 def week(current: SignedIn, member_id: UUID) -> list[Shift]:
     rows = current.db.execute(
         text("""
@@ -65,6 +87,10 @@ def week(current: SignedIn, member_id: UUID) -> list[Shift]:
         """),
         {"id": member_id},
     )
+    return to_shifts(rows)
+
+
+def to_shifts(rows: Iterable[Any]) -> list[Shift]:
     return [
         Shift(weekday=r.weekday, starts_at=f"{r.starts_at:%H:%M}", ends_at=f"{r.ends_at:%H:%M}")
         for r in rows
@@ -110,6 +136,22 @@ def replace_week(
         raise ApiError(422, "end_not_after_start")
     if overlapping(rows):
         raise ApiError(422, "overlapping_hours")
+    # After the 403, never before: an unauthorised caller must not learn the shop's opening hours.
+    # One statement; no rows means the business never configured opening hours, and behaves exactly
+    # as it did before ZIF-105. Checked against the JOINED shifts, so 09:00-15:00 fits opening rows
+    # 09:00-12:00 + 12:00-15:00. Not a trigger: a trigger fires per row, cannot name the weekday,
+    # and would put a per-tenant set_config duty on every future data migration touching
+    # working_hours (CONTRIBUTING.md:70-71).
+    envelope: list[Row] = [
+        (weekday, starts_at, ends_at)
+        for weekday, starts_at, ends_at in current.db.execute(
+            text("SELECT weekday, starts_at, ends_at FROM opening_hours")
+        ).tuples()
+    ]
+    if envelope:
+        for weekday, start, end in rows:
+            if not within((start, end), day_shifts(envelope, weekday)):
+                raise ApiError(422, "outside_opening_hours", weekday=weekday)
     old = (
         current.db.execute(
             text(
@@ -157,3 +199,114 @@ def replace_week(
         )
     response.headers["Cache-Control"] = "no-store"
     return week(current, member_id)
+
+
+opening_router = APIRouter(prefix="/api", tags=["opening-hours"])
+OPENING_PATH = "/opening-hours"
+OPENING_OVERLAP = "ex_opening_hours_overlap"  # migration 0025
+# The first key of the two-key advisory lock below: a namespace of our own, so the second key is
+# free to be any hash of the tenant id without colliding with another feature's lock.
+OPENING_LOCK = 105  # ZIF-105
+
+
+def opening_week(current: SignedIn) -> list[Shift]:
+    return to_shifts(
+        current.db.execute(
+            text("""
+            SELECT weekday, starts_at, ends_at FROM opening_hours ORDER BY weekday, starts_at
+            """)
+        )
+    )
+
+
+def lock_week(current: SignedIn) -> None:
+    """Serialize two owners replacing the opening week.
+
+    Not optional. The replace body is an unqualified DELETE + INSERT, and under READ COMMITTED two
+    concurrent saves are not last-writer-wins: the second DELETE wakes to find the first's rows
+    already gone and cannot see its inserts, so both weeks end up stored - an envelope wider than
+    either owner asked for, which re-exposes exactly the stale working hours this table exists to
+    fence off.
+
+    Transaction-scoped and released on commit or rollback. An advisory lock, not a row lock: there
+    is no membership row to lock here, and an endpoint must never lock tenants
+    (CONTRIBUTING.md:79-83). The INSERT still takes only the KEY SHARE its foreign key takes.
+    Its own function, so the concurrency test has the same seam ZIF-46's test takes on
+    members.member_user.
+    """
+    current.db.execute(
+        text("SELECT pg_advisory_xact_lock(:key, hashtext(current_setting('app.tenant_id')))"),
+        {"key": OPENING_LOCK},
+    )
+
+
+@opening_router.get(OPENING_PATH, name="read", responses={401: {"model": Error}})
+def read_opening_hours(current: CurrentSession, response: Response) -> list[Shift]:
+    """When the business is open, Monday first. Anyone in the business may read it: a worker needs
+    the envelope while editing their own week."""
+    response.headers["Cache-Control"] = "no-store"
+    return opening_week(current)
+
+
+@opening_router.put(
+    OPENING_PATH, name="replace", responses={s: {"model": Error} for s in (401, 403, 415, 422)}
+)
+def replace_opening_hours(
+    shifts: Annotated[list[Shift], Body(max_length=MAX_SHIFTS)],
+    current: CurrentOwner,
+    request: Request,
+    response: Response,
+) -> list[Shift]:
+    """Replace the business's whole opening week. Owners only.
+
+    An empty week is refused (opening_hours_required), not stored: row count is the only sentinel
+    this table has, so "no rows" must keep meaning "never configured". A shop that removed its last
+    open day would otherwise silently lose its envelope and re-expose every worker's stale hours -
+    failing open. To stop taking bookings, clear working hours, archive the services, or block the
+    period as time off (ZIF-101). "Closed every day" is deliberately not expressible here.
+
+    Narrowing the week is accepted and never touches working_hours (ZIF-105, accept-and-narrow):
+    availability clips. Two visible costs: the console may show a worker working past closing (a
+    ZIF-50 hint), and that worker's next PUT of their unchanged week is a 422 naming the day - which
+    is the acceptance criterion, not a bug. Reject loses because a {"code": str} body cannot name
+    the blocking members and naming them would be personal data; clamp loses because replace_week
+    replaces a week wholesale, so a clamp is silent data loss with no history.
+    """
+    # First, before any other statement, exactly as replace_week locks the membership first: two
+    # saves of one week run one after the other. Without this they interleave into a union of both
+    # weeks - see lock_week's docstring.
+    lock_week(current)
+    rows = sorted(
+        (s.weekday, time.fromisoformat(s.starts_at), time.fromisoformat(s.ends_at)) for s in shifts
+    )
+    if not rows:
+        raise ApiError(422, "opening_hours_required")
+    if any(end <= start for _, start, end in rows):
+        raise ApiError(422, "end_not_after_start")
+    if overlapping(rows):
+        raise ApiError(422, "overlapping_hours")
+    old = (
+        current.db.execute(text("DELETE FROM opening_hours RETURNING weekday, starts_at, ends_at"))
+        .tuples()
+        .all()
+    )
+    try:  # no `if rows:` guard: the empty week was refused above
+        current.db.execute(
+            text("""
+            INSERT INTO opening_hours (tenant_id, weekday, starts_at, ends_at)
+            VALUES (current_setting('app.tenant_id')::uuid, :weekday, :starts_at, :ends_at)
+            """),
+            [{"weekday": d, "starts_at": s, "ends_at": e} for d, s, e in rows],
+        )
+    except IntegrityError as error:
+        # Only our overlap rule, keyed on this table's constraint; anything else stays a 500.
+        if (
+            isinstance(error.orig, ExclusionViolation)
+            and error.orig.diag.constraint_name == OPENING_OVERLAP
+        ):
+            raise ApiError(422, "overlapping_hours") from None
+        raise
+    if sorted(old) != rows:
+        auth.record(current.db, request, "opening_hours_changed", actor_user_id=current.user_id)
+    response.headers["Cache-Control"] = "no-store"
+    return opening_week(current)

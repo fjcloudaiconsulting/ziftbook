@@ -212,3 +212,29 @@ def test_upgrading_0020_rewrites_last_error_to_the_class_only(
         command.upgrade(cfg, "head")
         with migrate_engine.begin() as conn:
             conn.execute(text("DELETE FROM jobs WHERE dedupe_key = :key"), {"key": key})
+
+
+def test_downgrading_and_upgrading_0025_keeps_the_timerange_type(
+    migrated: None, migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # F18: 0025's downgrade must never DROP TYPE timerange - working_hours' own exclusion
+    # constraint (0017) still uses it.
+    cfg = Config(toml_file=str(API_DIR / "pyproject.toml"))
+    url = os.environ["ZIF_MIGRATE_DATABASE_URL"]
+    options = urlencode({"options": "-c lock_timeout=5s"})
+    monkeypatch.setenv("ZIF_MIGRATE_DATABASE_URL", f"{url}{'&' if '?' in url else '?'}{options}")
+    command.downgrade(cfg, "0024")
+    try:
+        with migrate_engine.connect() as conn:
+            assert conn.scalar(text("SELECT to_regclass('opening_hours')")) is None
+            assert conn.scalar(text("SELECT to_regtype('timerange')")) is not None
+    finally:
+        command.upgrade(cfg, "head")
+    with migrate_engine.connect() as conn:
+        assert conn.scalar(text("SELECT to_regclass('opening_hours')")) is not None
+        assert (
+            conn.scalar(
+                text("SELECT conname FROM pg_constraint WHERE conname = 'ex_opening_hours_overlap'")
+            )
+            is not None
+        )

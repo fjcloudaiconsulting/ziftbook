@@ -34,6 +34,7 @@ def slots(
     *,
     time_off: list[Interval] | None = None,
     booked: list[Booked] | None = None,
+    opening: list[Row] | None = None,
     duration: int = 60,
     buffer: int = 0,
     pct: int = 0,
@@ -44,6 +45,7 @@ def slots(
         shift_rows,
         time_off or [],
         booked or [],
+        opening=opening or [],
         zone=ZONE,
         first=first,
         last=last or first,
@@ -291,6 +293,7 @@ def test_today_is_the_business_s_local_date_end_to_end() -> None:
         every_day,
         [],
         [],
+        opening=[],
         zone=ZONE,
         first=first,
         last=last,
@@ -301,3 +304,54 @@ def test_today_is_the_business_s_local_date_end_to_end() -> None:
         earliest=earliest,
     )
     assert found == [utc("2026-07-16T07:00"), utc("2026-07-17T07:00")]
+
+
+# 8. the opening-hours envelope (ZIF-105)
+
+
+def test_the_envelope_is_clipped_in_local_time_not_in_utc() -> None:
+    # F3: the spring-forward DST fence (spec 9.1). Europe/Amsterdam, 2026-03-29, 02:00 CET -> 03:00
+    # CEST. Worker 02:30-05:00, opening 03:00-05:00. Clipped in local wall clock: max(02:30, 03:00)
+    # = 03:00 -> piece (03:00, 05:00) -> opens=01:00Z, closes=03:00Z, anchor(03:00, 60)=03:00 ->
+    # t=01:00Z, neither walk loop moves it. A UTC clip instead loses the 01:00Z slot (spec 9.1).
+    found = slots(
+        rows(7, ("02:30", "05:00")),
+        date(2026, 3, 29),
+        opening=rows(7, ("03:00", "05:00")),
+        duration=60,
+        step=60,
+    )
+    assert found == [utc("2026-03-29T01:00"), utc("2026-03-29T02:00")]
+
+
+def test_the_envelope_takes_the_first_of_a_repeated_local_hour() -> None:
+    # F4 (GUARD, spec finding 1): fall-back 2026-10-25. Worker 01:00-05:00, opening 02:00-05:00.
+    # The clipped envelope's ambiguous 02:00 is the *first* 02:00 (to_utc's documented rule), so the
+    # repeated hour is inside opening hours. A UTC clip gives the same answer on this date.
+    found = slots(
+        rows(7, ("01:00", "05:00")),
+        date(2026, 10, 25),
+        opening=rows(7, ("02:00", "05:00")),
+        duration=60,
+        step=60,
+    )
+    assert found == [
+        utc("2026-10-25T00:00"),
+        utc("2026-10-25T01:00"),
+        utc("2026-10-25T02:00"),
+        utc("2026-10-25T03:00"),
+    ]
+
+
+def test_touching_opening_rows_are_joined_before_clipping() -> None:
+    # F6: opening rows joined by day_shifts before clipping, so a worker shift spanning the join
+    # (09:00-15:00 against 09:00-12:00 + 12:00-15:00) isn't fragmented at noon.
+    found = slots(
+        rows(1, ("09:00", "15:00")),
+        MONDAY,
+        opening=rows(1, ("09:00", "12:00"), ("12:00", "15:00")),
+        duration=60,
+        step=30,
+    )
+    assert local(MONDAY, "11:30") in found
+    assert len(found) == 11

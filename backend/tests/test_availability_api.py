@@ -26,6 +26,7 @@ from tests.conftest import (
     save_setting,
     signed_in,
 )
+from tests.test_opening_hours import seed_opening
 from tests.test_services import service
 from tests.test_working_hours import seed
 
@@ -501,3 +502,107 @@ def test_the_display_name_costs_no_extra_query(
     naming_memberships = [s for s in statements if "memberships" in s]
     assert len(naming_memberships) == 1
     assert "working_hours" in naming_memberships[0]
+
+
+# 11. the opening-hours envelope (ZIF-105)
+
+
+def test_a_business_with_no_opening_hours_returns_exactly_todays_slots(
+    people: People, app: FastAPI, ready: str
+) -> None:
+    # F1: the catastrophic inversion. No opening_hours rows must behave exactly as before ZIF-105.
+    response = get(new_client(app), people.a, ready)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["slots"][0] == "2026-03-30T07:00:00Z"
+    assert len(body["slots"]) == 11
+
+
+def test_a_closed_weekday_sells_nothing_though_the_worker_still_has_hours(
+    people: People, app: FastAPI, ready: str
+) -> None:
+    # F2: the other direction. Only Tuesday is open; the worker's Monday hours must not sell.
+    seed_opening(people.a, [(2, "09:00", "12:00")])
+    client = new_client(app)
+
+    monday = get(client, people.a, ready, MONDAY, MONDAY)
+    tuesday = get(client, people.a, ready, "2026-03-31", "2026-03-31")
+
+    assert monday.json()["slots"] == []
+    assert len(tuesday.json()["slots"]) == 11
+
+
+def test_the_opening_hours_envelope_is_read_once_per_request(
+    people: People, app: FastAPI, owner: TestClient, app_engine: Engine
+) -> None:
+    # F7: one statement, whatever the worker count or the day count.
+    both, only_a = member_id(people.a, people.both), member_id(people.a, people.only_a)
+    service_id = new_service(owner)
+    seed(people.a, people.both, weekdays("09:00", "12:00"))
+    seed(people.a, people.only_a, weekdays("09:00", "12:00"))
+    assign(people.a, service_id, both, only_a)
+    seed_opening(people.a, [(1, "09:00", "17:00")])
+    statements: list[str] = []
+
+    def count(conn: object, cursor: object, statement: str, *args: object) -> None:
+        statements.append(statement)
+
+    event.listen(app_engine, "before_cursor_execute", count)
+    try:
+        response = get(new_client(app), people.a, service_id, MONDAY, "2026-04-12")
+    finally:
+        event.remove(app_engine, "before_cursor_execute", count)
+
+    assert response.status_code == 200
+    assert sum("opening_hours" in s for s in statements) == 1
+
+
+def test_the_envelope_is_read_even_when_no_worker_is_assigned(
+    people: People, app: FastAPI, owner: TestClient, app_engine: Engine
+) -> None:
+    # F21: pins section 3.4's placement, outside the `if chosen and first <= last:` guard.
+    service_id = new_service(owner)  # nobody assigned: chosen is empty
+    seed_opening(people.a, [(1, "09:00", "17:00")])
+    statements: list[str] = []
+
+    def count(conn: object, cursor: object, statement: str, *args: object) -> None:
+        statements.append(statement)
+
+    event.listen(app_engine, "before_cursor_execute", count)
+    try:
+        response = get(new_client(app), people.a, service_id)
+    finally:
+        event.remove(app_engine, "before_cursor_execute", count)
+
+    assert response.status_code == 200
+    assert response.json()["slots"] == []
+    assert sum("opening_hours" in s for s in statements) == 1
+
+
+def test_the_envelope_narrows_a_worker_who_starts_before_opening(
+    people: People, app: FastAPI, ready: str
+) -> None:
+    # G7: the AC end to end, through the public route.
+    seed_opening(people.a, [(1, "10:00", "12:00")])
+
+    response = get(new_client(app), people.a, ready)
+
+    slots = response.json()["slots"]
+    assert slots[0] == local(MONDAY, "10:00")
+    assert local(MONDAY, "09:00") not in slots
+    assert local(MONDAY, "11:30") in slots
+
+
+def test_a_worker_entirely_outside_the_envelope_is_still_listed_with_no_slots(
+    people: People, app: FastAPI, ready: str
+) -> None:
+    # G8: ruling 4's first visible cost, made executable.
+    both = member_id(people.a, people.both)
+    seed_opening(people.a, [(1, "13:00", "17:00")])
+
+    response = get(new_client(app), people.a, ready)
+
+    body = response.json()
+    assert body["workers"] == [{"id": str(both), "display_name": None}]
+    assert body["slots"] == []

@@ -41,6 +41,29 @@ def merged(intervals: Iterable[Interval]) -> list[Interval]:
     return out
 
 
+def clip(
+    shifts: list[tuple[time, time]], envelope: list[tuple[time, time]]
+) -> list[tuple[time, time]]:
+    """One weekday's shifts cut to that weekday's opening shifts, in LOCAL WALL CLOCK.
+
+    Never in UTC. In UTC a shift that starts inside an hour the clock skips converts to an instant
+    *later* than a shift that starts after the change (02:30 -> 01:30Z but 03:00 -> 01:00Z on
+    2026-03-29 Amsterdam, app/schedule.py's to_utc), so max() in UTC picks the wrong bound; and the
+    anchor would then have to be rebuilt from an instant that has two local names on the fall-back
+    day.
+
+    Both inputs come from day_shifts, so both are sorted, disjoint and non-touching; so is the
+    result (see the spec's invariant argument). An envelope with no shifts this weekday cuts
+    everything away: the business is shut that day.
+    """
+    return [
+        (max(start, opens), min(end, closes))
+        for start, end in shifts
+        for opens, closes in envelope
+        if max(start, opens) < min(end, closes)
+    ]
+
+
 def overlaps(blocks: list[Interval], start: datetime, end: datetime) -> bool:
     """Whether [start, end) meets any of merged() blocks. Touching isn't overlapping."""
     i = bisect_right(blocks, start, key=lambda b: b[1])  # the first block ending after start
@@ -52,17 +75,6 @@ def anchor(start: time, step: int) -> time | None:
     midnight."""
     minutes = -(-(start.hour * 60 + start.minute) // step) * step
     return time(*divmod(minutes, 60)) if minutes < 24 * 60 else None
-
-
-def day_shifts(rows: list[schedule.Row], weekday: int) -> list[tuple[time, time]]:
-    """One weekday's shifts in local time, touching ones joined (09:00-10:30 + 10:30-12:00)."""
-    joined: list[tuple[time, time]] = []
-    for _, start, end in sorted(r for r in rows if r[0] == weekday):
-        if joined and start == joined[-1][1]:
-            joined[-1] = (joined[-1][0], end)
-        else:
-            joined.append((start, end))
-    return joined
 
 
 def window(
@@ -83,6 +95,7 @@ def member_slots(
     time_off: list[Interval],
     booked: list[Booked],
     *,
+    opening: list[schedule.Row],
     zone: str,
     first: date,
     last: date,
@@ -109,7 +122,14 @@ def member_slots(
     out: list[datetime] = []
     day = first
     while day <= last:
-        for local_start, local_end in day_shifts(rows, day.isoweekday()):
+        weekday = day.isoweekday()
+        shifts = schedule.day_shifts(rows, weekday)
+        # A business with no opening hours at all behaves exactly as before (ZIF-105 AC). Tested on
+        # the whole envelope, never per weekday: an empty *weekday* means shut that day, not
+        # unconfigured.
+        if opening:
+            shifts = clip(shifts, schedule.day_shifts(opening, weekday))
+        for local_start, local_end in shifts:
             opens = schedule.to_utc(day, local_start, zone)
             closes = schedule.to_utc(day, local_end, zone)
             at = anchor(local_start, step)
@@ -211,6 +231,14 @@ def read_availability(
         if service is None:
             raise ApiError(404, "not_found")
         settings = business_settings.read(db)
+        # The business's envelope: one statement per request, never per day or per worker. No
+        # WHERE tenant_id: row-level security scopes it. No ORDER BY: day_shifts sorts.
+        opening: list[schedule.Row] = [
+            (weekday, starts_at, ends_at)
+            for weekday, starts_at, ends_at in db.execute(
+                text("SELECT weekday, starts_at, ends_at FROM opening_hours")
+            ).tuples()
+        ]
         hours: dict[UUID, list[schedule.Row]] = defaultdict(list)
         names: dict[UUID, str | None] = {}
         for m, display_name, weekday, starts_at, ends_at in db.execute(
@@ -267,6 +295,7 @@ def read_availability(
                         hours[m],
                         time_off[m],
                         bookings[m],
+                        opening=opening,
                         zone=zone,
                         first=first,
                         last=last,

@@ -382,6 +382,9 @@ def people(app_engine: Engine, migrate_engine: Engine, bound: None) -> Iterator[
     yield people
     for tenant_id in (a, b):
         with tenant_context(tenant_id) as session:
+            # Not cascaded by deleting memberships: opening_hours references tenants, not a
+            # membership (ZIF-105).
+            session.execute(text("DELETE FROM opening_hours"))
             session.execute(text("DELETE FROM settings"))  # they reference the business
             session.execute(text("DELETE FROM invites"))
             session.execute(text("DELETE FROM memberships"))

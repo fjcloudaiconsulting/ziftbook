@@ -103,6 +103,7 @@ def create_app() -> FastAPI:
     app.include_router(members.router)
     app.include_router(invites.router)
     app.include_router(schedule.router)
+    app.include_router(schedule.opening_router)
     app.include_router(time_off.router)
     app.include_router(availability.router)
 
@@ -158,7 +159,13 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(ApiError)
     async def api_error(request: Request, error: ApiError) -> JSONResponse:
-        return JSONResponse({"code": error.code}, status_code=error.status_code)
+        # weekday only when set: every error body that names no day stays exactly {"code": ...},
+        # which is what the whole suite asserts. Emitting it unconditionally fails 135 tests
+        # across 15 files (measured, ZIF-105).
+        body: dict[str, object] = {"code": error.code}
+        if error.weekday is not None:
+            body["weekday"] = error.weekday
+        return JSONResponse(body, status_code=error.status_code)
 
     @app.exception_handler(RequestValidationError)
     async def invalid_request(request: Request, error: RequestValidationError) -> JSONResponse:

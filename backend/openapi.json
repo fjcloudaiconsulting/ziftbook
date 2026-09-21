@@ -2236,6 +2236,121 @@
         }
       }
     },
+    "/api/opening-hours": {
+      "get": {
+        "tags": [
+          "opening-hours"
+        ],
+        "summary": "Read",
+        "description": "When the business is open, Monday first. Anyone in the business may read it: a worker needs\nthe envelope while editing their own week.",
+        "operationId": "opening-hours-read",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/Shift"
+                  },
+                  "type": "array",
+                  "title": "Response Opening-Hours-Read"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "opening-hours"
+        ],
+        "summary": "Replace",
+        "description": "Replace the business's whole opening week. Owners only.\n\nAn empty week is refused (opening_hours_required), not stored: row count is the only sentinel\nthis table has, so \"no rows\" must keep meaning \"never configured\". A shop that removed its last\nopen day would otherwise silently lose its envelope and re-expose every worker's stale hours -\nfailing open. To stop taking bookings, clear working hours, archive the services, or block the\nperiod as time off (ZIF-101). \"Closed every day\" is deliberately not expressible here.\n\nNarrowing the week is accepted and never touches working_hours (ZIF-105, accept-and-narrow):\navailability clips. Two visible costs: the console may show a worker working past closing (a\nZIF-50 hint), and that worker's next PUT of their unchanged week is a 422 naming the day - which\nis the acceptance criterion, not a bug. Reject loses because a {\"code\": str} body cannot name\nthe blocking members and naming them would be personal data; clamp loses because replace_week\nreplaces a week wholesale, so a clamp is silent data loss with no history.",
+        "operationId": "opening-hours-replace",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "items": {
+                  "$ref": "#/components/schemas/Shift"
+                },
+                "type": "array",
+                "maxItems": 50,
+                "title": "Shifts"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/Shift"
+                  },
+                  "type": "array",
+                  "title": "Response Opening-Hours-Replace"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Content",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/members/{member_id}/time-off": {
       "get": {
         "tags": [
@@ -3313,6 +3428,17 @@
           "code": {
             "type": "string",
             "title": "Code"
+          },
+          "weekday": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Weekday"
           }
         },
         "type": "object",
