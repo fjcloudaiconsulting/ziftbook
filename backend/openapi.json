@@ -2236,6 +2236,121 @@
         }
       }
     },
+    "/api/opening-hours": {
+      "get": {
+        "tags": [
+          "opening-hours"
+        ],
+        "summary": "Read",
+        "description": "When the business is open, Monday first. Anyone in the business may read it: a worker needs\nthe envelope while editing their own week.",
+        "operationId": "opening-hours-read",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/Shift"
+                  },
+                  "type": "array",
+                  "title": "Response Opening-Hours-Read"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "opening-hours"
+        ],
+        "summary": "Replace",
+        "description": "Replace the business's whole opening week. Owners only; an empty week is refused, because no\nrows is how this table says \"never configured\".",
+        "operationId": "opening-hours-replace",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "items": {
+                  "$ref": "#/components/schemas/Shift"
+                },
+                "type": "array",
+                "maxItems": 50,
+                "title": "Shifts"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/Shift"
+                  },
+                  "type": "array",
+                  "title": "Response Opening-Hours-Replace"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Content",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/members/{member_id}/time-off": {
       "get": {
         "tags": [
@@ -3313,6 +3428,17 @@
           "code": {
             "type": "string",
             "title": "Code"
+          },
+          "weekday": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Weekday"
           }
         },
         "type": "object",

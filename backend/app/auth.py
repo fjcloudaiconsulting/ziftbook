@@ -80,6 +80,7 @@ Action = Literal[
     "member_removed",
     "member_display_name_changed",
     "working_hours_changed",
+    "opening_hours_changed",
     "time_off_created",
     "time_off_changed",
     "time_off_deleted",
