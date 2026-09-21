@@ -232,16 +232,8 @@ def read_availability(
         if service is None:
             raise ApiError(404, "not_found")
         settings = business_settings.read(db)
-        # The business's envelope: one statement per request, never per day or per worker. No
-        # WHERE tenant_id: row-level security scopes it. No ORDER BY: day_shifts sorts. Joined into
-        # a weekday mapping here too, once per request rather than once per worker per day.
-        opening_rows: list[schedule.Row] = [
-            (weekday, starts_at, ends_at)
-            for weekday, starts_at, ends_at in db.execute(
-                text("SELECT weekday, starts_at, ends_at FROM opening_hours")
-            ).tuples()
-        ]
-        opening = schedule.by_weekday(opening_rows)
+        # Here, not inside either loop below: once per request, never per worker per day.
+        opening = schedule.envelope(db)
         hours: dict[UUID, list[schedule.Row]] = defaultdict(list)
         names: dict[UUID, str | None] = {}
         for m, display_name, weekday, starts_at, ends_at in db.execute(

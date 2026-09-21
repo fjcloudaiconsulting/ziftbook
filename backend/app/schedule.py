@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import Row as SqlRow  # aliased: this module's own Row is the (weekday, from, to)
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
 
 from app import auth, business_settings, members
 from app.auth import CurrentOwner, CurrentSession, SignedIn
@@ -78,11 +79,22 @@ def by_weekday(rows: list[Row]) -> dict[int, list[tuple[time, time]]]:
     """Every weekday's joined shifts at once, keyed by weekday; a weekday with no rows is absent.
 
     day_shifts scans the whole list, so callers that ask about many weekdays (availability: up to
-    14 days x 20 workers) build this once instead. Empty in, empty out: `{}` is falsy, exactly like
-    the row list it came from, so "the business never configured opening hours" still reads as a
-    plain truth test on it.
+    14 days x 20 workers) build this once instead.
     """
     return {weekday: day_shifts(rows, weekday) for weekday in {r[0] for r in rows}}
+
+
+def envelope(db: Session) -> dict[int, list[tuple[time, time]]]:
+    """The business's opening week, keyed by weekday; `{}` when it never configured any.
+
+    One statement, never one per weekday or per worker. No WHERE tenant_id: row-level security
+    scopes it. No ORDER BY: day_shifts sorts. `{}` is falsy, exactly like the row list it came
+    from, so "never configured" stays a plain truth test on the result.
+    """
+    rows: list[Row] = list(
+        db.execute(text("SELECT weekday, starts_at, ends_at FROM opening_hours")).tuples()
+    )
+    return by_weekday(rows)
 
 
 def within(shift: tuple[time, time], envelope: list[tuple[time, time]]) -> bool:
@@ -155,13 +167,7 @@ def replace_week(
     # 09:00-12:00 + 12:00-15:00. Not a trigger: a trigger fires per row, cannot name the weekday,
     # and would put a per-tenant set_config duty on every future data migration touching
     # working_hours (CONTRIBUTING.md:70-71).
-    envelope: list[Row] = [
-        (weekday, starts_at, ends_at)
-        for weekday, starts_at, ends_at in current.db.execute(
-            text("SELECT weekday, starts_at, ends_at FROM opening_hours")
-        ).tuples()
-    ]
-    open_days = by_weekday(envelope)
+    open_days = envelope(current.db)
     if open_days:
         for weekday, start, end in rows:
             if not within((start, end), open_days.get(weekday, [])):
@@ -270,11 +276,8 @@ def read_opening_hours(current: CurrentSession, response: Response) -> list[Shif
 # Design notes, deliberately a comment and not a docstring: a docstring here ships verbatim into
 # openapi.json as the operation's description, and from there into the generated web client.
 #
-# An empty week is refused (opening_hours_required), not stored: row count is the only sentinel
-# this table has, so "no rows" must keep meaning "never configured". A shop that removed its last
-# open day would otherwise silently lose its envelope and re-expose every worker's stale hours -
-# failing open. To stop taking bookings, clear working hours, archive the services, or block the
-# period as time off (ZIF-101). "Closed every day" is deliberately not expressible here.
+# An empty week is refused (opening_hours_required) - see this handler's docstring. To stop taking
+# bookings: clear working hours, archive the services, or block the period as time off (ZIF-101).
 #
 # Narrowing the week is accepted and never touches working_hours (ZIF-105, accept-and-narrow):
 # availability clips. Two visible costs: the console may show a worker working past closing (a
@@ -293,9 +296,6 @@ def replace_opening_hours(
 ) -> list[Shift]:
     """Replace the business's whole opening week. Owners only; an empty week is refused, because no
     rows is how this table says "never configured"."""
-    # First, before any other statement, exactly as replace_week locks the membership first: two
-    # saves of one week run one after the other. Without this they interleave into a union of both
-    # weeks - see lock_week's docstring.
     lock_week(current)
     rows = sorted(
         (s.weekday, time.fromisoformat(s.starts_at), time.fromisoformat(s.ends_at)) for s in shifts
