@@ -39,6 +39,17 @@ class LogSettings(Settings):
     log_sql: bool = False
 
 
+class TurnstileSettings(Settings):
+    """Cloudflare Turnstile. Unset means verification is skipped, so development and the test suite
+    need no network; that state is printed on the `api started` line so a deployment that forgot the
+    secret is visible in the logs rather than silently open."""
+
+    # Resolved at runtime from the environment and never committed. In a deployment it comes from
+    # Secrets Manager as {{resolve:secretsmanager:...:SecretString:json-key}} so the value never
+    # enters a repository or a transcript (ZIF-38).
+    turnstile_secret: str = ""
+
+
 class MailSettings(Settings):
     """SMTP for outgoing email. Deployed: Mailgun EU (smtp.eu.mailgun.org:587, STARTTLS)."""
 

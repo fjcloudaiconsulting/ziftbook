@@ -81,51 +81,88 @@ class Found:
     locale: str | None
 
 
-FIND_OR_CREATE = text("""
-INSERT INTO clients (tenant_id, name, email, phone, locale)
-VALUES (current_setting('app.tenant_id')::uuid, :name, :email, :phone, :locale)
+_INSERT = """
+INSERT INTO clients (tenant_id, name, email, phone, locale, user_id)
+VALUES (current_setting('app.tenant_id')::uuid, :name, :email, :phone, :locale, :user_id)
 ON CONFLICT (tenant_id, email) DO UPDATE SET
+"""
+_RETURNING = "\nRETURNING id, phone, locale\n"
+
+# The address's own account is signing in and booking: what they type is what they own.
+REFRESH = text(
+    _INSERT
+    + """
   name = excluded.name,
   phone = coalesce(excluded.phone, clients.phone),
   locale = coalesce(excluded.locale, clients.locale)
-RETURNING id, phone, locale
-""")
+"""
+    + _RETURNING
+)
+# Anyone else, including a signed-in person typing a third party's address. Blanks are filled;
+# nothing stored is ever replaced. Not DO NOTHING: that returns no row.
+FILL = text(
+    _INSERT
+    + """
+  phone = coalesce(clients.phone, excluded.phone),
+  locale = coalesce(clients.locale, excluded.locale)
+"""
+    + _RETURNING
+)
 
 
 def find_or_create(
-    db: Session, *, name: str, email: str | None, phone: str | None, locale: str | None
+    db: Session,
+    *,
+    name: str,
+    email: str | None,
+    phone: str | None,
+    locale: str | None,
+    user_id: UUID | None = None,
+    refresh: bool,
 ) -> Found:
     """The business's own record for this client, created or refreshed. `email` must already be
     normalised (app.passwords.normalise_email); ZIF-51's request model does that.
 
     One statement, never SELECT-then-INSERT: two bookings for the same address at the same moment
-    would race, and the loser would get a unique violation instead of the client.
+    would race, and the loser would get a unique violation instead of the client. That statement
+    also takes the row lock that makes ZIF-51's max_pending_per_email cap exact - see below.
 
-    CALLER'S DUTY (ZIF-51). This docstring is the one home for the three rules below; CONTRIBUTING
+    CALLER'S DUTY (ZIF-51). This docstring is the one home for the rules below; CONTRIBUTING
     points here rather than restating them.
 
+    refresh. REQUIRED, and keyed on AUTHENTICATION, not on the route. Pass True only when the
+    request carries a live session AND the posted email equals that session's verified account
+    email. Everything else - a guest booking, a merchant console action on someone else's address,
+    a signed-in person typing a third party's address - passes False, which fills blanks only:
+    phone = coalesce(clients.phone, excluded.phone), the same for locale, and the stored name is
+    left alone. This replaces ZIF-49's shipped rule that the booker's name always wins. The reason
+    it replaced it: `name = excluded.name` reachable without authentication is a write primitive
+    that rewrites a merchant's client record and points that client's appointment reminders at a
+    phone an attacker owns. A rate limit caps that; it does not stop it.
+
     Reading. phone and locale come back as *stored*, because coalesce keeps the old value when the
-    booker left the field empty. On the public booking page the requester is not authenticated, so
-    echoing Found.phone or Found.locale into the response would hand anyone who guesses an address
-    that person's stored phone number. Use them to write the booking, never to fill a public
-    answer.
+    booker left the field empty, and under refresh=False the stored value always wins. On the
+    public booking page the requester is not authenticated, so echoing Found.phone or Found.locale
+    into the response would hand anyone who guesses an address that person's stored contact
+    details. Use them to write the booking, never to fill a public answer;
+    tests/test_openapi.py holds that fence for every public RESPONSE schema.
 
-    Writing, the dangerous direction. A booker who *does* type a phone replaces the number the
-    merchant had for that address, and the same for locale and, through `name = excluded.name`,
-    for the name. So a stranger who guesses a client's email can point that client's appointment
-    reminders at a phone they own while the appointment stays the victim's. All three follow from
-    the refresh-per-booking rule (ZIF-99), and ZIF-51 must rate limit the booking POST per IP
-    because of it.
+    user_id. Set it from the booker's own session and never from a request body, only alongside
+    refresh=True, and it goes in the INSERT list only - never in either DO UPDATE SET list. There,
+    an anonymous booking would null a client's platform link and a signed-in stranger's booking
+    would claim a client row as their own account. tests/test_clients_db.py test 2 fences the SET
+    lists; tests/test_openapi.py fences user_id out of every request schema.
 
-    user_id. This function takes no user_id and must not grow one: ZIF-51 adds the column to the
-    INSERT list, from the booker's own session and never from a request body, and NEVER to the
-    DO UPDATE SET list - there, an anonymous booking would null a client's platform link, and a
-    signed-in stranger's booking would claim a client row as their own account. test 2 in
-    tests/test_clients_db.py fences the SET list; tests/test_openapi.py fences user_id out of
-    every request schema.
+    Locking. The ON CONFLICT DO UPDATE takes a row lock on the client. ZIF-51 calls this BEFORE
+    opening its savepoint, exactly once. ROLLBACK TO SAVEPOINT releases locks taken inside the
+    savepoint, so a call made inside one would release that lock on every failed attempt, and two
+    same-email bookings that each lost an attempt would both re-count pendings on a fresh snapshot
+    and both pass the cap.
     """
+    statement = REFRESH if refresh else FILL
     row = db.execute(
-        FIND_OR_CREATE, {"name": name, "email": email, "phone": phone, "locale": locale}
+        statement,
+        {"name": name, "email": email, "phone": phone, "locale": locale, "user_id": user_id},
     ).one()
     return Found(id=row.id, phone=row.phone, locale=row.locale)
 

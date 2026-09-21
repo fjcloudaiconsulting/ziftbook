@@ -669,6 +669,7 @@ def test_the_api_logs_its_settings_once_at_startup(
             "log_format": "json",
             "log_sql": False,
             "trusted_proxies": "10.1.0.0/16",
+            "turnstile": "off",
         }
     ]
     assert "postgresql" not in json.dumps(log_lines())

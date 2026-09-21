@@ -27,6 +27,8 @@ DEFAULTS = {
     "slot_step_minutes": 15,
     "min_notice_minutes": 60,
     "booking_horizon_days": 60,
+    "max_pending_per_email": 3,
+    "cancellation_policy_text": "",
 }
 
 
@@ -217,6 +219,8 @@ def test_the_contract_requires_every_setting_back_and_none_sent() -> None:
         "slot_step_minutes",
         "min_notice_minutes",
         "booking_horizon_days",
+        "max_pending_per_email",
+        "cancellation_policy_text",
     ]
     assert "required" not in schemas["BusinessSettings-Input"]
 

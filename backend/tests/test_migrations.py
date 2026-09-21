@@ -238,3 +238,46 @@ def test_downgrading_and_upgrading_0025_keeps_the_timerange_type(
             )
             is not None
         )
+
+
+def test_downgrading_and_upgrading_0026_restores_the_tables_and_their_grants(
+    migrated: None, migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = Config(toml_file=str(API_DIR / "pyproject.toml"))
+    url = os.environ["ZIF_MIGRATE_DATABASE_URL"]
+    options = urlencode({"options": "-c lock_timeout=5s"})
+    monkeypatch.setenv("ZIF_MIGRATE_DATABASE_URL", f"{url}{'&' if '?' in url else '?'}{options}")
+    command.downgrade(cfg, "0025")
+    try:
+        with migrate_engine.connect() as conn:
+            assert conn.scalar(text("SELECT to_regclass('bookings')")) is None
+            assert conn.scalar(text("SELECT to_regclass('booking_events')")) is None
+    finally:
+        command.upgrade(cfg, "head")
+    with migrate_engine.connect() as conn:
+        assert not conn.scalar(
+            text("SELECT has_table_privilege('ziftbook_app', 'bookings', 'DELETE')")
+        )
+        assert not conn.scalar(
+            text("SELECT has_table_privilege('ziftbook_app', 'booking_events', 'DELETE')")
+        )
+        assert not conn.scalar(
+            text("SELECT has_table_privilege('ziftbook_app', 'booking_events', 'UPDATE')")
+        )
+        assert not conn.scalar(
+            text(
+                "SELECT has_column_privilege('ziftbook_app', 'booking_events', "
+                "'created_at', 'INSERT')"
+            )
+        )
+        assert conn.scalar(
+            text("SELECT has_column_privilege('ziftbook_app', 'booking_events', 'event', 'INSERT')")
+        )
+        # The re-upgrade must also restore what the app still needs: the REVOKE ALL runs before
+        # the GRANTs, and a downgrade/upgrade that lost them breaks every read and every write.
+        assert conn.scalar(
+            text("SELECT has_table_privilege('ziftbook_app', 'booking_events', 'SELECT')")
+        )
+        assert conn.scalar(text("SELECT has_table_privilege('ziftbook_app', 'bookings', 'SELECT')"))
+        assert conn.scalar(text("SELECT has_table_privilege('ziftbook_app', 'bookings', 'INSERT')"))
+        assert conn.scalar(text("SELECT has_table_privilege('ziftbook_app', 'bookings', 'UPDATE')"))

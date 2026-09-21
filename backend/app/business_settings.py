@@ -65,6 +65,16 @@ class BusinessSettings(BaseModel):
     # may book.
     min_notice_minutes: Annotated[int, Field(ge=0, le=10080)] = 60
     booking_horizon_days: Annotated[int, Field(ge=1, le=365)] = 60
+    # How many unsettled bookings one email address may hold at this business at once. Counted
+    # inside the booking transaction, after find_or_create: pendings hold slots by design, so
+    # without a cap a script fills the next 60 days under throwaway addresses and refills as the
+    # TTL expires (ZIF-5, denial of availability).
+    max_pending_per_email: Annotated[int, Field(ge=1, le=50)] = 3
+    # The cancellation terms shown on the booking page, snapshotted onto every booking. ZIF-55
+    # reads the SNAPSHOT, never this key: a key would be re-read at cancellation time, and ZIF-5
+    # rejects evaluating mutable settings at cancellation time as the thing that destroys the
+    # dispute evidence. Empty means the business publishes no terms.
+    cancellation_policy_text: Annotated[str, Field(max_length=2000)] = ""
 
 
 def read(db: Session) -> BusinessSettings:

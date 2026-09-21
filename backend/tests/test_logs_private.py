@@ -9,6 +9,7 @@ import hashlib
 import json
 import smtplib
 from collections.abc import Callable
+from datetime import date, timedelta
 from typing import Any
 
 import pytest
@@ -235,6 +236,36 @@ def test_no_personal_data_ever_reaches_a_log(
         == 201
     )
     assert owner.get("/api/clients", params={"q": client_search}).status_code == 200
+
+    # 6e (ZIF-51): a guest booking POST at DEBUG, and the availability GET that finds its slot.
+    # F-i: the 6c call above is fixed-dated and now in the past, so its slots list is empty - this
+    # flow needs its OWN future-dated GET.
+    booking_day = (date.today() + timedelta(days=2)).isoformat()
+    own_availability = client_for(app).get(
+        f"/api/public/businesses/{people.a}/services/{created.json()['id']}/availability",
+        params={"from": booking_day, "to": booking_day},
+    )
+    assert own_availability.status_code == 200
+    slots = own_availability.json()["slots"]
+    assert slots, "no slots offered for the logging flow to book"
+    booker_name = "Booker Zvq-9"
+    booker_email = fresh_email()
+    booker_phone = "+31 6 11 22 33 44"
+    secret(booker_name)
+    secret(booker_email)
+    secret(booker_phone)
+    booked = client_for(app).post(
+        f"/api/public/businesses/{people.a}/services/{created.json()['id']}/bookings",
+        json={
+            "starts_at": slots[0],
+            "name": booker_name,
+            "email": booker_email,
+            "phone": booker_phone,
+            "policy_version": "2026-09-01",
+            "consents": {},
+        },
+    )
+    assert booked.status_code == 201
 
     # 7: invite flow — send, list, a wrong token, then accept with a brand-new account.
     invite_email = fresh_email()
