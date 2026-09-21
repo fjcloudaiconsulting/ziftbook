@@ -1,15 +1,6 @@
-"""clients and consents: a business's own client records, and an append-only consent log.
-
-A business keeps its own copy of a client's name and contact details, refreshed on each booking
-(ZIF-99): never a live view of the platform account, and never a join to users. clients.user_id
-points at that account when a signed-in person booked (ZIF-51 sets it, from their own session),
-with no foreign key on purpose - see the comment on the column.
-
-consents is append-only: one row per grant or withdrawal per purpose, with the exact text the
-person was shown. The app role may SELECT, and INSERT a fixed column list; never UPDATE or DELETE,
-and never set id or created_at itself.
-
-Erasure is ZIF-58: it adds clients.erased_at as its own expand migration. Nothing here reads it.
+"""clients and consents: a business's own copy of its clients' names and contact details, refreshed
+on each booking (ZIF-99), and the log of the marketing consent given to that business.
+consents is append-only by privilege, not by a trigger.
 
 Revision ID: 0024
 Revises: 0023
@@ -55,8 +46,6 @@ def upgrade() -> None:
         CONSTRAINT ck_clients_email_lowercase CHECK (email = lower(email)),
       phone text
         CONSTRAINT ck_clients_phone_length CHECK (char_length(phone) BETWEEN 1 AND 40),
-      -- The language this business writes to this client in; IN (...) rather than a length check,
-      -- as on users.locale (0005:27).
       locale text CONSTRAINT ck_clients_locale CHECK (locale IN ('en', 'nl', 'pt')),
       -- client_note is what the client told the business; internal_note is the business's own and
       -- never appears in a client-facing schema (tests/test_openapi.py holds that fence).
@@ -87,12 +76,9 @@ def upgrade() -> None:
       purpose text NOT NULL
         CONSTRAINT ck_consents_purpose
           CHECK (purpose IN ('marketing_email', 'sms', 'whatsapp')),
-      -- One row per grant or withdrawal: false is a withdrawal. Deliberately not ZIF-4's
-      -- granted_at/withdrawn_at pair, which invites the UPDATE that append-only forbids.
+      -- Deliberately not ZIF-4's granted_at/withdrawn_at pair, which invites the UPDATE that
+      -- append-only forbids.
       granted boolean NOT NULL,
-      -- Server-owned (app.clients.CONSENT_TEXTS): the exact wording shown, and the policy version
-      -- that wording belongs to. A client-supplied text would make the Art. 7(1) evidence
-      -- attacker-controlled.
       text_shown text NOT NULL
         CONSTRAINT ck_consents_text_shown_length
           CHECK (char_length(text_shown) BETWEEN 1 AND 2000),
@@ -113,18 +99,11 @@ def upgrade() -> None:
       CONSTRAINT fk_consents_tenant_id_client_id_clients
         FOREIGN KEY (tenant_id, client_id) REFERENCES clients (tenant_id, id)
     )""")
-    # referenced=True (the default): the flag is about a table having an id, which consents does
-    # (see app.db.enable_tenant_isolation). Nothing references consents today, so its
-    # uq_consents_tenant_id_id is one spare index - cheaper than a variant call whose reason does
-    # not apply here.
     enable_tenant_isolation("consents")
-    # The current state per purpose: DISTINCT ON (client_id, purpose) ... ORDER BY ..., id DESC,
-    # under app.clients.CURRENT_CONSENTS' tenant predicate.
     op.execute("""
     CREATE INDEX ix_consents_tenant_id_client_id_purpose_id
       ON consents (tenant_id, client_id, purpose, id DESC)""")
-    # Append-only by privilege, not by a trigger: no UPDATE, no DELETE, and an INSERT that cannot
-    # name id or created_at. The REVOKE runs before the GRANTs, or it would wipe them.
+    # The REVOKE runs before the GRANTs, or it would wipe them.
     op.execute("REVOKE ALL ON consents FROM ziftbook_app")
     op.execute("GRANT SELECT ON consents TO ziftbook_app")
     op.execute(f"GRANT INSERT ({CONSENT_COLUMNS}) ON consents TO ziftbook_app")

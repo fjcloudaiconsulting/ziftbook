@@ -123,8 +123,7 @@ Passwords and sign-in tokens live in tables the app role can't read or write (`p
 ## Client records
 
 A business's clients (`clients`) are the business's own copy of a person's name and contact details, not a view of
-that person's platform account (ZIF-99). ZIF-49 ships the tables, the console routes and `find_or_create`; the
-booking flow that calls it is ZIF-51's.
+that person's platform account (ZIF-99).
 
 - The copy is never read live from `users`. No table owned by a business may join to `users`, and `clients.user_id`
   carries no foreign key and no index on purpose: a foreign key check bypasses row-level security, so the constraint
@@ -140,9 +139,7 @@ booking flow that calls it is ZIF-51's.
   version is a 422, and so is a known version that publishes no wording for a purpose the caller named. A caller
   never supplies the text it claims to have shown.
 - `app.clients.find_or_create` refreshes the copy from what a booker typed, and its docstring is the one home for
-  what that costs: the phone and locale it returns are the *stored* ones, a booker who fills those fields overwrites
-  the merchant's, and `user_id` belongs in its INSERT list and never in its `DO UPDATE SET`. The duties it lists are
-  ZIF-51's, rate limiting the booking POST per IP among them. Read it before writing that route.
+  what that costs and for the duties it puts on the route that calls it. Read it before writing that route.
 
 ## Audit log
 

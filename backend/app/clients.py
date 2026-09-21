@@ -69,9 +69,6 @@ def texts_for(policy_version: str, purposes: Iterable[Purpose]) -> dict[Purpose,
     texts = CONSENT_TEXTS.get(policy_version)
     if texts is None:
         raise ApiError(422, "unknown_policy_version")
-    # Unreachable while every version publishes all three purposes, and live the day one doesn't:
-    # purposes are caller-supplied, so a subset version would otherwise turn texts[purpose] into a
-    # KeyError - a 500 where this ticket's answer is a 422.
     if not set(purposes) <= set(texts):
         raise ApiError(422, "purpose_not_in_policy_version")
     return texts
@@ -103,15 +100,6 @@ def find_or_create(
 
     One statement, never SELECT-then-INSERT: two bookings for the same address at the same moment
     would race, and the loser would get a unique violation instead of the client.
-
-    DO UPDATE, not DO NOTHING: DO NOTHING returns no row on conflict, so the caller would have to
-    look it up again. The SET list refreshes the merchant's copy on each booking (ZIF-99) and
-    names only what the booker just typed: never client_note, internal_note or user_id, which are
-    the business's own data and the platform link.
-
-    With email IS NULL there is no conflict target, so every booking with no email creates a new
-    row. That is intended: two walk-ins named "Jan" are two clients, and merging them is the
-    merchant's job, not a guess we make from a name.
 
     CALLER'S DUTY (ZIF-51). This docstring is the one home for the three rules below; CONTRIBUTING
     points here rather than restating them.
@@ -222,8 +210,7 @@ def current_consents(
 ) -> dict[UUID, dict[Purpose, ConsentOut]]:
     """The newest state per (client, purpose) for these clients: {} for a client with no rows.
 
-    One statement for a whole page, never one query per client. Called by every route and directly
-    by the database tests, which have no route to go through.
+    One statement for a whole page, never one query per client.
     """
     rows = db.execute(CURRENT_CONSENTS, {"client_ids": list(client_ids)}).all()
     result: dict[UUID, dict[Purpose, ConsentOut]] = {}
@@ -248,18 +235,8 @@ class ClientOut(BaseModel):
 def as_clients(
     rows: Sequence[Row[Any]], consents: dict[UUID, dict[Purpose, ConsentOut]]
 ) -> list[ClientOut]:
-    """Client rows plus their consents as the API returns them, in the order given."""
     return [
-        ClientOut(
-            id=row.id,
-            name=row.name,
-            email=row.email,
-            phone=row.phone,
-            locale=row.locale,
-            client_note=row.client_note,
-            internal_note=row.internal_note,
-            consents=consents.get(row.id, {}),
-        )
+        ClientOut(**row._mapping, consents=consents.get(row.id, {}))  # rows are SELECT FIELDS
         for row in rows
     ]
 
