@@ -5,7 +5,7 @@ process.env.TZ = "America/Sao_Paulo";
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { allowed, dateLocale, navFor, sameSession, sectionOf, todayLabel } from "../lib/console.ts";
+import { allowed, dateLocale, guardedWrite, navFor, sameSession, sectionOf, todayLabel } from "../lib/console.ts";
 
 describe("navFor", () => {
   test("worker nav has none of team, clients, settings or opening-hours", () => {
@@ -97,5 +97,86 @@ describe("sameSession", () => {
 
   test("the same person in the same business is the same session", () => {
     assert.equal(sameSession(base, { ...base }), true);
+  });
+});
+
+describe("guardedWrite", () => {
+  const current = { user_id: "u1", tenant_id: "t1" };
+
+  test("a session mismatch never sends, and reports mismatch", async () => {
+    let sendCalls = 0;
+    const result = await guardedWrite(
+      async () => ({ status: 200, data: { user_id: "u2", tenant_id: "t1" } }),
+      current,
+      async () => {
+        sendCalls++;
+        return { status: 200 };
+      },
+    );
+    assert.equal(sendCalls, 0);
+    assert.equal(result.kind, "mismatch");
+  });
+
+  test("a match sends exactly once, only after the session read resolves", async () => {
+    const order = [];
+    const result = await guardedWrite(
+      async () => {
+        order.push("read");
+        return { status: 200, data: current };
+      },
+      current,
+      async () => {
+        order.push("send");
+        return { status: 204 };
+      },
+    );
+    assert.deepEqual(order, ["read", "send"]);
+    assert.equal(result.kind, "sent");
+    assert.equal(result.outcome.status, 204);
+  });
+
+  test("a signed-out read never sends", async () => {
+    let sendCalls = 0;
+    const result = await guardedWrite(
+      async () => ({ status: 401 }),
+      current,
+      async () => {
+        sendCalls++;
+        return { status: 200 };
+      },
+    );
+    assert.equal(sendCalls, 0);
+    assert.equal(result.kind, "signedOut");
+  });
+
+  test("an unreachable or otherwise broken read never sends", async () => {
+    let sendCalls = 0;
+    const result = await guardedWrite(
+      async () => ({ status: 0 }),
+      current,
+      async () => {
+        sendCalls++;
+        return { status: 200 };
+      },
+    );
+    assert.equal(sendCalls, 0);
+    assert.equal(result.kind, "failed");
+    assert.equal(result.outcome.status, 0);
+  });
+
+  test("a 200 with no identity in the body is a failure, never read as the write's own outcome", () => {
+    return (async () => {
+      let sendCalls = 0;
+      const result = await guardedWrite(
+        async () => ({ status: 200, data: undefined }),
+        current,
+        async () => {
+          sendCalls++;
+          return { status: 200 };
+        },
+      );
+      assert.equal(sendCalls, 0);
+      assert.equal(result.kind, "failed");
+    })();
   });
 });

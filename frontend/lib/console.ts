@@ -63,3 +63,36 @@ export function todayLabel(now: Date, timeZone: string, locale: string): string 
 export function sameSession(a: { user_id: string; tenant_id: string }, b: { user_id: string; tenant_id: string }): boolean {
   return a.user_id === b.user_id && a.tenant_id === b.tenant_id;
 }
+
+type Identity = { user_id: string; tenant_id: string };
+type ReadOutcome = { status: number; data?: Identity };
+type SendOutcome<T> = { status: number; data?: T };
+
+export type GuardedWriteResult<T> =
+  | { kind: "sent"; outcome: SendOutcome<T> }
+  | { kind: "signedOut" }
+  | { kind: "mismatch" }
+  | { kind: "failed"; outcome: { status: number } };
+
+/**
+ * Runs a write only after proving the session hasn't changed underneath it. `send` is a thunk, not
+ * an already-started request: a generated SDK call fires its HTTP request the instant it's
+ * invoked, so passing an in-flight promise here would let the write reach the server before this
+ * ever reads the session — exactly the race this function exists to close. `send` runs at most
+ * once, and only once `readSession` has resolved to a match.
+ */
+export async function guardedWrite<T>(
+  readSession: () => Promise<ReadOutcome>,
+  current: Identity,
+  send: () => Promise<SendOutcome<T>>,
+): Promise<GuardedWriteResult<T>> {
+  const fresh = await readSession();
+  if (fresh.status === 401) return { kind: "signedOut" };
+  // A 200 with no usable identity (missing or malformed body) is a failure, never the write's own
+  // outcome: it never reaches the sameSession check, let alone send().
+  if (fresh.status !== 200 || !fresh.data || !fresh.data.user_id || !fresh.data.tenant_id) {
+    return { kind: "failed", outcome: { status: fresh.status } };
+  }
+  if (!sameSession(current, fresh.data)) return { kind: "mismatch" };
+  return { kind: "sent", outcome: await send() };
+}
