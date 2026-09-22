@@ -92,6 +92,11 @@ Action = Literal[
     "consent_recorded",
     "booking_confirmed",
     "booking_declined",
+    # ZIF-55. "cancelled_by_merchant", not "cancelled": ZIF-54 adds a client-side cancellation
+    # next, and renaming an audit action once rows exist is not a rename.
+    "booking_cancelled_by_merchant",
+    "booking_completed",
+    "booking_no_show",
 ]
 
 

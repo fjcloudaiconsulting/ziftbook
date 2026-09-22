@@ -313,7 +313,9 @@ def test_downgrading_and_upgrading_0027_restores_both_thresholds(
     try:
         command.downgrade(cfg, "0026")
         with migrate_engine.connect() as conn:
-            assert dict(conn.execute(NEW_COLUMNS).tuples().all()) == {"cancellation_policy_text": "YES"}
+            assert dict(conn.execute(NEW_COLUMNS).tuples().all()) == {
+                "cancellation_policy_text": "YES"
+            }
             assert conn.scalars(NEW_CHECKS).all() == []
     finally:
         command.upgrade(cfg, "head")
