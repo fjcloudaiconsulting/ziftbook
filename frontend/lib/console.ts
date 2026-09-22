@@ -96,3 +96,16 @@ export async function guardedWrite<T>(
   if (!sameSession(current, fresh.data)) return { kind: "mismatch" };
   return { kind: "sent", outcome: await send() };
 }
+
+/**
+ * The outcome a screen renders for a guarded write. All the mapping lives here, not at the call
+ * site, so a "failed" result (the identity check itself came back wrong) can never be reported as
+ * if it were the write succeeding: guardedWrite's only route to "failed" with a 200 is the check
+ * answering 200 with no usable body, never a real write response.
+ */
+export function writeOutcome<T>(result: GuardedWriteResult<T>): SendOutcome<T> {
+  if (result.kind === "sent") return result.outcome;
+  if (result.kind === "signedOut") return { status: 401 };
+  if (result.kind === "mismatch") return { status: 0 };
+  return { status: result.outcome.status === 200 ? 0 : result.outcome.status };
+}

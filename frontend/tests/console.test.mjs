@@ -5,7 +5,7 @@ process.env.TZ = "America/Sao_Paulo";
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { allowed, dateLocale, guardedWrite, navFor, sameSession, sectionOf, todayLabel } from "../lib/console.ts";
+import { allowed, dateLocale, guardedWrite, navFor, sameSession, sectionOf, todayLabel, writeOutcome } from "../lib/console.ts";
 
 describe("navFor", () => {
   test("worker nav has none of team, clients, settings or opening-hours", () => {
@@ -178,5 +178,30 @@ describe("guardedWrite", () => {
       assert.equal(sendCalls, 0);
       assert.equal(result.kind, "failed");
     })();
+  });
+});
+
+describe("writeOutcome", () => {
+  test("a sent write's own outcome passes through unchanged", () => {
+    assert.deepEqual(writeOutcome({ kind: "sent", outcome: { status: 204 } }), { status: 204 });
+  });
+
+  test("signedOut maps to 401", () => {
+    assert.equal(writeOutcome({ kind: "signedOut" }).status, 401);
+  });
+
+  test("a mismatch never reports as success", () => {
+    assert.notEqual(writeOutcome({ kind: "mismatch" }).status, 200);
+  });
+
+  test("a failed identity check that happened to answer 200 is never read as the write succeeding", () => {
+    // guardedWrite's only route to "failed" with a 200 is the check itself answering 200 with no
+    // usable body — never a real write response, so it must never look like one here.
+    const outcome = writeOutcome({ kind: "failed", outcome: { status: 200 } });
+    assert.notEqual(outcome.status, 200);
+  });
+
+  test("a failed identity check with a real error status keeps it", () => {
+    assert.equal(writeOutcome({ kind: "failed", outcome: { status: 500 } }).status, 500);
   });
 });

@@ -12,7 +12,7 @@ import {
   settingsRead,
 } from "@/api-client";
 import { Link, usePathname, useRouter } from "@/i18n/navigation";
-import { allowed, guardedWrite, navFor, type Role, sectionOf, type Section } from "@/lib/console";
+import { allowed, guardedWrite, navFor, type Role, sectionOf, type Section, writeOutcome } from "@/lib/console";
 
 import { LanguageLinks } from "./header";
 import { Banner, NoScript, type Outcome, problem, send } from "./parts";
@@ -286,13 +286,11 @@ export function Shell({ children }: { children: ReactNode }) {
       session!,
       () => send(request()),
     );
-    if (result.kind === "signedOut") return { status: 401 };
-    if (result.kind === "mismatch") {
-      window.location.reload();
-      return { status: 0 };
-    }
-    if (result.kind === "failed") return result.outcome;
-    return result.outcome;
+    // Nothing was sent: the reload throws this tab's state away, so a bare status back to the
+    // caller is fine, but every other mapping (including "the identity check itself failed, don't
+    // report that as a success") lives in writeOutcome, not here.
+    if (result.kind === "mismatch") window.location.reload();
+    return writeOutcome(result);
   }
 
   function updateSession(patch: Partial<SessionOut>) {
