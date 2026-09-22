@@ -219,8 +219,9 @@ VALUES (current_setting('app.tenant_id')::uuid, :booking_id, :event, CAST(:ip AS
 # the list is the right urgency order for it.
 QUEUE = text("""
 SELECT b.id, b.starts_at, b.ends_at, b.expires_at, b.service_id, b.service_name,
-       b.price_amount_minor, b.price_currency, b.worker_id, b.worker_display_name,
-       b.client_id, c.name AS client_name
+       jsonb_build_object('amount_minor', b.price_amount_minor,
+                          'currency', b.price_currency) AS price,
+       b.worker_id, b.worker_display_name, b.client_id, c.name AS client_name
 FROM bookings b
 JOIN clients c ON c.tenant_id = b.tenant_id AND c.id = b.client_id
 WHERE b.status = 'pending' AND b.expires_at > now()
@@ -520,22 +521,7 @@ def pending(
         {"everyone": members.is_owner(current), "me": current.user_id, "limit": limit},
     ).all()
     response.headers["Cache-Control"] = "no-store"
-    return [
-        PendingOut(
-            id=row.id,
-            starts_at=row.starts_at,
-            ends_at=row.ends_at,
-            expires_at=row.expires_at,
-            service_id=row.service_id,
-            service_name=row.service_name,
-            price=Price(amount_minor=row.price_amount_minor, currency=row.price_currency),
-            worker_id=row.worker_id,
-            worker_display_name=row.worker_display_name,
-            client_id=row.client_id,
-            client_name=row.client_name,
-        )
-        for row in rows
-    ]
+    return [PendingOut.model_validate(row, from_attributes=True) for row in rows]
 
 
 @merchant_router.patch(
