@@ -114,6 +114,7 @@ def create_app() -> FastAPI:
     app.include_router(time_off.router)
     app.include_router(availability.router)
     app.include_router(bookings.router)
+    app.include_router(bookings.merchant_router)
 
     @app.middleware("http")
     async def json_only(

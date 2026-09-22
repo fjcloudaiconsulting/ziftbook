@@ -2931,6 +2931,170 @@
           }
         }
       }
+    },
+    "/api/bookings/pending": {
+      "get": {
+        "tags": [
+          "bookings"
+        ],
+        "summary": "Pending",
+        "description": "The business's live pending bookings, soonest first. An owner sees the whole queue; a\nworker sees only bookings assigned to them (members.may_manage's split, applied to the list\nand to the transition alike, so the two can never disagree).",
+        "operationId": "bookings-pending",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PendingOut"
+                  },
+                  "title": "Response Bookings-Pending"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          }
+        }
+      }
+    },
+    "/api/bookings/{booking_id}": {
+      "patch": {
+        "tags": [
+          "bookings"
+        ],
+        "summary": "Transition",
+        "description": "A merchant accepts or declines a pending booking. An owner, or the membership in\nbookings.worker_id, may transition; anyone else on this business gets 403. Another business's\nbooking is 404 (row-level security makes it invisible) rather than 403.",
+        "operationId": "bookings-transition",
+        "parameters": [
+          {
+            "name": "booking_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Booking Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StatusChange"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookingStatusOut"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -3256,6 +3420,29 @@
         ],
         "title": "BookingOut"
       },
+      "BookingStatusOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "confirmed",
+              "declined"
+            ],
+            "title": "Status"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "status"
+        ],
+        "title": "BookingStatusOut"
+      },
       "BusinessSettings-Input": {
         "properties": {
           "timezone": {
@@ -3323,6 +3510,13 @@
             "minimum": 1.0,
             "title": "Max Pending Per Email",
             "default": 3
+          },
+          "pending_ttl_hours": {
+            "type": "integer",
+            "maximum": 168.0,
+            "minimum": 1.0,
+            "title": "Pending Ttl Hours",
+            "default": 24
           },
           "cancellation_policy_text": {
             "type": "string",
@@ -3403,6 +3597,13 @@
             "title": "Max Pending Per Email",
             "default": 3
           },
+          "pending_ttl_hours": {
+            "type": "integer",
+            "maximum": 168.0,
+            "minimum": 1.0,
+            "title": "Pending Ttl Hours",
+            "default": 24
+          },
           "cancellation_policy_text": {
             "type": "string",
             "maxLength": 2000,
@@ -3422,6 +3623,7 @@
           "min_notice_minutes",
           "booking_horizon_days",
           "max_pending_per_email",
+          "pending_ttl_hours",
           "cancellation_policy_text"
         ],
         "title": "BusinessSettings"
@@ -3982,6 +4184,85 @@
         "title": "NoteChange",
         "description": "Only the fields sent change; null clears a note. Nothing else about a client is editable\nhere: name, email, phone and locale are the merchant's copy of what the client typed, refreshed\nby the next booking."
       },
+      "PendingOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "starts_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Starts At"
+          },
+          "ends_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Ends At"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Expires At"
+          },
+          "service_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Service Id"
+          },
+          "service_name": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Service Name"
+          },
+          "price": {
+            "$ref": "#/components/schemas/Price"
+          },
+          "worker_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Worker Id"
+          },
+          "worker_display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Worker Display Name"
+          },
+          "client_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Client Id"
+          },
+          "client_name": {
+            "type": "string",
+            "title": "Client Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "starts_at",
+          "ends_at",
+          "expires_at",
+          "service_id",
+          "service_name",
+          "price",
+          "worker_id",
+          "worker_display_name",
+          "client_id",
+          "client_name"
+        ],
+        "title": "PendingOut"
+      },
       "Price": {
         "properties": {
           "amount_minor": {
@@ -4333,6 +4614,24 @@
           "ends_at"
         ],
         "title": "Shift"
+      },
+      "StatusChange": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "confirmed",
+              "declined"
+            ],
+            "title": "Status"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "StatusChange"
       },
       "TimeOffChange": {
         "properties": {

@@ -70,6 +70,12 @@ class BusinessSettings(BaseModel):
     # without a cap a script fills the next 60 days under throwaway addresses and refills as the
     # TTL expires (ZIF-5, denial of availability).
     max_pending_per_email: Annotated[int, Field(ge=1, le=50)] = 3
+    # How long a pending booking holds its slot before availability stops counting it. Hours, not
+    # minutes: it is a merchant-facing promise ("we answer within a day"), not a scheduling grid.
+    # Nothing sweeps: availability carves expired pendings out at read time
+    # (app/availability.py:175) and the booking transaction expires them before inserting
+    # (app/bookings.py:264), so this key is read once, when a pending is born.
+    pending_ttl_hours: Annotated[int, Field(ge=1, le=168)] = 24
     # The cancellation terms shown on the booking page, snapshotted onto every booking. ZIF-55
     # reads the SNAPSHOT, never this key: a key would be re-read at cancellation time, and ZIF-5
     # rejects evaluating mutable settings at cancellation time as the thing that destroys the
