@@ -1005,6 +1005,13 @@ def test_post_days_returns_null_instants_and_stores_null_instants(
         {"first_day": "3000-01-01", "last_day": "3000-01-01"},  # above the year bound
         {"first_day": "0001-01-01", "last_day": "0001-01-01"},  # never 500
         {"first_day": "2026-10-27", "last_day": "2026-11-02", "starts_at": None},  # explicit null
+        # Mirror of the case above: a complete instant pair with an explicit null on the OTHER
+        # kind's field. Kills a not_null validator applied only to starts_at/ends_at.
+        {
+            "starts_at": "2026-10-27T09:00:00Z",
+            "ends_at": "2026-10-27T10:00:00Z",
+            "first_day": None,
+        },
     ],
 )
 def test_a_malformed_or_mixed_days_body_is_refused(
