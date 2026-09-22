@@ -10,6 +10,8 @@ seeded on every weekday so the test never cares which weekday it lands on.
 
 import json
 import threading
+import urllib.parse
+import urllib.request
 import uuid
 from datetime import UTC, date, datetime, timedelta
 from datetime import time as time_cls
@@ -44,8 +46,15 @@ from tests.conftest import (
     signed_in,
     wait_until_blocked,
 )
-from tests.test_availability_api import assign, new_service, weekdays
+from tests.test_availability_api import (
+    assign,
+    new_service,
+    seed_booking,
+    set_display_name,
+    weekdays,
+)
 from tests.test_opening_hours import seed_opening
+from tests.test_turnstile import FakeAnswer
 from tests.test_working_hours import seed
 
 ZONE = "Europe/Amsterdam"
@@ -153,6 +162,27 @@ def test_auto_confirm_makes_the_booking_confirmed_with_no_expiry(
     assert row.auto_confirm_at_booking is True
 
 
+# 15b: FENCE - ZIF-97, the reason migration 0026 snapshots worker_display_name at all. No other
+# booking test ever sets memberships.display_name, so it is None in every fixture and
+# `worker_display_name=None` passed unconditionally. Wrong impl: drop `worker_display_name` from
+# INSERT_BOOKING's column list and from BookingOut, or pass `None` for it.
+def test_the_workers_display_name_is_snapshotted_and_answered(
+    people: People, app: FastAPI, ready: str
+) -> None:
+    set_display_name(people.a, member_id(people.a, people.both), "Ada Lovelace")
+
+    response = post_booking(new_client(app), people.a, ready, starts_at=at("09:00"))
+
+    assert response.status_code == 201
+    assert response.json()["worker_display_name"] == "Ada Lovelace"
+    with tenant_context(people.a) as session:
+        stored = session.scalar(
+            text("SELECT worker_display_name FROM bookings WHERE id = :id"),
+            {"id": response.json()["id"]},
+        )
+    assert stored == "Ada Lovelace"
+
+
 # 16: FENCE - ruling 3. Wrong impl: delete step 12 (the member_slots re-derivation).
 def test_a_start_inside_a_buffer_tail_is_refused(
     people: People, app: FastAPI, owner: TestClient
@@ -238,26 +268,34 @@ def test_the_write_path_takes_its_clock_from_postgres(
     assign(people.a, service_id, member_id(people.a, people.both))
     save_setting(people.a, "min_notice_minutes", 60)
     real_now = datetime.now(UTC)
-    monkeypatch.setattr(availability, "now", lambda: real_now + timedelta(hours=2))
-    local_now = real_now.astimezone(ZoneInfo(ZONE))
-    # 90 minutes out: clears the REAL 60-minute notice, but is still inside the SKEWED clock's
-    # 60-minute notice (skewed now is +2h, so its horizon is +3h). Only an implementation that
-    # uses availability.now() instead of Postgres's row.now refuses this.
-    start = local_now + timedelta(minutes=90)
-    start = start.replace(minute=(start.minute // 15) * 15, second=0, microsecond=0)
-    if start.date() != local_now.date():
-        pytest.skip("too close to local midnight for this run to land on one calendar day")
-    if start <= local_now + timedelta(minutes=60):
-        start += timedelta(minutes=15)
-
-    response = post_booking(
-        new_client(app),
-        people.a,
-        service_id,
-        starts_at=start.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    # The GET runs BEFORE the monkeypatch, deliberately: under the skewed clock the GET's own
+    # `earliest` moves too and it would refuse to offer the band this test needs. Asking the engine
+    # for the slot - rather than computing one - is also what removes the time dependence: a
+    # computed start was 409'd by a CORRECT implementation for the half hour a day when
+    # `local_now + 90 min` could not fit before 23:45, and silently pytest.skip'd near midnight.
+    today = real_now.astimezone(ZoneInfo(ZONE)).date()
+    offered = new_client(app).get(
+        f"/api/public/businesses/{people.a}/services/{service_id}/availability",
+        params={"from": today.isoformat(), "to": (today + timedelta(days=1)).isoformat()},
     )
+    assert offered.status_code == 200
+    # The discriminating band: past the REAL 60-minute notice, still inside the SKEWED clock's
+    # (skewed now is +2h, so its earliest is +3h). Five minutes of slack at each end so a slot
+    # landing on a boundary cannot make this flap. A 110-minute band on a 15-minute grid over
+    # 00:00-23:45 always holds a start; only 23:15-00:00 is empty, and that is 45 minutes.
+    band = [
+        slot
+        for slot in offered.json()["slots"]
+        if real_now + timedelta(minutes=65)
+        < datetime.fromisoformat(slot)
+        < real_now + timedelta(minutes=175)
+    ]
+    assert band, f"no slot between +65 and +175 minutes of {real_now}"
+    monkeypatch.setattr(availability, "now", lambda: real_now + timedelta(hours=2))
 
-    assert response.status_code == 201
+    response = post_booking(new_client(app), people.a, service_id, starts_at=band[0])
+
+    assert response.status_code == 201, response.json()
 
 
 # 18c: FENCE - B1.
@@ -302,7 +340,10 @@ def test_a_worker_not_assigned_to_the_service_is_refused_without_probing(
         assert (response.status_code, response.json()) == (409, {"code": "slot_unavailable"})
 
 
-# 20: GUARD, demoted from FENCE (F-c/F-d). The lock's proof is rows 50 and 51, not this one.
+# 20: FENCE, but of ONE thing only: that the candidate query considers EVERY assigned worker.
+# Wrong impl: add `LIMIT 1` to CANDIDATES. It is not a test of the lock (rows 50 and 51 are) and it
+# is not a test of load spreading (row 21g is): under the tenant lock each loser re-derives and the
+# workers already taken have left `eligible`, so `load` never decides anything here.
 def test_three_concurrent_bookers_and_three_free_workers_all_get_a_booking(
     people: People, app: FastAPI, owner: TestClient, app_engine: Engine, migrate_engine: Engine
 ) -> None:
@@ -381,6 +422,50 @@ def test_two_concurrent_bookers_and_one_worker_give_one_201_and_one_clean_409(
     assert count == 1
 
 
+def commit_bypassing_the_lock(
+    tenant_id: uuid.UUID, service_id: str, worker_id: uuid.UUID, starts_at: str
+) -> None:
+    """Commit a conflicting booking directly, taking NO advisory lock: the writer the candidate
+    loop's 23P01 branch exists for. tests/test_availability_api.py's seed_booking cannot serve here
+    because it DOES take the lock, and would block behind the request under test."""
+    with tenant_context(tenant_id) as session:
+        client_id = session.scalar(
+            text(
+                "INSERT INTO clients (tenant_id, name) "
+                "VALUES (current_setting('app.tenant_id')::uuid, 'Direct') RETURNING id"
+            )
+        )
+        service_row = session.execute(
+            text(
+                "SELECT name, price_amount_minor, price_currency, duration_minutes "
+                "FROM services WHERE id = :id"
+            ),
+            {"id": service_id},
+        ).one()
+        start = datetime.fromisoformat(starts_at.replace("Z", "+00:00"))
+        session.execute(
+            text("""
+            INSERT INTO bookings (tenant_id, client_id, worker_id, service_id, starts_at, ends_at,
+                status, source, service_name, price_amount_minor, price_currency,
+                duration_minutes, auto_confirm_at_booking)
+            VALUES (current_setting('app.tenant_id')::uuid, :client_id, :worker_id, :service_id,
+                    :starts_at, :ends_at, 'confirmed', 'merchant', CAST(:service_name AS jsonb),
+                    :price_amount_minor, :price_currency, :duration_minutes, true)
+            """),
+            {
+                "client_id": client_id,
+                "worker_id": worker_id,
+                "service_id": service_id,
+                "starts_at": start,
+                "ends_at": start + timedelta(minutes=service_row.duration_minutes),
+                "service_name": json.dumps(dict(service_row.name)),
+                "price_amount_minor": service_row.price_amount_minor,
+                "price_currency": service_row.price_currency,
+                "duration_minutes": service_row.duration_minutes,
+            },
+        )
+
+
 # 21c: FENCE - the AC's other half, part 2 (test_bookings_db's 21b is part 1).
 def test_a_conflicting_row_committed_mid_request_is_a_409_slot_taken(
     people: People, app: FastAPI, ready: str, monkeypatch: pytest.MonkeyPatch
@@ -409,49 +494,137 @@ def test_a_conflicting_row_committed_mid_request_is_a_409_slot_taken(
     thread.start()
     assert paused.wait(timeout=10)
 
-    # A lock-bypassing writer: commits a conflicting booking directly, no advisory lock.
-    with tenant_context(people.a) as session:
-        client_id = session.scalar(
-            text(
-                "INSERT INTO clients (tenant_id, name) "
-                "VALUES (current_setting('app.tenant_id')::uuid, 'Direct') RETURNING id"
-            )
-        )
-        service_row = session.execute(
-            text(
-                "SELECT name, price_amount_minor, price_currency, duration_minutes "
-                "FROM services WHERE id = :id"
-            ),
-            {"id": ready},
-        ).one()
-        starts_at = datetime.fromisoformat(at("09:00").replace("Z", "+00:00"))
-        session.execute(
-            text("""
-            INSERT INTO bookings (tenant_id, client_id, worker_id, service_id, starts_at, ends_at,
-                status, source, service_name, price_amount_minor, price_currency,
-                duration_minutes, auto_confirm_at_booking)
-            VALUES (current_setting('app.tenant_id')::uuid, :client_id, :worker_id, :service_id,
-                    :starts_at, :ends_at, 'confirmed', 'merchant', CAST(:service_name AS jsonb),
-                    :price_amount_minor, :price_currency, :duration_minutes, true)
-            """),
-            {
-                "client_id": client_id,
-                "worker_id": worker,
-                "service_id": ready,
-                "starts_at": starts_at,
-                "ends_at": starts_at + timedelta(minutes=service_row.duration_minutes),
-                "service_name": json.dumps(dict(service_row.name)),
-                "price_amount_minor": service_row.price_amount_minor,
-                "price_currency": service_row.price_currency,
-                "duration_minutes": service_row.duration_minutes,
-            },
-        )
+    commit_bypassing_the_lock(people.a, ready, worker, at("09:00"))
     release.set()
     thread.join(timeout=10)
     assert not thread.is_alive()
 
     response = results["response"]
     assert (response.status_code, response.json()) == (409, {"code": "slot_taken"})
+
+
+# 21f: FENCE - the candidate loop is a LOOP, not one attempt. Wrong impl:
+# `queue = sorted(eligible, key=...)[:1]`. Both existing 23P01 and 23503 tests have exactly one
+# candidate, so `continue` and `break` are indistinguishable there and the truncation was green.
+# Two workers, and the one the queue puts FIRST is taken out from under us between step 11 and the
+# insert; the booking must land on the second.
+def test_the_loop_moves_to_the_next_candidate_when_the_first_is_taken(
+    people: People, app: FastAPI, owner: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service_id = new_service(owner)
+    for user in (people.both, people.only_a):
+        seed(people.a, user, weekdays("09:00", "17:00"))
+    # Both loads are 0, so the queue is worker_id ascending: [0] is the head it must skip.
+    workers = sorted([member_id(people.a, people.both), member_id(people.a, people.only_a)])
+    assign(people.a, service_id, *workers)
+    real_booked = availability.booked
+    paused_once = threading.Event()
+    paused = threading.Event()
+    release = threading.Event()
+
+    def paused_booked(db: Any, members_: Any, start: Any, end: Any) -> Any:
+        result = real_booked(db, members_, start, end)
+        if not paused_once.is_set():
+            paused_once.set()
+            paused.set()
+            release.wait(timeout=10)
+        return result
+
+    monkeypatch.setattr(availability, "booked", paused_booked)
+    results: dict[str, Response] = {}
+
+    def request_thread() -> None:
+        results["response"] = post_booking(
+            new_client(app), people.a, service_id, starts_at=at("09:00")
+        )
+
+    thread = threading.Thread(target=request_thread)
+    thread.start()
+    assert paused.wait(timeout=10)
+
+    commit_bypassing_the_lock(people.a, service_id, workers[0], at("09:00"))
+    release.set()
+    thread.join(timeout=10)
+    assert not thread.is_alive()
+
+    response = results["response"]
+    assert response.status_code == 201, response.json()
+    assert response.json()["worker_id"] == str(workers[1])
+
+
+# 21g: FENCE - "least loaded that day", a written acceptance criterion. Wrong impl:
+# `queue = sorted(eligible)` (drop the `key=lambda m: (load[m], m)`). The existing 3-booker test
+# cannot see this: under the tenant lock each loser re-derives and the taken worker has already
+# left `eligible`, so `load` never decides anything there. Here the load is PRE-EXISTING, and the
+# busier worker is deliberately the one that sorts FIRST by id, so dropping the key is red every
+# run rather than half of them.
+def test_a_booking_goes_to_the_least_loaded_worker_that_day(
+    people: People, app: FastAPI, owner: TestClient
+) -> None:
+    service_id = new_service(owner)
+    for user in (people.both, people.only_a):
+        seed(people.a, user, weekdays("09:00", "17:00"))
+    workers = sorted([member_id(people.a, people.both), member_id(people.a, people.only_a)])
+    assign(people.a, service_id, *workers)
+    seed_booking(people.a, service_id, workers[0], at("14:00"), at("14:30"))
+
+    response = post_booking(new_client(app), people.a, service_id, starts_at=at("09:00"))
+
+    assert response.status_code == 201, response.json()
+    assert response.json()["worker_id"] == str(workers[1])
+
+
+# 21d: FENCE - booked()'s TTL carve-out and the step-9 sweep, END TO END through the route. Every
+# other booking-seam test monkeypatches availability.booked, so its SQL is only ever asserted for
+# statement COUNT. Wrong impl: (a) delete `AND (b.status <> ALL(:expiring) OR b.expires_at > now())`
+# from availability.BOOKED - a timed-out pending holds its worker's slot for ever; (b) delete the
+# step-9 `db.execute(EXPIRE, ...)` in app/bookings.py - the row never reaches 'expired'.
+def test_an_expired_pending_frees_its_slot(people: People, app: FastAPI, ready: str) -> None:
+    first = post_booking(new_client(app), people.a, ready, starts_at=at("09:00"))
+    assert (first.status_code, first.json()["status"]) == (201, "pending")
+    with tenant_context(people.a) as session:
+        session.execute(
+            text("UPDATE bookings SET expires_at = now() - interval '1 hour' WHERE id = :id"),
+            {"id": first.json()["id"]},
+        )
+
+    offered = new_client(app).get(
+        f"/api/public/businesses/{people.a}/services/{ready}/availability",
+        params={"from": DAY.isoformat(), "to": DAY.isoformat()},
+    )
+    assert at("09:00") in offered.json()["slots"]
+    # A DIFFERENT address, as post_booking's default already is: the same one would put
+    # max_pending_per_email in play and this would measure the cap instead of the slot.
+    second = post_booking(new_client(app), people.a, ready, starts_at=at("09:00"))
+    assert second.status_code == 201, second.json()
+    with tenant_context(people.a) as session:
+        status = session.scalar(
+            text("SELECT status FROM bookings WHERE id = :id"), {"id": first.json()["id"]}
+        )
+    assert status == "expired"
+
+
+# 21e: FENCE - booked()'s occupying filter, END TO END through the route (same reason as 21d).
+# Wrong impl: delete `AND b.status = ANY(:occupying)` from availability.BOOKED - every cancelled,
+# declined or expired booking blocks its worker's slot for ever.
+def test_a_cancelled_booking_frees_its_slot_through_the_route(
+    people: People, app: FastAPI, ready: str
+) -> None:
+    first = post_booking(new_client(app), people.a, ready, starts_at=at("09:00"))
+    assert first.status_code == 201
+    with tenant_context(people.a) as session:
+        session.execute(
+            text("UPDATE bookings SET status = 'cancelled_by_client' WHERE id = :id"),
+            {"id": first.json()["id"]},
+        )
+
+    offered = new_client(app).get(
+        f"/api/public/businesses/{people.a}/services/{ready}/availability",
+        params={"from": DAY.isoformat(), "to": DAY.isoformat()},
+    )
+    assert at("09:00") in offered.json()["slots"]
+    second = post_booking(new_client(app), people.a, ready, starts_at=at("09:00"))
+    assert second.status_code == 201, second.json()
 
 
 # 22: GUARD, demoted honestly (see spec SS14.3 for the invariant this leaves unfenced).
@@ -521,6 +694,25 @@ def test_max_pending_per_email_answers_the_same_code_as_the_rate_limit(
     response = post_booking(client, people.a, service_b, email=email, starts_at=at("11:00"))
 
     assert (response.status_code, response.json()) == (429, {"code": "rate_limited"})
+
+
+# 23b: FENCE. Row 23 exercises max_pending_per_email at exactly ONE value, so `if (pending or 0)
+# >= 1:` - ignoring the setting entirely - was green. This is the DEFAULT (3): the fourth booking
+# is the first refusal. Two values between the two tests is the whole point.
+def test_the_pending_cap_is_the_setting_and_not_a_constant(
+    people: People, app: FastAPI, owner: TestClient, ready: str
+) -> None:
+    assert put_settings(owner, {"max_pending_per_email": 3}).status_code == 200  # the default
+    client = new_client(app)
+    email = fresh_email()
+
+    for clock_time in ("09:00", "10:00", "11:00"):
+        response = post_booking(client, people.a, ready, email=email, starts_at=at(clock_time))
+        assert (clock_time, response.status_code) == (clock_time, 201)
+
+    fourth = post_booking(client, people.a, ready, email=email, starts_at=at("12:00"))
+
+    assert (fourth.status_code, fourth.json()) == (429, {"code": "rate_limited"})
 
 
 # 24: FENCE - ruling 8.
@@ -727,6 +919,44 @@ def test_the_rate_limits_run_in_order_and_as_two_calls(
     assert seventh.status_code == 201
 
 
+# 28b: FENCE - the token's journey from the request body to Cloudflare. Two wrong impls, both
+# measured GREEN against the whole suite before this test existed, and each of them refuses EVERY
+# booking with 403 in any deployment that configures a secret (the test suite configures none, so
+# nothing else notices): (a) `turnstile.verify(None, ip)` in the route - the posted token never
+# reaches verify(); (b) `form = {"secret": secret}` in turnstile.verify - it never reaches the wire.
+def test_the_posted_turnstile_token_reaches_cloudflare(
+    people: People, app: FastAPI, ready: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ZIF_TURNSTILE_SECRET", "a-test-secret")
+    calls: list[tuple[Any, float | None]] = []
+
+    def fake_urlopen(outbound: Any, timeout: float | None = None) -> Any:
+        calls.append((outbound, timeout))
+        return FakeAnswer(json.dumps({"success": True}).encode())
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    address = fresh_address()
+
+    response = post_booking(
+        new_client(app, address),
+        people.a,
+        ready,
+        starts_at=at("09:00"),
+        turnstile_token="the-exact-token-the-browser-sent",
+    )
+
+    assert response.status_code == 201, response.json()
+    assert len(calls) == 1
+    outbound, timeout = calls[0]
+    assert outbound.full_url == turnstile.SITEVERIFY
+    assert timeout == turnstile.TIMEOUT
+    assert urllib.parse.parse_qs(outbound.data.decode()) == {
+        "secret": ["a-test-secret"],
+        "response": ["the-exact-token-the-browser-sent"],
+        "remoteip": [address],
+    }
+
+
 # 29: GUARD.
 def test_thirty_bookings_an_hour_per_address_and_five_per_address_and_business(
     people: People, app: FastAPI, owner: TestClient, ready: str
@@ -802,7 +1032,8 @@ def test_the_booking_post_writes_no_audit_event(
 def test_the_creation_event_carries_the_address_the_browser_and_the_consent_seam(
     people: People, app: FastAPI, ready: str
 ) -> None:
-    client = new_client(app)
+    address = fresh_address()
+    client = new_client(app, address)
     client.headers.update({"User-Agent": "zif-booking-test/1"})
 
     response = post_booking(
@@ -823,6 +1054,9 @@ def test_the_creation_event_carries_the_address_the_browser_and_the_consent_seam
             {"id": response.json()["id"]},
         ).one()
     assert row.event == "created"
+    # The Art. 7(1) evidence half: the address was SELECTed and never asserted, so writing
+    # `"ip": None` was green. auth.origin takes it from the connection, never from a header.
+    assert row.ip == address
     assert row.user_agent == "zif-booking-test/1"
     assert row.policy_version == "2026-09-01"
     assert row.consent_purposes == {"marketing_email": True, "sms": False}
@@ -878,7 +1112,11 @@ def test_an_unknown_policy_version_is_a_422_and_writes_nothing(
     assert (booking_count, client_count) == (0, 0)
 
 
-# 34: FENCE - ruling 9.
+# 34: FENCE - ruling 9. Two wrong impls, one per half. (a) Write the snapshot columns from anything
+# but the FOR SHARE service row - `price_amount_minor=0`, `source='merchant'`,
+# `auto_confirm_at_booking=True` all used to pass. (b) SNAPSHOT THE BUFFER: give 0026 a
+# `buffer_minutes` column, carry it in INSERT_BOOKING, and read `b.buffer_minutes` instead of
+# `s.buffer_minutes` in availability.BOOKED. A buffer is a scheduling rule, not evidence.
 def test_the_snapshot_is_the_service_as_it_was_and_the_buffer_is_not_snapshotted(
     people: People, app: FastAPI, owner: TestClient, ready: str
 ) -> None:
@@ -900,22 +1138,69 @@ def test_the_snapshot_is_the_service_as_it_was_and_the_buffer_is_not_snapshotted
 
     with tenant_context(people.a) as session:
         row = session.execute(
-            text(
-                "SELECT service_name, price_amount_minor, duration_minutes FROM bookings "
-                "WHERE id = :id"
-            ),
+            text("""
+            SELECT service_name, price_amount_minor, price_currency, duration_minutes, source,
+                   auto_confirm_at_booking
+            FROM bookings WHERE id = :id
+            """),
             {"id": booking_id},
         ).one()
-    assert row.service_name != {"en": "Renamed"}
-    assert row.price_amount_minor != 9999
-    assert row.duration_minutes != 45
+    # EQUALITY against the PRE-PATCH values, never `!=` against the post-PATCH ones: the booking is
+    # written before the PATCH, so `!= {"en": "Renamed"}` can never fail - a row that stored `{}`,
+    # `0` and `5` passed all three. source is here because ZIF-77's platform fee reads it and it
+    # cannot be reconstructed afterwards.
+    assert row.service_name == {"en": "Cut"}
+    assert row.price_amount_minor == 2500
+    # Honest label: this one line is a column-presence check, NOT a fence. Every test tenant is
+    # EUR and tenants.currency cannot change under a price (0016:52), so a hardcoded 'EUR' is
+    # indistinguishable here. Give it teeth by adding a non-EUR business to the fixtures.
+    assert row.price_currency == "EUR"
+    assert row.duration_minutes == 30
+    assert row.source == "booking_page"
+    assert row.auto_confirm_at_booking is False
 
     slots = client.get(
         f"/api/public/businesses/{people.a}/services/{ready}/availability",
         params={"from": DAY.isoformat(), "to": DAY.isoformat()},
     ).json()["slots"]
     assert at("09:30") not in slots  # blocked by the NEW 30-minute buffer, applied live
+    # 09:45 is the ONLY discriminator for "live, not snapshotted": with the 30-minute buffer read
+    # live, 09:45-10:30 runs into the booking's tail; with the buffer snapshotted onto the booking
+    # (NULL at booking time, so buffer_pct's 10% of 45 = 5 minutes) it is offered. 09:30 and 10:00
+    # hold under BOTH, which is why this row was not a fence before.
+    assert at("09:45") not in slots
     assert at("10:00") in slots
+
+
+# 34b: FENCE - C6. No test in the repo ever set cancellation_policy_text to a non-empty value, so
+# writing NULL, or joining the LIVE setting at read time, was green. The second half is the whole
+# reason the column stores TEXT rather than a key: the wording the client agreed to is evidence and
+# a later edit must not reach back. Wrong impl: pass `None` for cancellation_policy_text in
+# INSERT_BOOKING, or omit it from BookingOut.
+def test_the_cancellation_policy_text_is_snapshotted_and_never_rewritten(
+    people: People, app: FastAPI, owner: TestClient, ready: str
+) -> None:
+    agreed = "Free cancellation up to 24 hours before."
+    assert put_settings(owner, {"cancellation_policy_text": agreed}).status_code == 200
+
+    response = post_booking(new_client(app), people.a, ready, starts_at=at("09:00"))
+
+    assert response.status_code == 201
+    assert response.json()["cancellation_policy_text"] == agreed
+    with tenant_context(people.a) as session:
+        stored = session.scalar(
+            text("SELECT cancellation_policy_text FROM bookings WHERE id = :id"),
+            {"id": response.json()["id"]},
+        )
+    assert stored == agreed
+
+    assert put_settings(owner, {"cancellation_policy_text": "No refunds."}).status_code == 200
+    with tenant_context(people.a) as session:
+        after = session.scalar(
+            text("SELECT cancellation_policy_text FROM bookings WHERE id = :id"),
+            {"id": response.json()["id"]},
+        )
+    assert after == agreed
 
 
 # 35: FENCE. Wrong impl: add client_name/client_email columns to 0026 and write them.
@@ -1057,7 +1342,11 @@ def test_the_booking_transaction_takes_the_tenant_lock_first(
     )
     lock_statement, lock_params = executed[tenant_set + 1]
     assert lock_statement.startswith("SELECT pg_advisory_xact_lock(")
-    assert lock_params == {"key": bookings.LOCK_KEY}
+    # The LITERAL, never `bookings.LOCK_KEY` read back out of the module under test: that compared
+    # the constant with itself, so `LOCK_KEY = 105` - a collision with schedule.OPENING_LOCK, which
+    # would make the two locks serialise against each other - kept this green.
+    assert lock_params == {"key": 51}
+    assert bookings.LOCK_KEY != schedule.OPENING_LOCK
 
 
 # 51: FENCE, behavioural. The other fence that proves the lock, measured RED 5/5 (F-c).

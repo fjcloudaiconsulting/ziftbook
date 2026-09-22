@@ -13,7 +13,7 @@ import json
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -40,10 +40,6 @@ from app.clients import ClientName, Phone, PolicyVersion, Purpose
 from app.db import SessionLocal, join_tenant, tenant_context
 from app.errors import ApiError, Error
 from app.services import STRICT, Price
-
-# ZIF-53, ZIF-55 and ZIF-7 each add a value; migration 0026 puts a length CHECK only, on purpose
-# (spec C7), so this Literal is the only place the value set is protected.
-Event = Literal["created"]
 
 IP_LIMIT, EMAIL_LIMIT, LIMIT_WINDOW = 30, 5, timedelta(hours=1)
 # ZIF-5's ~24h for merchant approval. ZIF-54 may promote this to a setting; it is not one today.

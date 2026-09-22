@@ -1,6 +1,7 @@
 """app.turnstile.verify: fails closed, skips cleanly with no secret, and never retries a spent
 token (spec C9)."""
 
+import http.client
 import json
 import urllib.request
 from collections.abc import Callable
@@ -51,15 +52,32 @@ def json_answer(body: dict[str, Any]) -> FakeAnswer:
     return FakeAnswer(json.dumps(body).encode())
 
 
-# 45: FENCE. Wrong impl: `return True` in the except branch.
+# 45: FENCE. Wrong impl: (a) `return True` in the except branch; (b) drop
+# http.client.HTTPException from the except tuple - IncompleteRead is NOT an OSError, it subclasses
+# HTTPException only, so a body truncated mid-read escapes and 500s; (c) drop the isinstance(dict)
+# guard and go straight to result.get - `[]`, `null` and `"ok"` are all valid JSON that json.load
+# accepts and .get raises AttributeError on. (b) and (c) each turn the product's first
+# unauthenticated write into a 500 with a traceback instead of a refusal.
 @pytest.mark.parametrize(
     "make_urlopen",
     [
         lambda: (_ for _ in ()).throw(OSError("network unreachable")),
         lambda: FakeAnswer(b"not json"),
         lambda: json_answer({"success": False, "error-codes": ["timeout-or-duplicate"]}),
+        lambda: (_ for _ in ()).throw(http.client.IncompleteRead(b'{"succ')),
+        lambda: FakeAnswer(b"[]"),
+        lambda: FakeAnswer(b"null"),
+        lambda: FakeAnswer(b'"ok"'),
     ],
-    ids=["oserror", "bad-json", "success-false"],
+    ids=[
+        "oserror",
+        "bad-json",
+        "success-false",
+        "incomplete-read",
+        "json-array",
+        "json-null",
+        "json-string",
+    ],
 )
 def test_verification_fails_closed(monkeypatch: pytest.MonkeyPatch, make_urlopen: Any) -> None:
     monkeypatch.setenv("ZIF_TURNSTILE_SECRET", "shhh")
@@ -135,7 +153,6 @@ def test_verification_calls_siteverify_at_most_once(
 
     assert turnstile.verify("a-single-use-token", "203.0.113.1") is expected
     assert len(calls) == 1
-    assert len(set(calls)) == len(calls)  # never the same token string passed twice
 
 
 def test_enabled_reflects_the_secret(monkeypatch: pytest.MonkeyPatch) -> None:

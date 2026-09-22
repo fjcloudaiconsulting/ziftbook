@@ -1,5 +1,6 @@
 """Cloudflare Turnstile verification. No new dependency: stdlib urllib, as app/worker.py:6,32."""
 
+import http.client
 import json
 import logging
 import urllib.parse
@@ -48,9 +49,16 @@ def verify(token: str | None, ip: str | None) -> bool:
     try:
         with urllib.request.urlopen(request, timeout=TIMEOUT) as answer:
             result = json.load(answer)
-    except (OSError, ValueError) as error:
+    # http.client.HTTPException is listed because it is NOT an OSError: a response truncated
+    # mid-body raises http.client.IncompleteRead, which subclasses HTTPException only. Without it
+    # a dropped TLS connection is a 500 on the product's first unauthenticated write, not the
+    # fail-closed 403 this function promises. Do not "simplify" the tuple.
+    except (OSError, ValueError, http.client.HTTPException) as error:
         # The class only: an error's text can quote the secret or the address
         # (CONTRIBUTING.md:253-257, "log the class ... never %r/str(error)").
         logger.warning("turnstile unreachable", extra={"error": type(error).__name__})
         return False
-    return result.get("success") is True
+    # isinstance before .get: siteverify is documented to answer an object, but `[]`, `"ok"`,
+    # `null` and `123` are all valid JSON that json.load accepts and .get raises AttributeError
+    # on - again a 500 rather than a refusal. Anything that is not an object is not a pass.
+    return isinstance(result, dict) and result.get("success") is True

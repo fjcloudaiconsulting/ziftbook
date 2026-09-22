@@ -227,7 +227,11 @@ def test_the_predicate_is_exactly_the_four_occupying_statuses(migrate_engine: En
     assert set(availability.OCCUPYING) <= check_statuses
 
 
-# 5: CHARACTERISATION. No injection exists: this is a behaviour of Postgres, not of our code.
+# 5: FENCE - F1 sequential. An injection DOES exist, and the old label ("characterisation, no
+# injection exists: this is a behaviour of Postgres, not of our code") was wrong: add
+# "cancelled_by_client" to migration 0026's OCCUPYING - the predicate the constraint is built from -
+# and the second insert below raises ExclusionViolation instead of succeeding. Downgrade to 0025
+# first; the `migrated` fixture is session-scoped and would otherwise leave the injection a no-op.
 def test_a_cancelled_booking_frees_its_slot(people: People) -> None:
     service_id = seed_service(people.a)
     client_id = seed_client(people.a, email=fresh_email())

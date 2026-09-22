@@ -208,9 +208,13 @@ def upgrade() -> None:
       tenant_id uuid NOT NULL
         CONSTRAINT fk_booking_events_tenant_id_tenants REFERENCES tenants (id),
       booking_id uuid NOT NULL,
-      -- No CHECK on the value set, deliberately. ZIF-53, ZIF-55 and ZIF-7 each add events; a value
-      -- list here would make every one of them a migration under a lock, for no protection the
-      -- app.bookings.Event Literal does not already give. Length only.
+      -- No CHECK on the value set, deliberately, and the reason is the lock and nothing else:
+      -- ZIF-53, ZIF-55 and ZIF-7 each add an event, and a value list here would make every one of
+      -- them an ALTER TABLE ... ADD CONSTRAINT under ACCESS EXCLUSIVE. The value set is held at the
+      -- single write site instead - app/bookings.py's INSERT_EVENT, which hardcodes 'created' in
+      -- the SQL. (An earlier version of this comment cited an `app.bookings.Event` Literal as the
+      -- protection. It was a one-value Literal referenced nowhere, it protected nothing, and it has
+      -- been deleted; ZIF-53 adds the parameter and a real value set together.) Length only.
       event text NOT NULL
         CONSTRAINT ck_booking_events_event_length CHECK (char_length(event) BETWEEN 1 AND 40),
       -- From auth.origin(request), the same source an audit event's comes from. On a
