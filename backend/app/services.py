@@ -269,7 +269,7 @@ def lock_members(current: SignedIn, member_ids: list[UUID]) -> dict[UUID, UUID]:
     out."""
     # One statement, in id order, like members.target, so there is no cycle with a removal or role
     # change. A member removed while we waited is simply not returned (READ COMMITTED), which is a
-    # 422 in replace_workers instead of a foreign key 500 at the insert.
+    # 422 in assign_workers instead of a foreign key 500 at the insert.
     return dict(
         current.db.execute(
             text("""

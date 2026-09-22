@@ -507,3 +507,27 @@ def test_a_malformed_worker_list_is_refused_on_create(
 
     assert (response.status_code, response.json()) == (422, {"code": "invalid_request"})
     assert stored(people.a) == []
+
+
+# 20. fence: exactly MAX_WORKERS ids get past validation (made-up ids: then unknown_member, not
+# invalid_request), so the limit is the documented 200.
+def test_the_worker_limit_is_200_on_create(people: People, owner: TestClient) -> None:
+    response = create(owner, [str(uuid.uuid7()) for _ in range(200)])
+
+    assert (response.status_code, response.json()) == (422, {"code": "unknown_member"})
+    assert stored(people.a) == []
+
+
+# 21. guard: a duplicate id is assigned once and recorded once.
+def test_a_duplicate_worker_is_assigned_once_on_create(
+    people: People, owner: TestClient, migrate_engine: Engine
+) -> None:
+    only_a = member_id(people.a, people.only_a)
+
+    response = create(owner, [str(only_a), str(only_a)])
+
+    assert response.status_code == 201
+    assert response.json()["worker_ids"] == ids(only_a)
+    assert pairs(people.a) == [(uuid.UUID(response.json()["id"]), only_a)]
+    changed = events(migrate_engine, action=CHANGED, tenant_id=people.a)
+    assert [e["details"] for e in changed] == [{"added": [str(people.only_a)], "removed": []}]
