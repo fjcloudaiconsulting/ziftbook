@@ -503,6 +503,8 @@ def test_a_transition_does_not_touch_expires_at(
 # write-site value set: a value added to the Literal with no TRANSITIONS entry is a KeyError here
 # (and a 500 in production). Each case now builds its target's own legal source state, and reads
 # the action out of TRANSITIONS' rule rather than out of a bare status->Action map (ZIF-55 D10).
+# That read is DERIVED from the code under test, so it pins the WIRING (each target records its
+# own action) and not the action strings. F16 below, hard-coded, is the one that pins the strings.
 # Kills: adds a value to the Literal without a TRANSITIONS entry; echoes the request instead of
 # RETURNING the row; answers with another booking's id; writes the wrong audit action.
 @pytest.mark.parametrize(
@@ -733,7 +735,7 @@ def events_of(tenant_id: uuid.UUID, booking_id: str) -> list[str]:
         ("pending", "cancelled_by_merchant", "booking_cancelled_by_merchant"),
         ("confirmed", "cancelled_by_merchant", "booking_cancelled_by_merchant"),
         ("confirmed", "completed", "booking_completed"),
-        ("confirmed", "no_show", "booking_no_show"),
+        ("confirmed", "no_show", "booking_no_show_recorded"),
     ],
     ids=["pending cancel", "confirmed cancel", "completed", "no show"],
 )
@@ -840,6 +842,12 @@ def test_an_auto_confirmed_booking_can_be_cancelled_by_the_merchant(
 
 # F20 (T17) - a TTL-passed pending is dead for every target, cancellation included.
 # Kills: deleting the liveness clause outright to make F19 pass.
+#
+# REJECTED (reviewer, ZIF-55 R3): the merchant therefore cannot cancel an expired pending, and the
+# row keeps status='pending' until some later booking POST runs the EXPIRE sweep. Left as it is,
+# on purpose: it is what the spec says, and the row is already invisible in the queue (QUEUE
+# filters on expires_at > now()) and inert (`pending` is in EXPIRING, so it holds no slot), which
+# leaves the merchant nothing to cancel. The sweeper itself is ZIF-122's.
 def test_a_ttl_passed_pending_cannot_be_cancelled_either(
     people: People, app: FastAPI, owner: TestClient, ready: str
 ) -> None:
@@ -852,9 +860,11 @@ def test_a_ttl_passed_pending_cannot_be_cancelled_either(
     assert status_of(people.a, booking_id) == "pending"
 
 
-# F21 (T18) - expires_at is never in the SET list, for the new targets either. F11 covers only
-# confirmed/declined. The hold's expiry is evidence; clearing it buys nothing and destroys it.
-# Kills: adding `expires_at = NULL` (or `= now()`) to the SET list.
+# F21 (T18) - GUARD, not a fence; the original "fence" label was wrong. Its named kill - adding
+# `expires_at = NULL` (or `= now()`) to the SET list - turns the pre-existing F11 red as well, and
+# TRANSITION has ONE shared SET list, so the only mutation this distinguishes from F11 is a
+# per-target SET list nobody would write. Kept at three lines because it says out loud that the
+# hold's expiry survives a cancellation too. F11 is what actually kills the edit.
 def test_cancelling_a_pending_leaves_its_expiry_exactly_as_it_was(
     people: People, app: FastAPI, owner: TestClient, ready: str
 ) -> None:
@@ -875,7 +885,13 @@ def test_cancelling_a_pending_leaves_its_expiry_exactly_as_it_was(
 # F22 (T19) - no_show FREES the slot and completed does NOT. This is the walk-in case migration
 # 0026 designed the exclusion constraint's status predicate for, and the reason no_show is
 # terminal: once the slot is free, an undo is a 23P01.
-# Kills: adding no_show to OCCUPYING or to the EXCLUDE predicate; removing completed from either.
+# Kills: 0026's EXCLUDE predicate written with no_show in it, or without completed, on a database
+# migrated from the edited migration.
+# Does NOT kill either of those edits made to `availability.OCCUPYING` instead: that tuple is a
+# query filter, and the constraint exercised here is built from 0026's own copy of the list. The
+# pre-existing test_bookings_db.py::test_the_predicate_is_exactly_the_four_occupying_statuses is
+# what holds the two in lockstep and what catches a change to the tuple; this test is red only for
+# the predicate form they share.
 def test_no_show_frees_the_slot_and_completed_does_not(
     people: People, app: FastAPI, owner: TestClient, ready: str
 ) -> None:
@@ -904,20 +920,23 @@ def test_no_show_frees_the_slot_and_completed_does_not(
     assert raised.value.orig.diag.constraint_name == bookings.OVERLAP
 
 
-# F23 (T20) - no_show is terminal. The asymmetry is deliberate: completed -> no_show is legal
-# (F25), no_show -> completed is not.
-# Kills: listing no_show among completed's legal sources - which returns 200 here, and 23P01 -> a
-# 500 the moment a walk-in holds the freed slot.
-def test_a_no_show_cannot_be_undone(
-    people: People, app: FastAPI, owner: TestClient, ready: str
+# F23 (T20) - `completed` sources `confirmed` and nothing else. Both other ways back INTO it are
+# the same hazard D14 describes for no_show: a status that FREED the slot would re-enter the
+# exclusion predicate, which is a 23P01 -> 500 the moment a walk-in legitimately holds the slot
+# the merchant gave up. The asymmetry is deliberate: completed -> no_show and
+# completed -> cancelled_by_merchant are legal (F25); the reverse of each is not.
+# Kills: listing no_show, or cancelled_by_merchant, among completed's legal sources.
+@pytest.mark.parametrize("settled", ["no_show", "cancelled_by_merchant"])
+def test_a_slot_freeing_status_cannot_be_turned_back_into_completed(
+    people: People, app: FastAPI, owner: TestClient, ready: str, settled: str
 ) -> None:
     booking_id = confirmed_in_the_past(app, owner, people.a, ready)
-    assert patch(owner, booking_id, "no_show").status_code == 200
+    assert patch(owner, booking_id, settled).status_code == 200
 
     response = patch(owner, booking_id, "completed")
 
     assert (response.status_code, response.json()) == (409, {"code": "invalid_transition"})
-    assert status_of(people.a, booking_id) == "no_show"
+    assert status_of(people.a, booking_id) == settled
 
 
 # F24 (T21) - the advisory lock is still statement 1 on the new targets' path too, exactly as F1
@@ -947,13 +966,20 @@ def test_cancelling_takes_the_tenant_lock_first(
     assert lock_params == {"key": 51}
 
 
-# F25 (T26) - a mis-clicked `completed` is correctable. Without this, a merchant who clicks
-# "completed" one second into a twelve-hour booking has permanently destroyed the no-show outcome
-# AND permanently pinned the slot inside OCCUPYING: completed does not free the slot and DELETE is
-# revoked from the app role.
-# Kills: `completed` as a terminal state - both corrections 409. Also kills adding the sources
-# without their event/audit entries.
-@pytest.mark.parametrize("correction", ["no_show", "cancelled_by_merchant"])
+# F25 (T26) - a mis-clicked `completed` is correctable, RESTORE included. Without the first two
+# corrections a merchant who clicks "completed" one second into a twelve-hour booking has
+# permanently destroyed the no-show outcome AND permanently pinned the slot inside OCCUPYING:
+# completed does not free the slot and DELETE is revoked from the app role. Without the third,
+# `completed` is only EXIT-able and not CORRECTABLE: the two exits write a false record (no_show)
+# or a 100% refund by AC (cancelled_by_merchant), so every way out of a mis-click costs money or
+# truth. `completed -> confirmed` is the one that costs neither.
+# Kills: `completed` as a terminal state - all three corrections 409; dropping `completed` from
+# `confirmed`'s source list - the restore 409s and the other two still pass. Also kills adding the
+# sources without their event/audit entries.
+#
+# The action read below is derived from the code under test and pins the wiring, not the strings;
+# F16's hard-coded parametrize list is what pins the strings.
+@pytest.mark.parametrize("correction", ["no_show", "cancelled_by_merchant", "confirmed"])
 def test_a_mis_clicked_completed_can_be_corrected(
     people: People,
     app: FastAPI,
@@ -973,22 +999,22 @@ def test_a_mis_clicked_completed_can_be_corrected(
     )
     assert status_of(people.a, booking_id) == correction
     assert events_of(people.a, booking_id)[-1] == correction
-    assert (
-        len(
-            events(
-                migrate_engine,
-                action=bookings.TRANSITIONS[correction].action,
-                target=f"booking:{booking_id}",
-            )
-        )
-        == 1
-    )
-    if correction == "no_show":
-        # Out of OCCUPYING: the slot the mis-click pinned is free again.
-        with tenant_context(people.a) as session:
-            span = session.execute(
-                text("SELECT starts_at, ends_at FROM bookings WHERE id = :id"), {"id": booking_id}
-            ).one()
+    # The whole audit trail of this booking, in order. `booking:<uuid>` is a unique target, so
+    # this needs no tenant scoping. The restore legitimately writes a SECOND booking_confirmed -
+    # it is the same act as the first accept - which is why this asserts the sequence and not a
+    # count of one.
+    audit = [e["action"] for e in events(migrate_engine, target=f"booking:{booking_id}")]
+    assert audit == [
+        "booking_confirmed",
+        "booking_completed",
+        bookings.TRANSITIONS[correction].action,
+    ]
+    with tenant_context(people.a) as session:
+        span = session.execute(
+            text("SELECT starts_at, ends_at FROM bookings WHERE id = :id"), {"id": booking_id}
+        ).one()
+
+    def walk_in() -> None:
         seed_booking(
             people.a,
             ready,
@@ -996,6 +1022,17 @@ def test_a_mis_clicked_completed_can_be_corrected(
             span.starts_at.isoformat(),
             span.ends_at.isoformat(),
         )
+
+    if correction == "confirmed":
+        # The restore cannot raise 23P01, and this is the reason rather than an assumption:
+        # `confirmed` and `completed` are BOTH in OCCUPYING, so the row never leaves the exclusion
+        # predicate and there is no window for a walk-in to take the slot. The 200 above is half
+        # the proof; that the slot is still held is the other half.
+        with pytest.raises(IntegrityError) as raised:
+            walk_in()
+        assert isinstance(raised.value.orig, ExclusionViolation)
+    else:
+        walk_in()  # out of OCCUPYING: the slot the mis-click pinned is free again
 
 
 # G8 (T22) - the 404/403 pair holds for a new target too. Guard: F5/F6 fence the order on the
@@ -1028,3 +1065,87 @@ def test_a_status_outside_the_five_targets_is_422(
 
     assert (response.status_code, response.json()) == (422, {"code": "invalid_request"})
     assert status_of(people.a, booking_id) == "pending"
+
+
+@pytest.fixture
+def worker_ready(people: People, owner: TestClient) -> tuple[uuid.UUID, str]:
+    """A 30-minute service performed by only_a, a genuine NON-OWNER worker. `ready` assigns
+    people.both, who is an owner in tenant a, which would make "worker" and "owner"
+    indistinguishable on any test about the difference."""
+    worker_user = people.only_a
+    service_id = new_service(owner)
+    seed(people.a, worker_user, weekdays("09:00", "17:00"))
+    assign(people.a, service_id, member_id(people.a, worker_user))
+    return worker_user, service_id
+
+
+def worker_completed(
+    app: FastAPI, people: People, worker_ready: tuple[uuid.UUID, str], clock_time: str = "09:00"
+) -> tuple[TestClient, str]:
+    """A past booking the assigned NON-OWNER worker has taken all the way to `completed` on their
+    own - which they may, and which is the whole point: the trap starts from a state they can
+    reach without an owner."""
+    worker_user, service_id = worker_ready
+    worker = signed_in(app, people.a, worker_user)
+    booking_id = make_pending(
+        app,
+        people.a,
+        service_id,
+        member_id=str(member_id(people.a, worker_user)),
+        starts_at=at(clock_time),
+    )
+    assert patch(worker, booking_id, "confirmed").status_code == 200
+    shift(people.a, booking_id, PAST)
+    assert patch(worker, booking_id, "completed").status_code == 200
+    return worker, booking_id
+
+
+# F26 (T27) - leaving `completed` is the OWNER's alone, whatever the target. A non-owner worker
+# who mis-clicks "completed" on their own appointment must not be able to turn it into a record
+# nobody can put back: `no_show` is terminal and frees the slot, `cancelled_by_merchant` is a 100%
+# refund by AC, and `confirmed` un-does a settled outcome. An owner can do all three.
+# Kills: dropping the OWNER_ONLY_SOURCES check in transition() - all three legs answer 200 for the
+# worker, and with `cancelled_by_merchant` there is then no way back at all (DELETE is revoked,
+# 0026:203, and `confirmed` would not source it); keying the check on the TARGET instead of the
+# SOURCE - the worker's own `confirmed -> completed` above 403s and this test never gets started.
+@pytest.mark.parametrize("target", ["cancelled_by_merchant", "no_show", "confirmed"])
+def test_only_an_owner_may_transition_out_of_completed(
+    people: People,
+    app: FastAPI,
+    owner: TestClient,
+    worker_ready: tuple[uuid.UUID, str],
+    target: str,
+) -> None:
+    worker, booking_id = worker_completed(app, people, worker_ready)
+
+    refused = patch(worker, booking_id, target)
+
+    assert (refused.status_code, refused.json()) == (403, {"code": "owner_only"})
+    assert status_of(people.a, booking_id) == "completed"
+    assert events_of(people.a, booking_id) == ["confirmed", "completed"]
+
+    assert patch(owner, booking_id, target).status_code == 200
+    assert status_of(people.a, booking_id) == target
+
+
+# F27 (T28) - and the worker can still do their job. The owner-only rule is keyed on the SOURCE,
+# so recording the outcome of an appointment they performed is untouched.
+# Kills: making `completed` or `no_show` owner-only targets instead - both legs 403.
+@pytest.mark.parametrize("target", ["completed", "no_show"])
+def test_the_assigned_worker_still_records_the_outcome_of_their_own_appointment(
+    people: People, app: FastAPI, worker_ready: tuple[uuid.UUID, str], target: str
+) -> None:
+    worker_user, service_id = worker_ready
+    worker = signed_in(app, people.a, worker_user)
+    booking_id = make_pending(
+        app,
+        people.a,
+        service_id,
+        member_id=str(member_id(people.a, worker_user)),
+        starts_at=at("09:00"),
+    )
+    assert patch(worker, booking_id, "confirmed").status_code == 200
+    shift(people.a, booking_id, PAST)
+
+    assert patch(worker, booking_id, target).status_code == 200
+    assert status_of(people.a, booking_id) == target

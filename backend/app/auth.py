@@ -93,10 +93,12 @@ Action = Literal[
     "booking_confirmed",
     "booking_declined",
     # ZIF-55. "cancelled_by_merchant", not "cancelled": ZIF-54 adds a client-side cancellation
-    # next, and renaming an audit action once rows exist is not a rename.
+    # next, and renaming an audit action once rows exist is not a rename. Every value above ends
+    # in a past-tense verb, which is why the third is not "booking_no_show": the STATUS is
+    # `no_show`, the act this row records is recording one.
     "booking_cancelled_by_merchant",
     "booking_completed",
-    "booking_no_show",
+    "booking_no_show_recorded",
 ]
 
 

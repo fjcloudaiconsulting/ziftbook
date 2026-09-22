@@ -72,7 +72,7 @@ INSERT INTO bookings (tenant_id, client_id, worker_id, service_id, starts_at, en
 VALUES (current_setting('app.tenant_id')::uuid, :client_id, :worker_id, :service_id, :starts_at,
         :ends_at, :status, :expires_at, :source, CAST(:service_name AS jsonb),
         :price_amount_minor, :price_currency, :duration_minutes, :auto_confirm_at_booking,
-        :display_name, 48, 24)
+        :display_name, :free_hours, :cutoff_hours)
 RETURNING id
 """)
 
@@ -93,6 +93,8 @@ def insert_booking(
     duration_minutes: int = 30,
     auto_confirm: bool = True,
     display_name: str | None = None,
+    free_hours: int = 48,
+    cutoff_hours: int = 24,
 ) -> uuid.UUID:
     booking_id: uuid.UUID = session.scalar(
         INSERT_BOOKING,
@@ -111,6 +113,8 @@ def insert_booking(
             "duration_minutes": duration_minutes,
             "auto_confirm_at_booking": auto_confirm,
             "display_name": display_name,
+            "free_hours": free_hours,
+            "cutoff_hours": cutoff_hours,
         },
     )
     return booking_id
@@ -667,3 +671,41 @@ def test_a_raw_insert_that_bypasses_the_lock_raises_23P01_by_constraint_name(
 
     assert isinstance(error.value.orig, ExclusionViolation)
     assert error.value.orig.diag.constraint_name == "ex_bookings_worker_overlap"
+
+
+# 14: FENCE - ZIF-55's two thresholds, at the CHECK's own edges. The route never reaches them:
+# pydantic refuses 721 and -1 before the database is asked, and T7 asserts only that the two
+# constraints exist by NAME, so a CHECK widened to `BETWEEN 0 AND 8760` (or dropped to a bare
+# `>= 0`) ships with every test green. Raw inserts, like the rest of this file.
+# Kills: widening or narrowing either ck_bookings_*_hours in 0027; dropping either.
+@pytest.mark.parametrize(
+    "hours,ok", [(0, True), (720, True), (721, False), (-1, False)], ids=["0", "720", "721", "-1"]
+)
+@pytest.mark.parametrize("column", ["free_hours", "cutoff_hours"])
+def test_the_threshold_columns_accept_0_to_720_and_nothing_else(
+    people: People, column: str, hours: int, ok: bool
+) -> None:
+    service_id = seed_service(people.a)
+    client_id = seed_client(people.a, email=fresh_email())
+    worker_id = member_id(people.a, people.both)
+    row = {
+        "client_id": client_id,
+        "worker_id": worker_id,
+        "service_id": service_id,
+        "starts_at": T4[0],
+        "ends_at": T4[1],
+        column: hours,
+    }
+
+    if ok:
+        assert book(people.a, **row) is not None
+        return
+    with pytest.raises(IntegrityError) as error:
+        book(people.a, **row)
+
+    assert isinstance(error.value.orig, CheckViolation)
+    assert error.value.orig.diag.constraint_name == (
+        "ck_bookings_free_cancellation_hours"
+        if column == "free_hours"
+        else "ck_bookings_reschedule_cutoff_hours"
+    )

@@ -284,13 +284,23 @@ def test_downgrading_and_upgrading_0026_restores_the_tables_and_their_grants(
         )
         assert conn.scalar(text("SELECT has_table_privilege('ziftbook_app', 'bookings', 'SELECT')"))
         assert conn.scalar(text("SELECT has_table_privilege('ziftbook_app', 'bookings', 'INSERT')"))
-        assert conn.scalar(text("SELECT has_table_privilege('ziftbook_app', 'bookings', 'UPDATE')"))
+        # Column-level since 0027, which revokes table-level UPDATE and grants it back on every
+        # column but the two cancellation snapshots. `status` is the only one the app updates.
+        assert conn.scalar(
+            text("SELECT has_column_privilege('ziftbook_app', 'bookings', 'status', 'UPDATE')")
+        )
 
 
 # F19 (T7) - 0027's round trip: both columns, both CHECKs, and the app's privileges on them.
 # Kills: a downgrade that drops one column and not the other, or takes cancellation_policy_text
-# with them; an upgrade that adds them nullable or without the CHECK; a 0027 that copies 0026's
-# REVOKE ALL ... GRANT pattern and loses a privilege on the way back up.
+# with them; an upgrade that adds them nullable or without the CHECK; a 0027 whose REVOKE/GRANT
+# pair loses SELECT or INSERT on the way up, or does not put table-level UPDATE back on the way
+# down; an upgrade that leaves the snapshot columns UPDATE-able by the app role, or that revokes
+# UPDATE from a column the app does write.
+#
+# The last assertion is also the tripwire for 0027's column-list GRANT: bookings is now a
+# column-grant table, so a LATER migration that adds a column without granting UPDATE on it turns
+# this red instead of 500ing a route.
 NEW_COLUMNS = text("""
 SELECT column_name, is_nullable FROM information_schema.columns
 WHERE table_name = 'bookings'
@@ -301,10 +311,16 @@ NEW_CHECKS = text("""
 SELECT conname FROM pg_constraint WHERE conrelid = 'bookings'::regclass
   AND conname IN ('ck_bookings_free_cancellation_hours', 'ck_bookings_reschedule_cutoff_hours')
 """)
+NO_UPDATE = text("""
+SELECT column_name FROM information_schema.columns
+WHERE table_name = 'bookings'
+  AND NOT has_column_privilege('ziftbook_app', 'bookings', column_name, 'UPDATE')
+""")
+SNAPSHOT = ("free_cancellation_hours", "reschedule_cutoff_hours")
 
 
 def test_downgrading_and_upgrading_0027_restores_both_thresholds(
-    migrated: None, migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+    people: People, migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     cfg = Config(toml_file=str(API_DIR / "pyproject.toml"))
     url = os.environ["ZIF_MIGRATE_DATABASE_URL"]
@@ -317,7 +333,17 @@ def test_downgrading_and_upgrading_0027_restores_both_thresholds(
                 "cancellation_policy_text": "YES"
             }
             assert conn.scalars(NEW_CHECKS).all() == []
+            # Table-level UPDATE is back, exactly as 0026 leaves it.
+            assert conn.scalars(NO_UPDATE).all() == []
+            assert conn.scalar(
+                text("SELECT has_table_privilege('ziftbook_app', 'bookings', 'UPDATE')")
+            )
     finally:
+        # D17: tenant-scoped, as the migrate role, BEFORE the re-upgrade. 0027's upgrade refuses a
+        # non-empty bookings (23502) and would raise out of this finally, leaving the database at
+        # 0026 with both columns gone for every later test in this xdist worker.
+        with migrate_engine.begin() as conn:
+            delete_bookings(conn, (people.a, people.b))
         command.upgrade(cfg, "head")
     with migrate_engine.connect() as conn:
         assert dict(conn.execute(NEW_COLUMNS).tuples().all()) == {
@@ -329,12 +355,15 @@ def test_downgrading_and_upgrading_0027_restores_both_thresholds(
             "ck_bookings_free_cancellation_hours",
             "ck_bookings_reschedule_cutoff_hours",
         ]
-        for column in ("free_cancellation_hours", "reschedule_cutoff_hours"):
-            for privilege in ("INSERT", "SELECT", "UPDATE"):
+        for column in SNAPSHOT:
+            for privilege in ("INSERT", "SELECT"):
                 assert conn.scalar(
                     text("SELECT has_column_privilege('ziftbook_app', 'bookings', :c, :p)"),
                     {"c": column, "p": privilege},
                 ), (column, privilege)
+        # The snapshot is written once and never updated: immutability as a privilege, the way
+        # booking_events' append-only shape is. Exactly these two columns, no others.
+        assert sorted(conn.scalars(NO_UPDATE)) == sorted(SNAPSHOT)
 
 
 # F20 (T8) - 0027 REFUSES on a non-empty bookings table. That refusal is the feature: ZIF-55 is

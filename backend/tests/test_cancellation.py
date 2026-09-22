@@ -3,9 +3,10 @@
 See docs/specs/2026-09-22-zif-55-spec.md §4. Pure, no database, no fixtures.
 """
 
-import ast
 import dataclasses
-from datetime import UTC, datetime, timedelta
+import subprocess
+import sys
+from datetime import UTC, datetime, timedelta, tzinfo
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -145,6 +146,54 @@ def test_a_naive_datetime_is_refused(starts_at: datetime, now: datetime) -> None
         decide(P, starts_at, now)
 
 
+class Unset(tzinfo):
+    """Aware-LOOKING and naive: `tzinfo is not None`, `utcoffset()` is None. The shape psycopg3
+    would hand over for a timestamp read through a custom tzinfo that declines to answer."""
+
+    def utcoffset(self, dt: datetime | None) -> timedelta | None:
+        return None
+
+    def dst(self, dt: datetime | None) -> timedelta | None:
+        return None
+
+    def tzname(self, dt: datetime | None) -> str | None:
+        return None
+
+
+# F5b (T2c') - the naive guard is `utcoffset() is None`, not `tzinfo is None`, on both arguments.
+# Kills: `if starts_at.tzinfo is None or now.tzinfo is None` - this datetime walks straight
+# through it, and astimezone(UTC) then falls back to the HOST zone (CPython
+# datetime.astimezone: `myoffset is None` -> `self.replace(tzinfo=None)._local_timezone()`),
+# silently restating the lead and the refund. Measured under TZ=Europe/Amsterdam: 12:00 came back
+# as 10:00Z. The mutation does not raise at all, so this is red on a UTC host too.
+@pytest.mark.parametrize(
+    "starts_at,now",
+    [
+        (STARTS, datetime(2026, 9, 29, 12, 0, tzinfo=Unset())),
+        (datetime(2026, 10, 1, 12, 0, tzinfo=Unset()), utc("2026-09-29T12:00:00Z")),
+    ],
+    ids=["offsetless now", "offsetless starts_at"],
+)
+def test_a_tzinfo_that_answers_no_offset_is_refused_as_naive(
+    starts_at: datetime, now: datetime
+) -> None:
+    assert starts_at.tzinfo is not None and now.tzinfo is not None  # the trap is set
+    assert starts_at.utcoffset() is None or now.utcoffset() is None
+
+    with pytest.raises(ValueError, match="aware"):
+        decide(P, starts_at, now)
+
+
+# F6 (T2d) - a negative threshold is refused at construction. A Policy comes from the booking row,
+# whose CHECK is `BETWEEN 0 AND 720`, but nothing stops a caller building one from anywhere else.
+# Kills: no lower-bound guard - Policy(-1, -1) makes `lead >= timedelta(hours=-1)` true for every
+# future booking, so decide() answers refund_pct=100 for every lead, at any distance.
+@pytest.mark.parametrize("hours", [(-1, 24), (48, -1), (-1, -1)], ids=["free", "cutoff", "both"])
+def test_a_negative_threshold_is_refused(hours: tuple[int, int]) -> None:
+    with pytest.raises(ValueError, match="negative"):
+        Policy(*hours)
+
+
 # G1 (T3) - D9's fourth key spelled out: a merchant may set the reschedule cutoff ABOVE the refund
 # threshold, and the engine answers that combination. Guard, not fence: §4 row 10 is this case and
 # F1 already parametrises it, and the cross-field validator D2 rejected could ship without ever
@@ -173,17 +222,27 @@ def test_the_dataclasses_are_frozen() -> None:
         P.free_cancellation_hours = 1  # type: ignore[misc]
 
 
-# G4 (T6) - the engine's purity, read off the module rather than asserted in prose: ZIF-7's money
-# path must be able to import it without importing a router. Guard: it inspects the module, not
-# behaviour.
-def test_the_engine_imports_only_the_standard_library() -> None:
-    source = Path(__file__).parent.parent / "app" / "cancellation.py"
-    tree = ast.parse(source.read_text())
-    imported = {
-        node.module.split(".")[0] if isinstance(node, ast.ImportFrom) and node.module else name.name
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Import | ast.ImportFrom)
-        for name in (node.names or [])
-    }
+# F7 (T6) - the engine's purity as the BEHAVIOUR it is for: ZIF-7's money path must be able to
+# import it without dragging a router, a database engine and the settings registry in behind it.
+# A fresh interpreter, because this one has already imported half of `app`.
+# Kills: `from app import business_settings` (or any other app module) in app/cancellation.py -
+# the subprocess then reports it and everything it pulls in.
+#
+# Replaces a version that parsed the import statements with `ast` and asserted the resulting set
+# equalled {"dataclasses", "datetime"}: an assertion on the TEXT of a data structure, which a
+# harmless `import typing` turned red without touching the property it claimed to hold.
+def test_importing_the_engine_drags_in_no_other_app_module() -> None:
+    found = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import app.cancellation, sys;"
+            " print(sorted(m for m in sys.modules if m == 'app' or m.startswith('app.')))",
+        ],
+        cwd=Path(__file__).parent.parent,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
 
-    assert imported == {"dataclasses", "datetime"}
+    assert found.stdout.strip() == "['app', 'app.cancellation']"

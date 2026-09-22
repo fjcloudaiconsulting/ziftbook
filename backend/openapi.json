@@ -2998,7 +2998,7 @@
           "booking-approvals"
         ],
         "summary": "Update",
-        "description": "A merchant settles a booking: accept, decline, cancel, or record how it went. An owner, or\nthe membership in bookings.worker_id, may transition; anyone else on this business gets 403.\nAnother business's booking is 404 (row-level security makes it invisible) rather than 403.\n\nThe UPDATE's own qualifier is the only authority on whether a transition is legal - the SELECT\nabove it exists for the 404/403 pair and nothing else - which is what makes it exactly-once\nunder the advisory lock. Zero rows updated is 409 invalid_transition, for either refusal:\nwrong source status, or an appointment that has not started yet.",
+        "description": "A merchant settles a booking: accept, decline, cancel, or record how it went.\n\nAn owner, or the membership in bookings.worker_id, may transition; anyone else on this business\ngets 403, and another business's booking is 404. Undoing a booking already marked `completed`\nis the owner's alone. A transition the booking's current status does not allow, or an outcome\nrecorded before the appointment starts, is 409 `invalid_transition`.",
         "operationId": "booking-approvals-update",
         "parameters": [
           {

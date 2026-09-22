@@ -1,9 +1,9 @@
 """ZIF-55's cancellation rule engine.
 
 Pure by construction: this module imports nothing from `app`, opens no transaction, and reads no
-clock of its own -- both moments arrive as arguments. Keep the import list stdlib-only: that is the
-property tests/test_cancellation.py asserts, and it is why this is its own file rather than another
-hundred lines of app/bookings.py.
+clock of its own -- both moments arrive as arguments. Keep it stdlib-only: importing it must not
+drag a router in, which is what tests/test_cancellation.py imports it in a subprocess to check, and
+it is why this is its own file rather than another hundred lines of app/bookings.py.
 
 ZIF-55 ships no caller. The client cancel and reschedule routes that consume this are ZIF-54's.
 """
@@ -18,6 +18,14 @@ class Policy:
 
     free_cancellation_hours: int
     reschedule_cutoff_hours: int
+
+    def __post_init__(self) -> None:
+        # The columns' CHECK is `BETWEEN 0 AND 720`, but a Policy is built in Python from whatever
+        # its caller hands over, and a NEGATIVE hour does not fail - it inverts the rule.
+        # Policy(-1, -1) makes `lead >= timedelta(hours=-1)` true for every future booking, so
+        # every cancellation refunds 100%. Clocks are a trust boundary (see decide) and so is this.
+        if self.free_cancellation_hours < 0 or self.reschedule_cutoff_hours < 0:
+            raise ValueError("Policy hours cannot be negative (ZIF-55: ck_bookings_* start at 0)")
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,12 +45,15 @@ def decide(policy: Policy, starts_at: datetime, now: datetime) -> Decision:
     caller meant as UTC silently shifts the lead by the host's offset and restates the refund (under
     TZ=America/New_York a true 48h lead reads 44h and the refund goes from 100 to 0). This is a
     trust boundary on a money path; the columns' CHECK covers the policy, nothing covers the clocks.
+    "Aware" is `utcoffset() is not None`, not `tzinfo is not None`: a tzinfo whose utcoffset()
+    returns None makes a datetime that LOOKS aware and behaves naively, and astimezone(UTC) then
+    assumes the host zone exactly as it does for tzinfo=None - the same trap, through the gate.
 
     `charge_pct` is always 0 here (D8). ZIF-7 must NOT read it as the no-show charge: a post-start
     booking answers 0 while the ticket says "fully charged", because a no-show is a MERCHANT act
     keyed off bookings.status = 'no_show', a constant this engine never computes.
     """
-    if starts_at.tzinfo is None or now.tzinfo is None:
+    if starts_at.utcoffset() is None or now.utcoffset() is None:
         raise ValueError("decide() needs aware datetimes: starts_at and now (ZIF-55 D5)")
     # The first statement, and the only pair anything below compares. CPython short-circuits on
     # `self._tzinfo is other._tzinfo` in both __sub__ and the rich comparisons and never calls

@@ -280,7 +280,17 @@ def test_changing_a_cancellation_threshold_is_audited(
         == 200
     )
 
-    for key in ("free_cancellation_hours", "reschedule_cutoff_hours"):
-        assert (
-            len(events(migrate_engine, action="setting_changed", target=f"setting:{key}")) == 1
-        ), key
+    # Scoped to THIS business, and saying whose change it was. A business setting's audit target
+    # is the global string `setting:<key>` - it carries no tenant, unlike every other target
+    # format - and events() reads across tenants, so matching on the target alone counts every
+    # business in this worker's database that ever touched that key: two reviewers saw 2 and 5.
+    # The sibling language test scopes with tenant_id for the same reason.
+    recorded = sorted(
+        (e["target"], e["actor_user_id"])
+        for e in events(migrate_engine, tenant_id=people.a, action="setting_changed")
+    )
+
+    assert recorded == [
+        ("setting:free_cancellation_hours", people.both),
+        ("setting:reschedule_cutoff_hours", people.both),
+    ]

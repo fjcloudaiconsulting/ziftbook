@@ -134,9 +134,16 @@ class Rule(NamedTuple):
 # "The merchant can always cancel" = from every status that still holds the slot, which is why
 # `completed` is a source for cancelled_by_merchant and for no_show: `completed` does NOT leave
 # OCCUPYING (app/availability.py:163), DELETE is revoked from the app role (0026:203), and without
-# those two sources a merchant who mis-clicks "completed" one second into a twelve-hour booking
-# pins the slot inside OCCUPYING forever and destroys the no-show outcome. Both corrections LEAVE
-# the exclusion predicate, and leaving never conflicts.
+# those sources a merchant who mis-clicks "completed" one second into a twelve-hour booking pins
+# the slot inside OCCUPYING forever and destroys the no-show outcome. Every correction LEAVES the
+# exclusion predicate or stays inside it, and neither conflicts.
+#
+# `completed -> confirmed` is the RESTORE, and it is the only exit from a mis-clicked `completed`
+# that costs neither money nor truth: the other two write a false record (`no_show`) or a 100%
+# refund by AC (`cancelled_by_merchant`). "Correctable" means restorable, not merely exitable.
+# It carries past_only = False because past_only is a property of the TARGET and `confirmed` is
+# also how a future pending is accepted; the restore is past-only anyway, through its source -
+# `completed` is only reachable under `completed`'s own past_only.
 #
 # There is deliberately no way OUT of `no_show`. no_show FREES the slot, so `no_show -> completed`
 # or `-> confirmed` is a 23P01 waiting for the merchant who corrects a mistake five minutes after
@@ -145,15 +152,24 @@ class Rule(NamedTuple):
 # already does. `awaiting_payment` is absent from every source list on purpose: nothing writes it
 # until ZIF-7 brings the payment path that makes it reachable.
 TRANSITIONS: dict[str, Rule] = {
-    "confirmed": Rule(("pending",), False, "booking_confirmed"),
+    "confirmed": Rule(("pending", "completed"), False, "booking_confirmed"),
     "declined": Rule(("pending",), False, "booking_declined"),
     "cancelled_by_merchant": Rule(
         ("pending", "confirmed", "completed"), False, "booking_cancelled_by_merchant"
     ),
     "completed": Rule(("confirmed",), True, "booking_completed"),
-    "no_show": Rule(("confirmed", "completed"), True, "booking_no_show"),
+    "no_show": Rule(("confirmed", "completed"), True, "booking_no_show_recorded"),
 }
 Target = Literal["confirmed", "declined", "cancelled_by_merchant", "completed", "no_show"]
+
+# Leaving `completed` is the owner's alone, whatever the target. `completed` is the one status a
+# non-owner worker can reach on their OWN booking (may_manage lets the assigned worker transition
+# it), and every exit from it is destructive or irreversible: `no_show` is terminal and frees the
+# slot, `cancelled_by_merchant` is a 100% refund by AC, and `confirmed` un-does a settled record.
+# Without this a worker could walk a past booking of theirs to `cancelled_by_merchant` and leave
+# the owner with no route back at all. Doing the job stays open to them: `confirmed -> completed`
+# and `confirmed -> no_show` are unaffected. A mis-click is corrected by an owner.
+OWNER_ONLY_SOURCES = ("completed",)
 
 
 class StatusChange(BaseModel):
@@ -266,7 +282,7 @@ LIMIT :limit
 # qualifier are what make the transition exactly-once, and locking a membership row here would
 # take locks in an order CONTRIBUTING.md constrains around keep_an_owner.
 BOOKING = text("""
-SELECT m.user_id AS worker_user_id
+SELECT m.user_id AS worker_user_id, b.status
 FROM bookings b
 JOIN memberships m ON m.tenant_id = b.tenant_id AND m.id = b.worker_id
 WHERE b.id = :id
@@ -291,6 +307,12 @@ WHERE b.id = :id
 # correct for ZIF-52 (which was gated on status = 'pending') and a bug HERE: an auto_confirm
 # booking has expires_at IS NULL, `NULL > now()` is NULL, and every merchant cancellation of one
 # would answer 409.
+#
+# REJECTED (reviewer, ZIF-55 R4): `awaiting_payment` in that array is unreachable - nothing writes
+# the status until ZIF-7 - and no test covers it. It stays, deliberately: the array is a copy of
+# ck_bookings_expires_at's own list (0026:95-100), and the day ZIF-7 makes the status reachable an
+# array that had been trimmed to the reachable half would silently drop the liveness guard on the
+# payment hold. Commentary for ZIF-7, kept in lockstep with the CHECK it mirrors.
 TRANSITION = text("""
 UPDATE bookings SET status = :status
 WHERE id = :id
@@ -484,6 +506,14 @@ def create(  # sync def: turnstile.verify's urlopen blocks, and runs in FastAPI'
                                 or None,
                                 # ZIF-55: the thresholds in force NOW, snapshotted beside the
                                 # text. Never re-read at cancellation time.
+                                #
+                                # REJECTED (reviewer, ZIF-55 R2): a settings PUT committing
+                                # between business_settings.read() above and this INSERT
+                                # snapshots the PRE-change value, and no tenant advisory lock
+                                # closes that window. It is not a race to fix. The pre-change
+                                # value is precisely the policy the client was shown on the
+                                # booking page they are submitting; snapshotting the value that
+                                # replaced it a moment ago would sell them terms they never saw.
                                 "free_cancellation_hours": settings.free_cancellation_hours,
                                 "reschedule_cutoff_hours": settings.reschedule_cutoff_hours,
                                 "auto_confirm_at_booking": settings.auto_confirm,
@@ -582,19 +612,29 @@ def transition(
     request: Request,
     response: Response,
 ) -> BookingStatusOut:
-    """A merchant settles a booking: accept, decline, cancel, or record how it went. An owner, or
-    the membership in bookings.worker_id, may transition; anyone else on this business gets 403.
-    Another business's booking is 404 (row-level security makes it invisible) rather than 403.
+    """A merchant settles a booking: accept, decline, cancel, or record how it went.
 
-    The UPDATE's own qualifier is the only authority on whether a transition is legal - the SELECT
-    above it exists for the 404/403 pair and nothing else - which is what makes it exactly-once
-    under the advisory lock. Zero rows updated is 409 invalid_transition, for either refusal:
-    wrong source status, or an appointment that has not started yet."""
+    An owner, or the membership in bookings.worker_id, may transition; anyone else on this business
+    gets 403, and another business's booking is 404. Undoing a booking already marked `completed`
+    is the owner's alone. A transition the booking's current status does not allow, or an outcome
+    recorded before the appointment starts, is 409 `invalid_transition`.
+    """
+    # Internals, deliberately not in the public schema: the UPDATE's own qualifier is the only
+    # authority on whether a transition is legal - the SELECT above it exists for the 404/403 pair
+    # and nothing else - which is what makes it exactly-once under the advisory lock. Zero rows
+    # updated is the 409, for either refusal.
+    #
+    # REJECTED (reviewer, ZIF-55 R1, and the same finding and the same answer as ZIF-52): the
+    # 403/404/409 responses carry no Cache-Control. Statement 7 sets the header after every raise
+    # on purpose - it matches the set_display_name precedent, and an error body is an error code
+    # and nothing else, so there is nothing in it worth a caching directive.
     current.db.execute(LOCK, {"key": LOCK_KEY})  # 1: nothing above this
     row = current.db.execute(BOOKING, {"id": booking_id}).first()  # 2
     if row is None:
         raise ApiError(404, "not_found")
     if not members.may_manage(current, row.worker_user_id):  # 3
+        raise ApiError(403, "owner_only")
+    if row.status in OWNER_ONLY_SOURCES and not members.is_owner(current):  # 3b
         raise ApiError(403, "owner_only")
     rule = TRANSITIONS[change.status]
     changed = current.db.execute(

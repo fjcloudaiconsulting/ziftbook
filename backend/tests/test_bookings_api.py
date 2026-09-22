@@ -1464,23 +1464,36 @@ def test_a_later_settings_change_does_not_reach_a_booking_already_made(
     assert thresholds_of(people.a, booking_id) == (12, 6)
 
 
-# 37: FENCE (T10) - the pydantic bound and the column CHECK are ONE pair. A value the registry
-# accepts and ck_bookings_free_cancellation_hours rejects is a 500 on the public booking POST, so
-# the upper bound is asserted by BOOKING at it, not by reading the number back.
-# Kills: a pydantic bound wider than the CHECK (le=8760: the 720 leg 500s on the insert); a bound
-# narrower than the CHECK (the 720 leg 422s); a non-strict field (the "48" leg).
+# 37: FENCE (T10) - the pydantic bound and the column CHECK are ONE pair, for BOTH columns. A
+# value the registry accepts and the column's CHECK rejects is a 500 on the public booking POST,
+# so the upper bound is asserted by BOOKING at it, not by reading the number back.
+# Kills, on either column: a pydantic bound wider than its CHECK (le=8760 on
+# reschedule_cutoff_hours: the 720 leg 500s on the insert); a bound narrower than the CHECK (the
+# 720 leg 422s); a non-strict field (the "48" leg). Parametrised over both keys because varying
+# only free_cancellation_hours left `reschedule_cutoff_hours: Field(ge=0, le=8760)` paired with
+# `CHECK (reschedule_cutoff_hours BETWEEN 0 AND 24)` green - proved, both directions at once.
+COLUMNS = ("free_cancellation_hours", "reschedule_cutoff_hours")
+
+
+@pytest.mark.parametrize("key", COLUMNS)
 @pytest.mark.parametrize(
     "value,expected",
     [(720, 200), (721, 422), (-1, 422), ("48", 422)],
     ids=["720", "721", "-1", "str"],
 )
 def test_the_threshold_bounds_match_the_column_check(
-    people: People, app: FastAPI, owner: TestClient, ready: str, value: object, expected: int
+    people: People,
+    app: FastAPI,
+    owner: TestClient,
+    ready: str,
+    key: str,
+    value: object,
+    expected: int,
 ) -> None:
-    response = put_settings(owner, {"free_cancellation_hours": value})
+    response = put_settings(owner, {key: value})
 
     assert response.status_code == expected
     if expected == 200:
         booked = post_booking(new_client(app), people.a, ready, starts_at=at("09:00"))
         assert booked.status_code == 201, booked.json()
-        assert thresholds_of(people.a, booked.json()["id"])[0] == 720
+        assert thresholds_of(people.a, booked.json()["id"])[COLUMNS.index(key)] == 720
