@@ -217,13 +217,6 @@ WHERE s.service_id = :service_id
   AND (CAST(:member_id AS uuid) IS NULL OR w.member_id = :member_id)
 """)
 
-TIME_OFF = text("""
-SELECT member_id, starts_at, ends_at FROM time_off
-WHERE member_id = ANY(CAST(:members AS uuid[]))
-  AND starts_at < :end AND ends_at > :start
-  AND starts_at > CAST(:start AS timestamptz) - interval '366 days'
-""")
-
 EXPIRE = text("""
 UPDATE bookings SET status = 'expired'
 WHERE status = ANY(CAST(:expiring AS text[])) AND expires_at <= :now
@@ -420,10 +413,7 @@ def create(  # sync def: turnstile.verify's urlopen blocks, and runs in FastAPI'
             if candidates:
                 start = schedule.to_utc(first - timedelta(days=1), time(), zone)
                 end = schedule.to_utc(last + timedelta(days=2), time(), zone)
-                for m, starts_at, ends_at in db.execute(  # 10
-                    TIME_OFF, {"members": candidates, "start": start, "end": end}
-                ).tuples():
-                    off_by_member[m].append((starts_at, ends_at))
+                off_by_member.update(availability.time_off(db, candidates, first, last, zone))  # 10
                 booked_rows = availability.booked(db, candidates, start, end)  # 11
             bookings: dict[UUID, list[availability.Booked]] = defaultdict(list)
             for m, starts_at, ends_at, override in booked_rows:

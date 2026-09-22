@@ -2,6 +2,7 @@
 expectations in UTC; the business is in Europe/Amsterdam."""
 
 from datetime import UTC, date, datetime, time, timedelta
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -12,6 +13,7 @@ from app.availability import (
     anchor,
     buffer_for,
     clip,
+    day_span,
     member_slots,
     merged,
     overlaps,
@@ -440,3 +442,129 @@ def test_touching_opening_rows_are_joined_before_clipping() -> None:
     )
     assert local(MONDAY, "11:30") in found
     assert len(found) == 11
+
+
+# 9. day_span (ZIF-101)
+
+
+# 1. fence: 23h and 25h spans, each end through to_utc directly. Kills start + n * 24h.
+def test_day_span_is_23_or_25_hours_around_a_clock_change() -> None:
+    assert day_span(date(2026, 3, 29), date(2026, 3, 29), ZONE) == (
+        utc("2026-03-28T23:00"),
+        utc("2026-03-29T22:00"),
+    )
+    assert day_span(date(2026, 10, 25), date(2026, 10, 25), ZONE) == (
+        utc("2026-10-24T22:00"),
+        utc("2026-10-25T23:00"),
+    )
+
+
+# 2. fence: tiling, no gap and no overlap, across a whole year in three zones.
+@pytest.mark.parametrize("zone", ["Europe/Amsterdam", "America/Santiago", "America/Havana"])
+def test_day_span_tiles_with_no_gap_and_no_overlap(zone: str) -> None:
+    day = date(2026, 1, 1)
+    while day < date(2026, 12, 31):
+        tomorrow = day + timedelta(days=1)
+        assert day_span(day, day, zone)[1] == day_span(tomorrow, tomorrow, zone)[0]
+        day = tomorrow
+    for a, b in [
+        (date(2026, 1, 10), date(2026, 1, 12)),
+        (date(2026, 3, 27), date(2026, 4, 1)),
+        (date(2026, 10, 23), date(2026, 10, 28)),
+    ]:
+        assert day_span(a, b, zone) == (day_span(a, a, zone)[0], day_span(b, b, zone)[1])
+
+
+# 3. fence: skipped midnight. Kills "midnight + fixed offset" and using the after-change offset.
+def test_day_span_at_a_skipped_midnight_starts_at_the_day_s_first_instant() -> None:
+    assert day_span(date(2026, 9, 6), date(2026, 9, 6), "America/Santiago")[0] == utc(
+        "2026-09-06T04:00"
+    )
+    assert day_span(date(2026, 9, 5), date(2026, 9, 5), "America/Santiago")[1] == utc(
+        "2026-09-06T04:00"
+    )
+    havana = day_span(date(2026, 3, 8), date(2026, 3, 8), "America/Havana")
+    assert havana[0] == utc("2026-03-08T05:00")
+    assert havana[1] - havana[0] == timedelta(hours=23)
+
+
+# 4. fence: repeated midnight starts at the first occurrence (fold=0). Kills fold=1.
+def test_day_span_at_a_repeated_midnight_starts_at_the_first_occurrence() -> None:
+    assert day_span(date(2026, 11, 1), date(2026, 11, 1), "America/Havana") == (
+        utc("2026-11-01T04:00"),
+        utc("2026-11-02T05:00"),
+    )
+
+
+# 5. fence (P2): day_span is not a same-tzinfo subtraction.
+def test_day_span_is_not_a_bare_subtraction_of_two_aware_datetimes() -> None:
+    start = datetime.combine(date(2026, 10, 25), time(), ZoneInfo(ZONE))
+    end = datetime.combine(date(2026, 10, 26), time(), ZoneInfo(ZONE))
+    assert end - start == timedelta(hours=24)
+    span = day_span(date(2026, 10, 25), date(2026, 10, 25), ZONE)
+    assert span[1] - span[0] == timedelta(hours=25)
+
+
+# 6. fence: a run of days is one interval, never n * 24h or n separate intervals.
+def test_day_span_of_a_run_spans_all_of_it() -> None:
+    assert day_span(date(2026, 10, 24), date(2026, 10, 26), ZONE) == (
+        utc("2026-10-23T22:00"),
+        utc("2026-10-26T23:00"),
+    )
+
+
+TWICE_DAILY = [
+    (d, s, e)
+    for weekday in range(1, 8)
+    for d, s, e in rows(weekday, ("00:00", "02:00"), ("22:00", "23:59"))
+]
+
+
+def whole_day_off(day: date) -> list[Interval]:
+    return [day_span(day, day, ZONE)]
+
+
+# 7. fence: fall-back day blocked whole; literal UTC instants, never computed through day_span.
+def test_a_whole_day_block_empties_only_its_own_local_day_across_the_fall_back() -> None:
+    found = slots(
+        TWICE_DAILY,
+        date(2026, 10, 24),
+        date(2026, 10, 26),
+        time_off=whole_day_off(date(2026, 10, 25)),
+        duration=60,
+        step=60,
+    )
+    assert utc("2026-10-24T20:00") in found  # 10-24 22:00 local
+    assert utc("2026-10-25T23:00") in found  # 10-26 00:00 local
+    assert not any(utc("2026-10-24T22:00") <= t < utc("2026-10-25T23:00") for t in found)
+
+
+# 8. fence: spring-forward day blocked whole; the next day's first slot must survive.
+def test_a_whole_day_block_does_not_eat_the_next_day_s_first_hour_across_spring_forward() -> None:
+    found = slots(
+        TWICE_DAILY,
+        date(2026, 3, 28),
+        date(2026, 3, 30),
+        time_off=whole_day_off(date(2026, 3, 29)),
+        duration=60,
+        step=60,
+    )
+    assert utc("2026-03-29T22:00") in found  # 03-30 00:00 local
+    assert not any(utc("2026-03-28T23:00") <= t < utc("2026-03-29T22:00") for t in found)
+
+
+# 9. guard: a whole-day block plus an overlapping partial block; the day after is untouched.
+def test_a_whole_day_block_and_an_overlapping_partial_block_leave_no_slots_that_day() -> None:
+    found = slots(
+        TWICE_DAILY,
+        date(2026, 10, 24),
+        date(2026, 10, 26),
+        time_off=[
+            *whole_day_off(date(2026, 10, 25)),
+            (local(date(2026, 10, 25), "10:00"), local(date(2026, 10, 25), "11:00")),
+        ],
+        duration=60,
+        step=60,
+    )
+    assert not any(utc("2026-10-24T22:00") <= t < utc("2026-10-25T23:00") for t in found)
+    assert utc("2026-10-25T23:00") in found  # 10-26 00:00 local, untouched

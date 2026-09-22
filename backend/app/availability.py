@@ -229,6 +229,44 @@ def booked(
     )
 
 
+def day_span(first: date, last: date, zone: str) -> Interval:
+    """Whole local days first..last as UTC [midnight(first), midnight(last + 1)). Each end through
+    to_utc on its own: never an aware instant plus timedelta(days=n), never a subtraction of two
+    datetimes built on one ZoneInfo."""
+    return (
+        schedule.to_utc(first, time(), zone),
+        schedule.to_utc(last + timedelta(days=1), time(), zone),
+    )
+
+
+TIME_OFF = text("""
+SELECT member_id, starts_at, ends_at, first_day, last_day FROM time_off
+WHERE member_id = ANY(CAST(:members AS uuid[]))
+  AND (starts_at < :end AND ends_at > :start
+       AND starts_at > CAST(:start AS timestamptz) - interval '366 days'
+    OR first_day <= :last AND last_day >= :first
+       AND first_day > CAST(:first AS date) - 366)
+""")
+
+
+def time_off(
+    db: Session, members: list[UUID], first: date, last: date, zone: str
+) -> dict[UUID, list[Interval]]:
+    """Blocked time meeting local days first..last, as UTC intervals. Never the reason (private)."""
+    start = schedule.to_utc(first - timedelta(days=1), time(), zone)
+    end = schedule.to_utc(last + timedelta(days=2), time(), zone)
+    out: dict[UUID, list[Interval]] = defaultdict(list)
+    for member_id, starts_at, ends_at, first_day, last_day in db.execute(
+        TIME_OFF,
+        {"members": members, "start": start, "end": end, "first": first, "last": last},
+    ).tuples():
+        if first_day is not None:
+            out[member_id].append(day_span(first_day, last_day, zone))
+        else:
+            out[member_id].append((starts_at, ends_at))
+    return out
+
+
 def now() -> datetime:
     return datetime.now(UTC)
 
@@ -331,18 +369,7 @@ def read_availability(
             start = schedule.to_utc(first - timedelta(days=1), time(), zone)
             # Two days past the last: a booking's buffer and a midnight clock change.
             end = schedule.to_utc(last + timedelta(days=2), time(), zone)
-            time_off: dict[UUID, list[Interval]] = defaultdict(list)
-            # Never the reason: it is private to the member and owners.
-            for m, starts_at, ends_at in db.execute(
-                text("""
-                SELECT member_id, starts_at, ends_at FROM time_off
-                WHERE member_id = ANY(CAST(:members AS uuid[]))
-                  AND starts_at < :end AND ends_at > :start
-                  AND starts_at > CAST(:start AS timestamptz) - interval '366 days'
-                """),
-                {"members": chosen, "start": start, "end": end},
-            ).tuples():
-                time_off[m].append((starts_at, ends_at))
+            blocked = time_off(db, chosen, first, last, zone)
             bookings: dict[UUID, list[Booked]] = defaultdict(list)
             for m, starts_at, ends_at, override in booked(db, chosen, start, end):
                 bookings[m].append((starts_at, ends_at, override))
@@ -353,7 +380,7 @@ def read_availability(
                 found.update(
                     member_slots(
                         hours[m],
-                        time_off[m],
+                        blocked.get(m, []),
                         bookings[m],
                         opening=opening,
                         zone=zone,
