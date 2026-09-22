@@ -250,11 +250,19 @@ WHERE member_id = ANY(CAST(:members AS uuid[]))
 
 
 def time_off(
-    db: Session, members: list[UUID], first: date, last: date, zone: str
+    db: Session,
+    members: list[UUID],
+    first: date,
+    last: date,
+    zone: str,
+    start: datetime,
+    end: datetime,
 ) -> dict[UUID, list[Interval]]:
-    """Blocked time meeting local days first..last, as UTC intervals. Never the reason (private)."""
-    start = schedule.to_utc(first - timedelta(days=1), time(), zone)
-    end = schedule.to_utc(last + timedelta(days=2), time(), zone)
+    """Blocked time meeting local days first..last, as UTC intervals. Never the reason (private).
+
+    start/end: the same padded window (first - 1 day .. last + 2 days) the caller already computed
+    for its own booked()/BOOKED query, so it isn't computed twice.
+    """
     out: dict[UUID, list[Interval]] = defaultdict(list)
     for member_id, starts_at, ends_at, first_day, last_day in db.execute(
         TIME_OFF,
@@ -369,7 +377,7 @@ def read_availability(
             start = schedule.to_utc(first - timedelta(days=1), time(), zone)
             # Two days past the last: a booking's buffer and a midnight clock change.
             end = schedule.to_utc(last + timedelta(days=2), time(), zone)
-            blocked = time_off(db, chosen, first, last, zone)
+            blocked = time_off(db, chosen, first, last, zone, start, end)
             bookings: dict[UUID, list[Booked]] = defaultdict(list)
             for m, starts_at, ends_at, override in booked(db, chosen, start, end):
                 bookings[m].append((starts_at, ends_at, override))
@@ -380,7 +388,7 @@ def read_availability(
                 found.update(
                     member_slots(
                         hours[m],
-                        blocked.get(m, []),
+                        blocked[m],
                         bookings[m],
                         opening=opening,
                         zone=zone,

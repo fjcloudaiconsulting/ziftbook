@@ -413,7 +413,9 @@ def create(  # sync def: turnstile.verify's urlopen blocks, and runs in FastAPI'
             if candidates:
                 start = schedule.to_utc(first - timedelta(days=1), time(), zone)
                 end = schedule.to_utc(last + timedelta(days=2), time(), zone)
-                off_by_member.update(availability.time_off(db, candidates, first, last, zone))  # 10
+                off_by_member.update(
+                    availability.time_off(db, candidates, first, last, zone, start, end)  # 10
+                )
                 booked_rows = availability.booked(db, candidates, start, end)  # 11
             bookings: dict[UUID, list[availability.Booked]] = defaultdict(list)
             for m, starts_at, ends_at, override in booked_rows:

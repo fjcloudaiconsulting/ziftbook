@@ -2,7 +2,7 @@
 reason is shown only to the block's member and to owners."""
 
 import re
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Annotated, Literal
 from uuid import UUID
 from zoneinfo import ZoneInfo
@@ -22,10 +22,9 @@ from pydantic import (
 from pydantic.json_schema import SkipJsonSchema
 from sqlalchemy import text
 
-from app import auth, business_settings, members, schedule
+from app import auth, availability, business_settings, members
 from app.accounts import printable
 from app.auth import CurrentSession, SignedIn
-from app.availability import ymd
 from app.errors import ApiError, Error
 
 LONGEST = timedelta(days=366)  # migration 0019, ck_time_off_at_most_366_days
@@ -39,19 +38,20 @@ def iso_text(value: object) -> object:
     return value
 
 
-def utc(value: datetime) -> datetime:
-    # The year check comes first: astimezone raises OverflowError (a 500) at year 1, and Postgres
-    # would store a BC date that psycopg can't read back.
-    if not 2000 <= value.year <= 2999:
+def year_bounds(year: int) -> None:
+    # astimezone / schedule.to_utc / date + timedelta all overflow (a 500) outside this range
+    # (ruling 4), and Postgres would store a BC date psycopg can't read back.
+    if not 2000 <= year <= 2999:
         raise ValueError("out of range")
+
+
+def utc(value: datetime) -> datetime:
+    year_bounds(value.year)  # first: astimezone() itself would overflow before this could run
     return value.astimezone(UTC)
 
 
-def year_bounds(value: date) -> date:
-    # Same year bound as utc() above, and for the same reason: schedule.to_utc / date + timedelta
-    # overflow (a 500) outside it (ruling 4).
-    if not 2000 <= value.year <= 2999:
-        raise ValueError("out of range")
+def checked_year(value: date) -> date:
+    year_bounds(value.year)
     return value
 
 
@@ -64,36 +64,10 @@ Reason = Annotated[
     StringConstraints(strip_whitespace=True, min_length=1, max_length=500),
     AfterValidator(printable),
 ]
-# A local calendar date, exactly YYYY-MM-DD (availability.ymd), years 2000..2999.
-Day = Annotated[date, Field(strict=False), BeforeValidator(ymd), AfterValidator(year_bounds)]
+# A local calendar date, exactly YYYY-MM-DD (availability.Day), years 2000..2999.
+Day = Annotated[availability.Day, AfterValidator(checked_year)]
 STRICT = ConfigDict(strict=True, extra="forbid")
 PAIR_FIELDS = ("starts_at", "ends_at", "first_day", "last_day")
-
-
-class TimeOffIn(BaseModel):
-    """Exactly one complete pair: {starts_at, ends_at} (a partial block) or {first_day, last_day}
-    (a whole-day block, both days included). An explicit null for any of the four is refused."""
-
-    model_config = STRICT
-    starts_at: Instant | SkipJsonSchema[None] = None
-    ends_at: Instant | SkipJsonSchema[None] = None
-    first_day: Day | SkipJsonSchema[None] = None
-    last_day: Day | SkipJsonSchema[None] = None
-    reason: Reason | None = None
-
-    @field_validator("starts_at", "ends_at", "first_day", "last_day", mode="before")
-    @classmethod
-    def not_null(cls, value: object) -> object:
-        if value is None:
-            raise ValueError("null")
-        return value
-
-    @model_validator(mode="after")
-    def one_pair(self) -> TimeOffIn:
-        sent = {f for f in PAIR_FIELDS if getattr(self, f) is not None}
-        if sent not in ({"starts_at", "ends_at"}, {"first_day", "last_day"}):
-            raise ValueError("send exactly one complete pair")
-        return self
 
 
 class TimeOffChange(BaseModel):
@@ -114,6 +88,18 @@ class TimeOffChange(BaseModel):
         if value is None:
             raise ValueError("null")
         return value
+
+
+class TimeOffIn(TimeOffChange):
+    """Exactly one complete pair: {starts_at, ends_at} (a partial block) or {first_day, last_day}
+    (a whole-day block, both days included). An explicit null for any of the four is refused."""
+
+    @model_validator(mode="after")
+    def one_pair(self) -> TimeOffIn:
+        sent = {f for f in PAIR_FIELDS if getattr(self, f) is not None}
+        if sent not in ({"starts_at", "ends_at"}, {"first_day", "last_day"}):
+            raise ValueError("send exactly one complete pair")
+        return self
 
 
 class TimeOffOut(BaseModel):
@@ -210,7 +196,7 @@ def list_time_off(
         if b.starts_at is not None:
             return b.starts_at
         assert b.first_day is not None  # ck_time_off_kind: exactly one pair is non-null
-        return schedule.to_utc(b.first_day, time(), zone)
+        return availability.day_span(b.first_day, b.first_day, zone)[0]
 
     blocks.sort(key=lambda b: (effective_start(b), b.id))
     response.headers["Cache-Control"] = "no-store"
