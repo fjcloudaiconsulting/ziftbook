@@ -114,12 +114,15 @@
   .content { padding: 1.75rem 2rem 3rem; }
 }
 
-/* One focus rule for the whole shell, matching the design (design-r2.html:202-204): a plain
- * :focus (as a programmatic .focus() on a heading produces) gets no ring, only :focus-visible does,
- * and a heading's ring sits further outside so it never reads as overlapping the text below it. */
+/* One focus rule for the whole shell (design-r2.html:202-204): every real, keyboard-focusable
+ * control keeps its ring on :focus-visible. */
 .shell :focus { outline: none; }
 .shell :focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 0.35rem; }
-.shell h1:focus-visible { outline-offset: 6px; }
+/* A screen's own heading is focused only programmatically (<Heading focus>, on a screen swap), never
+ * by the keyboard: Chrome still matches :focus-visible for a script .focus() with no prior pointer
+ * use, which would otherwise draw a ring the design doesn't show here. This targets only that
+ * tabindex=-1 heading, so a real focusable control's ring is untouched. */
+.shell h1[tabindex="-1"]:focus { outline: none; }
 
 /* Phone tab bar */
 .tabbar {
@@ -140,11 +143,15 @@
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   gap: 0.2rem;
   min-height: 3rem;
   padding: 0.35rem 0.2rem;
   border: 0;
   background: none;
+  /* The More tab is a <button>; every other tab is an <a>. Without this, the button's UA default
+   * font (not the page's) gives it a different line-height and sits higher than its siblings. */
+  font: inherit;
   color: var(--muted);
   text-decoration: none;
   cursor: pointer;
@@ -190,6 +197,9 @@
 .placeholder p { margin: 0; color: var(--muted); font-size: 0.9375rem; }
 .steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.5rem; }
 .steps li { display: flex; align-items: center; gap: 0.75rem; }
+/* textButton's own align-self: flex-start (meant for a stacked column) would otherwise override the
+ * row's align-items: center and hug the link to the row's top. */
+.steps li > a { align-self: center; }
 .stepMark {
   display: inline-flex;
   align-items: center;

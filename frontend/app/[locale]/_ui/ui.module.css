@@ -224,5 +224,7 @@
 
 .empty { border: 1px dashed var(--line); border-radius: 1rem; padding: 1.1rem; display: grid; gap: 0.3rem; justify-items: start; }
 .empty strong { font-weight: 600; }
-.empty span { color: var(--muted); font-size: 0.9375rem; }
+/* :not(.mark): both the body text and the Mark icon are plain <span> children of .empty, and
+ * without this the icon's own brand-red .mark colour was muted by this rule's higher specificity. */
+.empty span:not(.mark) { color: var(--muted); font-size: 0.9375rem; }
 .empty .button { width: auto; margin-top: 0.3rem; }
