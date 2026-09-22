@@ -41,7 +41,7 @@ test: test-hooks
 	npm --prefix landing test
 	docker compose run --rm db-init
 	docker compose up -d mailpit
-	$(API) pytest
+	$(API) pytest -n auto
 	$(WEB) build
 	$(WEB) test
 

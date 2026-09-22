@@ -1,9 +1,9 @@
 // Every environment variable ziftbook defines starts with ZIF_. Names required by third-party tools
-// (NODE_ENV, POSTGRES_*, PG*) are only allowed where listed below. Run: node scripts/check-env-names.mjs
+// (NODE_ENV, PYTEST_XDIST_WORKER, POSTGRES_*, PG*) are only allowed where listed below. Run: node scripts/check-env-names.mjs
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 
-const ALLOWED = new Set(["NODE_ENV"]);
+const ALLOWED = new Set(["NODE_ENV", "PYTEST_XDIST_WORKER"]);
 const NAME = "([A-Za-z_][A-Za-z0-9_]*)";
 
 const READERS = {
