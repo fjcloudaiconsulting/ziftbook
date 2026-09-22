@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.16.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.15.0...v0.16.0) (2026-09-22)
+
+
+### Features
+
+* **backend:** a business has opening hours that bound every worker and booking (ZIF-105) ([#100](https://github.com/fjcloudaiconsulting/ziftbook/issues/100)) ([93660ab](https://github.com/fjcloudaiconsulting/ziftbook/commit/93660ab8c2f491e5eb1a68d58aeaeffc052f7921))
+* **backend:** configurable cancellation rules, snapshotted on each booking (ZIF-55) ([#105](https://github.com/fjcloudaiconsulting/ziftbook/issues/105)) ([576c498](https://github.com/fjcloudaiconsulting/ziftbook/commit/576c498dd4507ec9902424941194be8c2787eced))
+* **backend:** merchants accept or decline pending bookings (ZIF-52) ([#104](https://github.com/fjcloudaiconsulting/ziftbook/issues/104)) ([11e0edf](https://github.com/fjcloudaiconsulting/ziftbook/commit/11e0edfba0e3f1e390bf80df0f6752bd67dd6239))
+
+
+### Bug Fixes
+
+* **backend:** run the test suite in parallel with one database per worker (ZIF-111) ([#103](https://github.com/fjcloudaiconsulting/ziftbook/issues/103)) ([01e4d1b](https://github.com/fjcloudaiconsulting/ziftbook/commit/01e4d1b9e1bcfd3c1d3774b3822a01998d12fc51))
+
 ## [0.15.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.14.0...v0.15.0) (2026-09-21)
 
 
