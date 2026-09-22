@@ -825,6 +825,60 @@ def test_direct_inserts_hit_the_database_checks(
     assert exc_info.value.orig.diag.constraint_name == constraint
 
 
+DAY_ROW = """
+INSERT INTO time_off (tenant_id, member_id, starts_at, ends_at, first_day, last_day)
+VALUES (:t, :m, :s, :e, :f, :l)
+"""
+
+
+# 25. fence (DB, ZIF-101): raw INSERTs refused by ck_time_off_kind and ck_time_off_days, naming the
+# right constraint. Kills app-only validation and a CHECK without the year bound.
+@pytest.mark.parametrize(
+    ("starts", "ends", "first_day", "last_day", "constraint"),
+    [
+        (  # both pairs
+            "2026-10-01T08:00:00Z",
+            "2026-10-02T08:00:00Z",
+            "2026-10-01",
+            "2026-10-02",
+            "ck_time_off_kind",
+        ),
+        (None, None, "2026-10-01", None, "ck_time_off_kind"),  # half a pair, days
+        ("2026-10-01T08:00:00Z", None, None, None, "ck_time_off_kind"),  # half a pair, instants
+        (None, None, None, None, "ck_time_off_kind"),  # empty
+        (None, None, "2026-10-05", "2026-10-04", "ck_time_off_days"),  # last_day < first_day
+        (None, None, "2026-10-01", "2027-10-02", "ck_time_off_days"),  # 367 days
+        (None, None, "1999-12-31", "2000-01-01", "ck_time_off_days"),  # below the year bound
+        (None, None, "2999-12-31", "9999-12-30", "ck_time_off_days"),  # above the year bound
+    ],
+)
+def test_direct_inserts_hit_the_zif_101_database_checks(
+    people: People,
+    starts: str | None,
+    ends: str | None,
+    first_day: str | None,
+    last_day: str | None,
+    constraint: str,
+) -> None:
+    only_a_member = member_id(people.a, people.only_a)
+
+    with pytest.raises(IntegrityError) as exc_info, tenant_context(people.a) as session:
+        session.execute(
+            text(DAY_ROW),
+            {
+                "t": people.a,
+                "m": only_a_member,
+                "s": starts,
+                "e": ends,
+                "f": first_day,
+                "l": last_day,
+            },
+        )
+
+    assert isinstance(exc_info.value.orig, pg_errors.CheckViolation)
+    assert exc_info.value.orig.diag.constraint_name == constraint
+
+
 def test_a_second_google_row_with_the_same_external_id_is_refused(people: People) -> None:
     only_a_member = member_id(people.a, people.only_a)
     google(people.a, only_a_member, external_id="dup")
