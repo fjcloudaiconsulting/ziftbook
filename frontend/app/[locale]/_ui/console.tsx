@@ -12,7 +12,7 @@ import {
   settingsRead,
 } from "@/api-client";
 import { Link, usePathname, useRouter } from "@/i18n/navigation";
-import { allowed, navFor, type Role, sameSession, sectionOf, type Section } from "@/lib/console";
+import { allowed, guardedWrite, navFor, type Role, sectionOf, type Section } from "@/lib/console";
 
 import { LanguageLinks } from "./header";
 import { Banner, NoScript, type Outcome, problem, send } from "./parts";
@@ -26,9 +26,11 @@ const JSON_WRITE = { body: {} as never };
 type ConsoleContextValue = {
   session: SessionOut;
   settings: BusinessSettingsOutput;
-  /** Every write goes through this. It rereads the session first, so a sign-in as someone else in
-   * another tab never lets this tab's write land in the wrong business. */
-  call<T>(request: Promise<{ data?: T; error?: unknown; response?: Response }>, options?: { write?: boolean }): Promise<Outcome<T>>;
+  /** Every write goes through this. `request` is a thunk: a generated SDK call fires its request the
+   * instant it's invoked, so an already-started promise here would race the session re-read this
+   * runs first for a write (`guardedWrite`). It rereads the session first, so a sign-in as someone
+   * else in another tab never lets this tab's write land in the wrong business. */
+  call<T>(request: () => Promise<{ data?: T; error?: unknown; response?: Response }>, options?: { write?: boolean }): Promise<Outcome<T>>;
   updateSession(patch: Partial<SessionOut>): void;
 };
 
@@ -123,13 +125,28 @@ const HREF: Record<Section, string> = {
   settings: "/settings",
 };
 
-function NavLink({ section, current, className, onClick }: { section: Section; current: Section | null; className: string; onClick?(): void }) {
+function NavLink({
+  section,
+  current,
+  className,
+  onClick,
+  variant = "item",
+}: {
+  section: Section;
+  current: Section | null;
+  className: string;
+  onClick?(): void;
+  /** "tab" ellipsizes its label (the phone tab bar, where space is tight); "item" (sidebar, More
+   * sheet) renders it plainly, at the same size as every other row. */
+  variant?: "item" | "tab";
+}) {
   const t = useTranslations("Console.nav");
   const labelKey = section === "my-hours" ? "myHours" : section === "opening-hours" ? "openingHours" : section;
+  const label = t(labelKey);
   return (
     <Link href={HREF[section]} className={className} aria-current={current === section ? "page" : undefined} onClick={onClick}>
       {ICONS[section]}
-      <span className={styles.tabLabel}>{t(labelKey)}</span>
+      {variant === "tab" ? <span className={styles.tabLabel}>{label}</span> : label}
     </Link>
   );
 }
@@ -157,6 +174,24 @@ function AccountPopover({ session, onSignOut }: { session: SessionOut; onSignOut
         </button>
       </div>
     </div>
+  );
+}
+
+/** The banner a write shows when `call()`'s session check finds the cookie already signed out
+ * (U3). No PR 1 screen writes anything besides sign-out (which has its own, opposite meaning for a
+ * 401: already signed out), so this has no caller yet — PR 2's save button is the first. */
+export function SignedOutBanner() {
+  const t = useTranslations("Console.errors");
+  return (
+    <Banner tone="error">
+      {t.rich("signedOut", {
+        link: (chunks) => (
+          <a href="/sign-in" target="_blank" rel="noopener">
+            {chunks}
+          </a>
+        ),
+      })}
+    </Banner>
   );
 }
 
@@ -238,24 +273,26 @@ export function Shell({ children }: { children: ReactNode }) {
   }, [session, pathname, router]);
 
   async function call<T>(
-    request: Promise<{ data?: T; error?: unknown; response?: Response }>,
+    request: () => Promise<{ data?: T; error?: unknown; response?: Response }>,
     options?: { write?: boolean },
   ): Promise<Outcome<T>> {
     if (!options?.write) {
-      const outcome = await send(request);
+      const outcome = await send(request());
       if (outcome.status === 401) router.replace("/sign-in");
       return outcome;
     }
-    const fresh = await send(sessionRead());
-    if (fresh.status === 401) return { status: 401 };
-    if (fresh.status === 200 && fresh.data) {
-      if (!sameSession(session!, fresh.data)) {
-        window.location.reload();
-        return { status: 0 };
-      }
-      return send(request);
+    const result = await guardedWrite<T>(
+      () => send(sessionRead()),
+      session!,
+      () => send(request()),
+    );
+    if (result.kind === "signedOut") return { status: 401 };
+    if (result.kind === "mismatch") {
+      window.location.reload();
+      return { status: 0 };
     }
-    return fresh as Outcome<T>;
+    if (result.kind === "failed") return result.outcome;
+    return result.outcome;
   }
 
   function updateSession(patch: Partial<SessionOut>) {
@@ -315,18 +352,18 @@ export function Shell({ children }: { children: ReactNode }) {
         )}
 
         <div className={styles.body}>
-          <nav className={styles.sidebar} aria-label="Sections">
+          <nav className={styles.sidebar} aria-label={navT("sections")}>
             {nav.sidebar.map((section) => (
               <NavLink key={section} section={section} current={current} className={styles.navItem} />
             ))}
           </nav>
 
           <main id="content" className={styles.content}>
-            {children}
+            <div className={styles.col}>{children}</div>
           </main>
         </div>
 
-        <nav className={styles.tabbar} aria-label="Sections">
+        <nav className={styles.tabbar} aria-label={navT("sections")}>
           {nav.tabs.map((section) =>
             section === "more" ? (
               <button
@@ -345,7 +382,7 @@ export function Shell({ children }: { children: ReactNode }) {
                 <span className={styles.tabLabel}>{navT("more")}</span>
               </button>
             ) : (
-              <NavLink key={section} section={section} current={current} className={styles.tab} />
+              <NavLink key={section} section={section} current={current} className={styles.tab} variant="tab" />
             ),
           )}
         </nav>

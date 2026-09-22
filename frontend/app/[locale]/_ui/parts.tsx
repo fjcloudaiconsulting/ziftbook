@@ -60,6 +60,12 @@ export function Banner({ tone, children }: { tone: "error" | "note" | "info"; ch
 }
 
 const MARKS = {
+  calendar: (
+    <>
+      <rect x="3.5" y="5" width="17" height="15" rx="2.5" fill="none" stroke="currentColor" strokeWidth="1.8" />
+      <path d="M3.5 9.5h17M8 3.5v3M16 3.5v3" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </>
+  ),
   mail: (
     <>
       <rect x="3.5" y="5.5" width="17" height="13" rx="2" fill="none" stroke="currentColor" strokeWidth="1.8" />

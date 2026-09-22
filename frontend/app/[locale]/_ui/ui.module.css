@@ -222,17 +222,7 @@
   white-space: nowrap;
 }
 
-/* Signed-in home */
-.meta { margin: -0.75rem 0 0; color: var(--muted); }
-.role {
-  display: inline-flex;
-  align-self: flex-start;
-  padding: 0.25rem 0.65rem;
-  border-radius: 999px;
-  background: var(--surface);
-  font: 600 0.8125rem/1.2 var(--font-body), system-ui, sans-serif;
-}
-.empty { border: 1px dashed var(--line); border-radius: 1rem; padding: 1.1rem; display: grid; gap: 0.3rem; }
+.empty { border: 1px dashed var(--line); border-radius: 1rem; padding: 1.1rem; display: grid; gap: 0.3rem; justify-items: start; }
 .empty strong { font-weight: 600; }
 .empty span { color: var(--muted); font-size: 0.9375rem; }
-.divider { height: 1px; background: var(--line); }
+.empty .button { width: auto; margin-top: 0.3rem; }

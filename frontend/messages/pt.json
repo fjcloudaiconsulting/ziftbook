@@ -144,7 +144,7 @@
     },
     "account": {
       "menu": "Sua conta",
-      "owner": "Proprietário",
+      "owner": "Responsável",
       "worker": "Equipe",
       "signOut": "Sair",
       "everywhereHint": "Perdeu o celular, ou entrou em um computador compartilhado?",

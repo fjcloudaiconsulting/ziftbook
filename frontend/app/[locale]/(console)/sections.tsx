@@ -7,7 +7,7 @@ import { todayLabel } from "@/lib/console";
 
 import { useConsole } from "../_ui/console";
 import styles from "../_ui/console.module.css";
-import { Heading } from "../_ui/parts";
+import { Heading, Mark } from "../_ui/parts";
 import uiStyles from "../_ui/ui.module.css";
 
 export function Today() {
@@ -23,12 +23,13 @@ export function Today() {
         <Heading focus>{nav("today")}</Heading>
         <p className={uiStyles.lede}>{label}</p>
         <div className={uiStyles.empty}>
+          <Mark icon="calendar" />
           <strong>{t("workerEmptyTitle")}</strong>
           <span>{t("workerEmptyBody")}</span>
+          <Link className={`${uiStyles.button} ${uiStyles.secondary}`} href="/my-hours">
+            {t("checkHours")}
+          </Link>
         </div>
-        <Link className={`${uiStyles.button} ${uiStyles.secondary}`} href="/my-hours">
-          {t("checkHours")}
-        </Link>
       </>
     );
   }
@@ -38,6 +39,7 @@ export function Today() {
       <Heading focus>{nav("today")}</Heading>
       <p className={uiStyles.lede}>{label}</p>
       <div className={uiStyles.empty}>
+        <Mark icon="calendar" />
         <strong>{t("ownerEmptyTitle")}</strong>
         <span>{t("ownerEmptyBody")}</span>
       </div>
@@ -46,28 +48,36 @@ export function Today() {
           <span className={styles.stepMark} aria-hidden="true">
             1
           </span>
-          <Link href="/opening-hours">{t("step1")}</Link>
+          <Link className={uiStyles.textButton} href="/opening-hours">
+            {t("step1")}
+          </Link>
         </li>
         <li>
           <span className={styles.stepMark} aria-hidden="true">
             2
           </span>
-          <Link href="/services">{t("step2")}</Link>
+          <Link className={uiStyles.textButton} href="/services">
+            {t("step2")}
+          </Link>
         </li>
         <li>
           <span className={styles.stepMark} aria-hidden="true">
             3
           </span>
-          <Link href={`/team/${session.member_id}`}>{t("step3")}</Link>
+          <Link className={uiStyles.textButton} href={`/team/${session.member_id}`}>
+            {t("step3")}
+          </Link>
         </li>
         <li>
           <span className={styles.stepMark} aria-hidden="true">
             4
           </span>
-          <Link href="/team">{t("step4")}</Link>
+          <Link className={uiStyles.textButton} href="/team">
+            {t("step4")}
+          </Link>
         </li>
       </ol>
-      <p className={uiStyles.hint}>{t("stepsHint")}</p>
+      <p className={styles.stepsHint}>{t("stepsHint")}</p>
     </>
   );
 }
@@ -83,11 +93,11 @@ export function Calendar() {
         <strong>{t("title")}</strong>
         <p>{t("body")}</p>
         {session.role === "owner" ? (
-          <Link className={`${uiStyles.button} ${uiStyles.secondary}`} href={`/team/${session.member_id}`} style={{ justifySelf: "start" }}>
+          <Link className={`${uiStyles.button} ${uiStyles.secondary} ${styles.placeholderAction}`} href={`/team/${session.member_id}`}>
             {t("seeHours")}
           </Link>
         ) : (
-          <Link className={`${uiStyles.button} ${uiStyles.secondary}`} href="/my-hours" style={{ justifySelf: "start" }}>
+          <Link className={`${uiStyles.button} ${uiStyles.secondary} ${styles.placeholderAction}`} href="/my-hours">
             {t("seeMyHours")}
           </Link>
         )}

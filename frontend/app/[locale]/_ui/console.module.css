@@ -59,6 +59,20 @@
 .accountName { font-weight: 600; }
 .accountMeta { margin: 0.15rem 0 0; color: var(--muted); font-size: 0.875rem; }
 .popoverDivider { height: 1px; background: var(--line); margin: 0.75rem 0; }
+/* The language list, styled like the signed-out header's .languageMenu popover it's shared with. */
+.accountPopover a {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  min-height: 2.5rem;
+  padding: 0.4rem 0.6rem;
+  border-radius: 0.65rem;
+  color: inherit;
+  text-decoration: none;
+}
+.accountPopover a:hover, .accountPopover a:focus-visible { background: var(--surface); }
+.accountPopover a[aria-current="page"] { font-weight: 600; }
 
 /* Layout: sidebar + content on desktop, content only on phone */
 .body { display: flex; flex: 1; }
@@ -91,11 +105,21 @@
 .navItem svg { flex: none; }
 
 .content { flex: 1; min-width: 0; padding: 1.25rem 1rem 1.5rem; padding-bottom: calc(1.5rem + 4.5rem + env(safe-area-inset-bottom)); }
+/* Every screen's own elements (heading, lede, empty block, ...) are its direct children here, so
+ * this is where the drawn 1.25rem rhythm between them comes from — not spacing baked into each one. */
+.col { display: flex; flex-direction: column; gap: 1.25rem; }
 
 @media (min-width: 56rem) {
   .sidebar { display: flex; }
   .content { padding: 1.75rem 2rem 3rem; }
 }
+
+/* One focus rule for the whole shell, matching the design (design-r2.html:202-204): a plain
+ * :focus (as a programmatic .focus() on a heading produces) gets no ring, only :focus-visible does,
+ * and a heading's ring sits further outside so it never reads as overlapping the text below it. */
+.shell :focus { outline: none; }
+.shell :focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 0.35rem; }
+.shell h1:focus-visible { outline-offset: 6px; }
 
 /* Phone tab bar */
 .tabbar {
@@ -111,6 +135,7 @@
   .tabbar { display: none; }
 }
 .tab {
+  position: relative;
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -121,9 +146,22 @@
   border: 0;
   background: none;
   color: var(--muted);
+  text-decoration: none;
   cursor: pointer;
 }
 .tab[aria-current="page"], .tab[aria-expanded="true"] { color: var(--primary); }
+/* Colour is never the only signal: the current tab also carries a bar. */
+.tab[aria-current="page"]::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 50%;
+  translate: -50% 0;
+  width: 1.75rem;
+  height: 0.1875rem;
+  border-radius: 0 0 999px 999px;
+  background: var(--primary);
+}
 .tabLabel { font-size: 0.6875rem; font-weight: 600; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* More sheet, a native modal <dialog> */
@@ -150,17 +188,20 @@
 .placeholder { border: 1px dashed var(--line); border-radius: 1rem; padding: 1.1rem; display: grid; gap: 0.5rem; }
 .placeholder strong { font-weight: 600; }
 .placeholder p { margin: 0; color: var(--muted); font-size: 0.9375rem; }
-.steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.6rem; }
-.steps li { display: flex; align-items: center; gap: 0.6rem; }
+.steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.5rem; }
+.steps li { display: flex; align-items: center; gap: 0.75rem; }
 .stepMark {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 1.5rem;
-  height: 1.5rem;
+  width: 1.65rem;
+  height: 1.65rem;
   border-radius: 50%;
-  background: var(--surface);
+  border: 1px solid var(--field-line);
+  color: var(--muted);
   font: 600 0.8125rem/1 var(--font-body), system-ui, sans-serif;
   flex: none;
 }
-.settingsList { list-style: none; margin: 0.25rem 0 0; padding: 0; display: grid; gap: 0.4rem; color: var(--muted); font-size: 0.9375rem; }
+.stepsHint { margin: 0; font-size: 0.875rem; color: var(--muted); }
+.settingsList { margin: 0.25rem 0 0; padding-left: 1.1rem; display: grid; gap: 0.4rem; color: var(--muted); font-size: 0.9375rem; }
+.placeholderAction { justify-self: start; width: auto; }
