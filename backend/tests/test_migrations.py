@@ -209,9 +209,11 @@ def test_upgrading_0020_rewrites_last_error_to_the_class_only(
         assert last_error == "SMTPRecipientsRefused"
         assert address not in (last_error or "")
     finally:
-        command.upgrade(cfg, "head")
+        # Delete before the upgrade: `jobs` is not tenant-scoped, so an upgrade that raises would
+        # otherwise leak this row into it for every later test to see.
         with migrate_engine.begin() as conn:
             conn.execute(text("DELETE FROM jobs WHERE dedupe_key = :key"), {"key": key})
+        command.upgrade(cfg, "head")
 
 
 def test_downgrading_and_upgrading_0025_keeps_the_timerange_type(

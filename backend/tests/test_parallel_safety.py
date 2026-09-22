@@ -17,15 +17,12 @@ from sqlalchemy.pool import NullPool
 
 from tests.conftest import (
     ADMIN_DATABASE_URL,
+    ORIGINAL_URLS,
     SHARED_DATABASE,
     XDIST_WORKER,
     wait_until_blocked,
     worker_url,
 )
-
-# migrations/env.py's MIGRATION_LOCK_ID. Duplicated rather than imported: importing env.py runs
-# the migrations.
-MIGRATION_LOCK_ID = 7_428_211_906
 
 URL_NAMES = ("ZIF_MIGRATE_DATABASE_URL", "ZIF_DATABASE_URL")
 SAMPLE = "postgresql+psycopg://ziftbook_app:ziftbook_app@localhost:5432/ziftbook"
@@ -83,14 +80,21 @@ def blocked_elsewhere(elsewhere: Engine) -> Iterator[None]:
 
 @pytest.fixture
 def fence_row(app_engine: Engine, migrate_engine: Engine) -> Iterator[None]:
-    """A lockable row in *this* worker's database, readable by the app role."""
+    """A lockable row in *this* worker's database, readable by the app role.
+
+    try/finally, not the yield's implicit teardown alone: a serial run points migrate_engine at
+    the developer's shared `ziftbook` (ZIF-111 §"a serial run still shares ziftbook with make up"),
+    so this must not leave `fence` sitting there if the test body raises.
+    """
     with migrate_engine.begin() as conn:
         conn.execute(text("CREATE TABLE IF NOT EXISTS fence (id int PRIMARY KEY)"))
         conn.execute(text("GRANT SELECT, UPDATE ON fence TO ziftbook_app"))
         conn.execute(text("INSERT INTO fence VALUES (1) ON CONFLICT DO NOTHING"))
-    yield None
-    with migrate_engine.begin() as conn:
-        conn.execute(text("DROP TABLE fence"))
+    try:
+        yield None
+    finally:
+        with migrate_engine.begin() as conn:
+            conn.execute(text("DROP TABLE IF EXISTS fence"))
 
 
 # 1 (FENCE): an ungranted lock in another database of the same instance is not this test's
@@ -107,8 +111,10 @@ def test_wait_until_blocked_ignores_another_databases_waiter(
         wait_until_blocked(migrate_engine, 1)
 
 
-# 2 (FENCE): a row-lock waiter in this database is seen. `AND l.database = (SELECT oid ...)` makes
-# this permanently zero, because a row-lock waiter's transactionid lock carries database = NULL.
+# 2 (GUARD): a row-lock waiter in this database is seen. Its kill set is a strict subset of test
+# 3's (any regression that reds this one also reds test 3), so on its own it protects nothing; it
+# exists so that a regression in `l.database` scoping is diagnosable by a single-role failure
+# instead of only showing up as the cross-role test 3 going red.
 def test_wait_until_blocked_sees_a_waiter_in_this_database(
     fence_row: None, app_engine: Engine
 ) -> None:
@@ -144,20 +150,27 @@ def test_each_xdist_worker_targets_its_own_database() -> None:
 # exported empty value. Measured with pytest-xdist 3.8.0: the variable is absent both at `-n 0`
 # and with no flag at all, so only an operator's own export reaches the empty case -- but it is
 # one export away, and `if not worker` costs nothing.
+# Gated on the raw `os.environ.get("PYTEST_XDIST_WORKER")`, not the imported XDIST_WORKER, and
+# asserted against ORIGINAL_URLS (captured at import, before conftest's rewrite loop), not
+# os.environ: a mutation to `XDIST_WORKER = os.environ.get("PYTEST_XDIST_WORKER") or "gw0"` makes
+# XDIST_WORKER truthy even in a serial run, so gating on the imported constant (as this test used
+# to) skips the whole check right when it needs to fire -- and even reading it, comparing against
+# os.environ[name] would have been a self-comparison against the same rewrite the code under test
+# performed, not an independent check.
 @pytest.mark.parametrize("worker", [None, ""])
 def test_a_serial_run_targets_the_shared_database(worker: str | None) -> None:
     assert worker_url(SAMPLE, worker) == SAMPLE
 
-    if not XDIST_WORKER:
+    if not os.environ.get("PYTEST_XDIST_WORKER"):
         for name in URL_NAMES:
+            assert make_url(os.environ[name]).database == make_url(ORIGINAL_URLS[name]).database
             assert make_url(os.environ[name]).database == SHARED_DATABASE
 
 
-# 6 (GUARD): migrations/env.py's session-level pg_advisory_lock serialises concurrent migration
-# runs *per database*, not cluster-wide. That is what lets N workers migrate at once; making it
-# cluster-wide (an advisory lock on a shared database, say) would serialise them.
-def test_the_migration_lock_is_per_database(elsewhere: Engine, migrate_engine: Engine) -> None:
-    taken = text("SELECT pg_try_advisory_lock(:id)")
-    with migrate_engine.connect() as here, elsewhere.connect() as there:
-        assert here.scalar(taken, {"id": MIGRATION_LOCK_ID}) is True
-        assert there.scalar(taken, {"id": MIGRATION_LOCK_ID}) is True
+# migrations/env.py's session-level pg_advisory_lock serialises concurrent migration runs *per
+# database*, not cluster-wide (PostgreSQL's own documented behaviour -- advisory lock keys are
+# scoped to the session's database, not the instance). That is what lets N xdist workers migrate
+# their own database at once instead of queueing behind one lock; making it cluster-wide (an
+# advisory lock taken against a shared database, say) would serialise them. There used to be a
+# test here asserting exactly that fact against a throwaway database; it exercised PostgreSQL, not
+# env.py, and stayed green with env.py's lock deleted entirely, so it was deleted.

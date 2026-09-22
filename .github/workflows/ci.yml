@@ -99,6 +99,9 @@ jobs:
       - run: uv run ruff check .
       - run: uv run ruff format --check .
       - run: uv run mypy app tests migrations
+      # Serial, no -n: the file whose own tests assert the serial path (ZIF-111) still passes
+      # without xdist.
+      - run: uv run pytest -q tests/test_parallel_safety.py
       - run: uv run pytest -n auto
 
   image:
