@@ -81,6 +81,17 @@ class BusinessSettings(BaseModel):
     # rejects evaluating mutable settings at cancellation time as the thing that destroys the
     # dispute evidence. Empty means the business publishes no terms.
     cancellation_policy_text: Annotated[str, Field(max_length=2000)] = ""
+    # ZIF-55. Hours before the appointment at or above which a cancellation is refunded in full,
+    # and below which rescheduling is refused. Both are SNAPSHOTTED onto every booking as
+    # bookings.free_cancellation_hours / reschedule_cutoff_hours; the engine (app/cancellation.py)
+    # reads the snapshot and never these keys. The bounds here and the columns' CHECKs are ONE
+    # pair: a value pydantic accepts and the CHECK rejects is a 500 on the public booking POST.
+    # 0 is meaningful on both ("always refundable", "reschedule until it starts"). The inverted
+    # combination (cutoff above the threshold) is legal and the engine answers it - there is no
+    # cross-field validator, because update_settings validates the BODY alone, where an unsent key
+    # takes the class default rather than the saved value.
+    free_cancellation_hours: Annotated[int, Field(ge=0, le=720)] = 48
+    reschedule_cutoff_hours: Annotated[int, Field(ge=0, le=720)] = 24
 
 
 def read(db: Session) -> BusinessSettings:

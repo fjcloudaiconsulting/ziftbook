@@ -30,6 +30,8 @@ DEFAULTS = {
     "max_pending_per_email": 3,
     "pending_ttl_hours": 24,
     "cancellation_policy_text": "",
+    "free_cancellation_hours": 48,
+    "reschedule_cutoff_hours": 24,
 }
 
 
@@ -233,6 +235,8 @@ def test_the_contract_requires_every_setting_back_and_none_sent() -> None:
         "max_pending_per_email",
         "pending_ttl_hours",
         "cancellation_policy_text",
+        "free_cancellation_hours",
+        "reschedule_cutoff_hours",
     ]
     assert "required" not in schemas["BusinessSettings-Input"]
 
@@ -251,3 +255,32 @@ def test_changing_the_language_is_recorded(
         if e["action"] == "setting_changed"
     ]
     assert changed == [{"old": "en", "new": "pt"}]
+
+
+# G (T11) - the two ZIF-55 keys are in the registry with the ticket's defaults, and a change to
+# each is audited like every other setting. Guard: the whole-body DEFAULTS assertions above
+# already fail if either key is missing.
+def test_the_cancellation_thresholds_default_to_48_and_24(people: People, app: FastAPI) -> None:
+    client = signed_in(app, people.a, people.only_a)
+
+    body = client.get("/api/settings").json()
+
+    assert (body["free_cancellation_hours"], body["reschedule_cutoff_hours"]) == (48, 24)
+
+
+def test_changing_a_cancellation_threshold_is_audited(
+    people: People, app: FastAPI, migrate_engine: Engine
+) -> None:
+    owner = signed_in(app, people.a, people.both)
+
+    assert (
+        put_settings(
+            owner, {"free_cancellation_hours": 12, "reschedule_cutoff_hours": 6}
+        ).status_code
+        == 200
+    )
+
+    for key in ("free_cancellation_hours", "reschedule_cutoff_hours"):
+        assert (
+            len(events(migrate_engine, action="setting_changed", target=f"setting:{key}")) == 1
+        ), key

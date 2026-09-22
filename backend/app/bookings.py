@@ -191,12 +191,13 @@ INSERT_BOOKING = text("""
 INSERT INTO bookings (
   tenant_id, client_id, worker_id, service_id, starts_at, ends_at, status, expires_at, source,
   service_name, price_amount_minor, price_currency, duration_minutes, cancellation_policy_text,
-  auto_confirm_at_booking, worker_display_name)
+  auto_confirm_at_booking, worker_display_name, free_cancellation_hours, reschedule_cutoff_hours)
 VALUES (
   current_setting('app.tenant_id')::uuid, :client_id, :worker_id, :service_id,
   :starts_at, :starts_at + make_interval(mins => :duration_minutes), :status, :expires_at,
   :source, CAST(:service_name AS jsonb), :price_amount_minor, :price_currency, :duration_minutes,
-  :cancellation_policy_text, :auto_confirm_at_booking, :worker_display_name)
+  :cancellation_policy_text, :auto_confirm_at_booking, :worker_display_name,
+  :free_cancellation_hours, :reschedule_cutoff_hours)
 RETURNING id, status, starts_at, ends_at
 """)
 
@@ -440,6 +441,10 @@ def create(  # sync def: turnstile.verify's urlopen blocks, and runs in FastAPI'
                                 "price_currency": row.price_currency,
                                 "cancellation_policy_text": settings.cancellation_policy_text
                                 or None,
+                                # ZIF-55: the thresholds in force NOW, snapshotted beside the
+                                # text. Never re-read at cancellation time.
+                                "free_cancellation_hours": settings.free_cancellation_hours,
+                                "reschedule_cutoff_hours": settings.reschedule_cutoff_hours,
                                 "auto_confirm_at_booking": settings.auto_confirm,
                                 "worker_display_name": names[candidate],
                             },

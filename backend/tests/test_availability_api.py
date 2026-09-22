@@ -407,10 +407,11 @@ def seed_booking(
             text("""
             INSERT INTO bookings (tenant_id, client_id, worker_id, service_id, starts_at, ends_at,
                 status, source, service_name, price_amount_minor, price_currency,
-                duration_minutes, auto_confirm_at_booking)
+                duration_minutes, auto_confirm_at_booking, free_cancellation_hours,
+                reschedule_cutoff_hours)
             SELECT current_setting('app.tenant_id')::uuid, :client_id, :worker_id, :service_id,
                    :starts_at, :ends_at, 'confirmed', 'merchant', name, price_amount_minor,
-                   price_currency, duration_minutes, true
+                   price_currency, duration_minutes, true, 48, 24
             FROM services WHERE id = :service_id
             """),
             {

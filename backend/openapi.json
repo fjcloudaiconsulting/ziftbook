@@ -3523,6 +3523,20 @@
             "maxLength": 2000,
             "title": "Cancellation Policy Text",
             "default": ""
+          },
+          "free_cancellation_hours": {
+            "type": "integer",
+            "maximum": 720.0,
+            "minimum": 0.0,
+            "title": "Free Cancellation Hours",
+            "default": 48
+          },
+          "reschedule_cutoff_hours": {
+            "type": "integer",
+            "maximum": 720.0,
+            "minimum": 0.0,
+            "title": "Reschedule Cutoff Hours",
+            "default": 24
           }
         },
         "additionalProperties": false,
@@ -3609,6 +3623,20 @@
             "maxLength": 2000,
             "title": "Cancellation Policy Text",
             "default": ""
+          },
+          "free_cancellation_hours": {
+            "type": "integer",
+            "maximum": 720.0,
+            "minimum": 0.0,
+            "title": "Free Cancellation Hours",
+            "default": 48
+          },
+          "reschedule_cutoff_hours": {
+            "type": "integer",
+            "maximum": 720.0,
+            "minimum": 0.0,
+            "title": "Reschedule Cutoff Hours",
+            "default": 24
           }
         },
         "additionalProperties": false,
@@ -3624,7 +3652,9 @@
           "booking_horizon_days",
           "max_pending_per_email",
           "pending_ttl_hours",
-          "cancellation_policy_text"
+          "cancellation_policy_text",
+          "free_cancellation_hours",
+          "reschedule_cutoff_hours"
         ],
         "title": "BusinessSettings"
       },
