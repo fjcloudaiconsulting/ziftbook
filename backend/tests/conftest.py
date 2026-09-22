@@ -4,6 +4,7 @@ import io
 import json
 import logging
 import os
+import re
 import secrets
 import threading
 import time
@@ -22,6 +23,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from httpx2 import Response
 from sqlalchemy import Connection, Engine, create_engine, text
+from sqlalchemy.engine import make_url
 from sqlalchemy.pool import NullPool
 
 from app import auth, logs, passwords
@@ -53,6 +55,76 @@ os.environ.setdefault(
     "ZIF_DATABASE_URL",
     "postgresql+psycopg://ziftbook_app:ziftbook_app@localhost:5432/ziftbook",
 )
+# Admin connection for CREATE/DROP DATABASE: ziftbook_migrate has rolcreatedb = f and must not be
+# granted it -- it is a production role. Derived from ZIF_MIGRATE_DATABASE_URL, never hardcoded, so
+# it always aims at the instance the suite is already talking to: a literal localhost:5432 would
+# point DROP DATABASE at an unrelated server the moment ZIF_MIGRATE_DATABASE_URL does not.
+# render_as_string(hide_password=False), never str(): str(URL) renders the password as "***".
+ADMIN_DATABASE_URL = (
+    make_url(os.environ["ZIF_MIGRATE_DATABASE_URL"])
+    .set(database="postgres", username="ziftbook", password="ziftbook")
+    .render_as_string(hide_password=False)
+)
+
+# One database per xdist worker (ZIF-111). Dropped, recreated and migrated every run, not reused: a
+# reused database keeps its rows, and `jobs` is not tenant-scoped (ZIF-110), so mailed()'s run_once
+# drains every earlier run's backlog and the suite silently degrades 2.7x (65s -> 178s over three
+# runs). No WITH (FORCE) here: two suites on one instance can both claim ziftbook_gw0 (worker ids
+# are assigned independently per run), and FORCE would let the second DROP the first's database out
+# from under it mid-run. Without FORCE that collision is a loud ObjectInUse refusal instead of a
+# silent kill -- the rule is one Postgres instance per checkout. All of it at import, not in a
+# fixture:
+#   - migrations/env.py:20-22 reads ZIF_MIGRATE_DATABASE_URL at module level, and
+#     test_logs/test_api_database spawn subprocesses that inherit os.environ;
+#   - test_logs.py's `python -m alembic current` does not depend on `migrated`, so a worker that
+#     reaches it first would find no database at all (also true of any -k or single-file subset);
+#   - nothing has opened an engine yet, so the DROP cannot fail with ObjectInUse against a
+#     connection this worker itself already holds.
+XDIST_WORKER = os.environ.get("PYTEST_XDIST_WORKER")
+# pytest-xdist only ever sets this to gw<N>. Anything else is some other export (an operator's
+# shell, a CI matrix, a parent pytest) that happens to share the name, and it must not silently
+# steer this suite at a per-"worker" database -- a serial run with PYTEST_XDIST_WORKER=prod would
+# otherwise drop and recreate ziftbook_prod. It also closes an injection path: an unvalidated value
+# renders straight into a URL (make_url(url).set(database=f"ziftbook_{worker}")), so
+# "gw0?host=evil" would happily reinterpret the connection target.
+if XDIST_WORKER is not None and not re.fullmatch(r"gw\d+", XDIST_WORKER):
+    raise RuntimeError(
+        f"PYTEST_XDIST_WORKER={XDIST_WORKER!r} is not a pytest-xdist worker id (expected gw<N>); "
+        "refusing to guess which database this run owns"
+    )
+URL_NAMES = ("ZIF_MIGRATE_DATABASE_URL", "ZIF_DATABASE_URL")
+# Captured before the rewrite below, so a test can compare against them independently of whatever
+# the rewrite did.
+ORIGINAL_URLS = {name: os.environ[name] for name in URL_NAMES}
+
+
+def worker_url(url: str, worker: str | None) -> str:
+    """That worker's own database, or the URL untouched when there is no worker.
+
+    The guard is on the worker id being set to something, not on the variable merely existing: an
+    exported but empty PYTEST_XDIST_WORKER would otherwise aim the whole suite at `ziftbook_`.
+
+    Residual: a *serial* run (no worker id) still points at the shared `ziftbook` that `make up`
+    runs the app against -- the original instance-wide false-green risk this ticket fixed for
+    parallel runs survives, unchanged, for a serial one.
+    """
+    if not worker:
+        return url
+    return make_url(url).set(database=f"ziftbook_{worker}").render_as_string(hide_password=False)
+
+
+for _name in URL_NAMES:
+    os.environ[_name] = worker_url(os.environ[_name], XDIST_WORKER)
+if XDIST_WORKER:
+    _database = f"ziftbook_{XDIST_WORKER}"
+    _admin = create_engine(ADMIN_DATABASE_URL, isolation_level="AUTOCOMMIT")
+    with _admin.connect() as _conn:
+        _conn.execute(text(f"DROP DATABASE IF EXISTS {_database}"))
+        # OWNER is load-bearing: on PG15+ `public` is owned by pg_database_owner, and without it
+        # alembic dies on alembic_version with InsufficientPrivilege (42501).
+        _conn.execute(text(f"CREATE DATABASE {_database} OWNER ziftbook_migrate"))
+    _admin.dispose()
+    command.upgrade(Config(toml_file=str(API_DIR / "pyproject.toml")), "head")
 # Mailpit from docker-compose.yaml.
 os.environ.setdefault("ZIF_SMTP_HOST", "localhost")
 os.environ.setdefault("ZIF_SMTP_PORT", "1025")
@@ -147,11 +219,31 @@ def new_client(app: FastAPI, address: str | None = None) -> TestClient:
 
 
 def wait_until_blocked(engine: Engine, backends: int) -> None:
-    """Wait until that many sessions block on a lock: the interleaving the test needs."""
+    """Wait until that many sessions block on a lock in THIS database: the interleaving the test
+    needs.
+
+    Both tables are load-bearing; neither half can be dropped (ZIF-111).
+    pg_locks alone cannot scope by database: a row-lock waiter's `transactionid` lock carries
+    pg_locks.database = NULL, so filtering on it makes the count permanently zero. Unscoped, any
+    ungranted lock anywhere in the instance -- another database, a second suite, a stray psql --
+    satisfies the wait, the helper returns early and the test asserts against the wrong state.
+    pg_stat_activity alone cannot see the wait cross-role: watching an app-role waiter from a
+    migrate-role connection, wait_event_type/state/query are all masked. Only pid, datname and
+    usename survive, which is exactly what the join needs.
+
+    Residual: `NOT l.granted` counts a waiter blocked on ANY lock type in this database, not just
+    the row lock a given call site cares about -- so an advisory-lock waiter would also satisfy a
+    row-lock call site. Harmless under xdist because tests within one worker's private database
+    run sequentially, so nothing else is ever mid-wait here at the same time.
+    """
     for _ in range(100):
         with engine.connect() as conn:
             waiting = conn.scalar(
-                text("SELECT count(DISTINCT pid) FROM pg_locks WHERE NOT granted")
+                text(
+                    "SELECT count(DISTINCT l.pid) FROM pg_locks l "
+                    "JOIN pg_stat_activity a ON a.pid = l.pid "
+                    "WHERE NOT l.granted AND a.datname = current_database()"
+                )
             )
         if waiting >= backends:
             return

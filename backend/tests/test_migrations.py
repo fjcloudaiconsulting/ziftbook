@@ -43,8 +43,8 @@ def test_downgrading_and_upgrading_0013_restores_its_columns_and_grants(
     url = os.environ["ZIF_MIGRATE_DATABASE_URL"]
     options = urlencode({"options": "-c lock_timeout=5s"})
     monkeypatch.setenv("ZIF_MIGRATE_DATABASE_URL", f"{url}{'&' if '?' in url else '?'}{options}")
-    command.downgrade(cfg, "0012")
     try:
+        command.downgrade(cfg, "0012")
         with migrate_engine.connect() as conn:
             assert {"country", "currency"}.isdisjoint(set(conn.scalars(COLUMNS)))
             assert conn.scalar(text(TABLE_PRIVILEGE), {"priv": "UPDATE"})
@@ -80,8 +80,8 @@ def test_downgrading_and_upgrading_0022_restores_the_three_arg_complete_sign_up_
     url = os.environ["ZIF_MIGRATE_DATABASE_URL"]
     options = urlencode({"options": "-c lock_timeout=5s"})
     monkeypatch.setenv("ZIF_MIGRATE_DATABASE_URL", f"{url}{'&' if '?' in url else '?'}{options}")
-    command.downgrade(cfg, "0021")
     try:
+        command.downgrade(cfg, "0021")
         with migrate_engine.connect() as conn:
             assert conn.scalar(text(THREE_ARG)) is not None
             assert conn.scalar(text(FIVE_ARG)) is not None
@@ -111,8 +111,8 @@ def test_downgrading_and_upgrading_0023_restores_the_display_name_column_and_a_c
     url = os.environ["ZIF_MIGRATE_DATABASE_URL"]
     options = urlencode({"options": "-c lock_timeout=5s"})
     monkeypatch.setenv("ZIF_MIGRATE_DATABASE_URL", f"{url}{'&' if '?' in url else '?'}{options}")
-    command.downgrade(cfg, "0022")
     try:
+        command.downgrade(cfg, "0022")
         with migrate_engine.connect() as conn:
             assert "display_name" not in set(conn.scalars(MEMBERSHIP_COLUMNS))
             assert conn.scalar(text(CONSTRAINT_NAME)) is None
@@ -147,8 +147,8 @@ def test_downgrading_and_upgrading_0024_restores_the_tables_and_their_grants(
     url = os.environ["ZIF_MIGRATE_DATABASE_URL"]
     options = urlencode({"options": "-c lock_timeout=5s"})
     monkeypatch.setenv("ZIF_MIGRATE_DATABASE_URL", f"{url}{'&' if '?' in url else '?'}{options}")
-    command.downgrade(cfg, "0023")
     try:
+        command.downgrade(cfg, "0023")
         with migrate_engine.connect() as conn:
             assert conn.scalar(text("SELECT to_regclass('clients')")) is None
             assert conn.scalar(text("SELECT to_regclass('consents')")) is None
@@ -194,8 +194,8 @@ def test_upgrading_0020_rewrites_last_error_to_the_class_only(
     monkeypatch.setenv("ZIF_MIGRATE_DATABASE_URL", f"{url}{'&' if '?' in url else '?'}{options}")
     key = f"test.zif93:{uuid.uuid4()}"
     address = "someone@example.com"
-    command.downgrade(cfg, "0019")
     try:
+        command.downgrade(cfg, "0019")
         with migrate_engine.begin() as conn:
             conn.execute(
                 text(ADD_JOB),
@@ -209,9 +209,11 @@ def test_upgrading_0020_rewrites_last_error_to_the_class_only(
         assert last_error == "SMTPRecipientsRefused"
         assert address not in (last_error or "")
     finally:
-        command.upgrade(cfg, "head")
+        # Delete before the upgrade: `jobs` is not tenant-scoped, so an upgrade that raises would
+        # otherwise leak this row into it for every later test to see.
         with migrate_engine.begin() as conn:
             conn.execute(text("DELETE FROM jobs WHERE dedupe_key = :key"), {"key": key})
+        command.upgrade(cfg, "head")
 
 
 def test_downgrading_and_upgrading_0025_keeps_the_timerange_type(
@@ -223,8 +225,8 @@ def test_downgrading_and_upgrading_0025_keeps_the_timerange_type(
     url = os.environ["ZIF_MIGRATE_DATABASE_URL"]
     options = urlencode({"options": "-c lock_timeout=5s"})
     monkeypatch.setenv("ZIF_MIGRATE_DATABASE_URL", f"{url}{'&' if '?' in url else '?'}{options}")
-    command.downgrade(cfg, "0024")
     try:
+        command.downgrade(cfg, "0024")
         with migrate_engine.connect() as conn:
             assert conn.scalar(text("SELECT to_regclass('opening_hours')")) is None
             assert conn.scalar(text("SELECT to_regtype('timerange')")) is not None
@@ -247,8 +249,8 @@ def test_downgrading_and_upgrading_0026_restores_the_tables_and_their_grants(
     url = os.environ["ZIF_MIGRATE_DATABASE_URL"]
     options = urlencode({"options": "-c lock_timeout=5s"})
     monkeypatch.setenv("ZIF_MIGRATE_DATABASE_URL", f"{url}{'&' if '?' in url else '?'}{options}")
-    command.downgrade(cfg, "0025")
     try:
+        command.downgrade(cfg, "0025")
         with migrate_engine.connect() as conn:
             assert conn.scalar(text("SELECT to_regclass('bookings')")) is None
             assert conn.scalar(text("SELECT to_regclass('booking_events')")) is None

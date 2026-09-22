@@ -19,6 +19,7 @@ dev = [
     "httpx2",
     "mypy==2.3.1",
     "pytest",
+    "pytest-xdist",
     "ruff==0.16.7",
 ]
 
