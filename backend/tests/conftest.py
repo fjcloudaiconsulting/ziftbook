@@ -92,11 +92,10 @@ if XDIST_WORKER is not None and not re.fullmatch(r"gw\d+", XDIST_WORKER):
         f"PYTEST_XDIST_WORKER={XDIST_WORKER!r} is not a pytest-xdist worker id (expected gw<N>); "
         "refusing to guess which database this run owns"
     )
-WORKER_DATABASE = f"ziftbook_{XDIST_WORKER}"
-SHARED_DATABASE = make_url(os.environ["ZIF_DATABASE_URL"]).database
-ORIGINAL_URLS = {
-    name: os.environ[name] for name in ("ZIF_MIGRATE_DATABASE_URL", "ZIF_DATABASE_URL")
-}
+URL_NAMES = ("ZIF_MIGRATE_DATABASE_URL", "ZIF_DATABASE_URL")
+# Captured before the rewrite below, so a test can compare against them independently of whatever
+# the rewrite did.
+ORIGINAL_URLS = {name: os.environ[name] for name in URL_NAMES}
 
 
 def worker_url(url: str, worker: str | None) -> str:
@@ -114,15 +113,16 @@ def worker_url(url: str, worker: str | None) -> str:
     return make_url(url).set(database=f"ziftbook_{worker}").render_as_string(hide_password=False)
 
 
-for _name in ("ZIF_MIGRATE_DATABASE_URL", "ZIF_DATABASE_URL"):
+for _name in URL_NAMES:
     os.environ[_name] = worker_url(os.environ[_name], XDIST_WORKER)
 if XDIST_WORKER:
+    _database = f"ziftbook_{XDIST_WORKER}"
     _admin = create_engine(ADMIN_DATABASE_URL, isolation_level="AUTOCOMMIT")
     with _admin.connect() as _conn:
-        _conn.execute(text(f"DROP DATABASE IF EXISTS {WORKER_DATABASE}"))
+        _conn.execute(text(f"DROP DATABASE IF EXISTS {_database}"))
         # OWNER is load-bearing: on PG15+ `public` is owned by pg_database_owner, and without it
         # alembic dies on alembic_version with InsufficientPrivilege (42501).
-        _conn.execute(text(f"CREATE DATABASE {WORKER_DATABASE} OWNER ziftbook_migrate"))
+        _conn.execute(text(f"CREATE DATABASE {_database} OWNER ziftbook_migrate"))
     _admin.dispose()
     command.upgrade(Config(toml_file=str(API_DIR / "pyproject.toml")), "head")
 # Mailpit from docker-compose.yaml.

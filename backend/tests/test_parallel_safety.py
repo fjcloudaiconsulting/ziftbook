@@ -18,13 +18,12 @@ from sqlalchemy.pool import NullPool
 from tests.conftest import (
     ADMIN_DATABASE_URL,
     ORIGINAL_URLS,
-    SHARED_DATABASE,
+    URL_NAMES,
     XDIST_WORKER,
     wait_until_blocked,
     worker_url,
 )
 
-URL_NAMES = ("ZIF_MIGRATE_DATABASE_URL", "ZIF_DATABASE_URL")
 SAMPLE = "postgresql+psycopg://ziftbook_app:ziftbook_app@localhost:5432/ziftbook"
 
 
@@ -164,7 +163,6 @@ def test_a_serial_run_targets_the_shared_database(worker: str | None) -> None:
     if not os.environ.get("PYTEST_XDIST_WORKER"):
         for name in URL_NAMES:
             assert make_url(os.environ[name]).database == make_url(ORIGINAL_URLS[name]).database
-            assert make_url(os.environ[name]).database == SHARED_DATABASE
 
 
 # migrations/env.py's session-level pg_advisory_lock serialises concurrent migration runs *per
