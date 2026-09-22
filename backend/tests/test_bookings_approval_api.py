@@ -3,6 +3,7 @@ decline pending bookings. See docs/specs/2026-09-22-zif-52-accept-decline.md for
 each fence protects."""
 
 import threading
+import time
 import uuid
 from datetime import date, timedelta
 from typing import Any, get_args
@@ -13,7 +14,7 @@ from fastapi.testclient import TestClient
 from httpx2 import Response
 from sqlalchemy import Engine, event, text
 
-from app import availability, bookings, members
+from app import bookings, members
 from app.db import tenant_context
 from tests.conftest import (
     People,
@@ -138,30 +139,74 @@ def test_a_ttl_passed_pending_cannot_be_accepted(
     assert events(migrate_engine, action="booking_confirmed", target=f"booking:{booking_id}") == []
 
 
-# F3 - the expiry is compared against Postgres's clock, not Python's.
-# Kills: compares expires_at to availability.now()/datetime.now(UTC) in Python instead of in the
-# statement.
-def test_the_expiry_check_uses_postgres_clock_not_python(
-    people: People,
-    app: FastAPI,
-    owner: TestClient,
-    ready: str,
-    monkeypatch: pytest.MonkeyPatch,
+def hold_the_tenant_lock(
+    tenant_id: uuid.UUID, holding: threading.Event, release: threading.Event
 ) -> None:
-    assert "expires_at > now()" in str(bookings.TRANSITION)
-
-    real_now = availability.now()
-    monkeypatch.setattr(availability, "now", lambda: real_now - timedelta(hours=2))
-    booking_id = make_pending(app, people.a, ready)
-    with tenant_context(people.a) as session:
+    """Hold ZIF-51's tenant advisory lock from a second session until released, so a request that
+    takes it as its first statement waits with its transaction - and its now() - already open."""
+    with tenant_context(tenant_id) as session:
         session.execute(
-            text("UPDATE bookings SET expires_at = now() - interval '30 minutes' WHERE id = :id"),
+            text("SELECT pg_advisory_xact_lock(51, hashtext(current_setting('app.tenant_id')))")
+        )
+        holding.set()
+        release.wait(timeout=30)
+
+
+def expire_in_a_second(tenant_id: uuid.UUID, booking_id: str) -> None:
+    """Push expires_at to one second ahead of the DB clock NOW - after the waiting transaction
+    opened, so its frozen now() is provably before the expiry - and return once wall clock has
+    passed it, so a Python-clock comparison provably sees it expired."""
+    with tenant_context(tenant_id) as session:
+        session.execute(
+            text("UPDATE bookings SET expires_at = now() + interval '1 second' WHERE id = :id"),
             {"id": booking_id},
         )
+    for _ in range(100):
+        with tenant_context(tenant_id) as session:
+            if session.scalar(
+                text("SELECT clock_timestamp() > expires_at FROM bookings WHERE id = :id"),
+                {"id": booking_id},
+            ):
+                return
+        time.sleep(0.05)
+    raise AssertionError("the pending never passed its expiry")
 
-    response = patch(owner, booking_id, "confirmed")
 
-    assert (response.status_code, response.json()) == (409, {"code": "not_pending"})
+# F3 - the expiry is compared against the DATABASE's clock, not the application process's.
+# Behavioural, with no seam monkeypatched: the route's now() is transaction_timestamp(), frozen when
+# the transaction opens, so a request waiting on the tenant advisory lock holds a clock behind wall
+# clock. A pending whose expiry falls between that frozen now() and wall clock is therefore still
+# live for the statement and already dead for Python.
+# Kills: `expires_at > :now` bound to datetime.now(UTC) (or availability.now()) in the handler, and
+# TRANSITION left dead with the handler running its own Python-clock UPDATE - both answer 409 here.
+def test_the_expiry_check_uses_postgres_clock_not_python(
+    people: People, app: FastAPI, owner: TestClient, ready: str, app_engine: Engine
+) -> None:
+    booking_id = make_pending(app, people.a, ready)
+    merchant = signed_in(app, people.a, people.both)
+    holding, release = threading.Event(), threading.Event()
+    blocker = threading.Thread(target=hold_the_tenant_lock, args=(people.a, holding, release))
+    blocker.start()
+    result: dict[str, Response] = {}
+
+    def confirm() -> None:
+        result["response"] = patch(merchant, booking_id, "confirmed")
+
+    assert holding.wait(timeout=10)
+    patcher = threading.Thread(target=confirm)
+    patcher.start()
+    wait_until_blocked(app_engine, 1)  # its transaction - and its now() - is open and waiting
+    expire_in_a_second(people.a, booking_id)  # ahead of that now(), behind wall clock
+    release.set()
+    for thread in (blocker, patcher):
+        thread.join(timeout=15)
+    assert not blocker.is_alive() and not patcher.is_alive()
+
+    assert (result["response"].status_code, result["response"].json()) == (
+        200,
+        {"id": booking_id, "status": "confirmed"},
+    )
+    assert status_of(people.a, booking_id) == "confirmed"
 
 
 # F4 - a settled booking cannot be transitioned again.
@@ -408,15 +453,83 @@ def test_a_transition_does_not_touch_expires_at(
     assert before2 == after2
 
 
-# F12 - the write-site value set covers the request literal exactly.
-# Kills: adds a value to the Literal without a TRANSITIONS entry.
-def test_transitions_covers_the_request_literal_exactly() -> None:
-    assert set(bookings.TRANSITIONS) == set(
-        get_args(bookings.StatusChange.model_fields["status"].annotation)
+# F12 - every value of the request literal transitions, answers with the row, and logs its own
+# action. Parametrized over the Literal itself, so it also covers the write-site value set: a value
+# added to the Literal with no TRANSITIONS entry is a KeyError here (and a 500 in production).
+# Kills: adds a value to the Literal without a TRANSITIONS entry; echoes the request instead of
+# RETURNING the row; answers with another booking's id; writes the wrong audit action.
+@pytest.mark.parametrize(
+    "status", get_args(bookings.StatusChange.model_fields["status"].annotation)
+)
+def test_each_status_transitions_and_logs_its_action(
+    people: People,
+    app: FastAPI,
+    owner: TestClient,
+    ready: str,
+    migrate_engine: Engine,
+    status: str,
+) -> None:
+    booking_id = make_pending(app, people.a, ready)
+
+    response = patch(owner, booking_id, status)
+
+    assert (response.status_code, response.json()) == (200, {"id": booking_id, "status": status})
+    assert status_of(people.a, booking_id) == status
+    audit = events(
+        migrate_engine, action=bookings.TRANSITIONS[status], target=f"booking:{booking_id}"
     )
+    assert len(audit) == 1
 
 
-# G1 - accepting keeps the slot held and never 23P01.
+# F13 - `limit` truncates the queue, and the rows that survive are the soonest ones.
+# Kills: hardcoded `LIMIT 50` (every call returns all three), and a truncation applied before the
+# ORDER BY (limit=1 returns whichever row the scan reached first, not the earliest).
+def test_limit_truncates_the_queue_keeping_the_soonest(
+    people: People, app: FastAPI, owner: TestClient, ready: str
+) -> None:
+    late = make_pending(app, people.a, ready, starts_at=at("15:00"))
+    early = make_pending(app, people.a, ready, starts_at=at("09:00"))
+    mid = make_pending(app, people.a, ready, starts_at=at("12:00"))
+
+    def queue(limit: int) -> list[str]:
+        response = owner.get("/api/bookings/pending", params={"limit": limit})
+        assert response.status_code == 200
+        return [row["id"] for row in response.json()]
+
+    assert queue(1) == [early]
+    assert queue(2) == [early, mid]
+    assert queue(3) == [early, mid, late]
+
+
+# F14 - the PATCH body is exactly one field out of the Literal, strictly typed.
+# Kills: a non-strict model (a bare str status, extra="ignore", an Optional status).
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"status": "expired"},
+        {"status": "confirmed", "reason": "x"},
+        {"status": "CONFIRMED"},
+        {},
+        {"status": None},
+    ],
+    ids=["other status", "extra field", "wrong case", "empty body", "null status"],
+)
+def test_a_body_outside_the_literal_is_refused(
+    people: People, app: FastAPI, owner: TestClient, ready: str, body: Any
+) -> None:
+    booking_id = make_pending(app, people.a, ready)
+
+    response = owner.patch(transition_url(booking_id), json=body)
+
+    assert (response.status_code, response.json()) == (422, {"code": "invalid_request"})
+    assert status_of(people.a, booking_id) == "pending"
+
+
+# F15 (was G1) - accepting keeps the slot held, and keeps holding it past the TTL.
+# The TTL is what discriminates: a pending holds the slot exactly as a confirmed one does, so the
+# expiry is the only state in which the two differ - an accepted booking holds its slot forever,
+# while a row left pending is swept to 'expired' by the next create (app/bookings.py's EXPIRE) and
+# frees it. Kills: `SET status = status` (a no-op UPDATE that still RETURNs a row).
 def test_accepting_keeps_the_slot_held(
     people: People, app: FastAPI, owner: TestClient, ready: str
 ) -> None:
@@ -424,6 +537,7 @@ def test_accepting_keeps_the_slot_held(
 
     response = patch(owner, booking_id, "confirmed")
     assert response.status_code == 200
+    expire(people.a, booking_id)
 
     second = post_booking(new_client(app), people.a, ready, email=fresh_email())
     assert (second.status_code, second.json()) == (409, {"code": "slot_unavailable"})

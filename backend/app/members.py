@@ -128,10 +128,17 @@ def member_user(current: SignedIn, member_id: UUID, *, lock: bool) -> UUID:
     return user_id
 
 
+def is_owner(current: SignedIn) -> bool:
+    """The owner half of may_manage on its own, for a list route with no single user_id to compare
+    against (the pending queue, ZIF-52). One source of truth, so a list and the per-row decision it
+    offers can never disagree about who sees what."""
+    return current.role == "owner"
+
+
 def may_manage(current: SignedIn, user_id: UUID) -> bool:
     """An owner manages everyone's data; anyone else only their own. Shared with time off
     (ZIF-47) and the display name (ZIF-97)."""
-    return current.role == "owner" or user_id == current.user_id
+    return is_owner(current) or user_id == current.user_id
 
 
 def guarded(current: SignedIn, statement: str, member_id: UUID, **values: object) -> None:

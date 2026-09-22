@@ -2935,11 +2935,11 @@
     "/api/bookings/pending": {
       "get": {
         "tags": [
-          "bookings"
+          "booking-approvals"
         ],
-        "summary": "Pending",
-        "description": "The business's live pending bookings, soonest first. An owner sees the whole queue; a\nworker sees only bookings assigned to them (members.may_manage's split, applied to the list\nand to the transition alike, so the two can never disagree).",
-        "operationId": "bookings-pending",
+        "summary": "List",
+        "description": "The business's live pending bookings, soonest first. An owner sees the whole queue; a\nworker sees only bookings assigned to them - members.is_owner, the same owner half that\nmembers.may_manage applies to the transition, so the list and the transition can never\ndisagree.",
+        "operationId": "booking-approvals-list",
         "parameters": [
           {
             "name": "limit",
@@ -2964,7 +2964,7 @@
                   "items": {
                     "$ref": "#/components/schemas/PendingOut"
                   },
-                  "title": "Response Bookings-Pending"
+                  "title": "Response Booking-Approvals-List"
                 }
               }
             }
@@ -2995,11 +2995,11 @@
     "/api/bookings/{booking_id}": {
       "patch": {
         "tags": [
-          "bookings"
+          "booking-approvals"
         ],
-        "summary": "Transition",
+        "summary": "Update",
         "description": "A merchant accepts or declines a pending booking. An owner, or the membership in\nbookings.worker_id, may transition; anyone else on this business gets 403. Another business's\nbooking is 404 (row-level security makes it invisible) rather than 403.",
-        "operationId": "bookings-transition",
+        "operationId": "booking-approvals-update",
         "parameters": [
           {
             "name": "booking_id",

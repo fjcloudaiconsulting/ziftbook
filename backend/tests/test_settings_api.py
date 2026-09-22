@@ -87,6 +87,11 @@ def test_only_an_owner_changes_settings(people: People, app: FastAPI, body: Any)
         {"min_notice_minutes": 10081},
         {"booking_horizon_days": 0},
         {"booking_horizon_days": 366},
+        {"pending_ttl_hours": 0},
+        {"pending_ttl_hours": 169},
+        {"pending_ttl_hours": "24"},
+        {"pending_ttl_hours": 24.0},
+        {"pending_ttl_hours": None},
         [],
     ],
     ids=[
@@ -119,6 +124,11 @@ def test_only_an_owner_changes_settings(people: People, app: FastAPI, body: Any)
         "notice over a week",
         "zero horizon",
         "horizon over a year",
+        "zero ttl",
+        "ttl over a week",
+        "string ttl",
+        "float ttl",
+        "null ttl",
         "list body",
     ],
 )
