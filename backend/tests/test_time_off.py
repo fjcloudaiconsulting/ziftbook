@@ -849,7 +849,9 @@ VALUES (:t, :m, :s, :e, :f, :l)
         (None, None, "2026-10-05", "2026-10-04", "ck_time_off_days"),  # last_day < first_day
         (None, None, "2026-10-01", "2027-10-02", "ck_time_off_days"),  # 367 days
         (None, None, "1999-12-31", "2000-01-01", "ck_time_off_days"),  # below the year bound
-        (None, None, "2999-12-31", "9999-12-30", "ck_time_off_days"),  # above the year bound
+        # A single day, well under the 366-day count bound: isolates the upper year bound alone.
+        # 2999-12-31..9999-12-30 would also be refused by the day-count clause, making it vacuous.
+        (None, None, "3000-01-01", "3000-01-01", "ck_time_off_days"),  # above the year bound
     ],
 )
 def test_direct_inserts_hit_the_zif_101_database_checks(
@@ -997,10 +999,12 @@ def test_post_days_returns_null_instants_and_stores_null_instants(
         {"starts_at": "2026-10-01T08:00:00Z"},  # half the other pair, no day fields
         {"first_day": None, "last_day": "2026-11-02"},
         {"first_day": "2026-10-03T00:00", "last_day": "2026-11-02"},  # a datetime, not a date
-        {"first_day": 1789000000, "last_day": "2026-11-02"},  # an epoch number
-        {"first_day": "1999-12-31", "last_day": "2026-11-02"},  # below the year bound
-        {"first_day": "3000-01-01", "last_day": "3000-01-02"},  # above the year bound
-        {"first_day": "0001-01-01", "last_day": "2026-11-02"},  # never 500
+        {"first_day": 1788998400, "last_day": "2026-11-02"},  # an epoch number, midnight-aligned
+        # Paired with itself: the day-count clause never fires, so only the year bound refuses it.
+        {"first_day": "1999-12-31", "last_day": "1999-12-31"},  # below the year bound
+        {"first_day": "3000-01-01", "last_day": "3000-01-01"},  # above the year bound
+        {"first_day": "0001-01-01", "last_day": "0001-01-01"},  # never 500
+        {"first_day": "2026-10-27", "last_day": "2026-11-02", "starts_at": None},  # explicit null
     ],
 )
 def test_a_malformed_or_mixed_days_body_is_refused(
@@ -1097,6 +1101,13 @@ def test_patch_switches_kind_and_merges_within_a_kind(
     )
     assert both_kinds.status_code == 422
 
+    # Half the instant pair on a day block: switching kind needs the complete new pair, never a
+    # naive merge that would leave both pairs non-null and hit ck_time_off_kind (a 500).
+    half_instant_pair_on_day = owner.patch(
+        block_path(day_id), json={"starts_at": "2026-10-20T08:00:00Z"}
+    )
+    assert half_instant_pair_on_day.status_code == 422
+
     kept_kind = owner.patch(block_path(day_id), json={"reason": "Renamed"})
     assert kept_kind.status_code == 200
     assert kept_kind.json()["first_day"] == "2026-11-01"
@@ -1137,17 +1148,23 @@ def test_list_window_edges_for_a_whole_day_block(people: People, app: FastAPI) -
     included = owner.get(path(only_a_member), params=from_inside_last_day).json()
     assert [b["id"] for b in included] == [day_d]
 
+    # `to` is UTC midnight starting day D, two hours EARLIER than day D's own local midnight
+    # (2026-10-02T22:00:00Z): at that instant the business's local wall clock still reads
+    # 2026-10-03T01:59:59.999999 (Amsterdam, UTC+2), so day D is still the correct local date and
+    # must be included. Kills computing the window edge from the UTC calendar date instead of the
+    # zone-converted one.
+    utc_midnight_of_d = {"from": "2026-09-25T00:00:00Z", "to": "2026-10-03T00:00:00Z"}
+    result_utc_midnight = owner.get(path(only_a_member), params=utc_midnight_of_d).json()
+    assert day_d in [b["id"] for b in result_utc_midnight]
+
 
 # 21. fence: list order by effective start (COALESCE(starts_at, midnight(first_day)) done in
-# Python, never in SQL: AT TIME ZONE is banned). The fence itself needs no server-TimeZone pin,
-# because our own implementation never asks Postgres to compare an instant with a date; this
-# asserts that precondition explicitly so a future SQL-side ORDER BY regression can't pass by luck
-# of the server's configured TimeZone (postgres:18 defaults to Etc/UTC, but nothing pins it).
-def test_list_order_is_by_effective_start_amsterdam(
-    people: People, app: FastAPI, migrate_engine: Engine
-) -> None:
-    with migrate_engine.connect() as conn:
-        assert conn.execute(text("SHOW TimeZone")).scalar() in ("UTC", "Etc/UTC")
+# Python, never in SQL: AT TIME ZONE is banned). Never assert the server's own TimeZone default
+# here: a correctly-behaving server on a non-UTC default must still pass this test. A SQL-side
+# ORDER BY COALESCE regression is instead pinned with `SET LOCAL TimeZone = 'UTC'` at the point the
+# wrong implementation is injected (see the spec's fence table), so that check doesn't leak into
+# the committed test or constrain what a real deployment's server may be configured to.
+def test_list_order_is_by_effective_start_amsterdam(people: People, app: FastAPI) -> None:
     owner = signed_in(app, people.a, people.both)
     put_settings(owner, {"timezone": "Europe/Amsterdam"})
     only_a_member = member_id(people.a, people.only_a)

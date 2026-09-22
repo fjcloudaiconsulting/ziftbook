@@ -753,6 +753,25 @@ def test_a_whole_day_block_is_matched_exactly_at_the_window_edges(
     assert get(client, people.a, ready, start=day, end=day).json()["slots"] == baseline
 
 
+# 10b. fence: a multi-day GET, so a reader whose predicate requires the block to CONTAIN the
+# whole query window (first_day <= :first AND last_day >= :last, swapped from the correct
+# first_day <= :last AND last_day >= :first) can't pass by luck: every case above requests a
+# single day, where :first == :last makes the two predicates indistinguishable.
+def test_a_whole_day_block_inside_a_wider_window_blocks_only_its_own_day(
+    people: People, app: FastAPI, ready: str
+) -> None:
+    client = new_client(app)
+    baseline = get(client, people.a, ready, start="2026-04-19", end="2026-04-21").json()["slots"]
+    assert local("2026-04-20", "09:00") in baseline  # asserted first: never vacuously blocked
+
+    insert_day_block(people.a, member_id(people.a, people.both), "2026-04-20", "2026-04-20")
+    blocked = get(client, people.a, ready, start="2026-04-19", end="2026-04-21").json()["slots"]
+
+    assert local("2026-04-20", "09:00") not in blocked
+    assert local("2026-04-19", "09:00") in blocked
+    assert local("2026-04-21", "09:00") in blocked
+
+
 # 11. fence: the look-back must be at least as wide as ck_time_off_days' bound (366 days).
 def test_a_366_day_old_whole_day_block_still_meets_the_window(
     people: People, app: FastAPI, ready: str
@@ -766,28 +785,34 @@ def test_a_366_day_old_whole_day_block_still_meets_the_window(
     assert get(client, people.a, ready, start=day, end=day).json()["slots"] == []
 
 
-# 12. fence: a whole-day block follows the business's CURRENT timezone, never a frozen instant.
+# 12. fence: a whole-day block follows the business's CURRENT timezone, never a frozen instant,
+# and never a UTC calendar date substituted for the zone-converted one. Europe/Lisbon is UTC+1
+# after 2026-03-29: Friday's own local midnight (2026-04-03T00:00 Lisbon) is Thursday's UTC
+# calendar date (2026-04-02T23:00:00Z). A day_span computed with zone='UTC' would derive Friday's
+# span as [2026-04-03T00:00Z, 2026-04-04T00:00Z) and never touch that instant, so it would stay
+# offered even though Friday is blocked.
 def test_a_whole_day_block_follows_a_later_timezone_change(
     people: People, app: FastAPI, owner: TestClient
 ) -> None:
     service_id = new_service(owner)
-    seed(people.a, people.both, weekdays("23:00", "23:59"))
+    seed(people.a, people.both, weekdays("23:00", "23:59") + weekdays("00:00", "01:00"))
     assign(people.a, service_id, member_id(people.a, people.both))
     client = new_client(app)
     thu, fri = "2026-04-02", "2026-04-03"
 
     assert put_settings(owner, {"timezone": "Europe/Lisbon"}).status_code == 200
     assert get(client, people.a, service_id, start=thu, end=thu).json()["slots"] != []
-    assert get(client, people.a, service_id, start=fri, end=fri).json()["slots"] != []
+    friday_before = get(client, people.a, service_id, start=fri, end=fri).json()["slots"]
+    assert "2026-04-03T22:00:00Z" in friday_before  # 23:00 Lisbon
+    assert "2026-04-02T23:00:00Z" in friday_before  # Friday's own 00:00 Lisbon
 
     assert put_settings(owner, {"timezone": "Europe/Amsterdam"}).status_code == 200
     insert_day_block(people.a, member_id(people.a, people.both), fri, fri)
     assert put_settings(owner, {"timezone": "Europe/Lisbon"}).status_code == 200
 
-    assert (
-        "2026-04-03T22:00:00Z"
-        not in get(client, people.a, service_id, start=fri, end=fri).json()["slots"]
-    )
+    friday_after = get(client, people.a, service_id, start=fri, end=fri).json()["slots"]
+    assert "2026-04-03T22:00:00Z" not in friday_after
+    assert "2026-04-02T23:00:00Z" not in friday_after  # kills a UTC-derived day_span
     assert (
         "2026-04-02T22:00:00Z"
         in get(client, people.a, service_id, start=thu, end=thu).json()["slots"]
