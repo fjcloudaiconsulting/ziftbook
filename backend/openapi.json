@@ -2998,7 +2998,7 @@
           "booking-approvals"
         ],
         "summary": "Update",
-        "description": "A merchant accepts or declines a pending booking. An owner, or the membership in\nbookings.worker_id, may transition; anyone else on this business gets 403. Another business's\nbooking is 404 (row-level security makes it invisible) rather than 403.",
+        "description": "A merchant settles a booking: accept, decline, cancel, or record how it went.\n\nAn owner, or the membership in bookings.worker_id, may transition; anyone else on this business\ngets 403, and another business's booking is 404. Undoing a booking already marked `completed`\nis the owner's alone. A transition the booking's current status does not allow, or an outcome\nrecorded before the appointment starts, is 409 `invalid_transition`.",
         "operationId": "booking-approvals-update",
         "parameters": [
           {
@@ -3431,7 +3431,10 @@
             "type": "string",
             "enum": [
               "confirmed",
-              "declined"
+              "declined",
+              "cancelled_by_merchant",
+              "completed",
+              "no_show"
             ],
             "title": "Status"
           }
@@ -3523,6 +3526,20 @@
             "maxLength": 2000,
             "title": "Cancellation Policy Text",
             "default": ""
+          },
+          "free_cancellation_hours": {
+            "type": "integer",
+            "maximum": 720.0,
+            "minimum": 0.0,
+            "title": "Free Cancellation Hours",
+            "default": 48
+          },
+          "reschedule_cutoff_hours": {
+            "type": "integer",
+            "maximum": 720.0,
+            "minimum": 0.0,
+            "title": "Reschedule Cutoff Hours",
+            "default": 24
           }
         },
         "additionalProperties": false,
@@ -3609,6 +3626,20 @@
             "maxLength": 2000,
             "title": "Cancellation Policy Text",
             "default": ""
+          },
+          "free_cancellation_hours": {
+            "type": "integer",
+            "maximum": 720.0,
+            "minimum": 0.0,
+            "title": "Free Cancellation Hours",
+            "default": 48
+          },
+          "reschedule_cutoff_hours": {
+            "type": "integer",
+            "maximum": 720.0,
+            "minimum": 0.0,
+            "title": "Reschedule Cutoff Hours",
+            "default": 24
           }
         },
         "additionalProperties": false,
@@ -3624,7 +3655,9 @@
           "booking_horizon_days",
           "max_pending_per_email",
           "pending_ttl_hours",
-          "cancellation_policy_text"
+          "cancellation_policy_text",
+          "free_cancellation_hours",
+          "reschedule_cutoff_hours"
         ],
         "title": "BusinessSettings"
       },
@@ -4621,7 +4654,10 @@
             "type": "string",
             "enum": [
               "confirmed",
-              "declined"
+              "declined",
+              "cancelled_by_merchant",
+              "completed",
+              "no_show"
             ],
             "title": "Status"
           }

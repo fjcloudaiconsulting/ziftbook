@@ -447,10 +447,11 @@ def commit_bypassing_the_lock(
             text("""
             INSERT INTO bookings (tenant_id, client_id, worker_id, service_id, starts_at, ends_at,
                 status, source, service_name, price_amount_minor, price_currency,
-                duration_minutes, auto_confirm_at_booking)
+                duration_minutes, auto_confirm_at_booking, free_cancellation_hours,
+                reschedule_cutoff_hours)
             VALUES (current_setting('app.tenant_id')::uuid, :client_id, :worker_id, :service_id,
                     :starts_at, :ends_at, 'confirmed', 'merchant', CAST(:service_name AS jsonb),
-                    :price_amount_minor, :price_currency, :duration_minutes, true)
+                    :price_amount_minor, :price_currency, :duration_minutes, true, 48, 24)
             """),
             {
                 "client_id": client_id,
@@ -1405,3 +1406,94 @@ def test_an_operational_error_is_a_503_not_a_500(
     response = post_booking(new_client(app), people.a, ready, starts_at=at("09:00"))
 
     assert (response.status_code, response.json()) == (503, {"code": "busy"})
+
+
+def thresholds_of(tenant_id: uuid.UUID, booking_id: str) -> tuple[int, int]:
+    with tenant_context(tenant_id) as session:
+        row = session.execute(
+            text(
+                "SELECT free_cancellation_hours, reschedule_cutoff_hours "
+                "FROM bookings WHERE id = :id"
+            ),
+            {"id": booking_id},
+        ).one()
+    return (row.free_cancellation_hours, row.reschedule_cutoff_hours)
+
+
+# 36: FENCE (T9) - AC-1. The two thresholds in force at booking time are SNAPSHOTTED onto the row,
+# from the business's settings and from nowhere else. Modelled on 34b.
+# Kills: INSERT_BOOKING omitting either column (23502, a 500 on the public POST); filling either
+# from a constant, or from the other settings key.
+def test_the_cancellation_thresholds_are_snapshotted_onto_the_booking(
+    people: People, app: FastAPI, owner: TestClient, ready: str
+) -> None:
+    assert (
+        put_settings(
+            owner, {"free_cancellation_hours": 12, "reschedule_cutoff_hours": 6}
+        ).status_code
+        == 200
+    )
+
+    response = post_booking(new_client(app), people.a, ready, starts_at=at("09:00"))
+
+    assert response.status_code == 201, response.json()
+    assert thresholds_of(people.a, response.json()["id"]) == (12, 6)
+
+
+# 36b: GUARD (T9b) - AC-1's immutability half, honestly labelled. It kills NOTHING in ZIF-55: the
+# engine ships no caller (D5), so no reader resolves the thresholds from business_settings.read()
+# at decision time, and nothing rewrites the row. Held for ZIF-54's reader to be fenced against.
+def test_a_later_settings_change_does_not_reach_a_booking_already_made(
+    people: People, app: FastAPI, owner: TestClient, ready: str
+) -> None:
+    assert (
+        put_settings(
+            owner, {"free_cancellation_hours": 12, "reschedule_cutoff_hours": 6}
+        ).status_code
+        == 200
+    )
+    booking_id = post_booking(new_client(app), people.a, ready, starts_at=at("09:00")).json()["id"]
+
+    assert (
+        put_settings(
+            owner, {"free_cancellation_hours": 6, "reschedule_cutoff_hours": 1}
+        ).status_code
+        == 200
+    )
+
+    assert thresholds_of(people.a, booking_id) == (12, 6)
+
+
+# 37: FENCE (T10) - the pydantic bound and the column CHECK are ONE pair, for BOTH columns. A
+# value the registry accepts and the column's CHECK rejects is a 500 on the public booking POST,
+# so the upper bound is asserted by BOOKING at it, not by reading the number back.
+# Kills, on either column: a pydantic bound wider than its CHECK (le=8760 on
+# reschedule_cutoff_hours: the 720 leg 500s on the insert); a bound narrower than the CHECK (the
+# 720 leg 422s); a non-strict field (the "48" leg). Parametrised over both keys because varying
+# only free_cancellation_hours left `reschedule_cutoff_hours: Field(ge=0, le=8760)` paired with
+# `CHECK (reschedule_cutoff_hours BETWEEN 0 AND 24)` green - proved, both directions at once.
+COLUMNS = ("free_cancellation_hours", "reschedule_cutoff_hours")
+
+
+@pytest.mark.parametrize("key", COLUMNS)
+@pytest.mark.parametrize(
+    "value,expected",
+    [(720, 200), (721, 422), (-1, 422), ("48", 422)],
+    ids=["720", "721", "-1", "str"],
+)
+def test_the_threshold_bounds_match_the_column_check(
+    people: People,
+    app: FastAPI,
+    owner: TestClient,
+    ready: str,
+    key: str,
+    value: object,
+    expected: int,
+) -> None:
+    response = put_settings(owner, {key: value})
+
+    assert response.status_code == expected
+    if expected == 200:
+        booked = post_booking(new_client(app), people.a, ready, starts_at=at("09:00"))
+        assert booked.status_code == 201, booked.json()
+        assert thresholds_of(people.a, booked.json()["id"])[COLUMNS.index(key)] == 720
