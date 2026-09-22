@@ -27,7 +27,7 @@ from tests.conftest import (
     signed_in,
     wait_until_blocked,
 )
-from tests.test_services import DEFAULT
+from tests.test_services import DEFAULT, stored
 
 CHANGED = "service_workers_changed"
 
@@ -427,3 +427,83 @@ def test_schema_index_and_service_cascade(
     assert index is not None and "(tenant_id, member_id)" in index
     assert unique == 0
     assert left == 0
+
+
+# ZIF-104: POST /api/services takes worker_ids and assigns them in the same transaction.
+def create(client: TestClient, worker_ids: Any) -> Response:
+    return client.post("/api/services", json={**DEFAULT, "worker_ids": worker_ids})
+
+
+# 16. fence: creating with workers assigns them and records what the PUT would.
+def test_creating_a_service_assigns_its_workers(
+    people: People, owner: TestClient, migrate_engine: Engine
+) -> None:
+    only_a, both = member_id(people.a, people.only_a), member_id(people.a, people.both)
+
+    response = create(owner, [str(both), str(only_a)])
+
+    assert response.status_code == 201
+    service_id = response.json()["id"]
+    assert response.json()["worker_ids"] == ids(only_a, both)
+    assert pairs(people.a) == sorted((uuid.UUID(service_id), m) for m in (only_a, both))
+    recorded = events(migrate_engine, tenant_id=people.a)
+    assert [e["action"] for e in recorded] == ["service_created", CHANGED]
+    assert recorded[-1]["target"] == f"service:{service_id}"
+    assert recorded[-1]["actor_user_id"] == people.both
+    assert recorded[-1]["details"] == {
+        "added": sorted(str(u) for u in (people.only_a, people.both)),
+        "removed": [],
+    }
+
+
+# 17. fence: a rejected worker id leaves no service, no assignment and no audit row behind.
+@pytest.mark.parametrize("bogus", ["only_b", "both_in_b", "random"])
+def test_a_rejected_worker_leaves_no_service_behind(
+    people: People, app: FastAPI, owner: TestClient, migrate_engine: Engine, bogus: str
+) -> None:
+    in_b = b_service(app, people)
+    b_member = member_id(people.b, people.only_b)
+    signed_in(app, people.b, people.both).put(f"/api/services/{in_b}/workers", json=[str(b_member)])
+    before_b = (stored(people.b), pairs(people.b))
+    other = {
+        "only_b": b_member,
+        "both_in_b": member_id(people.b, people.both),
+        "random": uuid.uuid7(),
+    }[bogus]
+
+    # only_a sorts first, so checking only the first id lets the bogus one through.
+    response = create(owner, [str(member_id(people.a, people.only_a)), str(other)])
+
+    assert (response.status_code, response.json()) == (422, {"code": "unknown_member"})
+    assert stored(people.a) == []
+    assert pairs(people.a) == []
+    assert events(migrate_engine, tenant_id=people.a) == []
+    assert (stored(people.b), pairs(people.b)) == before_b
+
+
+# 18. guard: no list, or an empty one, is today's create: nobody assigned, one event.
+@pytest.mark.parametrize("body", [DEFAULT, {**DEFAULT, "worker_ids": []}], ids=["omitted", "[]"])
+def test_creating_without_workers_is_unchanged(
+    people: People, owner: TestClient, migrate_engine: Engine, body: dict[str, Any]
+) -> None:
+    response = owner.post("/api/services", json=body)
+
+    assert response.status_code == 201
+    assert response.json()["worker_ids"] == []
+    assert pairs(people.a) == []
+    assert [e["action"] for e in events(migrate_engine, tenant_id=people.a)] == ["service_created"]
+
+
+# 19. guard: a malformed list is refused before anything is written.
+@pytest.mark.parametrize(
+    "worker_ids",
+    [None, "x", [1], [None], [str(uuid.uuid7()) for _ in range(201)]],
+    ids=["null", "string", "number", "null-item", "201-ids"],
+)
+def test_a_malformed_worker_list_is_refused_on_create(
+    people: People, owner: TestClient, worker_ids: Any
+) -> None:
+    response = create(owner, worker_ids)
+
+    assert (response.status_code, response.json()) == (422, {"code": "invalid_request"})
+    assert stored(people.a) == []

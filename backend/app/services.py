@@ -56,6 +56,7 @@ Buffer = Annotated[int, Field(ge=0, le=240)]
 
 # Built field by field: nothing a client sends can name a business, a currency or an id.
 STRICT = ConfigDict(strict=True, extra="forbid")
+MAX_WORKERS = 200  # ponytail: a business has tens of members; raise it if one ever has more
 
 
 class PriceIn(BaseModel):
@@ -75,6 +76,11 @@ class ServiceIn(BaseModel):
     price: PriceIn
     duration_minutes: Duration
     buffer_minutes: Buffer | None = None  # None: the business's default
+    # Member ids, assigned as PUT /workers would, in the same transaction; [] for none.
+    # strict=False on the item, as bookings.BookingIn: strict mode refuses every UUID string.
+    worker_ids: Annotated[
+        list[Annotated[UUID, Field(strict=False)]], Field(max_length=MAX_WORKERS)
+    ] = Field(default_factory=list)
 
 
 class ServiceChange(BaseModel):
@@ -190,7 +196,12 @@ def create_service(
         target=f"service:{service.id}",
     )
     response.headers["Cache-Control"] = "no-store"
-    return service
+    if not new.worker_ids:
+        return service
+    # A refused id is an ApiError, which rolls back the insert above too: no unbookable leftover.
+    # Nobody else sees the new row yet, so locking only the members makes no cycle with PUT.
+    assign_workers(current, request, service.id, new.worker_ids)
+    return found(current, service.id)
 
 
 @router.patch(
@@ -253,9 +264,6 @@ def update_service(
     return ServiceOut.model_validate(row, from_attributes=True)
 
 
-MAX_WORKERS = 200  # ponytail: a business has tens of members; raise it if one ever has more
-
-
 def lock_members(current: SignedIn, member_ids: list[UUID]) -> dict[UUID, UUID]:
     """The user behind each member id of this business, locked; ids of no current member are left
     out."""
@@ -292,6 +300,15 @@ def replace_workers(
     # The service first, as update_service locks it: two saves of one service queue here.
     found(current, service_id, "FOR NO KEY UPDATE")
     response.headers["Cache-Control"] = "no-store"
+    assign_workers(current, request, service_id, member_ids)
+    return found(current, service_id)
+
+
+def assign_workers(
+    current: SignedIn, request: Request, service_id: UUID, member_ids: list[UUID]
+) -> None:
+    """Make member_ids the service's workers and record what changed; 422 if any id is not a
+    current member of this business, before anything is written. The caller holds the service."""
     ids = sorted(set(member_ids))
     # Then the members (lock_members). Arrays go as CAST(:ids AS uuid[]): psycopg sends an empty
     # list as an untyped '{}'.
@@ -328,4 +345,3 @@ def replace_workers(
                 "removed": sorted(str(u) for u in removed),
             },
         )
-    return found(current, service_id)

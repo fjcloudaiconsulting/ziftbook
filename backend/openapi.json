@@ -4472,6 +4472,15 @@
               }
             ],
             "title": "Buffer Minutes"
+          },
+          "worker_ids": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "maxItems": 200,
+            "title": "Worker Ids"
           }
         },
         "additionalProperties": false,
