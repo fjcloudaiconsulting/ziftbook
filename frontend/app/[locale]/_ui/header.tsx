@@ -10,10 +10,26 @@ import styles from "./ui.module.css";
 // Each language names itself, as on the landing page.
 const NAMES: Record<(typeof routing.locales)[number], string> = { en: "English", nl: "Nederlands", pt: "Português" };
 
-export function Header() {
-  const t = useTranslations("Header");
+/** The language list, shared by the signed-out header's popover and the console's account popover. */
+export function LanguageLinks() {
   const locale = useLocale();
   const pathname = usePathname();
+  return (
+    <ul>
+      {routing.locales.map((id) => (
+        <li key={id}>
+          {/* The fragment of an emailed link was already taken out of the address bar. */}
+          <Link href={pathname} locale={id} hrefLang={id} lang={id} aria-current={id === locale ? "page" : undefined}>
+            {NAMES[id]}
+          </Link>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+export function Header() {
+  const t = useTranslations("Header");
 
   return (
     <header className={styles.top}>
@@ -41,16 +57,7 @@ export function Header() {
         </svg>
       </button>
       <nav id="languages" className={styles.languageMenu} popover="auto" aria-label={t("language")}>
-        <ul>
-          {routing.locales.map((id) => (
-            <li key={id}>
-              {/* The fragment of an emailed link was already taken out of the address bar. */}
-              <Link href={pathname} locale={id} hrefLang={id} lang={id} aria-current={id === locale ? "page" : undefined}>
-                {NAMES[id]}
-              </Link>
-            </li>
-          ))}
-        </ul>
+        <LanguageLinks />
       </nav>
     </header>
   );

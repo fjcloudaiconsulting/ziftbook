@@ -21,6 +21,12 @@
 
   --gutter: clamp(1.25rem, 0.6rem + 3vw, 3.5rem);
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+
+  /* Console shell (ZIF-50) */
+  --nav: oklch(0.985 0.004 28);
+  --lift: 0 -0.5rem 1.5rem -1rem oklch(0.23 0.025 28 / 0.28);
+  --z-sticky: 10;
+  --z-tabs: 20;
 }
 
 *, *::before, *::after { box-sizing: border-box; }

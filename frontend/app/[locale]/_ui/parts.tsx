@@ -5,6 +5,7 @@ import { type ReactNode, type Ref, useEffect, useId, useRef, useState, useSyncEx
 
 import { clock, RESEND_AFTER_MS, secondsLeft, takeToken } from "@/lib/account";
 
+import { Header } from "./header";
 import styles from "./ui.module.css";
 
 /** What an API call came back with: status 0 means the request never got an answer. */
@@ -29,9 +30,12 @@ export function problem(outcome: Outcome<unknown>): "busy" | "unreachable" | "in
 
 export function Screen({ children }: { children: ReactNode }) {
   return (
-    <main className={styles.screen}>
-      <div className={styles.col}>{children}</div>
-    </main>
+    <>
+      <Header />
+      <main className={styles.screen}>
+        <div className={styles.col}>{children}</div>
+      </main>
+    </>
   );
 }
 

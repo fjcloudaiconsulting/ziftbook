@@ -3,7 +3,9 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 
-const ALLOWED = new Set(["NODE_ENV", "PYTEST_XDIST_WORKER"]);
+// TZ is interpreted by the runtime itself (libc/ICU), never read by ziftbook code as configuration:
+// tests set it so Intl and Date formatting is deterministic regardless of the host's own zone.
+const ALLOWED = new Set(["NODE_ENV", "PYTEST_XDIST_WORKER", "TZ"]);
 const NAME = "([A-Za-z_][A-Za-z0-9_]*)";
 
 const READERS = {

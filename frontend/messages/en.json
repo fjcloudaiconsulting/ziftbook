@@ -127,14 +127,69 @@
     "memberTitle": "You're already part of {business}",
     "memberLede": "You already work there, so nothing changed. Sign in to see your appointments."
   },
-  "Home": {
-    "signedInAs": "Signed in as <chip>{email}</chip>",
-    "owner": "Owner",
-    "worker": "Staff",
-    "emptyTitle": "Your bookings will show here",
-    "emptyBody": "Services, opening hours and today's appointments come next. For now your account and business are ready.",
-    "signOut": "Sign out",
-    "everywhereHint": "Lost a phone, or signed in on a shared computer?",
-    "signOutEverywhere": "Sign out on every device"
+  "Console": {
+    "nav": {
+      "today": "Today",
+      "calendar": "Calendar",
+      "services": "Services",
+      "team": "Team",
+      "myHours": "My hours",
+      "clients": "Clients",
+      "openingHours": "Opening hours",
+      "settings": "Settings",
+      "more": "More",
+      "close": "Close",
+      "sections": "Sections",
+      "moreSections": "More sections"
+    },
+    "account": {
+      "menu": "Your account",
+      "owner": "Owner",
+      "worker": "Staff",
+      "signOut": "Sign out",
+      "everywhereHint": "Lost a phone, or signed in on a shared computer?",
+      "signOutEverywhere": "Sign out on every device"
+    },
+    "person": {
+      "nameNotSet": "Name not set"
+    },
+    "today": {
+      "ownerEmptyTitle": "No appointments yet",
+      "ownerEmptyBody": "Clients can book once you have a service and working hours. It takes about five minutes.",
+      "steps": "Steps to take bookings",
+      "step1": "Set when the shop is open",
+      "step2": "Add your first service",
+      "step3": "Set your working hours",
+      "step4": "Invite the people who work with you",
+      "stepsHint": "Opening hours come first: everyone's working hours sit inside them. Step four is optional. If you work alone, your own working hours are enough.",
+      "workerEmptyTitle": "Nothing booked with you today",
+      "workerEmptyBody": "New appointments appear here as clients book them.",
+      "checkHours": "Check my working hours"
+    },
+    "calendar": {
+      "title": "Designed with bookings, not here",
+      "body": "The week view arrives with bookings (ZIF-51). It has no endpoint yet: working hours and blocked time already feed it, which is why those two screens are in this ticket.",
+      "seeHours": "See working hours",
+      "seeMyHours": "See my hours"
+    },
+    "clients": {
+      "title": "Arrives with bookings",
+      "body": "Clients book as guests, so this list is built from their bookings."
+    },
+    "settings": {
+      "title": "ZIF-42 fills this in",
+      "intro": "The navigation has the slot ready. The screens in this ticket already read four of these settings, so they are worth naming:",
+      "timezone": "<b>Time zone</b> · every time on screen is drawn in it",
+      "staffHours": "<b>Staff may change their own working hours</b> · decides whether \"My hours\" is editable",
+      "buffer": "<b>Default gap after an appointment</b> · what \"use the business default\" means on a service",
+      "horizon": "<b>How far ahead clients can book</b> · {days} days, and the blocked-time list shows the same {days} days",
+      "slotStep": "<b>Slot spacing</b> · not shown in this ticket",
+      "openingHoursNote": "Opening hours are not here: they have a section of their own, next to this one, because everyone's working hours sit inside them."
+    },
+    "errors": {
+      "ownerOnly": "Only an owner can do this.",
+      "signedOut": "Your session ended. Sign in again in a new tab, then try again here. <link>Sign in</link>"
+    },
+    "notSaved": "Nothing was saved, and your details are still here."
   }
 }

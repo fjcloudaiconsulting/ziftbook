@@ -1,0 +1,166 @@
+/* The signed-in console shell: top bar, desktop sidebar, phone tab bar and the More sheet. */
+
+.shell { min-height: 100dvh; display: flex; flex-direction: column; }
+
+/* Top bar */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-sticky);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.85rem var(--gutter);
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
+}
+.brand { display: flex; align-items: baseline; gap: 0.6rem; min-width: 0; }
+.bizName { color: var(--muted); font-size: 0.9375rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.iconButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--ink);
+  cursor: pointer;
+  flex: none;
+  anchor-name: --account-button;
+}
+.iconButton:hover { border-color: var(--muted); }
+.iconButton:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
+
+.accountPopover {
+  margin: 0;
+  padding: 0.85rem;
+  min-inline-size: 15rem;
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  background: var(--bg);
+  color: var(--ink);
+  box-shadow: 0 1rem 2.5rem -1rem oklch(0.23 0.025 28 / 0.25);
+  position: fixed;
+  inset: 4.5rem var(--gutter) auto auto;
+}
+@supports (anchor-name: --a) {
+  .accountPopover {
+    position-anchor: --account-button;
+    inset: auto;
+    position-area: bottom span-left;
+    position-try-fallbacks: flip-block;
+    margin-block: 0.5rem;
+  }
+}
+.accountPopover ul { list-style: none; margin: 0.5rem 0; padding: 0; display: grid; }
+.accountName { font-weight: 600; }
+.accountMeta { margin: 0.15rem 0 0; color: var(--muted); font-size: 0.875rem; }
+.popoverDivider { height: 1px; background: var(--line); margin: 0.75rem 0; }
+
+/* Layout: sidebar + content on desktop, content only on phone */
+.body { display: flex; flex: 1; }
+.sidebar {
+  display: none;
+  flex-direction: column;
+  gap: 0.15rem;
+  width: 15rem;
+  flex: none;
+  padding: 1rem 0.75rem;
+  background: var(--nav);
+  border-right: 1px solid var(--line);
+}
+.navItem {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-height: 2.75rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.65rem;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  text-decoration: none;
+  font: 600 0.9375rem/1.2 var(--font-body), system-ui, sans-serif;
+  cursor: pointer;
+}
+.navItem:hover { background: var(--surface); }
+.navItem[aria-current="page"] { background: var(--surface); color: var(--primary); }
+.navItem svg { flex: none; }
+
+.content { flex: 1; min-width: 0; padding: 1.25rem 1rem 1.5rem; padding-bottom: calc(1.5rem + 4.5rem + env(safe-area-inset-bottom)); }
+
+@media (min-width: 56rem) {
+  .sidebar { display: flex; }
+  .content { padding: 1.75rem 2rem 3rem; }
+}
+
+/* Phone tab bar */
+.tabbar {
+  position: sticky;
+  bottom: 0;
+  z-index: var(--z-tabs);
+  display: flex;
+  background: var(--nav);
+  box-shadow: var(--lift);
+  padding: 0.35rem 0.25rem env(safe-area-inset-bottom);
+}
+@media (min-width: 56rem) {
+  .tabbar { display: none; }
+}
+.tab {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.2rem;
+  min-height: 3rem;
+  padding: 0.35rem 0.2rem;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+.tab[aria-current="page"], .tab[aria-expanded="true"] { color: var(--primary); }
+.tabLabel { font-size: 0.6875rem; font-weight: 600; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* More sheet, a native modal <dialog> */
+.sheet {
+  padding: 0;
+  border: 0;
+  border-radius: 1.25rem 1.25rem 0 0;
+  position: fixed;
+  inset: auto 0 0 0;
+  margin: 0;
+  width: 100%;
+  max-width: none;
+  box-shadow: var(--lift);
+}
+.sheet::backdrop { background: oklch(0.23 0.025 28 / 0.35); }
+@media (prefers-reduced-motion: no-preference) {
+  .sheet[open] { animation: sheet-in 220ms var(--ease-out); }
+}
+@keyframes sheet-in { from { translate: 0 100%; } }
+.sheetInner { padding: 0.75rem 1rem calc(1rem + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 0.15rem; }
+.sheetGrab { align-self: center; width: 2.5rem; height: 0.3rem; border-radius: 999px; background: var(--line); margin-bottom: 0.5rem; }
+
+/* Placeholder sections and Today's steps list */
+.placeholder { border: 1px dashed var(--line); border-radius: 1rem; padding: 1.1rem; display: grid; gap: 0.5rem; }
+.placeholder strong { font-weight: 600; }
+.placeholder p { margin: 0; color: var(--muted); font-size: 0.9375rem; }
+.steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.6rem; }
+.steps li { display: flex; align-items: center; gap: 0.6rem; }
+.stepMark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 50%;
+  background: var(--surface);
+  font: 600 0.8125rem/1 var(--font-body), system-ui, sans-serif;
+  flex: none;
+}
+.settingsList { list-style: none; margin: 0.25rem 0 0; padding: 0; display: grid; gap: 0.4rem; color: var(--muted); font-size: 0.9375rem; }

@@ -118,7 +118,18 @@ describe("account pages", () => {
     api.close();
   });
 
-  const pages = ["/en", "/en/sign-in", "/en/sign-up", "/en/sign-up/complete", "/en/forgot-password", "/nl/reset-password", "/pt/invite"];
+  const pages = [
+    "/en",
+    "/en/sign-in",
+    "/en/sign-up",
+    "/en/sign-up/complete",
+    "/en/forgot-password",
+    "/nl/reset-password",
+    "/pt/invite",
+    "/en/calendar",
+    "/nl/clients",
+    "/pt/settings",
+  ];
 
   test("no page sends a Referer or can be framed", async () => {
     for (const path of pages) {

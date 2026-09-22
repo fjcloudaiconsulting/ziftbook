@@ -5,8 +5,6 @@ import { notFound } from "next/navigation";
 
 import { routing } from "@/i18n/routing";
 
-import { Header } from "./_ui/header";
-
 import "../tokens.css";
 
 const display = localFont({
@@ -40,10 +38,7 @@ export default async function LocaleLayout({ children, params }: LayoutProps<"/[
   return (
     <html lang={locale} className={`${display.variable} ${body.variable}`}>
       <body>
-        <NextIntlClientProvider>
-          <Header />
-          {children}
-        </NextIntlClientProvider>
+        <NextIntlClientProvider>{children}</NextIntlClientProvider>
       </body>
     </html>
   );
