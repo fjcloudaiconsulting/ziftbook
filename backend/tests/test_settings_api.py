@@ -28,6 +28,7 @@ DEFAULTS = {
     "min_notice_minutes": 60,
     "booking_horizon_days": 60,
     "max_pending_per_email": 3,
+    "pending_ttl_hours": 24,
     "cancellation_policy_text": "",
 }
 
@@ -86,6 +87,11 @@ def test_only_an_owner_changes_settings(people: People, app: FastAPI, body: Any)
         {"min_notice_minutes": 10081},
         {"booking_horizon_days": 0},
         {"booking_horizon_days": 366},
+        {"pending_ttl_hours": 0},
+        {"pending_ttl_hours": 169},
+        {"pending_ttl_hours": "24"},
+        {"pending_ttl_hours": 24.0},
+        {"pending_ttl_hours": None},
         [],
     ],
     ids=[
@@ -118,6 +124,11 @@ def test_only_an_owner_changes_settings(people: People, app: FastAPI, body: Any)
         "notice over a week",
         "zero horizon",
         "horizon over a year",
+        "zero ttl",
+        "ttl over a week",
+        "string ttl",
+        "float ttl",
+        "null ttl",
         "list body",
     ],
 )
@@ -220,6 +231,7 @@ def test_the_contract_requires_every_setting_back_and_none_sent() -> None:
         "min_notice_minutes",
         "booking_horizon_days",
         "max_pending_per_email",
+        "pending_ttl_hours",
         "cancellation_policy_text",
     ]
     assert "required" not in schemas["BusinessSettings-Input"]

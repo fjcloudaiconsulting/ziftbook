@@ -13,11 +13,11 @@ import json
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Request, Response
+from fastapi import APIRouter, Query, Request, Response
 from psycopg.errors import ExclusionViolation, ForeignKeyViolation
 from pydantic import BaseModel, Field, StringConstraints
 from sqlalchemy import Row, text
@@ -42,8 +42,6 @@ from app.errors import ApiError, Error
 from app.services import STRICT, Price
 
 IP_LIMIT, EMAIL_LIMIT, LIMIT_WINDOW = 30, 5, timedelta(hours=1)
-# ZIF-5's ~24h for merchant approval. ZIF-54 may promote this to a setting; it is not one today.
-PENDING_TTL = timedelta(hours=24)
 # ZIF-51's own key in app/schedule.py's ticket-number advisory lock convention (OPENING_LOCK = 105):
 # disjoint first arguments, so the two locks can never collide.
 LOCK_KEY = 51
@@ -119,6 +117,38 @@ def account(request: Request) -> Account | None:
     return None if email is None else Account(row.user_id, email)
 
 
+# The booking_events value set and its audit action, held here because migration 0026 deliberately
+# put no CHECK on booking_events.event (0026:211-217). ZIF-53/ZIF-55/ZIF-7 add their own rows.
+TRANSITIONS: dict[str, auth.Action] = {
+    "confirmed": "booking_confirmed",
+    "declined": "booking_declined",
+}
+
+
+class StatusChange(BaseModel):
+    model_config = STRICT  # app.services.STRICT: strict=True, extra="forbid"
+    status: Literal["confirmed", "declined"]
+
+
+class BookingStatusOut(BaseModel):
+    id: UUID
+    status: Literal["confirmed", "declined"]
+
+
+class PendingOut(BaseModel):
+    id: UUID
+    starts_at: datetime
+    ends_at: datetime
+    expires_at: datetime  # NOT NULL for every pending: ck_bookings_expires_at
+    service_id: UUID
+    service_name: dict[str, str]  # all three locales, as snapshotted
+    price: Price  # app.services.Price
+    worker_id: UUID
+    worker_display_name: str | None
+    client_id: UUID
+    client_name: str
+
+
 LOCK = text("SELECT pg_advisory_xact_lock(:key, hashtext(current_setting('app.tenant_id')))")
 
 SERVICE = text("""
@@ -173,9 +203,61 @@ RETURNING id, status, starts_at, ends_at
 INSERT_EVENT = text("""
 INSERT INTO booking_events (tenant_id, booking_id, event, ip, user_agent, policy_version,
                             consent_purposes)
-VALUES (current_setting('app.tenant_id')::uuid, :booking_id, 'created', CAST(:ip AS inet),
+VALUES (current_setting('app.tenant_id')::uuid, :booking_id, :event, CAST(:ip AS inet),
         :user_agent, :policy_version, CAST(:consent_purposes AS jsonb))
 """)
+
+# ponytail: limit=50 (100 max) with no cursor, so a business holding more live pendings than that
+# sees only the soonest ones and the tail stays invisible until the TTL thins it. Bounded by
+# pending_ttl_hours x arrival rate, capped per address by max_pending_per_email. The upgrade is a
+# (starts_at, id) cursor exactly like app/clients.py:63 - no schema change, no new index.
+#
+# No starts_at filter, deliberately (rejected review finding): a pending whose appointment time has
+# already passed stays in the queue and, soonest-first, sorts to the top. The merchant must still be
+# able to settle it rather than have it vanish until the TTL, and recording a booking whose time has
+# passed is a case migration 0026 explicitly supports (its walk-in comment, 0026:159-171). Top of
+# the list is the right urgency order for it.
+QUEUE = text("""
+SELECT b.id, b.starts_at, b.ends_at, b.expires_at, b.service_id, b.service_name,
+       jsonb_build_object('amount_minor', b.price_amount_minor,
+                          'currency', b.price_currency) AS price,
+       b.worker_id, b.worker_display_name, b.client_id, c.name AS client_name
+FROM bookings b
+JOIN clients c ON c.tenant_id = b.tenant_id AND c.id = b.client_id
+WHERE b.status = 'pending' AND b.expires_at > now()
+  AND (:everyone OR b.worker_id = (SELECT id FROM memberships WHERE user_id = :me))
+ORDER BY b.starts_at, b.id
+LIMIT :limit
+""")
+
+# The booking and who holds it. No FOR UPDATE (D5): the advisory lock and TRANSITION's own
+# qualifier are what make the transition exactly-once, and locking a membership row here would
+# take locks in an order CONTRIBUTING.md constrains around keep_an_owner.
+BOOKING = text("""
+SELECT m.user_id AS worker_user_id
+FROM bookings b
+JOIN memberships m ON m.tenant_id = b.tenant_id AND m.id = b.worker_id
+WHERE b.id = :id
+""")
+
+# One statement, both guards in SQL. `expires_at > now()` is the TRANSACTION's clock - the same
+# now() availability.BOOKED uses (app/availability.py:175) - so the queue and this can never
+# disagree. expires_at is NOT in the SET list: ck_bookings_expires_at is one-way (0026:95-100).
+#
+# now() is transaction_timestamp(), frozen when the transaction opens, so a request that waits on
+# the tenant advisory lock compares against a clock behind wall clock: a pending that expires WHILE
+# the request waits is still accepted (measured: a transaction blocked 2.7 s saw now() 2.717 s
+# behind clock_timestamp()). Kept on purpose (rejected review finding): statement_timestamp() here
+# would let the queue (QUEUE, availability.BOOKED and EXPIRE all use now()) and this transition
+# disagree about the same booking - the exact failure the design set out to prevent - and the error
+# direction is the safe one: now() <= wall clock, so a live pending is never wrongly refused.
+# tests/test_bookings_approval_api.py's F3 fences exactly this convention.
+TRANSITION = text("""
+UPDATE bookings SET status = :status
+WHERE id = :id AND status = 'pending' AND expires_at > now()
+RETURNING id, status
+""")
+
 
 router = APIRouter(prefix="/api/public", tags=["bookings"])
 
@@ -325,7 +407,11 @@ def create(  # sync def: turnstile.verify's urlopen blocks, and runs in FastAPI'
             #     loop survives as the backstop for a writer that forgot the lock (23P01) or a
             #     member removed concurrently (23503, B5).
             status = "confirmed" if settings.auto_confirm else "pending"
-            expires_at = None if status == "confirmed" else row.now + PENDING_TTL
+            expires_at = (
+                None
+                if status == "confirmed"
+                else row.now + timedelta(hours=settings.pending_ttl_hours)
+            )
             load = Counter(
                 m
                 for m, starts_at, _ends_at, _o in booked_rows
@@ -363,6 +449,7 @@ def create(  # sync def: turnstile.verify's urlopen blocks, and runs in FastAPI'
                             INSERT_EVENT,
                             {
                                 "booking_id": booking.id,
+                                "event": "created",
                                 "ip": origin_ip,
                                 "user_agent": user_agent,
                                 "policy_version": new.policy_version,
@@ -412,3 +499,75 @@ def create(  # sync def: turnstile.verify's urlopen blocks, and runs in FastAPI'
         # not know) and not 500. app/passwords.py:84 established the code. No retry behind it: a
         # retry would need the Turnstile token again, which is single-use (C9).
         raise ApiError(503, "busy") from None
+
+
+merchant_router = APIRouter(prefix="/api", tags=["booking-approvals"])
+
+
+@merchant_router.get(
+    "/bookings/pending", name="list", responses={s: {"model": Error} for s in (401, 422)}
+)
+def pending(
+    current: auth.CurrentSession,
+    response: Response,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+) -> list[PendingOut]:
+    """The business's live pending bookings, soonest first. An owner sees the whole queue; a
+    worker sees only bookings assigned to them - members.is_owner, the same owner half that
+    members.may_manage applies to the transition, so the list and the transition can never
+    disagree."""
+    rows = current.db.execute(
+        QUEUE,
+        {"everyone": members.is_owner(current), "me": current.user_id, "limit": limit},
+    ).all()
+    response.headers["Cache-Control"] = "no-store"
+    return [PendingOut.model_validate(row, from_attributes=True) for row in rows]
+
+
+@merchant_router.patch(
+    "/bookings/{booking_id}",
+    name="update",
+    responses={s: {"model": Error} for s in (401, 403, 404, 409, 415, 422)},
+)
+def transition(
+    booking_id: UUID,
+    change: StatusChange,
+    current: auth.CurrentSession,
+    request: Request,
+    response: Response,
+) -> BookingStatusOut:
+    """A merchant accepts or declines a pending booking. An owner, or the membership in
+    bookings.worker_id, may transition; anyone else on this business gets 403. Another business's
+    booking is 404 (row-level security makes it invisible) rather than 403."""
+    current.db.execute(LOCK, {"key": LOCK_KEY})  # 1: nothing above this
+    row = current.db.execute(BOOKING, {"id": booking_id}).first()  # 2
+    if row is None:
+        raise ApiError(404, "not_found")
+    if not members.may_manage(current, row.worker_user_id):  # 3
+        raise ApiError(403, "owner_only")
+    changed = current.db.execute(
+        TRANSITION, {"id": booking_id, "status": change.status}
+    ).first()  # 4
+    if changed is None:
+        raise ApiError(409, "not_pending")
+    origin_ip, user_agent = auth.origin(request)
+    current.db.execute(  # 5
+        INSERT_EVENT,
+        {
+            "booking_id": booking_id,
+            "event": change.status,
+            "ip": origin_ip,
+            "user_agent": user_agent,
+            "policy_version": None,
+            "consent_purposes": None,
+        },
+    )
+    auth.record(  # 6
+        current.db,
+        request,
+        TRANSITIONS[change.status],
+        actor_user_id=current.user_id,
+        target=f"booking:{booking_id}",
+    )
+    response.headers["Cache-Control"] = "no-store"  # 7
+    return BookingStatusOut(id=changed.id, status=changed.status)

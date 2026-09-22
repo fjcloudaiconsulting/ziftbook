@@ -90,6 +90,8 @@ Action = Literal[
     "client_created",
     "client_changed",
     "consent_recorded",
+    "booking_confirmed",
+    "booking_declined",
 ]
 
 
