@@ -253,8 +253,6 @@ def test_the_queue_lists_only_live_pendings_soonest_first(
     late = make_pending(app, people.a, ready, starts_at=at("15:00"))
     early = make_pending(app, people.a, ready, starts_at=at("09:00"))
     mid = make_pending(app, people.a, ready, starts_at=at("12:00"))
-    expired = make_pending(app, people.a, ready, starts_at=at("10:00"))
-    expire(people.a, expired)
     confirmed = make_pending(app, people.a, ready, starts_at=at("11:00"))
     assert patch(owner, confirmed, "confirmed").status_code == 200
     declined = make_pending(app, people.a, ready, starts_at=at("13:00"))
@@ -265,6 +263,10 @@ def test_the_queue_lists_only_live_pendings_soonest_first(
             text("UPDATE bookings SET status = 'awaiting_payment' WHERE id = :id"),
             {"id": awaiting},
         )
+    # Created and expired LAST: any post_booking call after this would flip it to 'expired' via
+    # the create path's own EXPIRE step (app/bookings.py:264), masking the queue's own TTL filter.
+    expired = make_pending(app, people.a, ready, starts_at=at("10:00"))
+    expire(people.a, expired)
 
     response = owner.get("/api/bookings/pending")
 
