@@ -387,6 +387,79 @@ def local_dt(day: str) -> datetime:
     return to_utc(date.fromisoformat(day), time(), ZONE)
 
 
+def seed_booking(
+    tenant_id: uuid.UUID, service_id: str, worker_id: uuid.UUID, starts_at: str, ends_at: str
+) -> None:
+    """A real booking row, inserted directly (the console path, not the public route): enough to
+    make booked() do real work for test_booked_is_one_statement_whatever_the_worker_and_day_count,
+    which must not monkeypatch booked() (F-l) or the fence it drives is unfalsifiable."""
+    with tenant_context(tenant_id) as session:
+        session.execute(
+            text("SELECT pg_advisory_xact_lock(51, hashtext(current_setting('app.tenant_id')))")
+        )
+        client_id = session.scalar(
+            text(
+                "INSERT INTO clients (tenant_id, name) "
+                "VALUES (current_setting('app.tenant_id')::uuid, 'Walk-in') RETURNING id"
+            )
+        )
+        session.execute(
+            text("""
+            INSERT INTO bookings (tenant_id, client_id, worker_id, service_id, starts_at, ends_at,
+                status, source, service_name, price_amount_minor, price_currency,
+                duration_minutes, auto_confirm_at_booking)
+            SELECT current_setting('app.tenant_id')::uuid, :client_id, :worker_id, :service_id,
+                   :starts_at, :ends_at, 'confirmed', 'merchant', name, price_amount_minor,
+                   price_currency, duration_minutes, true
+            FROM services WHERE id = :service_id
+            """),
+            {
+                "client_id": client_id,
+                "worker_id": worker_id,
+                "service_id": service_id,
+                "starts_at": starts_at,
+                "ends_at": ends_at,
+            },
+        )
+
+
+def test_booked_is_one_statement_whatever_the_worker_and_day_count(
+    people: People, app: FastAPI, owner: TestClient, app_engine: Engine
+) -> None:
+    # F-l: booked() joins services, so a per-worker or per-day implementation would still show up
+    # as extra "FROM bookings" statements even with real rows - patch_booked (a monkeypatch that
+    # issues no statement at all) would make this fence unfalsifiable.
+    both, only_a = member_id(people.a, people.both), member_id(people.a, people.only_a)
+    service_id = new_service(owner)
+    seed(people.a, people.both, weekdays("09:00", "12:00"))
+    seed(people.a, people.only_a, weekdays("09:00", "12:00"))
+    assign(people.a, service_id, both, only_a)
+    seed_booking(people.a, service_id, both, local(MONDAY, "10:00"), local(MONDAY, "10:30"))
+    seed_booking(people.a, service_id, only_a, local(MONDAY, "10:00"), local(MONDAY, "10:30"))
+    statements: list[str] = []
+
+    def count(conn: object, cursor: object, statement: str, *args: object) -> None:
+        statements.append(statement)
+
+    event.listen(app_engine, "before_cursor_execute", count)
+    try:
+        client = new_client(app)
+        short = get(client, people.a, service_id)
+        one_day_bookings = sum("FROM bookings" in s for s in statements)
+        one_day_total = len(statements)
+        statements.clear()
+        long = get(client, people.a, service_id, MONDAY, "2026-04-12")
+        many_days_bookings = sum("FROM bookings" in s for s in statements)
+        many_days_total = len(statements)
+    finally:
+        event.remove(app_engine, "before_cursor_execute", count)
+
+    assert (short.status_code, long.status_code) == (200, 200)
+    assert one_day_bookings == 1
+    assert many_days_bookings == 1
+    assert one_day_total == many_days_total
+
+
 # 8. a fixed number of queries
 
 

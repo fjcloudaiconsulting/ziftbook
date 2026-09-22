@@ -27,6 +27,7 @@ from tests.conftest import (
     signed_in,
     wait_until_blocked,
 )
+from tests.test_services import service as create_service
 
 
 @pytest.fixture
@@ -766,6 +767,61 @@ def test_a_worker_probing_another_business_is_not_found_not_forbidden(
 
     assert (response.status_code, response.json()) == (404, {"code": "not_found"})
     assert stored_name(people.b, other_business_member) is None
+
+
+# ZIF-51: bookings reference memberships with no ON DELETE, so removing a member who holds one is
+# a 409, not the 500 a bare ForeignKeyViolation re-raise would give (F2).
+
+
+def seed_booking_for(tenant_id: uuid.UUID, worker_id: uuid.UUID, service_id: str) -> None:
+    """A real booking row, inserted directly as the console path would (source='merchant')."""
+    with tenant_context(tenant_id) as session:
+        session.execute(
+            text("SELECT pg_advisory_xact_lock(51, hashtext(current_setting('app.tenant_id')))")
+        )
+        client_id = session.scalar(
+            text(
+                "INSERT INTO clients (tenant_id, name) "
+                "VALUES (current_setting('app.tenant_id')::uuid, 'Client') RETURNING id"
+            )
+        )
+        session.execute(
+            text("""
+            INSERT INTO bookings (tenant_id, client_id, worker_id, service_id, starts_at, ends_at,
+                status, source, service_name, price_amount_minor, price_currency,
+                duration_minutes, auto_confirm_at_booking)
+            SELECT current_setting('app.tenant_id')::uuid, :client_id, :worker_id, :service_id,
+                   now() + interval '1 day', now() + interval '1 day 30 minutes', 'confirmed',
+                   'merchant', name, price_amount_minor, price_currency, duration_minutes, true
+            FROM services WHERE id = :service_id
+            """),
+            {"client_id": client_id, "worker_id": worker_id, "service_id": service_id},
+        )
+
+
+def test_removing_a_member_who_holds_a_booking_is_a_409(people: People, app: FastAPI) -> None:
+    owner = signed_in(app, people.a, people.both)
+    only_a_member = member_id(people.a, people.only_a)
+    created = create_service(owner)
+    assert created.status_code == 201
+    service_id = created.json()["id"]
+    seed_booking_for(people.a, only_a_member, service_id)
+
+    # F-h: json_only refuses a bare `.request("DELETE", ...)` with no body before routing unless
+    # the content-type is application/json - this is the repo's first DELETE test.
+    response = owner.request(
+        "DELETE",
+        f"/api/members/{only_a_member}",
+        headers={"content-type": "application/json"},
+        json={},
+    )
+
+    assert (response.status_code, response.json()) == (409, {"code": "has_bookings"})
+    with tenant_context(people.a) as session:
+        still_there = session.scalar(
+            text("SELECT count(*) FROM memberships WHERE id = :id"), {"id": only_a_member}
+        )
+    assert still_there == 1
 
 
 @pytest.mark.parametrize(

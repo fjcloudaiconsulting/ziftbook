@@ -275,6 +275,16 @@ def delete_clients(conn: Connection, tenant_ids: Iterable[object]) -> None:
         conn.execute(text("DELETE FROM clients"))
 
 
+def delete_bookings(conn: Connection, tenant_ids: Iterable[object]) -> None:
+    """The app role can delete neither booking_events nor bookings; fixtures remove them as the
+    migrate role, one business at a time (forced row-level security), events first for the foreign
+    key."""
+    for tenant_id in tenant_ids:
+        conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(tenant_id)})
+        conn.execute(text("DELETE FROM booking_events"))
+        conn.execute(text("DELETE FROM bookings"))
+
+
 def events(migrate_engine: Engine, **match: Any) -> list[dict[str, Any]]:
     """Audit events read as an operator, oldest first, matched on the given columns."""
     where = " AND ".join(
@@ -380,6 +390,10 @@ def people(app_engine: Engine, migrate_engine: Engine, bound: None) -> Iterator[
     add_membership(a, people.both, "owner")
     add_membership(b, people.both)
     yield people
+    # First, and as the migrate role: bookings reference memberships (no ON DELETE), clients and
+    # services, so they must go before any of the three. The app role has no DELETE on them.
+    with migrate_engine.begin() as conn:
+        delete_bookings(conn, (a, b))
     for tenant_id in (a, b):
         with tenant_context(tenant_id) as session:
             # Not cascaded by deleting memberships: opening_hours references tenants, not a

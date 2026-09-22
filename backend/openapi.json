@@ -2807,6 +2807,130 @@
           }
         }
       }
+    },
+    "/api/public/businesses/{tenant_id}/services/{service_id}/bookings": {
+      "post": {
+        "tags": [
+          "bookings"
+        ],
+        "summary": "Create",
+        "description": "Book a free slot as a guest. Public: no session required; a cookie, if present, only decides\nwhether the client record for the posted address is refreshed from what was typed\n(app.clients.find_or_create), and only when it belongs to the signed-in account.",
+        "operationId": "bookings-create",
+        "parameters": [
+          {
+            "name": "tenant_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Tenant Id"
+            }
+          },
+          {
+            "name": "service_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Service Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BookingIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookingOut"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -2953,6 +3077,185 @@
         ],
         "title": "AvailabilityOut"
       },
+      "BookingIn": {
+        "properties": {
+          "starts_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Starts At"
+          },
+          "member_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Member Id"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "email": {
+            "type": "string",
+            "title": "Email"
+          },
+          "phone": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 40,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phone"
+          },
+          "locale": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "en",
+                  "nl",
+                  "pt"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Locale"
+          },
+          "policy_version": {
+            "type": "string",
+            "maxLength": 40,
+            "minLength": 1,
+            "title": "Policy Version"
+          },
+          "consents": {
+            "additionalProperties": {
+              "type": "boolean"
+            },
+            "propertyNames": {
+              "enum": [
+                "marketing_email",
+                "sms",
+                "whatsapp"
+              ]
+            },
+            "type": "object",
+            "title": "Consents"
+          },
+          "turnstile_token": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 2048
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turnstile Token"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "starts_at",
+          "name",
+          "email",
+          "policy_version"
+        ],
+        "title": "BookingIn"
+      },
+      "BookingOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "starts_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Starts At"
+          },
+          "ends_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Ends At"
+          },
+          "duration_minutes": {
+            "type": "integer",
+            "title": "Duration Minutes"
+          },
+          "service_name": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Service Name"
+          },
+          "price": {
+            "$ref": "#/components/schemas/Price"
+          },
+          "worker_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Worker Id"
+          },
+          "worker_display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Worker Display Name"
+          },
+          "cancellation_policy_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cancellation Policy Text"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "status",
+          "starts_at",
+          "ends_at",
+          "duration_minutes",
+          "service_name",
+          "price",
+          "worker_id",
+          "worker_display_name",
+          "cancellation_policy_text"
+        ],
+        "title": "BookingOut"
+      },
       "BusinessSettings-Input": {
         "properties": {
           "timezone": {
@@ -3013,6 +3316,19 @@
             "minimum": 1.0,
             "title": "Booking Horizon Days",
             "default": 60
+          },
+          "max_pending_per_email": {
+            "type": "integer",
+            "maximum": 50.0,
+            "minimum": 1.0,
+            "title": "Max Pending Per Email",
+            "default": 3
+          },
+          "cancellation_policy_text": {
+            "type": "string",
+            "maxLength": 2000,
+            "title": "Cancellation Policy Text",
+            "default": ""
           }
         },
         "additionalProperties": false,
@@ -3079,6 +3395,19 @@
             "minimum": 1.0,
             "title": "Booking Horizon Days",
             "default": 60
+          },
+          "max_pending_per_email": {
+            "type": "integer",
+            "maximum": 50.0,
+            "minimum": 1.0,
+            "title": "Max Pending Per Email",
+            "default": 3
+          },
+          "cancellation_policy_text": {
+            "type": "string",
+            "maxLength": 2000,
+            "title": "Cancellation Policy Text",
+            "default": ""
           }
         },
         "additionalProperties": false,
@@ -3091,7 +3420,9 @@
           "buffer_pct",
           "slot_step_minutes",
           "min_notice_minutes",
-          "booking_horizon_days"
+          "booking_horizon_days",
+          "max_pending_per_email",
+          "cancellation_policy_text"
         ],
         "title": "BusinessSettings"
       },

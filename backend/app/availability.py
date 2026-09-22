@@ -156,12 +156,77 @@ def member_slots(
     return sorted(set(out))
 
 
+# The three-place status set. This tuple, migration 0026's OCCUPYING, and the nine values of
+# ck_bookings_status must agree; tests/test_bookings_db.py test 12 reads
+# pg_get_constraintdef('ex_bookings_worker_overlap') and asserts all three relations. Divergence
+# means a free slot that 409s forever, or a taken slot the constraint lets through.
+OCCUPYING = ("awaiting_payment", "pending", "confirmed", "completed")
+# The subset whose hold is provisional and expires. A strict subset of OCCUPYING by construction.
+EXPIRING = ("awaiting_payment", "pending")
+
+BOOKED = text("""
+SELECT b.worker_id, b.starts_at, b.ends_at, s.buffer_minutes
+FROM bookings b
+JOIN services s ON s.tenant_id = b.tenant_id AND s.id = b.service_id
+WHERE b.worker_id = ANY(CAST(:members AS uuid[]))
+  AND b.starts_at < :end AND b.ends_at > :start
+  AND b.starts_at > CAST(:start AS timestamptz) - interval '1 day'
+  AND b.status = ANY(CAST(:occupying AS text[]))
+  AND (b.status <> ALL(CAST(:expiring AS text[])) OR b.expires_at > now())
+""")
+
+
 def booked(
     db: Session, members: list[UUID], start: datetime, end: datetime
 ) -> list[tuple[UUID, datetime, datetime, int | None]]:
     """Bookings that occupy these workers between start and end: (member_id, starts_at, ends_at,
-    their service's buffer_minutes). No bookings table yet: ZIF-51 replaces this body."""
-    return []
+    their service's buffer_minutes).
+
+    ONE statement, shaped like the time_off read beside it: = ANY(uuid[]), the same two-sided
+    window predicate, and the same bounded look-back (time_off uses `- interval '366 days'`, its own
+    CHECK's bound) so ix_bookings_tenant_id_worker_id_starts_at gets a lower bound and the range
+    scan stays bounded instead of degrading to a full per-worker scan.
+
+    One day is the audit, and it derives from ONE constraint, not from the duration and the buffer:
+    `ends_at > :start` plus ck_bookings_at_most_12_hours (migration 0026) gives
+    starts_at > :start - 12 hours directly, and 12 h < 24 h. If that CHECK is ever widened, widen
+    this interval in the same migration.
+
+    Do NOT derive the bound from duration_minutes plus buffer_minutes. Revision 1 did, and the
+    arithmetic was wrong: buffer_for falls back to ceil(duration * buffer_pct / 100) and
+    BusinessSettings.buffer_pct goes up to 100, so the effective buffer reaches 720 minutes, not
+    the 240 of ck_services_buffer_minutes - which would have made it 720 + 720 = exactly 24 hours,
+    with no margin at all. The buffer does not belong in this bound in any case: this statement
+    returns raw booking intervals and member_slots applies the buffer in Python afterwards, over a
+    window read_availability has already padded by a whole day on each side.
+
+    It NEVER joins memberships. The display name is snapshotted onto the booking, so there is
+    nothing to join for; tests/test_availability_api.py:502-504 is the fence, and it is correct.
+
+    The service's buffer is joined LIVE and never snapshotted: a buffer is a scheduling rule, not
+    evidence, and a merchant who widens it must see today's calendar widen too.
+
+    No envelope predicate, ever. A booking taken before the business narrowed its opening week
+    still occupies its worker, and its buffer still blocks the slot after it.
+
+    The TTL carve-out lives here and only here: an index predicate must be IMMUTABLE and now() is
+    STABLE, so the exclusion constraint cannot express it. now() is the transaction's, so on the
+    write path this agrees with the clock taken from the FOR SHARE service row by construction.
+
+    +1 statement on the GET, constant in workers and in days.
+    """
+    return list(
+        db.execute(
+            BOOKED,
+            {
+                "members": members,
+                "start": start,
+                "end": end,
+                "occupying": list(OCCUPYING),
+                "expiring": list(EXPIRING),
+            },
+        ).tuples()
+    )
 
 
 def now() -> datetime:

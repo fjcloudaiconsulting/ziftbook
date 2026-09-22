@@ -138,8 +138,52 @@ that person's platform account (ZIF-99).
 - The wording and the version stored with a consent come from the server (`app.clients.CONSENT_TEXTS`). An unknown
   version is a 422, and so is a known version that publishes no wording for a purpose the caller named. A caller
   never supplies the text it claims to have shown.
-- `app.clients.find_or_create` refreshes the copy from what a booker typed, and its docstring is the one home for
-  what that costs and for the duties it puts on the route that calls it. Read it before writing that route.
+- `app.clients.find_or_create` refreshes the copy from what a booker typed **only when the booker is authenticated as
+  that address's own account (`refresh=True`); every other caller fills blanks only**, and its docstring is the one
+  home for what that costs and for the duties it puts on the route that calls it. Read it before writing that route.
+
+## Bookings
+
+A booking holds one worker for one interval, and **the database is what makes that exclusive** (`ex_bookings_worker_overlap`,
+migration 0026), not any code path. A race in a route somebody forgets to guard cannot double-book.
+
+- **Every booking writer takes `SELECT pg_advisory_xact_lock(51, hashtext(current_setting('app.tenant_id')))` as the
+  first statement of its transaction, before anything else.** An `EXCLUDE` constraint has no speculative-insertion
+  path, so two concurrent inserters of the same interval can each wait on the other: measured at about 9% of losers
+  deadlocking rather than conflicting, and a deadlock arrives as `OperationalError`, aborts the whole transaction, and
+  cannot be recovered by `ROLLBACK TO SAVEPOINT`. Keyed on the tenant alone — a late-evening booking ends on the next
+  local day, and an "anyone" booking has no worker yet. The key space is the ticket number, as `app/schedule.py:229`
+  already does with `105`.
+- The constraint's predicate is the four **occupying** statuses. That set lives in three places — the predicate,
+  `app.availability.OCCUPYING`, and `ck_bookings_status` — and `tests/test_bookings_db.py` fences all three against
+  each other. Changing it later takes `ACCESS EXCLUSIVE` and a full gist rebuild: there is no
+  `ADD CONSTRAINT ... USING INDEX` for an exclusion constraint.
+- The predicate cannot mention `now()` (an index predicate must be `IMMUTABLE`). The expiry carve-out therefore lives
+  in `app.availability.booked()` alone, and a booking transaction expires stale pendings in one `UPDATE` before
+  inserting. A sweeper is housekeeping, never correctness.
+- **The constraint is only half of it.** It catches an overlap with a live booking and nothing else: not a buffer
+  tail, not opening hours, not the worker's hours, not time off, not the slot grid, not `min_notice`, not the
+  horizon, not an unassigned worker, not an archived service. A write path re-derives the posted start **through
+  `member_slots` itself**, never through a second validator — two implementations of "is this bookable" drift, and
+  the drift is the bug.
+- Any transaction that inserts a booking takes its locks in this order: `services ... FOR SHARE` (mandatory —
+  archiving takes `FOR NO KEY UPDATE` and the foreign key only `KEY SHARE`, so the key alone lets a booking land on a
+  concurrently archived service), then `clients.find_or_create`, then the expiry `UPDATE`, then the savepoint and the
+  insert. Postgres `now()` comes from that first row and is the whole transaction's clock.
+- `find_or_create` runs **before** the savepoint, once: `ROLLBACK TO SAVEPOINT` releases the row lock that makes
+  `max_pending_per_email` exact.
+- The evidence snapshot (service name in every language, price, duration, the cancellation policy **text**, source,
+  the auto-confirm setting, the worker's display name) is on the booking. **Client personal data is not**: it stays
+  in `clients`, reached by `client_id`, so ZIF-58 keeps one tombstone. The service's buffer is **not** snapshotted —
+  a buffer is a scheduling rule, not evidence. The cancellation policy is snapshotted as text and carries **no
+  version**: a version is only useful for re-reading a policy at cancellation time, which ZIF-5 rejects. The
+  `policy_version` on `booking_events` is a different key — the consent wording version, into
+  `app.clients.CONSENT_TEXTS` — and the two are never unified.
+- `booking_events` is append-only by privilege, like `audit_events` and `consents`: a column added later needs its
+  own `GRANT INSERT (column) ON booking_events TO ziftbook_app`, or **every** event write fails, not only writes of
+  the new column.
+- The public booking POST writes **no** `audit_events` row: the requester is the data subject, and `auth.record`
+  stamps their address into a table with no foreign keys that outlives erased people.
 
 ## Audit log
 

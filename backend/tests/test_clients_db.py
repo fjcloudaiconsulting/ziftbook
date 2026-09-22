@@ -80,7 +80,7 @@ def test_find_or_create_survives_two_bookings_of_the_same_address_at_once(
     def thread_a() -> None:
         with tenant_context(people.a) as session:
             results["a"] = clients.find_or_create(
-                session, name="Booker A", email=email, phone=None, locale=None
+                session, name="Booker A", email=email, phone=None, locale=None, refresh=False
             )
             inserted.set()
             release.wait(timeout=10)  # holds the transaction open until B has queued behind it
@@ -89,7 +89,12 @@ def test_find_or_create_survives_two_bookings_of_the_same_address_at_once(
         try:
             with tenant_context(people.a) as session:
                 results["b"] = clients.find_or_create(
-                    session, name="Booker B", email=email, phone="+31 6 00 00 00 00", locale="en"
+                    session,
+                    name="Booker B",
+                    email=email,
+                    phone="+31 6 00 00 00 00",
+                    locale="en",
+                    refresh=False,
                 )
         except Exception as error:  # would be a bug in find_or_create, not the expected outcome
             results["b"] = error
@@ -113,7 +118,8 @@ def test_find_or_create_survives_two_bookings_of_the_same_address_at_once(
     assert count == 1
 
 
-# 2: FENCE. Wrong impl: add client_note/internal_note/user_id to the DO UPDATE SET list.
+# 38: FENCE, rewritten (ZIF-51). Wrong impl: add client_note/internal_note/user_id to either
+# DO UPDATE SET list.
 def test_find_or_create_never_touches_the_notes_or_the_user_id(people: People) -> None:
     email = fresh_email()
     seeded_user = uuid.uuid7()
@@ -129,7 +135,13 @@ def test_find_or_create_never_touches_the_notes_or_the_user_id(people: People) -
 
     with tenant_context(people.a) as session:
         found = clients.find_or_create(
-            session, name="New Name", email=email, phone="+31611111111", locale="nl"
+            session,
+            name="New Name",
+            email=email,
+            phone="+31611111111",
+            locale="nl",
+            user_id=uuid.uuid7(),  # a different user: must never be written to an existing row
+            refresh=True,
         )
 
     assert found.id == client_id
@@ -142,11 +154,12 @@ def test_find_or_create_never_touches_the_notes_or_the_user_id(people: People) -
     assert row["locale"] == "nl"
     assert row["client_note"] == "Client note"
     assert row["internal_note"] == "Internal note"
-    assert row["user_id"] == seeded_user
+    assert row["user_id"] == seeded_user  # the conflict path never writes user_id (§8.7b)
 
 
-# 2b: FENCE. Wrong impl: drop either coalesce from the DO UPDATE SET list (`phone = excluded.phone`,
-# `locale = excluded.locale`), so a booking that leaves the field empty erases the stored value.
+# 2b: GUARD (ZIF-51: kept, now under refresh=True). Wrong impl: drop either coalesce from the
+# REFRESH statement's SET list (`phone = coalesce(excluded.phone, clients.phone)`, the same for
+# locale), so a booking that leaves the field empty erases the stored value.
 def test_find_or_create_keeps_the_stored_phone_and_locale_when_the_booker_sends_none(
     people: People,
 ) -> None:
@@ -154,22 +167,65 @@ def test_find_or_create_keeps_the_stored_phone_and_locale_when_the_booker_sends_
     client_id = seed_client(people.a, name="Old Name", email=email, phone="+31600000000")
 
     with tenant_context(people.a) as session:
-        clients.find_or_create(session, name="Typed", email=email, phone=None, locale="pt")
-        found = clients.find_or_create(session, name="Empty", email=email, phone=None, locale=None)
+        clients.find_or_create(
+            session, name="Typed", email=email, phone=None, locale="pt", refresh=True
+        )
+        found = clients.find_or_create(
+            session, name="Empty", email=email, phone=None, locale=None, refresh=True
+        )
 
     assert found.id == client_id
     assert (found.phone, found.locale) == ("+31600000000", "pt")
     row = row_of(people.a, client_id)
-    assert row["name"] == "Empty"  # the name has no coalesce: the booker's name always wins
+    assert row["name"] == "Empty"  # under refresh=True the booker's name always wins
     assert row["phone"] == "+31600000000"
     assert row["locale"] == "pt"
+
+
+# 39: FENCE (ZIF-51, replaces 2b's old name rule). Wrong impl: make FILL identical to REFRESH, or
+# default refresh=True.
+def test_find_or_create_without_refresh_never_replaces_a_stored_value(people: People) -> None:
+    email = fresh_email()
+    client_id = seed_client(people.a, name="Old", email=email, phone="+31600000000", locale="nl")
+
+    with tenant_context(people.a) as session:
+        found = clients.find_or_create(
+            session, name="New", email=email, phone="+31611111111", locale="pt", refresh=False
+        )
+
+    assert found.id == client_id
+    assert (found.phone, found.locale) == ("+31600000000", "nl")
+    row = row_of(people.a, client_id)
+    assert (row["name"], row["phone"], row["locale"]) == ("Old", "+31600000000", "nl")
+
+    # A blank stored value is still filled: FILL is "blanks only", not "never write".
+    blank_email = fresh_email()
+    blank_id = seed_client(people.a, name="Blank", email=blank_email)
+    with tenant_context(people.a) as session:
+        filled = clients.find_or_create(
+            session,
+            name="Ignored",
+            email=blank_email,
+            phone="+31699999999",
+            locale="en",
+            refresh=False,
+        )
+    assert filled.id == blank_id
+    assert (filled.phone, filled.locale) == ("+31699999999", "en")
+    blank_row = row_of(people.a, blank_id)
+    assert blank_row["name"] == "Blank"  # the name is never filled: it has no coalesce at all
+    assert (blank_row["phone"], blank_row["locale"]) == ("+31699999999", "en")
 
 
 # 3: GUARD.
 def test_a_booking_with_no_email_creates_a_new_client_every_time(people: People) -> None:
     with tenant_context(people.a) as session:
-        first = clients.find_or_create(session, name="Jan", email=None, phone=None, locale=None)
-        second = clients.find_or_create(session, name="Jan", email=None, phone=None, locale=None)
+        first = clients.find_or_create(
+            session, name="Jan", email=None, phone=None, locale=None, refresh=False
+        )
+        second = clients.find_or_create(
+            session, name="Jan", email=None, phone=None, locale=None, refresh=False
+        )
 
     assert first.id != second.id
     with tenant_context(people.a) as session:

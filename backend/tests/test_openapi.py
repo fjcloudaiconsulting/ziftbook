@@ -76,8 +76,8 @@ def test_healthz_response_is_a_named_schema_with_required_fields() -> None:
     assert schema["required"] == ["status", "version"]
 
 
-# 31: FENCE. Wrong impl: add internal_note to a public schema (or publish ClientOut from a
-# /api/public route) and run `make openapi`.
+# 31/40: FENCE, narrowed in ZIF-51. Wrong impl: add internal_note to a public RESPONSE schema (or
+# publish ClientOut from a /api/public route) and run `make openapi`.
 #
 # phone, email and locale are fenced alongside it, so ZIF-51's "never echo these publicly" is
 # executable rather than prose: find_or_create returns the *stored* phone and locale, so a public
@@ -87,15 +87,20 @@ def test_healthz_response_is_a_named_schema_with_required_fields() -> None:
 PRIVATE_TO_THE_CONSOLE = ("internal_note", "phone", "email", "locale")
 
 
-def test_no_public_schema_exposes_a_clients_private_field() -> None:
+def test_no_public_response_exposes_a_clients_private_field() -> None:
+    # Renamed from ..._no_public_schema_... and narrowed to RESPONSES in ZIF-51. The rule was always
+    # "never ECHO these publicly" (find_or_create returns the *stored* phone and locale, so a public
+    # answer carrying either hands a stranger a third party's contact details). A public REQUEST
+    # legitimately takes an address: that is what guest booking is. The request side is fenced by
+    # the next test, with an explicit allowlist, so neither direction is unguarded.
     spec = json.loads(CONTRACT.read_text())
-    public_operations = [
-        operation
+    responses = [
+        operation["responses"]
         for path, operations in spec["paths"].items()
         if path.startswith("/api/public")
         for operation in operations.values()
     ]
-    reachable = schemas_reachable_from(spec, *public_operations)
+    reachable = schemas_reachable_from(spec, *responses)
     offending = [
         (name, field)
         for name in reachable
@@ -103,6 +108,30 @@ def test_no_public_schema_exposes_a_clients_private_field() -> None:
         if field in spec["components"]["schemas"][name].get("properties", {})
     ]
     assert offending == []
+
+
+# 41: FENCE, new in ZIF-51. Wrong impl: (a) publish ClientIn from a public route and run
+# `make openapi`; (b) remove all three of email, phone and locale from BookingIn.
+BOOKING_REQUEST = {"BookingIn"}
+
+
+def test_the_only_public_request_schema_with_contact_details_is_the_booking() -> None:
+    spec = json.loads(CONTRACT.read_text())
+    bodies = [
+        operation["requestBody"]
+        for path, operations in spec["paths"].items()
+        if path.startswith("/api/public")
+        for operation in operations.values()
+        if "requestBody" in operation
+    ]
+    reachable = schemas_reachable_from(spec, *bodies)
+    carrying = {
+        name
+        for name in reachable
+        for field in PRIVATE_TO_THE_CONSOLE
+        if field in spec["components"]["schemas"][name].get("properties", {})
+    }
+    assert carrying == BOOKING_REQUEST
 
 
 # 32: FENCE, load-bearing (test 21 is its unit echo). Wrong impl: add

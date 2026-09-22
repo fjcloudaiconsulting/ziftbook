@@ -5,7 +5,7 @@ from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Request, Response
-from psycopg.errors import CheckViolation
+from psycopg.errors import CheckViolation, ForeignKeyViolation
 from pydantic import AfterValidator, BaseModel, ConfigDict, StringConstraints
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
@@ -16,6 +16,8 @@ from app.auth import CurrentOwner, CurrentSession, SignedIn
 from app.errors import ApiError, Error
 
 Role = Literal["owner", "worker"]
+
+BOOKINGS_WORKER = "fk_bookings_tenant_id_worker_id_memberships"  # migration 0026
 
 router = APIRouter(prefix="/api", tags=["members"])
 
@@ -133,16 +135,23 @@ def may_manage(current: SignedIn, user_id: UUID) -> bool:
 
 
 def guarded(current: SignedIn, statement: str, member_id: UUID, **values: object) -> None:
-    """Run a change the keep_an_owner trigger may refuse; its refusal is a 409."""
+    """Run a change the keep_an_owner trigger or a booking may refuse; either refusal is a 409."""
     try:
         current.db.execute(text(statement), {"id": member_id, **values})
     except IntegrityError as error:
-        # Only the trigger's refusal: any other integrity error stays a 500.
+        # Only these two refusals; any other integrity error stays a 500.
         if (
             isinstance(error.orig, CheckViolation)
             and error.orig.diag.constraint_name == "last_owner"
         ):
             raise ApiError(409, "last_owner") from None
+        # bookings (ZIF-51) reference memberships with no ON DELETE, on purpose: a booking is a
+        # business record and must never be cascaded away with the person who took it.
+        if (
+            isinstance(error.orig, ForeignKeyViolation)
+            and error.orig.diag.constraint_name == BOOKINGS_WORKER
+        ):
+            raise ApiError(409, "has_bookings") from None
         raise
 
 

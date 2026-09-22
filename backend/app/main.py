@@ -20,6 +20,7 @@ from app import (
     audit,
     auth,
     availability,
+    bookings,
     business_settings,
     clients,
     invites,
@@ -28,6 +29,7 @@ from app import (
     schedule,
     services,
     time_off,
+    turnstile,
 )
 from app.config import DatabaseSettings, Settings
 from app.db import SessionLocal
@@ -69,7 +71,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Here, not at import: `python -m app.main` prints the OpenAPI document to stdout.
     logger.info(
         "api started",
-        extra={**logs.settings_fields(), "trusted_proxies": Settings().trusted_proxies},
+        extra={
+            **logs.settings_fields(),
+            "trusted_proxies": Settings().trusted_proxies,
+            # Never the secret. "off" means every booking POST skips verification.
+            "turnstile": "on" if turnstile.enabled() else "off",
+        },
     )
     try:
         yield
@@ -106,6 +113,7 @@ def create_app() -> FastAPI:
     app.include_router(schedule.opening_router)
     app.include_router(time_off.router)
     app.include_router(availability.router)
+    app.include_router(bookings.router)
 
     @app.middleware("http")
     async def json_only(
