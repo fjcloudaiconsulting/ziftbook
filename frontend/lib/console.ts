@@ -46,6 +46,19 @@ export function allowed(role: Role, pathname: string): boolean {
   return true;
 }
 
+/** Whether a role may PUT a member's working hours, mirroring the server's own rule
+ * (`schedule.py:152`): an owner changes anyone's; a worker only their own, and only while the
+ * business allows it. The UI reads this to decide editable vs read-only; the API enforces it. */
+export function canEditHours(role: Role, isSelf: boolean, workersEditOwnHours: boolean): boolean {
+  return role === "owner" || (isSelf && workersEditOwnHours);
+}
+
+/** "Set a name clients can see" shows only while the name is genuinely unset, never for any other
+ * falsy-looking value the API might send. */
+export function showSetName(displayName: string | null): boolean {
+  return displayName === null;
+}
+
 /** en reads dates the British way ("Tuesday 22 September"), as drawn; nl and pt keep the URL
  * locale. Money never uses this: it keeps the URL locale for every language. */
 export function dateLocale(locale: string): string {

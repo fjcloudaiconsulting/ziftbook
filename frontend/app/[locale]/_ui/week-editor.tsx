@@ -6,6 +6,7 @@ import { type FormEvent, type ReactNode, useId, useState } from "react";
 import { dateLocale } from "@/lib/console";
 import {
   changedDays,
+  copyToEveryDay as copyToEveryDayIn,
   type Day,
   daysFromShifts,
   daysSummary,
@@ -73,16 +74,36 @@ type WeekEditorProps = {
   /** The static note below the days (opening hours' "Shortening a day leaves..."). Working hours
    * has no equivalent line drawn, so it's opt-in per caller rather than baked into the editor. */
   footNote?: ReactNode;
+  /** Opening hours refuses an all-closed week; working hours doesn't (the server accepts an empty
+   * list, e.g. an owner clearing a leaving worker's week). Off by default. */
+  allowEmptyWeek?: boolean;
 };
 
-export function WeekEditor({ initial, envelope, locale, t, tWeek, onSave, savedMessage, envelopeNote, openingHoursLink, footNote }: WeekEditorProps) {
+export function WeekEditor({
+  initial,
+  envelope,
+  locale,
+  t,
+  tWeek,
+  onSave,
+  savedMessage,
+  envelopeNote,
+  openingHoursLink,
+  footNote,
+  allowEmptyWeek,
+}: WeekEditorProps) {
   const form = useTranslations("Form");
+  const errors = useTranslations("Console.errors");
   const formId = useId();
   const dl = dateLocale(locale);
   const [committed, setCommitted] = useState(initial);
   const [days, setDays] = useState(initial);
-  const [phase, setPhase] = useState<Phase>("idle");
-  const [problems, setProblems] = useState<ReturnType<typeof weekProblems>>({ byDay: {} });
+  // Checked on load too (spec PR 4, §5 item 6), not only on submit: a shift left outside the
+  // envelope after the owner narrowed it is flagged before the save the server would refuse.
+  const [problems, setProblems] = useState<ReturnType<typeof weekProblems>>(() => weekProblems(initial, envelope, { allowEmptyWeek }));
+  const [phase, setPhase] = useState<Phase>(() =>
+    Object.keys(problems.byDay).length > 0 || problems.overall ? "error" : "idle",
+  );
   const [serverProblem, setServerProblem] = useState<ServerProblem | null>(null);
   const [writeFailure, setWriteFailure] = useState<Outcome<unknown> | null>(null);
 
@@ -122,14 +143,7 @@ export function WeekEditor({ initial, envelope, locale, t, tWeek, onSave, savedM
   }
 
   function copyToEveryDay(weekday: number) {
-    const source = days.find((d) => d.weekday === weekday);
-    if (!source) return;
-    edit(
-      days.map((day) => {
-        const shopOpen = envelope === null || envelopeShiftsFor(envelope, day.weekday).length > 0;
-        return shopOpen ? { ...day, shifts: source.shifts.map((s) => ({ ...s })) } : day;
-      }),
-    );
+    edit(copyToEveryDayIn(days, envelope, weekday));
   }
 
   function undo() {
@@ -143,7 +157,7 @@ export function WeekEditor({ initial, envelope, locale, t, tWeek, onSave, savedM
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
     if (status === "idle" || status === "saved") return;
-    const result = weekProblems(days, envelope);
+    const result = weekProblems(days, envelope, { allowEmptyWeek });
     if (Object.keys(result.byDay).length > 0 || result.overall) {
       setProblems(result);
       setServerProblem(null);
@@ -161,6 +175,13 @@ export function WeekEditor({ initial, envelope, locale, t, tWeek, onSave, savedM
       setServerProblem(null);
       setWriteFailure(null);
       setPhase("saved");
+    } else if (outcome.status === 422 && outcome.code === "outside_opening_hours" && outcome.weekday) {
+      // The owner narrowed the opening hours between load and save: the same code and weekday
+      // `weekProblems` would have caught, so it gets the same field error and top banner.
+      setProblems({ byDay: { [outcome.weekday]: "outside_opening_hours" } });
+      setServerProblem(null);
+      setWriteFailure(null);
+      setPhase("error");
     } else {
       if (outcome.status === 422 && (outcome.code === "opening_hours_required" || outcome.code === "end_not_after_start" || outcome.code === "overlapping_hours")) {
         setServerProblem(outcome.code);
@@ -175,7 +196,8 @@ export function WeekEditor({ initial, envelope, locale, t, tWeek, onSave, savedM
   const problemWeekdays = Object.keys(problems.byDay)
     .map(Number)
     .sort((a, b) => a - b);
-  const genericFailure = writeFailure && writeFailure.status !== 401;
+  const ownerOnlyFailure = writeFailure?.status === 403 && writeFailure.code === "owner_only";
+  const genericFailure = writeFailure && writeFailure.status !== 401 && !ownerOnlyFailure;
 
   const savebarHint =
     status === "saving"
@@ -222,6 +244,7 @@ export function WeekEditor({ initial, envelope, locale, t, tWeek, onSave, savedM
   return (
     <form id={formId} className={uiStyles.stack} noValidate onSubmit={onSubmit}>
       {writeFailure?.status === 401 && <SignedOutBanner />}
+      {ownerOnlyFailure && <Banner tone="error">{errors("ownerOnly")}</Banner>}
       {genericFailure && <Banner tone="error">{form(problem(writeFailure!))}</Banner>}
       {(problems.overall === "opening_hours_required" || serverProblem === "opening_hours_required") && (
         <Banner tone="error">{t("allClosedRefusal")}</Banner>

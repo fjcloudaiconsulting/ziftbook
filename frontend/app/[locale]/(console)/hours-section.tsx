@@ -138,6 +138,7 @@ export function HoursSection({ memberId, editable, ownerView }: HoursSectionProp
       savedMessage={t("saved")}
       envelopeNote={ownerView ? t.rich("noteBounded", { link: changeLink }) : t("noteBoundedWorker")}
       openingHoursLink={ownerView ? changeLink(t("changeOpeningHours")) : undefined}
+      allowEmptyWeek
       onSave={(body) => call(() => workingHoursReplace({ path: { member_id: memberId }, body }), { write: true })}
     />
   );

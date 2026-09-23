@@ -157,6 +157,7 @@
       "nameLabel": "Display name",
       "save": "Save",
       "cancel": "Cancel",
+      "nameRequired": "Enter a name.",
       "lede": "{email} · {role} · times are in {city} time",
       "notFound": "This person could not be found."
     },

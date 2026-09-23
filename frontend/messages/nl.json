@@ -157,6 +157,7 @@
       "nameLabel": "Weergavenaam",
       "save": "Opslaan",
       "cancel": "Annuleren",
+      "nameRequired": "Vul een naam in.",
       "lede": "{email} · {role} · tijden zijn in {city}-tijd",
       "notFound": "Deze persoon kon niet worden gevonden."
     },

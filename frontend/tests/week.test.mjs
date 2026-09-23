@@ -7,6 +7,7 @@ import { describe, test } from "node:test";
 
 import {
   changedDays,
+  copyToEveryDay,
   daysFromShifts,
   daysSummary,
   emptyWeek,
@@ -15,6 +16,7 @@ import {
   overlapWindow,
   problemList,
   shiftRanges,
+  teamHoursSummary,
   weekBody,
   weekdayName,
   weekProblems,
@@ -138,6 +140,60 @@ describe("weekProblems", () => {
   test("an all-closed week is opening_hours_required", () => {
     const days = [1, 2, 3, 4, 5, 6, 7].map((weekday) => ({ weekday, shifts: [] }));
     assert.equal(weekProblems(days, null).overall, "opening_hours_required");
+  });
+
+  test("fence: allowEmptyWeek lets an all-closed week save (an owner clearing a leaving worker's hours)", () => {
+    const days = [1, 2, 3, 4, 5, 6, 7].map((weekday) => ({ weekday, shifts: [] }));
+    assert.equal(weekProblems(days, null, { allowEmptyWeek: true }).overall, undefined);
+  });
+
+  test("guard: allowEmptyWeek is off by default, so opening hours keeps refusing an all-closed week", () => {
+    const days = [1, 2, 3, 4, 5, 6, 7].map((weekday) => ({ weekday, shifts: [] }));
+    assert.equal(weekProblems(days, null, {}).overall, "opening_hours_required");
+  });
+});
+
+describe("copyToEveryDay", () => {
+  const days = [1, 2, 3, 4, 5, 6, 7].map((weekday) => ({ weekday, shifts: [] }));
+  days[1] = { weekday: 2, shifts: [{ start: "09:00", end: "12:00" }] }; // Tuesday: the source
+
+  test("fence: respects a bounded envelope, skipping a day the shop is closed", () => {
+    const envelope = [
+      { weekday: 2, shifts: [{ start: "09:00", end: "18:00" }] },
+      { weekday: 3, shifts: [{ start: "09:00", end: "18:00" }] },
+      // Monday (1) has no envelope row: the shop is closed there.
+    ];
+    const result = copyToEveryDay(days, envelope, 2);
+    assert.deepEqual(result.find((d) => d.weekday === 1).shifts, [], "Monday (shop closed) stays untouched");
+    assert.deepEqual(result.find((d) => d.weekday === 3).shifts, [{ start: "09:00", end: "12:00" }]);
+  });
+
+  test("guard: an unbounded envelope (null) copies to every day", () => {
+    const result = copyToEveryDay(days, null, 2);
+    for (const day of result) assert.deepEqual(day.shifts, [{ start: "09:00", end: "12:00" }]);
+  });
+
+  test("guard: an unknown source weekday leaves the week unchanged", () => {
+    assert.deepEqual(copyToEveryDay(days, null, 99), days);
+  });
+});
+
+describe("teamHoursSummary", () => {
+  const to = (from, to) => `${from} to ${to}`;
+
+  test("fence: no shifts is null, never daysSummary's empty-list \"\"", () => {
+    assert.equal(teamHoursSummary([], "en-GB", to), null);
+  });
+
+  test("guard: shifts summarize their weekdays, deduplicated", () => {
+    assert.equal(
+      teamHoursSummary(
+        [{ weekday: 2 }, { weekday: 2 }, { weekday: 3 }],
+        "en-GB",
+        to,
+      ),
+      "Tuesday and Wednesday",
+    );
   });
 });
 

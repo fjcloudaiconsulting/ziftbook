@@ -5,13 +5,13 @@ import { type FormEvent, useEffect, useId, useState } from "react";
 
 import { membersList, membersSetDisplayName, type MemberOut, workingHoursRead } from "@/api-client";
 import { Link } from "@/i18n/navigation";
-import { dateLocale } from "@/lib/console";
-import { daysSummary, zoneCity } from "@/lib/week";
+import { canEditHours, dateLocale, type Role, showSetName } from "@/lib/console";
+import { teamHoursSummary, zoneCity } from "@/lib/week";
 
 import { HoursSection } from "../hours-section";
-import { useConsole } from "../../_ui/console";
+import { SignedOutBanner, useConsole } from "../../_ui/console";
 import styles from "../../_ui/console.module.css";
-import { Banner, Heading, Mark, problem, Submit } from "../../_ui/parts";
+import { Banner, FieldError, Heading, Mark, problem, Submit } from "../../_ui/parts";
 import uiStyles from "../../_ui/ui.module.css";
 
 /** A member's "Works {days}" (or "No working hours yet") row meta, from one working-hours GET.
@@ -23,10 +23,8 @@ function HoursMeta({ shifts, locale }: { shifts: { weekday: number; starts_at: s
   const t = useTranslations("Console.team");
   const tWeek = useTranslations("Console.week");
   if (shifts === null) return null;
-  if (shifts.length === 0) return <span className={styles.rowMeta}>{t("noHours")}</span>;
-  const weekdays = [...new Set(shifts.map((s) => s.weekday))];
-  const days = daysSummary(weekdays, dateLocale(locale), (from, to) => tWeek("dayRange", { from, to }));
-  return <span className={styles.rowMeta}>{t("worksLabel", { days })}</span>;
+  const days = teamHoursSummary(shifts, dateLocale(locale), (from, to) => tWeek("dayRange", { from, to }));
+  return <span className={styles.rowMeta}>{days === null ? t("noHours") : t("worksLabel", { days })}</span>;
 }
 
 export function TeamList() {
@@ -50,10 +48,12 @@ export function TeamList() {
       }
       setFailure(null);
       setMembers(outcome.data);
-      // ponytail: one GET per member, run in parallel; fine up to tens of members, revisit if a
-      // business ever grows past that.
+      // The self row never shows an hours summary, so it's never fetched.
+      // ponytail: one GET per other member, run in parallel; fine up to tens of members, revisit
+      // if a business ever grows past that.
+      const others = outcome.data.filter((m) => m.member_id !== session.member_id);
       const entries = await Promise.all(
-        outcome.data.map(async (m) => {
+        others.map(async (m) => {
           const r = await call(() => workingHoursRead({ path: { member_id: m.member_id } }));
           return [m.member_id, r.status === 200 && r.data ? r.data : null] as const;
         }),
@@ -175,6 +175,9 @@ function SetNameField({ memberId, onSaved }: { memberId: string; onSaved(name: s
   const [value, setValue] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [signedOut, setSignedOut] = useState(false);
+  const [fieldError, setFieldError] = useState<string | null>(null);
+  const errorId = `${id}-error`;
 
   if (!open) {
     return (
@@ -187,7 +190,13 @@ function SetNameField({ memberId, onSaved }: { memberId: string; onSaved(name: s
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
     const trimmed = value.trim();
-    if (!trimmed) return;
+    if (!trimmed) {
+      setFieldError(t("nameRequired"));
+      return;
+    }
+    setFieldError(null);
+    setSignedOut(false);
+    setError(null);
     setSaving(true);
     const outcome = await call(
       () => membersSetDisplayName({ path: { member_id: memberId }, body: { display_name: trimmed } }),
@@ -197,21 +206,34 @@ function SetNameField({ memberId, onSaved }: { memberId: string; onSaved(name: s
     if (outcome.status === 200 && outcome.data) {
       onSaved(outcome.data.display_name ?? trimmed);
       setOpen(false);
-    } else if (outcome.status !== 401) {
+    } else if (outcome.status === 401) {
+      setSignedOut(true);
+    } else {
       setError(form(problem(outcome)));
     }
   }
 
   return (
     <form className={uiStyles.stack} noValidate onSubmit={onSubmit}>
+      {signedOut && <SignedOutBanner />}
       {error && <Banner tone="error">{error}</Banner>}
       <div className={uiStyles.field}>
         <label className={uiStyles.label} htmlFor={id}>
           {t("nameLabel")}
         </label>
         <div className={uiStyles.input}>
-          <input id={id} type="text" maxLength={60} value={value} disabled={saving} onChange={(e) => setValue(e.target.value)} />
+          <input
+            id={id}
+            type="text"
+            maxLength={60}
+            value={value}
+            disabled={saving}
+            aria-invalid={fieldError ? true : undefined}
+            aria-describedby={fieldError ? errorId : undefined}
+            onChange={(e) => setValue(e.target.value)}
+          />
         </div>
+        {fieldError && <FieldError id={errorId}>{fieldError}</FieldError>}
       </div>
       <div className={styles.dayActions}>
         <Submit busy={saving} busyLabel={form("sending")}>
@@ -285,7 +307,7 @@ export function Person({ memberId }: { memberId: string }) {
         {displayName ? displayName : <span className={styles.unset}>{t("nameNotSet")}</span>}
       </Heading>
       <p className={uiStyles.lede}>{t("lede", { email: member.email, role: account(member.role === "owner" ? "owner" : "worker"), city })}</p>
-      {!displayName && (
+      {showSetName(displayName) && (
         <SetNameField
           memberId={memberId}
           onSaved={(name) => {
@@ -294,7 +316,11 @@ export function Person({ memberId }: { memberId: string }) {
           }}
         />
       )}
-      <HoursSection memberId={memberId} editable ownerView />
+      <HoursSection
+        memberId={memberId}
+        editable={canEditHours(session.role as Role, memberId === session.member_id, settings.workers_edit_own_hours)}
+        ownerView
+      />
     </>
   );
 }

@@ -2,6 +2,7 @@
 
 import { useTranslations } from "next-intl";
 
+import { canEditHours, type Role } from "@/lib/console";
 import { zoneCity } from "@/lib/week";
 
 import { HoursSection } from "./hours-section";
@@ -14,12 +15,13 @@ export function MyHours() {
   const t = useTranslations("Console.hours");
   const nav = useTranslations("Console.nav");
   const city = zoneCity(settings.timezone);
+  const editable = canEditHours(session.role as Role, true, settings.workers_edit_own_hours);
 
   return (
     <>
       <Heading focus>{nav("myHours")}</Heading>
       <p className={uiStyles.lede}>{t("myHoursLede", { city })}</p>
-      <HoursSection memberId={session.member_id} editable={settings.workers_edit_own_hours} ownerView={false} />
+      <HoursSection memberId={session.member_id} editable={editable} ownerView={false} />
     </>
   );
 }

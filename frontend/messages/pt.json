@@ -157,6 +157,7 @@
       "nameLabel": "Nome de exibição",
       "save": "Salvar",
       "cancel": "Cancelar",
+      "nameRequired": "Digite um nome.",
       "lede": "{email} · {role} · horários no fuso de {city}",
       "notFound": "Esta pessoa não foi encontrada."
     },

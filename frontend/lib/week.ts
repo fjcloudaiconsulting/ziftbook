@@ -69,8 +69,13 @@ export type WeekProblems = {
  * `envelope`: `null` means it was never configured, which bounds nothing (`schedule.py:170-171`).
  * A configured envelope (a non-empty list) that has no entry for a weekday treats that weekday as
  * closed, never as unbounded.
+ *
+ * `options.allowEmptyWeek`: opening hours refuses an all-closed week
+ * (`opening_hours_required`, `schedule.py:304`); working hours does not (`schedule.py:139-190`
+ * accepts an empty list, e.g. an owner clearing a leaving worker's week). Off by default, so every
+ * existing opening-hours call keeps refusing it.
  */
-export function weekProblems(days: Day[], envelope: Day[] | null): WeekProblems {
+export function weekProblems(days: Day[], envelope: Day[] | null, options?: { allowEmptyWeek?: boolean }): WeekProblems {
   const byDay: Partial<Record<number, string>> = {};
   const bounded = envelope !== null && envelope.length > 0;
   const envelopeByWeekday = new Map<number, Shift[]>((envelope ?? []).map((d) => [d.weekday, d.shifts]));
@@ -111,7 +116,7 @@ export function weekProblems(days: Day[], envelope: Day[] | null): WeekProblems 
   }
 
   if (totalShifts > 50) return { byDay, overall: "too_many" };
-  if (!anyOpen) return { byDay, overall: "opening_hours_required" };
+  if (!anyOpen && !options?.allowEmptyWeek) return { byDay, overall: "opening_hours_required" };
   return { byDay };
 }
 
@@ -183,6 +188,35 @@ export function envelopeShiftsFor(envelope: Day[], weekday: number): Shift[] {
  * use); every word around `{ranges}` comes from the catalog. */
 export function shiftRanges(shifts: Shift[]): string {
   return shifts.map((s) => `${s.start} – ${s.end}`).join(" · ");
+}
+
+/**
+ * "Copy to every day": the source weekday's shifts, applied to every day the shop is open (every
+ * day, when the envelope is unbounded). A day the shop is closed keeps whatever it had (never
+ * force-closed, and never given a shift the server would refuse).
+ */
+export function copyToEveryDay(days: Day[], envelope: Day[] | null, sourceWeekday: number): Day[] {
+  const source = days.find((d) => d.weekday === sourceWeekday);
+  if (!source) return days;
+  return days.map((day) => {
+    const shopOpen = envelope === null || envelopeShiftsFor(envelope, day.weekday).length > 0;
+    return shopOpen ? { ...day, shifts: source.shifts.map((s) => ({ ...s })) } : day;
+  });
+}
+
+/**
+ * The team row's "Works {days}" meta, or `null` for "No working hours yet". Kept out of the
+ * component so an empty week is never fed through `daysSummary` (an empty weekday list formats as
+ * `""`, which a naive check would treat as truthy and show as "Works ").
+ */
+export function teamHoursSummary(
+  shifts: { weekday: number }[],
+  locale: string,
+  formatRange: (from: string, to: string) => string,
+): string | null {
+  if (shifts.length === 0) return null;
+  const weekdays = [...new Set(shifts.map((s) => s.weekday))];
+  return daysSummary(weekdays, locale, formatRange);
 }
 
 /** The shift on a day whose start (or end) overlaps another, and the exact overlap window (the

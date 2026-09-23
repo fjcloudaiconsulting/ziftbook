@@ -5,7 +5,46 @@ process.env.TZ = "America/Sao_Paulo";
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { allowed, dateLocale, guardedWrite, navFor, sameSession, sectionOf, todayLabel, writeOutcome } from "../lib/console.ts";
+import {
+  allowed,
+  canEditHours,
+  dateLocale,
+  guardedWrite,
+  navFor,
+  sameSession,
+  sectionOf,
+  showSetName,
+  todayLabel,
+  writeOutcome,
+} from "../lib/console.ts";
+
+describe("canEditHours", () => {
+  test("guard: an owner always may, self or not", () => {
+    assert.equal(canEditHours("owner", true, false), true);
+    assert.equal(canEditHours("owner", false, false), true);
+    assert.equal(canEditHours("owner", false, true), true);
+  });
+
+  test("fence: a worker may only edit their own hours, never anyone else's", () => {
+    assert.equal(canEditHours("worker", false, true), false, "someone else's hours, even with the setting on");
+  });
+
+  test("fence: a worker's own hours still need the setting on", () => {
+    assert.equal(canEditHours("worker", true, false), false);
+    assert.equal(canEditHours("worker", true, true), true);
+  });
+});
+
+describe("showSetName", () => {
+  test("fence: shown only for null, never any other falsy value", () => {
+    assert.equal(showSetName(null), true);
+    assert.equal(showSetName(""), false);
+  });
+
+  test("guard: not shown once a name is set", () => {
+    assert.equal(showSetName("Kim Peters"), false);
+  });
+});
 
 describe("navFor", () => {
   test("worker nav has none of team, clients, settings or opening-hours", () => {
