@@ -6,7 +6,7 @@ process.env.TZ = "America/Sao_Paulo";
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { localToInstant, requestBody } from "../lib/time-off.ts";
+import { listWindow, localToInstant, requestBody } from "../lib/time-off.ts";
 
 describe("localToInstant", () => {
   test("Amsterdam, before the spring-forward transition (2026-03-29), uses CET (+01:00)", () => {
@@ -47,5 +47,24 @@ describe("requestBody", () => {
     const body = requestBody({ allDay: true, firstDay: "2026-10-27", lastDay: "2026-10-27", startTime: "09:00", endTime: "11:00", reason: "   ", tz });
     assert.deepEqual(body, { first_day: "2026-10-27", last_day: "2026-10-27" });
     assert.equal("reason" in body, false);
+  });
+});
+
+describe("listWindow", () => {
+  const tz = "Europe/Amsterdam";
+
+  test("from is today's local midnight in the business zone, to is horizonDays later, never a hardcoded 365/366", () => {
+    const now = new Date("2026-09-23T20:00:00Z"); // 22:00 in Amsterdam already, still 23rd there
+    const window = listWindow(now, tz, 10);
+    assert.equal(window.from, localToInstant("2026-09-23", "00:00", tz));
+    assert.equal(window.to, localToInstant("2026-10-03", "00:00", tz));
+  });
+
+  test("uses the business zone's date, not the runner's own TZ (Sao Paulo, 3h behind)", () => {
+    // 2026-09-23T02:00Z is already 2026-09-23 04:00 in Amsterdam, but still 2026-09-22 23:00 in
+    // Sao Paulo: a window keyed off the runner's zone would start a day early.
+    const now = new Date("2026-09-23T02:00:00Z");
+    const window = listWindow(now, tz, 5);
+    assert.equal(window.from, localToInstant("2026-09-23", "00:00", tz));
   });
 });

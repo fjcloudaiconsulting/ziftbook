@@ -72,3 +72,29 @@ export function requestBody(
     ends_at: localToInstant(form.firstDay, form.endTime, form.tz),
   });
 }
+
+/** "Today" as a plain YYYY-MM-DD, in `tz` rather than the runner's own zone. */
+function localDateISO(instant: Date, tz: string): string {
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(instant);
+  const map = Object.fromEntries(parts.map((p) => [p.type, p.value]));
+  return `${map.year}-${map.month}-${map.day}`;
+}
+
+/** A calendar date `days` after `dateISO`, plain date arithmetic (no zone involved: a day is a
+ * day, regardless of what the clock does that day). */
+function addDaysISO(dateISO: string, days: number): string {
+  const [y, m, d] = dateISO.split("-").map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d + days));
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
+}
+
+/**
+ * The blocked-time list window (ZIF-103): `[today, today + horizonDays)` in the business zone,
+ * the same window clients can book in (`GET /api/settings.booking_horizon_days`) - never a
+ * hardcoded year. `now` and `horizonDays` are both passed in, so the fence controls them exactly
+ * rather than reading the real clock or a real settings read.
+ */
+export function listWindow(now: Date, tz: string, horizonDays: number): { from: string; to: string } {
+  const today = localDateISO(now, tz);
+  return { from: localToInstant(today, "00:00", tz), to: localToInstant(addDaysISO(today, horizonDays), "00:00", tz) };
+}
