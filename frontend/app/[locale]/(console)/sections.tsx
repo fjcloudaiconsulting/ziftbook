@@ -46,7 +46,7 @@ export function Today() {
       <ol className={styles.steps} aria-label={t("steps")}>
         <li>
           <span className={styles.stepMark} aria-hidden="true">
-            1
+            {1}
           </span>
           <Link className={uiStyles.textButton} href="/opening-hours">
             {t("step1")}
@@ -54,7 +54,7 @@ export function Today() {
         </li>
         <li>
           <span className={styles.stepMark} aria-hidden="true">
-            2
+            {2}
           </span>
           <Link className={uiStyles.textButton} href="/services">
             {t("step2")}
@@ -62,7 +62,7 @@ export function Today() {
         </li>
         <li>
           <span className={styles.stepMark} aria-hidden="true">
-            3
+            {3}
           </span>
           <Link className={uiStyles.textButton} href={`/team/${session.member_id}`}>
             {t("step3")}
@@ -70,7 +70,7 @@ export function Today() {
         </li>
         <li>
           <span className={styles.stepMark} aria-hidden="true">
-            4
+            {4}
           </span>
           <Link className={uiStyles.textButton} href="/team">
             {t("step4")}
