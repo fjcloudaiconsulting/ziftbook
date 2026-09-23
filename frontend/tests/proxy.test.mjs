@@ -133,6 +133,9 @@ describe("account pages", () => {
     "/en/team",
     "/nl/team/00000000-0000-0000-0000-000000000000",
     "/pt/my-hours",
+    "/en/services",
+    "/nl/services/new",
+    "/pt/services/00000000-0000-0000-0000-000000000000",
   ];
 
   test("no page sends a Referer or can be framed", async () => {

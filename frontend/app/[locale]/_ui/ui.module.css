@@ -114,7 +114,7 @@
 .label { font: 600 0.9375rem/1.3 var(--font-body), system-ui, sans-serif; }
 .labelRow a { font-size: 0.875rem; }
 .input { position: relative; }
-.input input, .input select {
+.input input, .input select, .input textarea {
   width: 100%;
   min-height: 48px;
   padding: 0 0.9rem;
@@ -124,13 +124,14 @@
   color: var(--ink);
   font: 400 1rem/1 var(--font-body), system-ui, sans-serif;
 }
+.input textarea { min-height: 6rem; padding-top: 0.75rem; resize: vertical; line-height: 1.35; }
 /* A native select, drawn like the text inputs; the chevron is a sibling because a select can't hold one. */
 .input select { appearance: none; padding-right: 2.5rem; cursor: pointer; }
 .input select:invalid { color: var(--muted); }
 .input option { color: var(--ink); }
 .selectChevron { position: absolute; right: 1rem; top: 50%; translate: 0 -50%; color: var(--muted); pointer-events: none; }
-.input input:focus-visible, .input select:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; border-color: var(--primary); }
-.input :is(input, select)[aria-invalid="true"] { border-color: var(--error); border-width: 2px; padding-left: calc(0.9rem - 1px); }
+.input input:focus-visible, .input select:focus-visible, .input textarea:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; border-color: var(--primary); }
+.input :is(input, select, textarea)[aria-invalid="true"] { border-color: var(--error); border-width: 2px; padding-left: calc(0.9rem - 1px); }
 .input input:read-only { background: var(--surface); border-color: var(--line); }
 .input .withToggle { padding-right: 5.5rem; }
 .toggle {
@@ -235,3 +236,92 @@ a.textButton { display: inline-flex; align-items: center; }
  * without this the icon's own brand-red .mark colour was muted by this rule's higher specificity. */
 .empty span:not(.mark) { color: var(--muted); font-size: 0.9375rem; }
 .empty .button { width: auto; margin-top: 0.3rem; }
+
+/* Screen head: heading plus a header-level action (services' "Add a service"). */
+.screenHead { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 0.75rem 1rem; }
+.screenHead .button { width: auto; }
+.small { min-height: 44px; padding: 0.4rem 0.9rem; font-size: 0.9375rem; }
+.col a.back, .back {
+  align-self: flex-start; display: inline-flex; align-items: center; gap: 0.4rem; min-height: 2.75rem;
+  border: 0; background: none; padding: 0; color: var(--primary); cursor: pointer; text-decoration: none;
+  font: 600 0.9375rem/1 var(--font-body), system-ui, sans-serif;
+}
+.colWide { max-width: 34rem; }
+.divider { height: 1px; background: var(--line); }
+.actions { display: flex; flex-direction: column; gap: 0.6rem; }
+
+/* Lists of things (services, members, blocks). Rows, not cards. */
+.list { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: 1rem; overflow: hidden; background: var(--bg); }
+.list > li + li { border-top: 1px solid var(--line); }
+/* .col a.rowLink: a plain class selector loses to the broader `.col a` link-colour rule at equal
+ * specificity by source order, so the row (a whole-row link, styled as a list row, not as a link)
+ * needs the compound selector to win back its own colour and drop the underline. */
+.col a.rowLink, .rowLink {
+  width: 100%; display: flex; align-items: center; gap: 0.9rem; text-align: left;
+  min-height: 4rem; padding: 0.85rem 1rem; border: 0; background: none; cursor: pointer; color: inherit;
+  font: inherit; text-decoration: none;
+}
+.rowLink:hover { background: var(--surface); }
+.rowStatic { display: flex; align-items: center; gap: 0.9rem; min-height: 4rem; padding: 0.85rem 1rem; }
+.rowMain { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.15rem; }
+.rowTitle { font: 600 1rem/1.3 var(--font-body), system-ui, sans-serif; overflow-wrap: anywhere; }
+/* No tabular-nums here: it widens the decimal comma in a price and the row reads as "35 , 00". */
+.rowMeta { font-size: 0.875rem; color: var(--muted); }
+.rowEnd { display: flex; align-items: center; gap: 0.5rem; flex: none; color: var(--muted); }
+.rowEnd .button { width: auto; }
+.chev { color: var(--muted); flex: none; }
+.pill {
+  display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.2rem 0.55rem; border-radius: 999px;
+  background: var(--surface); color: var(--ink); font: 600 0.75rem/1.5 var(--font-body), system-ui, sans-serif; flex: none;
+}
+.pillWarn { background: var(--note-soft); box-shadow: inset 0 0 0 1px var(--note-line); }
+
+/* Danger zone (archive) */
+.dangerZone { display: grid; gap: 0.6rem; padding: 1rem; border: 1px solid var(--error-line); border-radius: 1rem; background: var(--error-soft); }
+.dangerZone strong { font: 600 1rem/1.3 var(--font-body), system-ui, sans-serif; }
+.dangerZone p { margin: 0; font-size: 0.9375rem; color: var(--ink); max-width: 60ch; }
+.danger { background: var(--bg); color: var(--error); border-color: var(--error-line); }
+.danger:hover { background: var(--error-soft); }
+
+/* Price field's currency sign, before or after the amount (Intl decides which). */
+.prefixed { display: flex; align-items: stretch; }
+.prefix {
+  display: inline-flex; align-items: center; padding: 0 0.85rem; border: 1px solid var(--field-line);
+  border-right: 0; border-radius: 0.75rem 0 0 0.75rem; background: var(--surface); color: var(--muted);
+  font: 600 1rem/1 var(--font-body), system-ui, sans-serif;
+}
+.prefixed input { border-radius: 0 0.75rem 0.75rem 0; }
+.prefixed.trailing { flex-direction: row-reverse; }
+.prefixed.trailing .prefix { border-right: 1px solid var(--field-line); border-left: 0; border-radius: 0 0.75rem 0.75rem 0; }
+.prefixed.trailing input { border-radius: 0.75rem 0 0 0.75rem; }
+.row2 { display: grid; gap: 1.1rem; grid-template-columns: 1fr; }
+@container app (min-width: 34rem) { .row2 { grid-template-columns: 1fr 1fr; } }
+
+/* Radio and checkbox lists: full-row hit targets */
+.choices { display: flex; flex-direction: column; gap: 0.5rem; margin: 0; padding: 0; border: 0; }
+.choice {
+  display: flex; align-items: flex-start; gap: 0.7rem; min-height: 48px; padding: 0.7rem 0.9rem;
+  border: 1px solid var(--line); border-radius: 0.75rem; cursor: pointer; background: var(--bg);
+}
+.choice:hover { border-color: var(--field-line); }
+.choice:has(input:checked) { border-color: var(--primary); box-shadow: inset 0 0 0 1px var(--primary); }
+.choice input { width: 1.25rem; height: 1.25rem; margin: 0.15rem 0 0; accent-color: var(--primary); flex: none; }
+.choice span { font-size: 0.9375rem; }
+.choice b { display: block; font-weight: 600; font-size: 1rem; }
+.choice em { display: block; font-style: normal; color: var(--muted); font-size: 0.875rem; }
+.unset { color: var(--muted); }
+
+/* Language tabs inside a field (service name / description) */
+.langTabs { display: flex; gap: 0.3rem; background: var(--surface); border-radius: 999px; padding: 0.2rem; align-self: flex-start; }
+.langTab {
+  min-height: 2.25rem; padding: 0 0.75rem; border: 0; border-radius: 999px; background: none;
+  color: var(--muted); font: 600 0.8125rem/1 var(--font-body), system-ui, sans-serif; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 0.35rem;
+}
+.langTab[aria-selected="true"] { background: var(--bg); color: var(--ink); box-shadow: 0 1px 2px oklch(0.23 0.025 28 / 0.12); }
+.dot { width: 0.4rem; height: 0.4rem; border-radius: 50%; background: var(--line); }
+.langTab[data-filled="yes"] .dot { background: var(--ok); }
+/* Visibility is the native `hidden` attribute, not a CSS Modules class: a hashed "is-on" class
+ * name built by string concatenation in JS would never match a class this file defines, since
+ * CSS Modules hashes .is-on too and the two hashes would never agree. */
+.langPanel[hidden] { display: none; }
