@@ -101,3 +101,22 @@ export function serviceBody(
 export function defaultBuffer(durationMinutes: number, percent: number): number {
   return Math.ceil((durationMinutes * percent) / 100);
 }
+
+/** The list's live services (owner and worker both filter archived ones out; a worker never sees
+ * an Archived group at all). */
+export function activeServices<T extends { archived: boolean }>(services: T[]): T[] {
+  return services.filter((s) => !s.archived);
+}
+
+/** The owner list's `<details>` "Archived (n)" group. */
+export function archivedServices<T extends { archived: boolean }>(services: T[]): T[] {
+  return services.filter((s) => s.archived);
+}
+
+/** Whether a service's "no one assigned" warning pill shows. A worker count can never really be
+ * negative, but the check is exact equality, not `<= 0`: a bug that starts treating a negative
+ * count as "empty" would still leave the true empty case (0) alone, which is why this needs its
+ * own guard rather than trusting `n === 0`'s absence of a fence. */
+export function needsWorkerWarning(workerCount: number): boolean {
+  return workerCount === 0;
+}

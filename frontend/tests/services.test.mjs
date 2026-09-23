@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
 import { parseMoney } from "../lib/money.ts";
-import { defaultBuffer, serviceBody, serviceName } from "../lib/services.ts";
+import { activeServices, archivedServices, defaultBuffer, needsWorkerWarning, serviceBody, serviceName } from "../lib/services.ts";
 
 function body(form, options) {
   return serviceBody(form, options, parseMoney);
@@ -116,6 +116,72 @@ describe("serviceBody", () => {
       { ...base },
     );
     assert.equal(result.errors?.price, "priceInvalid");
+  });
+
+  test("blank description languages are omitted too, never sent as \"\"", () => {
+    const result = body(
+      { name: { nl: "Manicure" }, description: { nl: "  ", en: "Real text", pt: "" }, price: "35,00", duration: "45", gap: "default" },
+      { ...base },
+    );
+    assert.ok(!("errors" in result));
+    assert.deepEqual(result.body.description, { en: "Real text" });
+  });
+
+  test("duration boundaries: 5 and 720 are valid, 4 and 721 are not", () => {
+    for (const [value, valid] of [["5", true], ["720", true], ["4", false], ["721", false]]) {
+      const result = body({ name: { nl: "Manicure" }, description: {}, price: "35,00", duration: value, gap: "default" }, { ...base });
+      assert.equal(!("errors" in result), valid, `duration ${value}`);
+    }
+  });
+
+  test("fixed gap boundaries: 0 and 240 are valid, -1 and 241 are not", () => {
+    for (const [value, valid] of [["0", true], ["240", true], ["-1", false], ["241", false]]) {
+      const result = body(
+        { name: { nl: "Manicure" }, description: {}, price: "35,00", duration: "45", gap: "fixed", fixedGap: value },
+        { ...base },
+      );
+      assert.equal(!("errors" in result), valid, `fixed gap ${value}`);
+    }
+  });
+
+  test("price boundaries: 0 and 1_000_000 minor units are valid", () => {
+    const zero = body({ name: { nl: "Manicure" }, description: {}, price: "0", duration: "45", gap: "default" }, { ...base });
+    assert.ok(!("errors" in zero));
+    assert.equal(zero.body.price.amount_minor, 0);
+    const max = body({ name: { nl: "Manicure" }, description: {}, price: "10000,00", duration: "45", gap: "default" }, { ...base });
+    assert.ok(!("errors" in max));
+    assert.equal(max.body.price.amount_minor, 1_000_000);
+  });
+});
+
+describe("activeServices / archivedServices", () => {
+  const services = [
+    { id: "a", archived: false },
+    { id: "b", archived: true },
+    { id: "c", archived: false },
+  ];
+
+  test("activeServices keeps only the non-archived ones, in order", () => {
+    assert.deepEqual(activeServices(services).map((s) => s.id), ["a", "c"]);
+  });
+
+  test("archivedServices keeps only the archived ones", () => {
+    assert.deepEqual(archivedServices(services).map((s) => s.id), ["b"]);
+  });
+});
+
+describe("needsWorkerWarning", () => {
+  test("0 assigned workers needs the warning", () => {
+    assert.equal(needsWorkerWarning(0), true);
+  });
+
+  test("1 or more assigned workers needs no warning", () => {
+    assert.equal(needsWorkerWarning(1), false);
+    assert.equal(needsWorkerWarning(2), false);
+  });
+
+  test("guard: an impossible negative count is not treated as the empty case", () => {
+    assert.equal(needsWorkerWarning(-1), false);
   });
 });
 
