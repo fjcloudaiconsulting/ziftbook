@@ -60,6 +60,11 @@ function clientProblem(form: FormState): "lastDayBeforeFirst" | "endNotAfterStar
 
 type Mode = { kind: "list" } | { kind: "new" } | { kind: "edit"; block: TimeOffOut };
 
+// A body-less write still needs `Content-Type: application/json` (the API's CSRF defence refuses
+// any mutating request without it, `main.py`'s `json_only`): the same `{ body: {} as never }`
+// shape `sessionSignOut` already uses.
+const JSON_WRITE = { body: {} as never };
+
 export function BlockedTime({ memberId }: { memberId: string }) {
   const { session, settings, call } = useConsole();
   const locale = useLocale();
@@ -265,7 +270,7 @@ function BlockedTimeForm({
     if (!editing || submitting.current) return;
     submitting.current = true;
     setRemoving(true);
-    const outcome = await call(() => timeOffDelete({ path: { time_off_id: editing.id } }), { write: true });
+    const outcome = await call(() => timeOffDelete({ path: { time_off_id: editing.id }, ...JSON_WRITE }), { write: true });
     setRemoving(false);
     submitting.current = false;
     if (outcome.status === 204) {
