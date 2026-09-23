@@ -44,3 +44,31 @@ export function localToInstant(date: string, time: string, tz: string): string {
   const second = guess - offsetAt(first, tz);
   return new Date(second).toISOString();
 }
+
+export type BlockForm = {
+  /** true = block whole days (a date range); false = block part of one day (a start/end time). */
+  allDay: boolean;
+  firstDay: string;
+  lastDay: string;
+  startTime: string;
+  endTime: string;
+  reason: string;
+  tz: string;
+};
+
+/** `TimeOffIn`'s exactly-one-pair shape, decided by the form's own `allDay` flag - never derived
+ * from which fields happen to be filled in, so a leftover time value from a toggle never leaks
+ * into a whole-day request. A blank (or whitespace-only) reason is left out entirely: the field is
+ * optional, but the server's `Reason` type refuses an empty string (min_length=1), so sending one
+ * would turn "no reason" into a 422 rather than into nothing at all. */
+export function requestBody(
+  form: BlockForm,
+): { first_day: string; last_day: string; reason?: string } | { starts_at: string; ends_at: string; reason?: string } {
+  const reason = form.reason.trim();
+  const withReason = <T extends object>(body: T): T & { reason?: string } => (reason ? { ...body, reason } : body);
+  if (form.allDay) return withReason({ first_day: form.firstDay, last_day: form.lastDay });
+  return withReason({
+    starts_at: localToInstant(form.firstDay, form.startTime, form.tz),
+    ends_at: localToInstant(form.firstDay, form.endTime, form.tz),
+  });
+}
