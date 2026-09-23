@@ -144,7 +144,9 @@ function InviteRow({ invite, onChanged }: { invite: InviteOut; onChanged(update:
     setBusy(true);
     let outcome;
     try {
-      outcome = await call(() => invitesDelete({ path: { invite_id: invite.id } }), { write: true });
+      // json_only (main.py) refuses any non-GET request without a JSON content type, even a
+      // bodyless DELETE: an explicit empty body forces the generated client to send one.
+      outcome = await call(() => invitesDelete({ path: { invite_id: invite.id }, body: {} as never }), { write: true });
     } finally {
       setBusy(false);
       busyRef.current = false;
