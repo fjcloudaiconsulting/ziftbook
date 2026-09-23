@@ -69,8 +69,13 @@ export type WeekProblems = {
  * `envelope`: `null` means it was never configured, which bounds nothing (`schedule.py:170-171`).
  * A configured envelope (a non-empty list) that has no entry for a weekday treats that weekday as
  * closed, never as unbounded.
+ *
+ * `options.allowEmptyWeek`: opening hours refuses an all-closed week
+ * (`opening_hours_required`, `schedule.py:304`); working hours does not (`schedule.py:139-190`
+ * accepts an empty list, e.g. an owner clearing a leaving worker's week). Off by default, so every
+ * existing opening-hours call keeps refusing it.
  */
-export function weekProblems(days: Day[], envelope: Day[] | null): WeekProblems {
+export function weekProblems(days: Day[], envelope: Day[] | null, options?: { allowEmptyWeek?: boolean }): WeekProblems {
   const byDay: Partial<Record<number, string>> = {};
   const bounded = envelope !== null && envelope.length > 0;
   const envelopeByWeekday = new Map<number, Shift[]>((envelope ?? []).map((d) => [d.weekday, d.shifts]));
@@ -111,8 +116,19 @@ export function weekProblems(days: Day[], envelope: Day[] | null): WeekProblems 
   }
 
   if (totalShifts > 50) return { byDay, overall: "too_many" };
-  if (!anyOpen) return { byDay, overall: "opening_hours_required" };
+  if (!anyOpen && !options?.allowEmptyWeek) return { byDay, overall: "opening_hours_required" };
   return { byDay };
+}
+
+/**
+ * The per-day problems worth flagging as soon as a week loads (spec PR 4, §5 item 6): a shift left
+ * outside the envelope after the owner narrowed it, caught before the save the server would
+ * refuse. Never `overall`: `too_many` and `opening_hours_required` are submit-time refusals of
+ * what the person just did, not something to greet an untouched, freshly-loaded week with (an
+ * empty opening-hours week loads via `emptyWeek()`, and must start idle, not in the error phase).
+ */
+export function loadTimeProblems(days: Day[], envelope: Day[] | null, options?: { allowEmptyWeek?: boolean }): WeekProblems {
+  return { byDay: weekProblems(days, envelope, options).byDay };
 }
 
 /** Whether two days' shifts are the same set, ignoring order (reordering within a day is no
@@ -171,6 +187,49 @@ export function daysSummary(weekdays: number[], locale: string, formatRange: (fr
   return new Intl.ListFormat(locale, { type: "conjunction" }).format(sorted.map((w) => weekdayName(w, locale)));
 }
 
+/** The envelope's shifts for one weekday, sorted, or `[]` when the shop doesn't open that day.
+ * `envelope === null` (unbounded) has no per-day line at all; callers check that first. */
+export function envelopeShiftsFor(envelope: Day[], weekday: number): Shift[] {
+  return sortShifts(envelope.find((d) => d.weekday === weekday)?.shifts ?? []);
+}
+
+/** "09:00 – 18:00" or, for two blocks, "09:00 – 13:00 · 14:00 – 18:00": the working-hours day
+ * head's "Shop open {ranges}" line. Only the punctuation is fixed here (an en dash and a
+ * middot, the same locale-invariant separators the shift row and the services meta line already
+ * use); every word around `{ranges}` comes from the catalog. */
+export function shiftRanges(shifts: Shift[]): string {
+  return shifts.map((s) => `${s.start} – ${s.end}`).join(" · ");
+}
+
+/**
+ * "Copy to every day": the source weekday's shifts, applied to every day the shop is open (every
+ * day, when the envelope is unbounded). A day the shop is closed keeps whatever it had (never
+ * force-closed, and never given a shift the server would refuse).
+ */
+export function copyToEveryDay(days: Day[], envelope: Day[] | null, sourceWeekday: number): Day[] {
+  const source = days.find((d) => d.weekday === sourceWeekday);
+  if (!source) return days;
+  return days.map((day) => {
+    const shopOpen = envelope === null || envelopeShiftsFor(envelope, day.weekday).length > 0;
+    return shopOpen ? { ...day, shifts: source.shifts.map((s) => ({ ...s })) } : day;
+  });
+}
+
+/**
+ * The team row's "Works {days}" meta, or `null` for "No working hours yet". Kept out of the
+ * component so an empty week is never fed through `daysSummary` (an empty weekday list formats as
+ * `""`, which a naive check would treat as truthy and show as "Works ").
+ */
+export function teamHoursSummary(
+  shifts: { weekday: number }[],
+  locale: string,
+  formatRange: (from: string, to: string) => string,
+): string | null {
+  if (shifts.length === 0) return null;
+  const weekdays = [...new Set(shifts.map((s) => s.weekday))];
+  return daysSummary(weekdays, locale, formatRange);
+}
+
 /** The shift on a day whose start (or end) overlaps another, and the exact overlap window (the
  * intersection, not the outer span): two shifts 09:00-18:00 and 10:00-11:00 overlap 10:00-11:00,
  * never 10:00-18:00. Used to name the window in the field error under the day. */
@@ -182,4 +241,37 @@ export function overlapWindow(shifts: Shift[]): { from: string; to: string } | n
     }
   }
   return null;
+}
+
+type SaveOutcome = { status: number; code?: string; weekday?: number; data?: unknown[] };
+
+export type SaveResult =
+  | { kind: "saved"; data: unknown[] }
+  | { kind: "outsideOpeningHours"; weekday: number }
+  | { kind: "serverProblem"; code: "opening_hours_required" | "end_not_after_start" | "overlapping_hours" }
+  | { kind: "failure"; outcome: { status: number; code?: string } };
+
+/**
+ * Maps a save attempt's outcome to the one thing the editor does next, so every outcome - success,
+ * every server refusal, and a request that never came back at all - resolves to a result the caller
+ * can act on. `outcome` is `null` when the write itself threw (a rejected promise: a network drop,
+ * a browser going offline mid-request), which is exactly the bug this fences: an un-caught throw
+ * between `setPhase("saving")` and the next `setPhase` left the savebar showing a spinner forever,
+ * because nothing after the throw ever ran. Routed through this function first, a threw write is
+ * `{ kind: "failure" }` like any other unreachable server, never a case the caller has to remember
+ * to handle separately.
+ */
+export function saveResult(outcome: SaveOutcome | null): SaveResult {
+  if (outcome === null) return { kind: "failure", outcome: { status: 0 } };
+  if (outcome.status === 200 && outcome.data) return { kind: "saved", data: outcome.data };
+  if (outcome.status === 422 && outcome.code === "outside_opening_hours" && outcome.weekday) {
+    return { kind: "outsideOpeningHours", weekday: outcome.weekday };
+  }
+  if (
+    outcome.status === 422 &&
+    (outcome.code === "opening_hours_required" || outcome.code === "end_not_after_start" || outcome.code === "overlapping_hours")
+  ) {
+    return { kind: "serverProblem", code: outcome.code };
+  }
+  return { kind: "failure", outcome: { status: outcome.status, code: outcome.code } };
 }

@@ -8,13 +8,16 @@ import { clock, RESEND_AFTER_MS, secondsLeft, takeToken } from "@/lib/account";
 import { Header } from "./header";
 import styles from "./ui.module.css";
 
-/** What an API call came back with: status 0 means the request never got an answer. */
-export type Outcome<T> = { status: number; code?: string; data?: T };
+/** What an API call came back with: status 0 means the request never got an answer.
+ * `weekday`: only `outside_opening_hours` carries it (`errors.py:8-13`), so the working-hours
+ * screen can name the day the server refused. */
+export type Outcome<T> = { status: number; code?: string; weekday?: number; data?: T };
 
 export async function send<T>(request: Promise<{ data?: T; error?: unknown; response?: Response }>): Promise<Outcome<T>> {
   try {
     const { data, error, response } = await request;
-    return { status: response?.status ?? 0, code: (error as { code?: string } | undefined)?.code, data };
+    const body = error as { code?: string; weekday?: number | null } | undefined;
+    return { status: response?.status ?? 0, code: body?.code, weekday: body?.weekday ?? undefined, data };
   } catch {
     return { status: 0 };
   }

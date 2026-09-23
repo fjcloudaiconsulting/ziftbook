@@ -1,16 +1,21 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-import { type FormEvent, useId, useState } from "react";
+import { type FormEvent, type ReactNode, useId, useRef, useState } from "react";
 
 import { dateLocale } from "@/lib/console";
 import {
   changedDays,
+  copyToEveryDay as copyToEveryDayIn,
   type Day,
   daysFromShifts,
   daysSummary,
+  envelopeShiftsFor,
+  loadTimeProblems,
   overlapWindow,
   problemList,
+  saveResult,
+  shiftRanges,
   weekBody,
   weekdayName,
   weekProblems,
@@ -61,18 +66,62 @@ type WeekEditorProps = {
   tWeek: T;
   onSave(body: ApiShift[]): Promise<Outcome<ApiShift[]>>;
   savedMessage: string;
+  /** The note banner above the days, shown only while `envelope` is bounded (U11: unbounded shows
+   * no banner, no "Shop ..." lines and no per-day restriction at all). `null` in the opening-hours
+   * page, which has no envelope of its own. */
+  envelopeNote?: ReactNode;
+  /** A "Change the opening hours" link, rendered next to a day's `outside_opening_hours` field
+   * error. Owner only: a worker's read-only note says the same thing in words instead. */
+  openingHoursLink?: ReactNode;
+  /** The static note below the days (opening hours' "Shortening a day leaves..."). Working hours
+   * has no equivalent line drawn, so it's opt-in per caller rather than baked into the editor. */
+  footNote?: ReactNode;
+  /** Opening hours refuses an all-closed week; working hours doesn't (the server accepts an empty
+   * list, e.g. an owner clearing a leaving worker's week). Off by default. */
+  allowEmptyWeek?: boolean;
+  /** Called after a server `outside_opening_hours` 422: the owner narrowed the opening hours
+   * between load and save, so the envelope this editor was given (the "Shop open ..." lines) is
+   * now stale. The caller re-reads it; `envelope` is a plain prop, so a fresh value here re-renders
+   * with no need to remount. */
+  onStaleEnvelope?: () => void;
 };
 
-export function WeekEditor({ initial, envelope, locale, t, tWeek, onSave, savedMessage }: WeekEditorProps) {
+export function WeekEditor({
+  initial,
+  envelope,
+  locale,
+  t,
+  tWeek,
+  onSave,
+  savedMessage,
+  envelopeNote,
+  openingHoursLink,
+  footNote,
+  allowEmptyWeek,
+  onStaleEnvelope,
+}: WeekEditorProps) {
   const form = useTranslations("Form");
+  const errors = useTranslations("Console.errors");
   const formId = useId();
   const dl = dateLocale(locale);
   const [committed, setCommitted] = useState(initial);
   const [days, setDays] = useState(initial);
+  // Checked on load too (spec PR 4, §5 item 6), not only on submit: a shift left outside the
+  // envelope after the owner narrowed it is flagged in the field, before the save the server would
+  // refuse. `byDay` only, never `overall` (`loadTimeProblems`): an untouched, freshly-loaded empty
+  // week (opening hours' own "Set the opening week" empty state) must start idle, not greeted with
+  // "Open the shop on at least one day." `phase` starts plain "idle" too: the top banner and the
+  // savebar's attention hint are gated on `phase === "error"`, which only a submit ever sets, so a
+  // day flagged from load reads as a field message, never "The week was not saved" before anyone
+  // tried to save it.
+  const [problems, setProblems] = useState<ReturnType<typeof weekProblems>>(() => loadTimeProblems(initial, envelope, { allowEmptyWeek }));
   const [phase, setPhase] = useState<Phase>("idle");
-  const [problems, setProblems] = useState<ReturnType<typeof weekProblems>>({ byDay: {} });
   const [serverProblem, setServerProblem] = useState<ServerProblem | null>(null);
   const [writeFailure, setWriteFailure] = useState<Outcome<unknown> | null>(null);
+  // A state flag lags a tick behind synchronous re-entrant calls (three requestSubmit()s in one
+  // event all read the same stale `busy` before any re-render), so the actual guard is this ref,
+  // set the instant a submit starts and cleared when it's done - not the `busy` derived below.
+  const submitting = useRef(false);
 
   const changed = changedDays(committed, days);
   const isDirty = changed.length > 0;
@@ -110,9 +159,7 @@ export function WeekEditor({ initial, envelope, locale, t, tWeek, onSave, savedM
   }
 
   function copyToEveryDay(weekday: number) {
-    const source = days.find((d) => d.weekday === weekday);
-    if (!source) return;
-    edit(days.map((day) => ({ ...day, shifts: source.shifts.map((s) => ({ ...s })) })));
+    edit(copyToEveryDayIn(days, envelope, weekday));
   }
 
   function undo() {
@@ -125,32 +172,59 @@ export function WeekEditor({ initial, envelope, locale, t, tWeek, onSave, savedM
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
+    if (submitting.current) return;
     if (status === "idle" || status === "saved") return;
-    const result = weekProblems(days, envelope);
-    if (Object.keys(result.byDay).length > 0 || result.overall) {
-      setProblems(result);
-      setServerProblem(null);
-      setWriteFailure(null);
-      setPhase("error");
-      return;
-    }
-    setPhase("saving");
-    const outcome = await onSave(weekBody(days));
-    if (outcome.status === 200 && outcome.data) {
-      const next = daysFromShifts(outcome.data);
-      setCommitted(next);
-      setDays(next);
-      setProblems({ byDay: {} });
-      setServerProblem(null);
-      setWriteFailure(null);
-      setPhase("saved");
-    } else {
-      if (outcome.status === 422 && (outcome.code === "opening_hours_required" || outcome.code === "end_not_after_start" || outcome.code === "overlapping_hours")) {
-        setServerProblem(outcome.code);
-      } else {
-        setWriteFailure(outcome);
+    submitting.current = true;
+    try {
+      const clientProblems = weekProblems(days, envelope, { allowEmptyWeek });
+      if (Object.keys(clientProblems.byDay).length > 0 || clientProblems.overall) {
+        setProblems(clientProblems);
+        setServerProblem(null);
+        setWriteFailure(null);
+        setPhase("error");
+        return;
       }
-      setPhase("error");
+      setPhase("saving");
+      // A rejected `onSave` (a thrown fetch, e.g. the connection dropping mid-request) is treated
+      // exactly like any other failed outcome, via `saveResult(null)`: this `try` is what closes
+      // the bug where such a throw skipped every `setPhase` below it, leaving the savebar showing
+      // "saving" (a spinner) forever, since nothing but these branches ever leaves that phase.
+      let outcome;
+      try {
+        outcome = await onSave(weekBody(days));
+      } catch {
+        outcome = null;
+      }
+      const result = saveResult(outcome);
+      if (result.kind === "saved") {
+        const next = daysFromShifts(result.data as ApiShift[]);
+        setCommitted(next);
+        setDays(next);
+        setProblems({ byDay: {} });
+        setServerProblem(null);
+        setWriteFailure(null);
+        setPhase("saved");
+      } else if (result.kind === "outsideOpeningHours") {
+        // The owner narrowed the opening hours between load and save: the same code and weekday
+        // `weekProblems` would have caught, so it gets the same field error and top banner. The
+        // envelope this editor was given is now stale (the "Shop open ..." lines still show the
+        // old times), so the caller re-reads it.
+        setProblems({ byDay: { [result.weekday]: "outside_opening_hours" } });
+        setServerProblem(null);
+        setWriteFailure(null);
+        setPhase("error");
+        onStaleEnvelope?.();
+      } else if (result.kind === "serverProblem") {
+        setServerProblem(result.code);
+        setWriteFailure(null);
+        setPhase("error");
+      } else {
+        setServerProblem(null);
+        setWriteFailure(result.outcome);
+        setPhase("error");
+      }
+    } finally {
+      submitting.current = false;
     }
   }
 
@@ -158,7 +232,8 @@ export function WeekEditor({ initial, envelope, locale, t, tWeek, onSave, savedM
   const problemWeekdays = Object.keys(problems.byDay)
     .map(Number)
     .sort((a, b) => a - b);
-  const genericFailure = writeFailure && writeFailure.status !== 401;
+  const ownerOnlyFailure = writeFailure?.status === 403 && writeFailure.code === "owner_only";
+  const genericFailure = writeFailure && writeFailure.status !== 401 && !ownerOnlyFailure;
 
   const savebarHint =
     status === "saving"
@@ -205,6 +280,7 @@ export function WeekEditor({ initial, envelope, locale, t, tWeek, onSave, savedM
   return (
     <form id={formId} className={uiStyles.stack} noValidate onSubmit={onSubmit}>
       {writeFailure?.status === 401 && <SignedOutBanner />}
+      {ownerOnlyFailure && <Banner tone="error">{errors("ownerOnly")}</Banner>}
       {genericFailure && <Banner tone="error">{form(problem(writeFailure!))}</Banner>}
       {(problems.overall === "opening_hours_required" || serverProblem === "opening_hours_required") && (
         <Banner tone="error">{t("allClosedRefusal")}</Banner>
@@ -212,7 +288,7 @@ export function WeekEditor({ initial, envelope, locale, t, tWeek, onSave, savedM
       {problems.overall === "too_many" && <Banner tone="error">{tWeek("tooMany")}</Banner>}
       {serverProblem === "end_not_after_start" && <Banner tone="error">{tWeek("serverEndNotAfterStart")}</Banner>}
       {serverProblem === "overlapping_hours" && <Banner tone="error">{tWeek("serverOverlapping")}</Banner>}
-      {problemWeekdays.length > 0 && (
+      {phase === "error" && problemWeekdays.length > 0 && (
         <Banner tone="error">
           {tWeek("notSaved", {
             count: problemWeekdays.length,
@@ -224,6 +300,8 @@ export function WeekEditor({ initial, envelope, locale, t, tWeek, onSave, savedM
         </Banner>
       )}
 
+      {envelope !== null && envelopeNote && <Banner tone="note">{envelopeNote}</Banner>}
+
       <div className={styles.weekContent}>
       <div className={styles.days}>
         {days.map((day) => {
@@ -231,12 +309,16 @@ export function WeekEditor({ initial, envelope, locale, t, tWeek, onSave, savedM
           const code = problems.byDay[day.weekday];
           const errorId = `day-${day.weekday}-error`;
           const overlap = code === "overlapping_hours" ? overlapWindow(day.shifts) : null;
+          // `null` envelope (unbounded) never restricts a day; a bounded one closes any weekday
+          // it has no rows for (`envelopeShiftsFor`, never `?? unbounded`).
+          const envShifts = envelope !== null ? envelopeShiftsFor(envelope, day.weekday) : null;
+          const shopOpen = envShifts === null || envShifts.length > 0;
           return (
             <div className={styles.day} key={day.weekday}>
               <div className={styles.dayHead}>
                 <span className={styles.dayName}>{weekdayText}</span>
                 {day.shifts.length === 0 ? (
-                  <span className={styles.dayClosed}>{t("closed")}</span>
+                  <span className={styles.dayClosed}>{envelope !== null && !shopOpen ? t("shopClosed") : t("closed")}</span>
                 ) : (
                   firstOpenWeekday === day.weekday && (
                     <button className={uiStyles.textButton} type="button" disabled={busy} onClick={() => copyToEveryDay(day.weekday)}>
@@ -244,12 +326,17 @@ export function WeekEditor({ initial, envelope, locale, t, tWeek, onSave, savedM
                     </button>
                   )
                 )}
+                {envelope !== null && shopOpen && (
+                  <span className={uiStyles.hint}>{t("shopOpen", { ranges: shiftRanges(envShifts!) })}</span>
+                )}
               </div>
 
               {day.shifts.length === 0 ? (
-                <button className={uiStyles.textButton} type="button" disabled={busy} onClick={() => addTimes(day.weekday)}>
-                  {t("addTimes")}
-                </button>
+                shopOpen && (
+                  <button className={uiStyles.textButton} type="button" disabled={busy} onClick={() => addTimes(day.weekday)}>
+                    {t("addTimes")}
+                  </button>
+                )
               ) : (
                 <>
                   <div className={styles.shifts}>
@@ -328,6 +415,7 @@ export function WeekEditor({ initial, envelope, locale, t, tWeek, onSave, savedM
                               : null}
                     </FieldError>
                   )}
+                  {code === "outside_opening_hours" && openingHoursLink}
                 </>
               )}
             </div>
@@ -335,7 +423,7 @@ export function WeekEditor({ initial, envelope, locale, t, tWeek, onSave, savedM
         })}
       </div>
 
-      <p className={uiStyles.hint}>{t("shortenHint")}</p>
+      {footNote && <p className={uiStyles.hint}>{footNote}</p>}
       </div>
 
       {/* Phone: stacked directly on the tab bar, in the shell's own bottom bar - see FooterPortal.

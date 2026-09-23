@@ -7,12 +7,18 @@ import { describe, test } from "node:test";
 
 import {
   changedDays,
+  copyToEveryDay,
   daysFromShifts,
   daysSummary,
   emptyWeek,
   envelopeFromShifts,
+  envelopeShiftsFor,
+  loadTimeProblems,
   overlapWindow,
   problemList,
+  saveResult,
+  shiftRanges,
+  teamHoursSummary,
   weekBody,
   weekdayName,
   weekProblems,
@@ -137,6 +143,83 @@ describe("weekProblems", () => {
     const days = [1, 2, 3, 4, 5, 6, 7].map((weekday) => ({ weekday, shifts: [] }));
     assert.equal(weekProblems(days, null).overall, "opening_hours_required");
   });
+
+  test("fence: allowEmptyWeek lets an all-closed week save (an owner clearing a leaving worker's hours)", () => {
+    const days = [1, 2, 3, 4, 5, 6, 7].map((weekday) => ({ weekday, shifts: [] }));
+    assert.equal(weekProblems(days, null, { allowEmptyWeek: true }).overall, undefined);
+  });
+
+  test("guard: allowEmptyWeek is off by default, so opening hours keeps refusing an all-closed week", () => {
+    const days = [1, 2, 3, 4, 5, 6, 7].map((weekday) => ({ weekday, shifts: [] }));
+    assert.equal(weekProblems(days, null, {}).overall, "opening_hours_required");
+  });
+});
+
+describe("loadTimeProblems", () => {
+  test("fence: an untouched, freshly-loaded empty week has no overall problem (never greets a first run with a refusal)", () => {
+    const days = [1, 2, 3, 4, 5, 6, 7].map((weekday) => ({ weekday, shifts: [] }));
+    assert.equal(loadTimeProblems(days, null).overall, undefined);
+    assert.deepEqual(loadTimeProblems(days, null).byDay, {});
+  });
+
+  test("guard: a shift already outside a narrowed envelope is still flagged in byDay", () => {
+    const days = [{ weekday: 1, shifts: [{ start: "09:00", end: "12:00" }] }];
+    const envelope = [{ weekday: 1, shifts: [{ start: "09:00", end: "11:00" }] }];
+    assert.equal(loadTimeProblems(days, envelope).byDay[1], "outside_opening_hours");
+  });
+});
+
+describe("copyToEveryDay", () => {
+  const days = [1, 2, 3, 4, 5, 6, 7].map((weekday) => ({ weekday, shifts: [] }));
+  days[1] = { weekday: 2, shifts: [{ start: "09:00", end: "12:00" }] }; // Tuesday: the source
+
+  test("fence: respects a bounded envelope, skipping a day the shop is closed", () => {
+    const envelope = [
+      { weekday: 2, shifts: [{ start: "09:00", end: "18:00" }] },
+      { weekday: 3, shifts: [{ start: "09:00", end: "18:00" }] },
+      // Monday (1) has no envelope row: the shop is closed there.
+    ];
+    const result = copyToEveryDay(days, envelope, 2);
+    assert.deepEqual(result.find((d) => d.weekday === 1).shifts, [], "Monday (shop closed) stays untouched");
+    assert.deepEqual(result.find((d) => d.weekday === 3).shifts, [{ start: "09:00", end: "12:00" }]);
+  });
+
+  test("guard: an unbounded envelope (null) copies to every day", () => {
+    const result = copyToEveryDay(days, null, 2);
+    for (const day of result) assert.deepEqual(day.shifts, [{ start: "09:00", end: "12:00" }]);
+  });
+
+  test("fence: a closed day keeps its own existing shifts, never cleared", () => {
+    // Monday already has a stale shift (left over from before the shop narrowed its hours), which
+    // "Copy to every day" must leave exactly as it was: it skips a closed day, it doesn't blank it.
+    const withStaleMonday = days.map((d) => (d.weekday === 1 ? { weekday: 1, shifts: [{ start: "08:00", end: "10:00" }] } : d));
+    const envelope = [{ weekday: 2, shifts: [{ start: "09:00", end: "18:00" }] }]; // Monday has no row: closed.
+    const result = copyToEveryDay(withStaleMonday, envelope, 2);
+    assert.deepEqual(result.find((d) => d.weekday === 1).shifts, [{ start: "08:00", end: "10:00" }]);
+  });
+
+  test("guard: an unknown source weekday leaves the week unchanged", () => {
+    assert.deepEqual(copyToEveryDay(days, null, 99), days);
+  });
+});
+
+describe("teamHoursSummary", () => {
+  const to = (from, to) => `${from} to ${to}`;
+
+  test("fence: no shifts is null, never daysSummary's empty-list \"\"", () => {
+    assert.equal(teamHoursSummary([], "en-GB", to), null);
+  });
+
+  test("guard: shifts summarize their weekdays, deduplicated", () => {
+    assert.equal(
+      teamHoursSummary(
+        [{ weekday: 2 }, { weekday: 2 }, { weekday: 3 }],
+        "en-GB",
+        to,
+      ),
+      "Tuesday and Wednesday",
+    );
+  });
 });
 
 describe("weekBody", () => {
@@ -220,5 +303,55 @@ describe("changedDays", () => {
     const before = [{ weekday: 3, shifts: [{ start: "13:00", end: "17:00" }, { start: "09:00", end: "12:00" }] }];
     const after = [{ weekday: 3, shifts: [{ start: "13:00", end: "17:00" }, { start: "09:00", end: "12:00" }] }];
     assert.deepEqual(changedDays(before, after), []);
+  });
+});
+
+describe("envelopeShiftsFor", () => {
+  const envelope = [
+    { weekday: 2, shifts: [{ start: "09:00", end: "18:00" }] },
+    { weekday: 3, shifts: [{ start: "14:00", end: "18:00" }, { start: "09:00", end: "13:00" }] },
+  ];
+
+  test("fence: the right weekday's shifts, sorted, never the whole envelope flattened", () => {
+    assert.deepEqual(envelopeShiftsFor(envelope, 3), [{ start: "09:00", end: "13:00" }, { start: "14:00", end: "18:00" }]);
+  });
+
+  test("guard: a weekday absent from the envelope has no shifts", () => {
+    assert.deepEqual(envelopeShiftsFor(envelope, 1), []);
+  });
+});
+
+describe("shiftRanges", () => {
+  test("guard: one shift", () => {
+    assert.equal(shiftRanges([{ start: "09:00", end: "18:00" }]), "09:00 – 18:00");
+  });
+
+  test("guard: two shifts joined by a middot", () => {
+    assert.equal(
+      shiftRanges([{ start: "09:00", end: "13:00" }, { start: "14:00", end: "18:00" }]),
+      "09:00 – 13:00 · 14:00 – 18:00",
+    );
+  });
+});
+
+describe("saveResult", () => {
+  test("fence: a thrown write (null outcome) is a failure, never left unresolved (the savebar-stuck-on-'saving' bug)", () => {
+    assert.deepEqual(saveResult(null), { kind: "failure", outcome: { status: 0 } });
+  });
+
+  test("guard: a 200 with data is saved, even an empty array (clearing the whole week)", () => {
+    assert.deepEqual(saveResult({ status: 200, data: [] }), { kind: "saved", data: [] });
+  });
+
+  test("guard: outside_opening_hours names the weekday", () => {
+    assert.deepEqual(saveResult({ status: 422, code: "outside_opening_hours", weekday: 3 }), { kind: "outsideOpeningHours", weekday: 3 });
+  });
+
+  test("guard: a server-side week refusal is a serverProblem", () => {
+    assert.deepEqual(saveResult({ status: 422, code: "opening_hours_required" }), { kind: "serverProblem", code: "opening_hours_required" });
+  });
+
+  test("guard: anything else (401, 403, unreachable) is a failure carrying its status and code", () => {
+    assert.deepEqual(saveResult({ status: 403, code: "owner_only" }), { kind: "failure", outcome: { status: 403, code: "owner_only" } });
   });
 });
