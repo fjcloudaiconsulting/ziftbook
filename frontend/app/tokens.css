@@ -27,6 +27,14 @@
   --lift: 0 -0.5rem 1.5rem -1rem oklch(0.23 0.025 28 / 0.28);
   --z-sticky: 10;
   --z-tabs: 20;
+  /* The phone tab bar's own rendered height (.tab's 3rem min-height plus .tabbar's 0.35rem top and
+     bottom padding). */
+  --tabbar-h: 3.7rem;
+  /* The week editor's savebar's own approximate rendered height (padding, one hint line, the
+     button): the clearance its page's own content needs above it, never for positioning the
+     savebar itself. The savebar stacks directly on the tab bar on phone (console.tsx's
+     FooterSlot/FooterPortal) or sticks alone on desktop, so there is no offset to get wrong. */
+  --savebar-h: 4.75rem;
 }
 
 *, *::before, *::after { box-sizing: border-box; }

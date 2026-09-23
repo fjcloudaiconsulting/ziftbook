@@ -27,7 +27,8 @@
     "unreachable": "Não conseguimos acessar o ziftbook. Confira sua conexão e tente de novo.",
     "unexpected": "Algo deu errado do nosso lado. Tente de novo em instantes.",
     "noScript": "Esta página precisa de JavaScript para manter seu link privado. Ative no navegador e abra de novo o link do e-mail.",
-    "needsJavaScript": "Esta página precisa de JavaScript. Ative no navegador e recarregue a página."
+    "needsJavaScript": "Esta página precisa de JavaScript. Ative no navegador e recarregue a página.",
+    "tryAgain": "Tentar novamente"
   },
   "Inbox": {
     "title": "Confira seu e-mail",
@@ -181,6 +182,57 @@
       "ownerOnly": "Só um proprietário pode fazer isso.",
       "signedOut": "Sua sessão terminou. Entre novamente em uma nova aba e tente de novo aqui. <link>Entrar</link>"
     },
-    "notSaved": "Nada foi salvo, seus dados ainda estão aqui."
+    "notSaved": "Nada foi salvo, seus dados ainda estão aqui.",
+    "week": {
+      "savingHint": "A semana inteira está sendo salva de uma vez. Nada muda para os clientes até ser salva.",
+      "saving": "Salvando…",
+      "save": "Salvar a semana",
+      "undo": "Desfazer alterações",
+      "unsavedChanges": "Alterações não salvas: {days}.",
+      "attentionHint": "{count, plural, =1 {Um dia precisa de atenção.} =2 {Dois dias precisam de atenção.} =3 {Três dias precisam de atenção.} =4 {Quatro dias precisam de atenção.} =5 {Cinco dias precisam de atenção.} =6 {Seis dias precisam de atenção.} =7 {Sete dias precisam de atenção.} other {# dias precisam de atenção.}}",
+      "notSaved": "A semana não foi salva. {count, plural, =1 {Um dia precisa de atenção} =2 {Dois dias precisam de atenção} =3 {Três dias precisam de atenção} =4 {Quatro dias precisam de atenção} =5 {Cinco dias precisam de atenção} =6 {Seis dias precisam de atenção} =7 {Sete dias precisam de atenção} other {# dias precisam de atenção}}: {list}.",
+      "fieldTimeRequired": "Informe um horário",
+      "fieldEndNotAfterStart": "O horário de término precisa ser depois do horário de início. Horários que passam da meia-noite são dois dias.",
+      "fieldOverlapping": "Esses dois blocos cobrem de {from} até {to} duas vezes. Altere um deles.",
+      "phraseTimeRequired": "{weekday} está sem um horário",
+      "phraseEndNotAfterStart": "{weekday} termina antes de começar",
+      "phraseOverlapping": "{weekday} tem dois blocos que se sobrepõem",
+      "phraseOutsideOpeningHours": "{weekday} fica fora do horário de funcionamento da loja",
+      "dayRange": "{from} até {to}",
+      "tooMany": "Esta semana tem blocos demais para salvar. Remova alguns e tente novamente.",
+      "fieldOutsideOpeningHours": "Isso fica fora do horário de funcionamento da loja.",
+      "serverEndNotAfterStart": "Um horário de término precisa ser depois do horário de início correspondente. Confira cada dia e tente novamente.",
+      "serverOverlapping": "Dois blocos nesta semana se sobrepõem. Confira cada dia e tente novamente."
+    },
+    "opening": {
+      "emptyLede": "{business} · horários no fuso de {city}",
+      "editorLede": "Quando a loja está aberta. Horários no fuso de {city}.",
+      "empty": {
+        "title": "A loja ainda não tem horário de funcionamento",
+        "body": "Estes são os horários em que a loja está aberta. Tudo cabe dentro deles: cada pessoa trabalha parte da semana, o tempo bloqueado sai daí, e o que sobra é o que os clientes podem agendar.",
+        "cta": "Definir a semana de funcionamento",
+        "hint": "O horário de funcionamento é o primeiro passo: os horários de trabalho de todos cabem dentro dele."
+      },
+      "note": "Ninguém pode trabalhar fora desses horários, e nada pode ser agendado fora deles. <link>Ver quem trabalha quando</link>",
+      "shortenHint": "Encurtar um dia torna os horários de trabalho fora dos novos horários não agendáveis. Quem trabalha nesse horário mantém suas horas; os clientes simplesmente deixam de receber essas opções.",
+      "closed": "Fechado",
+      "addTimes": "Adicionar horários",
+      "copyToEveryDay": "Copiar para todos os dias",
+      "addBlock": "Adicionar um bloco",
+      "addSecondBlock": "Adicionar um segundo bloco",
+      "twoBlockHint": "Dois blocos fecham a loja no intervalo: nada é agendado de {from} até {to}.",
+      "opensAt": "{weekday}, a loja abre às",
+      "opensAtFirst": "{weekday}, primeiro bloco, a loja abre às",
+      "opensAtSecond": "{weekday}, segundo bloco, a loja abre às",
+      "opensAtBlock": "{weekday}, bloco {n}, a loja abre às",
+      "closesAt": "{weekday}, a loja fecha às",
+      "closesAtFirst": "{weekday}, primeiro bloco, a loja fecha às",
+      "closesAtSecond": "{weekday}, segundo bloco, a loja fecha às",
+      "closesAtBlock": "{weekday}, bloco {n}, a loja fecha às",
+      "removeOnly": "Fechar a loja no dia {weekday}, removendo de {from} até {to}",
+      "remove": "Remover {weekday}, de {from} até {to}",
+      "allClosedRefusal": "Abra a loja em pelo menos um dia.",
+      "saved": "Salvo. Os clientes só podem agendar enquanto a loja estiver aberta."
+    }
   }
 }

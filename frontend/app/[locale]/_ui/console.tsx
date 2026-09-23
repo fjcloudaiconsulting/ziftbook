@@ -2,6 +2,7 @@
 
 import { useTranslations } from "next-intl";
 import { createContext, type ReactNode, useContext, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 import {
   type BusinessSettingsOutput,
@@ -32,6 +33,11 @@ type ConsoleContextValue = {
    * else in another tab never lets this tab's write land in the wrong business. */
   call<T>(request: () => Promise<{ data?: T; error?: unknown; response?: Response }>, options?: { write?: boolean }): Promise<Outcome<T>>;
   updateSession(patch: Partial<SessionOut>): void;
+  /** Where a page's own bottom action bar (the week editor's savebar) renders on phone, so it
+   * stacks directly on the tab bar as one element with no gap between them - never a sticky offset
+   * computed to line up with a separately-stickied tab bar, which a page nested many levels deep
+   * has no reliable room to reach (`FooterSlot`/`FooterPortal`, below). `null` until mounted. */
+  footerSlot: HTMLDivElement | null;
 };
 
 const ConsoleContext = createContext<ConsoleContextValue | null>(null);
@@ -40,6 +46,15 @@ export function useConsole(): ConsoleContextValue {
   const value = useContext(ConsoleContext);
   if (!value) throw new Error("useConsole must be used inside Shell");
   return value;
+}
+
+/** Portals a page's phone-only footer action bar (the week editor's savebar) into the Shell's own
+ * bottom bar, right above the tab bar: one sticky container, one set of edges, so no gap can open
+ * between the two. Renders nothing until the slot has mounted, and nothing at all on desktop
+ * (the slot isn't rendered there - see `.footerSlot` in console.module.css). */
+export function FooterPortal({ children }: { children: ReactNode }) {
+  const { footerSlot } = useConsole();
+  return footerSlot ? createPortal(children, footerSlot) : null;
 }
 
 const ICONS: Record<Section, ReactNode> = {
@@ -243,6 +258,7 @@ export function Shell({ children }: { children: ReactNode }) {
   const [failure, setFailure] = useState<ReturnType<typeof problem> | null>(null);
   const [signOutFailure, setSignOutFailure] = useState<ReturnType<typeof problem> | null>(null);
   const [moreOpen, setMoreOpen] = useState(false);
+  const [footerSlot, setFooterSlot] = useState<HTMLDivElement | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -323,7 +339,7 @@ export function Shell({ children }: { children: ReactNode }) {
   const current = sectionOf(pathname);
 
   return (
-    <ConsoleContext.Provider value={{ session, settings, call, updateSession }}>
+    <ConsoleContext.Provider value={{ session, settings, call, updateSession, footerSlot }}>
       <div className={styles.shell}>
         <header className={styles.topbar}>
           <span className={styles.brand}>
@@ -362,29 +378,36 @@ export function Shell({ children }: { children: ReactNode }) {
           </main>
         </div>
 
-        <nav className={styles.tabbar} aria-label={navT("sections")}>
-          {nav.tabs.map((section) =>
-            section === "more" ? (
-              <button
-                key="more"
-                type="button"
-                className={styles.tab}
-                aria-haspopup="dialog"
-                aria-expanded={moreOpen}
-                onClick={() => setMoreOpen(true)}
-              >
-                <svg aria-hidden="true" viewBox="0 0 24 24" width="20" height="20">
-                  <circle cx="5.5" cy="12" r="1.6" fill="currentColor" />
-                  <circle cx="12" cy="12" r="1.6" fill="currentColor" />
-                  <circle cx="18.5" cy="12" r="1.6" fill="currentColor" />
-                </svg>
-                <span className={styles.tabLabel}>{navT("more")}</span>
-              </button>
-            ) : (
-              <NavLink key={section} section={section} current={current} className={styles.tab} variant="tab" />
-            ),
-          )}
-        </nav>
+        {/* One sticky container for a page's own phone footer bar (FooterPortal) stacked directly
+            on the tab bar: adjacent children of the same box, so there is no gap either could show
+            scrolled content through. Desktop has no tab bar and renders nothing here (a page's
+            footer bar sticks on its own there, inside .content - see week-editor.tsx). */}
+        <div className={styles.bottomBar}>
+          <div ref={setFooterSlot} className={styles.footerSlot} />
+          <nav className={styles.tabbar} aria-label={navT("sections")}>
+            {nav.tabs.map((section) =>
+              section === "more" ? (
+                <button
+                  key="more"
+                  type="button"
+                  className={styles.tab}
+                  aria-haspopup="dialog"
+                  aria-expanded={moreOpen}
+                  onClick={() => setMoreOpen(true)}
+                >
+                  <svg aria-hidden="true" viewBox="0 0 24 24" width="20" height="20">
+                    <circle cx="5.5" cy="12" r="1.6" fill="currentColor" />
+                    <circle cx="12" cy="12" r="1.6" fill="currentColor" />
+                    <circle cx="18.5" cy="12" r="1.6" fill="currentColor" />
+                  </svg>
+                  <span className={styles.tabLabel}>{navT("more")}</span>
+                </button>
+              ) : (
+                <NavLink key={section} section={section} current={current} className={styles.tab} variant="tab" />
+              ),
+            )}
+          </nav>
+        </div>
 
         <MoreSheet more={nav.more} current={current} open={moreOpen} onClose={() => setMoreOpen(false)} />
       </div>

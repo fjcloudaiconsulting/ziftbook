@@ -134,10 +134,12 @@ export function NoScript({ children }: { children: ReactNode }) {
   );
 }
 
-/** Stays focusable while a request runs, so focus isn't lost; a second press does nothing. */
-export function Submit({ busy, busyLabel, children }: { busy: boolean; busyLabel: string; children: ReactNode }) {
+/** Stays focusable while a request runs, so focus isn't lost; a second press does nothing.
+ * `form`: the id of the `<form>` to submit, for a submit button rendered outside it (a week
+ * editor's savebar, portaled into the shell's own bottom bar on phone). */
+export function Submit({ busy, busyLabel, form, children }: { busy: boolean; busyLabel: string; form?: string; children: ReactNode }) {
   return (
-    <button className={`${styles.button} ${styles.primary}`} type="submit" aria-disabled={busy || undefined}>
+    <button className={`${styles.button} ${styles.primary}`} type="submit" form={form} aria-disabled={busy || undefined}>
       {busy && <span className={styles.spinner} aria-hidden="true" />}
       {busy ? busyLabel : children}
     </button>

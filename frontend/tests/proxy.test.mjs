@@ -129,6 +129,7 @@ describe("account pages", () => {
     "/en/calendar",
     "/nl/clients",
     "/pt/settings",
+    "/en/opening-hours",
   ];
 
   test("no page sends a Referer or can be framed", async () => {

@@ -125,18 +125,29 @@
  * tabindex=-1 heading, so a real focusable control's ring is untouched. */
 .shell h1[tabindex="-1"]:focus { outline: none; }
 
-/* Phone tab bar */
-.tabbar {
+/* Phone tab bar, and the shared sticky bar it shares with a page's own footer actions (the week
+   editor's savebar, portaled in through FooterSlot/FooterPortal - console.tsx). Stacking both as
+   direct children of one sticky box, not two independently-stickied elements each computing its
+   own offset, is what rules out a gap ever opening between them: there is no offset to get wrong. */
+.bottomBar {
   position: sticky;
   bottom: 0;
   z-index: var(--z-tabs);
   display: flex;
+  flex-direction: column;
+}
+@media (min-width: 56rem) {
+  /* No tab bar on desktop: a page's own footer bar sticks on its own, inside .content. */
+  .bottomBar { display: none; }
+}
+/* The mount point FooterPortal renders a page's savebar into: no styling of its own, so an empty
+   slot (most pages) takes no space, and a filled one is exactly the savebar's own box. */
+.footerSlot { display: contents; }
+.tabbar {
+  display: flex;
   background: var(--nav);
   box-shadow: var(--lift);
   padding: 0.35rem 0.25rem env(safe-area-inset-bottom);
-}
-@media (min-width: 56rem) {
-  .tabbar { display: none; }
 }
 .tab {
   position: relative;
@@ -214,3 +225,100 @@
 }
 .stepsHint { margin: 0; font-size: 0.875rem; color: var(--muted); }
 .placeholderAction { justify-self: start; width: auto; }
+
+/* Week editor (opening hours; working hours later): the day list and its sticky savebar. */
+.days { display: grid; gap: 0.5rem; }
+.day { border: 1px solid var(--line); border-radius: 0.85rem; padding: 0.75rem 0.9rem; background: var(--bg); }
+.dayHead { display: flex; flex-wrap: wrap; align-items: center; gap: 0.25rem 0.75rem; min-height: 2.5rem; }
+.dayHead .dayName { margin-inline-end: auto; }
+.dayName { font: 600 1rem/1 var(--font-body), system-ui, sans-serif; }
+.dayClosed { color: var(--muted); font-size: 0.9375rem; }
+.shifts { display: grid; gap: 0.5rem; margin-top: 0.6rem; }
+.shift { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.shift input[type="time"] {
+  min-height: 48px;
+  min-width: 6.5rem;
+  flex: 1 1 6.5rem;
+  padding: 0 0.7rem;
+  border: 1px solid var(--field-line);
+  border-radius: 0.7rem;
+  background: var(--bg);
+  color: var(--ink);
+  font: 400 1rem/1 var(--font-body), system-ui, sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+.shift input[aria-invalid="true"] { border-color: var(--error); border-width: 2px; }
+.shift .dash { color: var(--muted); flex: none; }
+.iconOnly {
+  min-height: 44px;
+  min-width: 44px;
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  border: 1px solid var(--line);
+  border-radius: 0.7rem;
+  background: var(--bg);
+  color: var(--muted);
+  cursor: pointer;
+}
+.iconOnly:hover { border-color: var(--field-line); color: var(--ink); }
+.dayActions { display: flex; flex-wrap: wrap; gap: 0.25rem 1rem; margin-top: 0.5rem; }
+
+/* The days grid plus the static hint below it: everything in the week editor except the savebar,
+   which lives elsewhere now (phone: portaled into the shell's own bottom bar, stacked on the tab
+   bar; desktop: sticky on its own, below). Its trailing clearance needs to be exactly the combined
+   footer height (tab bar + savebar on phone; savebar alone on desktop), not that plus whatever
+   .content's own generic tab-bar guess already adds - the negative margin cancels that guess
+   first, so the two don't stack into a much taller empty band than either bar needs. */
+.weekContent {
+  margin-bottom: calc(-4.5rem - env(safe-area-inset-bottom));
+  padding-bottom: calc(var(--tabbar-h) + var(--savebar-h) + env(safe-area-inset-bottom));
+}
+@media (min-width: 56rem) {
+  /* No tab bar here, and this padding is only for the sticky savebar's own containing block to
+     have room in (a little past --savebar-h: design-r2.html:441-444's desktop padding runs a bit
+     taller than phone's). Known gap: #content's own trailing 3rem (Shell, shared by every console
+     page) sits past where this savebar's containing block ends, so at true max scroll the savebar
+     has already released back to its static position, roughly 3rem short of the true bottom - a
+     descendant's margin can't reach up and cancel a shared ancestor's own padding. Narrower than
+     the phone gap this round fixed (no content shows through - it's blank space, not a bug that
+     lets anything peek), and not reachable from here without a Shell-level change. */
+  .weekContent { padding-bottom: calc(var(--savebar-h) + 1rem); }
+}
+
+/* The savebar itself: same box regardless of where it renders. Edge to edge on phone (full
+   viewport width: it's portaled outside .content's own padding entirely), inset to the content
+   column's own edges on desktop (the negative margin bleeds it back out to that column's edge). */
+.savebar {
+  background: var(--bg);
+  border-top: 1px solid var(--line);
+  padding: 0.75rem 1rem;
+  box-shadow: var(--lift);
+  display: flex;
+  align-items: center;
+  gap: 0.75rem 1rem;
+  flex-wrap: wrap;
+}
+.savebar .hint { flex: 1 1 100%; order: -1; }
+/* The desktop-only instance (a duplicate of the same content, shown instead of the phone one that
+   FooterPortal renders - each hidden where the other applies, so only one is ever visible or
+   focusable): there is no tab bar to stack on there, so it sticks on its own, inset to the content
+   column via the same negative margin .content's own padding calls for. */
+.savebarDesktop { display: none; }
+@media (min-width: 56rem) {
+  .savebarDesktop {
+    display: flex;
+    position: sticky;
+    bottom: 0;
+    z-index: var(--z-sticky);
+    margin: 0.25rem -2rem 0;
+    padding: 0.9rem 2rem;
+  }
+  .savebarDesktop .hint { flex: 1; order: 0; }
+}
+.saveButton { flex: 1 1 10rem; }
+@media (min-width: 56rem) {
+  .saveButton { flex: 0 0 auto; min-width: 11rem; }
+}
+/* Disabled because there is nothing to save reads differently from disabled because it is saving. */
+.saveIdle[aria-disabled="true"] { background: var(--surface); color: var(--muted); border-color: var(--line); opacity: 1; cursor: default; }

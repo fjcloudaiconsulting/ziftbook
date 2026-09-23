@@ -34,3 +34,15 @@ test("reports a string where the source has a group", () => {
   const nl = { Home: "Hallo", footer: "Contact" };
   assert.deepEqual(compareCatalogs(en, nl), ["type differs at Home: expected group, got string"]);
 });
+
+test("an ICU plural's branch text isn't mistaken for a placeholder", () => {
+  const en2 = { count: "{count, plural, =1 {One day} other {# days}}" };
+  const nl2 = { count: "{count, plural, =1 {Eén dag} other {# dagen}}" };
+  assert.deepEqual(compareCatalogs(en2, nl2), []);
+});
+
+test("a real placeholder dropped inside an ICU plural branch is still caught", () => {
+  const en2 = { count: "{count, plural, =1 {One day, {list}} other {# days, {list}}}" };
+  const nl2 = { count: "{count, plural, =1 {Eén dag} other {# dagen}}" };
+  assert.deepEqual(compareCatalogs(en2, nl2), ["placeholders differ at count: expected {count,list}, got {count}"]);
+});
