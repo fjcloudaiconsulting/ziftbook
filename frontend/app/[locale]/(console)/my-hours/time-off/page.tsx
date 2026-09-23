@@ -1,6 +1,6 @@
 import { getTranslations } from "next-intl/server";
 
-import { MyHoursTimeOff } from "../../my-hours";
+import { MyHours } from "../../my-hours";
 
 export async function generateMetadata() {
   const t = await getTranslations("Console.nav");
@@ -8,5 +8,5 @@ export async function generateMetadata() {
 }
 
 export default function MyHoursTimeOffPage() {
-  return <MyHoursTimeOff />;
+  return <MyHours tab="timeOff" />;
 }

@@ -9,5 +9,5 @@ export async function generateMetadata() {
 
 export default async function PersonPage({ params }: { params: Promise<{ memberId: string }> }) {
   const { memberId } = await params;
-  return <Person memberId={memberId} />;
+  return <Person memberId={memberId} tab="hours" />;
 }

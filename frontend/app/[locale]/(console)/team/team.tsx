@@ -585,7 +585,11 @@ function SetNameField({ memberId, onSaved }: { memberId: string; onSaved(name: s
   );
 }
 
-export function Person({ memberId }: { memberId: string }) {
+/** `/team/[memberId]` (working hours) and `/team/[memberId]/time-off` (blocked time): one shared
+ * loader and header (name, lede, tabs), so switching tabs never makes the header jump - only the
+ * tab body underneath changes. While the blocked-time tab is showing its own form, the form's own
+ * heading is the only `<h1>` on screen: this header hides rather than doubling up. */
+export function Person({ memberId, tab }: { memberId: string; tab: "hours" | "timeOff" }) {
   const { session, settings, call, updateSession } = useConsole();
   const t = useTranslations("Console.person");
   const account = useTranslations("Console.account");
@@ -595,6 +599,7 @@ export function Person({ memberId }: { memberId: string }) {
   const [members, setMembers] = useState<MemberOut[] | null>(null);
   const [displayName, setDisplayName] = useState<string | null>(null);
   const [failure, setFailure] = useState<ReturnType<typeof problem> | null>(null);
+  const [inForm, setInForm] = useState(false);
 
   function load() {
     call(() => membersList()).then((outcome) => {
@@ -638,91 +643,36 @@ export function Person({ memberId }: { memberId: string }) {
     );
   }
 
+  const name = displayName ? displayName : t("nameNotSet");
+
   return (
     <>
-      <BackLink />
-      <Heading focus>
-        {displayName ? displayName : <span className={styles.unset}>{t("nameNotSet")}</span>}
-      </Heading>
-      <p className={uiStyles.lede}>{t("lede", { email: member.email, role: account(member.role === "owner" ? "owner" : "worker"), city })}</p>
-      {showSetName(displayName) && (
-        <SetNameField
-          memberId={memberId}
-          onSaved={(name) => {
-            setDisplayName(name);
-            if (memberId === session.member_id) updateSession({ display_name: name });
-          }}
-        />
+      {!inForm && (
+        <>
+          <BackLink />
+          <Heading focus>{displayName ? displayName : <span className={styles.unset}>{t("nameNotSet")}</span>}</Heading>
+          <p className={uiStyles.lede}>{t("lede", { email: member.email, role: account(member.role === "owner" ? "owner" : "worker"), city })}</p>
+          {showSetName(displayName) && (
+            <SetNameField
+              memberId={memberId}
+              onSaved={(saved) => {
+                setDisplayName(saved);
+                if (memberId === session.member_id) updateSession({ display_name: saved });
+              }}
+            />
+          )}
+          <PersonTabs workingHoursHref={`/team/${memberId}`} blockedTimeHref={`/team/${memberId}/time-off`} active={tab} />
+        </>
       )}
-      <PersonTabs workingHoursHref={`/team/${memberId}`} blockedTimeHref={`/team/${memberId}/time-off`} active="hours" />
-      <HoursSection
-        memberId={memberId}
-        editable={canEditHours(session.role as Role, memberId === session.member_id, settings.workers_edit_own_hours)}
-        ownerView
-      />
-    </>
-  );
-}
-
-/** `/team/[memberId]/time-off` (owner): the same person header as `Person`, with the blocked-time
- * tab active. Kept a separate export (not a `tab` prop on `Person`) so each route's page component
- * stays a plain wrapper. */
-export function PersonTimeOff({ memberId }: { memberId: string }) {
-  const { call } = useConsole();
-  const t = useTranslations("Console.person");
-  const form = useTranslations("Form");
-
-  const [members, setMembers] = useState<MemberOut[] | null>(null);
-  const [failure, setFailure] = useState<ReturnType<typeof problem> | null>(null);
-
-  function load() {
-    call(() => membersList()).then((outcome) => {
-      if (outcome.status === 200 && outcome.data) {
-        setFailure(null);
-        setMembers(outcome.data);
-      } else {
-        setFailure(problem(outcome));
-      }
-    });
-  }
-
-  useEffect(() => {
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [memberId]);
-
-  if (failure) {
-    return (
-      <>
-        <BackLink />
-        <Banner tone="error">{form(failure)}</Banner>
-        <button className={uiStyles.textButton} type="button" onClick={load}>
-          {form("tryAgain")}
-        </button>
-      </>
-    );
-  }
-
-  if (!members) return <BackLink />;
-
-  const member = members.find((m) => m.member_id === memberId);
-  if (!member) {
-    return (
-      <>
-        <BackLink />
-        <Banner tone="error">{t("notFound")}</Banner>
-      </>
-    );
-  }
-
-  return (
-    <>
-      <BackLink />
-      <Heading focus>
-        {member.display_name ? member.display_name : <span className={styles.unset}>{t("nameNotSet")}</span>}
-      </Heading>
-      <PersonTabs workingHoursHref={`/team/${memberId}`} blockedTimeHref={`/team/${memberId}/time-off`} active="timeOff" />
-      <BlockedTime memberId={memberId} />
+      {tab === "hours" ? (
+        <HoursSection
+          memberId={memberId}
+          editable={canEditHours(session.role as Role, memberId === session.member_id, settings.workers_edit_own_hours)}
+          ownerView
+        />
+      ) : (
+        <BlockedTime memberId={memberId} personName={name} onFormMode={setInForm} />
+      )}
     </>
   );
 }

@@ -8,5 +8,5 @@ export async function generateMetadata() {
 }
 
 export default function MyHoursPage() {
-  return <MyHours />;
+  return <MyHours tab="hours" />;
 }
