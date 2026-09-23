@@ -167,24 +167,15 @@
       "checkHours": "Bekijk mijn werktijden"
     },
     "calendar": {
-      "title": "Ontworpen met boekingen, nog niet hier",
-      "body": "De weekweergave komt met boekingen (ZIF-51). Er is nog geen endpoint: werktijden en geblokkeerde tijd voeden die al, daarom staan die twee schermen in dit ticket.",
+      "comingSoon": "Je agenda komt binnenkort.",
       "seeHours": "Bekijk werktijden",
       "seeMyHours": "Bekijk mijn uren"
     },
     "clients": {
-      "title": "Komt met boekingen",
-      "body": "Klanten boeken als gast, dus deze lijst wordt opgebouwd uit hun boekingen."
+      "comingSoon": "Je klanten komen binnenkort."
     },
     "settings": {
-      "title": "ZIF-42 vult dit in",
-      "intro": "De navigatie heeft hier al een plek voor. De schermen in dit ticket lezen al vier van deze instellingen, dus die zijn het noemen waard:",
-      "timezone": "<b>Tijdzone</b> · elke tijd op het scherm wordt hierin getoond",
-      "staffHours": "<b>Medewerkers mogen hun eigen werktijden wijzigen</b> · bepaalt of \"Mijn uren\" bewerkbaar is",
-      "buffer": "<b>Standaard marge na een afspraak</b> · wat \"gebruik de standaardwaarde van het bedrijf\" betekent bij een dienst",
-      "horizon": "<b>Hoe ver vooruit klanten kunnen boeken</b> · {days} dagen, en de lijst met geblokkeerde tijd toont dezelfde {days} dagen",
-      "slotStep": "<b>Tijdsindeling</b> · niet getoond in dit ticket",
-      "openingHoursNote": "Openingstijden staan hier niet: die hebben een eigen onderdeel, naast dit onderdeel, omdat ieders werktijden daarbinnen vallen."
+      "comingSoon": "Je instellingen komen binnenkort."
     },
     "errors": {
       "ownerOnly": "Alleen een eigenaar kan dit doen.",

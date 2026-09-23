@@ -167,24 +167,15 @@
       "checkHours": "Ver meus horários de trabalho"
     },
     "calendar": {
-      "title": "Pensado para agendamentos, ainda não aqui",
-      "body": "A visão semanal chega com os agendamentos (ZIF-51). Ainda não há endpoint: os horários de trabalho e o tempo bloqueado já o alimentam, por isso essas duas telas estão neste ticket.",
+      "comingSoon": "A sua agenda chega em breve.",
       "seeHours": "Ver horários de trabalho",
       "seeMyHours": "Ver meus horários"
     },
     "clients": {
-      "title": "Chega com os agendamentos",
-      "body": "Os clientes agendam como convidados, então esta lista é construída a partir dos agendamentos deles."
+      "comingSoon": "Os seus clientes chegam em breve."
     },
     "settings": {
-      "title": "O ZIF-42 vai preencher isto",
-      "intro": "A navegação já tem o espaço pronto. As telas deste ticket já leem quatro dessas configurações, por isso vale a pena nomeá-las:",
-      "timezone": "<b>Fuso horário</b> · todo horário na tela é exibido nele",
-      "staffHours": "<b>A equipe pode alterar seus próprios horários de trabalho</b> · decide se \"Meus horários\" é editável",
-      "buffer": "<b>Intervalo padrão após um agendamento</b> · o que \"usar o padrão do negócio\" significa em um serviço",
-      "horizon": "<b>Com quanta antecedência os clientes podem agendar</b> · {days} dias, e a lista de tempo bloqueado mostra os mesmos {days} dias",
-      "slotStep": "<b>Espaçamento dos horários</b> · não exibido neste ticket",
-      "openingHoursNote": "O horário de funcionamento não está aqui: ele tem uma seção própria, ao lado desta, porque os horários de todos ficam dentro dele."
+      "comingSoon": "As suas configurações chegam em breve."
     },
     "errors": {
       "ownerOnly": "Só um proprietário pode fazer isso.",

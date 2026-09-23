@@ -167,24 +167,15 @@
       "checkHours": "Check my working hours"
     },
     "calendar": {
-      "title": "Designed with bookings, not here",
-      "body": "The week view arrives with bookings (ZIF-51). It has no endpoint yet: working hours and blocked time already feed it, which is why those two screens are in this ticket.",
+      "comingSoon": "Your calendar is coming soon.",
       "seeHours": "See working hours",
       "seeMyHours": "See my hours"
     },
     "clients": {
-      "title": "Arrives with bookings",
-      "body": "Clients book as guests, so this list is built from their bookings."
+      "comingSoon": "Your clients are coming soon."
     },
     "settings": {
-      "title": "ZIF-42 fills this in",
-      "intro": "The navigation has the slot ready. The screens in this ticket already read four of these settings, so they are worth naming:",
-      "timezone": "<b>Time zone</b> · every time on screen is drawn in it",
-      "staffHours": "<b>Staff may change their own working hours</b> · decides whether \"My hours\" is editable",
-      "buffer": "<b>Default gap after an appointment</b> · what \"use the business default\" means on a service",
-      "horizon": "<b>How far ahead clients can book</b> · {days} days, and the blocked-time list shows the same {days} days",
-      "slotStep": "<b>Slot spacing</b> · not shown in this ticket",
-      "openingHoursNote": "Opening hours are not here: they have a section of their own, next to this one, because everyone's working hours sit inside them."
+      "comingSoon": "Your settings are coming soon."
     },
     "errors": {
       "ownerOnly": "Only an owner can do this.",

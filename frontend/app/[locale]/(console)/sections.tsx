@@ -90,8 +90,7 @@ export function Calendar() {
     <>
       <Heading focus>{nav("calendar")}</Heading>
       <div className={styles.placeholder}>
-        <strong>{t("title")}</strong>
-        <p>{t("body")}</p>
+        <p>{t("comingSoon")}</p>
         {session.role === "owner" ? (
           <Link className={`${uiStyles.button} ${uiStyles.secondary} ${styles.placeholderAction}`} href={`/team/${session.member_id}`}>
             {t("seeHours")}
@@ -113,31 +112,20 @@ export function Clients() {
     <>
       <Heading focus>{nav("clients")}</Heading>
       <div className={styles.placeholder}>
-        <strong>{t("title")}</strong>
-        <p>{t("body")}</p>
+        <p>{t("comingSoon")}</p>
       </div>
     </>
   );
 }
 
 export function Settings() {
-  const { settings } = useConsole();
   const t = useTranslations("Console.settings");
   const nav = useTranslations("Console.nav");
   return (
     <>
       <Heading focus>{nav("settings")}</Heading>
       <div className={styles.placeholder}>
-        <strong>{t("title")}</strong>
-        <p>{t("intro")}</p>
-        <ul className={styles.settingsList}>
-          <li>{t.rich("timezone", { b: (chunks) => <b>{chunks}</b> })}</li>
-          <li>{t.rich("staffHours", { b: (chunks) => <b>{chunks}</b> })}</li>
-          <li>{t.rich("buffer", { b: (chunks) => <b>{chunks}</b> })}</li>
-          <li>{t.rich("horizon", { b: (chunks) => <b>{chunks}</b>, days: settings.booking_horizon_days })}</li>
-          <li>{t.rich("slotStep", { b: (chunks) => <b>{chunks}</b> })}</li>
-        </ul>
-        <p>{t("openingHoursNote")}</p>
+        <p>{t("comingSoon")}</p>
       </div>
     </>
   );

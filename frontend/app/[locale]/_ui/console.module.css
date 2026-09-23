@@ -194,7 +194,6 @@
 
 /* Placeholder sections and Today's steps list */
 .placeholder { border: 1px dashed var(--line); border-radius: 1rem; padding: 1.1rem; display: grid; gap: 0.5rem; }
-.placeholder strong { font-weight: 600; }
 .placeholder p { margin: 0; color: var(--muted); font-size: 0.9375rem; }
 .steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.5rem; }
 .steps li { display: flex; align-items: center; gap: 0.75rem; }
@@ -214,5 +213,4 @@
   flex: none;
 }
 .stepsHint { margin: 0; font-size: 0.875rem; color: var(--muted); }
-.settingsList { margin: 0.25rem 0 0; padding-left: 1.1rem; display: grid; gap: 0.4rem; color: var(--muted); font-size: 0.9375rem; }
 .placeholderAction { justify-self: start; width: auto; }
