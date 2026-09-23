@@ -5,6 +5,7 @@ import { type ReactNode, type Ref, useEffect, useId, useRef, useState, useSyncEx
 
 import { clock, RESEND_AFTER_MS, secondsLeft, takeToken } from "@/lib/account";
 
+import { Header } from "./header";
 import styles from "./ui.module.css";
 
 /** What an API call came back with: status 0 means the request never got an answer. */
@@ -29,9 +30,12 @@ export function problem(outcome: Outcome<unknown>): "busy" | "unreachable" | "in
 
 export function Screen({ children }: { children: ReactNode }) {
   return (
-    <main className={styles.screen}>
-      <div className={styles.col}>{children}</div>
-    </main>
+    <>
+      <Header />
+      <main className={styles.screen}>
+        <div className={styles.col}>{children}</div>
+      </main>
+    </>
   );
 }
 
@@ -56,6 +60,12 @@ export function Banner({ tone, children }: { tone: "error" | "note" | "info"; ch
 }
 
 const MARKS = {
+  calendar: (
+    <>
+      <rect x="3.5" y="5" width="17" height="15" rx="2.5" fill="none" stroke="currentColor" strokeWidth="1.8" />
+      <path d="M3.5 9.5h17M8 3.5v3M16 3.5v3" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </>
+  ),
   mail: (
     <>
       <rect x="3.5" y="5.5" width="17" height="13" rx="2" fill="none" stroke="currentColor" strokeWidth="1.8" />

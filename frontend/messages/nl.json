@@ -127,14 +127,60 @@
     "memberTitle": "Je hoort al bij {business}",
     "memberLede": "Je werkt er al, dus er is niets gewijzigd. Log in om je afspraken te zien."
   },
-  "Home": {
-    "signedInAs": "Ingelogd als <chip>{email}</chip>",
-    "owner": "Eigenaar",
-    "worker": "Medewerker",
-    "emptyTitle": "Hier komen je boekingen",
-    "emptyBody": "Diensten, openingstijden en de afspraken van vandaag komen hierna. Je account en bedrijf staan al klaar.",
-    "signOut": "Uitloggen",
-    "everywhereHint": "Telefoon kwijt, of ingelogd op een gedeelde computer?",
-    "signOutEverywhere": "Uitloggen op alle apparaten"
+  "Console": {
+    "nav": {
+      "today": "Vandaag",
+      "calendar": "Agenda",
+      "services": "Diensten",
+      "team": "Team",
+      "myHours": "Mijn uren",
+      "clients": "Klanten",
+      "openingHours": "Openingstijden",
+      "settings": "Instellingen",
+      "more": "Meer",
+      "close": "Sluiten",
+      "sections": "Onderdelen",
+      "moreSections": "Meer onderdelen"
+    },
+    "account": {
+      "menu": "Jouw account",
+      "owner": "Eigenaar",
+      "worker": "Medewerker",
+      "signOut": "Uitloggen",
+      "everywhereHint": "Telefoon kwijt, of ingelogd op een gedeelde computer?",
+      "signOutEverywhere": "Uitloggen op alle apparaten"
+    },
+    "person": {
+      "nameNotSet": "Geen naam ingesteld"
+    },
+    "today": {
+      "ownerEmptyTitle": "Nog geen afspraken",
+      "ownerEmptyBody": "Klanten kunnen boeken zodra je een dienst en werktijden hebt. Dat kost ongeveer vijf minuten.",
+      "steps": "Stappen om boekingen te ontvangen",
+      "step1": "Stel in wanneer de winkel open is",
+      "step2": "Voeg je eerste dienst toe",
+      "step3": "Stel je werktijden in",
+      "step4": "Nodig de mensen uit die met je werken",
+      "stepsHint": "Openingstijden komen eerst: ieders werktijden vallen daarbinnen. Stap vier is optioneel. Werk je alleen, dan zijn je eigen werktijden genoeg.",
+      "workerEmptyTitle": "Vandaag niets bij jou geboekt",
+      "workerEmptyBody": "Nieuwe afspraken verschijnen hier zodra klanten boeken.",
+      "checkHours": "Bekijk mijn werktijden"
+    },
+    "calendar": {
+      "comingSoon": "Je agenda komt binnenkort.",
+      "seeHours": "Bekijk werktijden",
+      "seeMyHours": "Bekijk mijn uren"
+    },
+    "clients": {
+      "comingSoon": "Je klanten komen binnenkort."
+    },
+    "settings": {
+      "comingSoon": "Je instellingen komen binnenkort."
+    },
+    "errors": {
+      "ownerOnly": "Alleen een eigenaar kan dit doen.",
+      "signedOut": "Je sessie is verlopen. Log opnieuw in in een nieuw tabblad en probeer het hier dan opnieuw. <link>Inloggen</link>"
+    },
+    "notSaved": "Er is niets opgeslagen, je gegevens staan hier nog."
   }
 }

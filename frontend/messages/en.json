@@ -127,14 +127,60 @@
     "memberTitle": "You're already part of {business}",
     "memberLede": "You already work there, so nothing changed. Sign in to see your appointments."
   },
-  "Home": {
-    "signedInAs": "Signed in as <chip>{email}</chip>",
-    "owner": "Owner",
-    "worker": "Staff",
-    "emptyTitle": "Your bookings will show here",
-    "emptyBody": "Services, opening hours and today's appointments come next. For now your account and business are ready.",
-    "signOut": "Sign out",
-    "everywhereHint": "Lost a phone, or signed in on a shared computer?",
-    "signOutEverywhere": "Sign out on every device"
+  "Console": {
+    "nav": {
+      "today": "Today",
+      "calendar": "Calendar",
+      "services": "Services",
+      "team": "Team",
+      "myHours": "My hours",
+      "clients": "Clients",
+      "openingHours": "Opening hours",
+      "settings": "Settings",
+      "more": "More",
+      "close": "Close",
+      "sections": "Sections",
+      "moreSections": "More sections"
+    },
+    "account": {
+      "menu": "Your account",
+      "owner": "Owner",
+      "worker": "Staff",
+      "signOut": "Sign out",
+      "everywhereHint": "Lost a phone, or signed in on a shared computer?",
+      "signOutEverywhere": "Sign out on every device"
+    },
+    "person": {
+      "nameNotSet": "Name not set"
+    },
+    "today": {
+      "ownerEmptyTitle": "No appointments yet",
+      "ownerEmptyBody": "Clients can book once you have a service and working hours. It takes about five minutes.",
+      "steps": "Steps to take bookings",
+      "step1": "Set when the shop is open",
+      "step2": "Add your first service",
+      "step3": "Set your working hours",
+      "step4": "Invite the people who work with you",
+      "stepsHint": "Opening hours come first: everyone's working hours sit inside them. Step four is optional. If you work alone, your own working hours are enough.",
+      "workerEmptyTitle": "Nothing booked with you today",
+      "workerEmptyBody": "New appointments appear here as clients book them.",
+      "checkHours": "Check my working hours"
+    },
+    "calendar": {
+      "comingSoon": "Your calendar is coming soon.",
+      "seeHours": "See working hours",
+      "seeMyHours": "See my hours"
+    },
+    "clients": {
+      "comingSoon": "Your clients are coming soon."
+    },
+    "settings": {
+      "comingSoon": "Your settings are coming soon."
+    },
+    "errors": {
+      "ownerOnly": "Only an owner can do this.",
+      "signedOut": "Your session ended. Sign in again in a new tab, then try again here. <link>Sign in</link>"
+    },
+    "notSaved": "Nothing was saved, and your details are still here."
   }
 }
