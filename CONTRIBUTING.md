@@ -337,7 +337,8 @@ Local dev (`make up`) needs no `.env`: `docker-compose.yaml` sets every variable
 root is for `docker-compose-prod.yaml` only; copy it to `.env` next to that file and fill in the blanks. A row
 marked "secret" is never committed and never put in a shared `.env`: in a deployment it resolves from Secrets
 Manager, e.g. `{{resolve:secretsmanager:secret-id:SecretString:json-key}}` (see `TurnstileSettings`' comment and
-ZIF-38).
+ZIF-38). An empty variable means the default: `env_ignore_empty=True` on the base `Settings` model makes `VAR=""`
+(as compose passes an unset optional variable, `${VAR:-}`) behave the same as `VAR` unset.
 
 | Name | Read by | Default | Required in production? | Secret? | What it does |
 |---|---|---|---|---|---|
@@ -351,8 +352,8 @@ ZIF-38).
 | `ZIF_SMTP_HOST` | worker | `smtp.eu.mailgun.org` | no | no | SMTP host. |
 | `ZIF_SMTP_PORT` | worker | `587` | no | no | SMTP port. |
 | `ZIF_SMTP_STARTTLS` | worker | `true` | no | no | Use STARTTLS. |
-| `ZIF_SMTP_USERNAME` | worker | none | yes | yes | SMTP auth username (Mailgun EU). |
-| `ZIF_SMTP_PASSWORD` | worker | `""` | yes | yes | SMTP auth password. |
+| `ZIF_SMTP_USERNAME` | worker | none | needed to send mail | yes | SMTP auth username (Mailgun EU). |
+| `ZIF_SMTP_PASSWORD` | worker | `""` | needed to send mail | yes | SMTP auth password. |
 | `ZIF_SMTP_FROM` | worker | `ziftbook <no-reply@ziftbook.com>` | no | no | `From` header on outgoing email. |
 | `ZIF_APP_URL` | worker | `http://localhost:3000` | yes | no | Where links in emails point; must be the public web URL in production. |
 | **Security** | | | | | |
