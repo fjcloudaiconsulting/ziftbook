@@ -14,6 +14,7 @@ import {
   loadTimeProblems,
   overlapWindow,
   problemList,
+  saveResult,
   shiftRanges,
   weekBody,
   weekdayName,
@@ -175,40 +176,51 @@ export function WeekEditor({
     if (status === "idle" || status === "saved") return;
     submitting.current = true;
     try {
-      const result = weekProblems(days, envelope, { allowEmptyWeek });
-      if (Object.keys(result.byDay).length > 0 || result.overall) {
-        setProblems(result);
+      const clientProblems = weekProblems(days, envelope, { allowEmptyWeek });
+      if (Object.keys(clientProblems.byDay).length > 0 || clientProblems.overall) {
+        setProblems(clientProblems);
         setServerProblem(null);
         setWriteFailure(null);
         setPhase("error");
         return;
       }
       setPhase("saving");
-      const outcome = await onSave(weekBody(days));
-      if (outcome.status === 200 && outcome.data) {
-        const next = daysFromShifts(outcome.data);
+      // A rejected `onSave` (a thrown fetch, e.g. the connection dropping mid-request) is treated
+      // exactly like any other failed outcome, via `saveResult(null)`: this `try` is what closes
+      // the bug where such a throw skipped every `setPhase` below it, leaving the savebar showing
+      // "saving" (a spinner) forever, since nothing but these branches ever leaves that phase.
+      let outcome;
+      try {
+        outcome = await onSave(weekBody(days));
+      } catch {
+        outcome = null;
+      }
+      const result = saveResult(outcome);
+      if (result.kind === "saved") {
+        const next = daysFromShifts(result.data as ApiShift[]);
         setCommitted(next);
         setDays(next);
         setProblems({ byDay: {} });
         setServerProblem(null);
         setWriteFailure(null);
         setPhase("saved");
-      } else if (outcome.status === 422 && outcome.code === "outside_opening_hours" && outcome.weekday) {
+      } else if (result.kind === "outsideOpeningHours") {
         // The owner narrowed the opening hours between load and save: the same code and weekday
         // `weekProblems` would have caught, so it gets the same field error and top banner. The
         // envelope this editor was given is now stale (the "Shop open ..." lines still show the
         // old times), so the caller re-reads it.
-        setProblems({ byDay: { [outcome.weekday]: "outside_opening_hours" } });
+        setProblems({ byDay: { [result.weekday]: "outside_opening_hours" } });
         setServerProblem(null);
         setWriteFailure(null);
         setPhase("error");
         onStaleEnvelope?.();
+      } else if (result.kind === "serverProblem") {
+        setServerProblem(result.code);
+        setWriteFailure(null);
+        setPhase("error");
       } else {
-        if (outcome.status === 422 && (outcome.code === "opening_hours_required" || outcome.code === "end_not_after_start" || outcome.code === "overlapping_hours")) {
-          setServerProblem(outcome.code);
-        } else {
-          setWriteFailure(outcome);
-        }
+        setServerProblem(null);
+        setWriteFailure(result.outcome);
         setPhase("error");
       }
     } finally {

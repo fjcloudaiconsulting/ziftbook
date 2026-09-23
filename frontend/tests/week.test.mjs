@@ -16,6 +16,7 @@ import {
   loadTimeProblems,
   overlapWindow,
   problemList,
+  saveResult,
   shiftRanges,
   teamHoursSummary,
   weekBody,
@@ -330,5 +331,27 @@ describe("shiftRanges", () => {
       shiftRanges([{ start: "09:00", end: "13:00" }, { start: "14:00", end: "18:00" }]),
       "09:00 – 13:00 · 14:00 – 18:00",
     );
+  });
+});
+
+describe("saveResult", () => {
+  test("fence: a thrown write (null outcome) is a failure, never left unresolved (the savebar-stuck-on-'saving' bug)", () => {
+    assert.deepEqual(saveResult(null), { kind: "failure", outcome: { status: 0 } });
+  });
+
+  test("guard: a 200 with data is saved, even an empty array (clearing the whole week)", () => {
+    assert.deepEqual(saveResult({ status: 200, data: [] }), { kind: "saved", data: [] });
+  });
+
+  test("guard: outside_opening_hours names the weekday", () => {
+    assert.deepEqual(saveResult({ status: 422, code: "outside_opening_hours", weekday: 3 }), { kind: "outsideOpeningHours", weekday: 3 });
+  });
+
+  test("guard: a server-side week refusal is a serverProblem", () => {
+    assert.deepEqual(saveResult({ status: 422, code: "opening_hours_required" }), { kind: "serverProblem", code: "opening_hours_required" });
+  });
+
+  test("guard: anything else (401, 403, unreachable) is a failure carrying its status and code", () => {
+    assert.deepEqual(saveResult({ status: 403, code: "owner_only" }), { kind: "failure", outcome: { status: 403, code: "owner_only" } });
   });
 });

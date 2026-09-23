@@ -242,3 +242,36 @@ export function overlapWindow(shifts: Shift[]): { from: string; to: string } | n
   }
   return null;
 }
+
+type SaveOutcome = { status: number; code?: string; weekday?: number; data?: unknown[] };
+
+export type SaveResult =
+  | { kind: "saved"; data: unknown[] }
+  | { kind: "outsideOpeningHours"; weekday: number }
+  | { kind: "serverProblem"; code: "opening_hours_required" | "end_not_after_start" | "overlapping_hours" }
+  | { kind: "failure"; outcome: { status: number; code?: string } };
+
+/**
+ * Maps a save attempt's outcome to the one thing the editor does next, so every outcome - success,
+ * every server refusal, and a request that never came back at all - resolves to a result the caller
+ * can act on. `outcome` is `null` when the write itself threw (a rejected promise: a network drop,
+ * a browser going offline mid-request), which is exactly the bug this fences: an un-caught throw
+ * between `setPhase("saving")` and the next `setPhase` left the savebar showing a spinner forever,
+ * because nothing after the throw ever ran. Routed through this function first, a threw write is
+ * `{ kind: "failure" }` like any other unreachable server, never a case the caller has to remember
+ * to handle separately.
+ */
+export function saveResult(outcome: SaveOutcome | null): SaveResult {
+  if (outcome === null) return { kind: "failure", outcome: { status: 0 } };
+  if (outcome.status === 200 && outcome.data) return { kind: "saved", data: outcome.data };
+  if (outcome.status === 422 && outcome.code === "outside_opening_hours" && outcome.weekday) {
+    return { kind: "outsideOpeningHours", weekday: outcome.weekday };
+  }
+  if (
+    outcome.status === 422 &&
+    (outcome.code === "opening_hours_required" || outcome.code === "end_not_after_start" || outcome.code === "overlapping_hours")
+  ) {
+    return { kind: "serverProblem", code: outcome.code };
+  }
+  return { kind: "failure", outcome: { status: outcome.status, code: outcome.code } };
+}
