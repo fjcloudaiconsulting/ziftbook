@@ -1,7 +1,7 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useId, useState } from "react";
 
 import { dateLocale } from "@/lib/console";
 import {
@@ -16,7 +16,7 @@ import {
   weekProblems,
 } from "@/lib/week";
 
-import { SignedOutBanner } from "./console";
+import { FooterPortal, SignedOutBanner } from "./console";
 import styles from "./console.module.css";
 import { Banner, FieldError, type Outcome, problem, Submit } from "./parts";
 import uiStyles from "./ui.module.css";
@@ -65,6 +65,7 @@ type WeekEditorProps = {
 
 export function WeekEditor({ initial, envelope, locale, t, tWeek, onSave, savedMessage }: WeekEditorProps) {
   const form = useTranslations("Form");
+  const formId = useId();
   const dl = dateLocale(locale);
   const [committed, setCommitted] = useState(initial);
   const [days, setDays] = useState(initial);
@@ -159,8 +160,50 @@ export function WeekEditor({ initial, envelope, locale, t, tWeek, onSave, savedM
     .sort((a, b) => a - b);
   const genericFailure = writeFailure && writeFailure.status !== 401;
 
+  const savebarHint =
+    status === "saving"
+      ? tWeek("savingHint")
+      : status === "saved"
+        ? savedMessage
+        : status === "error"
+          ? problemWeekdays.length > 0
+            ? tWeek("attentionHint", { count: problemWeekdays.length })
+            : ""
+          : status === "dirty"
+            ? tWeek("unsavedChanges", { days: daysSummary(changed, dl, (from, to) => tWeek("dayRange", { from, to })) })
+            : "";
+
+  const savebarContent = (
+    <>
+      <p className={uiStyles.hint} role={status === "saving" ? "status" : undefined}>
+        {savebarHint}
+      </p>
+      {status === "dirty" || status === "error" ? (
+        <button className={uiStyles.textButton} type="button" onClick={undo}>
+          {tWeek("undo")}
+        </button>
+      ) : null}
+      {status === "idle" || status === "saved" ? (
+        <button
+          className={`${uiStyles.button} ${uiStyles.primary} ${styles.saveButton} ${styles.saveIdle}`}
+          type="submit"
+          form={formId}
+          aria-disabled="true"
+        >
+          {tWeek("save")}
+        </button>
+      ) : (
+        <div className={styles.saveButton}>
+          <Submit busy={busy} busyLabel={tWeek("saving")} form={formId}>
+            {tWeek("save")}
+          </Submit>
+        </div>
+      )}
+    </>
+  );
+
   return (
-    <form className={`${uiStyles.stack} ${styles.weekForm}`} noValidate onSubmit={onSubmit}>
+    <form id={formId} className={uiStyles.stack} noValidate onSubmit={onSubmit}>
       {writeFailure?.status === 401 && <SignedOutBanner />}
       {genericFailure && <Banner tone="error">{form(problem(writeFailure!))}</Banner>}
       {(problems.overall === "opening_hours_required" || serverProblem === "opening_hours_required") && (
@@ -181,6 +224,7 @@ export function WeekEditor({ initial, envelope, locale, t, tWeek, onSave, savedM
         </Banner>
       )}
 
+      <div className={styles.weekContent}>
       <div className={styles.days}>
         {days.map((day) => {
           const weekdayText = weekdayName(day.weekday, dl);
@@ -292,38 +336,14 @@ export function WeekEditor({ initial, envelope, locale, t, tWeek, onSave, savedM
       </div>
 
       <p className={uiStyles.hint}>{t("shortenHint")}</p>
-
-      <div className={styles.savebar}>
-        <p className={uiStyles.hint} role={status === "saving" ? "status" : undefined}>
-          {status === "saving"
-            ? tWeek("savingHint")
-            : status === "saved"
-              ? savedMessage
-              : status === "error"
-                ? problemWeekdays.length > 0
-                  ? tWeek("attentionHint", { count: problemWeekdays.length })
-                  : ""
-                : status === "dirty"
-                  ? tWeek("unsavedChanges", { days: daysSummary(changed, dl, (from, to) => tWeek("dayRange", { from, to })) })
-                  : ""}
-        </p>
-        {status === "dirty" || status === "error" ? (
-          <button className={uiStyles.textButton} type="button" onClick={undo}>
-            {tWeek("undo")}
-          </button>
-        ) : null}
-        {status === "idle" || status === "saved" ? (
-          <button className={`${uiStyles.button} ${uiStyles.primary} ${styles.saveButton} ${styles.saveIdle}`} type="submit" aria-disabled="true">
-            {tWeek("save")}
-          </button>
-        ) : (
-          <div className={styles.saveButton}>
-            <Submit busy={busy} busyLabel={tWeek("saving")}>
-              {tWeek("save")}
-            </Submit>
-          </div>
-        )}
       </div>
+
+      {/* Phone: stacked directly on the tab bar, in the shell's own bottom bar - see FooterPortal.
+          Desktop: the duplicate below, sticky on its own (each hidden where the other applies). */}
+      <FooterPortal>
+        <div className={styles.savebar}>{savebarContent}</div>
+      </FooterPortal>
+      <div className={`${styles.savebar} ${styles.savebarDesktop}`}>{savebarContent}</div>
     </form>
   );
 }

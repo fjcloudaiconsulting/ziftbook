@@ -229,8 +229,8 @@
       "closesAtFirst": "{weekday}, primeiro bloco, a loja fecha às",
       "closesAtSecond": "{weekday}, segundo bloco, a loja fecha às",
       "closesAtBlock": "{weekday}, bloco {n}, a loja fecha às",
-      "removeOnly": "Fechar a loja em {weekday}, removendo {from} até {to}",
-      "remove": "Remover {weekday} {from} até {to}",
+      "removeOnly": "Fechar a loja no dia {weekday}, removendo de {from} até {to}",
+      "remove": "Remover {weekday}, de {from} até {to}",
       "allClosedRefusal": "Abra a loja em pelo menos um dia.",
       "saved": "Salvo. Os clientes só podem agendar enquanto a loja estiver aberta."
     }
