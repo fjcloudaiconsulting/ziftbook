@@ -1,7 +1,7 @@
 "use client";
 
 import { useLocale, useTranslations } from "next-intl";
-import { type FormEvent, useEffect, useId, useMemo, useRef, useState } from "react";
+import { type FormEvent, type KeyboardEvent, useEffect, useId, useMemo, useRef, useState } from "react";
 
 import {
   type MemberOut,
@@ -15,9 +15,19 @@ import {
 } from "@/api-client";
 import { Link, useRouter } from "@/i18n/navigation";
 import { currencySign, formatMoney, parseMoney, priceText, signFirst } from "@/lib/money";
-import { defaultBuffer, type Locale, type NameMap, serviceBody, type ServiceForm, serviceName } from "@/lib/services";
+import {
+  activeServices,
+  archivedServices,
+  defaultBuffer,
+  type Locale,
+  type NameMap,
+  needsWorkerWarning,
+  serviceBody,
+  type ServiceForm,
+  serviceName,
+} from "@/lib/services";
 
-import { useConsole } from "../../_ui/console";
+import { SignedOutBanner, useConsole } from "../../_ui/console";
 import { Banner, FieldError, Heading, Mark, problem, Submit } from "../../_ui/parts";
 import styles from "../../_ui/ui.module.css";
 
@@ -43,14 +53,15 @@ function Row({ service, locale }: { service: ServiceOut; locale: string }) {
   const name = serviceName(service.name as NameMap, locale as Locale, settings.language);
   const price = formatMoney(service.price.amount_minor, service.price.currency, locale);
   const n = service.worker_ids.length;
+  const warn = needsWorkerWarning(n);
 
   return (
     <li>
       <Link href={`/services/${service.id}`} className={styles.rowLink}>
         <span className={styles.rowMain}>
           <span className={styles.rowTitle}>{name}</span>
-          {n > 0 && <span className={styles.rowMeta}>{t("rowMetaPeople", { minutes: service.duration_minutes, price, n })}</span>}
-          {n === 0 && (
+          {!warn && <span className={styles.rowMeta}>{t("rowMetaPeople", { minutes: service.duration_minutes, price, n })}</span>}
+          {warn && (
             <>
               <span className={styles.rowMeta}>{t("rowMeta", { minutes: service.duration_minutes, price })}</span>
               <span className={`${styles.pill} ${styles.pillWarn}`}>
@@ -98,16 +109,30 @@ function ArchivedRow({ service, locale, onBroughtBack }: { service: ServiceOut; 
   const { settings, call } = useConsole();
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<ReturnType<typeof problem> | null>(null);
+  const [signedOut, setSignedOut] = useState(false);
+  // A ref, not `busy` state: several calls in the same tick (e.g. a double click before React
+  // re-renders) all read the same stale `busy` from their render closure and would all pass a
+  // state-based guard. The ref is set synchronously, before any `await`, so only the first call
+  // in a tick ever gets past it.
+  const inFlight = useRef(false);
   const name = serviceName(service.name as NameMap, locale as Locale, settings.language);
   const price = formatMoney(service.price.amount_minor, service.price.currency, locale);
 
   async function bringBack() {
+    if (inFlight.current) return;
+    inFlight.current = true;
     setBusy(true);
     setFailure(null);
-    const outcome = await call(() => servicesUpdate({ path: { service_id: service.id }, body: { archived: false } }), { write: true });
-    setBusy(false);
-    if (outcome.status === 200 && outcome.data) onBroughtBack(outcome.data);
-    else if (outcome.status !== 401) setFailure(problem(outcome));
+    setSignedOut(false);
+    try {
+      const outcome = await call(() => servicesUpdate({ path: { service_id: service.id }, body: { archived: false } }), { write: true });
+      if (outcome.status === 200 && outcome.data) onBroughtBack(outcome.data);
+      else if (outcome.status === 401) setSignedOut(true);
+      else setFailure(problem(outcome));
+    } finally {
+      inFlight.current = false;
+      setBusy(false);
+    }
   }
 
   return (
@@ -116,6 +141,7 @@ function ArchivedRow({ service, locale, onBroughtBack }: { service: ServiceOut; 
         <span className={styles.rowMain}>
           <span className={styles.rowTitle}>{name}</span>
           <span className={styles.rowMeta}>{t("archivedMeta", { minutes: service.duration_minutes, price })}</span>
+          {signedOut && <SignedOutBanner />}
           {failure && <span className={styles.rowMeta}>{form(failure)}</span>}
         </span>
         <span className={styles.rowEnd}>
@@ -157,12 +183,15 @@ export function Services() {
   const collator = useMemo(() => new Intl.Collator(locale), [locale]);
   const active = useMemo(
     () =>
-      (services ?? [])
-        .filter((s) => !s.archived)
-        .sort((a, b) => collator.compare(serviceName(a.name as NameMap, locale as Locale, settings.language), serviceName(b.name as NameMap, locale as Locale, settings.language))),
+      activeServices(services ?? []).sort((a, b) =>
+        collator.compare(
+          serviceName(a.name as NameMap, locale as Locale, settings.language),
+          serviceName(b.name as NameMap, locale as Locale, settings.language),
+        ),
+      ),
     [services, collator, locale, settings.language],
   );
-  const archived = useMemo(() => (services ?? []).filter((s) => s.archived), [services]);
+  const archived = useMemo(() => archivedServices(services ?? []), [services]);
 
   function onBroughtBack(updated: ServiceOut) {
     setServices((current) => (current ? current.map((s) => (s.id === updated.id ? updated : s)) : current));
@@ -278,6 +307,25 @@ function LangField({
   const idBase = useId();
   const errorId = `${idBase}-error`;
   const headingId = `${idBase}-heading`;
+  const tabId = (loc: Locale) => `${idBase}-tab-${loc}`;
+  const tabRefs = useRef<Partial<Record<Locale, HTMLButtonElement | null>>>({});
+
+  // Roving tabindex + arrow-key navigation, per the ARIA APG tablist pattern: only the selected
+  // tab sits in the page's Tab order, and Left/Right/Home/End move both the selection and focus
+  // between the other two.
+  function onTabKeyDown(event: KeyboardEvent, loc: Locale) {
+    const index = LOCALES.indexOf(loc);
+    let nextIndex: number;
+    if (event.key === "ArrowRight") nextIndex = (index + 1) % LOCALES.length;
+    else if (event.key === "ArrowLeft") nextIndex = (index - 1 + LOCALES.length) % LOCALES.length;
+    else if (event.key === "Home") nextIndex = 0;
+    else if (event.key === "End") nextIndex = LOCALES.length - 1;
+    else return;
+    event.preventDefault();
+    const next = LOCALES[nextIndex];
+    setActive(next);
+    tabRefs.current[next]?.focus();
+  }
 
   return (
     <div className={styles.field}>
@@ -290,13 +338,19 @@ function LangField({
         {LOCALES.map((loc) => (
           <button
             key={loc}
+            ref={(el) => {
+              tabRefs.current[loc] = el;
+            }}
+            id={tabId(loc)}
             type="button"
             role="tab"
             aria-selected={active === loc}
             aria-controls={`${idBase}-${loc}`}
+            tabIndex={active === loc ? 0 : -1}
             data-filled={values[loc].trim() ? "yes" : "no"}
             className={styles.langTab}
             onClick={() => setActive(loc)}
+            onKeyDown={(event) => onTabKeyDown(event, loc)}
           >
             <span className={styles.dot} aria-hidden="true" />
             {t(`languages.${loc}`)}
@@ -304,7 +358,14 @@ function LangField({
         ))}
       </div>
       {LOCALES.map((loc) => (
-        <div key={loc} id={`${idBase}-${loc}`} role="tabpanel" hidden={active !== loc} className={styles.langPanel}>
+        <div
+          key={loc}
+          id={`${idBase}-${loc}`}
+          role="tabpanel"
+          aria-labelledby={tabId(loc)}
+          hidden={active !== loc}
+          className={styles.langPanel}
+        >
           {multiline ? (
             <>
               <label className={styles.srOnly} htmlFor={`${idBase}-${loc}-input`}>
@@ -378,13 +439,17 @@ function ServiceFormBody(props: Props) {
 
   const [errors, setErrors] = useState<Errors>({});
   const [banner, setBanner] = useState<ReturnType<typeof problem> | "unknownMember" | null>(null);
+  const [signedOut, setSignedOut] = useState(false);
+  const [membersFailure, setMembersFailure] = useState<ReturnType<typeof problem> | null>(null);
   const [busy, setBusy] = useState(false);
   const [failedOnce, setFailedOnce] = useState(false);
+  const submitting = useRef(false);
 
   useEffect(() => {
     if (props.mode !== "create") return;
     call(() => membersList()).then((outcome) => {
       if (outcome.status === 200 && outcome.data) setMembers(outcome.data);
+      else setMembersFailure(problem(outcome));
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -398,59 +463,76 @@ function ServiceFormBody(props: Props) {
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
+    // A ref, not `busy` state: several submits in the same tick (Enter plus a click, or a
+    // double-tap, before React re-renders) all read the same stale `busy` from their render
+    // closure and would all pass a state-based guard. The ref is set synchronously, before any
+    // `await`, so only the first call in a tick ever gets past it.
+    if (submitting.current) return;
     const form: ServiceForm = { name, description, price, duration, gap, fixedGap };
     const result = serviceBody(form, { businessLanguage: settings.language, mode: editing ? "edit" : "create" }, parseMoney);
     if ("errors" in result && result.errors) {
       setErrors(result.errors);
       return;
     }
+    submitting.current = true;
     setErrors({});
     setBanner(null);
+    setSignedOut(false);
     setBusy(true);
 
-    if (!editing) {
-      const workerIds = [...checked];
-      const outcome = await call(() => servicesCreate({ body: { ...result.body, worker_ids: workerIds } }), { write: true });
-      setBusy(false);
-      if (outcome.status === 201) {
+    try {
+      if (!editing) {
+        const workerIds = [...checked];
+        const outcome = await call(() => servicesCreate({ body: { ...result.body, worker_ids: workerIds } }), { write: true });
+        if (outcome.status === 201) {
+          router.push("/services");
+          return;
+        }
+        if (outcome.status === 401) {
+          setSignedOut(true);
+          return;
+        }
+        if (outcome.status === 422 && outcome.code === "unknown_member") setBanner("unknownMember");
+        else setBanner(problem(outcome));
+        setFailedOnce(true);
+        return;
+      }
+
+      // edit: servicesUpdate, then servicesReplaceWorkers only if the set changed. Both idempotent.
+      const before = new Set(props.service.worker_ids);
+      const after = checked;
+      const workersChanged = before.size !== after.size || [...before].some((id) => !after.has(id));
+
+      const updateOutcome = await call(() => servicesUpdate({ path: { service_id: props.service.id }, body: result.body }), { write: true });
+      if (updateOutcome.status !== 200 || !updateOutcome.data) {
+        if (updateOutcome.status === 401) {
+          setSignedOut(true);
+          return;
+        }
+        setBanner(problem(updateOutcome));
+        setFailedOnce(true);
+        return;
+      }
+      if (!workersChanged) {
         router.push("/services");
         return;
       }
-      if (outcome.status === 401) return;
-      if (outcome.status === 422 && outcome.code === "unknown_member") setBanner("unknownMember");
-      else setBanner(problem(outcome));
+      const workersOutcome = await call(() => servicesReplaceWorkers({ path: { service_id: props.service.id }, body: [...after] }), { write: true });
+      if (workersOutcome.status === 200) {
+        router.push("/services");
+        return;
+      }
+      if (workersOutcome.status === 401) {
+        setSignedOut(true);
+        return;
+      }
+      if (workersOutcome.status === 422 && workersOutcome.code === "unknown_member") setBanner("unknownMember");
+      else setBanner(problem(workersOutcome));
       setFailedOnce(true);
-      return;
-    }
-
-    // edit: servicesUpdate, then servicesReplaceWorkers only if the set changed. Both idempotent.
-    const before = new Set(props.service.worker_ids);
-    const after = checked;
-    const workersChanged = before.size !== after.size || [...before].some((id) => !after.has(id));
-
-    const updateOutcome = await call(() => servicesUpdate({ path: { service_id: props.service.id }, body: result.body }), { write: true });
-    if (updateOutcome.status !== 200 || !updateOutcome.data) {
+    } finally {
+      submitting.current = false;
       setBusy(false);
-      if (updateOutcome.status === 401) return;
-      setBanner(problem(updateOutcome));
-      setFailedOnce(true);
-      return;
     }
-    if (!workersChanged) {
-      setBusy(false);
-      router.push("/services");
-      return;
-    }
-    const workersOutcome = await call(() => servicesReplaceWorkers({ path: { service_id: props.service.id }, body: [...after] }), { write: true });
-    setBusy(false);
-    if (workersOutcome.status === 200) {
-      router.push("/services");
-      return;
-    }
-    if (workersOutcome.status === 401) return;
-    if (workersOutcome.status === 422 && workersOutcome.code === "unknown_member") setBanner("unknownMember");
-    else setBanner(problem(workersOutcome));
-    setFailedOnce(true);
   }
 
   const submitLabel = editing ? t("submitEdit") : t("submitCreate");
@@ -458,9 +540,11 @@ function ServiceFormBody(props: Props) {
 
   return (
     <form className={`${styles.form} ${styles.colWide}`} noValidate onSubmit={onSubmit}>
-      {banner && (
+      {signedOut && <SignedOutBanner />}
+      {!signedOut && banner && (
         <Banner tone="error">{banner === "unknownMember" ? services("unknownMember") : consoleForm(banner)}</Banner>
       )}
+      {!editing && membersFailure && <Banner tone="error">{consoleForm(membersFailure)}</Banner>}
 
       <LangField
         heading={t("nameLabel")}
@@ -663,42 +747,73 @@ function ServiceFormBody(props: Props) {
         <Submit busy={busy} busyLabel={t("submitBusy")}>
           {failedOnce ? tryAgainLabel : submitLabel}
         </Submit>
-        <Link className={`${styles.button} ${styles.secondary}`} href="/services" aria-disabled={busy || undefined}>
+        <Link
+          className={`${styles.button} ${styles.secondary}`}
+          href="/services"
+          aria-disabled={busy || undefined}
+          onClick={(event) => {
+            // aria-disabled alone doesn't stop a real <a> from navigating while a save is in
+            // flight (design-r2.html:999): the click itself has to be swallowed too.
+            if (busy) event.preventDefault();
+          }}
+        >
           {t("cancel")}
         </Link>
       </div>
 
-      {editing && <ArchiveZone service={props.service} />}
+      {editing && <ArchiveZone service={props.service} locale={locale} businessLanguage={settings.language} />}
     </form>
   );
 }
 
-function ArchiveZone({ service }: { service: ServiceOut }) {
+function ArchiveZone({ service, locale, businessLanguage }: { service: ServiceOut; locale: string; businessLanguage: Locale }) {
   const t = useTranslations("Console.services.form");
+  const consoleForm = useTranslations("Form");
   const { call } = useConsole();
   const router = useRouter();
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [banner, setBanner] = useState<ReturnType<typeof problem> | null>(null);
+  const [signedOut, setSignedOut] = useState(false);
+  const submitting = useRef(false);
   const startRef = useRef<HTMLButtonElement>(null);
-  const confirmRef = useRef<HTMLButtonElement>(null);
+  const yesRef = useRef<HTMLButtonElement>(null);
+  // Tracks the confirming true<->false transition itself, not the currently focused element: the
+  // form never unmounts this component, so "focus is still on the start button" would otherwise
+  // never distinguish "just opened" from "already back", and every close ended up refocusing the
+  // start button unconditionally.
+  const wasConfirming = useRef(false);
 
   useEffect(() => {
-    if (confirming) confirmRef.current?.focus();
-    else if (startRef.current === document.activeElement) startRef.current?.focus();
+    if (confirming && !wasConfirming.current) yesRef.current?.focus(); // design-r2.html:542
+    else if (!confirming && wasConfirming.current) startRef.current?.focus(); // "Keep it" returns focus
+    wasConfirming.current = confirming;
   }, [confirming]);
 
   const n = service.worker_ids.length;
   const bodyKey = n === 0 ? "archiveConfirmBodyNone" : n === 1 ? "archiveConfirmBodyOne" : "archiveConfirmBodyMany";
 
   async function archive() {
+    if (submitting.current) return;
+    submitting.current = true;
     setBusy(true);
-    const outcome = await call(() => servicesUpdate({ path: { service_id: service.id }, body: { archived: true } }), { write: true });
-    setBusy(false);
-    if (outcome.status === 200) router.push("/services");
+    setBanner(null);
+    setSignedOut(false);
+    try {
+      const outcome = await call(() => servicesUpdate({ path: { service_id: service.id }, body: { archived: true } }), { write: true });
+      if (outcome.status === 200) {
+        router.push("/services");
+        return;
+      }
+      if (outcome.status === 401) setSignedOut(true);
+      else setBanner(problem(outcome));
+    } finally {
+      submitting.current = false;
+      setBusy(false);
+    }
   }
 
-  const name = service.name as NameMap;
-  const displayName = Object.values(name).find((v) => v) ?? "";
+  const displayName = serviceName(service.name as NameMap, locale as Locale, businessLanguage);
 
   return (
     <>
@@ -715,15 +830,20 @@ function ArchiveZone({ service }: { service: ServiceOut }) {
         <div className={styles.dangerZone}>
           <strong>{t("archiveConfirmTitle", { name: displayName })}</strong>
           <p>{t(bodyKey, { n })}</p>
+          {signedOut && <SignedOutBanner />}
+          {!signedOut && banner && <Banner tone="error">{consoleForm(banner)}</Banner>}
           <div className={styles.actions} style={{ margin: 0 }}>
-            <button className={`${styles.button} ${styles.danger}`} type="button" aria-disabled={busy || undefined} onClick={archive}>
+            <button ref={yesRef} className={`${styles.button} ${styles.danger}`} type="button" aria-disabled={busy || undefined} onClick={archive}>
               {t("archiveConfirmYes")}
             </button>
             <button
-              ref={confirmRef}
               className={`${styles.button} ${styles.secondary}`}
               type="button"
-              onClick={() => setConfirming(false)}
+              aria-disabled={busy || undefined}
+              onClick={() => {
+                if (busy) return;
+                setConfirming(false);
+              }}
             >
               {t("archiveConfirmKeep")}
             </button>
@@ -746,28 +866,35 @@ export function NewService() {
 }
 
 export function EditService({ serviceId }: { serviceId: string }) {
-  const { call } = useConsole();
+  const { call, settings } = useConsole();
+  const locale = useLocale();
   const nav = useTranslations("Console.nav");
   const form = useTranslations("Form");
   const [service, setService] = useState<ServiceOut | null | undefined>(undefined);
   const [members, setMembers] = useState<MemberOut[] | null>(null);
   const [failure, setFailure] = useState<ReturnType<typeof problem> | null>(null);
 
-  useEffect(() => {
+  function load() {
     Promise.all([call(() => servicesRead({ path: { service_id: serviceId } })), call(() => membersList())]).then(
       ([serviceOutcome, membersOutcome]) => {
         if (serviceOutcome.status === 404) {
           setService(null);
+          setFailure(null);
           return;
         }
         if (serviceOutcome.status === 200 && serviceOutcome.data && membersOutcome.status === 200 && membersOutcome.data) {
           setService(serviceOutcome.data);
           setMembers(membersOutcome.data);
+          setFailure(null);
         } else {
           setFailure(problem(serviceOutcome.status !== 200 ? serviceOutcome : membersOutcome));
         }
       },
     );
+  }
+
+  useEffect(() => {
+    load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [serviceId]);
 
@@ -777,6 +904,9 @@ export function EditService({ serviceId }: { serviceId: string }) {
         <BackLink />
         <Heading focus>{nav("services")}</Heading>
         <Banner tone="error">{form(failure)}</Banner>
+        <button className={styles.textButton} type="button" onClick={load}>
+          {form("tryAgain")}
+        </button>
       </>
     );
   }
@@ -800,8 +930,7 @@ export function EditService({ serviceId }: { serviceId: string }) {
     );
   }
 
-  const name = service.name as NameMap;
-  const heading = Object.values(name).find((v) => v) ?? "";
+  const heading = serviceName(service.name as NameMap, locale as Locale, settings.language);
 
   return (
     <>
