@@ -319,6 +319,19 @@
       "onlyYouBody": "Invite someone and they get their own sign-in, their own working hours and their own appointments. You decide which services they perform.",
       "onlyYouHint": "Working alone is fine. Set your own working hours and clients can start booking."
     },
+    "invites": {
+      "inviteSomeone": "Invite someone",
+      "sendInvite": "Send invite",
+      "cancel": "Cancel",
+      "invited": "Invited",
+      "expiresIn": "Invite expires in {n, plural, one {one day} other {# days}}",
+      "expired": "Invite expired",
+      "sendAgain": "Send again",
+      "cancelInvite": "Cancel the invite to {email}",
+      "invitedHint": "Someone who has not accepted yet cannot sign in and takes no appointments. Their name can be set once they accept.",
+      "alreadyMember": "This person is already on your team.",
+      "rateLimited": "Too many invites for now. Try again in an hour."
+    },
     "hours": {
       "myHoursLede": "Times are in {city} time.",
       "emptyTitle": "No working hours yet",

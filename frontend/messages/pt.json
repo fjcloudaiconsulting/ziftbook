@@ -319,6 +319,19 @@
       "onlyYouBody": "Convide alguém e essa pessoa ganha seu próprio acesso, seus próprios horários de trabalho e seus próprios agendamentos. Você decide quais serviços ela realiza.",
       "onlyYouHint": "Trabalhar sozinho está ótimo. Defina seus próprios horários de trabalho e os clientes já podem agendar."
     },
+    "invites": {
+      "inviteSomeone": "Convidar alguém",
+      "sendInvite": "Enviar convite",
+      "cancel": "Cancelar",
+      "invited": "Convidados",
+      "expiresIn": "O convite expira em {n, plural, one {um dia} other {# dias}}",
+      "expired": "Convite expirado",
+      "sendAgain": "Enviar novamente",
+      "cancelInvite": "Cancelar o convite para {email}",
+      "invitedHint": "Quem ainda não aceitou não consegue entrar e não recebe agendamentos. O nome pode ser definido assim que aceitar.",
+      "alreadyMember": "Essa pessoa já faz parte da sua equipe.",
+      "rateLimited": "Convites demais por agora. Tente novamente daqui a uma hora."
+    },
     "hours": {
       "myHoursLede": "Horários no fuso de {city}.",
       "emptyTitle": "Ainda sem horários de trabalho",

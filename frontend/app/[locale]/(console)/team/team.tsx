@@ -3,15 +3,25 @@
 import { useLocale, useTranslations } from "next-intl";
 import { type FormEvent, useEffect, useId, useRef, useState } from "react";
 
-import { membersList, membersSetDisplayName, type MemberOut, workingHoursRead } from "@/api-client";
+import {
+  invitesCreate,
+  invitesDelete,
+  invitesList,
+  type InviteOut,
+  membersList,
+  membersSetDisplayName,
+  type MemberOut,
+  workingHoursRead,
+} from "@/api-client";
 import { Link } from "@/i18n/navigation";
 import { canEditHours, dateLocale, type Role, showSetName } from "@/lib/console";
+import { canInvite, expiresIn } from "@/lib/team";
 import { teamHoursSummary, zoneCity } from "@/lib/week";
 
 import { HoursSection } from "../hours-section";
 import { SignedOutBanner, useConsole } from "../../_ui/console";
 import styles from "../../_ui/console.module.css";
-import { Banner, FieldError, Heading, Mark, problem, Submit } from "../../_ui/parts";
+import { Banner, EmailField, FieldError, Heading, Mark, problem, Submit } from "../../_ui/parts";
 import uiStyles from "../../_ui/ui.module.css";
 
 /** A member's "Works {days}" (or "No working hours yet") row meta, from one working-hours GET.
@@ -27,6 +37,158 @@ function HoursMeta({ shifts, locale }: { shifts: { weekday: number; starts_at: s
   return <span className={styles.rowMeta}>{days === null ? t("noHours") : t("worksLabel", { days })}</span>;
 }
 
+/** Opened by the header's or the empty state's "Invite someone" button (undrawn, U8). */
+function InviteForm({ onCancel, onSent }: { onCancel(): void; onSent(invite: InviteOut): void }) {
+  const t = useTranslations("Console.invites");
+  const tConsole = useTranslations("Console");
+  const form = useTranslations("Form");
+  const { call } = useConsole();
+  const [email, setEmail] = useState("");
+  const [emailError, setEmailError] = useState<string>();
+  const [error, setError] = useState<string | null>(null);
+  const [signedOut, setSignedOut] = useState(false);
+  const [sending, setSending] = useState(false);
+  const submitting = useRef(false);
+
+  async function onSubmit(event: FormEvent) {
+    event.preventDefault();
+    if (submitting.current) return;
+    submitting.current = true;
+    setEmailError(undefined);
+    setError(null);
+    setSignedOut(false);
+    setSending(true);
+    let outcome;
+    try {
+      outcome = await call(() => invitesCreate({ body: { email } }), { write: true });
+    } finally {
+      setSending(false);
+      submitting.current = false;
+    }
+    if (outcome.status === 201 && outcome.data) {
+      onSent(outcome.data);
+    } else if (outcome.status === 401) {
+      setSignedOut(true);
+    } else if (outcome.status === 422) {
+      setEmailError(form("invalidEmail"));
+    } else if (outcome.status === 409) {
+      setError(t("alreadyMember"));
+    } else if (outcome.status === 429) {
+      setError(t("rateLimited"));
+    } else {
+      setError(`${form(problem(outcome))} ${tConsole("notSaved")}`);
+    }
+  }
+
+  return (
+    <form className={uiStyles.stack} noValidate onSubmit={onSubmit}>
+      {signedOut && <SignedOutBanner />}
+      {error && <Banner tone="error">{error}</Banner>}
+      <EmailField value={email} onChange={setEmail} error={emailError} />
+      <div className={styles.dayActions}>
+        <Submit busy={sending} busyLabel={form("sending")}>
+          {t("sendInvite")}
+        </Submit>
+        <button className={uiStyles.textButton} type="button" disabled={sending} onClick={onCancel}>
+          {t("cancel")}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+/** A pending invite's row: email, day count or "Invite expired" (`InviteOut.expired`), Send again
+ * and Cancel (revoke). Both actions stay offered on an expired row (U9). */
+function InviteRow({ invite, onChanged }: { invite: InviteOut; onChanged(update: (prev: InviteOut[] | null) => InviteOut[] | null): void }) {
+  const t = useTranslations("Console.invites");
+  const tConsole = useTranslations("Console");
+  const form = useTranslations("Form");
+  const { call } = useConsole();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [signedOut, setSignedOut] = useState(false);
+  const busyRef = useRef(false);
+
+  async function resend() {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setError(null);
+    setSignedOut(false);
+    setBusy(true);
+    let outcome;
+    try {
+      outcome = await call(() => invitesCreate({ body: { email: invite.email } }), { write: true });
+    } finally {
+      setBusy(false);
+      busyRef.current = false;
+    }
+    if (outcome.status === 201 && outcome.data) {
+      const fresh = outcome.data;
+      onChanged((prev) => (prev ?? []).map((i) => (i.id === invite.id ? fresh : i)));
+    } else if (outcome.status === 401) {
+      setSignedOut(true);
+    } else if (outcome.status === 409) {
+      setError(t("alreadyMember"));
+    } else if (outcome.status === 429) {
+      setError(t("rateLimited"));
+    } else {
+      setError(`${form(problem(outcome))} ${tConsole("notSaved")}`);
+    }
+  }
+
+  async function revoke() {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setError(null);
+    setSignedOut(false);
+    setBusy(true);
+    let outcome;
+    try {
+      outcome = await call(() => invitesDelete({ path: { invite_id: invite.id } }), { write: true });
+    } finally {
+      setBusy(false);
+      busyRef.current = false;
+    }
+    // 404: another tab already revoked it. Same result either way, so it leaves quietly.
+    if (outcome.status === 204 || outcome.status === 404) {
+      onChanged((prev) => (prev ?? []).filter((i) => i.id !== invite.id));
+    } else if (outcome.status === 401) {
+      setSignedOut(true);
+    } else {
+      setError(`${form(problem(outcome))} ${tConsole("notSaved")}`);
+    }
+  }
+
+  return (
+    <li>
+      {signedOut && <SignedOutBanner />}
+      {error && <Banner tone="error">{error}</Banner>}
+      <div className={styles.rowStatic}>
+        <span className={styles.rowMain}>
+          <span className={styles.rowTitle}>{invite.email}</span>
+          <span className={styles.rowMeta}>
+            {invite.expired ? t("expired") : t("expiresIn", { n: expiresIn(invite.expires_at, new Date()) })}
+          </span>
+        </span>
+        <span className={styles.rowActions}>
+          <button className={`${uiStyles.button} ${uiStyles.secondary} ${uiStyles.small}`} type="button" disabled={busy} onClick={resend}>
+            {t("sendAgain")}
+          </button>
+          <button
+            className={`${uiStyles.button} ${uiStyles.secondary} ${uiStyles.small}`}
+            type="button"
+            disabled={busy}
+            aria-label={t("cancelInvite", { email: invite.email })}
+            onClick={revoke}
+          >
+            {t("cancel")}
+          </button>
+        </span>
+      </div>
+    </li>
+  );
+}
+
 export function TeamList() {
   const { session, call } = useConsole();
   const locale = useLocale();
@@ -34,11 +196,21 @@ export function TeamList() {
   const nav = useTranslations("Console.nav");
   const account = useTranslations("Console.account");
   const person = useTranslations("Console.person");
+  const tInvites = useTranslations("Console.invites");
   const form = useTranslations("Form");
 
   const [members, setMembers] = useState<MemberOut[] | null>(null);
   const [hours, setHours] = useState<HoursSummaries>({});
+  const [invites, setInvites] = useState<InviteOut[] | null>(null);
+  const [inviting, setInviting] = useState(false);
   const [failure, setFailure] = useState<ReturnType<typeof problem> | null>(null);
+
+  function loadInvites() {
+    if (!canInvite(session.role as Role)) return;
+    call(() => invitesList()).then((outcome) => {
+      if (outcome.status === 200 && outcome.data) setInvites(outcome.data);
+    });
+  }
 
   function load() {
     call(() => membersList()).then(async (outcome) => {
@@ -60,6 +232,7 @@ export function TeamList() {
       );
       setHours(Object.fromEntries(entries));
     });
+    loadInvites();
   }
 
   useEffect(() => {
@@ -83,10 +256,32 @@ export function TeamList() {
 
   const self = members.find((m) => m.member_id === session.member_id);
   const others = members.filter((m) => m.member_id !== session.member_id);
+  const mayInvite = canInvite(session.role as Role);
+  const alone = others.length === 0 && (invites?.length ?? 0) === 0;
 
   return (
     <>
-      <Heading focus>{nav("team")}</Heading>
+      <div className={styles.screenHead}>
+        <Heading focus>{nav("team")}</Heading>
+        {mayInvite && !alone && !inviting && (
+          <button
+            className={`${uiStyles.button} ${uiStyles.primary} ${uiStyles.small}`}
+            type="button"
+            onClick={() => setInviting(true)}
+          >
+            {tInvites("inviteSomeone")}
+          </button>
+        )}
+      </div>
+      {inviting && (
+        <InviteForm
+          onCancel={() => setInviting(false)}
+          onSent={(invite) => {
+            setInvites((prev) => [...(prev ?? []), invite]);
+            setInviting(false);
+          }}
+        />
+      )}
       <ul className={styles.list}>
         {self && (
           <li>
@@ -132,12 +327,28 @@ export function TeamList() {
           </li>
         ))}
       </ul>
-      {others.length === 0 && (
+      {(invites?.length ?? 0) > 0 && (
+        <>
+          <h2 className={styles.heading2}>{tInvites("invited")}</h2>
+          <ul className={styles.list}>
+            {invites!.map((invite) => (
+              <InviteRow key={invite.id} invite={invite} onChanged={setInvites} />
+            ))}
+          </ul>
+          <p className={uiStyles.hint}>{tInvites("invitedHint")}</p>
+        </>
+      )}
+      {alone && (
         <>
           <div className={uiStyles.empty}>
             <Mark icon="person" />
             <strong>{t("onlyYouTitle")}</strong>
             <span>{t("onlyYouBody")}</span>
+            {mayInvite && !inviting && (
+              <button className={`${uiStyles.button} ${uiStyles.primary}`} type="button" onClick={() => setInviting(true)}>
+                {tInvites("inviteSomeone")}
+              </button>
+            )}
           </div>
           <p className={uiStyles.hint}>{t("onlyYouHint")}</p>
         </>

@@ -319,6 +319,19 @@
       "onlyYouBody": "Nodig iemand uit en die krijgt een eigen inlog, eigen werktijden en eigen afspraken. Jij bepaalt welke diensten diegene uitvoert.",
       "onlyYouHint": "Alleen werken kan prima. Stel je eigen werktijden in en klanten kunnen boeken."
     },
+    "invites": {
+      "inviteSomeone": "Iemand uitnodigen",
+      "sendInvite": "Uitnodiging versturen",
+      "cancel": "Annuleren",
+      "invited": "Uitgenodigd",
+      "expiresIn": "Uitnodiging verloopt over {n, plural, one {één dag} other {# dagen}}",
+      "expired": "Uitnodiging verlopen",
+      "sendAgain": "Opnieuw versturen",
+      "cancelInvite": "Uitnodiging aan {email} intrekken",
+      "invitedHint": "Iemand die nog niet heeft geaccepteerd kan niet inloggen en krijgt geen afspraken. De naam kan worden ingesteld zodra diegene accepteert.",
+      "alreadyMember": "Deze persoon werkt al in je team.",
+      "rateLimited": "Op dit moment te veel uitnodigingen. Probeer het over een uur opnieuw."
+    },
     "hours": {
       "myHoursLede": "Tijden zijn in {city}-tijd.",
       "emptyTitle": "Nog geen werktijden",
