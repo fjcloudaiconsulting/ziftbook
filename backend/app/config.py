@@ -9,7 +9,9 @@ class Settings(BaseSettings):
     Business settings live in the database, not here.
     """
 
-    model_config = SettingsConfigDict(env_prefix="ZIF_")
+    # env_ignore_empty: compose passes an unset optional variable as "" (${VAR:-}), which
+    # pydantic-settings would otherwise treat as an explicit value, overriding the default.
+    model_config = SettingsConfigDict(env_prefix="ZIF_", env_ignore_empty=True)
 
     app_version: str = "dev"
     # Addresses or networks (comma-separated) whose X-Forwarded-For the API believes: the web app
