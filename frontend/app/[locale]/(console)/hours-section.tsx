@@ -92,12 +92,17 @@ export function HoursSection({ memberId, editable, ownerView }: HoursSectionProp
   );
 
   if (!editable) {
+    const blockTimeLink = (chunks: ReactNode) => (
+      <Link className={uiStyles.textButton} href="/my-hours/time-off">
+        {chunks}
+      </Link>
+    );
     return (
       <>
         <Banner tone="note">
           {envelope === null
-            ? t("lockedNoteUnbounded")
-            : t("lockedNoteBounded", { days: daysSummary(openWeekdays, dl, formatRange) })}
+            ? t.rich("lockedNoteUnbounded", { link: blockTimeLink })
+            : t.rich("lockedNoteBounded", { days: daysSummary(openWeekdays, dl, formatRange), link: blockTimeLink })}
         </Banner>
         <div className={styles.days}>
           {days.map((day) => (

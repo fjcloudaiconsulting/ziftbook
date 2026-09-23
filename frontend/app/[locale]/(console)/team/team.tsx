@@ -19,6 +19,7 @@ import { canInvite, expiresIn, isRowExpired, upsertInvite } from "@/lib/team";
 import { teamHoursSummary, zoneCity } from "@/lib/week";
 
 import { HoursSection } from "../hours-section";
+import { BlockedTime, PersonTabs } from "../time-off-section";
 import { JSON_WRITE, SignedOutBanner, useConsole } from "../../_ui/console";
 import styles from "../../_ui/console.module.css";
 import { Banner, EmailField, FieldError, Heading, Mark, problem, Submit } from "../../_ui/parts";
@@ -653,11 +654,75 @@ export function Person({ memberId }: { memberId: string }) {
           }}
         />
       )}
+      <PersonTabs workingHoursHref={`/team/${memberId}`} blockedTimeHref={`/team/${memberId}/time-off`} active="hours" />
       <HoursSection
         memberId={memberId}
         editable={canEditHours(session.role as Role, memberId === session.member_id, settings.workers_edit_own_hours)}
         ownerView
       />
+    </>
+  );
+}
+
+/** `/team/[memberId]/time-off` (owner): the same person header as `Person`, with the blocked-time
+ * tab active. Kept a separate export (not a `tab` prop on `Person`) so each route's page component
+ * stays a plain wrapper. */
+export function PersonTimeOff({ memberId }: { memberId: string }) {
+  const { call } = useConsole();
+  const t = useTranslations("Console.person");
+  const form = useTranslations("Form");
+
+  const [members, setMembers] = useState<MemberOut[] | null>(null);
+  const [failure, setFailure] = useState<ReturnType<typeof problem> | null>(null);
+
+  function load() {
+    call(() => membersList()).then((outcome) => {
+      if (outcome.status === 200 && outcome.data) {
+        setFailure(null);
+        setMembers(outcome.data);
+      } else {
+        setFailure(problem(outcome));
+      }
+    });
+  }
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [memberId]);
+
+  if (failure) {
+    return (
+      <>
+        <BackLink />
+        <Banner tone="error">{form(failure)}</Banner>
+        <button className={uiStyles.textButton} type="button" onClick={load}>
+          {form("tryAgain")}
+        </button>
+      </>
+    );
+  }
+
+  if (!members) return <BackLink />;
+
+  const member = members.find((m) => m.member_id === memberId);
+  if (!member) {
+    return (
+      <>
+        <BackLink />
+        <Banner tone="error">{t("notFound")}</Banner>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <BackLink />
+      <Heading focus>
+        {member.display_name ? member.display_name : <span className={styles.unset}>{t("nameNotSet")}</span>}
+      </Heading>
+      <PersonTabs workingHoursHref={`/team/${memberId}`} blockedTimeHref={`/team/${memberId}/time-off`} active="timeOff" />
+      <BlockedTime memberId={memberId} />
     </>
   );
 }
