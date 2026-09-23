@@ -126,6 +126,11 @@ services:
       target: dev
     ports:
       - "127.0.0.1:3000:3000"
+    # After the API answers /api/healthz, so a tab left open across `make up` or `make reset` doesn't
+    # hit ECONNREFUSED while the backend is still starting (its start_interval is 1s).
+    depends_on:
+      backend:
+        condition: service_healthy
     environment:
       ZIF_API_URL: http://backend:8000
     networks:
