@@ -203,11 +203,9 @@
           "pt": "Português"
         },
         "nameLangLabel": "Nome em {language}",
-        "nameLangRequired": "· idioma do seu negócio, obrigatório",
-        "nameLangOptional": "· opcional",
         "namePlaceholder": "Deixe em branco para mostrar o nome em {language}",
-        "nameHint": "Os clientes veem o nome no idioma deles quando você adiciona um, e o nome em {language} caso contrário.",
-        "nameRequired": "Digite um nome em {language}. Os clientes veem este quando o idioma deles está ausente.",
+        "nameHint": "Os clientes veem o nome no idioma deles, senão no idioma do seu negócio, senão qualquer nome que você tiver definido.",
+        "nameRequired": "Digite um nome em pelo menos um idioma.",
         "descriptionLabel": "Descrição",
         "descriptionOptional": "· opcional",
         "descriptionLangLabel": "Descrição em {language}",

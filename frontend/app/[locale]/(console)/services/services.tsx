@@ -304,7 +304,7 @@ function LangField({
   onChange(locale: Locale, value: string): void;
   businessLanguage: Locale;
   optionalHint?: string;
-  requiredHint: string;
+  requiredHint?: string;
   placeholder?(language: string): string;
   multiline?: boolean;
   errorMessage?: string;
@@ -391,8 +391,13 @@ function LangField({
           ) : (
             <>
               <label className={styles.label} htmlFor={`${idBase}-${loc}-input`}>
-                {t("nameLangLabel", { language: t(`languages.${loc}`) })}{" "}
-                <span className={styles.optional}>{loc === businessLanguage ? requiredHint : optionalHint}</span>
+                {t("nameLangLabel", { language: t(`languages.${loc}`) })}
+                {(loc === businessLanguage ? requiredHint : optionalHint) && (
+                  <>
+                    {" "}
+                    <span className={styles.optional}>{loc === businessLanguage ? requiredHint : optionalHint}</span>
+                  </>
+                )}
               </label>
               <div className={styles.input}>
                 <input
@@ -561,12 +566,10 @@ function ServiceFormBody(props: Props) {
           setName((current) => ({ ...current, [loc]: value }));
         }}
         businessLanguage={settings.language}
-        requiredHint={t("nameLangRequired")}
-        optionalHint={t("nameLangOptional")}
         placeholder={(language) => t("namePlaceholder", { language })}
-        errorMessage={errors.name ? t("nameRequired", { language: t(`languages.${settings.language}`) }) : undefined}
+        errorMessage={errors.name ? t("nameRequired") : undefined}
       />
-      {!editing && <p className={styles.hint}>{t("nameHint", { language: t(`languages.${settings.language}`) })}</p>}
+      {!editing && <p className={styles.hint}>{t("nameHint")}</p>}
 
       {!editing && (
         <LangField
@@ -590,7 +593,7 @@ function ServiceFormBody(props: Props) {
           <label className={styles.label} htmlFor="service-price">
             {t("priceLabel")}
           </label>
-          <div className={trailing ? `${styles.prefixed} ${styles.trailing}` : styles.prefixed}>
+          <div className={trailing ? `${styles.input} ${styles.prefixed} ${styles.trailing}` : `${styles.input} ${styles.prefixed}`}>
             <span className={styles.prefix} aria-hidden="true">
               {sign}
             </span>
