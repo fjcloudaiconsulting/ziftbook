@@ -53,10 +53,11 @@ export type ServiceBodyResult = { body: ServiceBody; errors?: never } | { body?:
  * same rule as edit, so an English-only name for a Portuguese business is a valid create, not an
  * error demanding the business language specifically. `serviceName`'s display fallback order
  * (reader's language, then the business's, then any) is unaffected — this only decides which
- * name(s) satisfy validation. */
+ * name(s) satisfy validation. No `businessLanguage` parameter here: the required-name check never
+ * touches it, on create or edit alike. */
 export function serviceBody(
   form: ServiceForm,
-  options: { businessLanguage: Locale; mode: "create" | "edit" },
+  options: { mode: "create" | "edit" },
   parsePrice: (text: string) => number | null,
 ): ServiceBodyResult {
   const errors: Record<string, string> = {};

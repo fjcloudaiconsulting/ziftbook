@@ -488,7 +488,7 @@ function ServiceFormBody(props: Props) {
     // `await`, so only the first call in a tick ever gets past it.
     if (submitting.current) return;
     const form: ServiceForm = { name, description, price, duration, gap, fixedGap };
-    const result = serviceBody(form, { businessLanguage: settings.language, mode: editing ? "edit" : "create" }, parseMoney);
+    const result = serviceBody(form, { mode: editing ? "edit" : "create" }, parseMoney);
     if ("errors" in result && result.errors) {
       setErrors(result.errors);
       return;

@@ -203,7 +203,7 @@
           "pt": "Portuguese"
         },
         "nameLangLabel": "Name in {language}",
-        "nameHint": "Add a name in at least one language. Clients see their own language when you add it.",
+        "nameHint": "Add a name in at least one language. Clients see the name in their own language if you add one; otherwise the one you wrote.",
         "nameRequired": "Enter a name in at least one language.",
         "descriptionLabel": "Description",
         "descriptionOptional": "· optional",

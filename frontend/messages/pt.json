@@ -203,7 +203,7 @@
           "pt": "Português"
         },
         "nameLangLabel": "Nome em {language}",
-        "nameHint": "Adicione um nome em pelo menos um idioma. Os clientes veem o idioma deles quando você o adiciona.",
+        "nameHint": "Adicione um nome em pelo menos um idioma. Os clientes veem o nome no idioma deles, se você adicionar um; caso contrário, o idioma que você escreveu.",
         "nameRequired": "Digite um nome em pelo menos um idioma.",
         "descriptionLabel": "Descrição",
         "descriptionOptional": "· opcional",
