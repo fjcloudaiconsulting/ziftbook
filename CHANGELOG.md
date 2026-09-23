@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.17.1](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.17.0...v0.17.1) (2026-09-23)
+
+
+### Bug Fixes
+
+* **config:** an empty environment variable falls back to its default ([#116](https://github.com/fjcloudaiconsulting/ziftbook/issues/116)) ([eb81dee](https://github.com/fjcloudaiconsulting/ziftbook/commit/eb81deee02544b785229c6c22da0942aa99b6a7f))
+* **frontend:** service names and descriptions need no particular language (ZIF-50) ([#117](https://github.com/fjcloudaiconsulting/ziftbook/issues/117)) ([ff7920b](https://github.com/fjcloudaiconsulting/ziftbook/commit/ff7920bad92b387ff5e24d2f5cdebbd402a3b96e))
+
 ## [0.17.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.16.0...v0.17.0) (2026-09-23)
 
 
