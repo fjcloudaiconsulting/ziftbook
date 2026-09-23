@@ -18,6 +18,22 @@ describe("weekProblems", () => {
     assert.equal(weekProblems(days, null).byDay[1], "overlapping_hours");
   });
 
+  test("three touching shifts given out of array order are not an overlap", () => {
+    // Sorted, these three only touch (09-12, 12-15, 15-18); scrambled, an unsorted neighbour
+    // check compares the wrong pairs and would flag them as overlapping.
+    const days = [
+      {
+        weekday: 1,
+        shifts: [
+          { start: "12:00", end: "15:00" },
+          { start: "09:00", end: "12:00" },
+          { start: "15:00", end: "18:00" },
+        ],
+      },
+    ];
+    assert.equal(weekProblems(days, null).byDay[1], undefined);
+  });
+
   test("09:00-09:00 is end_not_after_start", () => {
     const days = [{ weekday: 1, shifts: [{ start: "09:00", end: "09:00" }] }];
     assert.equal(weekProblems(days, null).byDay[1], "end_not_after_start");
