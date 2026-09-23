@@ -203,8 +203,7 @@
           "pt": "Portugees"
         },
         "nameLangLabel": "Naam in het {language}",
-        "namePlaceholder": "Laat leeg om de naam in het {language} te tonen",
-        "nameHint": "Klanten zien de naam in hun eigen taal, anders in je bedrijfstaal, anders welke naam je ook hebt ingevuld.",
+        "nameHint": "Voeg een naam toe in ten minste één taal. Klanten zien hun eigen taal wanneer je die toevoegt.",
         "nameRequired": "Vul een naam in ten minste één taal in.",
         "descriptionLabel": "Beschrijving",
         "descriptionOptional": "· optioneel",

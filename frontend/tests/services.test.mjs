@@ -5,7 +5,15 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
 import { parseMoney } from "../lib/money.ts";
-import { activeServices, archivedServices, defaultBuffer, needsWorkerWarning, serviceBody, serviceName } from "../lib/services.ts";
+import {
+  activeServices,
+  archivedServices,
+  defaultBuffer,
+  initialLanguageTab,
+  needsWorkerWarning,
+  serviceBody,
+  serviceName,
+} from "../lib/services.ts";
 
 function body(form, options) {
   return serviceBody(form, options, parseMoney);
@@ -201,5 +209,23 @@ describe("defaultBuffer", () => {
 
   test("40 minutes at 10% is 4 (an exact value stays exact under ceil)", () => {
     assert.equal(defaultBuffer(40, 10), 4);
+  });
+});
+
+describe("initialLanguageTab", () => {
+  test("a viewer whose own language is blank, in an nl business, still opens on the viewer's language: the business's language is never consulted", () => {
+    assert.equal(initialLanguageTab("en", {}), "en");
+  });
+
+  test("editing a service with only pt text present opens on pt, not the viewer's empty language", () => {
+    assert.equal(initialLanguageTab("en", { pt: "Unhas" }), "pt");
+  });
+
+  test("the viewer's own language wins when it already has text, over any other present language", () => {
+    assert.equal(initialLanguageTab("en", { en: "Nails", nl: "Nagels" }), "en");
+  });
+
+  test("first-present-in-canonical-order when the viewer's language is blank and several others have text", () => {
+    assert.equal(initialLanguageTab("pt", { nl: "Nagels", en: "Nails" }), "en");
   });
 });

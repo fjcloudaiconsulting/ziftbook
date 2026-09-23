@@ -3,6 +3,7 @@
 // (and of any sibling import, as lib/week.ts) so node --test can run it directly with no module
 // resolution to configure: `parseMoney` (lib/money.ts) is passed in as a callback instead.
 export type Locale = "en" | "nl" | "pt";
+export const LOCALES: Locale[] = ["en", "nl", "pt"];
 export type NameMap = Partial<Record<Locale, string>>;
 
 /** The reader's own language, else the business's, else the first one present
@@ -14,6 +15,18 @@ export function serviceName(name: NameMap, locale: Locale, businessLanguage: Loc
   if (name[businessLanguage]) return name[businessLanguage] as string;
   const [first] = Object.values(name).filter((v): v is string => Boolean(v));
   return first ?? "";
+}
+
+/** Which language tab a name/description field opens on. Owner ruling (2026-09-23): a business's
+ * language never decides this — a Dutch business whose owner doesn't speak Dutch must not be
+ * steered toward filling in Dutch first. Opens on the viewer's own language when that language
+ * already has text (edit); otherwise the first language (in canonical order) that has text
+ * (edit, viewer's own language absent); otherwise the viewer's own language itself (create, or an
+ * edit with nothing typed anywhere yet — nothing to fall back to). */
+export function initialLanguageTab(viewerLocale: Locale, name: NameMap): Locale {
+  if (name[viewerLocale]) return viewerLocale;
+  const filled = LOCALES.find((locale) => name[locale]);
+  return filled ?? viewerLocale;
 }
 
 export type ServiceForm = {
