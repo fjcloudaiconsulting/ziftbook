@@ -1,4 +1,4 @@
-// Pure logic for blocked time (ZIF-103's window): local-time-to-instant conversion (DST correct,
+// Pure logic for blocked time: local-time-to-instant conversion (DST correct,
 // matching the server's own rule, no browser midnight math), the request body per kind, the PATCH
 // change-set, the list window (today .. today+horizon), list labels, who may edit a block, and
 // which fields a partial block's form needs before it can be converted at all.

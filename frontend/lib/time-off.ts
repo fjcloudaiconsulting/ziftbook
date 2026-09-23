@@ -1,4 +1,4 @@
-// Pure logic for blocked time (window per ZIF-103). The server owns whole-day midnight (a
+// Pure logic for blocked time, including the list window. The server owns whole-day midnight (a
 // request sends a bare `{first_day, last_day}` date pair, never computed here); this file only
 // turns a partial block's local date + HH:MM (in the business time zone) into the UTC instant the
 // API expects, DST included, and the other pure decisions the blocked-time screens need. Kept
@@ -172,7 +172,7 @@ function addDaysISO(dateISO: string, days: number): string {
 }
 
 /**
- * The blocked-time list window (ZIF-103): `[today, today + horizonDays)` in the business zone,
+ * The blocked-time list window: `[today, today + horizonDays)` in the business zone,
  * the same window clients can book in (`GET /api/settings.booking_horizon_days`) - never a
  * hardcoded year, never the runner's own zone for "today", and never a fixed-ms "n days later"
  * for the far end. `now` and `horizonDays` are both passed in, so the fence controls them exactly
