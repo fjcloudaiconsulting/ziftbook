@@ -6,7 +6,7 @@ process.env.TZ = "America/Sao_Paulo";
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { blockLabel, listWindow, localToInstant, requestBody } from "../lib/time-off.ts";
+import { blockLabel, canEditBlock, listWindow, localToInstant, requestBody } from "../lib/time-off.ts";
 
 describe("localToInstant", () => {
   test("Amsterdam, before the spring-forward transition (2026-03-29), uses CET (+01:00)", () => {
@@ -85,5 +85,23 @@ describe("blockLabel", () => {
   test("a partial block: kind partial, date and times read in the business zone, never UTC", () => {
     const label = blockLabel({ starts_at: "2026-10-14T07:00:00.000Z", ends_at: "2026-10-14T09:00:00.000Z", first_day: null, last_day: null }, tz);
     assert.deepEqual(label, { kind: "partial", date: "2026-10-14", start: "09:00", end: "11:00" });
+  });
+});
+
+describe("canEditBlock", () => {
+  test("an owner may change or remove anyone's manual block", () => {
+    assert.equal(canEditBlock("owner", false, "manual"), true);
+    assert.equal(canEditBlock("owner", true, "manual"), true);
+  });
+
+  test("a worker may only change or remove their own manual block, never a colleague's", () => {
+    assert.equal(canEditBlock("worker", true, "manual"), true);
+    assert.equal(canEditBlock("worker", false, "manual"), false);
+  });
+
+  test("a Google-sourced block is read only for everyone, owner included (PATCH/DELETE 404 on it)", () => {
+    assert.equal(canEditBlock("owner", true, "google"), false);
+    assert.equal(canEditBlock("owner", false, "google"), false);
+    assert.equal(canEditBlock("worker", true, "google"), false);
   });
 });

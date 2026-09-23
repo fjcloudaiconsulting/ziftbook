@@ -135,3 +135,12 @@ export function blockLabel(block: Block, tz: string): BlockLabel {
   if (startsAt === null || block.ends_at === null) throw new Error("a block has neither pair filled in");
   return { kind: "partial", date: localDateISO(new Date(startsAt), tz), start: localTime(startsAt, tz), end: localTime(block.ends_at, tz) };
 }
+
+/** Mirrors `members.may_manage` (`time_off.py`'s `manual_block`): an owner manages everyone's
+ * block, anyone else only their own. A `source: "google"` block is never editable by anyone - the
+ * API's PATCH/DELETE 404 on it (`time_off.py:87`, `manual_block`'s `source = 'manual'` filter), so
+ * the row only ever links out to Google Calendar. */
+export function canEditBlock(role: "owner" | "worker", isSelf: boolean, source: "manual" | "google"): boolean {
+  if (source === "google") return false;
+  return role === "owner" || isSelf;
+}
