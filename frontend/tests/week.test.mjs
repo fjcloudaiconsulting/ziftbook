@@ -5,7 +5,32 @@ process.env.TZ = "America/Sao_Paulo";
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { changedDays, daysSummary, problemList, weekBody, weekdayName, weekProblems, zoneCity } from "../lib/week.ts";
+import { changedDays, daysFromShifts, daysSummary, emptyWeek, problemList, weekBody, weekdayName, weekProblems, zoneCity } from "../lib/week.ts";
+
+describe("emptyWeek", () => {
+  test("seven closed days, Monday first", () => {
+    const week = emptyWeek();
+    assert.deepEqual(
+      week.map((d) => d.weekday),
+      [1, 2, 3, 4, 5, 6, 7],
+    );
+    assert.ok(week.every((d) => d.shifts.length === 0));
+  });
+});
+
+describe("daysFromShifts", () => {
+  test("fills all seven weekdays, sorting each day's shifts by start", () => {
+    const days = daysFromShifts([
+      { weekday: 3, starts_at: "14:00", ends_at: "18:00" },
+      { weekday: 3, starts_at: "09:00", ends_at: "12:00" },
+    ]);
+    assert.deepEqual(
+      days.find((d) => d.weekday === 3).shifts,
+      [{ start: "09:00", end: "12:00" }, { start: "14:00", end: "18:00" }],
+    );
+    assert.deepEqual(days.find((d) => d.weekday === 1).shifts, []);
+  });
+});
 
 describe("weekProblems", () => {
   test("touching shifts (09:00-12:00, 12:00-15:00) are not an overlap", () => {

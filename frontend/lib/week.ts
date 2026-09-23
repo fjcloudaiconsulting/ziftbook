@@ -10,6 +10,23 @@ export const WEEKDAYS = [1, 2, 3, 4, 5, 6, 7] as const;
 export type Shift = { start: string; end: string };
 export type Day = { weekday: number; shifts: Shift[] };
 
+/** Seven closed days, for the empty state's "Set the opening week" button. */
+export function emptyWeek(): Day[] {
+  return WEEKDAYS.map((weekday) => ({ weekday, shifts: [] }));
+}
+
+/** The GET response turned into all seven weekdays (closed ones included), each day's shifts
+ * sorted by start. */
+export function daysFromShifts(shifts: { weekday: number; starts_at: string; ends_at: string }[]): Day[] {
+  return WEEKDAYS.map((weekday) => ({
+    weekday,
+    shifts: shifts
+      .filter((s) => s.weekday === weekday)
+      .map((s) => ({ start: s.starts_at, end: s.ends_at }))
+      .sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : 0)),
+  }));
+}
+
 /** The PUT body: every non-empty shift, flattened and sorted by weekday then start (never by
  * JS `Date#getDay()`, which is 0-indexed and puts Sunday first). */
 export function weekBody(days: Day[]): { weekday: number; starts_at: string; ends_at: string }[] {
