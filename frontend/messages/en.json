@@ -181,6 +181,50 @@
       "ownerOnly": "Only an owner can do this.",
       "signedOut": "Your session ended. Sign in again in a new tab, then try again here. <link>Sign in</link>"
     },
-    "notSaved": "Nothing was saved, and your details are still here."
+    "notSaved": "Nothing was saved, and your details are still here.",
+    "week": {
+      "savingHint": "Saving the whole week at once. Nothing changes for clients until it is saved.",
+      "saving": "Saving…",
+      "save": "Save the week",
+      "undo": "Undo changes",
+      "unsavedChanges": "Unsaved changes on {days}.",
+      "attentionHint": "{count, plural, =1 {One day needs attention.} =2 {Two days need attention.} =3 {Three days need attention.} =4 {Four days need attention.} =5 {Five days need attention.} =6 {Six days need attention.} =7 {Seven days need attention.} other {# days need attention.}}",
+      "notSaved": "The week was not saved. {count, plural, =1 {One day needs attention} =2 {Two days need attention} =3 {Three days need attention} =4 {Four days need attention} =5 {Five days need attention} =6 {Six days need attention} =7 {Seven days need attention} other {# days need attention}}: {list}.",
+      "fieldTimeRequired": "Enter a time",
+      "fieldEndNotAfterStart": "The end time has to come after the start time. Hours that run past midnight are set as two days.",
+      "fieldOverlapping": "These two blocks cover {from} to {to} twice. Change one of them.",
+      "phraseTimeRequired": "{weekday} is missing a time",
+      "phraseEndNotAfterStart": "{weekday} ends before it starts",
+      "phraseOverlapping": "two blocks on {weekday} cover the same time"
+    },
+    "opening": {
+      "emptyLede": "{business} · times are in {city} time",
+      "editorLede": "When the shop is open. Times are in {city} time.",
+      "empty": {
+        "title": "The shop has no opening hours yet",
+        "body": "These are the times the shop is open. Everything sits inside them: each person works part of the week, blocked time comes out of that, and what is left is what clients can book.",
+        "cta": "Set the opening week",
+        "hint": "Opening hours are the first setup step: everyone's working hours sit inside them."
+      },
+      "note": "Nobody can work outside these times, and nothing can be booked outside them. <link>See who works when</link>",
+      "shortenHint": "Shortening a day leaves any working hours outside the new times unbookable. The people who work then keep their hours; clients simply stop being offered those slots.",
+      "closed": "Closed",
+      "addTimes": "Add times",
+      "copyToEveryDay": "Copy to every day",
+      "addBlock": "Add a block",
+      "addSecondBlock": "Add a second block",
+      "twoBlockHint": "Two blocks close the shop in between: nothing is booked from {from} to {to}.",
+      "opensAt": "{weekday}, shop opens at",
+      "opensAtFirst": "{weekday}, first block, shop opens at",
+      "opensAtSecond": "{weekday}, second block, shop opens at",
+      "opensAtBlock": "{weekday}, block {n}, shop opens at",
+      "closesAt": "{weekday}, shop closes at",
+      "closesAtFirst": "{weekday}, first block, shop closes at",
+      "closesAtSecond": "{weekday}, second block, shop closes at",
+      "closesAtBlock": "{weekday}, block {n}, shop closes at",
+      "removeOnly": "Close the shop on {weekday}, removing {from} to {to}",
+      "remove": "Remove {weekday} {from} to {to}",
+      "allClosedRefusal": "Open the shop on at least one day."
+    }
   }
 }

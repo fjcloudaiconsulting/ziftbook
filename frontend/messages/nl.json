@@ -181,6 +181,50 @@
       "ownerOnly": "Alleen een eigenaar kan dit doen.",
       "signedOut": "Je sessie is verlopen. Log opnieuw in in een nieuw tabblad en probeer het hier dan opnieuw. <link>Inloggen</link>"
     },
-    "notSaved": "Er is niets opgeslagen, je gegevens staan hier nog."
+    "notSaved": "Er is niets opgeslagen, je gegevens staan hier nog.",
+    "week": {
+      "savingHint": "De hele week wordt in één keer opgeslagen. Voor klanten verandert er niets tot het is opgeslagen.",
+      "saving": "Bezig met opslaan…",
+      "save": "Week opslaan",
+      "undo": "Wijzigingen ongedaan maken",
+      "unsavedChanges": "Niet-opgeslagen wijzigingen op {days}.",
+      "attentionHint": "{count, plural, =1 {Eén dag heeft aandacht nodig.} =2 {Twee dagen hebben aandacht nodig.} =3 {Drie dagen hebben aandacht nodig.} =4 {Vier dagen hebben aandacht nodig.} =5 {Vijf dagen hebben aandacht nodig.} =6 {Zes dagen hebben aandacht nodig.} =7 {Zeven dagen hebben aandacht nodig.} other {# dagen hebben aandacht nodig.}}",
+      "notSaved": "De week is niet opgeslagen. {count, plural, =1 {Eén dag heeft aandacht nodig} =2 {Twee dagen hebben aandacht nodig} =3 {Drie dagen hebben aandacht nodig} =4 {Vier dagen hebben aandacht nodig} =5 {Vijf dagen hebben aandacht nodig} =6 {Zes dagen hebben aandacht nodig} =7 {Zeven dagen hebben aandacht nodig} other {# dagen hebben aandacht nodig}}: {list}.",
+      "fieldTimeRequired": "Vul een tijd in",
+      "fieldEndNotAfterStart": "De eindtijd moet na de starttijd liggen. Uren die doorlopen na middernacht zet je als twee dagen.",
+      "fieldOverlapping": "Deze twee blokken overlappen van {from} tot {to}. Pas er een van aan.",
+      "phraseTimeRequired": "{weekday} mist een tijd",
+      "phraseEndNotAfterStart": "{weekday} eindigt voordat het begint",
+      "phraseOverlapping": "twee blokken op {weekday} overlappen elkaar"
+    },
+    "opening": {
+      "emptyLede": "{business} · tijden zijn in {city}-tijd",
+      "editorLede": "Wanneer de winkel open is. Tijden zijn in {city}-tijd.",
+      "empty": {
+        "title": "De winkel heeft nog geen openingstijden",
+        "body": "Dit zijn de tijden dat de winkel open is. Alles valt hierbinnen: iedereen werkt een deel van de week, geblokkeerde tijd komt hiervan af, en wat overblijft is wat klanten kunnen boeken.",
+        "cta": "Openingsweek instellen",
+        "hint": "Openingstijden zijn de eerste stap: ieders werktijden vallen hierbinnen."
+      },
+      "note": "Niemand kan buiten deze tijden werken, en er kan niets buiten deze tijden worden geboekt. <link>Bekijk wie wanneer werkt</link>",
+      "shortenHint": "Een dag inkorten maakt werktijden buiten de nieuwe tijden niet meer boekbaar. De mensen die dan werken houden hun uren; klanten krijgen die tijden simpelweg niet meer aangeboden.",
+      "closed": "Gesloten",
+      "addTimes": "Tijden toevoegen",
+      "copyToEveryDay": "Naar elke dag kopiëren",
+      "addBlock": "Blok toevoegen",
+      "addSecondBlock": "Tweede blok toevoegen",
+      "twoBlockHint": "Twee blokken sluiten de winkel ertussenin: er wordt niets geboekt van {from} tot {to}.",
+      "opensAt": "{weekday}, winkel opent om",
+      "opensAtFirst": "{weekday}, eerste blok, winkel opent om",
+      "opensAtSecond": "{weekday}, tweede blok, winkel opent om",
+      "opensAtBlock": "{weekday}, blok {n}, winkel opent om",
+      "closesAt": "{weekday}, winkel sluit om",
+      "closesAtFirst": "{weekday}, eerste blok, winkel sluit om",
+      "closesAtSecond": "{weekday}, tweede blok, winkel sluit om",
+      "closesAtBlock": "{weekday}, blok {n}, winkel sluit om",
+      "removeOnly": "Winkel sluiten op {weekday}, {from} tot {to} verwijderen",
+      "remove": "{weekday} {from} tot {to} verwijderen",
+      "allClosedRefusal": "Open de winkel op ten minste één dag."
+    }
   }
 }
