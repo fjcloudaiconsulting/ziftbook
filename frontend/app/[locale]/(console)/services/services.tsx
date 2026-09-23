@@ -141,8 +141,6 @@ function ArchivedRow({ service, locale, onBroughtBack }: { service: ServiceOut; 
         <span className={styles.rowMain}>
           <span className={styles.rowTitle}>{name}</span>
           <span className={styles.rowMeta}>{t("archivedMeta", { minutes: service.duration_minutes, price })}</span>
-          {signedOut && <SignedOutBanner />}
-          {failure && <span className={styles.rowMeta}>{form(failure)}</span>}
         </span>
         <span className={styles.rowEnd}>
           <button className={`${styles.button} ${styles.secondary} ${styles.small}`} type="button" aria-disabled={busy || undefined} onClick={bringBack}>
@@ -150,6 +148,15 @@ function ArchivedRow({ service, locale, onBroughtBack }: { service: ServiceOut; 
           </button>
         </span>
       </div>
+      {/* A <div> (SignedOutBanner) or role="alert" element can't nest inside .rowMain's <span>
+       * (phrasing content only), and a plain muted <span> is never announced to screen readers:
+       * both render as block-level siblings of the row instead. */}
+      {signedOut && <SignedOutBanner />}
+      {!signedOut && failure && (
+        <p role="alert" className={styles.rowMeta}>
+          {form(failure)}
+        </p>
+      )}
     </li>
   );
 }
@@ -761,12 +768,31 @@ function ServiceFormBody(props: Props) {
         </Link>
       </div>
 
-      {editing && <ArchiveZone service={props.service} locale={locale} businessLanguage={settings.language} />}
+      {editing && (
+        <ArchiveZone
+          service={props.service}
+          locale={locale}
+          businessLanguage={settings.language}
+          onSignedOut={() => setSignedOut(true)}
+        />
+      )}
     </form>
   );
 }
 
-function ArchiveZone({ service, locale, businessLanguage }: { service: ServiceOut; locale: string; businessLanguage: Locale }) {
+function ArchiveZone({
+  service,
+  locale,
+  businessLanguage,
+  onSignedOut,
+}: {
+  service: ServiceOut;
+  locale: string;
+  businessLanguage: Locale;
+  // Shared with the enclosing form's own write-401 state, so archiving and saving never stack
+  // two identical SignedOutBanners on the same page — only one signed-out state, one banner.
+  onSignedOut: () => void;
+}) {
   const t = useTranslations("Console.services.form");
   const consoleForm = useTranslations("Form");
   const { call } = useConsole();
@@ -774,7 +800,6 @@ function ArchiveZone({ service, locale, businessLanguage }: { service: ServiceOu
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [banner, setBanner] = useState<ReturnType<typeof problem> | null>(null);
-  const [signedOut, setSignedOut] = useState(false);
   const submitting = useRef(false);
   const startRef = useRef<HTMLButtonElement>(null);
   const yesRef = useRef<HTMLButtonElement>(null);
@@ -798,14 +823,13 @@ function ArchiveZone({ service, locale, businessLanguage }: { service: ServiceOu
     submitting.current = true;
     setBusy(true);
     setBanner(null);
-    setSignedOut(false);
     try {
       const outcome = await call(() => servicesUpdate({ path: { service_id: service.id }, body: { archived: true } }), { write: true });
       if (outcome.status === 200) {
         router.push("/services");
         return;
       }
-      if (outcome.status === 401) setSignedOut(true);
+      if (outcome.status === 401) onSignedOut();
       else setBanner(problem(outcome));
     } finally {
       submitting.current = false;
@@ -830,8 +854,7 @@ function ArchiveZone({ service, locale, businessLanguage }: { service: ServiceOu
         <div className={styles.dangerZone}>
           <strong>{t("archiveConfirmTitle", { name: displayName })}</strong>
           <p>{t(bodyKey, { n })}</p>
-          {signedOut && <SignedOutBanner />}
-          {!signedOut && banner && <Banner tone="error">{consoleForm(banner)}</Banner>}
+          {banner && <Banner tone="error">{consoleForm(banner)}</Banner>}
           <div className={styles.actions} style={{ margin: 0 }}>
             <button ref={yesRef} className={`${styles.button} ${styles.danger}`} type="button" aria-disabled={busy || undefined} onClick={archive}>
               {t("archiveConfirmYes")}
