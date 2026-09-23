@@ -12,7 +12,7 @@ process.env.TZ = "America/Sao_Paulo";
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { blockLabel, canEditBlock, clientProblem, listWindow, localToInstant, patchBody, requestBody } from "../lib/time-off.ts";
+import { beyondHorizon, blockLabel, canEditBlock, clientProblem, listWindow, localToInstant, patchBody, requestBody } from "../lib/time-off.ts";
 
 describe("localToInstant", () => {
   test("Amsterdam, before the spring-forward transition (2026-03-29), uses CET (+01:00)", () => {
@@ -177,6 +177,24 @@ describe("blockLabel", () => {
   test("a partial block spanning days (starts_at 07:00Z the 14th, ends_at 09:00Z the 16th): kind partialRange, both dates shown, never just the start day", () => {
     const label = blockLabel({ starts_at: "2026-10-14T07:00:00.000Z", ends_at: "2026-10-16T09:00:00.000Z", first_day: null, last_day: null }, tz);
     assert.deepEqual(label, { kind: "partialRange", from: "2026-10-14", to: "2026-10-16", start: "09:00", end: "11:00" });
+  });
+});
+
+describe("beyondHorizon", () => {
+  const tz = "Europe/Amsterdam";
+  const windowTo = localToInstant("2026-10-03", "00:00", tz);
+
+  test("a whole-day block starting on the window's last visible day is within it", () => {
+    assert.equal(beyondHorizon({ starts_at: null, first_day: "2026-10-02" }, tz, windowTo), false);
+  });
+
+  test("a whole-day block starting on (or after) the window's exclusive end is beyond it", () => {
+    assert.equal(beyondHorizon({ starts_at: null, first_day: "2026-10-03" }, tz, windowTo), true);
+  });
+
+  test("a partial block is compared by its own instant, not by rounding its date", () => {
+    assert.equal(beyondHorizon({ starts_at: "2026-10-02T20:30:00.000Z", first_day: null }, tz, windowTo), false);
+    assert.equal(beyondHorizon({ starts_at: "2026-10-02T23:30:00.000Z", first_day: null }, tz, windowTo), true);
   });
 });
 

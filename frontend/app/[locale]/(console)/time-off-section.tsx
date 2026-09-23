@@ -5,7 +5,7 @@ import { type FormEvent, useEffect, useRef, useState } from "react";
 
 import { timeOffCreate, timeOffDelete, timeOffList, timeOffUpdate, type TimeOffOut } from "@/api-client";
 import { Link } from "@/i18n/navigation";
-import { canEditBlock, clientProblem, listWindow, patchBody, requestBody } from "@/lib/time-off";
+import { beyondHorizon, canEditBlock, clientProblem, listWindow, patchBody, requestBody } from "@/lib/time-off";
 import { zoneCity } from "@/lib/week";
 import { JSON_WRITE, SignedOutBanner, useConsole } from "../_ui/console";
 import styles from "../_ui/console.module.css";
@@ -88,6 +88,7 @@ export function BlockedTime({
   const [blocks, setBlocks] = useState<TimeOffOut[] | null>(null);
   const [failure, setFailure] = useState<ReturnType<typeof problem> | null>(null);
   const [mode, setMode] = useState<Mode>({ kind: "list" });
+  const [overflowNote, setOverflowNote] = useState(false);
 
   useEffect(() => {
     onFormMode?.(mode.kind !== "list");
@@ -131,7 +132,9 @@ export function BlockedTime({
         tz={settings.timezone}
         personName={personName}
         editing={mode.kind === "edit" ? mode.block : null}
-        onDone={() => {
+        onDone={(saved) => {
+          const window = listWindow(new Date(), settings.timezone, settings.booking_horizon_days);
+          setOverflowNote(saved !== null && beyondHorizon(saved, settings.timezone, window.to));
           setMode({ kind: "list" });
           load();
         }}
@@ -145,6 +148,7 @@ export function BlockedTime({
   if (blocks.length === 0) {
     return (
       <>
+        {overflowNote && <Banner tone="note">{t("savedBeyondHorizon", { days })}</Banner>}
         <div className={uiStyles.empty}>
           <Mark icon="calendar" />
           <strong>{t("emptyTitle")}</strong>
@@ -160,6 +164,7 @@ export function BlockedTime({
 
   return (
     <>
+      {overflowNote && <Banner tone="note">{t("savedBeyondHorizon", { days })}</Banner>}
       <div className={styles.screenHead}>
         <p className={uiStyles.hint}>{t("listHint", { days })}</p>
         <button className={`${uiStyles.button} ${uiStyles.primary} ${styles.small}`} type="button" onClick={() => setMode({ kind: "new" })}>
@@ -240,7 +245,7 @@ function BlockedTimeForm({
   tz: string;
   personName: string;
   editing: TimeOffOut | null;
-  onDone(): void;
+  onDone(saved: TimeOffOut | null): void;
   onCancel(): void;
 }) {
   const { call, settings } = useConsole();
@@ -286,7 +291,7 @@ function BlockedTimeForm({
           )
         : await call(() => timeOffCreate({ path: { member_id: memberId }, body: requestBody({ ...state, lastDay: state.allDay ? state.lastDay : state.firstDay, tz }) }), { write: true });
       if ((outcome.status === 200 || outcome.status === 201) && outcome.data) {
-        onDone();
+        onDone(outcome.data);
         return;
       }
       if (outcome.status === 401) return setSignedOut(true);
@@ -317,7 +322,7 @@ function BlockedTimeForm({
     setRemoving(false);
     submitting.current = false;
     if (outcome.status === 204) {
-      onDone();
+      onDone(null);
       return;
     }
     setConfirmingRemove(false);

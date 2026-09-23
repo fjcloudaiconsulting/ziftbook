@@ -372,6 +372,7 @@
       "emptyTitle": "Niets geblokkeerd",
       "emptyBody": "Blokkeer tijd wanneer deze persoon niet beschikbaar is, ook al valt dit binnen de werktijden: een vakantie, een cursus, een eigen afspraak. Klanten kunnen dan niet boeken.",
       "blockTime": "Tijd blokkeren",
+      "savedBeyondHorizon": "Opgeslagen. Dit valt buiten de lijst van {days} dagen hieronder en wordt daar niet getoond.",
       "emptyHint": "De komende {days} dagen worden getoond: hetzelfde venster waarin klanten kunnen boeken.",
       "listHint": "Komende {days} dagen, eerst het dichtstbijzijnde: hetzelfde venster waarin klanten kunnen boeken.",
       "reasonListHint": "De reden is alleen zichtbaar voor deze persoon en de eigenaren. Klanten zien deze nooit.",

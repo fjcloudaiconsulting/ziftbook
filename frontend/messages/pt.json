@@ -372,6 +372,7 @@
       "emptyTitle": "Nada bloqueado",
       "emptyBody": "Bloqueie tempo quando esta pessoa não estiver disponível, mesmo dentro do horário de trabalho: umas férias, um curso, um compromisso pessoal. Os clientes não podem reservar nesse período.",
       "blockTime": "Bloquear tempo",
+      "savedBeyondHorizon": "Salvo. Isso está além dos {days} dias da lista abaixo, então não vai aparecer nela.",
       "emptyHint": "Mostrando os próximos {days} dias: a mesma janela em que os clientes podem reservar.",
       "listHint": "Próximos {days} dias, do mais próximo ao mais distante: a mesma janela em que os clientes podem reservar.",
       "reasonListHint": "O motivo só é visível para esta pessoa e para os proprietários. Os clientes nunca o veem.",

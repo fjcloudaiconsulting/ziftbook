@@ -372,6 +372,7 @@
       "emptyTitle": "Nothing blocked",
       "emptyBody": "Block time when this person is not available even though it is inside their working hours: a holiday, a course, an appointment of their own. Clients cannot book then.",
       "blockTime": "Block time",
+      "savedBeyondHorizon": "Saved. It's beyond the {days}-day list below, so it won't show there.",
       "emptyHint": "Showing the next {days} days: the same window clients can book in.",
       "listHint": "Next {days} days, soonest first: the same window clients can book in.",
       "reasonListHint": "The reason is only visible to this person and to the owners. Clients never see it.",

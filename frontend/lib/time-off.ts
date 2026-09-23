@@ -183,6 +183,14 @@ export function listWindow(now: Date, tz: string, horizonDays: number): { from: 
   return { from: localToInstant(today, "00:00", tz), to: localToInstant(addDaysISO(today, horizonDays), "00:00", tz) };
 }
 
+/** Whether a just-saved block's own effective start falls at or past the list window's `to`
+ * (from `listWindow`): it saved fine, but it won't show up in the list the person is looking at,
+ * since that list is capped to the booking horizon. */
+export function beyondHorizon(block: { starts_at: string | null; first_day: string | null }, tz: string, windowTo: string): boolean {
+  const effectiveStart = block.starts_at ?? localToInstant(block.first_day!, "00:00", tz);
+  return new Date(effectiveStart).getTime() >= new Date(windowTo).getTime();
+}
+
 export type Block = { starts_at: string | null; ends_at: string | null; first_day: string | null; last_day: string | null };
 export type BlockLabel =
   | { kind: "day"; date: string }
