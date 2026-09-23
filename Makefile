@@ -1,4 +1,4 @@
-.PHONY: setup up down migrate migration openapi lint typecheck test test-hooks
+.PHONY: setup up down reset migrate migration openapi lint typecheck test test-hooks
 
 API := uv run --directory backend
 PNPM ?= pnpm
@@ -15,6 +15,11 @@ up: ## Start the whole app (http://localhost:3000), syncing source changes into 
 
 down:
 	docker compose down
+
+reset: ## Delete the local database (every account, business and booking) and start fresh; asks first
+	@printf 'This deletes the local database. Type "reset" to continue: '; read answer; [ "$$answer" = reset ] || { echo "Nothing deleted."; exit 1; }
+	docker compose down -v
+	$(MAKE) up
 
 migrate: ## Apply database migrations (as ziftbook_migrate)
 	docker compose run --rm --build migrate

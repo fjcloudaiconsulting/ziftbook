@@ -20,6 +20,12 @@ make up     # http://localhost:3000 (backend directly: http://localhost:8000/api
 make down
 ```
 
+To start over with an empty database (every local account, business and booking is deleted; it asks first):
+
+```sh
+make reset   # docker compose down -v, then make up
+```
+
 `make up` needs host ports 3000, 8000, 5432, 1025 and 8025 free, and fails naming whatever holds one it isn't already
 using itself. If another project's Mailpit (or anything else) is squatting on 1025/8025, stop it, or free just that
 port and recreate Mailpit: `docker compose up -d --force-recreate --no-deps mailpit`.
