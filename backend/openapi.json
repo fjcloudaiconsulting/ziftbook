@@ -2357,7 +2357,7 @@
           "time-off"
         ],
         "summary": "List",
-        "description": "A member's blocks that overlap [from, to), by start. Anyone in the business may read them;\nthe reason only the member and owners.",
+        "description": "A member's blocks that overlap [from, to), by effective start (a day block's local\nmidnight). Anyone in the business may read them; the reason only the member and owners.",
         "operationId": "time-off-list",
         "parameters": [
           {
@@ -4690,6 +4690,16 @@
             "format": "date-time",
             "title": "Ends At"
           },
+          "first_day": {
+            "type": "string",
+            "format": "date",
+            "title": "First Day"
+          },
+          "last_day": {
+            "type": "string",
+            "format": "date",
+            "title": "Last Day"
+          },
           "reason": {
             "anyOf": [
               {
@@ -4707,7 +4717,7 @@
         "additionalProperties": false,
         "type": "object",
         "title": "TimeOffChange",
-        "description": "Only the fields sent change. reason may be null (clears it); the times may not."
+        "description": "Only the fields sent change. reason may be null (clears it); the times and the days may\nnot. A body carries fields of one kind: within the block's own kind any subset merges; to\nswitch kinds send the complete new pair (checked at the route, which knows the block's kind)."
       },
       "TimeOffIn": {
         "properties": {
@@ -4720,6 +4730,16 @@
             "type": "string",
             "format": "date-time",
             "title": "Ends At"
+          },
+          "first_day": {
+            "type": "string",
+            "format": "date",
+            "title": "First Day"
+          },
+          "last_day": {
+            "type": "string",
+            "format": "date",
+            "title": "Last Day"
           },
           "reason": {
             "anyOf": [
@@ -4737,11 +4757,8 @@
         },
         "additionalProperties": false,
         "type": "object",
-        "required": [
-          "starts_at",
-          "ends_at"
-        ],
-        "title": "TimeOffIn"
+        "title": "TimeOffIn",
+        "description": "Exactly one complete pair: {starts_at, ends_at} (a partial block) or {first_day, last_day}\n(a whole-day block, both days included). An explicit null for any of the four is refused."
       },
       "TimeOffOut": {
         "properties": {
@@ -4756,14 +4773,52 @@
             "title": "Member Id"
           },
           "starts_at": {
-            "type": "string",
-            "format": "date-time",
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Starts At"
           },
           "ends_at": {
-            "type": "string",
-            "format": "date-time",
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Ends At"
+          },
+          "first_day": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Day"
+          },
+          "last_day": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Day"
           },
           "reason": {
             "anyOf": [
@@ -4791,6 +4846,8 @@
           "member_id",
           "starts_at",
           "ends_at",
+          "first_day",
+          "last_day",
           "reason",
           "source"
         ],

@@ -23,6 +23,7 @@ from tests.conftest import (
     failing,
     member_id,
     new_client,
+    put_settings,
     signed_in,
     wait_until_blocked,
 )
@@ -824,6 +825,62 @@ def test_direct_inserts_hit_the_database_checks(
     assert exc_info.value.orig.diag.constraint_name == constraint
 
 
+DAY_ROW = """
+INSERT INTO time_off (tenant_id, member_id, starts_at, ends_at, first_day, last_day)
+VALUES (:t, :m, :s, :e, :f, :l)
+"""
+
+
+# 25. fence (DB, ZIF-101): raw INSERTs refused by ck_time_off_kind and ck_time_off_days, naming the
+# right constraint. Kills app-only validation and a CHECK without the year bound.
+@pytest.mark.parametrize(
+    ("starts", "ends", "first_day", "last_day", "constraint"),
+    [
+        (  # both pairs
+            "2026-10-01T08:00:00Z",
+            "2026-10-02T08:00:00Z",
+            "2026-10-01",
+            "2026-10-02",
+            "ck_time_off_kind",
+        ),
+        (None, None, "2026-10-01", None, "ck_time_off_kind"),  # half a pair, days
+        ("2026-10-01T08:00:00Z", None, None, None, "ck_time_off_kind"),  # half a pair, instants
+        (None, None, None, None, "ck_time_off_kind"),  # empty
+        (None, None, "2026-10-05", "2026-10-04", "ck_time_off_days"),  # last_day < first_day
+        (None, None, "2026-10-01", "2027-10-02", "ck_time_off_days"),  # 367 days
+        (None, None, "1999-12-31", "2000-01-01", "ck_time_off_days"),  # below the year bound
+        # A single day, well under the 366-day count bound: isolates the upper year bound alone.
+        # 2999-12-31..9999-12-30 would also be refused by the day-count clause, making it vacuous.
+        (None, None, "3000-01-01", "3000-01-01", "ck_time_off_days"),  # above the year bound
+    ],
+)
+def test_direct_inserts_hit_the_zif_101_database_checks(
+    people: People,
+    starts: str | None,
+    ends: str | None,
+    first_day: str | None,
+    last_day: str | None,
+    constraint: str,
+) -> None:
+    only_a_member = member_id(people.a, people.only_a)
+
+    with pytest.raises(IntegrityError) as exc_info, tenant_context(people.a) as session:
+        session.execute(
+            text(DAY_ROW),
+            {
+                "t": people.a,
+                "m": only_a_member,
+                "s": starts,
+                "e": ends,
+                "f": first_day,
+                "l": last_day,
+            },
+        )
+
+    assert isinstance(exc_info.value.orig, pg_errors.CheckViolation)
+    assert exc_info.value.orig.diag.constraint_name == constraint
+
+
 def test_a_second_google_row_with_the_same_external_id_is_refused(people: People) -> None:
     only_a_member = member_id(people.a, people.only_a)
     google(people.a, only_a_member, external_id="dup")
@@ -882,3 +939,314 @@ def test_schema_grants_and_index(migrate_engine: Engine) -> None:
     assert "starts_at" in index_columns
     assert delete_priv is True
     assert update_priv is True
+    with migrate_engine.connect() as conn:
+        # Tripwire for a future column REVOKE (ZIF-101): the two new columns must stay writable
+        # with no GRANT, since 0028 adds them under time_off's table-level default privileges
+        # (0001:22) and grants no column list of its own.
+        first_day_update = conn.scalar(
+            text("SELECT has_column_privilege('ziftbook_app', 'time_off', 'first_day', 'UPDATE')")
+        )
+    assert first_day_update is True
+
+
+def day_block(client: TestClient, member: uuid.UUID, **over: Any) -> Response:
+    body = {"first_day": "2026-10-27", "last_day": "2026-11-02", "reason": "Holiday"}
+    body.update(over)
+    return client.post(path(member), json=body)
+
+
+# 15. fence: POST days -> 201, response has first_day/last_day and starts_at = ends_at = null; the
+# DB row has NULL instants (read as events() does: set_config('app.tenant_id', ...) first, or
+# FORCE RLS raises 42704). Kills "midnight instants plus a flag" and emitting derived instants.
+def test_post_days_returns_null_instants_and_stores_null_instants(
+    people: People, app: FastAPI, migrate_engine: Engine
+) -> None:
+    owner = signed_in(app, people.a, people.both)
+    only_a_member = member_id(people.a, people.only_a)
+
+    response = day_block(owner, only_a_member)
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["first_day"] == "2026-10-27"
+    assert body["last_day"] == "2026-11-02"
+    assert body["starts_at"] is None
+    assert body["ends_at"] is None
+
+    with migrate_engine.begin() as conn:
+        conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(people.a)})
+        row = conn.execute(
+            text("SELECT starts_at, ends_at, first_day, last_day FROM time_off WHERE id = :id"),
+            {"id": body["id"]},
+        ).one()
+    assert row.starts_at is None
+    assert row.ends_at is None
+    assert row.first_day.isoformat() == "2026-10-27"
+    assert row.last_day.isoformat() == "2026-11-02"
+
+
+# 16. fence (parametrised): 422 invalid_request for malformed or mixed bodies. Kills a lax date
+# field, a union that silently prefers one pair, and a missing year bound.
+@pytest.mark.parametrize(
+    "over",
+    [
+        {
+            "first_day": "2026-10-27",
+            "starts_at": "2026-10-27T09:00:00Z",
+            "ends_at": "2026-10-27T10:00:00Z",
+        },
+        {"first_day": "2026-10-27"},  # half a pair
+        {"starts_at": "2026-10-01T08:00:00Z"},  # half the other pair, no day fields
+        {"first_day": None, "last_day": "2026-11-02"},
+        {"first_day": "2026-10-03T00:00", "last_day": "2026-11-02"},  # a datetime, not a date
+        {"first_day": 1788998400, "last_day": "2026-11-02"},  # an epoch number, midnight-aligned
+        # Paired with itself: the day-count clause never fires, so only the year bound refuses it.
+        {"first_day": "1999-12-31", "last_day": "1999-12-31"},  # below the year bound
+        {"first_day": "3000-01-01", "last_day": "3000-01-01"},  # above the year bound
+        {"first_day": "0001-01-01", "last_day": "0001-01-01"},  # never 500
+        {"first_day": "2026-10-27", "last_day": "2026-11-02", "starts_at": None},  # explicit null
+        # Mirror of the case above: a complete instant pair with an explicit null on the OTHER
+        # kind's field. Kills a not_null validator applied only to starts_at/ends_at.
+        {
+            "starts_at": "2026-10-27T09:00:00Z",
+            "ends_at": "2026-10-27T10:00:00Z",
+            "first_day": None,
+        },
+    ],
+)
+def test_a_malformed_or_mixed_days_body_is_refused(
+    people: People, app: FastAPI, over: dict[str, Any]
+) -> None:
+    owner = signed_in(app, people.a, people.both)
+    only_a_member = member_id(people.a, people.only_a)
+
+    # Not through day_block(): its defaults would silently fill in a field the case means to omit.
+    response = owner.post(path(only_a_member), json=over)
+
+    assert (response.status_code, response.json()["code"]) == (422, "invalid_request")
+
+
+def test_neither_pair_is_sent_is_refused(people: People, app: FastAPI) -> None:
+    owner = signed_in(app, people.a, people.both)
+    only_a_member = member_id(people.a, people.only_a)
+
+    result = owner.post(path(only_a_member), json={"reason": "x"})
+
+    assert (result.status_code, result.json()["code"]) == (422, "invalid_request")
+
+
+# 17. fence: last_day < first_day -> 422 last_day_before_first_day; first == last -> 201. Kills
+# reusing checked()'s strict `>`.
+def test_last_day_before_first_day_is_refused_but_a_single_day_is_accepted(
+    people: People, app: FastAPI
+) -> None:
+    owner = signed_in(app, people.a, people.both)
+    only_a_member = member_id(people.a, people.only_a)
+
+    backwards = day_block(owner, only_a_member, first_day="2026-10-05", last_day="2026-10-04")
+    assert (backwards.status_code, backwards.json()["code"]) == (422, "last_day_before_first_day")
+
+    single = day_block(owner, only_a_member, first_day="2026-10-05", last_day="2026-10-05")
+    assert single.status_code == 201
+
+
+# 18. fence + guard at the edge: at most 366 days (a count, not elapsed time), across two
+# fall-backs and a spring-forward. Kills validating days by elapsed time / LONGEST.
+def test_a_whole_day_block_may_not_exceed_366_days(people: People, app: FastAPI) -> None:
+    owner = signed_in(app, people.a, people.both)
+    only_a_member = member_id(people.a, people.only_a)
+
+    ok = day_block(owner, only_a_member, first_day="2027-10-30", last_day="2028-10-29")
+    assert ok.status_code == 201
+
+    too_long = day_block(owner, only_a_member, first_day="2027-10-30", last_day="2028-10-30")
+    assert (too_long.status_code, too_long.json()["code"]) == (422, "time_off_too_long")
+
+
+# 19. fence: PATCH kind-switching. Kills a naive `before | change` merge (both pairs set would hit
+# ck_time_off_kind and 500).
+def test_patch_switches_kind_and_merges_within_a_kind(
+    people: People, app: FastAPI, migrate_engine: Engine
+) -> None:
+    owner = signed_in(app, people.a, people.both)
+    only_a_member = member_id(people.a, people.only_a)
+
+    day_row = day_block(owner, only_a_member, first_day="2026-10-10", last_day="2026-10-12").json()
+    day_id = day_row["id"]
+
+    moved_end = owner.patch(block_path(day_id), json={"last_day": "2026-10-15"})
+    assert moved_end.status_code == 200
+    assert moved_end.json()["first_day"] == "2026-10-10"
+    assert moved_end.json()["last_day"] == "2026-10-15"
+
+    switched_to_partial = owner.patch(
+        block_path(day_id),
+        json={"starts_at": "2026-10-20T08:00:00Z", "ends_at": "2026-10-20T09:00:00Z"},
+    )
+    assert switched_to_partial.status_code == 200
+    assert switched_to_partial.json()["first_day"] is None
+    assert switched_to_partial.json()["last_day"] is None
+    assert switched_to_partial.json()["starts_at"] == "2026-10-20T08:00:00Z"
+
+    partial_id = switched_to_partial.json()["id"]
+    half_pair_on_partial = owner.patch(block_path(partial_id), json={"last_day": "2026-10-25"})
+    assert half_pair_on_partial.status_code == 422
+
+    switched_to_day = owner.patch(
+        block_path(partial_id),
+        json={"first_day": "2026-11-01", "last_day": "2026-11-03"},
+    )
+    assert switched_to_day.status_code == 200
+    assert switched_to_day.json()["starts_at"] is None
+    assert switched_to_day.json()["ends_at"] is None
+    assert switched_to_day.json()["first_day"] == "2026-11-01"
+
+    day_id = switched_to_day.json()["id"]
+    both_kinds = owner.patch(
+        block_path(day_id),
+        json={"starts_at": "2026-10-20T08:00:00Z", "first_day": "2026-11-01"},
+    )
+    assert both_kinds.status_code == 422
+
+    # Half the instant pair on a day block: switching kind needs the complete new pair, never a
+    # naive merge that would leave both pairs non-null and hit ck_time_off_kind (a 500).
+    half_instant_pair_on_day = owner.patch(
+        block_path(day_id), json={"starts_at": "2026-10-20T08:00:00Z"}
+    )
+    assert half_instant_pair_on_day.status_code == 422
+
+    kept_kind = owner.patch(block_path(day_id), json={"reason": "Renamed"})
+    assert kept_kind.status_code == 200
+    assert kept_kind.json()["first_day"] == "2026-11-01"
+    assert kept_kind.json()["reason"] == "Renamed"
+
+    before = events(migrate_engine, tenant_id=people.a, action="time_off_changed")
+    noop = owner.patch(block_path(day_id), json={})
+    assert noop.status_code == 200
+    same_values = owner.patch(
+        block_path(day_id), json={"first_day": "2026-11-01", "last_day": "2026-11-03"}
+    )
+    assert same_values.status_code == 200
+    after = events(migrate_engine, tenant_id=people.a, action="time_off_changed")
+    assert len(after) == len(before)
+
+
+# 20. fence: list window edges, half-open on the instant side, inclusive by local date on the day
+# side. Kills to.astimezone(tz).date() without the 1 microsecond. The business's default timezone
+# is Europe/Amsterdam (UTC+2 in early October): local midnight starting 2026-10-03 is
+# 2026-10-02T22:00:00Z, and local midnight starting 2026-10-02 is 2026-10-01T22:00:00Z.
+def test_list_window_edges_for_a_whole_day_block(people: People, app: FastAPI) -> None:
+    owner = signed_in(app, people.a, people.both)
+    only_a_member = member_id(people.a, people.only_a)
+    day_d_minus_1 = day_block(
+        owner, only_a_member, first_day="2026-10-02", last_day="2026-10-02"
+    ).json()["id"]
+    day_d = day_block(owner, only_a_member, first_day="2026-10-03", last_day="2026-10-03").json()[
+        "id"
+    ]
+
+    # `to` is local midnight starting day D: D is excluded, D-1 is included.
+    midnight_d = {"from": "2026-09-25T00:00:00Z", "to": "2026-10-02T22:00:00Z"}
+    result = owner.get(path(only_a_member), params=midnight_d).json()
+    assert [b["id"] for b in result] == [day_d_minus_1]
+
+    # `from` is inside day D's own last day (still local 2026-10-03, though past UTC midnight).
+    from_inside_last_day = {"from": "2026-10-03T12:00:00Z", "to": "2026-10-05T00:00:00Z"}
+    included = owner.get(path(only_a_member), params=from_inside_last_day).json()
+    assert [b["id"] for b in included] == [day_d]
+
+    # `to` is UTC midnight starting day D, two hours EARLIER than day D's own local midnight
+    # (2026-10-02T22:00:00Z): at that instant the business's local wall clock still reads
+    # 2026-10-03T01:59:59.999999 (Amsterdam, UTC+2), so day D is still the correct local date and
+    # must be included. Kills computing the window edge from the UTC calendar date instead of the
+    # zone-converted one.
+    utc_midnight_of_d = {"from": "2026-09-25T00:00:00Z", "to": "2026-10-03T00:00:00Z"}
+    result_utc_midnight = owner.get(path(only_a_member), params=utc_midnight_of_d).json()
+    assert day_d in [b["id"] for b in result_utc_midnight]
+
+
+# 21. fence: list order by effective start (COALESCE(starts_at, midnight(first_day)) done in
+# Python, never in SQL: AT TIME ZONE is banned). Never assert the server's own TimeZone default
+# here: a correctly-behaving server on a non-UTC default must still pass this test. A SQL-side
+# ORDER BY COALESCE regression is instead pinned with `SET LOCAL TimeZone = 'UTC'` at the point the
+# wrong implementation is injected (see the spec's fence table), so that check doesn't leak into
+# the committed test or constrain what a real deployment's server may be configured to.
+def test_list_order_is_by_effective_start_amsterdam(people: People, app: FastAPI) -> None:
+    owner = signed_in(app, people.a, people.both)
+    put_settings(owner, {"timezone": "Europe/Amsterdam"})
+    only_a_member = member_id(people.a, people.only_a)
+
+    partial_10_02 = block(
+        owner, only_a_member, starts_at="2026-10-02T07:00:00Z", ends_at="2026-10-02T08:00:00Z"
+    ).json()["id"]
+    day_10_03 = day_block(
+        owner, only_a_member, first_day="2026-10-03", last_day="2026-10-03"
+    ).json()["id"]
+    # 00:30 local on 2026-10-03, i.e. 2026-10-02T22:30Z: before the day block's own effective start
+    # (2026-10-02T22:00Z) but after the earlier partial block.
+    partial_10_03_early = block(
+        owner, only_a_member, starts_at="2026-10-02T22:30:00Z", ends_at="2026-10-02T23:00:00Z"
+    ).json()["id"]
+    partial_10_04 = block(
+        owner, only_a_member, starts_at="2026-10-04T07:00:00Z", ends_at="2026-10-04T08:00:00Z"
+    ).json()["id"]
+
+    listed = owner.get(
+        path(only_a_member),
+        params={"from": "2026-10-01T00:00:00Z", "to": "2026-10-10T00:00:00Z"},
+    ).json()
+
+    assert [b["id"] for b in listed] == [
+        partial_10_02,
+        day_10_03,
+        partial_10_03_early,
+        partial_10_04,
+    ]
+
+
+# 22. guard: reason visibility, Google rows read-only, audit events and member-removal cascade are
+# the same for a day row as for a partial one.
+def test_a_day_block_behaves_like_a_partial_one_for_visibility_audit_and_cascade(
+    people: People, app: FastAPI, migrate_engine: Engine
+) -> None:
+    owner = signed_in(app, people.a, people.both)
+    worker = signed_in(app, people.a, people.only_a)
+    only_a_member = member_id(people.a, people.only_a)
+    both_member = member_id(people.a, people.both)
+
+    created = day_block(owner, both_member).json()  # the owner's own block
+    wide = {"from": "2026-01-01T00:00:00Z", "to": "2026-12-31T00:00:00Z"}
+
+    as_worker = worker.get(path(both_member), params=wide)
+    assert as_worker.json()[0]["reason"] is None  # not the block's own member, not an owner
+
+    as_owner = owner.get(path(both_member), params=wide)
+    assert as_owner.json()[0]["reason"] == "Holiday"
+
+    cascaded = day_block(owner, only_a_member).json()  # this one belongs to the removed member
+
+    google_id = google(people.a, only_a_member, external_id="day-evt")
+    with tenant_context(people.a) as session:
+        session.execute(
+            text(
+                "UPDATE time_off SET first_day = '2026-12-01', last_day = '2026-12-02', "
+                "starts_at = NULL, ends_at = NULL WHERE id = :id"
+            ),
+            {"id": google_id},
+        )
+    assert owner.patch(block_path(google_id), json={"reason": "nope"}).status_code == 404
+    assert owner.request("DELETE", block_path(google_id), json={}).status_code == 404
+
+    before = events(migrate_engine, tenant_id=people.a, action="time_off_created")
+    assert len(before) >= 1
+
+    with tenant_context(people.a) as session:
+        session.execute(text("DELETE FROM memberships WHERE id = :id"), {"id": only_a_member})
+        removed = session.execute(
+            text("SELECT count(*) FROM time_off WHERE id = :id"), {"id": cascaded["id"]}
+        ).scalar()
+        untouched = session.execute(
+            text("SELECT count(*) FROM time_off WHERE id = :id"), {"id": created["id"]}
+        ).scalar()
+    assert removed == 0
+    assert untouched == 1

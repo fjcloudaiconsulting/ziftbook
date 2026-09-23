@@ -702,3 +702,167 @@ def test_a_worker_rostered_past_closing_sells_nothing_after_closing(
     assert slots[-1] == local(MONDAY, "11:30")
     assert [s for s in slots if s >= local(MONDAY, "12:00")] == []
     assert len(slots) == 11
+
+
+# 12. whole-day time off (ZIF-101). Every date here lies in 2026-03-31..2026-05-29: NOW is pinned
+# to 2026-03-30T06:00Z and the default horizon is 60 days, so an earlier date would be clamped away
+# and a positive half of a fence would be vacuous for the wrong reason.
+
+
+def insert_day_block(
+    tenant_id: uuid.UUID, member: uuid.UUID, first_day: str, last_day: str
+) -> None:
+    with tenant_context(tenant_id) as session:
+        session.execute(
+            text("""
+            INSERT INTO time_off (tenant_id, member_id, first_day, last_day, reason)
+            VALUES (:t, :m, :f, :l, 'Holiday')
+            """),
+            {"t": tenant_id, "m": member, "f": first_day, "l": last_day},
+        )
+
+
+def clear_time_off(tenant_id: uuid.UUID) -> None:
+    with tenant_context(tenant_id) as session:
+        session.execute(text("DELETE FROM time_off"))
+
+
+# 10. fence: window edges. Kills off-by-ones on first_day >= :first, first_day < :last,
+# last_day > :first.
+def test_a_whole_day_block_is_matched_exactly_at_the_window_edges(
+    people: People, app: FastAPI, ready: str
+) -> None:
+    client = new_client(app)
+    day = "2026-04-20"
+    baseline = get(client, people.a, ready, start=day, end=day).json()["slots"]
+    assert baseline  # asserted first: a positive half empty for another reason would be vacuous
+
+    insert_day_block(people.a, member_id(people.a, people.both), "2026-04-14", "2026-04-20")
+    assert get(client, people.a, ready, start=day, end=day).json()["slots"] == []
+    clear_time_off(people.a)
+
+    insert_day_block(people.a, member_id(people.a, people.both), "2026-04-20", "2026-04-24")
+    assert get(client, people.a, ready, start=day, end=day).json()["slots"] == []
+    clear_time_off(people.a)
+
+    insert_day_block(people.a, member_id(people.a, people.both), "2026-04-19", "2026-04-19")
+    assert get(client, people.a, ready, start=day, end=day).json()["slots"] == baseline
+    clear_time_off(people.a)
+
+    insert_day_block(people.a, member_id(people.a, people.both), "2026-04-21", "2026-04-21")
+    assert get(client, people.a, ready, start=day, end=day).json()["slots"] == baseline
+
+
+# 10b. fence: a multi-day GET, so a reader whose predicate requires the block to CONTAIN the
+# whole query window (first_day <= :first AND last_day >= :last, swapped from the correct
+# first_day <= :last AND last_day >= :first) can't pass by luck: every case above requests a
+# single day, where :first == :last makes the two predicates indistinguishable.
+def test_a_whole_day_block_inside_a_wider_window_blocks_only_its_own_day(
+    people: People, app: FastAPI, ready: str
+) -> None:
+    client = new_client(app)
+    baseline = get(client, people.a, ready, start="2026-04-19", end="2026-04-21").json()["slots"]
+    assert local("2026-04-20", "09:00") in baseline  # asserted first: never vacuously blocked
+
+    insert_day_block(people.a, member_id(people.a, people.both), "2026-04-20", "2026-04-20")
+    blocked = get(client, people.a, ready, start="2026-04-19", end="2026-04-21").json()["slots"]
+
+    assert local("2026-04-20", "09:00") not in blocked
+    assert local("2026-04-19", "09:00") in blocked
+    assert local("2026-04-21", "09:00") in blocked
+
+
+# 11. fence: the look-back must be at least as wide as ck_time_off_days' bound (366 days).
+def test_a_366_day_old_whole_day_block_still_meets_the_window(
+    people: People, app: FastAPI, ready: str
+) -> None:
+    client = new_client(app)
+    day = "2026-04-01"
+    baseline = get(client, people.a, ready, start=day, end=day).json()["slots"]
+    assert baseline
+
+    insert_day_block(people.a, member_id(people.a, people.both), "2025-04-01", "2026-04-01")
+    assert get(client, people.a, ready, start=day, end=day).json()["slots"] == []
+
+
+# 12. fence: a whole-day block follows the business's CURRENT timezone, never a frozen instant,
+# and never a UTC calendar date substituted for the zone-converted one. Europe/Lisbon is UTC+1
+# after 2026-03-29: Friday's own local midnight (2026-04-03T00:00 Lisbon) is Thursday's UTC
+# calendar date (2026-04-02T23:00:00Z). A day_span computed with zone='UTC' would derive Friday's
+# span as [2026-04-03T00:00Z, 2026-04-04T00:00Z) and never touch that instant, so it would stay
+# offered even though Friday is blocked.
+def test_a_whole_day_block_follows_a_later_timezone_change(
+    people: People, app: FastAPI, owner: TestClient
+) -> None:
+    service_id = new_service(owner)
+    seed(people.a, people.both, weekdays("23:00", "23:59") + weekdays("00:00", "01:00"))
+    assign(people.a, service_id, member_id(people.a, people.both))
+    client = new_client(app)
+    thu, fri = "2026-04-02", "2026-04-03"
+
+    assert put_settings(owner, {"timezone": "Europe/Lisbon"}).status_code == 200
+    assert get(client, people.a, service_id, start=thu, end=thu).json()["slots"] != []
+    friday_before = get(client, people.a, service_id, start=fri, end=fri).json()["slots"]
+    assert "2026-04-03T22:00:00Z" in friday_before  # 23:00 Lisbon
+    assert "2026-04-02T23:00:00Z" in friday_before  # Friday's own 00:00 Lisbon
+
+    assert put_settings(owner, {"timezone": "Europe/Amsterdam"}).status_code == 200
+    insert_day_block(people.a, member_id(people.a, people.both), fri, fri)
+    assert put_settings(owner, {"timezone": "Europe/Lisbon"}).status_code == 200
+
+    friday_after = get(client, people.a, service_id, start=fri, end=fri).json()["slots"]
+    assert "2026-04-03T22:00:00Z" not in friday_after
+    assert "2026-04-02T23:00:00Z" not in friday_after  # kills a UTC-derived day_span
+    assert (
+        "2026-04-02T22:00:00Z"
+        in get(client, people.a, service_id, start=thu, end=thu).json()["slots"]
+    )
+
+
+# 13. guard: a partial block keeps its stored instants across the same zone change (ruling 2).
+def test_a_partial_block_keeps_its_stored_instants_across_a_timezone_change(
+    people: People, app: FastAPI, owner: TestClient, ready: str
+) -> None:
+    with tenant_context(people.a) as session:
+        session.execute(
+            text("""
+            INSERT INTO time_off (tenant_id, member_id, starts_at, ends_at, reason)
+            VALUES (:t, :m, :s, :e, 'Dentist')
+            """),
+            {
+                "t": people.a,
+                "m": member_id(people.a, people.both),
+                "s": local(MONDAY, "10:00"),
+                "e": local(MONDAY, "10:30"),
+            },
+        )
+    client = new_client(app)
+    assert local(MONDAY, "10:00") not in get(client, people.a, ready).json()["slots"]
+
+    assert put_settings(owner, {"timezone": "Europe/Lisbon"}).status_code == 200
+    assert local(MONDAY, "10:00") not in get(client, people.a, ready).json()["slots"]
+
+
+# 14. guard: the public response carries no time-off fields and no reason, whole-day block or not.
+def test_the_public_response_carries_no_time_off_fields_for_a_whole_day_block(
+    people: People, app: FastAPI, ready: str
+) -> None:
+    marker = f"holiday-{uuid.uuid4()}"
+    with tenant_context(people.a) as session:
+        session.execute(
+            text("""
+            INSERT INTO time_off (tenant_id, member_id, first_day, last_day, reason)
+            VALUES (:t, :m, :f, :l, :r)
+            """),
+            {
+                "t": people.a,
+                "m": member_id(people.a, people.both),
+                "f": MONDAY,
+                "l": MONDAY,
+                "r": marker,
+            },
+        )
+    response = get(new_client(app), people.a, ready)
+    assert response.status_code == 200
+    assert marker not in response.text
+    assert set(response.json()) == {"timezone", "duration_minutes", "workers", "slots"}

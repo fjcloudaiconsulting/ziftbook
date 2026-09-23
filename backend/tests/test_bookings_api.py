@@ -1497,3 +1497,67 @@ def test_the_threshold_bounds_match_the_column_check(
         booked = post_booking(new_client(app), people.a, ready, starts_at=at("09:00"))
         assert booked.status_code == 201, booked.json()
         assert thresholds_of(people.a, booked.json()["id"])[COLUMNS.index(key)] == 720
+
+
+# 38: FENCE (ZIF-101) - the real clock (the booking path uses Postgres now()), never fixed calendar
+# dates. A whole-day block on DAY refuses the DAY slot the public GET offered and never touches
+# DAY + 1. Kills updating only the GET's reader and leaving bookings.TIME_OFF (which must no
+# longer exist) reading the old instants-only shape.
+def test_a_whole_day_block_refuses_the_booking_and_leaves_the_next_day_untouched(
+    people: People, app: FastAPI, owner: TestClient, ready: str
+) -> None:
+    # Also seed DAY's own local midnight, which (Europe/Amsterdam always being ahead of UTC) falls
+    # on the PREVIOUS UTC calendar date: a day_span derived from the UTC date instead of the
+    # business's zone would miss it and leave it wrongly bookable.
+    seed(people.a, people.both, [(d, "00:00", "01:00") for d in range(1, 8)])
+    midnight_slot = to_utc(DAY, time_cls(0, 0), ZONE).strftime("%Y-%m-%dT%H:%M:%SZ")
+    next_day_midnight_slot = to_utc(DAY + timedelta(days=1), time_cls(0, 0), ZONE).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+
+    client = new_client(app)
+    day_availability = client.get(
+        f"/api/public/businesses/{people.a}/services/{ready}/availability",
+        params={"from": DAY.isoformat(), "to": DAY.isoformat()},
+    ).json()
+    next_day = (DAY + timedelta(days=1)).isoformat()
+    next_day_availability = client.get(
+        f"/api/public/businesses/{people.a}/services/{ready}/availability",
+        params={"from": next_day, "to": next_day},
+    ).json()
+    assert day_availability["slots"]
+    assert next_day_availability["slots"]
+    assert midnight_slot in day_availability["slots"]
+    assert next_day_midnight_slot in next_day_availability["slots"]
+
+    with tenant_context(people.a) as session:
+        session.execute(
+            text("""
+            INSERT INTO time_off (tenant_id, member_id, first_day, last_day, reason)
+            VALUES (:t, :m, :f, :l, 'Holiday')
+            """),
+            {
+                "t": people.a,
+                "m": member_id(people.a, people.both),
+                "f": DAY.isoformat(),
+                "l": DAY.isoformat(),
+            },
+        )
+
+    blocked = post_booking(client, people.a, ready, starts_at=day_availability["slots"][0])
+    assert (blocked.status_code, blocked.json()["code"]) == (409, "slot_unavailable")
+    blocked_midnight = post_booking(client, people.a, ready, starts_at=midnight_slot)
+    assert (blocked_midnight.status_code, blocked_midnight.json()["code"]) == (
+        409,
+        "slot_unavailable",
+    )
+
+    # Not next_day_availability["slots"][0]: with the added 00:00-01:00 shift, the earliest slot
+    # IS next_day_midnight_slot itself (chronologically first), so booking it here would collide
+    # with the still_open_midnight booking below. A distinct, unrelated slot on the same day.
+    still_open = post_booking(
+        client, people.a, ready, starts_at=at("09:00", DAY + timedelta(days=1))
+    )
+    assert still_open.status_code == 201
+    still_open_midnight = post_booking(client, people.a, ready, starts_at=next_day_midnight_slot)
+    assert still_open_midnight.status_code == 201
