@@ -98,3 +98,40 @@ export function listWindow(now: Date, tz: string, horizonDays: number): { from: 
   const today = localDateISO(now, tz);
   return { from: localToInstant(today, "00:00", tz), to: localToInstant(addDaysISO(today, horizonDays), "00:00", tz) };
 }
+
+export type Block = { starts_at: string | null; ends_at: string | null; first_day: string | null; last_day: string | null };
+export type BlockLabel =
+  | { kind: "day"; date: string }
+  | { kind: "range"; from: string; to: string; days: number }
+  | { kind: "partial"; date: string; start: string; end: string };
+
+/** "HH:MM" in `tz`, from an instant. */
+function localTime(instant: string, tz: string): string {
+  return new Intl.DateTimeFormat("en-GB", { timeZone: tz, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date(instant));
+}
+
+/** The number of inclusive whole days between two YYYY-MM-DD dates. */
+function inclusiveDays(first: string, last: string): number {
+  const [y1, m1, d1] = first.split("-").map(Number);
+  const [y2, m2, d2] = last.split("-").map(Number);
+  return Math.round((Date.UTC(y2, m2 - 1, d2) - Date.UTC(y1, m1 - 1, d1)) / 86_400_000) + 1;
+}
+
+/**
+ * The list row's shape for one block: a whole-day block (`starts_at`/`ends_at` are null - the
+ * server never invents a midnight for these) is a day or a range, from its own `first_day`/
+ * `last_day` fields alone, never from time arithmetic on a null instant (the bug this fences:
+ * formatting `null` as a time reads "00:00", not "no time at all"). A partial block reads its date
+ * and its start/end clock time from the instants, in the business zone, never UTC. The caller
+ * turns this into words: `Console.timeOff` supplies "Whole day", "{n} whole days", the day/range
+ * date formatting (via `dateLocale`) and the "{from} – {to}" join.
+ */
+export function blockLabel(block: Block, tz: string): BlockLabel {
+  if (block.first_day !== null && block.last_day !== null) {
+    if (block.first_day === block.last_day) return { kind: "day", date: block.first_day };
+    return { kind: "range", from: block.first_day, to: block.last_day, days: inclusiveDays(block.first_day, block.last_day) };
+  }
+  const startsAt = block.starts_at;
+  if (startsAt === null || block.ends_at === null) throw new Error("a block has neither pair filled in");
+  return { kind: "partial", date: localDateISO(new Date(startsAt), tz), start: localTime(startsAt, tz), end: localTime(block.ends_at, tz) };
+}

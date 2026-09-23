@@ -6,7 +6,7 @@ process.env.TZ = "America/Sao_Paulo";
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { listWindow, localToInstant, requestBody } from "../lib/time-off.ts";
+import { blockLabel, listWindow, localToInstant, requestBody } from "../lib/time-off.ts";
 
 describe("localToInstant", () => {
   test("Amsterdam, before the spring-forward transition (2026-03-29), uses CET (+01:00)", () => {
@@ -66,5 +66,24 @@ describe("listWindow", () => {
     const now = new Date("2026-09-23T02:00:00Z");
     const window = listWindow(now, tz, 5);
     assert.equal(window.from, localToInstant("2026-09-23", "00:00", tz));
+  });
+});
+
+describe("blockLabel", () => {
+  const tz = "Europe/Amsterdam";
+
+  test("a single whole day: kind day, never a time (no '00:00 to 00:00' from the null instants)", () => {
+    const label = blockLabel({ starts_at: null, ends_at: null, first_day: "2026-10-03", last_day: "2026-10-03" }, tz);
+    assert.deepEqual(label, { kind: "day", date: "2026-10-03" });
+  });
+
+  test("a run of whole days: kind range, with the inclusive day count from the API's own fields", () => {
+    const label = blockLabel({ starts_at: null, ends_at: null, first_day: "2026-10-27", last_day: "2026-11-02" }, tz);
+    assert.deepEqual(label, { kind: "range", from: "2026-10-27", to: "2026-11-02", days: 7 });
+  });
+
+  test("a partial block: kind partial, date and times read in the business zone, never UTC", () => {
+    const label = blockLabel({ starts_at: "2026-10-14T07:00:00.000Z", ends_at: "2026-10-14T09:00:00.000Z", first_day: null, last_day: null }, tz);
+    assert.deepEqual(label, { kind: "partial", date: "2026-10-14", start: "09:00", end: "11:00" });
   });
 });
