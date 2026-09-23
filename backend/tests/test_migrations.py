@@ -420,3 +420,141 @@ def test_0027_refuses_to_backfill_an_existing_booking(
         with migrate_engine.begin() as conn:
             delete_bookings(conn, (people.a,))
         command.upgrade(cfg, "head")
+
+
+# 26. fence (ZIF-101): 0028 is DDL only, no backfill. A partial block inserted at 0027 (tenant-
+# scoped, two tenants, one of them midnight-to-midnight local) survives 0028's upgrade unchanged,
+# with first_day/last_day NULL and still listed as a partial block. Kills any backfill (it would
+# error under FORCE RLS, or wrongly turn the midnight-to-midnight row into a day block).
+def test_0028_does_not_backfill_existing_partial_blocks(
+    people: People, migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = Config(toml_file=str(API_DIR / "pyproject.toml"))
+    url = os.environ["ZIF_MIGRATE_DATABASE_URL"]
+    options = urlencode({"options": "-c lock_timeout=5s"})
+    monkeypatch.setenv("ZIF_MIGRATE_DATABASE_URL", f"{url}{'&' if '?' in url else '?'}{options}")
+    a_member = member_id(people.a, people.only_a)
+    b_member = member_id(people.b, people.only_b)
+    try:
+        command.downgrade(cfg, "0027")
+        with tenant_context(people.a) as session:
+            a_id = session.scalar(
+                text("""
+                INSERT INTO time_off (tenant_id, member_id, starts_at, ends_at, reason)
+                VALUES (current_setting('app.tenant_id')::uuid, :m, :s, :e, 'A') RETURNING id
+                """),
+                {"m": a_member, "s": "2026-10-01T08:00:00Z", "e": "2026-10-01T09:00:00Z"},
+            )
+        with tenant_context(people.b) as session:
+            # Midnight-to-midnight local (Europe/Amsterdam, summer time): must stay a partial
+            # block, never be read as a day block.
+            b_id = session.scalar(
+                text("""
+                INSERT INTO time_off (tenant_id, member_id, starts_at, ends_at, reason)
+                VALUES (current_setting('app.tenant_id')::uuid, :m, :s, :e, 'B') RETURNING id
+                """),
+                {"m": b_member, "s": "2026-10-01T22:00:00Z", "e": "2026-10-02T22:00:00Z"},
+            )
+        command.upgrade(cfg, "head")
+        with migrate_engine.connect() as conn:
+            conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(people.a)})
+            a_row = conn.execute(
+                text("SELECT starts_at, ends_at, first_day, last_day FROM time_off WHERE id = :id"),
+                {"id": a_id},
+            ).one()
+            conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(people.b)})
+            b_row = conn.execute(
+                text("SELECT starts_at, ends_at, first_day, last_day FROM time_off WHERE id = :id"),
+                {"id": b_id},
+            ).one()
+        assert a_row.first_day is None and a_row.last_day is None
+        assert a_row.starts_at is not None and a_row.ends_at is not None
+        assert b_row.first_day is None and b_row.last_day is None
+        assert b_row.starts_at is not None and b_row.ends_at is not None
+    finally:
+        with migrate_engine.begin() as conn:
+            conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(people.a)})
+            conn.execute(text("DELETE FROM time_off"))
+            conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(people.b)})
+            conn.execute(text("DELETE FROM time_off"))
+
+
+# 27. fence (ZIF-101): downgrade with a whole-day row present refuses with NotNullViolation (never
+# 42704: a DML-first downgrade would raise that instead), and leaves the schema at 0028 with the
+# row intact; delete it, downgrade succeeds: columns and both CHECKs gone, starts_at/ends_at NOT
+# NULL again; upgrade again restores both CHECKs, and they bite. Kills a downgrade that drops or
+# converts day rows, and one that leaves the instants nullable.
+def test_0028_downgrade_refuses_while_a_whole_day_row_exists(
+    people: People, migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = Config(toml_file=str(API_DIR / "pyproject.toml"))
+    url = os.environ["ZIF_MIGRATE_DATABASE_URL"]
+    options = urlencode({"options": "-c lock_timeout=5s"})
+    monkeypatch.setenv("ZIF_MIGRATE_DATABASE_URL", f"{url}{'&' if '?' in url else '?'}{options}")
+    a_member = member_id(people.a, people.only_a)
+    with tenant_context(people.a) as session:
+        day_id = session.scalar(
+            text("""
+            INSERT INTO time_off (tenant_id, member_id, first_day, last_day, reason)
+            VALUES (current_setting('app.tenant_id')::uuid, :m, :f, :l, 'Holiday') RETURNING id
+            """),
+            {"m": a_member, "f": "2026-10-01", "l": "2026-10-02"},
+        )
+    try:
+        with pytest.raises(IntegrityError) as raised:
+            command.downgrade(cfg, "0027")
+        assert isinstance(raised.value.orig, NotNullViolation)
+        with migrate_engine.connect() as conn:
+            version = conn.scalar(text("SELECT version_num FROM alembic_version"))
+            assert version == "0028"
+            conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(people.a)})
+            still_there = conn.scalar(
+                text("SELECT count(*) FROM time_off WHERE id = :id"), {"id": day_id}
+            )
+        assert still_there == 1
+
+        with tenant_context(people.a) as session:
+            session.execute(text("DELETE FROM time_off WHERE id = :id"), {"id": day_id})
+        command.downgrade(cfg, "0027")
+        with migrate_engine.connect() as conn:
+            columns = set(
+                conn.scalars(
+                    text(
+                        "SELECT column_name FROM information_schema.columns "
+                        "WHERE table_name = 'time_off'"
+                    )
+                )
+            )
+            assert {"first_day", "last_day"}.isdisjoint(columns)
+            not_null = dict(
+                conn.execute(
+                    text(
+                        "SELECT column_name, is_nullable FROM information_schema.columns "
+                        "WHERE table_name = 'time_off' AND column_name IN ('starts_at', 'ends_at')"
+                    )
+                )
+                .tuples()
+                .all()
+            )
+            assert not_null == {"starts_at": "NO", "ends_at": "NO"}
+    finally:
+        command.upgrade(cfg, "head")
+    with migrate_engine.connect() as conn:
+        checks = set(
+            conn.scalars(
+                text(
+                    "SELECT conname FROM pg_constraint WHERE conrelid = 'time_off'::regclass "
+                    "AND conname IN ('ck_time_off_kind', 'ck_time_off_days')"
+                )
+            )
+        )
+        assert checks == {"ck_time_off_kind", "ck_time_off_days"}
+    with pytest.raises(IntegrityError) as bites, tenant_context(people.a) as session:
+        session.execute(
+            text("""
+            INSERT INTO time_off (tenant_id, member_id, starts_at, ends_at, first_day, last_day)
+            VALUES (current_setting('app.tenant_id')::uuid, :m, NULL, NULL, NULL, NULL)
+            """),
+            {"m": a_member},
+        )
+    assert isinstance(bites.value.orig, CheckViolation)
