@@ -1,13 +1,13 @@
 import { getTranslations } from "next-intl/server";
 
-import { Person } from "../team";
+import { Person } from "../../team";
 
 export async function generateMetadata() {
   const t = await getTranslations("Console.nav");
   return { title: t("team") };
 }
 
-export default async function PersonPage({ params }: { params: Promise<{ memberId: string }> }) {
+export default async function PersonTimeOffPage({ params }: { params: Promise<{ memberId: string }> }) {
   const { memberId } = await params;
-  return <Person memberId={memberId} tab="hours" />;
+  return <Person memberId={memberId} tab="timeOff" />;
 }
