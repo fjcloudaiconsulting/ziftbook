@@ -179,6 +179,10 @@ describe("overlapWindow", () => {
   test("no overlap is null", () => {
     assert.equal(overlapWindow([{ start: "09:00", end: "12:00" }, { start: "13:00", end: "14:00" }]), null);
   });
+
+  test("the nested shift given first (reversed order) still finds the inner window", () => {
+    assert.deepEqual(overlapWindow([{ start: "10:00", end: "11:00" }, { start: "09:00", end: "18:00" }]), { from: "10:00", to: "11:00" });
+  });
 });
 
 describe("daysSummary", () => {
