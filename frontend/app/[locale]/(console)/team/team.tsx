@@ -15,11 +15,11 @@ import {
 } from "@/api-client";
 import { Link } from "@/i18n/navigation";
 import { canEditHours, dateLocale, type Role, showSetName } from "@/lib/console";
-import { canInvite, expiresIn } from "@/lib/team";
+import { canInvite, expiresIn, isRowExpired, upsertInvite } from "@/lib/team";
 import { teamHoursSummary, zoneCity } from "@/lib/week";
 
 import { HoursSection } from "../hours-section";
-import { SignedOutBanner, useConsole } from "../../_ui/console";
+import { JSON_WRITE, SignedOutBanner, useConsole } from "../../_ui/console";
 import styles from "../../_ui/console.module.css";
 import { Banner, EmailField, FieldError, Heading, Mark, problem, Submit } from "../../_ui/parts";
 import uiStyles from "../../_ui/ui.module.css";
@@ -37,8 +37,18 @@ function HoursMeta({ shifts, locale }: { shifts: { weekday: number; starts_at: s
   return <span className={styles.rowMeta}>{days === null ? t("noHours") : t("worksLabel", { days })}</span>;
 }
 
-/** Opened by the header's or the empty state's "Invite someone" button (undrawn, U8). */
-function InviteForm({ onCancel, onSent }: { onCancel(): void; onSent(invite: InviteOut): void }) {
+/** Opened by the header's or the empty state's "Invite someone" button (undrawn, U8). Focus
+ * lands on the email field on open, and the signed-out banner is the page's one copy (owned by
+ * `TeamList`), not this form's own. */
+function InviteForm({
+  onCancel,
+  onSent,
+  onSignedOut,
+}: {
+  onCancel(): void;
+  onSent(invite: InviteOut): void;
+  onSignedOut(value: boolean): void;
+}) {
   const t = useTranslations("Console.invites");
   const tConsole = useTranslations("Console");
   const form = useTranslations("Form");
@@ -46,9 +56,13 @@ function InviteForm({ onCancel, onSent }: { onCancel(): void; onSent(invite: Inv
   const [email, setEmail] = useState("");
   const [emailError, setEmailError] = useState<string>();
   const [error, setError] = useState<string | null>(null);
-  const [signedOut, setSignedOut] = useState(false);
   const [sending, setSending] = useState(false);
   const submitting = useRef(false);
+  const emailInput = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    emailInput.current?.focus();
+  }, []);
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
@@ -56,7 +70,7 @@ function InviteForm({ onCancel, onSent }: { onCancel(): void; onSent(invite: Inv
     submitting.current = true;
     setEmailError(undefined);
     setError(null);
-    setSignedOut(false);
+    onSignedOut(false);
     setSending(true);
     let outcome;
     try {
@@ -68,7 +82,7 @@ function InviteForm({ onCancel, onSent }: { onCancel(): void; onSent(invite: Inv
     if (outcome.status === 201 && outcome.data) {
       onSent(outcome.data);
     } else if (outcome.status === 401) {
-      setSignedOut(true);
+      onSignedOut(true);
     } else if (outcome.status === 422) {
       setEmailError(form("invalidEmail"));
     } else if (outcome.status === 409) {
@@ -82,9 +96,8 @@ function InviteForm({ onCancel, onSent }: { onCancel(): void; onSent(invite: Inv
 
   return (
     <form className={uiStyles.stack} noValidate onSubmit={onSubmit}>
-      {signedOut && <SignedOutBanner />}
       {error && <Banner tone="error">{error}</Banner>}
-      <EmailField value={email} onChange={setEmail} error={emailError} />
+      <EmailField value={email} onChange={setEmail} error={emailError} autoComplete="off" inputRef={emailInput} />
       <div className={styles.dayActions}>
         <Submit busy={sending} busyLabel={form("sending")}>
           {t("sendInvite")}
@@ -97,23 +110,38 @@ function InviteForm({ onCancel, onSent }: { onCancel(): void; onSent(invite: Inv
   );
 }
 
-/** A pending invite's row: email, day count or "Invite expired" (`InviteOut.expired`), Send again
- * and Cancel (revoke). Both actions stay offered on an expired row (U9). */
-function InviteRow({ invite, onChanged }: { invite: InviteOut; onChanged(update: (prev: InviteOut[] | null) => InviteOut[] | null): void }) {
+/** A pending invite's row: email, day count or "Invite expired" (`InviteOut.expired`, or zero
+ * days left by the client's own clock), Send again and Cancel (revoke). Both actions stay offered
+ * on an expired row (U9). */
+function InviteRow({
+  invite,
+  onResent,
+  onRevoked,
+  onRevokeStale,
+  onSignedOut,
+  sendAgainRef,
+}: {
+  invite: InviteOut;
+  onResent(invite: InviteOut): void;
+  onRevoked(id: string): void;
+  /** 404: another tab already revoked it. The list is refetched rather than assumed correct. */
+  onRevokeStale(): void;
+  onSignedOut(value: boolean): void;
+  sendAgainRef(id: string, el: HTMLButtonElement | null): void;
+}) {
   const t = useTranslations("Console.invites");
   const tConsole = useTranslations("Console");
   const form = useTranslations("Form");
   const { call } = useConsole();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [signedOut, setSignedOut] = useState(false);
   const busyRef = useRef(false);
 
   async function resend() {
     if (busyRef.current) return;
     busyRef.current = true;
     setError(null);
-    setSignedOut(false);
+    onSignedOut(false);
     setBusy(true);
     let outcome;
     try {
@@ -123,10 +151,9 @@ function InviteRow({ invite, onChanged }: { invite: InviteOut; onChanged(update:
       busyRef.current = false;
     }
     if (outcome.status === 201 && outcome.data) {
-      const fresh = outcome.data;
-      onChanged((prev) => (prev ?? []).map((i) => (i.id === invite.id ? fresh : i)));
+      onResent(outcome.data);
     } else if (outcome.status === 401) {
-      setSignedOut(true);
+      onSignedOut(true);
     } else if (outcome.status === 409) {
       setError(t("alreadyMember"));
     } else if (outcome.status === 429) {
@@ -140,22 +167,23 @@ function InviteRow({ invite, onChanged }: { invite: InviteOut; onChanged(update:
     if (busyRef.current) return;
     busyRef.current = true;
     setError(null);
-    setSignedOut(false);
+    onSignedOut(false);
     setBusy(true);
     let outcome;
     try {
       // json_only (main.py) refuses any non-GET request without a JSON content type, even a
-      // bodyless DELETE: an explicit empty body forces the generated client to send one.
-      outcome = await call(() => invitesDelete({ path: { invite_id: invite.id }, body: {} as never }), { write: true });
+      // bodyless DELETE: JSON_WRITE (console.tsx) forces the generated client to send one.
+      outcome = await call(() => invitesDelete({ path: { invite_id: invite.id }, ...JSON_WRITE }), { write: true });
     } finally {
       setBusy(false);
       busyRef.current = false;
     }
-    // 404: another tab already revoked it. Same result either way, so it leaves quietly.
-    if (outcome.status === 204 || outcome.status === 404) {
-      onChanged((prev) => (prev ?? []).filter((i) => i.id !== invite.id));
+    if (outcome.status === 204) {
+      onRevoked(invite.id);
+    } else if (outcome.status === 404) {
+      onRevokeStale();
     } else if (outcome.status === 401) {
-      setSignedOut(true);
+      onSignedOut(true);
     } else {
       setError(`${form(problem(outcome))} ${tConsole("notSaved")}`);
     }
@@ -163,17 +191,22 @@ function InviteRow({ invite, onChanged }: { invite: InviteOut; onChanged(update:
 
   return (
     <li>
-      {signedOut && <SignedOutBanner />}
       {error && <Banner tone="error">{error}</Banner>}
       <div className={styles.rowStatic}>
         <span className={styles.rowMain}>
           <span className={styles.rowTitle}>{invite.email}</span>
           <span className={styles.rowMeta}>
-            {invite.expired ? t("expired") : t("expiresIn", { n: expiresIn(invite.expires_at, new Date()) })}
+            {isRowExpired(invite, new Date()) ? t("expired") : t("expiresIn", { n: expiresIn(invite.expires_at, new Date()) })}
           </span>
         </span>
         <span className={styles.rowActions}>
-          <button className={`${uiStyles.button} ${uiStyles.secondary} ${uiStyles.small}`} type="button" disabled={busy} onClick={resend}>
+          <button
+            ref={(el) => sendAgainRef(invite.id, el)}
+            className={`${uiStyles.button} ${uiStyles.secondary} ${uiStyles.small}`}
+            type="button"
+            disabled={busy}
+            onClick={resend}
+          >
             {t("sendAgain")}
           </button>
           <button
@@ -204,15 +237,54 @@ export function TeamList() {
   const [members, setMembers] = useState<MemberOut[] | null>(null);
   const [hours, setHours] = useState<HoursSummaries>({});
   const [invites, setInvites] = useState<InviteOut[] | null>(null);
+  // A worker never fetches invites at all, so nothing is ever "loading" for it: the lazy
+  // initializer (not a synchronous setState reachable from the mount effect) starts it settled.
+  const [invitesLoaded, setInvitesLoaded] = useState(() => !canInvite(session.role as Role));
+  const [invitesFailure, setInvitesFailure] = useState<ReturnType<typeof problem> | null>(null);
   const [inviting, setInviting] = useState(false);
+  const [signedOut, setSignedOut] = useState(false);
   const [failure, setFailure] = useState<ReturnType<typeof problem> | null>(null);
+
+  // Where focus goes after a revoke removes a row: the next row (or the previous one, if the
+  // removed row was last), else the "Invite someone" button once the list is empty again.
+  const sendAgainButtons = useRef<Map<string, HTMLButtonElement>>(new Map());
+  const inviteButton = useRef<HTMLButtonElement>(null);
+  const pendingFocusIndex = useRef<number | null>(null);
 
   function loadInvites() {
     if (!canInvite(session.role as Role)) return;
     call(() => invitesList()).then((outcome) => {
-      if (outcome.status === 200 && outcome.data) setInvites(outcome.data);
+      if (outcome.status === 200 && outcome.data) {
+        setInvites(outcome.data);
+        setInvitesFailure(null);
+      } else {
+        setInvitesFailure(problem(outcome));
+      }
+      setInvitesLoaded(true);
     });
   }
+
+  function applyInvite(invite: InviteOut) {
+    setInvites((prev) => upsertInvite(prev ?? [], invite));
+  }
+
+  function revokeRow(id: string) {
+    setInvites((prev) => {
+      const list = prev ?? [];
+      pendingFocusIndex.current = list.findIndex((i) => i.id === id);
+      return list.filter((i) => i.id !== id);
+    });
+  }
+
+  useEffect(() => {
+    if (pendingFocusIndex.current === null) return;
+    const idx = pendingFocusIndex.current;
+    pendingFocusIndex.current = null;
+    const list = invites ?? [];
+    const neighbour = list[idx] ?? list[idx - 1];
+    if (neighbour) sendAgainButtons.current.get(neighbour.id)?.focus();
+    else inviteButton.current?.focus();
+  }, [invites]);
 
   function load() {
     call(() => membersList()).then(async (outcome) => {
@@ -259,7 +331,10 @@ export function TeamList() {
   const self = members.find((m) => m.member_id === session.member_id);
   const others = members.filter((m) => m.member_id !== session.member_id);
   const mayInvite = canInvite(session.role as Role);
-  const alone = others.length === 0 && (invites?.length ?? 0) === 0;
+  // While invites are loading (or failed to load), "alone" stays false: the owner never sees the
+  // empty state flash before a pending invite it didn't know about yet.
+  const invitesReady = invitesLoaded && !invitesFailure;
+  const alone = invitesReady && others.length === 0 && (invites?.length ?? 0) === 0;
 
   return (
     <>
@@ -267,6 +342,7 @@ export function TeamList() {
         <Heading focus>{nav("team")}</Heading>
         {mayInvite && !alone && !inviting && (
           <button
+            ref={inviteButton}
             className={`${uiStyles.button} ${uiStyles.primary} ${uiStyles.small}`}
             type="button"
             onClick={() => setInviting(true)}
@@ -275,13 +351,23 @@ export function TeamList() {
           </button>
         )}
       </div>
+      {signedOut && <SignedOutBanner />}
+      {invitesFailure && (
+        <>
+          <Banner tone="error">{form(invitesFailure)}</Banner>
+          <button className={uiStyles.textButton} type="button" onClick={loadInvites}>
+            {form("tryAgain")}
+          </button>
+        </>
+      )}
       {inviting && (
         <InviteForm
           onCancel={() => setInviting(false)}
           onSent={(invite) => {
-            setInvites((prev) => [...(prev ?? []), invite]);
+            applyInvite(invite);
             setInviting(false);
           }}
+          onSignedOut={setSignedOut}
         />
       )}
       <ul className={styles.list}>
@@ -334,7 +420,18 @@ export function TeamList() {
           <h2 className={styles.heading2}>{tInvites("invited")}</h2>
           <ul className={styles.list}>
             {invites!.map((invite) => (
-              <InviteRow key={invite.id} invite={invite} onChanged={setInvites} />
+              <InviteRow
+                key={invite.id}
+                invite={invite}
+                onResent={applyInvite}
+                onRevoked={revokeRow}
+                onRevokeStale={loadInvites}
+                onSignedOut={setSignedOut}
+                sendAgainRef={(id, el) => {
+                  if (el) sendAgainButtons.current.set(id, el);
+                  else sendAgainButtons.current.delete(id);
+                }}
+              />
             ))}
           </ul>
           <p className={uiStyles.hint}>{tInvites("invitedHint")}</p>
@@ -347,7 +444,7 @@ export function TeamList() {
             <strong>{t("onlyYouTitle")}</strong>
             <span>{t("onlyYouBody")}</span>
             {mayInvite && !inviting && (
-              <button className={`${uiStyles.button} ${uiStyles.primary}`} type="button" onClick={() => setInviting(true)}>
+              <button ref={inviteButton} className={`${uiStyles.button} ${uiStyles.primary}`} type="button" onClick={() => setInviting(true)}>
                 {tInvites("inviteSomeone")}
               </button>
             )}

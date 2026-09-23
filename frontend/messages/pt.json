@@ -330,7 +330,7 @@
       "cancelInvite": "Cancelar o convite para {email}",
       "invitedHint": "Quem ainda não aceitou não consegue entrar e não recebe agendamentos. O nome pode ser definido assim que aceitar.",
       "alreadyMember": "Essa pessoa já faz parte da sua equipe.",
-      "rateLimited": "Convites demais por agora. Tente novamente daqui a uma hora."
+      "rateLimited": "Convites demais por agora. Tente novamente mais tarde."
     },
     "hours": {
       "myHoursLede": "Horários no fuso de {city}.",

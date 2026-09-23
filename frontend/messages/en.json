@@ -330,7 +330,7 @@
       "cancelInvite": "Cancel the invite to {email}",
       "invitedHint": "Someone who has not accepted yet cannot sign in and takes no appointments. Their name can be set once they accept.",
       "alreadyMember": "This person is already on your team.",
-      "rateLimited": "Too many invites for now. Try again in an hour."
+      "rateLimited": "Too many invites for now. Try again later."
     },
     "hours": {
       "myHoursLede": "Times are in {city} time.",

@@ -330,7 +330,7 @@
       "cancelInvite": "Uitnodiging aan {email} intrekken",
       "invitedHint": "Iemand die nog niet heeft geaccepteerd kan niet inloggen en krijgt geen afspraken. De naam kan worden ingesteld zodra diegene accepteert.",
       "alreadyMember": "Deze persoon werkt al in je team.",
-      "rateLimited": "Op dit moment te veel uitnodigingen. Probeer het over een uur opnieuw."
+      "rateLimited": "Op dit moment te veel uitnodigingen. Probeer het later opnieuw."
     },
     "hours": {
       "myHoursLede": "Tijden zijn in {city}-tijd.",
