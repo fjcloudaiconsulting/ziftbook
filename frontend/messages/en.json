@@ -196,6 +196,7 @@
       "unknownMember": "Someone you chose is no longer on the team. Reload and choose again.",
       "form": {
         "newHeading": "New service",
+        "nameLabel": "Name",
         "languages": {
           "en": "English",
           "nl": "Dutch",

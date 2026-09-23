@@ -35,7 +35,9 @@ function useCurrencyName(currency: string, locale: string): string {
 
 /* ---------------------------------- List ---------------------------------- */
 
-function Row({ service, locale, showPeople }: { service: ServiceOut; locale: string; showPeople: boolean }) {
+/** Owner row: a whole-row link to the edit form, with the people count or the "no one assigned"
+ * warning pill and a chevron, as drawn (`s-services-list`). */
+function Row({ service, locale }: { service: ServiceOut; locale: string }) {
   const t = useTranslations("Console.services");
   const { settings } = useConsole();
   const name = serviceName(service.name as NameMap, locale as Locale, settings.language);
@@ -47,8 +49,8 @@ function Row({ service, locale, showPeople }: { service: ServiceOut; locale: str
       <Link href={`/services/${service.id}`} className={styles.rowLink}>
         <span className={styles.rowMain}>
           <span className={styles.rowTitle}>{name}</span>
-          {showPeople && n > 0 && <span className={styles.rowMeta}>{t("rowMetaPeople", { minutes: service.duration_minutes, price, n })}</span>}
-          {showPeople && n === 0 && (
+          {n > 0 && <span className={styles.rowMeta}>{t("rowMetaPeople", { minutes: service.duration_minutes, price, n })}</span>}
+          {n === 0 && (
             <>
               <span className={styles.rowMeta}>{t("rowMeta", { minutes: service.duration_minutes, price })}</span>
               <span className={`${styles.pill} ${styles.pillWarn}`}>
@@ -60,12 +62,32 @@ function Row({ service, locale, showPeople }: { service: ServiceOut; locale: str
               </span>
             </>
           )}
-          {!showPeople && <span className={styles.rowMeta}>{t("rowMeta", { minutes: service.duration_minutes, price })}</span>}
         </span>
         <svg className={styles.chev} aria-hidden="true" viewBox="0 0 12 12" width="12" height="12">
           <path d="M4.5 2.5l3 3.5-3 3.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       </Link>
+    </li>
+  );
+}
+
+/** Worker row: static, no link and no chevron — a worker has no edit route to go to
+ * (`allowed()` in lib/console.ts already blocks it), and no people count (`/api/members` is
+ * owner only, `s-services-worker`). */
+function WorkerRow({ service, locale }: { service: ServiceOut; locale: string }) {
+  const t = useTranslations("Console.services");
+  const { settings } = useConsole();
+  const name = serviceName(service.name as NameMap, locale as Locale, settings.language);
+  const price = formatMoney(service.price.amount_minor, service.price.currency, locale);
+
+  return (
+    <li>
+      <div className={styles.rowStatic}>
+        <span className={styles.rowMain}>
+          <span className={styles.rowTitle}>{name}</span>
+          <span className={styles.rowMeta}>{t("rowMeta", { minutes: service.duration_minutes, price })}</span>
+        </span>
+      </div>
     </li>
   );
 }
@@ -167,7 +189,7 @@ export function Services() {
         <Banner tone="note">{t("workerNote")}</Banner>
         <ul className={styles.list}>
           {active.map((service) => (
-            <Row key={service.id} service={service} locale={locale} showPeople={false} />
+            <WorkerRow key={service.id} service={service} locale={locale} />
           ))}
         </ul>
       </>
@@ -200,7 +222,7 @@ export function Services() {
       </div>
       <ul className={styles.list}>
         {active.map((service) => (
-          <Row key={service.id} service={service} locale={locale} showPeople />
+          <Row key={service.id} service={service} locale={locale} />
         ))}
       </ul>
       {archived.length > 0 && (
@@ -229,6 +251,8 @@ function emptyNameMap(): Record<Locale, string> {
 }
 
 function LangField({
+  heading,
+  headingHint,
   values,
   onChange,
   businessLanguage,
@@ -238,6 +262,8 @@ function LangField({
   multiline,
   errorMessage,
 }: {
+  heading: string;
+  headingHint?: string;
   values: Record<Locale, string>;
   onChange(locale: Locale, value: string): void;
   businessLanguage: Locale;
@@ -251,10 +277,16 @@ function LangField({
   const [active, setActive] = useState<Locale>(businessLanguage);
   const idBase = useId();
   const errorId = `${idBase}-error`;
+  const headingId = `${idBase}-heading`;
 
   return (
     <div className={styles.field}>
-      <div className={styles.langTabs} role="tablist">
+      <div className={styles.labelRow}>
+        <span className={styles.label} id={headingId}>
+          {heading} {headingHint && <span className={styles.optional}>{headingHint}</span>}
+        </span>
+      </div>
+      <div className={styles.langTabs} role="tablist" aria-labelledby={headingId}>
         {LOCALES.map((loc) => (
           <button
             key={loc}
@@ -272,7 +304,7 @@ function LangField({
         ))}
       </div>
       {LOCALES.map((loc) => (
-        <div key={loc} id={`${idBase}-${loc}`} role="tabpanel" hidden={active !== loc} className={active === loc ? styles.langPanel + " is-on" : styles.langPanel}>
+        <div key={loc} id={`${idBase}-${loc}`} role="tabpanel" hidden={active !== loc} className={styles.langPanel}>
           {multiline ? (
             <>
               <label className={styles.srOnly} htmlFor={`${idBase}-${loc}-input`}>
@@ -431,6 +463,7 @@ function ServiceFormBody(props: Props) {
       )}
 
       <LangField
+        heading={t("nameLabel")}
         values={name}
         onChange={(loc, value) => {
           markDirty();
@@ -446,6 +479,8 @@ function ServiceFormBody(props: Props) {
 
       {!editing && (
         <LangField
+          heading={t("descriptionLabel")}
+          headingHint={t("descriptionOptional")}
           values={description}
           onChange={(loc, value) => {
             markDirty();

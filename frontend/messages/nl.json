@@ -196,6 +196,7 @@
       "unknownMember": "Iemand die je koos, zit niet meer in het team. Laad opnieuw en kies opnieuw.",
       "form": {
         "newHeading": "Nieuwe dienst",
+        "nameLabel": "Naam",
         "languages": {
           "en": "Engels",
           "nl": "Nederlands",
