@@ -5,19 +5,21 @@ import { type FormEvent, useEffect, useRef, useState } from "react";
 
 import { timeOffCreate, timeOffDelete, timeOffList, timeOffUpdate, type TimeOffOut } from "@/api-client";
 import { Link } from "@/i18n/navigation";
-import { canEditBlock, listWindow, requestBody } from "@/lib/time-off";
-import { SignedOutBanner, useConsole } from "../_ui/console";
+import { canEditBlock, clientProblem, listWindow, patchBody, requestBody } from "@/lib/time-off";
+import { zoneCity } from "@/lib/week";
+import { JSON_WRITE, SignedOutBanner, useConsole } from "../_ui/console";
 import styles from "../_ui/console.module.css";
 import { Banner, FieldError, Heading, Mark, problem, Submit } from "../_ui/parts";
 import uiStyles from "../_ui/ui.module.css";
 import { blockMeta, blockTitle } from "./time-off-labels";
 
 /** The two-tab bar on a person's frame (working hours / blocked time), shared by the owner's
- * `/team/[memberId]` and the worker's `/my-hours` frames. */
+ * `/team/[memberId]` and the worker's `/my-hours` frames. The label is one catalog string (never
+ * two translated fragments joined with a literal "/" here), so a translator owns the whole phrase. */
 export function PersonTabs({ workingHoursHref, blockedTimeHref, active }: { workingHoursHref: string; blockedTimeHref: string; active: "hours" | "timeOff" }) {
   const t = useTranslations("Console.timeOff");
   return (
-    <div className={styles.tabs} role="tablist" aria-label={t("tabWorkingHours") + " / " + t("tabBlockedTime")}>
+    <div className={styles.tabs} role="tablist" aria-label={t("tabsLabel")}>
       <Link href={workingHoursHref} className={styles.subTab} role="tab" aria-selected={active === "hours"}>
         {t("tabWorkingHours")}
       </Link>
@@ -41,6 +43,16 @@ function blank(): FormState {
   return { allDay: true, firstDay: "", lastDay: "", startTime: "", endTime: "", reason: "" };
 }
 
+/** Whether an editing block's own dates - as read back from the server, not from the form - are a
+ * partial block spanning more than one local day (`lib/time-off.ts`'s `partialRange`), so the form
+ * can warn before an edit to its times silently collapses it to one day (this form's own fields
+ * can only hold a single first-day). */
+function isMultiDayPartial(block: TimeOffOut, tz: string): boolean {
+  if (block.first_day || !block.starts_at || !block.ends_at) return false;
+  const date = (instant: string) => new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(instant));
+  return date(block.starts_at) !== date(block.ends_at);
+}
+
 function fromBlock(block: TimeOffOut, tz: string): FormState {
   if (block.first_day) {
     return { allDay: true, firstDay: block.first_day, lastDay: block.last_day ?? block.first_day, startTime: "09:00", endTime: "17:00", reason: block.reason ?? "" };
@@ -51,21 +63,20 @@ function fromBlock(block: TimeOffOut, tz: string): FormState {
   return { allDay: false, firstDay: date, lastDay: date, startTime: time(block.starts_at!), endTime: time(block.ends_at!), reason: block.reason ?? "" };
 }
 
-/** Client-side mirrors of the server's own checks (`time_off.py:checked`/`checked_days`), so the
- * obvious mistakes are caught before a round trip, in the same words the 422 would use. */
-function clientProblem(form: FormState): "lastDayBeforeFirst" | "endNotAfterStart" | null {
-  if (form.allDay) return form.lastDay < form.firstDay ? "lastDayBeforeFirst" : null;
-  return form.endTime <= form.startTime ? "endNotAfterStart" : null;
-}
-
 type Mode = { kind: "list" } | { kind: "new" } | { kind: "edit"; block: TimeOffOut };
 
-// A body-less write still needs `Content-Type: application/json` (the API's CSRF defence refuses
-// any mutating request without it, `main.py`'s `json_only`): the same `{ body: {} as never }`
-// shape `sessionSignOut` already uses.
-const JSON_WRITE = { body: {} as never };
-
-export function BlockedTime({ memberId }: { memberId: string }) {
+export function BlockedTime({
+  memberId,
+  personName,
+  onFormMode,
+}: {
+  memberId: string;
+  personName: string;
+  /** Whether the block list or the block form is showing, so a caller with its own person header
+   * (name, tabs) can hide it while the form's own heading is on screen - the form is never behind
+   * a second `<h1>`. */
+  onFormMode?: (inForm: boolean) => void;
+}) {
   const { session, settings, call } = useConsole();
   const locale = useLocale();
   const t = useTranslations("Console.timeOff");
@@ -77,6 +88,11 @@ export function BlockedTime({ memberId }: { memberId: string }) {
   const [blocks, setBlocks] = useState<TimeOffOut[] | null>(null);
   const [failure, setFailure] = useState<ReturnType<typeof problem> | null>(null);
   const [mode, setMode] = useState<Mode>({ kind: "list" });
+
+  useEffect(() => {
+    onFormMode?.(mode.kind !== "list");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode.kind]);
 
   function load() {
     const window = listWindow(new Date(), settings.timezone, settings.booking_horizon_days);
@@ -113,6 +129,7 @@ export function BlockedTime({ memberId }: { memberId: string }) {
       <BlockedTimeForm
         memberId={memberId}
         tz={settings.timezone}
+        personName={personName}
         editing={mode.kind === "edit" ? mode.block : null}
         onDone={() => {
           setMode({ kind: "list" });
@@ -152,6 +169,7 @@ export function BlockedTime({ memberId }: { memberId: string }) {
       <ul className={styles.list}>
         {blocks.map((block) => {
           const editable = canEditBlock(role, isSelf, block.source);
+          const fromGoogle = block.source === "google";
           const title = blockTitle(block, locale, settings.timezone, (from, to) => tWeek("dayRange", { from, to }));
           const meta = blockMeta(block, settings.timezone, t);
           if (!editable) {
@@ -161,9 +179,11 @@ export function BlockedTime({ memberId }: { memberId: string }) {
                   <span className={styles.rowMain}>
                     <span className={styles.rowTitle}>{title}</span>
                     <span className={styles.rowMeta}>
-                      {meta} · {t("changeInGoogle")}
+                      {meta}
+                      {fromGoogle && ` · ${t("changeInGoogle")}`}
+                      {!fromGoogle && block.reason ? ` · ${block.reason}` : ""}
                     </span>
-                    <span className={`${styles.pill} ${styles.pillMuted}`}>{t("fromGoogle")}</span>
+                    {fromGoogle && <span className={`${styles.pill} ${styles.pillMuted}`}>{t("fromGoogle")}</span>}
                   </span>
                 </div>
               </li>
@@ -198,24 +218,37 @@ function Chevron() {
   );
 }
 
+/** The field-level error's catalog key for every reason `clientProblem` can refuse a submit. */
+const FIELD_ERROR_KEY = {
+  missingFirstDay: "errorMissingFirstDay",
+  missingLastDay: "errorMissingLastDay",
+  missingStart: "errorMissingStart",
+  missingEnd: "errorMissingEnd",
+  lastDayBeforeFirst: "errorLastDayBeforeFirst",
+  endNotAfterStart: "errorEndNotAfterStart",
+} as const;
+
 function BlockedTimeForm({
   memberId,
   tz,
+  personName,
   editing,
   onDone,
   onCancel,
 }: {
   memberId: string;
   tz: string;
+  personName: string;
   editing: TimeOffOut | null;
   onDone(): void;
   onCancel(): void;
 }) {
-  const { call } = useConsole();
+  const { call, settings } = useConsole();
   const t = useTranslations("Console.timeOff");
   const tConsole = useTranslations("Console");
   const form = useTranslations("Form");
-  const [state, setState] = useState<FormState>(() => (editing ? fromBlock(editing, tz) : blank()));
+  const [initial] = useState<FormState>(() => (editing ? fromBlock(editing, tz) : blank()));
+  const [state, setState] = useState<FormState>(initial);
   const [fieldError, setFieldError] = useState<string | null>(null);
   const [bannerError, setBannerError] = useState<string | null>(null);
   const [signedOut, setSignedOut] = useState(false);
@@ -224,6 +257,8 @@ function BlockedTimeForm({
   const [removing, setRemoving] = useState(false);
   const submitting = useRef(false);
   const confirmRef = useRef<HTMLButtonElement>(null);
+  const wasMultiDayPartial = editing ? isMultiDayPartial(editing, tz) : false;
+  const timesTouched = !state.allDay && (state.startTime !== initial.startTime || state.endTime !== initial.endTime);
 
   useEffect(() => {
     if (confirmingRemove) confirmRef.current?.focus();
@@ -239,31 +274,39 @@ function BlockedTimeForm({
     event.preventDefault();
     if (submitting.current) return;
     resetMessages();
-    const clientIssue = clientProblem(state);
-    if (clientIssue === "lastDayBeforeFirst") return setFieldError(t("errorLastDayBeforeFirst"));
-    if (clientIssue === "endNotAfterStart") return setFieldError(t("errorEndNotAfterStart"));
+    const clientIssue = clientProblem({ ...state, lastDay: state.allDay ? state.lastDay : state.firstDay, tz });
+    if (clientIssue) return setFieldError(t(FIELD_ERROR_KEY[clientIssue]));
     submitting.current = true;
     setSaving(true);
-    const body = requestBody({ allDay: state.allDay, firstDay: state.firstDay, lastDay: state.allDay ? state.lastDay : state.firstDay, startTime: state.startTime, endTime: state.endTime, reason: state.reason, tz });
-    const outcome = editing
-      ? await call(() => timeOffUpdate({ path: { time_off_id: editing.id }, body }), { write: true })
-      : await call(() => timeOffCreate({ path: { member_id: memberId }, body }), { write: true });
-    setSaving(false);
-    submitting.current = false;
-    if ((outcome.status === 200 || outcome.status === 201) && outcome.data) {
-      onDone();
-      return;
+    try {
+      const outcome = editing
+        ? await call(
+            () => timeOffUpdate({ path: { time_off_id: editing.id }, body: patchBody({ ...initial, lastDay: initial.allDay ? initial.lastDay : initial.firstDay, tz }, { ...state, lastDay: state.allDay ? state.lastDay : state.firstDay, tz }) }),
+            { write: true },
+          )
+        : await call(() => timeOffCreate({ path: { member_id: memberId }, body: requestBody({ ...state, lastDay: state.allDay ? state.lastDay : state.firstDay, tz }) }), { write: true });
+      if ((outcome.status === 200 || outcome.status === 201) && outcome.data) {
+        onDone();
+        return;
+      }
+      if (outcome.status === 401) return setSignedOut(true);
+      const dayOrTimeCode = outcome.code === "last_day_before_first_day" || outcome.code === "time_off_too_long" || outcome.code === "end_not_after_start";
+      if (outcome.status === 422 && dayOrTimeCode) {
+        setBannerError(t("notBlocked"));
+        if (outcome.code === "last_day_before_first_day") setFieldError(t("errorLastDayBeforeFirst"));
+        if (outcome.code === "time_off_too_long") setFieldError(t("errorTooLong"));
+        if (outcome.code === "end_not_after_start") setFieldError(t("errorEndNotAfterStart"));
+        return;
+      }
+      setBannerError(`${form(problem(outcome))} ${tConsole("notSaved")}`);
+    } catch {
+      // A throw here (never expected once `clientProblem` has passed) must still leave the form
+      // usable, not stuck on "Sending" forever.
+      setBannerError(`${form("unexpected")} ${tConsole("notSaved")}`);
+    } finally {
+      setSaving(false);
+      submitting.current = false;
     }
-    if (outcome.status === 401) return setSignedOut(true);
-    const dayOrTimeCode = outcome.code === "last_day_before_first_day" || outcome.code === "time_off_too_long" || outcome.code === "end_not_after_start";
-    if (outcome.status === 422 && dayOrTimeCode) {
-      setBannerError(t("notBlocked"));
-      if (outcome.code === "last_day_before_first_day") setFieldError(t("errorLastDayBeforeFirst"));
-      if (outcome.code === "time_off_too_long") setFieldError(t("errorTooLong"));
-      if (outcome.code === "end_not_after_start") setFieldError(t("errorEndNotAfterStart"));
-      return;
-    }
-    setBannerError(`${form(problem(outcome))} ${tConsole("notSaved")}`);
   }
 
   async function onRemove() {
@@ -285,6 +328,7 @@ function BlockedTimeForm({
   return (
     <>
       <Heading focus>{editing ? t("editTitle") : t("newTitle")}</Heading>
+      <p className={uiStyles.lede}>{t("zoneLede", { name: personName, city: zoneCity(settings.timezone) })}</p>
       {signedOut && <SignedOutBanner />}
       {bannerError && <Banner tone="error">{bannerError}</Banner>}
       <form className={`${uiStyles.stack} ${styles.colWide}`} noValidate onSubmit={onSubmit}>
@@ -300,6 +344,8 @@ function BlockedTimeForm({
             <em>{t("allDayHint")}</em>
           </span>
         </label>
+
+        {!state.allDay && wasMultiDayPartial && timesTouched && <p className={uiStyles.hint}>{t("multiDayNote")}</p>}
 
         <div className={styles.row2}>
           <div className={uiStyles.field}>

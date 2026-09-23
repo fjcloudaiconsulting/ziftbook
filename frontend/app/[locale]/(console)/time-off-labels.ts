@@ -11,22 +11,24 @@ function dayLabel(date: string, locale: string): string {
   );
 }
 
-/** The row's title: a day, a range (via the catalog's "{from} to {to}"), or a partial block's own
- * date (the time sits in the meta line instead). */
+/** The row's title: a day, a range (via the catalog's "{from} to {to}") - a whole-day one or a
+ * partial block spanning days alike - or a single-day partial block's own date (the time sits in
+ * the meta line instead). */
 export function blockTitle(block: Block, locale: string, tz: string, formatRange: (from: string, to: string) => string): string {
   const label = blockLabel(block, tz);
   if (label.kind === "day") return dayLabel(label.date, locale);
-  if (label.kind === "range") return formatRange(dayLabel(label.from, locale), dayLabel(label.to, locale));
+  if (label.kind === "range" || label.kind === "partialRange") return formatRange(dayLabel(label.from, locale), dayLabel(label.to, locale));
   return dayLabel(label.date, locale);
 }
 
-/** The row's meta: "Whole day", "{n} whole days", or the part-day time range in the business zone.
- * `t` is next-intl's `Console.timeOff` translator; typed loosely here (rather than importing its
+/** The row's meta: "Whole day", "{n} whole days", or the part-day time range in the business zone
+ * (via the catalog's "{from} – {to}", never a hardcoded separator built in this file). `t` is
+ * next-intl's `Console.timeOff` translator; typed loosely here (rather than importing its
  * generated literal-key type) since this is glue, not part of the pure lib. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function blockMeta(block: Block, tz: string, t: (key: any, values?: any) => string): string {
   const label = blockLabel(block, tz);
   if (label.kind === "day") return t("wholeDay");
   if (label.kind === "range") return t("wholeDays", { n: label.days });
-  return `${label.start} – ${label.end}`;
+  return t("timeRange", { from: label.start, to: label.end });
 }

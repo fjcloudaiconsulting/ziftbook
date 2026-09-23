@@ -367,7 +367,8 @@
     "timeOff": {
       "tabWorkingHours": "Working hours",
       "tabBlockedTime": "Blocked time",
-      "zoneLede": "Times are in {city} time.",
+      "tabsLabel": "What to manage",
+      "zoneLede": "{name} · {city} time",
       "emptyTitle": "Nothing blocked",
       "emptyBody": "Block time when this person is not available even though it is inside their working hours: a holiday, a course, an appointment of their own. Clients cannot book then.",
       "blockTime": "Block time",
@@ -376,6 +377,7 @@
       "reasonListHint": "The reason is only visible to this person and to the owners. Clients never see it.",
       "wholeDay": "Whole day",
       "wholeDays": "{n} whole days",
+      "timeRange": "{from} – {to}",
       "fromGoogle": "From Google Calendar",
       "changeInGoogle": "change it in Google Calendar",
       "newTitle": "Block time",
@@ -395,13 +397,18 @@
       "cancel": "Cancel",
       "removeButton": "Remove this block",
       "removeHint": "The time becomes bookable again straight away.",
+      "multiDayNote": "This block spans more than one day. Changing the time here sets it to a single day.",
       "removeConfirmTitle": "Remove this block?",
       "removeConfirm": "Remove",
       "notBlocked": "This time was not blocked. Check the dates below and try again.",
       "notRemoved": "This block was not removed. Try again.",
       "errorLastDayBeforeFirst": "The last day is before the first day. Choose a later last day.",
+      "errorMissingFirstDay": "Choose a first day.",
+      "errorMissingLastDay": "Choose a last day.",
       "errorTooLong": "Block up to one year at a time. Choose an earlier last day.",
       "errorEndNotAfterStart": "The end time is before the start time. Choose a later end time.",
+      "errorMissingStart": "Choose a start time.",
+      "errorMissingEnd": "Choose an end time.",
       "notFound": "This block could not be found. It may already have been removed."
     }
   }

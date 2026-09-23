@@ -367,7 +367,8 @@
     "timeOff": {
       "tabWorkingHours": "Werktijden",
       "tabBlockedTime": "Geblokkeerde tijd",
-      "zoneLede": "Tijden zijn in de tijdzone van {city}.",
+      "tabsLabel": "Wat u wilt beheren",
+      "zoneLede": "{name} · {city}-tijd",
       "emptyTitle": "Niets geblokkeerd",
       "emptyBody": "Blokkeer tijd wanneer deze persoon niet beschikbaar is, ook al valt dit binnen de werktijden: een vakantie, een cursus, een eigen afspraak. Klanten kunnen dan niet boeken.",
       "blockTime": "Tijd blokkeren",
@@ -376,6 +377,7 @@
       "reasonListHint": "De reden is alleen zichtbaar voor deze persoon en de eigenaren. Klanten zien deze nooit.",
       "wholeDay": "Hele dag",
       "wholeDays": "{n} hele dagen",
+      "timeRange": "{from} – {to}",
       "fromGoogle": "Vanuit Google Agenda",
       "changeInGoogle": "wijzig dit in Google Agenda",
       "newTitle": "Tijd blokkeren",
@@ -395,13 +397,18 @@
       "cancel": "Annuleren",
       "removeButton": "Dit blok verwijderen",
       "removeHint": "De tijd is meteen weer boekbaar.",
+      "multiDayNote": "Dit blok beslaat meer dan één dag. Als u hier de tijd wijzigt, wordt het teruggebracht tot één dag.",
       "removeConfirmTitle": "Dit blok verwijderen?",
       "removeConfirm": "Verwijderen",
       "notBlocked": "Deze tijd is niet geblokkeerd. Controleer de datums hieronder en probeer het opnieuw.",
       "notRemoved": "Dit blok is niet verwijderd. Probeer het opnieuw.",
       "errorLastDayBeforeFirst": "De laatste dag ligt voor de eerste dag. Kies een latere laatste dag.",
+      "errorMissingFirstDay": "Kies een eerste dag.",
+      "errorMissingLastDay": "Kies een laatste dag.",
       "errorTooLong": "Blokkeer maximaal één jaar tegelijk. Kies een eerdere laatste dag.",
       "errorEndNotAfterStart": "De eindtijd ligt voor de begintijd. Kies een latere eindtijd.",
+      "errorMissingStart": "Kies een begintijd.",
+      "errorMissingEnd": "Kies een eindtijd.",
       "notFound": "Dit blok kon niet worden gevonden. Het is mogelijk al verwijderd."
     }
   }
