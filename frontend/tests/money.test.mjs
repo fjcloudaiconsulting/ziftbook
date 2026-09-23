@@ -64,4 +64,17 @@ describe("currencySign / signFirst", () => {
     assert.equal(currencySign(3500, "CHF", "en"), "CHF");
     assert.equal(signFirst("CHF", "en"), true);
   });
+
+  // No fence for a trailing sign: every combination this app can actually reach — its three
+  // locales (en, nl, pt) crossed with the currencies a business can hold (EUR, BRL, GBP, USD;
+  // countries.py:16-17) — puts the sign first (checked on node 24). A test asserting the opposite
+  // for some other locale/currency pair would never fail on a real regression, so there is
+  // deliberately none here rather than a fence that can't fail.
+  test("every locale x currency this app can reach puts the sign first", () => {
+    for (const locale of ["en", "nl", "pt"]) {
+      for (const currency of ["EUR", "BRL", "GBP", "USD"]) {
+        assert.equal(signFirst(currency, locale), true, `${locale} ${currency}`);
+      }
+    }
+  });
 });

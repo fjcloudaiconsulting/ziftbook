@@ -205,7 +205,7 @@
         "nameLangLabel": "Naam in het {language}",
         "nameLangRequired": "· je bedrijfstaal, verplicht",
         "nameLangOptional": "· optioneel",
-        "namePlaceholder": "Laat leeg om de {language} naam te tonen",
+        "namePlaceholder": "Laat leeg om de naam in het {language} te tonen",
         "nameHint": "Klanten zien de naam in hun eigen taal als je die toevoegt, en anders de {language} naam.",
         "nameRequired": "Vul een naam in het {language} in. Klanten zien deze als hun eigen taal ontbreekt.",
         "descriptionLabel": "Beschrijving",
