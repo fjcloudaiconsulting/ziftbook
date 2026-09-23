@@ -12,7 +12,7 @@ process.env.TZ = "America/Sao_Paulo";
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { beyondHorizon, blockLabel, canEditBlock, clientProblem, listWindow, localToInstant, patchBody, requestBody } from "../lib/time-off.ts";
+import { beyondHorizon, blockLabel, canEditBlock, clientProblem, dateOrTimeChanged, listWindow, localToInstant, patchBody, requestBody } from "../lib/time-off.ts";
 
 describe("localToInstant", () => {
   test("Amsterdam, before the spring-forward transition (2026-03-29), uses CET (+01:00)", () => {
@@ -216,6 +216,24 @@ describe("canEditBlock", () => {
   });
 });
 
+describe("dateOrTimeChanged", () => {
+  const tz = "Europe/Amsterdam";
+  const stored = { allDay: false, firstDay: "2026-10-14", lastDay: "2026-10-14", startTime: "22:00", endTime: "02:00", reason: "old", tz };
+
+  test("only the reason changed: false", () => {
+    assert.equal(dateOrTimeChanged(stored, { ...stored, reason: "new" }), false);
+  });
+
+  test("only the date changed (would silently shorten a multi-day partial block): true - not just a start/end time diff", () => {
+    assert.equal(dateOrTimeChanged(stored, { ...stored, firstDay: "2026-10-15" }), true);
+  });
+
+  test("a time changed: true", () => {
+    assert.equal(dateOrTimeChanged(stored, { ...stored, startTime: "21:00" }), true);
+    assert.equal(dateOrTimeChanged(stored, { ...stored, endTime: "03:00" }), true);
+  });
+});
+
 describe("clientProblem", () => {
   const tz = "Europe/Amsterdam";
   const wholeDay = { allDay: true, firstDay: "2026-10-27", lastDay: "2026-11-02", startTime: "", endTime: "", reason: "", tz };
@@ -237,5 +255,15 @@ describe("clientProblem", () => {
   test("order checks still run once every field is present", () => {
     assert.equal(clientProblem({ ...wholeDay, lastDay: "2026-10-01" }), "lastDayBeforeFirst");
     assert.equal(clientProblem({ ...partial, endTime: "09:00" }), "endNotAfterStart");
+  });
+
+  test("editing a multi-day partial block (22:00 -> 02:00, spanning midnight) and touching only the reason must not trip the order check: the stored block is valid by definition, and neither its date nor its times changed", () => {
+    const storedMultiDay = { allDay: false, firstDay: "2026-10-14", lastDay: "2026-10-14", startTime: "22:00", endTime: "02:00", reason: "old", tz };
+    const reasonOnlyEdit = { ...storedMultiDay, reason: "new" };
+    assert.equal(clientProblem(reasonOnlyEdit, storedMultiDay), null);
+    // The order check still runs when a time actually changed.
+    assert.equal(clientProblem({ ...storedMultiDay, endTime: "20:00" }, storedMultiDay), "endNotAfterStart");
+    // And it still runs for a brand-new block (no initial to compare against).
+    assert.equal(clientProblem(storedMultiDay), "endNotAfterStart");
   });
 });

@@ -5,7 +5,7 @@ import { type FormEvent, useEffect, useRef, useState } from "react";
 
 import { timeOffCreate, timeOffDelete, timeOffList, timeOffUpdate, type TimeOffOut } from "@/api-client";
 import { Link } from "@/i18n/navigation";
-import { beyondHorizon, canEditBlock, clientProblem, listWindow, patchBody, requestBody } from "@/lib/time-off";
+import { beyondHorizon, canEditBlock, clientProblem, dateOrTimeChanged, listWindow, patchBody, requestBody } from "@/lib/time-off";
 import { zoneCity } from "@/lib/week";
 import { JSON_WRITE, SignedOutBanner, useConsole } from "../_ui/console";
 import styles from "../_ui/console.module.css";
@@ -263,7 +263,7 @@ function BlockedTimeForm({
   const submitting = useRef(false);
   const confirmRef = useRef<HTMLButtonElement>(null);
   const wasMultiDayPartial = editing ? isMultiDayPartial(editing, tz) : false;
-  const timesTouched = !state.allDay && (state.startTime !== initial.startTime || state.endTime !== initial.endTime);
+  const dateOrTimeTouched = !state.allDay && dateOrTimeChanged({ ...initial, tz }, { ...state, tz });
 
   useEffect(() => {
     if (confirmingRemove) confirmRef.current?.focus();
@@ -279,7 +279,10 @@ function BlockedTimeForm({
     event.preventDefault();
     if (submitting.current) return;
     resetMessages();
-    const clientIssue = clientProblem({ ...state, lastDay: state.allDay ? state.lastDay : state.firstDay, tz });
+    const clientIssue = clientProblem(
+      { ...state, lastDay: state.allDay ? state.lastDay : state.firstDay, tz },
+      editing ? { ...initial, lastDay: initial.allDay ? initial.lastDay : initial.firstDay, tz } : undefined,
+    );
     if (clientIssue) return setFieldError(t(FIELD_ERROR_KEY[clientIssue]));
     submitting.current = true;
     setSaving(true);
@@ -350,7 +353,7 @@ function BlockedTimeForm({
           </span>
         </label>
 
-        {!state.allDay && wasMultiDayPartial && timesTouched && <p className={uiStyles.hint}>{t("multiDayNote")}</p>}
+        {!state.allDay && wasMultiDayPartial && dateOrTimeTouched && <p className={uiStyles.hint}>{t("multiDayNote")}</p>}
 
         <div className={styles.row2}>
           <div className={uiStyles.field}>

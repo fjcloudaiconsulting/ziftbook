@@ -246,12 +246,31 @@ export function canEditBlock(role: "owner" | "worker", isSelf: boolean, source: 
   return role === "owner" || isSelf;
 }
 
+/** Whether a partial block's edit form has moved away from its own stored date or either clock
+ * time - never just the times, since changing only the date recomputes both `starts_at`/`ends_at`
+ * onto that one new day exactly as touching a time would, and silently collapsing a multi-day
+ * partial block down to a single day either way (fence: the old check, keyed on start/end time
+ * only, missed a date-only change and so never warned about it). Used to decide whether the
+ * multi-day-partial warning note should show. */
+export function dateOrTimeChanged(initial: BlockForm, current: BlockForm): boolean {
+  return current.firstDay !== initial.firstDay || current.startTime !== initial.startTime || current.endTime !== initial.endTime;
+}
+
 /** Every field a partial block's date/time inputs need present before `localToInstant` can run:
  * fences the bug where an empty date or time reached `localToInstant` after the in-flight flag
  * was already set, throwing a `RangeError` (from `NaN` inside `Date.UTC`) and leaving the form
- * stuck on "Sending" forever, because nothing downstream ever caught it. */
+ * stuck on "Sending" forever, because nothing downstream ever caught it.
+ *
+ * `endTime <= startTime` only means "invalid" for a same-day block: a multi-day partial block
+ * (22:00 -> 02:00, spanning midnight) has an end clock-time-of-day legitimately "before" its
+ * start, and is valid by definition once the server has already stored it. `initial`, when
+ * given (editing an existing block), is the block's own last-saved form; the order check is
+ * skipped when the person touched neither the date nor either time from that stored state -
+ * only reason changed - since there is then nothing new to validate. Creating a block, or
+ * actually changing a date/time, always runs the check. */
 export function clientProblem(
   form: BlockForm,
+  initial?: BlockForm,
 ): "missingFirstDay" | "missingLastDay" | "missingStart" | "missingEnd" | "lastDayBeforeFirst" | "endNotAfterStart" | null {
   if (!form.firstDay) return "missingFirstDay";
   if (form.allDay) {
@@ -260,5 +279,12 @@ export function clientProblem(
   }
   if (!form.startTime) return "missingStart";
   if (!form.endTime) return "missingEnd";
+  const dateOrTimeUnchanged =
+    initial !== undefined &&
+    !initial.allDay &&
+    form.firstDay === initial.firstDay &&
+    form.startTime === initial.startTime &&
+    form.endTime === initial.endTime;
+  if (dateOrTimeUnchanged) return null;
   return form.endTime <= form.startTime ? "endNotAfterStart" : null;
 }
