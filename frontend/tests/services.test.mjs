@@ -4,7 +4,12 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
+import { parseMoney } from "../lib/money.ts";
 import { defaultBuffer, serviceBody, serviceName } from "../lib/services.ts";
+
+function body(form, options) {
+  return serviceBody(form, options, parseMoney);
+}
 
 describe("serviceName", () => {
   test("only the business language present: reads that one, not en", () => {
@@ -24,7 +29,7 @@ describe("serviceBody", () => {
   const base = { businessLanguage: "nl", mode: "create" };
 
   test("blank or whitespace-only languages are omitted, never sent as \"\"", () => {
-    const result = serviceBody(
+    const result = body(
       { name: { nl: "Manicure", en: "  ", pt: "" }, description: {}, price: "35,00", duration: "45", gap: "default" },
       { ...base },
     );
@@ -33,7 +38,7 @@ describe("serviceBody", () => {
   });
 
   test("edit that empties pt keeps every other language, and sends name without pt", () => {
-    const result = serviceBody(
+    const result = body(
       { name: { nl: "Manicure", en: "Manicure", pt: "" }, description: {}, price: "35,00", duration: "45", gap: "default" },
       { businessLanguage: "nl", mode: "edit" },
     );
@@ -42,7 +47,7 @@ describe("serviceBody", () => {
   });
 
   test('"use the business default" sends buffer_minutes: null, never 0', () => {
-    const result = serviceBody(
+    const result = body(
       { name: { nl: "Manicure" }, description: {}, price: "35,00", duration: "45", gap: "default" },
       { ...base },
     );
@@ -51,7 +56,7 @@ describe("serviceBody", () => {
   });
 
   test("edit body has only name, price and duration_minutes: never description or buffer_minutes", () => {
-    const result = serviceBody(
+    const result = body(
       { name: { nl: "Manicure" }, description: { nl: "would be dropped" }, price: "35,00", duration: "45", gap: "fixed", fixedGap: "10" },
       { businessLanguage: "nl", mode: "edit" },
     );
@@ -60,7 +65,7 @@ describe("serviceBody", () => {
   });
 
   test("create without a business-language name: nameRequired", () => {
-    const result = serviceBody(
+    const result = body(
       { name: { nl: "", en: "Manicure" }, description: {}, price: "35,00", duration: "45", gap: "default" },
       { ...base },
     );
@@ -68,7 +73,7 @@ describe("serviceBody", () => {
   });
 
   test("edit of {pt: Unhas} with business nl is a valid body: the create rule does not apply", () => {
-    const result = serviceBody(
+    const result = body(
       { name: { nl: "", pt: "Unhas" }, description: {}, price: "35,00", duration: "45", gap: "default" },
       { businessLanguage: "nl", mode: "edit" },
     );
@@ -77,7 +82,7 @@ describe("serviceBody", () => {
   });
 
   test("edit with every language blank: still nameRequired", () => {
-    const result = serviceBody(
+    const result = body(
       { name: { nl: "", en: "", pt: "" }, description: {}, price: "35,00", duration: "45", gap: "default" },
       { businessLanguage: "nl", mode: "edit" },
     );
@@ -85,12 +90,12 @@ describe("serviceBody", () => {
   });
 
   test("duration outside 5..720 is a field error", () => {
-    const tooShort = serviceBody(
+    const tooShort = body(
       { name: { nl: "Manicure" }, description: {}, price: "35,00", duration: "4", gap: "default" },
       { ...base },
     );
     assert.equal(tooShort.errors?.duration, "durationRange");
-    const tooLong = serviceBody(
+    const tooLong = body(
       { name: { nl: "Manicure" }, description: {}, price: "35,00", duration: "721", gap: "default" },
       { ...base },
     );
@@ -98,7 +103,7 @@ describe("serviceBody", () => {
   });
 
   test("a fixed gap outside 0..240 is a field error", () => {
-    const result = serviceBody(
+    const result = body(
       { name: { nl: "Manicure" }, description: {}, price: "35,00", duration: "45", gap: "fixed", fixedGap: "241" },
       { ...base },
     );
@@ -106,7 +111,7 @@ describe("serviceBody", () => {
   });
 
   test("an unparsable price is a field error", () => {
-    const result = serviceBody(
+    const result = body(
       { name: { nl: "Manicure" }, description: {}, price: "not a number", duration: "45", gap: "default" },
       { ...base },
     );

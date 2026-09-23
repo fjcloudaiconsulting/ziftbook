@@ -1,8 +1,7 @@
 // Pure logic behind the service create/edit form: which name a reader sees (services.py:47-49),
 // the create/edit request body and its field errors, and the default-gap hint. Kept free of React
-// so node --test can run it directly.
-import { parseMoney } from "./money.ts";
-
+// (and of any sibling import, as lib/week.ts) so node --test can run it directly with no module
+// resolution to configure: `parseMoney` (lib/money.ts) is passed in as a callback instead.
 export type Locale = "en" | "nl" | "pt";
 export type NameMap = Partial<Record<Locale, string>>;
 
@@ -41,7 +40,11 @@ export type ServiceBodyResult = { body: ServiceBody; errors?: never } | { body?:
  * it is the fallback everyone else needs). edit: any non-blank entry satisfies the server's rule,
  * so an edit of a service whose only name is another language stays valid — applying create's
  * rule there would lock such a service. */
-export function serviceBody(form: ServiceForm, options: { businessLanguage: Locale; mode: "create" | "edit" }): ServiceBodyResult {
+export function serviceBody(
+  form: ServiceForm,
+  options: { businessLanguage: Locale; mode: "create" | "edit" },
+  parsePrice: (text: string) => number | null,
+): ServiceBodyResult {
   const errors: Record<string, string> = {};
 
   const name: NameMap = {};
@@ -53,7 +56,7 @@ export function serviceBody(form: ServiceForm, options: { businessLanguage: Loca
     options.mode === "create" ? !name[options.businessLanguage] : Object.keys(name).length === 0;
   if (nameRequired) errors.name = "nameRequired";
 
-  const minor = parseMoney(form.price);
+  const minor = parsePrice(form.price);
   if (minor === null) errors.price = "priceInvalid";
 
   const duration = Number(form.duration);
