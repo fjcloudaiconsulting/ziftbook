@@ -33,6 +33,7 @@ openapi: ## Regenerate the committed API contract (backend/openapi.json)
 lint:
 	node scripts/check-catalogs.mjs
 	node scripts/check-env-names.mjs
+	node scripts/check-env-doc.mjs
 	$(API) ruff check .
 	$(API) ruff format --check .
 	$(WEB) lint

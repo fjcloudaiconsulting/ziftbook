@@ -330,3 +330,44 @@ names (`NODE_ENV`, `POSTGRES_*`, `PG*`, `CLOUDFLARE_API_TOKEN`). `node scripts/c
 Deployment settings are environment variables read at runtime; never add `NEXT_PUBLIC_*` variables, which Next.js
 bakes into the build. Configuration that code already covers stays in code (`landing/wrangler.jsonc`, the compose
 files); managing hosting infrastructure with Terraform is deferred until the platform is chosen (ZIF-20).
+
+### Environment variables
+
+Local dev (`make up`) needs no `.env`: `docker-compose.yaml` sets every variable itself. `.env.example` at the repo
+root is for `docker-compose-prod.yaml` only; copy it to `.env` next to that file and fill in the blanks. A row
+marked "secret" is never committed and never put in a shared `.env`: in a deployment it resolves from Secrets
+Manager, e.g. `{{resolve:secretsmanager:secret-id:SecretString:json-key}}` (see `TurnstileSettings`' comment and
+ZIF-38).
+
+| Name | Read by | Default | Required in production? | Secret? | What it does |
+|---|---|---|---|---|---|
+| **Database** | | | | | |
+| `ZIF_DATABASE_URL` | api, worker | none | yes | yes | `ziftbook_app`'s connection string. |
+| `ZIF_MIGRATE_DATABASE_URL` | migrations | none | yes | yes | `ziftbook_migrate`'s connection string, used to run Alembic. |
+| `ZIF_POSTGRES_PASSWORD` | compose | none | yes | yes | Postgres superuser password. |
+| `ZIF_MIGRATE_PASSWORD` | compose (`bootstrap.sql`) | none | yes | yes | `ziftbook_migrate` role password. |
+| `ZIF_APP_PASSWORD` | compose (`bootstrap.sql`) | none | yes | yes | `ziftbook_app` role password. |
+| **Mail** | | | | | |
+| `ZIF_SMTP_HOST` | worker | `smtp.eu.mailgun.org` | no | no | SMTP host. |
+| `ZIF_SMTP_PORT` | worker | `587` | no | no | SMTP port. |
+| `ZIF_SMTP_STARTTLS` | worker | `true` | no | no | Use STARTTLS. |
+| `ZIF_SMTP_USERNAME` | worker | none | yes | yes | SMTP auth username (Mailgun EU). |
+| `ZIF_SMTP_PASSWORD` | worker | `""` | yes | yes | SMTP auth password. |
+| `ZIF_SMTP_FROM` | worker | `ziftbook <no-reply@ziftbook.com>` | no | no | `From` header on outgoing email. |
+| `ZIF_APP_URL` | worker | `http://localhost:3000` | yes | no | Where links in emails point; must be the public web URL in production. |
+| **Security** | | | | | |
+| `ZIF_TURNSTILE_SECRET` | api | `""` | no | yes | Cloudflare Turnstile secret. Unset skips verification, logged on the `api started` line. |
+| `ZIF_TRUSTED_PROXIES` | api | `""` | yes | no | Addresses whose `X-Forwarded-For` the API believes. Empty trusts nobody. |
+| `ZIF_CLIENT_IP_HEADER` | frontend | none | no | no | Header the web app trusts for the visitor's address (staging: `cf-connecting-ip`). Set only behind a proxy that overwrites it. |
+| **Logging** | | | | | |
+| `ZIF_LOG_LEVEL` | api, worker, migrations | `INFO` | no | no | `DEBUG`/`INFO`/`WARNING`/`ERROR`. |
+| `ZIF_LOG_FORMAT` | api, worker, migrations | `json` | no | no | `json` or `text`. |
+| `ZIF_LOG_SQL` | api, worker, migrations | `false` | no | no | Logs SQL statements (never values) when the level is `DEBUG`. |
+| **Runtime** | | | | | |
+| `ZIF_APP_VERSION` | api | `dev` | no | no | Baked into the backend image at build time. |
+| `ZIF_HEALTHCHECK_URL` | worker | none | no | no | Pinged after every successful loop. |
+| `ZIF_IMAGE_TAG` | compose | none | yes | no | Release tag (`vX.Y.Z`) for the three GHCR images. |
+| `ZIF_API_URL` | frontend | none | yes | no | Backend base URL the web app proxies `/api` to. |
+
+`node scripts/check-env-names.mjs` (part of `make lint`) fails if a `ZIF_*` name read in code, or in a compose
+file, is missing from this table.

@@ -11,6 +11,10 @@ make setup   # enable git hooks, install api and web dependencies
 make lint typecheck test
 ```
 
+Local dev needs no configuration: `docker-compose.yaml` sets every environment variable itself, no `.env` required.
+Running the production compose file below is different: see the "Environment variables" table in
+[CONTRIBUTING.md](CONTRIBUTING.md) and `.env.example`.
+
 Run the whole app locally (Postgres 18, migrations, backend, background worker, Mailpit and the frontend in English,
 Dutch and Portuguese), with source changes synced and reloaded:
 
@@ -31,9 +35,10 @@ using itself. If another project's Mailpit (or anything else) is squatting on 10
 port and recreate Mailpit: `docker compose up -d --force-recreate --no-deps mailpit`.
 
 `docker-compose.yaml` is this local stack. `docker-compose-prod.yaml` runs a released version from GHCR
-(`ghcr.io/fjcloudaiconsulting/ziftbook/{backend,frontend,migrations}`); its header lists the variables it needs.
-The `migrations` image runs `alembic upgrade head` as an init container: the backend starts only if it succeeds, and
-rerunning it is a no-op. The same image is meant for the Kubernetes init container.
+(`ghcr.io/fjcloudaiconsulting/ziftbook/{backend,frontend,migrations}`); see `.env.example` and the CONTRIBUTING.md
+table for the variables it needs. The `migrations` image runs `alembic upgrade head` as an init container: the
+backend starts only if it succeeds, and rerunning it is a no-op. The same image is meant for the Kubernetes init
+container.
 
 ```sh
 docker login ghcr.io

@@ -39,6 +39,7 @@ jobs:
       - run: node --test "scripts/*.test.mjs"
       - run: node scripts/check-catalogs.mjs
       - run: node scripts/check-env-names.mjs
+      - run: node scripts/check-env-doc.mjs
       - name: No build-time public env vars in the web app
         run: |
           if grep -rn "NEXT_PUBLIC_" frontend --include='*.ts' --include='*.tsx' --include='*.mjs' --include='*.json' \
