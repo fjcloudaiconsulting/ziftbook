@@ -27,7 +27,8 @@
     "unreachable": "Não conseguimos acessar o ziftbook. Confira sua conexão e tente de novo.",
     "unexpected": "Algo deu errado do nosso lado. Tente de novo em instantes.",
     "noScript": "Esta página precisa de JavaScript para manter seu link privado. Ative no navegador e abra de novo o link do e-mail.",
-    "needsJavaScript": "Esta página precisa de JavaScript. Ative no navegador e recarregue a página."
+    "needsJavaScript": "Esta página precisa de JavaScript. Ative no navegador e recarregue a página.",
+    "tryAgain": "Tentar novamente"
   },
   "Inbox": {
     "title": "Confira seu e-mail",
@@ -224,7 +225,8 @@
       "closesAtBlock": "{weekday}, bloco {n}, a loja fecha às",
       "removeOnly": "Fechar a loja em {weekday}, removendo {from} até {to}",
       "remove": "Remover {weekday} {from} até {to}",
-      "allClosedRefusal": "Abra a loja em pelo menos um dia."
+      "allClosedRefusal": "Abra a loja em pelo menos um dia.",
+      "saved": "Salvo. Os clientes só podem agendar enquanto a loja estiver aberta."
     }
   }
 }

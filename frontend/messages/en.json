@@ -27,7 +27,8 @@
     "unreachable": "We couldn't reach ziftbook. Check your connection and try again.",
     "unexpected": "Something went wrong on our side. Try again in a moment.",
     "noScript": "This page needs JavaScript to keep your link private. Turn it on in your browser, then open the link from the email again.",
-    "needsJavaScript": "This page needs JavaScript. Turn it on in your browser, then reload the page."
+    "needsJavaScript": "This page needs JavaScript. Turn it on in your browser, then reload the page.",
+    "tryAgain": "Try again"
   },
   "Inbox": {
     "title": "Check your inbox",
@@ -224,7 +225,8 @@
       "closesAtBlock": "{weekday}, block {n}, shop closes at",
       "removeOnly": "Close the shop on {weekday}, removing {from} to {to}",
       "remove": "Remove {weekday} {from} to {to}",
-      "allClosedRefusal": "Open the shop on at least one day."
+      "allClosedRefusal": "Open the shop on at least one day.",
+      "saved": "Saved. Clients can only book while the shop is open."
     }
   }
 }

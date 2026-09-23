@@ -214,3 +214,72 @@
 }
 .stepsHint { margin: 0; font-size: 0.875rem; color: var(--muted); }
 .placeholderAction { justify-self: start; width: auto; }
+
+/* Week editor (opening hours, PR 2; working hours, PR 4): the day list and its sticky savebar. */
+.days { display: grid; gap: 0.5rem; }
+.day { border: 1px solid var(--line); border-radius: 0.85rem; padding: 0.75rem 0.9rem; background: var(--bg); }
+.dayHead { display: flex; flex-wrap: wrap; align-items: center; gap: 0.25rem 0.75rem; min-height: 2.5rem; }
+.dayHead .dayName { margin-inline-end: auto; }
+.dayName { font: 600 1rem/1 var(--font-body), system-ui, sans-serif; }
+.dayClosed { color: var(--muted); font-size: 0.9375rem; }
+.shifts { display: grid; gap: 0.5rem; margin-top: 0.6rem; }
+.shift { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.shift input[type="time"] {
+  min-height: 48px;
+  min-width: 6.5rem;
+  flex: 1 1 6.5rem;
+  padding: 0 0.7rem;
+  border: 1px solid var(--field-line);
+  border-radius: 0.7rem;
+  background: var(--bg);
+  color: var(--ink);
+  font: 400 1rem/1 var(--font-body), system-ui, sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+.shift input[aria-invalid="true"] { border-color: var(--error); border-width: 2px; }
+.shift .dash { color: var(--muted); flex: none; }
+.iconOnly {
+  min-height: 44px;
+  min-width: 44px;
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  border: 1px solid var(--line);
+  border-radius: 0.7rem;
+  background: var(--bg);
+  color: var(--muted);
+  cursor: pointer;
+}
+.iconOnly:hover { border-color: var(--field-line); color: var(--ink); }
+.dayActions { display: flex; flex-wrap: wrap; gap: 0.25rem 1rem; margin-top: 0.5rem; }
+
+/* Sticky, edge to edge, above the phone tab bar (which .content already reserves space for). */
+.savebar {
+  position: sticky;
+  bottom: calc(4.5rem + env(safe-area-inset-bottom));
+  z-index: var(--z-sticky);
+  background: var(--bg);
+  border-top: 1px solid var(--line);
+  margin: 0.25rem -1rem -1.5rem;
+  padding: 0.75rem 1rem calc(0.75rem + 1.5rem);
+  box-shadow: var(--lift);
+  display: flex;
+  align-items: center;
+  gap: 0.75rem 1rem;
+  flex-wrap: wrap;
+}
+.savebar .hint { flex: 1 1 100%; order: -1; }
+@media (min-width: 56rem) {
+  .savebar {
+    bottom: 0;
+    margin: 0.25rem -2rem -3rem;
+    padding: 0.9rem 2rem calc(0.9rem + 3rem);
+  }
+  .savebar .hint { flex: 1; order: 0; }
+}
+.saveButton { flex: 1 1 10rem; }
+@media (min-width: 56rem) {
+  .saveButton { flex: 0 0 auto; min-width: 11rem; }
+}
+/* Disabled because there is nothing to save reads differently from disabled because it is saving. */
+.saveIdle[aria-disabled="true"] { background: var(--surface); color: var(--muted); border-color: var(--line); opacity: 1; cursor: default; }

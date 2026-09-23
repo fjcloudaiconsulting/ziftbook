@@ -27,7 +27,8 @@
     "unreachable": "We konden ziftbook niet bereiken. Controleer je verbinding en probeer het opnieuw.",
     "unexpected": "Er ging bij ons iets mis. Probeer het zo nog eens.",
     "noScript": "Deze pagina heeft JavaScript nodig om je link privé te houden. Zet het aan in je browser en open de link uit de e-mail opnieuw.",
-    "needsJavaScript": "Deze pagina heeft JavaScript nodig. Zet het aan in je browser en laad de pagina opnieuw."
+    "needsJavaScript": "Deze pagina heeft JavaScript nodig. Zet het aan in je browser en laad de pagina opnieuw.",
+    "tryAgain": "Probeer opnieuw"
   },
   "Inbox": {
     "title": "Kijk in je inbox",
@@ -224,7 +225,8 @@
       "closesAtBlock": "{weekday}, blok {n}, winkel sluit om",
       "removeOnly": "Winkel sluiten op {weekday}, {from} tot {to} verwijderen",
       "remove": "{weekday} {from} tot {to} verwijderen",
-      "allClosedRefusal": "Open de winkel op ten minste één dag."
+      "allClosedRefusal": "Open de winkel op ten minste één dag.",
+      "saved": "Opgeslagen. Klanten kunnen alleen boeken terwijl de winkel open is."
     }
   }
 }
