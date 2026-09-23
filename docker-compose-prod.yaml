@@ -1,16 +1,11 @@
 # Production stack from the released images (docker-compose.yaml is the local development stack).
 # Run from a checkout of the release tag, after `docker login ghcr.io` (the packages are private):
 #   docker compose -f docker-compose-prod.yaml up -d
-# Required variables, from the environment or a .env file next to this file (never committed):
-#   ZIF_IMAGE_TAG           release tag (vX.Y.Z); the migrations image exists from the release after v0.1.1
-#   ZIF_POSTGRES_PASSWORD   Postgres superuser password
-#   ZIF_MIGRATE_PASSWORD    ziftbook_migrate password (URL-safe characters: it is part of a database URL)
-#   ZIF_APP_PASSWORD        ziftbook_app password
-# Optional: ZIF_HEALTHCHECK_URL, pinged by the worker after every successful loop; ZIF_SMTP_USERNAME and
-#   ZIF_SMTP_PASSWORD for sending email (Mailgun EU SMTP credentials); ZIF_LOG_LEVEL (default INFO),
-#   ZIF_LOG_FORMAT (default json) and ZIF_LOG_SQL (default false; SQL at DEBUG, never its values).
-#   ZIF_CLIENT_IP_HEADER is not passed through here on purpose. Port 3000 is published directly, so any
-#   header can be forged.
+# Every variable this file reads, its default and whether it's required or a secret: .env.example at
+# the repo root (copy it to a .env next to this file) and the "Environment variables" table in
+# CONTRIBUTING.md.
+# ZIF_CLIENT_IP_HEADER is not passed through here on purpose. Port 3000 is published directly, so any
+# header can be forged.
 name: ziftbook
 
 # Fixed addresses, so the backend can trust exactly the frontend (ZIF_TRUSTED_PROXIES). If this
@@ -84,6 +79,7 @@ services:
       ZIF_LOG_FORMAT: ${ZIF_LOG_FORMAT:-json}
       ZIF_LOG_SQL: ${ZIF_LOG_SQL:-false}
       ZIF_TRUSTED_PROXIES: 172.28.0.10
+      ZIF_TURNSTILE_SECRET: ${ZIF_TURNSTILE_SECRET:-}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/healthz')"]
       interval: 30s
@@ -109,6 +105,8 @@ services:
       # Mailgun EU SMTP by default (see MailSettings).
       ZIF_SMTP_USERNAME: ${ZIF_SMTP_USERNAME:-}
       ZIF_SMTP_PASSWORD: ${ZIF_SMTP_PASSWORD:-}
+      ZIF_SMTP_FROM: ${ZIF_SMTP_FROM:-}
+      ZIF_APP_URL: ${ZIF_APP_URL:?set ZIF_APP_URL}
 
   # The only published port; /api is forwarded to the backend on the internal network.
   frontend:
