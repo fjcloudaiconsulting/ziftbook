@@ -16,24 +16,27 @@
   text-decoration: none;
   color: var(--ink);
 }
+/* Closed, this shows only the current language's flag (sized to match the account button next to
+ * it in the console top bar); its accessible name still spells the language out. */
 .languageButton {
   display: inline-flex;
   align-items: center;
-  gap: 0.5rem;
-  min-block-size: 2.75rem;
-  padding: 0.5rem 0.85rem;
+  justify-content: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  flex: none;
+  padding: 0;
   border: 1px solid var(--line);
-  border-radius: 999px;
+  border-radius: 50%;
   background: var(--bg);
   color: var(--ink);
-  font: 600 0.9375rem/1 var(--font-body), system-ui, sans-serif;
   cursor: pointer;
+  overflow: hidden;
   anchor-name: --language-button;
 }
+.languageButton .flag { width: 1.5rem; height: 1.05rem; }
 .languageButton:hover { border-color: var(--muted); }
 .languageButton:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
-.chevron { color: var(--muted); transition: rotate 200ms var(--ease-out); }
-.languageButton:has(+ .languageMenu:popover-open) .chevron { rotate: 180deg; }
 .languageMenu {
   margin: 0;
   padding: 0.4rem;
@@ -67,6 +70,8 @@
   color: inherit;
   text-decoration: none;
 }
+.languageRow { display: flex; align-items: center; gap: 0.65rem; }
+.languageMenu .flag { flex: none; border-radius: 2px; }
 .languageMenu a:hover, .languageMenu a:focus-visible { background: var(--surface); outline: none; }
 .languageMenu a[aria-current="page"] { font-weight: 600; }
 .languageMenu a[aria-current="page"]::after {

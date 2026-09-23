@@ -17,6 +17,7 @@
 }
 .brand { display: flex; align-items: baseline; gap: 0.6rem; min-width: 0; }
 .bizName { color: var(--muted); font-size: 0.9375rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.topbarActions { display: flex; align-items: center; gap: 0.5rem; flex: none; }
 .iconButton {
   display: inline-flex;
   align-items: center;

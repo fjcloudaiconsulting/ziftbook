@@ -14,7 +14,7 @@ import {
 import { Link, usePathname, useRouter } from "@/i18n/navigation";
 import { allowed, guardedWrite, navFor, type Role, sectionOf, type Section, writeOutcome } from "@/lib/console";
 
-import { LanguageLinks } from "./header";
+import { LanguageSwitcher } from "./header";
 import { Banner, NoScript, type Outcome, problem, send } from "./parts";
 import styles from "./console.module.css";
 import uiStyles from "./ui.module.css";
@@ -161,8 +161,6 @@ function AccountPopover({ session, onSignOut }: { session: SessionOut; onSignOut
       <p className={styles.accountMeta}>
         {session.email} · {t(session.role === "owner" ? "owner" : "worker")}
       </p>
-      <div className={styles.popoverDivider} role="presentation" />
-      <LanguageLinks />
       <div className={styles.popoverDivider} role="presentation" />
       <div className={uiStyles.stack}>
         <button className={`${uiStyles.button} ${uiStyles.secondary}`} type="button" onClick={() => onSignOut(false)}>
@@ -334,13 +332,16 @@ export function Shell({ children }: { children: ReactNode }) {
             </Link>
             <span className={styles.bizName}>{session.business_name}</span>
           </span>
-          <button className={styles.iconButton} type="button" popoverTarget="account" aria-label={accountT("menu")}>
-            <svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18">
-              <circle cx="12" cy="9" r="3.5" fill="none" stroke="currentColor" strokeWidth="1.8" />
-              <path d="M5 19.5c1.2-3.3 3.8-5 7-5s5.8 1.7 7 5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-            </svg>
-          </button>
-          <AccountPopover session={session} onSignOut={onSignOut} />
+          <div className={styles.topbarActions}>
+            <LanguageSwitcher />
+            <button className={styles.iconButton} type="button" popoverTarget="account" aria-label={accountT("menu")}>
+              <svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18">
+                <circle cx="12" cy="9" r="3.5" fill="none" stroke="currentColor" strokeWidth="1.8" />
+                <path d="M5 19.5c1.2-3.3 3.8-5 7-5s5.8 1.7 7 5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+              </svg>
+            </button>
+            <AccountPopover session={session} onSignOut={onSignOut} />
+          </div>
         </header>
 
         {signOutFailure && (
