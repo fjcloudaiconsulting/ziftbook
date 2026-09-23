@@ -5,7 +5,15 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
 import { parseMoney } from "../lib/money.ts";
-import { activeServices, archivedServices, defaultBuffer, needsWorkerWarning, serviceBody, serviceName } from "../lib/services.ts";
+import {
+  activeServices,
+  archivedServices,
+  defaultBuffer,
+  initialLanguageTab,
+  needsWorkerWarning,
+  serviceBody,
+  serviceName,
+} from "../lib/services.ts";
 
 function body(form, options) {
   return serviceBody(form, options, parseMoney);
@@ -26,7 +34,7 @@ describe("serviceName", () => {
 });
 
 describe("serviceBody", () => {
-  const base = { businessLanguage: "nl", mode: "create" };
+  const base = { mode: "create" };
 
   test("blank or whitespace-only languages are omitted, never sent as \"\"", () => {
     const result = body(
@@ -40,7 +48,7 @@ describe("serviceBody", () => {
   test("edit that empties pt keeps every other language, and sends name without pt", () => {
     const result = body(
       { name: { nl: "Manicure", en: "Manicure", pt: "" }, description: {}, price: "35,00", duration: "45", gap: "default" },
-      { businessLanguage: "nl", mode: "edit" },
+      { mode: "edit" },
     );
     assert.ok(!("errors" in result));
     assert.deepEqual(result.body.name, { nl: "Manicure", en: "Manicure" });
@@ -58,16 +66,16 @@ describe("serviceBody", () => {
   test("edit body has only name, price and duration_minutes: never description or buffer_minutes", () => {
     const result = body(
       { name: { nl: "Manicure" }, description: { nl: "would be dropped" }, price: "35,00", duration: "45", gap: "fixed", fixedGap: "10" },
-      { businessLanguage: "nl", mode: "edit" },
+      { mode: "edit" },
     );
     assert.ok(!("errors" in result));
     assert.deepEqual(Object.keys(result.body).sort(), ["duration_minutes", "name", "price"]);
   });
 
-  test("create with an en-only name for a pt business is valid: any one language satisfies it, not specifically the business's", () => {
+  test("create with an en-only name is valid: any one language satisfies it, never a specific one", () => {
     const result = body(
       { name: { pt: "", en: "Test" }, description: {}, price: "35,00", duration: "45", gap: "default" },
-      { businessLanguage: "pt", mode: "create" },
+      { mode: "create" },
     );
     assert.ok(!("errors" in result), JSON.stringify(result));
     assert.deepEqual(result.body.name, { en: "Test" });
@@ -81,10 +89,10 @@ describe("serviceBody", () => {
     assert.equal(result.errors?.name, "nameRequired");
   });
 
-  test("edit of {pt: Unhas} with business nl is a valid body", () => {
+  test("edit of {pt: Unhas} is a valid body: a name in any single language is enough", () => {
     const result = body(
       { name: { nl: "", pt: "Unhas" }, description: {}, price: "35,00", duration: "45", gap: "default" },
-      { businessLanguage: "nl", mode: "edit" },
+      { mode: "edit" },
     );
     assert.ok(!("errors" in result), JSON.stringify(result));
     assert.deepEqual(result.body.name, { pt: "Unhas" });
@@ -93,7 +101,7 @@ describe("serviceBody", () => {
   test("edit with every language blank: still nameRequired", () => {
     const result = body(
       { name: { nl: "", en: "", pt: "" }, description: {}, price: "35,00", duration: "45", gap: "default" },
-      { businessLanguage: "nl", mode: "edit" },
+      { mode: "edit" },
     );
     assert.equal(result.errors?.name, "nameRequired");
   });
@@ -201,5 +209,27 @@ describe("defaultBuffer", () => {
 
   test("40 minutes at 10% is 4 (an exact value stays exact under ceil)", () => {
     assert.equal(defaultBuffer(40, 10), 4);
+  });
+});
+
+describe("initialLanguageTab", () => {
+  test("a viewer whose own language is blank, in an nl business, still opens on the viewer's language: the business's language is never consulted", () => {
+    assert.equal(initialLanguageTab("en", {}), "en");
+  });
+
+  test("editing a service with only pt text present opens on pt, not the viewer's empty language", () => {
+    assert.equal(initialLanguageTab("en", { pt: "Unhas" }), "pt");
+  });
+
+  test("the viewer's own language wins when it already has text, over any other present language", () => {
+    // pt, not first in LOCALES' canonical order (en, nl, pt): a version of initialLanguageTab
+    // that dropped the `if (name[viewerLocale]) return viewerLocale;` check entirely would still
+    // pass this with viewer=en (en is first anyway), so the fence uses viewer=pt instead, where
+    // only the viewer-language check — not the canonical-order fallback — can produce "pt".
+    assert.equal(initialLanguageTab("pt", { en: "Nails", pt: "Unhas" }), "pt");
+  });
+
+  test("first-present-in-canonical-order when the viewer's language is blank and several others have text", () => {
+    assert.equal(initialLanguageTab("pt", { nl: "Nagels", en: "Nails" }), "en");
   });
 });

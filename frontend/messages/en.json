@@ -203,8 +203,7 @@
           "pt": "Portuguese"
         },
         "nameLangLabel": "Name in {language}",
-        "namePlaceholder": "Leave empty to show the {language} name",
-        "nameHint": "Clients see the name in their own language, else your business language, else whichever one you've set.",
+        "nameHint": "Add a name in at least one language. Clients see the name in their own language if you add one; otherwise the one you wrote.",
         "nameRequired": "Enter a name in at least one language.",
         "descriptionLabel": "Description",
         "descriptionOptional": "· optional",

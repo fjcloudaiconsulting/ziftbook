@@ -19,7 +19,9 @@ import {
   activeServices,
   archivedServices,
   defaultBuffer,
+  initialLanguageTab,
   type Locale,
+  LOCALES,
   type NameMap,
   needsWorkerWarning,
   serviceBody,
@@ -30,8 +32,6 @@ import {
 import { SignedOutBanner, useConsole } from "../../_ui/console";
 import { Banner, FieldError, Heading, Mark, problem, Submit } from "../../_ui/parts";
 import styles from "../../_ui/ui.module.css";
-
-const LOCALES: Locale[] = ["en", "nl", "pt"];
 
 function useCurrencyName(currency: string, locale: string): string {
   return useMemo(() => {
@@ -291,9 +291,8 @@ function LangField({
   headingHint,
   values,
   onChange,
-  businessLanguage,
-  optionalHint,
-  requiredHint,
+  initialTab,
+  hint,
   placeholder,
   multiline,
   errorMessage,
@@ -302,15 +301,21 @@ function LangField({
   headingHint?: string;
   values: Record<Locale, string>;
   onChange(locale: Locale, value: string): void;
-  businessLanguage: Locale;
-  optionalHint?: string;
-  requiredHint?: string;
-  placeholder?(language: string): string;
+  // Which tab opens first: the viewer's own language, else the first language with text, else the
+  // viewer's own — never a business language (owner ruling 2026-09-23: the business's language
+  // must never steer which language an owner is nudged to fill in first). Computed once by the
+  // caller via `initialLanguageTab`, not derived in here, so the same rule is fenced in one place.
+  initialTab: Locale;
+  // Shown next to every tab's label alike (no tab is singled out as "required"): used by the
+  // description field ("· optional"); the name field passes none, since at least one language is
+  // required overall, but never a specific one.
+  hint?: string;
+  placeholder?: string;
   multiline?: boolean;
   errorMessage?: string;
 }) {
   const t = useTranslations("Console.services.form");
-  const [active, setActive] = useState<Locale>(businessLanguage);
+  const [active, setActive] = useState<Locale>(initialTab);
   const idBase = useId();
   const errorId = `${idBase}-error`;
   const headingId = `${idBase}-heading`;
@@ -382,7 +387,7 @@ function LangField({
                 <textarea
                   id={`${idBase}-${loc}-input`}
                   maxLength={1000}
-                  placeholder={loc === businessLanguage ? placeholder?.(t(`languages.${businessLanguage}`)) : undefined}
+                  placeholder={placeholder}
                   value={values[loc]}
                   onChange={(event) => onChange(loc, event.target.value)}
                 />
@@ -392,10 +397,10 @@ function LangField({
             <>
               <label className={styles.label} htmlFor={`${idBase}-${loc}-input`}>
                 {t("nameLangLabel", { language: t(`languages.${loc}`) })}
-                {(loc === businessLanguage ? requiredHint : optionalHint) && (
+                {hint && (
                   <>
                     {" "}
-                    <span className={styles.optional}>{loc === businessLanguage ? requiredHint : optionalHint}</span>
+                    <span className={styles.optional}>{hint}</span>
                   </>
                 )}
               </label>
@@ -405,11 +410,13 @@ function LangField({
                   type="text"
                   maxLength={100}
                   autoComplete="off"
-                  placeholder={loc !== businessLanguage ? placeholder?.(t(`languages.${businessLanguage}`)) : undefined}
+                  placeholder={placeholder}
                   value={values[loc]}
                   onChange={(event) => onChange(loc, event.target.value)}
-                  aria-invalid={loc === businessLanguage && errorMessage ? true : undefined}
-                  aria-describedby={loc === businessLanguage && errorMessage ? errorId : undefined}
+                  // The error attaches to whichever tab happens to be open, not a fixed language:
+                  // there is no longer a "the" required tab (owner ruling 2026-09-23).
+                  aria-invalid={loc === active && errorMessage ? true : undefined}
+                  aria-describedby={loc === active && errorMessage ? errorId : undefined}
                 />
               </div>
             </>
@@ -481,7 +488,7 @@ function ServiceFormBody(props: Props) {
     // `await`, so only the first call in a tick ever gets past it.
     if (submitting.current) return;
     const form: ServiceForm = { name, description, price, duration, gap, fixedGap };
-    const result = serviceBody(form, { businessLanguage: settings.language, mode: editing ? "edit" : "create" }, parseMoney);
+    const result = serviceBody(form, { mode: editing ? "edit" : "create" }, parseMoney);
     if ("errors" in result && result.errors) {
       setErrors(result.errors);
       return;
@@ -565,11 +572,10 @@ function ServiceFormBody(props: Props) {
           markDirty();
           setName((current) => ({ ...current, [loc]: value }));
         }}
-        businessLanguage={settings.language}
-        placeholder={(language) => t("namePlaceholder", { language })}
+        initialTab={initialLanguageTab(locale as Locale, name)}
         errorMessage={errors.name ? t("nameRequired") : undefined}
       />
-      {!editing && <p className={styles.hint}>{t("nameHint")}</p>}
+      <p className={styles.hint}>{t("nameHint")}</p>
 
       {!editing && (
         <LangField
@@ -580,10 +586,9 @@ function ServiceFormBody(props: Props) {
             markDirty();
             setDescription((current) => ({ ...current, [loc]: value }));
           }}
-          businessLanguage={settings.language}
-          requiredHint={t("descriptionOptional")}
-          optionalHint={t("descriptionOptional")}
-          placeholder={() => t("descriptionPlaceholder")}
+          initialTab={initialLanguageTab(locale as Locale, description)}
+          hint={t("descriptionOptional")}
+          placeholder={t("descriptionPlaceholder")}
           multiline
         />
       )}
