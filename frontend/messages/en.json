@@ -338,7 +338,7 @@
       "emptyBody": "Add the times this person is at work each week. Clients can only book inside them, so nothing is bookable until they exist.",
       "emptyCta": "Set the working week",
       "emptyHintBounded": "The shop is open {days}. Working hours sit inside those times, so a day the shop is closed cannot be worked. <link>Change the opening hours</link>",
-      "emptyHintBoundedWorker": "The shop is open {days}. Working hours sit inside those times, so a day the shop is closed cannot be worked. Ask your owner to change the opening hours.",
+      "emptyHintBoundedWorker": "The shop is open {days}. Working hours sit inside those times, so a day the shop is closed cannot be worked. Ask the business owner to change the opening hours.",
       "closed": "Not working",
       "shopClosed": "Shop closed",
       "shopOpen": "Shop open {ranges}",
@@ -361,8 +361,8 @@
       "noteBounded": "Working hours sit inside the shop's opening hours, shown under each day. <link>Change the opening hours</link>",
       "noteBoundedWorker": "Your hours sit inside the shop's opening hours, shown under each day. Only an owner can change those.",
       "changeOpeningHours": "Change the opening hours",
-      "lockedNoteBounded": "Your owner sets these hours, inside the shop's opening hours: {days}. Ask them to change them. You can still block time when you are not available.",
-      "lockedNoteUnbounded": "Your owner sets these hours. Ask them to change them. You can still block time when you are not available."
+      "lockedNoteBounded": "The business owner sets these hours, inside the shop's opening hours: {days}. Ask them to change them. You can still block time when you are not available.",
+      "lockedNoteUnbounded": "The business owner sets these hours. Ask them to change them. You can still block time when you are not available."
     }
   }
 }

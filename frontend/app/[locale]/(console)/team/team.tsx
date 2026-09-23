@@ -250,6 +250,9 @@ export function TeamList() {
   const sendAgainButtons = useRef<Map<string, HTMLButtonElement>>(new Map());
   const inviteButton = useRef<HTMLButtonElement>(null);
   const pendingFocusIndex = useRef<number | null>(null);
+  // The header button unmounts while the form is open, so it isn't there yet the instant the form
+  // closes: this fires once the next render has it back, whichever of the three things asked for it.
+  const focusInviteButtonPending = useRef(false);
 
   function loadInvites() {
     if (!canInvite(session.role as Role)) return;
@@ -276,6 +279,18 @@ export function TeamList() {
     });
   }
 
+  /** After Send invite, form Cancel, or a stale (404) revoke: the form or the row is gone, so
+   * focus returns to the one control still on the page that opens it again. */
+  function closeInviteForm() {
+    focusInviteButtonPending.current = true;
+    setInviting(false);
+  }
+
+  function reloadAfterStaleRevoke() {
+    focusInviteButtonPending.current = true;
+    loadInvites();
+  }
+
   useEffect(() => {
     if (pendingFocusIndex.current === null) return;
     const idx = pendingFocusIndex.current;
@@ -285,6 +300,12 @@ export function TeamList() {
     if (neighbour) sendAgainButtons.current.get(neighbour.id)?.focus();
     else inviteButton.current?.focus();
   }, [invites]);
+
+  useEffect(() => {
+    if (!focusInviteButtonPending.current) return;
+    focusInviteButtonPending.current = false;
+    inviteButton.current?.focus();
+  }, [inviting, invites, invitesFailure]);
 
   function load() {
     call(() => membersList()).then(async (outcome) => {
@@ -362,10 +383,10 @@ export function TeamList() {
       )}
       {inviting && (
         <InviteForm
-          onCancel={() => setInviting(false)}
+          onCancel={closeInviteForm}
           onSent={(invite) => {
             applyInvite(invite);
-            setInviting(false);
+            closeInviteForm();
           }}
           onSignedOut={setSignedOut}
         />
@@ -425,7 +446,7 @@ export function TeamList() {
                 invite={invite}
                 onResent={applyInvite}
                 onRevoked={revokeRow}
-                onRevokeStale={loadInvites}
+                onRevokeStale={reloadAfterStaleRevoke}
                 onSignedOut={setSignedOut}
                 sendAgainRef={(id, el) => {
                   if (el) sendAgainButtons.current.set(id, el);

@@ -338,7 +338,7 @@
       "emptyBody": "Voeg de tijden toe dat deze persoon elke week werkt. Klanten kunnen alleen hierbinnen boeken, dus er is niets boekbaar tot ze bestaan.",
       "emptyCta": "Werkweek instellen",
       "emptyHintBounded": "De winkel is open {days}. Werktijden vallen binnen die tijden, dus een dag dat de winkel gesloten is kan niet gewerkt worden. <link>Openingstijden wijzigen</link>",
-      "emptyHintBoundedWorker": "De winkel is open {days}. Werktijden vallen binnen die tijden, dus een dag dat de winkel gesloten is kan niet gewerkt worden. Vraag je eigenaar om de openingstijden te wijzigen.",
+      "emptyHintBoundedWorker": "De winkel is open {days}. Werktijden vallen binnen die tijden, dus een dag dat de winkel gesloten is kan niet gewerkt worden. Vraag de eigenaar van het bedrijf om de openingstijden te wijzigen.",
       "closed": "Werkt niet",
       "shopClosed": "Winkel gesloten",
       "shopOpen": "Winkel open {ranges}",
@@ -361,8 +361,8 @@
       "noteBounded": "Werktijden vallen binnen de openingstijden van de winkel, onder elke dag getoond. <link>Openingstijden wijzigen</link>",
       "noteBoundedWorker": "Je werktijden vallen binnen de openingstijden van de winkel, onder elke dag getoond. Alleen een eigenaar kan deze wijzigen.",
       "changeOpeningHours": "Openingstijden wijzigen",
-      "lockedNoteBounded": "Je eigenaar stelt deze uren in, binnen de openingstijden van de winkel: {days}. Vraag diegene om ze te wijzigen. Je kunt nog wel tijd blokkeren wanneer je niet beschikbaar bent.",
-      "lockedNoteUnbounded": "Je eigenaar stelt deze uren in. Vraag diegene om ze te wijzigen. Je kunt nog wel tijd blokkeren wanneer je niet beschikbaar bent."
+      "lockedNoteBounded": "De eigenaar van het bedrijf stelt deze uren in, binnen de openingstijden van de winkel: {days}. Vraag diegene om ze te wijzigen. Je kunt nog wel tijd blokkeren wanneer je niet beschikbaar bent.",
+      "lockedNoteUnbounded": "De eigenaar van het bedrijf stelt deze uren in. Vraag diegene om ze te wijzigen. Je kunt nog wel tijd blokkeren wanneer je niet beschikbaar bent."
     }
   }
 }
