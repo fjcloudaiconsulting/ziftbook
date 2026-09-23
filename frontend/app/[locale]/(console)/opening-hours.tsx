@@ -28,9 +28,10 @@ export function OpeningHours() {
   function load() {
     call(() => openingHoursRead()).then((outcome) => {
       if (outcome.status === 200 && outcome.data) {
+        const shifts = outcome.data;
         setFailure(null);
-        setRawEmpty(outcome.data!.length === 0);
-        setDays(outcome.data!.length === 0 ? emptyWeek() : daysFromShifts(outcome.data!));
+        setRawEmpty(shifts.length === 0);
+        setDays(shifts.length === 0 ? emptyWeek() : daysFromShifts(shifts));
       } else {
         setFailure(problem(outcome));
       }

@@ -27,6 +27,10 @@
   --lift: 0 -0.5rem 1.5rem -1rem oklch(0.23 0.025 28 / 0.28);
   --z-sticky: 10;
   --z-tabs: 20;
+  /* The phone tab bar's own rendered height (.tab's 3rem min-height plus .tabbar's 0.35rem top and
+     bottom padding): the week savebar sticks flush above it, so its background reaches the tab
+     bar with no gap of scrolled content showing between them. */
+  --tabbar-h: 3.7rem;
 }
 
 *, *::before, *::after { box-sizing: border-box; }

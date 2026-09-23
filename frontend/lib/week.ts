@@ -1,9 +1,7 @@
-// Pure logic shared by the opening-hours (PR 2) and working-hours (PR 4) week editors: turning the
-// UI's per-day shift lists into the PUT body, checking them for problems before a save, and the
-// weekday/city/list formatting the savebar and error banners use. Kept free of React so
-// node --test can run it directly.
-
-import { dateLocale } from "./console.ts";
+// Pure logic shared by the opening-hours and working-hours week editors: turning the UI's per-day
+// shift lists into the PUT body, checking them for problems before a save, and the
+// weekday/city/list formatting the savebar and error banners use. Kept free of React (and of any
+// sibling import) so node --test can run it directly.
 
 export const WEEKDAYS = [1, 2, 3, 4, 5, 6, 7] as const;
 
@@ -25,6 +23,13 @@ export function daysFromShifts(shifts: { weekday: number; starts_at: string; end
       .map((s) => ({ start: s.starts_at, end: s.ends_at }))
       .sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : 0)),
   }));
+}
+
+/** An opening-hours GET turned into a `weekProblems` envelope. `[]` means never configured
+ * (`schedule.py:170-171`), which must stay `null` (unbounded) here: seven empty `daysFromShifts`
+ * days would instead read as "closed every day", refusing every shift. */
+export function envelopeFromShifts(shifts: { weekday: number; starts_at: string; ends_at: string }[]): Day[] | null {
+  return shifts.length === 0 ? null : daysFromShifts(shifts);
 }
 
 /** The PUT body: every non-empty shift, flattened and sorted by weekday then start (never by
@@ -154,12 +159,27 @@ export function problemList(phrases: string[], locale: string): string {
 /**
  * Weekdays as one run ("Tuesday to Saturday") when three or more sort into one unbroken sequence
  * that never wraps Sunday to Monday (the week is Monday-first); otherwise a plain list ("Monday,
- * Wednesday and Friday", `dateLocale`: en-GB drops the Oxford comma).
+ * Wednesday and Friday", no Oxford comma in en-GB). `locale` is already the caller's resolved
+ * date locale (`dateLocale(locale)` from `lib/console.ts`): this file takes no sibling import, so
+ * it stays runnable by `node --test` with no module resolution to configure. `formatRange` is the
+ * catalog's `{from} to {to}` phrase, so the word between the two weekdays is translated too.
  */
-export function daysSummary(weekdays: number[], locale: string): string {
+export function daysSummary(weekdays: number[], locale: string, formatRange: (from: string, to: string) => string): string {
   const sorted = [...weekdays].sort((a, b) => a - b);
-  const dl = dateLocale(locale);
   const isRun = sorted.length >= 3 && sorted.every((w, i) => i === 0 || w === sorted[i - 1] + 1);
-  if (isRun) return `${weekdayName(sorted[0], dl)} to ${weekdayName(sorted.at(-1)!, dl)}`;
-  return new Intl.ListFormat(dl, { type: "conjunction" }).format(sorted.map((w) => weekdayName(w, dl)));
+  if (isRun) return formatRange(weekdayName(sorted[0], locale), weekdayName(sorted.at(-1)!, locale));
+  return new Intl.ListFormat(locale, { type: "conjunction" }).format(sorted.map((w) => weekdayName(w, locale)));
+}
+
+/** The shift on a day whose start (or end) overlaps another, and the exact overlap window (the
+ * intersection, not the outer span): two shifts 09:00-18:00 and 10:00-11:00 overlap 10:00-11:00,
+ * never 10:00-18:00. Used to name the window in the field error under the day. */
+export function overlapWindow(shifts: Shift[]): { from: string; to: string } | null {
+  const sorted = sortShifts(shifts);
+  for (let i = 1; i < sorted.length; i++) {
+    if (sorted[i].start < sorted[i - 1].end) {
+      return { from: sorted[i].start, to: sorted[i].end < sorted[i - 1].end ? sorted[i].end : sorted[i - 1].end };
+    }
+  }
+  return null;
 }

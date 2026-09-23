@@ -215,7 +215,7 @@
 .stepsHint { margin: 0; font-size: 0.875rem; color: var(--muted); }
 .placeholderAction { justify-self: start; width: auto; }
 
-/* Week editor (opening hours, PR 2; working hours, PR 4): the day list and its sticky savebar. */
+/* Week editor (opening hours; working hours later): the day list and its sticky savebar. */
 .days { display: grid; gap: 0.5rem; }
 .day { border: 1px solid var(--line); border-radius: 0.85rem; padding: 0.75rem 0.9rem; background: var(--bg); }
 .dayHead { display: flex; flex-wrap: wrap; align-items: center; gap: 0.25rem 0.75rem; min-height: 2.5rem; }
@@ -253,10 +253,11 @@
 .iconOnly:hover { border-color: var(--field-line); color: var(--ink); }
 .dayActions { display: flex; flex-wrap: wrap; gap: 0.25rem 1rem; margin-top: 0.5rem; }
 
-/* Sticky, edge to edge, above the phone tab bar (which .content already reserves space for). */
+/* Sticky, edge to edge, flush above the phone tab bar: its own background reaches all the way
+   down to the tab bar's top edge, so no scrolled content shows through a gap between them. */
 .savebar {
   position: sticky;
-  bottom: calc(4.5rem + env(safe-area-inset-bottom));
+  bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom));
   z-index: var(--z-sticky);
   background: var(--bg);
   border-top: 1px solid var(--line);

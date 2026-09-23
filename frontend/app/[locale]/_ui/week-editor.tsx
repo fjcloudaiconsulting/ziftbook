@@ -4,7 +4,17 @@ import { useTranslations } from "next-intl";
 import { type FormEvent, useState } from "react";
 
 import { dateLocale } from "@/lib/console";
-import { changedDays, type Day, daysFromShifts, daysSummary, type Shift, weekBody, weekdayName, weekProblems } from "@/lib/week";
+import {
+  changedDays,
+  type Day,
+  daysFromShifts,
+  daysSummary,
+  overlapWindow,
+  problemList,
+  weekBody,
+  weekdayName,
+  weekProblems,
+} from "@/lib/week";
 
 import { SignedOutBanner } from "./console";
 import styles from "./console.module.css";
@@ -16,16 +26,10 @@ type T = ReturnType<typeof useTranslations>;
 type Phase = "idle" | "saving" | "saved" | "error";
 type Status = Phase | "dirty";
 
-/** The shift on a day whose start (or end) overlaps another, and the exact overlap window: the
- * drawn field error names it ("cover 13:00 to 14:00 twice"). Presentation only, not exported: the
- * real overlap *check* is `weekProblems`, this only finds which pair to name in the message. */
-function overlapWindow(shifts: Shift[]): { from: string; to: string } | null {
-  const sorted = [...shifts].sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : 0));
-  for (let i = 1; i < sorted.length; i++) {
-    if (sorted[i].start < sorted[i - 1].end) return { from: sorted[i].start, to: sorted[i - 1].end };
-  }
-  return null;
-}
+/** A server 422 the browser's own `weekProblems` would also have caught, mapped to the same
+ * message a client-side check shows. Reached only on a race: two saves at once, or the opening
+ * envelope narrowing between load and save. */
+type ServerProblem = "opening_hours_required" | "end_not_after_start" | "overlapping_hours";
 
 function shiftLabel(kind: "opensAt" | "closesAt", weekday: string, index: number, total: number, t: T): string {
   if (total === 1) return t(kind, { weekday });
@@ -34,15 +38,24 @@ function shiftLabel(kind: "opensAt" | "closesAt", weekday: string, index: number
   return t(`${kind}Block`, { weekday, n: index + 1 });
 }
 
+/** The top banner's one phrase per problem day (`Console.week.phrase*`). Every `weekProblems`
+ * per-day code has a branch: none silently falls through to another code's words. */
+function dayPhrase(code: string, weekday: string, tWeek: T): string {
+  if (code === "overlapping_hours") return tWeek("phraseOverlapping", { weekday });
+  if (code === "end_not_after_start") return tWeek("phraseEndNotAfterStart", { weekday });
+  if (code === "outside_opening_hours") return tWeek("phraseOutsideOpeningHours", { weekday });
+  return tWeek("phraseTimeRequired", { weekday });
+}
+
 type ApiShift = { weekday: number; starts_at: string; ends_at: string };
 
 type WeekEditorProps = {
   initial: Day[];
-  /** The opening-hours envelope working hours must fall inside (PR 4). `null` here in PR 2: the
-   * opening week itself has no envelope. */
+  /** The opening-hours envelope working hours must fall inside. `null` here in the opening-hours
+   * page itself: the opening week has no envelope of its own. */
   envelope: Day[] | null;
   locale: string;
-  /** `Console.opening` (PR 2) or its PR 4 equivalent: the page-specific copy. */
+  /** The page-specific copy (`Console.opening`, or its working-hours equivalent). */
   t: T;
   /** `Console.week`: the shared savebar, error and day-editing copy. */
   tWeek: T;
@@ -52,10 +65,12 @@ type WeekEditorProps = {
 
 export function WeekEditor({ initial, envelope, locale, t, tWeek, onSave, savedMessage }: WeekEditorProps) {
   const form = useTranslations("Form");
+  const dl = dateLocale(locale);
   const [committed, setCommitted] = useState(initial);
   const [days, setDays] = useState(initial);
   const [phase, setPhase] = useState<Phase>("idle");
   const [problems, setProblems] = useState<ReturnType<typeof weekProblems>>({ byDay: {} });
+  const [serverProblem, setServerProblem] = useState<ServerProblem | null>(null);
   const [writeFailure, setWriteFailure] = useState<Outcome<unknown> | null>(null);
 
   const changed = changedDays(committed, days);
@@ -68,6 +83,7 @@ export function WeekEditor({ initial, envelope, locale, t, tWeek, onSave, savedM
     if (phase !== "saving") {
       setPhase("idle");
       setProblems({ byDay: {} });
+      setServerProblem(null);
       setWriteFailure(null);
     }
   }
@@ -102,15 +118,17 @@ export function WeekEditor({ initial, envelope, locale, t, tWeek, onSave, savedM
     setDays(committed);
     setPhase("idle");
     setProblems({ byDay: {} });
+    setServerProblem(null);
     setWriteFailure(null);
   }
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
-    if (status === "idle") return;
+    if (status === "idle" || status === "saved") return;
     const result = weekProblems(days, envelope);
     if (Object.keys(result.byDay).length > 0 || result.overall) {
       setProblems(result);
+      setServerProblem(null);
       setWriteFailure(null);
       setPhase("error");
       return;
@@ -122,10 +140,15 @@ export function WeekEditor({ initial, envelope, locale, t, tWeek, onSave, savedM
       setCommitted(next);
       setDays(next);
       setProblems({ byDay: {} });
+      setServerProblem(null);
       setWriteFailure(null);
       setPhase("saved");
     } else {
-      setWriteFailure(outcome);
+      if (outcome.status === 422 && (outcome.code === "opening_hours_required" || outcome.code === "end_not_after_start" || outcome.code === "overlapping_hours")) {
+        setServerProblem(outcome.code);
+      } else {
+        setWriteFailure(outcome);
+      }
       setPhase("error");
     }
   }
@@ -134,25 +157,25 @@ export function WeekEditor({ initial, envelope, locale, t, tWeek, onSave, savedM
   const problemWeekdays = Object.keys(problems.byDay)
     .map(Number)
     .sort((a, b) => a - b);
-  const genericFailure = writeFailure && writeFailure.status !== 401 && problems.overall !== "opening_hours_required" && problemWeekdays.length === 0;
+  const genericFailure = writeFailure && writeFailure.status !== 401;
 
   return (
     <form className={uiStyles.stack} noValidate onSubmit={onSubmit}>
       {writeFailure?.status === 401 && <SignedOutBanner />}
       {genericFailure && <Banner tone="error">{form(problem(writeFailure!))}</Banner>}
-      {problems.overall === "opening_hours_required" && <Banner tone="error">{t("allClosedRefusal")}</Banner>}
+      {(problems.overall === "opening_hours_required" || serverProblem === "opening_hours_required") && (
+        <Banner tone="error">{t("allClosedRefusal")}</Banner>
+      )}
+      {problems.overall === "too_many" && <Banner tone="error">{tWeek("tooMany")}</Banner>}
+      {serverProblem === "end_not_after_start" && <Banner tone="error">{tWeek("serverEndNotAfterStart")}</Banner>}
+      {serverProblem === "overlapping_hours" && <Banner tone="error">{tWeek("serverOverlapping")}</Banner>}
       {problemWeekdays.length > 0 && (
         <Banner tone="error">
           {tWeek("notSaved", {
             count: problemWeekdays.length,
-            list: new Intl.ListFormat(locale, { type: "conjunction" }).format(
-              problemWeekdays.map((weekday) => {
-                const code = problems.byDay[weekday];
-                const weekdayText = weekdayName(weekday, dateLocale(locale));
-                if (code === "overlapping_hours") return tWeek("phraseOverlapping", { weekday: weekdayText });
-                if (code === "end_not_after_start") return tWeek("phraseEndNotAfterStart", { weekday: weekdayText });
-                return tWeek("phraseTimeRequired", { weekday: weekdayText });
-              }),
+            list: problemList(
+              problemWeekdays.map((weekday) => dayPhrase(problems.byDay[weekday]!, weekdayName(weekday, dl), tWeek)),
+              locale,
             ),
           })}
         </Banner>
@@ -160,7 +183,7 @@ export function WeekEditor({ initial, envelope, locale, t, tWeek, onSave, savedM
 
       <div className={styles.days}>
         {days.map((day) => {
-          const weekdayText = weekdayName(day.weekday, dateLocale(locale));
+          const weekdayText = weekdayName(day.weekday, dl);
           const code = problems.byDay[day.weekday];
           const errorId = `day-${day.weekday}-error`;
           const overlap = code === "overlapping_hours" ? overlapWindow(day.shifts) : null;
@@ -192,7 +215,7 @@ export function WeekEditor({ initial, envelope, locale, t, tWeek, onSave, savedM
                           ? shift.start === "" || shift.end === ""
                           : code === "end_not_after_start"
                             ? shift.end !== "" && shift.start !== "" && shift.end <= shift.start
-                            : code === "overlapping_hours";
+                            : code === "overlapping_hours" || code === "outside_opening_hours";
                       const removeLabel =
                         day.shifts.length === 1
                           ? t("removeOnly", { weekday: weekdayText, from: shift.start, to: shift.end })
@@ -214,7 +237,7 @@ export function WeekEditor({ initial, envelope, locale, t, tWeek, onSave, savedM
                             onChange={(e) => updateShift(day.weekday, index, "start", e.target.value)}
                           />
                           <span className={styles.dash} aria-hidden="true">
-                            {"–"}
+                            –
                           </span>
                           <label className={uiStyles.srOnly} htmlFor={`shift-${day.weekday}-${index}-end`}>
                             {shiftLabel("closesAt", weekdayText, index, day.shifts.length, t)}
@@ -254,9 +277,11 @@ export function WeekEditor({ initial, envelope, locale, t, tWeek, onSave, savedM
                         ? tWeek("fieldTimeRequired")
                         : code === "end_not_after_start"
                           ? tWeek("fieldEndNotAfterStart")
-                          : overlap
-                            ? tWeek("fieldOverlapping", { from: overlap.from, to: overlap.to })
-                            : null}
+                          : code === "outside_opening_hours"
+                            ? tWeek("fieldOutsideOpeningHours")
+                            : overlap
+                              ? tWeek("fieldOverlapping", { from: overlap.from, to: overlap.to })
+                              : null}
                     </FieldError>
                   )}
                 </>
@@ -279,7 +304,7 @@ export function WeekEditor({ initial, envelope, locale, t, tWeek, onSave, savedM
                   ? tWeek("attentionHint", { count: problemWeekdays.length })
                   : ""
                 : status === "dirty"
-                  ? tWeek("unsavedChanges", { days: daysSummary(changed, locale) })
+                  ? tWeek("unsavedChanges", { days: daysSummary(changed, dl, (from, to) => tWeek("dayRange", { from, to })) })
                   : ""}
         </p>
         {status === "dirty" || status === "error" ? (
@@ -287,7 +312,7 @@ export function WeekEditor({ initial, envelope, locale, t, tWeek, onSave, savedM
             {tWeek("undo")}
           </button>
         ) : null}
-        {status === "idle" ? (
+        {status === "idle" || status === "saved" ? (
           <button className={`${uiStyles.button} ${uiStyles.primary} ${styles.saveButton} ${styles.saveIdle}`} type="submit" aria-disabled="true">
             {tWeek("save")}
           </button>

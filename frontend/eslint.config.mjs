@@ -11,7 +11,7 @@ const eslintConfig = defineConfig([
   // punctuation a few screens join translated pieces with.
   {
     rules: {
-      "react/jsx-no-literals": ["error", { allowedStrings: ["ziftbook", "·", "…"] }],
+      "react/jsx-no-literals": ["error", { allowedStrings: ["ziftbook", "·", "…", "–"] }],
     },
   },
   // Override default ignores of eslint-config-next.

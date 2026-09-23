@@ -188,7 +188,7 @@
       "saving": "Saving…",
       "save": "Save the week",
       "undo": "Undo changes",
-      "unsavedChanges": "Unsaved changes on {days}.",
+      "unsavedChanges": "Unsaved changes: {days}.",
       "attentionHint": "{count, plural, =1 {One day needs attention.} =2 {Two days need attention.} =3 {Three days need attention.} =4 {Four days need attention.} =5 {Five days need attention.} =6 {Six days need attention.} =7 {Seven days need attention.} other {# days need attention.}}",
       "notSaved": "The week was not saved. {count, plural, =1 {One day needs attention} =2 {Two days need attention} =3 {Three days need attention} =4 {Four days need attention} =5 {Five days need attention} =6 {Six days need attention} =7 {Seven days need attention} other {# days need attention}}: {list}.",
       "fieldTimeRequired": "Enter a time",
@@ -196,7 +196,13 @@
       "fieldOverlapping": "These two blocks cover {from} to {to} twice. Change one of them.",
       "phraseTimeRequired": "{weekday} is missing a time",
       "phraseEndNotAfterStart": "{weekday} ends before it starts",
-      "phraseOverlapping": "two blocks on {weekday} cover the same time"
+      "phraseOverlapping": "{weekday} has two blocks that overlap",
+      "phraseOutsideOpeningHours": "{weekday} falls outside the shop's opening hours",
+      "dayRange": "{from} to {to}",
+      "tooMany": "This week has too many blocks to save. Remove a few and try again.",
+      "fieldOutsideOpeningHours": "This falls outside the shop's opening hours.",
+      "serverEndNotAfterStart": "One of the end times has to come after its start time. Check each day and try again.",
+      "serverOverlapping": "Two blocks in this week overlap. Check each day and try again."
     },
     "opening": {
       "emptyLede": "{business} · times are in {city} time",
