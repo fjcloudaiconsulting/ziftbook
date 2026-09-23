@@ -161,7 +161,20 @@ export function FieldError({ id, children }: { id: string; children: ReactNode }
   );
 }
 
-export function EmailField({ value, onChange, error }: { value: string; onChange(value: string): void; error?: string }) {
+export function EmailField({
+  value,
+  onChange,
+  error,
+  autoComplete = "email",
+  inputRef,
+}: {
+  value: string;
+  onChange(value: string): void;
+  error?: string;
+  /** "off" for an invite form: the browser autofills the signed-in person's own address otherwise. */
+  autoComplete?: "email" | "off";
+  inputRef?: Ref<HTMLInputElement>;
+}) {
   const t = useTranslations("Form");
   const id = useId();
   return (
@@ -171,10 +184,11 @@ export function EmailField({ value, onChange, error }: { value: string; onChange
       </label>
       <div className={styles.input}>
         <input
+          ref={inputRef}
           id={id}
           name="email"
           type="email"
-          autoComplete="email"
+          autoComplete={autoComplete}
           required
           maxLength={254}
           placeholder={t("emailPlaceholder")}

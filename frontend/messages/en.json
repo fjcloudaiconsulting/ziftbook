@@ -319,13 +319,26 @@
       "onlyYouBody": "Invite someone and they get their own sign-in, their own working hours and their own appointments. You decide which services they perform.",
       "onlyYouHint": "Working alone is fine. Set your own working hours and clients can start booking."
     },
+    "invites": {
+      "inviteSomeone": "Invite someone",
+      "sendInvite": "Send invite",
+      "cancel": "Cancel",
+      "invited": "Invited",
+      "expiresIn": "Invite expires in {n, plural, one {one day} other {# days}}",
+      "expired": "Invite expired",
+      "sendAgain": "Send again",
+      "cancelInvite": "Cancel the invite to {email}",
+      "invitedHint": "Someone who has not accepted yet cannot sign in and takes no appointments. Their name can be set once they accept.",
+      "alreadyMember": "This person is already on your team.",
+      "rateLimited": "Too many invites for now. Try again later."
+    },
     "hours": {
       "myHoursLede": "Times are in {city} time.",
       "emptyTitle": "No working hours yet",
       "emptyBody": "Add the times this person is at work each week. Clients can only book inside them, so nothing is bookable until they exist.",
       "emptyCta": "Set the working week",
       "emptyHintBounded": "The shop is open {days}. Working hours sit inside those times, so a day the shop is closed cannot be worked. <link>Change the opening hours</link>",
-      "emptyHintBoundedWorker": "The shop is open {days}. Working hours sit inside those times, so a day the shop is closed cannot be worked. Ask your owner to change the opening hours.",
+      "emptyHintBoundedWorker": "The shop is open {days}. Working hours sit inside those times, so a day the shop is closed cannot be worked. Ask the business owner to change the opening hours.",
       "closed": "Not working",
       "shopClosed": "Shop closed",
       "shopOpen": "Shop open {ranges}",
@@ -348,8 +361,8 @@
       "noteBounded": "Working hours sit inside the shop's opening hours, shown under each day. <link>Change the opening hours</link>",
       "noteBoundedWorker": "Your hours sit inside the shop's opening hours, shown under each day. Only an owner can change those.",
       "changeOpeningHours": "Change the opening hours",
-      "lockedNoteBounded": "Your owner sets these hours, inside the shop's opening hours: {days}. Ask them to change them. You can still block time when you are not available.",
-      "lockedNoteUnbounded": "Your owner sets these hours. Ask them to change them. You can still block time when you are not available."
+      "lockedNoteBounded": "The business owner sets these hours, inside the shop's opening hours: {days}. Ask them to change them. You can still block time when you are not available.",
+      "lockedNoteUnbounded": "The business owner sets these hours. Ask them to change them. You can still block time when you are not available."
     }
   }
 }

@@ -22,7 +22,7 @@ import uiStyles from "./ui.module.css";
 
 // The API only accepts JSON writes (its CSRF defence), and the client drops Content-Type from a
 // request with no body: these DELETEs send an empty JSON object.
-const JSON_WRITE = { body: {} as never };
+export const JSON_WRITE = { body: {} as never };
 
 type ConsoleContextValue = {
   session: SessionOut;
