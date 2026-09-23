@@ -70,9 +70,12 @@ type WeekEditorProps = {
   /** A "Change the opening hours" link, rendered next to a day's `outside_opening_hours` field
    * error. Owner only: a worker's read-only note says the same thing in words instead. */
   openingHoursLink?: ReactNode;
+  /** The static note below the days (opening hours' "Shortening a day leaves..."). Working hours
+   * has no equivalent line drawn, so it's opt-in per caller rather than baked into the editor. */
+  footNote?: ReactNode;
 };
 
-export function WeekEditor({ initial, envelope, locale, t, tWeek, onSave, savedMessage, envelopeNote, openingHoursLink }: WeekEditorProps) {
+export function WeekEditor({ initial, envelope, locale, t, tWeek, onSave, savedMessage, envelopeNote, openingHoursLink, footNote }: WeekEditorProps) {
   const form = useTranslations("Form");
   const formId = useId();
   const dl = dateLocale(locale);
@@ -361,7 +364,7 @@ export function WeekEditor({ initial, envelope, locale, t, tWeek, onSave, savedM
         })}
       </div>
 
-      <p className={uiStyles.hint}>{t("shortenHint")}</p>
+      {footNote && <p className={uiStyles.hint}>{footNote}</p>}
       </div>
 
       {/* Phone: stacked directly on the tab bar, in the shell's own bottom bar - see FooterPortal.

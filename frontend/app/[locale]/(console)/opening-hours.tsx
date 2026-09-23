@@ -98,6 +98,7 @@ export function OpeningHours() {
         t={t}
         tWeek={tWeek}
         savedMessage={t("saved")}
+        footNote={t("shortenHint")}
         onSave={(body) => call(() => openingHoursReplace({ body }), { write: true })}
       />
     </>

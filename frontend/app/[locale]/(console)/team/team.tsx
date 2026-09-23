@@ -92,7 +92,9 @@ export function TeamList() {
           <li>
             <Link href={`/team/${self.member_id}`} className={styles.rowLink}>
               <span className={styles.rowMain}>
-                <span className={styles.rowTitle}>{self.display_name || person("nameNotSet")}</span>
+                <span className={self.display_name ? styles.rowTitle : `${styles.rowTitle} ${styles.unset}`}>
+                  {self.display_name || person("nameNotSet")}
+                </span>
                 <span className={styles.rowMeta}>{t("selfMeta")}</span>
                 <span className={styles.rowMeta}>{self.email}</span>
               </span>

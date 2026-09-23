@@ -329,7 +329,7 @@
 /* Team list and the person frame (design-r2.html:239-380) */
 .back {
   align-self: flex-start; display: inline-flex; align-items: center; gap: 0.4rem; min-height: 2.75rem;
-  border: 0; background: none; padding: 0; color: var(--primary); cursor: pointer;
+  border: 0; background: none; padding: 0; color: var(--primary); cursor: pointer; text-decoration: none;
   font: 600 0.9375rem/1 var(--font-body), system-ui, sans-serif;
 }
 /* A name that is not set yet: a neutral label, never the email, in the same display serif so the
@@ -340,7 +340,7 @@
 .rowLink {
   width: 100%; display: flex; align-items: center; gap: 0.9rem; text-align: left;
   min-height: 4rem; padding: 0.85rem 1rem; border: 0; background: none; cursor: pointer; color: inherit;
-  font: inherit;
+  font: inherit; text-decoration: none;
 }
 .rowLink:hover { background: var(--surface); }
 .rowStatic { display: flex; align-items: center; gap: 0.9rem; min-height: 4rem; padding: 0.85rem 1rem; }
