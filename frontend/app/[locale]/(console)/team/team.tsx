@@ -189,6 +189,7 @@ function SetNameField({ memberId, onSaved }: { memberId: string; onSaved(name: s
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
+    if (saving) return;
     const trimmed = value.trim();
     if (!trimmed) {
       setFieldError(t("nameRequired"));

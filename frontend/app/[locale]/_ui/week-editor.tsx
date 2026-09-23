@@ -156,6 +156,7 @@ export function WeekEditor({
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
+    if (busy) return;
     if (status === "idle" || status === "saved") return;
     const result = weekProblems(days, envelope, { allowEmptyWeek });
     if (Object.keys(result.byDay).length > 0 || result.overall) {
