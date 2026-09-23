@@ -35,11 +35,12 @@ export type ServiceBody = {
 
 export type ServiceBodyResult = { body: ServiceBody; errors?: never } | { body?: never; errors: Record<string, string> };
 
-/** create: the business-language name is required (services.py:51 only requires one entry
- * overall, but the create screen always shows the business language and the drawn hint promises
- * it is the fallback everyone else needs). edit: any non-blank entry satisfies the server's rule,
- * so an edit of a service whose only name is another language stays valid — applying create's
- * rule there would lock such a service. */
+/** Any one non-blank name, in any language, satisfies the server's own rule (services.py:51 only
+ * requires one entry — not specifically the business language). Owner ruling: create follows the
+ * same rule as edit, so an English-only name for a Portuguese business is a valid create, not an
+ * error demanding the business language specifically. `serviceName`'s display fallback order
+ * (reader's language, then the business's, then any) is unaffected — this only decides which
+ * name(s) satisfy validation. */
 export function serviceBody(
   form: ServiceForm,
   options: { businessLanguage: Locale; mode: "create" | "edit" },
@@ -52,8 +53,7 @@ export function serviceBody(
     const trimmed = (value ?? "").trim();
     if (trimmed) name[locale] = trimmed;
   }
-  const nameRequired =
-    options.mode === "create" ? !name[options.businessLanguage] : Object.keys(name).length === 0;
+  const nameRequired = Object.keys(name).length === 0;
   if (nameRequired) errors.name = "nameRequired";
 
   const minor = parsePrice(form.price);

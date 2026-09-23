@@ -64,15 +64,24 @@ describe("serviceBody", () => {
     assert.deepEqual(Object.keys(result.body).sort(), ["duration_minutes", "name", "price"]);
   });
 
-  test("create without a business-language name: nameRequired", () => {
+  test("create with an en-only name for a pt business is valid: any one language satisfies it, not specifically the business's", () => {
     const result = body(
-      { name: { nl: "", en: "Manicure" }, description: {}, price: "35,00", duration: "45", gap: "default" },
+      { name: { pt: "", en: "Test" }, description: {}, price: "35,00", duration: "45", gap: "default" },
+      { businessLanguage: "pt", mode: "create" },
+    );
+    assert.ok(!("errors" in result), JSON.stringify(result));
+    assert.deepEqual(result.body.name, { en: "Test" });
+  });
+
+  test("create with every language blank: nameRequired", () => {
+    const result = body(
+      { name: { nl: "", en: "", pt: "" }, description: {}, price: "35,00", duration: "45", gap: "default" },
       { ...base },
     );
     assert.equal(result.errors?.name, "nameRequired");
   });
 
-  test("edit of {pt: Unhas} with business nl is a valid body: the create rule does not apply", () => {
+  test("edit of {pt: Unhas} with business nl is a valid body", () => {
     const result = body(
       { name: { nl: "", pt: "Unhas" }, description: {}, price: "35,00", duration: "45", gap: "default" },
       { businessLanguage: "nl", mode: "edit" },
