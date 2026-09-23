@@ -1,7 +1,7 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-import { type FormEvent, useId, useState } from "react";
+import { type FormEvent, type ReactNode, useId, useState } from "react";
 
 import { dateLocale } from "@/lib/console";
 import {
@@ -9,8 +9,10 @@ import {
   type Day,
   daysFromShifts,
   daysSummary,
+  envelopeShiftsFor,
   overlapWindow,
   problemList,
+  shiftRanges,
   weekBody,
   weekdayName,
   weekProblems,
@@ -61,9 +63,16 @@ type WeekEditorProps = {
   tWeek: T;
   onSave(body: ApiShift[]): Promise<Outcome<ApiShift[]>>;
   savedMessage: string;
+  /** The note banner above the days, shown only while `envelope` is bounded (U11: unbounded shows
+   * no banner, no "Shop ..." lines and no per-day restriction at all). `null` in the opening-hours
+   * page, which has no envelope of its own. */
+  envelopeNote?: ReactNode;
+  /** A "Change the opening hours" link, rendered next to a day's `outside_opening_hours` field
+   * error. Owner only: a worker's read-only note says the same thing in words instead. */
+  openingHoursLink?: ReactNode;
 };
 
-export function WeekEditor({ initial, envelope, locale, t, tWeek, onSave, savedMessage }: WeekEditorProps) {
+export function WeekEditor({ initial, envelope, locale, t, tWeek, onSave, savedMessage, envelopeNote, openingHoursLink }: WeekEditorProps) {
   const form = useTranslations("Form");
   const formId = useId();
   const dl = dateLocale(locale);
@@ -112,7 +121,12 @@ export function WeekEditor({ initial, envelope, locale, t, tWeek, onSave, savedM
   function copyToEveryDay(weekday: number) {
     const source = days.find((d) => d.weekday === weekday);
     if (!source) return;
-    edit(days.map((day) => ({ ...day, shifts: source.shifts.map((s) => ({ ...s })) })));
+    edit(
+      days.map((day) => {
+        const shopOpen = envelope === null || envelopeShiftsFor(envelope, day.weekday).length > 0;
+        return shopOpen ? { ...day, shifts: source.shifts.map((s) => ({ ...s })) } : day;
+      }),
+    );
   }
 
   function undo() {
@@ -224,6 +238,8 @@ export function WeekEditor({ initial, envelope, locale, t, tWeek, onSave, savedM
         </Banner>
       )}
 
+      {envelope !== null && envelopeNote && <Banner tone="note">{envelopeNote}</Banner>}
+
       <div className={styles.weekContent}>
       <div className={styles.days}>
         {days.map((day) => {
@@ -231,12 +247,16 @@ export function WeekEditor({ initial, envelope, locale, t, tWeek, onSave, savedM
           const code = problems.byDay[day.weekday];
           const errorId = `day-${day.weekday}-error`;
           const overlap = code === "overlapping_hours" ? overlapWindow(day.shifts) : null;
+          // `null` envelope (unbounded) never restricts a day; a bounded one closes any weekday
+          // it has no rows for (`envelopeShiftsFor`, never `?? unbounded`).
+          const envShifts = envelope !== null ? envelopeShiftsFor(envelope, day.weekday) : null;
+          const shopOpen = envShifts === null || envShifts.length > 0;
           return (
             <div className={styles.day} key={day.weekday}>
               <div className={styles.dayHead}>
                 <span className={styles.dayName}>{weekdayText}</span>
                 {day.shifts.length === 0 ? (
-                  <span className={styles.dayClosed}>{t("closed")}</span>
+                  <span className={styles.dayClosed}>{envelope !== null && !shopOpen ? t("shopClosed") : t("closed")}</span>
                 ) : (
                   firstOpenWeekday === day.weekday && (
                     <button className={uiStyles.textButton} type="button" disabled={busy} onClick={() => copyToEveryDay(day.weekday)}>
@@ -244,12 +264,17 @@ export function WeekEditor({ initial, envelope, locale, t, tWeek, onSave, savedM
                     </button>
                   )
                 )}
+                {envelope !== null && shopOpen && (
+                  <span className={uiStyles.hint}>{t("shopOpen", { ranges: shiftRanges(envShifts!) })}</span>
+                )}
               </div>
 
               {day.shifts.length === 0 ? (
-                <button className={uiStyles.textButton} type="button" disabled={busy} onClick={() => addTimes(day.weekday)}>
-                  {t("addTimes")}
-                </button>
+                shopOpen && (
+                  <button className={uiStyles.textButton} type="button" disabled={busy} onClick={() => addTimes(day.weekday)}>
+                    {t("addTimes")}
+                  </button>
+                )
               ) : (
                 <>
                   <div className={styles.shifts}>
@@ -328,6 +353,7 @@ export function WeekEditor({ initial, envelope, locale, t, tWeek, onSave, savedM
                               : null}
                     </FieldError>
                   )}
+                  {code === "outside_opening_hours" && openingHoursLink}
                 </>
               )}
             </div>

@@ -152,7 +152,13 @@
       "signOutEverywhere": "Sign out on every device"
     },
     "person": {
-      "nameNotSet": "Name not set"
+      "nameNotSet": "Name not set",
+      "setName": "Set a name clients can see",
+      "nameLabel": "Display name",
+      "save": "Save",
+      "cancel": "Cancel",
+      "lede": "{email} · {role} · times are in {city} time",
+      "notFound": "This person could not be found."
     },
     "today": {
       "ownerEmptyTitle": "No appointments yet",
@@ -233,6 +239,47 @@
       "remove": "Remove {weekday} {from} to {to}",
       "allClosedRefusal": "Open the shop on at least one day.",
       "saved": "Saved. Clients can only book while the shop is open."
+    },
+    "team": {
+      "selfMeta": "You",
+      "noHours": "No working hours yet",
+      "worksLabel": "Works {days}",
+      "unnamedWarning": "Clients see no name yet",
+      "onlyYouTitle": "It is just you right now",
+      "onlyYouBody": "Invite someone and they get their own sign-in, their own working hours and their own appointments. You decide which services they perform.",
+      "onlyYouHint": "Working alone is fine. Set your own working hours and clients can start booking."
+    },
+    "hours": {
+      "myHoursLede": "Times are in {city} time.",
+      "emptyTitle": "No working hours yet",
+      "emptyBody": "Add the times this person is at work each week. Clients can only book inside them, so nothing is bookable until they exist.",
+      "emptyCta": "Set the working week",
+      "emptyHintBounded": "The shop is open {days}. Working hours sit inside those times, so a day the shop is closed cannot be worked. <link>Change the opening hours</link>",
+      "emptyHintBoundedWorker": "The shop is open {days}. Working hours sit inside those times, so a day the shop is closed cannot be worked. Ask your owner to change the opening hours.",
+      "closed": "Not working",
+      "shopClosed": "Shop closed",
+      "shopOpen": "Shop open {ranges}",
+      "addTimes": "Add times",
+      "copyToEveryDay": "Copy to every day",
+      "addBlock": "Add a block",
+      "addSecondBlock": "Add a second block",
+      "twoBlockHint": "Two blocks make a break: nothing can be booked between {from} and {to}.",
+      "opensAt": "{weekday} starts at",
+      "opensAtFirst": "{weekday}, first shift, starts at",
+      "opensAtSecond": "{weekday}, second shift, starts at",
+      "opensAtBlock": "{weekday}, shift {n}, starts at",
+      "closesAt": "{weekday} ends at",
+      "closesAtFirst": "{weekday}, first shift, ends at",
+      "closesAtSecond": "{weekday}, second shift, ends at",
+      "closesAtBlock": "{weekday}, shift {n}, ends at",
+      "removeOnly": "Remove {weekday} {from} to {to}",
+      "remove": "Remove {weekday} {from} to {to}",
+      "saved": "Saved. Clients see these times straight away.",
+      "noteBounded": "Working hours sit inside the shop's opening hours, shown under each day. <link>Change the opening hours</link>",
+      "noteBoundedWorker": "Your hours sit inside the shop's opening hours, shown under each day. Only an owner can change those.",
+      "changeOpeningHours": "Change the opening hours",
+      "lockedNoteBounded": "Your owner sets these hours, inside the shop's opening hours: {days}. Ask them to change them. You can still block time when you are not available.",
+      "lockedNoteUnbounded": "Your owner sets these hours. Ask them to change them. You can still block time when you are not available."
     }
   }
 }

@@ -152,7 +152,13 @@
       "signOutEverywhere": "Uitloggen op alle apparaten"
     },
     "person": {
-      "nameNotSet": "Geen naam ingesteld"
+      "nameNotSet": "Geen naam ingesteld",
+      "setName": "Naam instellen die klanten zien",
+      "nameLabel": "Weergavenaam",
+      "save": "Opslaan",
+      "cancel": "Annuleren",
+      "lede": "{email} · {role} · tijden zijn in {city}-tijd",
+      "notFound": "Deze persoon kon niet worden gevonden."
     },
     "today": {
       "ownerEmptyTitle": "Nog geen afspraken",
@@ -233,6 +239,47 @@
       "remove": "{weekday} {from} tot {to} verwijderen",
       "allClosedRefusal": "Open de winkel op ten minste één dag.",
       "saved": "Opgeslagen. Klanten kunnen alleen boeken terwijl de winkel open is."
+    },
+    "team": {
+      "selfMeta": "Jij",
+      "noHours": "Nog geen werktijden",
+      "worksLabel": "Werkt {days}",
+      "unnamedWarning": "Klanten zien nog geen naam",
+      "onlyYouTitle": "Op dit moment ben jij de enige",
+      "onlyYouBody": "Nodig iemand uit en die krijgt een eigen inlog, eigen werktijden en eigen afspraken. Jij bepaalt welke diensten diegene uitvoert.",
+      "onlyYouHint": "Alleen werken kan prima. Stel je eigen werktijden in en klanten kunnen boeken."
+    },
+    "hours": {
+      "myHoursLede": "Tijden zijn in {city}-tijd.",
+      "emptyTitle": "Nog geen werktijden",
+      "emptyBody": "Voeg de tijden toe dat deze persoon elke week werkt. Klanten kunnen alleen hierbinnen boeken, dus er is niets boekbaar tot ze bestaan.",
+      "emptyCta": "Werkweek instellen",
+      "emptyHintBounded": "De winkel is open {days}. Werktijden vallen binnen die tijden, dus een dag dat de winkel gesloten is kan niet gewerkt worden. <link>Openingstijden wijzigen</link>",
+      "emptyHintBoundedWorker": "De winkel is open {days}. Werktijden vallen binnen die tijden, dus een dag dat de winkel gesloten is kan niet gewerkt worden. Vraag je eigenaar om de openingstijden te wijzigen.",
+      "closed": "Werkt niet",
+      "shopClosed": "Winkel gesloten",
+      "shopOpen": "Winkel open {ranges}",
+      "addTimes": "Tijden toevoegen",
+      "copyToEveryDay": "Naar elke dag kopiëren",
+      "addBlock": "Blok toevoegen",
+      "addSecondBlock": "Tweede blok toevoegen",
+      "twoBlockHint": "Twee blokken maken een pauze: er wordt niets geboekt tussen {from} en {to}.",
+      "opensAt": "{weekday} begint om",
+      "opensAtFirst": "{weekday}, eerste dienst, begint om",
+      "opensAtSecond": "{weekday}, tweede dienst, begint om",
+      "opensAtBlock": "{weekday}, dienst {n}, begint om",
+      "closesAt": "{weekday} eindigt om",
+      "closesAtFirst": "{weekday}, eerste dienst, eindigt om",
+      "closesAtSecond": "{weekday}, tweede dienst, eindigt om",
+      "closesAtBlock": "{weekday}, dienst {n}, eindigt om",
+      "removeOnly": "{weekday} {from} tot {to} verwijderen",
+      "remove": "{weekday} {from} tot {to} verwijderen",
+      "saved": "Opgeslagen. Klanten zien deze tijden meteen.",
+      "noteBounded": "Werktijden vallen binnen de openingstijden van de winkel, onder elke dag getoond. <link>Openingstijden wijzigen</link>",
+      "noteBoundedWorker": "Je werktijden vallen binnen de openingstijden van de winkel, onder elke dag getoond. Alleen een eigenaar kan deze wijzigen.",
+      "changeOpeningHours": "Openingstijden wijzigen",
+      "lockedNoteBounded": "Je eigenaar stelt deze uren in, binnen de openingstijden van de winkel: {days}. Vraag diegene om ze te wijzigen. Je kunt nog wel tijd blokkeren wanneer je niet beschikbaar bent.",
+      "lockedNoteUnbounded": "Je eigenaar stelt deze uren in. Vraag diegene om ze te wijzigen. Je kunt nog wel tijd blokkeren wanneer je niet beschikbaar bent."
     }
   }
 }

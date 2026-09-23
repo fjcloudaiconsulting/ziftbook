@@ -152,7 +152,13 @@
       "signOutEverywhere": "Sair em todos os dispositivos"
     },
     "person": {
-      "nameNotSet": "Nome não definido"
+      "nameNotSet": "Nome não definido",
+      "setName": "Definir um nome que os clientes veem",
+      "nameLabel": "Nome de exibição",
+      "save": "Salvar",
+      "cancel": "Cancelar",
+      "lede": "{email} · {role} · horários no fuso de {city}",
+      "notFound": "Esta pessoa não foi encontrada."
     },
     "today": {
       "ownerEmptyTitle": "Ainda sem agendamentos",
@@ -233,6 +239,47 @@
       "remove": "Remover {weekday}, de {from} até {to}",
       "allClosedRefusal": "Abra a loja em pelo menos um dia.",
       "saved": "Salvo. Os clientes só podem agendar enquanto a loja estiver aberta."
+    },
+    "team": {
+      "selfMeta": "Você",
+      "noHours": "Ainda sem horários de trabalho",
+      "worksLabel": "Trabalha {days}",
+      "unnamedWarning": "Os clientes ainda não veem um nome",
+      "onlyYouTitle": "No momento é só você",
+      "onlyYouBody": "Convide alguém e essa pessoa ganha seu próprio acesso, seus próprios horários de trabalho e seus próprios agendamentos. Você decide quais serviços ela realiza.",
+      "onlyYouHint": "Trabalhar sozinho está ótimo. Defina seus próprios horários de trabalho e os clientes já podem agendar."
+    },
+    "hours": {
+      "myHoursLede": "Horários no fuso de {city}.",
+      "emptyTitle": "Ainda sem horários de trabalho",
+      "emptyBody": "Adicione os horários em que essa pessoa trabalha a cada semana. Os clientes só podem agendar dentro deles, então nada é agendável até existirem.",
+      "emptyCta": "Definir a semana de trabalho",
+      "emptyHintBounded": "A loja está aberta {days}. Os horários de trabalho ficam dentro desses horários, então um dia em que a loja está fechada não pode ser trabalhado. <link>Alterar o horário de funcionamento</link>",
+      "emptyHintBoundedWorker": "A loja está aberta {days}. Os horários de trabalho ficam dentro desses horários, então um dia em que a loja está fechada não pode ser trabalhado. Peça ao seu proprietário para alterar o horário de funcionamento.",
+      "closed": "Não trabalha",
+      "shopClosed": "Loja fechada",
+      "shopOpen": "Loja aberta {ranges}",
+      "addTimes": "Adicionar horários",
+      "copyToEveryDay": "Copiar para todos os dias",
+      "addBlock": "Adicionar um bloco",
+      "addSecondBlock": "Adicionar um segundo bloco",
+      "twoBlockHint": "Dois blocos criam um intervalo: nada é agendado entre {from} e {to}.",
+      "opensAt": "{weekday} começa às",
+      "opensAtFirst": "{weekday}, primeiro turno, começa às",
+      "opensAtSecond": "{weekday}, segundo turno, começa às",
+      "opensAtBlock": "{weekday}, turno {n}, começa às",
+      "closesAt": "{weekday} termina às",
+      "closesAtFirst": "{weekday}, primeiro turno, termina às",
+      "closesAtSecond": "{weekday}, segundo turno, termina às",
+      "closesAtBlock": "{weekday}, turno {n}, termina às",
+      "removeOnly": "Remover {weekday}, de {from} até {to}",
+      "remove": "Remover {weekday}, de {from} até {to}",
+      "saved": "Salvo. Os clientes veem esses horários imediatamente.",
+      "noteBounded": "Os horários de trabalho ficam dentro do horário de funcionamento da loja, mostrado abaixo de cada dia. <link>Alterar o horário de funcionamento</link>",
+      "noteBoundedWorker": "Seus horários ficam dentro do horário de funcionamento da loja, mostrado abaixo de cada dia. Só um proprietário pode alterar isso.",
+      "changeOpeningHours": "Alterar o horário de funcionamento",
+      "lockedNoteBounded": "Seu proprietário define esses horários, dentro do horário de funcionamento da loja: {days}. Peça para ele os alterar. Você ainda pode bloquear horários quando não estiver disponível.",
+      "lockedNoteUnbounded": "Seu proprietário define esses horários. Peça para ele os alterar. Você ainda pode bloquear horários quando não estiver disponível."
     }
   }
 }
