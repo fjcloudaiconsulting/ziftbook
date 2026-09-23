@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.17.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.16.0...v0.17.0) (2026-09-23)
+
+
+### Features
+
+* **backend:** creating a service assigns its workers in the same request (ZIF-104) ([#106](https://github.com/fjcloudaiconsulting/ziftbook/issues/106)) ([aa66c5d](https://github.com/fjcloudaiconsulting/ziftbook/commit/aa66c5d9498119912dac96e7d45f8305f734968b))
+* **backend:** time off can block whole days and runs of days (ZIF-101) ([#108](https://github.com/fjcloudaiconsulting/ziftbook/issues/108)) ([f65570c](https://github.com/fjcloudaiconsulting/ziftbook/commit/f65570c594bb54f721bd1bdabaf89e6cf120329d))
+* **frontend:** owners and workers set working hours in the console (ZIF-50) ([#111](https://github.com/fjcloudaiconsulting/ziftbook/issues/111)) ([e2cffbd](https://github.com/fjcloudaiconsulting/ziftbook/commit/e2cffbdaa96e77a9f4b7979ed49b5947485d6249))
+* **frontend:** owners create, edit and archive services in the console (ZIF-50) ([#112](https://github.com/fjcloudaiconsulting/ziftbook/issues/112)) ([c65917f](https://github.com/fjcloudaiconsulting/ziftbook/commit/c65917f3e9acc527808bb2e5aa0e56c148b2b2db))
+* **frontend:** owners invite people to their business from the console (ZIF-50) ([#113](https://github.com/fjcloudaiconsulting/ziftbook/issues/113)) ([22e690c](https://github.com/fjcloudaiconsulting/ziftbook/commit/22e690ced82d3da2d011ec618f249f5d19ce0f8f))
+* **frontend:** owners set the shop's opening hours in the console (ZIF-50) ([#110](https://github.com/fjcloudaiconsulting/ziftbook/issues/110)) ([ae5dd08](https://github.com/fjcloudaiconsulting/ziftbook/commit/ae5dd08779c3a63f3bb9027b1d678136ae79b13c))
+* **frontend:** people block whole days or part of a day off in the console (ZIF-50) ([#114](https://github.com/fjcloudaiconsulting/ziftbook/issues/114)) ([9471b4a](https://github.com/fjcloudaiconsulting/ziftbook/commit/9471b4a091cc809fe537233091f4223328371c3f))
+* **frontend:** the merchant console shell with navigation for owners and workers (ZIF-50) ([#107](https://github.com/fjcloudaiconsulting/ziftbook/issues/107)) ([183e478](https://github.com/fjcloudaiconsulting/ziftbook/commit/183e478de472e9ffb603c725adecb56f1d51aa93))
+
 ## [0.16.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.15.0...v0.16.0) (2026-09-22)
 
 
