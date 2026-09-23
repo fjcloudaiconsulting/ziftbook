@@ -171,6 +171,20 @@ export function daysSummary(weekdays: number[], locale: string, formatRange: (fr
   return new Intl.ListFormat(locale, { type: "conjunction" }).format(sorted.map((w) => weekdayName(w, locale)));
 }
 
+/** The envelope's shifts for one weekday, sorted, or `[]` when the shop doesn't open that day.
+ * `envelope === null` (unbounded) has no per-day line at all; callers check that first. */
+export function envelopeShiftsFor(envelope: Day[], weekday: number): Shift[] {
+  return sortShifts(envelope.find((d) => d.weekday === weekday)?.shifts ?? []);
+}
+
+/** "09:00 – 18:00" or, for two blocks, "09:00 – 13:00 · 14:00 – 18:00": the working-hours day
+ * head's "Shop open {ranges}" line. Only the punctuation is fixed here (an en dash and a
+ * middot, the same locale-invariant separators the shift row and the services meta line already
+ * use); every word around `{ranges}` comes from the catalog. */
+export function shiftRanges(shifts: Shift[]): string {
+  return shifts.map((s) => `${s.start} – ${s.end}`).join(" · ");
+}
+
 /** The shift on a day whose start (or end) overlaps another, and the exact overlap window (the
  * intersection, not the outer span): two shifts 09:00-18:00 and 10:00-11:00 overlap 10:00-11:00,
  * never 10:00-18:00. Used to name the window in the field error under the day. */

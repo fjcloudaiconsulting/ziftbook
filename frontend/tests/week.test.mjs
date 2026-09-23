@@ -11,8 +11,10 @@ import {
   daysSummary,
   emptyWeek,
   envelopeFromShifts,
+  envelopeShiftsFor,
   overlapWindow,
   problemList,
+  shiftRanges,
   weekBody,
   weekdayName,
   weekProblems,
@@ -220,5 +222,33 @@ describe("changedDays", () => {
     const before = [{ weekday: 3, shifts: [{ start: "13:00", end: "17:00" }, { start: "09:00", end: "12:00" }] }];
     const after = [{ weekday: 3, shifts: [{ start: "13:00", end: "17:00" }, { start: "09:00", end: "12:00" }] }];
     assert.deepEqual(changedDays(before, after), []);
+  });
+});
+
+describe("envelopeShiftsFor", () => {
+  const envelope = [
+    { weekday: 2, shifts: [{ start: "09:00", end: "18:00" }] },
+    { weekday: 3, shifts: [{ start: "14:00", end: "18:00" }, { start: "09:00", end: "13:00" }] },
+  ];
+
+  test("fence: the right weekday's shifts, sorted, never the whole envelope flattened", () => {
+    assert.deepEqual(envelopeShiftsFor(envelope, 3), [{ start: "09:00", end: "13:00" }, { start: "14:00", end: "18:00" }]);
+  });
+
+  test("guard: a weekday absent from the envelope has no shifts", () => {
+    assert.deepEqual(envelopeShiftsFor(envelope, 1), []);
+  });
+});
+
+describe("shiftRanges", () => {
+  test("guard: one shift", () => {
+    assert.equal(shiftRanges([{ start: "09:00", end: "18:00" }]), "09:00 – 18:00");
+  });
+
+  test("guard: two shifts joined by a middot", () => {
+    assert.equal(
+      shiftRanges([{ start: "09:00", end: "13:00" }, { start: "14:00", end: "18:00" }]),
+      "09:00 – 13:00 · 14:00 – 18:00",
+    );
   });
 });
