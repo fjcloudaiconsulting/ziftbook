@@ -160,7 +160,7 @@ export function WeekEditor({ initial, envelope, locale, t, tWeek, onSave, savedM
   const genericFailure = writeFailure && writeFailure.status !== 401;
 
   return (
-    <form className={uiStyles.stack} noValidate onSubmit={onSubmit}>
+    <form className={`${uiStyles.stack} ${styles.weekForm}`} noValidate onSubmit={onSubmit}>
       {writeFailure?.status === 401 && <SignedOutBanner />}
       {genericFailure && <Banner tone="error">{form(problem(writeFailure!))}</Banner>}
       {(problems.overall === "opening_hours_required" || serverProblem === "opening_hours_required") && (

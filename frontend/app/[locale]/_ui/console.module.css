@@ -253,16 +253,25 @@
 .iconOnly:hover { border-color: var(--field-line); color: var(--ink); }
 .dayActions { display: flex; flex-wrap: wrap; gap: 0.25rem 1rem; margin-top: 0.5rem; }
 
-/* Sticky, edge to edge, flush above the phone tab bar: its own background reaches all the way
-   down to the tab bar's top edge, so no scrolled content shows through a gap between them. */
+/* A sticky element can only travel within its containing block - here, the <form> the savebar
+   sits in - which by default ends right at the savebar, with no slack below for it to travel
+   into: a plain "bottom: tab bar height" offset would then never engage, and the savebar would
+   just sit at its static position, letting whatever day row is there scroll past underneath it
+   instead of staying pinned above the tab bar. weekForm gives the form itself that slack. */
+.weekForm { padding-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom)); }
+@media (min-width: 56rem) {
+  .weekForm { padding-bottom: 0; }
+}
+
+/* Sticky, edge to edge, flush above the phone tab bar. */
 .savebar {
   position: sticky;
   bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom));
   z-index: var(--z-sticky);
   background: var(--bg);
   border-top: 1px solid var(--line);
-  margin: 0.25rem -1rem -1.5rem;
-  padding: 0.75rem 1rem calc(0.75rem + 1.5rem);
+  margin: 0.25rem -1rem 0;
+  padding: 0.75rem 1rem;
   box-shadow: var(--lift);
   display: flex;
   align-items: center;
@@ -272,9 +281,10 @@
 .savebar .hint { flex: 1 1 100%; order: -1; }
 @media (min-width: 56rem) {
   .savebar {
+    /* No tab bar on desktop: the savebar sticks flush at the true bottom. */
     bottom: 0;
-    margin: 0.25rem -2rem -3rem;
-    padding: 0.9rem 2rem calc(0.9rem + 3rem);
+    margin: 0.25rem -2rem 0;
+    padding: 0.9rem 2rem;
   }
   .savebar .hint { flex: 1; order: 0; }
 }
