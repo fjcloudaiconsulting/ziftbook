@@ -120,6 +120,17 @@ export function weekProblems(days: Day[], envelope: Day[] | null, options?: { al
   return { byDay };
 }
 
+/**
+ * The per-day problems worth flagging as soon as a week loads (spec PR 4, §5 item 6): a shift left
+ * outside the envelope after the owner narrowed it, caught before the save the server would
+ * refuse. Never `overall`: `too_many` and `opening_hours_required` are submit-time refusals of
+ * what the person just did, not something to greet an untouched, freshly-loaded week with (an
+ * empty opening-hours week loads via `emptyWeek()`, and must start idle, not in the error phase).
+ */
+export function loadTimeProblems(days: Day[], envelope: Day[] | null, options?: { allowEmptyWeek?: boolean }): WeekProblems {
+  return { byDay: weekProblems(days, envelope, options).byDay };
+}
+
 /** Whether two days' shifts are the same set, ignoring order (reordering within a day is no
  * change). */
 function sameShifts(a: Shift[], b: Shift[]): boolean {

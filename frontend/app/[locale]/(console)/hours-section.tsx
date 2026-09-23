@@ -60,6 +60,16 @@ export function HoursSection({ memberId, editable, ownerView }: HoursSectionProp
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [memberId]);
 
+  /** A server `outside_opening_hours` 422 means the owner narrowed the opening hours after this
+   * page loaded: `envelope` (the "Shop open ..." lines `WeekEditor` renders) is now stale. Only
+   * re-reads the envelope, not the working hours themselves - the rejected PUT never persisted, so
+   * `days` is already what the server holds. */
+  function reloadEnvelope() {
+    call(() => openingHoursRead()).then((outcome) => {
+      if (outcome.status === 200 && outcome.data) setEnvelope(envelopeFromShifts(outcome.data));
+    });
+  }
+
   if (failure) {
     return (
       <>
@@ -139,6 +149,7 @@ export function HoursSection({ memberId, editable, ownerView }: HoursSectionProp
       envelopeNote={ownerView ? t.rich("noteBounded", { link: changeLink }) : t("noteBoundedWorker")}
       openingHoursLink={ownerView ? changeLink(t("changeOpeningHours")) : undefined}
       allowEmptyWeek
+      onStaleEnvelope={reloadEnvelope}
       onSave={(body) => call(() => workingHoursReplace({ path: { member_id: memberId }, body }), { write: true })}
     />
   );

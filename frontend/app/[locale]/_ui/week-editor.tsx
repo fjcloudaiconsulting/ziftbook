@@ -1,7 +1,7 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-import { type FormEvent, type ReactNode, useId, useState } from "react";
+import { type FormEvent, type ReactNode, useId, useRef, useState } from "react";
 
 import { dateLocale } from "@/lib/console";
 import {
@@ -11,6 +11,7 @@ import {
   daysFromShifts,
   daysSummary,
   envelopeShiftsFor,
+  loadTimeProblems,
   overlapWindow,
   problemList,
   shiftRanges,
@@ -77,6 +78,11 @@ type WeekEditorProps = {
   /** Opening hours refuses an all-closed week; working hours doesn't (the server accepts an empty
    * list, e.g. an owner clearing a leaving worker's week). Off by default. */
   allowEmptyWeek?: boolean;
+  /** Called after a server `outside_opening_hours` 422: the owner narrowed the opening hours
+   * between load and save, so the envelope this editor was given (the "Shop open ..." lines) is
+   * now stale. The caller re-reads it; `envelope` is a plain prop, so a fresh value here re-renders
+   * with no need to remount. */
+  onStaleEnvelope?: () => void;
 };
 
 export function WeekEditor({
@@ -91,6 +97,7 @@ export function WeekEditor({
   openingHoursLink,
   footNote,
   allowEmptyWeek,
+  onStaleEnvelope,
 }: WeekEditorProps) {
   const form = useTranslations("Form");
   const errors = useTranslations("Console.errors");
@@ -99,13 +106,21 @@ export function WeekEditor({
   const [committed, setCommitted] = useState(initial);
   const [days, setDays] = useState(initial);
   // Checked on load too (spec PR 4, §5 item 6), not only on submit: a shift left outside the
-  // envelope after the owner narrowed it is flagged before the save the server would refuse.
-  const [problems, setProblems] = useState<ReturnType<typeof weekProblems>>(() => weekProblems(initial, envelope, { allowEmptyWeek }));
-  const [phase, setPhase] = useState<Phase>(() =>
-    Object.keys(problems.byDay).length > 0 || problems.overall ? "error" : "idle",
-  );
+  // envelope after the owner narrowed it is flagged in the field, before the save the server would
+  // refuse. `byDay` only, never `overall` (`loadTimeProblems`): an untouched, freshly-loaded empty
+  // week (opening hours' own "Set the opening week" empty state) must start idle, not greeted with
+  // "Open the shop on at least one day." `phase` starts plain "idle" too: the top banner and the
+  // savebar's attention hint are gated on `phase === "error"`, which only a submit ever sets, so a
+  // day flagged from load reads as a field message, never "The week was not saved" before anyone
+  // tried to save it.
+  const [problems, setProblems] = useState<ReturnType<typeof weekProblems>>(() => loadTimeProblems(initial, envelope, { allowEmptyWeek }));
+  const [phase, setPhase] = useState<Phase>("idle");
   const [serverProblem, setServerProblem] = useState<ServerProblem | null>(null);
   const [writeFailure, setWriteFailure] = useState<Outcome<unknown> | null>(null);
+  // A state flag lags a tick behind synchronous re-entrant calls (three requestSubmit()s in one
+  // event all read the same stale `busy` before any re-render), so the actual guard is this ref,
+  // set the instant a submit starts and cleared when it's done - not the `busy` derived below.
+  const submitting = useRef(false);
 
   const changed = changedDays(committed, days);
   const isDirty = changed.length > 0;
@@ -156,40 +171,48 @@ export function WeekEditor({
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
-    if (busy) return;
+    if (submitting.current) return;
     if (status === "idle" || status === "saved") return;
-    const result = weekProblems(days, envelope, { allowEmptyWeek });
-    if (Object.keys(result.byDay).length > 0 || result.overall) {
-      setProblems(result);
-      setServerProblem(null);
-      setWriteFailure(null);
-      setPhase("error");
-      return;
-    }
-    setPhase("saving");
-    const outcome = await onSave(weekBody(days));
-    if (outcome.status === 200 && outcome.data) {
-      const next = daysFromShifts(outcome.data);
-      setCommitted(next);
-      setDays(next);
-      setProblems({ byDay: {} });
-      setServerProblem(null);
-      setWriteFailure(null);
-      setPhase("saved");
-    } else if (outcome.status === 422 && outcome.code === "outside_opening_hours" && outcome.weekday) {
-      // The owner narrowed the opening hours between load and save: the same code and weekday
-      // `weekProblems` would have caught, so it gets the same field error and top banner.
-      setProblems({ byDay: { [outcome.weekday]: "outside_opening_hours" } });
-      setServerProblem(null);
-      setWriteFailure(null);
-      setPhase("error");
-    } else {
-      if (outcome.status === 422 && (outcome.code === "opening_hours_required" || outcome.code === "end_not_after_start" || outcome.code === "overlapping_hours")) {
-        setServerProblem(outcome.code);
-      } else {
-        setWriteFailure(outcome);
+    submitting.current = true;
+    try {
+      const result = weekProblems(days, envelope, { allowEmptyWeek });
+      if (Object.keys(result.byDay).length > 0 || result.overall) {
+        setProblems(result);
+        setServerProblem(null);
+        setWriteFailure(null);
+        setPhase("error");
+        return;
       }
-      setPhase("error");
+      setPhase("saving");
+      const outcome = await onSave(weekBody(days));
+      if (outcome.status === 200 && outcome.data) {
+        const next = daysFromShifts(outcome.data);
+        setCommitted(next);
+        setDays(next);
+        setProblems({ byDay: {} });
+        setServerProblem(null);
+        setWriteFailure(null);
+        setPhase("saved");
+      } else if (outcome.status === 422 && outcome.code === "outside_opening_hours" && outcome.weekday) {
+        // The owner narrowed the opening hours between load and save: the same code and weekday
+        // `weekProblems` would have caught, so it gets the same field error and top banner. The
+        // envelope this editor was given is now stale (the "Shop open ..." lines still show the
+        // old times), so the caller re-reads it.
+        setProblems({ byDay: { [outcome.weekday]: "outside_opening_hours" } });
+        setServerProblem(null);
+        setWriteFailure(null);
+        setPhase("error");
+        onStaleEnvelope?.();
+      } else {
+        if (outcome.status === 422 && (outcome.code === "opening_hours_required" || outcome.code === "end_not_after_start" || outcome.code === "overlapping_hours")) {
+          setServerProblem(outcome.code);
+        } else {
+          setWriteFailure(outcome);
+        }
+        setPhase("error");
+      }
+    } finally {
+      submitting.current = false;
     }
   }
 
@@ -253,7 +276,7 @@ export function WeekEditor({
       {problems.overall === "too_many" && <Banner tone="error">{tWeek("tooMany")}</Banner>}
       {serverProblem === "end_not_after_start" && <Banner tone="error">{tWeek("serverEndNotAfterStart")}</Banner>}
       {serverProblem === "overlapping_hours" && <Banner tone="error">{tWeek("serverOverlapping")}</Banner>}
-      {problemWeekdays.length > 0 && (
+      {phase === "error" && problemWeekdays.length > 0 && (
         <Banner tone="error">
           {tWeek("notSaved", {
             count: problemWeekdays.length,

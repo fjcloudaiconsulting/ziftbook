@@ -13,6 +13,7 @@ import {
   emptyWeek,
   envelopeFromShifts,
   envelopeShiftsFor,
+  loadTimeProblems,
   overlapWindow,
   problemList,
   shiftRanges,
@@ -153,6 +154,20 @@ describe("weekProblems", () => {
   });
 });
 
+describe("loadTimeProblems", () => {
+  test("fence: an untouched, freshly-loaded empty week has no overall problem (never greets a first run with a refusal)", () => {
+    const days = [1, 2, 3, 4, 5, 6, 7].map((weekday) => ({ weekday, shifts: [] }));
+    assert.equal(loadTimeProblems(days, null).overall, undefined);
+    assert.deepEqual(loadTimeProblems(days, null).byDay, {});
+  });
+
+  test("guard: a shift already outside a narrowed envelope is still flagged in byDay", () => {
+    const days = [{ weekday: 1, shifts: [{ start: "09:00", end: "12:00" }] }];
+    const envelope = [{ weekday: 1, shifts: [{ start: "09:00", end: "11:00" }] }];
+    assert.equal(loadTimeProblems(days, envelope).byDay[1], "outside_opening_hours");
+  });
+});
+
 describe("copyToEveryDay", () => {
   const days = [1, 2, 3, 4, 5, 6, 7].map((weekday) => ({ weekday, shifts: [] }));
   days[1] = { weekday: 2, shifts: [{ start: "09:00", end: "12:00" }] }; // Tuesday: the source
@@ -171,6 +186,15 @@ describe("copyToEveryDay", () => {
   test("guard: an unbounded envelope (null) copies to every day", () => {
     const result = copyToEveryDay(days, null, 2);
     for (const day of result) assert.deepEqual(day.shifts, [{ start: "09:00", end: "12:00" }]);
+  });
+
+  test("fence: a closed day keeps its own existing shifts, never cleared", () => {
+    // Monday already has a stale shift (left over from before the shop narrowed its hours), which
+    // "Copy to every day" must leave exactly as it was: it skips a closed day, it doesn't blank it.
+    const withStaleMonday = days.map((d) => (d.weekday === 1 ? { weekday: 1, shifts: [{ start: "08:00", end: "10:00" }] } : d));
+    const envelope = [{ weekday: 2, shifts: [{ start: "09:00", end: "18:00" }] }]; // Monday has no row: closed.
+    const result = copyToEveryDay(withStaleMonday, envelope, 2);
+    assert.deepEqual(result.find((d) => d.weekday === 1).shifts, [{ start: "08:00", end: "10:00" }]);
   });
 
   test("guard: an unknown source weekday leaves the week unchanged", () => {

@@ -1,7 +1,7 @@
 "use client";
 
 import { useLocale, useTranslations } from "next-intl";
-import { type FormEvent, useEffect, useId, useState } from "react";
+import { type FormEvent, useEffect, useId, useRef, useState } from "react";
 
 import { membersList, membersSetDisplayName, type MemberOut, workingHoursRead } from "@/api-client";
 import { Link } from "@/i18n/navigation";
@@ -178,6 +178,9 @@ function SetNameField({ memberId, onSaved }: { memberId: string; onSaved(name: s
   const [signedOut, setSignedOut] = useState(false);
   const [fieldError, setFieldError] = useState<string | null>(null);
   const errorId = `${id}-error`;
+  // A state flag lags a tick behind synchronous re-entrant calls (three requestSubmit()s in one
+  // event all read the same stale `saving` before any re-render), so the actual guard is this ref.
+  const submitting = useRef(false);
 
   if (!open) {
     return (
@@ -189,12 +192,13 @@ function SetNameField({ memberId, onSaved }: { memberId: string; onSaved(name: s
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
-    if (saving) return;
+    if (submitting.current) return;
     const trimmed = value.trim();
     if (!trimmed) {
       setFieldError(t("nameRequired"));
       return;
     }
+    submitting.current = true;
     setFieldError(null);
     setSignedOut(false);
     setError(null);
@@ -204,6 +208,7 @@ function SetNameField({ memberId, onSaved }: { memberId: string; onSaved(name: s
       { write: true },
     );
     setSaving(false);
+    submitting.current = false;
     if (outcome.status === 200 && outcome.data) {
       onSaved(outcome.data.display_name ?? trimmed);
       setOpen(false);
