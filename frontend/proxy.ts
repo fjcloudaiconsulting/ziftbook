@@ -53,11 +53,10 @@ async function forwardApi(request: NextRequest): Promise<Response> {
 
   const { pathname, search } = request.nextUrl;
   const headers = new Headers(request.headers);
-  // A header the Connection value itself names (e.g. "Connection: x-foo") is hop-by-hop too, so
-  // it must be read and dropped before "connection" itself is deleted below.
-  for (const name of (headers.get("connection") ?? "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean)) {
-    headers.delete(name);
-  }
+  // RFC 7230 6.1 also wants every header the Connection value itself names dropped. Not parsed:
+  // the upstream is our own backend, which never reads an extra hop header even if one arrives,
+  // and Connection's value is arbitrary client input, some of which isn't a valid header name and
+  // makes Headers.delete() throw (an invalid Connection value must never 500 the proxy).
   for (const name of [...FORWARDING, ...HOP_BY_HOP, ...REQUEST_ONLY_STRIP]) headers.delete(name);
   const ip = clientIp(request);
   if (ip) headers.set("x-forwarded-for", ip);

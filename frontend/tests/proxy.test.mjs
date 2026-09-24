@@ -3,6 +3,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createServer, request as httpRequest } from "node:http";
+import { connect } from "node:net";
 import { after, before, describe, test } from "node:test";
 import { gzipSync } from "node:zlib";
 
@@ -45,6 +46,17 @@ function stubEcho() {
   });
 }
 
+function stubHopByHopResponse(version) {
+  return new Promise((resolve) => {
+    const server = createServer((req, res) => {
+      res.setHeader("Content-Type", "application/json");
+      res.setHeader("Proxy-Connection", "x");
+      res.setHeader("Trailer", "t");
+      res.end(JSON.stringify({ status: "ok", version }));
+    }).listen(0, "127.0.0.1", () => resolve(server));
+  });
+}
+
 function stubRedirect(location) {
   return new Promise((resolve) => {
     const server = createServer((req, res) => {
@@ -68,6 +80,38 @@ function postWithExpectContinue(port, path, payload) {
     );
     req.on("error", reject);
     req.end(payload);
+  });
+}
+
+// A raw GET with arbitrary headers, written straight to the socket: fetch()'s client side refuses
+// to let a caller set some of these (Connection, like Expect), and node:http's own client
+// special-cases and rejects a bare Trailer header outside chunked transfer.
+function getWithHeaders(port, path, headers) {
+  return new Promise((resolve, reject) => {
+    const socket = connect(port, "127.0.0.1", () => {
+      const lines = [`GET ${path} HTTP/1.1`, `Host: 127.0.0.1:${port}`];
+      for (const [name, value] of Object.entries(headers)) lines.push(`${name}: ${value}`);
+      socket.write(lines.join("\r\n") + "\r\n\r\n");
+    });
+    let raw = "";
+    socket.on("data", (chunk) => {
+      raw += chunk;
+      // A keep-alive connection never sends 'end' on its own, and the proxy may reply chunked
+      // (a streamed fetch body) rather than with a Content-Length, so stop as soon as whichever
+      // terminator applies has arrived (every response here is a small JSON body).
+      const split = raw.indexOf("\r\n\r\n");
+      if (split === -1) return;
+      const head = raw.slice(0, split);
+      const rest = raw.slice(split + 4);
+      const chunked = /transfer-encoding: chunked/i.test(head);
+      const contentLength = Number(/content-length: (\d+)/i.exec(head)?.[1] ?? -1);
+      const done = chunked ? rest.endsWith("0\r\n\r\n") : contentLength >= 0 && Buffer.byteLength(rest) >= contentLength;
+      if (!done) return;
+      socket.destroy();
+      const body = chunked ? rest.split("\r\n").filter((_, i) => i % 2 === 1).join("") : rest;
+      resolve({ status: Number(head.split(" ")[1]), body });
+    });
+    socket.on("error", reject);
   });
 }
 
@@ -499,6 +543,56 @@ describe("unset ZIF_API_URL (E7)", () => {
       assert.equal(lines[0].level, "ERROR");
     } finally {
       await stop(web);
+    }
+  });
+});
+
+describe("hop-by-hop headers", () => {
+  const port = 3213;
+
+  test("Proxy-Authorization and Trailer never reach the upstream; X-Request-ID does", async () => {
+    const api = await stubApi("H");
+    const web = await startWeb(`http://127.0.0.1:${api.address().port}`, port);
+    try {
+      const { status, body } = await getWithHeaders(port, "/api/x", { "Proxy-Authorization": "p", Trailer: "t", "X-Request-ID": "r1" });
+      assert.equal(status, 200);
+      const { headers } = JSON.parse(body);
+      assert.equal(headers["proxy-authorization"], undefined);
+      assert.equal(headers["trailer"], undefined);
+      assert.equal(headers["x-request-id"], "r1");
+    } finally {
+      await stop(web);
+      api.close();
+    }
+  });
+
+  // Guard: this is the exact shape of the bug the review found (an "@" isn't a legal header-name
+  // character, so a naive headers.delete(name) on a token read out of Connection throws).
+  test("guard: Connection: x@y never 500s the proxy", async () => {
+    const api = await stubApi("I");
+    const web = await startWeb(`http://127.0.0.1:${api.address().port}`, port + 1);
+    try {
+      const { status, body } = await getWithHeaders(port + 1, "/api/x", { Connection: "x@y" });
+      assert.equal(status, 200);
+      assert.equal(JSON.parse(body).version, "I");
+    } finally {
+      await stop(web);
+      api.close();
+    }
+  });
+
+  test("Proxy-Connection and Trailer from the upstream never reach the client", async () => {
+    const api = await stubHopByHopResponse("J");
+    const web = await startWeb(`http://127.0.0.1:${api.address().port}`, port + 2);
+    try {
+      // keep-alive/connection are excluded on purpose: Node's own HTTP server sets those itself.
+      const response = await fetch(`http://127.0.0.1:${port + 2}/api/x`, { redirect: "manual" });
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get("proxy-connection"), null);
+      assert.equal(response.headers.get("trailer"), null);
+    } finally {
+      await stop(web);
+      api.close();
     }
   });
 });
