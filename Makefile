@@ -13,18 +13,18 @@ up: ## Start the whole app (http://localhost:3000), syncing source changes into 
 	sh scripts/check-ports.sh
 	docker compose up --build --watch
 
-observe: ## Like up, plus logs and traces in the shared local lgtm stack (Grafana: http://127.0.0.1:3300)
-	@curl -sf -o /dev/null http://127.0.0.1:3300/api/health || { echo "The shared lgtm stack is not running: see CONTRIBUTING.md, Local logs and traces."; exit 1; }
+observe: ## Like up, exporting OpenTelemetry to the shared local lgtm stack (Grafana: http://127.0.0.1:3300)
+	@curl -sf -o /dev/null http://127.0.0.1:3300/api/health || { echo "The shared lgtm stack is not running: see CONTRIBUTING.md, Observability."; exit 1; }
 	sh scripts/check-ports.sh
 	ZIF_OTEL_EXPORTER_OTLP_ENDPOINT=http://host.docker.internal:4318 ZIF_OTEL_EXPORTER_OTLP_HEADERS= \
-		docker compose --profile observability up --build --watch
+		docker compose up --build --watch
 
 down:
-	docker compose --profile observability down
+	docker compose down
 
 reset: ## Delete the local database (every account, business and booking) and start fresh; asks first
 	@printf 'This deletes the local database. Type "reset" to continue: '; read answer; [ "$$answer" = reset ] || { echo "Nothing deleted."; exit 1; }
-	docker compose --profile observability down -v
+	docker compose down -v
 	$(MAKE) up
 
 migrate: ## Apply database migrations (as ziftbook_migrate)

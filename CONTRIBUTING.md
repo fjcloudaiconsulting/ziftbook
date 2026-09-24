@@ -331,15 +331,42 @@ Attributes on every span come from an explicit allowlist instead.
   ruling: an operator-facing name carries `ZIF_`). Code itself only ever reads the standard
   `OTEL_*` names; nothing in `app/` or `lib/` reads a `ZIF_OTEL_*` name directly.
 
-## Local logs and traces
+## Observability
 
-`make observe` is `make up` plus the opt-in `observability` compose profile. It sends every
-process's traces, and every container's log lines, to one Grafana LGTM stack (Loki, Tempo,
-Prometheus, Grafana) that runs outside this project and is shared by every project on the machine.
-`make up` is unchanged and exports nothing. If the stack isn't running yet, start it once (it comes
-back with Docker; data survives in the `lgtm-data` volume). It needs Docker Desktop (macOS,
-Windows): on Linux `host.docker.internal` does not reach a stack published on 127.0.0.1, so
-neither logs nor traces arrive, and nothing says so.
+Every signal leaves the app in a vendor-neutral form: logs as JSON lines on stdout, traces (and,
+later, metrics and logs too) over OTLP to one endpoint. What sits behind that endpoint (the
+Grafana LGTM stack today; Prometheus, fluentd or anything else later) is an OpenTelemetry
+Collector's configuration, never app code. So no vendor agent, SDK or protocol belongs in this
+repo, and every switch below works the same in `docker-compose.yaml`, `docker-compose-prod.yaml`
+and any other deployment: set the variable, restart the processes.
+
+| Signal | Leaves the app as | On | Off | Tune |
+|---|---|---|---|---|
+| Logs | JSON lines on stdout (`ZIF_LOG_FORMAT=json`, the default; `text` in dev) | always | cannot be turned off; raise `ZIF_LOG_LEVEL` to `ERROR` for the least | `ZIF_LOG_LEVEL` (default `INFO`), `ZIF_LOG_SQL` (see Logging) |
+| Traces | OTLP/HTTP to `ZIF_OTEL_EXPORTER_OTLP_ENDPOINT` | set the endpoint (plus `ZIF_OTEL_EXPORTER_OTLP_HEADERS` if the collector wants auth) | leave the endpoint unset: no spans are exported and no connection is attempted. In prod you can also set `ZIF_OTEL_TRACES_SAMPLER=always_off` | prod: `ZIF_OTEL_TRACES_SAMPLER` / `_ARG` (default 10% of new traces, following the caller's decision); dev: 100% |
+| Metrics | none yet (ZIF-88) | | | |
+
+- Logs go to stdout because that is what every platform collects (the Docker logging driver, a
+  Kubernetes node agent, an OpenTelemetry Collector's `filelog` receiver). Exporting them over
+  OTLP as well, so all three signals share the endpoint, is ZIF-137.
+- The sampler variables are the OpenTelemetry standard values (`always_on`, `always_off`,
+  `traceidratio`, `parentbased_*`), read by the SDK itself. The dev compose passes neither.
+- Service names: `ziftbook-api`, `ziftbook-worker`, `ziftbook-migrations`, `ziftbook-web`
+  (`OTEL_SERVICE_NAME` overrides; `OTEL_RESOURCE_ATTRIBUTES` adds e.g. `deployment.environment=prod`).
+- The environment variables table below lists each of these with its defaults.
+
+### Locally
+
+`make observe` is `make up` with traces exported to one Grafana LGTM stack (Loki, Tempo,
+Prometheus and Grafana behind a built-in OpenTelemetry Collector) that runs outside this project
+and is shared by every project on the machine. `make up` is unchanged and exports nothing.
+`make observe` sets `ZIF_OTEL_EXPORTER_OTLP_ENDPOINT` to `http://host.docker.internal:4318` and
+clears `ZIF_OTEL_EXPORTER_OTLP_HEADERS`, overriding a `.env` that sends to a hosted collector. It
+needs Docker Desktop (macOS, Windows): on Linux `host.docker.internal` does not reach a stack
+published on 127.0.0.1, so nothing arrives, and nothing says so.
+
+If the stack isn't running yet, start it once (it comes back with Docker; data survives in the
+`lgtm-data` volume):
 
 ```sh
 docker run -d --name lgtm --restart unless-stopped -v lgtm-data:/data \
@@ -347,31 +374,14 @@ docker run -d --name lgtm --restart unless-stopped -v lgtm-data:/data \
   -p 127.0.0.1:3100:3100 -p 127.0.0.1:3200:3200 -p 127.0.0.1:9090:9090 grafana/otel-lgtm:0.33.1
 ```
 
-- Traces: `make observe` points `ZIF_OTEL_EXPORTER_OTLP_ENDPOINT` at the stack
-  (`http://host.docker.internal:4318`) and clears `ZIF_OTEL_EXPORTER_OTLP_HEADERS`, overriding a
-  `.env` that sends to a hosted collector.
-- Logs: the profile's `alloy` service (`observability/logs.alloy`) tails this compose project's
-  containers through the Docker socket and pushes them to Loki. It publishes no port. The socket
-  gives it full control of the Docker daemon, which is one reason it never runs without the profile.
-- Every stream's `service_name` matches the process's trace service name (`ziftbook-api`,
-  `ziftbook-worker`, `ziftbook-web`), and is `ziftbook-<compose service>` for the rest
-  (`ziftbook-postgres`, `ziftbook-mailpit`, `ziftbook-alloy`). Its `project` label is the compose
-  project, which tells two checkouts apart.
-- Alloy only sees running containers, so `migrate` and `db-init`, which exit at startup, are not
-  in Loki: read them in the terminal or with `docker compose logs migrate`. Migrate's traces
-  still arrive (`ziftbook-migrations`).
-- `make down` and `make reset` include the profile, so they also remove `alloy`. A bare
-  `docker compose down` leaves it running. `make reset` restarts with `make up`, so run
-  `make observe` again afterwards to keep exporting.
-- No metrics yet: nothing emits any.
+To follow a request, open Grafana at http://127.0.0.1:3300, then Explore:
 
-To find a request by id, open Grafana at http://127.0.0.1:3300, then Explore:
+1. Take the id from the response's `X-Request-ID` header and find its log line in the terminal
+   (`docker compose logs backend | grep <request id>`). The API's access line carries `trace_id=`.
+2. In Tempo, open that trace id: it shows the web span, the API span, its SQL spans, and any job
+   and email it queued. Or search Tempo by service name (`{resource.service.name="ziftbook-api"}`).
 
-1. Take the id from the response's `X-Request-ID` header (or any log line's `request_id=`).
-2. In Loki, query `{service_name=~"ziftbook-.*"} |= "<request id>"` (a line takes up to a
-   minute to show up). The API's access line carries `trace_id=`.
-3. In Tempo, open that trace id: it shows the web span, the API span, its SQL spans, and any job
-   and email it queued.
+Logs reach Loki once ZIF-137 exports them over OTLP; until then they stay in the terminal.
 
 ## API contract
 
@@ -440,13 +450,12 @@ ZIF-38). An empty variable means the default: `env_ignore_empty=True` on the bas
 | `ZIF_IMAGE_TAG` | compose | none | yes | no | Release tag (`vX.Y.Z`) for the three GHCR images. |
 | `ZIF_API_URL` | frontend | none | yes | no | Backend base URL the web app proxies `/api` to. |
 | **Tracing** | | | | | |
-| `ZIF_OTEL_EXPORTER_OTLP_ENDPOINT` | compose (api, worker, migrations, frontend) | none | no | no | Feeds `OTEL_EXPORTER_OTLP_ENDPOINT`, the OTLP/HTTP collector endpoint. Unset exports nothing. `make observe` sets it to the shared local stack; see Local logs and traces. |
+| `ZIF_OTEL_EXPORTER_OTLP_ENDPOINT` | compose (api, worker, migrations, frontend) | none | no | no | Feeds `OTEL_EXPORTER_OTLP_ENDPOINT`, the OTLP/HTTP collector endpoint. Unset exports nothing (the off switch). `make observe` sets it to the shared local stack; see Observability. |
 | `ZIF_OTEL_EXPORTER_OTLP_HEADERS` | compose (api, worker, migrations, frontend) | none | no | yes | Feeds `OTEL_EXPORTER_OTLP_HEADERS`, the collector's auth headers, e.g. `Authorization=Basic%20<base64 instance:token>`. URL-encoded, comma-separated `key=value` pairs. A malformed entry is dropped without a log line (the SDK's warning would quote the token), and export then fails with an auth error. |
-| `ZIF_OTEL_TRACES_SAMPLER` | compose, prod only (api, worker, migrations, frontend) | `parentbased_traceidratio` | no | no | Feeds `OTEL_TRACES_SAMPLER`. Dev compose sets neither sampler variable, so dev stays at the SDK's own default, 100% (`parentbased_always_on`). |
+| `ZIF_OTEL_TRACES_SAMPLER` | compose, prod only (api, worker, migrations, frontend) | `parentbased_traceidratio` | no | no | Feeds `OTEL_TRACES_SAMPLER`; `always_off` stops traces with the endpoint still set. Dev compose sets neither sampler variable, so dev stays at the SDK's own default, 100% (`parentbased_always_on`). |
 | `ZIF_OTEL_TRACES_SAMPLER_ARG` | compose, prod only (api, worker, migrations, frontend) | `0.1` | no | no | Feeds `OTEL_TRACES_SAMPLER_ARG`. |
 | `OTEL_SERVICE_NAME` | api, worker, migrations, frontend | `ziftbook-api`/`ziftbook-worker`/`ziftbook-migrations`/`ziftbook-web` | no | no | Read by the OTel SDK itself; each process sets its own default if unset. Not set by compose. |
 | `OTEL_RESOURCE_ATTRIBUTES` | api, worker, migrations, frontend | none | no | no | Read by the OTel SDK itself; extra resource attributes. Not set by compose. |
-| `ZIF_COMPOSE_PROJECT` | compose, dev only (alloy) | none | no | no | Set by `docker-compose.yaml` itself from `COMPOSE_PROJECT_NAME`, never by hand: the compose project whose container logs `alloy` ships. |
 
 `node scripts/check-env-names.mjs` (part of `make lint`) fails if a `ZIF_*` name read in code, or in a compose
 file, is missing from this table. Any name beginning with `OTEL_` is allowed everywhere: those are read by the
