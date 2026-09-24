@@ -603,7 +603,7 @@ def test_every_booking_template_renders_service_and_when() -> None:
         "zone": "Europe/Amsterdam",
         "client": "Client Name",
         "link": "https://example.com/en",
-        "expires": "DATE-MARKER TIME-MARKER (Europe/Amsterdam)",
+        "expires": "EXPIRES-MARKER",  # never the date/time markers: booking_request prints it too
     }
     for template in STATUS_FOR:
         for locale in LOCALES:
