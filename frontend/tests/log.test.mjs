@@ -1,8 +1,9 @@
 // Structured logging for the web server, mirroring backend/app/logs.py's tests.
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { describe, test } from "node:test";
 
-import { errorFields, format, logger, parseFormat, parseLevel, requestId } from "../lib/log.ts";
+import { errorFields, format, logger, parseFormat, parseLevel, requestErrorFields, requestId } from "../lib/log.ts";
 
 describe("parseLevel (L1, L2)", () => {
   test("undefined and empty give INFO; the four values are accepted as-is", () => {
@@ -29,13 +30,38 @@ describe("parseLevel (L1, L2)", () => {
 });
 
 describe("parseFormat (L3)", () => {
-  test("empty gives json; junk throws naming ZIF_LOG_FORMAT", () => {
+  test("empty and undefined give json; text is accepted as-is; junk throws naming ZIF_LOG_FORMAT", () => {
     assert.equal(parseFormat(""), "json");
+    assert.equal(parseFormat(undefined), "json");
+    assert.equal(parseFormat("text"), "text");
     for (const bad of ["JSON", "pretty"]) {
       assert.throws(() => parseFormat(bad), (err) => {
         assert.match(err.message, /ZIF_LOG_FORMAT/);
         return true;
       });
+    }
+  });
+
+  test("logger() under ZIF_LOG_FORMAT=text writes a non-JSON line starting with the ts", () => {
+    process.env.ZIF_LOG_LEVEL = "INFO";
+    process.env.ZIF_LOG_FORMAT = "text";
+    const log = logger("web.test");
+    const calls = [];
+    const original = process.stdout.write;
+    process.stdout.write = (chunk) => {
+      calls.push(chunk);
+      return true;
+    };
+    try {
+      log.info("hello");
+      assert.equal(calls.length, 1);
+      const line = calls[0];
+      assert.throws(() => JSON.parse(line), "a text-format line must not parse as JSON");
+      assert.match(line, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z /);
+    } finally {
+      process.stdout.write = original;
+      delete process.env.ZIF_LOG_LEVEL;
+      delete process.env.ZIF_LOG_FORMAT;
     }
   });
 });
@@ -61,6 +87,14 @@ describe("format: text (L5)", () => {
     assert.doesNotMatch(line, /[\r\n]/);
     assert.match(line, /bad\\nmsg\\rhere/);
     assert.match(line, /note=a\\r\\nb/);
+  });
+
+  test("other control and line-separator characters also come out escaped, not raw", () => {
+    const line = format("text", "ERROR", "web.request", "esc\x1btab", { note: "a\u2028b" });
+    assert.doesNotMatch(line, /\x1b/);
+    assert.match(line, /esc\\u001btab/);
+    assert.doesNotMatch(line, /\u2028/);
+    assert.match(line, /note=a\\u2028b/);
   });
 });
 
@@ -110,6 +144,25 @@ describe("logger (L7)", () => {
       process.stdout.write = original;
       delete process.env.ZIF_LOG_LEVEL;
       delete process.env.ZIF_LOG_FORMAT;
+    }
+  });
+
+  test("a bad env value at log time falls back to INFO/json instead of throwing", () => {
+    process.env.ZIF_LOG_LEVEL = "nope";
+    delete process.env.ZIF_LOG_FORMAT;
+    const calls = [];
+    const original = process.stdout.write;
+    process.stdout.write = (chunk) => {
+      calls.push(chunk);
+      return true;
+    };
+    try {
+      assert.doesNotThrow(() => logger("x").error("m"));
+      assert.equal(calls.length, 1, "startup has already refused this value; a log call must still write");
+      assert.doesNotThrow(() => JSON.parse(calls[0]), "falls back to json, not text");
+    } finally {
+      process.stdout.write = original;
+      delete process.env.ZIF_LOG_LEVEL;
     }
   });
 });
@@ -174,6 +227,27 @@ describe("errorFields (L8)", () => {
     });
     assert.equal(fields.exc.length, 1);
   });
+
+  test("a 7-deep cause chain is capped at 5 entries", () => {
+    let err = new Error("e0");
+    for (let i = 1; i < 7; i++) err = new Error(`e${i}`, { cause: err });
+    const fields = errorFields(err);
+    assert.equal(fields.exc.length, 5);
+  });
+
+  test("a stack with 25 at-lines is capped at 20 frames", () => {
+    const err = new Error("x");
+    const atLines = Array.from({ length: 25 }, (_, i) => `    at f${i} (file.js:${i}:1)`).join("\n");
+    err.stack = `Error: x\n${atLines}`;
+    const fields = errorFields(err);
+    assert.equal(fields.exc[0].frames.length, 20);
+  });
+
+  test("a DOMException's type is its name, e.g. TimeoutError", () => {
+    const err = new DOMException("x", "TimeoutError");
+    const fields = errorFields(err);
+    assert.equal(fields.exc[0].type, "TimeoutError");
+  });
 });
 
 describe("requestId (L9)", () => {
@@ -190,45 +264,42 @@ describe("requestId (L9)", () => {
   });
 });
 
-describe("onRequestError-shaped fields (L10)", () => {
-  test("digest, message and headers never leak; request_id and route do", async () => {
-    const { onRequestError } = await import("../instrumentation.ts");
-    const calls = [];
-    const original = process.stdout.write;
-    process.stdout.write = (chunk) => {
-      calls.push(chunk);
-      return true;
-    };
-    process.env.ZIF_LOG_LEVEL = "INFO";
-    process.env.ZIF_LOG_FORMAT = "json";
-    try {
-      const err = new Error("a@b.c");
-      err.digest = "NEXT_REDIRECT;replace;/x?token=t;307;";
-      await onRequestError(
-        err,
-        { path: "/en/x?token=t", method: "GET", headers: { cookie: "c=secret", "x-request-id": "r1" } },
-        { routePath: "/[locale]/x", routeType: "render" },
-      );
-      assert.equal(calls.length, 1);
-      const line = calls[0];
-      assert.doesNotMatch(line, /token/);
-      assert.doesNotMatch(line, /secret/);
-      assert.doesNotMatch(line, /a@b\.c/);
-      assert.doesNotMatch(line, /digest/);
-      const parsed = JSON.parse(line);
-      assert.equal(parsed.request_id, "r1");
-      assert.equal(parsed.route, "/[locale]/x");
+describe("requestErrorFields (L10)", () => {
+  test("digest, message and headers never leak; request_id and route do", () => {
+    const err = new Error("a@b.c");
+    err.digest = "NEXT_REDIRECT;replace;/x?token=t;307;";
+    const fields = requestErrorFields(
+      err,
+      { path: "/en/x?token=t", method: "GET", headers: { cookie: "c=secret", "x-request-id": "r1" } },
+      { routePath: "/[locale]/x", routeType: "render" },
+    );
+    const serialised = JSON.stringify(fields);
+    assert.doesNotMatch(serialised, /token/);
+    assert.doesNotMatch(serialised, /secret/);
+    assert.doesNotMatch(serialised, /a@b\.c/);
+    assert.equal("digest" in fields, false, "a non-numeric-hash digest (a navigation digest) is dropped");
+    assert.equal(fields.request_id, "r1");
+    assert.equal(fields.route, "/[locale]/x");
 
-      calls.length = 0;
-      const err2 = new Error("y");
-      err2.digest = "12345";
-      await onRequestError(err2, { path: "/en", method: "GET", headers: {} }, { routePath: "/[locale]", routeType: "render" });
-      const parsed2 = JSON.parse(calls[0]);
-      assert.equal(parsed2.digest, "12345");
-    } finally {
-      process.stdout.write = original;
-      delete process.env.ZIF_LOG_LEVEL;
-      delete process.env.ZIF_LOG_FORMAT;
+    const err2 = new Error("y");
+    err2.digest = "12345";
+    const fields2 = requestErrorFields(err2, { path: "/en", method: "GET", headers: {} }, { routePath: "/[locale]", routeType: "render" });
+    assert.equal(fields2.digest, "12345");
+  });
+});
+
+describe("source guards (L11)", () => {
+  const read = (rel) => readFileSync(new URL(rel, import.meta.url), "utf8");
+
+  test("instrumentation.ts exports register and onRequestError as functions", () => {
+    const src = read("../instrumentation.ts");
+    assert.match(src, /export (async )?function register\b/);
+    assert.match(src, /export (async )?function onRequestError\b/);
+  });
+
+  test("proxy.ts, instrumentation.ts and lib/log.ts never call console.*", () => {
+    for (const rel of ["../proxy.ts", "../instrumentation.ts", "../lib/log.ts"]) {
+      assert.doesNotMatch(read(rel), /\bconsole\./, rel);
     }
   });
 });

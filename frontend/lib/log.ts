@@ -24,9 +24,14 @@ export function parseFormat(value: string | undefined): Format {
 
 const RESERVED = new Set(["ts", "level", "logger", "msg"]);
 
-// mirrors backend/app/logs.py's _escape: the only two bytes that could split or inject a text line.
+// mirrors backend/app/logs.py's _escape: \r and \n could split a text line, and every other
+// control byte (plus the Unicode line/paragraph separators, which some renderers treat as a
+// newline) could still inject one, so all of them get a \uXXXX escape instead of passing through.
 function escape(value: string): string {
-  return value.replace(/\r/g, "\\r").replace(/\n/g, "\\n");
+  return value
+    .replace(/\r/g, "\\r")
+    .replace(/\n/g, "\\n")
+    .replace(/[\x00-\x1f\x7f-\x9f\u2028\u2029]/g, (c) => `\\u${c.codePointAt(0)!.toString(16).padStart(4, "0")}`);
 }
 
 export function format(
@@ -151,4 +156,29 @@ const REQUEST_ID = /^[A-Za-z0-9._:-]{1,64}$/;
 export function requestId(header: string | null): string {
   if (header !== null && REQUEST_ID.test(header)) return header;
   return randomUUID().replaceAll("-", "");
+}
+
+export type ErrorRequest = { path: string; method: string; headers: Record<string, string | string[] | undefined> };
+export type ErrorContext = { routePath: string; routeType: string };
+
+/** The fields for instrumentation.ts's onRequestError log line, as a pure function so a test can
+ * check them without going through a logger or importing instrumentation.ts itself. Never
+ * request.path (carries the query string) or any header but x-request-id. */
+export function requestErrorFields(err: unknown, request: ErrorRequest, context: ErrorContext): Record<string, unknown> {
+  const header = request.headers["x-request-id"];
+  const fields: Record<string, unknown> = {
+    request_id: requestId(typeof header === "string" ? header : null),
+    method: request.method,
+    route: context.routePath,
+    route_type: context.routeType,
+  };
+  let digest: unknown;
+  try {
+    digest = (err as { digest?: unknown } | null)?.digest;
+  } catch {
+    digest = undefined;
+  }
+  if (typeof digest === "string" && /^\d{1,20}$/.test(digest)) fields.digest = digest;
+  Object.assign(fields, errorFields(err));
+  return fields;
 }

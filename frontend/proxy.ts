@@ -12,10 +12,14 @@ const log = logger("web.proxy");
 // Headers that name the visitor. Only the one this deployment trusts is forwarded, as
 // X-Forwarded-For.
 const FORWARDING = ["x-forwarded-for", "x-real-ip", "forwarded", "x-forwarded-proto"];
-// Never forwarded upstream: hop-by-hop headers (RFC 7230 6.1), the incoming Host, and
-// content-length (undici sets its own once the body and headers are final). expect is here too:
-// undici throws UND_ERR_NOT_SUPPORTED on it, and curl sends it for any upload over 1MB.
-const STRIP = ["host", "connection", "keep-alive", "transfer-encoding", "te", "upgrade", "proxy-connection", "expect", "content-length"];
+// Hop-by-hop headers (RFC 7230 6.1): meaningful only between one connection's two ends, never
+// valid on a proxied message, request or response.
+const HOP_BY_HOP = ["connection", "keep-alive", "transfer-encoding", "te", "upgrade", "proxy-connection", "trailer"];
+// Stripped from the request only: the incoming Host, content-length (undici sets its own once the
+// body and headers are final), expect (undici throws UND_ERR_NOT_SUPPORTED on it, and curl sends
+// it for any upload over 1MB), and proxy-authorization (meant for a proxy between the browser and
+// us, never for the upstream).
+const REQUEST_ONLY_STRIP = ["host", "expect", "content-length", "proxy-authorization"];
 
 // Read per request, like apiUrl(). Set only where every request reaches this server through a
 // proxy that overwrites the header (staging: cf-connecting-ip). Unset: the API sees this
@@ -49,7 +53,12 @@ async function forwardApi(request: NextRequest): Promise<Response> {
 
   const { pathname, search } = request.nextUrl;
   const headers = new Headers(request.headers);
-  for (const name of [...FORWARDING, ...STRIP]) headers.delete(name);
+  // A header the Connection value itself names (e.g. "Connection: x-foo") is hop-by-hop too, so
+  // it must be read and dropped before "connection" itself is deleted below.
+  for (const name of (headers.get("connection") ?? "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean)) {
+    headers.delete(name);
+  }
+  for (const name of [...FORWARDING, ...HOP_BY_HOP, ...REQUEST_ONLY_STRIP]) headers.delete(name);
   const ip = clientIp(request);
   if (ip) headers.set("x-forwarded-for", ip);
   headers.set("x-request-id", id);
@@ -68,14 +77,15 @@ async function forwardApi(request: NextRequest): Promise<Response> {
         // for a streamed body.
       } as RequestInit & { duplex: "half" },
     );
-    // Rebuilt, never passed through: plain iteration folds every Set-Cookie into one
-    // comma-joined header, which breaks a cookie whose Expires contains a comma.
+    // Headers iteration (unlike a naive Map) already yields each Set-Cookie as its own [name,
+    // value] pair (measured), so no separate getSetCookie() rebuild is needed to keep them apart.
+    // content-encoding/content-length are dropped because undici has already decoded the body;
+    // the hop-by-hop set is dropped for the same reason it never reaches the upstream request.
     const responseHeaders = new Headers();
     for (const [name, value] of upstreamResponse.headers) {
-      if (name === "content-encoding" || name === "content-length" || name === "set-cookie") continue;
+      if (name === "content-encoding" || name === "content-length" || HOP_BY_HOP.includes(name)) continue;
       responseHeaders.append(name, value);
     }
-    for (const cookie of upstreamResponse.headers.getSetCookie()) responseHeaders.append("set-cookie", cookie);
     return new Response(upstreamResponse.body, { status: upstreamResponse.status, headers: responseHeaders });
   } catch (err) {
     if (request.signal.aborted) {

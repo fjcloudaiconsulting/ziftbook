@@ -1,9 +1,23 @@
 // Runs once per server process, before any request. Startup logging and per-request error
 // reporting, the same idea as backend/app/logs.py's configure() and app.main's exception handling.
-import { errorFields, logger, parseFormat, parseLevel, requestId } from "./lib/log.ts";
+// Field-building lives in lib/log.ts (pure, so it's testable without a logger); this file only
+// wires it to Next's lifecycle hooks.
+import {
+  type ErrorContext,
+  type ErrorRequest,
+  type Format,
+  type Level,
+  logger,
+  parseFormat,
+  parseLevel,
+  requestErrorFields,
+} from "./lib/log";
+
+const startupLog = logger("web.startup");
+const requestLog = logger("web.request");
 
 export function register(): void {
-  let level, format;
+  let level: Level, format: Format;
   try {
     level = parseLevel(process.env.ZIF_LOG_LEVEL);
   } catch (err) {
@@ -16,27 +30,9 @@ export function register(): void {
     process.stderr.write(`invalid ${err instanceof Error ? err.message : "ZIF_LOG_FORMAT"}\n`);
     process.exit(1);
   }
-  logger("web.startup").info("started", { log_level: level, log_format: format });
+  startupLog.info("started", { log_level: level, log_format: format });
 }
 
-type ErrorRequest = { path: string; method: string; headers: Record<string, string | string[] | undefined> };
-type ErrorContext = { routePath: string; routeType: string };
-
 export function onRequestError(err: unknown, request: ErrorRequest, context: ErrorContext): void {
-  const header = request.headers["x-request-id"];
-  const fields: Record<string, unknown> = {
-    request_id: requestId(typeof header === "string" ? header : null),
-    method: request.method,
-    route: context.routePath,
-    route_type: context.routeType,
-  };
-  let digest: unknown;
-  try {
-    digest = (err as { digest?: unknown } | null)?.digest;
-  } catch {
-    digest = undefined;
-  }
-  if (typeof digest === "string" && /^\d{1,20}$/.test(digest)) fields.digest = digest;
-  Object.assign(fields, errorFields(err));
-  logger("web.request").error("request failed", fields);
+  requestLog.error("request failed", requestErrorFields(err, request, context));
 }

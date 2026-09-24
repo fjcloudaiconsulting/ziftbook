@@ -71,23 +71,32 @@ function postWithExpectContinue(port, path, payload) {
   });
 }
 
+function parsedLogLines(getText, msg) {
+  return getText()
+    .split("\n")
+    .filter((line) => line.startsWith("{"))
+    .map((line) => {
+      try {
+        return JSON.parse(line);
+      } catch {
+        return null;
+      }
+    })
+    .filter((parsed) => parsed && parsed.msg === msg);
+}
+
 // Poll a growing text buffer (from startWeb's child.logs) for a JSON line with the given msg.
-// Never counts total lines: Next prints its own banner, which never starts with "{".
+// Never counts total lines: Next prints its own banner, which never starts with "{". After the
+// first match, wait a bit and re-read once more before the caller counts, so a second line
+// written just after (a duplicate) is caught rather than raced.
 async function waitForLog(getText, msg, timeoutMs = 5000) {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
-    const lines = getText()
-      .split("\n")
-      .filter((line) => line.startsWith("{"))
-      .map((line) => {
-        try {
-          return JSON.parse(line);
-        } catch {
-          return null;
-        }
-      })
-      .filter((parsed) => parsed && parsed.msg === msg);
-    if (lines.length > 0) return lines;
+    const lines = parsedLogLines(getText, msg);
+    if (lines.length > 0) {
+      await new Promise((r) => setTimeout(r, 200));
+      return parsedLogLines(getText, msg);
+    }
     if (Date.now() > deadline) return [];
     await new Promise((r) => setTimeout(r, 50));
   }
@@ -396,7 +405,11 @@ describe("dead upstream (E2)", () => {
   });
 });
 
-describe("response headers passthrough (E3)", () => {
+// Guard, not a fence: on Next 16.3.5 Headers iteration already splits multiple Set-Cookie apart
+// (see proxy.ts) and the runtime already serves an already-decoded body without a stale
+// content-encoding, so neither half of this can be forced red against a wrong implementation in
+// this stack. Kept to catch a regression if that runtime behavior ever changes.
+describe("response headers passthrough (E3, guard)", () => {
   const port = 3209;
 
   test("multiple Set-Cookie reach the client; a gzipped upstream body arrives already decoded", async () => {
