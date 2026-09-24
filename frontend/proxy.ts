@@ -108,8 +108,6 @@ export default function proxy(request: NextRequest) {
 
 export const config = {
   // /api is forwarded to FastAPI; every other page path goes through locale routing.
-  // Next internals and files with an extension are skipped. proxy.ts (renamed from
-  // middleware.ts) always runs on the Node.js runtime, so node:crypto, process.stdout and a
-  // duplex-streamed fetch all just work.
+  // Next internals and files with an extension are skipped.
   matcher: ["/api/:path*", "/((?!api|_next|_vercel|.*\\..*).*)"],
 };

@@ -548,7 +548,7 @@ describe("unset ZIF_API_URL (E7)", () => {
 });
 
 describe("hop-by-hop headers", () => {
-  const port = 3213;
+  const port = 3214;
 
   test("Proxy-Authorization and Trailer never reach the upstream; X-Request-ID does", async () => {
     const api = await stubApi("H");
