@@ -2,8 +2,18 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, test } from "node:test";
+import { InMemoryLogRecordExporter, SimpleLogRecordProcessor } from "@opentelemetry/sdk-logs";
 
-import { errorFields, format, logger, parseFormat, parseLevel, requestErrorFields, requestId } from "../lib/log.ts";
+import { errorFields, format, logger, logProvider, parseFormat, parseLevel, requestErrorFields, requestId } from "../lib/log.ts";
+
+// A developer's shell endpoint must never receive test lines: delete every OTEL_* var, then build
+// the memoized provider with an in-memory exporter, no real network involved (ZIF-137 spec, test
+// 13-16 setup).
+for (const key of Object.keys(process.env)) {
+  if (key.startsWith("OTEL_")) delete process.env[key];
+}
+const otlpExporter = new InMemoryLogRecordExporter();
+logProvider([new SimpleLogRecordProcessor({ exporter: otlpExporter })]);
 
 describe("parseLevel (L1, L2)", () => {
   test("undefined and empty give INFO; the four values are accepted as-is", () => {
@@ -285,6 +295,94 @@ describe("requestErrorFields (L10)", () => {
     err2.digest = "12345";
     const fields2 = requestErrorFields(err2, { path: "/en", method: "GET", headers: {} }, { routePath: "/[locale]", routeType: "render" });
     assert.equal(fields2.digest, "12345");
+  });
+});
+
+describe("OTLP export (L13, L14)", () => {
+  test("(L13) an error with an email and a cause chain, then a circular field: export equals the json line 1:1, no email leak", () => {
+    otlpExporter.reset();
+    process.env.ZIF_LOG_LEVEL = "INFO";
+    process.env.ZIF_LOG_FORMAT = "json";
+    const calls = [];
+    const original = process.stdout.write;
+    process.stdout.write = (chunk) => {
+      calls.push(chunk);
+      return true;
+    };
+    try {
+      const cause = new Error("root a@b.c");
+      const err = new Error("boom a@b.c", { cause });
+      const log = logger("web.test13");
+      log.error("failed", errorFields(err));
+      assert.equal(calls.length, 1);
+      const parsed = JSON.parse(calls[0]);
+      const rec = otlpExporter.getFinishedLogRecords().at(-1);
+      assert.equal(rec.body, parsed.msg);
+      assert.equal(rec.severityText, parsed.level);
+      assert.deepEqual(rec.attributes.exc, parsed.exc);
+      assert.equal(rec.attributes.logger, parsed.logger);
+      const serialised = JSON.stringify(rec.attributes) + rec.body;
+      assert.doesNotMatch(serialised, /a@b\.c/);
+
+      calls.length = 0;
+      otlpExporter.reset();
+      const circular = {};
+      circular.self = circular;
+      log.error("circ", { circular });
+      const parsed2 = JSON.parse(calls[0]);
+      const rec2 = otlpExporter.getFinishedLogRecords().at(-1);
+      assert.equal(rec2.body, parsed2.msg, "the circular fallback (head-only) is the same on both paths");
+      assert.equal("circular" in rec2.attributes, false);
+    } finally {
+      process.stdout.write = original;
+      delete process.env.ZIF_LOG_LEVEL;
+      delete process.env.ZIF_LOG_FORMAT;
+    }
+  });
+
+  test("(L14) valid hex trace_id/span_id become the native spanContext with no id attributes; a non-hex id stays an attribute", () => {
+    otlpExporter.reset();
+    process.env.ZIF_LOG_LEVEL = "INFO";
+    process.env.ZIF_LOG_FORMAT = "json";
+    const original = process.stdout.write;
+    process.stdout.write = () => true;
+    try {
+      const log = logger("web.proxy");
+      const traceId = "a".repeat(32);
+      const spanId = "b".repeat(16);
+      log.info("req", { trace_id: traceId, span_id: spanId });
+      const rec = otlpExporter.getFinishedLogRecords().at(-1);
+      assert.equal(rec.spanContext.traceId, traceId);
+      assert.equal(rec.spanContext.spanId, spanId);
+      assert.equal("trace_id" in rec.attributes, false);
+      assert.equal("span_id" in rec.attributes, false);
+
+      otlpExporter.reset();
+      log.info("req2", { trace_id: "not-hex", span_id: spanId });
+      const rec2 = otlpExporter.getFinishedLogRecords().at(-1);
+      assert.equal(rec2.attributes.trace_id, "not-hex");
+      assert.equal(rec2.attributes.span_id, spanId, "a non-hex trace_id keeps span_id an attribute too, no partial context");
+    } finally {
+      process.stdout.write = original;
+      delete process.env.ZIF_LOG_LEVEL;
+      delete process.env.ZIF_LOG_FORMAT;
+    }
+  });
+});
+
+describe("(L16 guard) below ZIF_LOG_LEVEL nothing is exported", () => {
+  test("a filtered-out debug call never reaches the exporter", () => {
+    otlpExporter.reset();
+    process.env.ZIF_LOG_LEVEL = "ERROR";
+    const original = process.stdout.write;
+    process.stdout.write = () => true;
+    try {
+      logger("x").debug("nope");
+      assert.equal(otlpExporter.getFinishedLogRecords().length, 0);
+    } finally {
+      process.stdout.write = original;
+      delete process.env.ZIF_LOG_LEVEL;
+    }
   });
 });
 

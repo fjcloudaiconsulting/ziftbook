@@ -1,7 +1,16 @@
 // Structured, levelled logs for the web server, mirroring backend/app/logs.py: one line per call
 // (JSON or text), ids only, never an error's message. Env is read at call time (like apiUrl()), so
 // one built image works in dev or prod, and a bad value never gets silently swapped for a default.
+//
+// No sibling import of lib/trace.ts here (see docs/specs/2026-09-24-zif-137-spec.md): "./trace"
+// fails ERR_MODULE_NOT_FOUND under node --test, and "./trace.ts" fails typecheck (TS5097,
+// allowImportingTsExtensions stays off per ZIF-50). So the gate below is a private duplicate of
+// lib/trace.ts's enabled(), imports npm packages only.
 import { randomUUID } from "node:crypto";
+import { ROOT_CONTEXT, trace } from "@opentelemetry/api";
+import { OTLPLogExporter } from "@opentelemetry/exporter-logs-otlp-http";
+import { detectResources, envDetector } from "@opentelemetry/resources";
+import { BatchLogRecordProcessor, LoggerProvider, type LogRecordProcessor } from "@opentelemetry/sdk-logs";
 
 const LEVELS = ["DEBUG", "INFO", "WARNING", "ERROR"] as const;
 export type Level = (typeof LEVELS)[number];
@@ -23,6 +32,71 @@ export function parseFormat(value: string | undefined): Format {
 }
 
 const RESERVED = new Set(["ts", "level", "logger", "msg"]);
+
+// The gate, duplicated from lib/trace.ts (never imported, see the header comment): an endpoint
+// (OTEL_EXPORTER_OTLP_LOGS_ENDPOINT or OTEL_EXPORTER_OTLP_ENDPOINT, trimmed) and
+// OTEL_LOGS_EXPORTER, trimmed and lower-cased, not "none".
+function enabled(): boolean {
+  const endpoint = (process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT ?? process.env.OTEL_EXPORTER_OTLP_ENDPOINT ?? "").trim();
+  if (!endpoint) return false;
+  const exporter = (process.env.OTEL_LOGS_EXPORTER ?? "").trim().toLowerCase();
+  return exporter !== "none";
+}
+
+let built: { provider: LoggerProvider; processors: LogRecordProcessor[] } | undefined;
+
+// Lazy and memoized: built once, on first use, never registered globally, the same approach as
+// lib/trace.ts's provider(). Returns the processor array it built so a test can see whether the
+// OTLP exporter was added.
+export function logProvider(processors: LogRecordProcessor[] = []): { provider: LoggerProvider; processors: LogRecordProcessor[] } {
+  if (built) return built;
+  process.env.OTEL_SERVICE_NAME ??= "ziftbook-web";
+  const logProcessors: LogRecordProcessor[] = [...processors];
+  if (enabled()) logProcessors.push(new BatchLogRecordProcessor({ exporter: new OTLPLogExporter() }));
+  const provider = new LoggerProvider({
+    resource: detectResources({ detectors: [envDetector] }),
+    processors: logProcessors,
+  });
+  built = { provider, processors: logProcessors };
+  return built;
+}
+
+const HEX32 = /^[0-9a-f]{32}$/;
+const HEX16 = /^[0-9a-f]{16}$/;
+// Inlined rather than importing @opentelemetry/api-logs' SeverityNumber (see the spec: not a
+// direct dependency). Only the four levels lib/log.ts's logger() emits ever reach here.
+const SEVERITY_NUMBER: Record<Level, number> = { DEBUG: 5, INFO: 9, WARNING: 13, ERROR: 17 };
+
+// Maps the parsed JSON line per docs/specs/2026-09-24-zif-137-spec.md's field-mapping table and
+// emits it. Not exported: only write() calls it.
+function exportLine(rec: Record<string, unknown>): void {
+  const { processors } = logProvider();
+  if (processors.length === 0) return;
+  const { ts, level, msg, trace_id, span_id, ...rest } = rec;
+  const attributes: Record<string, unknown> = { ...rest };
+  let context = ROOT_CONTEXT;
+  const traceId = typeof trace_id === "string" ? trace_id : undefined;
+  const spanId = typeof span_id === "string" ? span_id : undefined;
+  if (traceId !== undefined && HEX32.test(traceId) && spanId !== undefined && HEX16.test(spanId)) {
+    context = trace.setSpanContext(ROOT_CONTEXT, { traceId, spanId, traceFlags: 0 });
+  } else {
+    if (trace_id !== undefined) attributes.trace_id = trace_id;
+    if (span_id !== undefined) attributes.span_id = span_id;
+  }
+  const emitter = logProvider().provider.getLogger("ziftbook-web");
+  // The record came from JSON.parse (arbitrary JSON, untyped), not from api-logs' own types
+  // (not a direct dependency -- see the spec -- so its types aren't imported either); the emit
+  // parameter type is taken structurally from `emitter` itself instead.
+  type EmitArg = Parameters<typeof emitter.emit>[0];
+  emitter.emit({
+    timestamp: typeof ts === "string" ? new Date(ts) : new Date(),
+    severityNumber: SEVERITY_NUMBER[level as Level] ?? 0,
+    severityText: level as string,
+    body: msg,
+    attributes,
+    context,
+  } as EmitArg);
+}
 
 // Stricter than backend/app/logs.py's _escape, which only escapes \r and \n: those two could
 // split a text line, but every other control byte (plus the Unicode line/paragraph separators,
@@ -80,7 +154,14 @@ export function logger(name: string): {
       format_ = "json";
     }
     if (ORDER[level] < ORDER[level_]) return;
-    process.stdout.write(format(format_, level, name, msg, fields) + "\n");
+    const now = new Date();
+    const line = format(format_, level, name, msg, fields, now);
+    process.stdout.write(line + "\n");
+    try {
+      exportLine(JSON.parse(format_ === "json" ? line : format("json", level, name, msg, fields, now)));
+    } catch {
+      // Logging never throws.
+    }
   };
   return {
     debug: (msg, fields) => write("DEBUG", msg, fields),

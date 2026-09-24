@@ -14,16 +14,24 @@ import { BasicTracerProvider, BatchSpanProcessor, type SpanProcessor } from "@op
 
 let built: BasicTracerProvider | undefined;
 
+// The gate, also in lib/log.ts (lib/ files never import a sibling -- see its header comment --
+// so the few lines are duplicated rather than shared). Narrowed to "TRACES": this file has no
+// other caller. An endpoint (the signal-specific or generic OTEL_EXPORTER_OTLP_*_ENDPOINT,
+// trimmed) and OTEL_<SIGNAL>_EXPORTER, trimmed and lower-cased, not "none".
+export function enabled(signal: "TRACES"): boolean {
+  const endpoint = (process.env[`OTEL_EXPORTER_OTLP_${signal}_ENDPOINT`] ?? process.env.OTEL_EXPORTER_OTLP_ENDPOINT ?? "").trim();
+  if (!endpoint) return false;
+  const exporter = (process.env[`OTEL_${signal}_EXPORTER`] ?? "").trim().toLowerCase();
+  return exporter !== "none";
+}
+
 // Lazy and memoized: built once, on first use, never registered globally (register() would make
 // Next's own instrumentation start recording raw request URLs and paths).
 export function provider(processors: SpanProcessor[] = []): BasicTracerProvider {
   if (built) return built;
   process.env.OTEL_SERVICE_NAME ??= "ziftbook-web";
   const spanProcessors: SpanProcessor[] = [...processors];
-  // Same gate as the backend: without an endpoint the exporter would fail to connect on every
-  // request.
-  const endpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT || process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT;
-  if (endpoint) spanProcessors.push(new BatchSpanProcessor(new OTLPTraceExporter()));
+  if (enabled("TRACES")) spanProcessors.push(new BatchSpanProcessor(new OTLPTraceExporter()));
   built = new BasicTracerProvider({
     resource: detectResources({ detectors: [envDetector] }),
     spanProcessors,
