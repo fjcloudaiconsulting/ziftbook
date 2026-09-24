@@ -2,10 +2,9 @@
 // (JSON or text), ids only, never an error's message. Env is read at call time (like apiUrl()), so
 // one built image works in dev or prod, and a bad value never gets silently swapped for a default.
 //
-// No sibling import of lib/trace.ts here (see docs/specs/2026-09-24-zif-137-spec.md): "./trace"
-// fails ERR_MODULE_NOT_FOUND under node --test, and "./trace.ts" fails typecheck (TS5097,
-// allowImportingTsExtensions stays off per ZIF-50). So the gate below is a private duplicate of
-// lib/trace.ts's enabled(), imports npm packages only.
+// No sibling import of lib/trace.ts: "./trace" fails ERR_MODULE_NOT_FOUND under node --test, and
+// "./trace.ts" fails typecheck (TS5097; allowImportingTsExtensions stays off). Hence the gate below
+// duplicates lib/trace.ts's enabled().
 import { randomUUID } from "node:crypto";
 import { ROOT_CONTEXT, trace } from "@opentelemetry/api";
 import { OTLPLogExporter } from "@opentelemetry/exporter-logs-otlp-http";
@@ -64,30 +63,26 @@ export function logProvider(processors: LogRecordProcessor[] = []): { provider: 
 
 const HEX32 = /^[0-9a-f]{32}$/;
 const HEX16 = /^[0-9a-f]{16}$/;
-// Inlined rather than importing @opentelemetry/api-logs' SeverityNumber (see the spec: not a
-// direct dependency). Only the four levels lib/log.ts's logger() emits ever reach here.
+// Inlined: @opentelemetry/api-logs (SeverityNumber) is not a direct dependency. Only the four
+// levels logger() emits ever reach here.
 const SEVERITY_NUMBER: Record<Level, number> = { DEBUG: 5, INFO: 9, WARNING: 13, ERROR: 17 };
 
-// Maps the parsed JSON line per docs/specs/2026-09-24-zif-137-spec.md's field-mapping table and
-// emits it. Not exported: only write() calls it.
+// Emits the parsed JSON line: ts/level/msg become timestamp/severity/body, valid ids become the
+// native trace context, everything else stays an attribute as-is.
 function exportLine(rec: Record<string, unknown>): void {
-  const { processors } = logProvider();
+  const { provider, processors } = logProvider();
   if (processors.length === 0) return;
   const { ts, level, msg, trace_id, span_id, ...rest } = rec;
   const attributes: Record<string, unknown> = { ...rest };
   let context = ROOT_CONTEXT;
-  const traceId = typeof trace_id === "string" ? trace_id : undefined;
-  const spanId = typeof span_id === "string" ? span_id : undefined;
-  if (traceId !== undefined && HEX32.test(traceId) && spanId !== undefined && HEX16.test(spanId)) {
-    context = trace.setSpanContext(ROOT_CONTEXT, { traceId, spanId, traceFlags: 0 });
+  if (typeof trace_id === "string" && HEX32.test(trace_id) && typeof span_id === "string" && HEX16.test(span_id)) {
+    context = trace.setSpanContext(ROOT_CONTEXT, { traceId: trace_id, spanId: span_id, traceFlags: 0 });
   } else {
     if (trace_id !== undefined) attributes.trace_id = trace_id;
     if (span_id !== undefined) attributes.span_id = span_id;
   }
-  const emitter = logProvider().provider.getLogger("ziftbook-web");
-  // The record came from JSON.parse (arbitrary JSON, untyped), not from api-logs' own types
-  // (not a direct dependency -- see the spec -- so its types aren't imported either); the emit
-  // parameter type is taken structurally from `emitter` itself instead.
+  const emitter = provider.getLogger("ziftbook-web");
+  // api-logs isn't a direct dependency: take emit's parameter type from the logger itself.
   type EmitArg = Parameters<typeof emitter.emit>[0];
   emitter.emit({
     timestamp: typeof ts === "string" ? new Date(ts) : new Date(),
