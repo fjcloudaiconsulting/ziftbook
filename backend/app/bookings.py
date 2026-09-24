@@ -289,15 +289,24 @@ WHERE b.id = :id
 MERCHANTS = text("SELECT DISTINCT user_id FROM memberships WHERE role = 'owner' OR id = :worker_id")
 
 
-def _email(db: Session, tenant_id: UUID, booking_id: UUID, template: str) -> None:
-    """Enqueue one client booking email, in the caller's transaction."""
-    jobs.enqueue(
-        db,
-        "email.booking",
-        f"email.booking:{tenant_id}:{booking_id}:{template}",
-        {"booking_id": str(booking_id), "template": template},
-        tenant_id=tenant_id,
-    )
+def _email(
+    db: Session,
+    tenant_id: UUID,
+    booking_id: UUID,
+    template: str,
+    user_id: UUID | None = None,
+) -> None:
+    """Enqueue one booking email, in the caller's transaction.
+
+    With user_id, the email is to that merchant (ruling R1) rather than the client, and the
+    dedupe key and payload carry the user_id too.
+    """
+    key = f"email.booking:{tenant_id}:{booking_id}:{template}"
+    payload = {"booking_id": str(booking_id), "template": template}
+    if user_id is not None:
+        key += f":{user_id}"
+        payload["user_id"] = str(user_id)
+    jobs.enqueue(db, "email.booking", key, payload, tenant_id=tenant_id)
 
 
 def _email_merchants(
@@ -305,13 +314,7 @@ def _email_merchants(
 ) -> None:
     """Enqueue one merchant booking email per active owner plus the assigned worker (ruling R1)."""
     for (user_id,) in db.execute(MERCHANTS, {"worker_id": worker_id}).all():
-        jobs.enqueue(
-            db,
-            "email.booking",
-            f"email.booking:{tenant_id}:{booking_id}:{template}:{user_id}",
-            {"booking_id": str(booking_id), "template": template, "user_id": str(user_id)},
-            tenant_id=tenant_id,
-        )
+        _email(db, tenant_id, booking_id, template, user_id=user_id)
 
 
 def _remind(

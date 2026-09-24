@@ -23,7 +23,7 @@ KINDS: dict[str, JobKind] = {
     "email.invite": JobKind(mail.send_invite, timeout=30, grace=timedelta(hours=24)),
     # ZIF-53. Grace covers the reminder, whose due_at is already 24h out; the status gate at send
     # time (re-checked on every run, never withdrawn on enqueue) is what keeps a stale booking
-    # email from going out. One-release-gap waived for this ticket (nothing runs in production yet).
+    # email from going out.
     "email.booking": JobKind(mail.send_booking, timeout=30, grace=timedelta(hours=24)),
 }
 

@@ -31,8 +31,6 @@ LOCALES = get_args(Locale)
 # already puts the event in the client's own calendar with their own formatting).
 DATE_FORMAT = {"en": "%d/%m/%Y", "nl": "%d-%m-%Y", "pt": "%d/%m/%Y"}
 
-# C0 minus CR/LF, DEL, C1, and the Unicode line/paragraph separators: control characters an .ics
-# TEXT value must not carry (see ics()'s escape()).
 _ICS_CONTROL_CHARS = re.compile(
     "[\x00-\x09\x0b\x0c\x0e-\x1f\x7f\x80-\x9f\N{LINE SEPARATOR}\N{PARAGRAPH SEPARATOR}]"
 )
@@ -58,20 +56,19 @@ def deliver(
     subject: str,
     body: str,
     headers: dict[str, str] | None = None,
-    attachment: tuple[str, bytes] | None = None,
+    ics: bytes | None = None,
 ) -> None:
     """Hand one message for one address to the SMTP server, and log it by template.
 
-    With attachment (filename, bytes), the message becomes multipart/mixed with the plain-text
-    body first, as a calendar part (text/calendar; method=PUBLISH) - the only attachment kind this
-    sends today.
+    With ics, the message becomes multipart/mixed with the plain-text body first, as a calendar
+    part (text/calendar; method=PUBLISH).
 
     The job's id comes from its bound context. Never the address, subject or body, and on failure
     the error's class only (SMTPRecipientsRefused quotes the address); the error still propagates,
     so the job is retried.
     """
     try:
-        _send(to, subject, body, headers, attachment)
+        _send(to, subject, body, headers, ics)
     except Exception as error:
         logger.warning("email failed", extra={"template": template, "error": type(error).__name__})
         raise
@@ -83,7 +80,7 @@ def _send(
     subject: str,
     body: str,
     headers: dict[str, str] | None,
-    attachment: tuple[str, bytes] | None = None,
+    ics: bytes | None,
 ) -> None:
     settings = MailSettings()
     message = EmailMessage()
@@ -93,13 +90,12 @@ def _send(
     for name, value in (headers or {}).items():
         message[name] = value
     message.set_content(body)
-    if attachment is not None:
-        filename, data = attachment
+    if ics is not None:
         message.add_attachment(
-            data,
+            ics,
             maintype="text",
             subtype="calendar",
-            filename=filename,
+            filename="booking.ics",
             params={"method": "PUBLISH", "charset": "utf-8"},
         )
     # Never the recipient, subject, body or template values: only the server this deployment talks
@@ -121,7 +117,9 @@ def _send(
             # Once the server accepted the message, a failed goodbye must not undo it (and resend).
             try:
                 smtp.quit()
-            except smtplib.SMTPException, OSError:
+            except smtplib.SMTPException:
+                smtp.close()
+            except OSError:
                 smtp.close()
 
 
@@ -276,10 +274,10 @@ SELECT u.email, u.locale FROM users u JOIN memberships m ON m.user_id = u.id WHE
 
 
 def _local_text(value: dict[str, str], locale: str) -> str:
-    """value[locale], else the first present of en, nl, pt."""
+    """value[locale], else the first present of LOCALES."""
     if value.get(locale):
         return value[locale]
-    for fallback in ("en", "nl", "pt"):
+    for fallback in LOCALES:
         if value.get(fallback):
             return value[fallback]
     return ""
@@ -398,20 +396,18 @@ def send_booking(job: Job) -> None:
         if template == "booking_request":
             expires_local = row.expires_at.astimezone(ZoneInfo(zone))
             values["expires"] = (
-                f"{expires_local.strftime(DATE_FORMAT[locale])} "
-                f"{expires_local.strftime('%H:%M')} ({zone})"
+                expires_local.strftime(f"{DATE_FORMAT[locale]} %H:%M") + f" ({zone})"
             )
         subject, body = render(template, locale, values)
         status = _outbox(session, job, recipient_id, template, subject)
     if status == "sent":
         return
 
-    attachment = None
+    booking_ics = None
     if template == "booking_confirmed":
         summary = f"{values['service']} - {row.business}"
-        attachment = (
-            "booking.ics",
-            ics(payload["booking_id"], row.starts_at, row.ends_at, summary, datetime.now(UTC)),
+        booking_ics = ics(
+            payload["booking_id"], row.starts_at, row.ends_at, summary, datetime.now(UTC)
         )
-    deliver(template, recipient_email, subject, body, attachment=attachment)
+    deliver(template, recipient_email, subject, body, ics=booking_ics)
     _mark_sent(job)
