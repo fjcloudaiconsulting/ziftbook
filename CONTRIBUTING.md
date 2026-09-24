@@ -337,8 +337,12 @@ Every signal leaves the app in a vendor-neutral form: logs as JSON lines on stdo
 later, metrics and logs too) over OTLP to one endpoint. What sits behind that endpoint (the
 Grafana LGTM stack today; Prometheus, fluentd or anything else later) is an OpenTelemetry
 Collector's configuration, never app code. So no vendor agent, SDK or protocol belongs in this
-repo, and every switch below works the same in `docker-compose.yaml`, `docker-compose-prod.yaml`
-and any other deployment: set the variable, restart the processes.
+repo. Every switch below is an environment variable read at process start, so any deployment
+sets it the same way. With `docker-compose-prod.yaml`, set it in `.env` and run
+`docker compose -f docker-compose-prod.yaml up -d`, which recreates the changed containers
+(`docker compose restart` keeps the old environment and changes nothing). The dev
+`docker-compose.yaml` passes only the endpoint and headers through from `.env`; it fixes the
+log settings at `DEBUG`/`text`, passes no `ZIF_LOG_SQL` and no sampler.
 
 | Signal | Leaves the app as | On | Off | Tune |
 |---|---|---|---|---|
@@ -346,6 +350,8 @@ and any other deployment: set the variable, restart the processes.
 | Traces | OTLP/HTTP to `ZIF_OTEL_EXPORTER_OTLP_ENDPOINT` | set the endpoint (plus `ZIF_OTEL_EXPORTER_OTLP_HEADERS` if the collector wants auth) | leave the endpoint unset: no spans are exported and no connection is attempted. In prod you can also set `ZIF_OTEL_TRACES_SAMPLER=always_off` | prod: `ZIF_OTEL_TRACES_SAMPLER` / `_ARG` (default 10% of new traces, following the caller's decision); dev: 100% |
 | Metrics | none yet (ZIF-88) | | | |
 
+- Next's own startup banner (standalone `server.js`) is plain text and ignores `ZIF_LOG_*`;
+  every other web server line follows them.
 - Logs go to stdout because that is what every platform collects (the Docker logging driver, a
   Kubernetes node agent, an OpenTelemetry Collector's `filelog` receiver). Exporting them over
   OTLP as well, so all three signals share the endpoint, is ZIF-137.
@@ -353,6 +359,9 @@ and any other deployment: set the variable, restart the processes.
   `traceidratio`, `parentbased_*`), read by the SDK itself. The dev compose passes neither.
 - Service names: `ziftbook-api`, `ziftbook-worker`, `ziftbook-migrations`, `ziftbook-web`
   (`OTEL_SERVICE_NAME` overrides; `OTEL_RESOURCE_ATTRIBUTES` adds e.g. `deployment.environment=prod`).
+  Neither compose file passes these two through, so with compose they mean editing the file.
+- A log line's `trace_id` is there even when the trace was not sampled: in prod at 10%, most
+  logged trace ids are not in the trace store.
 - The environment variables table below lists each of these with its defaults.
 
 ### Locally
