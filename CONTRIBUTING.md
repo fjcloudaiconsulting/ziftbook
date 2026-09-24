@@ -331,6 +331,42 @@ Attributes on every span come from an explicit allowlist instead.
   ruling: an operator-facing name carries `ZIF_`). Code itself only ever reads the standard
   `OTEL_*` names; nothing in `app/` or `lib/` reads a `ZIF_OTEL_*` name directly.
 
+## Local logs and traces
+
+`make observe` is `make up` plus the opt-in `observability` compose profile. It sends every
+process's traces, and every container's log lines, to one Grafana LGTM stack (Loki, Tempo,
+Prometheus, Grafana) that runs outside this project and is shared by every project on the machine.
+`make up` is unchanged and exports nothing. If the stack isn't running yet, start it once (it comes
+back with Docker; data survives in the `lgtm-data` volume):
+
+```sh
+docker run -d --name lgtm --restart unless-stopped -v lgtm-data:/data \
+  -p 127.0.0.1:3300:3000 -p 127.0.0.1:4317:4317 -p 127.0.0.1:4318:4318 \
+  -p 127.0.0.1:3100:3100 -p 127.0.0.1:3200:3200 -p 127.0.0.1:9090:9090 grafana/otel-lgtm:0.33.1
+```
+
+- Traces: `make observe` points `ZIF_OTEL_EXPORTER_OTLP_ENDPOINT` at the stack
+  (`http://host.docker.internal:4318`) and clears `ZIF_OTEL_EXPORTER_OTLP_HEADERS`, overriding a
+  `.env` that sends to a hosted collector. Docker Desktop resolves `host.docker.internal` for
+  every container; on Linux only `alloy` has the `host-gateway` entry that provides it.
+- Logs: the profile's `alloy` service (`observability/logs.alloy`) tails this compose project's
+  containers through the Docker socket and pushes them to Loki. It publishes no port. The socket
+  gives it full control of the Docker daemon, which is one reason it never runs without the profile.
+- Every stream's `service_name` matches the process's trace service name: `ziftbook-api`,
+  `ziftbook-worker`, `ziftbook-migrations`, `ziftbook-web`, and `ziftbook-<compose service>` for
+  the rest (`ziftbook-postgres`, `ziftbook-mailpit`).
+- `make down` and `make reset` include the profile, so they also remove `alloy`. A bare
+  `docker compose down` leaves it running.
+- No metrics yet: nothing emits any.
+
+To find a request by id, open Grafana at http://127.0.0.1:3300, then Explore:
+
+1. Take the id from the response's `X-Request-ID` header (or any log line's `request_id=`).
+2. In Loki, query `{service_name=~"ziftbook-.*"} |= "<request id>"`. The API's access line
+   carries `trace_id=`.
+3. In Tempo, open that trace id: it shows the web span, the API span, its SQL spans, and any job
+   and email it queued.
+
 ## API contract
 
 `backend/openapi.json` is committed and the web client is generated from it. After changing an API route or
@@ -398,7 +434,7 @@ ZIF-38). An empty variable means the default: `env_ignore_empty=True` on the bas
 | `ZIF_IMAGE_TAG` | compose | none | yes | no | Release tag (`vX.Y.Z`) for the three GHCR images. |
 | `ZIF_API_URL` | frontend | none | yes | no | Backend base URL the web app proxies `/api` to. |
 | **Tracing** | | | | | |
-| `ZIF_OTEL_EXPORTER_OTLP_ENDPOINT` | compose (api, worker, migrations, frontend) | none | no | no | Feeds `OTEL_EXPORTER_OTLP_ENDPOINT`, the OTLP/HTTP collector endpoint. Unset exports nothing (no collector today; ZIF-90). |
+| `ZIF_OTEL_EXPORTER_OTLP_ENDPOINT` | compose (api, worker, migrations, frontend) | none | no | no | Feeds `OTEL_EXPORTER_OTLP_ENDPOINT`, the OTLP/HTTP collector endpoint. Unset exports nothing. `make observe` sets it to the shared local stack; see Local logs and traces. |
 | `ZIF_OTEL_EXPORTER_OTLP_HEADERS` | compose (api, worker, migrations, frontend) | none | no | yes | Feeds `OTEL_EXPORTER_OTLP_HEADERS`, the collector's auth headers, e.g. `Authorization=Basic%20<base64 instance:token>`. URL-encoded, comma-separated `key=value` pairs. A malformed entry is dropped without a log line (the SDK's warning would quote the token), and export then fails with an auth error. |
 | `ZIF_OTEL_TRACES_SAMPLER` | compose, prod only (api, worker, migrations, frontend) | `parentbased_traceidratio` | no | no | Feeds `OTEL_TRACES_SAMPLER`. Dev compose sets neither sampler variable, so dev stays at the SDK's own default, 100% (`parentbased_always_on`). |
 | `ZIF_OTEL_TRACES_SAMPLER_ARG` | compose, prod only (api, worker, migrations, frontend) | `0.1` | no | no | Feeds `OTEL_TRACES_SAMPLER_ARG`. |

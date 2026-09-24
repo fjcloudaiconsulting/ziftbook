@@ -177,5 +177,19 @@ services:
       start_interval: 1s
       interval: 15s
 
+  # Opt-in (make observe): ships the containers' logs to the shared local lgtm stack. The docker
+  # socket gives it full control of the daemon, which is why it only runs under this profile.
+  alloy:
+    image: grafana/alloy:v1.19.2
+    profiles: [observability]
+    command: ["run", "/etc/alloy/logs.alloy"]
+    environment:
+      COMPOSE_PROJECT: ${COMPOSE_PROJECT_NAME}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./observability/logs.alloy:/etc/alloy/logs.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
 volumes:
   pgdata:

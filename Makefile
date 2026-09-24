@@ -1,4 +1,4 @@
-.PHONY: setup up down reset migrate migration openapi lint typecheck test test-hooks
+.PHONY: setup up observe down reset migrate migration openapi lint typecheck test test-hooks
 
 API := uv run --directory backend
 PNPM ?= pnpm
@@ -13,12 +13,18 @@ up: ## Start the whole app (http://localhost:3000), syncing source changes into 
 	sh scripts/check-ports.sh
 	docker compose up --build --watch
 
+observe: ## Like up, plus logs and traces in the shared local lgtm stack (Grafana: http://127.0.0.1:3300)
+	@curl -sf -o /dev/null http://127.0.0.1:3300/api/health || { echo "The shared lgtm stack is not running: see CONTRIBUTING.md, Local logs and traces."; exit 1; }
+	sh scripts/check-ports.sh
+	ZIF_OTEL_EXPORTER_OTLP_ENDPOINT=http://host.docker.internal:4318 ZIF_OTEL_EXPORTER_OTLP_HEADERS= \
+		docker compose --profile observability up --build --watch
+
 down:
-	docker compose down
+	docker compose --profile observability down
 
 reset: ## Delete the local database (every account, business and booking) and start fresh; asks first
 	@printf 'This deletes the local database. Type "reset" to continue: '; read answer; [ "$$answer" = reset ] || { echo "Nothing deleted."; exit 1; }
-	docker compose down -v
+	docker compose --profile observability down -v
 	$(MAKE) up
 
 migrate: ## Apply database migrations (as ziftbook_migrate)
