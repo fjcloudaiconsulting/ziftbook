@@ -359,7 +359,7 @@ from `.env`; it fixes the log settings at `DEBUG`/`text`, passes no `ZIF_LOG_SQL
 - Ship stdout or OTLP into Loki, not both. Today prod compose has no `logging:` driver and no
   shipper, so nothing is doubled.
 - With a dead collector, each signal's shutdown retries for up to about 7s (migrations can exit
-  about 14s late); tune with `OTEL_EXPORTER_OTLP_TIMEOUT`.
+  about 14s late).
 - The web server may lose up to one batch (1s) of OTLP lines at stop, but they are on stdout too.
 - The sampler variables are the OpenTelemetry standard values (`always_on`, `always_off`,
   `traceidratio`, `parentbased_*`), read by the SDK itself. The dev compose passes neither.

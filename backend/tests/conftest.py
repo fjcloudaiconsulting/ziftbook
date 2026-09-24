@@ -179,6 +179,15 @@ def _rebuild(item: ReadableLogRecord) -> dict[str, Any]:
     # The SDK freezes list/dict attribute values into tuples for immutability; round-trip through
     # JSON so a rebuilt "kinds": ("a", "b") compares equal to the line's "kinds": ["a", "b"].
     attributes = json.loads(json.dumps(dict(record.attributes or {})))
+    # ts/level/msg are always popped by OtlpHandler.emit, never left behind as attributes. When a
+    # trace/span id was converted to the native context (below), it's popped too, so it must not
+    # also sit in attributes -- but a non-hex trace_id/span_id legitimately stays an attribute
+    # (test 9), so those two are only checked once we know whether the native context is set.
+    assert not {"ts", "level", "msg"} & attributes.keys()
+    if record.trace_id:
+        assert "trace_id" not in attributes
+    if record.span_id:
+        assert "span_id" not in attributes
     fields: dict[str, Any] = {
         "ts": ts.replace("+00:00", "Z"),
         "level": record.severity_text,

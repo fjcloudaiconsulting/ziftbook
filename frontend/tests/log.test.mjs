@@ -15,6 +15,30 @@ for (const key of Object.keys(process.env)) {
 const otlpExporter = new InMemoryLogRecordExporter();
 logProvider([new SimpleLogRecordProcessor({ exporter: otlpExporter })]);
 
+const HEAD_KEYS = ["ts", "level", "msg", "trace_id", "span_id"];
+
+// The exported LogRecord, turned back into a line-shaped object, mirroring backend/tests/
+// conftest.py's _rebuild: ts from the hrTime timestamp, level from severityText, msg from body,
+// logger/extras/exc from attributes, trace_id/span_id from spanContext when present. Used to
+// deepEqual against JSON.parse of the stdout line -- the same one-to-one parity fence as the
+// backend (ZIF-137 spec, test 13).
+function rebuild(rec) {
+  const [seconds, nanos] = rec.hrTime;
+  const ts = new Date(seconds * 1000 + Math.round(nanos / 1e6)).toISOString();
+  // The SDK freezes array attribute values; round-trip through JSON so a rebuilt array compares
+  // equal to the line's own array.
+  const attributes = JSON.parse(JSON.stringify(rec.attributes ?? {}));
+  for (const key of HEAD_KEYS) {
+    assert.equal(key in attributes, false, `${key} must not stay in attributes`);
+  }
+  const fields = { ts, level: rec.severityText, msg: rec.body, ...attributes };
+  if (rec.spanContext) {
+    fields.trace_id = rec.spanContext.traceId;
+    fields.span_id = rec.spanContext.spanId;
+  }
+  return fields;
+}
+
 describe("parseLevel (L1, L2)", () => {
   test("undefined and empty give INFO; the four values are accepted as-is", () => {
     assert.equal(parseLevel(undefined), "INFO");
@@ -313,14 +337,11 @@ describe("OTLP export (L13, L14)", () => {
       const cause = new Error("root a@b.c");
       const err = new Error("boom a@b.c", { cause });
       const log = logger("web.test13");
-      log.error("failed", errorFields(err));
+      log.error("failed", { ...errorFields(err), request_id: "r1" });
       assert.equal(calls.length, 1);
       const parsed = JSON.parse(calls[0]);
       const rec = otlpExporter.getFinishedLogRecords().at(-1);
-      assert.equal(rec.body, parsed.msg);
-      assert.equal(rec.severityText, parsed.level);
-      assert.deepEqual(rec.attributes.exc, parsed.exc);
-      assert.equal(rec.attributes.logger, parsed.logger);
+      assert.deepEqual(rebuild(rec), parsed);
       const serialised = JSON.stringify(rec.attributes) + rec.body;
       assert.doesNotMatch(serialised, /a@b\.c/);
 
@@ -331,8 +352,7 @@ describe("OTLP export (L13, L14)", () => {
       log.error("circ", { circular });
       const parsed2 = JSON.parse(calls[0]);
       const rec2 = otlpExporter.getFinishedLogRecords().at(-1);
-      assert.equal(rec2.body, parsed2.msg, "the circular fallback (head-only) is the same on both paths");
-      assert.equal("circular" in rec2.attributes, false);
+      assert.deepEqual(rebuild(rec2), parsed2, "the circular fallback (head-only) is the same on both paths");
     } finally {
       process.stdout.write = original;
       delete process.env.ZIF_LOG_LEVEL;

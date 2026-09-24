@@ -33,7 +33,7 @@ describe("OTLP export gates (L15)", () => {
       await built.provider.shutdown();
 
       const { enabled } = await fresh(TRACE_PATH);
-      assert.equal(enabled("TRACES"), false);
+      assert.equal(enabled(), false);
     } finally {
       clearOtelEnv();
     }
@@ -49,7 +49,7 @@ describe("OTLP export gates (L15)", () => {
       await built.provider.shutdown();
 
       const { enabled } = await fresh(TRACE_PATH);
-      assert.equal(enabled("TRACES"), true);
+      assert.equal(enabled(), true);
     } finally {
       clearOtelEnv();
     }
@@ -66,7 +66,7 @@ describe("OTLP export gates (L15)", () => {
       await built.provider.shutdown();
 
       const { enabled } = await fresh(TRACE_PATH);
-      assert.equal(enabled("TRACES"), true);
+      assert.equal(enabled(), true);
     } finally {
       clearOtelEnv();
     }
@@ -82,7 +82,93 @@ describe("OTLP export gates (L15)", () => {
       await built.provider.shutdown();
 
       const { enabled } = await fresh(TRACE_PATH);
-      assert.equal(enabled("TRACES"), false);
+      assert.equal(enabled(), false);
+    } finally {
+      clearOtelEnv();
+    }
+  });
+
+  test('a " none " (whitespace around the value) OTEL_LOGS_EXPORTER is still off, not just an exact "none"', async () => {
+    clearOtelEnv();
+    process.env.OTEL_EXPORTER_OTLP_ENDPOINT = DEAD_ENDPOINT;
+    process.env.OTEL_LOGS_EXPORTER = " none ";
+    try {
+      const { logProvider } = await fresh(LOG_PATH);
+      const built = logProvider();
+      assert.equal(built.processors.length, 0);
+      await built.provider.shutdown();
+    } finally {
+      clearOtelEnv();
+    }
+  });
+
+  test('a " none " (whitespace around the value) OTEL_TRACES_EXPORTER is still off, not just an exact "none"', async () => {
+    clearOtelEnv();
+    process.env.OTEL_EXPORTER_OTLP_ENDPOINT = DEAD_ENDPOINT;
+    process.env.OTEL_TRACES_EXPORTER = " none ";
+    try {
+      const { enabled } = await fresh(TRACE_PATH);
+      assert.equal(enabled(), false);
+    } finally {
+      clearOtelEnv();
+    }
+  });
+
+  test("OTEL_TRACES_EXPORTER=none: trace.ts's enabled() is false while log.ts still builds its exporter", async () => {
+    clearOtelEnv();
+    process.env.OTEL_EXPORTER_OTLP_ENDPOINT = DEAD_ENDPOINT;
+    process.env.OTEL_TRACES_EXPORTER = "none";
+    try {
+      const { enabled } = await fresh(TRACE_PATH);
+      assert.equal(enabled(), false);
+
+      const { logProvider } = await fresh(LOG_PATH);
+      const built = logProvider();
+      assert.equal(built.processors.length, 1);
+      await built.provider.shutdown();
+    } finally {
+      clearOtelEnv();
+    }
+  });
+
+  test("mirror: OTEL_LOGS_EXPORTER=none leaves log.ts off while trace.ts still builds its exporter", async () => {
+    clearOtelEnv();
+    process.env.OTEL_EXPORTER_OTLP_ENDPOINT = DEAD_ENDPOINT;
+    process.env.OTEL_LOGS_EXPORTER = "none";
+    try {
+      const { logProvider } = await fresh(LOG_PATH);
+      const built = logProvider();
+      assert.equal(built.processors.length, 0);
+      await built.provider.shutdown();
+
+      const { enabled } = await fresh(TRACE_PATH);
+      assert.equal(enabled(), true);
+    } finally {
+      clearOtelEnv();
+    }
+  });
+
+  test("an empty signal-specific endpoint falls back to the generic one (log.ts)", async () => {
+    clearOtelEnv();
+    process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT = "";
+    process.env.OTEL_EXPORTER_OTLP_ENDPOINT = DEAD_ENDPOINT;
+    try {
+      const { logProvider } = await fresh(LOG_PATH);
+      const built = logProvider();
+      assert.equal(built.processors.length, 1);
+      await built.provider.shutdown();
+    } finally {
+      clearOtelEnv();
+    }
+  });
+
+  test("an empty signal-specific endpoint falls back to the generic one (trace.ts)", async () => {
+    clearOtelEnv();
+    process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT = "";
+    process.env.OTEL_EXPORTER_OTLP_ENDPOINT = DEAD_ENDPOINT;
+    try {
+      const { enabled } = await fresh(TRACE_PATH);
+      assert.equal(enabled(), true);
     } finally {
       clearOtelEnv();
     }

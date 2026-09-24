@@ -15,13 +15,15 @@ import { BasicTracerProvider, BatchSpanProcessor, type SpanProcessor } from "@op
 let built: BasicTracerProvider | undefined;
 
 // The gate, also in lib/log.ts (lib/ files never import a sibling -- see its header comment --
-// so the few lines are duplicated rather than shared). Narrowed to "TRACES": this file has no
-// other caller. An endpoint (the signal-specific or generic OTEL_EXPORTER_OTLP_*_ENDPOINT,
-// trimmed) and OTEL_<SIGNAL>_EXPORTER, trimmed and lower-cased, not "none".
-export function enabled(signal: "TRACES"): boolean {
-  const endpoint = (process.env[`OTEL_EXPORTER_OTLP_${signal}_ENDPOINT`] ?? process.env.OTEL_EXPORTER_OTLP_ENDPOINT ?? "").trim();
+// so the few lines are duplicated rather than shared). This file only ever serves traces, so the
+// signal is fixed rather than a parameter. An endpoint (the signal-specific or generic
+// OTEL_EXPORTER_OTLP_*_ENDPOINT, trimmed) and OTEL_TRACES_EXPORTER, trimmed and lower-cased, not
+// "none". `||`, not `??`, for the signal-specific-to-generic endpoint fallback: an empty
+// OTEL_EXPORTER_OTLP_TRACES_ENDPOINT must still fall through to the generic one.
+export function enabled(): boolean {
+  const endpoint = (process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT || process.env.OTEL_EXPORTER_OTLP_ENDPOINT || "").trim();
   if (!endpoint) return false;
-  const exporter = (process.env[`OTEL_${signal}_EXPORTER`] ?? "").trim().toLowerCase();
+  const exporter = (process.env.OTEL_TRACES_EXPORTER ?? "").trim().toLowerCase();
   return exporter !== "none";
 }
 
@@ -31,7 +33,7 @@ export function provider(processors: SpanProcessor[] = []): BasicTracerProvider 
   if (built) return built;
   process.env.OTEL_SERVICE_NAME ??= "ziftbook-web";
   const spanProcessors: SpanProcessor[] = [...processors];
-  if (enabled("TRACES")) spanProcessors.push(new BatchSpanProcessor(new OTLPTraceExporter()));
+  if (enabled()) spanProcessors.push(new BatchSpanProcessor(new OTLPTraceExporter()));
   built = new BasicTracerProvider({
     resource: detectResources({ detectors: [envDetector] }),
     spanProcessors,

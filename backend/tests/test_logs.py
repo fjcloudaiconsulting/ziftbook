@@ -1185,6 +1185,31 @@ def test_the_recursion_guard_drops_sdk_and_suppressed_records(log_lines: Lines) 
         root.removeHandler(handler)
 
 
+# 8b: fence. A log processor's on_emit raising must never propagate into the caller's log call
+# (OtlpHandler.emit's except must not re-raise). Kills a re-raise inside that except block.
+def test_a_raising_log_processor_never_raises_into_the_caller() -> None:
+    class ExplodingProcessor:
+        def on_emit(self, record: Any, context: Any = None) -> None:
+            raise RuntimeError("boom")
+
+        def shutdown(self) -> None:
+            pass
+
+        def force_flush(self, timeout_millis: int = 30000) -> bool:
+            return True
+
+    provider = LoggerProvider(resource=Resource.create(), shutdown_on_exit=False)
+    provider.add_log_record_processor(ExplodingProcessor())  # type: ignore[arg-type]
+    handler = logs.OtlpHandler(provider)
+    root = logging.getLogger()
+    root.addHandler(handler)
+    try:
+        logging.getLogger("app.tests.logs").error("must survive")  # must not raise
+    finally:
+        root.removeHandler(handler)
+        provider.shutdown()
+
+
 # 9: guard. A non-hex trace_id stays an attribute (no int(x, 16) loss); an unserializable extra
 # falls back to the head-only record on both stdout and OTLP; emit never raises into the caller.
 def test_a_non_hex_trace_id_stays_an_attribute_and_export_never_raises(log_lines: Lines) -> None:

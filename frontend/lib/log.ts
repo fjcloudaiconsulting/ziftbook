@@ -35,9 +35,10 @@ const RESERVED = new Set(["ts", "level", "logger", "msg"]);
 
 // The gate, duplicated from lib/trace.ts (never imported, see the header comment): an endpoint
 // (OTEL_EXPORTER_OTLP_LOGS_ENDPOINT or OTEL_EXPORTER_OTLP_ENDPOINT, trimmed) and
-// OTEL_LOGS_EXPORTER, trimmed and lower-cased, not "none".
+// OTEL_LOGS_EXPORTER, trimmed and lower-cased, not "none". `||`, not `??`, for the endpoint
+// fallback: an empty OTEL_EXPORTER_OTLP_LOGS_ENDPOINT must still fall through to the generic one.
 function enabled(): boolean {
-  const endpoint = (process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT ?? process.env.OTEL_EXPORTER_OTLP_ENDPOINT ?? "").trim();
+  const endpoint = (process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT || process.env.OTEL_EXPORTER_OTLP_ENDPOINT || "").trim();
   if (!endpoint) return false;
   const exporter = (process.env.OTEL_LOGS_EXPORTER ?? "").trim().toLowerCase();
   return exporter !== "none";

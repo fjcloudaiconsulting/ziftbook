@@ -305,7 +305,7 @@ def test_t8_provider_exporter_gated_by_endpoint(
     assert len(unset._active_span_processor._span_processors) == 0
     assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
 
-    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:4318")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:9")
     with_endpoint = tracing._provider("t8-set")
     assert len(with_endpoint._active_span_processor._span_processors) == 1
     with_endpoint.shutdown()  # no exporter thread left running after this test
@@ -548,10 +548,10 @@ def test_native_ids_match_the_span_inside_and_after_it_exits(log_lines: Lines) -
     [
         ({}, False, False),
         ({"OTEL_EXPORTER_OTLP_ENDPOINT": "   "}, False, False),
-        ({"OTEL_EXPORTER_OTLP_ENDPOINT": "http://127.0.0.1:4318"}, True, True),
+        ({"OTEL_EXPORTER_OTLP_ENDPOINT": "http://127.0.0.1:9"}, True, True),
         (
             {
-                "OTEL_EXPORTER_OTLP_ENDPOINT": "http://127.0.0.1:4318",
+                "OTEL_EXPORTER_OTLP_ENDPOINT": "http://127.0.0.1:9",
                 "OTEL_TRACES_EXPORTER": "none",
             },
             False,
@@ -559,14 +559,14 @@ def test_native_ids_match_the_span_inside_and_after_it_exits(log_lines: Lines) -
         ),
         (
             {
-                "OTEL_EXPORTER_OTLP_ENDPOINT": "http://127.0.0.1:4318",
+                "OTEL_EXPORTER_OTLP_ENDPOINT": "http://127.0.0.1:9",
                 "OTEL_LOGS_EXPORTER": " NONE ",
             },
             True,
             False,
         ),
-        ({"OTEL_EXPORTER_OTLP_LOGS_ENDPOINT": "http://127.0.0.1:4318"}, False, True),
-        ({"OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http://127.0.0.1:4318"}, True, False),
+        ({"OTEL_EXPORTER_OTLP_LOGS_ENDPOINT": "http://127.0.0.1:9"}, False, True),
+        ({"OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http://127.0.0.1:9"}, True, False),
     ],
 )
 def test_the_signal_gate(
