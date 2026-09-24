@@ -347,23 +347,29 @@ docker run -d --name lgtm --restart unless-stopped -v lgtm-data:/data \
 
 - Traces: `make observe` points `ZIF_OTEL_EXPORTER_OTLP_ENDPOINT` at the stack
   (`http://host.docker.internal:4318`) and clears `ZIF_OTEL_EXPORTER_OTLP_HEADERS`, overriding a
-  `.env` that sends to a hosted collector. Docker Desktop resolves `host.docker.internal` for
-  every container; on Linux only `alloy` has the `host-gateway` entry that provides it.
+  `.env` that sends to a hosted collector. It relies on Docker Desktop (macOS, Windows):
+  on Linux `host.docker.internal` does not reach a stack published on 127.0.0.1, so nothing
+  arrives.
 - Logs: the profile's `alloy` service (`observability/logs.alloy`) tails this compose project's
   containers through the Docker socket and pushes them to Loki. It publishes no port. The socket
   gives it full control of the Docker daemon, which is one reason it never runs without the profile.
-- Every stream's `service_name` matches the process's trace service name: `ziftbook-api`,
-  `ziftbook-worker`, `ziftbook-migrations`, `ziftbook-web`, and `ziftbook-<compose service>` for
-  the rest (`ziftbook-postgres`, `ziftbook-mailpit`).
+- Every stream's `service_name` matches the process's trace service name (`ziftbook-api`,
+  `ziftbook-worker`, `ziftbook-web`), and is `ziftbook-<compose service>` for the rest
+  (`ziftbook-postgres`, `ziftbook-mailpit`, `ziftbook-alloy`). Its `project` label is the compose
+  project, which tells two checkouts apart.
+- Alloy only sees running containers, so `migrate` and `db-init`, which exit at startup, are not
+  in Loki: read them in the terminal or with `docker compose logs migrate`. Their traces still
+  arrive (`ziftbook-migrations`).
 - `make down` and `make reset` include the profile, so they also remove `alloy`. A bare
-  `docker compose down` leaves it running.
+  `docker compose down` leaves it running. `make reset` restarts with `make up`, so run
+  `make observe` again afterwards to keep exporting.
 - No metrics yet: nothing emits any.
 
 To find a request by id, open Grafana at http://127.0.0.1:3300, then Explore:
 
 1. Take the id from the response's `X-Request-ID` header (or any log line's `request_id=`).
-2. In Loki, query `{service_name=~"ziftbook-.*"} |= "<request id>"`. The API's access line
-   carries `trace_id=`.
+2. In Loki, query `{service_name=~"ziftbook-.*"} |= "<request id>"` (a line takes up to a
+   minute to show up). The API's access line carries `trace_id=`.
 3. In Tempo, open that trace id: it shows the web span, the API span, its SQL spans, and any job
    and email it queued.
 
@@ -440,6 +446,7 @@ ZIF-38). An empty variable means the default: `env_ignore_empty=True` on the bas
 | `ZIF_OTEL_TRACES_SAMPLER_ARG` | compose, prod only (api, worker, migrations, frontend) | `0.1` | no | no | Feeds `OTEL_TRACES_SAMPLER_ARG`. |
 | `OTEL_SERVICE_NAME` | api, worker, migrations, frontend | `ziftbook-api`/`ziftbook-worker`/`ziftbook-migrations`/`ziftbook-web` | no | no | Read by the OTel SDK itself; each process sets its own default if unset. Not set by compose. |
 | `OTEL_RESOURCE_ATTRIBUTES` | api, worker, migrations, frontend | none | no | no | Read by the OTel SDK itself; extra resource attributes. Not set by compose. |
+| `ZIF_COMPOSE_PROJECT` | compose, dev only (alloy) | none | no | no | Set by `docker-compose.yaml` itself from `COMPOSE_PROJECT_NAME`, never by hand: the compose project whose container logs `alloy` ships. |
 
 `node scripts/check-env-names.mjs` (part of `make lint`) fails if a `ZIF_*` name read in code, or in a compose
 file, is missing from this table. Any name beginning with `OTEL_` is allowed everywhere: those are read by the

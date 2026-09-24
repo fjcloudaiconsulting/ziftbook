@@ -184,9 +184,7 @@ services:
     profiles: [observability]
     command: ["run", "/etc/alloy/logs.alloy"]
     environment:
-      COMPOSE_PROJECT: ${COMPOSE_PROJECT_NAME}
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      ZIF_COMPOSE_PROJECT: ${COMPOSE_PROJECT_NAME}
     volumes:
       - ./observability/logs.alloy:/etc/alloy/logs.alloy:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro

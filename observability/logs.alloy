@@ -1,12 +1,13 @@
 // Ships this compose project's container logs to the shared local Loki (make observe, ZIF-90).
 // Traces go straight from each process to the same stack over OTLP; this only covers stdout.
+// Discovery sees running containers only: migrate and db-init exit before it looks.
 
 discovery.docker "project" {
   host = "unix:///var/run/docker.sock"
   // Only this compose project, never other projects' containers on the same daemon.
   filter {
     name   = "label"
-    values = ["com.docker.compose.project=" + sys.env("COMPOSE_PROJECT")]
+    values = ["com.docker.compose.project=" + sys.env("ZIF_COMPOSE_PROJECT")]
   }
 }
 
@@ -31,11 +32,10 @@ discovery.relabel "project" {
     target_label  = "service_name"
     replacement   = "ziftbook-web"
   }
+  // Two checkouts running make observe at once write the same service names.
   rule {
-    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
-    regex         = "migrate"
-    target_label  = "service_name"
-    replacement   = "ziftbook-migrations"
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    target_label  = "project"
   }
 }
 
