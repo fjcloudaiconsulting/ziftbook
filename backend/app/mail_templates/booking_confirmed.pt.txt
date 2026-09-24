@@ -1,0 +1,11 @@
+Seu agendamento está confirmado
+Olá,
+
+Seu agendamento em $business está confirmado:
+
+$service
+$date às $time ($zone)
+
+O arquivo de calendário anexo adiciona o horário à sua agenda.
+
+ziftbook

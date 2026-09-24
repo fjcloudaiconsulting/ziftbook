@@ -1,0 +1,11 @@
+We've received your booking request
+Hello,
+
+$business has received your booking request:
+
+$service
+$date at $time ($zone)
+
+The business still has to accept it. We'll email you as soon as they answer.
+
+ziftbook

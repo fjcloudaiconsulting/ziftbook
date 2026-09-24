@@ -1,0 +1,11 @@
+Recebemos seu pedido de agendamento
+Olá,
+
+$business recebeu seu pedido de agendamento:
+
+$service
+$date às $time ($zone)
+
+O negócio ainda precisa aceitar o pedido. Enviaremos um e-mail assim que houver resposta.
+
+ziftbook

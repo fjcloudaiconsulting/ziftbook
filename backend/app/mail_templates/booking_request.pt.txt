@@ -1,0 +1,12 @@
+Novo pedido de agendamento
+Olá,
+
+Um cliente pediu um agendamento:
+
+Cliente: $client
+
+Aceite ou recuse o pedido até $expires. Sem resposta a tempo, o pedido expira.
+
+$link
+
+ziftbook

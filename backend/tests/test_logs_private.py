@@ -8,7 +8,7 @@ import asyncio
 import hashlib
 import json
 import smtplib
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from datetime import date, timedelta
 from typing import Any
 
@@ -17,6 +17,7 @@ from fastapi import FastAPI
 from sqlalchemy import Engine, text
 
 from app import auth
+from app.db import tenant_context
 from app.jobs import run_once
 from app.mail import render
 from app.main import create_app
@@ -41,6 +42,14 @@ UA = {"User-Agent": "zif-never-log-agent/7"}
 @pytest.fixture
 def app(people: People) -> FastAPI:
     return create_app()
+
+
+@pytest.fixture(autouse=True)
+def clean_outbox(people: People) -> Iterator[None]:
+    yield
+    for tenant_id in (people.a, people.b):
+        with tenant_context(tenant_id) as session:
+            session.execute(text("DELETE FROM email_outbox"))
 
 
 def client_for(app: FastAPI) -> Any:
@@ -266,6 +275,14 @@ def test_no_personal_data_ever_reaches_a_log(
         },
     )
     assert booked.status_code == 201
+
+    # 6f (ZIF-53): confirm the booking and run its jobs - the client (booking_confirmed, its .ics)
+    # and merchant (booking_new) emails, and the queued reminder, all at DEBUG.
+    booking_confirmed = owner.patch(
+        f"/api/bookings/{booked.json()['id']}", json={"status": "confirmed"}
+    )
+    assert booking_confirmed.status_code == 200
+    asyncio.run(run_once(KINDS))
 
     # 7: invite flow — send, list, a wrong token, then accept with a brand-new account.
     invite_email = fresh_email()

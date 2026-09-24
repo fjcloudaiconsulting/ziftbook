@@ -1,0 +1,11 @@
+Your booking is confirmed
+Hello,
+
+Your booking at $business is confirmed:
+
+$service
+$date at $time ($zone)
+
+The attached calendar file adds it to your calendar.
+
+ziftbook

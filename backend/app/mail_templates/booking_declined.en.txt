@@ -1,0 +1,11 @@
+Your booking request was declined
+Hello,
+
+$business can't take your booking request:
+
+$service
+$date at $time ($zone)
+
+Nothing was booked. You're welcome to choose another time.
+
+ziftbook

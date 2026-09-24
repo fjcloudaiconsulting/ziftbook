@@ -1,0 +1,11 @@
+Seu pedido de agendamento foi recusado
+Olá,
+
+$business não pode aceitar seu pedido de agendamento:
+
+$service
+$date às $time ($zone)
+
+Nada foi agendado. Você pode escolher outro horário.
+
+ziftbook

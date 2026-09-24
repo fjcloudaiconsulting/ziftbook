@@ -6,13 +6,17 @@ import re
 import secrets
 import smtplib
 import ssl
+from datetime import UTC, datetime
 from email.message import EmailMessage
 from pathlib import Path
 from string import Template
 from typing import get_args
+from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from opentelemetry.trace import SpanKind
 from sqlalchemy import text
+from sqlalchemy.orm import Session
 
 from app import business_settings, tracing
 from app.business_settings import Locale
@@ -22,6 +26,10 @@ from app.jobs import Job
 
 TEMPLATES = Path(__file__).parent / "mail_templates"
 LOCALES = get_args(Locale)
+
+# Numeric, day-first: no Babel, no weekday/month names (those would be copy in code, and the .ics
+# already puts the event in the client's own calendar with their own formatting).
+DATE_FORMAT = {"en": "%d/%m/%Y", "nl": "%d-%m-%Y", "pt": "%d/%m/%Y"}
 
 logger = logging.getLogger(__name__)
 
@@ -39,23 +47,38 @@ def render(template: str, locale: str, values: dict[str, str] | None = None) -> 
 
 
 def deliver(
-    template: str, to: str, subject: str, body: str, headers: dict[str, str] | None = None
+    template: str,
+    to: str,
+    subject: str,
+    body: str,
+    headers: dict[str, str] | None = None,
+    attachment: tuple[str, bytes] | None = None,
 ) -> None:
-    """Hand one plain-text message for one address to the SMTP server, and log it by template.
+    """Hand one message for one address to the SMTP server, and log it by template.
+
+    With attachment (filename, bytes), the message becomes multipart/mixed with the plain-text
+    body first, as a calendar part (text/calendar; method=PUBLISH) - the only attachment kind this
+    sends today.
 
     The job's id comes from its bound context. Never the address, subject or body, and on failure
     the error's class only (SMTPRecipientsRefused quotes the address); the error still propagates,
     so the job is retried.
     """
     try:
-        _send(to, subject, body, headers)
+        _send(to, subject, body, headers, attachment)
     except Exception as error:
         logger.warning("email failed", extra={"template": template, "error": type(error).__name__})
         raise
     logger.info("email sent", extra={"template": template})
 
 
-def _send(to: str, subject: str, body: str, headers: dict[str, str] | None) -> None:
+def _send(
+    to: str,
+    subject: str,
+    body: str,
+    headers: dict[str, str] | None,
+    attachment: tuple[str, bytes] | None = None,
+) -> None:
     settings = MailSettings()
     message = EmailMessage()
     message["From"] = settings.smtp_from
@@ -64,6 +87,15 @@ def _send(to: str, subject: str, body: str, headers: dict[str, str] | None) -> N
     for name, value in (headers or {}).items():
         message[name] = value
     message.set_content(body)
+    if attachment is not None:
+        filename, data = attachment
+        message.add_attachment(
+            data,
+            maintype="text",
+            subtype="calendar",
+            filename=filename,
+            params={"method": "PUBLISH", "charset": "utf-8"},
+        )
     # Never the recipient, subject, body or template values: only the server this deployment talks
     # to.
     with tracing.span(
@@ -148,6 +180,37 @@ def send_invite(job: Job) -> None:
         deliver("invite", invite.email, subject, body, {"X-Mailgun-Track-Clicks": "no"})
 
 
+def _outbox(
+    session: Session, job: Job, recipient_id: UUID | str, template: str, subject: str
+) -> str:
+    """Insert or find this job's outbox row and return its status ('pending' or 'sent')."""
+    status: str = session.execute(
+        text("""
+        INSERT INTO email_outbox (tenant_id, job_id, recipient_id, template, subject)
+        VALUES (:tenant_id, :job_id, :recipient_id, :template, :subject)
+        ON CONFLICT (tenant_id, job_id) DO UPDATE SET subject = excluded.subject
+        RETURNING status
+        """),
+        {
+            "tenant_id": job.tenant_id,
+            "job_id": job.id,
+            "recipient_id": recipient_id,
+            "template": template,
+            "subject": subject,
+        },
+    ).scalar_one()
+    return status
+
+
+def _mark_sent(job: Job) -> None:
+    assert job.tenant_id is not None  # every caller already checked this before sending
+    with tenant_context(job.tenant_id) as session:
+        session.execute(
+            text("UPDATE email_outbox SET status = 'sent', sent_at = now() WHERE job_id = :job_id"),
+            {"job_id": job.id},
+        )
+
+
 def send(job: Job) -> None:
     """The email.send job. Payload: recipient_id (a user), template.
 
@@ -171,28 +234,174 @@ def send(job: Job) -> None:
         # The person's own language, else their business's.
         locale = recipient.locale or business_settings.read(session).language
         subject, body = render(payload["template"], locale)
-        status = session.execute(
-            text("""
-            INSERT INTO email_outbox (tenant_id, job_id, recipient_id, template, subject)
-            VALUES (:tenant_id, :job_id, :recipient_id, :template, :subject)
-            ON CONFLICT (tenant_id, job_id) DO UPDATE SET subject = excluded.subject
-            RETURNING status
-            """),
-            {
-                "tenant_id": job.tenant_id,
-                "job_id": job.id,
-                "recipient_id": payload["recipient_id"],
-                "template": payload["template"],
-                "subject": subject,
-            },
-        ).scalar_one()
+        status = _outbox(session, job, payload["recipient_id"], payload["template"], subject)
     if status == "sent":
         return
 
     deliver(payload["template"], recipient.email, subject, body)
+    _mark_sent(job)
+
+
+# The status a template announces; the email goes only if the booking still has it.
+STATUS_FOR = {
+    "booking_received": "pending",
+    "booking_request": "pending",
+    "booking_confirmed": "confirmed",
+    "booking_new": "confirmed",
+    "booking_reminder": "confirmed",
+    "booking_declined": "declined",
+    "booking_cancelled": "cancelled_by_merchant",
+    "booking_cancelled_by_client": "cancelled_by_client",
+}
+
+BOOKING = text("""
+SELECT c.email AS client_email, c.locale AS client_locale, c.name AS client_name,
+       t.name AS business, b.client_id, b.status, b.starts_at, b.ends_at, b.expires_at,
+       b.service_name, now() AS now
+FROM bookings b
+JOIN clients c ON c.tenant_id = b.tenant_id AND c.id = b.client_id
+JOIN tenants t ON t.id = b.tenant_id
+WHERE b.id = :id
+""")
+
+MERCHANT = text("""
+SELECT u.email, u.locale FROM users u JOIN memberships m ON m.user_id = u.id WHERE u.id = :id
+""")
+
+
+def _local_text(value: dict[str, str], locale: str) -> str:
+    """value[locale], else the first present of en, nl, pt."""
+    if value.get(locale):
+        return value[locale]
+    for fallback in ("en", "nl", "pt"):
+        if value.get(fallback):
+            return value[fallback]
+    return ""
+
+
+def ics(
+    booking_id: UUID | str, starts_at: datetime, ends_at: datetime, summary: str, now: datetime
+) -> bytes:
+    """A stdlib-only VCALENDAR/PUBLISH, stable UID per booking. See ZIF-53 SS3.3."""
+
+    def escape(value: str) -> str:
+        value = value.replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,")
+        return value.replace("\r\n", "\\n").replace("\n", "\\n").replace("\r", "\\n")
+
+    def stamp(when: datetime) -> str:
+        return when.astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
+
+    def fold(line: str) -> str:
+        """RFC 5545 line folding: no physical line over 75 octets, never mid-character. A
+        continuation line's leading space counts toward its own 75-octet budget."""
+        if len(line.encode()) <= 75:
+            return line
+        parts: list[bytes] = []
+        chunk = bytearray()
+        budget = 75
+        for char in line:
+            piece = char.encode()
+            if len(chunk) + len(piece) > budget:
+                parts.append(bytes(chunk))
+                chunk = bytearray()
+                budget = 74  # the folded line's leading space eats one octet of the next 75
+            chunk += piece
+        if chunk:
+            parts.append(bytes(chunk))
+        return "\r\n ".join(part.decode() for part in parts)
+
+    lines = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//ziftbook//booking//EN",
+        "CALSCALE:GREGORIAN",
+        "METHOD:PUBLISH",
+        "BEGIN:VEVENT",
+        f"UID:{booking_id}@ziftbook.com",
+        "SEQUENCE:0",
+        f"DTSTAMP:{stamp(now)}",
+        f"DTSTART:{stamp(starts_at)}",
+        f"DTEND:{stamp(ends_at)}",
+        f"SUMMARY:{escape(summary)}",
+        "END:VEVENT",
+        "END:VCALENDAR",
+    ]
+    return ("\r\n".join(fold(line) for line in lines) + "\r\n").encode()
+
+
+def send_booking(job: Job) -> None:
+    """The email.booking job: one client or merchant booking email, or the 24h-ahead reminder.
+
+    Payload: booking_id, template, and (merchant) user_id, or (reminder) starts_at. See ZIF-53 SS3.
+    """
+    if job.tenant_id is None:
+        raise ValueError("email.booking needs a tenant")
+    payload = job.payload
+    template = payload["template"]
+    if template not in STATUS_FOR:
+        raise ValueError(f"unknown booking template {template!r}")
+    app_url = MailSettings().app_url.rstrip("/")
 
     with tenant_context(job.tenant_id) as session:
-        session.execute(
-            text("UPDATE email_outbox SET status = 'sent', sent_at = now() WHERE job_id = :job_id"),
-            {"job_id": job.id},
+        row = session.execute(BOOKING, {"id": payload["booking_id"]}).first()
+        if row is None:
+            return
+        if row.status != STATUS_FOR[template]:
+            return
+        if template in ("booking_received", "booking_request") and (
+            row.expires_at is None or row.expires_at <= row.now
+        ):
+            return
+        if template == "booking_reminder" and (
+            row.starts_at <= row.now
+            or datetime.fromisoformat(payload["starts_at"]) != row.starts_at
+        ):
+            return
+
+        user_id = payload.get("user_id")
+        if user_id is None:
+            recipient_id = row.client_id
+            if row.client_email is None:  # erased, or merchant-created with no address
+                return
+            recipient_email, recipient_locale = row.client_email, row.client_locale
+        else:
+            merchant = session.execute(MERCHANT, {"id": user_id}).first()
+            if merchant is None:  # RLS: a member only through a membership in THIS tenant
+                return
+            recipient_id = user_id
+            recipient_email, recipient_locale = merchant.email, merchant.locale
+
+        settings = business_settings.read(session)
+        locale = recipient_locale or settings.language
+        zone = settings.timezone
+        starts_local = row.starts_at.astimezone(ZoneInfo(zone))
+        values = {
+            "business": row.business,
+            "service": _local_text(row.service_name, locale),
+            "date": starts_local.strftime(DATE_FORMAT[locale]),
+            "time": starts_local.strftime("%H:%M"),
+            "zone": zone,
+        }
+        if user_id is not None:
+            values["client"] = row.client_name
+            values["link"] = f"{app_url}/{locale}"
+        if template == "booking_request":
+            expires_local = row.expires_at.astimezone(ZoneInfo(zone))
+            values["expires"] = (
+                f"{expires_local.strftime(DATE_FORMAT[locale])} "
+                f"{expires_local.strftime('%H:%M')} ({zone})"
+            )
+        subject, body = render(template, locale, values)
+        status = _outbox(session, job, recipient_id, template, subject)
+    if status == "sent":
+        return
+
+    attachment = None
+    if template == "booking_confirmed":
+        summary = f"{values['service']} - {row.business}"
+        attachment = (
+            "booking.ics",
+            ics(payload["booking_id"], row.starts_at, row.ends_at, summary, datetime.now(UTC)),
         )
+    deliver(template, recipient_email, subject, body, attachment=attachment)
+    _mark_sent(job)

@@ -1,0 +1,12 @@
+Nieuwe boekingsaanvraag
+Hallo,
+
+Een klant wil boeken:
+
+Klant: $client
+
+Accepteer of wijs de aanvraag af vóór $expires. Antwoord je niet op tijd, dan vervalt de aanvraag.
+
+$link
+
+ziftbook

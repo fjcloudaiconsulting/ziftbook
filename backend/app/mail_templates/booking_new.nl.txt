@@ -1,0 +1,12 @@
+Nieuwe boeking
+Hallo,
+
+Je hebt een nieuwe boeking:
+
+Klant: $client
+
+De boeking is bevestigd.
+
+$link
+
+ziftbook

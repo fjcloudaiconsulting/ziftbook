@@ -1,0 +1,11 @@
+Herinnering: je afspraak komt eraan
+Hallo,
+
+Een herinnering aan je afspraak bij $business:
+
+$service
+$date om $time ($zone)
+
+Tot dan!
+
+ziftbook

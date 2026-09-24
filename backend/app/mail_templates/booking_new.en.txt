@@ -1,0 +1,12 @@
+New booking
+Hello,
+
+You have a new booking:
+
+Client: $client
+
+It's confirmed.
+
+$link
+
+ziftbook

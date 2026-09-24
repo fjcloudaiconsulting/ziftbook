@@ -1,0 +1,11 @@
+Reminder: your upcoming booking
+Hello,
+
+This is a reminder of your booking at $business:
+
+$service
+$date at $time ($zone)
+
+See you then.
+
+ziftbook
