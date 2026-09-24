@@ -275,7 +275,8 @@ Deferred and scheduled work goes through the `jobs` table (`app/jobs.py`); there
 Every process (API, worker, migrations) calls `app.logs.configure()` once and logs to stdout, one JSON
 object per line when deployed (`ZIF_LOG_FORMAT=json`, the default) and readable text in development.
 `ZIF_LOG_LEVEL` is `INFO` by default and `DEBUG` in `docker-compose.yaml`; an invalid value stops the
-process at startup.
+process at startup. The web server (`frontend/lib/log.ts`) follows the same rules, with its own
+loggers (`web.*`); Next's own stderr output (banners, SSR error traces) is not in this format.
 
 - Levels: `DEBUG` diagnostic detail; `INFO` lifecycle and business events (one access line per request);
   `WARNING` recovered problems (a job that will be retried); `ERROR` needs a human; `CRITICAL` an uncaught
@@ -361,8 +362,8 @@ ZIF-38). An empty variable means the default: `env_ignore_empty=True` on the bas
 | `ZIF_TRUSTED_PROXIES` | api | `""` | yes | no | Addresses whose `X-Forwarded-For` the API believes. Empty trusts nobody. |
 | `ZIF_CLIENT_IP_HEADER` | frontend | none | no | no | Header the web app trusts for the visitor's address (staging: `cf-connecting-ip`). Set only behind a proxy that overwrites it. |
 | **Logging** | | | | | |
-| `ZIF_LOG_LEVEL` | api, worker, migrations | `INFO` | no | no | `DEBUG`/`INFO`/`WARNING`/`ERROR`. |
-| `ZIF_LOG_FORMAT` | api, worker, migrations | `json` | no | no | `json` or `text`. |
+| `ZIF_LOG_LEVEL` | api, worker, migrations, frontend | `INFO` | no | no | `DEBUG`/`INFO`/`WARNING`/`ERROR`. |
+| `ZIF_LOG_FORMAT` | api, worker, migrations, frontend | `json` | no | no | `json` or `text`. |
 | `ZIF_LOG_SQL` | api, worker, migrations | `false` | no | no | Logs SQL statements (never values) when the level is `DEBUG`. |
 | **Runtime** | | | | | |
 | `ZIF_APP_VERSION` | api | `dev` | no | no | Baked into the backend image at build time. |
