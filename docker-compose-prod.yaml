@@ -117,6 +117,8 @@ services:
         condition: service_healthy
     environment:
       ZIF_API_URL: http://backend:8000
+      ZIF_LOG_LEVEL: ${ZIF_LOG_LEVEL:-INFO}
+      ZIF_LOG_FORMAT: ${ZIF_LOG_FORMAT:-json}
     ports:
       - "3000:3000"
     networks:

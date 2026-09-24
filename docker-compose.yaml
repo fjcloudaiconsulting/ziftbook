@@ -133,6 +133,8 @@ services:
         condition: service_healthy
     environment:
       ZIF_API_URL: http://backend:8000
+      ZIF_LOG_LEVEL: DEBUG
+      ZIF_LOG_FORMAT: text
     networks:
       default:
         ipv4_address: 172.28.0.10
