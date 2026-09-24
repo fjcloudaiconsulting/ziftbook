@@ -21,7 +21,7 @@ from fastapi import FastAPI
 from sqlalchemy import Engine, text
 from sqlalchemy.exc import IntegrityError
 
-from app import jobs, logs
+from app import jobs, logs, tracing
 from app.db import SessionLocal, tenant_context
 from app.jobs import Job, JobKind, enqueue, run_once
 from app.main import create_app
@@ -1023,6 +1023,23 @@ def test_configure_writes_nothing_and_python_dash_m_app_main_is_still_json(
     # capture stream, and any later test that logs would otherwise hit it.
     with capsys.disabled():
         logs.configure()
+
+
+# Review: a malformed OTEL_EXPORTER_OTLP_HEADERS entry logs a WARNING quoting it
+# (opentelemetry/util/re.py); that logger must be quieted like the other third-party ones.
+def test_a_malformed_otlp_headers_entry_never_reaches_the_log(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    logs.configure()
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_HEADERS", "Authorization: Bearer SECRETTOKEN")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:4318")
+
+    provider = tracing._provider("test-otlp-headers")
+    try:
+        output = capsys.readouterr().out
+        assert "SECRETTOKEN" not in output
+    finally:
+        provider.shutdown()
 
 
 # B1: a startup failure never leaks the exception message. Starlette sends str(exc) (here a

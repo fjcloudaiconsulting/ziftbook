@@ -281,6 +281,8 @@ def configure() -> None:
         "sqlalchemy.engine": sql,
         "psycopg": logging.WARNING,
         "httpx2": logging.WARNING,  # the test client; its INFO line has the URL and query
+        # Its WARNING quotes a malformed OTEL_EXPORTER_OTLP_HEADERS entry verbatim, token included.
+        "opentelemetry.util.re": logging.ERROR,
     }.items():
         logging.getLogger(name).setLevel(value)
     # uvicorn configured these before importing the app (see "uvicorn" in the spec): drop its

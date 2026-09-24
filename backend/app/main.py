@@ -182,11 +182,11 @@ def create_app() -> FastAPI:
                     logging.DEBUG, "access", extra=_access_fields(request, status, started)
                 )
 
-        ctx = tracing.PROPAGATOR.extract(dict(request.headers))
+        ctx = tracing.PROPAGATOR.extract({"traceparent": request.headers.get("traceparent", "")})
         method = request.method if request.method in METHODS else "_OTHER"
         raised = False
         with tracing.span(
-            method, SpanKind.SERVER, {"http.request.method": request.method}, context=ctx
+            method, SpanKind.SERVER, {"http.request.method": method}, context=ctx
         ) as current_span:
             span_context = current_span.get_span_context()
             # Set, never reset, exactly like request_id: the 500 handler and uvicorn's error line

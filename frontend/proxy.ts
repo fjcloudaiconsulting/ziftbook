@@ -94,8 +94,13 @@ async function forwardApi(request: NextRequest): Promise<Response> {
       if (name === "content-encoding" || name === "content-length" || HOP_BY_HOP.includes(name)) continue;
       responseHeaders.append(name, value);
     }
+    // Built before ending the span: a throw from the Response constructor must not end it twice.
+    const proxied = new Response(upstreamResponse.body, {
+      status: upstreamResponse.status,
+      headers: responseHeaders,
+    });
     endProxySpan(span, upstreamResponse.status);
-    return new Response(upstreamResponse.body, { status: upstreamResponse.status, headers: responseHeaders });
+    return proxied;
   } catch (err) {
     if (request.signal.aborted) {
       log.debug("client closed", { request_id: id, method: request.method, ...spanIds });

@@ -55,7 +55,7 @@ export function endProxySpan(span: Span, status: number, err?: unknown): void {
   span.setAttribute("http.response.status_code", status);
   if (status >= 500 || err !== undefined) {
     span.setStatus({ code: SpanStatusCode.ERROR });
-    span.setAttribute("error.type", err instanceof Error ? err.constructor.name : "502");
+    span.setAttribute("error.type", err instanceof Error ? err.constructor.name : String(status));
   }
   span.end();
 }

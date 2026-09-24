@@ -10,6 +10,7 @@ from datetime import timedelta
 from typing import Any
 
 import pytest
+from fastapi.responses import JSONResponse
 from opentelemetry import trace
 from opentelemetry.sdk.trace import ReadableSpan
 from opentelemetry.trace import SpanKind
@@ -295,6 +296,15 @@ def test_t8_provider_exporter_gated_by_endpoint(
     monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:4318")
     with_endpoint = tracing._provider("t8-set")
     assert len(with_endpoint._active_span_processor._span_processors) == 1
+    with_endpoint.shutdown()  # no exporter thread left running after this test
+
+    # An empty string is not a real endpoint: the same gate must hold, not just for an unset var.
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "")
+    with caplog.at_level(logging.WARNING):
+        empty = tracing._provider("t8-empty")
+    assert len(empty._active_span_processor._span_processors) == 0
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
 
 
 def test_t8_configure_is_idempotent_and_silent(
@@ -400,6 +410,61 @@ def test_t11_worker_and_migrations_configure_their_own_service_name(
 
     env_source = (API_DIR / "migrations" / "env.py").read_text()
     assert 'tracing.configure("ziftbook-migrations")' in env_source
+    assert '"migrations upgrade"' in env_source
+
+
+# Review: http.request.method must carry the bounded value (the span-name method or _OTHER),
+# never the raw client token -- the client fully controls that string.
+def test_http_request_method_attribute_is_bounded(spans: Spans) -> None:
+    client = new_client(create_app())
+
+    response = client.request("FOO", "/api/session")
+
+    assert response.status_code == 415
+    server = _one(spans(), kind=SpanKind.SERVER)
+    assert server.name.startswith("_OTHER")
+    assert _attrs(server).get("http.request.method") == "_OTHER"
+
+
+# Review: only traceparent is extracted at the API, never tracestate -- a stamped job payload must
+# never carry it either (enqueue() injects whatever trace_state the current span context holds).
+def test_extract_never_reads_tracestate(people: People, migrate_engine: Engine) -> None:
+    app = create_app()
+    owner = signed_in(app, people.a, people.both)
+    email = fresh_email()
+    trace_id = "4bf92f3577b34da6a3ce929d0e0e4736"
+    parent_span_id = "00f067aa0ba902b7"
+    headers = {
+        "traceparent": f"00-{trace_id}-{parent_span_id}-01",
+        "tracestate": "vendor=value",
+    }
+
+    response = owner.post("/api/invites", json={"email": email}, headers=headers)
+    assert response.status_code == 201
+
+    with migrate_engine.connect() as conn:
+        stored = conn.execute(
+            text("SELECT payload FROM jobs WHERE kind = 'email.invite' ORDER BY id DESC LIMIT 1")
+        ).scalar_one()
+    assert "tracestate" not in stored
+
+
+# Review: a handler that RETURNS a 500 without raising still gets an ERROR SERVER span.
+def test_a_returned_500_still_gets_an_error_span(spans: Spans) -> None:
+    app = create_app()
+
+    def returns_500() -> JSONResponse:
+        return JSONResponse(status_code=500, content={"code": "internal"})
+
+    app.add_api_route("/api/test-500", returns_500, methods=["GET"], tags=["test"])
+    client = new_client(app)
+
+    response = client.get("/api/test-500")
+    assert response.status_code == 500
+
+    server = _one(spans(), kind=SpanKind.SERVER, name="GET /api/test-500")
+    assert server.status.status_code == trace.StatusCode.ERROR
+    assert _attrs(server).get("error.type") == "500"
 
 
 # T12 (guard): an incoming traceparent becomes the SERVER span's trace and parent.

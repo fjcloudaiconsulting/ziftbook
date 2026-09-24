@@ -4,6 +4,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
+import { SpanStatusCode } from "@opentelemetry/api";
 
 const MODULE_PATH = "../lib/trace.ts";
 
@@ -57,6 +58,36 @@ describe("lib/trace.ts (W1)", () => {
     await resource.waitForAsyncAttributes?.();
     assert.equal(resource.attributes["service.name"], "ziftbook-web");
     assert.equal(process.env.OTEL_SERVICE_NAME, "ziftbook-web");
+  });
+
+  // Review: traceparent() of a span with an invalid context returns undefined.
+  test("traceparent of a span with an invalid context is undefined", async () => {
+    delete process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
+    const { traceparent } = await freshTrace();
+    const invalidSpan = { spanContext: () => ({ traceId: "0".repeat(32), spanId: "0".repeat(16), traceFlags: 0 }) };
+    assert.equal(traceparent(invalidSpan), undefined);
+  });
+
+  // Review: endProxySpan sets error.type from the status when there's no error object.
+  test("endProxySpan(span, 503) sets ERROR status with error.type \"503\"", async () => {
+    delete process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
+    const { provider, startProxySpan, endProxySpan } = await freshTrace();
+    provider();
+    const span = startProxySpan("GET");
+    endProxySpan(span, 503);
+    assert.equal(span.status.code, SpanStatusCode.ERROR);
+    assert.equal(span.attributes["error.type"], "503");
+  });
+
+  // Review: endProxySpan sets error.type from the error's class when one is given.
+  test('endProxySpan(span, 502, new TypeError()) sets error.type "TypeError"', async () => {
+    delete process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
+    const { provider, startProxySpan, endProxySpan } = await freshTrace();
+    provider();
+    const span = startProxySpan("GET");
+    endProxySpan(span, 502, new TypeError());
+    assert.equal(span.status.code, SpanStatusCode.ERROR);
+    assert.equal(span.attributes["error.type"], "TypeError");
   });
 
   // W2 (guard, can't go red: the private provider has no context manager to inherit from).
