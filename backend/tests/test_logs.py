@@ -18,6 +18,10 @@ from typing import Any
 import pytest
 import uvicorn.config
 from fastapi import FastAPI
+from opentelemetry import context as otel_context
+from opentelemetry.context import _SUPPRESS_INSTRUMENTATION_KEY
+from opentelemetry.sdk._logs import LoggerProvider
+from opentelemetry.sdk.resources import Resource
 from sqlalchemy import Engine, text
 from sqlalchemy.exc import IntegrityError
 
@@ -1070,3 +1074,132 @@ def test_a_startup_failure_never_leaks_the_bad_url() -> None:
     assert sentinel not in output
     lines = [json.loads(line) for line in output.splitlines() if line.startswith("{")]
     assert any(line["level"] == "CRITICAL" and line["msg"] == "startup failed" for line in lines)
+
+
+# ZIF-137: export logs over OTLP with the same allowlist as stdout. Test numbers below match
+# docs/specs/2026-09-24-zif-137-spec.md's "Tests" section.
+
+
+def _records(lines: Lines) -> list[Any]:
+    return lines.records()  # type: ignore[attr-defined,no-any-return]
+
+
+# 2: fence. Every exported record, rebuilt, equals its JSON line one-to-one. The parity check
+# itself lives in conftest's log_lines() (it runs in every one of the ~70 tests that use the
+# fixture); this test just gives it a record with every kind of field (context, extra, exc) to
+# check. Kills: a second allowlist, code.* attributes, the context dict or args leaking, exc
+# flattened, the template as body, dropped extras, an ungated handler exporting opentelemetry.*
+# records the flag list says to skip.
+def test_the_otlp_record_matches_its_json_line_one_to_one(log_lines: Lines) -> None:
+    logger = logging.getLogger("app.tests.logs")
+    with logs.bound(request_id="r", tenant_id="t"):
+        logger.error("m", extra={"k": 1}, exc_info=_raised(ValueError, "x"))
+
+    log_lines()  # asserts parity as a side effect
+    assert _records(log_lines)
+
+
+# 3: fence. exc over OTLP carries types/frames/sqlstate, never exception.* or the row's email.
+def test_exc_over_otlp_never_holds_the_message_or_sdk_exception_fields(
+    migrate_engine: Engine, log_lines: Lines
+) -> None:
+    email = fresh_email()
+    with pytest.raises(IntegrityError) as raised, migrate_engine.begin() as conn:
+        conn.execute(text("INSERT INTO users (email) VALUES (:email), (:email)"), {"email": email})
+
+    logging.getLogger("app.tests.logs").error("m", exc_info=raised.value)
+    log_lines()
+    record = _records(log_lines)[-1]
+    dumped = json.dumps(record.to_json())
+    assert email not in dumped
+    assert "exception.message" not in dumped
+    assert "exception.stacktrace" not in dumped
+    exc = record.log_record.attributes["exc"]
+    link = next(link for link in exc if "sqlstate" in link)
+    assert link["sqlstate"] == "23505"
+    assert link["table"] == "users"
+
+
+# 5: fence. Severity number/text and the rendered body.
+@pytest.mark.parametrize(
+    ("level", "severity_text", "number"),
+    [("warning", "WARNING", 13), ("critical", "CRITICAL", 21)],
+)
+def test_severity_and_body_over_otlp(
+    log_lines: Lines, level: str, severity_text: str, number: int
+) -> None:
+    logger = logging.getLogger("app.tests.logs")
+    getattr(logger, level)("hello %s", "world")
+    getattr(logger, level)(ValueError("x"))
+
+    log_lines()
+    records = [r for r in _records(log_lines) if r.log_record.severity_text == severity_text]
+    assert len(records) == 2
+    assert records[0].log_record.severity_number.value == number
+    assert records[0].log_record.body == "hello world"
+    assert records[1].log_record.body == "ValueError"
+
+
+# 6: fence. ZIF_LOG_FORMAT=text still exports a structured record with a plain body: the OTLP
+# handler owns its own json formatter and never reuses the root handler's.
+def test_otlp_export_stays_structured_under_text_format(
+    log_lines: Lines, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ZIF_LOG_FORMAT", "text")
+    logs.configure()
+
+    logging.getLogger("app.tests.logs").info("m", extra={"k": 1})
+
+    log_lines()
+    record = _records(log_lines)[-1]
+    assert record.log_record.body == "m"
+    assert record.log_record.attributes["k"] == 1
+
+
+# 8: fence. A record from an opentelemetry.* logger, and one logged under the suppress-
+# instrumentation key, reach stdout but are never exported. Logging after shutdown raises nothing.
+def test_the_recursion_guard_drops_sdk_and_suppressed_records(log_lines: Lines) -> None:
+    before = len(_records(log_lines))
+
+    logging.getLogger("opentelemetry.some.module").warning("queue full, dropping")
+    token = otel_context.attach(otel_context.set_value(_SUPPRESS_INSTRUMENTATION_KEY, True))
+    try:
+        logging.getLogger("app.tests.logs").warning("inside export")
+    finally:
+        otel_context.detach(token)
+
+    lines = log_lines()
+    assert any(line["logger"] == "opentelemetry.some.module" for line in lines)
+    assert any(line["msg"] == "inside export" for line in lines)
+    assert len(_records(log_lines)) == before  # neither reached the exporter
+
+    # Logging after the provider is shut down raises nothing (silent handleError).
+    provider = LoggerProvider(resource=Resource.create(), shutdown_on_exit=False)
+    provider.shutdown()
+    handler = logs.OtlpHandler(provider)
+    root = logging.getLogger()
+    root.addHandler(handler)
+    try:
+        logging.getLogger("app.tests.logs").error("after shutdown")  # must not raise
+    finally:
+        root.removeHandler(handler)
+
+
+# 9: guard. A non-hex trace_id stays an attribute (no int(x, 16) loss); an unserializable extra
+# falls back to the head-only record on both stdout and OTLP; emit never raises into the caller.
+def test_a_non_hex_trace_id_stays_an_attribute_and_export_never_raises(log_lines: Lines) -> None:
+    logging.getLogger("app.tests.logs").info("m", extra={"trace_id": "abc"})
+
+    log_lines()
+    record = _records(log_lines)[-1]
+    assert record.log_record.attributes["trace_id"] == "abc"
+    assert record.log_record.trace_id == 0
+
+    class Explodes:
+        def __str__(self) -> str:
+            raise RuntimeError("boom")
+
+    logging.getLogger("app.tests.logs").info("m2", extra={"bad": Explodes()})
+    lines = log_lines()  # must not raise; parity still holds for the head-only fallback
+    assert lines[-1]["msg"] == "m2"
+    assert "bad" not in lines[-1]

@@ -341,20 +341,26 @@ repo. Every switch below is an environment variable read at process start, so an
 sets it the same way. With `docker-compose-prod.yaml`, set it in `.env` and run
 `docker compose -f docker-compose-prod.yaml up -d`, which recreates the changed containers
 (`docker compose restart` keeps the old environment and changes nothing). The dev
-`docker-compose.yaml` passes only the endpoint and headers through from `.env`; it fixes the
-log settings at `DEBUG`/`text`, passes no `ZIF_LOG_SQL` and no sampler.
+`docker-compose.yaml` passes only the endpoint, headers and the two exporter switches through
+from `.env`; it fixes the log settings at `DEBUG`/`text`, passes no `ZIF_LOG_SQL` and no sampler.
 
 | Signal | Leaves the app as | On | Off | Tune |
 |---|---|---|---|---|
-| Logs | JSON lines on stdout (`ZIF_LOG_FORMAT=json`, the default; `text` in dev) | always | cannot be turned off; raise `ZIF_LOG_LEVEL` to `ERROR` for the least | `ZIF_LOG_LEVEL` (default `INFO`), `ZIF_LOG_SQL` (see Logging) |
-| Traces | OTLP/HTTP to `ZIF_OTEL_EXPORTER_OTLP_ENDPOINT` | set the endpoint (plus `ZIF_OTEL_EXPORTER_OTLP_HEADERS` if the collector wants auth) | leave the endpoint unset: no spans are exported and no connection is attempted. In prod you can also set `ZIF_OTEL_TRACES_SAMPLER=always_off` | prod: `ZIF_OTEL_TRACES_SAMPLER` / `_ARG` (default 10% of new traces, following the caller's decision); dev: 100% |
+| Logs | JSON lines on stdout (`ZIF_LOG_FORMAT=json`, the default; `text` in dev), and OTLP/HTTP to `ZIF_OTEL_EXPORTER_OTLP_ENDPOINT` when set | always (stdout); the endpoint set (OTLP) | stdout cannot be turned off; raise `ZIF_LOG_LEVEL` to `ERROR` for the least. `ZIF_OTEL_LOGS_EXPORTER=none` turns OTLP off with the endpoint still set (stdout stays on) | `ZIF_LOG_LEVEL` (default `INFO`), `ZIF_LOG_SQL` (see Logging) |
+| Traces | OTLP/HTTP to `ZIF_OTEL_EXPORTER_OTLP_ENDPOINT` | set the endpoint (plus `ZIF_OTEL_EXPORTER_OTLP_HEADERS` if the collector wants auth) | leave the endpoint unset: no spans are exported and no connection is attempted. `ZIF_OTEL_TRACES_EXPORTER=none` turns traces off with the endpoint still set. In prod you can also set `ZIF_OTEL_TRACES_SAMPLER=always_off` | prod: `ZIF_OTEL_TRACES_SAMPLER` / `_ARG` (default 10% of new traces, following the caller's decision); dev: 100% |
 | Metrics | none yet (ZIF-88) | | | |
 
 - Next's own startup banner (standalone `server.js`) is plain text and ignores `ZIF_LOG_*`;
   every other web server line follows them.
 - Logs go to stdout because that is what every platform collects (the Docker logging driver, a
-  Kubernetes node agent, an OpenTelemetry Collector's `filelog` receiver). Exporting them over
-  OTLP as well, so all three signals share the endpoint, is ZIF-137.
+  Kubernetes node agent, an OpenTelemetry Collector's `filelog` receiver).
+- Logs over OTLP carry the same fields as the JSON line, with trace/span ids as native fields
+  (not attributes) when they are valid hex.
+- Ship stdout or OTLP into Loki, not both. Today prod compose has no `logging:` driver and no
+  shipper, so nothing is doubled.
+- With a dead collector, each signal's shutdown retries for up to about 7s (migrations can exit
+  about 14s late); tune with `OTEL_EXPORTER_OTLP_TIMEOUT`.
+- The web server may lose up to one batch (1s) of OTLP lines at stop, but they are on stdout too.
 - The sampler variables are the OpenTelemetry standard values (`always_on`, `always_off`,
   `traceidratio`, `parentbased_*`), read by the SDK itself. The dev compose passes neither.
 - Service names: `ziftbook-api`, `ziftbook-worker`, `ziftbook-migrations`, `ziftbook-web`
@@ -390,7 +396,8 @@ To follow a request, open Grafana at http://127.0.0.1:3300, then Explore:
 2. In Tempo, open that trace id: it shows the web span, the API span, its SQL spans, and any job
    and email it queued. Or search Tempo by service name (`{resource.service.name="ziftbook-api"}`).
 
-Logs reach Loki once ZIF-137 exports them over OTLP; until then they stay in the terminal.
+Logs land in Loki under `service_name` = `ziftbook-api`, `ziftbook-worker`, `ziftbook-migrations`
+and `ziftbook-web`.
 
 ## API contract
 
@@ -463,6 +470,8 @@ ZIF-38). An empty variable means the default: `env_ignore_empty=True` on the bas
 | `ZIF_OTEL_EXPORTER_OTLP_HEADERS` | compose (api, worker, migrations, frontend) | none | no | yes | Feeds `OTEL_EXPORTER_OTLP_HEADERS`, the collector's auth headers, e.g. `Authorization=Basic%20<base64 instance:token>`. URL-encoded, comma-separated `key=value` pairs. A malformed entry is dropped without a log line (the SDK's warning would quote the token), and export then fails with an auth error. |
 | `ZIF_OTEL_TRACES_SAMPLER` | compose, prod only (api, worker, migrations, frontend) | `parentbased_traceidratio` | no | no | Feeds `OTEL_TRACES_SAMPLER`; `always_off` stops traces with the endpoint still set. Dev compose sets neither sampler variable, so dev stays at the SDK's own default, 100% (`parentbased_always_on`). |
 | `ZIF_OTEL_TRACES_SAMPLER_ARG` | compose, prod only (api, worker, migrations, frontend) | `0.1` | no | no | Feeds `OTEL_TRACES_SAMPLER_ARG`. |
+| `ZIF_OTEL_TRACES_EXPORTER` | compose (api, worker, migrations, frontend) | `otlp` | no | no | Feeds `OTEL_TRACES_EXPORTER`; `none` turns traces off with the endpoint still set. Any other value (`otlp`, unset) means on; only `otlp` is implemented. |
+| `ZIF_OTEL_LOGS_EXPORTER` | compose (api, worker, migrations, frontend) | `otlp` | no | no | Feeds `OTEL_LOGS_EXPORTER`; `none` turns logs over OTLP off with the endpoint still set (stdout logging is unaffected). Any other value (`otlp`, unset) means on; only `otlp` is implemented. |
 | `OTEL_SERVICE_NAME` | api, worker, migrations, frontend | `ziftbook-api`/`ziftbook-worker`/`ziftbook-migrations`/`ziftbook-web` | no | no | Read by the OTel SDK itself; each process sets its own default if unset. Not set by compose. |
 | `OTEL_RESOURCE_ATTRIBUTES` | api, worker, migrations, frontend | none | no | no | Read by the OTel SDK itself; extra resource attributes. Not set by compose. |
 

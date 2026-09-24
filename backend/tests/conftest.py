@@ -13,6 +13,7 @@ import urllib.request
 import uuid
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
@@ -23,6 +24,10 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from httpx2 import Response
 from opentelemetry import trace
+from opentelemetry.sdk._logs import LoggerProvider
+from opentelemetry.sdk._logs._internal import ReadableLogRecord
+from opentelemetry.sdk._logs.export import InMemoryLogRecordExporter, SimpleLogRecordProcessor
+from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
@@ -165,25 +170,78 @@ def _keep_pytest_thread_hook() -> Iterator[None]:
     threading.excepthook = _pytest_thread_hook
 
 
+def _rebuild(item: ReadableLogRecord) -> dict[str, Any]:
+    """The exported record, in the same shape as a parsed JSON line (test 2's parity fence).
+    datetime math, never integer math (which flakes on millisecond rounding, test 9)."""
+    record = item.log_record
+    assert record.timestamp is not None
+    ts = datetime.fromtimestamp(record.timestamp / 1e9, UTC).isoformat(timespec="milliseconds")
+    # The SDK freezes list/dict attribute values into tuples for immutability; round-trip through
+    # JSON so a rebuilt "kinds": ("a", "b") compares equal to the line's "kinds": ["a", "b"].
+    attributes = json.loads(json.dumps(dict(record.attributes or {})))
+    fields: dict[str, Any] = {
+        "ts": ts.replace("+00:00", "Z"),
+        "level": record.severity_text,
+        "msg": record.body,
+        **attributes,
+    }
+    if record.trace_id:
+        fields["trace_id"] = format(record.trace_id, "032x")
+    if record.span_id:
+        fields["span_id"] = format(record.span_id, "016x")
+    return fields
+
+
+class _CaptureHandler(logging.StreamHandler):  # type: ignore[type-arg]
+    """The plain stdout-shaped capture handler, plus one flag per line recording whether that
+    record was exportable -- appended inside emit(), under Handler.handle()'s lock, so the flag
+    list and the written line always advance together even from a worker thread."""
+
+    def __init__(self, stream: io.StringIO) -> None:
+        super().__init__(stream)
+        self.flags: list[bool] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.flags.append(logs._exportable(record))
+        super().emit(record)
+
+
 @pytest.fixture
 def log_lines(monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[[], list[dict[str, Any]]]]:
     """Captured JSON log records at ZIF_LOG_LEVEL (DEBUG unless the test reconfigures), parsed one
-    dict per line."""
+    dict per line. Also attaches logs.OtlpHandler over an in-memory provider (no env, no network)
+    and, on every call, asserts the one-to-one parity between every exported record and its
+    flagged JSON line (test 2)."""
     monkeypatch.setenv("ZIF_LOG_LEVEL", "DEBUG")
     logs.configure()
     threading.excepthook = _pytest_thread_hook  # configure() just reassigned it; put it back
     stream = io.StringIO()
-    handler = logs.stream_handler(stream, "json")
+    handler = _CaptureHandler(stream)
+    handler.setFormatter(logs.Formatter("json"))
+    handler.addFilter(logs._add_context)
     root = logging.getLogger()
     root.addHandler(handler)
+
+    provider = LoggerProvider(resource=Resource.create(), shutdown_on_exit=False)
+    exporter = InMemoryLogRecordExporter()  # type: ignore[no-untyped-call]
+    provider.add_log_record_processor(SimpleLogRecordProcessor(exporter))
+    otlp_handler = logs.OtlpHandler(provider)
+    root.addHandler(otlp_handler)
     try:
 
         def lines() -> list[dict[str, Any]]:
-            return [json.loads(line) for line in stream.getvalue().splitlines() if line]
+            parsed = [json.loads(line) for line in stream.getvalue().splitlines() if line]
+            flagged = [p for p, exportable in zip(parsed, handler.flags, strict=True) if exportable]
+            exported = [_rebuild(item) for item in exporter.get_finished_logs()]
+            assert flagged == exported
+            return parsed
 
+        lines.records = exporter.get_finished_logs  # type: ignore[attr-defined]
         yield lines
     finally:
         root.removeHandler(handler)
+        root.removeHandler(otlp_handler)
+        provider.shutdown()
         monkeypatch.delenv("ZIF_LOG_LEVEL", raising=False)
         monkeypatch.delenv("ZIF_LOG_FORMAT", raising=False)
         logs.configure()

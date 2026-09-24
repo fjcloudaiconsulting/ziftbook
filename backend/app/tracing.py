@@ -4,6 +4,7 @@ recording is off everywhere (R2): a span's error status carries logs.error_summa
 exception's own message or the SDK's default record_exception, both of which can quote an email.
 """
 
+import logging
 import os
 import re
 from collections.abc import Iterator
@@ -12,7 +13,10 @@ from typing import Any
 
 from opentelemetry import trace
 from opentelemetry.context import Context
+from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.sdk._logs import LoggerProvider
+from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
@@ -31,17 +35,35 @@ _SQL_KEYWORD = re.compile(r"^\s*(\w+)")
 _configured = False
 
 
+def _enabled(signal: str) -> bool:
+    """The gate: an endpoint (the signal-specific one, or the shared one) non-empty after strip(),
+    and OTEL_<signal>_EXPORTER stripped and lower-cased != "none". Only ``otlp`` is implemented;
+    any other value (empty, unset, ``console``) also means on -- not validating avoids a new way
+    to fail at startup."""
+    endpoint = os.environ.get(f"OTEL_EXPORTER_OTLP_{signal}_ENDPOINT") or os.environ.get(
+        "OTEL_EXPORTER_OTLP_ENDPOINT", ""
+    )
+    exporter = os.environ.get(f"OTEL_{signal}_EXPORTER", "")
+    return bool(endpoint.strip()) and exporter.strip().lower() != "none"
+
+
 def _provider(service: str) -> TracerProvider:
     """Pure, so tests call it directly with a monkeypatched environment."""
     os.environ.setdefault("OTEL_SERVICE_NAME", service)  # an explicit env value still wins
     provider = TracerProvider(resource=Resource.create())
     # Gated: without an endpoint the exporter falls back to localhost:4318 and logs WARNING/ERROR
     # noise plus a slow exit (measured, 7.7s) on every process that has no collector.
-    endpoint = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT") or os.environ.get(
-        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"
-    )
-    if endpoint:
+    if _enabled("TRACES"):
         provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
+    return provider
+
+
+def _log_provider() -> LoggerProvider | None:
+    """Pure. None unless the logs signal is on: no processor, no atexit hook, no slow exit."""
+    if not _enabled("LOGS"):
+        return None
+    provider = LoggerProvider(resource=Resource.create())
+    provider.add_log_record_processor(BatchLogRecordProcessor(OTLPLogExporter()))
     return provider
 
 
@@ -52,6 +74,8 @@ def configure(service: str) -> None:
         return
     _configured = True
     trace.set_tracer_provider(_provider(service))
+    if (provider := _log_provider()) is not None:
+        logging.getLogger().addHandler(logs.OtlpHandler(provider))
 
 
 @contextmanager

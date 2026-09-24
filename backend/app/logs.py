@@ -8,6 +8,7 @@ constraint/table names.
 
 import json
 import logging
+import re
 import sys
 import threading
 import traceback
@@ -18,7 +19,11 @@ from datetime import UTC, datetime
 from types import TracebackType
 from typing import Any, Literal
 
+from opentelemetry import context as otel_context
 from opentelemetry import trace
+from opentelemetry._logs import LoggerProvider, LogRecord, SeverityNumber
+from opentelemetry.context import _SUPPRESS_INSTRUMENTATION_KEY
+from opentelemetry.trace import NonRecordingSpan, SpanContext, TraceFlags
 from pydantic import ValidationError
 from pydantic_settings import BaseSettings
 
@@ -43,6 +48,16 @@ STANDARD = set(vars(logging.makeLogRecord({}))) | {
 }
 RESERVED = {"ts", "level", "logger", "msg"}  # set by _head(); context/extras never overwrite them
 uncaught_logger = logging.getLogger("app.uncaught")
+
+_TRACE_ID = re.compile(r"[0-9a-f]{32}")
+_SPAN_ID = re.compile(r"[0-9a-f]{16}")
+_SEVERITY = {
+    logging.DEBUG: SeverityNumber.DEBUG,
+    logging.INFO: SeverityNumber.INFO,
+    logging.WARNING: SeverityNumber.WARN,
+    logging.ERROR: SeverityNumber.ERROR,
+    logging.CRITICAL: SeverityNumber.FATAL,
+}
 
 
 @contextmanager
@@ -188,6 +203,60 @@ def stream_handler(stream: Any, kind: Literal["json", "text"]) -> logging.Handle
     handler.setFormatter(Formatter(kind))
     handler.addFilter(_add_context)
     return handler
+
+
+def _exportable(record: logging.LogRecord) -> bool:
+    """False for the SDK's own logger name (the queue-full loop) and for anything logged while
+    the export thread has suppressed instrumentation (urllib3/requests warnings inside export())."""
+    if record.name.startswith("opentelemetry"):
+        return False
+    return not otel_context.get_value(_SUPPRESS_INSTRUMENTATION_KEY)
+
+
+class OtlpHandler(logging.Handler):
+    """Exports the same allowlisted record as stdout, over OTLP. Never raises: emit() is wrapped,
+    and logging.raiseExceptions is False, so handleError() is silent."""
+
+    name = "zif-otlp"
+
+    def __init__(self, provider: LoggerProvider) -> None:
+        super().__init__()
+        self.setFormatter(Formatter("json"))
+        self.addFilter(_add_context)
+        self.addFilter(_exportable)
+        self._logger = provider.get_logger("app.logs")
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            fields = json.loads(self.format(record))
+            fields.pop("ts", None)
+            level = fields.pop("level")
+            msg = fields.pop("msg")
+            context = None
+            trace_id, span_id = fields.get("trace_id"), fields.get("span_id")
+            if (
+                isinstance(trace_id, str)
+                and isinstance(span_id, str)
+                and _TRACE_ID.fullmatch(trace_id)
+                and _SPAN_ID.fullmatch(span_id)
+            ):
+                del fields["trace_id"], fields["span_id"]
+                span_context = SpanContext(
+                    int(trace_id, 16), int(span_id, 16), is_remote=False, trace_flags=TraceFlags(0)
+                )
+                context = trace.set_span_in_context(NonRecordingSpan(span_context))
+            self._logger.emit(
+                LogRecord(
+                    timestamp=int(record.created * 1e9),
+                    context=context,
+                    severity_number=_SEVERITY.get(record.levelno, SeverityNumber.UNSPECIFIED),
+                    severity_text=level,
+                    body=msg,
+                    attributes=fields,
+                )
+            )
+        except Exception:
+            self.handleError(record)
 
 
 def _invalid_env(error: BaseException) -> list[str]:

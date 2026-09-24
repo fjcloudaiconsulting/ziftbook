@@ -337,6 +337,11 @@ def test_no_personal_data_ever_reaches_a_log(
     for value in never:
         assert value not in dumped, value
 
+    # ZIF-137 test 1: the exported OTLP records too (body, attributes, resource), not just stdout.
+    exported = json.dumps([r.to_json() for r in log_lines.records()])  # type: ignore[attr-defined]
+    for value in never:
+        assert value not in exported, value
+
     lines = log_lines()
     assert any(line["msg"] == "access" for line in lines)
     unhandled = [line for line in lines if line["msg"] == "unhandled error"]
