@@ -117,9 +117,7 @@ def _send(
             # Once the server accepted the message, a failed goodbye must not undo it (and resend).
             try:
                 smtp.quit()
-            except smtplib.SMTPException:
-                smtp.close()
-            except OSError:
+            except smtplib.SMTPException, OSError:
                 smtp.close()
 
 
