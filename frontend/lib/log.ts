@@ -1,7 +1,15 @@
 // Structured, levelled logs for the web server, mirroring backend/app/logs.py: one line per call
 // (JSON or text), ids only, never an error's message. Env is read at call time (like apiUrl()), so
 // one built image works in dev or prod, and a bad value never gets silently swapped for a default.
+//
+// No sibling import of lib/trace.ts: "./trace" fails ERR_MODULE_NOT_FOUND under node --test, and
+// "./trace.ts" fails typecheck (TS5097; allowImportingTsExtensions stays off). Hence the gate below
+// duplicates lib/trace.ts's enabled().
 import { randomUUID } from "node:crypto";
+import { ROOT_CONTEXT, trace } from "@opentelemetry/api";
+import { OTLPLogExporter } from "@opentelemetry/exporter-logs-otlp-http";
+import { detectResources, envDetector } from "@opentelemetry/resources";
+import { BatchLogRecordProcessor, LoggerProvider, type LogRecordProcessor } from "@opentelemetry/sdk-logs";
 
 const LEVELS = ["DEBUG", "INFO", "WARNING", "ERROR"] as const;
 export type Level = (typeof LEVELS)[number];
@@ -23,6 +31,68 @@ export function parseFormat(value: string | undefined): Format {
 }
 
 const RESERVED = new Set(["ts", "level", "logger", "msg"]);
+
+// The gate, duplicated from lib/trace.ts (never imported, see the header comment): an endpoint
+// (OTEL_EXPORTER_OTLP_LOGS_ENDPOINT or OTEL_EXPORTER_OTLP_ENDPOINT, trimmed) and
+// OTEL_LOGS_EXPORTER, trimmed and lower-cased, not "none". `||`, not `??`, for the endpoint
+// fallback: an empty OTEL_EXPORTER_OTLP_LOGS_ENDPOINT must still fall through to the generic one.
+function enabled(): boolean {
+  const endpoint = (process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT || process.env.OTEL_EXPORTER_OTLP_ENDPOINT || "").trim();
+  if (!endpoint) return false;
+  const exporter = (process.env.OTEL_LOGS_EXPORTER ?? "").trim().toLowerCase();
+  return exporter !== "none";
+}
+
+let built: { provider: LoggerProvider; processors: LogRecordProcessor[] } | undefined;
+
+// Lazy and memoized: built once, on first use, never registered globally, the same approach as
+// lib/trace.ts's provider(). Returns the processor array it built so a test can see whether the
+// OTLP exporter was added.
+export function logProvider(processors: LogRecordProcessor[] = []): { provider: LoggerProvider; processors: LogRecordProcessor[] } {
+  if (built) return built;
+  process.env.OTEL_SERVICE_NAME ??= "ziftbook-web";
+  const logProcessors: LogRecordProcessor[] = [...processors];
+  if (enabled()) logProcessors.push(new BatchLogRecordProcessor({ exporter: new OTLPLogExporter() }));
+  const provider = new LoggerProvider({
+    resource: detectResources({ detectors: [envDetector] }),
+    processors: logProcessors,
+  });
+  built = { provider, processors: logProcessors };
+  return built;
+}
+
+const HEX32 = /^[0-9a-f]{32}$/;
+const HEX16 = /^[0-9a-f]{16}$/;
+// Inlined: @opentelemetry/api-logs (SeverityNumber) is not a direct dependency. Only the four
+// levels logger() emits ever reach here.
+const SEVERITY_NUMBER: Record<Level, number> = { DEBUG: 5, INFO: 9, WARNING: 13, ERROR: 17 };
+
+// Emits the parsed JSON line: ts/level/msg become timestamp/severity/body, valid ids become the
+// native trace context, everything else stays an attribute as-is.
+function exportLine(rec: Record<string, unknown>): void {
+  const { provider, processors } = logProvider();
+  if (processors.length === 0) return;
+  const { ts, level, msg, trace_id, span_id, ...rest } = rec;
+  const attributes: Record<string, unknown> = { ...rest };
+  let context = ROOT_CONTEXT;
+  if (typeof trace_id === "string" && HEX32.test(trace_id) && typeof span_id === "string" && HEX16.test(span_id)) {
+    context = trace.setSpanContext(ROOT_CONTEXT, { traceId: trace_id, spanId: span_id, traceFlags: 0 });
+  } else {
+    if (trace_id !== undefined) attributes.trace_id = trace_id;
+    if (span_id !== undefined) attributes.span_id = span_id;
+  }
+  const emitter = provider.getLogger("ziftbook-web");
+  // api-logs isn't a direct dependency: take emit's parameter type from the logger itself.
+  type EmitArg = Parameters<typeof emitter.emit>[0];
+  emitter.emit({
+    timestamp: typeof ts === "string" ? new Date(ts) : new Date(),
+    severityNumber: SEVERITY_NUMBER[level as Level] ?? 0,
+    severityText: level as string,
+    body: msg,
+    attributes,
+    context,
+  } as EmitArg);
+}
 
 // Stricter than backend/app/logs.py's _escape, which only escapes \r and \n: those two could
 // split a text line, but every other control byte (plus the Unicode line/paragraph separators,
@@ -80,7 +150,14 @@ export function logger(name: string): {
       format_ = "json";
     }
     if (ORDER[level] < ORDER[level_]) return;
-    process.stdout.write(format(format_, level, name, msg, fields) + "\n");
+    const now = new Date();
+    const line = format(format_, level, name, msg, fields, now);
+    process.stdout.write(line + "\n");
+    try {
+      exportLine(JSON.parse(format_ === "json" ? line : format("json", level, name, msg, fields, now)));
+    } catch {
+      // Logging never throws.
+    }
   };
   return {
     debug: (msg, fields) => write("DEBUG", msg, fields),

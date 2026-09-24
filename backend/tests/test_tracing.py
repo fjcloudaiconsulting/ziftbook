@@ -1,9 +1,14 @@
 """ZIF-87: manual OpenTelemetry spans. Table ids (T1..T12) match docs/specs/zif-87-traces.md."""
 
 import asyncio
+import http.server
 import logging
+import os
 import re
 import smtplib
+import subprocess
+import sys
+import threading
 import uuid
 from collections.abc import Callable, Iterable
 from datetime import timedelta
@@ -12,6 +17,9 @@ from typing import Any
 import pytest
 from fastapi.responses import JSONResponse
 from opentelemetry import trace
+from opentelemetry.proto.collector.logs.v1.logs_service_pb2 import ExportLogsServiceRequest
+from opentelemetry.sdk._logs import LoggerProvider
+from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import ReadableSpan
 from opentelemetry.trace import SpanKind
 from sqlalchemy import Engine, text
@@ -28,6 +36,10 @@ from tests.test_invite_email import run_jobs
 
 Lines = Callable[[], list[dict[str, Any]]]
 Spans = Callable[[], list[ReadableSpan]]
+
+
+def _records(lines: Lines) -> list[Any]:
+    return lines.records()  # type: ignore[attr-defined,no-any-return]
 
 
 def _one(spans: Iterable[ReadableSpan], **match: Any) -> ReadableSpan:
@@ -293,7 +305,7 @@ def test_t8_provider_exporter_gated_by_endpoint(
     assert len(unset._active_span_processor._span_processors) == 0
     assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
 
-    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:4318")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:9")
     with_endpoint = tracing._provider("t8-set")
     assert len(with_endpoint._active_span_processor._span_processors) == 1
     with_endpoint.shutdown()  # no exporter thread left running after this test
@@ -482,3 +494,196 @@ def test_t12_incoming_traceparent_is_the_parent(people: People, spans: Spans) ->
     assert format(server.context.trace_id, "032x") == trace_id
     assert server.parent is not None
     assert format(server.parent.span_id, "016x") == parent_span_id
+
+
+# ZIF-137: export logs over OTLP with the same allowlist as stdout. Test numbers below match
+# docs/specs/2026-09-24-zif-137-spec.md's "Tests" section.
+
+
+# 4: fence. Native ids equal the span's inside it, no trace_id/span_id attribute; and once the
+# span has exited, with the ids still in CONTEXT (the access_log pattern), they are still native,
+# not attributes. Kills: reading trace.get_current_span() / context=None instead of the line's own
+# fields.
+def test_native_ids_match_the_span_inside_and_after_it_exits(log_lines: Lines) -> None:
+    logger = logging.getLogger("app.tests.tracing")
+    with tracing.span("test.span", SpanKind.INTERNAL, {}) as current:
+        span_context = current.get_span_context()
+        logger.info("inside span")
+
+    log_lines()
+    record = _records(log_lines)[-1].log_record
+    assert record.trace_id == span_context.trace_id
+    assert record.span_id == span_context.span_id
+    assert "trace_id" not in record.attributes
+    assert "span_id" not in record.attributes
+
+    before = dict(logs.CONTEXT.get({}))
+    with tracing.span("test.span2", SpanKind.INTERNAL, {}) as current2:
+        span_context2 = current2.get_span_context()
+        logs.CONTEXT.set(
+            {
+                **logs.CONTEXT.get({}),
+                "trace_id": format(span_context2.trace_id, "032x"),
+                "span_id": format(span_context2.span_id, "016x"),
+            }
+        )
+    try:
+        logger.info("after span exited")  # no current span; CONTEXT still carries the ids
+
+        log_lines()
+        after = _records(log_lines)[-1].log_record
+        assert after.trace_id == span_context2.trace_id
+        assert after.span_id == span_context2.span_id
+        assert "trace_id" not in after.attributes
+        assert "span_id" not in after.attributes
+    finally:
+        logs.CONTEXT.set(before)
+
+
+# 7: fence. The gate: an endpoint (either name), stripped, and OTEL_<SIGNAL>_EXPORTER stripped and
+# lower-cased != "none". Each signal is switched independently. Kills: trusting the SDK to read
+# OTEL_*_EXPORTER, an ungated log exporter (localhost fallback, slow exit), one shared switch.
+@pytest.mark.parametrize(
+    ("env", "traces_on", "logs_on"),
+    [
+        ({}, False, False),
+        ({"OTEL_EXPORTER_OTLP_ENDPOINT": "   "}, False, False),
+        ({"OTEL_EXPORTER_OTLP_ENDPOINT": "http://127.0.0.1:9"}, True, True),
+        (
+            {
+                "OTEL_EXPORTER_OTLP_ENDPOINT": "http://127.0.0.1:9",
+                "OTEL_TRACES_EXPORTER": "none",
+            },
+            False,
+            True,
+        ),
+        (
+            {
+                "OTEL_EXPORTER_OTLP_ENDPOINT": "http://127.0.0.1:9",
+                "OTEL_LOGS_EXPORTER": " NONE ",
+            },
+            True,
+            False,
+        ),
+        ({"OTEL_EXPORTER_OTLP_LOGS_ENDPOINT": "http://127.0.0.1:9"}, False, True),
+        ({"OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http://127.0.0.1:9"}, True, False),
+    ],
+)
+def test_the_signal_gate(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    env: dict[str, str],
+    traces_on: bool,
+    logs_on: bool,
+) -> None:
+    for name in [n for n in os.environ if n.startswith("OTEL_")]:
+        monkeypatch.delenv(name, raising=False)
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+
+    with caplog.at_level(logging.WARNING):
+        provider = tracing._provider("test-gate")
+        log_provider = tracing._log_provider()
+    try:
+        assert (len(provider._active_span_processor._span_processors) > 0) is traces_on
+        assert (log_provider is not None) is logs_on
+        assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+    finally:
+        provider.shutdown()
+        if log_provider is not None:
+            log_provider.shutdown()
+
+
+# 11: guard. configure() is idempotent with logs on: exactly one zif-otlp handler on the root.
+def test_configure_is_idempotent_with_logs_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(tracing, "_configured", False)
+    monkeypatch.setattr(trace, "set_tracer_provider", lambda provider: None)
+    memory_provider = LoggerProvider(resource=Resource.create(), shutdown_on_exit=False)
+    monkeypatch.setattr(tracing, "_log_provider", lambda: memory_provider)
+    root = logging.getLogger()
+    try:
+        tracing.configure("t")
+        logs.configure()
+        tracing.configure("t")
+
+        handlers = [h for h in root.handlers if h.name == logs.OtlpHandler.name]
+        assert len(handlers) == 1
+    finally:
+        for handler in [h for h in root.handlers if h.name == logs.OtlpHandler.name]:
+            root.removeHandler(handler)
+
+
+class _LogsReceiver(http.server.BaseHTTPRequestHandler):
+    def do_POST(self) -> None:
+        length = int(self.headers.get("Content-Length", "0"))
+        body = self.rfile.read(length)
+        if self.path != "/v1/logs":
+            self.send_response(404)
+            self.end_headers()
+            return
+        request = ExportLogsServiceRequest()
+        request.ParseFromString(body)
+        self.server.received.append(request)  # type: ignore[attr-defined]
+        self.send_response(200)
+        self.send_header("Content-Type", "application/x-protobuf")
+        self.end_headers()
+
+    def log_message(self, format_: str, *args: Any) -> None:  # noqa: A002 - stdlib signature
+        pass  # silence the request log; nothing this test needs
+
+
+# 10: fence. End to end, the only test with a real exporter: a stdlib http.server on
+# 127.0.0.1:0 decodes ExportLogsServiceRequest at /v1/logs. A child process with the endpoint set
+# runs logs.configure() and tracing.configure("ziftbook-migrations"), logs one line, then dies on
+# an uncaught error. Both records must arrive, under service.name=ziftbook-migrations. Kills:
+# shutdown_on_exit=False / no flush, a missing processor, a wrong endpoint path, a gate that never
+# builds the real exporter, a wrong service name.
+def test_t10_logs_reach_a_real_collector_end_to_end() -> None:
+    server = http.server.HTTPServer(("127.0.0.1", 0), _LogsReceiver)
+    server.received = []  # type: ignore[attr-defined]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        port = server.server_address[1]
+        env = {k: v for k, v in os.environ.items() if not k.startswith("OTEL_")}
+        env["OTEL_EXPORTER_OTLP_ENDPOINT"] = f"http://127.0.0.1:{port}"
+        body = (
+            "import logging\n"
+            "import app.logs as logs\n"
+            "import app.tracing as tracing\n"
+            "logs.configure()\n"
+            "tracing.configure('ziftbook-migrations')\n"
+            "logging.getLogger('app.tests.tracing').info('e2e line')\n"
+            "raise RuntimeError('boom')\n"
+        )
+        subprocess.run(
+            [sys.executable, "-c", body],
+            cwd=API_DIR,
+            capture_output=True,
+            text=True,
+            timeout=25,
+            env=env,
+        )
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+
+    seen: list[tuple[str | None, Any]] = []
+    for request in server.received:  # type: ignore[attr-defined]
+        for resource_logs in request.resource_logs:
+            service_name = next(
+                (
+                    kv.value.string_value
+                    for kv in resource_logs.resource.attributes
+                    if kv.key == "service.name"
+                ),
+                None,
+            )
+            for scope_logs in resource_logs.scope_logs:
+                seen.extend((service_name, record) for record in scope_logs.log_records)
+
+    assert len(seen) == 2, seen
+    assert all(service_name == "ziftbook-migrations" for service_name, _ in seen)
+    bodies = {record.body.string_value for _, record in seen}
+    assert "e2e line" in bodies
+    assert any(record.severity_text == "CRITICAL" for _, record in seen)
