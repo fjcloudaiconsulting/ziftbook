@@ -22,12 +22,14 @@ from psycopg.errors import ExclusionViolation, ForeignKeyViolation
 from pydantic import BaseModel, Field, StringConstraints
 from sqlalchemy import Row, text
 from sqlalchemy.exc import IntegrityError, OperationalError
+from sqlalchemy.orm import Session
 
 from app import (
     auth,
     availability,
     business_settings,
     clients,
+    jobs,
     limits,
     members,
     passwords,
@@ -275,11 +277,66 @@ LIMIT :limit
 # qualifier are what make the transition exactly-once, and locking a membership row here would
 # take locks in an order CONTRIBUTING.md constrains around keep_an_owner.
 BOOKING = text("""
-SELECT m.user_id AS worker_user_id, b.status
+SELECT m.user_id AS worker_user_id, b.status, b.starts_at, b.worker_id, now() AS now
 FROM bookings b
 JOIN memberships m ON m.tenant_id = b.tenant_id AND m.id = b.worker_id
 WHERE b.id = :id
 """)
+
+# ZIF-53. Every active owner (memberships never soft-delete today; members.remove deletes) plus the
+# assigned worker: the people who can settle the booking, the same set members.may_manage and the
+# pending queue use.
+MERCHANTS = text("SELECT DISTINCT user_id FROM memberships WHERE role = 'owner' OR id = :worker_id")
+
+
+def _email(
+    db: Session,
+    tenant_id: UUID,
+    booking_id: UUID,
+    template: str,
+    user_id: UUID | None = None,
+) -> None:
+    """Enqueue one booking email, in the caller's transaction.
+
+    With user_id, the email is to that merchant (ruling R1) rather than the client, and the
+    dedupe key and payload carry the user_id too.
+    """
+    key = f"email.booking:{tenant_id}:{booking_id}:{template}"
+    payload = {"booking_id": str(booking_id), "template": template}
+    if user_id is not None:
+        key += f":{user_id}"
+        payload["user_id"] = str(user_id)
+    jobs.enqueue(db, "email.booking", key, payload, tenant_id=tenant_id)
+
+
+def _email_merchants(
+    db: Session, tenant_id: UUID, booking_id: UUID, worker_id: UUID, template: str
+) -> None:
+    """Enqueue one merchant booking email per active owner plus the assigned worker (ruling R1)."""
+    for (user_id,) in db.execute(MERCHANTS, {"worker_id": worker_id}).all():
+        _email(db, tenant_id, booking_id, template, user_id=user_id)
+
+
+def _remind(
+    db: Session, tenant_id: UUID, booking_id: UUID, starts_at: datetime, now: datetime
+) -> None:
+    """Enqueue the 24h-ahead reminder, unless the start is already less than 24h away (R3)."""
+    due_at = starts_at - timedelta(hours=24)
+    if due_at <= now:
+        return
+    jobs.enqueue(
+        db,
+        "email.booking",
+        f"email.booking:{tenant_id}:{booking_id}:booking_reminder:{starts_at.isoformat()}",
+        {
+            "booking_id": str(booking_id),
+            "template": "booking_reminder",
+            "starts_at": starts_at.isoformat(),
+        },
+        tenant_id=tenant_id,
+        due_at=due_at,
+    )
+
 
 # One statement, both guards in SQL. `expires_at > now()` is the TRANSACTION's clock - the same
 # now() availability.BOOKED uses (app/availability.py:175) - so the queue and this can never
@@ -547,6 +604,15 @@ def create(  # sync def: turnstile.verify's urlopen blocks, and runs in FastAPI'
             # mypy narrowing only: the `else` above raises, so these are bound. Stripped under
             # `python -O`, which is why nothing below may depend on this running.
             assert booking is not None and candidate is not None
+            # ZIF-53. Same session as the status write, outside the savepoint: a rollback of the
+            # savepoint (a lost race) drops nothing here, since this only runs after `break`.
+            if status == "confirmed":
+                _email(db, tenant_id, booking.id, "booking_confirmed")
+                _remind(db, tenant_id, booking.id, booking.starts_at, row.now)
+                _email_merchants(db, tenant_id, booking.id, candidate, "booking_new")
+            else:
+                _email(db, tenant_id, booking.id, "booking_received")
+                _email_merchants(db, tenant_id, booking.id, candidate, "booking_request")
             return BookingOut(
                 id=booking.id,
                 status=booking.status,
@@ -652,6 +718,16 @@ def transition(
             "consent_purposes": None,
         },
     )
+    # ZIF-53, before auth.record on purpose: a statement that fails after this must roll the job
+    # back with the change (test 20). `row.status`, read at step 2 under the advisory lock, is the
+    # PRE-transition source.
+    if change.status == "confirmed" and row.status == "pending":
+        _email(current.db, current.tenant_id, booking_id, "booking_confirmed")
+        _remind(current.db, current.tenant_id, booking_id, row.starts_at, row.now)
+    elif change.status == "declined":
+        _email(current.db, current.tenant_id, booking_id, "booking_declined")
+    elif change.status == "cancelled_by_merchant" and row.status in ("pending", "confirmed"):
+        _email(current.db, current.tenant_id, booking_id, "booking_cancelled")
     auth.record(  # 6
         current.db,
         request,

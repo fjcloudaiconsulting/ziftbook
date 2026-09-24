@@ -1,0 +1,9 @@
+Je boeking is geannuleerd
+Hallo,
+
+Zoals gevraagd is je boeking bij $business geannuleerd:
+
+$service
+$date om $time ($zone)
+
+ziftbook

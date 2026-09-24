@@ -1,0 +1,15 @@
+Novo agendamento
+Olá,
+
+Você tem um novo agendamento:
+
+Cliente: $client
+
+$service
+$date às $time ($zone)
+
+O agendamento está confirmado.
+
+$link
+
+ziftbook

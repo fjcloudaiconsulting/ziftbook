@@ -1,0 +1,9 @@
+Your booking is cancelled
+Hello,
+
+As you asked, your booking at $business is cancelled:
+
+$service
+$date at $time ($zone)
+
+ziftbook

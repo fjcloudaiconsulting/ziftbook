@@ -269,6 +269,10 @@ Deferred and scheduled work goes through the `jobs` table (`app/jobs.py`); there
 - Register a kind as `JobKind(handler, timeout, grace)`: `timeout` in seconds under 60 (the claim lease), `grace`
   longer than the retry backoff (about 15 minutes, five attempts), after which an overdue job is skipped.
 - A new kind ships in one release and is enqueued from the next, so workers that don't know it yet never see it.
+- Booking emails (`email.booking`) are gated by the booking's status at SEND time, not at enqueue time: the handler
+  re-reads the booking and skips silently if its status no longer matches the template (ZIF-53).
+- Enqueue a booking email in the same transaction as the status change it announces, so a rollback drops the job with
+  it (ZIF-53).
 
 ## Logging
 

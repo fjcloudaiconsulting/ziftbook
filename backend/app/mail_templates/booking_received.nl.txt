@@ -1,0 +1,11 @@
+We hebben je boekingsaanvraag ontvangen
+Hallo,
+
+$business heeft je boekingsaanvraag ontvangen:
+
+$service
+$date om $time ($zone)
+
+Het bedrijf moet de aanvraag nog accepteren. We mailen je zodra ze antwoorden.
+
+ziftbook

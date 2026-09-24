@@ -1,0 +1,11 @@
+Lembrete: seu agendamento está chegando
+Olá,
+
+Este é um lembrete do seu agendamento em $business:
+
+$service
+$date às $time ($zone)
+
+Até lá!
+
+ziftbook
