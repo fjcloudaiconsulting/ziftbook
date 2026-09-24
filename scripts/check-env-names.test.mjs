@@ -29,6 +29,16 @@ test("Python: os.environ, getenv and monkeypatch reads, including across lines",
   ]);
 });
 
+test("TypeScript: OTEL_ names are allowed, including a ??= default write", () => {
+  const source = 'process.env.OTEL_SERVICE_NAME ??= "ziftbook-web";';
+  assert.deepEqual(unprefixedNames("trace.ts", source), []);
+});
+
+test("Python: OTEL_ names are allowed, including a setdefault default write", () => {
+  const source = 'os.environ.setdefault("OTEL_SERVICE_NAME", service)';
+  assert.deepEqual(unprefixedNames("tracing.py", source), []);
+});
+
 test("Python: settings classes must declare the ZIF_ prefix", () => {
   const without = "class Settings(BaseSettings):\n    app_version: str = 'dev'\n";
   const withPrefix = 'class Settings(BaseSettings):\n    model_config = SettingsConfigDict(env_prefix="ZIF_")\n';

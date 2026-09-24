@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 from types import TracebackType
 from typing import Any, Literal
 
+from opentelemetry import trace
 from pydantic import ValidationError
 from pydantic_settings import BaseSettings
 
@@ -61,7 +62,21 @@ def bound(**fields: str) -> Iterator[None]:
 
 
 def _add_context(record: logging.LogRecord) -> bool:
-    record.context = CONTEXT.get({})
+    context = CONTEXT.get({})
+    span_context = trace.get_current_span().get_span_context()
+    if span_context.is_valid:
+        # A new dict: mutating the one held in the contextvar would leave stale ids on later
+        # lines logged after this span (or another one) has ended.
+        record.context = {
+            **context,
+            "trace_id": format(span_context.trace_id, "032x"),
+            "span_id": format(span_context.span_id, "016x"),
+        }
+    else:
+        # No current span: keep whatever ids CONTEXT already carries (access_log sets them once
+        # and never resets, so the "unhandled error" line after the span exited still has them),
+        # and add neither key when it never carried any.
+        record.context = dict(context)
     return True
 
 
@@ -266,6 +281,8 @@ def configure() -> None:
         "sqlalchemy.engine": sql,
         "psycopg": logging.WARNING,
         "httpx2": logging.WARNING,  # the test client; its INFO line has the URL and query
+        # Its WARNING quotes a malformed OTEL_EXPORTER_OTLP_HEADERS entry verbatim, token included.
+        "opentelemetry.util.re": logging.ERROR,
     }.items():
         logging.getLogger(name).setLevel(value)
     # uvicorn configured these before importing the app (see "uvicorn" in the spec): drop its

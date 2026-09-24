@@ -596,3 +596,55 @@ describe("hop-by-hop headers", () => {
     }
   });
 });
+
+// W3: the proxy sets its own traceparent on the upstream request; the browser's own trace headers
+// (a client never chooses a trace, R5) are dropped.
+describe("trace propagation to the API (W3)", () => {
+  const port = 3217;
+
+  test("the stub sees a fresh traceparent; incoming tracestate/baggage never reach it", async () => {
+    const api = await stubApi("K");
+    const web = await startWeb(`http://127.0.0.1:${api.address().port}`, port);
+    try {
+      const knownTraceId = "4bf92f3577b34da6a3ce929d0e0e4736";
+      const response = await fetch(`http://127.0.0.1:${port}/api/healthz`, {
+        headers: {
+          traceparent: `00-${knownTraceId}-00f067aa0ba902b7-01`,
+          tracestate: "vendor=value",
+          baggage: "key=value",
+        },
+      });
+      const { headers } = await response.json();
+      assert.match(headers.traceparent, /^00-[0-9a-f]{32}-[0-9a-f]{16}-0[01]$/);
+      assert.notEqual(headers.traceparent.split("-")[1], knownTraceId);
+      assert.equal(headers.tracestate, undefined);
+      assert.equal(headers.baggage, undefined);
+    } finally {
+      await stop(web);
+      api.close();
+    }
+  });
+});
+
+// W4 (guard): the proxy's own error logs carry that span's ids.
+describe("proxy log lines carry the span's ids (W4)", () => {
+  const port = 3218;
+
+  test("the 'api unavailable' line's trace_id/span_id are in the traceparent id formats", async () => {
+    const deadServer = createServer().listen(0, "127.0.0.1");
+    await new Promise((resolve) => deadServer.once("listening", resolve));
+    const deadPort = deadServer.address().port;
+    await new Promise((resolve) => deadServer.close(resolve));
+
+    const web = await startWeb(`http://127.0.0.1:${deadPort}`, port);
+    try {
+      await fetch(`http://127.0.0.1:${port}/api/x`, { redirect: "manual" });
+      const lines = await waitForLog(web.logs.stdout, "api unavailable");
+      assert.equal(lines.length, 1);
+      assert.match(lines[0].trace_id, /^[0-9a-f]{32}$/);
+      assert.match(lines[0].span_id, /^[0-9a-f]{16}$/);
+    } finally {
+      await stop(web);
+    }
+  });
+});

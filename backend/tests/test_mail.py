@@ -125,8 +125,10 @@ Lines = Callable[[], list[dict[str, Any]]]
 
 
 def email_events(lines: Lines, job_id: uuid.UUID) -> list[dict[str, Any]]:
+    # trace_id/span_id: asserted on their own in test_tracing.py's T10, not against a fixed value
+    # here.
     return [
-        {k: v for k, v in line.items() if k not in ("ts", "logger")}
+        {k: v for k, v in line.items() if k not in ("ts", "logger", "trace_id", "span_id")}
         for line in lines()
         if line["msg"].startswith("email") and line.get("job_id") == str(job_id)
     ]

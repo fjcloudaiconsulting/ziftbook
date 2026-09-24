@@ -7,10 +7,12 @@ from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
 
+from opentelemetry import trace
+from opentelemetry.trace import SpanKind
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app import logs
+from app import logs, tracing
 from app.db import SessionLocal
 
 ENQUEUE = text("""
@@ -38,13 +40,17 @@ def enqueue(
     when the same thing can be rescheduled ("booking.reminder:<tenant>:<booking>:<starts_at>").
     The payload holds ids only.
     """
+    payload_copy = dict(payload)
+    # Writes traceparent only when the current span is valid; a no-op otherwise. Never baggage or
+    # tracestate: jobs is global, and only W3C tracecontext belongs in it (R3).
+    tracing.PROPAGATOR.inject(payload_copy)
     added = session.execute(
         ENQUEUE,
         {
             "kind": kind,
             "dedupe_key": dedupe_key,
             "tenant_id": tenant_id,
-            "payload": json.dumps(payload),
+            "payload": json.dumps(payload_copy),
             "due_at": due_at,
         },
     ).first()
@@ -120,7 +126,20 @@ async def _run(kind: JobKind, job: Job, attempts: int, overdue: timedelta) -> No
         context["tenant_id"] = str(job.tenant_id)
     # attempts rides on the job events only, not on everything the handler logs.
     attempt = {"attempts": attempts}
-    with logs.bound(**context):
+    # A non-string value (an older or odd row) makes extract raise TypeError, which would escape
+    # gather and fail run_once's whole batch; isinstance keeps a malformed value as no context
+    # instead, and the job still runs as a root span.
+    tp = job.payload.get("traceparent")
+    parent = tracing.PROPAGATOR.extract({"traceparent": tp}) if isinstance(tp, str) else None
+    with (
+        logs.bound(**context),
+        tracing.span(
+            f"job {job.kind}",
+            SpanKind.CONSUMER,
+            {"job.kind": job.kind, "job.id": str(job.id), "job.attempts": attempts},
+            context=parent,
+        ) as job_span,
+    ):
         logger.debug("job claimed", extra=attempt)
         if overdue > kind.grace:
             await asyncio.to_thread(
@@ -144,6 +163,10 @@ async def _run(kind: JobKind, job: Job, attempts: int, overdue: timedelta) -> No
                 extra={"error": type(error).__name__, **attempt},
                 exc_info=error,
             )
+            # The handler's error never escapes _run, so tracing.span never sees it; set on the
+            # job span explicitly instead.
+            job_span.set_status(trace.Status(trace.StatusCode.ERROR, logs.error_summary(error)))
+            job_span.set_attribute("error.type", type(error).__name__)
             await asyncio.to_thread(
                 _record,
                 job.id,

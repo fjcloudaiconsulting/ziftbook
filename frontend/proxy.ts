@@ -5,6 +5,7 @@ import { type NextRequest, NextResponse } from "next/server";
 
 import { routing } from "./i18n/routing";
 import { errorFields, logger, requestId } from "./lib/log";
+import { endProxySpan, startProxySpan, traceparent } from "./lib/trace";
 
 const localize = createMiddleware(routing);
 const log = logger("web.proxy");
@@ -20,6 +21,9 @@ const HOP_BY_HOP = ["connection", "keep-alive", "transfer-encoding", "te", "upgr
 // it for any upload over 1MB), and proxy-authorization (meant for a proxy between the browser and
 // us, never for the upstream).
 const REQUEST_ONLY_STRIP = ["host", "expect", "content-length", "proxy-authorization"];
+// R5: clients never choose a trace. Dropped unconditionally, from the request only: the API
+// trusts the traceparent this server sets itself below.
+const TRACE_HEADERS = ["traceparent", "tracestate", "baggage"];
 
 // Read per request, like apiUrl(). Set only where every request reaches this server through a
 // proxy that overwrites the header (staging: cf-connecting-ip). Unset: the API sees this
@@ -45,9 +49,12 @@ function unavailable(id: string): NextResponse {
 // only way to a clean 502 and to keep secrets out of both logs and the response.
 async function forwardApi(request: NextRequest): Promise<Response> {
   const id = requestId(request.headers.get("x-request-id"));
+  const span = startProxySpan(request.method);
+  const spanIds = { trace_id: span.spanContext().traceId, span_id: span.spanContext().spanId };
   const upstream = apiUrl();
   if (!upstream) {
-    log.error("api url unset", { request_id: id, method: request.method });
+    log.error("api url unset", { request_id: id, method: request.method, ...spanIds });
+    endProxySpan(span, 502);
     return unavailable(id);
   }
 
@@ -57,10 +64,12 @@ async function forwardApi(request: NextRequest): Promise<Response> {
   // the upstream is our own backend, which never reads an extra hop header even if one arrives,
   // and Connection's value is arbitrary client input, some of which isn't a valid header name and
   // makes Headers.delete() throw (an invalid Connection value must never 500 the proxy).
-  for (const name of [...FORWARDING, ...HOP_BY_HOP, ...REQUEST_ONLY_STRIP]) headers.delete(name);
+  for (const name of [...FORWARDING, ...HOP_BY_HOP, ...REQUEST_ONLY_STRIP, ...TRACE_HEADERS]) headers.delete(name);
   const ip = clientIp(request);
   if (ip) headers.set("x-forwarded-for", ip);
   headers.set("x-request-id", id);
+  const tp = traceparent(span);
+  if (tp) headers.set("traceparent", tp);
 
   try {
     const upstreamResponse = await fetch(
@@ -85,13 +94,21 @@ async function forwardApi(request: NextRequest): Promise<Response> {
       if (name === "content-encoding" || name === "content-length" || HOP_BY_HOP.includes(name)) continue;
       responseHeaders.append(name, value);
     }
-    return new Response(upstreamResponse.body, { status: upstreamResponse.status, headers: responseHeaders });
+    // Built before ending the span: a throw from the Response constructor must not end it twice.
+    const proxied = new Response(upstreamResponse.body, {
+      status: upstreamResponse.status,
+      headers: responseHeaders,
+    });
+    endProxySpan(span, upstreamResponse.status);
+    return proxied;
   } catch (err) {
     if (request.signal.aborted) {
-      log.debug("client closed", { request_id: id, method: request.method });
+      log.debug("client closed", { request_id: id, method: request.method, ...spanIds });
+      endProxySpan(span, 499);
       return new Response(null, { status: 499 });
     }
-    log.error("api unavailable", { request_id: id, method: request.method, ...errorFields(err) });
+    log.error("api unavailable", { request_id: id, method: request.method, ...spanIds, ...errorFields(err) });
+    endProxySpan(span, 502, err);
     return unavailable(id);
   }
 }

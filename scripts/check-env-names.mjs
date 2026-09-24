@@ -37,7 +37,8 @@ export function unprefixedNames(path, source) {
   const problems = found
     .sort((a, b) => a.index - b.index)
     .map((f) => f.name)
-    .filter((name) => !name.startsWith("ZIF_") && !ALLOWED.has(name));
+    // OTEL_* names are read by the OpenTelemetry SDK itself, never by our own config classes.
+    .filter((name) => !name.startsWith("ZIF_") && !name.startsWith("OTEL_") && !ALLOWED.has(name));
   if (language === "py" && /\(BaseSettings\)/.test(source) && !/env_prefix\s*=\s*["']ZIF_["']/.test(source)) {
     problems.push('BaseSettings without env_prefix="ZIF_"');
   }
