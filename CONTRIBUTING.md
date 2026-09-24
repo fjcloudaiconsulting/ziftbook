@@ -337,7 +337,9 @@ Attributes on every span come from an explicit allowlist instead.
 process's traces, and every container's log lines, to one Grafana LGTM stack (Loki, Tempo,
 Prometheus, Grafana) that runs outside this project and is shared by every project on the machine.
 `make up` is unchanged and exports nothing. If the stack isn't running yet, start it once (it comes
-back with Docker; data survives in the `lgtm-data` volume):
+back with Docker; data survives in the `lgtm-data` volume). It needs Docker Desktop (macOS,
+Windows): on Linux `host.docker.internal` does not reach a stack published on 127.0.0.1, so
+neither logs nor traces arrive, and nothing says so.
 
 ```sh
 docker run -d --name lgtm --restart unless-stopped -v lgtm-data:/data \
@@ -347,9 +349,7 @@ docker run -d --name lgtm --restart unless-stopped -v lgtm-data:/data \
 
 - Traces: `make observe` points `ZIF_OTEL_EXPORTER_OTLP_ENDPOINT` at the stack
   (`http://host.docker.internal:4318`) and clears `ZIF_OTEL_EXPORTER_OTLP_HEADERS`, overriding a
-  `.env` that sends to a hosted collector. It relies on Docker Desktop (macOS, Windows):
-  on Linux `host.docker.internal` does not reach a stack published on 127.0.0.1, so nothing
-  arrives.
+  `.env` that sends to a hosted collector.
 - Logs: the profile's `alloy` service (`observability/logs.alloy`) tails this compose project's
   containers through the Docker socket and pushes them to Loki. It publishes no port. The socket
   gives it full control of the Docker daemon, which is one reason it never runs without the profile.
@@ -358,8 +358,8 @@ docker run -d --name lgtm --restart unless-stopped -v lgtm-data:/data \
   (`ziftbook-postgres`, `ziftbook-mailpit`, `ziftbook-alloy`). Its `project` label is the compose
   project, which tells two checkouts apart.
 - Alloy only sees running containers, so `migrate` and `db-init`, which exit at startup, are not
-  in Loki: read them in the terminal or with `docker compose logs migrate`. Their traces still
-  arrive (`ziftbook-migrations`).
+  in Loki: read them in the terminal or with `docker compose logs migrate`. Migrate's traces
+  still arrive (`ziftbook-migrations`).
 - `make down` and `make reset` include the profile, so they also remove `alloy`. A bare
   `docker compose down` leaves it running. `make reset` restarts with `make up`, so run
   `make observe` again afterwards to keep exporting.
