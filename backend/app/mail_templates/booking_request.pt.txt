@@ -5,6 +5,9 @@ Um cliente pediu um agendamento:
 
 Cliente: $client
 
+$service
+$date às $time ($zone)
+
 Aceite ou recuse o pedido até $expires. Sem resposta a tempo, o pedido expira.
 
 $link

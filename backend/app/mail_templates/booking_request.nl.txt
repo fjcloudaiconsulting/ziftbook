@@ -5,6 +5,9 @@ Een klant wil boeken:
 
 Klant: $client
 
+$service
+$date om $time ($zone)
+
 Accepteer of wijs de aanvraag af vóór $expires. Antwoord je niet op tijd, dan vervalt de aanvraag.
 
 $link

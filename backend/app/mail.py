@@ -31,6 +31,12 @@ LOCALES = get_args(Locale)
 # already puts the event in the client's own calendar with their own formatting).
 DATE_FORMAT = {"en": "%d/%m/%Y", "nl": "%d-%m-%Y", "pt": "%d/%m/%Y"}
 
+# C0 minus CR/LF, DEL, C1, and the Unicode line/paragraph separators: control characters an .ics
+# TEXT value must not carry (see ics()'s escape()).
+_ICS_CONTROL_CHARS = re.compile(
+    "[\x00-\x09\x0b\x0c\x0e-\x1f\x7f\x80-\x9f\N{LINE SEPARATOR}\N{PARAGRAPH SEPARATOR}]"
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -285,6 +291,10 @@ def ics(
     """A stdlib-only VCALENDAR/PUBLISH, stable UID per booking. See ZIF-53 SS3.3."""
 
     def escape(value: str) -> str:
+        # C0 (minus CR/LF, handled below), DEL, C1, and the Unicode line/paragraph separators:
+        # none of those belong in a TEXT value, and left in they either break folding (a control
+        # character isn't a line boundary iCalendar understands) or render as garbage.
+        value = _ICS_CONTROL_CHARS.sub(" ", value)
         value = value.replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,")
         return value.replace("\r\n", "\\n").replace("\n", "\\n").replace("\r", "\\n")
 

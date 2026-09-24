@@ -372,6 +372,19 @@ def test_times_render_in_the_business_zone(people: People, app: FastAPI, ready: 
     assert "09:00" in message["Text"]
     assert "America/Sao_Paulo" in message["Text"]
 
+    # Winter: Amsterdam is CET (+1) in December, not the CEST (+2) offset a fixed-offset
+    # conversion would keep using year-round.
+    assert put_settings(owner, {"timezone": "Europe/Amsterdam"}).status_code == 200
+    booking_id3 = make_pending(app, people.a, ready, starts_at=at("13:00"))
+    assert patch(owner, booking_id3, "confirmed").status_code == 200
+    starts_at3 = datetime(2026, 12, 1, 12, 0, tzinfo=UTC)  # Amsterdam is CET (+1) in December
+    set_times(people.a, booking_id3, starts_at3, starts_at3 + timedelta(minutes=30))
+    client_email3 = _client_email(people.a, booking_id3)
+    run_send_booking(people.a, booking_id3, "booking_confirmed")
+    message = mail_for(client_email3)
+    assert "13:00" in message["Text"]
+    assert "Europe/Amsterdam" in message["Text"]
+
 
 # 9. fence. Kills: ignoring client locale / hardcoded en.
 def test_locale_comes_from_the_client_else_the_business(
@@ -453,7 +466,7 @@ def test_ics_folds_by_octet_and_escapes_text() -> None:
     starts_at = datetime(2026, 10, 3, 12, 0, tzinfo=UTC)
     ends_at = starts_at + timedelta(minutes=30)
     now = datetime(2026, 9, 24, 10, 0, tzinfo=UTC)
-    summary = "ã" * 60 + "A, B; C\\"
+    summary = "ã" * 120 + "A, B; C\\"
 
     data = mail.ics(booking_id, starts_at, ends_at, summary, now)
     text_ = data.decode()
@@ -464,14 +477,33 @@ def test_ics_folds_by_octet_and_escapes_text() -> None:
 
     # Unfold: a folded line's continuation starts with a single space.
     unfolded_lines: list[str] = []
+    continuation_lines = 0
     for line in lines:
         if line.startswith(" ") and unfolded_lines:
+            continuation_lines += 1
             unfolded_lines[-1] += line[1:]
         elif line:
             unfolded_lines.append(line)
+    assert continuation_lines >= 2  # a 120-char "ã" summary must fold across 3+ physical lines
     summary_line = next(line_ for line_ in unfolded_lines if line_.startswith("SUMMARY:"))
-    escaped = "ã" * 60 + "A\\, B\\; C\\\\"
+    escaped = "ã" * 120 + "A\\, B\\; C\\\\"
     assert summary_line == f"SUMMARY:{escaped}"
+
+
+# fence. Kills: control characters (other than CR/LF) left in a TEXT value.
+def test_ics_strips_control_characters_from_summary() -> None:
+    booking_id = uuid.uuid4()
+    starts_at = datetime(2026, 10, 3, 12, 0, tzinfo=UTC)
+    ends_at = starts_at + timedelta(minutes=30)
+    now = datetime(2026, 9, 24, 10, 0, tzinfo=UTC)
+    summary = "Cut\x0b Hair"
+
+    data = mail.ics(booking_id, starts_at, ends_at, summary, now)
+    text_ = data.decode()
+    lines = text_.split("\r\n")
+    summary_line = next(line for line in lines if line.startswith("SUMMARY:"))
+    assert "\x0b" not in summary_line
+    assert " " not in summary_line
 
 
 # 13. guard. RLS: the recipient read runs inside tenant_context(job.tenant_id).
@@ -557,6 +589,28 @@ def test_every_status_for_template_exists_in_every_locale() -> None:
         for locale in LOCALES:
             subject, body = render(template, locale)
             assert subject and body.strip()
+
+
+# fence. Kills: a booking template (client or merchant) missing the service or date/time line.
+def test_every_booking_template_renders_service_and_when() -> None:
+    from app.mail import LOCALES, render
+
+    values = {
+        "business": "Biz",
+        "service": "SVC-MARKER",
+        "date": "DATE-MARKER",
+        "time": "TIME-MARKER",
+        "zone": "Europe/Amsterdam",
+        "client": "Client Name",
+        "link": "https://example.com/en",
+        "expires": "DATE-MARKER TIME-MARKER (Europe/Amsterdam)",
+    }
+    for template in STATUS_FOR:
+        for locale in LOCALES:
+            _, body = render(template, locale, values)
+            assert "SVC-MARKER" in body, (template, locale)
+            assert "DATE-MARKER" in body, (template, locale)
+            assert "TIME-MARKER" in body, (template, locale)
 
 
 # 19. guard. email.booking is registered.
@@ -717,7 +771,9 @@ def test_merchant_recipients_are_every_owner_plus_the_assigned_worker(
     assert subjects_sent_to(email_of(worker1)) == [_subject("booking_request", "en")]
     assert subjects_sent_to(email_of(worker2)) == []
 
-    # Solo business: the owner is also the assigned worker -> exactly one email.
+    # Solo business: the owner is also the assigned worker -> exactly one email. Guard, not a
+    # fence: DISTINCT user_id in _email_merchants's query, plus the dedupe key already holding
+    # user_id, rules out a duplicate before this ever runs.
     set_role(people.b, people.only_b, "owner")
     solo_service = new_service(signed_in(app, people.b, people.only_b))
     seed(people.b, people.only_b, weekdays("09:00", "17:00"))

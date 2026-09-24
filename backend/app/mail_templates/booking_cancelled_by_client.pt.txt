@@ -1,4 +1,4 @@
-Seu agendamento é cancelado
+Seu agendamento foi cancelado
 Olá,
 
 Conforme solicitado, seu agendamento em $business foi cancelado:

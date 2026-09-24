@@ -5,6 +5,9 @@ Je hebt een nieuwe boeking:
 
 Klant: $client
 
+$service
+$date om $time ($zone)
+
 De boeking is bevestigd.
 
 $link

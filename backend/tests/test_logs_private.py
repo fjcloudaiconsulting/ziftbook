@@ -263,6 +263,11 @@ def test_no_personal_data_ever_reaches_a_log(
     secret(booker_name)
     secret(booker_email)
     secret(booker_phone)
+
+    # 6f (ZIF-53): auto_confirm on, so the booking is confirmed straight from the public POST -
+    # queuing the client (booking_confirmed, its .ics) and merchant (booking_new) emails, and a
+    # reminder (due_at a day away, so this run_once leaves it sitting - nothing to check there).
+    assert put_settings(owner, {"auto_confirm": True}).status_code == 200
     booked = client_for(app).post(
         f"/api/public/businesses/{people.a}/services/{created.json()['id']}/bookings",
         json={
@@ -275,13 +280,7 @@ def test_no_personal_data_ever_reaches_a_log(
         },
     )
     assert booked.status_code == 201
-
-    # 6f (ZIF-53): confirm the booking and run its jobs - the client (booking_confirmed, its .ics)
-    # and merchant (booking_new) emails, and the queued reminder, all at DEBUG.
-    booking_confirmed = owner.patch(
-        f"/api/bookings/{booked.json()['id']}", json={"status": "confirmed"}
-    )
-    assert booking_confirmed.status_code == 200
+    assert booked.json()["status"] == "confirmed"
     asyncio.run(run_once(KINDS))
 
     # 7: invite flow — send, list, a wrong token, then accept with a brand-new account.
@@ -368,6 +367,7 @@ def test_no_personal_data_ever_reaches_a_log(
     assert failed[0]["error"] == "SMTPRecipientsRefused"
     sent = {line["template"] for line in lines if line["msg"] == "email sent"}
     assert {"sign_up", "sign_up_registered", "password_reset", "invite"} <= sent
+    assert {"booking_confirmed", "booking_new"} <= sent
     email_failed = [line for line in lines if line["msg"] == "email failed"]
     assert [(line["template"], line["error"]) for line in email_failed] == [
         ("sign_up", "SMTPRecipientsRefused")
