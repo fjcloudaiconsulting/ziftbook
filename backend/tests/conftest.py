@@ -14,7 +14,7 @@ import uuid
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from alembic import command
@@ -22,14 +22,32 @@ from alembic.config import Config
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from httpx2 import Response
+from opentelemetry import trace
+from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from sqlalchemy import Connection, Engine, create_engine, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.pool import NullPool
 
-from app import auth, logs, passwords
+from app import auth, logs, passwords, tracing
 from app.db import SessionLocal, tenant_context
 from app.jobs import run_once
 from app.worker import KINDS
+
+# A developer's own collector must never receive test spans holding test emails, and a ratio
+# sampler would make span-count assertions flaky: strip every OTel env var before anything
+# (including the import-time migrate below, which imports migrations/env.py) can configure a real
+# exporter or sampler from it.
+for _otel_name in [n for n in os.environ if n.startswith("OTEL_")]:
+    del os.environ[_otel_name]
+tracing.configure("ziftbook-api")
+SPAN_EXPORTER = InMemorySpanExporter()
+# tracing.configure() always builds an SDK TracerProvider (never the abstract API base), so this
+# cast just tells mypy what set_tracer_provider already guarantees at runtime.
+cast(TracerProvider, trace.get_tracer_provider()).add_span_processor(
+    SimpleSpanProcessor(SPAN_EXPORTER)
+)
 
 # pytest's own threading.excepthook (installed in its pytest_configure, which every
 # conftest.py's pytest_configure hooks run alongside): captured with trylast so it runs after
@@ -170,6 +188,13 @@ def log_lines(monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[[], list[dic
         monkeypatch.delenv("ZIF_LOG_FORMAT", raising=False)
         logs.configure()
         threading.excepthook = _pytest_thread_hook  # ditto, for finalizers still to come
+
+
+@pytest.fixture
+def spans() -> Iterator[Callable[[], list[ReadableSpan]]]:
+    """Finished spans recorded since this fixture ran, oldest first."""
+    SPAN_EXPORTER.clear()
+    yield lambda: list(SPAN_EXPORTER.get_finished_spans())
 
 
 @pytest.fixture(scope="session")

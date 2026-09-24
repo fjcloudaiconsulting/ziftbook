@@ -6,11 +6,14 @@ import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from typing import Any
 
 from fastapi import APIRouter, FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
+from opentelemetry import trace
+from opentelemetry.trace import SpanKind
 from pydantic import BaseModel
 from sqlalchemy import create_engine
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
@@ -29,6 +32,7 @@ from app import (
     schedule,
     services,
     time_off,
+    tracing,
     turnstile,
 )
 from app.config import DatabaseSettings, Settings
@@ -36,6 +40,9 @@ from app.db import SessionLocal
 from app.errors import ApiError
 
 REQUEST_ID = re.compile(r"[A-Za-z0-9._:-]{1,64}")
+# _OTHER for anything else: the client controls the method, so span-name cardinality must stay
+# bounded.
+METHODS = {"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"}
 logger = logging.getLogger(__name__)
 access_logger = logging.getLogger("app.access")
 
@@ -43,6 +50,19 @@ access_logger = logging.getLogger("app.access")
 class Health(BaseModel):
     status: str
     version: str
+
+
+def _access_fields(request: Request, status: int, started: float) -> dict[str, Any]:
+    route = getattr(request.scope.get("route"), "path", "unmatched")
+    tenant_id = getattr(request.state, "tenant_id", None)
+    # The route template, never the path or query; no headers, cookies or bodies.
+    return {
+        "method": request.method,
+        "route": route,
+        "status": status,
+        "duration_ms": round((time.perf_counter() - started) * 1000, 1),
+        "tenant_id": str(tenant_id) if tenant_id else None,
+    }
 
 
 def operation_id(route: APIRoute) -> str:
@@ -145,26 +165,55 @@ def create_app() -> FastAPI:
         request.state.request_id = request_id
         started = time.perf_counter()
         status = 500  # if call_next raises, the 500 handler answers
-        try:
+
+        async def run() -> Response:
+            nonlocal status
             response = await call_next(request)
             status = response.status_code
             response.headers["X-Request-ID"] = request_id
             return response
-        finally:
-            route = getattr(request.scope.get("route"), "path", "unmatched")
-            tenant_id = getattr(request.state, "tenant_id", None)
-            # The route template, never the path or query; no headers, cookies or bodies.
-            access_logger.log(
-                logging.DEBUG if route == "/api/healthz" else logging.INFO,
-                "access",
-                extra={
-                    "method": request.method,
-                    "route": route,
-                    "status": status,
-                    "duration_ms": round((time.perf_counter() - started) * 1000, 1),
-                    "tenant_id": str(tenant_id) if tenant_id else None,
-                },
+
+        # No span for the healthcheck: nothing else below runs for it either.
+        if request.url.path == "/api/healthz":
+            try:
+                return await run()
+            finally:
+                access_logger.log(
+                    logging.DEBUG, "access", extra=_access_fields(request, status, started)
+                )
+
+        ctx = tracing.PROPAGATOR.extract(dict(request.headers))
+        method = request.method if request.method in METHODS else "_OTHER"
+        raised = False
+        with tracing.span(
+            method, SpanKind.SERVER, {"http.request.method": request.method}, context=ctx
+        ) as current_span:
+            span_context = current_span.get_span_context()
+            # Set, never reset, exactly like request_id: the 500 handler and uvicorn's error line
+            # run after this span has exited and still need the ids.
+            logs.CONTEXT.set(
+                {
+                    **logs.CONTEXT.get({}),
+                    "trace_id": format(span_context.trace_id, "032x"),
+                    "span_id": format(span_context.span_id, "016x"),
+                }
             )
+            try:
+                return await run()
+            except Exception:
+                raised = True  # tracing.span already set the status below; don't overwrite it
+                raise
+            finally:
+                route = getattr(request.scope.get("route"), "path", "unmatched")
+                current_span.update_name(f"{method} {route}")
+                current_span.set_attribute("http.route", route)
+                current_span.set_attribute("http.response.status_code", status)
+                if status >= 500 and not raised:
+                    current_span.set_status(trace.Status(trace.StatusCode.ERROR))
+                    current_span.set_attribute("error.type", "500")
+                access_logger.log(
+                    logging.INFO, "access", extra=_access_fields(request, status, started)
+                )
 
     @app.exception_handler(ApiError)
     async def api_error(request: Request, error: ApiError) -> JSONResponse:
@@ -207,6 +256,7 @@ def openapi_document() -> str:
 
 
 logs.configure()  # emits nothing
+tracing.configure("ziftbook-api")
 app = create_app()
 
 if __name__ == "__main__":

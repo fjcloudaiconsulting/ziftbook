@@ -9,7 +9,7 @@ from datetime import timedelta
 
 from sqlalchemy import create_engine
 
-from app import logs, mail
+from app import logs, mail, tracing
 from app.config import MailSettings, WorkerSettings
 from app.db import SessionLocal
 from app.jobs import JobKind, run_once
@@ -79,6 +79,7 @@ async def serve(settings: WorkerSettings) -> None:
 
 def main() -> None:
     logs.configure()
+    tracing.configure("ziftbook-worker")
     settings = WorkerSettings()
     engine = create_engine(
         settings.database_url,

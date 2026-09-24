@@ -66,6 +66,9 @@ services:
       ZIF_LOG_LEVEL: ${ZIF_LOG_LEVEL:-INFO}
       ZIF_LOG_FORMAT: ${ZIF_LOG_FORMAT:-json}
       ZIF_LOG_SQL: ${ZIF_LOG_SQL:-false}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_TRACES_SAMPLER: ${OTEL_TRACES_SAMPLER:-parentbased_traceidratio}
+      OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-0.1}
 
   backend:
     image: ghcr.io/fjcloudaiconsulting/ziftbook/backend:${ZIF_IMAGE_TAG:?set ZIF_IMAGE_TAG}
@@ -80,6 +83,9 @@ services:
       ZIF_LOG_SQL: ${ZIF_LOG_SQL:-false}
       ZIF_TRUSTED_PROXIES: 172.28.0.10
       ZIF_TURNSTILE_SECRET: ${ZIF_TURNSTILE_SECRET:-}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_TRACES_SAMPLER: ${OTEL_TRACES_SAMPLER:-parentbased_traceidratio}
+      OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-0.1}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/healthz')"]
       interval: 30s
@@ -102,6 +108,9 @@ services:
       ZIF_LOG_FORMAT: ${ZIF_LOG_FORMAT:-json}
       ZIF_LOG_SQL: ${ZIF_LOG_SQL:-false}
       ZIF_HEALTHCHECK_URL: ${ZIF_HEALTHCHECK_URL:-}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_TRACES_SAMPLER: ${OTEL_TRACES_SAMPLER:-parentbased_traceidratio}
+      OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-0.1}
       # Mailgun EU SMTP by default (see MailSettings).
       ZIF_SMTP_USERNAME: ${ZIF_SMTP_USERNAME:-}
       ZIF_SMTP_PASSWORD: ${ZIF_SMTP_PASSWORD:-}
@@ -119,6 +128,9 @@ services:
       ZIF_API_URL: http://backend:8000
       ZIF_LOG_LEVEL: ${ZIF_LOG_LEVEL:-INFO}
       ZIF_LOG_FORMAT: ${ZIF_LOG_FORMAT:-json}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_TRACES_SAMPLER: ${OTEL_TRACES_SAMPLER:-parentbased_traceidratio}
+      OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-0.1}
     ports:
       - "3000:3000"
     networks:

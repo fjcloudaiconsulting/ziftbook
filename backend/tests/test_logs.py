@@ -525,8 +525,11 @@ def test_job_context_matches_its_own_job_and_a_failure_never_leaks(
 
 
 def _fields(line: dict[str, Any]) -> dict[str, Any]:
-    """A record without what every record has (ts, logger) and the error chain."""
-    return {k: v for k, v in line.items() if k not in ("ts", "logger", "exc")}
+    """A record without what every record has (ts, logger), the error chain, and the trace ids a
+    span adds (asserted on their own in test_tracing.py's T10, not against a fixed value here)."""
+    return {
+        k: v for k, v in line.items() if k not in ("ts", "logger", "exc", "trace_id", "span_id")
+    }
 
 
 # ZIF-95: job claimed (DEBUG), done and skipped (INFO), failed (WARNING, retried) and gave up

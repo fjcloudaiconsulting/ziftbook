@@ -2,13 +2,15 @@ import logging
 import os
 
 from alembic import context
+from opentelemetry.trace import SpanKind
 from sqlalchemy import create_engine, text
 from sqlalchemy.pool import NullPool
 
-from app import logs
+from app import logs, tracing
 from app.db import metadata
 
 logs.configure()
+tracing.configure("ziftbook-migrations")
 logging.getLogger("app.migrations").info("migrations started", extra=logs.settings_fields())
 
 # Any fixed value works; it only has to be the same for every migration run against this database.
@@ -33,4 +35,5 @@ with engine.connect() as connection:
         target_metadata=metadata,
         transaction_per_migration=True,
     )
-    context.run_migrations()
+    with tracing.span("migrations upgrade", SpanKind.INTERNAL, {}):
+        context.run_migrations()

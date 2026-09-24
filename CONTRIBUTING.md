@@ -304,6 +304,30 @@ loggers (`web.*`); Next's own stderr output (banners, SSR error traces) is not i
   new flows to it. Build test secrets at runtime, never as literals on the line that raises: `exc` shows
   that line.
 
+## Tracing
+
+Every process (API, worker, migrations) calls `app.tracing.configure(service)` once, right after
+`logs.configure()`. Every span is hand-written (`app.tracing.span`), never from a contrib
+instrumentation package: those record raw URLs, paths and SQL error messages that can quote an
+email or password, and a denylist can't keep up with what a new library version starts recording.
+Attributes on every span come from an explicit allowlist instead.
+
+- The SDK's own exception recording is off on every span (`record_exception=False`,
+  `set_status_on_exception=False`): on an error, the span status is
+  `Status(ERROR, logs.error_summary(e))` plus `error.type`, the same rule this file's Logging
+  section already follows for log lines.
+- A job's trace context rides in its payload under the reserved key `traceparent` (`app/jobs.py`);
+  handlers never read it. It is the job span's **parent**, not a Link: a Link would start a new
+  trace.
+- Only W3C tracecontext is propagated, never baggage: arbitrary client data must never land in the
+  global `jobs` table.
+- The web app's `lib/trace.ts` never calls `register()`: with a global tracer provider, Next's own
+  built-in spans start recording raw request URLs and paths. `frontend/proxy.ts` also deletes any
+  incoming `traceparent`, `tracestate` and `baggage`, so a client never chooses a trace; every web
+  span is a root.
+- Never inline a value into `text(f"...")`: a manual SQL span's `db.query.text` exports the
+  statement text as-is, so an inlined value would export it too.
+
 ## API contract
 
 `backend/openapi.json` is committed and the web client is generated from it. After changing an API route or
@@ -370,6 +394,12 @@ ZIF-38). An empty variable means the default: `env_ignore_empty=True` on the bas
 | `ZIF_HEALTHCHECK_URL` | worker | none | no | no | Pinged after every successful loop. |
 | `ZIF_IMAGE_TAG` | compose | none | yes | no | Release tag (`vX.Y.Z`) for the three GHCR images. |
 | `ZIF_API_URL` | frontend | none | yes | no | Backend base URL the web app proxies `/api` to. |
+| **Tracing** | | | | | |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | api, worker, migrations, frontend | none | no | no | OTLP/HTTP collector endpoint. Unset exports nothing (no collector today; ZIF-90). |
+| `OTEL_SERVICE_NAME` | api, worker, migrations, frontend | `ziftbook-api`/`ziftbook-worker`/`ziftbook-migrations`/`ziftbook-web` | no | no | Read by the OTel SDK itself; each process sets its own default if unset. |
+| `OTEL_RESOURCE_ATTRIBUTES` | api, worker, migrations, frontend | none | no | no | Read by the OTel SDK itself; extra resource attributes. |
+| `OTEL_TRACES_SAMPLER` / `OTEL_TRACES_SAMPLER_ARG` | api, worker, migrations, frontend | `parentbased_always_on` (dev) | no | no | Read by the OTel SDK itself; `parentbased_traceidratio` at `0.1` in production. |
 
 `node scripts/check-env-names.mjs` (part of `make lint`) fails if a `ZIF_*` name read in code, or in a compose
-file, is missing from this table.
+file, is missing from this table. Any name beginning with `OTEL_` is allowed everywhere: those are read by the
+OpenTelemetry SDK itself, never by our own config classes.

@@ -11,9 +11,10 @@ from pathlib import Path
 from string import Template
 from typing import get_args
 
+from opentelemetry.trace import SpanKind
 from sqlalchemy import text
 
-from app import business_settings
+from app import business_settings, tracing
 from app.business_settings import Locale
 from app.config import MailSettings
 from app.db import SessionLocal, tenant_context
@@ -63,20 +64,27 @@ def _send(to: str, subject: str, body: str, headers: dict[str, str] | None) -> N
     for name, value in (headers or {}).items():
         message[name] = value
     message.set_content(body)
-    smtp = smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=10)
-    try:
-        if settings.smtp_starttls:
-            smtp.starttls(context=ssl.create_default_context())
-        if settings.smtp_username:
-            smtp.login(settings.smtp_username, settings.smtp_password)
-        # to_addrs: exactly the one stored address, even if its text reads as a list ("a, b").
-        smtp.send_message(message, to_addrs=[to])
-    finally:
-        # Once the server accepted the message, a failed goodbye must not undo it (and resend).
+    # Never the recipient, subject, body or template values: only the server this deployment talks
+    # to.
+    with tracing.span(
+        "smtp send",
+        SpanKind.CLIENT,
+        {"server.address": settings.smtp_host, "server.port": settings.smtp_port},
+    ):
+        smtp = smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=10)
         try:
-            smtp.quit()
-        except smtplib.SMTPException, OSError:
-            smtp.close()
+            if settings.smtp_starttls:
+                smtp.starttls(context=ssl.create_default_context())
+            if settings.smtp_username:
+                smtp.login(settings.smtp_username, settings.smtp_password)
+            # to_addrs: exactly the one stored address, even if its text reads as a list ("a, b").
+            smtp.send_message(message, to_addrs=[to])
+        finally:
+            # Once the server accepted the message, a failed goodbye must not undo it (and resend).
+            try:
+                smtp.quit()
+            except smtplib.SMTPException, OSError:
+                smtp.close()
 
 
 # The page each purpose's link opens; the token rides in the fragment, which no server ever sees.

@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import re
 import uuid
 from typing import Any
 from uuid import uuid4
@@ -97,7 +98,10 @@ def test_creating_an_invite_queues_its_email_job(
     assert job.kind == "email.invite"
     assert str(job.tenant_id) == str(people.a)
     assert job.dedupe_key == f"email.invite:{people.a}:{invite_id}"
+    # Inside a request, enqueue() also stamps its payload with the active span's traceparent.
+    traceparent = job.payload.pop("traceparent")
     assert job.payload == {"invite_id": invite_id}
+    assert re.fullmatch(r"00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}", traceparent)
 
 
 # I2: a resend kills the old link before its job even runs.
