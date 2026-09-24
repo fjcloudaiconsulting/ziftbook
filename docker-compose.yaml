@@ -59,6 +59,8 @@ services:
       ZIF_MIGRATE_DATABASE_URL: postgresql+psycopg://ziftbook_migrate:ziftbook_migrate@postgres:5432/ziftbook
       ZIF_LOG_LEVEL: DEBUG
       ZIF_LOG_FORMAT: text
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${ZIF_OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_EXPORTER_OTLP_HEADERS: ${ZIF_OTEL_EXPORTER_OTLP_HEADERS:-}
 
   backend:
     build:
@@ -71,6 +73,8 @@ services:
       ZIF_TRUSTED_PROXIES: 172.28.0.10
       ZIF_LOG_LEVEL: DEBUG
       ZIF_LOG_FORMAT: text
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${ZIF_OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_EXPORTER_OTLP_HEADERS: ${ZIF_OTEL_EXPORTER_OTLP_HEADERS:-}
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -110,6 +114,8 @@ services:
       ZIF_SMTP_STARTTLS: "false"
       ZIF_LOG_LEVEL: DEBUG
       ZIF_LOG_FORMAT: text
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${ZIF_OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_EXPORTER_OTLP_HEADERS: ${ZIF_OTEL_EXPORTER_OTLP_HEADERS:-}
     develop:
       watch:
         - action: sync+restart
@@ -135,6 +141,8 @@ services:
       ZIF_API_URL: http://backend:8000
       ZIF_LOG_LEVEL: DEBUG
       ZIF_LOG_FORMAT: text
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${ZIF_OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_EXPORTER_OTLP_HEADERS: ${ZIF_OTEL_EXPORTER_OTLP_HEADERS:-}
     networks:
       default:
         ipv4_address: 172.28.0.10

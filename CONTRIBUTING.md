@@ -327,6 +327,9 @@ Attributes on every span come from an explicit allowlist instead.
   span is a root.
 - Never inline a value into `text(f"...")`: a manual SQL span's `db.query.text` exports the
   statement text as-is, so an inlined value would export it too.
+- The compose files feed the OTel SDK's own `OTEL_*` variables from `ZIF_OTEL_*` ones (owner
+  ruling: an operator-facing name carries `ZIF_`). Code itself only ever reads the standard
+  `OTEL_*` names; nothing in `app/` or `lib/` reads a `ZIF_OTEL_*` name directly.
 
 ## API contract
 
@@ -395,10 +398,12 @@ ZIF-38). An empty variable means the default: `env_ignore_empty=True` on the bas
 | `ZIF_IMAGE_TAG` | compose | none | yes | no | Release tag (`vX.Y.Z`) for the three GHCR images. |
 | `ZIF_API_URL` | frontend | none | yes | no | Backend base URL the web app proxies `/api` to. |
 | **Tracing** | | | | | |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | api, worker, migrations, frontend | none | no | no | OTLP/HTTP collector endpoint. Unset exports nothing (no collector today; ZIF-90). |
-| `OTEL_SERVICE_NAME` | api, worker, migrations, frontend | `ziftbook-api`/`ziftbook-worker`/`ziftbook-migrations`/`ziftbook-web` | no | no | Read by the OTel SDK itself; each process sets its own default if unset. |
-| `OTEL_RESOURCE_ATTRIBUTES` | api, worker, migrations, frontend | none | no | no | Read by the OTel SDK itself; extra resource attributes. |
-| `OTEL_TRACES_SAMPLER` / `OTEL_TRACES_SAMPLER_ARG` | api, worker, migrations, frontend | `parentbased_always_on` (dev) | no | no | Read by the OTel SDK itself; `parentbased_traceidratio` at `0.1` in production. |
+| `ZIF_OTEL_EXPORTER_OTLP_ENDPOINT` | compose (api, worker, migrations, frontend) | none | no | no | Feeds `OTEL_EXPORTER_OTLP_ENDPOINT`, the OTLP/HTTP collector endpoint. Unset exports nothing (no collector today; ZIF-90). |
+| `ZIF_OTEL_EXPORTER_OTLP_HEADERS` | compose (api, worker, migrations, frontend) | none | no | yes | Feeds `OTEL_EXPORTER_OTLP_HEADERS`, the collector's auth headers, e.g. `Authorization=Basic%20<base64 instance:token>`. URL-encoded, comma-separated `key=value` pairs. |
+| `ZIF_OTEL_TRACES_SAMPLER` | compose, prod only (api, worker, migrations, frontend) | `parentbased_traceidratio` | no | no | Feeds `OTEL_TRACES_SAMPLER`. Dev compose sets neither sampler variable, so dev stays at the SDK's own default, 100% (`parentbased_always_on`). |
+| `ZIF_OTEL_TRACES_SAMPLER_ARG` | compose, prod only (api, worker, migrations, frontend) | `0.1` | no | no | Feeds `OTEL_TRACES_SAMPLER_ARG`. |
+| `OTEL_SERVICE_NAME` | api, worker, migrations, frontend | `ziftbook-api`/`ziftbook-worker`/`ziftbook-migrations`/`ziftbook-web` | no | no | Read by the OTel SDK itself; each process sets its own default if unset. Not set by compose. |
+| `OTEL_RESOURCE_ATTRIBUTES` | api, worker, migrations, frontend | none | no | no | Read by the OTel SDK itself; extra resource attributes. Not set by compose. |
 
 `node scripts/check-env-names.mjs` (part of `make lint`) fails if a `ZIF_*` name read in code, or in a compose
 file, is missing from this table. Any name beginning with `OTEL_` is allowed everywhere: those are read by the
