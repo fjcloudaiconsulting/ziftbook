@@ -24,6 +24,10 @@ make up     # http://localhost:3000 (backend directly: http://localhost:8000/api
 make down
 ```
 
+To see the app's traces in Grafana (http://127.0.0.1:3300), run `make observe` instead of `make up`. It needs the
+shared local LGTM stack running; see "Observability" in [CONTRIBUTING.md](CONTRIBUTING.md), which also lists every
+switch for logs and traces in production.
+
 To start over with an empty database (every local account, business and booking is deleted; it asks first):
 
 ```sh

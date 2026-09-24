@@ -1,4 +1,4 @@
-.PHONY: setup up down reset migrate migration openapi lint typecheck test test-hooks
+.PHONY: setup up observe down reset migrate migration openapi lint typecheck test test-hooks
 
 API := uv run --directory backend
 PNPM ?= pnpm
@@ -12,6 +12,12 @@ setup: ## One-time: enable the repo git hooks and install api and web dependenci
 up: ## Start the whole app (http://localhost:3000), syncing source changes into the containers
 	sh scripts/check-ports.sh
 	docker compose up --build --watch
+
+observe: ## Like up, exporting OpenTelemetry to the shared local lgtm stack (Grafana: http://127.0.0.1:3300)
+	@curl -sf -o /dev/null http://127.0.0.1:3300/api/health || { echo "The shared lgtm stack is not running: see CONTRIBUTING.md, Observability."; exit 1; }
+	sh scripts/check-ports.sh
+	ZIF_OTEL_EXPORTER_OTLP_ENDPOINT=http://host.docker.internal:4318 ZIF_OTEL_EXPORTER_OTLP_HEADERS= \
+		docker compose up --build --watch
 
 down:
 	docker compose down
