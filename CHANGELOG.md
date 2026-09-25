@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.18.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.17.1...v0.18.0) (2026-09-25)
+
+
+### Features
+
+* **backend:** booking emails to clients and merchants, with a reminder and an .ics (ZIF-53) ([#124](https://github.com/fjcloudaiconsulting/ziftbook/issues/124)) ([0dcd03e](https://github.com/fjcloudaiconsulting/ziftbook/commit/0dcd03e0ec97142b7ac410cf04cef813860d7e2f))
+* **dev:** export traces to the shared lgtm stack, document every observability switch (ZIF-90) ([#122](https://github.com/fjcloudaiconsulting/ziftbook/issues/122)) ([16ccd21](https://github.com/fjcloudaiconsulting/ziftbook/commit/16ccd211f0630a8b61586f5bf008a0244825fd18))
+* **frontend:** the web server logs like the backend (ZIF-86) ([#119](https://github.com/fjcloudaiconsulting/ziftbook/issues/119)) ([238bc58](https://github.com/fjcloudaiconsulting/ziftbook/commit/238bc588ea545267ca657052e92c580c6641d087))
+* logs go out over OTLP from the API, worker, migrations and web app (ZIF-137) ([#123](https://github.com/fjcloudaiconsulting/ziftbook/issues/123)) ([0b9a3eb](https://github.com/fjcloudaiconsulting/ziftbook/commit/0b9a3eb08fbcfd4fe34ffc1b4955d42a937f593b))
+* traces from the web app through the API, database, jobs and email (ZIF-87) ([#121](https://github.com/fjcloudaiconsulting/ziftbook/issues/121)) ([1cc5aae](https://github.com/fjcloudaiconsulting/ziftbook/commit/1cc5aae574a0a1e1c2102d0246ea74b89e5fb952))
+
 ## [0.17.1](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.17.0...v0.17.1) (2026-09-23)
 
 
