@@ -782,7 +782,7 @@ def test_merchant_recipients_are_every_owner_plus_the_assigned_worker(
     assert subjects_sent_to(email_of(worker2)) == []
 
     # Solo business: the owner is also the assigned worker -> exactly one email. Guard, not a
-    # fence: DISTINCT user_id in _email_merchants's query, plus the dedupe key already holding
+    # fence: DISTINCT user_id in email_merchants's query, plus the dedupe key already holding
     # user_id, rules out a duplicate before this ever runs.
     set_role(people.b, people.only_b, "owner")
     solo_service = new_service(signed_in(app, people.b, people.only_b))

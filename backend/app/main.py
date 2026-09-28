@@ -120,7 +120,14 @@ def create_app() -> FastAPI:
 
     # No deploy version in the OpenAPI document: it is a committed contract
     # and must not vary per environment.
-    app = FastAPI(title="ziftbook", generate_unique_id_function=operation_id, lifespan=lifespan)
+    # redirect_slashes=False (ZIF-136): a trailing slash is a plain 404, never a 307 whose
+    # Location names the internal API origin.
+    app = FastAPI(
+        title="ziftbook",
+        generate_unique_id_function=operation_id,
+        lifespan=lifespan,
+        redirect_slashes=False,
+    )
     app.include_router(router)
     app.include_router(auth.router)
     app.include_router(accounts.router)

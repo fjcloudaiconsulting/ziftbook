@@ -292,7 +292,7 @@ WHERE b.id = :id
 MERCHANTS = text("SELECT DISTINCT user_id FROM memberships WHERE role = 'owner' OR id = :worker_id")
 
 
-def _email(
+def email(
     db: Session,
     tenant_id: UUID,
     booking_id: UUID,
@@ -322,7 +322,7 @@ def _email(
     jobs.enqueue(db, "email.booking", key, payload, tenant_id=tenant_id)
 
 
-def _email_merchants(
+def email_merchants(
     db: Session,
     tenant_id: UUID,
     booking_id: UUID,
@@ -334,12 +334,12 @@ def _email_merchants(
 ) -> None:
     """Enqueue one merchant booking email per active owner plus the assigned worker (ruling R1)."""
     for (user_id,) in db.execute(MERCHANTS, {"worker_id": worker_id}).all():
-        _email(
+        email(
             db, tenant_id, booking_id, template, user_id=user_id, key_suffix=key_suffix, extra=extra
         )
 
 
-def _remind(
+def remind(
     db: Session, tenant_id: UUID, booking_id: UUID, starts_at: datetime, now: datetime
 ) -> None:
     """Enqueue the 24h-ahead reminder, unless the start is already less than 24h away (R3)."""
@@ -537,7 +537,7 @@ def create(  # sync def: turnstile.verify's urlopen blocks, and runs in FastAPI'
             )
             booked_rows = result.booked
             offered = result.slots
-            eligible = [c for c in candidates if new.starts_at in offered.get(c, set())]
+            eligible = [c for c in candidates if new.starts_at in offered[c]]  # keys every member
             if not eligible:
                 raise ApiError(409, "slot_unavailable")
             # 13. AFTER re-derivation, never before (B6): counting before it makes 429-vs-409 an
@@ -643,12 +643,19 @@ def create(  # sync def: turnstile.verify's urlopen blocks, and runs in FastAPI'
             # ZIF-53. Same session as the status write, outside the savepoint: a rollback of the
             # savepoint (a lost race) drops nothing here, since this only runs after `break`.
             if status == "confirmed":
-                _email(db, tenant_id, booking.id, "booking_confirmed")
-                _remind(db, tenant_id, booking.id, booking.starts_at, row.now)
-                _email_merchants(db, tenant_id, booking.id, candidate, "booking_new")
+                # starts_at (ZIF-54 D10): a reschedule before this runs makes it skip itself.
+                email(
+                    db,
+                    tenant_id,
+                    booking.id,
+                    "booking_confirmed",
+                    extra={"starts_at": booking.starts_at.isoformat()},
+                )
+                remind(db, tenant_id, booking.id, booking.starts_at, row.now)
+                email_merchants(db, tenant_id, booking.id, candidate, "booking_new")
             else:
-                _email(db, tenant_id, booking.id, "booking_received")
-                _email_merchants(db, tenant_id, booking.id, candidate, "booking_request")
+                email(db, tenant_id, booking.id, "booking_received")
+                email_merchants(db, tenant_id, booking.id, candidate, "booking_request")
             return BookingOut(
                 id=booking.id,
                 status=booking.status,
@@ -758,12 +765,18 @@ def transition(
     # back with the change (test 20). `row.status`, read at step 2 under the advisory lock, is the
     # PRE-transition source.
     if change.status == "confirmed" and row.status == "pending":
-        _email(current.db, current.tenant_id, booking_id, "booking_confirmed")
-        _remind(current.db, current.tenant_id, booking_id, row.starts_at, row.now)
+        email(
+            current.db,
+            current.tenant_id,
+            booking_id,
+            "booking_confirmed",
+            extra={"starts_at": row.starts_at.isoformat()},
+        )
+        remind(current.db, current.tenant_id, booking_id, row.starts_at, row.now)
     elif change.status == "declined":
-        _email(current.db, current.tenant_id, booking_id, "booking_declined")
+        email(current.db, current.tenant_id, booking_id, "booking_declined")
     elif change.status == "cancelled_by_merchant" and row.status in ("pending", "confirmed"):
-        _email(current.db, current.tenant_id, booking_id, "booking_cancelled")
+        email(current.db, current.tenant_id, booking_id, "booking_cancelled")
     auth.record(  # 6
         current.db,
         request,

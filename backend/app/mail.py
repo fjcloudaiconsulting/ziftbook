@@ -463,6 +463,7 @@ def send_booking(job: Job) -> None:
             datetime.now(UTC),
             sequence=row.reschedule_count,
         )
+    # Mailgun would otherwise rewrite the link, token included, through its tracking domain.
     headers = {"X-Mailgun-Track-Clicks": "no"} if template in LINKED and user_id is None else None
-    deliver(template, recipient_email, subject, body, headers, booking_ics)
+    deliver(template, recipient_email, subject, body, headers, ics=booking_ics)
     _mark_sent(job)

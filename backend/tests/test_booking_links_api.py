@@ -3,10 +3,12 @@ booking emails, with no account. See docs/specs/2026-09-24-zif-54-spec.md for th
 this file protects (backend half; the frontend and 30/38 live elsewhere)."""
 
 import base64
+import contextlib
 import email as email_module
 import hashlib
 import logging
 import secrets
+import threading
 import urllib.request
 import uuid
 from collections.abc import Callable
@@ -23,7 +25,7 @@ from psycopg.errors import CheckViolation, InsufficientPrivilege
 from sqlalchemy import Engine, text
 from sqlalchemy.exc import IntegrityError, ProgrammingError
 
-from app import mail
+from app import booking_links, mail
 from app.booking_links import COOKIE
 from app.bookings import RESCHEDULE
 from app.db import tenant_context
@@ -37,6 +39,7 @@ from tests.conftest import (
     put_settings,
     save_setting,
     signed_in,
+    wait_until_blocked,
 )
 from tests.test_availability_api import assign, new_service, weekdays
 from tests.test_booking_email import (
@@ -48,7 +51,7 @@ from tests.test_booking_email import (
     template_of,
     texts_to,
 )
-from tests.test_bookings_api import at
+from tests.test_bookings_api import at, post_booking
 from tests.test_bookings_approval_api import ago, expire, make_pending, patch, shift
 from tests.test_working_hours import seed
 
@@ -629,7 +632,7 @@ def same_instant(payload_value: str, api_value: str) -> bool:
 
 # 24. fence. A reschedule enqueues booking_confirmed (:r1), booking_client_rescheduled per
 # merchant and a reminder for the NEW start; the confirmation's .ics carries SEQUENCE:1 and the old
-# reminder sends nothing. Kills a key without the count, a forgotten _remind (the confirm already
+# reminder sends nothing. Kills a key without the count, a forgotten remind (the confirm already
 # enqueued a reminder for the OLD start, so "some reminder exists" proves nothing) and SEQUENCE:0.
 def test_reschedule_enqueues_confirmation_merchant_email_and_reminder(
     people: People, app: FastAPI, ready: str, owner: TestClient, app_engine: Engine
@@ -658,7 +661,9 @@ def test_reschedule_enqueues_confirmation_merchant_email_and_reminder(
     (confirmation,) = [
         j
         for j in booking_jobs(app_engine, people.a, booking_id)
-        if j.payload["template"] == "booking_confirmed" and "starts_at" in j.payload
+        if j.payload["template"] == "booking_confirmed"
+        and "starts_at" in j.payload
+        and same_instant(j.payload["starts_at"], at("10:30"))
     ]
     mail.send_booking(confirmation)
     (sent,) = _search(client_email)
@@ -769,6 +774,88 @@ def test_the_read_is_served_without_a_trailing_slash(
     client = linked(app, people.a, confirmed_booking(app, people.a, ready))
     response = client.get(URL, follow_redirects=False)
     assert response.status_code == 200, (response.status_code, response.headers.get("location"))
+
+
+# fence (ZIF-136, redirect half). With a trailing slash every route is a plain 404, never a 3xx:
+# Starlette's redirect_slashes answers 307 with a Location on the INTERNAL API origin. Kills
+# create_app() without redirect_slashes=False. /api/services/ stands for the older routes.
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("GET", f"{URL}/"),
+        ("GET", f"{URL}/availability/"),
+        ("POST", f"{URL}/session/"),
+        ("POST", f"{URL}/cancel/"),
+        ("POST", f"{URL}/reschedule/"),
+        ("POST", f"{URL}/consents/"),
+        ("GET", "/api/services/"),
+    ],
+)
+def test_a_trailing_slash_is_404_and_never_a_redirect(
+    people: People, app: FastAPI, ready: str, method: str, path: str
+) -> None:
+    client = linked(app, people.a, confirmed_booking(app, people.a, ready))
+    body: dict[str, Any] | None = {} if method == "POST" else None
+    response = client.request(method, path, json=body, follow_redirects=False)
+    assert (response.status_code, response.headers.get("location")) == (404, None)
+
+
+# fence. The picker offers nothing the reschedule would refuse: no reschedules left, or the
+# service archived since booking, gives an empty slot list (the page shows "no times"). Kills a
+# GET /availability that skips decide() or reads buffer_minutes from an archived service.
+def test_availability_offers_nothing_the_reschedule_would_refuse(
+    people: People, app: FastAPI, ready: str, owner: TestClient
+) -> None:
+    day = {"from": DAY.isoformat(), "to": DAY.isoformat()}
+    assert put_settings_max(owner, 0) == 200
+    spent = confirmed_booking(app, people.a, ready, starts_at=at("10:00"))
+    assert patch(owner, spent, "confirmed").status_code == 200
+    assert put_settings_max(owner, 3) == 200
+    archived = confirmed_booking(app, people.a, ready, starts_at=at("11:00"))
+    assert patch(owner, archived, "confirmed").status_code == 200
+    archived_client = linked(app, people.a, archived)
+    assert get(archived_client, "/availability", **day).json()["slots"]  # offered while live
+
+    with tenant_context(people.a) as session:
+        session.execute(
+            text("UPDATE services SET archived_at = now() WHERE id = :id"), {"id": ready}
+        )
+
+    for client in (linked(app, people.a, spent), archived_client):
+        response = get(client, "/availability", **day)
+        assert (response.status_code, response.json()["slots"]) == (200, [])
+
+
+# fence (D10). The create/accept confirmation still queued when the client reschedules sends
+# nothing: its payload carries the start it was about, so the starts_at gate skips it. Kills a
+# confirmation payload without starts_at (a second, stale "confirmed" email with the old time).
+@pytest.mark.parametrize("path", ["create", "accept"])
+def test_a_queued_confirmation_run_after_a_reschedule_sends_nothing(
+    people: People, app: FastAPI, ready: str, owner: TestClient, app_engine: Engine, path: str
+) -> None:
+    if path == "create":
+        save_setting(people.a, "auto_confirm", True)
+        response = post_booking(new_client(app), people.a, ready, starts_at=at("10:00"))
+        assert response.json()["status"] == "confirmed", response.json()
+        booking_id = response.json()["id"]
+    else:
+        booking_id = confirmed_booking(app, people.a, ready, starts_at=at("10:00"))
+        assert patch(owner, booking_id, "confirmed").status_code == 200
+    (original,) = [
+        j
+        for j in booking_jobs(app_engine, people.a, booking_id)
+        if j.payload["template"] == "booking_confirmed"
+    ]
+    moved = post(
+        linked(app, people.a, booking_id),
+        "/reschedule",
+        reschedule_body(booking_id, at("11:00"), 0),
+    )
+    assert moved.status_code == 200
+
+    mail.send_booking(original)
+
+    assert _search(_client_email(people.a, booking_id)) == []
 
 
 # 15. fence. A double submit with the same echoed count: one 200, one 409 changed. And RESCHEDULE
@@ -972,6 +1059,65 @@ def test_confirming_twice_is_idempotent(
             {"id": booking_id},
         )
     assert (consent_rows, confirmed_events) == (1, 1)
+
+
+# fence. Two confirms at once: the second waits on the tenant lock behind the first, then finds
+# nothing pending -- one set of grant rows, one consent_confirmed event. Kills /consents without
+# bookings.LOCK (both read "pending" before either commits, and both record).
+def test_two_concurrent_confirms_record_once(
+    people: People,
+    app: FastAPI,
+    ready: str,
+    owner: TestClient,
+    app_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    booking_id = confirmed_booking(app, people.a, ready, consents={"marketing_email": True})
+    assert patch(owner, booking_id, "confirmed").status_code == 200
+    real_pending = booking_links.pending_consents
+    holding, release, paused_once = threading.Event(), threading.Event(), threading.Event()
+
+    def paused_pending(*args: Any) -> list[Any]:
+        result = real_pending(*args)
+        if not paused_once.is_set():
+            paused_once.set()
+            holding.set()
+            release.wait(timeout=10)
+        return result
+
+    monkeypatch.setattr(booking_links, "pending_consents", paused_pending)
+    token = mint(people.a, booking_id)
+    results: list[int] = []
+
+    def confirm() -> None:
+        response = post(with_cookie(app, people.a, token), "/consents", {"booking_id": booking_id})
+        results.append(response.status_code)
+
+    first = threading.Thread(target=confirm)
+    first.start()
+    assert holding.wait(timeout=10)
+    second = threading.Thread(target=confirm)
+    second.start()
+    # Without the lock the second never waits: let the timeout pass and the row counts below fail.
+    with contextlib.suppress(AssertionError):
+        wait_until_blocked(app_engine, 1)
+    release.set()
+    for thread in (first, second):
+        thread.join(timeout=10)
+    assert not first.is_alive() and not second.is_alive()
+
+    with tenant_context(people.a) as session:
+        consent_rows = session.scalar(
+            text("SELECT count(*) FROM consents WHERE source = 'booking_page'")
+        )
+        confirmed_events = session.scalar(
+            text(
+                "SELECT count(*) FROM booking_events WHERE booking_id = :id "
+                "AND event = 'consent_confirmed'"
+            ),
+            {"id": booking_id},
+        )
+    assert (sorted(results), consent_rows, confirmed_events) == ([200, 409], 1, 1)
 
 
 # 28. guard. The 11th exchange in 15 minutes, and the 21st write in an hour, both 429.

@@ -284,8 +284,8 @@ def time_off(
 @dataclass(frozen=True)
 class Offered:
     slots: dict[UUID, set[datetime]]  # per member, its bookable starts on first..last
-    # The rows booked() read while computing them: create()'s least-loaded tiebreak (step 14) and
-    # any other caller that needs the same window's bookings reuse this instead of a second read.
+    # The rows booked() read while computing them: only create() reads it, for its least-loaded
+    # tiebreak (step 14), instead of a second read.
     booked: list[tuple[UUID, datetime, datetime, int | None]]
 
 
