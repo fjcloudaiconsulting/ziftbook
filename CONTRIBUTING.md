@@ -231,6 +231,11 @@ Rate limits and audit events key on the visitor's address. Each deployment has e
   any of those could set its own `X-Forwarded-For`. k3s/flannel doesn't SNAT pod-to-ClusterIP traffic, but
   that is not the safeguard: the backend Service must never be exposed via NodePort, LoadBalancer or
   Ingress, and NetworkPolicies must admit only the web app's pods.
+- **Production prerequisite (ZIF-54):** `/api/public/booking-link/*`'s per-IP limits
+  (`booking_link_open`/`booking_link_read`/`booking_link_write`) key on `request.client.host` exactly like
+  every other public route. Without `ZIF_CLIENT_IP_HEADER` set wherever a proxy fronts the web app, every
+  visitor's booking-link traffic arrives at the API under the web server's one address, and the 10th
+  exchange in 15 minutes locks out every client of every business behind it.
 
 ## Business settings
 

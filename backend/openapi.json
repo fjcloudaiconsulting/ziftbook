@@ -2770,7 +2770,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AvailabilityOut"
+                  "$ref": "#/components/schemas/app__availability__AvailabilityOut"
                 }
               }
             }
@@ -2854,7 +2854,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BookingOut"
+                  "$ref": "#/components/schemas/app__bookings__BookingOut"
                 }
               }
             }
@@ -3095,6 +3095,449 @@
           }
         }
       }
+    },
+    "/api/public/booking-link/session": {
+      "post": {
+        "tags": [
+          "booking-link"
+        ],
+        "summary": "Session",
+        "description": "Exchange the emailed token for the manage cookie. Writes nothing (D3, tests 8/9): not even\nthe consent confirmation click, which is its own explicit POST (D11).",
+        "operationId": "booking-link-session",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TokenIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Content",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/public/booking-link/": {
+      "get": {
+        "tags": [
+          "booking-link"
+        ],
+        "summary": "Read",
+        "operationId": "booking-link-read",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LinkedBooking"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/public/booking-link/availability": {
+      "get": {
+        "tags": [
+          "booking-link"
+        ],
+        "summary": "Availability",
+        "operationId": "booking-link-availability",
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date",
+              "title": "From"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date",
+              "title": "To"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/app__booking_links__AvailabilityOut"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          }
+        }
+      }
+    },
+    "/api/public/booking-link/cancel": {
+      "post": {
+        "tags": [
+          "booking-link"
+        ],
+        "summary": "Cancel",
+        "operationId": "booking-link-cancel",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CancelIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LinkedBooking"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Content",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/public/booking-link/reschedule": {
+      "post": {
+        "tags": [
+          "booking-link"
+        ],
+        "summary": "Reschedule",
+        "operationId": "booking-link-reschedule",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RescheduleIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LinkedBooking"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Content",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/public/booking-link/consents": {
+      "post": {
+        "tags": [
+          "booking-link"
+        ],
+        "summary": "Consents",
+        "description": "D11: the explicit confirmation click, never the link click itself. Confirms the grants\nticked at booking (the `created` event's true values), minus any later withdrawal, and records\nthem with `clients.record_consents(source='booking_page', ...)`. Runs once per booking: a\nsecond click finds nothing pending and changes nothing (idempotent, test 26).",
+        "operationId": "booking-link-consents",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConsentsIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LinkedBooking"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Content",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -3206,41 +3649,6 @@
         ],
         "title": "AuditEventOut"
       },
-      "AvailabilityOut": {
-        "properties": {
-          "timezone": {
-            "type": "string",
-            "title": "Timezone"
-          },
-          "duration_minutes": {
-            "type": "integer",
-            "title": "Duration Minutes"
-          },
-          "workers": {
-            "items": {
-              "$ref": "#/components/schemas/WorkerOut"
-            },
-            "type": "array",
-            "title": "Workers"
-          },
-          "slots": {
-            "items": {
-              "type": "string",
-              "format": "date-time"
-            },
-            "type": "array",
-            "title": "Slots"
-          }
-        },
-        "type": "object",
-        "required": [
-          "timezone",
-          "duration_minutes",
-          "workers",
-          "slots"
-        ],
-        "title": "AvailabilityOut"
-      },
       "BookingIn": {
         "properties": {
           "starts_at": {
@@ -3341,84 +3749,6 @@
           "policy_version"
         ],
         "title": "BookingIn"
-      },
-      "BookingOut": {
-        "properties": {
-          "id": {
-            "type": "string",
-            "format": "uuid",
-            "title": "Id"
-          },
-          "status": {
-            "type": "string",
-            "title": "Status"
-          },
-          "starts_at": {
-            "type": "string",
-            "format": "date-time",
-            "title": "Starts At"
-          },
-          "ends_at": {
-            "type": "string",
-            "format": "date-time",
-            "title": "Ends At"
-          },
-          "duration_minutes": {
-            "type": "integer",
-            "title": "Duration Minutes"
-          },
-          "service_name": {
-            "additionalProperties": {
-              "type": "string"
-            },
-            "type": "object",
-            "title": "Service Name"
-          },
-          "price": {
-            "$ref": "#/components/schemas/Price"
-          },
-          "worker_id": {
-            "type": "string",
-            "format": "uuid",
-            "title": "Worker Id"
-          },
-          "worker_display_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Worker Display Name"
-          },
-          "cancellation_policy_text": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Cancellation Policy Text"
-          }
-        },
-        "type": "object",
-        "required": [
-          "id",
-          "status",
-          "starts_at",
-          "ends_at",
-          "duration_minutes",
-          "service_name",
-          "price",
-          "worker_id",
-          "worker_display_name",
-          "cancellation_policy_text"
-        ],
-        "title": "BookingOut"
       },
       "BookingStatusOut": {
         "properties": {
@@ -3540,6 +3870,13 @@
             "minimum": 0.0,
             "title": "Reschedule Cutoff Hours",
             "default": 24
+          },
+          "max_reschedules": {
+            "type": "integer",
+            "maximum": 10.0,
+            "minimum": 0.0,
+            "title": "Max Reschedules",
+            "default": 2
           }
         },
         "additionalProperties": false,
@@ -3640,6 +3977,13 @@
             "minimum": 0.0,
             "title": "Reschedule Cutoff Hours",
             "default": 24
+          },
+          "max_reschedules": {
+            "type": "integer",
+            "maximum": 10.0,
+            "minimum": 0.0,
+            "title": "Max Reschedules",
+            "default": 2
           }
         },
         "additionalProperties": false,
@@ -3657,9 +4001,30 @@
           "pending_ttl_hours",
           "cancellation_policy_text",
           "free_cancellation_hours",
-          "reschedule_cutoff_hours"
+          "reschedule_cutoff_hours",
+          "max_reschedules"
         ],
         "title": "BusinessSettings"
+      },
+      "CancelIn": {
+        "properties": {
+          "booking_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Booking Id"
+          },
+          "refund_pct": {
+            "type": "integer",
+            "title": "Refund Pct"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "booking_id",
+          "refund_pct"
+        ],
+        "title": "CancelIn"
       },
       "ClientIn": {
         "properties": {
@@ -3926,6 +4291,21 @@
         ],
         "title": "ConsentOut"
       },
+      "ConsentsIn": {
+        "properties": {
+          "booking_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Booking Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "booking_id"
+        ],
+        "title": "ConsentsIn"
+      },
       "Credentials": {
         "properties": {
           "email": {
@@ -3988,6 +4368,44 @@
           "display_name"
         ],
         "title": "DisplayNameOut"
+      },
+      "EngineOut": {
+        "properties": {
+          "can_cancel": {
+            "type": "boolean",
+            "title": "Can Cancel"
+          },
+          "can_reschedule": {
+            "type": "boolean",
+            "title": "Can Reschedule"
+          },
+          "refund_pct": {
+            "type": "integer",
+            "title": "Refund Pct"
+          },
+          "copy_key": {
+            "type": "string",
+            "title": "Copy Key"
+          },
+          "reschedule_count": {
+            "type": "integer",
+            "title": "Reschedule Count"
+          },
+          "reschedules_left": {
+            "type": "integer",
+            "title": "Reschedules Left"
+          }
+        },
+        "type": "object",
+        "required": [
+          "can_cancel",
+          "can_reschedule",
+          "refund_pct",
+          "copy_key",
+          "reschedule_count",
+          "reschedules_left"
+        ],
+        "title": "EngineOut"
       },
       "Error": {
         "properties": {
@@ -4122,6 +4540,36 @@
           "locale"
         ],
         "title": "LinkRequest"
+      },
+      "LinkedBooking": {
+        "properties": {
+          "booking": {
+            "$ref": "#/components/schemas/app__booking_links__BookingOut"
+          },
+          "engine": {
+            "$ref": "#/components/schemas/EngineOut"
+          },
+          "pending_consents": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "marketing_email",
+                "sms",
+                "whatsapp"
+              ]
+            },
+            "type": "array",
+            "title": "Pending Consents"
+          }
+        },
+        "type": "object",
+        "required": [
+          "booking",
+          "engine",
+          "pending_consents"
+        ],
+        "title": "LinkedBooking",
+        "description": "Never the client's name, email, phone or ids, nor the worker id, source or events: the\nlink is a bearer credential (spec S4, test 12)."
       },
       "MemberOut": {
         "properties": {
@@ -4329,6 +4777,32 @@
           "amount_minor"
         ],
         "title": "PriceIn"
+      },
+      "RescheduleIn": {
+        "properties": {
+          "booking_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Booking Id"
+          },
+          "starts_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Starts At"
+          },
+          "reschedule_count": {
+            "type": "integer",
+            "title": "Reschedule Count"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "booking_id",
+          "starts_at",
+          "reschedule_count"
+        ],
+        "title": "RescheduleIn"
       },
       "RoleChange": {
         "properties": {
@@ -4853,6 +5327,20 @@
         ],
         "title": "TimeOffOut"
       },
+      "TokenIn": {
+        "properties": {
+          "token": {
+            "type": "string",
+            "title": "Token"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "token"
+        ],
+        "title": "TokenIn"
+      },
       "WorkerOut": {
         "properties": {
           "id": {
@@ -4878,6 +5366,231 @@
           "display_name"
         ],
         "title": "WorkerOut"
+      },
+      "app__availability__AvailabilityOut": {
+        "properties": {
+          "timezone": {
+            "type": "string",
+            "title": "Timezone"
+          },
+          "duration_minutes": {
+            "type": "integer",
+            "title": "Duration Minutes"
+          },
+          "workers": {
+            "items": {
+              "$ref": "#/components/schemas/WorkerOut"
+            },
+            "type": "array",
+            "title": "Workers"
+          },
+          "slots": {
+            "items": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "type": "array",
+            "title": "Slots"
+          }
+        },
+        "type": "object",
+        "required": [
+          "timezone",
+          "duration_minutes",
+          "workers",
+          "slots"
+        ],
+        "title": "AvailabilityOut"
+      },
+      "app__booking_links__AvailabilityOut": {
+        "properties": {
+          "timezone": {
+            "type": "string",
+            "title": "Timezone"
+          },
+          "slots": {
+            "items": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "type": "array",
+            "title": "Slots"
+          }
+        },
+        "type": "object",
+        "required": [
+          "timezone",
+          "slots"
+        ],
+        "title": "AvailabilityOut"
+      },
+      "app__booking_links__BookingOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "business": {
+            "type": "string",
+            "title": "Business"
+          },
+          "timezone": {
+            "type": "string",
+            "title": "Timezone"
+          },
+          "starts_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Starts At"
+          },
+          "ends_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Ends At"
+          },
+          "original_starts_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Original Starts At"
+          },
+          "service_name": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Service Name"
+          },
+          "price": {
+            "$ref": "#/components/schemas/Price"
+          },
+          "worker_display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Worker Display Name"
+          },
+          "cancellation_policy_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cancellation Policy Text"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "status",
+          "business",
+          "timezone",
+          "starts_at",
+          "ends_at",
+          "original_starts_at",
+          "service_name",
+          "price",
+          "worker_display_name",
+          "cancellation_policy_text"
+        ],
+        "title": "BookingOut"
+      },
+      "app__bookings__BookingOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "starts_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Starts At"
+          },
+          "ends_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Ends At"
+          },
+          "duration_minutes": {
+            "type": "integer",
+            "title": "Duration Minutes"
+          },
+          "service_name": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Service Name"
+          },
+          "price": {
+            "$ref": "#/components/schemas/Price"
+          },
+          "worker_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Worker Id"
+          },
+          "worker_display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Worker Display Name"
+          },
+          "cancellation_policy_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cancellation Policy Text"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "status",
+          "starts_at",
+          "ends_at",
+          "duration_minutes",
+          "service_name",
+          "price",
+          "worker_id",
+          "worker_display_name",
+          "cancellation_policy_text"
+        ],
+        "title": "BookingOut"
       }
     }
   }

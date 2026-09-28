@@ -1,0 +1,12 @@
+Een klant heeft de boeking verzet
+Hallo,
+
+$client heeft de boeking verzet:
+
+$service
+Was $old_date om $old_time
+Nu $date om $time ($zone)
+
+$link
+
+ziftbook

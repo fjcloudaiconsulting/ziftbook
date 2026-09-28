@@ -1,0 +1,12 @@
+Um cliente remarcou o agendamento
+Olá,
+
+$client remarcou o agendamento:
+
+$service
+Antes $old_date às $old_time
+Agora $date às $time ($zone)
+
+$link
+
+ziftbook

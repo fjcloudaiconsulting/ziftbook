@@ -1,0 +1,11 @@
+Een klant heeft de boeking geannuleerd
+Hallo,
+
+$client heeft de boeking geannuleerd:
+
+$service
+$date om $time ($zone)
+
+$link
+
+ziftbook

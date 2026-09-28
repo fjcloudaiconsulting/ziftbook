@@ -23,6 +23,7 @@ from app import (
     audit,
     auth,
     availability,
+    booking_links,
     bookings,
     business_settings,
     clients,
@@ -135,6 +136,7 @@ def create_app() -> FastAPI:
     app.include_router(availability.router)
     app.include_router(bookings.router)
     app.include_router(bookings.merchant_router)
+    app.include_router(booking_links.router)
 
     @app.middleware("http")
     async def json_only(
