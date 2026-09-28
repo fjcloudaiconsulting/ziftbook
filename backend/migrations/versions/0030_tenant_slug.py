@@ -109,8 +109,9 @@ def upgrade() -> None:
     # free_slug is not for ziftbook_app to call directly (it holds the (56, 0) advisory lock);
     # tenants_default_slug is SECURITY DEFINER so an app-role insert still reaches it. slug_ok
     # stays reachable: ck_tenants_slug's CHECK runs as the inserting role, not the trigger's.
-    # tenants_default_slug itself needs no grant: firing a trigger is not a privilege-checked call,
-    # only test_password_auth_db.py's blanket rule that a SECURITY DEFINER function is never PUBLIC.
+    # tenants_default_slug itself needs no grant, since firing a trigger is not a privilege-checked
+    # call. Its REVOKE exists only for test_password_auth_db.py's rule that a SECURITY DEFINER
+    # function is never executable by PUBLIC.
     op.execute("REVOKE EXECUTE ON FUNCTION slug_ok(text), free_slug(text) FROM PUBLIC")
     op.execute("GRANT EXECUTE ON FUNCTION slug_ok(text) TO ziftbook_app")
     op.execute("REVOKE EXECUTE ON FUNCTION tenants_default_slug() FROM PUBLIC")
