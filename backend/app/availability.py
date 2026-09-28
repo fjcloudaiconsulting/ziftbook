@@ -343,6 +343,32 @@ def offered(
     return Offered(slots, booked_rows)
 
 
+# member_id narrows it to one worker, so an unassigned or unknown member_id yields no candidates in
+# this one query, never a 404 (no membership probing).
+CANDIDATES = text("""
+SELECT w.member_id, m.display_name, w.weekday, w.starts_at, w.ends_at
+FROM working_hours w JOIN service_workers s
+  ON s.tenant_id = w.tenant_id AND s.member_id = w.member_id
+JOIN memberships m ON m.tenant_id = w.tenant_id AND m.id = w.member_id
+WHERE s.service_id = :service_id
+  AND (CAST(:member_id AS uuid) IS NULL OR w.member_id = :member_id)
+""")
+
+
+def candidates(
+    db: Session, service_id: UUID, member_id: UUID | None = None
+) -> tuple[dict[UUID, list[schedule.Row]], dict[UUID, str | None]]:
+    """Each worker of the service (or just member_id) with their working hours, and their names."""
+    hours: dict[UUID, list[schedule.Row]] = defaultdict(list)
+    names: dict[UUID, str | None] = {}
+    for m, display_name, weekday, starts_at, ends_at in db.execute(
+        CANDIDATES, {"service_id": service_id, "member_id": member_id}
+    ).tuples():
+        hours[m].append((weekday, starts_at, ends_at))
+        names[m] = display_name
+    return hours, names
+
+
 def now() -> datetime:
     return datetime.now(UTC)
 
@@ -413,20 +439,7 @@ def read_availability(
         settings = business_settings.read(db)
         # Here, not inside either loop below: once per request, never per worker per day.
         opening = schedule.envelope(db)
-        hours: dict[UUID, list[schedule.Row]] = defaultdict(list)
-        names: dict[UUID, str | None] = {}
-        for m, display_name, weekday, starts_at, ends_at in db.execute(
-            text("""
-            SELECT w.member_id, m.display_name, w.weekday, w.starts_at, w.ends_at
-            FROM working_hours w JOIN service_workers s
-              ON s.tenant_id = w.tenant_id AND s.member_id = w.member_id
-            JOIN memberships m ON m.tenant_id = w.tenant_id AND m.id = w.member_id
-            WHERE s.service_id = :service_id
-            """),
-            {"service_id": service_id},
-        ).tuples():
-            hours[m].append((weekday, starts_at, ends_at))
-            names[m] = display_name
+        hours, names = candidates(db, service_id)
         workers = sorted(hours)
         # An unassigned or unknown member_id: no slots, never a 404 (no membership probing).
         chosen = [m for m in workers if member_id in (None, m)]

@@ -10,7 +10,7 @@ comment on the constraint.
 """
 
 import json
-from collections import Counter, defaultdict
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Annotated, Any, Literal, NamedTuple
@@ -205,18 +205,6 @@ SELECT now() AS now, name, price_amount_minor, price_currency, duration_minutes,
 FROM services
 WHERE id = :service_id AND archived_at IS NULL
 FOR SHARE
-""")
-
-# The same statement read_availability runs (working_hours join service_workers join memberships),
-# with an optional member_id filter added so an unassigned or unknown member_id yields no
-# candidates in this one query, never a 404 (no membership probing).
-CANDIDATES = text("""
-SELECT w.member_id, m.display_name, w.weekday, w.starts_at, w.ends_at
-FROM working_hours w JOIN service_workers s
-  ON s.tenant_id = w.tenant_id AND s.member_id = w.member_id
-JOIN memberships m ON m.tenant_id = w.tenant_id AND m.id = w.member_id
-WHERE s.service_id = :service_id
-  AND (CAST(:member_id AS uuid) IS NULL OR w.member_id = :member_id)
 """)
 
 EXPIRE = text("""
@@ -469,13 +457,7 @@ def create(  # sync def: turnstile.verify's urlopen blocks, and runs in FastAPI'
                 raise ApiError(404, "not_found")
             settings = business_settings.read(db)  # 3
             opening = schedule.envelope(db)  # 4: once, never per worker or per day
-            hours: dict[UUID, list[schedule.Row]] = defaultdict(list)
-            names: dict[UUID, str | None] = {}
-            for m, display_name, weekday, starts_at, ends_at in db.execute(
-                CANDIDATES, {"service_id": service_id, "member_id": new.member_id}
-            ).tuples():
-                hours[m].append((weekday, starts_at, ends_at))
-                names[m] = display_name
+            hours, names = availability.candidates(db, service_id, new.member_id)
             candidates = sorted(hours)  # 5
             # 6. Validate the WHOLE posted map here, before any write, so a bad policy version is a
             #    422 with nothing written - regardless of whether anything was withdrawn.

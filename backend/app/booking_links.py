@@ -1,25 +1,10 @@
-"""ZIF-54: a client views, cancels or reschedules one booking from the link in their booking
-emails, with no account.
-
-D3/D4. The link is `{app_url}/{locale}/booking#{tenant_id}.{token}`, the invite shape: the
-fragment never reaches a server. The page exchanges it for a cookie at POST /session; every other
-route here authenticates from that cookie alone. Every route parses the token the same way
-(`UUID(tenant)` plus `invites.SECRET.fullmatch`), opens `tenant_context(tenant)` and looks the
-SHA-256 hash up under that tenant's row-level security. Every failure is the SAME 404
-`link_expired`: bad shape, unknown tenant, unknown hash, not live, or no cookie at all -- one
-oracle, not several (D4, test 6).
-
-D2. Liveness is derived, never stored: `resolve()` is the one place that predicate lives.
-
-D5/D6. The id is an assertion only (a stale cookie vs a fresh body is `409 link_changed`); the
-cancel and reschedule echoes (`refund_pct`, `reschedule_count`) guard a stale click against a term
-or a count that has since moved (`409 terms_changed` / `409 changed`).
+"""ZIF-54: a client views, cancels or reschedules one booking from their emailed link, no account.
+Every failure to find a live link is the SAME 404 `link_expired` (D4, test 6).
 """
 
 import hashlib
 import logging
-from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from types import SimpleNamespace
 from typing import Annotated, Any
 from uuid import UUID
@@ -44,6 +29,7 @@ from app import (
     schedule,
 )
 from app.bookings import CLIENT_CANCEL, INSERT_EVENT, RESCHEDULE
+from app.business_settings import BusinessSettings
 from app.cancellation import Decision
 from app.clients import Purpose
 from app.db import tenant_context
@@ -77,11 +63,25 @@ def _parse(token: str) -> tuple[UUID, bytes]:
     return tenant_id, hashlib.sha256(secret.encode()).digest()
 
 
-def _cookie_token(request: Request) -> tuple[UUID, bytes]:
-    raw = request.cookies.get(COOKIE)
-    if not raw:
-        raise ApiError(404, "link_expired")
-    return _parse(raw)
+def _enter(
+    request: Request,
+    key: str,
+    limit: int,
+    window: timedelta,
+    token: str | None = None,
+    refuse: ApiError | None = None,
+) -> tuple[UUID, bytes]:
+    """Per IP, before any hashing or lookup (D4, test 28): a stranger with a guessed shape must not
+    get free hash attempts past the limit. Then `refuse`, if any, then the body's token or else the
+    cookie's (a missing cookie parses like any other bad shape)."""
+    ip = request.client.host if request.client else None
+    if limits.hit({limits.ip_key(key, ip): limit}, window):
+        raise ApiError(429, "rate_limited")
+    if refuse is not None:
+        raise refuse
+    tenant_id, token_hash = _parse(token if token is not None else request.cookies.get(COOKIE, ""))
+    request.state.tenant_id = tenant_id
+    return tenant_id, token_hash
 
 
 RESOLVE = text("""
@@ -103,10 +103,13 @@ WHERE l.token_hash = :hash
 """)
 
 
-def resolve(db: Session, token_hash: bytes) -> Row[Any] | None:
-    """The live booking a link's hash names, or None (D2/D4: the caller answers 404 link_expired,
-    the only failure code this whole feature has)."""
-    return db.execute(RESOLVE, {"hash": token_hash}).first()
+def resolve(db: Session, token_hash: bytes) -> Row[Any]:
+    """The live booking a link's hash names, or 404 link_expired (D2/D4: the only failure code this
+    whole feature has)."""
+    row = db.execute(RESOLVE, {"hash": token_hash}).first()
+    if row is None:
+        raise ApiError(404, "link_expired")
+    return row
 
 
 class BookingOut(BaseModel):
@@ -208,6 +211,22 @@ def _policy(row: Any) -> cancellation.Policy:
     )
 
 
+def _event(
+    db: Session, booking_id: UUID, event: str, ip: str | None, user_agent: str | None
+) -> None:
+    db.execute(
+        INSERT_EVENT,
+        {
+            "booking_id": booking_id,
+            "event": event,
+            "ip": ip,
+            "user_agent": user_agent,
+            "policy_version": None,
+            "consent_purposes": None,
+        },
+    )
+
+
 def _view(row: Any, decision: Decision, zone: str, consents: list[Purpose]) -> LinkedBooking:
     return LinkedBooking(
         booking=BookingOut(
@@ -255,16 +274,11 @@ class TokenIn(BaseModel):
 def open_session(body: TokenIn, request: Request, response: Response) -> None:
     """Exchange the emailed token for the manage cookie. Writes nothing (D3, tests 8/9): not even
     the consent confirmation click, which is its own explicit POST (D11)."""
-    ip = request.client.host if request.client else None
-    # Per IP, before any hashing or lookup (D4, test 28): a stranger with a guessed shape must not
-    # get free hash attempts past the limit.
-    if limits.hit({limits.ip_key("booking_link_open", ip): OPEN_LIMIT}, OPEN_WINDOW):
-        raise ApiError(429, "rate_limited")
-    tenant_id, token_hash = _parse(body.token)
-    request.state.tenant_id = tenant_id
+    tenant_id, token_hash = _enter(
+        request, "booking_link_open", OPEN_LIMIT, OPEN_WINDOW, token=body.token
+    )
     with tenant_context(tenant_id) as db:
-        if resolve(db, token_hash) is None:
-            raise ApiError(404, "link_expired")
+        resolve(db, token_hash)
     response.set_cookie(
         COOKIE,
         body.token,
@@ -278,15 +292,9 @@ def open_session(body: TokenIn, request: Request, response: Response) -> None:
 
 @router.get("", name="read", responses={s: {"model": Error} for s in (404, 429)})
 def read(request: Request) -> LinkedBooking:
-    ip = request.client.host if request.client else None
-    if limits.hit({limits.ip_key("booking_link_read", ip): READ_LIMIT}, READ_WINDOW):
-        raise ApiError(429, "rate_limited")
-    tenant_id, token_hash = _cookie_token(request)
-    request.state.tenant_id = tenant_id
+    tenant_id, token_hash = _enter(request, "booking_link_read", READ_LIMIT, READ_WINDOW)
     with tenant_context(tenant_id) as db:
         row = resolve(db, token_hash)
-        if row is None:
-            raise ApiError(404, "link_expired")
         zone = business_settings.read(db).timezone
         decision = _decide(row, _policy(row))
         consents = pending_consents(db, row.booking_id, row.client_id)
@@ -298,15 +306,53 @@ class AvailabilityOut(BaseModel):
     slots: list[datetime]
 
 
-def _worker_hours(db: Session, service_id: UUID, worker_id: UUID) -> dict[UUID, list[schedule.Row]]:
-    """This booking's worker's working hours for this service, exactly the CANDIDATES shape
-    create() reads, filtered to one member so an unassigned or removed worker yields none."""
-    out: dict[UUID, list[schedule.Row]] = defaultdict(list)
-    for member_id, _display_name, weekday, starts_at, ends_at in db.execute(
-        bookings.CANDIDATES, {"service_id": service_id, "member_id": worker_id}
-    ).tuples():
-        out[member_id].append((weekday, starts_at, ends_at))
-    return out
+def _slots(
+    db: Session,
+    row: Any,
+    settings: BusinessSettings,
+    now: datetime,
+    first: date,
+    last: date,
+    *,
+    lock: bool,
+) -> set[datetime] | None:
+    """The starts this booking's worker could move it to on local days first..last, through the
+    same pipeline create() uses (D9), or None once its service is archived. `lock` holds the
+    service FOR SHARE, so a concurrent archive can't race a reschedule."""
+    service = db.execute(
+        text(
+            "SELECT buffer_minutes FROM services WHERE id = :id AND archived_at IS NULL"
+            + (" FOR SHARE" if lock else "")
+        ),
+        {"id": row.service_id},
+    ).first()
+    if service is None:
+        return None
+    # Filtered to this worker: an unassigned or removed worker has no hours, so no slots.
+    hours, _names = availability.candidates(db, row.service_id, row.worker_id)
+    first, last, earliest = availability.window(
+        now,
+        settings.timezone,
+        first,
+        last,
+        settings.min_notice_minutes,
+        settings.booking_horizon_days,
+    )
+    duration = (row.ends_at - row.starts_at) // timedelta(minutes=1)
+    result = availability.offered(
+        db,
+        members=[row.worker_id],
+        hours=hours,
+        opening=schedule.envelope(db),
+        settings=settings,
+        first=first,
+        last=last,
+        earliest=earliest,
+        duration=duration,
+        buffer=availability.buffer_for(duration, service.buffer_minutes, settings.buffer_pct),
+        exclude=row.booking_id,
+    )
+    return result.slots.get(row.worker_id, set())
 
 
 @router.get(
@@ -317,53 +363,26 @@ def read_availability(
     from_: Annotated[availability.Day, Query(alias="from")],
     to: availability.Day,
 ) -> AvailabilityOut:
-    ip = request.client.host if request.client else None
-    if limits.hit({limits.ip_key("booking_link_read", ip): READ_LIMIT}, READ_WINDOW):
-        raise ApiError(429, "rate_limited")
-    if to < from_ or (to - from_).days >= availability.MAX_DAYS:
-        raise ApiError(422, "invalid_range")
-    tenant_id, token_hash = _cookie_token(request)
-    request.state.tenant_id = tenant_id
+    bad_range = to < from_ or (to - from_).days >= availability.MAX_DAYS
+    tenant_id, token_hash = _enter(
+        request,
+        "booking_link_read",
+        READ_LIMIT,
+        READ_WINDOW,
+        refuse=ApiError(422, "invalid_range") if bad_range else None,
+    )
     with tenant_context(tenant_id) as db:
         row = resolve(db, token_hash)
-        if row is None or row.status != "confirmed":
+        if row.status != "confirmed":
             # A pending booking has no slot to move into yet (D7): the picker has nothing to show.
             raise ApiError(404, "link_expired")
         settings = business_settings.read(db)
-        zone = settings.timezone
-        service = db.execute(
-            text("SELECT buffer_minutes FROM services WHERE id = :id AND archived_at IS NULL"),
-            {"id": row.service_id},
-        ).first()
         # Nothing the reschedule would refuse (409 not_allowed / slot_unavailable): the page shows
         # "no times" rather than slots that can't be taken.
-        if service is None or not _decide(row, _policy(row)).can_reschedule:
-            return AvailabilityOut(timezone=zone, slots=[])
-        opening = schedule.envelope(db)
-        hours = _worker_hours(db, row.service_id, row.worker_id)
-        first, last, earliest = availability.window(
-            availability.now(),
-            zone,
-            from_,
-            to,
-            settings.min_notice_minutes,
-            settings.booking_horizon_days,
-        )
-        duration = (row.ends_at - row.starts_at) // timedelta(minutes=1)
-        result = availability.offered(
-            db,
-            members=[row.worker_id],
-            hours=hours,
-            opening=opening,
-            settings=settings,
-            first=first,
-            last=last,
-            earliest=earliest,
-            duration=duration,
-            buffer=availability.buffer_for(duration, service.buffer_minutes, settings.buffer_pct),
-            exclude=row.booking_id,
-        )
-    return AvailabilityOut(timezone=zone, slots=sorted(result.slots.get(row.worker_id, set())))
+        slots = None
+        if _decide(row, _policy(row)).can_reschedule:
+            slots = _slots(db, row, settings, availability.now(), from_, to, lock=False)
+    return AvailabilityOut(timezone=settings.timezone, slots=sorted(slots or ()))
 
 
 class CancelIn(BaseModel):
@@ -378,18 +397,12 @@ class CancelIn(BaseModel):
     responses={s: {"model": Error} for s in (404, 409, 415, 422, 429, 503)},
 )
 def cancel(body: CancelIn, request: Request) -> LinkedBooking:
-    ip = request.client.host if request.client else None
-    if limits.hit({limits.ip_key("booking_link_write", ip): WRITE_LIMIT}, WRITE_WINDOW):
-        raise ApiError(429, "rate_limited")
-    tenant_id, token_hash = _cookie_token(request)
-    request.state.tenant_id = tenant_id
+    tenant_id, token_hash = _enter(request, "booking_link_write", WRITE_LIMIT, WRITE_WINDOW)
     origin_ip, user_agent = auth.origin(request)
     try:
         with tenant_context(tenant_id) as db:
             db.execute(bookings.LOCK, {"key": bookings.LOCK_KEY})  # first statement, always
             row = resolve(db, token_hash)
-            if row is None:
-                raise ApiError(404, "link_expired")
             if body.booking_id != row.booking_id:
                 raise ApiError(409, "link_changed")
             decision = _decide(row, _policy(row))
@@ -400,17 +413,7 @@ def cancel(body: CancelIn, request: Request) -> LinkedBooking:
             changed = db.execute(CLIENT_CANCEL, {"id": row.booking_id}).first()
             if changed is None:  # lost a race under the same lock: belt and suspenders on D2
                 raise ApiError(404, "link_expired")
-            db.execute(
-                INSERT_EVENT,
-                {
-                    "booking_id": row.booking_id,
-                    "event": "cancelled_by_client",
-                    "ip": origin_ip,
-                    "user_agent": user_agent,
-                    "policy_version": None,
-                    "consent_purposes": None,
-                },
-            )
+            _event(db, row.booking_id, "cancelled_by_client", origin_ip, user_agent)
             bookings.email(db, tenant_id, row.booking_id, "booking_cancelled_by_client")
             bookings.email_merchants(
                 db, tenant_id, row.booking_id, row.worker_id, "booking_client_cancelled"
@@ -439,18 +442,12 @@ class RescheduleIn(BaseModel):
     responses={s: {"model": Error} for s in (404, 409, 415, 422, 429, 503)},
 )
 def reschedule(body: RescheduleIn, request: Request) -> LinkedBooking:
-    ip = request.client.host if request.client else None
-    if limits.hit({limits.ip_key("booking_link_write", ip): WRITE_LIMIT}, WRITE_WINDOW):
-        raise ApiError(429, "rate_limited")
-    tenant_id, token_hash = _cookie_token(request)
-    request.state.tenant_id = tenant_id
+    tenant_id, token_hash = _enter(request, "booking_link_write", WRITE_LIMIT, WRITE_WINDOW)
     origin_ip, user_agent = auth.origin(request)
     try:
         with tenant_context(tenant_id) as db:
             db.execute(bookings.LOCK, {"key": bookings.LOCK_KEY})  # first statement, always
             row = resolve(db, token_hash)
-            if row is None:
-                raise ApiError(404, "link_expired")
             if body.booking_id != row.booking_id:
                 raise ApiError(409, "link_changed")
             decision = _decide(row, _policy(row))
@@ -458,47 +455,11 @@ def reschedule(body: RescheduleIn, request: Request) -> LinkedBooking:
                 raise ApiError(409, "not_allowed")
             if body.reschedule_count != row.reschedule_count:
                 raise ApiError(409, "changed")
-            # D9: re-derive through the same pipeline create() uses. FOR SHARE the service, so a
-            # concurrent archive can't race this the way create()'s own step 2 guards against it.
-            service = db.execute(
-                text("""
-                SELECT duration_minutes, buffer_minutes FROM services
-                WHERE id = :service_id AND archived_at IS NULL
-                FOR SHARE
-                """),
-                {"service_id": row.service_id},
-            ).first()
-            if service is None:
-                raise ApiError(409, "slot_unavailable")
-            hours = _worker_hours(db, row.service_id, row.worker_id)
-            if row.worker_id not in hours:  # unassigned, or removed from the service
-                raise ApiError(409, "slot_unavailable")
             settings = business_settings.read(db)
             zone = settings.timezone
-            duration = (row.ends_at - row.starts_at) // timedelta(minutes=1)
             day = body.starts_at.astimezone(ZoneInfo(zone)).date()
-            first, last, earliest = availability.window(
-                row.now, zone, day, day, settings.min_notice_minutes, settings.booking_horizon_days
-            )
-            if first > last:
-                raise ApiError(409, "slot_unavailable")
-            opening = schedule.envelope(db)
-            result = availability.offered(
-                db,
-                members=[row.worker_id],
-                hours=hours,
-                opening=opening,
-                settings=settings,
-                first=first,
-                last=last,
-                earliest=earliest,
-                duration=duration,
-                buffer=availability.buffer_for(
-                    duration, service.buffer_minutes, settings.buffer_pct
-                ),
-                exclude=row.booking_id,
-            )
-            if body.starts_at not in result.slots.get(row.worker_id, set()):
+            slots = _slots(db, row, settings, row.now, day, day, lock=True)
+            if slots is None or body.starts_at not in slots:
                 raise ApiError(409, "slot_unavailable")
             try:
                 changed = db.execute(
@@ -514,17 +475,7 @@ def reschedule(body: RescheduleIn, request: Request) -> LinkedBooking:
                 raise
             if changed is None:  # the echo was stale under our own lock: the CHECK is the backstop
                 raise ApiError(409, "changed")
-            db.execute(
-                INSERT_EVENT,
-                {
-                    "booking_id": row.booking_id,
-                    "event": "rescheduled",
-                    "ip": origin_ip,
-                    "user_agent": user_agent,
-                    "policy_version": None,
-                    "consent_purposes": None,
-                },
-            )
+            _event(db, row.booking_id, "rescheduled", origin_ip, user_agent)
             suffix = f":r{changed.reschedule_count}"
             new_iso = changed.starts_at.isoformat()
             bookings.email(
@@ -586,18 +537,12 @@ def confirm_consents(body: ConsentsIn, request: Request) -> LinkedBooking:
     ticked at booking (the `created` event's true values), minus any later withdrawal, and records
     them with `clients.record_consents(source='booking_page', ...)`. Runs once per booking: a
     second click finds nothing pending and changes nothing (idempotent, test 26)."""
-    ip = request.client.host if request.client else None
-    if limits.hit({limits.ip_key("booking_link_write", ip): WRITE_LIMIT}, WRITE_WINDOW):
-        raise ApiError(429, "rate_limited")
-    tenant_id, token_hash = _cookie_token(request)
-    request.state.tenant_id = tenant_id
+    tenant_id, token_hash = _enter(request, "booking_link_write", WRITE_LIMIT, WRITE_WINDOW)
     origin_ip, user_agent = auth.origin(request)
     try:
         with tenant_context(tenant_id) as db:
             db.execute(bookings.LOCK, {"key": bookings.LOCK_KEY})  # first statement, always
             row = resolve(db, token_hash)
-            if row is None:
-                raise ApiError(404, "link_expired")
             if body.booking_id != row.booking_id:
                 raise ApiError(409, "link_changed")
             event = db.execute(CONSENT_EVENT, {"id": row.booking_id}).first()
@@ -613,17 +558,7 @@ def confirm_consents(body: ConsentsIn, request: Request) -> LinkedBooking:
                 ip=origin_ip,
                 user_agent=user_agent,
             )
-            db.execute(
-                INSERT_EVENT,
-                {
-                    "booking_id": row.booking_id,
-                    "event": "consent_confirmed",
-                    "ip": origin_ip,
-                    "user_agent": user_agent,
-                    "policy_version": None,
-                    "consent_purposes": None,
-                },
-            )
+            _event(db, row.booking_id, "consent_confirmed", origin_ip, user_agent)
             zone = business_settings.read(db).timezone
             decision = _decide(row, _policy(row))
     except OperationalError:

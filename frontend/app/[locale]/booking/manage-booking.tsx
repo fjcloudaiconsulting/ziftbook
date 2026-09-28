@@ -1,7 +1,7 @@
 "use client";
 
 import { useLocale, useTranslations } from "next-intl";
-import { type ReactNode, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import {
   bookingLinkAvailability,
@@ -367,7 +367,7 @@ function Manage({ token }: { token: string | null }) {
           <div className={styles.slots} role="group" aria-label={t("timesOn", { day: dayLabel(pick.day!, { weekday: "long", day: "numeric", month: "long" }) })}>
             {times.map((slot) => (
               <button key={slot} className={`${styles.button} ${styles.secondary}`} type="button" onClick={() => setView({ ...pick, chosen: slot })}>
-                {new Intl.DateTimeFormat(dateLocale(locale), { hour: "2-digit", minute: "2-digit", timeZone: zone }).format(new Date(slot))}
+                {localWhen(slot, zone, dateLocale(locale)).time}
               </button>
             ))}
           </div>
@@ -422,7 +422,8 @@ function Manage({ token }: { token: string | null }) {
         {!engine.can_cancel && !engine.can_reschedule && <p className={styles.hint}>{t("noChanges", { business: booking.business })}</p>}
       </div>
       {linked.pending_consents.length > 0 && (
-        <Consent text={t("consentAsk", { business: booking.business, purposes })}>
+        <div className={styles.empty}>
+          <span>{t("consentAsk", { business: booking.business, purposes })}</span>
           <button
             className={`${styles.button} ${styles.primary}`}
             type="button"
@@ -432,19 +433,10 @@ function Manage({ token }: { token: string | null }) {
             {busy && <span className={styles.spinner} aria-hidden="true" />}
             {busy ? t("confirming") : t("consentConfirm")}
           </button>
-        </Consent>
+        </div>
       )}
       {view.note === "consentDone" && <Banner tone="info">{t("consentDone")}</Banner>}
     </>
-  );
-}
-
-function Consent({ text, children }: { text: string; children: ReactNode }) {
-  return (
-    <div className={styles.empty}>
-      <span>{text}</span>
-      {children}
-    </div>
   );
 }
 

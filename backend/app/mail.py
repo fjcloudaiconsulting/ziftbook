@@ -258,10 +258,7 @@ STATUS_FOR = {
     "booking_client_rescheduled": "confirmed",
 }
 
-# ZIF-54 D1/D3. The client-facing templates whose $link is the guest booking link (the fragment
-# token), never the console: exactly the ones the client already reads a status update from. The
-# route (app/booking_links.py) mints no link of its own -- every link a client ever sees comes from
-# here, minted at send time, one insert-only booking_links row per email actually sent.
+# ZIF-54 D1: the client templates whose $link is the guest booking link, minted here at send time.
 LINKED = frozenset({"booking_received", "booking_confirmed", "booking_reminder"})
 
 BOOKING = text("""
