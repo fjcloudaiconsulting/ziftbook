@@ -45,9 +45,14 @@ BEGIN
   -- statement below a fresh snapshot, so a same-slug sign-up that committed first is seen. Held
   -- to commit. Sign-ups are rare.
   PERFORM pg_advisory_xact_lock(56, 0);
-  -- Letters NFKD does not decompose, first; then strip combining marks (U+0300..U+036F).
-  base := translate(replace(replace(replace(replace(lower(p_name),
-            'ß', 'ss'), 'æ', 'ae'), 'œ', 'oe'), 'þ', 'th'), 'øłđ', 'old');
+  -- Letters NFKD does not decompose, first; then strip combining marks (U+0300..U+036F). lower()
+  -- under COLLATE "C" only folds ASCII, so AEOEUEDSS's uppercase forms (AEOELDPTHSS) must be
+  -- mapped explicitly too, not just their lower() output.
+  base := translate(replace(replace(replace(replace(
+            replace(replace(replace(replace(lower(p_name),
+              'ß', 'ss'), 'ẞ', 'ss'), 'æ', 'ae'), 'Æ', 'ae'),
+            'œ', 'oe'), 'Œ', 'oe'), 'þ', 'th'), 'Þ', 'th'),
+            'øłđØŁĐ', 'oldold');
   base := regexp_replace(normalize(base, NFKD), '[\u0300-\u036f]', '', 'g');
   base := trim(both '-' from regexp_replace(base, '[^a-z0-9]+', '-', 'g'));
   base := trim(both '-' from left(base, 34));   -- room for "-NNNNN" within 40

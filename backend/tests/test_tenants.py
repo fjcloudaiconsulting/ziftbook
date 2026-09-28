@@ -160,6 +160,17 @@ def test_the_derivation_table(app_engine: Engine) -> None:
     assert valid == [True] * 7
 
 
+# 3b. fence — review nit: lower() under COLLATE "C" only folds ASCII, so ÆØŁĐŒÞẞ stay uppercase;
+# the letter mapping must catch those forms too or they turn into a hyphen, not ae/o/l/d/oe/th/ss.
+def test_the_derivation_maps_uppercase_special_letters_under_collate_c(app_engine: Engine) -> None:
+    t = tag()
+    with app_engine.connect() as conn:  # rolled back on close
+        conn.execute(TIMEOUT)
+        query = text('SELECT free_slug((:n)::text COLLATE "C")')
+        slug = conn.scalar(query, {"n": f"ÆØŁĐŒÞẞ {t}"})
+    assert slug == f"aeoldoethss-{t}"
+
+
 # 4. fence
 def test_the_probe_gives_up_after_a_thousand_candidates(app_engine: Engine) -> None:
     t = tag()

@@ -723,6 +723,22 @@ def plain_insert(conn: Connection) -> str:
         return str(getattr(error.orig, "sqlstate", error))
 
 
+def downgrade_outcome(cfg: Config) -> str | None:
+    """Run the downgrade; None on success, else its SQLSTATE (or exception type as a fallback).
+
+    A broken downgrade (e.g. dropping slug_ok before the column that CHECKs against it) raises
+    instead of returning, so a bare `command.downgrade` call would turn the test's assertion below
+    into an unhandled error. Capturing the outcome here keeps the failure an assertion, not an
+    error, and a `finally: upgrade head` around the caller can no longer hide it.
+    """
+    try:
+        command.downgrade(cfg, "0029")
+        return None
+    except Exception as error:
+        orig = getattr(error, "orig", None)
+        return getattr(orig, "sqlstate", None) or type(error).__name__
+
+
 # ZIF-56 test 11. fence
 def test_0030_round_trips(
     migrated: None, migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
@@ -731,8 +747,12 @@ def test_0030_round_trips(
     ids: list[uuid.UUID] = []
     cfg = lock_timeout_config(monkeypatch)
     try:
-        command.downgrade(cfg, "0029")
+        assert downgrade_outcome(cfg) is None
         with migrate_engine.begin() as conn:
+            # A downgrade that misses a function leaves it behind here, not at head, so catch it
+            # now as an assertion; left uncaught, the next upgrade's CREATE FUNCTION would collide
+            # with the leftover and crash the test setup instead of failing an assertion.
+            assert tuple(conn.execute(text(SLUG_OBJECTS)).one()) == (0, 0, True)
             for name in (f"Round {tag}", f"Trip {tag}"):
                 ids.append(
                     conn.scalar(
@@ -759,12 +779,19 @@ def test_0030_round_trips(
                 == 1
             )
             assert tuple(conn.execute(text(SLUG_OBJECTS)).one()) == (1, 1, False)
-        command.downgrade(cfg, "0029")
+        assert downgrade_outcome(cfg) is None
         with migrate_engine.begin() as conn:
             assert tuple(conn.execute(text(SLUG_OBJECTS)).one()) == (0, 0, True)
             assert plain_insert(conn) == "ok"
     finally:
-        command.upgrade(cfg, "head")
+        # Best-effort: a broken migration under test can leave the DB in a state this can't
+        # cleanly return to head from (e.g. a function a wrong downgrade failed to drop, colliding
+        # with upgrade's CREATE FUNCTION). Swallow that here so it can never replace the assertion
+        # above as the test's reported failure.
+        try:
+            command.upgrade(cfg, "head")
+        except Exception:
+            pass
     with migrate_engine.begin() as conn:
         assert conn.execute(SLUGS, {"ids": ids}).tuples().all() == before
         conn.execute(text("DELETE FROM tenants WHERE id = ANY(:ids)"), {"ids": ids})
