@@ -58,7 +58,9 @@ from tests.test_turnstile import FakeAnswer
 from tests.test_working_hours import seed
 
 ZONE = "Europe/Amsterdam"
-TODAY = date.today()
+# The business's date, never the host's: on a UTC host between 22:00 and 24:00 the host is still
+# on yesterday, and every "two days out" would land one day nearer (ZIF-54 F1).
+TODAY = datetime.now(ZoneInfo(ZONE)).date()
 DAY = TODAY + timedelta(days=2)
 
 

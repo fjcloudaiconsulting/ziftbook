@@ -5,7 +5,7 @@ each fence protects."""
 import threading
 import time
 import uuid
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any, get_args
 
 import pytest
@@ -33,9 +33,6 @@ from tests.conftest import (
 from tests.test_availability_api import assign, new_service, seed_booking, weekdays
 from tests.test_bookings_api import at, post_booking
 from tests.test_working_hours import seed
-
-TODAY = date.today()
-DAY = TODAY + timedelta(days=2)
 
 
 @pytest.fixture

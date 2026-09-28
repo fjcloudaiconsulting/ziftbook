@@ -69,6 +69,12 @@ describe("which screen an answer leads to", () => {
     }
   });
 
+  test("fence: a 409 code named like an Object.prototype member is unknown too (kills `in` for Object.hasOwn)", () => {
+    for (const code of ["toString", "constructor", "__proto__", "hasOwnProperty"]) {
+      assert.equal(answerScreen({ status: 409, code }), "retry", code);
+    }
+  });
+
   test("a success is the booking", () => {
     assert.equal(answerScreen({ status: 200 }), "booking");
     assert.equal(answerScreen({ status: 204 }), "booking");

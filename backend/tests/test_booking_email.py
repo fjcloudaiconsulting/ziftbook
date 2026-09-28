@@ -880,6 +880,22 @@ def test_a_linked_client_email_carries_a_fragment_token_that_hashes_into_booking
     assert "X-Mailgun-Track-Clicks: no" in raw
 
 
+# fence (D1). A job already sent, run again, stores no second booking_links row: the token it
+# mints for the dedupe no-op is dropped unused. Kills INSERT_LINK regardless of _outbox's status.
+def test_a_rerun_of_a_sent_job_stores_no_link(
+    people: People, app: FastAPI, ready: str, app_engine: Engine
+) -> None:
+    booking_id = make_pending(app, people.a, ready)
+    assert patch(signed_in(app, people.a, people.both), booking_id, "confirmed").status_code == 200
+
+    job = run_send_booking(people.a, booking_id, "booking_confirmed")
+    assert len(link_hash(app_engine, people.a, booking_id)) == 1
+    mail.send_booking(job)  # outbox already 'sent'
+
+    assert len(link_hash(app_engine, people.a, booking_id)) == 1
+    assert len(_search(_client_email(people.a, booking_id))) == 1
+
+
 def texts_to(email: str) -> list[str]:
     """The text body of every message Mailpit got for email."""
     out = []

@@ -12,7 +12,7 @@ import threading
 import urllib.request
 import uuid
 from collections.abc import Callable
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import UTC, datetime, time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -51,13 +51,9 @@ from tests.test_booking_email import (
     template_of,
     texts_to,
 )
-from tests.test_bookings_api import at, post_booking
+from tests.test_bookings_api import DAY, TODAY, ZONE, at, post_booking
 from tests.test_bookings_approval_api import ago, expire, make_pending, patch, shift
 from tests.test_working_hours import seed
-
-ZONE = "Europe/Amsterdam"
-TODAY = date.today()
-DAY = TODAY + timedelta(days=2)
 
 
 @pytest.fixture
@@ -79,6 +75,27 @@ def ready(people: People, owner: TestClient) -> str:
     seed(people.a, people.both, weekdays("09:00", "17:00"))
     assign(people.a, service_id, member_id(people.a, people.both))
     return service_id
+
+
+@pytest.fixture
+def worker_ready(people: People, owner: TestClient) -> str:
+    """A 30-minute service performed only by only_a, a worker who is not an owner: its bookings
+    are the ones that tell "every owner" apart from "every owner plus the assigned worker" (R1)."""
+    service_id = new_service(owner)
+    seed(people.a, people.only_a, weekdays("09:00", "17:00"))
+    assign(people.a, service_id, member_id(people.a, people.only_a))
+    return service_id
+
+
+def merchant_recipients(
+    app_engine: Engine, tenant_id: uuid.UUID, booking_id: str, template: str
+) -> list[str]:
+    """The user_id of every merchant email of `template` enqueued for this booking, sorted."""
+    return sorted(
+        j["payload"]["user_id"]
+        for j in jobs_for_booking(app_engine, tenant_id, booking_id)
+        if template_of(j) == template
+    )
 
 
 def confirmed_booking(app: FastAPI, tenant_id: object, service_id: str, **overrides: Any) -> str:
@@ -290,7 +307,7 @@ def test_json_only_cookie_flags_and_headers(people: People, app: FastAPI, ready:
     token = mint(people.a, booking_id)
     exchange = post(new_client(app), "/session", {"token": f"{people.a}.{token}"})
     flags = {f.strip().lower() for f in exchange.headers["set-cookie"].split(";")[1:]}
-    assert {"httponly", "secure", "samesite=strict", "path=/"} <= flags
+    assert {"httponly", "secure", "samesite=strict", "path=/", "max-age=3600"} <= flags
 
     # Every route, success and failure alike (spec S4).
     view = get(client)
@@ -409,7 +426,10 @@ def test_a_stale_refund_echo_is_terms_changed(people: People, app: FastAPI, read
 def test_a_pending_booking_can_be_cancelled_but_not_rescheduled(
     people: People, app: FastAPI, ready: str
 ) -> None:
-    booking_id = confirmed_booking(app, people.a, ready)  # still pending, not yet accepted
+    # Still pending, not yet accepted, and 20 days out: the engine alone would refund 100, so the
+    # refund 0 below is the pending rule's at any hour. Kills a pending keeping the engine's pct.
+    far = at("10:00", day=TODAY + timedelta(days=20))
+    booking_id = confirmed_booking(app, people.a, ready, starts_at=far)
     client = linked(app, people.a, booking_id)
 
     view = get(client).json()
@@ -435,9 +455,9 @@ def test_a_pending_booking_can_be_cancelled_but_not_rescheduled(
 # 23. fence. A client cancel enqueues booking_cancelled_by_client once, booking_client_cancelled
 # once per owner/worker, even on a double submit.
 def test_client_cancel_enqueues_the_right_emails_once_each(
-    people: People, app: FastAPI, ready: str, app_engine: Engine
+    people: People, app: FastAPI, worker_ready: str, app_engine: Engine
 ) -> None:
-    booking_id = confirmed_booking(app, people.a, ready)
+    booking_id = confirmed_booking(app, people.a, worker_ready)
     assert patch(signed_in(app, people.a, people.both), booking_id, "confirmed").status_code == 200
     client = linked(app, people.a, booking_id)
     refund_pct = get(client).json()["engine"]["refund_pct"]
@@ -450,7 +470,15 @@ def test_client_cancel_enqueues_the_right_emails_once_each(
     jobs = jobs_for_booking(app_engine, people.a, booking_id)
     templates = [template_of(j) for j in jobs]
     assert templates.count("booking_cancelled_by_client") == 1
-    assert templates.count("booking_client_cancelled") == 1  # one owner in this fixture
+    with tenant_context(people.a) as session:
+        recorded = session.scalars(
+            text("SELECT event FROM booking_events WHERE booking_id = :id"), {"id": booking_id}
+        ).all()
+    assert recorded.count("cancelled_by_client") == 1  # kills the cancel logging another event
+    # R1: the one owner and the assigned (non-owner) worker, once each. Kills worker_id=None.
+    assert merchant_recipients(
+        app_engine, people.a, booking_id, "booking_client_cancelled"
+    ) == sorted([str(people.both), str(people.only_a)])
 
 
 # 20. fence. cancelled_by_client is not, and never becomes, a merchant PATCH target.
@@ -635,9 +663,9 @@ def same_instant(payload_value: str, api_value: str) -> bool:
 # reminder sends nothing. Kills a key without the count, a forgotten remind (the confirm already
 # enqueued a reminder for the OLD start, so "some reminder exists" proves nothing) and SEQUENCE:0.
 def test_reschedule_enqueues_confirmation_merchant_email_and_reminder(
-    people: People, app: FastAPI, ready: str, owner: TestClient, app_engine: Engine
+    people: People, app: FastAPI, worker_ready: str, owner: TestClient, app_engine: Engine
 ) -> None:
-    booking_id = confirmed_booking(app, people.a, ready, starts_at=at("10:00"))
+    booking_id = confirmed_booking(app, people.a, worker_ready, starts_at=at("10:00"))
     assert patch(owner, booking_id, "confirmed").status_code == 200
     client = linked(app, people.a, booking_id)
 
@@ -648,6 +676,10 @@ def test_reschedule_enqueues_confirmation_merchant_email_and_reminder(
     keys = {j["dedupe_key"] for j in jobs}
     assert any(k.endswith("booking_confirmed:r1") for k in keys)
     assert any(f"booking_client_rescheduled:r1:{people.both}" in k for k in keys)
+    # R1: the one owner and the assigned (non-owner) worker, once each. Kills worker_id=None.
+    assert merchant_recipients(
+        app_engine, people.a, booking_id, "booking_client_rescheduled"
+    ) == sorted([str(people.both), str(people.only_a)])
     reminders = [
         j
         for j in booking_jobs(app_engine, people.a, booking_id)
@@ -687,7 +719,10 @@ def test_refund_is_anchored_to_the_earliest_start_ever_held(
     booking_id = confirmed_booking(app, people.a, ready, starts_at=at("09:00"))
     assert patch(owner, booking_id, "confirmed").status_code == 200
     client = linked(app, people.a, booking_id)
-    assert get(client).json()["engine"]["refund_pct"] == 0
+    engine = get(client).json()["engine"]
+    # Still cancellable, but no refund left: no deadline to show. Kills free_until without the
+    # refund_pct guard (an anchor minus 120h, already in the past).
+    assert (engine["can_cancel"], engine["refund_pct"], engine["free_until"]) == (True, 0, None)
     far = post(
         client,
         "/reschedule",
@@ -811,19 +846,40 @@ def test_availability_offers_nothing_the_reschedule_would_refuse(
     spent = confirmed_booking(app, people.a, ready, starts_at=at("10:00"))
     assert patch(owner, spent, "confirmed").status_code == 200
     assert put_settings_max(owner, 3) == 200
-    archived = confirmed_booking(app, people.a, ready, starts_at=at("11:00"))
+    # Its own service, so archiving it leaves `spent`'s service live: each leg kills its own branch.
+    doomed = new_service(owner)
+    assign(people.a, doomed, member_id(people.a, people.both))
+    archived = confirmed_booking(app, people.a, doomed, starts_at=at("11:00"))
     assert patch(owner, archived, "confirmed").status_code == 200
     archived_client = linked(app, people.a, archived)
     assert get(archived_client, "/availability", **day).json()["slots"]  # offered while live
 
     with tenant_context(people.a) as session:
         session.execute(
-            text("UPDATE services SET archived_at = now() WHERE id = :id"), {"id": ready}
+            text("UPDATE services SET archived_at = now() WHERE id = :id"), {"id": doomed}
         )
 
     for client in (linked(app, people.a, spent), archived_client):
         response = get(client, "/availability", **day)
         assert (response.status_code, response.json()["slots"]) == (200, [])
+
+
+# fence (D9). The picker leaves the booking's own slot out of "booked": a 10:00-10:30 booking is
+# offered 10:00 again, a slot that overlaps only itself. Kills GET /availability without exclude=.
+def test_availability_offers_slots_overlapping_the_booking_itself(
+    people: People, app: FastAPI, ready: str, owner: TestClient
+) -> None:
+    booking_id = confirmed_booking(app, people.a, ready, starts_at=at("10:00"))
+    assert patch(owner, booking_id, "confirmed").status_code == 200
+
+    response = get(
+        linked(app, people.a, booking_id),
+        "/availability",
+        **{"from": DAY.isoformat(), "to": DAY.isoformat()},
+    )
+
+    slots = {datetime.fromisoformat(s) for s in response.json()["slots"]}
+    assert datetime.fromisoformat(at("10:00")) in slots
 
 
 # fence (D10). The create/accept confirmation still queued when the client reschedules sends
@@ -1032,6 +1088,30 @@ def test_confirm_skips_a_purpose_withdrawn_after_booking(
             .all()
         )
     assert list(recorded) == ["marketing_email"]
+
+
+# fence (D11). A withdrawal made BEFORE the booking's grant does not override it: the grant is
+# the newer word. Kills WITHDRAWN_SINCE without `created_at > :since`.
+def test_a_withdrawal_older_than_the_grant_does_not_suppress_it(
+    people: People, app: FastAPI, ready: str, owner: TestClient, migrate_engine: Engine
+) -> None:
+    booking_id = confirmed_booking(app, people.a, ready, consents={"sms": True})
+    assert patch(owner, booking_id, "confirmed").status_code == 200
+    # As the migrate role: the app role may not back-date created_at, and no route can.
+    with migrate_engine.begin() as conn:
+        conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(people.a)})
+        conn.execute(
+            text("""
+            INSERT INTO consents (tenant_id, client_id, purpose, granted, text_shown,
+                                  policy_version, source, created_at)
+            SELECT tenant_id, client_id, 'sms', false, 'withdrawn', '2026-09-01', 'merchant',
+                   now() - interval '1 day'
+            FROM bookings WHERE id = :id
+            """),
+            {"id": booking_id},
+        )
+
+    assert get(linked(app, people.a, booking_id)).json()["pending_consents"] == ["sms"]
 
 
 # 26. fence. Confirming twice: one set of rows, one event.
