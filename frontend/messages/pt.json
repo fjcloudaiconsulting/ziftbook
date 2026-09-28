@@ -251,7 +251,12 @@
       "comingSoon": "Os seus clientes chegam em breve."
     },
     "settings": {
-      "comingSoon": "As suas configurações chegam em breve."
+      "maxReschedulesLabel": "Alterações que um cliente pode fazer a uma marcação",
+      "maxReschedulesHint": "Quantas vezes um cliente pode mudar uma marcação para outra hora, de 0 a 10. Com 0 fica desligado. As novas marcações ficam com o novo número; as existentes mantêm o delas.",
+      "maxReschedulesRange": "Introduza um número inteiro de 0 a 10.",
+      "maxReschedulesOwnerOnly": "Só o proprietário pode alterar isto.",
+      "save": "Guardar",
+      "saved": "Guardado. As novas marcações ficam com este número."
     },
     "errors": {
       "ownerOnly": "Só um proprietário pode fazer isso.",
@@ -411,5 +416,67 @@
       "errorMissingEnd": "Escolha um horário de término.",
       "notFound": "Este bloqueio não foi encontrado. Pode já ter sido removido."
     }
+  },
+  "BookingLink": {
+    "title": "A sua marcação",
+    "opening": "A abrir a sua marcação…",
+    "notActiveTitle": "Este link já não está ativo",
+    "notActiveLede": "Pode ser de uma marcação que foi cancelada ou que já aconteceu. Se tiver um email mais recente sobre esta marcação, use o link desse email.",
+    "error": "Algo correu mal, tente novamente",
+    "retry": "Tentar novamente",
+    "when": "{date} às {time} ({zone})",
+    "with": "Com {name}",
+    "withTeam": "Com alguém da equipa",
+    "confirmed": "Confirmada",
+    "waiting": "À espera que {business} aceite",
+    "originally": "Originalmente {when}",
+    "copy": {
+      "full_refund_reschedule": "Pode cancelar sem custos ou mudar a hora.",
+      "full_refund_no_reschedule": "Pode cancelar sem custos. Já é tarde para mudar a hora online.",
+      "no_refund_reschedule": "Se cancelar agora, não há reembolso. Ainda pode mudar a hora.",
+      "no_refund_no_reschedule": "Se cancelar agora, não há reembolso, e já é tarde para mudar a hora online.",
+      "started": "Esta marcação já começou.",
+      "pending": "Ainda nada foi pago, por isso não há nada a reembolsar."
+    },
+    "refundFull": "Recebe o reembolso total.",
+    "refundNone": "Se cancelar agora, não há reembolso.",
+    "pendingNote": "Pode mudar a hora assim que {business} aceitar.",
+    "cancel": "Cancelar marcação",
+    "reschedule": "Mudar data ou hora ({n, plural, one {resta # alteração} other {restam # alterações}})",
+    "noChanges": "Esta marcação já não pode ser alterada online. Contacte {business}.",
+    "consentAsk": "Quando marcou, pediu a {business} para manter o contacto por: {purposes}. Confirma?",
+    "purposes": {
+      "marketing_email": "email",
+      "sms": "SMS",
+      "whatsapp": "WhatsApp"
+    },
+    "consentConfirm": "Confirmar",
+    "consentDone": "Obrigado, está confirmado.",
+    "confirming": "A confirmar…",
+    "cancelTitle": "Cancelar esta marcação?",
+    "yesCancel": "Sim, cancelar",
+    "keep": "Manter a marcação",
+    "cancelling": "A cancelar…",
+    "termsChanged": "As condições de cancelamento mudaram há instantes. Verifique-as novamente.",
+    "changed": "Esta marcação acabou de ser alterada.",
+    "notAllowed": "Isso já não pode ser feito online. Esta é a sua marcação neste momento.",
+    "pickTitle": "Escolha uma nova hora",
+    "previousWeek": "Semana anterior",
+    "nextWeek": "Semana seguinte",
+    "loadingTimes": "A carregar horas livres…",
+    "noTimes": "Sem horas livres esta semana",
+    "timesOn": "Horas livres em {day}",
+    "slotTaken": "Essa hora acabou de ser ocupada.",
+    "moveAsk": "Mudar de {old} para {new}? {n, plural, =0 {Esta é a última alteração que pode fazer.} one {Pode alterá-la mais # vez.} other {Pode alterá-la mais # vezes.}}",
+    "confirm": "Confirmar",
+    "back": "Voltar",
+    "moving": "A mudar…",
+    "cancelledTitle": "A sua marcação foi cancelada",
+    "cancelledLede": "Enviámos-lhe uma confirmação por email.",
+    "movedTitle": "A sua marcação passou para {when}",
+    "movedLede": "Enviámos-lhe uma nova confirmação por email, com um ficheiro de calendário.",
+    "backToBooking": "Voltar à sua marcação",
+    "anotherTitle": "Abriu outra marcação neste navegador",
+    "anotherLede": "Para gerir esta, abra novamente o link no email dela."
   }
 }
