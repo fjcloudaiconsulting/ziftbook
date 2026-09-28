@@ -351,6 +351,7 @@ def test_linked_booking_carries_no_client_identity(
         "copy_key",
         "reschedule_count",
         "reschedules_left",
+        "free_until",
     }
     assert set(body["booking"]) == {
         "id",
@@ -736,6 +737,38 @@ def test_moving_near_then_far_again_keeps_the_near_refund_anchor(
     assert get(client).json()["engine"]["refund_pct"] == 0
     cancelled = post(client, "/cancel", cancel_body(booking_id, 0))
     assert (cancelled.status_code, cancelled.json()["engine"]["refund_pct"]) == (200, 0)
+
+
+# fence (owner ruling). free_until is the refund anchor (earliest_starts_at) minus
+# free_cancellation_hours: book 20 days out, move 10 days LATER, and the deadline stays with the
+# first start. Kills computing it from the current starts_at.
+def test_free_until_is_the_earliest_start_minus_the_free_window(
+    people: People, app: FastAPI, ready: str, owner: TestClient
+) -> None:
+    assert put_settings(owner, {"free_cancellation_hours": 48}).status_code == 200
+    first = at("10:00", day=TODAY + timedelta(days=20))
+    booking_id = confirmed_booking(app, people.a, ready, starts_at=first)
+    assert patch(owner, booking_id, "confirmed").status_code == 200
+    client = linked(app, people.a, booking_id)
+    later = at("10:00", day=TODAY + timedelta(days=30))
+    moved = post(client, "/reschedule", reschedule_body(booking_id, later, 0))
+    assert moved.status_code == 200, moved.json()
+
+    deadline = datetime.fromisoformat(first) - timedelta(hours=48)
+    for view in (moved.json(), get(client).json()):
+        assert view["engine"]["refund_pct"] == 100
+        assert datetime.fromisoformat(view["engine"]["free_until"]) == deadline
+
+
+# fence (demo blocker, ZIF-136). The read is served at the prefix itself, with no trailing slash:
+# a slash-only route answers the frontend's slash-less call with a 307 whose Location carries the
+# internal API origin. Kills the route back at "/".
+def test_the_read_is_served_without_a_trailing_slash(
+    people: People, app: FastAPI, ready: str
+) -> None:
+    client = linked(app, people.a, confirmed_booking(app, people.a, ready))
+    response = client.get(URL, follow_redirects=False)
+    assert response.status_code == 200, (response.status_code, response.headers.get("location"))
 
 
 # 15. fence. A double submit with the same echoed count: one 200, one 409 changed. And RESCHEDULE

@@ -3161,7 +3161,7 @@
         }
       }
     },
-    "/api/public/booking-link/": {
+    "/api/public/booking-link": {
       "get": {
         "tags": [
           "booking-link"
@@ -4394,6 +4394,18 @@
           "reschedules_left": {
             "type": "integer",
             "title": "Reschedules Left"
+          },
+          "free_until": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Free Until"
           }
         },
         "type": "object",
@@ -4403,7 +4415,8 @@
           "refund_pct",
           "copy_key",
           "reschedule_count",
-          "reschedules_left"
+          "reschedules_left",
+          "free_until"
         ],
         "title": "EngineOut"
       },

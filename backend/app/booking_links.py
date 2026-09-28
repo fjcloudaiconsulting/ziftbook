@@ -131,6 +131,10 @@ class EngineOut(BaseModel):
     copy_key: str
     reschedule_count: int
     reschedules_left: int
+    # The last moment a cancel still refunds in full: the refund anchor (the earliest start the
+    # booking ever held, D7) minus free_cancellation_hours. None once no refund is left, and for a
+    # pending or no-longer-cancellable booking.
+    free_until: datetime | None
 
 
 class LinkedBooking(BaseModel):
@@ -227,6 +231,12 @@ def _view(row: object, decision: Decision, zone: str, consents: list[Purpose]) -
             copy_key=decision.copy_key,
             reschedule_count=row.reschedule_count,  # type: ignore[attr-defined]
             reschedules_left=decision.reschedules_left,
+            free_until=(
+                (row.earliest_starts_at or row.starts_at)  # type: ignore[attr-defined]
+                - timedelta(hours=row.free_cancellation_hours)  # type: ignore[attr-defined]
+                if decision.can_cancel and decision.refund_pct
+                else None
+            ),
         ),
         pending_consents=consents,
     )
@@ -267,7 +277,7 @@ def open_session(body: TokenIn, request: Request, response: Response) -> None:
     )
 
 
-@router.get("/", name="read", responses={s: {"model": Error} for s in (404, 429)})
+@router.get("", name="read", responses={s: {"model": Error} for s in (404, 429)})
 def read(request: Request) -> LinkedBooking:
     ip = request.client.host if request.client else None
     if limits.hit({limits.ip_key("booking_link_read", ip): READ_LIMIT}, READ_WINDOW):
