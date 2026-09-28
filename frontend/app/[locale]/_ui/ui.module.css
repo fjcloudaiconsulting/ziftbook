@@ -255,7 +255,8 @@ a.textButton { display: inline-flex; align-items: center; }
 /* Desktop: actions at their natural width, primary first, side by side (design-r2.html:272). */
 @media (min-width: 56rem) {
   .actions { flex-direction: row-reverse; justify-content: flex-end; }
-  .actions .button, .dangerZone > .button { width: auto; min-width: 10rem; justify-self: start; }
+  .actions .button { width: auto; min-width: 10rem; }
+  .dangerZone > .button { width: auto; min-width: 10rem; justify-self: start; }
 }
 
 /* Lists of things (services, members, blocks). Rows, not cards. */
