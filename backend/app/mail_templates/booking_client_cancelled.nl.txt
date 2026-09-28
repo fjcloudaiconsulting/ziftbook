@@ -1,7 +1,7 @@
-Een klant heeft de boeking geannuleerd
+Een klant heeft de afspraak geannuleerd
 Hallo,
 
-$client heeft de boeking geannuleerd:
+$client heeft de afspraak geannuleerd:
 
 $service
 $date om $time ($zone)

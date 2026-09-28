@@ -1,7 +1,7 @@
-Een klant heeft de boeking verzet
+Een klant heeft de afspraak verzet
 Hallo,
 
-$client heeft de boeking verzet:
+$client heeft de afspraak verzet:
 
 $service
 Was $old_date om $old_time

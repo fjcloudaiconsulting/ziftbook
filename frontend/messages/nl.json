@@ -251,7 +251,7 @@
       "comingSoon": "Je klanten komen binnenkort."
     },
     "settings": {
-      "maxReschedulesLabel": "Wijzigingen die een klant aan een afspraak kan doen",
+      "maxReschedulesLabel": "Wijzigingen die een klant in een afspraak kan aanbrengen",
       "maxReschedulesHint": "Hoe vaak een klant een afspraak naar een andere tijd kan verplaatsen, van 0 tot 10. Met 0 staat het uit. Nieuwe afspraken krijgen het nieuwe aantal; bestaande afspraken houden het hunne.",
       "maxReschedulesRange": "Vul een heel getal van 0 tot 10 in.",
       "maxReschedulesOwnerOnly": "Alleen de eigenaar kan dit wijzigen.",

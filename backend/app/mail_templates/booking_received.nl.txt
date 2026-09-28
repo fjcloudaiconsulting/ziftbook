@@ -8,6 +8,6 @@ $date om $time ($zone)
 
 Het bedrijf moet de aanvraag nog accepteren. We mailen je zodra ze antwoorden.
 
-Bekijk, wijzig of annuleer je boeking: $link
+Bekijk, wijzig of annuleer je afspraak: $link
 
 ziftbook
