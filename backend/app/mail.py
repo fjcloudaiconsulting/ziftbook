@@ -254,16 +254,26 @@ STATUS_FOR = {
     "booking_declined": "declined",
     "booking_cancelled": "cancelled_by_merchant",
     "booking_cancelled_by_client": "cancelled_by_client",
+    "booking_client_cancelled": "cancelled_by_client",
+    "booking_client_rescheduled": "confirmed",
 }
+
+# ZIF-54 D1: the client templates whose $link is the guest booking link, minted here at send time.
+LINKED = frozenset({"booking_received", "booking_confirmed", "booking_reminder"})
 
 BOOKING = text("""
 SELECT c.email AS client_email, c.locale AS client_locale, c.name AS client_name,
        t.name AS business, b.client_id, b.status, b.starts_at, b.ends_at, b.expires_at,
-       b.service_name, now() AS now
+       b.service_name, b.reschedule_count, now() AS now
 FROM bookings b
 JOIN clients c ON c.tenant_id = b.tenant_id AND c.id = b.client_id
 JOIN tenants t ON t.id = b.tenant_id
 WHERE b.id = :id
+""")
+
+INSERT_LINK = text("""
+INSERT INTO booking_links (token_hash, tenant_id, booking_id)
+VALUES (:hash, current_setting('app.tenant_id')::uuid, :booking_id)
 """)
 
 MERCHANT = text("""
@@ -282,9 +292,20 @@ def _local_text(value: dict[str, str], locale: str) -> str:
 
 
 def ics(
-    booking_id: UUID | str, starts_at: datetime, ends_at: datetime, summary: str, now: datetime
+    booking_id: UUID | str,
+    starts_at: datetime,
+    ends_at: datetime,
+    summary: str,
+    now: datetime,
+    *,
+    sequence: int = 0,
 ) -> bytes:
-    """A stdlib-only VCALENDAR/PUBLISH, stable UID per booking. See ZIF-53 SS3.3."""
+    """A stdlib-only VCALENDAR/PUBLISH, stable UID per booking. See ZIF-53 SS3.3.
+
+    sequence (ZIF-54): the booking's reschedule_count. RFC 5545: a calendar client applies a
+    PUBLISH VEVENT only when its SEQUENCE is >= the one it already holds, so a reschedule's new
+    .ics (same UID) must carry a higher SEQUENCE or the client's calendar app silently ignores it.
+    """
 
     def escape(value: str) -> str:
         # C0 (minus CR/LF, handled below), DEL, C1, and the Unicode line/paragraph separators:
@@ -324,7 +345,7 @@ def ics(
         "METHOD:PUBLISH",
         "BEGIN:VEVENT",
         f"UID:{booking_id}@ziftbook.com",
-        "SEQUENCE:0",
+        f"SEQUENCE:{sequence}",
         f"DTSTAMP:{stamp(now)}",
         f"DTSTART:{stamp(starts_at)}",
         f"DTEND:{stamp(ends_at)}",
@@ -338,7 +359,8 @@ def ics(
 def send_booking(job: Job) -> None:
     """The email.booking job: one client or merchant booking email, or the 24h-ahead reminder.
 
-    Payload: booking_id, template, and (merchant) user_id, or (reminder) starts_at. See ZIF-53 SS3.
+    Payload: booking_id, template, and (merchant) user_id, or (reminder/reschedule) starts_at,
+    or (merchant reschedule) previous_starts_at. See ZIF-53 SS3, ZIF-54 D1/D10.
     """
     if job.tenant_id is None:
         raise ValueError("email.booking needs a tenant")
@@ -358,10 +380,13 @@ def send_booking(job: Job) -> None:
             row.expires_at is None or row.expires_at <= row.now
         ):
             return
-        if template == "booking_reminder" and (
-            row.starts_at <= row.now
-            or datetime.fromisoformat(payload["starts_at"]) != row.starts_at
-        ):
+        # ZIF-54 D10. Generic: any template whose payload carries starts_at (the reminder, and
+        # both reschedule emails) skips itself once the booking has moved on again -- an `:r1`
+        # email that runs after `:r2` already changed starts_at sends nothing (test 32). The
+        # reminder keeps its own extra check: due, but not yet past, the start.
+        if "starts_at" in payload and datetime.fromisoformat(payload["starts_at"]) != row.starts_at:
+            return
+        if template == "booking_reminder" and row.starts_at <= row.now:
             return
 
         user_id = payload.get("user_id")
@@ -388,9 +413,24 @@ def send_booking(job: Job) -> None:
             "time": starts_local.strftime("%H:%M"),
             "zone": zone,
         }
+        token: str | None = None
         if user_id is not None:
+            # Merchant emails keep the console link, never the manage link (D10): a manage link
+            # reaching staff is a threat the console link cannot be.
             values["client"] = row.client_name
             values["link"] = f"{app_url}/{locale}"
+            if "previous_starts_at" in payload:
+                previous_local = datetime.fromisoformat(payload["previous_starts_at"]).astimezone(
+                    ZoneInfo(zone)
+                )
+                values["old_date"] = previous_local.strftime(DATE_FORMAT[locale])
+                values["old_time"] = previous_local.strftime("%H:%M")
+        elif template in LINKED:
+            # D1: mint and set values["link"] BEFORE render() (the body needs it), and only insert
+            # the hash if _outbox (below) reports 'pending' -- a token minted for a dedupe no-op is
+            # dropped unused, never stored.
+            token = secrets.token_urlsafe(32)
+            values["link"] = f"{app_url}/{locale}/booking#{job.tenant_id}.{token}"
         if template == "booking_request":
             expires_local = row.expires_at.astimezone(ZoneInfo(zone))
             values["expires"] = (
@@ -398,6 +438,14 @@ def send_booking(job: Job) -> None:
             )
         subject, body = render(template, locale, values)
         status = _outbox(session, job, recipient_id, template, subject)
+        if status == "pending" and token is not None:
+            session.execute(
+                INSERT_LINK,
+                {
+                    "hash": hashlib.sha256(token.encode()).digest(),
+                    "booking_id": payload["booking_id"],
+                },
+            )
     if status == "sent":
         return
 
@@ -405,7 +453,14 @@ def send_booking(job: Job) -> None:
     if template == "booking_confirmed":
         summary = f"{values['service']} - {row.business}"
         booking_ics = ics(
-            payload["booking_id"], row.starts_at, row.ends_at, summary, datetime.now(UTC)
+            payload["booking_id"],
+            row.starts_at,
+            row.ends_at,
+            summary,
+            datetime.now(UTC),
+            sequence=row.reschedule_count,
         )
-    deliver(template, recipient_email, subject, body, ics=booking_ics)
+    # Mailgun would otherwise rewrite the link, token included, through its tracking domain.
+    headers = {"X-Mailgun-Track-Clicks": "no"} if template in LINKED and user_id is None else None
+    deliver(template, recipient_email, subject, body, headers, ics=booking_ics)
     _mark_sent(job)

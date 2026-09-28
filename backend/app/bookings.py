@@ -10,9 +10,9 @@ comment on the constraint.
 """
 
 import json
-from collections import Counter, defaultdict
+from collections import Counter
 from dataclasses import dataclass
-from datetime import datetime, time, timedelta
+from datetime import datetime, timedelta
 from typing import Annotated, Any, Literal, NamedTuple
 from uuid import UUID
 from zoneinfo import ZoneInfo
@@ -207,18 +207,6 @@ WHERE id = :service_id AND archived_at IS NULL
 FOR SHARE
 """)
 
-# The same statement read_availability runs (working_hours join service_workers join memberships),
-# with an optional member_id filter added so an unassigned or unknown member_id yields no
-# candidates in this one query, never a 404 (no membership probing).
-CANDIDATES = text("""
-SELECT w.member_id, m.display_name, w.weekday, w.starts_at, w.ends_at
-FROM working_hours w JOIN service_workers s
-  ON s.tenant_id = w.tenant_id AND s.member_id = w.member_id
-JOIN memberships m ON m.tenant_id = w.tenant_id AND m.id = w.member_id
-WHERE s.service_id = :service_id
-  AND (CAST(:member_id AS uuid) IS NULL OR w.member_id = :member_id)
-""")
-
 EXPIRE = text("""
 UPDATE bookings SET status = 'expired'
 WHERE status = ANY(CAST(:expiring AS text[])) AND expires_at <= :now
@@ -233,13 +221,16 @@ INSERT_BOOKING = text("""
 INSERT INTO bookings (
   tenant_id, client_id, worker_id, service_id, starts_at, ends_at, status, expires_at, source,
   service_name, price_amount_minor, price_currency, duration_minutes, cancellation_policy_text,
-  auto_confirm_at_booking, worker_display_name, free_cancellation_hours, reschedule_cutoff_hours)
+  auto_confirm_at_booking, worker_display_name, free_cancellation_hours, reschedule_cutoff_hours,
+  original_starts_at, earliest_starts_at, max_reschedules)
 VALUES (
   current_setting('app.tenant_id')::uuid, :client_id, :worker_id, :service_id,
   :starts_at, :starts_at + make_interval(mins => :duration_minutes), :status, :expires_at,
   :source, CAST(:service_name AS jsonb), :price_amount_minor, :price_currency, :duration_minutes,
   :cancellation_policy_text, :auto_confirm_at_booking, :worker_display_name,
-  :free_cancellation_hours, :reschedule_cutoff_hours)
+  :free_cancellation_hours, :reschedule_cutoff_hours,
+  -- ZIF-54 (D8). Both snapshotted = the insert's own starts_at, never re-read afterwards.
+  :starts_at, :starts_at, :max_reschedules)
 RETURNING id, status, starts_at, ends_at
 """)
 
@@ -289,35 +280,54 @@ WHERE b.id = :id
 MERCHANTS = text("SELECT DISTINCT user_id FROM memberships WHERE role = 'owner' OR id = :worker_id")
 
 
-def _email(
+def email(
     db: Session,
     tenant_id: UUID,
     booking_id: UUID,
     template: str,
     user_id: UUID | None = None,
+    *,
+    key_suffix: str = "",
+    extra: dict[str, str] | None = None,
 ) -> None:
     """Enqueue one booking email, in the caller's transaction.
 
     With user_id, the email is to that merchant (ruling R1) rather than the client, and the
     dedupe key and payload carry the user_id too.
+
+    key_suffix (ZIF-54): goes on the dedupe key, before the user_id suffix if any -- a reschedule's
+    `:r{count}` so a later reschedule's confirmation email is a fresh job, not a dedupe no-op
+    against an earlier one's. extra: values merged into the payload (starts_at,
+    previous_starts_at); mail.send_booking's starts_at gate reads starts_at back out of it.
     """
-    key = f"email.booking:{tenant_id}:{booking_id}:{template}"
-    payload = {"booking_id": str(booking_id), "template": template}
+    key = f"email.booking:{tenant_id}:{booking_id}:{template}{key_suffix}"
+    payload: dict[str, str] = {"booking_id": str(booking_id), "template": template}
+    if extra:
+        payload.update(extra)
     if user_id is not None:
         key += f":{user_id}"
         payload["user_id"] = str(user_id)
     jobs.enqueue(db, "email.booking", key, payload, tenant_id=tenant_id)
 
 
-def _email_merchants(
-    db: Session, tenant_id: UUID, booking_id: UUID, worker_id: UUID, template: str
+def email_merchants(
+    db: Session,
+    tenant_id: UUID,
+    booking_id: UUID,
+    worker_id: UUID,
+    template: str,
+    *,
+    key_suffix: str = "",
+    extra: dict[str, str] | None = None,
 ) -> None:
     """Enqueue one merchant booking email per active owner plus the assigned worker (ruling R1)."""
     for (user_id,) in db.execute(MERCHANTS, {"worker_id": worker_id}).all():
-        _email(db, tenant_id, booking_id, template, user_id=user_id)
+        email(
+            db, tenant_id, booking_id, template, user_id=user_id, key_suffix=key_suffix, extra=extra
+        )
 
 
-def _remind(
+def remind(
     db: Session, tenant_id: UUID, booking_id: UUID, starts_at: datetime, now: datetime
 ) -> None:
     """Enqueue the 24h-ahead reminder, unless the start is already less than 24h away (R3)."""
@@ -372,6 +382,34 @@ WHERE id = :id
 RETURNING id, status
 """)
 
+# ZIF-54. The two client-side writers, kept beside TRANSITION so every bookings writer lives in
+# this one file. Both are D2's liveness predicate as their own qualifier -- app/booking_links.py's
+# resolve() already checked it, but the UPDATE re-checks it under the row's own lock, exactly as
+# TRANSITION re-checks its own source list rather than trusting the earlier SELECT.
+#
+# CLIENT_CANCEL never touches TRANSITIONS/Target (D10): 'cancelled_by_client' is not, and must
+# never become, a merchant PATCH target (test 20).
+CLIENT_CANCEL = text("""
+UPDATE bookings SET status = 'cancelled_by_client'
+WHERE id = :id AND starts_at > now()
+  AND (status = 'confirmed' OR (status = 'pending' AND expires_at > now()))
+RETURNING id, status
+""")
+
+# earliest_starts_at = LEAST(earliest_starts_at, :new): it only ever goes down (D7/D8), and the
+# CHECK pair (ck_bookings_earliest_starts_at, ck_bookings_earliest_starts_at_current) is the
+# database's own backstop on that guarantee. `status = 'confirmed'` (never 'pending': D7, a
+# pending booking is never rescheduled) and `reschedule_count = :seen` (the client's echo,
+# re-checked under the row's own write -- test 15's fence) are both qualifiers, not pre-checks:
+# a stale echo or a status this statement doesn't match updates zero rows, answered as 409.
+RESCHEDULE = text("""
+UPDATE bookings SET starts_at = :new, ends_at = :new + (ends_at - starts_at),
+                    earliest_starts_at = LEAST(earliest_starts_at, :new),
+                    reschedule_count = reschedule_count + 1
+WHERE id = :id AND status = 'confirmed' AND reschedule_count = :seen
+RETURNING id, starts_at, ends_at, reschedule_count
+""")
+
 
 router = APIRouter(prefix="/api/public", tags=["bookings"])
 
@@ -419,13 +457,7 @@ def create(  # sync def: turnstile.verify's urlopen blocks, and runs in FastAPI'
                 raise ApiError(404, "not_found")
             settings = business_settings.read(db)  # 3
             opening = schedule.envelope(db)  # 4: once, never per worker or per day
-            hours: dict[UUID, list[schedule.Row]] = defaultdict(list)
-            names: dict[UUID, str | None] = {}
-            for m, display_name, weekday, starts_at, ends_at in db.execute(
-                CANDIDATES, {"service_id": service_id, "member_id": new.member_id}
-            ).tuples():
-                hours[m].append((weekday, starts_at, ends_at))
-                names[m] = display_name
+            hours, names = availability.candidates(db, service_id, new.member_id)
             candidates = sorted(hours)  # 5
             # 6. Validate the WHOLE posted map here, before any write, so a bad policy version is a
             #    422 with nothing written - regardless of whether anything was withdrawn.
@@ -465,44 +497,29 @@ def create(  # sync def: turnstile.verify's urlopen blocks, and runs in FastAPI'
             )
             if first > last:  # in the past, or beyond the horizon
                 raise ApiError(409, "slot_unavailable")
-            off_by_member: dict[UUID, list[availability.Interval]] = defaultdict(list)
-            booked_rows: list[tuple[UUID, datetime, datetime, int | None]] = []
-            if candidates:
-                start = schedule.to_utc(first - timedelta(days=1), time(), zone)
-                end = schedule.to_utc(last + timedelta(days=2), time(), zone)
-                off_by_member.update(
-                    availability.time_off(db, candidates, first, last, zone, start, end)  # 10
-                )
-                booked_rows = availability.booked(db, candidates, start, end)  # 11
-            bookings: dict[UUID, list[availability.Booked]] = defaultdict(list)
-            for m, starts_at, ends_at, override in booked_rows:
-                bookings[m].append((starts_at, ends_at, override))
             buffer = availability.buffer_for(
                 row.duration_minutes, row.buffer_minutes, settings.buffer_pct
             )
-            # 12. Re-derive the posted start through member_slots itself - never a bespoke
-            #     validator: two implementations of "is this slot bookable" drift, and the drift is
-            #     the bug. The constraint alone does not catch a buffer tail, opening hours, the
-            #     worker's own hours, time off, the slot grid, min_notice, the horizon, an
-            #     unassigned worker or an archived service.
-            offered = {
-                candidate: availability.member_slots(
-                    hours[candidate],
-                    off_by_member[candidate],
-                    bookings[candidate],
-                    opening=opening,
-                    zone=zone,
-                    first=first,
-                    last=last,
-                    duration=row.duration_minutes,
-                    buffer=buffer,
-                    pct=settings.buffer_pct,
-                    step=settings.slot_step_minutes,
-                    earliest=earliest,
-                )
-                for candidate in candidates
-            }
-            eligible = [c for c in candidates if new.starts_at in offered[c]]
+            # 10-12. ONE implementation of "is this slot bookable" (availability.offered), never a
+            #     bespoke validator: the constraint alone does not catch a buffer tail, opening
+            #     hours, the worker's own hours, time off, the slot grid, min_notice, the horizon,
+            #     an unassigned worker or an archived service. offered() itself no-ops (no query)
+            #     when candidates is empty.
+            result = availability.offered(
+                db,
+                members=candidates,
+                hours=hours,
+                opening=opening,
+                settings=settings,
+                first=first,
+                last=last,
+                earliest=earliest,
+                duration=row.duration_minutes,
+                buffer=buffer,
+            )
+            booked_rows = result.booked
+            offered = result.slots
+            eligible = [c for c in candidates if new.starts_at in offered[c]]  # keys every member
             if not eligible:
                 raise ApiError(409, "slot_unavailable")
             # 13. AFTER re-derivation, never before (B6): counting before it makes 429-vs-409 an
@@ -565,6 +582,7 @@ def create(  # sync def: turnstile.verify's urlopen blocks, and runs in FastAPI'
                                 # replaced it a moment ago would sell them terms they never saw.
                                 "free_cancellation_hours": settings.free_cancellation_hours,
                                 "reschedule_cutoff_hours": settings.reschedule_cutoff_hours,
+                                "max_reschedules": settings.max_reschedules,
                                 "auto_confirm_at_booking": settings.auto_confirm,
                                 "worker_display_name": names[candidate],
                             },
@@ -607,12 +625,19 @@ def create(  # sync def: turnstile.verify's urlopen blocks, and runs in FastAPI'
             # ZIF-53. Same session as the status write, outside the savepoint: a rollback of the
             # savepoint (a lost race) drops nothing here, since this only runs after `break`.
             if status == "confirmed":
-                _email(db, tenant_id, booking.id, "booking_confirmed")
-                _remind(db, tenant_id, booking.id, booking.starts_at, row.now)
-                _email_merchants(db, tenant_id, booking.id, candidate, "booking_new")
+                # starts_at (ZIF-54 D10): a reschedule before this runs makes it skip itself.
+                email(
+                    db,
+                    tenant_id,
+                    booking.id,
+                    "booking_confirmed",
+                    extra={"starts_at": booking.starts_at.isoformat()},
+                )
+                remind(db, tenant_id, booking.id, booking.starts_at, row.now)
+                email_merchants(db, tenant_id, booking.id, candidate, "booking_new")
             else:
-                _email(db, tenant_id, booking.id, "booking_received")
-                _email_merchants(db, tenant_id, booking.id, candidate, "booking_request")
+                email(db, tenant_id, booking.id, "booking_received")
+                email_merchants(db, tenant_id, booking.id, candidate, "booking_request")
             return BookingOut(
                 id=booking.id,
                 status=booking.status,
@@ -722,12 +747,18 @@ def transition(
     # back with the change (test 20). `row.status`, read at step 2 under the advisory lock, is the
     # PRE-transition source.
     if change.status == "confirmed" and row.status == "pending":
-        _email(current.db, current.tenant_id, booking_id, "booking_confirmed")
-        _remind(current.db, current.tenant_id, booking_id, row.starts_at, row.now)
+        email(
+            current.db,
+            current.tenant_id,
+            booking_id,
+            "booking_confirmed",
+            extra={"starts_at": row.starts_at.isoformat()},
+        )
+        remind(current.db, current.tenant_id, booking_id, row.starts_at, row.now)
     elif change.status == "declined":
-        _email(current.db, current.tenant_id, booking_id, "booking_declined")
+        email(current.db, current.tenant_id, booking_id, "booking_declined")
     elif change.status == "cancelled_by_merchant" and row.status in ("pending", "confirmed"):
-        _email(current.db, current.tenant_id, booking_id, "booking_cancelled")
+        email(current.db, current.tenant_id, booking_id, "booking_cancelled")
     auth.record(  # 6
         current.db,
         request,

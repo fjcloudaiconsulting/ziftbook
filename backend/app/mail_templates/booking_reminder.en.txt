@@ -8,4 +8,6 @@ $date at $time ($zone)
 
 See you then.
 
+View, change or cancel your booking: $link
+
 ziftbook

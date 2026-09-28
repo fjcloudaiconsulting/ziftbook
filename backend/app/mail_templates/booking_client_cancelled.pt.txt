@@ -1,0 +1,11 @@
+Um cliente cancelou o agendamento
+Olá,
+
+$client cancelou o agendamento:
+
+$service
+$date às $time ($zone)
+
+$link
+
+ziftbook

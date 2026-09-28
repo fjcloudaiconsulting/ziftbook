@@ -251,7 +251,12 @@
       "comingSoon": "Je klanten komen binnenkort."
     },
     "settings": {
-      "comingSoon": "Je instellingen komen binnenkort."
+      "maxReschedulesLabel": "Wijzigingen die een klant in een afspraak kan aanbrengen",
+      "maxReschedulesHint": "Hoe vaak een klant een afspraak naar een andere tijd kan verplaatsen, van 0 tot 10. Met 0 staat het uit. Nieuwe afspraken krijgen het nieuwe aantal; bestaande afspraken houden het hunne.",
+      "maxReschedulesRange": "Vul een heel getal van 0 tot 10 in.",
+      "maxReschedulesOwnerOnly": "Alleen de eigenaar kan dit wijzigen.",
+      "save": "Opslaan",
+      "saved": "Opgeslagen. Nieuwe afspraken krijgen dit aantal."
     },
     "errors": {
       "ownerOnly": "Alleen een eigenaar kan dit doen.",
@@ -411,5 +416,70 @@
       "errorMissingEnd": "Kies een eindtijd.",
       "notFound": "Dit blok kon niet worden gevonden. Het is mogelijk al verwijderd."
     }
+  },
+  "BookingLink": {
+    "title": "Je afspraak",
+    "opening": "Je afspraak wordt geopend…",
+    "notActiveTitle": "Deze link werkt niet meer",
+    "notActiveLede": "Misschien hoort hij bij een afspraak die is geannuleerd of al heeft plaatsgevonden. Heb je een nieuwere e-mail over deze afspraak, gebruik dan de link daarin.",
+    "error": "Er ging iets mis, probeer het opnieuw",
+    "retry": "Opnieuw proberen",
+    "when": "{date} om {time} ({zone})",
+    "with": "Bij {name}",
+    "withTeam": "Bij iemand van het team",
+    "confirmed": "Bevestigd",
+    "waiting": "Wacht op akkoord van {business}",
+    "originally": "Oorspronkelijk {when}",
+    "copy": {
+      "full_refund_reschedule": "Je kunt gratis annuleren of de tijd wijzigen.",
+      "full_refund_no_reschedule": "Je kunt gratis annuleren. Het is te laat om de tijd online te wijzigen.",
+      "no_refund_reschedule": "Als je nu annuleert, krijg je niets terug. Je kunt de tijd nog wel wijzigen.",
+      "no_refund_no_reschedule": "Als je nu annuleert, krijg je niets terug, en het is te laat om de tijd online te wijzigen.",
+      "started": "Deze afspraak is al begonnen.",
+      "pending": "Er is nog niets betaald, dus er valt niets terug te betalen."
+    },
+    "freeUntil": "Je kunt gratis annuleren tot {date}, {time}. {move, select, yes {Je kunt ook de tijd wijzigen.} other {Het is te laat om de tijd online te wijzigen.}}",
+    "refundFull": "Je krijgt alles terug.",
+    "refundNone": "Als je nu annuleert, krijg je niets terug.",
+    "pendingNote": "Je kunt de tijd wijzigen zodra {business} akkoord is.",
+    "cancel": "Afspraak annuleren",
+    "reschedule": "Datum of tijd wijzigen (nog {n, plural, one {# wijziging} other {# wijzigingen}})",
+    "noChanges": "Deze afspraak kan niet meer online worden gewijzigd. Neem contact op met {business}.",
+    "consentAsk": "Bij het boeken vroeg je {business} om contact te houden via: {purposes}. Bevestigen?",
+    "purposes": {
+      "marketing_email": "e-mail",
+      "sms": "sms",
+      "whatsapp": "WhatsApp"
+    },
+    "consentConfirm": "Bevestigen",
+    "consentDone": "Bedankt, bevestigd.",
+    "confirming": "Bevestigen…",
+    "cancelTitle": "Deze afspraak annuleren?",
+    "yesCancel": "Ja, annuleren",
+    "keep": "Afspraak houden",
+    "cancelling": "Annuleren…",
+    "termsChanged": "De annuleringsvoorwaarden zijn net gewijzigd. Bekijk ze nog even.",
+    "changed": "Deze afspraak is net gewijzigd.",
+    "notAllowed": "Dat kan niet meer online. Dit is je afspraak zoals hij nu staat.",
+    "pickTitle": "Kies een nieuwe tijd",
+    "previousWeek": "Vorige week",
+    "nextWeek": "Volgende week",
+    "loadingTimes": "Vrije tijden laden…",
+    "noTimes": "Geen vrije tijden deze week",
+    "timesOn": "Vrije tijden op {day}",
+    "timesIn": "Tijden in de tijdzone van {zone}",
+    "slotTaken": "Die tijd is net bezet.",
+    "confirmTitle": "Bevestig de nieuwe tijd",
+    "changesAfter": "{n, plural, =0 {Dit is de laatste wijziging die je kunt doen.} one {Je kunt hem nog # keer wijzigen.} other {Je kunt hem nog # keer wijzigen.}}",
+    "confirm": "Bevestigen",
+    "back": "Terug",
+    "moving": "Verplaatsen…",
+    "cancelledTitle": "Je afspraak is geannuleerd",
+    "cancelledLede": "We hebben je een bevestiging gemaild.",
+    "movedTitle": "Je afspraak is verplaatst naar {when}",
+    "movedLede": "We hebben je een nieuwe bevestiging gemaild, met een agendabestand.",
+    "backToBooking": "Terug naar je afspraak",
+    "anotherTitle": "Je hebt in deze browser een andere afspraak geopend",
+    "anotherLede": "Open de link in de e-mail van deze afspraak opnieuw om hem te beheren."
   }
 }

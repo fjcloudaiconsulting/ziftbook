@@ -8,4 +8,6 @@ $date às $time ($zone)
 
 O negócio ainda precisa aceitar o pedido. Enviaremos um e-mail assim que houver resposta.
 
+Veja, altere ou cancele seu agendamento: $link
+
 ziftbook

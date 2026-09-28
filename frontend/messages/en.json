@@ -251,7 +251,12 @@
       "comingSoon": "Your clients are coming soon."
     },
     "settings": {
-      "comingSoon": "Your settings are coming soon."
+      "maxReschedulesLabel": "Changes a client can make to a booking",
+      "maxReschedulesHint": "How many times a client can move a booking to another time, from 0 to 10. 0 turns it off. New bookings get the new number; existing bookings keep theirs.",
+      "maxReschedulesRange": "Enter a whole number from 0 to 10.",
+      "maxReschedulesOwnerOnly": "Only the owner can change this.",
+      "save": "Save",
+      "saved": "Saved. New bookings get this number."
     },
     "errors": {
       "ownerOnly": "Only an owner can do this.",
@@ -411,5 +416,70 @@
       "errorMissingEnd": "Choose an end time.",
       "notFound": "This block could not be found. It may already have been removed."
     }
+  },
+  "BookingLink": {
+    "title": "Your booking",
+    "opening": "Opening your booking…",
+    "notActiveTitle": "This link is no longer active",
+    "notActiveLede": "It may be for a booking that was cancelled or has already taken place. If you have a newer email about this booking, use its link.",
+    "error": "Something went wrong, try again",
+    "retry": "Retry",
+    "when": "{date} at {time} ({zone})",
+    "with": "With {name}",
+    "withTeam": "With a member of the team",
+    "confirmed": "Confirmed",
+    "waiting": "Waiting for {business} to accept",
+    "originally": "Originally {when}",
+    "copy": {
+      "full_refund_reschedule": "You can cancel for free or change the time.",
+      "full_refund_no_reschedule": "You can cancel for free. It's too late to change the time online.",
+      "no_refund_reschedule": "Cancelling now is not refunded. You can still change the time.",
+      "no_refund_no_reschedule": "Cancelling now is not refunded, and it's too late to change the time online.",
+      "started": "This booking has already started.",
+      "pending": "Nothing has been paid, so there is nothing to refund."
+    },
+    "freeUntil": "You can cancel for free until {date}, {time}. {move, select, yes {You can also change the time.} other {It's too late to change the time online.}}",
+    "refundFull": "You get a full refund.",
+    "refundNone": "Cancelling now is not refunded.",
+    "pendingNote": "You can change the time once {business} accepts.",
+    "cancel": "Cancel booking",
+    "reschedule": "Change date or time ({n, plural, one {# change left} other {# changes left}})",
+    "noChanges": "This booking can no longer be changed online. Contact {business}.",
+    "consentAsk": "When you booked, you asked {business} to keep in touch by: {purposes}. Confirm?",
+    "purposes": {
+      "marketing_email": "email",
+      "sms": "text message",
+      "whatsapp": "WhatsApp"
+    },
+    "consentConfirm": "Confirm",
+    "consentDone": "Thanks, confirmed.",
+    "confirming": "Confirming…",
+    "cancelTitle": "Cancel this booking?",
+    "yesCancel": "Yes, cancel",
+    "keep": "Keep my booking",
+    "cancelling": "Cancelling…",
+    "termsChanged": "The cancellation terms changed a moment ago. Please check them again.",
+    "changed": "This booking was just changed.",
+    "notAllowed": "That can no longer be done online. This is your booking as it stands now.",
+    "pickTitle": "Choose a new time",
+    "previousWeek": "Previous week",
+    "nextWeek": "Next week",
+    "loadingTimes": "Loading free times…",
+    "noTimes": "No free times this week",
+    "timesOn": "Free times on {day}",
+    "timesIn": "Times in {zone} time",
+    "slotTaken": "That time was just taken.",
+    "confirmTitle": "Confirm the new time",
+    "changesAfter": "{n, plural, =0 {This is the last change you can make.} one {You can change it # more time.} other {You can change it # more times.}}",
+    "confirm": "Confirm",
+    "back": "Back",
+    "moving": "Moving…",
+    "cancelledTitle": "Your booking is cancelled",
+    "cancelledLede": "We've emailed you a confirmation.",
+    "movedTitle": "Your booking is moved to {when}",
+    "movedLede": "We've emailed you a new confirmation with a calendar file.",
+    "backToBooking": "Back to your booking",
+    "anotherTitle": "You opened another booking in this browser",
+    "anotherLede": "To manage this one, open the link in its email again."
   }
 }

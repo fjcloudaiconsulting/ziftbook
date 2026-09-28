@@ -5,7 +5,7 @@ each fence protects."""
 import threading
 import time
 import uuid
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any, get_args
 
 import pytest
@@ -33,9 +33,6 @@ from tests.conftest import (
 from tests.test_availability_api import assign, new_service, seed_booking, weekdays
 from tests.test_bookings_api import at, post_booking
 from tests.test_working_hours import seed
-
-TODAY = date.today()
-DAY = TODAY + timedelta(days=2)
 
 
 @pytest.fixture
@@ -93,7 +90,12 @@ def shift(tenant_id: uuid.UUID, booking_id: str, delta: timedelta) -> None:
     with tenant_context(tenant_id) as session:
         session.execute(
             text(
-                "UPDATE bookings SET starts_at = starts_at + :d, ends_at = ends_at + :d "
+                "UPDATE bookings SET starts_at = starts_at + :d, ends_at = ends_at + :d, "
+                # ZIF-54's ck_bookings_earliest_starts_at_current (earliest_starts_at <=
+                # starts_at): this helper isn't RESCHEDULE and carries no LEAST, but a fresh
+                # confirmed booking's earliest_starts_at is exactly its own starts_at (D8), so
+                # moving both by the same delta keeps the invariant it was insert-derived from.
+                "earliest_starts_at = earliest_starts_at + :d "
                 "WHERE id = :id"
             ),
             {"id": booking_id, "d": delta},

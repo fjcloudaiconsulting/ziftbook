@@ -328,3 +328,9 @@ a.textButton { display: inline-flex; align-items: center; }
  * name built by string concatenation in JS would never match a class this file defines, since
  * CSS Modules hashes .is-on too and the two hashes would never agree. */
 .langPanel[hidden] { display: none; }
+
+/* The guest booking page's picker (ZIF-54): a strip of seven days, then that day's start times. */
+.picker .button:disabled { background: var(--surface); color: var(--muted); border-color: var(--line); cursor: default; }
+.days { display: grid; grid-template-columns: repeat(7, 1fr); gap: 0.3rem; }
+.days .button { flex-direction: column; gap: 0; padding: 0.4rem 0; border-radius: 0.75rem; font-size: 0.875rem; }
+.slots { display: grid; grid-template-columns: repeat(auto-fill, minmax(5rem, 1fr)); gap: 0.5rem; }

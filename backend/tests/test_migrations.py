@@ -2,6 +2,7 @@
 
 import os
 import uuid
+from datetime import UTC, datetime, timedelta
 from urllib.parse import urlencode
 
 import pytest
@@ -13,7 +14,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.db import tenant_context
 from tests.conftest import API_DIR, People, delete_bookings, member_id
-from tests.test_bookings_db import seed_service
+from tests.test_bookings_db import insert_booking, seed_service
 
 COLUMNS = text("SELECT column_name FROM information_schema.columns WHERE table_name = 'tenants'")
 TABLE_PRIVILEGE = "SELECT has_table_privilege('ziftbook_app', 'tenants', :priv)"
@@ -316,7 +317,12 @@ SELECT column_name FROM information_schema.columns
 WHERE table_name = 'bookings'
   AND NOT has_column_privilege('ziftbook_app', 'bookings', column_name, 'UPDATE')
 """)
-SNAPSHOT = ("free_cancellation_hours", "reschedule_cutoff_hours")
+SNAPSHOT = (
+    "free_cancellation_hours",
+    "reschedule_cutoff_hours",
+    "original_starts_at",
+    "max_reschedules",
+)
 
 
 def test_downgrading_and_upgrading_0027_restores_both_thresholds(
@@ -558,3 +564,131 @@ def test_0028_downgrade_refuses_while_a_whole_day_row_exists(
             {"m": a_member},
         )
     assert isinstance(bites.value.orig, CheckViolation)
+
+
+# 35. fence (ZIF-54): 0029's round trip. booking_links exists and is insert-only for the app role
+# (no UPDATE, no DELETE); bookings gains original_starts_at, earliest_starts_at, max_reschedules,
+# reschedule_count, with the app role able to UPDATE only the last two; and
+# ck_bookings_earliest_starts_at_current refuses raising earliest_starts_at above the CURRENT
+# starts_at. Kills a downgrade that drops one column and not the rest, an upgrade with a missing or
+# too-narrow UPDATE grant, or a CHECK that only compares against original_starts_at.
+LINK_TABLE = "SELECT to_regclass('booking_links')"
+LINK_PRIVILEGES = """
+SELECT has_table_privilege('ziftbook_app', 'booking_links', :priv)
+"""
+NEW_BOOKING_COLUMNS = text("""
+SELECT column_name FROM information_schema.columns
+WHERE table_name = 'bookings'
+  AND column_name IN ('original_starts_at', 'earliest_starts_at', 'max_reschedules',
+                      'reschedule_count')
+""")
+
+
+def test_downgrading_and_upgrading_0029_restores_booking_links_and_the_snapshots(
+    people: People, migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = Config(toml_file=str(API_DIR / "pyproject.toml"))
+    url = os.environ["ZIF_MIGRATE_DATABASE_URL"]
+    options = urlencode({"options": "-c lock_timeout=5s"})
+    monkeypatch.setenv("ZIF_MIGRATE_DATABASE_URL", f"{url}{'&' if '?' in url else '?'}{options}")
+    try:
+        command.downgrade(cfg, "0028")
+        with migrate_engine.connect() as conn:
+            assert conn.scalar(text(LINK_TABLE)) is None
+            assert conn.scalars(NEW_BOOKING_COLUMNS).all() == []
+    finally:
+        command.upgrade(cfg, "head")
+    with migrate_engine.connect() as conn:
+        assert conn.scalar(text(LINK_TABLE)) is not None
+        # SELECT is table-level; INSERT is a column list (like booking_events' since 0026), so
+        # has_table_privilege reports it False even though the app can insert. UPDATE and DELETE
+        # are absent from booking_links entirely -- insert-only, exactly booking_events' shape.
+        for privilege, expected in (("SELECT", True), ("UPDATE", False), ("DELETE", False)):
+            assert (conn.scalar(text(LINK_PRIVILEGES), {"priv": privilege}) or False) == expected, (
+                privilege
+            )
+        assert conn.scalar(
+            text(
+                "SELECT has_column_privilege('ziftbook_app', 'booking_links', "
+                "'token_hash', 'INSERT')"
+            )
+        )
+        assert sorted(conn.scalars(NEW_BOOKING_COLUMNS)) == [
+            "earliest_starts_at",
+            "max_reschedules",
+            "original_starts_at",
+            "reschedule_count",
+        ]
+        for column, expected in (
+            ("original_starts_at", False),
+            ("earliest_starts_at", True),
+            ("max_reschedules", False),
+            ("reschedule_count", True),
+        ):
+            assert (
+                conn.scalar(
+                    text("SELECT has_column_privilege('ziftbook_app', 'bookings', :c, 'UPDATE')"),
+                    {"c": column},
+                )
+            ) == expected, column
+    service_id = seed_service(people.a)
+    worker_id = member_id(people.a, people.both)
+    with tenant_context(people.a) as session:
+        client_id = session.scalar(
+            text(
+                "INSERT INTO clients (tenant_id, name) "
+                "VALUES (current_setting('app.tenant_id')::uuid, 'X') RETURNING id"
+            )
+        )
+        starts_at = datetime.now(UTC) + timedelta(days=1)
+        booking_id = insert_booking(
+            session,
+            client_id=client_id,
+            worker_id=worker_id,
+            service_id=service_id,
+            starts_at=starts_at,
+            ends_at=starts_at + timedelta(minutes=30),
+            original_starts_at=None,
+            earliest_starts_at=None,
+        )
+        with pytest.raises(IntegrityError) as bites:
+            session.execute(
+                text(
+                    "UPDATE bookings SET earliest_starts_at = starts_at + interval '1 day' "
+                    "WHERE id = :id"
+                ),
+                {"id": booking_id},
+            )
+        assert isinstance(bites.value.orig, CheckViolation)
+        assert bites.value.orig.diag.constraint_name == "ck_bookings_earliest_starts_at_current"
+    # Spec 35: ck_bookings_earliest_starts_at refuses a raise above original_starts_at, on a row
+    # whose current start is later still (so only this CHECK, not _current, can refuse it).
+    # A fresh client: the refused UPDATE above rolled its whole transaction back.
+    original = datetime.now(UTC) + timedelta(days=2)
+    with tenant_context(people.a) as session:
+        moved_id = insert_booking(
+            session,
+            client_id=session.scalar(
+                text(
+                    "INSERT INTO clients (tenant_id, name) "
+                    "VALUES (current_setting('app.tenant_id')::uuid, 'Y') RETURNING id"
+                )
+            ),
+            worker_id=worker_id,
+            service_id=service_id,
+            starts_at=original + timedelta(hours=2),
+            ends_at=original + timedelta(hours=2, minutes=30),
+            original_starts_at=original,
+            earliest_starts_at=original,
+            reschedule_count=1,
+        )
+        with pytest.raises(IntegrityError) as raised:
+            session.execute(
+                text(
+                    "UPDATE bookings SET earliest_starts_at = original_starts_at "
+                    "+ interval '1 hour' WHERE id = :id"
+                ),
+                {"id": moved_id},
+            )
+    assert isinstance(raised.value.orig, CheckViolation)
+    assert raised.value.orig.diag.constraint_name == "ck_bookings_earliest_starts_at"

@@ -32,6 +32,7 @@ DEFAULTS = {
     "cancellation_policy_text": "",
     "free_cancellation_hours": 48,
     "reschedule_cutoff_hours": 24,
+    "max_reschedules": 2,
 }
 
 
@@ -237,6 +238,7 @@ def test_the_contract_requires_every_setting_back_and_none_sent() -> None:
         "cancellation_policy_text",
         "free_cancellation_hours",
         "reschedule_cutoff_hours",
+        "max_reschedules",
     ]
     assert "required" not in schemas["BusinessSettings-Input"]
 
@@ -294,3 +296,15 @@ def test_changing_a_cancellation_threshold_is_audited(
         ("setting:free_cancellation_hours", people.both),
         ("setting:reschedule_cutoff_hours", people.both),
     ]
+
+
+# 36 (part). fence (ZIF-54): the settings PUT bound equals the CHECK pair
+# (ck_bookings_max_reschedules BETWEEN 0 AND 10). Kills a pydantic bound wider than the CHECK,
+# which would 500 the public booking POST instead of 422ing the settings PUT.
+def test_max_reschedules_default_and_bound(people: People, app: FastAPI) -> None:
+    owner = signed_in(app, people.a, people.both)
+
+    assert owner.get("/api/settings").json()["max_reschedules"] == 2
+    assert put_settings(owner, {"max_reschedules": 10}).status_code == 200
+    assert put_settings(owner, {"max_reschedules": 11}).status_code == 422
+    assert put_settings(owner, {"max_reschedules": -1}).status_code == 422

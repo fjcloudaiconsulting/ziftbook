@@ -8,4 +8,6 @@ $date às $time ($zone)
 
 O arquivo de calendário anexo adiciona o horário à sua agenda.
 
+Veja, altere ou cancele seu agendamento: $link
+
 ziftbook

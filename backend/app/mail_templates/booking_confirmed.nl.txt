@@ -8,4 +8,6 @@ $date om $time ($zone)
 
 Met het bijgevoegde agendabestand zet je de afspraak in je agenda.
 
+Bekijk, wijzig of annuleer je afspraak: $link
+
 ziftbook

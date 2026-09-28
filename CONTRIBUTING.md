@@ -231,6 +231,11 @@ Rate limits and audit events key on the visitor's address. Each deployment has e
   any of those could set its own `X-Forwarded-For`. k3s/flannel doesn't SNAT pod-to-ClusterIP traffic, but
   that is not the safeguard: the backend Service must never be exposed via NodePort, LoadBalancer or
   Ingress, and NetworkPolicies must admit only the web app's pods.
+- **Production prerequisite (ZIF-54):** `/api/public/booking-link/*`'s per-IP limits
+  (`booking_link_open`/`booking_link_read`/`booking_link_write`) key on `request.client.host` exactly like
+  every other public route. Without `ZIF_CLIENT_IP_HEADER` set wherever a proxy fronts the web app, every
+  visitor's booking-link traffic arrives at the API under the web server's one address: after 10
+  exchanges in 15 minutes, every further one is refused, for every client of every business behind it.
 
 ## Business settings
 
@@ -459,7 +464,7 @@ ZIF-38). An empty variable means the default: `env_ignore_empty=True` on the bas
 | **Security** | | | | | |
 | `ZIF_TURNSTILE_SECRET` | api | `""` | no | yes | Cloudflare Turnstile secret. Unset skips verification, logged on the `api started` line. |
 | `ZIF_TRUSTED_PROXIES` | api | `""` | yes | no | Addresses whose `X-Forwarded-For` the API believes. Empty trusts nobody. |
-| `ZIF_CLIENT_IP_HEADER` | frontend | none | no | no | Header the web app trusts for the visitor's address (staging: `cf-connecting-ip`). Set only behind a proxy that overwrites it. |
+| `ZIF_CLIENT_IP_HEADER` | frontend | none | yes, behind a proxy | no | Header the web app trusts for the visitor's address (staging: `cf-connecting-ip`). Set only behind a proxy that overwrites it; unset there, every visitor shares the proxy's address and its per-IP limits. |
 | **Logging** | | | | | |
 | `ZIF_LOG_LEVEL` | api, worker, migrations, frontend | `INFO` | no | no | `DEBUG`/`INFO`/`WARNING`/`ERROR`. |
 | `ZIF_LOG_FORMAT` | api, worker, migrations, frontend | `json` | no | no | `json` or `text`. |

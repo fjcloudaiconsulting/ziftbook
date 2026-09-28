@@ -1,0 +1,11 @@
+A client cancelled their booking
+Hello,
+
+$client has cancelled their booking:
+
+$service
+$date at $time ($zone)
+
+$link
+
+ziftbook

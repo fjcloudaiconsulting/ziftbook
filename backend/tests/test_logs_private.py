@@ -9,8 +9,9 @@ import hashlib
 import json
 import smtplib
 from collections.abc import Callable, Iterator
-from datetime import date, timedelta
+from datetime import datetime, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pytest
 from fastapi import FastAPI
@@ -249,7 +250,9 @@ def test_no_personal_data_ever_reaches_a_log(
     # 6e (ZIF-51): a guest booking POST at DEBUG, and the availability GET that finds its slot.
     # F-i: the 6c call above is fixed-dated and now in the past, so its slots list is empty - this
     # flow needs its OWN future-dated GET.
-    booking_day = (date.today() + timedelta(days=2)).isoformat()
+    # The business's date (the default zone), never the host's (ZIF-54 F1).
+    today = datetime.now(ZoneInfo("Europe/Amsterdam")).date()
+    booking_day = (today + timedelta(days=2)).isoformat()
     own_availability = client_for(app).get(
         f"/api/public/businesses/{people.a}/services/{created.json()['id']}/availability",
         params={"from": booking_day, "to": booking_day},

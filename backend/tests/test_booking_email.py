@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Engine, text
 
 from app import auth, mail
+from app.bookings import CLIENT_CANCEL
 from app.db import tenant_context
 from app.jobs import Job, run_once
 from app.mail import STATUS_FOR
@@ -156,7 +157,14 @@ def set_times(
 ) -> None:
     with tenant_context(tenant_id) as session:
         session.execute(
-            text("UPDATE bookings SET starts_at = :s, ends_at = :e WHERE id = :id"),
+            text(
+                "UPDATE bookings SET starts_at = :s, ends_at = :e, "
+                # ZIF-54's ck_bookings_earliest_starts_at_current (earliest_starts_at <= starts_at):
+                # this helper moves starts_at arbitrarily, not through RESCHEDULE, so it keeps the
+                # same LEAST() RESCHEDULE itself uses rather than trusting the new value is later.
+                "earliest_starts_at = LEAST(earliest_starts_at, :s) "
+                "WHERE id = :id"
+            ),
             {"s": starts_at, "e": ends_at, "id": booking_id},
         )
 
@@ -604,6 +612,8 @@ def test_every_booking_template_renders_service_and_when() -> None:
         "client": "Client Name",
         "link": "https://example.com/en",
         "expires": "EXPIRES-MARKER",  # never the date/time markers: booking_request prints it too
+        "old_date": "OLD-DATE-MARKER",
+        "old_time": "OLD-TIME-MARKER",
     }
     for template in STATUS_FOR:
         for locale in LOCALES:
@@ -772,7 +782,7 @@ def test_merchant_recipients_are_every_owner_plus_the_assigned_worker(
     assert subjects_sent_to(email_of(worker2)) == []
 
     # Solo business: the owner is also the assigned worker -> exactly one email. Guard, not a
-    # fence: DISTINCT user_id in _email_merchants's query, plus the dedupe key already holding
+    # fence: DISTINCT user_id in email_merchants's query, plus the dedupe key already holding
     # user_id, rules out a duplicate before this ever runs.
     set_role(people.b, people.only_b, "owner")
     solo_service = new_service(signed_in(app, people.b, people.only_b))
@@ -795,7 +805,14 @@ def test_enqueued_payloads_hold_only_ids_no_pii(
     assert jobs
     for job in jobs:
         payload = job["payload"] if isinstance(job["payload"], dict) else json.loads(job["payload"])
-        assert set(payload) <= {"booking_id", "template", "user_id", "starts_at", "traceparent"}
+        assert set(payload) <= {
+            "booking_id",
+            "template",
+            "user_id",
+            "starts_at",
+            "previous_starts_at",
+            "traceparent",
+        }
         blob = json.dumps(payload)
         assert "Secret Name" not in blob
         assert "secret@example.com" not in blob
@@ -816,3 +833,212 @@ def test_double_confirm_enqueues_one_confirmed_job(
     jobs = jobs_for_booking(app_engine, people.a, booking_id)
     confirmed_jobs = [j for j in jobs if template_of(j) == "booking_confirmed"]
     assert len(confirmed_jobs) == 1
+
+
+# ---------------------------------------------------------------------------
+# ZIF-54 D1/D3: the guest booking link minted at send time.
+# ---------------------------------------------------------------------------
+
+
+def link_hash(app_engine: Engine, tenant_id: uuid.UUID, booking_id: str) -> list[bytes]:
+    with tenant_context(tenant_id) as session:
+        return list(
+            session.execute(
+                text("SELECT token_hash FROM booking_links WHERE booking_id = :id"),
+                {"id": booking_id},
+            ).scalars()
+        )
+
+
+# 2. fence. Kills storing the raw token, a query-string link, or dropping the tracking header.
+def test_a_linked_client_email_carries_a_fragment_token_that_hashes_into_booking_links(
+    people: People, app: FastAPI, ready: str, app_engine: Engine
+) -> None:
+    import hashlib
+
+    booking_id = make_pending(app, people.a, ready)
+    owner = signed_in(app, people.a, people.both)
+    assert patch(owner, booking_id, "confirmed").status_code == 200
+    client_email = _client_email(people.a, booking_id)
+
+    run_send_booking(people.a, booking_id, "booking_confirmed")
+
+    message = mail_for(client_email)
+    fragment = message["Text"].split("#")[1].split()[0]
+    tenant, _, token = fragment.partition(".")
+    assert tenant == str(people.a)
+    digest = hashlib.sha256(token.encode()).digest()
+    assert digest in link_hash(app_engine, people.a, booking_id)
+    # The raw token is nowhere else: not in the outbox, not in the jobs table.
+    with tenant_context(people.a) as session:
+        outbox_blob = json.dumps(
+            [dict(r) for r in session.execute(text("SELECT * FROM email_outbox")).mappings()],
+            default=str,
+        )
+    assert token not in outbox_blob
+    raw = raw_for(client_email)
+    assert "X-Mailgun-Track-Clicks: no" in raw
+
+
+# fence (D1). A job already sent, run again, stores no second booking_links row: the token it
+# mints for the dedupe no-op is dropped unused. Kills INSERT_LINK regardless of _outbox's status.
+def test_a_rerun_of_a_sent_job_stores_no_link(
+    people: People, app: FastAPI, ready: str, app_engine: Engine
+) -> None:
+    booking_id = make_pending(app, people.a, ready)
+    assert patch(signed_in(app, people.a, people.both), booking_id, "confirmed").status_code == 200
+
+    job = run_send_booking(people.a, booking_id, "booking_confirmed")
+    assert len(link_hash(app_engine, people.a, booking_id)) == 1
+    mail.send_booking(job)  # outbox already 'sent'
+
+    assert len(link_hash(app_engine, people.a, booking_id)) == 1
+    assert len(_search(_client_email(people.a, booking_id))) == 1
+
+
+def texts_to(email: str) -> list[str]:
+    """The text body of every message Mailpit got for email."""
+    out = []
+    for sent in _search(email):
+        with urllib.request.urlopen(f"{MAILPIT}/api/v1/message/{sent['ID']}", timeout=5) as body:
+            out.append(json.load(body)["Text"])
+    return out
+
+
+def starts_at_of(tenant_id: uuid.UUID, booking_id: str) -> str:
+    with tenant_context(tenant_id) as session:
+        found: datetime = session.scalar(
+            text("SELECT starts_at FROM bookings WHERE id = :id"), {"id": booking_id}
+        )
+    return found.isoformat()
+
+
+# 4. fence. booking_new, booking_client_cancelled and booking_client_rescheduled carry no manage
+# link. Kills sharing one $link between the manage link and the console link.
+def test_merchant_templates_never_carry_the_manage_link_fragment(
+    people: People, app: FastAPI, ready: str
+) -> None:
+    booking_id = make_pending(app, people.a, ready)
+    owner = signed_in(app, people.a, people.both)
+    assert patch(owner, booking_id, "confirmed").status_code == 200
+    with tenant_context(people.a) as session:
+        owner_email = session.scalar(
+            text("SELECT email FROM users WHERE id = :id"), {"id": people.both}
+        )
+    assert owner_email is not None
+    user_id = str(people.both)
+    starts_at = starts_at_of(people.a, booking_id)
+
+    run_send_booking(people.a, booking_id, "booking_new", user_id=user_id)
+    run_send_booking(
+        people.a,
+        booking_id,
+        "booking_client_rescheduled",
+        user_id=user_id,
+        starts_at=starts_at,
+        previous_starts_at=starts_at,
+    )
+    with tenant_context(people.a) as session:
+        assert session.execute(CLIENT_CANCEL, {"id": booking_id}).first() is not None
+    run_send_booking(people.a, booking_id, "booking_client_cancelled", user_id=user_id)
+
+    texts = texts_to(owner_email)
+    assert len(texts) == 3
+    for body in texts:
+        assert "/booking#" not in body
+
+
+# 3. fence. After the confirmation and then the reminder, BOTH emailed links still exchange.
+# Kills rotation (only the newest link of a booking resolving).
+def test_every_emailed_link_stays_live_after_a_newer_one(
+    people: People, app: FastAPI, ready: str
+) -> None:
+    booking_id = make_pending(app, people.a, ready)
+    owner = signed_in(app, people.a, people.both)
+    assert patch(owner, booking_id, "confirmed").status_code == 200
+    client_email = _client_email(people.a, booking_id)
+
+    run_send_booking(people.a, booking_id, "booking_confirmed")
+    run_send_booking(
+        people.a, booking_id, "booking_reminder", starts_at=starts_at_of(people.a, booking_id)
+    )
+
+    texts = texts_to(client_email)
+    assert len(texts) == 2
+    for body in texts:
+        token = body.split("/booking#")[1].split()[0]
+        exchange = new_client(app).post("/api/public/booking-link/session", json={"token": token})
+        assert exchange.status_code == 204
+
+
+# 24 (part). fence. Kills the hardcoded SEQUENCE:0 on a rescheduled confirmation.
+def test_the_confirmation_ics_sequence_is_the_reschedule_count(
+    people: People, app: FastAPI, ready: str, app_engine: Engine
+) -> None:
+    booking_id = make_pending(app, people.a, ready)
+    owner = signed_in(app, people.a, people.both)
+    assert patch(owner, booking_id, "confirmed").status_code == 200
+    with tenant_context(people.a) as session:
+        session.execute(
+            text("UPDATE bookings SET reschedule_count = 1 WHERE id = :id"), {"id": booking_id}
+        )
+    client_email = _client_email(people.a, booking_id)
+
+    run_send_booking(people.a, booking_id, "booking_confirmed")
+
+    import email as email_module
+
+    parsed = email_module.message_from_string(raw_for(client_email))
+    (calendar_part,) = [p for p in parsed.walk() if p.get_content_type() == "text/calendar"]
+    payload = calendar_part.get_payload(decode=True)
+    assert isinstance(payload, bytes)
+    assert "SEQUENCE:1" in payload.decode()
+
+
+# 34. fence. Kills losing an already-sent link, or a retry that never gets a usable one, when a
+# later send in the same booking's life fails at SMTP.
+def test_an_smtp_failure_leaves_the_earlier_link_valid_and_the_retry_mints_its_own(
+    people: People,
+    app: FastAPI,
+    ready: str,
+    app_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    booking_id = make_pending(app, people.a, ready)
+    client_email = _client_email(people.a, booking_id)
+    run_send_booking(people.a, booking_id, "booking_received")
+    owner = signed_in(app, people.a, people.both)
+    assert patch(owner, booking_id, "confirmed").status_code == 200
+
+    # The booking_received link (sent before confirmation) already exists and is unaffected.
+    earlier_hashes = set(link_hash(app_engine, people.a, booking_id))
+    assert earlier_hashes  # booking_received minted one
+
+    def broken_send(*args: Any, **kwargs: Any) -> None:
+        raise ConnectionRefusedError("smtp down")
+
+    monkeypatch.setattr(mail, "_send", broken_send)
+    job = Job(
+        uuid.uuid4(),
+        "email.booking",
+        people.a,
+        {"booking_id": str(booking_id), "template": "booking_confirmed"},
+    )
+    with pytest.raises(ConnectionRefusedError):
+        mail.send_booking(job)
+
+    # The failed attempt's own hash is committed (harmless, unused) alongside the earlier ones.
+    after_failure = set(link_hash(app_engine, people.a, booking_id))
+    assert earlier_hashes <= after_failure
+    assert outbox_for(people.a, job.id)["status"] == "pending"
+
+    monkeypatch.undo()
+    mail.send_booking(job)  # the retry: same job, mints its own token, and this time it sends
+
+    assert outbox_for(people.a, job.id)["status"] == "sent"
+    (confirmed,) = [
+        m for m in _search(client_email) if m["Subject"] == _subject("booking_confirmed", "en")
+    ]
+    with urllib.request.urlopen(f"{MAILPIT}/api/v1/message/{confirmed['ID']}", timeout=5) as body:
+        message: dict[str, Any] = json.load(body)
+    assert "#" in message["Text"]

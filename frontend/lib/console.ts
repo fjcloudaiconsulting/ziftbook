@@ -53,6 +53,20 @@ export function canEditHours(role: Role, isSelf: boolean, workersEditOwnHours: b
   return role === "owner" || (isSelf && workersEditOwnHours);
 }
 
+/** Whether a role may change the business settings (`PUT /api/settings` is owner-only). */
+export function canEditSettings(role: Role): boolean {
+  return role === "owner";
+}
+
+/** The "changes a client can make" field as the number to save: a whole number from 0 to 10, the
+ * database CHECK's bounds; null for anything else. */
+export function maxReschedulesValue(text: string): number | null {
+  const trimmed = text.trim();
+  if (!/^\d{1,2}$/.test(trimmed)) return null;
+  const value = Number(trimmed);
+  return value <= 10 ? value : null;
+}
+
 /** "Set a name clients can see" shows only while the name is genuinely unset, never for any other
  * falsy-looking value the API might send. */
 export function showSetName(displayName: string | null): boolean {

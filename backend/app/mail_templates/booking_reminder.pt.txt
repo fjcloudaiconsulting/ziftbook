@@ -8,4 +8,6 @@ $date às $time ($zone)
 
 Até lá!
 
+Veja, altere ou cancele seu agendamento: $link
+
 ziftbook

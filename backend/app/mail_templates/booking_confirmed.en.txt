@@ -8,4 +8,6 @@ $date at $time ($zone)
 
 The attached calendar file adds it to your calendar.
 
+View, change or cancel your booking: $link
+
 ziftbook

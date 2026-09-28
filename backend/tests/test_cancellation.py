@@ -30,7 +30,10 @@ def utc(text: str) -> datetime:
     return datetime.fromisoformat(text)
 
 
-# F1 (T1) - the §4 boundary table, all eleven rows, whole Decision per row.
+# F1 (T1) - the §4 boundary table, all eleven rows, whole Decision per row. Every row's booking is
+# not yet rescheduled (original_starts_at = starts_at, the insert-time snapshot), so can_reschedule
+# reduces to the pre-ZIF-54 cutoff-only rule and reschedules_left is max_reschedules whenever it is
+# true.
 # Kills: `>` instead of `>=` at the refund threshold (row 2 drops to 0); `>` instead of `>=` at the
 # reschedule cutoff (row 4 loses reschedule); `<=` instead of `<` at starts_at (row 7 answers
 # no_refund_no_reschedule instead of started); charge_pct = 100 - refund_pct (rows 3-9 answer 100);
@@ -39,26 +42,46 @@ def utc(text: str) -> datetime:
 @pytest.mark.parametrize(
     "policy,starts_at,now,expected",
     [
-        (P, STARTS, utc("2026-09-29T11:59:59Z"), (True, True, 100, 0, "full_refund_reschedule")),
-        (P, STARTS, utc("2026-09-29T12:00:00Z"), (True, True, 100, 0, "full_refund_reschedule")),
-        (P, STARTS, utc("2026-09-29T12:00:01Z"), (True, True, 0, 0, "no_refund_reschedule")),
-        (P, STARTS, utc("2026-09-30T12:00:00Z"), (True, True, 0, 0, "no_refund_reschedule")),
-        (P, STARTS, utc("2026-09-30T12:00:01Z"), (True, False, 0, 0, "no_refund_no_reschedule")),
-        (P, STARTS, utc("2026-10-01T11:59:59Z"), (True, False, 0, 0, "no_refund_no_reschedule")),
-        (P, STARTS, utc("2026-10-01T12:00:00Z"), (False, False, 0, 0, "started")),
-        (P, STARTS, utc("2026-10-01T12:00:01Z"), (False, False, 0, 0, "started")),
-        (P, STARTS, utc("2026-10-02T12:00:00Z"), (False, False, 0, 0, "started")),
+        (
+            P,
+            STARTS,
+            utc("2026-09-29T11:59:59Z"),
+            (True, True, 100, 0, "full_refund_reschedule", 2),
+        ),
+        (
+            P,
+            STARTS,
+            utc("2026-09-29T12:00:00Z"),
+            (True, True, 100, 0, "full_refund_reschedule", 2),
+        ),
+        (P, STARTS, utc("2026-09-29T12:00:01Z"), (True, True, 0, 0, "no_refund_reschedule", 2)),
+        (P, STARTS, utc("2026-09-30T12:00:00Z"), (True, True, 0, 0, "no_refund_reschedule", 2)),
+        (
+            P,
+            STARTS,
+            utc("2026-09-30T12:00:01Z"),
+            (True, False, 0, 0, "no_refund_no_reschedule", 0),
+        ),
+        (
+            P,
+            STARTS,
+            utc("2026-10-01T11:59:59Z"),
+            (True, False, 0, 0, "no_refund_no_reschedule", 0),
+        ),
+        (P, STARTS, utc("2026-10-01T12:00:00Z"), (False, False, 0, 0, "started", 0)),
+        (P, STARTS, utc("2026-10-01T12:00:01Z"), (False, False, 0, 0, "started", 0)),
+        (P, STARTS, utc("2026-10-02T12:00:00Z"), (False, False, 0, 0, "started", 0)),
         (
             Policy(0, 48),
             STARTS,
             utc("2026-09-30T12:00:00Z"),
-            (True, False, 100, 0, "full_refund_no_reschedule"),
+            (True, False, 100, 0, "full_refund_no_reschedule", 0),
         ),
         (
             Policy(0, 0),
             STARTS,
             utc("2026-10-01T11:59:59Z"),
-            (True, True, 100, 0, "full_refund_reschedule"),
+            (True, True, 100, 0, "full_refund_reschedule", 2),
         ),
     ],
     ids=[
@@ -79,9 +102,9 @@ def test_the_boundary_table(
     policy: Policy,
     starts_at: datetime,
     now: datetime,
-    expected: tuple[bool, bool, int, int, str],
+    expected: tuple[bool, bool, int, int, str, int],
 ) -> None:
-    assert decide(policy, starts_at, now) == Decision(*expected), SPEC
+    assert decide(policy, starts_at, now, original_starts_at=starts_at) == Decision(*expected), SPEC
 
 
 # F2 (T2) - §4 row D-1: both moments wear ONE shared ZoneInfo object, as psycopg3 hands them over.
@@ -207,9 +230,9 @@ def test_an_inverted_policy_refunds_in_full_without_a_reschedule() -> None:
 
 # G2 (T4) - zero is the settings' lower bound on both keys and it means "always".
 def test_a_zero_policy_allows_everything_until_the_moment_it_starts() -> None:
-    assert decide(Policy(0, 0), STARTS, utc("2026-10-01T11:59:59Z")) == Decision(
-        True, True, 100, 0, "full_refund_reschedule"
-    )
+    assert decide(
+        Policy(0, 0), STARTS, utc("2026-10-01T11:59:59Z"), original_starts_at=STARTS
+    ) == Decision(True, True, 100, 0, "full_refund_reschedule", 2)
     assert decide(Policy(0, 0), STARTS, STARTS) == Decision(False, False, 0, 0, "started")
 
 
@@ -246,3 +269,77 @@ def test_importing_the_engine_drags_in_no_other_app_module() -> None:
     )
 
     assert found.stdout.strip() == "['app', 'app.cancellation']"
+
+
+# ZIF-54 D7/D8 pure-engine fences.
+
+
+# F17 (T17) - refund_pct is anchored to earliest_starts_at, never the current starts_at alone.
+# Kills measuring the refund from the new start.
+def test_refund_is_anchored_to_earliest_starts_at_not_the_current_start() -> None:
+    # Moved from far out to 5 days out; now cancelling with only 30h of ORIGINAL lead left.
+    earliest = utc("2026-10-02T12:00:00Z")
+    current = utc("2026-11-01T12:00:00Z")  # far in the future: current-start lead alone is huge
+    now = earliest - timedelta(hours=30)
+
+    verdict = decide(
+        P, current, now, original_starts_at=utc("2026-09-01T12:00:00Z"), earliest_starts_at=earliest
+    )
+
+    assert verdict.refund_pct == 0, SPEC
+
+
+# F19 (T19) - the original start is in the past; the CURRENT start (moved out) is still in the
+# future. can_cancel is true (a property of the current start) and the refund is 0 (measured from
+# the past earliest start). Kills applying earliest_starts_at to the started check.
+def test_a_booking_moved_out_after_its_original_start_passed_can_still_be_cancelled() -> None:
+    now = utc("2026-10-05T12:00:00Z")
+    original = utc("2026-10-01T12:00:00Z")  # already past
+    current = utc("2026-11-01T12:00:00Z")  # moved into the future
+
+    verdict = decide(P, current, now, original_starts_at=original, earliest_starts_at=original)
+
+    assert verdict.can_cancel is True
+    assert verdict.refund_pct == 0
+
+
+# F21-equivalent, pure (T21's route half lives in test_booking_links_api.py) - reschedule_count at
+# or above max_reschedules refuses a further reschedule; original_starts_at unset (a legacy
+# booking) refuses one too, however much lead remains.
+@pytest.mark.parametrize(
+    "reschedule_count,original_starts_at,expected",
+    [
+        (2, STARTS, False),  # count == max_reschedules
+        (3, STARTS, False),  # count > max_reschedules (should never happen, still refused)
+        (0, None, False),  # legacy booking, never rescheduled, no snapshot
+        (1, STARTS, True),  # one reschedule used, one left
+    ],
+)
+def test_reschedule_is_refused_past_the_cap_or_with_no_snapshot(
+    reschedule_count: int, original_starts_at: datetime | None, expected: bool
+) -> None:
+    verdict = decide(
+        P,
+        STARTS,
+        utc("2026-09-01T00:00:00Z"),
+        reschedule_count=reschedule_count,
+        original_starts_at=original_starts_at,
+    )
+
+    assert verdict.can_reschedule is expected
+
+
+# F27 (T27) - a pending booking is not decide()'s concern: the route overrides copy_key/refund_pct
+# for one (spec §3, app/cancellation.py's own note). This only fences that decide() itself keeps
+# answering can_cancel=True regardless of status; the route applies the pending override.
+def test_decide_does_not_know_about_booking_status() -> None:
+    verdict = decide(P, STARTS, utc("2026-09-01T00:00:00Z"), original_starts_at=STARTS)
+
+    assert verdict.can_cancel is True
+
+
+# ZIF-54 36 (pure half; the settings PUT half is in test_settings_api.py). A negative cap is
+# refused at construction, like a negative hour: it would otherwise make reschedules_left negative.
+def test_a_negative_max_reschedules_is_refused() -> None:
+    with pytest.raises(ValueError, match="negative"):
+        Policy(48, 24, max_reschedules=-1)

@@ -251,7 +251,12 @@
       "comingSoon": "Os seus clientes chegam em breve."
     },
     "settings": {
-      "comingSoon": "As suas configurações chegam em breve."
+      "maxReschedulesLabel": "Alterações que um cliente pode fazer em um agendamento",
+      "maxReschedulesHint": "Quantas vezes um cliente pode mudar um agendamento para outro horário, de 0 a 10. Com 0, fica desativado. Os novos agendamentos recebem o novo número; os existentes mantêm o deles.",
+      "maxReschedulesRange": "Digite um número inteiro de 0 a 10.",
+      "maxReschedulesOwnerOnly": "Só o proprietário pode alterar isso.",
+      "save": "Salvar",
+      "saved": "Salvo. Os novos agendamentos recebem este número."
     },
     "errors": {
       "ownerOnly": "Só um proprietário pode fazer isso.",
@@ -411,5 +416,70 @@
       "errorMissingEnd": "Escolha um horário de término.",
       "notFound": "Este bloqueio não foi encontrado. Pode já ter sido removido."
     }
+  },
+  "BookingLink": {
+    "title": "Seu agendamento",
+    "opening": "Abrindo seu agendamento…",
+    "notActiveTitle": "Este link não está mais ativo",
+    "notActiveLede": "Ele pode ser de um agendamento que foi cancelado ou que já aconteceu. Se você tiver um e-mail mais recente sobre este agendamento, use o link dele.",
+    "error": "Algo deu errado, tente de novo",
+    "retry": "Tentar de novo",
+    "when": "{date} às {time} ({zone})",
+    "with": "Com {name}",
+    "withTeam": "Com alguém da equipe",
+    "confirmed": "Confirmado",
+    "waiting": "Aguardando {business} aceitar",
+    "originally": "Originalmente {when}",
+    "copy": {
+      "full_refund_reschedule": "Você pode cancelar sem custo ou mudar o horário.",
+      "full_refund_no_reschedule": "Você pode cancelar sem custo. Já é tarde para mudar o horário on-line.",
+      "no_refund_reschedule": "Se você cancelar agora, não há reembolso. Você ainda pode mudar o horário.",
+      "no_refund_no_reschedule": "Se você cancelar agora, não há reembolso, e já é tarde para mudar o horário on-line.",
+      "started": "Este agendamento já começou.",
+      "pending": "Nada foi pago ainda, então não há nada a reembolsar."
+    },
+    "freeUntil": "Você pode cancelar sem custo até {date}, {time}. {move, select, yes {Você também pode mudar o horário.} other {Já é tarde para mudar o horário on-line.}}",
+    "refundFull": "Você recebe o reembolso total.",
+    "refundNone": "Se você cancelar agora, não há reembolso.",
+    "pendingNote": "Você pode mudar o horário assim que {business} aceitar.",
+    "cancel": "Cancelar agendamento",
+    "reschedule": "Mudar data ou horário ({n, plural, one {resta # alteração} other {restam # alterações}})",
+    "noChanges": "Este agendamento não pode mais ser alterado on-line. Entre em contato com {business}.",
+    "consentAsk": "Ao agendar, você pediu a {business} para manter contato por: {purposes}. Confirma?",
+    "purposes": {
+      "marketing_email": "e-mail",
+      "sms": "SMS",
+      "whatsapp": "WhatsApp"
+    },
+    "consentConfirm": "Confirmar",
+    "consentDone": "Obrigado, está confirmado.",
+    "confirming": "Confirmando…",
+    "cancelTitle": "Cancelar este agendamento?",
+    "yesCancel": "Sim, cancelar",
+    "keep": "Manter o agendamento",
+    "cancelling": "Cancelando…",
+    "termsChanged": "As condições de cancelamento mudaram agora há pouco. Confira de novo.",
+    "changed": "Este agendamento acabou de ser alterado.",
+    "notAllowed": "Isso não pode mais ser feito on-line. Este é o seu agendamento agora.",
+    "pickTitle": "Escolha um novo horário",
+    "previousWeek": "Semana anterior",
+    "nextWeek": "Próxima semana",
+    "loadingTimes": "Carregando horários livres…",
+    "noTimes": "Nenhum horário livre nesta semana",
+    "timesOn": "Horários livres em {day}",
+    "timesIn": "Horários no fuso de {zone}",
+    "slotTaken": "Esse horário acabou de ser ocupado.",
+    "confirmTitle": "Confirme o novo horário",
+    "changesAfter": "{n, plural, =0 {Esta é a última alteração que você pode fazer.} one {Você pode alterá-lo mais # vez.} other {Você pode alterá-lo mais # vezes.}}",
+    "confirm": "Confirmar",
+    "back": "Voltar",
+    "moving": "Mudando…",
+    "cancelledTitle": "Seu agendamento foi cancelado",
+    "cancelledLede": "Enviamos uma confirmação para o seu e-mail.",
+    "movedTitle": "Seu agendamento mudou para {when}",
+    "movedLede": "Enviamos uma nova confirmação para o seu e-mail, com um arquivo de calendário.",
+    "backToBooking": "Voltar ao seu agendamento",
+    "anotherTitle": "Você abriu outro agendamento neste navegador",
+    "anotherLede": "Para gerenciar este, abra de novo o link no e-mail dele."
   }
 }

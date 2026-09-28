@@ -58,7 +58,9 @@ from tests.test_turnstile import FakeAnswer
 from tests.test_working_hours import seed
 
 ZONE = "Europe/Amsterdam"
-TODAY = date.today()
+# The business's date, never the host's: on a UTC host between 22:00 and 24:00 the host is still
+# on yesterday, and every "two days out" would land one day nearer (ZIF-54 F1).
+TODAY = datetime.now(ZoneInfo(ZONE)).date()
 DAY = TODAY + timedelta(days=2)
 
 
@@ -477,8 +479,8 @@ def test_a_conflicting_row_committed_mid_request_is_a_409_slot_taken(
     paused = threading.Event()
     release = threading.Event()
 
-    def paused_booked(db: Any, members_: Any, start: Any, end: Any) -> Any:
-        result = real_booked(db, members_, start, end)
+    def paused_booked(db: Any, members_: Any, start: Any, end: Any, *, exclude: Any = None) -> Any:
+        result = real_booked(db, members_, start, end, exclude=exclude)
         if not paused_once.is_set():
             paused_once.set()
             paused.set()
@@ -523,8 +525,8 @@ def test_the_loop_moves_to_the_next_candidate_when_the_first_is_taken(
     paused = threading.Event()
     release = threading.Event()
 
-    def paused_booked(db: Any, members_: Any, start: Any, end: Any) -> Any:
-        result = real_booked(db, members_, start, end)
+    def paused_booked(db: Any, members_: Any, start: Any, end: Any, *, exclude: Any = None) -> Any:
+        result = real_booked(db, members_, start, end, exclude=exclude)
         if not paused_once.is_set():
             paused_once.set()
             paused.set()
@@ -1359,8 +1361,8 @@ def test_a_second_booker_waits_for_the_first_rather_than_deadlocking(
     holding = threading.Event()
     release = threading.Event()
 
-    def paused_booked(db: Any, members_: Any, start: Any, end: Any) -> Any:
-        result = real_booked(db, members_, start, end)
+    def paused_booked(db: Any, members_: Any, start: Any, end: Any, *, exclude: Any = None) -> Any:
+        result = real_booked(db, members_, start, end, exclude=exclude)
         if not paused_once.is_set():
             paused_once.set()
             holding.set()
@@ -1561,3 +1563,21 @@ def test_a_whole_day_block_refuses_the_booking_and_leaves_the_next_day_untouched
     assert still_open.status_code == 201
     still_open_midnight = post_booking(client, people.a, ready, starts_at=next_day_midnight_slot)
     assert still_open_midnight.status_code == 201
+
+
+# ZIF-54 33: GUARD. create() re-derives the slot through availability.offered() and takes its
+# least-loaded tiebreak from the rows offered() already read: exactly one booked() read per booking.
+def test_create_reads_booked_exactly_once(
+    people: People, app: FastAPI, ready: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[Any] = []
+    real = availability.booked
+
+    def counting(*args: Any, **kwargs: Any) -> Any:
+        calls.append(kwargs.get("exclude"))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(availability, "booked", counting)
+
+    assert post_booking(new_client(app), people.a, ready).status_code == 201
+    assert calls == [None]

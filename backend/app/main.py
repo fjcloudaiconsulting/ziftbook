@@ -23,6 +23,7 @@ from app import (
     audit,
     auth,
     availability,
+    booking_links,
     bookings,
     business_settings,
     clients,
@@ -119,7 +120,14 @@ def create_app() -> FastAPI:
 
     # No deploy version in the OpenAPI document: it is a committed contract
     # and must not vary per environment.
-    app = FastAPI(title="ziftbook", generate_unique_id_function=operation_id, lifespan=lifespan)
+    # redirect_slashes=False (ZIF-136): a trailing slash is a plain 404, never a 307 whose
+    # Location names the internal API origin.
+    app = FastAPI(
+        title="ziftbook",
+        generate_unique_id_function=operation_id,
+        lifespan=lifespan,
+        redirect_slashes=False,
+    )
     app.include_router(router)
     app.include_router(auth.router)
     app.include_router(accounts.router)
@@ -135,6 +143,7 @@ def create_app() -> FastAPI:
     app.include_router(availability.router)
     app.include_router(bookings.router)
     app.include_router(bookings.merchant_router)
+    app.include_router(booking_links.router)
 
     @app.middleware("http")
     async def json_only(
@@ -149,6 +158,9 @@ def create_app() -> FastAPI:
             response = await call_next(request)
         # No API response is a page to link from.
         response.headers["Referrer-Policy"] = "no-referrer"
+        # ZIF-54 spec S4: every guest-link answer, errors included, is private to its bearer.
+        if request.url.path.startswith("/api/public/booking-link"):
+            response.headers["Cache-Control"] = "no-store"
         return response
 
     @app.middleware("http")
