@@ -302,7 +302,7 @@ export function WeekEditor({
 
       {envelope !== null && envelopeNote && <Banner tone="note">{envelopeNote}</Banner>}
 
-      <div className={styles.weekContent}>
+      <div>
       <div className={styles.days}>
         {days.map((day) => {
           const weekdayText = weekdayName(day.weekday, dl);
