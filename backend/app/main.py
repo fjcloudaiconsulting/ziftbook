@@ -24,6 +24,7 @@ from app import (
     auth,
     availability,
     booking_links,
+    booking_page,
     bookings,
     business_settings,
     clients,
@@ -141,6 +142,7 @@ def create_app() -> FastAPI:
     app.include_router(schedule.opening_router)
     app.include_router(time_off.router)
     app.include_router(availability.router)
+    app.include_router(booking_page.router)
     app.include_router(bookings.router)
     app.include_router(bookings.merchant_router)
     app.include_router(booking_links.router)
@@ -159,7 +161,7 @@ def create_app() -> FastAPI:
         # No API response is a page to link from.
         response.headers["Referrer-Policy"] = "no-referrer"
         # ZIF-54 spec S4: every guest-link answer, errors included, is private to its bearer.
-        if request.url.path.startswith("/api/public/booking-link"):
+        if request.url.path.startswith(("/api/public/booking-link", "/api/public/booking-pages")):
             response.headers["Cache-Control"] = "no-store"
         return response
 

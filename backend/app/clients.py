@@ -54,6 +54,7 @@ CONSENT_TEXTS: dict[str, dict[Purpose, str]] = {
         "I can opt out at any time.",
     }
 }
+CURRENT_POLICY_VERSION = max(CONSENT_TEXTS)  # the version a booking page offers (ISO dates sort)
 # ponytail: one wording per purpose, English. The stored evidence must be the text the person
 # actually read, so when the booking page ships translated (ZIF-56) the key becomes
 # (version, locale), the caller sends the locale it rendered, and an unknown locale is a 422 -
