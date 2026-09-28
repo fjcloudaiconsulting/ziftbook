@@ -2,27 +2,54 @@
 booking emails, with no account. See docs/specs/2026-09-24-zif-54-spec.md for the numbered tests
 this file protects (backend half; the frontend and 30/38 live elsewhere)."""
 
+import base64
+import email as email_module
 import hashlib
+import logging
 import secrets
+import urllib.request
 import uuid
-from datetime import date, timedelta
+from collections.abc import Callable
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from httpx2 import Response
+from opentelemetry.sdk.trace import ReadableSpan
 from psycopg.errors import CheckViolation, InsufficientPrivilege
 from sqlalchemy import Engine, text
 from sqlalchemy.exc import IntegrityError, ProgrammingError
 
+from app import mail
 from app.booking_links import COOKIE
+from app.bookings import RESCHEDULE
 from app.db import tenant_context
-from tests.conftest import People, fresh_address, member_id, new_client, signed_in
+from app.jobs import Job
+from tests.conftest import (
+    People,
+    fresh_address,
+    fresh_email,
+    member_id,
+    new_client,
+    put_settings,
+    save_setting,
+    signed_in,
+)
 from tests.test_availability_api import assign, new_service, weekdays
-from tests.test_booking_email import jobs_for_booking, template_of
+from tests.test_booking_email import (
+    MAILPIT,
+    _client_email,
+    _search,
+    clean_outbox,  # noqa: F401 -- autouse: these tests send mail, so they leave outbox rows
+    jobs_for_booking,
+    template_of,
+    texts_to,
+)
 from tests.test_bookings_api import at
-from tests.test_bookings_approval_api import make_pending, patch
+from tests.test_bookings_approval_api import ago, expire, make_pending, patch, shift
 from tests.test_working_hours import seed
 
 ZONE = "Europe/Amsterdam"
@@ -135,50 +162,59 @@ def test_every_failure_shape_gives_the_identical_404(
     booking_id = confirmed_booking(app, people.a, ready)
     assert patch(signed_in(app, people.a, people.both), booking_id, "confirmed").status_code == 200
     live_token = mint(people.a, booking_id)
+    dead_id = confirmed_booking(app, people.a, ready, starts_at=at("11:00"))
+    dead_token = mint(people.a, dead_id)
+    assert patch(signed_in(app, people.a, people.both), dead_id, "declined").status_code == 200
 
-    bad_shape = post(new_client(app), "/session", {"token": "not-a-token"})
-    unknown_tenant = post(new_client(app), "/session", {"token": f"{uuid.uuid4()}.{live_token}"})
-    unknown_hash = post(
-        new_client(app), "/session", {"token": f"{people.a}.{secrets.token_urlsafe(32)}"}
-    )
-    no_cookie = get(new_client(app))
+    def exchange(token: str) -> Response:
+        return post(new_client(app), "/session", {"token": token})
 
-    bodies = [bad_shape.json(), unknown_tenant.json(), unknown_hash.json(), no_cookie.json()]
-    statuses = [
-        bad_shape.status_code,
-        unknown_tenant.status_code,
-        unknown_hash.status_code,
-        no_cookie.status_code,
+    answers = [
+        exchange("not-a-token"),  # no tenant part at all
+        exchange(f"{people.a}.too-short"),  # a real tenant, a secret of the wrong shape
+        exchange(f"{uuid.uuid4()}.{live_token}"),  # unknown tenant
+        exchange(f"{people.a}.{secrets.token_urlsafe(32)}"),  # unknown hash
+        exchange(f"{people.a}.{dead_token}"),  # a real link of a dead booking
+        get(new_client(app)),  # no cookie
     ]
-    assert statuses == [404, 404, 404, 404]
-    assert bodies == [{"code": "link_expired"}] * 4
+
+    assert [(a.status_code, a.json()) for a in answers] == [(404, {"code": "link_expired"})] * 6
 
 
-# 7. fence. Merchant cancel, decline, pending expiry and starts_at passing all revoke every route.
-def test_a_dead_booking_gives_404_on_every_route(people: People, app: FastAPI, ready: str) -> None:
-    booking_id = confirmed_booking(app, people.a, ready)
+# 7. fence. Merchant cancel, decline, pending expiry and starts_at passing all revoke every route,
+# the exchange included. Kills a stored expiry, or a view window after the start (the "started"
+# case is one minute past its start, so any grace period at all keeps it alive).
+@pytest.mark.parametrize("death", ["cancelled", "declined", "expired", "started"])
+def test_a_dead_booking_gives_404_on_every_route(
+    people: People, app: FastAPI, ready: str, death: str
+) -> None:
+    booking_id = confirmed_booking(app, people.a, ready, starts_at=at("10:00"))
     owner = signed_in(app, people.a, people.both)
-    assert patch(owner, booking_id, "confirmed").status_code == 200
-    client = linked(app, people.a, booking_id)
+    if death in ("cancelled", "started"):
+        assert patch(owner, booking_id, "confirmed").status_code == 200
+    token = mint(people.a, booking_id)
+    client = with_cookie(app, people.a, token)
     assert get(client).status_code == 200
 
-    assert patch(owner, booking_id, "cancelled_by_merchant").status_code == 200
+    if death == "cancelled":
+        assert patch(owner, booking_id, "cancelled_by_merchant").status_code == 200
+    elif death == "declined":
+        assert patch(owner, booking_id, "declined").status_code == 200
+    elif death == "expired":
+        expire(people.a, booking_id)
+    else:
+        shift(people.a, booking_id, ago(at("10:00"), timedelta(minutes=1)))
 
-    assert get(client).status_code == 404
-    assert (
-        get(client, "/availability", **{"from": DAY.isoformat(), "to": DAY.isoformat()}).status_code
-        == 404
-    )
-    assert post(client, "/cancel", {"booking_id": booking_id, "refund_pct": 100}).status_code == 404
-    assert (
-        post(
-            client,
-            "/reschedule",
-            {"booking_id": booking_id, "starts_at": at("10:00"), "reschedule_count": 0},
-        ).status_code
-        == 404
-    )
-    assert post(client, "/consents", {"booking_id": booking_id}).status_code == 404
+    day = {"from": DAY.isoformat(), "to": DAY.isoformat()}
+    answers = [
+        post(new_client(app), "/session", {"token": f"{people.a}.{token}"}),
+        get(client),
+        get(client, "/availability", **day),
+        post(client, "/cancel", {"booking_id": booking_id, "refund_pct": 0}),
+        post(client, "/reschedule", reschedule_body(booking_id, at("11:00"), 0)),
+        post(client, "/consents", {"booking_id": booking_id}),
+    ]
+    assert [(a.status_code, a.text) for a in answers] == [(404, '{"code":"link_expired"}')] * 6
 
 
 # 8. fence. Opening (session/read/availability) writes nothing: bookings, events, consents, jobs
@@ -250,14 +286,27 @@ def test_json_only_cookie_flags_and_headers(people: People, app: FastAPI, ready:
 
     token = mint(people.a, booking_id)
     exchange = post(new_client(app), "/session", {"token": f"{people.a}.{token}"})
-    set_cookie = exchange.headers["set-cookie"]
-    assert "HttpOnly" in set_cookie
-    assert "Secure" in set_cookie
-    assert "SameSite=strict" in set_cookie.lower().replace("samesite=strict", "SameSite=strict")
+    flags = {f.strip().lower() for f in exchange.headers["set-cookie"].split(";")[1:]}
+    assert {"httponly", "secure", "samesite=strict", "path=/"} <= flags
 
-    for response in (get(client), exchange):
-        assert response.headers["cache-control"] == "no-store"
-        assert response.headers["referrer-policy"] == "no-referrer"
+    # Every route, success and failure alike (spec S4).
+    view = get(client)
+    responses = [
+        plain,
+        exchange,
+        post(new_client(app), "/session", {"token": "not-a-token"}),
+        view,
+        get(client, "/availability", **{"from": DAY.isoformat(), "to": DAY.isoformat()}),
+        post(client, "/consents", {"booking_id": booking_id}),
+        post(client, "/reschedule", reschedule_body(booking_id, at("11:00"), 0)),
+        post(client, "/cancel", cancel_body(booking_id, 42)),
+        post(client, "/cancel", cancel_body(booking_id, view.json()["engine"]["refund_pct"])),
+        get(client),
+    ]
+    assert [r.status_code for r in responses] == [415, 204, 404, 200, 200, 409, 200, 409, 200, 404]
+    for response in responses:
+        assert response.headers.get("cache-control") == "no-store", response.request.url
+        assert response.headers.get("referrer-policy") == "no-referrer", response.request.url
 
 
 # 11. fence. The cookie of booking B with body booking_id A -> 409 link_changed; A untouched.
@@ -270,8 +319,10 @@ def test_cookie_and_body_booking_mismatch_is_link_changed(
     assert patch(owner, a, "confirmed").status_code == 200
     assert patch(owner, b, "confirmed").status_code == 200
     client_for_b = linked(app, people.a, b)
+    # B's own terms, so the echo alone would let the cancel through: only the id check refuses it.
+    refund_pct = get(client_for_b).json()["engine"]["refund_pct"]
 
-    response = post(client_for_b, "/cancel", {"booking_id": a, "refund_pct": 100})
+    response = post(client_for_b, "/cancel", {"booking_id": a, "refund_pct": refund_pct})
 
     assert response.status_code == 409
     assert response.json()["code"] == "link_changed"
@@ -284,14 +335,23 @@ def test_cookie_and_body_booking_mismatch_is_link_changed(
 def test_linked_booking_carries_no_client_identity(
     people: People, app: FastAPI, ready: str
 ) -> None:
-    booking_id = confirmed_booking(app, people.a, ready)
+    email = fresh_email()
+    booking_id = confirmed_booking(app, people.a, ready, email=email)
     assert patch(signed_in(app, people.a, people.both), booking_id, "confirmed").status_code == 200
     client = linked(app, people.a, booking_id)
 
     body = get(client).json()
 
     blob = str(body)
-    assert "worker_id" not in body["booking"]
+    assert set(body) == {"booking", "engine", "pending_consents"}
+    assert set(body["engine"]) == {
+        "can_cancel",
+        "can_reschedule",
+        "refund_pct",
+        "copy_key",
+        "reschedule_count",
+        "reschedules_left",
+    }
     assert set(body["booking"]) == {
         "id",
         "status",
@@ -306,6 +366,13 @@ def test_linked_booking_carries_no_client_identity(
         "cancellation_policy_text",
     }
     assert "Guest" not in blob  # post_booking's default client name
+    assert email not in blob
+    with tenant_context(people.a) as session:
+        ids = session.execute(
+            text("SELECT client_id, worker_id FROM bookings WHERE id = :id"), {"id": booking_id}
+        ).one()
+    assert str(ids.client_id) not in blob
+    assert str(ids.worker_id) not in blob
 
 
 # ---------------------------------------------------------------------------
@@ -382,7 +449,7 @@ def test_client_cancel_enqueues_the_right_emails_once_each(
     assert templates.count("booking_client_cancelled") == 1  # one owner in this fixture
 
 
-# 4/20. fence. cancelled_by_client is not, and never becomes, a merchant PATCH target.
+# 20. fence. cancelled_by_client is not, and never becomes, a merchant PATCH target.
 def test_cancelled_by_client_is_not_a_merchant_transition_target(
     people: People, app: FastAPI, ready: str
 ) -> None:
@@ -457,7 +524,7 @@ def test_reschedule_into_a_free_slot_succeeds_and_others_still_block(
     assert blocked.json()["code"] == "slot_unavailable"
 
 
-# 15 (part). A raw UPDATE past max_reschedules raises 23514 (the CHECK is the backstop).
+# 16. fence. A raw UPDATE past max_reschedules raises 23514. Kills a Python-only cap.
 def test_a_raw_update_past_max_reschedules_raises_the_check(
     people: People, app: FastAPI, ready: str, owner: TestClient, migrate_engine: Engine
 ) -> None:
@@ -493,6 +560,13 @@ def test_max_reschedules_is_the_snapshot_not_the_live_setting(
 
     assert view["engine"]["reschedules_left"] == 3
     assert view["engine"]["can_reschedule"] is True
+    moved = post(
+        linked(app, people.a, booking_id),
+        "/reschedule",
+        reschedule_body(booking_id, at("11:00"), 0),
+    )
+    assert moved.status_code == 200, moved.json()
+    assert moved.json()["engine"]["reschedules_left"] == 2
 
 
 def put_settings_max(owner: TestClient, value: int) -> int:
@@ -510,7 +584,8 @@ def test_original_starts_at_is_write_once_by_privilege(
     with tenant_context(people.a) as session:
         with pytest.raises(ProgrammingError) as raised:
             session.execute(
-                text("UPDATE bookings SET original_starts_at = now() WHERE id = :id"),
+                # Its own value: only the missing privilege can refuse this, never a CHECK.
+                text("UPDATE bookings SET original_starts_at = original_starts_at WHERE id = :id"),
                 {"id": booking_id},
             )
     assert isinstance(raised.value.orig, InsufficientPrivilege)
@@ -534,8 +609,27 @@ def test_original_starts_at_is_write_once_by_privilege(
     assert original.strftime("%Y-%m-%dT%H:%M:%SZ") == at("10:00")
 
 
+def booking_jobs(app_engine: Engine, tenant_id: uuid.UUID, booking_id: str) -> list[Job]:
+    with app_engine.begin() as conn:
+        rows = conn.execute(
+            text("""
+            SELECT id, kind, payload FROM jobs
+            WHERE tenant_id = :t AND payload->>'booking_id' = :b
+            ORDER BY id  -- uuidv7: insertion order
+            """),
+            {"t": tenant_id, "b": str(booking_id)},
+        ).tuples()
+        return [Job(id_, kind, tenant_id, payload) for id_, kind, payload in rows]
+
+
+def same_instant(payload_value: str, api_value: str) -> bool:
+    return datetime.fromisoformat(payload_value) == datetime.fromisoformat(api_value)
+
+
 # 24. fence. A reschedule enqueues booking_confirmed (:r1), booking_client_rescheduled per
-# merchant and a reminder for the new start.
+# merchant and a reminder for the NEW start; the confirmation's .ics carries SEQUENCE:1 and the old
+# reminder sends nothing. Kills a key without the count, a forgotten _remind (the confirm already
+# enqueued a reminder for the OLD start, so "some reminder exists" proves nothing) and SEQUENCE:0.
 def test_reschedule_enqueues_confirmation_merchant_email_and_reminder(
     people: People, app: FastAPI, ready: str, owner: TestClient, app_engine: Engine
 ) -> None:
@@ -549,30 +643,228 @@ def test_reschedule_enqueues_confirmation_merchant_email_and_reminder(
     jobs = jobs_for_booking(app_engine, people.a, booking_id)
     keys = {j["dedupe_key"] for j in jobs}
     assert any(k.endswith("booking_confirmed:r1") for k in keys)
-    assert any("booking_client_rescheduled:r1" in k for k in keys)
-    assert any("booking_reminder" in k for k in keys)
+    assert any(f"booking_client_rescheduled:r1:{people.both}" in k for k in keys)
+    reminders = [
+        j
+        for j in booking_jobs(app_engine, people.a, booking_id)
+        if j.payload["template"] == "booking_reminder"
+    ]
+    assert [same_instant(j.payload["starts_at"], at("10:30")) for j in reminders] == [False, True]
+
+    client_email = _client_email(people.a, booking_id)
+    mail.send_booking(reminders[0])  # the old start's reminder
+    assert _search(client_email) == []
+    (confirmation,) = [
+        j
+        for j in booking_jobs(app_engine, people.a, booking_id)
+        if j.payload["template"] == "booking_confirmed" and "starts_at" in j.payload
+    ]
+    mail.send_booking(confirmation)
+    (sent,) = _search(client_email)
+    with urllib.request.urlopen(f"{MAILPIT}/api/v1/message/{sent['ID']}/raw", timeout=5) as raw:
+        parsed = email_module.message_from_bytes(raw.read())
+    (calendar,) = [p for p in parsed.walk() if p.get_content_type() == "text/calendar"]
+    ics = calendar.get_payload(decode=True)
+    assert isinstance(ics, bytes)
+    assert f"UID:{booking_id}".encode() in ics.replace(b"\r\n ", b"")
+    assert b"SEQUENCE:1\r\n" in ics
 
 
-# 17/17b. fence. refund_pct is anchored to earliest_starts_at, which only goes down.
+# 17. fence. 30-odd hours out with free cancellation at 120h (so no refund today), rescheduled
+# three weeks out, then cancelled -> refund 0. Kills measuring the refund from the new start alone.
 def test_refund_is_anchored_to_the_earliest_start_ever_held(
     people: People, app: FastAPI, ready: str, owner: TestClient
 ) -> None:
+    # 120h, not the default 48h: DAY 09:00 is 33-57h away depending on the clock, and the fence
+    # must not depend on the time of day it runs.
+    assert put_settings(owner, {"free_cancellation_hours": 120}).status_code == 200
     booking_id = confirmed_booking(app, people.a, ready, starts_at=at("09:00"))
     assert patch(owner, booking_id, "confirmed").status_code == 200
     client = linked(app, people.a, booking_id)
-    # Move to a slot far in the future so the CURRENT lead alone would look like a full refund.
+    assert get(client).json()["engine"]["refund_pct"] == 0
     far = post(
         client,
         "/reschedule",
         reschedule_body(booking_id, at("15:00", day=DAY + timedelta(days=20)), 0),
     )
     assert far.status_code == 200, far.json()
+    assert far.json()["engine"]["refund_pct"] == 0
 
-    view = get(linked(app, people.a, booking_id)).json()
-    # earliest_starts_at is still the ORIGINAL near start, so with 48h free-cancellation and the
-    # booking only two days out at the start, the refund reflects that near anchor, not the far
-    # new date.
+    view = get(client).json()
     assert view["engine"]["refund_pct"] == 0
+    cancelled = post(client, "/cancel", cancel_body(booking_id, 0))
+    assert (cancelled.status_code, cancelled.json()["engine"]["refund_pct"]) == (200, 0)
+
+
+def first_slot_after(lead: timedelta) -> str:
+    """The first half-hour start at least `lead` from now inside the fixture's 09:00-17:00 hours
+    (a 30-minute service, so 16:30 is the last start). From lead=30h this is always under 48h."""
+    zone = ZoneInfo(ZONE)
+    local = (datetime.now(UTC) + lead).astimezone(zone)
+    start = local.replace(minute=0, second=0, microsecond=0)
+    while start < local or not time(9) <= start.time() <= time(16, 30):
+        start += timedelta(minutes=30)
+    return start.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+# 17b. fence (R4). free=48h, cutoff=24h, max=2: book A 20 days out, move earlier to B (30-48h
+# out, so B is already inside its no-refund window but still movable), move to C 30 days out,
+# cancel -> refund 0, and earliest_starts_at = B. Kills min(original, current) (= A, a full
+# refund) and a RESCHEDULE without LEAST (earliest stays A, or jumps to C).
+def test_moving_near_then_far_again_keeps_the_near_refund_anchor(
+    people: People, app: FastAPI, ready: str, owner: TestClient
+) -> None:
+    a = at("10:00", day=TODAY + timedelta(days=20))
+    b = first_slot_after(timedelta(hours=30))
+    c = at("10:00", day=TODAY + timedelta(days=30))
+    lead_b = datetime.fromisoformat(b) - datetime.now(UTC)
+    assert timedelta(hours=24) < lead_b < timedelta(hours=48)
+    booking_id = confirmed_booking(app, people.a, ready, starts_at=a)
+    assert patch(owner, booking_id, "confirmed").status_code == 200
+    client = linked(app, people.a, booking_id)
+    assert get(client).json()["engine"]["refund_pct"] == 100
+
+    assert post(client, "/reschedule", reschedule_body(booking_id, b, 0)).status_code == 200
+    moved = post(client, "/reschedule", reschedule_body(booking_id, c, 1))
+    assert moved.status_code == 200, moved.json()
+
+    with tenant_context(people.a) as session:
+        earliest = session.scalar(
+            text("SELECT earliest_starts_at FROM bookings WHERE id = :id"), {"id": booking_id}
+        )
+    assert earliest == datetime.fromisoformat(b)
+    assert get(client).json()["engine"]["refund_pct"] == 0
+    cancelled = post(client, "/cancel", cancel_body(booking_id, 0))
+    assert (cancelled.status_code, cancelled.json()["engine"]["refund_pct"]) == (200, 0)
+
+
+# 15. fence. A double submit with the same echoed count: one 200, one 409 changed. And RESCHEDULE
+# run directly with a stale :seen updates nothing: the route's own echo check (and the lock) would
+# otherwise hide a qualifier without `reschedule_count = :seen`.
+def test_a_stale_reschedule_count_changes_nothing(
+    people: People, app: FastAPI, ready: str, owner: TestClient
+) -> None:
+    booking_id = confirmed_booking(app, people.a, ready, starts_at=at("10:00"))
+    assert patch(owner, booking_id, "confirmed").status_code == 200
+    client = linked(app, people.a, booking_id)
+
+    first = post(client, "/reschedule", reschedule_body(booking_id, at("11:00"), 0))
+    second = post(client, "/reschedule", reschedule_body(booking_id, at("12:00"), 0))
+
+    assert first.status_code == 200
+    assert (second.status_code, second.json()) == (409, {"code": "changed"})
+    with tenant_context(people.a) as session:
+        stale = session.execute(
+            RESCHEDULE, {"id": booking_id, "new": datetime.fromisoformat(at("13:00")), "seen": 0}
+        ).first()
+        row = session.execute(
+            text("SELECT starts_at, reschedule_count FROM bookings WHERE id = :id"),
+            {"id": booking_id},
+        ).one()
+    assert stale is None
+    assert (row.starts_at, row.reschedule_count) == (datetime.fromisoformat(at("11:00")), 1)
+
+
+# 13 (rest). Time off, a buffer tail and beyond the horizon: every one of them only offered()
+# knows about, none of them is something the EXCLUDE constraint would catch.
+def test_reschedule_into_time_off_a_buffer_tail_or_past_the_horizon_is_slot_unavailable(
+    people: People, app: FastAPI, ready: str, owner: TestClient
+) -> None:
+    save_setting(people.a, "buffer_pct", 20)
+    booking_id = confirmed_booking(app, people.a, ready, starts_at=at("10:00"))
+    assert patch(owner, booking_id, "confirmed").status_code == 200
+    other = confirmed_booking(app, people.a, ready, starts_at=at("14:00"))
+    assert patch(owner, other, "confirmed").status_code == 200
+    next_day = DAY + timedelta(days=1)
+    with tenant_context(people.a) as session:
+        session.execute(
+            text("""
+            INSERT INTO time_off (tenant_id, member_id, first_day, last_day, reason)
+            VALUES (current_setting('app.tenant_id')::uuid, :m, :d, :d, 'Holiday')
+            """),
+            {"m": member_id(people.a, people.both), "d": next_day},
+        )
+    client = linked(app, people.a, booking_id)
+
+    time_off = post(client, "/reschedule", reschedule_body(booking_id, at("10:00", next_day), 0))
+    buffer_tail = post(client, "/reschedule", reschedule_body(booking_id, at("14:30"), 0))
+    assert put_settings(owner, {"booking_horizon_days": 1}).status_code == 200
+    horizon = post(client, "/reschedule", reschedule_body(booking_id, at("11:00"), 0))
+
+    for answer in (time_off, buffer_tail, horizon):
+        assert (answer.status_code, answer.json()) == (409, {"code": "slot_unavailable"})
+
+
+# 31. guard. A -> B -> A: the move back re-enqueues A's reminder as a dedupe no-op, B's skips
+# itself on the starts_at gate, and the client gets exactly one reminder.
+def test_there_and_back_again_sends_one_reminder(
+    people: People, app: FastAPI, ready: str, owner: TestClient, app_engine: Engine
+) -> None:
+    booking_id = confirmed_booking(app, people.a, ready, starts_at=at("10:00"))
+    assert patch(owner, booking_id, "confirmed").status_code == 200
+    client = linked(app, people.a, booking_id)
+    assert (
+        post(client, "/reschedule", reschedule_body(booking_id, at("11:00"), 0)).status_code == 200
+    )
+    assert (
+        post(client, "/reschedule", reschedule_body(booking_id, at("10:00"), 1)).status_code == 200
+    )
+
+    reminders = [
+        j
+        for j in booking_jobs(app_engine, people.a, booking_id)
+        if j.payload["template"] == "booking_reminder"
+    ]
+    assert len(reminders) == 2  # A once, B once
+    for job in reminders:
+        mail.send_booking(job)
+
+    assert len(_search(_client_email(people.a, booking_id))) == 1
+
+
+# 32. guard. Two reschedules in a row: the :r1 client confirmation and the :r1 merchant email,
+# run after :r2, send nothing (the starts_at gate). The :r2 merchant email shows old and new time.
+def test_an_older_reschedule_email_run_late_sends_nothing(
+    people: People, app: FastAPI, ready: str, owner: TestClient, app_engine: Engine
+) -> None:
+    booking_id = confirmed_booking(app, people.a, ready, starts_at=at("10:00"))
+    assert patch(owner, booking_id, "confirmed").status_code == 200
+    client = linked(app, people.a, booking_id)
+    assert (
+        post(client, "/reschedule", reschedule_body(booking_id, at("10:30"), 0)).status_code == 200
+    )
+    assert (
+        post(client, "/reschedule", reschedule_body(booking_id, at("15:00"), 1)).status_code == 200
+    )
+    moves = [
+        j
+        for j in booking_jobs(app_engine, people.a, booking_id)
+        if j.payload["template"] in ("booking_confirmed", "booking_client_rescheduled")
+        and "starts_at" in j.payload
+    ]
+    first = [j for j in moves if same_instant(j.payload["starts_at"], at("10:30"))]
+    second = [j for j in moves if same_instant(j.payload["starts_at"], at("15:00"))]
+    assert len(first) == len(second) == 2  # the client's and the one merchant's, each time
+
+    for job in first:
+        mail.send_booking(job)
+    client_email = _client_email(people.a, booking_id)
+    owner_email = email_of_user(people.a, people.both)
+    assert _search(client_email) == []
+    assert _search(owner_email) == []
+
+    for job in second:
+        mail.send_booking(job)
+    assert len(_search(client_email)) == 1
+    (merchant_text,) = texts_to(owner_email)
+    assert "10:30" in merchant_text
+    assert "15:00" in merchant_text
+
+
+def email_of_user(tenant_id: uuid.UUID, user_id: uuid.UUID) -> str:
+    with tenant_context(tenant_id) as session:
+        found: str = session.scalar(text("SELECT email FROM users WHERE id = :id"), {"id": user_id})
+    return found
 
 
 # ---------------------------------------------------------------------------
@@ -657,7 +949,61 @@ def test_rate_limits_trip_before_any_lookup(people: People, app: FastAPI, ready:
     for _ in range(10):
         client = new_client(app, address)
         post(client, "/session", {"token": f"{people.a}.{secrets.token_urlsafe(32)}"})
-    tripped = post(
-        new_client(app, address), "/session", {"token": f"{people.a}.{secrets.token_urlsafe(32)}"}
+    live = f"{people.a}.{mint(people.a, booking_id)}"
+    tripped = post(new_client(app, address), "/session", {"token": live})
+    assert tripped.status_code == 429  # a live token: the limit answers before the lookup
+
+    writer = fresh_address()
+    for _ in range(20):
+        post(new_client(app, writer), "/consents", {"booking_id": booking_id})
+    holder = new_client(app, writer)
+    holder.cookies.set(COOKIE, live)
+    refund_pct = get(linked(app, people.a, booking_id)).json()["engine"]["refund_pct"]
+    assert post(holder, "/cancel", cancel_body(booking_id, refund_pct)).status_code == 429
+    with tenant_context(people.a) as session:
+        status = session.scalar(
+            text("SELECT status FROM bookings WHERE id = :id"), {"id": booking_id}
+        )
+    assert status == "confirmed"
+
+
+# 29. guard. The logs and spans of a whole flow (exchange, read, availability, consents,
+# reschedule, cancel) hold neither the token nor its hash, in any spelling.
+def test_no_log_line_or_span_carries_the_token_or_its_hash(
+    people: People,
+    app: FastAPI,
+    ready: str,
+    caplog: pytest.LogCaptureFixture,
+    spans: Callable[[], list[ReadableSpan]],
+) -> None:
+    booking_id = confirmed_booking(
+        app, people.a, ready, starts_at=at("10:00"), consents={"marketing_email": True}
     )
-    assert tripped.status_code == 429
+    assert patch(signed_in(app, people.a, people.both), booking_id, "confirmed").status_code == 200
+    token = mint(people.a, booking_id)
+    digest = hashlib.sha256(token.encode()).digest()
+    client = new_client(app)
+
+    # DEBUG is the dev default (observability rules): nothing may leak at the chattiest level.
+    with caplog.at_level(logging.DEBUG), caplog.at_level(logging.DEBUG, logger="app"):
+        assert post(client, "/session", {"token": f"{people.a}.{token}"}).status_code == 204
+        view = get(client)
+        assert view.status_code == 200
+        day = {"from": DAY.isoformat(), "to": DAY.isoformat()}
+        assert get(client, "/availability", **day).status_code == 200
+        assert post(client, "/consents", {"booking_id": booking_id}).status_code == 200
+        moved = post(client, "/reschedule", reschedule_body(booking_id, at("11:00"), 0))
+        assert moved.status_code == 200
+        refund_pct = moved.json()["engine"]["refund_pct"]
+        assert post(client, "/cancel", cancel_body(booking_id, refund_pct)).status_code == 200
+
+    logged = "\n".join(repr(vars(record)) for record in caplog.records)
+    traced = "\n".join(
+        repr((s.name, s.attributes, [(e.name, e.attributes) for e in s.events])) for s in spans()
+    )
+    assert "booking cancelled by client" in logged
+    assert "booking rescheduled" in logged
+    assert traced
+    for spelling in (token, digest.hex(), repr(digest), base64.b64encode(digest).decode()):
+        assert spelling not in logged
+        assert spelling not in traced

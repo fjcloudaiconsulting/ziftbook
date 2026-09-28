@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Engine, text
 
 from app import auth, mail
+from app.bookings import CLIENT_CANCEL
 from app.db import tenant_context
 from app.jobs import Job, run_once
 from app.mail import STATUS_FOR
@@ -849,7 +850,7 @@ def link_hash(app_engine: Engine, tenant_id: uuid.UUID, booking_id: str) -> list
         )
 
 
-# 1/2. fence. Kills storing the raw token, a query-string link, or dropping the tracking header.
+# 2. fence. Kills storing the raw token, a query-string link, or dropping the tracking header.
 def test_a_linked_client_email_carries_a_fragment_token_that_hashes_into_booking_links(
     people: People, app: FastAPI, ready: str, app_engine: Engine
 ) -> None:
@@ -879,7 +880,25 @@ def test_a_linked_client_email_carries_a_fragment_token_that_hashes_into_booking
     assert "X-Mailgun-Track-Clicks: no" in raw
 
 
-# 4. fence. Kills sharing one $link between the manage link and the console link.
+def texts_to(email: str) -> list[str]:
+    """The text body of every message Mailpit got for email."""
+    out = []
+    for sent in _search(email):
+        with urllib.request.urlopen(f"{MAILPIT}/api/v1/message/{sent['ID']}", timeout=5) as body:
+            out.append(json.load(body)["Text"])
+    return out
+
+
+def starts_at_of(tenant_id: uuid.UUID, booking_id: str) -> str:
+    with tenant_context(tenant_id) as session:
+        found: datetime = session.scalar(
+            text("SELECT starts_at FROM bookings WHERE id = :id"), {"id": booking_id}
+        )
+    return found.isoformat()
+
+
+# 4. fence. booking_new, booking_client_cancelled and booking_client_rescheduled carry no manage
+# link. Kills sharing one $link between the manage link and the console link.
 def test_merchant_templates_never_carry_the_manage_link_fragment(
     people: People, app: FastAPI, ready: str
 ) -> None:
@@ -891,10 +910,49 @@ def test_merchant_templates_never_carry_the_manage_link_fragment(
             text("SELECT email FROM users WHERE id = :id"), {"id": people.both}
         )
     assert owner_email is not None
-    run_send_booking(people.a, booking_id, "booking_new", user_id=str(people.both))
+    user_id = str(people.both)
+    starts_at = starts_at_of(people.a, booking_id)
 
-    message = mail_for(owner_email)
-    assert "/booking#" not in message["Text"]
+    run_send_booking(people.a, booking_id, "booking_new", user_id=user_id)
+    run_send_booking(
+        people.a,
+        booking_id,
+        "booking_client_rescheduled",
+        user_id=user_id,
+        starts_at=starts_at,
+        previous_starts_at=starts_at,
+    )
+    with tenant_context(people.a) as session:
+        assert session.execute(CLIENT_CANCEL, {"id": booking_id}).first() is not None
+    run_send_booking(people.a, booking_id, "booking_client_cancelled", user_id=user_id)
+
+    texts = texts_to(owner_email)
+    assert len(texts) == 3
+    for body in texts:
+        assert "/booking#" not in body
+
+
+# 3. fence. After the confirmation and then the reminder, BOTH emailed links still exchange.
+# Kills rotation (only the newest link of a booking resolving).
+def test_every_emailed_link_stays_live_after_a_newer_one(
+    people: People, app: FastAPI, ready: str
+) -> None:
+    booking_id = make_pending(app, people.a, ready)
+    owner = signed_in(app, people.a, people.both)
+    assert patch(owner, booking_id, "confirmed").status_code == 200
+    client_email = _client_email(people.a, booking_id)
+
+    run_send_booking(people.a, booking_id, "booking_confirmed")
+    run_send_booking(
+        people.a, booking_id, "booking_reminder", starts_at=starts_at_of(people.a, booking_id)
+    )
+
+    texts = texts_to(client_email)
+    assert len(texts) == 2
+    for body in texts:
+        token = body.split("/booking#")[1].split()[0]
+        exchange = new_client(app).post("/api/public/booking-link/session", json={"token": token})
+        assert exchange.status_code == 204
 
 
 # 24 (part). fence. Kills the hardcoded SEQUENCE:0 on a rescheduled confirmation.

@@ -336,3 +336,10 @@ def test_decide_does_not_know_about_booking_status() -> None:
     verdict = decide(P, STARTS, utc("2026-09-01T00:00:00Z"), original_starts_at=STARTS)
 
     assert verdict.can_cancel is True
+
+
+# ZIF-54 36 (pure half; the settings PUT half is in test_settings_api.py). A negative cap is
+# refused at construction, like a negative hour: it would otherwise make reschedules_left negative.
+def test_a_negative_max_reschedules_is_refused() -> None:
+    with pytest.raises(ValueError, match="negative"):
+        Policy(48, 24, max_reschedules=-1)

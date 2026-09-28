@@ -1561,3 +1561,21 @@ def test_a_whole_day_block_refuses_the_booking_and_leaves_the_next_day_untouched
     assert still_open.status_code == 201
     still_open_midnight = post_booking(client, people.a, ready, starts_at=next_day_midnight_slot)
     assert still_open_midnight.status_code == 201
+
+
+# ZIF-54 33: GUARD. create() re-derives the slot through availability.offered() and takes its
+# least-loaded tiebreak from the rows offered() already read: exactly one booked() read per booking.
+def test_create_reads_booked_exactly_once(
+    people: People, app: FastAPI, ready: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[Any] = []
+    real = availability.booked
+
+    def counting(*args: Any, **kwargs: Any) -> Any:
+        calls.append(kwargs.get("exclude"))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(availability, "booked", counting)
+
+    assert post_booking(new_client(app), people.a, ready).status_code == 201
+    assert calls == [None]

@@ -660,3 +660,35 @@ def test_downgrading_and_upgrading_0029_restores_booking_links_and_the_snapshots
                 {"id": booking_id},
             )
         assert isinstance(bites.value.orig, CheckViolation)
+        assert bites.value.orig.diag.constraint_name == "ck_bookings_earliest_starts_at_current"
+    # Spec 35: ck_bookings_earliest_starts_at refuses a raise above original_starts_at, on a row
+    # whose current start is later still (so only this CHECK, not _current, can refuse it).
+    # A fresh client: the refused UPDATE above rolled its whole transaction back.
+    original = datetime.now(UTC) + timedelta(days=2)
+    with tenant_context(people.a) as session:
+        moved_id = insert_booking(
+            session,
+            client_id=session.scalar(
+                text(
+                    "INSERT INTO clients (tenant_id, name) "
+                    "VALUES (current_setting('app.tenant_id')::uuid, 'Y') RETURNING id"
+                )
+            ),
+            worker_id=worker_id,
+            service_id=service_id,
+            starts_at=original + timedelta(hours=2),
+            ends_at=original + timedelta(hours=2, minutes=30),
+            original_starts_at=original,
+            earliest_starts_at=original,
+            reschedule_count=1,
+        )
+        with pytest.raises(IntegrityError) as raised:
+            session.execute(
+                text(
+                    "UPDATE bookings SET earliest_starts_at = original_starts_at "
+                    "+ interval '1 hour' WHERE id = :id"
+                ),
+                {"id": moved_id},
+            )
+    assert isinstance(raised.value.orig, CheckViolation)
+    assert raised.value.orig.diag.constraint_name == "ck_bookings_earliest_starts_at"
