@@ -54,11 +54,16 @@ CONSENT_TEXTS: dict[str, dict[Purpose, str]] = {
         "I can opt out at any time.",
     }
 }
-CURRENT_POLICY_VERSION = max(CONSENT_TEXTS)  # the version a booking page offers (ISO dates sort)
 # ponytail: one wording per purpose, English. The stored evidence must be the text the person
 # actually read, so when the booking page ships translated (ZIF-56) the key becomes
 # (version, locale), the caller sends the locale it rendered, and an unknown locale is a 422 -
 # exactly as an unknown version is today. Do not add a locale parameter before the page has one.
+
+
+def current_policy_version() -> str:
+    """The version a booking page offers: the newest one, ISO dates sort. A function, not a
+    constant frozen at import, so a test can monkeypatch CONSENT_TEXTS and see it move."""
+    return max(CONSENT_TEXTS)
 
 
 def texts_for(policy_version: str, purposes: Iterable[Purpose]) -> dict[Purpose, str]:

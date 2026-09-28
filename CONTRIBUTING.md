@@ -417,6 +417,8 @@ web app.
 - Routes a client uses without signing in, for a business named in the path, live under `/api/public` (the
   availability route is the first). They open `tenant_context` from the path's tenant id, are rate limited per IP,
   answer 404 for anything the business doesn't own, and return no personal data beyond what a client must see.
+  A route named by a slug instead (the booking page) resolves the tenant from it first, then calls `join_tenant`
+  inside the same `SessionLocal.begin()`, rather than opening `tenant_context` directly.
 
 ## Translations
 

@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from httpx2 import Response
 from sqlalchemy import Engine, text
 
-from app import limits
+from app import clients, limits
 from app.db import tenant_context
 from app.main import create_app
 from tests.conftest import (
@@ -196,6 +196,26 @@ def test_every_wrong_slug_is_the_same_404(app: FastAPI, wrong: str) -> None:
     assert (response.status_code, response.content) == (404, b'{"code":"not_found"}')
 
 
+# 19b. fence — review nit: Python's str.lower() is Unicode-aware, so a non-ASCII letter can fold
+# to an ASCII one under a different code point (the Kelvin sign U+212A -> "k"), aliasing a real
+# slug. Kills checking isascii() after lower() instead of before, or not at all.
+def test_a_non_ascii_look_alike_does_not_alias_a_real_slug(
+    app: FastAPI, migrate_engine: Engine
+) -> None:
+    tag = uuid.uuid4().hex[:8]
+    with migrate_engine.begin() as conn:
+        tenant = conn.scalar(
+            text("INSERT INTO tenants (name, slug) VALUES ('Karen', :s) RETURNING id"),
+            {"s": f"karen-{tag}"},
+        )
+    try:
+        response = page(new_client(app), f"Karen-{tag}")
+        assert (response.status_code, response.content) == (404, b'{"code":"not_found"}')
+    finally:
+        with migrate_engine.begin() as conn:
+            conn.execute(text("DELETE FROM tenants WHERE id = :t"), {"t": tenant})
+
+
 # 20. fence
 def test_the_slug_is_case_insensitive(
     app: FastAPI, app_engine: Engine, people: People, migrate_engine: Engine
@@ -236,6 +256,29 @@ def test_the_61st_page_load_in_a_minute_is_limited_even_for_unknown_slugs(
     assert hits(migrate_engine, limits.ip_key("availability", address)) is None
 
 
+# 21b. fence — review nit: the limit is per IP, not a shared bucket. Kills a global key.
+def test_the_limit_is_per_ip_not_global(app: FastAPI, slug: str) -> None:
+    exhausted = new_client(app, fresh_address())
+    for _ in range(60):
+        assert page(exhausted, slug).status_code == 200
+    assert page(exhausted, slug).status_code == 429
+
+    fresh = new_client(app, fresh_address())
+    assert page(fresh, slug).status_code == 200
+
+
+# 21c. fence — review nit: the limiter runs before slug format validation. Kills a limiter moved
+# after the format check (a malformed slug would 404 instead of 429 on the 61st request).
+def test_the_61st_request_is_limited_even_with_a_malformed_slug(app: FastAPI, slug: str) -> None:
+    address = fresh_address()
+    client = new_client(app, address)
+    for _ in range(60):
+        assert page(client, slug).status_code == 200
+    response = page(client, "a--b")
+    assert response.status_code == 429
+    assert response.json() == {"code": "rate_limited"}
+
+
 # 22. fence
 def test_the_cancellation_terms_are_the_saved_settings(
     app: FastAPI, owner: TestClient, slug: str
@@ -266,6 +309,15 @@ def test_the_policy_version_is_one_a_booking_accepts(
     version = page(new_client(app), slug).json()["policy_version"]
     response = post_booking(new_client(app), people.a, ready, policy_version=version)
     assert response.status_code == 201, response.content
+
+
+# 23b. fence — review nit: the offered version is the newest one, max(CONSENT_TEXTS). Kills min().
+def test_the_policy_version_is_the_newest_one(
+    app: FastAPI, slug: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    patched = dict(clients.CONSENT_TEXTS) | {"9999-12-31": clients.CONSENT_TEXTS["2026-09-01"]}
+    monkeypatch.setattr(clients, "CONSENT_TEXTS", patched)
+    assert page(new_client(app), slug).json()["policy_version"] == "9999-12-31"
 
 
 # 24. guard

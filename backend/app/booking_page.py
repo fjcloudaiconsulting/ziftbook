@@ -74,6 +74,11 @@ def read(slug: str, request: Request) -> BookingPageOut:
     # page. Its own key, so page loads don't spend the availability budget.
     if limits.hit({limits.ip_key("booking_page", ip): LIMIT}, LIMIT_WINDOW):
         raise ApiError(429, "rate_limited")
+    # Before lower(): Python's str.lower() is Unicode-aware, so a non-ASCII letter could fold to
+    # an ASCII one under a different code point (e.g. the Kelvin sign %E2%84%AA -> "k"), aliasing
+    # a stored slug. No slug_ok() slug is ever non-ASCII, so this is simply not found.
+    if not slug.isascii():
+        raise ApiError(404, "not_found")
     slug = slug.lower()
     # Reserved words need no check: they are never stored, so they are simply not found.
     if len(slug) > 40 or not SLUG.fullmatch(slug):
@@ -108,7 +113,7 @@ def read(slug: str, request: Request) -> BookingPageOut:
         timezone=settings.timezone,
         language=settings.language,
         booking_horizon_days=settings.booking_horizon_days,
-        policy_version=clients.CURRENT_POLICY_VERSION,
+        policy_version=clients.current_policy_version(),
         cancellation=CancellationOut(
             text=settings.cancellation_policy_text or None,
             free_cancellation_hours=settings.free_cancellation_hours,

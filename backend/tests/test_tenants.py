@@ -144,31 +144,52 @@ def test_the_derivation_table(app_engine: Engine) -> None:
     long = t + "x" * 52
     with app_engine.connect() as conn:  # rolled back on close
         conn.execute(TIMEOUT)
-        a, calendar, bang, kanji, letters, long1, long2 = (
+        a, calendar, bang, kanji, letters, aesop, long1, long2 = (
             slug_of(conn, n)
-            for n in ("a", "Calendar", "!!!", "日本", f"Straße Øre Łódź {t}", long, long)
+            for n in (
+                "a",
+                "Calendar",
+                "!!!",
+                "日本",
+                f"Straße Øre Łódź {t}",
+                f"Æsop Œuvre Þor Đak {t}",
+                long,
+                long,
+            )
         )
-        results = [a, calendar, bang, kanji, letters, long1, long2]
+        results = [a, calendar, bang, kanji, letters, aesop, long1, long2]
         valid = [conn.scalar(text("SELECT slug_ok(:s)"), {"s": r}) for r in results]
     assert re.fullmatch(r"a-\d+", a), a
     assert re.fullmatch(r"calendar-\d+", calendar), calendar
     assert re.fullmatch(r"business(-\d+)?", bang), bang
     assert re.fullmatch(r"business(-\d+)?", kanji), kanji
     assert letters == f"strasse-ore-lodz-{t}"
+    # Under the DB's default collation, lower() already folds Æ/Œ/Þ/Đ to lowercase (unlike under
+    # COLLATE "C"); this catches dropping the *lowercase* æ/œ/þ/đ mapping entries instead.
+    assert aesop == f"aesop-oeuvre-thor-dak-{t}"
     assert len(long1) <= 40 and len(long2) <= 40, (long1, long2)
     assert long2 == f"{long1}-2"
-    assert valid == [True] * 7
+    assert valid == [True] * 8
 
 
 # 3b. fence — review nit: lower() under COLLATE "C" only folds ASCII, so ÆØŁĐŒÞẞ stay uppercase;
 # the letter mapping must catch those forms too or they turn into a hyphen, not ae/o/l/d/oe/th/ss.
-def test_the_derivation_maps_uppercase_special_letters_under_collate_c(app_engine: Engine) -> None:
+# Runs as migrate_engine: ziftbook_app has no EXECUTE on free_slug (test 9b covers that directly).
+def test_the_derivation_maps_uppercase_special_letters_under_collate_c(
+    migrate_engine: Engine,
+) -> None:
     t = tag()
-    with app_engine.connect() as conn:  # rolled back on close
+    query = text('SELECT free_slug((:n)::text COLLATE "C")')
+    with migrate_engine.connect() as conn:  # rolled back on close
         conn.execute(TIMEOUT)
-        query = text('SELECT free_slug((:n)::text COLLATE "C")')
-        slug = conn.scalar(query, {"n": f"ÆØŁĐŒÞẞ {t}"})
-    assert slug == f"aeoldoethss-{t}"
+        letters = conn.scalar(query, {"n": f"ÆØŁĐŒÞẞ {t}"})
+        # Decomposing an uppercase accented letter (Ã, É) under COLLATE "C" exposes a plain-ASCII
+        # uppercase base letter lower() never touched; it must be lowered again after the strip.
+        ecole = conn.scalar(query, {"n": f"École {t}"})
+        salao = conn.scalar(query, {"n": f"SALÃO {t}"})
+    assert letters == f"aeoldoethss-{t}"
+    assert ecole == f"ecole-{t}"
+    assert salao == f"salao-{t}"
 
 
 # 4. fence
@@ -245,6 +266,23 @@ def test_a_malformed_or_reserved_slug_is_refused(app_engine: Engine, slug: str) 
         assert slug_of(conn, "Foo", slug) == "23514"
 
 
+# 7b. fence — review nit: every word in 0030's RESERVED array, not just a sample. Kills dropping
+# any single one (e.g. www, admin, login) from that list.
+RESERVED = [
+    "booking", "forgot-password", "invite", "reset-password", "sign-in", "sign-up",
+    "calendar", "clients", "my-hours", "opening-hours", "services", "settings", "team",
+    "api", "admin", "www", "app", "static", "assets", "public", "help", "support", "about",
+    "pricing", "legal", "privacy", "terms", "login", "logout", "account", "billing",
+    "dashboard", "ziftbook",
+]  # fmt: skip
+
+
+@pytest.mark.parametrize("word", RESERVED)
+def test_every_reserved_word_fails_slug_ok(app_engine: Engine, word: str) -> None:
+    with app_engine.connect() as conn:
+        assert conn.scalar(text("SELECT slug_ok(:s)"), {"s": word}) is False
+
+
 LOCALE_DIR = Path(__file__).parents[2] / "frontend" / "app" / "[locale]"
 
 
@@ -269,6 +307,17 @@ def test_every_top_level_web_route_is_reserved(app_engine: Engine) -> None:
 def test_the_app_role_cannot_change_a_slug(people: People, app_engine: Engine) -> None:
     with pytest.raises(ProgrammingError) as error, app_engine.begin() as conn:
         conn.execute(text("UPDATE tenants SET slug = 'x-y-z' WHERE id = :a"), {"a": people.a})
+    assert isinstance(error.value.orig, InsufficientPrivilege)
+    assert error.value.orig.sqlstate == "42501"
+
+
+# 9b. fence — review nit: free_slug holds the (56, 0) advisory lock; ziftbook_app may only reach
+# it through the SECURITY DEFINER trigger, never by calling it directly. slug_ok stays callable
+# (ck_tenants_slug's CHECK runs as the inserting role, and the app already calls it directly, e.g.
+# test 8 above).
+def test_the_app_role_cannot_call_free_slug_directly(app_engine: Engine) -> None:
+    with pytest.raises(ProgrammingError) as error, app_engine.connect() as conn:
+        conn.execute(text("SELECT free_slug('x')"))
     assert isinstance(error.value.orig, InsufficientPrivilege)
     assert error.value.orig.sqlstate == "42501"
 

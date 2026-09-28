@@ -46,14 +46,17 @@ BEGIN
   -- to commit. Sign-ups are rare.
   PERFORM pg_advisory_xact_lock(56, 0);
   -- Letters NFKD does not decompose, first; then strip combining marks (U+0300..U+036F). lower()
-  -- under COLLATE "C" only folds ASCII, so AEOEUEDSS's uppercase forms (AEOELDPTHSS) must be
-  -- mapped explicitly too, not just their lower() output.
+  -- under COLLATE "C" only folds ASCII, so ÆØŁĐŒÞẞ's uppercase forms must be mapped explicitly
+  -- too, not just their lower() output.
   base := translate(replace(replace(replace(replace(
             replace(replace(replace(replace(lower(p_name),
               'ß', 'ss'), 'ẞ', 'ss'), 'æ', 'ae'), 'Æ', 'ae'),
             'œ', 'oe'), 'Œ', 'oe'), 'þ', 'th'), 'Þ', 'th'),
             'øłđØŁĐ', 'oldold');
   base := regexp_replace(normalize(base, NFKD), '[\u0300-\u036f]', '', 'g');
+  -- Decomposing an uppercase accented letter (\u00c3 -> A + combining tilde) exposes a plain-ASCII
+  -- uppercase base letter lower() never got a chance at; lower() again, now safely ASCII-only.
+  base := lower(base);
   base := trim(both '-' from regexp_replace(base, '[^a-z0-9]+', '-', 'g'));
   base := trim(both '-' from left(base, 34));   -- room for "-NNNNN" within 40
   IF base = '' THEN base := 'business'; END IF;  -- "!!!", non-Latin scripts
@@ -72,7 +75,10 @@ BEGIN
 END $$"""
 
 DEFAULT_SLUG = f"""
-CREATE FUNCTION tenants_default_slug() RETURNS trigger LANGUAGE plpgsql {SEARCH_PATH} AS $$
+CREATE FUNCTION tenants_default_slug() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER {SEARCH_PATH} AS $$
+-- SECURITY DEFINER: free_slug's EXECUTE is not granted to ziftbook_app (below), so an app-role
+-- insert's trigger call needs the owner's privileges to reach it.
 BEGIN NEW.slug := free_slug(NEW.name); RETURN NEW; END $$"""
 
 TRIGGER = """
@@ -100,8 +106,16 @@ def upgrade() -> None:
     op.execute("ALTER TABLE tenants ADD CONSTRAINT uq_tenants_slug UNIQUE (slug)")
     op.execute("ALTER TABLE tenants ALTER COLUMN slug SET NOT NULL")
     op.execute(TRIGGER)
-    # No grant changes: ziftbook_app keeps INSERT and UPDATE (name) only; no UPDATE (slug) until
-    # ZIF-42.
+    # free_slug is not for ziftbook_app to call directly (it holds the (56, 0) advisory lock);
+    # tenants_default_slug is SECURITY DEFINER so an app-role insert still reaches it. slug_ok
+    # stays reachable: ck_tenants_slug's CHECK runs as the inserting role, not the trigger's.
+    # tenants_default_slug itself needs no grant: firing a trigger is not a privilege-checked call,
+    # only test_password_auth_db.py's blanket rule that a SECURITY DEFINER function is never PUBLIC.
+    op.execute("REVOKE EXECUTE ON FUNCTION slug_ok(text), free_slug(text) FROM PUBLIC")
+    op.execute("GRANT EXECUTE ON FUNCTION slug_ok(text) TO ziftbook_app")
+    op.execute("REVOKE EXECUTE ON FUNCTION tenants_default_slug() FROM PUBLIC")
+    # No other grant changes: ziftbook_app keeps INSERT and UPDATE (name) only; no UPDATE (slug)
+    # until ZIF-42.
 
 
 def downgrade() -> None:
