@@ -162,7 +162,7 @@ export function Settings() {
       <Heading focus>{nav("settings")}</Heading>
       {signedOut && <SignedOutBanner />}
       {message && <Banner tone={message.tone}>{message.text}</Banner>}
-      <form className={uiStyles.form} noValidate onSubmit={onSubmit}>
+      <form className={`${uiStyles.form} ${uiStyles.col}`} noValidate onSubmit={onSubmit}>
         <div className={uiStyles.field}>
           <label className={uiStyles.label} htmlFor={id}>
             {t("maxReschedulesLabel")}

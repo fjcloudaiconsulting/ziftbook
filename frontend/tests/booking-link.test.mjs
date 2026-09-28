@@ -3,10 +3,11 @@
 process.env.TZ = "America/Sao_Paulo";
 
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { describe, test } from "node:test";
 
 import { takeToken } from "../lib/account.ts";
-import { answerScreen, copyMessage, firstStage, refundMessage, slotsByDay, weekDays } from "../lib/booking-link.ts";
+import { answerScreen, copyMessage, firstStage, localWhen, refundMessage, slotsByDay, weekDays } from "../lib/booking-link.ts";
 
 const TENANT = "0192f3a4-5b6c-7d8e-9f01-23456789abcd";
 const SECRET = "Ab3_-".repeat(8) + "xyz"; // 43 URL-safe characters
@@ -109,5 +110,21 @@ describe("a week of free times", () => {
     const days = slotsByDay(slots, "Europe/Amsterdam");
     assert.deepEqual(days.get("2026-10-30"), ["2026-10-29T23:30:00Z", "2026-10-30T08:00:00Z", "2026-10-30T09:00:00Z"]);
     assert.equal(days.get("2026-10-29"), undefined);
+  });
+});
+
+describe("the free-cancellation deadline", () => {
+  test("fence: free_until reads in the business's time zone, not UTC or the browser's", () => {
+    // Wrong implementation killed: formatting without timeZone (the browser's Sao Paulo, above) or in UTC.
+    // 08:00Z on 16 October is 10:00 in Amsterdam (CEST), 05:00 in Sao Paulo.
+    assert.deepEqual(localWhen("2026-10-16T08:00:00Z", "Europe/Amsterdam", "en-GB"), { date: "Friday 16 October", time: "10:00" });
+    assert.deepEqual(localWhen("2026-10-15T23:30:00Z", "Europe/Amsterdam", "en-GB"), { date: "Friday 16 October", time: "01:30" });
+  });
+
+  test("every language's sentence carries the date and the time", () => {
+    for (const locale of ["en", "nl", "pt"]) {
+      const sentence = JSON.parse(readFileSync(new URL(`../messages/${locale}.json`, import.meta.url), "utf8")).BookingLink.freeUntil;
+      assert.match(sentence, /\{date\}, \{time\}/, locale);
+    }
   });
 });

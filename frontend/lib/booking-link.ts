@@ -88,3 +88,13 @@ export function slotsByDay(slots: string[], timeZone: string): Map<string, strin
   }
   return days;
 }
+
+/** An instant as the page writes it, in the business's time zone: "Friday 16 October" and "10:00"
+ * in the given date locale (the page passes dateLocale(locale)). */
+export function localWhen(instant: string, timeZone: string, locale: string): { date: string; time: string } {
+  const at = new Date(instant);
+  return {
+    date: new Intl.DateTimeFormat(locale, { weekday: "long", day: "numeric", month: "long", timeZone }).format(at),
+    time: new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit", timeZone }).format(at),
+  };
+}

@@ -13,7 +13,7 @@ import {
   type LinkedBooking,
 } from "@/api-client";
 import { takeToken } from "@/lib/account";
-import { addDays, answerScreen, copyMessage, firstStage, localDay, refundMessage, slotsByDay, weekDays } from "@/lib/booking-link";
+import { addDays, answerScreen, copyMessage, firstStage, localDay, localWhen, refundMessage, slotsByDay, weekDays } from "@/lib/booking-link";
 import { dateLocale } from "@/lib/console";
 import { type OpenedLink, openedLink } from "@/lib/invite";
 import { formatMoney } from "@/lib/money";
@@ -138,8 +138,10 @@ function Manage({ token }: { token: string | null }) {
     const answer = await send(bookingLinkAvailability({ query: { from: first, to: addDays(first, 6) } }));
     if (answer.status === 200 && answer.data) {
       const slots = slotsByDay(answer.data.slots, linked.booking.timezone);
-      // A later week asked for meanwhile wins.
-      setView((current) => (current.is === "pick" && current.first === first ? { ...current, slots } : current));
+      // A later week asked for meanwhile wins. The first day with free times starts selected.
+      setView((current) =>
+        current.is === "pick" && current.first === first ? { ...current, slots, day: current.day ?? [...slots.keys()][0] } : current,
+      );
     } else {
       otherwise(answer, () => loadWeek(linked, first, taken));
     }
@@ -230,14 +232,7 @@ function Manage({ token }: { token: string | null }) {
   const { linked } = view;
   const { booking, engine } = linked;
   const zone = booking.timezone;
-  const when = (instant: string) => {
-    const date = new Date(instant);
-    return t("when", {
-      date: new Intl.DateTimeFormat(dateLocale(locale), { weekday: "long", day: "numeric", month: "long", timeZone: zone }).format(date),
-      time: new Intl.DateTimeFormat(dateLocale(locale), { hour: "2-digit", minute: "2-digit", timeZone: zone }).format(date),
-      zone: zoneCity(zone),
-    });
-  };
+  const when = (instant: string) => t("when", { ...localWhen(instant, zone, dateLocale(locale)), zone: zoneCity(zone) });
   const refund = refundMessage(engine);
   const refundText = refund === "pending" ? t("copy.pending") : t(refund);
 
@@ -294,11 +289,10 @@ function Manage({ token }: { token: string | null }) {
       return (
         <>
           <Heading focus key="move">
-            {t("pickTitle")}
+            {t("confirmTitle")}
           </Heading>
-          <p className={styles.lede}>
-            {t("moveAsk", { old: when(booking.starts_at), new: when(pick.chosen), n: Math.max(engine.reschedules_left - 1, 0) })}
-          </p>
+          <Summary linked={linked} when={when} to={pick.chosen} />
+          <p className={styles.lede}>{t("changesAfter", { n: Math.max(engine.reschedules_left - 1, 0) })}</p>
           {problem}
           <form
             className={styles.stack}
@@ -368,6 +362,7 @@ function Manage({ token }: { token: string | null }) {
             ))}
           </div>
         )}
+        {times.length > 0 && <p className={styles.hint}>{t("timesIn", { zone: zoneCity(zone) })}</p>}
         {times.length > 0 && (
           <div className={styles.slots} role="group" aria-label={t("timesOn", { day: dayLabel(pick.day!, { weekday: "long", day: "numeric", month: "long" }) })}>
             {times.map((slot) => (
@@ -401,7 +396,13 @@ function Manage({ token }: { token: string | null }) {
       {problem}
       {summary}
       {booking.cancellation_policy_text && <p className={styles.hint}>{booking.cancellation_policy_text}</p>}
-      {copy && <p className={styles.hint}>{t(`copy.${copy}`)}</p>}
+      {engine.free_until ? (
+        <p className={styles.hint}>
+          {t("freeUntil", { ...localWhen(engine.free_until, zone, dateLocale(locale)), move: engine.can_reschedule ? "yes" : "no" })}
+        </p>
+      ) : (
+        copy && <p className={styles.hint}>{t(`copy.${copy}`)}</p>
+      )}
       {pending && <p className={styles.hint}>{t("pendingNote", { business: booking.business })}</p>}
       <div className={styles.stack}>
         {engine.can_cancel && (
@@ -448,7 +449,7 @@ function Consent({ text, children }: { text: string; children: ReactNode }) {
 }
 
 /** The booking itself: what, when, with whom and for how much. Never the client's own details. */
-function Summary({ linked, when }: { linked: LinkedBooking; when(instant: string): string }) {
+function Summary({ linked, when, to }: { linked: LinkedBooking; when(instant: string): string; to?: string }) {
   const t = useTranslations("BookingLink");
   const locale = useLocale();
   const { booking } = linked;
@@ -459,7 +460,7 @@ function Summary({ linked, when }: { linked: LinkedBooking; when(instant: string
       <li className={styles.rowStatic}>
         <span className={styles.rowMain}>
           <span className={styles.rowTitle}>{service}</span>
-          <span className={styles.rowMeta}>{when(booking.starts_at)}</span>
+          <span className={styles.rowMeta}>{to ? `${when(booking.starts_at)} → ${when(to)}` : when(booking.starts_at)}</span>
           <span className={styles.rowMeta}>
             {booking.worker_display_name ? t("with", { name: booking.worker_display_name }) : t("withTeam")}
             {" · "}
