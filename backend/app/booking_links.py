@@ -17,6 +17,7 @@ or a count that has since moved (`409 terms_changed` / `409 changed`).
 """
 
 import hashlib
+import logging
 from collections import defaultdict
 from datetime import datetime, timedelta
 from types import SimpleNamespace
@@ -51,6 +52,8 @@ from app.services import STRICT, Price
 from app.time_off import Instant
 
 router = APIRouter(prefix="/api/public/booking-link", tags=["booking-link"])
+# Spec S3: never the token, its hash, the client id or an address in a log line.
+logger = logging.getLogger(__name__)
 
 COOKIE = "__Host-booking-link"
 COOKIE_MAX_AGE = 3600
@@ -229,10 +232,6 @@ def _view(row: object, decision: Decision, zone: str, consents: list[Purpose]) -
     )
 
 
-def _no_store(response: Response) -> None:
-    response.headers["Cache-Control"] = "no-store"
-
-
 class TokenIn(BaseModel):
     model_config = STRICT
     token: str
@@ -266,11 +265,10 @@ def open_session(body: TokenIn, request: Request, response: Response) -> None:
         httponly=True,
         samesite="strict",
     )
-    _no_store(response)
 
 
 @router.get("/", name="read", responses={s: {"model": Error} for s in (404, 429)})
-def read(request: Request, response: Response) -> LinkedBooking:
+def read(request: Request) -> LinkedBooking:
     ip = request.client.host if request.client else None
     if limits.hit({limits.ip_key("booking_link_read", ip): READ_LIMIT}, READ_WINDOW):
         raise ApiError(429, "rate_limited")
@@ -283,7 +281,6 @@ def read(request: Request, response: Response) -> LinkedBooking:
         zone = business_settings.read(db).timezone
         decision = _decide(row, _policy(row))
         consents = pending_consents(db, row.booking_id, row.client_id)
-    _no_store(response)
     return _view(row, decision, zone, consents)
 
 
@@ -308,7 +305,6 @@ def _worker_hours(db: Session, service_id: UUID, worker_id: UUID) -> dict[UUID, 
 )
 def read_availability(
     request: Request,
-    response: Response,
     from_: Annotated[availability.Day, Query(alias="from")],
     to: availability.Day,
 ) -> AvailabilityOut:
@@ -354,7 +350,6 @@ def read_availability(
             buffer=availability.buffer_for(duration, buffer_minutes, settings.buffer_pct),
             exclude=row.booking_id,
         )
-    _no_store(response)
     return AvailabilityOut(timezone=zone, slots=sorted(result.slots.get(row.worker_id, set())))
 
 
@@ -369,7 +364,7 @@ class CancelIn(BaseModel):
     name="cancel",
     responses={s: {"model": Error} for s in (404, 409, 415, 422, 429, 503)},
 )
-def cancel(body: CancelIn, request: Request, response: Response) -> LinkedBooking:
+def cancel(body: CancelIn, request: Request) -> LinkedBooking:
     ip = request.client.host if request.client else None
     if limits.hit({limits.ip_key("booking_link_write", ip): WRITE_LIMIT}, WRITE_WINDOW):
         raise ApiError(429, "rate_limited")
@@ -410,7 +405,7 @@ def cancel(body: CancelIn, request: Request, response: Response) -> LinkedBookin
             zone = business_settings.read(db).timezone
     except OperationalError:
         raise ApiError(503, "busy") from None
-    _no_store(response)
+    logger.info("booking cancelled by client", extra={"booking_id": str(row.booking_id)})
     # The final state (spec S4): no longer live, so no more consent to ask and nothing further
     # allowed -- the response carries what just happened, and every later call answers 404.
     final_row = SimpleNamespace(**{**dict(row._mapping), "status": changed.status})
@@ -430,7 +425,7 @@ class RescheduleIn(BaseModel):
     name="reschedule",
     responses={s: {"model": Error} for s in (404, 409, 415, 422, 429, 503)},
 )
-def reschedule(body: RescheduleIn, request: Request, response: Response) -> LinkedBooking:
+def reschedule(body: RescheduleIn, request: Request) -> LinkedBooking:
     ip = request.client.host if request.client else None
     if limits.hit({limits.ip_key("booking_link_write", ip): WRITE_LIMIT}, WRITE_WINDOW):
         raise ApiError(429, "rate_limited")
@@ -549,7 +544,7 @@ def reschedule(body: RescheduleIn, request: Request, response: Response) -> Link
             consents = pending_consents(db, row.booking_id, row.client_id)
     except OperationalError:
         raise ApiError(503, "busy") from None
-    _no_store(response)
+    logger.info("booking rescheduled", extra={"booking_id": str(row.booking_id)})
     new_row = SimpleNamespace(
         **{
             **dict(row._mapping),
@@ -573,7 +568,7 @@ class ConsentsIn(BaseModel):
     name="consents",
     responses={s: {"model": Error} for s in (404, 409, 415, 422, 429)},
 )
-def confirm_consents(body: ConsentsIn, request: Request, response: Response) -> LinkedBooking:
+def confirm_consents(body: ConsentsIn, request: Request) -> LinkedBooking:
     """D11: the explicit confirmation click, never the link click itself. Confirms the grants
     ticked at booking (the `created` event's true values), minus any later withdrawal, and records
     them with `clients.record_consents(source='booking_page', ...)`. Runs once per booking: a
@@ -616,5 +611,4 @@ def confirm_consents(body: ConsentsIn, request: Request, response: Response) -> 
         )
         zone = business_settings.read(db).timezone
         decision = _decide(row, _policy(row))
-    _no_store(response)
     return _view(row, decision, zone, [])

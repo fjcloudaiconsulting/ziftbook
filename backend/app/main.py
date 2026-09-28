@@ -151,6 +151,9 @@ def create_app() -> FastAPI:
             response = await call_next(request)
         # No API response is a page to link from.
         response.headers["Referrer-Policy"] = "no-referrer"
+        # ZIF-54 spec S4: every guest-link answer, errors included, is private to its bearer.
+        if request.url.path.startswith("/api/public/booking-link"):
+            response.headers["Cache-Control"] = "no-store"
         return response
 
     @app.middleware("http")
