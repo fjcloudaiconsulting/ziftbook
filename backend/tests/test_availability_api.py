@@ -335,7 +335,12 @@ def patch_booked(
     calls: list[tuple[list[uuid.UUID], datetime, datetime]] = []
 
     def fake(
-        db: Session, members: list[uuid.UUID], start: datetime, end: datetime
+        db: Session,
+        members: list[uuid.UUID],
+        start: datetime,
+        end: datetime,
+        *,
+        exclude: uuid.UUID | None = None,
     ) -> list[tuple[uuid.UUID, datetime, datetime, int | None]]:
         calls.append((members, start, end))
         return [

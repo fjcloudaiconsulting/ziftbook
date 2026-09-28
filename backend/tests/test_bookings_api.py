@@ -477,8 +477,8 @@ def test_a_conflicting_row_committed_mid_request_is_a_409_slot_taken(
     paused = threading.Event()
     release = threading.Event()
 
-    def paused_booked(db: Any, members_: Any, start: Any, end: Any) -> Any:
-        result = real_booked(db, members_, start, end)
+    def paused_booked(db: Any, members_: Any, start: Any, end: Any, *, exclude: Any = None) -> Any:
+        result = real_booked(db, members_, start, end, exclude=exclude)
         if not paused_once.is_set():
             paused_once.set()
             paused.set()
@@ -523,8 +523,8 @@ def test_the_loop_moves_to_the_next_candidate_when_the_first_is_taken(
     paused = threading.Event()
     release = threading.Event()
 
-    def paused_booked(db: Any, members_: Any, start: Any, end: Any) -> Any:
-        result = real_booked(db, members_, start, end)
+    def paused_booked(db: Any, members_: Any, start: Any, end: Any, *, exclude: Any = None) -> Any:
+        result = real_booked(db, members_, start, end, exclude=exclude)
         if not paused_once.is_set():
             paused_once.set()
             paused.set()
@@ -1359,8 +1359,8 @@ def test_a_second_booker_waits_for_the_first_rather_than_deadlocking(
     holding = threading.Event()
     release = threading.Event()
 
-    def paused_booked(db: Any, members_: Any, start: Any, end: Any) -> Any:
-        result = real_booked(db, members_, start, end)
+    def paused_booked(db: Any, members_: Any, start: Any, end: Any, *, exclude: Any = None) -> Any:
+        result = real_booked(db, members_, start, end, exclude=exclude)
         if not paused_once.is_set():
             paused_once.set()
             holding.set()

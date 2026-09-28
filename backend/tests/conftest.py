@@ -460,11 +460,18 @@ def delete_clients(conn: Connection, tenant_ids: Iterable[object]) -> None:
 
 
 def delete_bookings(conn: Connection, tenant_ids: Iterable[object]) -> None:
-    """The app role can delete neither booking_events nor bookings; fixtures remove them as the
-    migrate role, one business at a time (forced row-level security), events first for the foreign
-    key."""
+    """The app role can delete neither booking_events, booking_links nor bookings; fixtures remove
+    them as the migrate role, one business at a time (forced row-level security), booking_links and
+    events first for the foreign key.
+
+    booking_links may not exist: some test_migrations.py tests call this while temporarily
+    downgraded below 0029, where the table is gone.
+    """
+    has_links = conn.scalar(text("SELECT to_regclass('booking_links')")) is not None
     for tenant_id in tenant_ids:
         conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(tenant_id)})
+        if has_links:
+            conn.execute(text("DELETE FROM booking_links"))
         conn.execute(text("DELETE FROM booking_events"))
         conn.execute(text("DELETE FROM bookings"))
 

@@ -5,6 +5,7 @@ import re
 from bisect import bisect_right
 from collections import defaultdict
 from collections.abc import Iterable
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Annotated
 from uuid import UUID
@@ -173,14 +174,18 @@ WHERE b.worker_id = ANY(CAST(:members AS uuid[]))
   AND b.starts_at > CAST(:start AS timestamptz) - interval '1 day'
   AND b.status = ANY(CAST(:occupying AS text[]))
   AND (b.status <> ALL(CAST(:expiring AS text[])) OR b.expires_at > now())
+  AND b.id IS DISTINCT FROM CAST(:exclude AS uuid)
 """)
 
 
 def booked(
-    db: Session, members: list[UUID], start: datetime, end: datetime
+    db: Session, members: list[UUID], start: datetime, end: datetime, *, exclude: UUID | None = None
 ) -> list[tuple[UUID, datetime, datetime, int | None]]:
     """Bookings that occupy these workers between start and end: (member_id, starts_at, ends_at,
     their service's buffer_minutes).
+
+    exclude (ZIF-54): a booking id to leave out, so a reschedule can check whether the booking's
+    OWN slot is offered without seeing its own row as a conflict with itself.
 
     ONE statement, shaped like the time_off read beside it: = ANY(uuid[]), the same two-sided
     window predicate, and the same bounded look-back (time_off uses `- interval '366 days'`, its own
@@ -224,6 +229,7 @@ def booked(
                 "end": end,
                 "occupying": list(OCCUPYING),
                 "expiring": list(EXPIRING),
+                "exclude": exclude,
             },
         ).tuples()
     )
@@ -273,6 +279,68 @@ def time_off(
         else:
             out[member_id].append((starts_at, ends_at))
     return out
+
+
+@dataclass(frozen=True)
+class Offered:
+    slots: dict[UUID, set[datetime]]  # per member, its bookable starts on first..last
+    # The rows booked() read while computing them: create()'s least-loaded tiebreak (step 14) and
+    # any other caller that needs the same window's bookings reuse this instead of a second read.
+    booked: list[tuple[UUID, datetime, datetime, int | None]]
+
+
+def offered(
+    db: Session,
+    *,
+    members: list[UUID],
+    hours: dict[UUID, list[schedule.Row]],
+    opening: dict[int, list[tuple[time, time]]],
+    settings: business_settings.BusinessSettings,
+    first: date,
+    last: date,
+    earliest: datetime,
+    duration: int,
+    buffer: int,
+    exclude: UUID | None = None,
+) -> Offered:
+    """Is this slot bookable, for one or more workers: the one implementation read_availability,
+    bookings.create and the booking-link routes all call (ZIF-54).
+
+    first/last/earliest already clamped by window(); an empty or inverted range (first > last)
+    answers no slots for anyone, doing no query. exclude leaves out one booking id from the read
+    (a reschedule checking the booking's own slot against everyone ELSE's bookings).
+    """
+    if not members or first > last:
+        return Offered({}, [])
+    zone = settings.timezone
+    start = schedule.to_utc(first - timedelta(days=1), time(), zone)
+    # Two days past the last: a booking's buffer and a midnight clock change.
+    end = schedule.to_utc(last + timedelta(days=2), time(), zone)
+    off_by_member = time_off(db, members, first, last, zone, start, end)
+    booked_rows = booked(db, members, start, end, exclude=exclude)
+    bookings: dict[UUID, list[Booked]] = defaultdict(list)
+    for member_id, starts_at, ends_at, override in booked_rows:
+        bookings[member_id].append((starts_at, ends_at, override))
+    slots = {
+        member_id: set(
+            member_slots(
+                hours[member_id],
+                off_by_member[member_id],
+                bookings[member_id],
+                opening=opening,
+                zone=zone,
+                first=first,
+                last=last,
+                duration=duration,
+                buffer=buffer,
+                pct=settings.buffer_pct,
+                step=settings.slot_step_minutes,
+                earliest=earliest,
+            )
+        )
+        for member_id in members
+    }
+    return Offered(slots, booked_rows)
 
 
 def now() -> datetime:
@@ -374,33 +442,23 @@ def read_availability(
         found: set[datetime] = set()
         # Dates only after clamping: to=9999-12-31 would overflow below.
         if chosen and first <= last:
-            start = schedule.to_utc(first - timedelta(days=1), time(), zone)
-            # Two days past the last: a booking's buffer and a midnight clock change.
-            end = schedule.to_utc(last + timedelta(days=2), time(), zone)
-            blocked = time_off(db, chosen, first, last, zone, start, end)
-            bookings: dict[UUID, list[Booked]] = defaultdict(list)
-            for m, starts_at, ends_at, override in booked(db, chosen, start, end):
-                bookings[m].append((starts_at, ends_at, override))
             buffer = buffer_for(
                 service.duration_minutes, service.buffer_minutes, settings.buffer_pct
             )
+            result = offered(
+                db,
+                members=chosen,
+                hours=hours,
+                opening=opening,
+                settings=settings,
+                first=first,
+                last=last,
+                earliest=earliest,
+                duration=service.duration_minutes,
+                buffer=buffer,
+            )
             for m in chosen:
-                found.update(
-                    member_slots(
-                        hours[m],
-                        blocked[m],
-                        bookings[m],
-                        opening=opening,
-                        zone=zone,
-                        first=first,
-                        last=last,
-                        duration=service.duration_minutes,
-                        buffer=buffer,
-                        pct=settings.buffer_pct,
-                        step=settings.slot_step_minutes,
-                        earliest=earliest,
-                    )
-                )
+                found.update(result.slots[m])
     return AvailabilityOut(
         timezone=zone,
         duration_minutes=service.duration_minutes,

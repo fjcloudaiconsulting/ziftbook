@@ -92,6 +92,13 @@ class BusinessSettings(BaseModel):
     # takes the class default rather than the saved value.
     free_cancellation_hours: Annotated[int, Field(ge=0, le=720)] = 48
     reschedule_cutoff_hours: Annotated[int, Field(ge=0, le=720)] = 24
+    # ZIF-54. How many times a client may reschedule a booking from their own link, snapshotted
+    # onto every booking as bookings.max_reschedules at insert (ZIF-55's pattern). The bounds equal
+    # migration 0029's ck_bookings_max_reschedules CHECK exactly, the same pair as the two hours
+    # above: a value pydantic accepts and the CHECK rejects is a 500 on the public booking POST.
+    # 0 turns client-side rescheduling off for new bookings; existing bookings keep the value they
+    # were sold with.
+    max_reschedules: Annotated[int, Field(ge=0, le=10)] = 2
 
 
 def read(db: Session) -> BusinessSettings:

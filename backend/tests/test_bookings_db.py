@@ -68,11 +68,13 @@ INSERT_BOOKING = text("""
 INSERT INTO bookings (tenant_id, client_id, worker_id, service_id, starts_at, ends_at, status,
                        expires_at, source, service_name, price_amount_minor, price_currency,
                        duration_minutes, auto_confirm_at_booking, worker_display_name,
-                       free_cancellation_hours, reschedule_cutoff_hours)
+                       free_cancellation_hours, reschedule_cutoff_hours, original_starts_at,
+                       earliest_starts_at, max_reschedules, reschedule_count)
 VALUES (current_setting('app.tenant_id')::uuid, :client_id, :worker_id, :service_id, :starts_at,
         :ends_at, :status, :expires_at, :source, CAST(:service_name AS jsonb),
         :price_amount_minor, :price_currency, :duration_minutes, :auto_confirm_at_booking,
-        :display_name, :free_hours, :cutoff_hours)
+        :display_name, :free_hours, :cutoff_hours, :original_starts_at, :earliest_starts_at,
+        :max_reschedules, :reschedule_count)
 RETURNING id
 """)
 
@@ -95,6 +97,10 @@ def insert_booking(
     display_name: str | None = None,
     free_hours: int = 48,
     cutoff_hours: int = 24,
+    original_starts_at: datetime | None = None,
+    earliest_starts_at: datetime | None = None,
+    max_reschedules: int = 2,
+    reschedule_count: int = 0,
 ) -> uuid.UUID:
     booking_id: uuid.UUID = session.scalar(
         INSERT_BOOKING,
@@ -115,6 +121,10 @@ def insert_booking(
             "display_name": display_name,
             "free_hours": free_hours,
             "cutoff_hours": cutoff_hours,
+            "original_starts_at": original_starts_at,
+            "earliest_starts_at": earliest_starts_at,
+            "max_reschedules": max_reschedules,
+            "reschedule_count": reschedule_count,
         },
     )
     return booking_id
