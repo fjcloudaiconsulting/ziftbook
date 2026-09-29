@@ -14,14 +14,14 @@ import logging
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Annotated, Any, Literal, NamedTuple
+from typing import Annotated, Any, Literal, NamedTuple, Self
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Query, Request, Response
 from opentelemetry.trace import SpanKind
 from psycopg.errors import ExclusionViolation, ForeignKeyViolation
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import BaseModel, Field, StringConstraints, model_validator
 from sqlalchemy import Row, text
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
@@ -44,7 +44,7 @@ from app.business_settings import Locale
 from app.clients import ClientName, Phone, PolicyVersion, Purpose
 from app.db import SessionLocal, join_tenant, tenant_context
 from app.errors import ApiError, Error
-from app.services import STRICT, Price
+from app.services import STRICT, DescriptionText, Price
 
 logger = logging.getLogger(__name__)
 
@@ -182,6 +182,16 @@ OWNER_ONLY_SOURCES = ("completed",)
 class StatusChange(BaseModel):
     model_config = STRICT  # app.services.STRICT: strict=True, extra="forbid"
     status: Target
+    message: DescriptionText | None = Field(
+        default=None,
+        description="Only with status `declined`: sent to the client in the decline email.",
+    )
+
+    @model_validator(mode="after")
+    def only_a_decline_has_a_message(self) -> Self:
+        if self.message is not None and self.status != "declined":
+            raise ValueError("a message goes with a decline only")
+        return self
 
 
 class BookingStatusOut(BaseModel):
@@ -385,8 +395,11 @@ def remind(
 # ck_bookings_expires_at's own list (0026:95-100), and the day ZIF-7 makes the status reachable an
 # array that had been trimmed to the reachable half would silently drop the liveness guard on the
 # payment hold. Commentary for ZIF-7, kept in lockstep with the CHECK it mirrors.
+# decline_message is set here, in the same statement: the text lands only if the qualified UPDATE
+# succeeds. Safe to SET unconditionally (NULL for every other target) only because `declined` is in
+# no Rule's sources, so no transition leaves a declined row and clears its message.
 TRANSITION = text("""
-UPDATE bookings SET status = :status
+UPDATE bookings SET status = :status, decline_message = :message
 WHERE id = :id
   AND status = ANY(CAST(:allowed_from AS text[]))
   AND (status <> ALL (ARRAY['awaiting_payment', 'pending']) OR expires_at > now())
@@ -742,6 +755,7 @@ def transition(
         {
             "id": booking_id,
             "status": change.status,
+            "message": change.message,
             "allowed_from": list(rule.sources),
             "past_only": rule.past_only,
         },

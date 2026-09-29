@@ -309,6 +309,31 @@ def test_no_personal_data_ever_reaches_a_log(
         )
     assert bookings.sweep() >= 1
 
+    # 6h (ZIF-121): a decline with a message; the text goes to the client's email and nowhere else.
+    assert len(slots) >= 4  # clear of 6f's slot and its buffer; 6g's expired hold is free again
+    declined = client_for(app).post(
+        f"/api/public/businesses/{people.a}/services/{created.json()['id']}/bookings",
+        json={
+            "starts_at": slots[-2],
+            "name": booker_name,
+            "email": booker_email,
+            "phone": booker_phone,
+            "policy_version": "2026-09-01",
+            "consents": {},
+        },
+    )
+    assert declined.status_code == 201
+    decline_message = "Zzyzx-9 fully booked that day"
+    secret(decline_message)
+    assert (
+        owner.patch(
+            f"/api/bookings/{declined.json()['id']}",
+            json={"status": "declined", "message": decline_message},
+        ).status_code
+        == 200
+    )
+    asyncio.run(run_once(KINDS))
+
     # 7: invite flow — send, list, a wrong token, then accept with a brand-new account.
     invite_email = fresh_email()
     invite_password = "Invite-Pw7-55"
@@ -393,7 +418,7 @@ def test_no_personal_data_ever_reaches_a_log(
     assert failed[0]["error"] == "SMTPRecipientsRefused"
     sent = {line["template"] for line in lines if line["msg"] == "email sent"}
     assert {"sign_up", "sign_up_registered", "password_reset", "invite"} <= sent
-    assert {"booking_received", "booking_request", "booking_confirmed"} <= sent
+    assert {"booking_received", "booking_request", "booking_confirmed", "booking_declined"} <= sent
     email_failed = [line for line in lines if line["msg"] == "email failed"]
     assert [(line["template"], line["error"]) for line in email_failed] == [
         ("sign_up", "SMTPRecipientsRefused")

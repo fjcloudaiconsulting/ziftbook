@@ -264,7 +264,7 @@ LINKED = frozenset({"booking_received", "booking_confirmed", "booking_reminder"}
 BOOKING = text("""
 SELECT c.email AS client_email, c.locale AS client_locale, c.name AS client_name,
        t.name AS business, b.client_id, b.status, b.starts_at, b.ends_at, b.expires_at,
-       b.service_name, b.reschedule_count, now() AS now
+       b.service_name, b.reschedule_count, b.decline_message, now() AS now
 FROM bookings b
 JOIN clients c ON c.tenant_id = b.tenant_id AND c.id = b.client_id
 JOIN tenants t ON t.id = b.tenant_id
@@ -436,7 +436,15 @@ def send_booking(job: Job) -> None:
             values["expires"] = (
                 expires_local.strftime(f"{DATE_FORMAT[locale]} %H:%M") + f" ({zone})"
             )
-        subject, body = render(template, locale, values)
+        if row.decline_message is not None:
+            # ZIF-121: only the file rendered differs. `template` stays booking_declined for
+            # STATUS_FOR, the outbox row and the log; the text is a value, never rescanned.
+            values["message"] = row.decline_message
+        subject, body = render(
+            "booking_declined_message" if row.decline_message is not None else template,
+            locale,
+            values,
+        )
         status = _outbox(session, job, recipient_id, template, subject)
         if status == "pending" and token is not None:
             session.execute(

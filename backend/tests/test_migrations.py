@@ -11,6 +11,7 @@ from alembic.config import Config
 from psycopg.errors import CheckViolation, NotNullViolation
 from sqlalchemy import Connection, Engine, text
 from sqlalchemy.exc import DBAPIError, IntegrityError
+from sqlalchemy.orm import Session
 
 from app.db import tenant_context
 from tests.conftest import API_DIR, People, delete_bookings, member_id
@@ -818,3 +819,80 @@ def test_0030_backfills_oldest_first(
         slugs = dict(conn.execute(SLUGS, {"ids": [older, newer]}).tuples().all())
         conn.execute(text("DELETE FROM tenants WHERE id = ANY(:ids)"), {"ids": [older, newer]})
     assert (slugs[older], slugs[newer]) == (f"nail-bar-{tag}", f"nail-bar-{tag}-2")
+
+
+DECLINE_MESSAGE = text("""
+SELECT (SELECT count(*) FROM information_schema.columns
+        WHERE table_name = 'bookings' AND column_name = 'decline_message'),
+       (SELECT count(*) FROM pg_constraint WHERE conname = 'ck_bookings_decline_message')
+""")
+
+
+def booked(session: Session, worker_id: uuid.UUID, service_id: uuid.UUID, status: str) -> uuid.UUID:
+    """A booking straight in as the app role, for a fresh client."""
+    starts_at = datetime.now(UTC) + timedelta(days=1)
+    return insert_booking(
+        session,
+        client_id=session.scalar(
+            text(
+                "INSERT INTO clients (tenant_id, name) "
+                "VALUES (current_setting('app.tenant_id')::uuid, 'X') RETURNING id"
+            )
+        ),
+        worker_id=worker_id,
+        service_id=service_id,
+        starts_at=starts_at,
+        ends_at=starts_at + timedelta(minutes=30),
+        status=status,
+        expires_at=starts_at if status == "pending" else None,
+    )
+
+
+SET_MESSAGE = text("UPDATE bookings SET decline_message = :m WHERE id = :id")
+
+
+# ZIF-121 G1. fence: 0031's round trip over a table already holding a pending row.
+def test_0031_round_trips(
+    people: People, migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = lock_timeout_config(monkeypatch)
+    service_id = seed_service(people.a)
+    worker_id = member_id(people.a, people.both)
+    with tenant_context(people.a) as session:
+        pending_id = booked(session, worker_id, service_id, "pending")
+    try:
+        command.downgrade(cfg, "0030")
+        with migrate_engine.connect() as conn:
+            assert tuple(conn.execute(DECLINE_MESSAGE).one()) == (0, 0)
+    finally:
+        command.upgrade(cfg, "head")
+    with migrate_engine.connect() as conn:
+        assert tuple(conn.execute(DECLINE_MESSAGE).one()) == (1, 1)
+        assert conn.scalar(
+            text(
+                "SELECT has_column_privilege('ziftbook_app', 'bookings', "
+                "'decline_message', 'UPDATE')"
+            )
+        )
+    with tenant_context(people.a) as session:
+        assert session.scalar(
+            text("SELECT decline_message IS NULL FROM bookings WHERE id = :id"), {"id": pending_id}
+        )
+
+
+# ZIF-121 F11. fence, as the app role: the CHECK refuses a message on a non-declined row and one
+# over 1000 characters, and accepts NULL everywhere. Kills: no CHECK, a weakened one, or one
+# without the explicit IS NULL (NULL AND FALSE is FALSE, which would refuse every other row).
+def test_the_decline_message_check(people: People) -> None:
+    service_id = seed_service(people.a)
+    worker_id = member_id(people.a, people.both)
+    with tenant_context(people.a) as session:
+        pending_id = booked(session, worker_id, service_id, "pending")  # NULL inserts fine
+        declined_id = booked(session, worker_id, service_id, "declined")
+        for id_, message in ((pending_id, "Sorry"), (declined_id, "a" * 1001)):
+            with pytest.raises(IntegrityError) as bites, session.begin_nested():
+                session.execute(SET_MESSAGE, {"m": message, "id": id_})
+            assert isinstance(bites.value.orig, CheckViolation)
+            assert bites.value.orig.diag.constraint_name == "ck_bookings_decline_message"
+        session.execute(SET_MESSAGE, {"m": "a" * 1000, "id": declined_id})
+        session.execute(SET_MESSAGE, {"m": None, "id": declined_id})  # ZIF-58's erasure path

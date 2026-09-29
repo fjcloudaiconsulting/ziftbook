@@ -176,7 +176,9 @@ migration 0026), not any code path. A race in a route somebody forgets to guard 
   `max_pending_per_email` exact.
 - The evidence snapshot (service name in every language, price, duration, the cancellation policy **text**, source,
   the auto-confirm setting, the worker's display name) is on the booking. **Client personal data is not**: it stays
-  in `clients`, reached by `client_id`, so ZIF-58 keeps one tombstone. The service's buffer is **not** snapshotted —
+  in `clients`, reached by `client_id`, so ZIF-58 keeps one tombstone. The one exception is
+  `decline_message`, the merchant's free text to a client they declined: ZIF-58 must set it to NULL on erasure (the
+  CHECK allows NULL on a declined row). The service's buffer is **not** snapshotted —
   a buffer is a scheduling rule, not evidence. The cancellation policy is snapshotted as text and carries **no
   version**: a version is only useful for re-reading a policy at cancellation time, which ZIF-5 rejects. The
   `policy_version` on `booking_events` is a different key — the consent wording version, into
