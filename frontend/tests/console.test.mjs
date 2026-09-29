@@ -264,9 +264,8 @@ describe("writeOutcome", () => {
 });
 
 describe("bookingPageAddress (ZIF-145)", () => {
-  test("F8 fence: origin plus slug, no locale segment, no doubled slash", () => {
-    // Wrong implementation killed: a locale-prefixed address, or origin + "/" + slug when origin
-    // already carries a trailing slash (a doubled slash).
+  test("F8 fence: origin plus slug, no locale segment", () => {
+    // Wrong implementation killed: a locale-prefixed address (/nl/nail-bar-carol).
     assert.equal(bookingPageAddress("https://ziftbook.com", "nail-bar-carol"), "https://ziftbook.com/nail-bar-carol");
   });
 });

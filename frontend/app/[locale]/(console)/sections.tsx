@@ -175,6 +175,8 @@ export function Settings() {
   }
 
   async function onCopy() {
+    // Empty the live region first: a second "Copied" into an unchanged region isn't announced.
+    setCopyState("idle");
     try {
       if (!navigator.clipboard) throw new Error("no clipboard");
       await navigator.clipboard.writeText(address);

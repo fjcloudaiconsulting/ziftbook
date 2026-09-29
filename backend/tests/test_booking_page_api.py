@@ -72,10 +72,12 @@ def test_an_unpublished_business_is_byte_identical_to_an_unknown_slug(
         unpublished = page(client, slug)
         unknown = page(client, f"nobody-here-{tag}")
         assert unpublished.status_code == 404
-        assert (unpublished.status_code, unpublished.json()) == (
+        assert (unpublished.status_code, unpublished.content) == (
             unknown.status_code,
-            unknown.json(),
+            unknown.content,
         )
+        for header in ("content-type", "cache-control"):
+            assert unpublished.headers.get(header) == unknown.headers.get(header)
     finally:
         with migrate_engine.begin() as conn:
             conn.execute(text("DELETE FROM tenants WHERE id = :t"), {"t": tenant})
@@ -152,13 +154,15 @@ def test_publishing_gates_all_three_routes_and_only_an_owner_may_flip_it(
     worker = signed_in(app, people.a, people.only_a)
     client = new_client(app)
 
-    denied = put_settings(worker, {"published": True})
-
-    assert (denied.status_code, denied.json()) == (403, {"code": "owner_only"})
     assert page(client, slug).status_code == 200  # this file's autouse already published people.a
 
     assert put_settings(owner, {"published": False}).status_code == 200
     assert page(client, slug).status_code == 404
+
+    denied = put_settings(worker, {"published": True})
+
+    assert (denied.status_code, denied.json()) == (403, {"code": "owner_only"})
+    assert page(client, slug).status_code == 404  # the refused PUT wrote nothing
     assert get(client, people.a, ready).status_code == 404
     assert post_booking(client, people.a, ready).status_code == 404
 
