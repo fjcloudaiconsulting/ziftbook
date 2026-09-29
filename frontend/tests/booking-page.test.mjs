@@ -17,6 +17,7 @@ import {
   nextWeekDisabled,
   ownPolicyText,
   scanWindow,
+  slugLooksValid,
 } from "../lib/booking-page.ts";
 
 describe("F1 cancellation terms", () => {
@@ -199,6 +200,20 @@ describe("F10 availability window", () => {
     // availability.py:424 refuses (to - from).days >= 14, so from..from+13 is the largest legal
     // 14-day-inclusive window.
     assert.deepEqual(scanWindow("2026-10-01"), { from: "2026-10-01", to: "2026-10-14" });
+  });
+});
+
+describe("slugLooksValid: mirrors backend_page.py's own slug check, so a bad slug never reaches it", () => {
+  test("fence: uppercase is accepted (lowered first, like the backend), but non-ascii and long slugs are not", () => {
+    // Wrong implementation killed: rejecting uppercase outright (the backend lowers before
+    // checking, so "Carol-Nails" is a valid, findable slug, not a 404 by itself).
+    assert.equal(slugLooksValid("Carol-Nails"), true);
+    assert.equal(slugLooksValid("carol-nails-bar"), true);
+    assert.equal(slugLooksValid("café"), false);
+    assert.equal(slugLooksValid("a".repeat(41)), false);
+    assert.equal(slugLooksValid(""), false);
+    assert.equal(slugLooksValid("-leading"), false);
+    assert.equal(slugLooksValid("has space"), false);
   });
 });
 

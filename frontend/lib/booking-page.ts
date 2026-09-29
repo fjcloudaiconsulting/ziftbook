@@ -174,6 +174,15 @@ export function scanWindow(from: string): { from: string; to: string } {
   return { from, to: addDays(from, 13) };
 }
 
+// Mirrors backend/app/booking_page.py's own check (SLUG regex + isascii + len<=40): a slug that
+// fails this is never stored, so it is simply not found — this lets the page loader answer
+// notFound() without spending a request on the backend for something it would 404 anyway.
+const SLUG = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+
+export function slugLooksValid(slug: string): boolean {
+  return slug.length > 0 && slug.length <= 40 && /^[\x00-\x7F]*$/.test(slug) && SLUG.test(slug.toLowerCase());
+}
+
 /** The earliest business-local day at or after `from` that has a free slot, out of an already-
  * fetched availability window (never issues a request itself). A 14-day window fetched for the
  * visible week already covers the following week too (spec's scanWindow): when the visible 7 days
