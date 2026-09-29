@@ -408,7 +408,9 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
   const service1Done = flow.service;
   // flow.service is checked, not just flow.step: TS doesn't propagate that narrowing through the
   // ternary's inferred type, so the cast documents what the runtime check already guarantees.
-  const s2 = flow.step >= 2 && flow.service ? (flow as Step2Plus) : null;
+  // Not gated by flow.step: the checkout summary (and step 2/3's own folded rows) must keep
+  // showing what's already chosen even while step 1 is reopened via "Change".
+  const s2 = flow.service ? (flow as Step2Plus) : null;
 
   if (page.services.length === 0) {
     return (
@@ -423,8 +425,9 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
   }
 
   return (
+    <>
     <main className={styles.screen}>
-      <div className={`${styles.col} ${styles.colWide}`}>
+      <div className={`${styles.col} ${styles.bookingWide}`}>
         <div className={styles.bizHeader}>
           <h1>{page.name}</h1>
           <p className={styles.bizMeta}>
@@ -645,11 +648,11 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
           />
         </div>
       </div>
-
-      <footer className={styles.minimalFooter}>
-        <span>{t("footerBy")} ziftbook</span>
-      </footer>
     </main>
+    <footer className={styles.minimalFooter}>
+      <span>{t("footerBy")} ziftbook</span>
+    </footer>
+    </>
   );
 }
 

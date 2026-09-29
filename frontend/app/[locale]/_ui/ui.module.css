@@ -345,6 +345,9 @@ a.textButton { display: inline-flex; align-items: center; }
  * is the minimal footer's, not repeated here), numbered steps, and a summary column that sits
  * beside the flow at desktop widths (container query on .bookingLayout). */
 .minimalHeader { display: flex; justify-content: flex-end; padding: 1rem var(--gutter); }
+/* Wide enough for the flow column plus a 22rem sticky checkout side by side (colWide's 34rem,
+ * shared with plain single-column forms elsewhere, is too narrow for this page). */
+.bookingWide { max-width: 68rem; }
 
 .bizHeader { display: flex; flex-direction: column; gap: 0.35rem; padding-bottom: 1.25rem; border-bottom: 1px solid var(--line); }
 .bizHeader h1 { margin: 0; font: 400 1.75rem/1.2 var(--font-display), Georgia, serif; }
