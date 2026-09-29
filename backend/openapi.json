@@ -2808,6 +2808,68 @@
         }
       }
     },
+    "/api/public/booking-pages/{slug}": {
+      "get": {
+        "tags": [
+          "booking-page"
+        ],
+        "summary": "Read",
+        "operationId": "booking-page-read",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Slug"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookingPageOut"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          }
+        }
+      }
+    },
     "/api/public/businesses/{tenant_id}/services/{service_id}/bookings": {
       "post": {
         "tags": [
@@ -3760,6 +3822,67 @@
         ],
         "title": "BookingIn"
       },
+      "BookingPageOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "slug": {
+            "type": "string",
+            "title": "Slug"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "timezone": {
+            "type": "string",
+            "title": "Timezone"
+          },
+          "language": {
+            "type": "string",
+            "enum": [
+              "en",
+              "nl",
+              "pt"
+            ],
+            "title": "Language"
+          },
+          "booking_horizon_days": {
+            "type": "integer",
+            "title": "Booking Horizon Days"
+          },
+          "policy_version": {
+            "type": "string",
+            "title": "Policy Version"
+          },
+          "cancellation": {
+            "$ref": "#/components/schemas/CancellationOut"
+          },
+          "services": {
+            "items": {
+              "$ref": "#/components/schemas/PublicServiceOut"
+            },
+            "type": "array",
+            "title": "Services"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "slug",
+          "name",
+          "timezone",
+          "language",
+          "booking_horizon_days",
+          "policy_version",
+          "cancellation",
+          "services"
+        ],
+        "title": "BookingPageOut"
+      },
       "BookingStatusOut": {
         "properties": {
           "id": {
@@ -4035,6 +4158,41 @@
           "refund_pct"
         ],
         "title": "CancelIn"
+      },
+      "CancellationOut": {
+        "properties": {
+          "text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text"
+          },
+          "free_cancellation_hours": {
+            "type": "integer",
+            "title": "Free Cancellation Hours"
+          },
+          "reschedule_cutoff_hours": {
+            "type": "integer",
+            "title": "Reschedule Cutoff Hours"
+          },
+          "max_reschedules": {
+            "type": "integer",
+            "title": "Max Reschedules"
+          }
+        },
+        "type": "object",
+        "required": [
+          "text",
+          "free_cancellation_hours",
+          "reschedule_cutoff_hours",
+          "max_reschedules"
+        ],
+        "title": "CancellationOut"
       },
       "ClientIn": {
         "properties": {
@@ -4800,6 +4958,67 @@
           "amount_minor"
         ],
         "title": "PriceIn"
+      },
+      "PublicServiceOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "name": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "enum": [
+                "en",
+                "nl",
+                "pt"
+              ]
+            },
+            "type": "object",
+            "title": "Name"
+          },
+          "description": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "enum": [
+                "en",
+                "nl",
+                "pt"
+              ]
+            },
+            "type": "object",
+            "title": "Description"
+          },
+          "duration_minutes": {
+            "type": "integer",
+            "title": "Duration Minutes"
+          },
+          "price": {
+            "$ref": "#/components/schemas/Price"
+          },
+          "workers": {
+            "items": {
+              "$ref": "#/components/schemas/WorkerOut"
+            },
+            "type": "array",
+            "title": "Workers"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "description",
+          "duration_minutes",
+          "price",
+          "workers"
+        ],
+        "title": "PublicServiceOut"
       },
       "RescheduleIn": {
         "properties": {

@@ -9,8 +9,8 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from psycopg.errors import CheckViolation, NotNullViolation
-from sqlalchemy import Engine, text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import Connection, Engine, text
+from sqlalchemy.exc import DBAPIError, IntegrityError
 
 from app.db import tenant_context
 from tests.conftest import API_DIR, People, delete_bookings, member_id
@@ -692,3 +692,129 @@ def test_downgrading_and_upgrading_0029_restores_booking_links_and_the_snapshots
             )
     assert isinstance(raised.value.orig, CheckViolation)
     assert raised.value.orig.diag.constraint_name == "ck_bookings_earliest_starts_at"
+
+
+SLUG_OBJECTS = """
+SELECT (SELECT count(*) FROM information_schema.columns
+        WHERE table_name = 'tenants' AND column_name = 'slug'),
+       (SELECT count(*) FROM pg_trigger WHERE tgname = 'tenants_default_slug'),
+       to_regprocedure('slug_ok(text)') IS NULL
+         AND to_regprocedure('free_slug(text)') IS NULL
+         AND to_regprocedure('tenants_default_slug()') IS NULL
+"""
+SLUGS = text("SELECT id, slug FROM tenants WHERE id = ANY(:ids) ORDER BY id")
+
+
+def lock_timeout_config(monkeypatch: pytest.MonkeyPatch) -> Config:
+    cfg = Config(toml_file=str(API_DIR / "pyproject.toml"))
+    url = os.environ["ZIF_MIGRATE_DATABASE_URL"]
+    options = urlencode({"options": "-c lock_timeout=5s"})
+    monkeypatch.setenv("ZIF_MIGRATE_DATABASE_URL", f"{url}{'&' if '?' in url else '?'}{options}")
+    return cfg
+
+
+def plain_insert(conn: Connection) -> str:
+    try:
+        with conn.begin_nested():
+            conn.execute(text("INSERT INTO tenants (name) VALUES ('Plain')"))
+            conn.execute(text("DELETE FROM tenants WHERE name = 'Plain'"))
+        return "ok"
+    except DBAPIError as error:
+        return str(getattr(error.orig, "sqlstate", error))
+
+
+def downgrade_outcome(cfg: Config) -> str | None:
+    """Run the downgrade; None on success, else its SQLSTATE (or exception type as a fallback).
+
+    A broken downgrade (e.g. dropping slug_ok before the column that CHECKs against it) raises
+    instead of returning, so a bare `command.downgrade` call would turn the test's assertion below
+    into an unhandled error. Capturing the outcome here keeps the failure an assertion, not an
+    error, and a `finally: upgrade head` around the caller can no longer hide it.
+    """
+    try:
+        command.downgrade(cfg, "0029")
+        return None
+    except Exception as error:
+        orig = getattr(error, "orig", None)
+        return getattr(orig, "sqlstate", None) or type(error).__name__
+
+
+# ZIF-56 test 11. fence
+def test_0030_round_trips(
+    migrated: None, migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tag = uuid.uuid4().hex[:8]
+    ids: list[uuid.UUID] = []
+    cfg = lock_timeout_config(monkeypatch)
+    try:
+        assert downgrade_outcome(cfg) is None
+        with migrate_engine.begin() as conn:
+            # A downgrade that misses a function leaves it behind here, not at head, so catch it
+            # now as an assertion; left uncaught, the next upgrade's CREATE FUNCTION would collide
+            # with the leftover and crash the test setup instead of failing an assertion.
+            assert tuple(conn.execute(text(SLUG_OBJECTS)).one()) == (0, 0, True)
+            for name in (f"Round {tag}", f"Trip {tag}"):
+                ids.append(
+                    conn.scalar(
+                        text("INSERT INTO tenants (name) VALUES (:n) RETURNING id"), {"n": name}
+                    )
+                )
+        command.upgrade(cfg, "0030")
+        with migrate_engine.connect() as conn:
+            before = conn.execute(SLUGS, {"ids": ids}).tuples().all()
+            assert [s for _, s in before] == [f"round-{tag}", f"trip-{tag}"]
+            assert (
+                conn.scalar(
+                    text(
+                        "SELECT is_nullable FROM information_schema.columns "
+                        "WHERE table_name = 'tenants' AND column_name = 'slug'"
+                    )
+                )
+                == "NO"
+            )
+            assert (
+                conn.scalar(
+                    text("SELECT count(*) FROM pg_constraint WHERE conname = 'uq_tenants_slug'")
+                )
+                == 1
+            )
+            assert tuple(conn.execute(text(SLUG_OBJECTS)).one()) == (1, 1, False)
+        assert downgrade_outcome(cfg) is None
+        with migrate_engine.begin() as conn:
+            assert tuple(conn.execute(text(SLUG_OBJECTS)).one()) == (0, 0, True)
+            assert plain_insert(conn) == "ok"
+    finally:
+        # Best-effort: a broken migration under test can leave the DB in a state this can't
+        # cleanly return to head from (e.g. a function a wrong downgrade failed to drop, colliding
+        # with upgrade's CREATE FUNCTION). Swallow that here so it can never replace the assertion
+        # above as the test's reported failure.
+        try:
+            command.upgrade(cfg, "head")
+        except Exception:
+            pass
+    with migrate_engine.begin() as conn:
+        assert conn.execute(SLUGS, {"ids": ids}).tuples().all() == before
+        conn.execute(text("DELETE FROM tenants WHERE id = ANY(:ids)"), {"ids": ids})
+
+
+# ZIF-56 test 12. fence
+def test_0030_backfills_oldest_first(
+    migrated: None, migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tag = uuid.uuid4().hex[:8]
+    older, newer = uuid.uuid7(), uuid.uuid7()
+    cfg = lock_timeout_config(monkeypatch)
+    try:
+        command.downgrade(cfg, "0029")
+        with migrate_engine.begin() as conn:
+            for tenant_id in (newer, older):  # heap order: the newer business first
+                conn.execute(
+                    text("INSERT INTO tenants (id, name) VALUES (:i, :n)"),
+                    {"i": tenant_id, "n": f"Nail bar {tag}"},
+                )
+    finally:
+        command.upgrade(cfg, "head")
+    with migrate_engine.begin() as conn:
+        slugs = dict(conn.execute(SLUGS, {"ids": [older, newer]}).tuples().all())
+        conn.execute(text("DELETE FROM tenants WHERE id = ANY(:ids)"), {"ids": [older, newer]})
+    assert (slugs[older], slugs[newer]) == (f"nail-bar-{tag}", f"nail-bar-{tag}-2")

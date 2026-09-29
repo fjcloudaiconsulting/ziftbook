@@ -60,6 +60,12 @@ CONSENT_TEXTS: dict[str, dict[Purpose, str]] = {
 # exactly as an unknown version is today. Do not add a locale parameter before the page has one.
 
 
+def current_policy_version() -> str:
+    """The version a booking page offers: the newest one, ISO dates sort. A function, not a
+    constant frozen at import, so a test can monkeypatch CONSENT_TEXTS and see it move."""
+    return max(CONSENT_TEXTS)
+
+
 def texts_for(policy_version: str, purposes: Iterable[Purpose]) -> dict[Purpose, str]:
     """The wording a version published for these purposes, or 422. Never the caller's own text:
     that would make the Art. 7(1) evidence attacker-controlled.
