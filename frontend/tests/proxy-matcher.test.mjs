@@ -32,7 +32,6 @@ describe("proxy matcher (F7)", () => {
     const source = readFileSync(new URL("../proxy.ts", import.meta.url), "utf8");
     const match = /matcher:\s*\["\/api\/:path\*",\s*"((?:[^"\\]|\\.)*)"\]/.exec(source);
     assert.ok(match, "matcher literal not found in proxy.ts");
-    // eslint-disable-next-line no-eval
     assert.equal(eval(`"${match[1]}"`), LOCALE_MATCHER);
   });
 });
