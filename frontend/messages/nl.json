@@ -536,7 +536,6 @@
     "booking": "Bezig met boeken…",
     "sending": "Bezig met versturen…",
     "fine": "{biz} gebruikt je gegevens alleen om deze afspraak te beheren.",
-    "privacyLink": "Hoe je gegevens worden gebruikt",
     "errName": "Vul je naam in.",
     "errEmail": "Vul een e-mailadres in, zoals naam@voorbeeld.nl.",
     "errMissing": "Kies eerst een dienst en een tijd.",
@@ -562,8 +561,6 @@
     "noSvcBody": "{biz} heeft op dit moment geen diensten open voor online boeken. Probeer het later opnieuw, of neem rechtstreeks contact op.",
     "loadErrorTitle": "Deze pagina kon niet worden geladen",
     "loadErrorLede": "Probeer het opnieuw.",
-    "footerBy": "Boekingen door",
-    "terms2": "Voorwaarden",
-    "privacy2": "Privacy"
+    "footerBy": "Boekingen door"
   }
 }

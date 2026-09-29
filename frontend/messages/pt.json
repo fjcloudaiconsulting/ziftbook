@@ -536,7 +536,6 @@
     "booking": "Reservando…",
     "sending": "Enviando…",
     "fine": "{biz} usa seus dados somente para gerenciar esta reserva.",
-    "privacyLink": "Como seus dados são usados",
     "errName": "Digite seu nome.",
     "errEmail": "Digite um endereço de e-mail, como nome@exemplo.com.",
     "errMissing": "Escolha primeiro um serviço e um horário.",
@@ -562,8 +561,6 @@
     "noSvcBody": "{biz} não tem serviços abertos para reserva on-line agora. Tente mais tarde ou entre em contato diretamente.",
     "loadErrorTitle": "Não foi possível carregar esta página",
     "loadErrorLede": "Tente de novo.",
-    "footerBy": "Reservas por",
-    "terms2": "Termos",
-    "privacy2": "Privacidade"
+    "footerBy": "Reservas por"
   }
 }

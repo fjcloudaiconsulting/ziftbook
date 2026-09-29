@@ -536,7 +536,6 @@
     "booking": "Booking…",
     "sending": "Sending…",
     "fine": "{biz} uses your details only to manage this booking.",
-    "privacyLink": "How your details are used",
     "errName": "Enter your name.",
     "errEmail": "Enter an email address, like name@example.com.",
     "errMissing": "Choose a service and a time first.",
@@ -562,8 +561,6 @@
     "noSvcBody": "{biz} has no services open for online booking at the moment. Please check again later, or contact them directly.",
     "loadErrorTitle": "We couldn't load this page",
     "loadErrorLede": "Please try again.",
-    "footerBy": "Bookings by",
-    "terms2": "Terms",
-    "privacy2": "Privacy"
+    "footerBy": "Bookings by"
   }
 }

@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import Script from "next/script";
 import { useTranslations } from "next-intl";
 import { useEffect, useRef, useState } from "react";
@@ -621,8 +620,6 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
         <span>
           {t("footerBy")} ziftbook
         </span>
-        <Link href="/terms">{t("terms2")}</Link>
-        <Link href="/privacy">{t("privacy2")}</Link>
       </footer>
     </main>
   );
@@ -961,7 +958,7 @@ function Checkout({
         </Submit>
       </form>
       <p className={styles.fine}>
-        {t("fine", { biz: page.name })} <Link href="/privacy">{t("privacyLink")}</Link>
+        {t("fine", { biz: page.name })}
       </p>
     </aside>
   );
