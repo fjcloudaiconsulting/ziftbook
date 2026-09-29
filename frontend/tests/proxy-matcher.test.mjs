@@ -1,6 +1,7 @@
 // F7: which paths the locale-routing matcher catches. A bare public slug like /apiary must not be
 // swallowed by a prefix check meant only for /api itself.
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { describe, test } from "node:test";
 
 import { LOCALE_MATCHER } from "../lib/upstream.ts";
@@ -25,5 +26,13 @@ describe("proxy matcher (F7)", () => {
   test("an ordinary locale path still matches", () => {
     assert.match("/en/booking", localeRegex);
     assert.match("/a-2", localeRegex);
+  });
+
+  test("guard: proxy.ts's static matcher literal (Next can't parse an imported one) matches LOCALE_MATCHER", () => {
+    const source = readFileSync(new URL("../proxy.ts", import.meta.url), "utf8");
+    const match = /matcher:\s*\["\/api\/:path\*",\s*"((?:[^"\\]|\\.)*)"\]/.exec(source);
+    assert.ok(match, "matcher literal not found in proxy.ts");
+    // eslint-disable-next-line no-eval
+    assert.equal(eval(`"${match[1]}"`), LOCALE_MATCHER);
   });
 });

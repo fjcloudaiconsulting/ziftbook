@@ -4,7 +4,7 @@ import { type NextRequest, NextResponse } from "next/server";
 import { routing } from "./i18n/routing";
 import { errorFields, logger, requestId } from "./lib/log";
 import { endProxySpan, startProxySpan, traceparent } from "./lib/trace";
-import { apiUrl, clientIp, LOCALE_MATCHER } from "./lib/upstream";
+import { apiUrl, clientIp } from "./lib/upstream";
 
 const localize = createMiddleware(routing);
 const log = logger("web.proxy");
@@ -111,5 +111,8 @@ export default function proxy(request: NextRequest) {
 export const config = {
   // /api is forwarded to FastAPI; every other page path goes through locale routing.
   // Next internals and files with an extension are skipped.
-  matcher: ["/api/:path*", LOCALE_MATCHER],
+  // Next requires a static string literal here (it parses `config` at build time), so this can't
+  // import LOCALE_MATCHER: it must stay byte-for-byte equal to it (tests/proxy-matcher.test.mjs
+  // asserts the two never drift apart).
+  matcher: ["/api/:path*", "/((?!api(?:/|$)|_next|_vercel|.*\\..*).*)"],
 };
