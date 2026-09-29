@@ -18,3 +18,7 @@ __pycache__/
 # pnpm store created by `docker run ... pnpm install` from the repo root (frontend has its own for
 # non-Docker installs)
 .pnpm-store/
+
+# Local agent instructions and plugin state (never committed)
+/CLAUDE.md
+/.claude/
