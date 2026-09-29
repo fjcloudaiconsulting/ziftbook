@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.18.1](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.18.0...v0.18.1) (2026-09-28)
+
+
+### Bug Fixes
+
+* **frontend:** console buttons sit at their natural width on desktop ([#128](https://github.com/fjcloudaiconsulting/ziftbook/issues/128)) ([1fd483f](https://github.com/fjcloudaiconsulting/ziftbook/commit/1fd483f65e900f15de8cdd4b0bcf80030fce4969))
+
 ## [0.18.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.17.1...v0.18.0) (2026-09-28)
 
 
