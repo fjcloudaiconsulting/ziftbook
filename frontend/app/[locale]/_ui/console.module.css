@@ -384,3 +384,29 @@
 .choice span { font-size: 0.9375rem; }
 .choice b { display: block; font-weight: 600; font-size: 1rem; }
 .choice em { display: block; font-style: normal; color: var(--muted); font-size: 0.875rem; }
+
+/* Settings: "Booking page" section (ZIF-145) — status pill, read-only address box with a Copy
+ * button, and the section's own divider from the field below it. */
+.section { display: flex; flex-direction: column; gap: 0.9rem; padding-bottom: 1.25rem; border-bottom: 1px solid var(--line); }
+.statusPill {
+  display: inline-flex; align-self: flex-start; align-items: center; gap: 0.45rem;
+  padding: 0.3rem 0.75rem 0.3rem 0.6rem; border-radius: 999px; font: 600 0.875rem/1.2 var(--font-body), system-ui, sans-serif;
+  border: 1px solid var(--line); background: var(--surface); color: var(--muted);
+}
+.statusPill svg { width: 1rem; height: 1rem; flex: none; }
+.statusLive { color: var(--ok); background: oklch(0.97 0.025 152); border-color: oklch(0.85 0.06 152); }
+.address { display: flex; flex-direction: column; gap: 0.4rem; }
+.url {
+  display: flex; align-items: center; gap: 0.5rem; min-height: 48px; padding: 0.55rem 0.5rem 0.55rem 0.9rem;
+  border: 1px solid var(--line); border-radius: 0.75rem; background: var(--surface);
+}
+.url span { flex: 1; overflow-wrap: anywhere; font-size: 0.9375rem; }
+.urlOff span { color: var(--muted); }
+.urlSlug { font-weight: 400; white-space: nowrap; }
+.copyButton {
+  flex: none; min-height: 36px; padding: 0.3rem 0.8rem; border-radius: 999px; border: 1px solid var(--field-line);
+  background: var(--bg); font: 600 0.875rem/1 var(--font-body), system-ui, sans-serif; color: var(--ink);
+}
+.copyButton:hover { border-color: var(--muted); }
+.body { margin: 0; font-size: 0.9375rem; color: var(--ink); text-wrap: pretty; }
+.row { margin: 0; display: flex; flex-wrap: wrap; gap: 0.5rem 1.25rem; align-items: center; }
