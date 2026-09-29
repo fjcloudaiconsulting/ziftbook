@@ -387,7 +387,11 @@
 
 /* Settings: "Booking page" section (ZIF-145) — status pill, read-only address box with a Copy
  * button, and the section's own divider from the field below it. */
-.section { display: flex; flex-direction: column; gap: 0.9rem; padding-bottom: 1.25rem; border-bottom: 1px solid var(--line); }
+.section {
+  display: flex; flex-direction: column; gap: 0.9rem; width: 100%; max-width: 22rem; /* the form column's width */
+  padding-bottom: 1.25rem; border-bottom: 1px solid var(--line);
+}
+.section h2 { margin: 0; font: 400 1.375rem/1.2 var(--font-display), Georgia, serif; }
 .statusPill {
   display: inline-flex; align-self: flex-start; align-items: center; gap: 0.45rem;
   padding: 0.3rem 0.75rem 0.3rem 0.6rem; border-radius: 999px; font: 600 0.875rem/1.2 var(--font-body), system-ui, sans-serif;
