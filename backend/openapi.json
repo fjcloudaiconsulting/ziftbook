@@ -4015,6 +4015,11 @@
             "minimum": 0.0,
             "title": "Max Reschedules",
             "default": 2
+          },
+          "published": {
+            "type": "boolean",
+            "title": "Published",
+            "default": false
           }
         },
         "additionalProperties": false,
@@ -4122,6 +4127,11 @@
             "minimum": 0.0,
             "title": "Max Reschedules",
             "default": 2
+          },
+          "published": {
+            "type": "boolean",
+            "title": "Published",
+            "default": false
           }
         },
         "additionalProperties": false,
@@ -4140,7 +4150,8 @@
           "cancellation_policy_text",
           "free_cancellation_hours",
           "reschedule_cutoff_hours",
-          "max_reschedules"
+          "max_reschedules",
+          "published"
         ],
         "title": "BusinessSettings"
       },
@@ -5335,6 +5346,10 @@
           "currency": {
             "type": "string",
             "title": "Currency"
+          },
+          "slug": {
+            "type": "string",
+            "title": "Slug"
           }
         },
         "type": "object",
@@ -5346,7 +5361,8 @@
           "email",
           "display_name",
           "business_name",
-          "currency"
+          "currency",
+          "slug"
         ],
         "title": "SessionOut"
       },

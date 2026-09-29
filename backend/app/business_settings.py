@@ -99,6 +99,11 @@ class BusinessSettings(BaseModel):
     # 0 turns client-side rescheduling off for new bookings; existing bookings keep the value they
     # were sold with.
     max_reschedules: Annotated[int, Field(ge=0, le=10)] = 2
+    # ZIF-145. Whether the public booking page, its availability and its booking POST answer at all.
+    # False (unpublished) until the owner flips it: no row means no business has published by
+    # accident, new or old. The three public routes gate on this themselves (never here, never in
+    # tenant_context): see app/booking_page.py, app/availability.py and app/bookings.py.
+    published: bool = False
 
 
 def read(db: Session) -> BusinessSettings:

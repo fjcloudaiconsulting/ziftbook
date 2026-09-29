@@ -93,6 +93,11 @@ def read(slug: str, request: Request) -> BookingPageOut:
         join_tenant(db, tenant.id)
         request.state.tenant_id = tenant.id
         settings = business_settings.read(db)
+        # ZIF-145. Unpublished is byte-identical to an unknown slug: no distinct 403/410 code, and
+        # no earlier check may leak that the slug exists (the tenant lookup above already 404s the
+        # same way for a slug nobody owns).
+        if not settings.published:
+            raise ApiError(404, "not_found")
         services: dict[UUID, PublicServiceOut] = {}
         for row in db.execute(SERVICES):
             if row.id not in services:
