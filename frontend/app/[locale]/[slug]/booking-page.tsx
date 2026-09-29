@@ -1,16 +1,27 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import Script from "next/script";
 import { useTranslations } from "next-intl";
 import { useEffect, useRef, useState } from "react";
 
 import { availabilityRead, bookingsCreate, type BookingPageOut, sessionRead } from "@/api-client";
 import { addDays, localDay, localWhen, slotsByDay, weekDays } from "@/lib/booking-link";
-import { answerState, bookingBody, cancellationState, emailSuggestion, groupByDayPart, nextWeekDisabled, ownPolicyText, scanWindow } from "@/lib/booking-page";
+import {
+  answerState,
+  bookingBody,
+  cancellationState,
+  emailSuggestion,
+  firstFreeDayFrom,
+  groupByDayPart,
+  nextWeekDisabled,
+  ownPolicyText,
+  scanWindow,
+} from "@/lib/booking-page";
 import { dateLocale } from "@/lib/console";
+import { formatMoney } from "@/lib/money";
 import { type Locale, serviceName } from "@/lib/services";
 import { zoneCity } from "@/lib/week";
-import { formatMoney } from "@/lib/money";
 
 import { Banner, EmailField, FieldError, Outcome, send, Submit } from "../_ui/parts";
 import styles from "../_ui/ui.module.css";
@@ -43,7 +54,7 @@ type Flow = {
   phone: string;
   errors: { name?: string; email?: string };
   suggest: string | null;
-  banner: { where: 2 | "c"; tone: "note" | "error"; text: string } | null;
+  banner: { where: 1 | 2 | "c"; tone: "note" | "error"; text: string } | null;
   busy: boolean;
 };
 // Once `service` is set (steps 2 and 3), these fields are meaningful; this alias just documents
@@ -68,10 +79,9 @@ type Done = { status: string; service: Service; worker: Worker | null; starts_at
 
 type CacheEntry = { slots: string[] } | "error" | "loading";
 
-const TODAY_KEY = () => new Date().toISOString().slice(0, 10);
-
 export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingPageOut; locale: string; turnstileSiteKey: string | null }) {
   const t = useTranslations("BookingPage");
+  const router = useRouter();
   const loc = locale as Locale;
   const zone = page.timezone;
   const businessLanguage = page.language as Locale;
@@ -88,11 +98,18 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
   const headingRefs = useRef<Record<number, HTMLHeadingElement | null>>({});
   const [focusStep, setFocusStep] = useState<number | null>(null);
   const [verifying, setVerifying] = useState(false);
-  const [turnstileToken, setTurnstileToken] = useState<string | null>(turnstileSiteKey ? null : null);
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
   const turnstileWidget = useRef<string | null>(null);
   const turnstileTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingSubmit = useRef(false);
   const [firstFreeByEntry, setFirstFreeByEntry] = useState(new Map<string, string>());
+  // What autofill actually filled (if anything): "Book another appointment" restores exactly this,
+  // never whatever the visitor went on to type over it.
+  const sessionFill = useRef({ name: "", email: "" });
+  // Always current, read from the Turnstile widget's own callback: that callback is created once
+  // by onTurnstileLoad and would otherwise close over the render's doBook from that moment (stale
+  // — in particular, one from before any service was ever chosen).
+  const doBookRef = useRef<(token: string | null) => Promise<void>>(async () => {});
 
   // Autofill: GET /api/session once; fill name/email ONLY if still empty. Any other answer (no
   // session, network, whatever) is ignored silently.
@@ -101,11 +118,12 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
     void (async () => {
       const answer = await send(sessionRead());
       if (cancelled || answer.status !== 200 || !answer.data) return;
-      setFlow((f) => ({
-        ...f,
-        name: f.name || answer.data!.display_name || f.name,
-        email: f.email || answer.data!.email || f.email,
-      }));
+      setFlow((f) => {
+        const name = f.name || answer.data!.display_name || f.name;
+        const email = f.email || answer.data!.email || f.email;
+        sessionFill.current = { name: f.name ? sessionFill.current.name : name, email: f.email ? sessionFill.current.email : email };
+        return { ...f, name, email };
+      });
     })();
     return () => {
       cancelled = true;
@@ -116,34 +134,28 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
     if (focusStep !== null) headingRefs.current[focusStep]?.focus();
   }, [focusStep]);
 
-  if (page.services.length === 0) {
-    return (
-      <main className={styles.screen}>
-        <div className={styles.col}>
-          <Outcome icon="calendar" title={t("noSvcTitle")} lede={t("noSvcBody", { biz: page.name })}>
-            {null}
-          </Outcome>
-        </div>
-      </main>
-    );
-  }
-
-  if (done) {
-    return (
-      <DoneScreen page={page} done={done} locale={loc} dLocale={dLocale} zone={zone} t={t} onAgain={() => { setDone(null); setFlow({ ...INITIAL, name: flow.name, email: flow.email, phone: "" }); }} />
-    );
-  }
-
   function cacheKey(service: string, worker: string, from: string) {
     return `${service}|${worker}|${from}`;
   }
 
+  /** Sends the client back to step 1 with a note, and re-fetches the page's own data (a service
+   * that just 404'd may be gone from `page` itself too). Used for both a 404 on POST /bookings
+   * and a 404 on the week GET — the spec gives both the same path. */
+  function backToStep1(noteText: string) {
+    router.refresh();
+    setFlow((f) => ({ ...INITIAL, name: f.name, email: f.email, phone: f.phone, banner: { where: 1, tone: "note", text: noteText } }));
+    setFocusStep(1);
+  }
+
   /** The 14-day window starting at `from`, cached so paging within it needs no new fetch. Never
-   * resolves to "loading": that value only ever marks an in-flight fetch in the cache map itself. */
-  async function loadWindow(service: Service, worker: string, from: string): Promise<{ slots: string[] } | "error"> {
+   * resolves to "loading": that value only ever marks an in-flight fetch in the cache map itself.
+   * `bypass`: skip a cached entry and fetch fresh (after a 409, the cached window is stale). */
+  async function loadWindow(service: Service, worker: string, from: string, bypass = false): Promise<{ slots: string[] } | "error"> {
     const key = cacheKey(service.id, worker, from);
-    const existing = cache.get(key);
-    if (existing && existing !== "loading") return existing;
+    if (!bypass) {
+      const existing = cache.get(key);
+      if (existing && existing !== "loading") return existing;
+    }
     setCache((m) => new Map(m).set(key, "loading"));
     const { from: qFrom, to } = scanWindow(from);
     const answer = await send(
@@ -156,12 +168,7 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
     }
     if (answer.status === 404) {
       // The service (or every worker on it) is gone: same path as a 404 on Book (spec's mapping).
-      setCache((m) => {
-        const next = new Map(m);
-        next.delete(key);
-        return next;
-      });
-      setFlow((f) => ({ ...INITIAL, name: f.name, email: f.email, phone: f.phone }));
+      backToStep1(t("serviceGone"));
       return "error";
     }
     setCache((m) => new Map(m).set(key, "error"));
@@ -176,34 +183,43 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
     return from;
   }
 
-  async function ensureWeek(service: Service, worker: string, weekStart: string) {
+  async function ensureWeek(service: Service, worker: string, weekStart: string, bypass = false) {
     const entryKey = `${service.id}|${worker}`;
     const windowFrom = windowFromFor(weekStart, weekStart);
-    const entry = await loadWindow(service, worker, windowFrom);
+    const entry = await loadWindow(service, worker, windowFrom, bypass);
     if (entry === "error") return;
 
-    if (entry.slots.length === 0 && !scanned.current.has(entryKey)) {
+    const visibleWeekEmpty = weekDays(weekStart).every((d) => !(slotsByDay(entry.slots, zone).get(d) ?? []).length);
+    if (!visibleWeekEmpty) return;
+
+    // B8: what's already in hand (this SAME 14-day fetch covers the following week too) is
+    // checked before any further request — a free day may already be sitting in `entry.slots`.
+    let first = firstFreeDayFrom(entry.slots, weekStart, zone);
+    if (first === null && !scanned.current.has(entryKey)) {
       scanned.current.add(entryKey);
       let from = windowFrom;
-      let found: CacheEntry | null = null;
+      const businessToday = localDay(new Date(), zone);
       for (let i = 0; i < 5; i++) {
         from = addDays(from, 14);
-        if (addDays(from, 0) > addDays(TODAY_KEY(), page.booking_horizon_days)) break;
+        if (nextWeekDisabled(businessToday, from, page.booking_horizon_days)) break;
         const next = await loadWindow(service, worker, from);
         if (next === "error") break;
-        if (next.slots.length > 0) {
-          found = next;
-          break;
-        }
-      }
-      if (found) {
-        const firstDay = [...slotsByDay(found.slots, zone).keys()][0];
-        setFirstFreeByEntry((m) => new Map(m).set(entryKey, firstDay));
+        first = firstFreeDayFrom(next.slots, from, zone);
+        if (first !== null) break;
       }
     }
+    setFirstFreeByEntry((m) => new Map(m).set(entryKey, first ?? ""));
   }
 
-  function chooseService(service: Service) {
+  /** A genuinely different service resets worker/day/slot; re-confirming the one already picked
+   * (clicking it again after "Change") just moves on without losing what was already chosen. */
+  function selectService(service: Service) {
+    if (flow.service?.id === service.id) {
+      const step = flow.slot ? 3 : 2;
+      setFlow((f) => ({ ...f, step }));
+      setFocusStep(step);
+      return;
+    }
     const worker = service.workers.length === 1 ? service.workers[0].id : "any";
     const weekStart = localDay(new Date(), zone);
     setFlow((f) => ({ ...f, step: 2, service, worker, weekStart, day: null, slot: null, taken: new Set(), banner: null }));
@@ -245,7 +261,7 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
   function fieldChange(field: "name" | "email" | "phone", value: string) {
     setFlow((f) => {
       const next = { ...f, [field]: value };
-      if (field === "name" && f.errors.name) next.errors = { ...f.errors, name: undefined };
+      if ((field === "name" || field === "email") && f.errors[field]) next.errors = { ...f.errors, [field]: undefined };
       return next;
     });
   }
@@ -274,11 +290,16 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
         if (turnstileTimer.current) clearTimeout(turnstileTimer.current);
         if (pendingSubmit.current) {
           pendingSubmit.current = false;
-          void doBook(token);
+          void doBookRef.current(token);
         }
       },
       "error-callback": () => {
         setVerifying(false);
+        pendingSubmit.current = false;
+        if (turnstileTimer.current) {
+          clearTimeout(turnstileTimer.current);
+          turnstileTimer.current = null;
+        }
         setFlow((f) => ({ ...f, banner: { where: "c", tone: "error", text: t("verifyTimeout") } }));
       },
     });
@@ -336,7 +357,8 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
     });
     const answer = await send(bookingsCreate({ path: { tenant_id: page.id, service_id: f.service.id }, body: { ...body, locale: loc } }));
     working.current = false;
-    if (answer.status !== 201 && turnstileSiteKey) resetTurnstile();
+    // Reset after EVERY answer, 201 included: a fresh "Book another" must never reuse this token.
+    if (turnstileSiteKey) resetTurnstile();
 
     const outcome = answerState(answer);
     if (outcome.kind === "done" && answer.data) {
@@ -354,33 +376,51 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
       const time = localWhen(f.slot!, zone, dateLocale(locale)).time;
       setFlow({ ...f, slot: null, step: 2, taken: new Set([...f.taken, f.slot!]), busy: false, banner: { where: 2, tone: "note", text: t("slotTaken", { time }) } });
       setFocusStep(2);
-      void ensureWeek(f.service, f.worker, f.weekStart);
+      // The cached window is stale (it still offers the just-taken slot): bypass it.
+      void ensureWeek(f.service, f.worker, f.weekStart, true);
       return;
     }
     if (outcome.kind === "serviceGone") {
-      setFlow({ ...INITIAL, name: f.name, email: f.email, phone: f.phone });
-      setFocusStep(1);
+      backToStep1(t("serviceGone"));
+      return;
+    }
+    if (outcome.kind === "policyChanged") {
+      router.refresh();
+      setFlow({ ...f, busy: false, banner: { where: "c", tone: "error", text: t("policyChanged") } });
       return;
     }
     const text =
-      outcome.kind === "policyChanged"
-        ? t("policyChanged")
-        : outcome.kind === "verifyFailed"
-          ? t("verifyFailed")
-          : outcome.kind === "tooMany"
-            ? t("tooMany")
-            : outcome.kind === "nothingBooked"
-              ? t("nothingBooked")
-              : outcome.kind === "fieldErrors"
-                ? t("checkDetails")
-                : t("unknownOutcome");
+      outcome.kind === "verifyFailed"
+        ? t("verifyFailed")
+        : outcome.kind === "tooMany"
+          ? t("tooMany")
+          : outcome.kind === "nothingBooked"
+            ? t("nothingBooked")
+            : outcome.kind === "fieldErrors"
+              ? t("checkDetails")
+              : t("unknownOutcome");
     setFlow({ ...f, busy: false, banner: { where: "c", tone: "error", text } });
   }
+  useEffect(() => {
+    doBookRef.current = doBook;
+  });
 
   const service1Done = flow.service;
   // flow.service is checked, not just flow.step: TS doesn't propagate that narrowing through the
   // ternary's inferred type, so the cast documents what the runtime check already guarantees.
   const s2 = flow.step >= 2 && flow.service ? (flow as Step2Plus) : null;
+
+  if (page.services.length === 0) {
+    return (
+      <main className={styles.screen}>
+        <div className={styles.col}>
+          <Outcome icon="calendar" title={t("noSvcTitle")} lede={t("noSvcBody", { biz: page.name })}>
+            {null}
+          </Outcome>
+        </div>
+      </main>
+    );
+  }
 
   return (
     <main className={styles.screen}>
@@ -388,7 +428,7 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
         <div className={styles.bizHeader}>
           <h1>{page.name}</h1>
           <p className={styles.bizMeta}>
-            <span aria-hidden="true">{"📍"}</span>
+            <PinIcon />
             <span>{zoneCity(zone)}</span>
             <span aria-hidden="true">·</span>
             <span>{t("timesIn", { city: zoneCity(zone) })}</span>
@@ -397,90 +437,91 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
 
         <div className={styles.bookingLayout}>
           <div className={styles.flowCol}>
-            {/* Step 1: service */}
-            <section className={styles.step} aria-labelledby="step1-h">
-              <div className={styles.stepHead}>
-                <span className={styles.stepNum} aria-hidden="true">
-                  {flow.step > 1 && service1Done ? "✓" : 1}
-                </span>
-                <h2 id="step1-h" ref={(el) => { headingRefs.current[1] = el; }} tabIndex={-1}>
-                  {t("step1")}
-                  {flow.step > 1 && service1Done && (
-                    <span className={styles.srOnly}>
-                      {", "}
-                      {t("step1")}
-                    </span>
-                  )}
-                </h2>
-              </div>
-              {flow.step === 1 ? (
-                <ul className={styles.services} role="radiogroup" aria-labelledby="step1-h">
-                  {page.services.map((svc) => {
-                    const name = localized(svc.name, loc, businessLanguage);
-                    const desc = svc.description[loc] || svc.description[businessLanguage] ? localized(svc.description, loc, businessLanguage) : null;
-                    return (
-                      <li key={svc.id}>
-                        <label className={styles.svcChoice}>
-                          <input type="radio" name="service" checked={flow.service?.id === svc.id} onChange={() => chooseService(svc)} />
-                          <span className={styles.svcMain}>
-                            <span className={styles.svcName} lang={name.lang ?? undefined}>{name.text}</span>
-                            {desc && (
-                              <span className={styles.svcDesc} lang={desc.lang ?? undefined}>
-                                {desc.text}
+            {done ? (
+              <DoneScreen page={page} done={done} locale={loc} dLocale={dLocale} zone={zone} t={t} onAgain={() => { setDone(null); setFlow({ ...INITIAL, name: sessionFill.current.name, email: sessionFill.current.email, phone: "" }); }} />
+            ) : (
+              <>
+              {/* Step 1: service */}
+              <section className={styles.step} aria-labelledby="step1-h">
+                <div className={`${styles.stepHead} ${flow.step === 1 ? styles.stepHeadOn : ""}`}>
+                  <span className={`${styles.stepNum} ${flow.step >= 1 ? styles.stepNumOn : ""}`} aria-hidden="true">
+                    {flow.step > 1 && service1Done ? "✓" : 1}
+                  </span>
+                  <h2 id="step1-h" ref={(el) => { headingRefs.current[1] = el; }} tabIndex={-1}>
+                    {t("step1")}
+                    {flow.step > 1 && service1Done && <span className={styles.srOnly}>{", done"}</span>}
+                  </h2>
+                </div>
+                {flow.banner?.where === 1 && <Banner tone={flow.banner.tone}>{flow.banner.text}</Banner>}
+                {flow.step === 1 ? (
+                  <ul className={styles.services} role="radiogroup" aria-labelledby="step1-h">
+                    {page.services.map((svc) => {
+                      const name = localized(svc.name, loc, businessLanguage);
+                      const desc = svc.description[loc] || svc.description[businessLanguage] ? localized(svc.description, loc, businessLanguage) : null;
+                      return (
+                        <li key={svc.id}>
+                          <label className={styles.svcChoice}>
+                            <input type="radio" name="service" checked={flow.service?.id === svc.id} readOnly onClick={() => selectService(svc)} />
+                            <span className={styles.svcMain}>
+                              <span className={styles.svcTop}>
+                                <span className={styles.svcName} lang={name.lang ?? undefined}>
+                                  {name.text}
+                                </span>
+                                <span className={styles.svcPrice}>{formatMoney(svc.price.amount_minor, svc.price.currency, locale)}</span>
                               </span>
-                            )}
-                            <span className={styles.svcMeta}>{t("min", { n: svc.duration_minutes })}</span>
-                          </span>
-                          <span className={styles.svcPrice}>{formatMoney(svc.price.amount_minor, svc.price.currency, locale)}</span>
-                        </label>
-                      </li>
-                    );
-                  })}
-                </ul>
-              ) : (
-                service1Done && (
-                  <div className={styles.stepDone}>
-                    <span className={styles.stepDoneWhat}>
-                      <b lang={localized(service1Done.name, loc, businessLanguage).lang ?? undefined}>{localized(service1Done.name, loc, businessLanguage).text}</b>
-                      <span>
-                        {t("min", { n: service1Done.duration_minutes })} · {formatMoney(service1Done.price.amount_minor, service1Done.price.currency, locale)}
+                              {desc && (
+                                <span className={styles.svcDesc} lang={desc.lang ?? undefined}>
+                                  {desc.text}
+                                </span>
+                              )}
+                              <span className={styles.svcMeta}>
+                                <ClockIcon />
+                                {t("min", { n: svc.duration_minutes })}
+                              </span>
+                            </span>
+                          </label>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                ) : (
+                  service1Done && (
+                    <div className={styles.stepDone}>
+                      <span className={styles.stepDoneWhat}>
+                        <b lang={localized(service1Done.name, loc, businessLanguage).lang ?? undefined}>{localized(service1Done.name, loc, businessLanguage).text}</b>
+                        <span>
+                          {t("min", { n: service1Done.duration_minutes })} · {formatMoney(service1Done.price.amount_minor, service1Done.price.currency, locale)}
+                        </span>
                       </span>
-                    </span>
-                    <button className={styles.textButton} type="button" onClick={() => goTo(1)}>
-                      {t("change")}
-                      <span className={styles.srOnly}>
-                      {": "}
-                      {t("step1")}
-                    </span>
-                    </button>
-                  </div>
-                )
-              )}
-            </section>
+                      <button className={styles.textButton} type="button" onClick={() => goTo(1)}>
+                        {t("change")}
+                        <span className={styles.srOnly}>
+                          {": "}
+                          {t("step1")}
+                        </span>
+                      </button>
+                    </div>
+                  )
+                )}
+              </section>
 
-            {/* Step 2: day/time */}
-            {s2 && (
+              {/* Step 2: day/time — the shell always renders (muted) even before step 1 is done. */}
               <section className={styles.step} aria-labelledby="step2-h">
-                <div className={styles.stepHead}>
-                  <span className={styles.stepNum} aria-hidden="true">
+                <div className={`${styles.stepHead} ${flow.step === 2 ? styles.stepHeadOn : ""}`}>
+                  <span className={`${styles.stepNum} ${flow.step >= 2 && service1Done ? styles.stepNumOn : ""}`} aria-hidden="true">
                     {flow.step > 2 ? "✓" : 2}
                   </span>
                   <h2 id="step2-h" ref={(el) => { headingRefs.current[2] = el; }} tabIndex={-1}>
                     {t("step2")}
-                    {flow.step > 2 && (
-                      <span className={styles.srOnly}>
-                        {", "}
-                        {t("step2")}
-                      </span>
-                    )}
+                    {flow.step > 2 && <span className={styles.srOnly}>{", done"}</span>}
                   </h2>
                 </div>
-                {flow.step === 2 ? (
+                {s2 && flow.step === 2 && (
                   <Picker
                     page={page}
                     s2={s2}
                     cache={cache}
-                    firstFree={firstFreeByEntry.get(`${s2.service.id}|${s2.worker}`) ?? null}
+                    firstFree={firstFreeByEntry.get(`${s2.service.id}|${s2.worker}`) || null}
                     banner={flow.banner?.where === 2 ? flow.banner : null}
                     dLocale={dLocale}
                     zone={zone}
@@ -491,137 +532,142 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
                     onSlot={pickSlot}
                     onJump={jumpTo}
                     onAnyone={() => chooseWorker("any")}
-                    onRetry={() => void ensureWeek(s2.service, s2.worker, s2.weekStart)}
+                    onRetry={() => void ensureWeek(s2.service, s2.worker, s2.weekStart, true)}
                   />
-                ) : (
-                  s2.slot && (
-                    <div className={styles.stepDone}>
-                      <span className={styles.stepDoneWhat}>
-                        <b>
-                          {localWhen(s2.slot, zone, dLocale).date}
-                          {", "}
-                          {localWhen(s2.slot, zone, dLocale).time}
-                        </b>
-                        <span>{t("with", { name: s2.worker === "any" ? t("anyone") : (s2.service.workers.find((w) => w.id === s2.worker)?.display_name ?? "") })}</span>
+                )}
+                {s2 && flow.step > 2 && s2.slot && (
+                  <div className={styles.stepDone}>
+                    <span className={styles.stepDoneWhat}>
+                      <b>
+                        {localWhen(s2.slot, zone, dLocale).date}
+                        {", "}
+                        {localWhen(s2.slot, zone, dLocale).time}
+                      </b>
+                      <span>{t("with", { name: s2.worker === "any" ? t("anyone") : (s2.service.workers.find((w) => w.id === s2.worker)?.display_name ?? "") })}</span>
+                    </span>
+                    <button className={styles.textButton} type="button" onClick={() => goTo(2)}>
+                      {t("change")}
+                      <span className={styles.srOnly}>
+                        {": "}
+                        {t("step2")}
                       </span>
-                      <button className={styles.textButton} type="button" onClick={() => goTo(2)}>
-                        {t("change")}
-                        <span className={styles.srOnly}>
-                          {": "}
-                          {t("step2")}
-                        </span>
-                      </button>
-                    </div>
-                  )
+                    </button>
+                  </div>
                 )}
               </section>
-            )}
 
-            {/* Step 3: details */}
-            {s2 && flow.step === 3 && (
+              {/* Step 3: details — same always-visible shell. */}
               <section className={styles.step} aria-labelledby="step3-h">
-                <div className={styles.stepHead}>
-                  <span className={styles.stepNum} aria-hidden="true">{3}</span>
+                <div className={`${styles.stepHead} ${flow.step === 3 ? styles.stepHeadOn : ""}`}>
+                  <span className={`${styles.stepNum} ${flow.step >= 3 && s2?.slot ? styles.stepNumOn : ""}`} aria-hidden="true">
+                    {3}
+                  </span>
                   <h2 id="step3-h" ref={(el) => { headingRefs.current[3] = el; }} tabIndex={-1}>
                     {t("step3")}
                   </h2>
                 </div>
-                <div className={styles.form}>
-                  <div className={styles.row2}>
-                    <div className={styles.field}>
-                      <label className={styles.label} htmlFor="bp-name">
-                        {t("name")}
-                      </label>
-                      <div className={styles.input}>
-                        <input
-                          ref={nameRef}
-                          id="bp-name"
-                          name="name"
-                          autoComplete="name"
-                          value={flow.name}
-                          onChange={(e) => fieldChange("name", e.target.value)}
-                          aria-invalid={flow.errors.name ? true : undefined}
-                          aria-describedby={flow.errors.name ? "bp-name-err" : undefined}
-                        />
+                {s2 && flow.step === 3 && (
+                  <div className={styles.form}>
+                    <div className={styles.row2}>
+                      <div className={styles.field}>
+                        <label className={styles.label} htmlFor="bp-name">
+                          {t("name")}
+                        </label>
+                        <div className={styles.input}>
+                          <input
+                            ref={nameRef}
+                            id="bp-name"
+                            name="name"
+                            autoComplete="name"
+                            value={flow.name}
+                            onChange={(e) => fieldChange("name", e.target.value)}
+                            aria-invalid={flow.errors.name ? true : undefined}
+                            aria-describedby={flow.errors.name ? "bp-name-err" : undefined}
+                          />
+                        </div>
+                        {flow.errors.name && <FieldError id="bp-name-err">{flow.errors.name}</FieldError>}
                       </div>
-                      {flow.errors.name && <FieldError id="bp-name-err">{flow.errors.name}</FieldError>}
-                    </div>
-                    <div className={styles.field}>
-                      <label className={styles.label} htmlFor="bp-phone">
-                        {t("phone")} <span className={styles.hint}>{t("optional")}</span>
-                      </label>
-                      <div className={styles.input}>
-                        <input
-                          id="bp-phone"
-                          name="phone"
-                          type="tel"
-                          autoComplete="tel"
-                          value={flow.phone}
-                          onChange={(e) => fieldChange("phone", e.target.value)}
-                          aria-describedby="bp-phone-hint"
-                        />
-                      </div>
-                      <p className={styles.hint} id="bp-phone-hint">
-                        {t("phoneHint")}
-                      </p>
-                    </div>
-                  </div>
-                  <div>
-                    <EmailField
-                      value={flow.email}
-                      onChange={(v) => fieldChange("email", v)}
-                      error={flow.errors.email}
-                      inputRef={emailRef}
-                    />
-                    <div aria-live="polite">
-                      {flow.suggest && (
-                        <p className={styles.hint}>
-                          {t("didYouMean", { email: flow.suggest })}{" "}
-                          <button className={styles.textButton} type="button" onClick={useSuggestion} onBlurCapture={emailBlur}>
-                            {t("useSuggestion")}
-                          </button>
+                      <div className={styles.field}>
+                        <label className={styles.label} htmlFor="bp-phone">
+                          {t("phone")} <span className={styles.hint}>{t("optional")}</span>
+                        </label>
+                        <div className={styles.input}>
+                          <input
+                            id="bp-phone"
+                            name="phone"
+                            type="tel"
+                            autoComplete="tel"
+                            value={flow.phone}
+                            onChange={(e) => fieldChange("phone", e.target.value)}
+                            aria-describedby="bp-phone-hint"
+                          />
+                        </div>
+                        <p className={styles.hint} id="bp-phone-hint">
+                          {t("phoneHint")}
                         </p>
-                      )}
+                      </div>
                     </div>
-                    {/* onBlur is on the email input itself, wired below via a native handler */}
+                    <div>
+                      <EmailField value={flow.email} onChange={(v) => fieldChange("email", v)} error={flow.errors.email} inputRef={emailRef} onBlur={emailBlur} />
+                      <div aria-live="polite">
+                        {flow.suggest && (
+                          <p className={styles.hint}>
+                            {t("didYouMean", { email: flow.suggest })}{" "}
+                            <button className={styles.textButton} type="button" onClick={useSuggestion}>
+                              {t("useSuggestion")}
+                            </button>
+                          </p>
+                        )}
+                      </div>
+                    </div>
                   </div>
-                  {/* email blur handled inline on the input above via EmailField's onChange is not enough for blur; use a wrapper */}
-                </div>
+                )}
               </section>
+              </>
             )}
           </div>
 
-          {s2 && (
-            <Checkout
-              page={page}
-              s2={s2}
-              locale={locale}
-              dLocale={dLocale}
-              zone={zone}
-              businessLanguage={businessLanguage}
-              t={t}
-              banner={flow.banner?.where === "c" ? flow.banner : null}
-              busy={flow.busy}
-              verifying={verifying}
-              onBook={() => void book()}
-            />
-          )}
+          <Checkout
+            page={page}
+            s2={s2}
+            locale={locale}
+            dLocale={dLocale}
+            zone={zone}
+            businessLanguage={businessLanguage}
+            t={t}
+            banner={flow.banner?.where === "c" ? flow.banner : null}
+            busy={flow.busy}
+            verifying={verifying}
+            turnstileSiteKey={turnstileSiteKey}
+            onTurnstileLoad={onTurnstileLoad}
+            onBook={() => void book()}
+            hidden={done !== null}
+          />
         </div>
       </div>
 
-      {turnstileSiteKey && (
-        <>
-          <div id="turnstile-container" style={{ display: "none" }} />
-          <Script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" strategy="afterInteractive" onLoad={onTurnstileLoad} />
-        </>
-      )}
-
       <footer className={styles.minimalFooter}>
-        <span>
-          {t("footerBy")} ziftbook
-        </span>
+        <span>{t("footerBy")} ziftbook</span>
       </footer>
     </main>
+  );
+}
+
+function PinIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 16 16" width="15" height="15">
+      <path d="M8 14s4.5-4.1 4.5-7.5a4.5 4.5 0 0 0-9 0C3.5 9.9 8 14 8 14z" fill="none" stroke="currentColor" strokeWidth="1.5" />
+      <circle cx="8" cy="6.5" r="1.6" fill="currentColor" />
+    </svg>
+  );
+}
+
+function ClockIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 16 16" width="14" height="14">
+      <circle cx="8" cy="8" r="6.25" fill="none" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M8 4.8V8l2.1 1.3" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
   );
 }
 
@@ -761,6 +807,14 @@ function PickerWeek({
 }) {
   const byDay = slotsByDay(slots, zone);
   const anyThisWeek = days.some((d) => (byDay.get(d) ?? []).length > 0);
+  const day = s2.day && (byDay.get(s2.day) ?? []).length > 0 ? s2.day : (days.find((d) => (byDay.get(d) ?? []).length > 0) ?? null);
+
+  // Selecting the week's first free day is a consequence of this render, not something to do
+  // WHILE rendering (that would call the parent's setState mid-render): an effect, after.
+  useEffect(() => {
+    if (day && s2.day !== day) onDay(day);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [day]);
 
   if (!anyThisWeek) {
     const firstLabel = firstFree ? dayLabel(firstFree, { weekday: "long", day: "numeric", month: "long" }) : null;
@@ -784,8 +838,7 @@ function PickerWeek({
     );
   }
 
-  const day = s2.day && (byDay.get(s2.day) ?? []).length > 0 ? s2.day : days.find((d) => (byDay.get(d) ?? []).length > 0)!;
-  if (s2.day !== day) onDay(day);
+  if (!day) return null;
   const times = byDay.get(day) ?? [];
   const grouped = groupByDayPart(times, zone);
 
@@ -855,10 +908,13 @@ function Checkout({
   banner,
   busy,
   verifying,
+  turnstileSiteKey,
+  onTurnstileLoad,
   onBook,
+  hidden,
 }: {
   page: BookingPageOut;
-  s2: Step2Plus;
+  s2: Step2Plus | null;
   locale: string;
   dLocale: string;
   zone: string;
@@ -867,17 +923,24 @@ function Checkout({
   banner: { tone: "note" | "error"; text: string } | null;
   busy: boolean;
   verifying: boolean;
+  turnstileSiteKey: string | null;
+  /** True on the done screen: the aside (Turnstile included) stays mounted — never conditionally
+   * removed, so the same live widget survives into the next "Book another" cycle — just hidden. */
+  hidden: boolean;
+  onTurnstileLoad(): void;
   onBook(): void;
 }) {
-  const { service, slot, worker } = s2;
   const c = page.cancellation;
-  const workerName = service.workers.length === 1 ? service.workers[0].display_name : worker === "any" ? t("anyone") : (service.workers.find((w) => w.id === worker)?.display_name ?? "");
-  const name = localized(service.name, locale as Locale, businessLanguage);
+  const service = s2?.service ?? null;
+  const slot = s2?.slot ?? null;
+  const worker = s2?.worker ?? null;
+  const workerName = !service ? null : service.workers.length === 1 ? service.workers[0].display_name : worker === "any" ? t("anyone") : (service.workers.find((w) => w.id === worker)?.display_name ?? "");
+  const name = service ? localized(service.name, locale as Locale, businessLanguage) : null;
   const ownText = ownPolicyText(c.text, locale, businessLanguage);
 
   let whenText = <dd className={styles.unset}>{t("notChosen")}</dd>;
   let termLine: React.ReactNode;
-  if (slot) {
+  if (slot && service) {
     const start = new Date(slot);
     const end = new Date(start.getTime() + service.duration_minutes * 60_000);
     const w = localWhen(slot, zone, dLocale);
@@ -916,17 +979,17 @@ function Checkout({
   const label = busy ? (page.auto_confirm ? t("booking") : t("sending")) : page.auto_confirm ? t("book") : t("request");
 
   return (
-    <aside className={styles.checkout} aria-labelledby="checkout-h">
+    <aside className={styles.checkout} aria-labelledby="checkout-h" hidden={hidden}>
       <h2 id="checkout-h">{t("yourBooking")}</h2>
       <dl className={styles.summary}>
         <dt>{t("service")}</dt>
-        <dd lang={name.lang ?? undefined}>{name.text}</dd>
+        {service && name ? <dd lang={name.lang ?? undefined}>{name.text}</dd> : <dd className={styles.unset}>{t("notChosen")}</dd>}
         <dt>{t("when")}</dt>
         {whenText}
         <dt>{t("withRow")}</dt>
-        <dd>{workerName}</dd>
+        {workerName !== null ? <dd>{workerName}</dd> : <dd className={styles.unset}>{t("notChosen")}</dd>}
         <dt>{t("price")}</dt>
-        <dd>{formatMoney(service.price.amount_minor, service.price.currency, locale)}</dd>
+        {service ? <dd>{formatMoney(service.price.amount_minor, service.price.currency, locale)}</dd> : <dd className={styles.unset}>{t("notChosen")}</dd>}
       </dl>
       <section className={styles.terms} aria-labelledby="terms-h">
         <h3 id="terms-h">{t("termsTitle")}</h3>
@@ -947,6 +1010,15 @@ function Checkout({
       {!page.auto_confirm && <Banner tone="note">{t("approvalNote", { biz: page.name })}</Banner>}
       {verifying && <Banner tone="note">{t("verifying")}</Banner>}
       {banner && <Banner tone={banner.tone}>{banner.text}</Banner>}
+      {/* Rendered visibly (never display:none) and kept mounted for the whole page's life — an
+       * interaction-only challenge must be able to actually appear here, and "Book another" must
+       * reuse the same live widget rather than a dead one from a screen that unmounted it. */}
+      {turnstileSiteKey && (
+        <>
+          <div id="turnstile-container" className={styles.turnstileBox} />
+          <Script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" strategy="afterInteractive" onLoad={onTurnstileLoad} />
+        </>
+      )}
       <form
         onSubmit={(event) => {
           event.preventDefault();
@@ -957,9 +1029,7 @@ function Checkout({
           {label}
         </Submit>
       </form>
-      <p className={styles.fine}>
-        {t("fine", { biz: page.name })}
-      </p>
+      <p className={styles.fine}>{t("fine", { biz: page.name })}</p>
     </aside>
   );
 }
@@ -989,26 +1059,22 @@ function DoneScreen({
   const name = localized(done.service.name, locale, page.language as Locale);
   const lede = pending ? t("pendLede", { biz: page.name, email: done.email }) : t("okLede", { email: done.email });
   return (
-    <main className={styles.screen}>
-      <div className={styles.col}>
-        <Outcome icon={pending ? "mail" : "done"} title={pending ? t("pendTitle") : t("okTitle")} lede={lede}>
-          <ul className={styles.summary} style={{ gridTemplateColumns: "1fr" }}>
-            <li lang={name.lang ?? undefined}>{name.text}</li>
-            <li>
-              {t("whenFormat", { day: w.date, from: w.time, to: endTime })} {"("}
-              {zoneCity(zone)}
-              {")"}
-            </li>
-            <li>
-              {done.worker?.display_name ?? ""} · {formatMoney(done.price.amount_minor, done.price.currency, locale)}
-            </li>
-          </ul>
-          <p className={styles.hint}>{t("spam")}</p>
-          <button className={`${styles.button} ${styles.secondary}`} type="button" onClick={onAgain}>
-            {t("another")}
-          </button>
-        </Outcome>
-      </div>
-    </main>
+    <Outcome icon={pending ? "mail" : "done"} title={pending ? t("pendTitle") : t("okTitle")} lede={lede}>
+      <ul className={styles.summary} style={{ gridTemplateColumns: "1fr" }}>
+        <li lang={name.lang ?? undefined}>{name.text}</li>
+        <li>
+          {t("whenFormat", { day: w.date, from: w.time, to: endTime })} {"("}
+          {zoneCity(zone)}
+          {")"}
+        </li>
+        <li>
+          {done.worker?.display_name ?? ""} · {formatMoney(done.price.amount_minor, done.price.currency, locale)}
+        </li>
+      </ul>
+      <p className={styles.hint}>{t("spam")}</p>
+      <button className={`${styles.button} ${styles.secondary}`} type="button" onClick={onAgain}>
+        {t("another")}
+      </button>
+    </Outcome>
   );
 }

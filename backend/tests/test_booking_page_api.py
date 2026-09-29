@@ -111,7 +111,7 @@ def test_the_page_answers_exactly_the_documented_fields(
 def test_auto_confirm_reflects_the_setting(
     people: People, app: FastAPI, owner: TestClient, slug: str, ready: str, auto_confirm: bool
 ) -> None:
-    put_settings(owner, {"auto_confirm": auto_confirm})
+    assert put_settings(owner, {"auto_confirm": auto_confirm}).status_code == 200
     assert page(new_client(app), slug).json()["auto_confirm"] is auto_confirm
 
 
