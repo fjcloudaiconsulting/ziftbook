@@ -456,15 +456,9 @@ def create(  # sync def: turnstile.verify's urlopen blocks, and runs in FastAPI'
             if row is None:
                 raise ApiError(404, "not_found")
             settings = business_settings.read(db)  # 3
-            # ZIF-145. Turnstile (step 2) and the rate limits (steps 1, 3-shared-key) already ran
-            # above, outside the transaction, so a bad token still 403s an unpublished business the
-            # same as any other (F10, no existence oracle). Inside the transaction and before any
-            # write (texts_for, find_or_create, the insert): ApiError rolls the whole thing back, so
-            # nothing lands for an unpublished business, whatever the rest of the body says.
-            #
-            # A booking whose settings.read() above ran before a concurrent unpublish COMMITS still
-            # lands: it was effectively placed a moment before the unpublish took effect (harmless;
-            # the owner simply sees it).
+            # ZIF-145. After Turnstile and the limits, so unpublished answers like unknown (F10);
+            # before any write. A booking that read published=true before a concurrent unpublish
+            # commits still lands: it was placed first, and the owner sees it.
             if not settings.published:
                 raise ApiError(404, "not_found")
             opening = schedule.envelope(db)  # 4: once, never per worker or per day
