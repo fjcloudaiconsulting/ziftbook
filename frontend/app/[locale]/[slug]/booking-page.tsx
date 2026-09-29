@@ -23,7 +23,7 @@ import { formatMoney } from "@/lib/money";
 import { type Locale, serviceName } from "@/lib/services";
 import { zoneCity } from "@/lib/week";
 
-import { Banner, FieldError, Outcome, send, Submit } from "../_ui/parts";
+import { AlertIcon, Banner, FieldError, Outcome, send, Submit } from "../_ui/parts";
 import styles from "../_ui/ui.module.css";
 
 type Service = BookingPageOut["services"][number];
@@ -101,7 +101,11 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
   const emailRef = useRef<HTMLInputElement>(null);
   const headingRefs = useRef<Record<number, HTMLHeadingElement | null>>({});
   const [focusStep, setFocusStep] = useState<number | null>(null);
-  const [focusField, setFocusField] = useState<"name" | "email" | null>(null);
+  // Paired with a generation counter, not just the field name: pressing Book twice with the SAME
+  // field still missing both times must still re-focus it — a plain "name"/"name" value wouldn't
+  // change, so the effect below wouldn't re-fire.
+  const [focusField, setFocusField] = useState<{ field: "name" | "email"; gen: number } | null>(null);
+  const focusFieldGen = useRef(0);
   const [verifying, setVerifying] = useState(false);
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
   const turnstileWidget = useRef<string | null>(null);
@@ -142,8 +146,8 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
   // Runs after step 3 has (re)rendered with its inputs mounted, so a field targeted while step 3
   // wasn't the open step still gets focused once it is.
   useEffect(() => {
-    if (focusField === "name") nameRef.current?.focus();
-    else if (focusField === "email") emailRef.current?.focus();
+    if (focusField?.field === "name") nameRef.current?.focus();
+    else if (focusField?.field === "email") emailRef.current?.focus();
   }, [focusField, flow.step]);
 
   function cacheKey(service: string, worker: string, from: string) {
@@ -212,17 +216,21 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
     // checked before any further request — a free day may already be sitting in `entry.slots`.
     let first = firstFreeDayFrom(entry.slots, weekStart, zone);
     if (first === null && !scanned.current.has(entryKey)) {
-      scanned.current.add(entryKey);
       let from = windowFrom;
       const businessToday = localDay(new Date(), zone);
       for (let i = 0; i < 5; i++) {
         from = addDays(from, 14);
         if (nextWeekDisabled(businessToday, from, page.booking_horizon_days)) break;
         const next = await loadWindow(service, worker, from);
+        // A stale scan (superseded while awaiting) never marks the key scanned: an incomplete
+        // scan isn't a real "nothing found" result, and a later call must be free to redo it.
         if (next === "error" || !isCurrent()) return;
         first = firstFreeDayFrom(next.slots, from, zone);
         if (first !== null) break;
       }
+      // Reached here only by completing the scan (found something, hit the horizon, or the cap) —
+      // never by bailing out early — so it's now safe to skip a repeat for this service/worker.
+      scanned.current.add(entryKey);
     }
     if (!isCurrent()) return; // superseded by a newer call for this service/worker while awaiting
     setFirstFreeByEntry((m) => new Map(m).set(entryKey, first ?? ""));
@@ -297,11 +305,14 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
   // --- Turnstile ---
   // A client-side locale switch or slug nav unmounts this component with the widget still live;
   // removing it explicitly (Cloudflare's own recommendation) avoids leaking it and the console
-  // warning that follows from just letting its container be torn out from under it.
+  // warning that follows from just letting its container be torn out from under it. Clearing the
+  // ref after also means a StrictMode remount's mount-time check below never mistakes it for a
+  // still-live widget.
   useEffect(() => {
     return () => {
       const w = (window as unknown as { turnstile?: { remove(id: string): void } }).turnstile;
       if (w?.remove && turnstileWidget.current) w.remove(turnstileWidget.current);
+      turnstileWidget.current = null;
     };
   }, []);
 
@@ -335,6 +346,16 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
     });
   }
 
+  // Belt-and-suspenders for StrictMode's mount/unmount/remount: onReady is the path for the very
+  // first script load, but if `window.turnstile` is already there (the script executed during an
+  // earlier mount in the same cycle) and this mount has no widget of its own yet, render one
+  // directly instead of waiting on a callback that may not fire again.
+  useEffect(() => {
+    const w = (window as unknown as { turnstile?: unknown }).turnstile;
+    if (turnstileSiteKey && w && !turnstileWidget.current) onTurnstileLoad();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   function resetTurnstile() {
     setTurnstileToken(null);
     const w = (window as unknown as { turnstile?: { reset(id?: string): void } }).turnstile;
@@ -358,7 +379,8 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
       // wasn't already) so the ref below actually points at a mounted field, then focus once it
       // has — a step 2 "Change" reopen must not leave the error unfocusable.
       setFlow((f) => ({ ...f, errors, step: 3 }));
-      setFocusField(errors.name ? "name" : "email");
+      focusFieldGen.current += 1;
+      setFocusField({ field: errors.name ? "name" : "email", gen: focusFieldGen.current });
       return;
     }
     if (turnstileSiteKey && !turnstileToken) {
@@ -742,15 +764,6 @@ function CheckIcon() {
   return (
     <svg aria-hidden="true" viewBox="0 0 16 16" width="16" height="16">
       <path d="M3 8.5l3 3 7-7" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-function AlertIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 16 16" width="16" height="16">
-      <circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" strokeWidth="1.6" />
-      <path d="M8 4.5v4M8 11h.01" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
     </svg>
   );
 }
