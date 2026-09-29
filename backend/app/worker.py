@@ -3,13 +3,14 @@
 import asyncio
 import logging
 import signal
+import time
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 
 from sqlalchemy import create_engine
 
-from app import logs, mail, tracing
+from app import bookings, logs, mail, tracing
 from app.config import MailSettings, WorkerSettings
 from app.db import SessionLocal
 from app.jobs import JobKind, run_once
@@ -28,6 +29,8 @@ KINDS: dict[str, JobKind] = {
 }
 
 POLL_SECONDS = 30
+# ZIF-122: settle expired pending bookings; housekeeping, so it runs on a timer, not every poll.
+SWEEP_SECONDS = 300
 
 logger = logging.getLogger("app.worker")
 
@@ -37,11 +40,18 @@ def ping(url: str) -> None:
 
 
 async def work(kinds: dict[str, JobKind], healthcheck_url: str | None, stop: asyncio.Event) -> None:
-    """Run due jobs until nothing is due, ping, then wait POLL_SECONDS or until stopped."""
+    """Run due jobs until nothing is due, sweep when due, ping, then wait POLL_SECONDS or until
+    stopped."""
+    swept: float | None = None  # monotonic time of the last SUCCESSFUL sweep
     while not stop.is_set():
         try:
             while await run_once(kinds) and not stop.is_set():
                 pass
+            # After the drain, so emails go first. A failing sweep skips the ping (alerts) and
+            # retries next poll, since the mark is only set on success.
+            if swept is None or time.monotonic() - swept >= SWEEP_SECONDS:
+                await asyncio.to_thread(bookings.sweep)
+                swept = time.monotonic()
         except Exception:
             # No ping: an iteration that keeps failing (e.g. the database is down) raises the alert.
             logger.exception("worker iteration failed")

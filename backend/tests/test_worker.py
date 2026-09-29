@@ -6,13 +6,14 @@ import uuid
 from collections.abc import Callable, Iterator
 from datetime import timedelta
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.pool import NullPool
 
-from app import logs, worker
+from app import bookings, logs, worker
 from app.config import WorkerSettings
 from app.db import SessionLocal
 from app.jobs import Job, JobKind, enqueue
@@ -171,3 +172,57 @@ def test_a_failed_ping_logs_the_class_only(
     assert line is not None
     assert line["error"] == "OSError"
     assert sentinel not in json.dumps(log_lines())
+
+
+# ZIF-122: the expiry sweep runs on the first iteration, then every SWEEP_SECONDS. A sweep that
+# raises is logged, withholds the ping and is retried next iteration; jobs still run.
+def test_the_worker_sweeps_on_a_timer_and_retries_a_failing_sweep(
+    bound_session: None, monkeypatch: pytest.MonkeyPatch, log_lines: Lines
+) -> None:
+    sweeps: list[int] = []
+    fail = [True]
+    pings: list[str] = []
+    ran: list[Job] = []
+    clock = [1000.0]
+
+    def sweep() -> int:
+        sweeps.append(1)
+        if fail[0]:
+            raise RuntimeError("sweep boom")
+        return 0
+
+    monkeypatch.setattr(bookings, "sweep", sweep)
+    monkeypatch.setattr(worker, "ping", pings.append)
+    # Only the worker's clock: patching time.monotonic itself would freeze asyncio's.
+    monkeypatch.setattr(worker, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    monkeypatch.setattr(worker, "SWEEP_SECONDS", 100)
+    with SessionLocal.begin() as session:
+        enqueue(session, "test.worker", "test.worker:sweep", {})
+
+    async def scenario() -> None:
+        stop = asyncio.Event()
+        kinds = {"test.worker": JobKind(ran.append, 5, timedelta(hours=1))}
+        monkeypatch.setattr(worker, "POLL_SECONDS", 0.05)
+        task = asyncio.create_task(work(kinds, "http://ping.invalid/x", stop))
+
+        async def until(condition: Callable[[], bool]) -> None:
+            for _ in range(200):
+                if condition():
+                    return
+                await asyncio.sleep(0.05)
+            raise AssertionError("timed out")
+
+        await until(lambda: len(sweeps) >= 2)  # failed on iteration 1, retried on iteration 2
+        assert pings == [] and len(ran) == 1  # no ping while it fails; the job still ran
+        fail[0] = False
+        await until(lambda: len(sweeps) >= 3 and len(pings) >= 1)
+        count = len(sweeps)
+        await asyncio.sleep(0.3)  # several polls, clock frozen: not again before SWEEP_SECONDS
+        assert len(sweeps) == count
+        clock[0] += 101
+        await until(lambda: len(sweeps) > count)
+        stop.set()
+        await asyncio.wait_for(task, 5)
+
+    asyncio.run(scenario())
+    assert any(line["msg"] == "worker iteration failed" for line in log_lines())

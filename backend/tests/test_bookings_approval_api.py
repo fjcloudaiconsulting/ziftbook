@@ -1158,3 +1158,36 @@ def test_the_assigned_worker_still_records_the_outcome_of_their_own_appointment(
 
     assert patch(worker, booking_id, target).status_code == 200
     assert status_of(people.a, booking_id) == target
+
+
+# ZIF-122 F6 - create() expires an already-due pending WITH its event (the same EXPIRE the sweeper
+# runs), exactly once.
+# Kills: the in-write EXPIRE left event-less.
+def test_create_over_an_expired_pending_records_its_expired_event_once(
+    people: People, app: FastAPI, ready: str
+) -> None:
+    stale = make_pending(app, people.a, ready, starts_at=at("09:00"))
+    expire(people.a, stale)
+
+    make_pending(app, people.a, ready, starts_at=at("11:00"))
+
+    assert status_of(people.a, stale) == "expired"
+    with tenant_context(people.a) as session:
+        rows = session.scalars(
+            text("SELECT event FROM booking_events WHERE booking_id = :id AND event = 'expired'"),
+            {"id": stale},
+        ).all()
+    assert list(rows) == ["expired"]
+
+
+# ZIF-122 G7 - an expired booking cannot be confirmed afterwards.
+def test_a_swept_booking_cannot_be_confirmed(
+    people: People, app: FastAPI, owner: TestClient, ready: str
+) -> None:
+    booking_id = make_pending(app, people.a, ready)
+    expire(people.a, booking_id)
+
+    bookings.sweep()
+    response = patch(owner, booking_id, "confirmed")
+
+    assert (response.status_code, response.json()) == (409, {"code": "invalid_transition"})
