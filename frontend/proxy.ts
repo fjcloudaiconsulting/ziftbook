@@ -1,11 +1,10 @@
-import { isIP } from "node:net";
-
 import createMiddleware from "next-intl/middleware";
 import { type NextRequest, NextResponse } from "next/server";
 
 import { routing } from "./i18n/routing";
 import { errorFields, logger, requestId } from "./lib/log";
 import { endProxySpan, startProxySpan, traceparent } from "./lib/trace";
+import { apiUrl, clientIp, LOCALE_MATCHER } from "./lib/upstream";
 
 const localize = createMiddleware(routing);
 const log = logger("web.proxy");
@@ -24,20 +23,6 @@ const REQUEST_ONLY_STRIP = ["host", "expect", "content-length", "proxy-authoriza
 // R5: clients never choose a trace. Dropped unconditionally, from the request only: the API
 // trusts the traceparent this server sets itself below.
 const TRACE_HEADERS = ["traceparent", "tracestate", "baggage"];
-
-// Read per request, like apiUrl(). Set only where every request reaches this server through a
-// proxy that overwrites the header (staging: cf-connecting-ip). Unset: the API sees this
-// server's address.
-function clientIp(request: NextRequest): string | undefined {
-  const name = process.env.ZIF_CLIENT_IP_HEADER;
-  const value = name ? (request.headers.get(name) ?? "").trim().replace(/^::ffff:(?=\d+\.)/i, "") : "";
-  return isIP(value) ? value : undefined;
-}
-
-// Read per request, never at build time: one image runs against any API.
-function apiUrl(): string | undefined {
-  return process.env.ZIF_API_URL ?? (process.env.NODE_ENV === "development" ? "http://127.0.0.1:8000" : undefined);
-}
 
 function unavailable(id: string): NextResponse {
   return NextResponse.json({ code: "api_unavailable" }, { status: 502, headers: { "X-Request-ID": id } });
@@ -65,7 +50,7 @@ async function forwardApi(request: NextRequest): Promise<Response> {
   // and Connection's value is arbitrary client input, some of which isn't a valid header name and
   // makes Headers.delete() throw (an invalid Connection value must never 500 the proxy).
   for (const name of [...FORWARDING, ...HOP_BY_HOP, ...REQUEST_ONLY_STRIP, ...TRACE_HEADERS]) headers.delete(name);
-  const ip = clientIp(request);
+  const ip = clientIp(request.headers);
   if (ip) headers.set("x-forwarded-for", ip);
   headers.set("x-request-id", id);
   const tp = traceparent(span);
@@ -126,5 +111,5 @@ export default function proxy(request: NextRequest) {
 export const config = {
   // /api is forwarded to FastAPI; every other page path goes through locale routing.
   // Next internals and files with an extension are skipped.
-  matcher: ["/api/:path*", "/((?!api|_next|_vercel|.*\\..*).*)"],
+  matcher: ["/api/:path*", LOCALE_MATCHER],
 };
