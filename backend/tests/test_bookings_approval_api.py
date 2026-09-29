@@ -47,6 +47,13 @@ def owner(app: FastAPI, people: People) -> TestClient:
     return signed_in(app, people.a, people.both)
 
 
+@pytest.fixture(autouse=True)
+def _published(people: People) -> None:
+    """ZIF-145: make_pending posts through the public booking route, gated on published. Seeded
+    once, here, rather than in every test."""
+    save_setting(people.a, "published", True)
+
+
 @pytest.fixture
 def ready(people: People, owner: TestClient) -> str:
     """A 30-minute service performed by the owner, who works 09:00-17:00 every day."""

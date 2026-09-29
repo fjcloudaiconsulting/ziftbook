@@ -63,6 +63,13 @@ def owner(app: FastAPI, people: People) -> TestClient:
     return signed_in(app, people.a, people.both)
 
 
+@pytest.fixture(autouse=True)
+def _published(people: People) -> None:
+    """ZIF-145: make_pending posts through the public booking route, gated on published. Seeded
+    once, here, rather than in every test."""
+    save_setting(people.a, "published", True)
+
+
 @pytest.fixture
 def ready(people: People, owner: TestClient) -> str:
     """A 30-minute service performed by the owner, who works 09:00-17:00 every day."""
@@ -788,6 +795,7 @@ def test_merchant_recipients_are_every_owner_plus_the_assigned_worker(
     solo_service = new_service(signed_in(app, people.b, people.only_b))
     seed(people.b, people.only_b, weekdays("09:00", "17:00"))
     assign(people.b, solo_service, member_id(people.b, people.only_b))
+    save_setting(people.b, "published", True)
     make_pending(app, people.b, solo_service)
     run_jobs()
     assert subjects_sent_to(email_of(people.only_b)) == [_subject("booking_request", "en")]
