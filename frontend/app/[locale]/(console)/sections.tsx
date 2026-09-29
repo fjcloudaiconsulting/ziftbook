@@ -240,7 +240,9 @@ export function Settings() {
           <span className={uiStyles.label}>{t("addressLabel")}</span>
           <div className={`${styles.url} ${settings.published ? "" : styles.urlOff}`}>
             <span ref={addressRef}>
-              {origin}/<wbr />
+              {origin}
+              {"/"}
+              <wbr />
               <b className={styles.urlSlug}>{session.slug}</b>
             </span>
             <button className={styles.copyButton} type="button" onClick={onCopy}>
