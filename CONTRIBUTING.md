@@ -159,8 +159,10 @@ migration 0026), not any code path. A race in a route somebody forgets to guard 
   each other. Changing it later takes `ACCESS EXCLUSIVE` and a full gist rebuild: there is no
   `ADD CONSTRAINT ... USING INDEX` for an exclusion constraint.
 - The predicate cannot mention `now()` (an index predicate must be `IMMUTABLE`). The expiry carve-out therefore lives
-  in `app.availability.booked()` alone, and a booking transaction expires stale pendings in one `UPDATE` before
-  inserting. A sweeper is housekeeping, never correctness.
+  in `app.availability.booked()` alone, and a booking transaction expires stale pendings in one statement before
+  inserting; that statement (`EXPIRE`) also writes each booking's `expired` event. The worker runs the same statement
+  per tenant, under the tenant lock, every 300 seconds (`bookings.sweep`). A sweeper is housekeeping, never
+  correctness.
 - **The constraint is only half of it.** It catches an overlap with a live booking and nothing else: not a buffer
   tail, not opening hours, not the worker's hours, not time off, not the slot grid, not `min_notice`, not the
   horizon, not an unassigned worker, not an archived service. A write path re-derives the posted start **through
@@ -297,7 +299,8 @@ loggers (`web.*`); Next's own stderr output (banners, SSR error traces) is not i
   `job_kind`, `exc`. Add others with `extra={...}`; keep `msg` a constant ("access", "job failed") and put
   values in fields.
 - Events: `job claimed` (DEBUG), `job done` and `job skipped` (INFO, past its grace), `job failed`
-  (WARNING, retried) and `job gave up` (ERROR, last attempt), with `attempts`; `email sent` (INFO) and
+  (WARNING, retried) and `job gave up` (ERROR, last attempt), with `attempts`;
+  `bookings expired` (INFO, `count`, `tenant_id`, from the worker's sweep); `email sent` (INFO) and
   `email failed` (WARNING) with `template` (and `error` on failure) plus the job context; never the
   address, subject or body. Each process logs one startup line (`api started`, `worker started`, `migrations started`) with its
   non-secret settings.

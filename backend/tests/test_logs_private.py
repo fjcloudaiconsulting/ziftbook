@@ -17,7 +17,7 @@ import pytest
 from fastapi import FastAPI
 from sqlalchemy import Engine, text
 
-from app import auth
+from app import auth, bookings
 from app.db import tenant_context
 from app.jobs import run_once
 from app.mail import render
@@ -287,6 +287,27 @@ def test_no_personal_data_ever_reaches_a_log(
     confirmed = owner.patch(f"/api/bookings/{booked.json()['id']}", json={"status": "confirmed"})
     assert confirmed.status_code == 200
     asyncio.run(run_once(KINDS))
+
+    # 6g (ZIF-122): a second booking's hold runs out and the sweep settles it, logging its count.
+    assert len(slots) >= 2  # slots[-1] must not be 6f's slot, which is taken
+    lapsed = client_for(app).post(
+        f"/api/public/businesses/{people.a}/services/{created.json()['id']}/bookings",
+        json={
+            "starts_at": slots[-1],
+            "name": booker_name,
+            "email": booker_email,
+            "phone": booker_phone,
+            "policy_version": "2026-09-01",
+            "consents": {},
+        },
+    )
+    assert lapsed.status_code == 201
+    with tenant_context(people.a) as session:
+        session.execute(
+            text("UPDATE bookings SET expires_at = now() - interval '1 hour' WHERE id = :id"),
+            {"id": lapsed.json()["id"]},
+        )
+    assert bookings.sweep() >= 1
 
     # 7: invite flow — send, list, a wrong token, then accept with a brand-new account.
     invite_email = fresh_email()

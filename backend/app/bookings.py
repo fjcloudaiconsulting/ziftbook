@@ -10,6 +10,7 @@ comment on the constraint.
 """
 
 import json
+import logging
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -18,6 +19,7 @@ from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Query, Request, Response
+from opentelemetry.trace import SpanKind
 from psycopg.errors import ExclusionViolation, ForeignKeyViolation
 from pydantic import BaseModel, Field, StringConstraints
 from sqlalchemy import Row, text
@@ -34,6 +36,7 @@ from app import (
     members,
     passwords,
     schedule,
+    tracing,
     turnstile,
 )
 from app import time_off as time_off_module
@@ -42,6 +45,8 @@ from app.clients import ClientName, Phone, PolicyVersion, Purpose
 from app.db import SessionLocal, join_tenant, tenant_context
 from app.errors import ApiError, Error
 from app.services import STRICT, Price
+
+logger = logging.getLogger(__name__)
 
 IP_LIMIT, EMAIL_LIMIT, LIMIT_WINDOW = 30, 5, timedelta(hours=1)
 # ZIF-51's own key in app/schedule.py's ticket-number advisory lock convention (OPENING_LOCK = 105):
@@ -207,9 +212,16 @@ WHERE id = :service_id AND archived_at IS NULL
 FOR SHARE
 """)
 
+# ZIF-122. Shared by create() and the worker's sweep(): the event rides the same statement, so no
+# path can expire a booking without recording it. now() is the transaction's clock, as :now was.
 EXPIRE = text("""
-UPDATE bookings SET status = 'expired'
-WHERE status = ANY(CAST(:expiring AS text[])) AND expires_at <= :now
+WITH gone AS (
+  UPDATE bookings SET status = 'expired'
+  WHERE status = ANY(CAST(:expiring AS text[])) AND expires_at <= now()
+  RETURNING tenant_id, id)
+INSERT INTO booking_events (tenant_id, booking_id, event)
+SELECT tenant_id, id, 'expired' FROM gone
+RETURNING 1
 """)
 
 PENDING_COUNT = text("""
@@ -493,8 +505,8 @@ def create(  # sync def: turnstile.verify's urlopen blocks, and runs in FastAPI'
                     ip=origin_ip,
                     user_agent=user_agent,
                 )
-            # 9. Exact under the lock, rather than best-effort: :now is step 2's Postgres clock.
-            db.execute(EXPIRE, {"expiring": list(availability.EXPIRING), "now": row.now})
+            # 9. Exact under the lock, rather than best-effort: EXPIRE's now() is step 2's clock.
+            db.execute(EXPIRE, {"expiring": list(availability.EXPIRING)})
             zone = settings.timezone
             day = new.starts_at.astimezone(ZoneInfo(zone)).date()
             first, last, earliest = availability.window(
@@ -773,3 +785,26 @@ def transition(
     )
     response.headers["Cache-Control"] = "no-store"  # 7
     return BookingStatusOut(id=changed.id, status=changed.status)
+
+
+def sweep() -> int:
+    """Expire every tenant's due pendings; the worker's housekeeping, never correctness (create()
+    and availability.booked() already treat them as gone). Returns how many it settled."""
+    # The ids in their own short session, closed before the loop: the worker's pool is exactly 21.
+    with SessionLocal() as session:
+        tenant_ids = session.scalars(text("SELECT id FROM tenants")).all()
+    expired = 0
+    with tracing.span("bookings.sweep", SpanKind.INTERNAL, {"tenants": len(tenant_ids)}) as span:
+        # ponytail: one transaction per tenant per sweep; upgrade to a SECURITY DEFINER "tenants
+        # with due expiry" once the tenant count matters. A failure raises: the worker retries the
+        # whole sweep next poll, so a tenant that always fails blocks the ones after it (and pings).
+        for tenant_id in tenant_ids:
+            with tenant_context(tenant_id) as db:
+                db.execute(LOCK, {"key": LOCK_KEY})  # 1: first, like every booking writer
+                # RETURNING, not rowcount: Session.execute gives a Result, which has none (mypy).
+                count = len(db.execute(EXPIRE, {"expiring": list(availability.EXPIRING)}).all())
+                if count:
+                    logger.info("bookings expired", extra={"count": count})
+                expired += count
+        span.set_attribute("expired", expired)
+    return expired
