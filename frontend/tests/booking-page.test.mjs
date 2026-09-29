@@ -209,11 +209,21 @@ describe("slugLooksValid: mirrors backend_page.py's own slug check, so a bad slu
     // checking, so "Carol-Nails" is a valid, findable slug, not a 404 by itself).
     assert.equal(slugLooksValid("Carol-Nails"), true);
     assert.equal(slugLooksValid("carol-nails-bar"), true);
-    assert.equal(slugLooksValid("café"), false);
     assert.equal(slugLooksValid("a".repeat(41)), false);
     assert.equal(slugLooksValid(""), false);
     assert.equal(slugLooksValid("-leading"), false);
     assert.equal(slugLooksValid("has space"), false);
+  });
+
+  test("fence: the ASCII check runs on the RAW slug, not the lowercased one", () => {
+    // "Karol" spelled with U+212A KELVIN SIGN in place of the ordinary "K": String.toLowerCase()
+    // folds it to plain ASCII "k", so "karol" alone is indistinguishable from a real ASCII slug.
+    // Wrong implementation killed: checking isascii on `slug.toLowerCase()` instead of `slug` itself,
+    // which would let this through (café's "é" survives lowercasing and would be caught either way,
+    // so it never exercised this ordering).
+    const kelvinK = "Karol";
+    assert.equal(kelvinK.toLowerCase(), "karol"); // guard: confirms the fold this fence depends on
+    assert.equal(slugLooksValid(kelvinK), false);
   });
 });
 
