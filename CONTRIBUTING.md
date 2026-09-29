@@ -465,6 +465,7 @@ ZIF-38). An empty variable means the default: `env_ignore_empty=True` on the bas
 | `ZIF_APP_URL` | worker | `http://localhost:3000` | yes | no | Where links in emails point; must be the public web URL in production. |
 | **Security** | | | | | |
 | `ZIF_TURNSTILE_SECRET` | api | `""` | no | yes | Cloudflare Turnstile secret. Unset skips verification, logged on the `api started` line. |
+| `ZIF_TURNSTILE_SITE_KEY` | frontend | none | no | no | Cloudflare Turnstile site key, rendered on the public booking page. Set both the site key and the secret, or neither: a site key with no secret shows a widget the API never checks; a secret with no site key never gets a token to check. Never `NEXT_PUBLIC_*`: read server-side at request time (`process.env`, ZIF-56's page loader), not baked into the client bundle at build time. |
 | `ZIF_TRUSTED_PROXIES` | api | `""` | yes | no | Addresses whose `X-Forwarded-For` the API believes. Empty trusts nobody. |
 | `ZIF_CLIENT_IP_HEADER` | frontend | none | yes, behind a proxy | no | Header the web app trusts for the visitor's address (staging: `cf-connecting-ip`). Set only behind a proxy that overwrites it; unset there, every visitor shares the proxy's address and its per-IP limits. |
 | **Logging** | | | | | |
