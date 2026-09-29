@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.19.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.18.1...v0.19.0) (2026-09-29)
+
+
+### Features
+
+* **backend:** every business gets a slug and a public booking-page endpoint (ZIF-56) ([#131](https://github.com/fjcloudaiconsulting/ziftbook/issues/131)) ([e7ac572](https://github.com/fjcloudaiconsulting/ziftbook/commit/e7ac572d911a3e6d101a599ab5f21b8acd54e459))
+* **frontend:** clients book online on each business's public page (ZIF-56) ([#134](https://github.com/fjcloudaiconsulting/ziftbook/issues/134)) ([86ae8c7](https://github.com/fjcloudaiconsulting/ziftbook/commit/86ae8c77befd9c8e876109adf1bdae4b91101a0d))
+* owners publish their booking page when they are ready (ZIF-145) ([#135](https://github.com/fjcloudaiconsulting/ziftbook/issues/135)) ([f4deb7b](https://github.com/fjcloudaiconsulting/ziftbook/commit/f4deb7b9acac7d75d21415fec631dd61d31bacfe))
+
+
+### Bug Fixes
+
+* **frontend:** the save bar rests on the window edge at the end of a page (ZIF-124) ([#130](https://github.com/fjcloudaiconsulting/ziftbook/issues/130)) ([a1ae5e0](https://github.com/fjcloudaiconsulting/ziftbook/commit/a1ae5e05c76fdd6d6bb901702bb06183e9c0c7a3))
+
 ## [0.18.1](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.18.0...v0.18.1) (2026-09-28)
 
 
