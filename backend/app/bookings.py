@@ -505,7 +505,7 @@ def create(  # sync def: turnstile.verify's urlopen blocks, and runs in FastAPI'
                     ip=origin_ip,
                     user_agent=user_agent,
                 )
-            # 9. Exact under the lock, rather than best-effort: :now is step 2's Postgres clock.
+            # 9. Exact under the lock, rather than best-effort: EXPIRE's now() is step 2's clock.
             db.execute(EXPIRE, {"expiring": list(availability.EXPIRING)})
             zone = settings.timezone
             day = new.starts_at.astimezone(ZoneInfo(zone)).date()
@@ -796,7 +796,8 @@ def sweep() -> int:
     expired = 0
     with tracing.span("bookings.sweep", SpanKind.INTERNAL, {"tenants": len(tenant_ids)}) as span:
         # ponytail: one transaction per tenant per sweep; upgrade to a SECURITY DEFINER "tenants
-        # with due expiry" once the tenant count matters. A failure raises: the worker retries.
+        # with due expiry" once the tenant count matters. A failure raises: the worker retries the
+        # whole sweep next poll, so a tenant that always fails blocks the ones after it (and pings).
         for tenant_id in tenant_ids:
             with tenant_context(tenant_id) as db:
                 db.execute(LOCK, {"key": LOCK_KEY})  # 1: first, like every booking writer

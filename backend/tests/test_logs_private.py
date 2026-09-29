@@ -289,6 +289,7 @@ def test_no_personal_data_ever_reaches_a_log(
     asyncio.run(run_once(KINDS))
 
     # 6g (ZIF-122): a second booking's hold runs out and the sweep settles it, logging its count.
+    assert len(slots) >= 2  # slots[-1] must not be 6f's slot, which is taken
     lapsed = client_for(app).post(
         f"/api/public/businesses/{people.a}/services/{created.json()['id']}/bookings",
         json={

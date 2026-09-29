@@ -56,10 +56,13 @@ def bound_session(migrated: None, app_engine: Engine) -> Iterator[None]:
 
 
 def test_worker_runs_due_jobs_pings_and_stops(
-    bound_session: None, healthcheck: tuple[str, threading.Event]
+    bound_session: None,
+    healthcheck: tuple[str, threading.Event],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     url, pinged = healthcheck
     ran: list[Job] = []
+    monkeypatch.setattr(bookings, "sweep", lambda: 0)  # this test is about jobs
     with SessionLocal.begin() as session:
         enqueue(session, "test.worker", "test.worker:1", {})
 
@@ -158,6 +161,7 @@ def test_a_failed_ping_logs_the_class_only(
         raise OSError(sentinel)
 
     monkeypatch.setattr(worker, "ping", ping)
+    monkeypatch.setattr(bookings, "sweep", lambda: 0)
 
     async def scenario() -> None:
         stop = asyncio.Event()
@@ -186,7 +190,7 @@ def test_the_worker_sweeps_on_a_timer_and_retries_a_failing_sweep(
     clock = [1000.0]
 
     def sweep() -> int:
-        sweeps.append(1)
+        sweeps.append(len(ran))  # jobs drained so far: the sweep runs after the drain
         if fail[0]:
             raise RuntimeError("sweep boom")
         return 0
@@ -214,6 +218,7 @@ def test_the_worker_sweeps_on_a_timer_and_retries_a_failing_sweep(
 
         await until(lambda: len(sweeps) >= 2)  # failed on iteration 1, retried on iteration 2
         assert pings == [] and len(ran) == 1  # no ping while it fails; the job still ran
+        assert sweeps[0] == 1  # the first sweep came after the job, not before
         fail[0] = False
         await until(lambda: len(sweeps) >= 3 and len(pings) >= 1)
         count = len(sweeps)

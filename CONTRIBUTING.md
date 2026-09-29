@@ -299,7 +299,8 @@ loggers (`web.*`); Next's own stderr output (banners, SSR error traces) is not i
   `job_kind`, `exc`. Add others with `extra={...}`; keep `msg` a constant ("access", "job failed") and put
   values in fields.
 - Events: `job claimed` (DEBUG), `job done` and `job skipped` (INFO, past its grace), `job failed`
-  (WARNING, retried) and `job gave up` (ERROR, last attempt), with `attempts`; `bookings expired` (INFO, `count`, `tenant_id`, from the worker's sweep); `email sent` (INFO) and
+  (WARNING, retried) and `job gave up` (ERROR, last attempt), with `attempts`;
+  `bookings expired` (INFO, `count`, `tenant_id`, from the worker's sweep); `email sent` (INFO) and
   `email failed` (WARNING) with `template` (and `error` on failure) plus the job context; never the
   address, subject or body. Each process logs one startup line (`api started`, `worker started`, `migrations started`) with its
   non-secret settings.

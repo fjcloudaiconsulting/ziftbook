@@ -588,8 +588,9 @@ def test_a_body_outside_the_literal_is_refused(
 # F15 (was G1) - accepting keeps the slot held, and keeps holding it past the TTL.
 # The TTL is what discriminates: a pending holds the slot exactly as a confirmed one does, so the
 # expiry is the only state in which the two differ - an accepted booking holds its slot forever,
-# while a row left pending is swept to 'expired' by the next create (app/bookings.py's EXPIRE) and
-# frees it. Kills: `SET status = status` (a no-op UPDATE that still RETURNs a row).
+# while a row left pending is swept to 'expired' by the next create or the worker's sweep
+# (app/bookings.py's EXPIRE) and frees it. Kills: `SET status = status` (a no-op UPDATE that still
+# RETURNs a row).
 def test_accepting_keeps_the_slot_held(
     people: People, app: FastAPI, owner: TestClient, ready: str
 ) -> None:
@@ -853,10 +854,10 @@ def test_an_auto_confirmed_booking_can_be_cancelled_by_the_merchant(
 # Kills: deleting the liveness clause outright to make F19 pass.
 #
 # REJECTED (reviewer, ZIF-55 R3): the merchant therefore cannot cancel an expired pending, and the
-# row keeps status='pending' until some later booking POST runs the EXPIRE sweep. Left as it is,
-# on purpose: it is what the spec says, and the row is already invisible in the queue (QUEUE
-# filters on expires_at > now()) and inert (`pending` is in EXPIRING, so it holds no slot), which
-# leaves the merchant nothing to cancel. The sweeper itself is ZIF-122's.
+# row keeps status='pending' until some later booking POST or the worker's sweep runs EXPIRE.
+# Left as it is, on purpose: it is what the spec says, and the row is already invisible in the
+# queue (QUEUE filters on expires_at > now()) and inert (`pending` is in EXPIRING, so it holds no
+# slot), which leaves the merchant nothing to cancel. The sweeper itself is ZIF-122's.
 def test_a_ttl_passed_pending_cannot_be_cancelled_either(
     people: People, app: FastAPI, owner: TestClient, ready: str
 ) -> None:
@@ -1188,6 +1189,7 @@ def test_a_swept_booking_cannot_be_confirmed(
     expire(people.a, booking_id)
 
     bookings.sweep()
+    assert status_of(people.a, booking_id) == "expired"
     response = patch(owner, booking_id, "confirmed")
 
     assert (response.status_code, response.json()) == (409, {"code": "invalid_transition"})
