@@ -302,7 +302,8 @@ export function WeekEditor({
 
       {envelope !== null && envelopeNote && <Banner tone="note">{envelopeNote}</Banner>}
 
-      <div className={styles.weekContent}>
+      {/* Keeps the days and their footnote flush: the parent .stack would put its gap between them. */}
+      <div>
       <div className={styles.days}>
         {days.map((day) => {
           const weekdayText = weekdayName(day.weekday, dl);
