@@ -484,6 +484,7 @@
   },
   "BookingPage": {
     "timesIn": "Horários no fuso de {city}",
+    "stepDoneSuffix": ", concluído",
     "step1": "Escolha um serviço",
     "step2": "Escolha o dia e o horário",
     "step3": "Seus dados",

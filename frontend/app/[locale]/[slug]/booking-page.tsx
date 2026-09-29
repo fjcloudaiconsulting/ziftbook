@@ -92,11 +92,16 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
   // State, not a ref: read during render (the picker), so it must trigger a re-render on change.
   const [cache, setCache] = useState(new Map<string, CacheEntry>());
   const scanned = useRef(new Set<string>()); // service|worker keys already auto-scanned once
+  // The most recent ensureWeek call's own number, per service|worker: an older call's scan can
+  // still be in flight when the user pages to a different week before it resolves, and its result
+  // (computed for the week IT was called with) must not overwrite what a newer call already wrote.
+  const ensureWeekToken = useRef(new Map<string, number>());
   const working = useRef(false);
   const nameRef = useRef<HTMLInputElement>(null);
   const emailRef = useRef<HTMLInputElement>(null);
   const headingRefs = useRef<Record<number, HTMLHeadingElement | null>>({});
   const [focusStep, setFocusStep] = useState<number | null>(null);
+  const [focusField, setFocusField] = useState<"name" | "email" | null>(null);
   const [verifying, setVerifying] = useState(false);
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
   const turnstileWidget = useRef<string | null>(null);
@@ -133,6 +138,13 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
   useEffect(() => {
     if (focusStep !== null) headingRefs.current[focusStep]?.focus();
   }, [focusStep]);
+
+  // Runs after step 3 has (re)rendered with its inputs mounted, so a field targeted while step 3
+  // wasn't the open step still gets focused once it is.
+  useEffect(() => {
+    if (focusField === "name") nameRef.current?.focus();
+    else if (focusField === "email") emailRef.current?.focus();
+  }, [focusField, flow.step]);
 
   function cacheKey(service: string, worker: string, from: string) {
     return `${service}|${worker}|${from}`;
@@ -185,9 +197,13 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
 
   async function ensureWeek(service: Service, worker: string, weekStart: string, bypass = false) {
     const entryKey = `${service.id}|${worker}`;
+    const myToken = (ensureWeekToken.current.get(entryKey) ?? 0) + 1;
+    ensureWeekToken.current.set(entryKey, myToken);
+    const isCurrent = () => ensureWeekToken.current.get(entryKey) === myToken;
+
     const windowFrom = windowFromFor(weekStart, weekStart);
     const entry = await loadWindow(service, worker, windowFrom, bypass);
-    if (entry === "error") return;
+    if (entry === "error" || !isCurrent()) return;
 
     const visibleWeekEmpty = weekDays(weekStart).every((d) => !(slotsByDay(entry.slots, zone).get(d) ?? []).length);
     if (!visibleWeekEmpty) return;
@@ -203,11 +219,12 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
         from = addDays(from, 14);
         if (nextWeekDisabled(businessToday, from, page.booking_horizon_days)) break;
         const next = await loadWindow(service, worker, from);
-        if (next === "error") break;
+        if (next === "error" || !isCurrent()) return;
         first = firstFreeDayFrom(next.slots, from, zone);
         if (first !== null) break;
       }
     }
+    if (!isCurrent()) return; // superseded by a newer call for this service/worker while awaiting
     setFirstFreeByEntry((m) => new Map(m).set(entryKey, first ?? ""));
   }
 
@@ -262,6 +279,9 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
     setFlow((f) => {
       const next = { ...f, [field]: value };
       if ((field === "name" || field === "email") && f.errors[field]) next.errors = { ...f.errors, [field]: undefined };
+      // A suggestion computed from the email as it was at the last blur is stale the moment the
+      // value changes again — clicking "Use this address" afterward must never apply it.
+      if (field === "email" && f.suggest) next.suggest = null;
       return next;
     });
   }
@@ -313,7 +333,9 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
 
   async function book() {
     if (working.current) return;
-    if (flow.step < 2 || !flow.service || !flow.slot) {
+    // Not gated by flow.step: a complete selection (service + slot) is still complete even while
+    // step 1 or 2 happens to be reopened via "Change" — the summary already shows it.
+    if (!flow.service || !flow.slot) {
       setFlow((f) => ({ ...f, banner: { where: "c", tone: "error", text: f.service ? t("errMissingTime") : t("errMissing") } }));
       goTo(flow.service ? 2 : 1);
       return;
@@ -322,8 +344,11 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
     if (!flow.name.trim()) errors.name = t("errName");
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(flow.email.trim())) errors.email = t("errEmail");
     if (Object.keys(errors).length > 0) {
-      setFlow((f) => ({ ...f, errors }));
-      (errors.name ? nameRef : emailRef).current?.focus();
+      // Step 3's inputs only exist in the DOM while it's the open step: open it first (if it
+      // wasn't already) so the ref below actually points at a mounted field, then focus once it
+      // has — a step 2 "Change" reopen must not leave the error unfocusable.
+      setFlow((f) => ({ ...f, errors, step: 3 }));
+      setFocusField(errors.name ? "name" : "email");
       return;
     }
     if (turnstileSiteKey && !turnstileToken) {
@@ -452,7 +477,7 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
                   </span>
                   <h2 id="step1-h" ref={(el) => { headingRefs.current[1] = el; }} tabIndex={-1}>
                     {t("step1")}
-                    {flow.step > 1 && service1Done && <span className={styles.srOnly}>{", done"}</span>}
+                    {flow.step > 1 && service1Done && <span className={styles.srOnly}>{t("stepDoneSuffix")}</span>}
                   </h2>
                 </div>
                 <div className={styles.stepBody}>
@@ -518,7 +543,7 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
                   </span>
                   <h2 id="step2-h" ref={(el) => { headingRefs.current[2] = el; }} tabIndex={-1}>
                     {t("step2")}
-                    {flow.step > 2 && <span className={styles.srOnly}>{", done"}</span>}
+                    {flow.step > 2 && <span className={styles.srOnly}>{t("stepDoneSuffix")}</span>}
                   </h2>
                 </div>
                 <div className={styles.stepBody}>
@@ -1083,7 +1108,12 @@ function Checkout({
       {turnstileSiteKey && (
         <>
           <div id="turnstile-container" className={styles.turnstileBox} />
-          <Script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" strategy="afterInteractive" onLoad={onTurnstileLoad} />
+          {/* onReady, not onLoad: next/script's LoadCache means onLoad only fires the very first
+           * time this script URL is ever loaded on the page — a client-side locale switch or a
+           * soft nav to another slug remounts BookingPage without the browser reloading the
+           * script, so onLoad would never fire again and no widget would ever get rendered.
+           * onReady fires on every mount, script-cached or not. */}
+          <Script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" strategy="afterInteractive" onReady={onTurnstileLoad} />
         </>
       )}
       <form

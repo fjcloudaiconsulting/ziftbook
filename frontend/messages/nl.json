@@ -484,6 +484,7 @@
   },
   "BookingPage": {
     "timesIn": "Tijden in {city}",
+    "stepDoneSuffix": ", klaar",
     "step1": "Kies een dienst",
     "step2": "Kies een dag en tijd",
     "step3": "Jouw gegevens",
