@@ -889,7 +889,7 @@ def test_the_decline_message_check(people: People) -> None:
     with tenant_context(people.a) as session:
         pending_id = booked(session, worker_id, service_id, "pending")  # NULL inserts fine
         declined_id = booked(session, worker_id, service_id, "declined")
-        for id_, message in ((pending_id, "Sorry"), (declined_id, "a" * 1001)):
+        for id_, message in ((pending_id, "Sorry"), (declined_id, "a" * 1001), (declined_id, "")):
             with pytest.raises(IntegrityError) as bites, session.begin_nested():
                 session.execute(SET_MESSAGE, {"m": message, "id": id_})
             assert isinstance(bites.value.orig, CheckViolation)

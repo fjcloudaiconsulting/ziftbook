@@ -281,6 +281,17 @@ SELECT u.email, u.locale FROM users u JOIN memberships m ON m.user_id = u.id WHE
 """)
 
 
+def _quoted(message: str) -> str:
+    """Every line prefixed "> " (a blank one is ">"), a run of blank lines collapsed to one."""
+    lines: list[str] = []
+    for line in message.split("\n"):
+        if line.strip():
+            lines.append(f"> {line}")
+        elif lines[-1:] != [">"]:
+            lines.append(">")
+    return "\n".join(lines)
+
+
 def _local_text(value: dict[str, str], locale: str) -> str:
     """value[locale], else the first present of LOCALES."""
     if value.get(locale):
@@ -436,15 +447,14 @@ def send_booking(job: Job) -> None:
             values["expires"] = (
                 expires_local.strftime(f"{DATE_FORMAT[locale]} %H:%M") + f" ({zone})"
             )
-        if row.decline_message is not None:
+        file = template
+        if template == "booking_declined" and row.decline_message is not None:
             # ZIF-121: only the file rendered differs. `template` stays booking_declined for
-            # STATUS_FOR, the outbox row and the log; the text is a value, never rescanned.
-            values["message"] = row.decline_message
-        subject, body = render(
-            "booking_declined_message" if row.decline_message is not None else template,
-            locale,
-            values,
-        )
+            # STATUS_FOR, the outbox row and the log. The text is a value, never rescanned, and
+            # quoted so a merchant cannot pass their words off as the platform's own footer.
+            file = "booking_declined_message"
+            values["message"] = _quoted(row.decline_message)
+        subject, body = render(file, locale, values)
         status = _outbox(session, job, recipient_id, template, subject)
         if status == "pending" and token is not None:
             session.execute(

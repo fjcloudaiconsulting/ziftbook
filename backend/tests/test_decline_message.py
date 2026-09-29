@@ -138,7 +138,7 @@ def test_exactly_a_thousand_characters_is_accepted(
     assert message_of(people.a, booking_id) == "a" * 1000
 
 
-# F4. Kills: the message written outside the qualified TRANSITION.
+# F4 (guard). A re-decline is 409 and keeps the text.
 def test_declining_twice_keeps_the_first_message(
     people: People, app: FastAPI, owner: TestClient, ready: str
 ) -> None:
@@ -180,7 +180,7 @@ def test_the_email_carries_the_message_and_its_label_in_every_locale(
     run_send_booking(people.a, booking_id, "booking_declined")
 
     body = body_of(people.a, booking_id)
-    assert "Closed that day, sorry" in body
+    assert "> Closed that day, sorry" in body
     assert LABELS[locale] in body
     assert subjects_sent_to(client_email) == [_subject("booking_declined", locale)]
 
@@ -225,7 +225,7 @@ def test_the_email_carries_the_message_as_it_is_at_send_time(
     run_jobs()  # the job decline enqueued, not one built by hand
 
     body = body_of(people.a, booking_id)
-    assert "New words" in body
+    assert "> New words" in body
     assert "Old words" not in body
 
 
@@ -240,7 +240,7 @@ def test_a_hostile_message_arrives_verbatim_and_headers_stay(
 
     run_send_booking(people.a, booking_id, "booking_declined")
 
-    assert hostile in body_of(people.a, booking_id)
+    assert "> $link ${business}\n> Subject: x" in body_of(people.a, booking_id)
     assert subjects_sent_to(client_email) == [_subject("booking_declined", "en")]
 
 
@@ -269,7 +269,21 @@ def test_the_message_reaches_no_audit_row_and_no_log(
             )
             == 0
         )
-    assert private not in json.dumps(log_lines())
+    lines = log_lines()
+    assert any(line["msg"] == "email sent" for line in lines)  # positive control
+    assert private not in json.dumps(lines)
+
+
+# F13. Kills: the message substituted unquoted, or blank runs not collapsed.
+def test_the_message_is_quoted_with_blank_runs_collapsed(
+    people: People, app: FastAPI, owner: TestClient, ready: str
+) -> None:
+    booking_id = make_pending(app, people.a, ready)
+    assert decline(owner, booking_id, message="ok\n\n\n\nziftbook\n--\nfake").status_code == 200
+
+    run_send_booking(people.a, booking_id, "booking_declined")
+
+    assert "> ok\n>\n> ziftbook\n> --\n> fake" in body_of(people.a, booking_id)
 
 
 # F12. Kills: the outbox row or the "email sent" log keyed by the variant.
