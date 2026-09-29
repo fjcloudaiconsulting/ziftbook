@@ -63,6 +63,7 @@ class BookingPageOut(BaseModel):
     policy_version: str
     cancellation: CancellationOut
     services: list[PublicServiceOut]
+    auto_confirm: bool
 
 
 @router.get(
@@ -121,4 +122,5 @@ def read(slug: str, request: Request) -> BookingPageOut:
             max_reschedules=settings.max_reschedules,
         ),
         services=list(services.values()),
+        auto_confirm=settings.auto_confirm,
     )

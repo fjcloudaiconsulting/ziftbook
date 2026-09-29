@@ -83,6 +83,7 @@ def test_the_page_answers_exactly_the_documented_fields(
         "policy_version",
         "cancellation",
         "services",
+        "auto_confirm",
     }
     assert (body["id"], body["slug"], body["name"]) == (str(people.a), slug, "a")
     assert set(body["cancellation"]) == {
@@ -103,6 +104,15 @@ def test_the_page_answers_exactly_the_documented_fields(
     assert by_id[ready]["description"] == {}
     assert by_id[ready]["price"] == {"amount_minor": 2500, "currency": "EUR"}
     assert len(by_id[second]["workers"]) == 2
+
+
+# F9. fence
+@pytest.mark.parametrize("auto_confirm", [True, False])
+def test_auto_confirm_reflects_the_setting(
+    people: People, app: FastAPI, owner: TestClient, slug: str, ready: str, auto_confirm: bool
+) -> None:
+    assert put_settings(owner, {"auto_confirm": auto_confirm}).status_code == 200
+    assert page(new_client(app), slug).json()["auto_confirm"] is auto_confirm
 
 
 # 14. fence
