@@ -23,7 +23,7 @@ import { formatMoney } from "@/lib/money";
 import { type Locale, serviceName } from "@/lib/services";
 import { zoneCity } from "@/lib/week";
 
-import { Banner, EmailField, FieldError, Outcome, send, Submit } from "../_ui/parts";
+import { Banner, FieldError, Outcome, send, Submit } from "../_ui/parts";
 import styles from "../_ui/ui.module.css";
 
 type Service = BookingPageOut["services"][number];
@@ -445,130 +445,135 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
             ) : (
               <>
               {/* Step 1: service */}
-              <section className={styles.step} aria-labelledby="step1-h">
-                <div className={`${styles.stepHead} ${flow.step === 1 ? styles.stepHeadOn : ""}`}>
-                  <span className={`${styles.stepNum} ${flow.step >= 1 ? styles.stepNumOn : ""}`} aria-hidden="true">
-                    {flow.step > 1 && service1Done ? "✓" : 1}
+              <section className={`${styles.step} ${flow.step !== 1 && !(flow.step > 1 && service1Done) ? styles.stepLater : ""}`} aria-labelledby="step1-h">
+                <div className={styles.stepHead}>
+                  <span className={`${styles.stepNum} ${flow.step === 1 ? styles.stepNumOpen : flow.step > 1 && service1Done ? styles.stepNumDone : ""}`} aria-hidden="true">
+                    {flow.step > 1 && service1Done ? <CheckIcon /> : 1}
                   </span>
                   <h2 id="step1-h" ref={(el) => { headingRefs.current[1] = el; }} tabIndex={-1}>
                     {t("step1")}
                     {flow.step > 1 && service1Done && <span className={styles.srOnly}>{", done"}</span>}
                   </h2>
                 </div>
-                {flow.banner?.where === 1 && <Banner tone={flow.banner.tone}>{flow.banner.text}</Banner>}
-                {flow.step === 1 ? (
-                  <ul className={styles.services} role="radiogroup" aria-labelledby="step1-h">
-                    {page.services.map((svc) => {
-                      const name = localized(svc.name, loc, businessLanguage);
-                      const desc = svc.description[loc] || svc.description[businessLanguage] ? localized(svc.description, loc, businessLanguage) : null;
-                      return (
-                        <li key={svc.id}>
-                          <label className={styles.svcChoice}>
-                            <input type="radio" name="service" checked={flow.service?.id === svc.id} readOnly onClick={() => selectService(svc)} />
-                            <span className={styles.svcMain}>
-                              <span className={styles.svcTop}>
-                                <span className={styles.svcName} lang={name.lang ?? undefined}>
-                                  {name.text}
+                <div className={styles.stepBody}>
+                  {flow.banner?.where === 1 && <Banner tone={flow.banner.tone}>{flow.banner.text}</Banner>}
+                  {flow.step === 1 ? (
+                    <ul className={styles.services} role="radiogroup" aria-labelledby="step1-h">
+                      {page.services.map((svc) => {
+                        const name = localized(svc.name, loc, businessLanguage);
+                        const desc = svc.description[loc] || svc.description[businessLanguage] ? localized(svc.description, loc, businessLanguage) : null;
+                        return (
+                          <li key={svc.id}>
+                            <label className={styles.svcChoice}>
+                              <input type="radio" name="service" checked={flow.service?.id === svc.id} readOnly onClick={() => selectService(svc)} />
+                              <span className={styles.svcMain}>
+                                <span className={styles.svcTop}>
+                                  <span className={styles.svcName} lang={name.lang ?? undefined}>
+                                    {name.text}
+                                  </span>
+                                  <span className={styles.svcPrice}>{formatMoney(svc.price.amount_minor, svc.price.currency, locale)}</span>
                                 </span>
-                                <span className={styles.svcPrice}>{formatMoney(svc.price.amount_minor, svc.price.currency, locale)}</span>
-                              </span>
-                              {desc && (
-                                <span className={styles.svcDesc} lang={desc.lang ?? undefined}>
-                                  {desc.text}
+                                {desc && (
+                                  <span className={styles.svcDesc} lang={desc.lang ?? undefined}>
+                                    {desc.text}
+                                  </span>
+                                )}
+                                <span className={styles.svcMeta}>
+                                  <ClockIcon />
+                                  {t("min", { n: svc.duration_minutes })}
                                 </span>
-                              )}
-                              <span className={styles.svcMeta}>
-                                <ClockIcon />
-                                {t("min", { n: svc.duration_minutes })}
                               </span>
-                            </span>
-                          </label>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                ) : (
-                  service1Done && (
-                    <div className={styles.stepDone}>
-                      <span className={styles.stepDoneWhat}>
-                        <b lang={localized(service1Done.name, loc, businessLanguage).lang ?? undefined}>{localized(service1Done.name, loc, businessLanguage).text}</b>
-                        <span>
-                          {t("min", { n: service1Done.duration_minutes })} · {formatMoney(service1Done.price.amount_minor, service1Done.price.currency, locale)}
+                            </label>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  ) : (
+                    service1Done && (
+                      <div className={styles.stepDone}>
+                        <span className={styles.stepDoneWhat}>
+                          <b lang={localized(service1Done.name, loc, businessLanguage).lang ?? undefined}>{localized(service1Done.name, loc, businessLanguage).text}</b>
+                          <span>
+                            {t("min", { n: service1Done.duration_minutes })} · {formatMoney(service1Done.price.amount_minor, service1Done.price.currency, locale)}
+                          </span>
                         </span>
-                      </span>
-                      <button className={styles.textButton} type="button" onClick={() => goTo(1)}>
-                        {t("change")}
-                        <span className={styles.srOnly}>
-                          {": "}
-                          {t("step1")}
-                        </span>
-                      </button>
-                    </div>
-                  )
-                )}
+                        <button className={styles.textButton} type="button" onClick={() => goTo(1)}>
+                          {t("change")}
+                          <span className={styles.srOnly}>
+                            {": "}
+                            {t("step1")}
+                          </span>
+                        </button>
+                      </div>
+                    )
+                  )}
+                </div>
               </section>
 
               {/* Step 2: day/time — the shell always renders (muted) even before step 1 is done. */}
-              <section className={styles.step} aria-labelledby="step2-h">
-                <div className={`${styles.stepHead} ${flow.step === 2 ? styles.stepHeadOn : ""}`}>
-                  <span className={`${styles.stepNum} ${flow.step >= 2 && service1Done ? styles.stepNumOn : ""}`} aria-hidden="true">
-                    {flow.step > 2 ? "✓" : 2}
+              <section className={`${styles.step} ${flow.step !== 2 && !(flow.step > 2 && s2?.slot) ? styles.stepLater : ""}`} aria-labelledby="step2-h">
+                <div className={styles.stepHead}>
+                  <span className={`${styles.stepNum} ${flow.step === 2 ? styles.stepNumOpen : flow.step > 2 && s2?.slot ? styles.stepNumDone : ""}`} aria-hidden="true">
+                    {flow.step > 2 && s2?.slot ? <CheckIcon /> : 2}
                   </span>
                   <h2 id="step2-h" ref={(el) => { headingRefs.current[2] = el; }} tabIndex={-1}>
                     {t("step2")}
                     {flow.step > 2 && <span className={styles.srOnly}>{", done"}</span>}
                   </h2>
                 </div>
-                {s2 && flow.step === 2 && (
-                  <Picker
-                    page={page}
-                    s2={s2}
-                    cache={cache}
-                    firstFree={firstFreeByEntry.get(`${s2.service.id}|${s2.worker}`) || null}
-                    banner={flow.banner?.where === 2 ? flow.banner : null}
-                    dLocale={dLocale}
-                    zone={zone}
-                    t={t}
-                    onWorker={chooseWorker}
-                    onWeek={changeWeek}
-                    onDay={(d) => setFlow((f) => (f.step >= 2 ? { ...f, day: d } : f))}
-                    onSlot={pickSlot}
-                    onJump={jumpTo}
-                    onAnyone={() => chooseWorker("any")}
-                    onRetry={() => void ensureWeek(s2.service, s2.worker, s2.weekStart, true)}
-                  />
-                )}
-                {s2 && flow.step > 2 && s2.slot && (
-                  <div className={styles.stepDone}>
-                    <span className={styles.stepDoneWhat}>
-                      <b>
-                        {localWhen(s2.slot, zone, dLocale).date}
-                        {", "}
-                        {localWhen(s2.slot, zone, dLocale).time}
-                      </b>
-                      <span>{t("with", { name: s2.worker === "any" ? t("anyone") : (s2.service.workers.find((w) => w.id === s2.worker)?.display_name ?? "") })}</span>
-                    </span>
-                    <button className={styles.textButton} type="button" onClick={() => goTo(2)}>
-                      {t("change")}
-                      <span className={styles.srOnly}>
-                        {": "}
-                        {t("step2")}
+                <div className={styles.stepBody}>
+                  {s2 && flow.step === 2 && (
+                    <Picker
+                      page={page}
+                      s2={s2}
+                      cache={cache}
+                      firstFree={firstFreeByEntry.get(`${s2.service.id}|${s2.worker}`) || null}
+                      banner={flow.banner?.where === 2 ? flow.banner : null}
+                      dLocale={dLocale}
+                      zone={zone}
+                      t={t}
+                      onWorker={chooseWorker}
+                      onWeek={changeWeek}
+                      onDay={(d) => setFlow((f) => (f.step >= 2 ? { ...f, day: d } : f))}
+                      onSlot={pickSlot}
+                      onJump={jumpTo}
+                      onAnyone={() => chooseWorker("any")}
+                      onRetry={() => void ensureWeek(s2.service, s2.worker, s2.weekStart, true)}
+                    />
+                  )}
+                  {s2 && flow.step > 2 && s2.slot && (
+                    <div className={styles.stepDone}>
+                      <span className={styles.stepDoneWhat}>
+                        <b>
+                          {localWhen(s2.slot, zone, dLocale).date}
+                          {", "}
+                          {localWhen(s2.slot, zone, dLocale).time}
+                        </b>
+                        <span>{t("with", { name: s2.worker === "any" ? t("anyone") : (s2.service.workers.find((w) => w.id === s2.worker)?.display_name ?? "") })}</span>
                       </span>
-                    </button>
-                  </div>
-                )}
+                      <button className={styles.textButton} type="button" onClick={() => goTo(2)}>
+                        {t("change")}
+                        <span className={styles.srOnly}>
+                          {": "}
+                          {t("step2")}
+                        </span>
+                      </button>
+                    </div>
+                  )}
+                </div>
               </section>
 
               {/* Step 3: details — same always-visible shell. */}
-              <section className={styles.step} aria-labelledby="step3-h">
-                <div className={`${styles.stepHead} ${flow.step === 3 ? styles.stepHeadOn : ""}`}>
-                  <span className={`${styles.stepNum} ${flow.step >= 3 && s2?.slot ? styles.stepNumOn : ""}`} aria-hidden="true">
+              <section className={`${styles.step} ${flow.step !== 3 ? styles.stepLater : ""}`} aria-labelledby="step3-h">
+                <div className={styles.stepHead}>
+                  <span className={`${styles.stepNum} ${flow.step === 3 ? styles.stepNumOpen : ""}`} aria-hidden="true">
                     {3}
                   </span>
                   <h2 id="step3-h" ref={(el) => { headingRefs.current[3] = el; }} tabIndex={-1}>
                     {t("step3")}
                   </h2>
                 </div>
+                <div className={styles.stepBody}>
                 {s2 && flow.step === 3 && (
                   <div className={styles.form}>
                     <div className={styles.row2}>
@@ -610,8 +615,29 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
                         </p>
                       </div>
                     </div>
-                    <div>
-                      <EmailField value={flow.email} onChange={(v) => fieldChange("email", v)} error={flow.errors.email} inputRef={emailRef} onBlur={emailBlur} />
+                    <div className={styles.field}>
+                      <label className={styles.label} htmlFor="bp-email">
+                        {t("email")}
+                      </label>
+                      <div className={styles.input}>
+                        <input
+                          ref={emailRef}
+                          id="bp-email"
+                          name="email"
+                          type="email"
+                          autoComplete="email"
+                          required
+                          value={flow.email}
+                          onChange={(e) => fieldChange("email", e.target.value)}
+                          onBlur={emailBlur}
+                          aria-invalid={flow.errors.email ? true : undefined}
+                          aria-describedby={`bp-email-hint${flow.errors.email ? " bp-email-err" : ""}`}
+                        />
+                      </div>
+                      <p className={styles.hint} id="bp-email-hint">
+                        {t("emailHint")}
+                      </p>
+                      {flow.errors.email && <FieldError id="bp-email-err">{flow.errors.email}</FieldError>}
                       <div aria-live="polite">
                         {flow.suggest && (
                           <p className={styles.hint}>
@@ -625,6 +651,7 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
                     </div>
                   </div>
                 )}
+                </div>
               </section>
               </>
             )}
@@ -650,7 +677,9 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
       </div>
     </main>
     <footer className={styles.minimalFooter}>
-      <span>{t("footerBy")} ziftbook</span>
+      <span>
+        {t("footerBy")} <b>ziftbook</b>
+      </span>
     </footer>
     </>
   );
@@ -670,6 +699,31 @@ function ClockIcon() {
     <svg aria-hidden="true" viewBox="0 0 16 16" width="14" height="14">
       <circle cx="8" cy="8" r="6.25" fill="none" stroke="currentColor" strokeWidth="1.5" />
       <path d="M8 4.8V8l2.1 1.3" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function CheckIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 16 16" width="16" height="16">
+      <path d="M3 8.5l3 3 7-7" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function AlertIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 16 16" width="16" height="16">
+      <circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" strokeWidth="1.6" />
+      <path d="M8 4.5v4M8 11h.01" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function MoveIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 16 16" width="15" height="15">
+      <path d="M2.5 5.5h9l-2.5-2.5M13.5 10.5h-9l2.5 2.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
@@ -953,8 +1007,8 @@ function Checkout({
     if (state.kind === "before") {
       const freeW = localWhen(state.freeUntil.toISOString(), zone, dLocale);
       termLine = (
-        <li>
-          <span aria-hidden="true">{"✓"}</span>
+        <li className={styles.termsFree}>
+          <CheckIcon />
           <span>
             {t("freeUntil", { when: `${freeW.date}, ${freeW.time}` })} {t("afterFree")}
           </span>
@@ -963,15 +1017,15 @@ function Checkout({
     } else {
       termLine = (
         <li>
-          <span aria-hidden="true">{"!"}</span>
+          <AlertIcon />
           <span>{t("lateWindow", { n: c.free_cancellation_hours })}</span>
         </li>
       );
     }
   } else {
     termLine = (
-      <li>
-        <span aria-hidden="true">{"✓"}</span>
+      <li className={styles.termsFree}>
+        <CheckIcon />
         <span>
           {t("freeHours", { n: c.free_cancellation_hours })} {t("afterFree")}
         </span>
@@ -983,23 +1037,33 @@ function Checkout({
 
   return (
     <aside className={styles.checkout} aria-labelledby="checkout-h" hidden={hidden}>
-      <h2 id="checkout-h">{t("yourBooking")}</h2>
+      <h2 id="checkout-h" className={styles.checkoutHead}>
+        {t("yourBooking")}
+      </h2>
       <dl className={styles.summary}>
-        <dt>{t("service")}</dt>
-        {service && name ? <dd lang={name.lang ?? undefined}>{name.text}</dd> : <dd className={styles.unset}>{t("notChosen")}</dd>}
-        <dt>{t("when")}</dt>
-        {whenText}
-        <dt>{t("withRow")}</dt>
-        {workerName !== null ? <dd>{workerName}</dd> : <dd className={styles.unset}>{t("notChosen")}</dd>}
-        <dt>{t("price")}</dt>
-        {service ? <dd>{formatMoney(service.price.amount_minor, service.price.currency, locale)}</dd> : <dd className={styles.unset}>{t("notChosen")}</dd>}
+        <div className={styles.summaryRow}>
+          <dt>{t("service")}</dt>
+          {service && name ? <dd lang={name.lang ?? undefined}>{name.text}</dd> : <dd className={styles.unset}>{t("notChosen")}</dd>}
+        </div>
+        <div className={styles.summaryRow}>
+          <dt>{t("when")}</dt>
+          {whenText}
+        </div>
+        <div className={styles.summaryRow}>
+          <dt>{t("withRow")}</dt>
+          {workerName !== null ? <dd>{workerName}</dd> : <dd className={styles.unset}>{t("notChosen")}</dd>}
+        </div>
+        <div className={styles.summaryRow}>
+          <dt>{t("price")}</dt>
+          {service ? <dd>{formatMoney(service.price.amount_minor, service.price.currency, locale)}</dd> : <dd className={styles.unset}>{t("notChosen")}</dd>}
+        </div>
       </dl>
       <section className={styles.terms} aria-labelledby="terms-h">
         <h3 id="terms-h">{t("termsTitle")}</h3>
         <ul className={styles.termsList}>
           {termLine}
           <li>
-            <span aria-hidden="true">{"⇄"}</span>
+            <MoveIcon />
             <span>{c.max_reschedules > 0 ? t("moveTerms", { n: c.reschedule_cutoff_hours, m: c.max_reschedules }) : t("moveOff")}</span>
           </li>
         </ul>
@@ -1063,7 +1127,7 @@ function DoneScreen({
   const lede = pending ? t("pendLede", { biz: page.name, email: done.email }) : t("okLede", { email: done.email });
   return (
     <Outcome icon={pending ? "mail" : "done"} title={pending ? t("pendTitle") : t("okTitle")} lede={lede}>
-      <ul className={styles.summary} style={{ gridTemplateColumns: "1fr" }}>
+      <ul className={styles.doneList}>
         <li lang={name.lang ?? undefined}>{name.text}</li>
         <li>
           {t("whenFormat", { day: w.date, from: w.time, to: endTime })} {"("}
