@@ -295,6 +295,16 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
   }
 
   // --- Turnstile ---
+  // A client-side locale switch or slug nav unmounts this component with the widget still live;
+  // removing it explicitly (Cloudflare's own recommendation) avoids leaking it and the console
+  // warning that follows from just letting its container be torn out from under it.
+  useEffect(() => {
+    return () => {
+      const w = (window as unknown as { turnstile?: { remove(id: string): void } }).turnstile;
+      if (w?.remove && turnstileWidget.current) w.remove(turnstileWidget.current);
+    };
+  }, []);
+
   function onTurnstileLoad() {
     const w = (window as unknown as { turnstile?: { render(el: string | Element, opts: Record<string, unknown>): string; reset(id?: string): void } }).turnstile;
     const el = document.getElementById("turnstile-container");
