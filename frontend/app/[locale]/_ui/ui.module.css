@@ -356,6 +356,14 @@ a.textButton { display: inline-flex; align-items: center; }
 
 .bookingLayout { display: grid; gap: 0; container-type: inline-size; }
 .flowCol { min-width: 0; }
+/* Spacing between the heading, summary rows, terms box, approval note and Book button — one grid
+ * gap, exactly as the mockup's .checkout (this rule was missing, which is why those had collapsed
+ * to nothing). */
+.checkout { border-top: 1px solid var(--line); padding-top: 1.25rem; display: grid; gap: 1rem; align-self: start; }
+/* This rule's own `display: grid` above would otherwise beat the `hidden` attribute's UA-stylesheet
+ * `display: none` (author CSS always wins over UA defaults) — on the done screen, the aside is kept
+ * mounted (Turnstile) but must actually disappear, not render at full size with stale content. */
+.checkout[hidden] { display: none; }
 @media (min-width: 56rem) {
   .bookingLayout { grid-template-columns: minmax(0, 1fr) 22rem; gap: 3.5rem; align-items: start; }
   .checkout { position: sticky; top: 1.5rem; border: 1px solid var(--line); border-radius: 1.25rem; padding: 1.25rem; }
@@ -430,6 +438,13 @@ a.textButton { display: inline-flex; align-items: center; }
  * done screen — hidden's display:none is fine there since no challenge is ever in flight then). */
 .turnstileBox { min-height: 0; }
 
+/* The done screen's own spacing: shared Outcome's <p className="lede"> keeps its usual negative
+ * top margin (`.col`'s flex gap absorbs that everywhere else), but here Outcome is rendered inside
+ * `.flowCol`, a plain block container with no gap at all — nothing compensated the negative margin,
+ * so the heading and lede visually overlapped. This grid (mockup's own `.outcome` rule) gives every
+ * child (mark, heading, lede, done card, hint, button — Outcome renders a flat fragment) a real
+ * 1rem gap, same as elsewhere; the negative margin still nets out to a smaller-but-positive gap. */
+.outcomeGrid { display: grid; gap: 1rem; padding-top: 0.5rem; }
 .doneList { list-style: none; margin: 0; padding: 0.9rem 1rem; border: 1px solid var(--line); border-radius: 1rem; display: flex; flex-direction: column; gap: 0.15rem; }
 .doneList li:first-child { font-weight: 600; }
 .doneList li:not(:first-child) { font-size: 0.875rem; color: var(--muted); }

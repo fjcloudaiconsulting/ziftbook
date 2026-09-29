@@ -1126,22 +1126,24 @@ function DoneScreen({
   const name = localized(done.service.name, locale, page.language as Locale);
   const lede = pending ? t("pendLede", { biz: page.name, email: done.email }) : t("okLede", { email: done.email });
   return (
-    <Outcome icon={pending ? "mail" : "done"} title={pending ? t("pendTitle") : t("okTitle")} lede={lede}>
-      <ul className={styles.doneList}>
-        <li lang={name.lang ?? undefined}>{name.text}</li>
-        <li>
-          {t("whenFormat", { day: w.date, from: w.time, to: endTime })} {"("}
-          {zoneCity(zone)}
-          {")"}
-        </li>
-        <li>
-          {done.worker?.display_name ?? ""} · {formatMoney(done.price.amount_minor, done.price.currency, locale)}
-        </li>
-      </ul>
-      <p className={styles.hint}>{t("spam")}</p>
-      <button className={`${styles.button} ${styles.secondary}`} type="button" onClick={onAgain}>
-        {t("another")}
-      </button>
-    </Outcome>
+    <div className={styles.outcomeGrid}>
+      <Outcome icon={pending ? "mail" : "done"} title={pending ? t("pendTitle") : t("okTitle")} lede={lede}>
+        <ul className={styles.doneList}>
+          <li lang={name.lang ?? undefined}>{name.text}</li>
+          <li>
+            {t("whenFormat", { day: w.date, from: w.time, to: endTime })} {"("}
+            {zoneCity(zone)}
+            {")"}
+          </li>
+          <li>
+            {done.worker?.display_name ?? ""} · {formatMoney(done.price.amount_minor, done.price.currency, locale)}
+          </li>
+        </ul>
+        <p className={styles.hint}>{t("spam")}</p>
+        <button className={`${styles.button} ${styles.secondary}`} type="button" onClick={onAgain}>
+          {t("another")}
+        </button>
+      </Outcome>
+    </div>
   );
 }
