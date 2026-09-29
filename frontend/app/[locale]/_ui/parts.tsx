@@ -48,6 +48,17 @@ const ICONS = {
   info: <path d="M8 7.5V11M8 5h.01" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />,
 };
 
+/** The plain alert glyph (circle + "!"), for callers that draw their own bordered/tinted box
+ * around it instead of using `Banner` (e.g. the booking page's terms list). */
+export function AlertIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 16 16" width="16" height="16">
+      <circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" strokeWidth="1.6" />
+      {ICONS.alert}
+    </svg>
+  );
+}
+
 /** An error (role alert) or a neutral note (role status): colour, icon and words change together. */
 export function Banner({ tone, children }: { tone: "error" | "note" | "info"; children: ReactNode }) {
   const icon = tone === "error" ? "alert" : tone === "note" ? "clock" : "info";

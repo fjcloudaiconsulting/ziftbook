@@ -1,12 +1,10 @@
 // F8: every top-level route under frontend/app/[locale] must be in migration 0030's reserved-slug
 // list, so a future route can never be shadowed by a business slug. Route groups ("(console)") are
 // flattened to their children; "_ui" (a private folder) and "[slug]" (a dynamic segment) are
-// skipped. Run: node scripts/check-reserved-routes.mjs
-import { readdirSync, readFileSync } from "node:fs";
+// skipped. Checked by scripts/check-reserved-routes.test.mjs, which node --test "scripts/*.test.mjs"
+// already runs against the real tree — no separate CLI entrypoint.
+import { readdirSync } from "node:fs";
 import { join } from "node:path";
-
-const APP_LOCALE_DIR = "frontend/app/[locale]";
-const MIGRATION = "backend/migrations/versions/0030_tenant_slug.py";
 
 /** The route names a directory listing under app/[locale] yields: route groups flattened, private
  * folders (`_*`) and dynamic segments (`[*]`) skipped, files ignored. */
@@ -36,15 +34,4 @@ export function reservedWords(migrationSource) {
 export function unreservedRoutes(routes, reserved) {
   const set = new Set(reserved);
   return routes.filter((r) => !set.has(r));
-}
-
-if (import.meta.url === `file://${process.argv[1]}`) {
-  const routes = topLevelRoutes(APP_LOCALE_DIR);
-  const reserved = reservedWords(readFileSync(MIGRATION, "utf8"));
-  const missing = unreservedRoutes(routes, reserved);
-  if (missing.length > 0) {
-    console.error(`reserved routes: ${missing.join(", ")} not in migration 0030's RESERVED list`);
-    process.exit(1);
-  }
-  console.log(`reserved routes: all ${routes.length} top-level routes are reserved`);
 }
