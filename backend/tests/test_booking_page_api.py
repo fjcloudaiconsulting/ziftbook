@@ -16,13 +16,15 @@ from tests.conftest import (
     add_membership,
     add_user,
     email_of,
+    events,
     fresh_address,
     member_id,
     new_client,
     put_settings,
+    save_setting,
     signed_in,
 )
-from tests.test_availability_api import assign, new_service, set_display_name, weekdays
+from tests.test_availability_api import assign, get, new_service, set_display_name, weekdays
 from tests.test_bookings_api import post_booking
 from tests.test_working_hours import seed
 
@@ -37,10 +39,48 @@ def owner(app: FastAPI, people: People) -> TestClient:
     return signed_in(app, people.a, people.both)
 
 
+@pytest.fixture(autouse=True)
+def _published(people: People) -> None:
+    """ZIF-145: every test in this file exercises the public booking page, gated on published.
+    Seeded once, here, rather than in every test; a fence that needs an unpublished business (F1)
+    uses its own fresh tenant instead of people.a, and one that flips it (F4/F5) does so through
+    the owner PUT, never a second save_setting."""
+    save_setting(people.a, "published", True)
+
+
 def slug_of(app_engine: Engine, tenant_id: uuid.UUID) -> str:
     with app_engine.connect() as conn:
         slug: str = conn.scalar(text("SELECT slug FROM tenants WHERE id = :t"), {"t": tenant_id})
     return slug
+
+
+# F1. fence
+def test_an_unpublished_business_is_byte_identical_to_an_unknown_slug(
+    app: FastAPI, migrate_engine: Engine
+) -> None:
+    """A brand-new business (no settings row: published defaults False) answers exactly like a
+    slug nobody owns. Kills: published defaulting True, or a distinct 403/410/`unpublished` code
+    that would tell a prober the slug exists."""
+    tag = uuid.uuid4().hex[:8]
+    with migrate_engine.begin() as conn:
+        tenant = conn.scalar(
+            text("INSERT INTO tenants (name) VALUES (:n) RETURNING id"), {"n": f"Fresh Biz {tag}"}
+        )
+    slug = slug_of(migrate_engine, tenant)
+    client = new_client(app)
+    try:
+        unpublished = page(client, slug)
+        unknown = page(client, f"nobody-here-{tag}")
+        assert unpublished.status_code == 404
+        assert (unpublished.status_code, unpublished.content) == (
+            unknown.status_code,
+            unknown.content,
+        )
+        for header in ("content-type", "cache-control"):
+            assert unpublished.headers.get(header) == unknown.headers.get(header)
+    finally:
+        with migrate_engine.begin() as conn:
+            conn.execute(text("DELETE FROM tenants WHERE id = :t"), {"t": tenant})
 
 
 def page(client: TestClient, slug: str) -> Response:
@@ -104,6 +144,48 @@ def test_the_page_answers_exactly_the_documented_fields(
     assert by_id[ready]["description"] == {}
     assert by_id[ready]["price"] == {"amount_minor": 2500, "currency": "EUR"}
     assert len(by_id[second]["workers"]) == 2
+
+
+# F4/F5. fence. Kills: a one-way latch (publishing once can never be undone); an ungated PUT (a
+# worker can flip it); a missing or misshapen audit row.
+def test_publishing_gates_all_three_routes_and_only_an_owner_may_flip_it(
+    people: People, app: FastAPI, owner: TestClient, slug: str, ready: str, migrate_engine: Engine
+) -> None:
+    worker = signed_in(app, people.a, people.only_a)
+    client = new_client(app)
+
+    assert page(client, slug).status_code == 200  # this file's autouse already published people.a
+
+    assert put_settings(owner, {"published": False}).status_code == 200
+    assert page(client, slug).status_code == 404
+
+    denied = put_settings(worker, {"published": True})
+
+    assert (denied.status_code, denied.json()) == (403, {"code": "owner_only"})
+    assert page(client, slug).status_code == 404  # the refused PUT wrote nothing
+    assert get(client, people.a, ready).status_code == 404
+    assert post_booking(client, people.a, ready).status_code == 404
+
+    turned_on = put_settings(owner, {"published": True})
+
+    assert turned_on.status_code == 200
+    assert page(client, slug).status_code == 200
+    assert get(client, people.a, ready).status_code == 200
+    assert post_booking(client, people.a, ready).status_code == 201
+
+    assert put_settings(owner, {"published": False}).status_code == 200
+    assert page(client, slug).status_code == 404  # not a one-way latch
+
+    changed = [
+        e["details"]
+        for e in events(migrate_engine, tenant_id=people.a)
+        if e["action"] == "setting_changed" and e["target"] == "setting:published"
+    ]
+    assert changed == [
+        {"old": True, "new": False},
+        {"old": False, "new": True},
+        {"old": True, "new": False},
+    ]
 
 
 # F9. fence
@@ -189,6 +271,7 @@ def test_another_business_s_services_are_not_listed(
     b_service = new_service(b_owner, name={"en": "B only"})
     seed(people.b, people.only_b, weekdays("09:00", "12:00"))
     assign(people.b, b_service, member_id(people.b, people.only_b))
+    save_setting(people.b, "published", True)
 
     a_page = page(new_client(app), slug).json()
     b_page = page(new_client(app), slug_of(app_engine, people.b)).json()
@@ -236,12 +319,17 @@ def test_the_slug_is_case_insensitive(
             text("INSERT INTO tenants (name) VALUES (:n) RETURNING id"),
             {"n": f"Salão da Ana {tag}"},
         )
+    save_setting(tenant, "published", True)
     try:
         response = page(new_client(app), f"Salao-Da-Ana-{tag}")
         assert response.status_code == 200
         assert response.json()["slug"] == f"salao-da-ana-{tag}"
     finally:
         with migrate_engine.begin() as conn:
+            # save_setting wrote a settings row for this tenant; the foreign key needs it gone
+            # first.
+            conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(tenant)})
+            conn.execute(text("DELETE FROM settings"))
             conn.execute(text("DELETE FROM tenants WHERE id = :t"), {"t": tenant})
 
 

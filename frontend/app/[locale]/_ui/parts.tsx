@@ -150,10 +150,29 @@ export function NoScript({ children }: { children: ReactNode }) {
 
 /** Stays focusable while a request runs, so focus isn't lost; a second press does nothing.
  * `form`: the id of the `<form>` to submit, for a submit button rendered outside it (a week
- * editor's savebar, portaled into the shell's own bottom bar on phone). */
-export function Submit({ busy, busyLabel, form, children }: { busy: boolean; busyLabel: string; form?: string; children: ReactNode }) {
+ * editor's savebar, portaled into the shell's own bottom bar on phone). `secondary`: the
+ * secondary (outline) variant instead of primary — for a button whose meaning flips with state
+ * (ZIF-145's Publish/Unpublish) while staying the same element, so focus survives the flip. */
+export function Submit({
+  busy,
+  busyLabel,
+  form,
+  secondary,
+  children,
+}: {
+  busy: boolean;
+  busyLabel: string;
+  form?: string;
+  secondary?: boolean;
+  children: ReactNode;
+}) {
   return (
-    <button className={`${styles.button} ${styles.primary}`} type="submit" form={form} aria-disabled={busy || undefined}>
+    <button
+      className={`${styles.button} ${secondary ? styles.secondary : styles.primary}`}
+      type="submit"
+      form={form}
+      aria-disabled={busy || undefined}
+    >
       {busy && <span className={styles.spinner} aria-hidden="true" />}
       {busy ? busyLabel : children}
     </button>

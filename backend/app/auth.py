@@ -240,6 +240,7 @@ class SessionOut(BaseModel):
     display_name: str | None
     business_name: str
     currency: str
+    slug: str  # ZIF-145: the console builds the public booking-page address from this
 
 
 def describe(db: Session, user_id: UUID) -> SessionOut:
@@ -247,7 +248,7 @@ def describe(db: Session, user_id: UUID) -> SessionOut:
     row = db.execute(
         text("""
         SELECT m.user_id, m.tenant_id, m.id AS member_id, m.role, m.display_name, u.email,
-               t.name AS business_name, t.currency
+               t.name AS business_name, t.currency, t.slug
         FROM memberships m JOIN users u ON u.id = m.user_id JOIN tenants t ON t.id = m.tenant_id
         WHERE m.user_id = :user_id
         """),

@@ -437,6 +437,11 @@ def read_availability(
         if service is None:
             raise ApiError(404, "not_found")
         settings = business_settings.read(db)
+        # ZIF-145. After the range check (422 invalid_range must still win over an unpublished
+        # page: F10) and before any further read, so an unpublished business never computes or
+        # leaks a single slot.
+        if not settings.published:
+            raise ApiError(404, "not_found")
         # Here, not inside either loop below: once per request, never per worker per day.
         opening = schedule.envelope(db)
         hours, names = candidates(db, service_id)

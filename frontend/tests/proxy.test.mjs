@@ -237,6 +237,18 @@ describe("locale routing", () => {
     assert.equal(new URL(response.headers.get("location"), "http://x").pathname, "/pt");
   });
 
+  // G2 (ZIF-145): a business's clean booking-page address (no locale segment - the address the
+  // owner is given and shares) resolves through the same locale redirect any other unprefixed
+  // path gets. This PR changes no routing, so this is a guard, not a fence.
+  test("a business's clean booking-page address redirects to the visitor's language", async () => {
+    const response = await fetch(`http://127.0.0.1:${port}/nail-bar-carol`, {
+      redirect: "manual",
+      headers: { "Accept-Language": "nl" },
+    });
+    assert.equal(response.status, 307);
+    assert.equal(new URL(response.headers.get("location"), "http://x").pathname, "/nl/nail-bar-carol");
+  });
+
   test("no response sets a cookie", async () => {
     for (const path of ["/", "/en", "/nl", "/pt", "/api/healthz"]) {
       const response = await fetch(`http://127.0.0.1:${port}${path}`, { redirect: "manual" });

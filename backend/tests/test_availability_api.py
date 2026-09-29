@@ -46,6 +46,14 @@ def owner(app: FastAPI, people: People) -> TestClient:
     return signed_in(app, people.a, people.both)
 
 
+@pytest.fixture(autouse=True)
+def _published(people: People) -> None:
+    """ZIF-145: every test in this file exercises the public availability GET, gated on published.
+    Seeded once, here, rather than in every test; a fence that needs unpublished flips it back
+    through the owner PUT, never a second save_setting."""
+    save_setting(people.a, "published", True)
+
+
 def new_service(owner: TestClient, **overrides: Any) -> str:
     response = service(owner, **overrides)
     assert response.status_code == 201
@@ -270,6 +278,25 @@ def test_a_bad_range_is_refused(
     response = get(new_client(app), people.a, ready, start, end)
 
     assert (response.status_code, response.json()) == (422, {"code": code})
+
+
+# F2/F10. fence (ZIF-145). Kills: gating only the slug route, or a gate hoisted above the range
+# check (invalid_range must still win over unpublished: a bad range on an unknown tenant answers
+# the identical 422, so the gate cannot run first).
+def test_an_unpublished_business_offers_no_slots_but_a_bad_range_still_wins(
+    people: People, app: FastAPI, owner: TestClient, ready: str
+) -> None:
+    assert put_settings(owner, {"published": False}).status_code == 200
+
+    offered = get(new_client(app), people.a, ready)
+    bad_range = get(new_client(app), people.a, ready, "2026-03-30", "2026-03-29")
+    bad_range_unknown_tenant = get(
+        new_client(app), uuid.uuid4(), uuid.uuid4(), "2026-03-30", "2026-03-29"
+    )
+
+    assert (offered.status_code, offered.json()) == (404, {"code": "not_found"})
+    assert (bad_range.status_code, bad_range.json()) == (422, {"code": "invalid_range"})
+    assert bad_range.json() == bad_range_unknown_tenant.json()
 
 
 def test_a_bad_id_is_refused(people: People, app: FastAPI, ready: str) -> None:

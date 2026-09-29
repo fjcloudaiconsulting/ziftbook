@@ -74,6 +74,14 @@ def owner(app: FastAPI, people: People) -> TestClient:
     return signed_in(app, people.a, people.both)
 
 
+@pytest.fixture(autouse=True)
+def _published(people: People) -> None:
+    """ZIF-145: every test in this file exercises the public booking POST, gated on published.
+    Seeded once, here, rather than in every test; a fence that needs unpublished flips it back
+    through the owner PUT, never a second save_setting."""
+    save_setting(people.a, "published", True)
+
+
 @pytest.fixture
 def ready(people: People, owner: TestClient) -> str:
     """A 30-minute service performed by the owner, who works 09:00-17:00 every day."""
@@ -969,6 +977,7 @@ def test_thirty_bookings_an_hour_per_address_and_five_per_address_and_business(
     b_service = new_service(b_owner)
     seed(people.b, people.only_b, weekdays("09:00", "17:00"))
     assign(people.b, b_service, member_id(people.b, people.only_b))
+    save_setting(people.b, "published", True)
 
     address = fresh_address()
     per_address_client = new_client(app, address)
@@ -1107,6 +1116,45 @@ def test_an_unknown_policy_version_is_a_422_and_writes_nothing(
     )
 
     assert (response.status_code, response.json()) == (422, {"code": "unknown_policy_version"})
+    with tenant_context(people.a) as session:
+        booking_count = session.scalar(text("SELECT count(*) FROM bookings"))
+        client_count = session.scalar(
+            text("SELECT count(*) FROM clients WHERE email = :e"), {"e": email}
+        )
+    assert (booking_count, client_count) == (0, 0)
+
+
+# F2/F3/F10. fence (ZIF-145). Kills: gating only the slug route; a check placed after
+# find_or_create/record_consents, after texts_for, or after the slot checks (a past starts_at
+# still 404s, not 409/422); the gate hoisted above Turnstile or the rate limits (existence oracle:
+# a bad Turnstile token gives the identical 403 whether the business is published or not).
+def test_an_unpublished_business_refuses_every_booking_and_writes_nothing(
+    people: People, app: FastAPI, owner: TestClient, ready: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    email = fresh_email()
+    assert put_settings(owner, {"published": False}).status_code == 200
+
+    response = post_booking(new_client(app), people.a, ready, starts_at=at("09:00"), email=email)
+    past = post_booking(
+        new_client(app), people.a, ready, starts_at=at("09:00", day=TODAY - timedelta(days=1))
+    )
+    bad_version = post_booking(
+        new_client(app), people.a, ready, starts_at=at("09:00"), policy_version="unknown"
+    )
+    monkeypatch.setattr(turnstile, "verify", lambda token, ip: False)
+    bad_token = post_booking(new_client(app), people.a, ready, starts_at=at("09:00"))
+    unknown_tenant_bad_token = post_booking(
+        new_client(app), uuid.uuid4(), ready, starts_at=at("09:00")
+    )
+
+    assert (response.status_code, response.json()) == (404, {"code": "not_found"})
+    assert (past.status_code, past.json()) == (404, {"code": "not_found"})
+    assert (bad_version.status_code, bad_version.json()) == (404, {"code": "not_found"})
+    # F10: an unpublished business and an unknown tenant_id must be indistinguishable to a prober
+    # who cannot yet know whether the business exists - both fail on Turnstile, checked before the
+    # publish gate ever runs.
+    assert bad_token.json() == unknown_tenant_bad_token.json() == {"code": "turnstile_failed"}
+    assert bad_token.status_code == unknown_tenant_bad_token.status_code == 403
     with tenant_context(people.a) as session:
         booking_count = session.scalar(text("SELECT count(*) FROM bookings"))
         client_count = session.scalar(

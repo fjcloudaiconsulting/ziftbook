@@ -456,6 +456,11 @@ def create(  # sync def: turnstile.verify's urlopen blocks, and runs in FastAPI'
             if row is None:
                 raise ApiError(404, "not_found")
             settings = business_settings.read(db)  # 3
+            # ZIF-145. After Turnstile and the limits, so unpublished answers like unknown (F10);
+            # before any write. A booking that read published=true before a concurrent unpublish
+            # commits still lands: it was placed first, and the owner sees it.
+            if not settings.published:
+                raise ApiError(404, "not_found")
             opening = schedule.envelope(db)  # 4: once, never per worker or per day
             hours, names = availability.candidates(db, service_id, new.member_id)
             candidates = sorted(hours)  # 5

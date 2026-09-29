@@ -59,7 +59,12 @@ def sign_in(client: TestClient, email: str, password: str = PASSWORD) -> Respons
     return client.post("/api/session", json={"email": email, "password": password})
 
 
-def test_signing_in_starts_a_session_in_the_business(people: People, client: TestClient) -> None:
+def test_signing_in_starts_a_session_in_the_business(
+    people: People, client: TestClient, app_engine: Engine
+) -> None:
+    with app_engine.connect() as conn:
+        slug = conn.scalar(text("SELECT slug FROM tenants WHERE id = :t"), {"t": people.a})
+
     response = sign_in(client, email_of(people.only_a))
 
     assert response.status_code == 200
@@ -73,6 +78,7 @@ def test_signing_in_starts_a_session_in_the_business(people: People, client: Tes
         "business_name": "a",
         "currency": "EUR",
         "display_name": None,
+        "slug": slug,
     }
     client.cookies.set(auth.COOKIE, SimpleCookie(response.headers["set-cookie"])[auth.COOKIE].value)
     assert client.get("/api/session").json()["business_name"] == "a"

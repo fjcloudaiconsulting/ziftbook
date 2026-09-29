@@ -51,6 +51,7 @@ from tests.test_booking_email import (
     template_of,
     texts_to,
 )
+from tests.test_booking_page_api import page, slug_of
 from tests.test_bookings_api import DAY, TODAY, ZONE, at, post_booking
 from tests.test_bookings_approval_api import ago, expire, make_pending, patch, shift
 from tests.test_working_hours import seed
@@ -66,6 +67,14 @@ def app(people: People) -> FastAPI:
 @pytest.fixture
 def owner(app: FastAPI, people: People) -> TestClient:
     return signed_in(app, people.a, people.both)
+
+
+@pytest.fixture(autouse=True)
+def _published(people: People) -> None:
+    """ZIF-145: post_booking creates every booking this file exercises through the public route,
+    gated on published. Seeded once, here, rather than in every test; F6 (a link keeps working once
+    unpublished) flips it back through the owner PUT, never a second save_setting."""
+    save_setting(people.a, "published", True)
 
 
 @pytest.fixture
@@ -235,6 +244,28 @@ def test_a_dead_booking_gives_404_on_every_route(
         post(client, "/consents", {"booking_id": booking_id}),
     ]
     assert [(a.status_code, a.text) for a in answers] == [(404, '{"code":"link_expired"}')] * 6
+
+
+# F6. fence (ZIF-145). Kills: the gate placed in a shared helper booking_links.py also calls
+# (business_settings.read, tenant_context) rather than in the three PUBLIC routes alone. Existing
+# bookings and the links in clients' emails keep working once the business unpublishes.
+def test_a_link_keeps_working_once_the_business_unpublishes(
+    people: People, app: FastAPI, owner: TestClient, ready: str, app_engine: Engine
+) -> None:
+    booking_id = confirmed_booking(app, people.a, ready, starts_at=at("10:00"))
+    assert patch(owner, booking_id, "confirmed").status_code == 200
+    token = mint(people.a, booking_id)
+    client = with_cookie(app, people.a, token)
+    day = {"from": DAY.isoformat(), "to": DAY.isoformat()}
+
+    assert put_settings(owner, {"published": False}).status_code == 200
+
+    assert get(client).status_code == 200
+    assert get(client, "/availability", **day).status_code == 200
+    reschedule = post(client, "/reschedule", reschedule_body(booking_id, at("11:00"), 0))
+    assert reschedule.status_code == 200
+    # The gated public routes stay 404 all the while.
+    assert page(new_client(app), slug_of(app_engine, people.a)).status_code == 404
 
 
 # 8. fence. Opening (session/read/availability) writes nothing: bookings, events, consents, jobs

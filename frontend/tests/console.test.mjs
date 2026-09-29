@@ -7,6 +7,7 @@ import { describe, test } from "node:test";
 
 import {
   allowed,
+  bookingPageAddress,
   canEditHours,
   canEditSettings,
   dateLocale,
@@ -15,6 +16,7 @@ import {
   navFor,
   sameSession,
   sectionOf,
+  showPublishStep,
   showSetName,
   todayLabel,
   writeOutcome,
@@ -258,5 +260,19 @@ describe("writeOutcome", () => {
 
   test("a failed identity check with a real error status keeps it", () => {
     assert.equal(writeOutcome({ kind: "failed", outcome: { status: 500 } }).status, 500);
+  });
+});
+
+describe("bookingPageAddress (ZIF-145)", () => {
+  test("F8 fence: origin plus slug, no locale segment", () => {
+    // Wrong implementation killed: a locale-prefixed address (/nl/nail-bar-carol).
+    assert.equal(bookingPageAddress("https://ziftbook.com", "nail-bar-carol"), "https://ziftbook.com/nail-bar-carol");
+  });
+});
+
+describe("showPublishStep (ZIF-145, G1)", () => {
+  test("guard: true only while unpublished, gone once published", () => {
+    assert.equal(showPublishStep(false), true);
+    assert.equal(showPublishStep(true), false);
   });
 });

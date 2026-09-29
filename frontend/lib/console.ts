@@ -73,6 +73,19 @@ export function showSetName(displayName: string | null): boolean {
   return displayName === null;
 }
 
+/** The public booking page's shared address: origin plus the slug, no locale segment ever (the
+ * unprefixed path already redirects to the visitor's language). `origin` carries no trailing
+ * slash (`window.location.origin`), so this never doubles one. */
+export function bookingPageAddress(origin: string, slug: string): string {
+  return `${origin}/${slug}`;
+}
+
+/** Today's owner-only "Publish your booking page" step: shown only while unpublished, gone the
+ * moment the owner publishes (ZIF-145 ruling; the step never shows a done state). */
+export function showPublishStep(published: boolean): boolean {
+  return !published;
+}
+
 /** en reads dates the British way ("Tuesday 22 September"), as drawn; nl and pt keep the URL
  * locale. Money never uses this: it keeps the URL locale for every language. */
 export function dateLocale(locale: string): string {

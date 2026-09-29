@@ -33,6 +33,9 @@ type ConsoleContextValue = {
    * else in another tab never lets this tab's write land in the wrong business. */
   call<T>(request: () => Promise<{ data?: T; error?: unknown; response?: Response }>, options?: { write?: boolean }): Promise<Outcome<T>>;
   updateSession(patch: Partial<SessionOut>): void;
+  /** Patches the console's own settings state from a PUT's response (ZIF-145: publish/unpublish),
+   * so a dependent screen (Today's step 5) updates live, with no reload. */
+  updateSettings(patch: Partial<BusinessSettingsOutput>): void;
   /** Where a page's own bottom action bar (the week editor's savebar) renders on phone, so it
    * stacks directly on the tab bar as one element with no gap between them - never a sticky offset
    * computed to line up with a separately-stickied tab bar, which a page nested many levels deep
@@ -311,6 +314,10 @@ export function Shell({ children }: { children: ReactNode }) {
     setSession((current) => (current ? { ...current, ...patch } : current));
   }
 
+  function updateSettings(patch: Partial<BusinessSettingsOutput>) {
+    setSettings((current) => (current ? { ...current, ...patch } : current));
+  }
+
   async function onSignOut(everywhere: boolean) {
     const outcome = await send(everywhere ? sessionSignOutEverywhere(JSON_WRITE) : sessionSignOut(JSON_WRITE));
     // 401: the session had already ended, which is where signing out leads anyway.
@@ -339,7 +346,7 @@ export function Shell({ children }: { children: ReactNode }) {
   const current = sectionOf(pathname);
 
   return (
-    <ConsoleContext.Provider value={{ session, settings, call, updateSession, footerSlot }}>
+    <ConsoleContext.Provider value={{ session, settings, call, updateSession, updateSettings, footerSlot }}>
       <div className={styles.shell}>
         <header className={styles.topbar}>
           <span className={styles.brand}>

@@ -168,7 +168,8 @@ def test_no_personal_data_ever_reaches_a_log(
     secret(timezone)
     owner = signed_in(app, people.a, people.both)
     owner.headers.update(UA)
-    assert put_settings(owner, {"timezone": timezone}).status_code == 200
+    # published too: step 6c below hits the public availability route (ZIF-145 gate).
+    assert put_settings(owner, {"timezone": timezone, "published": True}).status_code == 200
 
     # 5: PATCH /api/members/{id} role change, as the owner.
     target = member_id(people.a, people.only_a)

@@ -76,8 +76,12 @@ def test_without_a_valid_cookie_the_request_is_unauthenticated(
     assert unauthenticated(client.get("/api/session"))
 
 
-def test_a_signed_in_user_sees_their_session(people: People, client: TestClient) -> None:
+def test_a_signed_in_user_sees_their_session(
+    people: People, client: TestClient, app_engine: Engine
+) -> None:
     sign_in(client, people.a, people.both)
+    with app_engine.connect() as conn:
+        slug = conn.scalar(text("SELECT slug FROM tenants WHERE id = :t"), {"t": people.a})
 
     response = client.get("/api/session")
 
@@ -92,6 +96,7 @@ def test_a_signed_in_user_sees_their_session(people: People, client: TestClient)
         "business_name": "a",
         "currency": "EUR",
         "display_name": None,
+        "slug": slug,
     }
 
 
