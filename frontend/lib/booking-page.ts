@@ -2,7 +2,7 @@
 // import besides lib/booking-link.ts's addDays) so node --test can run it directly: cancellation
 // terms, the business's own policy text, email typo suggestions, the POST body, the answer-to-
 // outcome mapping, day-part grouping and the availability window.
-import { addDays } from "./booking-link.ts";
+import { addDays, slotsByDay } from "./booking-link.ts";
 
 /** Cancellation terms once a slot is picked: free up to `freeUntil`, or already inside that
  * window. The boundary instant itself is still free (spec F1: "at the exact boundary instant,
@@ -22,8 +22,22 @@ export function ownPolicyText(text: string | null, pageLocale: string, businessL
 }
 
 // A handful of common providers a typo-fingered domain is worth flagging against. Not a
-// spellchecker: only close misses, never the domain itself.
-const KNOWN_DOMAINS = ["gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "icloud.com", "live.com", "aol.com"];
+// spellchecker: only close misses, never the domain itself. ymail.com/mail.com/email.com are
+// their own real providers (Yahoo's alternate domain, GMX's mail.com, and Mail.com's email.com),
+// never a "did you mean" target for one another or for gmail.com — listed here so they count as
+// an exact match (no suggestion), not a close-but-wrong one.
+const KNOWN_DOMAINS = [
+  "gmail.com",
+  "yahoo.com",
+  "hotmail.com",
+  "outlook.com",
+  "icloud.com",
+  "live.com",
+  "aol.com",
+  "ymail.com",
+  "mail.com",
+  "email.com",
+];
 
 function editDistance(a: string, b: string): number {
   const rows = a.length + 1;
@@ -158,4 +172,18 @@ export function nextWeekDisabled(businessLocalToday: string, nextWeekFirstDay: s
  * `+ 14` (availability.py:424 refuses a 14-day-or-longer span). */
 export function scanWindow(from: string): { from: string; to: string } {
   return { from, to: addDays(from, 13) };
+}
+
+/** The earliest business-local day at or after `from` that has a free slot, out of an already-
+ * fetched availability window (never issues a request itself). A 14-day window fetched for the
+ * visible week already covers the following week too (spec's scanWindow): when the visible 7 days
+ * are empty, this must be checked BEFORE any further network scan — the answer may already be in
+ * hand. `from` is inclusive, so days already shown (and confirmed empty by the caller) are simply
+ * never in `slots` for a day `< from` that this function would return. */
+export function firstFreeDayFrom(slots: string[], from: string, timeZone: string): string | null {
+  const days = [...slotsByDay(slots, timeZone).entries()]
+    .filter(([day, times]) => times.length > 0 && day >= from)
+    .map(([day]) => day)
+    .sort();
+  return days[0] ?? null;
 }

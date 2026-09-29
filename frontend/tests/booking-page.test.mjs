@@ -12,6 +12,7 @@ import {
   cancellationState,
   dayPart,
   emailSuggestion,
+  firstFreeDayFrom,
   groupByDayPart,
   nextWeekDisabled,
   ownPolicyText,
@@ -66,6 +67,15 @@ describe("F3 email typo suggestion", () => {
   test("fence: edit distance 3 or more suggests nothing", () => {
     assert.equal(emailSuggestion("ana@gmailxyz.com"), null); // distance 3 from gmail.com
     assert.equal(emailSuggestion("ana@example.com"), null);
+  });
+
+  test("fence: a legitimately different provider close in spelling to a known one is never flagged", () => {
+    // Wrong implementation killed: leaving ymail.com/mail.com/email.com out of KNOWN_DOMAINS, so
+    // each gets "corrected" toward gmail.com/mail.com/gmail.com respectively even though every one
+    // of them is a real provider in its own right.
+    assert.equal(emailSuggestion("ana@ymail.com"), null);
+    assert.equal(emailSuggestion("ana@mail.com"), null);
+    assert.equal(emailSuggestion("ana@email.com"), null);
   });
 });
 
@@ -160,7 +170,10 @@ describe("F6 day-part grouping and horizon, in the BUSINESS time zone", () => {
   test("fence: grouping uses the business zone, not the viewer's (TZ=America/Sao_Paulo)", () => {
     // Wrong implementation killed: reading new Date(slot).getHours() (the viewer's own zone),
     // which would misclassify every one of these under America/Sao_Paulo (UTC-3 in October).
-    assert.equal(dayPart("2026-10-20T09:30:00Z", ZONE), "morning"); // 11:30 Amsterdam (CEST, UTC+2)
+    // 04:00 Amsterdam (CEST, UTC+2) is morning; the SAME instant is 23:00 the PREVIOUS day in
+    // Sao_Paulo (UTC-3) — evening. A viewer-zone leak would answer "evening" here, unlike the
+    // other two cases below, which happen to land in a plausible-but-wrong part either way.
+    assert.equal(dayPart("2026-10-20T02:00:00Z", ZONE), "morning");
     assert.equal(dayPart("2026-10-20T14:30:00Z", ZONE), "afternoon"); // 16:30 Amsterdam
     assert.equal(dayPart("2026-10-20T18:30:00Z", ZONE), "evening"); // 20:30 Amsterdam
   });
@@ -186,5 +199,29 @@ describe("F10 availability window", () => {
     // availability.py:424 refuses (to - from).days >= 14, so from..from+13 is the largest legal
     // 14-day-inclusive window.
     assert.deepEqual(scanWindow("2026-10-01"), { from: "2026-10-01", to: "2026-10-14" });
+  });
+});
+
+describe("B8 firstFreeDayFrom: the already-fetched window is checked before any further scan", () => {
+  const ZONE = "Europe/Amsterdam";
+
+  test("fence: a free day in the SAME 14-day window's second week is found without a new fetch", () => {
+    // Wrong implementation killed: only looking at the visible 7 days (or requiring the whole
+    // 14-day window to be empty before checking anything), which misses a day the scanWindow
+    // fetch already returned in the *following* week and would trigger a needless extra request.
+    const weekStart = "2026-10-01"; // the visible week: 2026-10-01..2026-10-07, empty
+    const slots = ["2026-10-11T09:00:00Z"]; // in the SAME fetched window (from+13 = 10-14), week 2
+    assert.equal(firstFreeDayFrom(slots, weekStart, ZONE), "2026-10-11");
+  });
+
+  test("fence: a day before `from` is never returned, even if it sorts first", () => {
+    // Wrong implementation killed: ignoring the `from` lower bound, which could point the client
+    // back at a day before the week they're currently looking at.
+    const slots = ["2026-09-28T09:00:00Z", "2026-10-05T09:00:00Z"];
+    assert.equal(firstFreeDayFrom(slots, "2026-10-01", ZONE), "2026-10-05");
+  });
+
+  test("no free day anywhere in the window is null", () => {
+    assert.equal(firstFreeDayFrom([], "2026-10-01", ZONE), null);
   });
 });

@@ -167,6 +167,7 @@ export function EmailField({
   error,
   autoComplete = "email",
   inputRef,
+  onBlur,
 }: {
   value: string;
   onChange(value: string): void;
@@ -174,6 +175,9 @@ export function EmailField({
   /** "off" for an invite form: the browser autofills the signed-in person's own address otherwise. */
   autoComplete?: "email" | "off";
   inputRef?: Ref<HTMLInputElement>;
+  /** Optional: the booking page's typo suggestion checks the domain on blur. No other caller
+   * passes this, so the field's behaviour for them is unchanged. */
+  onBlur?(): void;
 }) {
   const t = useTranslations("Form");
   const id = useId();
@@ -194,6 +198,7 @@ export function EmailField({
           placeholder={t("emailPlaceholder")}
           value={value}
           onChange={(event) => onChange(event.target.value)}
+          onBlur={onBlur}
           aria-invalid={error ? true : undefined}
           aria-describedby={error ? `${id}-error` : undefined}
         />
