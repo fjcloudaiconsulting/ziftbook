@@ -18,7 +18,7 @@ import { Link, useRouter } from "@/i18n/navigation";
 import { closedDay, daySlices, dayWindow, hourRange, hrefFor, lanes, nowTop, type Panel, parseView, type Slice, visibleDays, weekdayOf } from "@/lib/calendar";
 import { dateLocale } from "@/lib/console";
 import { type Locale, type NameMap, serviceName } from "@/lib/services";
-import { slotAt } from "@/lib/new-booking";
+import { hhmm, messageShown, slotAt } from "@/lib/new-booking";
 import { addDaysISO, localDateISO, localTime, localToInstant } from "@/lib/time-off";
 import { agendaPhase, blockLabel, mergeAgenda, nowLineAt } from "@/lib/today";
 
@@ -39,7 +39,6 @@ type Column = { key: string; day: string; label: string; ariaLabel: string; smal
 /** The empty-spot popover: where it sits on screen, and the start and person the click meant. */
 type Popover = { at: string; time: string; member: string; name: string; column: string; left: number; top: number };
 
-const hhmm = (minutes: number) => `${String(Math.floor((minutes % 1440) / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
 const memberOf = (item: Item) => (item.kind === "booking" ? item.booking.worker_id : item.block.member_id);
 
 export function Calendar() {
@@ -77,10 +76,29 @@ export function Calendar() {
   const justDone = useRef<{ id: string; before: Loaded | null } | null>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const [popover, setPopover] = useState<Popover | null>(null);
-  const [message, setMessage] = useState<{ text: string; booking: string | null } | null>(null);
+  // The hint under the heading: where it was made (booking, day, view), so it never lingers elsewhere.
+  const [message, setMessage] = useState<{ text: string; booking: string | null; date: string; view: string } | null>(null);
+  // What the screen reader hears: cleared before each set, so an identical message is announced again.
+  const [live, setLive] = useState("");
+  const liveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [settled, setSettled] = useState<string | null>(null);
+  useEffect(() => () => {
+    if (liveTimer.current) clearTimeout(liveTimer.current);
+  }, []);
+  function announce(text: string) {
+    if (liveTimer.current) clearTimeout(liveTimer.current);
+    setLive("");
+    liveTimer.current = setTimeout(() => setLive(text), 50);
+  }
 
   const view = parseView(params, todayISO, isOwner ? "owner" : "worker", session.member_id, members?.map((m) => m.member_id) ?? null);
+  // Skipping the heading's focus is for the booking just made or moved, once: any other booking (or none)
+  // in between clears it, so a reopened one focuses its heading again.
+  const [seenBooking, setSeenBooking] = useState(view.booking);
+  if (seenBooking !== view.booking) {
+    setSeenBooking(view.booking);
+    if (settled !== view.booking) setSettled(null);
+  }
   const days = visibleDays(view.view, view.date);
   const range = dayWindow(days[0], tz, days.length);
   const key = `${range.from}|${range.to}`;
@@ -152,11 +170,17 @@ export function Calendar() {
   // list is hidden behind the panel, so then its panel heading), else the page heading.
   useEffect(() => {
     const done = justDone.current;
-    if (!done || !data || data === done.before) return;
+    if (!done) return;
+    // One shot, whether or not the window could be read again.
+    if (failed) {
+      justDone.current = null;
+      return;
+    }
+    if (!data || data === done.before) return;
     justDone.current = null;
     const link = [...document.querySelectorAll<HTMLElement>(`[data-open="${CSS.escape(done.id)}"]`)].find((el) => el.offsetParent !== null);
     (link ?? document.getElementById("detail-title") ?? document.querySelector<HTMLElement>("h1"))?.focus();
-  }, [data]);
+  }, [data, failed]);
   const href = (patch: Parameters<typeof hrefFor>[1]) => hrefFor(view, patch);
   const weekView = view.view === "week";
 
@@ -409,12 +433,13 @@ export function Calendar() {
 
   function openPanel(event: MouseEvent<HTMLElement>) {
     invoker.current = event.currentTarget;
-    panelOpenedInApp.current = true;
+    // A panel already open (a deep link from Today) has no calendar entry to go back to.
+    if (!view.panel) panelOpenedInApp.current = true;
   }
 
   function fromPopover(pop: Popover) {
     invoker.current = document.querySelector<HTMLElement>(`[data-col="${CSS.escape(pop.column)}"]`);
-    panelOpenedInApp.current = true;
+    if (!view.panel) panelOpenedInApp.current = true;
     setPopover(null);
   }
 
@@ -438,7 +463,8 @@ export function Calendar() {
   }
 
   function blocked() {
-    setMessage({ text: t("blockedDone"), booking: null });
+    setMessage({ text: t("blockedDone"), booking: null, date: view.date, view: view.view });
+    announce(t("blockedDone"));
     setReload((n) => n + 1);
     panelOpenedInApp.current = false;
     router.replace(href({ panel: null }), { scroll: false });
@@ -447,10 +473,13 @@ export function Calendar() {
   function finished(done: Done) {
     justDone.current = { id: done.id, before: loaded };
     setSettled(done.id);
-    setMessage({ text: done.message, booking: done.id });
+    openedInApp.current = false;
+    const date = localDateISO(new Date(done.startsAt), tz);
+    setMessage({ text: done.message, booking: done.id, date, view: view.view });
+    announce(done.message);
     setReload((n) => n + 1);
     panelOpenedInApp.current = false;
-    router.replace(href({ panel: null, booking: done.id, date: localDateISO(new Date(done.startsAt), tz), at: null, with: null }), { scroll: false });
+    router.replace(href({ panel: null, booking: done.id, date, at: null, with: null }), { scroll: false });
   }
 
   const step = weekView ? 7 : 1;
@@ -462,9 +491,9 @@ export function Calendar() {
     <div className={`${css.page} ${view.booking || view.panel ? css.hasDetail : ""}`}>
       <Heading focus>{nav("calendar")}</Heading>
       <p className={uiStyles.srOnly} role="status" aria-live="polite">
-        {message?.text ?? ""}
+        {live}
       </p>
-      {message && message.booking === view.booking && !view.panel && (
+      {message && messageShown(message, view) && (
         <p className={uiStyles.hint} aria-hidden="true">
           {message.text}
         </p>
@@ -673,6 +702,10 @@ export function Calendar() {
           aria-label={t("popoverGroup", { member: popover.name, time: popover.time })}
           className={css.popover}
           style={{ left: popover.left, top: popover.top }}
+          onBlur={(event) => {
+            // Tab out of the popover closes it (a null target is a click or the window losing focus).
+            if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget as Node)) setPopover(null);
+          }}
           onKeyDown={(event) => {
             if (event.key !== "Escape") return;
             event.stopPropagation();

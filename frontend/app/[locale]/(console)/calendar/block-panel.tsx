@@ -40,7 +40,7 @@ export function BlockPanel({
   const [prefill] = useState(() => (at ? blockPrefill(at, settings.timezone) : { firstDay: date, startTime: "09:00", endTime: "10:00" }));
   const nameOf = (m: MemberOut) => m.display_name ?? person("nameNotSet");
   const chosen = team.find((m) => m.member_id === who);
-  const name = isOwner ? (chosen ? nameOf(chosen) : "") : (session.display_name ?? person("nameNotSet"));
+  const name = chosen ? nameOf(chosen) : (session.display_name ?? person("nameNotSet"));
 
   return (
     <PanelFrame id="panel-title" title={t("blockTitle")} closeHref={closeHref} onClose={onClose}>

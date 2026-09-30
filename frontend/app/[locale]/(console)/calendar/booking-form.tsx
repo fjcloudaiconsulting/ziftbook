@@ -26,13 +26,15 @@ import {
   groupSlots,
   initialPick,
   isLatest,
+  initialStrip,
   isUnchanged,
+  memberForService,
   moveBody,
   type Pick,
   pickInstant,
+  searchStep,
   searchTerm,
   shiftStrip,
-  stripStart,
   submitFailure,
 } from "@/lib/new-booking";
 import { type Locale, type NameMap, serviceName } from "@/lib/services";
@@ -91,7 +93,9 @@ export function BookingForm(props: Props) {
   );
   if (failure) {
     return frame(
-      failure.status === 403 || failure.status === 404 ? (
+      failure.status === 401 ? (
+        <SignedOutBanner />
+      ) : failure.status === 403 || failure.status === 404 ? (
         <Banner tone="error">{failure.status === 403 ? t("detailForbidden") : t("detailGone")}</Banner>
       ) : (
         <LoadFailure failure={failure.problem} onRetry={() => setReload((n) => n + 1)} />
@@ -144,8 +148,9 @@ function Fields({ prefill, team, todayISO, date, onDone, services, booking }: Pr
   const initialWith = moving ? booking.worker_id : isOwner ? prefill.with : session.member_id;
   const [serviceId, setServiceId] = useState(() => (moving ? booking.service_id : (defaultService(services, initialWith)?.id ?? "")));
   const [withId, setWithId] = useState(initialWith ?? "");
-  const [anchor, setAnchor] = useState(() => stripStart(startAt ? localDateISO(new Date(startAt), tz) : date, todayISO));
-  const [day, setDay] = useState<string | null>(startAt ? localDateISO(new Date(startAt), tz) : null);
+  const [first] = useState(() => initialStrip(startAt ? localDateISO(new Date(startAt), tz) : null, date, todayISO));
+  const [anchor, setAnchor] = useState(first.anchor);
+  const [day, setDay] = useState<string | null>(first.day);
   const [pick, setPick] = useState<Pick>({ kind: "none" });
   const [slots, setSlots] = useState<string[]>([]);
   const [workers, setWorkers] = useState<WorkerOut[]>(() => {
@@ -164,7 +169,15 @@ function Fields({ prefill, team, todayISO, date, onDone, services, booking }: Pr
   const [emailError, setEmailError] = useState<string | null>(null);
   const [signedOut, setSignedOut] = useState(false);
   const submitting = useRef(false);
+  const mounted = useRef(true);
   const focusTarget = useRef<string | null>(null);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     const target = focusTarget.current;
@@ -176,11 +189,11 @@ function Fields({ prefill, team, todayISO, date, onDone, services, booking }: Pr
   // Search as you type: each change makes every older answer stale, and a slow one never wins.
   useEffect(() => {
     const mine = ++searchSeq.current;
-    const term = searchTerm(q);
-    if (!term) return;
+    const { term, call: search } = searchStep(q, mine, mine);
+    if (!search || !term) return;
     const timer = setTimeout(() => {
       call(() => clientsList({ query: { q: term, limit: 8 } })).then((outcome) => {
-        if (!isLatest(mine, searchSeq.current)) return;
+        if (!searchStep(q, mine, searchSeq.current).apply) return;
         setResults({ term, list: outcome.status === 200 && outcome.data ? outcome.data : [] });
       });
     }, 250);
@@ -207,9 +220,9 @@ function Fields({ prefill, team, todayISO, date, onDone, services, booking }: Pr
       setWorkers(outcome.data.workers);
       if (!initialised.current) {
         initialised.current = true;
-        const first = initialPick(startAt, outcome.data.slots, tz);
-        setPick(first);
-        if (first.kind === "slot") setDay(localDateISO(new Date(first.slot), tz));
+        const start = initialPick(startAt, outcome.data.slots, tz);
+        setPick(start);
+        if (start.kind === "slot") setDay(localDateISO(new Date(start.slot), tz));
       }
       setLoadedKey(availabilityKey);
     });
@@ -228,16 +241,17 @@ function Fields({ prefill, team, todayISO, date, onDone, services, booking }: Pr
 
   const grouped = groupSlots(slots, tz);
   const strip = Array.from({ length: 7 }, (_, i) => addDaysISO(anchor, i));
-  const selectedDay = day ?? strip.find((d) => grouped[d]) ?? strip[0];
+  const selectedDay = day && strip.includes(day) ? day : (strip.find((d) => grouped[d]) ?? strip[0]);
   const days = strip.filter((d) => grouped[d] || d === selectedDay);
   const times = grouped[selectedDay] ?? [];
   const loading = Boolean(serviceId) && loadedKey !== availabilityKey && !(availabilityFailure && availabilityFailure.key === availabilityKey);
   const failedAvailability = availabilityFailure && availabilityFailure.key === availabilityKey ? availabilityFailure : null;
 
   const service = services.find((s) => s.id === serviceId);
-  const withName = (id: string) =>
-    workers.find((w) => w.id === id)?.display_name ?? team.find((m) => m.member_id === id)?.display_name ?? (id === session.member_id ? session.display_name : null) ?? person("nameNotSet");
-  const prefillMember = prefill.with ? withName(prefill.with) : "";
+  const memberName = (id: string) => workers.find((w) => w.id === id)?.display_name ?? team.find((m) => m.member_id === id)?.display_name ?? (id === session.member_id ? session.display_name : null);
+  const withName = (id: string) => memberName(id) ?? person("nameNotSet");
+  const noServiceFor = initialWith ? withName(initialWith) : "";
+  const offered = isOwner ? services : services.filter((s) => s.worker_ids.includes(session.member_id));
   const clientName = moving ? booking.client_name : (client?.name ?? newName.trim());
   const clientEmail = moving ? booking.client_email : client ? client.email : newEmail.trim();
   const instant = pickInstant(pick, tz);
@@ -282,17 +296,19 @@ function Fields({ prefill, team, todayISO, date, onDone, services, booking }: Pr
           );
       const saved = outcome.data as { id: string; starts_at: string } | undefined;
       if ((outcome.status === 200 || outcome.status === 201) && saved) {
+        if (!mounted.current) return;
         onDone({ id: saved.id, startsAt: saved.starts_at, message: moving ? t("moved", { when: whenOf(saved.starts_at) }) : t("booked", { client: clientName, when: whenOf(saved.starts_at) }) });
         return;
       }
-      const failure = submitFailure(outcome, { newClientEmail: creating && newEmail.trim() !== "" });
+      const chosen = withId ? memberName(withId) : null;
+      const failure = submitFailure(outcome, override, chosen);
       if (failure === "signedOut") setSignedOut(true);
-      else if (failure === "slotTaken" || failure === "slotUnavailable") {
-        setBanner(failure === "slotTaken" ? t("slotTaken") : t("slotUnavailable", { member: withId ? withName(withId) : person("nameNotSet") }));
+      else if (failure === "slotTaken" || failure === "memberUnavailable") {
+        setBanner(failure === "slotTaken" ? t("slotTaken") : t("slotUnavailable", { member: chosen ?? "" }));
         clearTime();
         setRefetch((n) => n + 1);
-      } else if (failure === "emailTaken" || failure === "emailInvalid") {
-        setEmailError(failure === "emailTaken" ? t("emailTaken") : form("invalidEmail"));
+      } else if (failure === "emailTaken") {
+        setEmailError(t("emailTaken"));
         focusTarget.current = "bf-new-email";
       } else if (failure === "changed") setBanner(t("changedClose"));
       else if (failure === "ownerOnly") setBanner(errorsT("ownerOnly"));
@@ -454,20 +470,21 @@ function Fields({ prefill, team, todayISO, date, onDone, services, booking }: Pr
               value={serviceId}
               onChange={(event) => {
                 setServiceId(event.target.value);
+                setWithId(memberForService(withId, services.find((s) => s.id === event.target.value)?.worker_ids ?? [], ""));
                 clearTime();
               }}
             >
               <option value="" disabled>
                 {t("chooseService")}
               </option>
-              {services.map((s) => (
+              {offered.map((s) => (
                 <option key={s.id} value={s.id}>
                   {t("serviceOption", { name: ownService(s.name), minutes: s.duration_minutes, price: formatMoney(s.price.amount_minor, s.price.currency, locale) })}
                 </option>
               ))}
             </select>
           </div>
-          {prefill.with && isOwner && !defaultService(services, prefill.with) && <Banner tone="note">{t("memberNoService", { member: prefillMember })}</Banner>}
+          {initialWith && !defaultService(services, initialWith) && <Banner tone="note">{t("memberNoService", { member: noServiceFor })}</Banner>}
         </div>
       )}
 

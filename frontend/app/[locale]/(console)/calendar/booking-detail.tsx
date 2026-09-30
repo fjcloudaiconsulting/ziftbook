@@ -18,6 +18,7 @@ import { Banner, FieldError, problem } from "../../_ui/parts";
 import uiStyles from "../../_ui/ui.module.css";
 import { CHIPS, chipOf, LoadFailure, Skeleton } from "../today";
 import css from "./calendar.module.css";
+import { PanelFrame } from "./panel-frame";
 
 const TARGET = { accept: "confirmed", completed: "completed", no_show: "no_show", restore: "confirmed", cancel: "cancelled_by_merchant" } as const;
 const DONE = {
@@ -77,12 +78,6 @@ export function BookingDetail({
   const submitting = useRef(false);
   const focusTarget = useRef<string | null>(null);
   const heading = useRef<HTMLHeadingElement>(null);
-
-  // Opening (or switching to) a booking moves focus to the panel: the phone list behind it is hidden.
-  useEffect(() => {
-    if (focusOnOpen) heading.current?.focus();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   useEffect(() => {
     const target = focusTarget.current;
@@ -296,27 +291,22 @@ export function BookingDetail({
   const chip = ready ? (ready.status === "pending" && ready.expired ? CHIPS.expired : chipOf(ready.status)) : undefined;
 
   return (
-    <aside className={css.panel} aria-labelledby="detail-title">
-      <Link className={css.backLink} href={closeHref} replace scroll={false} onClick={onClose}>
-        <span aria-hidden="true">{"‹ "}</span>
-        {t("back")}
-      </Link>
-      <div className={css.panelHead}>
-        <div>
-          <h2 id="detail-title" className={css.panelTitle} ref={heading} tabIndex={-1}>
-            {ready ? ready.client_name : t("detailTitle")}
-          </h2>
-          {chip && (
-            <span className={`${styles.chip} ${chip.style}`}>
-              <span aria-hidden="true">{chip.icon}</span>
-              {today(chip.word)}
-            </span>
-          )}
-        </div>
-        <Link className={css.close} href={closeHref} replace scroll={false} aria-label={t("close")} onClick={onClose}>
-          <span aria-hidden="true">{"✕"}</span>
-        </Link>
-      </div>
+    <PanelFrame
+      id="detail-title"
+      title={ready ? ready.client_name : t("detailTitle")}
+      meta={
+        chip && (
+          <span className={`${styles.chip} ${chip.style}`}>
+            <span aria-hidden="true">{chip.icon}</span>
+            {today(chip.word)}
+          </span>
+        )
+      }
+      headingRef={heading}
+      focusOnOpen={focusOnOpen}
+      closeHref={closeHref}
+      onClose={onClose}
+    >
       <p className={uiStyles.srOnly} role="status" aria-live="polite">
         {status}
       </p>
@@ -372,6 +362,6 @@ export function BookingDetail({
           </div>
         </>
       )}
-    </aside>
+    </PanelFrame>
   );
 }
