@@ -1,0 +1,8 @@
+Boeking verzet
+Hallo,
+
+$client, $service: verzet van $old_date om $old_time naar $date om $time ($zone).
+
+$link
+
+ziftbook

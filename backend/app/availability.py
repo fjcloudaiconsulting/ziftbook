@@ -7,16 +7,16 @@ from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
-from typing import Annotated
+from typing import Annotated, Any
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Query, Request, Response
 from pydantic import BaseModel, BeforeValidator, Field
-from sqlalchemy import text
+from sqlalchemy import Row, text
 from sqlalchemy.orm import Session
 
-from app import business_settings, limits, schedule
+from app import auth, business_settings, limits, members, schedule
 from app.db import tenant_context
 from app.errors import ApiError, Error
 
@@ -442,44 +442,117 @@ def read_availability(
         # leaks a single slot.
         if not settings.published:
             raise ApiError(404, "not_found")
-        # Here, not inside either loop below: once per request, never per worker per day.
-        opening = schedule.envelope(db)
-        hours, names = candidates(db, service_id)
-        workers = sorted(hours)
-        # An unassigned or unknown member_id: no slots, never a 404 (no membership probing).
-        chosen = [m for m in workers if member_id in (None, m)]
-        zone = settings.timezone
-        first, last, earliest = window(
-            now(),
-            zone,
-            from_,
-            to,
-            settings.min_notice_minutes,
-            settings.booking_horizon_days,
+        return compute(db, service, service_id, member_id, from_, to, settings)
+
+
+def compute(
+    db: Session,
+    service: Row[Any],
+    service_id: UUID,
+    member_id: UUID | None,
+    from_: date,
+    to: date,
+    settings: business_settings.BusinessSettings,
+    exclude: UUID | None = None,
+) -> AvailabilityOut:
+    """Everything after the gates, shared by the public route and the merchant's (ZIF-57): each
+    gate stays with its own route. exclude leaves one booking out of the read, so a reschedule sees
+    that booking's own slot free."""
+    # Here, not inside either loop below: once per request, never per worker per day.
+    opening = schedule.envelope(db)
+    hours, names = candidates(db, service_id)
+    workers = sorted(hours)
+    # An unassigned or unknown member_id: no slots, never a 404 (no membership probing).
+    chosen = [m for m in workers if member_id in (None, m)]
+    zone = settings.timezone
+    first, last, earliest = window(
+        now(),
+        zone,
+        from_,
+        to,
+        settings.min_notice_minutes,
+        settings.booking_horizon_days,
+    )
+    found: set[datetime] = set()
+    # Dates only after clamping: to=9999-12-31 would overflow below.
+    if chosen and first <= last:
+        buffer = buffer_for(service.duration_minutes, service.buffer_minutes, settings.buffer_pct)
+        result = offered(
+            db,
+            members=chosen,
+            hours=hours,
+            opening=opening,
+            settings=settings,
+            first=first,
+            last=last,
+            earliest=earliest,
+            duration=service.duration_minutes,
+            buffer=buffer,
+            exclude=exclude,
         )
-        found: set[datetime] = set()
-        # Dates only after clamping: to=9999-12-31 would overflow below.
-        if chosen and first <= last:
-            buffer = buffer_for(
-                service.duration_minutes, service.buffer_minutes, settings.buffer_pct
-            )
-            result = offered(
-                db,
-                members=chosen,
-                hours=hours,
-                opening=opening,
-                settings=settings,
-                first=first,
-                last=last,
-                earliest=earliest,
-                duration=service.duration_minutes,
-                buffer=buffer,
-            )
-            for m in chosen:
-                found.update(result.slots[m])
+        for m in chosen:
+            found.update(result.slots[m])
     return AvailabilityOut(
         timezone=zone,
         duration_minutes=service.duration_minutes,
         workers=[WorkerOut(id=m, display_name=names[m]) for m in workers],
         slots=sorted(found),
+    )
+
+
+merchant_router = APIRouter(prefix="/api", tags=["availability"])
+
+# The booking's worker, for the `exclude` gate below.
+WORKER_OF = text("""
+SELECT m.user_id FROM bookings b
+JOIN memberships m ON m.tenant_id = b.tenant_id AND m.id = b.worker_id
+WHERE b.id = :id
+""")
+
+
+@merchant_router.get(
+    "/services/{service_id}/availability",
+    name="merchant-read",
+    responses={s: {"model": Error} for s in (401, 404, 422)},
+)
+def read_merchant_availability(
+    service_id: UUID,
+    from_: Annotated[Day, Query(alias="from")],
+    to: Day,
+    current: auth.CurrentSession,
+    response: Response,
+    member_id: UUID | None = None,
+    exclude: UUID | None = None,
+) -> AvailabilityOut:
+    """Bookable starts for the calendar's new-booking and reschedule panels. Any member may ask:
+    free times are what the public page shows. No publish gate (a business books by hand before it
+    opens its page) and no rate limit (a signed-in member, not an anonymous caller).
+
+    exclude is a booking id whose own slot counts as free, for a reschedule. Honoured only for
+    a booking the caller may manage; any other id is 404, so it cannot probe a colleague's."""
+    if to < from_ or (to - from_).days >= MAX_DAYS:
+        raise ApiError(422, "invalid_range")
+    service = current.db.execute(
+        text("""
+        SELECT duration_minutes, buffer_minutes FROM services
+        WHERE id = :id AND archived_at IS NULL
+        """),
+        {"id": service_id},
+    ).first()
+    if service is None:
+        raise ApiError(404, "not_found")
+    if exclude is not None:
+        owner_user_id = current.db.scalar(WORKER_OF, {"id": exclude})
+        if owner_user_id is None or not members.may_manage(current, owner_user_id):
+            raise ApiError(404, "not_found")
+    response.headers["Cache-Control"] = "no-store"
+    return compute(
+        current.db,
+        service,
+        service_id,
+        member_id,
+        from_,
+        to,
+        business_settings.read(current.db),
+        exclude,
     )

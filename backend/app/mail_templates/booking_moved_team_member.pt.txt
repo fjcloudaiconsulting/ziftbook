@@ -1,0 +1,8 @@
+Agendamento remarcado
+Olá,
+
+$client, $service: remarcado de $old_date às $old_time para $date às $time ($zone), agora com $member.
+
+$link
+
+ziftbook

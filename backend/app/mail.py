@@ -256,6 +256,8 @@ STATUS_FOR = {
     "booking_cancelled_by_client": "cancelled_by_client",
     "booking_client_cancelled": "cancelled_by_client",
     "booking_client_rescheduled": "confirmed",
+    # ZIF-57: the team is told when a colleague moves a booking of theirs.
+    "booking_moved_team": "confirmed",
 }
 
 # ZIF-54 D1: the client templates whose $link is the guest booking link, minted here at send time.
@@ -264,7 +266,7 @@ LINKED = frozenset({"booking_received", "booking_confirmed", "booking_reminder"}
 BOOKING = text("""
 SELECT c.email AS client_email, c.locale AS client_locale, c.name AS client_name,
        t.name AS business, b.client_id, b.status, b.starts_at, b.ends_at, b.expires_at,
-       b.service_name, b.reschedule_count, b.decline_message, now() AS now
+       b.service_name, b.reschedule_count, b.decline_message, b.worker_display_name, now() AS now
 FROM bookings b
 JOIN clients c ON c.tenant_id = b.tenant_id AND c.id = b.client_id
 JOIN tenants t ON t.id = b.tenant_id
@@ -442,12 +444,21 @@ def send_booking(job: Job) -> None:
             # dropped unused, never stored.
             token = secrets.token_urlsafe(32)
             values["link"] = f"{app_url}/{locale}/booking#{job.tenant_id}.{token}"
+        file = template
+        if (
+            template == "booking_moved_team"
+            and "member_changed" in payload
+            and row.worker_display_name
+        ):
+            # Only the file differs, as booking_declined_message below: the status gate, the outbox
+            # row and the log keep the template's own name.
+            file = "booking_moved_team_member"
+            values["member"] = row.worker_display_name
         if template == "booking_request":
             expires_local = row.expires_at.astimezone(ZoneInfo(zone))
             values["expires"] = (
                 expires_local.strftime(f"{DATE_FORMAT[locale]} %H:%M") + f" ({zone})"
             )
-        file = template
         if template == "booking_declined" and row.decline_message is not None:
             # ZIF-121: only the file rendered differs. `template` stays booking_declined for
             # STATUS_FOR, the outbox row and the log. The text is a value, never rescanned, and
