@@ -27,6 +27,24 @@ export function dayWindow(dateISO: string, tz: string, n: number): { from: strin
   return { from: localToInstant(dateISO, "00:00", tz), to: localToInstant(addDaysISO(dateISO, n), "00:00", tz) };
 }
 
+/** The local days a view shows: its seven days from Monday, or the one day. */
+export function visibleDays(view: View, dateISO: string): string[] {
+  const first = view === "week" ? weekStart(dateISO) : dateISO;
+  return Array.from({ length: view === "week" ? 7 : 1 }, (_, i) => addDaysISO(first, i));
+}
+
+/** The booking panel's "When", in `tz`: whether the start is today, both clock times, and whether the
+ * end falls on a later local day (so the line names its date). */
+export function whenParts(startISO: string, endISO: string, now: Date, tz: string) {
+  const day = localDateISO(new Date(startISO), tz);
+  return {
+    today: day === localDateISO(now, tz),
+    startTime: localTime(startISO, tz),
+    endTime: localTime(endISO, tz),
+    endsLater: localDateISO(new Date(endISO), tz) !== day,
+  };
+}
+
 export type Slice = { day: string; start: number; end: number };
 
 function localMinutes(instant: number, tz: string): number {

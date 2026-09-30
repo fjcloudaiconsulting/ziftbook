@@ -241,7 +241,6 @@
   flex: none;
 }
 .stepsHint { margin: 0; font-size: 0.875rem; color: var(--muted); }
-.placeholderAction { justify-self: start; width: auto; }
 
 /* Week editor (opening hours; working hours later): the day list and its sticky savebar. */
 .days { display: grid; gap: 0.5rem; }

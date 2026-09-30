@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { actionsFor, closedDay, daySlices, dayWindow, historyLabel, hourRange, hrefFor, lanes, nowTop, parseView, weekStart, weekdayOf } from "../lib/calendar.ts";
+import { actionsFor, closedDay, daySlices, dayWindow, historyLabel, hourRange, hrefFor, lanes, nowTop, parseView, visibleDays, weekStart, weekdayOf, whenParts } from "../lib/calendar.ts";
 
 const AMS = "Europe/Amsterdam";
 const at = (iso) => new Date(iso).getTime();
@@ -251,5 +251,19 @@ describe("hrefFor (G1)", () => {
   });
   test("it points at the calendar", () => {
     assert.ok(hrefFor(current, {}).startsWith("/calendar?"));
+  });
+});
+
+describe("visibleDays and whenParts", () => {
+  test("a week is its seven days from Monday, a day is itself", () => {
+    assert.deepEqual(visibleDays("week", "2026-10-04"), ["2026-09-28", "2026-09-29", "2026-09-30", "2026-10-01", "2026-10-02", "2026-10-03", "2026-10-04"]);
+    assert.deepEqual(visibleDays("day", "2026-10-04"), ["2026-10-04"]);
+  });
+  test("whenParts reads the business zone: today, the times, and a later end day", () => {
+    const now = new Date("2026-09-30T12:00:00Z");
+    assert.deepEqual(whenParts("2026-09-30T13:30:00Z", "2026-09-30T14:15:00Z", now, AMS), { today: true, startTime: "15:30", endTime: "16:15", endsLater: false });
+    // 23:30 - 00:30 Amsterdam: still the 30th at the start, ends the next local day
+    assert.deepEqual(whenParts("2026-09-30T21:30:00Z", "2026-09-30T22:30:00Z", now, AMS), { today: true, startTime: "23:30", endTime: "00:30", endsLater: true });
+    assert.equal(whenParts("2026-10-01T08:00:00Z", "2026-10-01T09:00:00Z", now, AMS).today, false);
   });
 });
