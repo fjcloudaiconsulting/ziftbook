@@ -257,7 +257,7 @@ export function BookingDetail({
         {has("accept") && expiryLine(d)}
         {(has("completed") || has("restore")) && (
           <div className={css.split}>
-            {has("restore") ? button("restore", t("restoreAction"), "primary") : button("completed", <><span aria-hidden="true">✓ </span>{t("completedAction")}</>, "primary")}
+            {has("restore") ? button("restore", t("restoreAction"), "primary") : button("completed", <><span aria-hidden="true">{"✓ "}</span>{t("completedAction")}</>, "primary")}
             {has("no_show") && button("no_show", t("noShowAction"), "secondary")}
           </div>
         )}
