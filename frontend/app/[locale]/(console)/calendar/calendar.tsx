@@ -99,6 +99,13 @@ export function Calendar() {
     setSeenBooking(view.booking);
     if (settled !== view.booking) setSettled(null);
   }
+  // Opening a panel (reschedule, new, block) from the detail also ends that one-shot skip, so the detail
+  // focuses its heading again when the panel closes.
+  const [seenPanel, setSeenPanel] = useState(view.panel);
+  if (seenPanel !== view.panel) {
+    setSeenPanel(view.panel);
+    if (view.panel) setSettled(null);
+  }
   const days = visibleDays(view.view, view.date);
   const range = dayWindow(days[0], tz, days.length);
   const key = `${range.from}|${range.to}`;

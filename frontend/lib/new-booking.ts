@@ -68,6 +68,12 @@ export const stripStart = (anchor: string, todayISO: string) => (anchor < todayI
 
 /** Where the strip starts and which day is selected: the start's local day (or the calendar's date), never
  * before today. A past start lands on today, selected; the selected day is always inside the strip. */
+/** The merchant availability window: seven local days from `anchor`, inclusive, as the API's `date`
+ * params (backend availability.py Day), never instants. */
+export function availabilityDays(anchor: string): { from: string; to: string } {
+  return { from: anchor, to: addDaysISO(anchor, 6) };
+}
+
 export function initialStrip(startDay: string | null, date: string, todayISO: string): { anchor: string; day: string | null } {
   const anchor = stripStart(startDay ?? date, todayISO);
   return { anchor, day: startDay === null ? null : startDay < anchor ? anchor : startDay };

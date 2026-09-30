@@ -17,10 +17,10 @@ import {
   type WorkerOut,
 } from "@/api-client";
 import { Link } from "@/i18n/navigation";
-import { dayWindow } from "@/lib/calendar";
 import { dateLocale } from "@/lib/console";
 import { formatMoney } from "@/lib/money";
 import {
+  availabilityDays,
   bookingBody,
   defaultService,
   groupSlots,
@@ -206,7 +206,7 @@ function Fields({ prefill, team, todayISO, date, onDone, services, booking }: Pr
   useEffect(() => {
     if (!serviceId || (moving && !withId)) return;
     const mine = ++availSeq.current;
-    const range = dayWindow(anchor, tz, 7);
+    const range = availabilityDays(anchor);
     call(() =>
       availabilityMerchantRead({
         path: { service_id: serviceId },
@@ -218,6 +218,9 @@ function Fields({ prefill, team, todayISO, date, onDone, services, booking }: Pr
       setAvailabilityFailure(null);
       setSlots(outcome.data.slots);
       setWorkers(outcome.data.workers);
+      // A member assigned to the service but with no hours isn't among the bookable workers: fall back
+      // to "Anyone free" rather than keep a choice the select can't show.
+      if (!moving && withId && !outcome.data.workers.some((w) => w.id === withId)) setWithId("");
       if (!initialised.current) {
         initialised.current = true;
         const start = initialPick(startAt, outcome.data.slots, tz);

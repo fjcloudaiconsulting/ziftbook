@@ -1,9 +1,11 @@
 // Pure logic behind the merchant's new-booking, move and block-time panels (ZIF-57 PR3).
 // No TZ is pinned: run under TZ=America/New_York and TZ=Pacific/Kiritimati as well.
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { describe, test } from "node:test";
 
 import {
+  availabilityDays,
   blockPrefill,
   bookingBody,
   defaultService,
@@ -255,5 +257,19 @@ describe("hhmm", () => {
     assert.equal(hhmm(75), "01:15");
     assert.equal(hhmm(1440), "00:00");
     assert.equal(hhmm(0), "00:00");
+  });
+});
+
+// The merchant availability route takes local DAYS (backend availability.py Day, inclusive, at most 14),
+// not instants: the generated client types both as string, so only this pins the contract.
+describe("availabilityDays", () => {
+  test("seven local days, inclusive, as YYYY-MM-DD", () => {
+    assert.deepEqual(availabilityDays("2026-10-01"), { from: "2026-10-01", to: "2026-10-07" });
+  });
+  test("matches the API's date format for both params", () => {
+    const api = JSON.parse(readFileSync(new URL("../../backend/openapi.json", import.meta.url), "utf8"));
+    const params = api.paths["/api/services/{service_id}/availability"].get.parameters;
+    for (const name of ["from", "to"]) assert.equal(params.find((q) => q.name === name).schema.format, "date");
+    for (const value of Object.values(availabilityDays("2026-10-25"))) assert.match(value, /^\d{4}-\d{2}-\d{2}$/);
   });
 });
