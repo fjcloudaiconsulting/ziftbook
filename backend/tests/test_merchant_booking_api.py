@@ -5,6 +5,7 @@ wrong implementation it kills (docs/specs/2026-09-30-zif-57-pr3-spec.md, tests F
 import json
 import urllib.request
 import uuid
+from collections.abc import Iterator
 from datetime import date, datetime, timedelta
 from typing import Any
 
@@ -420,17 +421,35 @@ def test_the_merchant_availability_checks_its_inputs(
 
 # F14. Kills: reusing RESCHEDULE (count + 1), a NULL actor.
 def test_f14_a_move_keeps_the_clients_allowance_and_records_the_team(
-    people: People, owner: TestClient, ready: str
+    people: People,
+    app_engine: Engine,
+    owner: TestClient,
+    ready: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     booking_id = book(owner, ready, member_id=boss(people)).json()["id"]
+    # A session that hands timestamps back in Amsterdam time (libpq reads PGTZ at connect), so only
+    # an explicit .astimezone(UTC) yields +00:00; a UTC session would pass either way.
+    monkeypatch.setenv("PGTZ", "Europe/Amsterdam")
+    app_engine.dispose()
+    from app.db import SessionLocal
+
+    SessionLocal.kw["bind"].dispose()
     response = move(owner, booking_id, starts_at=at("11:00"))
+    monkeypatch.delenv("PGTZ")
+    SessionLocal.kw["bind"].dispose()  # no Amsterdam connections left in the shared pool
     assert response.status_code == 200, response.json()
-    assert response.json()["starts_at"].startswith(at("11:00")[:16])
+    assert datetime.fromisoformat(response.json()["starts_at"]) == datetime.fromisoformat(
+        at("11:00").replace("Z", "+00:00")
+    )
     assert row_of(people.a, booking_id)["reschedule_count"] == 0
     last = events_of(people.a, booking_id)[-1]
     assert (last["event"], last["actor_user_id"]) == ("rescheduled", people.both)
     assert set(last["details"]) == {"from", "to"}
-    assert last["details"]["from"].endswith("+00:00") and last["details"]["to"].endswith("+00:00")
+    assert last["details"] == {
+        "from": at("09:00").replace("Z", "+00:00"),
+        "to": at("11:00").replace("Z", "+00:00"),
+    }
     history = owner.get(f"/api/bookings/{booking_id}").json()["history"]
     assert history[-1]["actor"] == "team"
 
@@ -553,8 +572,9 @@ def test_unchanged_is_422(people: People, owner: TestClient, ready: str) -> None
     assert (response.status_code, response.json()["code"]) == (422, "unchanged")
 
 
-# F12d-g. Kills: the wrong recipients, a missing or stale payload, a deduping key.
-def test_f12_owner_moves_anas_booking_to_ben_both_are_told(
+# F12d-g. Kills: the wrong recipients, a missing or stale payload, a deduping key, the new worker
+# told "now with" themselves.
+def test_f12_owner_moves_anas_booking_to_themselves_only_ana_is_told(
     people: People, app_engine: Engine, owner: TestClient, team: str
 ) -> None:
     booking_id = book(owner, team, member_id=ana_id(people)).json()["id"]
@@ -565,9 +585,10 @@ def test_f12_owner_moves_anas_booking_to_ben_both_are_told(
     # Ben here is the owner himself (the actor): only Ana, the old worker, is told.
     assert [payload_of(j)["user_id"] for j in sent] == [str(people.only_a)]
     assert payload_of(sent[0])["previous_starts_at"] and payload_of(sent[0])["starts_at"]
+    assert mails(app_engine, people.a, booking_id, "booking_new") == []
 
 
-def test_f12_owner_moves_between_two_workers_both_are_told_and_the_actor_is_not(
+def test_f12_owner_moves_between_two_workers_old_hears_moved_new_hears_new_booking(
     people: People, app_engine: Engine, owner: TestClient, team: str
 ) -> None:
     ben = add_user(app_engine)
@@ -582,9 +603,14 @@ def test_f12_owner_moves_between_two_workers_both_are_told_and_the_actor_is_not(
         ).status_code
         == 200
     )
-    sent = mails(app_engine, people.a, booking_id, "booking_moved_team")
-    assert sorted(payload_of(j)["user_id"] for j in sent) == sorted([str(people.only_a), str(ben)])
-    assert all(payload_of(j).get("member_changed") == "1" for j in sent)
+    moved = mails(app_engine, people.a, booking_id, "booking_moved_team")
+    assert [payload_of(j)["user_id"] for j in moved] == [str(people.only_a)]
+    assert payload_of(moved[0])["member_changed"] == "1"
+    new = mails(app_engine, people.a, booking_id, "booking_new")
+    assert [payload_of(j)["user_id"] for j in new] == [str(ben)]
+    assert "member_changed" not in payload_of(new[0])
+    keys = [j["dedupe_key"] for j in moved + new]
+    assert len(keys) == len(set(keys)) == 2
 
 
 def test_f12_a_move_in_time_only_tells_the_one_worker(
@@ -673,3 +699,50 @@ def test_the_team_template_set_is_complete() -> None:
             assert "—" not in body and "—" not in subject
     _, body = render("booking_moved_team_member", "en", values)
     assert "MEMBER-MARKER" in body
+
+
+# The moved-to-another-member email: "now with" names the booking's snapshot worker; a NULL
+# snapshot falls back to the plain moved template. Kills: the file switch, a missing fallback.
+@pytest.fixture
+def clean_outbox(people: People) -> Iterator[None]:
+    yield
+    with tenant_context(people.a) as session:
+        session.execute(text("DELETE FROM email_outbox"))
+
+
+@pytest.mark.usefixtures("clean_outbox")
+@pytest.mark.parametrize("name", ["Ana Snapshot", None])
+def test_send_booking_member_changed_body_names_the_member_or_falls_back(
+    people: People,
+    owner: TestClient,
+    team: str,
+    monkeypatch: pytest.MonkeyPatch,
+    name: str | None,
+) -> None:
+    from app import mail
+    from tests.test_booking_email import run_send_booking
+
+    booking_id = book(owner, team, member_id=ana_id(people)).json()["id"]
+    with tenant_context(people.a) as session:
+        session.execute(
+            text("UPDATE bookings SET worker_display_name = :n WHERE id = :id"),
+            {"n": name, "id": booking_id},
+        )
+    starts_at = row_of(people.a, booking_id)["starts_at"].isoformat()
+    bodies: list[str] = []
+    monkeypatch.setattr(mail, "deliver", lambda *args, **kwargs: bodies.append(args[3]))
+    run_send_booking(
+        people.a,
+        booking_id,
+        "booking_moved_team",
+        user_id=str(people.both),
+        starts_at=starts_at,
+        previous_starts_at=starts_at,
+        member_changed="1",
+    )
+    (body,) = bodies
+    # Locale-free: the member variant ends "(zone), now with <name>."; the plain one at "(zone)."
+    if name is None:
+        assert "(Europe/Amsterdam).\n" in body
+    else:
+        assert f"{name}.\n" in body and "(Europe/Amsterdam).\n" not in body

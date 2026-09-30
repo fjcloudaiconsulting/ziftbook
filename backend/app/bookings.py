@@ -1269,6 +1269,7 @@ def book(
         target=f"booking:{booking.id}",
     )
     response.headers["Cache-Control"] = "no-store"
+    logger.info("booking created", extra={"booking_id": str(booking.id)})
     return BookingOut(
         id=booking.id,
         status=booking.status,
@@ -1398,12 +1399,13 @@ def reschedule(
             db, current.tenant_id, booking_id, moved.starts_at, row.now
         )  # the old one self-skips
         changed_member = worker_id != row.worker_id
-        new_user = db.scalar(WORKER_USER, {"id": worker_id}) if changed_member else None
+        # The old worker hears it moved (away, when the member changed); the new one has a new
+        # booking, not a move "now with" themselves. The actor is skipped either way.
         tell_team(
             db,
             current,
             booking_id,
-            [new_user or row.worker_user_id, row.worker_user_id],
+            [row.worker_user_id],
             "booking_moved_team",
             key_suffix=stamp,
             extra={
@@ -1412,6 +1414,16 @@ def reschedule(
                 **({"member_changed": "1"} if changed_member else {}),
             },
         )
+        if changed_member:
+            tell_team(
+                db,
+                current,
+                booking_id,
+                [db.scalar(WORKER_USER, {"id": worker_id})],
+                "booking_new",
+                key_suffix=stamp,
+                extra={"starts_at": new_iso},
+            )
     auth.record(
         db,
         request,
