@@ -29,7 +29,11 @@ const saved = {
   buffer_pct: 10,
   pending_ttl_hours: 24,
   max_pending_per_email: 3,
+  free_cancellation_hours: 48,
+  reschedule_cutoff_hours: 24,
   max_reschedules: 2,
+  cancellation_policy_text: "Please cancel at least 48 hours ahead.",
+  workers_edit_own_hours: false,
 };
 const ints = FIELDS.filter((f) => f.kind === "int");
 
@@ -141,6 +145,42 @@ describe("F11 mergeSaved", () => {
     assert.equal(merged.max_reschedules, "5");
     assert.equal(merged.buffer_pct, "20"); // the server's value, not the typed "020"
     assert.ok(!("published" in merged));
+  });
+});
+
+describe("F12 policy text is sent exactly as typed", () => {
+  test("a trailing space is a change and is kept", () => {
+    const text = `${saved.cancellation_policy_text} `;
+    const draft = { ...draftFrom(saved), cancellation_policy_text: text };
+    assert.deepEqual(settingsBody(saved, draft), { body: { cancellation_policy_text: text }, invalid: [] });
+  });
+  test("clearing it sends the empty string", () => {
+    const draft = { ...draftFrom(saved), cancellation_policy_text: "" };
+    assert.deepEqual(settingsBody(saved, draft), { body: { cancellation_policy_text: "" }, invalid: [] });
+  });
+});
+
+describe("F13 cancelling and team keys", () => {
+  test("all four are sent, typed, in page order", () => {
+    const draft = {
+      ...draftFrom(saved),
+      workers_edit_own_hours: true,
+      cancellation_policy_text: "No refunds.",
+      reschedule_cutoff_hours: "0",
+      free_cancellation_hours: "720",
+    };
+    const { body, invalid } = settingsBody(saved, draft);
+    assert.deepEqual(invalid, []);
+    assert.deepEqual(Object.entries(body), [
+      ["free_cancellation_hours", 720],
+      ["reschedule_cutoff_hours", 0],
+      ["cancellation_policy_text", "No refunds."],
+      ["workers_edit_own_hours", true],
+    ]);
+  });
+  test("721 hours is invalid, never sent", () => {
+    const { body, invalid } = settingsBody(saved, { ...draftFrom(saved), free_cancellation_hours: "721" });
+    assert.deepEqual([body, invalid], [{}, ["free_cancellation_hours"]]);
   });
 });
 

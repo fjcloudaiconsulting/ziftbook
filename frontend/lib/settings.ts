@@ -12,7 +12,11 @@ export type Settings = {
   buffer_pct: number;
   pending_ttl_hours: number;
   max_pending_per_email: number;
+  free_cancellation_hours: number;
+  reschedule_cutoff_hours: number;
   max_reschedules: number;
+  cancellation_policy_text: string;
+  workers_edit_own_hours: boolean;
 };
 export type Key = keyof Settings;
 export type Draft = Record<Key, string | boolean>;
@@ -31,7 +35,12 @@ export const FIELDS: Field[] = [
   { key: "buffer_pct", kind: "int", min: 0, max: 100 },
   { key: "pending_ttl_hours", kind: "int", min: 1, max: 168 },
   { key: "max_pending_per_email", kind: "int", min: 1, max: 50 },
+  { key: "free_cancellation_hours", kind: "int", min: 0, max: 720 },
+  { key: "reschedule_cutoff_hours", kind: "int", min: 0, max: 720 },
   { key: "max_reschedules", kind: "int", min: 0, max: 10 },
+  // Compared and sent exactly as typed (no trim); the textarea's maxLength and the API cap its length.
+  { key: "cancellation_policy_text", kind: "text" },
+  { key: "workers_edit_own_hours", kind: "bool" },
 ];
 
 export const SLOT_STEPS = [5, 10, 15, 20, 30, 60];
@@ -122,7 +131,15 @@ export function breakMinutes(pct: number): number {
 }
 
 /** A numeric field's draft value while it parses, else the saved one (what computed hints show). */
-export type IntKey = "slot_step_minutes" | "buffer_pct" | "booking_horizon_days" | "pending_ttl_hours" | "max_pending_per_email" | "max_reschedules";
+export type IntKey =
+  | "slot_step_minutes"
+  | "buffer_pct"
+  | "booking_horizon_days"
+  | "pending_ttl_hours"
+  | "max_pending_per_email"
+  | "free_cancellation_hours"
+  | "reschedule_cutoff_hours"
+  | "max_reschedules";
 export function effective(saved: Settings, draft: Draft, key: IntKey): number {
   const value = parse(FIELDS.find((f) => f.key === key)!, draft[key]);
   return typeof value === "number" ? value : saved[key];
