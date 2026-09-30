@@ -1,0 +1,106 @@
+/* Calendar: toolbar, desktop time grid, phone list and the booking panel (ZIF-57, boards 3, 4, 5, 9, 10). */
+.page { display: flex; flex-direction: column; gap: 1.25rem; --hour: 64px; --head: 2.75rem; --note-ink: oklch(0.42 0.08 70); --primary-soft: oklch(0.96 0.025 28); --primary-line: oklch(0.82 0.08 28); }
+
+.toolbar { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+.stepper { display: inline-flex; align-items: center; border: 1px solid var(--field-line); border-radius: 999px; overflow: hidden; }
+.stepper a { min-width: 44px; min-height: 44px; display: grid; place-items: center; padding: 0 0.8rem; font-weight: 600; font-size: 0.9375rem; color: var(--ink); text-decoration: none; }
+.stepper a + a { border-left: 1px solid var(--line); }
+.stepper a:hover { background: var(--surface); }
+.seg { display: inline-flex; padding: 3px; background: var(--surface); border-radius: 999px; }
+.seg a { min-height: 38px; padding: 0 1rem; display: grid; place-items: center; border-radius: 999px; font-weight: 600; font-size: 0.9375rem; color: var(--muted); text-decoration: none; }
+.seg a[aria-current="true"] { background: var(--bg); color: var(--ink); box-shadow: 0 1px 3px oklch(0.23 0.025 28 / 0.15); }
+/* Phone: the date sits on its own line under the stepper. Desktop: first in the toolbar, as drawn. */
+.dateLabel { margin: 0; flex-basis: 100%; order: 3; color: var(--muted); font-size: 0.9375rem; }
+.member { display: none; min-width: 10rem; }
+.chips { display: flex; gap: 0.4rem; overflow-x: auto; padding-bottom: 2px; }
+.chips a { flex: none; min-height: 44px; padding: 0 1rem; display: inline-flex; align-items: center; border-radius: 999px; border: 1px solid var(--field-line); font-weight: 600; font-size: 0.9375rem; white-space: nowrap; color: var(--ink); text-decoration: none; }
+.chips a[aria-current="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+
+.phoneOnly { display: block; }
+.deskOnly { display: none; }
+.body { display: block; }
+
+/* Phone list: Today's agenda rows, each a link to its booking. */
+.dayBlock { display: flex; flex-direction: column; gap: 0.4rem; }
+.dayHeading { margin: 0; font: 400 1.2rem/1.2 var(--font-display), Georgia, serif; }
+.rowLink { grid-column: 1 / -1; display: grid; grid-template-columns: 4.5rem 1fr auto; gap: 0.1rem 1rem; min-height: 44px; color: inherit; text-decoration: none; }
+.noneToday { margin: 0; padding: 1.1rem 0; text-align: center; color: var(--muted); display: grid; gap: 0.2rem; }
+.noneToday strong { color: var(--ink); font-weight: 600; }
+.closedNote { margin: 0; display: grid; gap: 0.2rem; color: var(--muted); font-size: 0.9375rem; }
+.closedNote strong { color: var(--ink); font-weight: 600; }
+
+/* Desktop grid. The hour gutter stays put; columns scroll sideways past about six. */
+.gridWrap { display: grid; grid-template-columns: 3.5rem minmax(0, 1fr); border: 1px solid var(--line); border-radius: 1rem; overflow: hidden; background: var(--bg); }
+.gutterHead { height: var(--head); border-bottom: 1px solid var(--line); }
+.hours { position: relative; height: calc(var(--hour) * var(--hours)); }
+.hours span { position: absolute; right: 0.5rem; transform: translateY(-0.55rem); font-size: 0.75rem; color: var(--muted); font-variant-numeric: tabular-nums; top: calc(var(--hour) * var(--at)); }
+.hours span:first-child { transform: none; top: 0.25rem; }
+.scroller { overflow-x: auto; min-width: 0; }
+.inner { min-width: calc(var(--cols) * var(--mincol)); }
+.heads, .lanes { display: grid; grid-template-columns: repeat(var(--cols), minmax(var(--mincol), 1fr)); }
+.heads { height: var(--head); border-bottom: 1px solid var(--line); }
+.colHead { padding: 0 0.75rem; display: flex; align-items: center; gap: 0.4rem; border-left: 1px solid var(--line); font-weight: 600; font-size: 0.9375rem; white-space: nowrap; overflow: hidden; }
+.colHead small { font-weight: 400; color: var(--muted); font-size: 0.8125rem; }
+.colHead[aria-current="date"] { font-weight: 700; color: var(--primary); box-shadow: inset 0 -3px 0 var(--primary); }
+.lanes { height: calc(var(--hour) * var(--hours)); background-image: repeating-linear-gradient(to bottom, var(--line) 0 1px, transparent 1px var(--hour)); }
+.lane { position: relative; border-left: 1px solid var(--line); min-width: 0; }
+.lane.closed { background: repeating-linear-gradient(135deg, var(--surface) 0 6px, transparent 6px 12px); }
+.laneList { list-style: none; margin: 0; padding: 0; }
+.item { position: absolute; z-index: 1; border-radius: 0.55rem; overflow: hidden; font-size: 0.8125rem; line-height: 1.25; border: 1px solid var(--primary-line); background: var(--primary-soft); min-height: 24px; }
+.item a { display: block; height: 100%; min-height: 24px; padding: 0.3rem 0.5rem; color: var(--ink); text-decoration: none; }
+.item b { display: block; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.item span { color: var(--muted); display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.item b .ico { display: inline; color: inherit; }
+.item.short a { padding-top: 0.15rem; padding-bottom: 0.15rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.item.short b, .item.short span { display: inline; }
+.item.waiting { border: 1.5px dashed var(--note-ink); background: var(--note-soft); }
+.item.done { background: var(--bg); border-color: var(--line); color: var(--muted); }
+.item.done a { color: var(--muted); }
+.item.selected { outline: 2px solid var(--primary); outline-offset: 1px; }
+.block { position: absolute; z-index: 0; left: 0; right: 0; padding: 0.3rem 0.5rem; overflow: hidden; font-size: 0.8125rem; line-height: 1.25; color: var(--muted); background: repeating-linear-gradient(135deg, var(--surface) 0 6px, var(--bg) 6px 12px); border: 1px solid var(--line); }
+.block b { display: block; font-weight: 600; }
+.nowMark { position: absolute; left: 0; right: 0; z-index: 2; border-top: 2px solid var(--primary); pointer-events: none; }
+.nowMark::before { content: ""; position: absolute; left: -4px; top: -5px; width: 8px; height: 8px; border-radius: 50%; background: var(--primary); }
+.legend { margin: 0; font-size: 0.875rem; color: var(--muted); }
+.gridNote { margin: 0; display: grid; gap: 0.1rem; color: var(--muted); font-size: 0.9375rem; }
+.gridNote strong { color: var(--ink); font-weight: 600; }
+
+/* Booking panel: beside the grid on desktop, full screen on a phone. */
+.panel { position: fixed; inset: 0; z-index: 30; overflow-y: auto; background: var(--bg); padding: 1rem; display: flex; flex-direction: column; gap: 1.1rem; }
+.panelHead { display: flex; justify-content: space-between; align-items: flex-start; gap: 0.75rem; }
+.panelTitle { margin: 0; font: 400 1.2rem/1.2 var(--font-display), Georgia, serif; }
+.panelTitle:focus { outline: none; }
+.panelTitle + span { margin-top: 0.4rem; display: inline-flex; }
+.close { flex: none; min-width: 44px; min-height: 44px; display: grid; place-items: center; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); font-size: 1.1rem; text-decoration: none; }
+.backLink { min-height: 44px; display: inline-flex; align-items: center; color: var(--primary); font-weight: 600; font-size: 0.9375rem; text-decoration: underline; text-underline-offset: 3px; }
+.facts { margin: 0; display: grid; grid-template-columns: 6.5rem 1fr; gap: 0.45rem 0.75rem; font-size: 0.9375rem; }
+.facts dt { color: var(--muted); }
+.facts dd { margin: 0; overflow-wrap: anywhere; }
+.facts a { color: var(--primary); }
+.split { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; }
+.split > * { width: 100%; }
+.danger { color: var(--error); }
+.expiry { margin: 0; font-size: 0.875rem; color: var(--note-ink); }
+.historyList { list-style: none; margin: 0; padding: 0 0 0 1rem; border-left: 2px solid var(--line); display: flex; flex-direction: column; gap: 0.6rem; font-size: 0.875rem; }
+.historyList li { position: relative; line-height: 1.35; }
+.historyList li::before { content: ""; position: absolute; left: calc(-1rem - 6px); top: 0.35rem; width: 10px; height: 10px; border-radius: 50%; background: var(--bg); border: 2px solid var(--field-line); }
+.historyList li[aria-current="true"]::before { background: var(--ok); border-color: var(--ok); }
+.historyList small { display: block; color: var(--muted); font-size: 0.875rem; }
+.confirm { display: flex; flex-direction: column; gap: 0.6rem; }
+.confirm h3 { margin: 0; font: 600 0.9375rem/1.3 var(--font-body), system-ui, sans-serif; }
+.confirm h3:focus { outline: none; }
+
+@media (min-width: 56rem) {
+  .phoneOnly { display: none; }
+  .deskOnly { display: block; }
+  .dateLabel { flex-basis: auto; order: 0; margin-right: auto; color: var(--ink); font: 400 1.25rem/1.2 var(--font-display), Georgia, serif; }
+  .member { display: block; }
+  .body.hasPanel { display: grid; grid-template-columns: minmax(0, 1fr) 23rem; gap: 1.5rem; align-items: start; }
+  .panel { position: static; inset: auto; z-index: auto; overflow: visible; border-left: 1px solid var(--line); padding: 0 0 1rem 1.5rem; }
+  .backLink { display: none; }
+}
+/* The panel covers a phone's screen: the list behind it leaves the page, so focus and readers stay in the panel. */
+@media (max-width: 55.999rem) {
+  .panel .close { display: none; }
+  .hasDetail .hideWithDetail { display: none; }
+}

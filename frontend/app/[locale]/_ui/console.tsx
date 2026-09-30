@@ -1,7 +1,7 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-import { createContext, type FormEvent, type ReactNode, useContext, useEffect, useId, useRef, useState } from "react";
+import { createContext, type Dispatch, type FormEvent, type ReactNode, type SetStateAction, useContext, useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import {
@@ -44,7 +44,7 @@ type ConsoleContextValue = {
    * read lands, and for good if that read failed: no badge, never a failed console. Today sets it
    * after it loads and after each answer, so the badge follows what the page shows. */
   pendingCount: number | null;
-  setPendingCount(count: number): void;
+  setPendingCount: Dispatch<SetStateAction<number | null>>;
   /** Where a page's own bottom action bar (the week editor's savebar) renders on phone, so it
    * stacks directly on the tab bar as one element with no gap between them - never a sticky offset
    * computed to line up with a separately-stickied tab bar, which a page nested many levels deep

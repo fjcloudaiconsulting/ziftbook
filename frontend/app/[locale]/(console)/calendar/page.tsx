@@ -1,6 +1,7 @@
 import { getTranslations } from "next-intl/server";
+import { Suspense } from "react";
 
-import { Calendar } from "../sections";
+import { Calendar } from "./calendar";
 
 export async function generateMetadata() {
   const t = await getTranslations("Console.nav");
@@ -8,5 +9,10 @@ export async function generateMetadata() {
 }
 
 export default function CalendarPage() {
-  return <Calendar />;
+  // useSearchParams needs a Suspense boundary to build statically; the shell has already loaded by then.
+  return (
+    <Suspense>
+      <Calendar />
+    </Suspense>
+  );
 }

@@ -24,19 +24,30 @@ import styles from "../_ui/console.module.css";
 import { Banner, FieldError, Heading, Mark, problem } from "../_ui/parts";
 import uiStyles from "../_ui/ui.module.css";
 
-/** Icon, catalog key and style of a status chip: shape, icon and word together, never colour alone. */
-const CHIPS = {
+/** Icon, catalog key and style of a status chip: shape, icon and word together, never colour alone.
+ * One map for every status the API can send (Today's list and the calendar's panel both read it). */
+export const CHIPS = {
   completed: { icon: "✓", word: "statusCompleted", style: "" },
   no_show: { icon: "✕", word: "statusNoShow", style: styles.chipOff },
   confirmed: { icon: "●", word: "statusConfirmed", style: styles.chipOk },
   pending: { icon: "◷", word: "statusWaiting", style: styles.chipWait },
+  awaiting_payment: { icon: "◷", word: "statusAwaitingPayment", style: styles.chipWait },
+  declined: { icon: "–", word: "statusDeclined", style: styles.chipOff },
+  cancelled_by_merchant: { icon: "–", word: "statusCancelled", style: styles.chipOff },
+  cancelled_by_client: { icon: "–", word: "statusCancelledByClient", style: styles.chipOff },
+  expired: { icon: "–", word: "statusExpired", style: styles.chipOff },
 } as const;
+
+/** The chip for a status, or undefined for one this build doesn't know: never index CHIPS directly. */
+export function chipOf(status: string): (typeof CHIPS)[keyof typeof CHIPS] | undefined {
+  return Object.hasOwn(CHIPS, status) ? CHIPS[status as keyof typeof CHIPS] : undefined;
+}
 
 type Row = { declining: boolean; message: string; busy: boolean; error: string | null };
 const BLANK: Row = { declining: false, message: "", busy: false, error: null };
 
 /** `quiet`: another skeleton on the page already announces "Loading", so the page has one live region. */
-function Skeleton({ quiet }: { quiet?: boolean }) {
+export function Skeleton({ quiet }: { quiet?: boolean }) {
   const t = useTranslations("Console.today");
   return (
     <div aria-busy="true">
@@ -54,7 +65,7 @@ function Skeleton({ quiet }: { quiet?: boolean }) {
   );
 }
 
-function LoadFailure({ failure, onRetry }: { failure: ReturnType<typeof problem>; onRetry(): void }) {
+export function LoadFailure({ failure, onRetry }: { failure: ReturnType<typeof problem>; onRetry(): void }) {
   const form = useTranslations("Form");
   return (
     <>
@@ -510,7 +521,7 @@ export function Today() {
                 ];
               }
               const { booking } = item;
-              const chip = CHIPS[booking.status as keyof typeof CHIPS];
+              const chip = chipOf(booking.status);
               const meta = [isOwner ? worker(booking.worker_display_name) : null, booking.source === "merchant" ? t("walkIn") : null].filter(Boolean);
               return [
                 nowLine,
