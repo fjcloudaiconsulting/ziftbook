@@ -400,6 +400,7 @@ def test_no_personal_data_ever_reaches_a_log(
             ],
             default=str,
         )
+    assert '"user_name_set"' in recorded  # the window holds this test's events
     for value in (signer_name, invitee_name, legacy_name):
         assert value not in recorded, value
 
