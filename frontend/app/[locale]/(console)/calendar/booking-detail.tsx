@@ -37,6 +37,9 @@ export function BookingDetail({
   closeHref,
   onClose,
   onChanged,
+  moveHref,
+  onMove,
+  focusOnOpen = true,
 }: {
   id: string;
   now: Date;
@@ -44,6 +47,11 @@ export function BookingDetail({
   onClose(event: MouseEvent<HTMLAnchorElement>): void;
   /** The booking changed: the calendar reads its window again. */
   onChanged(): void;
+  /** Where "Reschedule" goes (the calendar's move panel for this booking), and what to note when it does. */
+  moveHref: string;
+  onMove(): void;
+  /** False right after a booking was made or moved: the calendar puts focus on the booking's grid item instead. */
+  focusOnOpen?: boolean;
 }) {
   const { session, settings, call, setPendingCount } = useConsole();
   const t = useTranslations("Console.calendar");
@@ -72,7 +80,8 @@ export function BookingDetail({
 
   // Opening (or switching to) a booking moves focus to the panel: the phone list behind it is hidden.
   useEffect(() => {
-    heading.current?.focus();
+    if (focusOnOpen) heading.current?.focus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -100,7 +109,7 @@ export function BookingDetail({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
-  async function act(action: Action) {
+  async function act(action: Exclude<Action, "reschedule">) {
     // Only ever the booking the panel is showing, and only once that one is what has loaded.
     if (!detail || detail.id !== id || submitting.current) return;
     submitting.current = true;
@@ -172,7 +181,7 @@ export function BookingDetail({
   function historyLine(d: BookingDetailOut, i: number) {
     const { key, params } = historyLabel(d.history, i, d.source, d.max_reschedules, tz);
     const at = d.history[i].at;
-    const moved = key === "historyMoved";
+    const moved = key === "historyMoved" || key === "historyMovedTeam";
     const text = t(key, {
       actor: (params.actor as string | null) ?? t("aTeamMember"),
       client: d.client_name,
@@ -183,7 +192,7 @@ export function BookingDetail({
     const waiting = latest && d.status === "pending" && !d.expired && d.history[i].event === "created";
     const small = waiting
       ? t("historyWaiting", { when: stamp(at) })
-      : moved
+      : key === "historyMoved"
         ? `${stamp(at)} · ${t("changesUsed", { k: Number(params.k), max: Number(params.max) })}`
         : stamp(at);
     return (
@@ -206,7 +215,7 @@ export function BookingDetail({
     );
   }
 
-  const button = (action: Action, label: string, variant: "primary" | "secondary", extra = "", onClick?: () => void, buttonId?: string) => (
+  const button = (action: Exclude<Action, "reschedule">, label: string, variant: "primary" | "secondary", extra = "", onClick?: () => void, buttonId?: string) => (
     <button
       id={buttonId}
       className={`${uiStyles.button} ${uiStyles[variant]} ${uiStyles.small} ${extra}`}
@@ -258,7 +267,16 @@ export function BookingDetail({
           </div>
         )}
         {d.status === "confirmed" && !has("completed") && <p className={uiStyles.hint}>{t("pastHint")}</p>}
-        {has("cancel") && !cancelling && button("cancel", t("cancelAction"), "secondary", css.danger, openCancel, "detail-cancel")}
+        {!cancelling && (has("reschedule") || has("cancel")) && (
+          <div className={has("reschedule") && has("cancel") ? css.split : undefined}>
+            {has("reschedule") && (
+              <Link id="detail-reschedule" className={`${uiStyles.button} ${uiStyles.secondary} ${uiStyles.small}`} href={moveHref} scroll={false} onClick={onMove}>
+                {t("rescheduleAction")}
+              </Link>
+            )}
+            {has("cancel") && button("cancel", t("cancelAction"), "secondary", css.danger, openCancel, "detail-cancel")}
+          </div>
+        )}
         {has("cancel") && cancelling && (
           <div className={css.confirm}>
             <h3 id="detail-cancel-title" tabIndex={-1}>

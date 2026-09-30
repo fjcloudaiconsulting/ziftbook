@@ -464,6 +464,10 @@
 .acts > button { flex: 1; width: auto; }
 .expires { font-size: 0.8125rem; color: oklch(0.42 0.08 70); }
 .desktopOnly { display: none; }
+/* Today's "+ New booking": beside the heading on desktop, a full-width button at the bottom on a phone. */
+.todayHead { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+a.newDesktop, a.openCalendar { display: none; }
+a.newPhone { display: flex; }
 .declining { display: flex; flex-direction: column; gap: 0.6rem; padding-top: 0.25rem; }
 .rowError { grid-column: 1 / -1; }
 /* Phone shows the first two requests; "Show n more" opens the rest. Desktop shows every one. */
@@ -474,6 +478,8 @@
   .req { grid-template-columns: 7.5rem 1fr auto; gap: 0.25rem 1.25rem; padding: 1rem 1.1rem; align-items: center; }
   .expires { grid-column: 2 / -1; }
   .desktopOnly { display: inline; }
+  a.newDesktop, a.openCalendar { display: inline-flex; }
+  a.newPhone { display: none; }
   .acts > button { flex: none; }
   .declining { grid-column: 1 / -1; }
   .reqExtra { display: grid; }

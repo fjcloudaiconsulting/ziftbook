@@ -297,11 +297,22 @@ export function Today() {
   // The agenda shows when its own data is in (or failed), whatever the queue's load did.
   const items = agenda !== null && blocks !== null ? mergeAgenda(agenda, blocks, tz, dayWindow, { role: isOwner ? "owner" : "worker", memberId: session.member_id }) : null;
   const line = nowLineAt(items ?? [], now.getTime());
+  // Phone: the same action at the bottom of the screen (desktop has it beside the heading).
+  const newPhone = (
+    <Link className={`${uiStyles.button} ${uiStyles.primary} ${styles.newPhone}`} href="/calendar?panel=new">
+      {t("newBooking")}
+    </Link>
+  );
   const nothing = todayEmpty({ queue, items, failed: Boolean(queueFailure || agendaFailure) });
 
   const head = (
     <>
-      <Heading focus>{nav("today")}</Heading>
+      <div className={styles.todayHead}>
+        <Heading focus>{nav("today")}</Heading>
+        <Link className={`${uiStyles.button} ${uiStyles.primary} ${uiStyles.small} ${styles.newDesktop}`} href="/calendar?panel=new">
+          {t("newBooking")}
+        </Link>
+      </div>
       <p className={uiStyles.lede}>{label}</p>
       <p className={uiStyles.srOnly} role="status" aria-live="polite">
         {status}
@@ -329,6 +340,7 @@ export function Today() {
             {t("checkHours")}
           </Link>
         </div>
+        {newPhone}
       </>
     );
   }
@@ -338,6 +350,7 @@ export function Today() {
       <>
         {head}
         <Steps />
+        {newPhone}
       </>
     );
   }
@@ -351,6 +364,7 @@ export function Today() {
           <strong>{t("nothingToday")}</strong>
           <span>{t("newRequestsHint")}</span>
         </div>
+        {newPhone}
       </>
     );
   }
@@ -552,7 +566,11 @@ export function Today() {
             )}
           </ol>
         )}
+        <Link className={`${uiStyles.textButton} ${styles.openCalendar}`} href="/calendar">
+          {t("openCalendar")}
+        </Link>
       </section>
+      {newPhone}
     </>
   );
 }
