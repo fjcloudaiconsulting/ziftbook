@@ -145,6 +145,11 @@ describe("F11 mergeSaved", () => {
     assert.equal(merged.max_reschedules, "5");
     assert.equal(merged.buffer_pct, "20"); // the server's value, not the typed "020"
     assert.ok(!("published" in merged));
+  });  test("an empty policy and an unticked box from the server are kept", () => {
+    const data = { ...saved, cancellation_policy_text: "", workers_edit_own_hours: false };
+    const merged = mergeSaved({ ...draftFrom(saved), cancellation_policy_text: "x", workers_edit_own_hours: true }, data, ["cancellation_policy_text", "workers_edit_own_hours"]);
+    assert.deepEqual([merged.cancellation_policy_text, merged.workers_edit_own_hours], ["", false]);
+    assert.deepEqual(changedKeys(data, merged), []);
   });
 });
 
