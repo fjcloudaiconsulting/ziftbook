@@ -181,8 +181,10 @@ describe("sortQueue compares instants, not strings", () => {
   });
 });
 
-describe("leaveQueue (stale closure)", () => {
-  test("two answers in a row, then a refetch: each works from the list as it is now", () => {
+// Guard only: this pins the filtering. The stale-closure race itself lives in today.tsx (leave()
+// must call setQueue(current => leaveQueue(current, ...))), which node --test cannot render.
+describe("leaveQueue", () => {
+  test("two answers in a row, then a refetch: answered rows stay out of every list", () => {
     const answers = new Map();
     let state = [{ id: "a" }, { id: "b" }, { id: "c" }];
     answers.set("a", "confirmed");
