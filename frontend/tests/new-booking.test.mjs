@@ -9,10 +9,15 @@ import {
   defaultService,
   groupSlots,
   initialPick,
+  hhmm,
+  initialStrip,
   isLatest,
+  memberForService,
+  messageShown,
   isUnchanged,
   moveBody,
   pickInstant,
+  searchStep,
   searchTerm,
   shiftStrip,
   slotAt,
@@ -168,19 +173,87 @@ describe("isUnchanged", () => {
 });
 
 describe("submitFailure", () => {
-  const mine = { newClientEmail: false };
-  test("each API answer has its own message", () => {
-    assert.equal(submitFailure({ status: 409, code: "slot_taken" }, mine), "slotTaken");
-    assert.equal(submitFailure({ status: 409, code: "slot_unavailable" }, mine), "slotUnavailable");
-    assert.equal(submitFailure({ status: 409, code: "email_taken" }, mine), "emailTaken");
-    assert.equal(submitFailure({ status: 409, code: "invalid_transition" }, mine), "changed");
-    assert.equal(submitFailure({ status: 403, code: "owner_only" }, mine), "ownerOnly");
-    assert.equal(submitFailure({ status: 401 }, mine), "signedOut");
+  test("without an override any slot 409 is just taken", () => {
+    assert.equal(submitFailure({ status: 409, code: "slot_taken" }, false, "Ana"), "slotTaken");
+    assert.equal(submitFailure({ status: 409, code: "slot_unavailable" }, false, "Ana"), "slotTaken");
+    assert.equal(submitFailure({ status: 409 }, false, null), "slotTaken");
   });
-  test("a 422 is the email's when a new client gave one, else the general banner", () => {
-    assert.equal(submitFailure({ status: 422 }, { newClientEmail: true }), "emailInvalid");
-    assert.equal(submitFailure({ status: 422 }, mine), "problem");
-    assert.equal(submitFailure({ status: 0 }, mine), "problem");
-    assert.equal(submitFailure({ status: 500 }, mine), "problem");
+  test("with an override slot_unavailable names the person, only when one is chosen", () => {
+    assert.equal(submitFailure({ status: 409, code: "slot_unavailable" }, true, "Ana"), "memberUnavailable");
+    assert.equal(submitFailure({ status: 409, code: "slot_unavailable" }, true, null), "slotTaken");
+    assert.equal(submitFailure({ status: 409, code: "slot_taken" }, true, "Ana"), "slotTaken");
+    assert.equal(submitFailure({ status: 409, code: "other" }, true, "Ana"), "problem");
+  });
+  test("the other answers keep their own messages", () => {
+    assert.equal(submitFailure({ status: 409, code: "email_taken" }, false, null), "emailTaken");
+    assert.equal(submitFailure({ status: 409, code: "invalid_transition" }, true, null), "changed");
+    assert.equal(submitFailure({ status: 401 }, false, null), "signedOut");
+  });
+  test("403 is owner-only only when the code says so", () => {
+    assert.equal(submitFailure({ status: 403, code: "owner_only" }, false, null), "ownerOnly");
+    assert.equal(submitFailure({ status: 403 }, false, null), "problem");
+    assert.equal(submitFailure({ status: 403, code: "name_required" }, false, null), "problem");
+  });
+  test("a 422 (which never names a field), a network failure or a 500 is the general banner", () => {
+    assert.equal(submitFailure({ status: 422, code: "invalid_request" }, false, null), "problem");
+    assert.equal(submitFailure({ status: 0 }, false, null), "problem");
+    assert.equal(submitFailure({ status: 500 }, false, null), "problem");
+  });
+});
+
+describe("searchStep", () => {
+  test("an empty or blank query never calls", () => {
+    assert.equal(searchStep("", 1, 1).call, false);
+    assert.equal(searchStep("  ", 1, 1).call, false);
+    assert.deepEqual(searchStep(" Mar ", 1, 1), { term: "Mar", call: true, apply: true });
+  });
+  test("only the latest request's answer applies", () => {
+    assert.equal(searchStep("Mar", 2, 3).apply, false);
+    assert.equal(searchStep("Mar", 3, 3).apply, true);
+  });
+});
+
+describe("memberForService", () => {
+  test("the person stays when they do the service, or nobody is chosen", () => {
+    assert.equal(memberForService("m1", ["m1", "m2"], ""), "m1");
+    assert.equal(memberForService("", ["m2"], "x"), "");
+  });
+  test("otherwise the fallback", () => {
+    assert.equal(memberForService("m1", ["m2"], ""), "");
+    assert.equal(memberForService("m1", [], "m2"), "m2");
+  });
+});
+
+describe("initialStrip", () => {
+  test("a future start anchors and selects its own day", () => {
+    assert.deepEqual(initialStrip("2026-10-05", "2026-10-01", "2026-09-30"), { anchor: "2026-10-05", day: "2026-10-05" });
+  });
+  test("a past start lands on today, selected", () => {
+    assert.deepEqual(initialStrip("2026-09-01", "2026-09-01", "2026-09-30"), { anchor: "2026-09-30", day: "2026-09-30" });
+  });
+  test("no start: the calendar's date (never past), nothing selected", () => {
+    assert.deepEqual(initialStrip(null, "2026-10-02", "2026-09-30"), { anchor: "2026-10-02", day: null });
+    assert.deepEqual(initialStrip(null, "2026-09-01", "2026-09-30"), { anchor: "2026-09-30", day: null });
+  });
+});
+
+describe("messageShown", () => {
+  const msg = { booking: "b1", date: "2026-09-30", view: "day" };
+  const now = { booking: "b1", date: "2026-09-30", view: "day", panel: null };
+  test("shown only where it was made", () => {
+    assert.equal(messageShown(msg, now), true);
+    assert.equal(messageShown(msg, { ...now, date: "2026-10-01" }), false);
+    assert.equal(messageShown(msg, { ...now, view: "week" }), false);
+    assert.equal(messageShown(msg, { ...now, panel: "new" }), false);
+    assert.equal(messageShown(msg, { ...now, booking: null }), false);
+    assert.equal(messageShown(null, now), false);
+  });
+});
+
+describe("hhmm", () => {
+  test("pads, and midnight wraps", () => {
+    assert.equal(hhmm(75), "01:15");
+    assert.equal(hhmm(1440), "00:00");
+    assert.equal(hhmm(0), "00:00");
   });
 });

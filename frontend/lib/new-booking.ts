@@ -3,7 +3,8 @@
 // so node --test can run it in any runner zone.
 import { addDaysISO, localDateISO, localTime, localToInstant } from "./time-off.ts";
 
-const hhmm = (minutes: number) => `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+/** "HH:MM" of minutes since midnight (1440 reads 00:00). */
+export const hhmm = (minutes: number) => `${String(Math.floor((minutes % 1440) / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
 
 /** The slot a click `offsetMinutes` below the top of the grid (which starts at `fromHour`) opens: rounded
  * DOWN to the business's slot step, and kept inside the shown hours so the last slot still starts before
@@ -65,6 +66,13 @@ export function pickInstant(pick: Pick, tz: string): string | null {
 /** Where the day strip starts: the anchor, never a day in the past. */
 export const stripStart = (anchor: string, todayISO: string) => (anchor < todayISO ? todayISO : anchor);
 
+/** Where the strip starts and which day is selected: the start's local day (or the calendar's date), never
+ * before today. A past start lands on today, selected; the selected day is always inside the strip. */
+export function initialStrip(startDay: string | null, date: string, todayISO: string): { anchor: string; day: string | null } {
+  const anchor = stripStart(startDay ?? date, todayISO);
+  return { anchor, day: startDay === null ? null : startDay < anchor ? anchor : startDay };
+}
+
 /** "Next 7 days" / "Previous 7 days": a week either way, never below today. */
 export const shiftStrip = (anchor: string, direction: 1 | -1, todayISO: string) => stripStart(addDaysISO(anchor, direction * 7), todayISO);
 
@@ -80,6 +88,24 @@ export const isLatest = (mine: number, current: number) => mine === current;
 
 /** The client search text, or null when there is nothing to search for. */
 export const searchTerm = (q: string) => q.trim() || null;
+
+/** The client search effect's decision: `call` only for a non-empty term; `apply` an answer only while it is
+ * still the latest request (`mine` is its number, `latest` the newest one made). */
+export function searchStep(q: string, mine: number, latest: number): { term: string | null; call: boolean; apply: boolean } {
+  const term = searchTerm(q);
+  return { term, call: term !== null, apply: isLatest(mine, latest) };
+}
+
+/** After the service changes: the chosen person stays when they do the new service (or nobody is chosen),
+ * otherwise `fallback` (Anyone free for a new booking). */
+export function memberForService(withId: string, workerIds: string[], fallback: string): string {
+  return !withId || workerIds.includes(withId) ? withId : fallback;
+}
+
+/** Whether the calendar's "booked / moved / blocked" hint still belongs to what is on screen. */
+export function messageShown(message: { booking: string | null; date: string; view: string } | null, now: { booking: string | null; date: string; view: string; panel: string | null }): boolean {
+  return message !== null && !now.panel && message.booking === now.booking && message.date === now.date && message.view === now.view;
+}
 
 /** The block form's prefill for a click at `at`: that start in the business zone, an hour long, never past
  * midnight. */
@@ -100,19 +126,18 @@ export function isUnchanged(startsAt: string | null, memberId: string | null, bo
   return startsAt !== null && Date.parse(startsAt) === Date.parse(booking.starts_at) && memberId === booking.worker_id;
 }
 
-export type Failure = "signedOut" | "slotTaken" | "slotUnavailable" | "emailTaken" | "changed" | "ownerOnly" | "emailInvalid" | "problem";
+export type Failure = "signedOut" | "slotTaken" | "memberUnavailable" | "emailTaken" | "changed" | "ownerOnly" | "problem";
 
-/** What a refused submit says. `problem` is the console's general banner for a 422, a network failure or
- * anything else. */
-export function submitFailure(outcome: { status: number; code?: string }, ctx: { newClientEmail: boolean }): Failure {
+/** What a refused submit says. Without an override any slot 409 means "just taken"; with one, the API says
+ * whether the time or the person is the trouble, and the person is only named when one was chosen. `problem`
+ * is the console's general banner (a 422 never says which field, so never blame one). */
+export function submitFailure(outcome: { status: number; code?: string }, override: boolean, memberName: string | null): Failure {
   if (outcome.status === 401) return "signedOut";
-  if (outcome.status === 403) return "ownerOnly";
-  if (outcome.status === 409) {
-    if (outcome.code === "slot_taken") return "slotTaken";
-    if (outcome.code === "slot_unavailable") return "slotUnavailable";
-    if (outcome.code === "email_taken") return "emailTaken";
-    if (outcome.code === "invalid_transition") return "changed";
-  }
-  if (outcome.status === 422 && ctx.newClientEmail) return "emailInvalid";
+  if (outcome.status === 403) return outcome.code === "owner_only" ? "ownerOnly" : "problem";
+  if (outcome.status !== 409) return "problem";
+  if (outcome.code === "email_taken") return "emailTaken";
+  if (outcome.code === "invalid_transition") return "changed";
+  if (!override || outcome.code === "slot_taken") return "slotTaken";
+  if (outcome.code === "slot_unavailable") return memberName ? "memberUnavailable" : "slotTaken";
   return "problem";
 }
