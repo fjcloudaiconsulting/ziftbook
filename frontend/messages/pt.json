@@ -331,7 +331,7 @@
       "rescheduleCutoffLabel": "Clientes podem remarcar um agendamento até",
       "hoursBeforeUnit": "{count, plural, one {hora antes} other {horas antes}}",
       "policyLabel": "Política de cancelamento",
-      "policyHint": "Os clientes veem isto ao agendar e nos e-mails. Novos agendamentos seguem as novas regras; os existentes mantêm as regras que já tinham.",
+      "policyHint": "Os clientes veem isto ao agendar e ao gerenciar o agendamento. Escreva no idioma dos seus e-mails. Novos agendamentos seguem as novas regras; os existentes mantêm as regras que já tinham.",
       "teamHeading": "Equipe",
       "workersEditLabel": "Membros da equipe podem alterar o próprio horário de trabalho",
       "workersEditHint": "Desativado: só você define os horários deles."

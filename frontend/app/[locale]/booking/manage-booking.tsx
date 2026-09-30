@@ -395,7 +395,12 @@ function Manage({ token }: { token: string | null }) {
       {view.note && view.note !== "consentDone" && <Banner tone="note">{t(view.note)}</Banner>}
       {problem}
       {summary}
-      {booking.cancellation_policy_text && <p className={styles.hint}>{booking.cancellation_policy_text}</p>}
+      {booking.cancellation_policy_text && (
+        // pre-line: the owner types it in a textarea (Settings), so keep their line breaks.
+        <p className={styles.hint} style={{ whiteSpace: "pre-line" }}>
+          {booking.cancellation_policy_text}
+        </p>
+      )}
       {engine.free_until ? (
         <p className={styles.hint}>
           {t("freeUntil", { ...localWhen(engine.free_until, zone, dateLocale(locale)), move: engine.can_reschedule ? "yes" : "no" })}

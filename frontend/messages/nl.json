@@ -331,7 +331,7 @@
       "rescheduleCutoffLabel": "Klanten kunnen een afspraak verzetten tot",
       "hoursBeforeUnit": "{count, plural, one {uur van tevoren} other {uur van tevoren}}",
       "policyLabel": "Annuleringsbeleid",
-      "policyHint": "Klanten zien dit als ze boeken en in hun e-mails. Nieuwe boekingen krijgen de nieuwe regels; bestaande boekingen houden hun eigen regels.",
+      "policyHint": "Klanten zien dit als ze boeken en als ze hun afspraak beheren. Schrijf het in de taal van je e-mails. Nieuwe boekingen krijgen de nieuwe regels; bestaande boekingen houden hun eigen regels.",
       "teamHeading": "Team",
       "workersEditLabel": "Teamleden kunnen hun eigen werktijden wijzigen",
       "workersEditHint": "Uit: alleen jij stelt hun tijden in."

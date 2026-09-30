@@ -331,7 +331,7 @@
       "rescheduleCutoffLabel": "Clients can move a booking up to",
       "hoursBeforeUnit": "{count, plural, one {hour before} other {hours before}}",
       "policyLabel": "Cancellation policy",
-      "policyHint": "Clients see this when they book and in their emails. New bookings get the new rules; existing bookings keep theirs.",
+      "policyHint": "Clients see this when they book and when they manage their booking. Write it in your email language. New bookings get the new rules; existing bookings keep theirs.",
       "teamHeading": "Team",
       "workersEditLabel": "Team members can change their own working hours",
       "workersEditHint": "Off: only you set their hours."
