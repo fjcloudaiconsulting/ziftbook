@@ -52,6 +52,9 @@
   "CompleteSignUp": {
     "title": "Stel je bedrijf in",
     "lede": "Je e-mailadres is bevestigd. Nog een paar gegevens en je kunt beginnen.",
+    "personName": "Je naam",
+    "personNameHint": "Je team en de klanten die bij je boeken zien dit.",
+    "personNameRequired": "Vul je naam in.",
     "businessName": "Bedrijfsnaam",
     "businessHint": "Klanten zien deze naam als ze boeken. Je kunt hem later wijzigen.",
     "nameRequired": "Vul je bedrijfsnaam in.",
@@ -115,6 +118,8 @@
     "tooMany": "Te veel pogingen. Wacht 15 minuten en probeer het opnieuw.",
     "joinTitle": "Sluit je aan bij {business}",
     "newLede": "Kies een wachtwoord om je afspraken en werktijden te zien.",
+    "personName": "Je naam",
+    "personNameRequired": "Vul je naam in.",
     "existingLede": "Log in met je ziftbook-wachtwoord om ook hier je afspraken te zien.",
     "newSubmit": "Lid worden van het team",
     "signInSubmit": "Inloggen en accepteren",
@@ -160,6 +165,13 @@
       "nameRequired": "Vul een naam in.",
       "lede": "{email} · {role} · tijden zijn in {city}-tijd",
       "notFound": "Deze persoon kon niet worden gevonden."
+    },
+    "nameStep": {
+      "title": "Hoe mogen we je noemen?",
+      "lede": "Je team en de klanten die bij je boeken zien deze naam. We vragen het maar één keer.",
+      "label": "Je naam",
+      "save": "Opslaan en doorgaan",
+      "required": "Vul je naam in."
     },
     "today": {
       "ownerEmptyTitle": "Nog geen afspraken",

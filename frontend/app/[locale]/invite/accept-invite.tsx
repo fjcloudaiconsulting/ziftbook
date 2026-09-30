@@ -5,10 +5,10 @@ import { type FormEvent, useCallback, useEffect, useId, useRef, useState, useSyn
 
 import { type InviteDetails, invitesAccept, invitesLookup } from "@/api-client";
 import { Link, useRouter } from "@/i18n/navigation";
-import { takeToken } from "@/lib/account";
+import { takeToken, trimmedName } from "@/lib/account";
 import { acceptOutcome, firstStage, inviteScreen, type OpenedLink, openedLink } from "@/lib/invite";
 
-import { Banner, Heading, NoScript, Outcome, PasswordField, problem, send, Submit } from "../_ui/parts";
+import { Banner, FieldError, Heading, NoScript, Outcome, PasswordField, problem, send, Submit } from "../_ui/parts";
 import styles from "../_ui/ui.module.css";
 
 let shown: OpenedLink | null = null;
@@ -71,10 +71,13 @@ function Invite({ token }: { token: string | null }) {
   const signIn = useTranslations("SignIn");
   const router = useRouter();
   const emailId = useId();
+  const personId = useId();
   const passwordInput = useRef<HTMLInputElement>(null);
   const [stage, setStage] = useState<Stage>({ is: firstStage(token) });
+  const [personName, setPersonName] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
+  const [personNameError, setPersonNameError] = useState<string>();
   const [passwordError, setPasswordError] = useState<string>();
   const [message, setMessage] = useState<Message | null>(null);
 
@@ -109,8 +112,15 @@ function Invite({ token }: { token: string | null }) {
     event.preventDefault();
     if (busy || !token || stage.is !== "form") return;
     const invite = stage.invite;
+    // Only a new account gives a name; an existing one keeps the name it has.
+    const name = invite.has_account ? undefined : trimmedName(personName);
+    if (!invite.has_account && !name) {
+      setPersonNameError(t("personNameRequired"));
+      return;
+    }
+    setPersonNameError(undefined);
     setBusy(true);
-    const outcome = await send(invitesAccept({ body: { token, password } }));
+    const outcome = await send(invitesAccept({ body: { token, password, name } }));
     setBusy(false);
     setPasswordError(undefined);
     setMessage(null);
@@ -133,6 +143,8 @@ function Invite({ token }: { token: string | null }) {
       setMessage({ tone: "info", text: t("accountExists") });
       setPassword("");
       passwordInput.current?.focus();
+    } else if (meaning === "nameRequired") {
+      setPersonNameError(t("personNameRequired"));
     } else if (meaning.startsWith("password_")) {
       setPasswordError(form(meaning as "password_too_short" | "password_too_long" | "password_too_common"));
     } else {
@@ -219,6 +231,27 @@ function Invite({ token }: { token: string | null }) {
             <input id={emailId} name="email" type="email" autoComplete="username" readOnly value={invite.email} />
           </div>
         </div>
+        {!existing && (
+          <div className={styles.field}>
+            <label className={styles.label} htmlFor={personId}>
+              {t("personName")}
+            </label>
+            <div className={styles.input}>
+              <input
+                id={personId}
+                name="name"
+                autoComplete="name"
+                required
+                maxLength={60}
+                value={personName}
+                onChange={(event) => setPersonName(event.target.value)}
+                aria-invalid={personNameError ? true : undefined}
+                aria-describedby={personNameError ? `${personId}-error` : undefined}
+              />
+            </div>
+            {personNameError && <FieldError id={`${personId}-error`}>{personNameError}</FieldError>}
+          </div>
+        )}
         <PasswordField
           label={form("password")}
           value={password}

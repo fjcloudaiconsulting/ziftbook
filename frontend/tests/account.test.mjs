@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, test } from "node:test";
 
-import { byName, clock, likelyCountry, RESEND_AFTER_MS, secondsLeft, signUpRequest, takeToken } from "../lib/account.ts";
+import { byName, clock, likelyCountry, RESEND_AFTER_MS, secondsLeft, signUpRequest, takeToken, trimmedName } from "../lib/account.ts";
 
 const countryNames = (locale) => JSON.parse(readFileSync(new URL(`../messages/${locale}.json`, import.meta.url))).CompleteSignUp.countries;
 
@@ -88,24 +88,44 @@ describe("choosing a country", () => {
   });
 });
 
-describe("building the sign-up request", () => {
-  test("rejects a blank name", () => {
-    assert.deepEqual(signUpRequest("", "NL"), { errors: { name: "nameRequired" } });
+describe("a person's name", () => {
+  test("is trimmed before it is sent", () => {
+    assert.equal(trimmedName("  Carol Mendes "), "Carol Mendes");
   });
 
-  test("rejects a whitespace-only name", () => {
-    assert.deepEqual(signUpRequest("   ", "NL"), { errors: { name: "nameRequired" } });
+  test("blank or whitespace-only is nothing to send", () => {
+    assert.equal(trimmedName(""), null);
+    assert.equal(trimmedName("   \t"), null);
+  });
+});
+
+describe("building the sign-up request", () => {
+  test("rejects a blank business name", () => {
+    assert.deepEqual(signUpRequest("Carol", "", "NL"), { errors: { name: "nameRequired" } });
+  });
+
+  test("rejects a whitespace-only business name", () => {
+    assert.deepEqual(signUpRequest("Carol", "   ", "NL"), { errors: { name: "nameRequired" } });
   });
 
   test("rejects no country", () => {
-    assert.deepEqual(signUpRequest("Acme", ""), { errors: { country: "countryRequired" } });
+    assert.deepEqual(signUpRequest("Carol", "Acme", ""), { errors: { country: "countryRequired" } });
   });
 
-  test("reports both errors at once", () => {
-    assert.deepEqual(signUpRequest("  ", ""), { errors: { name: "nameRequired", country: "countryRequired" } });
+  test("refuses a whitespace-only person name before any request is built", () => {
+    assert.deepEqual(signUpRequest("   ", "Acme", "NL"), { errors: { personName: "personNameRequired" } });
+    assert.deepEqual(signUpRequest("", "Acme", "NL"), { errors: { personName: "personNameRequired" } });
   });
 
-  test("builds the request body from valid input", () => {
-    assert.deepEqual(signUpRequest("Acme", "NL"), { body: { business_name: "Acme", country: "NL" } });
+  test("reports every missing field at once", () => {
+    assert.deepEqual(signUpRequest(" ", "  ", ""), {
+      errors: { personName: "personNameRequired", name: "nameRequired", country: "countryRequired" },
+    });
+  });
+
+  test("builds the request body from valid input, the person's name trimmed", () => {
+    assert.deepEqual(signUpRequest(" Carol Mendes ", "Acme", "NL"), {
+      body: { name: "Carol Mendes", business_name: "Acme", country: "NL" },
+    });
   });
 });

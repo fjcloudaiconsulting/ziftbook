@@ -52,6 +52,9 @@
   "CompleteSignUp": {
     "title": "Configure seu negócio",
     "lede": "Seu e-mail está confirmado. Faltam só alguns dados.",
+    "personName": "Seu nome",
+    "personNameHint": "Sua equipe e os clientes que agendam com você veem isto.",
+    "personNameRequired": "Digite seu nome.",
     "businessName": "Nome do negócio",
     "businessHint": "Os clientes veem esse nome ao agendar. Você pode mudar depois.",
     "nameRequired": "Digite o nome do seu negócio.",
@@ -115,6 +118,8 @@
     "tooMany": "Tentativas demais por agora. Espere 15 minutos e tente de novo.",
     "joinTitle": "Junte-se à equipe de {business}",
     "newLede": "Escolha uma senha para ver seus agendamentos e horários de trabalho.",
+    "personName": "Seu nome",
+    "personNameRequired": "Digite seu nome.",
     "existingLede": "Entre com sua senha do ziftbook para ver seus agendamentos aqui também.",
     "newSubmit": "Entrar na equipe",
     "signInSubmit": "Entrar e aceitar",
@@ -160,6 +165,13 @@
       "nameRequired": "Digite um nome.",
       "lede": "{email} · {role} · horários no fuso de {city}",
       "notFound": "Esta pessoa não foi encontrada."
+    },
+    "nameStep": {
+      "title": "Como devemos chamar você?",
+      "lede": "Sua equipe e os clientes que agendam com você veem este nome. Só perguntamos uma vez.",
+      "label": "Seu nome",
+      "save": "Salvar e continuar",
+      "required": "Digite seu nome."
     },
     "today": {
       "ownerEmptyTitle": "Ainda sem agendamentos",

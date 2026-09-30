@@ -14,6 +14,7 @@ import {
   guardedWrite,
   maxReschedulesValue,
   navFor,
+  needsName,
   sameSession,
   sectionOf,
   showPublishStep,
@@ -50,6 +51,17 @@ describe("the max_reschedules setting (ZIF-54 R3, test 38)", () => {
     // Wrong implementation killed: Number(text) with no bounds, which sends 11, -1 or 2.5.
     assert.deepEqual(["0", "2", "10", " 3 "].map(maxReschedulesValue), [0, 2, 10, 3]);
     for (const text of ["", "11", "-1", "2.5", "1e1", "two", "0x2"]) assert.equal(maxReschedulesValue(text), null, text);
+  });
+});
+
+describe("needsName", () => {
+  test("fence: asked only while the API says the name is null, never for another falsy value", () => {
+    assert.equal(needsName(null), true);
+    assert.equal(needsName(""), false);
+  });
+
+  test("guard: not asked once a name is set", () => {
+    assert.equal(needsName("Carol Mendes"), false);
   });
 });
 

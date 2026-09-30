@@ -30,6 +30,7 @@ export type Accepted =
   | "accountExists"
   | "alreadyMember"
   | "tooMany"
+  | "nameRequired"
   | (typeof PASSWORD_CODES)[number]
   | "other";
 
@@ -41,6 +42,7 @@ export function acceptOutcome(answer: { status: number; code?: string }): Accept
   if (answer.status === 429) return "tooMany";
   if (answer.status === 409 && answer.code === "account_exists") return "accountExists";
   if (answer.status === 409 && answer.code === "already_member") return "alreadyMember";
+  if (answer.status === 422 && answer.code === "name_required") return "nameRequired";
   if (answer.status === 422) return PASSWORD_CODES.find((code) => code === answer.code) ?? "other";
   return "other";
 }

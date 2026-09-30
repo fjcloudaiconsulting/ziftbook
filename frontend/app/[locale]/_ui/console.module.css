@@ -15,6 +15,18 @@
   background: var(--bg);
   border-bottom: 1px solid var(--line);
 }
+.plainLink {
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: 400 0.9375rem/1 var(--font-body), system-ui, sans-serif;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.plainLink:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 .brand { display: flex; align-items: baseline; gap: 0.6rem; min-width: 0; }
 .bizName { color: var(--muted); font-size: 0.9375rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .topbarActions { display: flex; align-items: center; gap: 0.5rem; flex: none; }

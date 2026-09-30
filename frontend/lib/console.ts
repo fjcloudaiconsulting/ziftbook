@@ -67,6 +67,12 @@ export function maxReschedulesValue(text: string): number | null {
   return value <= 10 ? value : null;
 }
 
+/** Whether the person still has to give their own name: the API refuses everything else with
+ * `name_required` until they do, so the console asks before showing any page. */
+export function needsName(name: string | null): boolean {
+  return name === null;
+}
+
 /** "Set a name clients can see" shows only while the name is genuinely unset, never for any other
  * falsy-looking value the API might send. */
 export function showSetName(displayName: string | null): boolean {
