@@ -3200,7 +3200,7 @@
           "booking-approvals"
         ],
         "summary": "Range",
-        "description": "The bookings that overlap [from, to) by start time, for a day or a week of the calendar.\nAn owner sees everyone's, a worker their own (the same rule as the pending queue). The window\nmay not exceed 8 days: a local week is 7 days plus or minus an hour across a clock change.",
+        "description": "The bookings whose interval overlaps [from, to), for a day or a week of the calendar.\nAn owner sees everyone's, a worker their own (the same rule as the pending queue). The window\nmay not exceed 8 days: a local week is 7 days plus or minus an hour across a clock change.",
         "operationId": "booking-approvals-range",
         "parameters": [
           {

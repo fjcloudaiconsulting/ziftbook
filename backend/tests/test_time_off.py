@@ -1272,16 +1272,21 @@ LOCAL_DAY = {"from": "2031-03-09T23:00:00Z", "to": "2031-03-10T23:00:00Z"}
 # F21 (ZIF-57): the business-wide range shows a colleague's block to a worker with the reason
 # hidden, their own with it, and names the member. Kills a range that skips the reason rule.
 def test_the_business_wide_range_hides_a_colleagues_reason_and_names_the_member(
-    people: People, app: FastAPI
+    people: People, app: FastAPI, migrate_engine: Engine
 ) -> None:
     worker_member = member_id(people.a, people.only_a)
     owner_member = member_id(people.a, people.both)
     with tenant_context(people.a) as session:  # distinct names: a wrong join cannot hide
-        for user, name in ((people.only_a, "Wanda"), (people.both, "Olga")):
-            session.execute(
-                text("UPDATE memberships SET display_name = :n WHERE user_id = :u"),
-                {"n": name, "u": user},
-            )
+        session.execute(  # the worker's comes from the membership, the owner's from the user
+            text("UPDATE memberships SET display_name = 'Wanda' WHERE user_id = :u"),
+            {"u": people.only_a},
+        )
+        session.execute(
+            text("UPDATE memberships SET display_name = NULL WHERE user_id = :u"),
+            {"u": people.both},
+        )
+    with migrate_engine.begin() as conn:  # users is not the app role's to write
+        conn.execute(text("UPDATE users SET name = 'Olga' WHERE id = :u"), {"u": people.both})
     mine = insert_block(
         people.a, worker_member, "2031-03-10T08:00:00Z", "2031-03-10T09:00:00Z", reason="Dentist"
     )
