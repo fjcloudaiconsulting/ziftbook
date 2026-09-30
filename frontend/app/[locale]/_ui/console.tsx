@@ -295,14 +295,15 @@ function NameStep({
   }
 
   return (
-    <>
+    // .shell: the same focus rules as the console (no ring on a heading focused by script).
+    <div className={styles.shell}>
       <header className={styles.topbar}>
         <span className={uiStyles.wordmark}>ziftbook</span>
         <button className={styles.plainLink} type="button" onClick={() => onSignOut(false)}>
           {accountT("signOut")}
         </button>
       </header>
-      <main id="content" className={styles.content}>
+      <main id="content" className={uiStyles.screen}>
         <div className={uiStyles.col}>
           {signOutFailure && <Banner tone="error">{form(signOutFailure)}</Banner>}
           <Heading focus>{t("title")}</Heading>
@@ -334,7 +335,7 @@ function NameStep({
           </form>
         </div>
       </main>
-    </>
+    </div>
   );
 }
 
@@ -412,6 +413,10 @@ export function Shell({ children }: { children: ReactNode }) {
   /** The name is saved: read the settings the API now allows, then show the page that was asked for. */
   async function onNamed(named: SessionOut) {
     const outcome = await send(settingsRead());
+    if (outcome.status === 401) {
+      router.replace("/sign-in");
+      return;
+    }
     setSession(named);
     if (outcome.status === 200 && outcome.data) setSettings(outcome.data);
     else setFailure(problem(outcome));

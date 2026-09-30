@@ -226,7 +226,8 @@ def named(current: AnySession) -> SignedIn:
     # gates it at once, and anything but a definite True (no row, NULL) denies.
     if (
         current.db.scalar(
-            text("SELECT name IS NOT NULL FROM users WHERE id = :u"), {"u": current.user_id}
+            text("SELECT name IS NOT NULL /* name gate */ FROM users WHERE id = :u"),
+            {"u": current.user_id},
         )
         is not True
     ):

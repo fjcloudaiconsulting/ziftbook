@@ -4915,6 +4915,7 @@
             "title": "Name"
           }
         },
+        "additionalProperties": false,
         "type": "object",
         "required": [
           "name"

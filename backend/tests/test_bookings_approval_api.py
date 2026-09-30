@@ -149,8 +149,8 @@ def test_the_transition_takes_the_tenant_lock_first(
     executed: list[tuple[str, Any]] = []
 
     def record(conn: object, cursor: object, statement: str, parameters: Any, *args: Any) -> None:
-        # Not the name gate's plain read (ZIF-131, app.auth.named): it takes no lock.
-        if not statement.startswith("SELECT name IS NOT NULL FROM users"):
+        # Not the name gate's plain read (ZIF-131, tagged in app.auth.named): it takes no lock.
+        if "/* name gate */" not in statement:
             executed.append((statement, parameters))
 
     event.listen(app_engine, "before_cursor_execute", record)
@@ -961,8 +961,8 @@ def test_cancelling_takes_the_tenant_lock_first(
     executed: list[tuple[str, Any]] = []
 
     def record(conn: object, cursor: object, statement: str, parameters: Any, *args: Any) -> None:
-        # Not the name gate's plain read (ZIF-131, app.auth.named): it takes no lock.
-        if not statement.startswith("SELECT name IS NOT NULL FROM users"):
+        # Not the name gate's plain read (ZIF-131, tagged in app.auth.named): it takes no lock.
+        if "/* name gate */" not in statement:
             executed.append((statement, parameters))
 
     event.listen(app_engine, "before_cursor_execute", record)

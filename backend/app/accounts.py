@@ -5,7 +5,7 @@ from datetime import timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Request, Response
-from pydantic import AfterValidator, BaseModel, Field, StringConstraints
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints
 from sqlalchemy import text
 
 from app import auth, business_settings, limits, passwords
@@ -66,13 +66,15 @@ BusinessName = Annotated[
 ]
 
 
-# Moved here from app/members.py (which imports it back): CompleteSignUp needs it too.
+# A person's name: a member's display name (app/members.py) and the platform name given at sign-up,
+# invite and first sign-in. Defined here because members imports this module, not the reverse.
 # ponytail: printable() blocks C* and Zl/Zp, so ZWJ, RLO and BOM are 422; strip_whitespace is what
 # empties an NBSP-only name (and min_length then refuses it). It does not block 60 combining
 # marks (Zalgo), blank-rendering glyphs (U+2800 Braille blank, U+3164 Hangul filler) or
-# homoglyphs. Accepted: it takes an authenticated member of that business, it damages only that
-# business's own page, and any owner can overwrite it. Add a normalisation/blocklist only if a
-# real business is hit.
+# homoglyphs. Accepted: a display name takes an authenticated member, damages only that business's
+# own page, and any owner can overwrite it; a platform name (users.name) is set once by its own
+# person, so no owner can overwrite it, but it only shows to their own businesses' teams and
+# clients. Add a normalisation/blocklist only if a real person is hit.
 DisplayNameText = Annotated[
     str,
     StringConstraints(strip_whitespace=True, min_length=1, max_length=60),
@@ -149,6 +151,8 @@ def complete_sign_up(
 
 
 class NameIn(BaseModel):
+    # Its own model, field by field: nothing else a client sends is accepted.
+    model_config = ConfigDict(strict=True, extra="forbid")
     name: DisplayNameText
 
 

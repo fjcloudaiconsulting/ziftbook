@@ -120,8 +120,9 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
   // — in particular, one from before any service was ever chosen).
   const doBookRef = useRef<(token: string | null) => Promise<void>>(async () => {});
 
-  // Autofill: GET /api/session once (the person's own name, not their name in some business); fill name/email ONLY if still empty. Any other answer (no
-  // session, network, whatever) is ignored silently.
+  // Autofill: GET /api/session once (the person's own name, not their name in some business); fill
+  // name/email ONLY if still empty. Any other answer (no session, network, whatever) is ignored
+  // silently.
   useEffect(() => {
     let cancelled = false;
     void (async () => {

@@ -225,6 +225,12 @@ def test_the_app_role_cannot_name_anyone_outside_its_business(
     # Inside the person's own business, where users' policy lets the app role see them: the row is
     # visible and the UPDATE privilege exists, so only the missing UPDATE policy stops it.
     with tenant_context(people.b) as session:
+        # Positive control: the row is visible here, so 0 changed rows means the policy, not RLS
+        # hiding it.
+        assert (
+            session.scalar(text("SELECT count(*) FROM users WHERE id = :u"), {"u": people.only_b})
+            == 1
+        )
         changed = session.execute(
             text("UPDATE users SET name = 'x' WHERE id = :u RETURNING id"), {"u": people.only_b}
         ).all()
@@ -260,6 +266,9 @@ def test_a_nameless_person_reaches_only_the_three_exempt_routes(
     set_user_name(migrate_engine, people.both, None)
     client = signed_in(app, people.a, people.both)
     routes = routes_behind_signed_in(app)
+    # The floor guards the walk itself: a FastAPI change that hid routes would make "every route
+    # answers name_required" vacuously true. 32 routes use a session today; a lower count means the
+    # walk stopped seeing some.
     assert EXEMPT <= set(routes) and len(routes) >= 30
 
     reached = set()
@@ -274,6 +283,92 @@ def test_a_nameless_person_reaches_only_the_three_exempt_routes(
             continue
         reached.add((method, path))
     assert reached == EXEMPT
+
+
+# Blank and overlong names are refused and change nothing.
+@pytest.mark.parametrize("name", ["   ", "x" * 61])
+def test_naming_refuses_a_blank_or_overlong_name(
+    people: People, app: FastAPI, migrate_engine: Engine, name: str
+) -> None:
+    set_user_name(migrate_engine, people.both, None)
+
+    response = signed_in(app, people.a, people.both).put("/api/session/name", json={"name": name})
+
+    assert response.status_code == 422
+    assert user_name(migrate_engine, people.both) is None
+
+
+# A blank name on a new account is refused and the link survives.
+def test_a_blank_name_does_not_use_up_the_invite(
+    people: People,
+    app: FastAPI,
+    migrate_engine: Engine,
+    new_accounts: list[NewAccount],  # noqa: F811
+) -> None:
+    token = invite_token(people.a, fresh_email())
+    client = new_client(app)
+
+    refused = client.post(
+        "/api/invites/accept", json={"token": token, "password": PASSWORD, "name": "   "}
+    )
+
+    assert refused.status_code == 422
+    accepted = client.post(
+        "/api/invites/accept", json={"token": token, "password": PASSWORD, "name": "Bea"}
+    )
+    assert accepted.status_code == 201
+    new_accounts.append(
+        NewAccount(tenant_id=people.a, user_id=uuid.UUID(accepted.json()["user_id"]))
+    )
+
+
+# A legacy account keeps no name by joining another business: the body's name is ignored, the new
+# membership has none, and the gate still asks.
+def test_a_nameless_account_joining_another_business_stays_nameless(
+    people: People, app: FastAPI, migrate_engine: Engine
+) -> None:
+    set_user_name(migrate_engine, people.only_a, None)
+    add_password(migrate_engine, people.only_a, PASSWORD)
+    token = invite_token(people.b, email_of(people.only_a))
+
+    accepted = new_client(app).post(
+        "/api/invites/accept", json={"token": token, "password": PASSWORD, "name": "Ignored"}
+    )
+
+    assert accepted.status_code == 201
+    assert accepted.json()["name"] is None
+    assert display_name(people.b, people.only_a) is None
+    assert user_name(migrate_engine, people.only_a) is None
+    gated = signed_in(app, people.b, people.only_a).get("/api/services")
+    assert (gated.status_code, gated.json()) == (403, {"code": "name_required"})
+
+
+# Signing in is not gated: a legacy person gets a session and learns the name is missing.
+def test_a_nameless_person_can_sign_in(
+    people: People, app: FastAPI, migrate_engine: Engine
+) -> None:
+    set_user_name(migrate_engine, people.only_a, None)
+    add_password(migrate_engine, people.only_a, PASSWORD)
+
+    response = new_client(app).post(
+        "/api/session", json={"email": email_of(people.only_a), "password": PASSWORD}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["name"] is None
+    assert app_auth.COOKIE in response.cookies
+
+
+# A caller can set app.sign_in; set_own_name must not let that widen its membership check.
+def test_presetting_sign_in_does_not_let_set_own_name_reach_another_business(
+    people: People, migrate_engine: Engine
+) -> None:
+    set_user_name(migrate_engine, people.only_b, None)
+    with tenant_context(people.a) as session:
+        session.execute(text("SELECT set_config('app.sign_in', 'on', true)"))
+        named = session.scalar(text("SELECT set_own_name(:u, 'x')"), {"u": people.only_b})
+    assert named is False
+    assert user_name(migrate_engine, people.only_b) is None
 
 
 # F10: leaving is never gated.

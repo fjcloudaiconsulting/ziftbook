@@ -67,6 +67,10 @@ def test_no_personal_data_ever_reaches_a_log(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     never: list[str] = ["2001:db8:", "@example.com", UA["User-Agent"]]
+    # The audit table persists across runs: only this run's rows are scanned for names.
+    with migrate_engine.begin() as conn:
+        conn.execute(text("SET LOCAL app.audit_review = 'on'"))
+        started = conn.scalar(text("SELECT clock_timestamp()"))
     templates = ("sign_up", "sign_up_registered", "password_reset", "invite")
     never += [render(template, "en")[0] for template in templates]
 
@@ -387,7 +391,11 @@ def test_no_personal_data_ever_reaches_a_log(
             [
                 dict(row)
                 for row in conn.execute(
-                    text("SELECT action, target, details FROM audit_events")
+                    text(
+                        "SELECT action, target, details FROM audit_events "
+                        "WHERE created_at >= :started"
+                    ),
+                    {"started": started},
                 ).mappings()
             ],
             default=str,

@@ -196,10 +196,12 @@ BEGIN
 END $$"""
 
 # The name is filled in once, and only for someone in the caller's business: the EXISTS reads
-# memberships under the caller's tenant (FORCE row-level security), so a compromised app role can
-# name nobody else. The stored display names are then filled in in EVERY business of the person,
-# which the caller's tenant cannot see: like account_by_email (0007), list them under app.sign_in,
-# then visit each tenant, and restore both settings.
+# memberships under the caller's tenant (FORCE row-level security), with app.sign_in cleared first
+# because a caller can set it. app.tenant_id is caller-trusted, like in every other definer: an app
+# role that can set it can already read that business directly. The stored display names are then
+# filled in in EVERY business of the person, which the caller's tenant cannot see: like
+# account_by_email (0007), list them under app.sign_in, then visit each tenant, and restore both
+# settings.
 SET_OWN_NAME_FUNCTION = f"""
 CREATE FUNCTION set_own_name(p_user uuid, p_name text)
 RETURNS boolean
@@ -211,10 +213,12 @@ DECLARE
   v_tenants uuid[];
   t uuid;
 BEGIN
+  PERFORM set_config('app.sign_in', '', true);
   UPDATE users u SET name = p_name
   WHERE u.id = p_user AND u.name IS NULL
     AND EXISTS (SELECT 1 FROM memberships m WHERE m.user_id = p_user);
   IF NOT FOUND THEN
+    PERFORM set_config('app.sign_in', coalesce(v_sign_in, ''), true);
     RETURN false;
   END IF;
   PERFORM set_config('app.sign_in', 'on', true);
