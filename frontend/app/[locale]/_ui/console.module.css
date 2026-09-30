@@ -469,7 +469,7 @@
 .rowError { grid-column: 1 / -1; }
 /* Phone shows the first two requests; "Show n more" opens the rest. Desktop shows every one. */
 .reqExtra { display: none; }
-.queueOpen .reqExtra { display: list-item; }
+.queueOpen .reqExtra { display: grid; }
 .showMore { align-self: flex-start; }
 @media (min-width: 56rem) {
   .req { grid-template-columns: 7.5rem 1fr auto; gap: 0.25rem 1.25rem; padding: 1rem 1.1rem; align-items: center; }
@@ -477,7 +477,7 @@
   .desktopOnly { display: inline; }
   .acts > button { flex: none; }
   .declining { grid-column: 1 / -1; }
-  .reqExtra { display: list-item; }
+  .reqExtra { display: grid; }
   .showMore { display: none; }
 }
 

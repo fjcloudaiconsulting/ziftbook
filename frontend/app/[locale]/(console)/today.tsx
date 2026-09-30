@@ -295,6 +295,13 @@ export function Today() {
       <p className={uiStyles.srOnly} role="status" aria-live="polite">
         {status}
       </p>
+      {/* The same line for sighted users (calendar-design notes: the row leaves with a short
+          "Accepted: ..." line). aria-hidden: the live region above already announces it. */}
+      {status && (
+        <p className={uiStyles.hint} aria-hidden="true">
+          {status}
+        </p>
+      )}
       {signedOut && <SignedOutBanner />}
     </>
   );
