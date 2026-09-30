@@ -320,9 +320,21 @@
         "buffer_pct": "pauze na elke afspraak",
         "pending_ttl_hours": "tijd om een aanvraag te beantwoorden",
         "max_pending_per_email": "openstaande aanvragen per klant",
-        "max_reschedules": "wijzigingen die een klant kan aanbrengen"
+        "max_reschedules": "wijzigingen die een klant kan aanbrengen",
+        "free_cancellation_hours": "gratis annuleren",
+        "reschedule_cutoff_hours": "een afspraak verzetten",
+        "cancellation_policy_text": "annuleringsbeleid",
+        "workers_edit_own_hours": "eigen werktijden van teamleden"
       },
-      "savingHint": "Je wijzigingen worden opgeslagen."
+      "savingHint": "Je wijzigingen worden opgeslagen.",
+      "freeCancellationLabel": "Gratis annuleren tot",
+      "rescheduleCutoffLabel": "Klanten kunnen een afspraak verzetten tot",
+      "hoursBeforeUnit": "{count, plural, one {uur van tevoren} other {uur van tevoren}}",
+      "policyLabel": "Annuleringsbeleid",
+      "policyHint": "Klanten zien dit als ze boeken en als ze hun afspraak beheren. Schrijf het in de taal van je e-mails. Nieuwe boekingen krijgen de nieuwe regels; bestaande boekingen houden hun eigen regels.",
+      "teamHeading": "Team",
+      "workersEditLabel": "Teamleden kunnen hun eigen werktijden wijzigen",
+      "workersEditHint": "Uit: alleen jij stelt hun tijden in."
     },
     "errors": {
       "ownerOnly": "Alleen een eigenaar kan dit doen.",

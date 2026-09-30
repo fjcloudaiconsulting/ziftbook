@@ -320,9 +320,21 @@
         "buffer_pct": "pausa após cada atendimento",
         "pending_ttl_hours": "tempo para responder a um pedido",
         "max_pending_per_email": "pedidos em aberto por cliente",
-        "max_reschedules": "alterações que um cliente pode fazer"
+        "max_reschedules": "alterações que um cliente pode fazer",
+        "free_cancellation_hours": "cancelamento grátis",
+        "reschedule_cutoff_hours": "remarcar um agendamento",
+        "cancellation_policy_text": "política de cancelamento",
+        "workers_edit_own_hours": "horário próprio dos membros da equipe"
       },
-      "savingHint": "Salvando suas alterações."
+      "savingHint": "Salvando suas alterações.",
+      "freeCancellationLabel": "Cancelamento grátis até",
+      "rescheduleCutoffLabel": "Clientes podem remarcar um agendamento até",
+      "hoursBeforeUnit": "{count, plural, one {hora antes} other {horas antes}}",
+      "policyLabel": "Política de cancelamento",
+      "policyHint": "Os clientes veem isto ao agendar e ao gerenciar o agendamento. Escreva no idioma dos seus e-mails. Novos agendamentos seguem as novas regras; os existentes mantêm as regras que já tinham.",
+      "teamHeading": "Equipe",
+      "workersEditLabel": "Membros da equipe podem alterar o próprio horário de trabalho",
+      "workersEditHint": "Desativado: só você define os horários deles."
     },
     "errors": {
       "ownerOnly": "Só um proprietário pode fazer isso.",

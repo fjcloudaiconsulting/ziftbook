@@ -320,9 +320,21 @@
         "buffer_pct": "break after each appointment",
         "pending_ttl_hours": "time to answer a request",
         "max_pending_per_email": "open requests per client",
-        "max_reschedules": "changes a client can make"
+        "max_reschedules": "changes a client can make",
+        "free_cancellation_hours": "free cancellation",
+        "reschedule_cutoff_hours": "moving a booking",
+        "cancellation_policy_text": "cancellation policy",
+        "workers_edit_own_hours": "team members' own hours"
       },
-      "savingHint": "Saving your changes."
+      "savingHint": "Saving your changes.",
+      "freeCancellationLabel": "Free cancellation up to",
+      "rescheduleCutoffLabel": "Clients can move a booking up to",
+      "hoursBeforeUnit": "{count, plural, one {hour before} other {hours before}}",
+      "policyLabel": "Cancellation policy",
+      "policyHint": "Clients see this when they book and when they manage their booking. Write it in your email language. New bookings get the new rules; existing bookings keep theirs.",
+      "teamHeading": "Team",
+      "workersEditLabel": "Team members can change their own working hours",
+      "workersEditHint": "Off: only you set their hours."
     },
     "errors": {
       "ownerOnly": "Only an owner can do this.",

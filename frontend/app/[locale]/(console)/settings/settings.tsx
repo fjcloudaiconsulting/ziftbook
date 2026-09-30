@@ -258,6 +258,25 @@ export function Settings() {
     </>
   );
   const fid = (key: Key) => `${formId}-${key}`;
+  const check = (key: Key, label: string, hint: string) => (
+    <div className={styles.checkRow}>
+      <input
+        id={fid(key)}
+        type="checkbox"
+        checked={draft[key] as boolean}
+        onChange={(e) => set(key, e.target.checked)}
+        aria-describedby={`${fid(key)}-hint`}
+      />
+      <div className={`${uiStyles.field} ${styles.checkText}`}>
+        <label className={uiStyles.label} htmlFor={fid(key)}>
+          {label}
+        </label>
+        <p className={uiStyles.hint} id={`${fid(key)}-hint`}>
+          {hint}
+        </p>
+      </div>
+    </div>
+  );
   const zones = zoneOptions(settings.timezone, Intl.supportedValuesOf("timeZone"));
   const showBar = dirty || saving || saveFailed;
 
@@ -347,23 +366,7 @@ export function Settings() {
           <legend>
             <h2>{t("bookingsHeading")}</h2>
           </legend>
-          <div className={styles.checkRow}>
-            <input
-              id={fid("auto_confirm")}
-              type="checkbox"
-              checked={draft.auto_confirm as boolean}
-              onChange={(e) => set("auto_confirm", e.target.checked)}
-              aria-describedby={`${fid("auto_confirm")}-hint`}
-            />
-            <div className={`${uiStyles.field} ${styles.checkText}`}>
-              <label className={uiStyles.label} htmlFor={fid("auto_confirm")}>
-                {t("autoConfirmLabel")}
-              </label>
-              <p className={uiStyles.hint} id={`${fid("auto_confirm")}-hint`}>
-                {t("autoConfirmHint")}
-              </p>
-            </div>
-          </div>
+          {check("auto_confirm", t("autoConfirmLabel"), t("autoConfirmHint"))}
           <Field
             id={fid("slot_step_minutes")}
             label={t("slotStepLabel")}
@@ -423,6 +426,22 @@ export function Settings() {
             <h2>{t("cancellingHeading")}</h2>
           </legend>
           <Field
+            id={fid("free_cancellation_hours")}
+            label={t("freeCancellationLabel")}
+            unit={t("hoursBeforeUnit", { count: count("free_cancellation_hours") })}
+            error={err("free_cancellation_hours")}
+          >
+            {(p) => int("free_cancellation_hours", p.id, p.describedBy, p.invalid)}
+          </Field>
+          <Field
+            id={fid("reschedule_cutoff_hours")}
+            label={t("rescheduleCutoffLabel")}
+            unit={t("hoursBeforeUnit", { count: count("reschedule_cutoff_hours") })}
+            error={err("reschedule_cutoff_hours")}
+          >
+            {(p) => int("reschedule_cutoff_hours", p.id, p.describedBy, p.invalid)}
+          </Field>
+          <Field
             id={fid("max_reschedules")}
             label={t("maxReschedulesLabel")}
             unit={t("timesUnit", { count: count("max_reschedules") })}
@@ -431,6 +450,24 @@ export function Settings() {
           >
             {(p) => int("max_reschedules", p.id, p.describedBy, p.invalid)}
           </Field>
+          <Field id={fid("cancellation_policy_text")} label={t("policyLabel")} hint={t("policyHint")}>
+            {(p) => (
+              <textarea
+                id={p.id}
+                maxLength={2000}
+                value={String(draft.cancellation_policy_text)}
+                onChange={(e) => set("cancellation_policy_text", e.target.value)}
+                aria-describedby={p.describedBy}
+              />
+            )}
+          </Field>
+        </fieldset>
+
+        <fieldset className={`${styles.section} ${styles.settingsSection}`} disabled={saving}>
+          <legend>
+            <h2>{t("teamHeading")}</h2>
+          </legend>
+          {check("workers_edit_own_hours", t("workersEditLabel"), t("workersEditHint"))}
         </fieldset>
 
         {showBar && (
