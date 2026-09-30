@@ -18,7 +18,7 @@ import { Link, useRouter } from "@/i18n/navigation";
 import { closedDay, closedDetail, daySlices, dayWindow, hourRange, hrefFor, type CalendarView, lanes, nowTop, type Panel, parseView, type Slice, spanTimes, visibleDays, weekdayOf } from "@/lib/calendar";
 import { dateLocale } from "@/lib/console";
 import { type Locale, type NameMap, serviceName } from "@/lib/services";
-import { hhmm, messageShown, slotAt } from "@/lib/new-booking";
+import { messageShown, slotAt } from "@/lib/new-booking";
 import { addDaysISO, localDateISO, localTime, localToInstant } from "@/lib/time-off";
 import { agendaPhase, blockLabel, mergeAgenda, nowLineAt } from "@/lib/today";
 
