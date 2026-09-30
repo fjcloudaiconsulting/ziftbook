@@ -79,6 +79,7 @@ Action = Literal[
     "member_role_changed",
     "member_removed",
     "member_display_name_changed",
+    "user_name_set",
     "working_hours_changed",
     "opening_hours_changed",
     "time_off_created",
@@ -215,7 +216,25 @@ def signed_in(request: Request) -> Iterator[SignedIn]:
 
 # scope="function": the endpoint's transaction commits before the response is sent, so a failed
 # commit is an error response instead of a success that didn't happen.
-CurrentSession = Annotated[SignedIn, Depends(signed_in, scope="function")]
+# Any signed-in person, named or not: only what a nameless person needs (read the session, give a
+# name, sign out everywhere) takes this. Everything else takes CurrentSession.
+AnySession = Annotated[SignedIn, Depends(signed_in, scope="function")]
+
+
+def named(current: AnySession) -> SignedIn:
+    # Deny by default (ZIF-131): read on every request, so a name removed while a session is live
+    # gates it at once, and anything but a definite True (no row, NULL) denies.
+    if (
+        current.db.scalar(
+            text("SELECT name IS NOT NULL FROM users WHERE id = :u"), {"u": current.user_id}
+        )
+        is not True
+    ):
+        raise ApiError(403, "name_required")
+    return current
+
+
+CurrentSession = Annotated[SignedIn, Depends(named)]
 
 
 def owner(current: CurrentSession) -> SignedIn:
@@ -238,6 +257,7 @@ class SessionOut(BaseModel):
     role: str
     email: str
     display_name: str | None
+    name: str | None  # the person's own; None until they give it (ZIF-131)
     business_name: str
     currency: str
     slug: str  # ZIF-145: the console builds the public booking-page address from this
@@ -247,7 +267,7 @@ def describe(db: Session, user_id: UUID) -> SessionOut:
     """The signed-in person as the web app shows them; db is a tenant_context for their business."""
     row = db.execute(
         text("""
-        SELECT m.user_id, m.tenant_id, m.id AS member_id, m.role, m.display_name, u.email,
+        SELECT m.user_id, m.tenant_id, m.id AS member_id, m.role, m.display_name, u.email, u.name,
                t.name AS business_name, t.currency, t.slug
         FROM memberships m JOIN users u ON u.id = m.user_id JOIN tenants t ON t.id = m.tenant_id
         WHERE m.user_id = :user_id
@@ -260,7 +280,7 @@ def describe(db: Session, user_id: UUID) -> SessionOut:
 
 
 @router.get("/session", responses={401: {"model": Error}})
-def read(current: CurrentSession, response: Response) -> SessionOut:
+def read(current: AnySession, response: Response) -> SessionOut:
     # One person's identity: never for a shared cache.
     response.headers["Cache-Control"] = "no-store"
     return describe(current.db, current.user_id)
@@ -358,7 +378,7 @@ def sign_out(request: Request, response: Response) -> None:
 @router.delete(
     "/sessions", status_code=204, responses={401: {"model": Error}, 415: {"model": Error}}
 )
-def sign_out_everywhere(current: CurrentSession, request: Request, response: Response) -> None:
+def sign_out_everywhere(current: AnySession, request: Request, response: Response) -> None:
     """Sign the user out of every session, in every tenant."""
     current.db.execute(text("DELETE FROM sessions WHERE user_id = :id"), {"id": current.user_id})
     record(current.db, request, "signed_out_everywhere", actor_user_id=current.user_id)

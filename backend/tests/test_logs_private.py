@@ -87,9 +87,11 @@ def test_no_personal_data_ever_reaches_a_log(
     sign_up_email = fresh_email()
     sign_up_password = "Studio-Zzyzx-Pw-1"
     business_name = "Studio Zzyzx-9"
+    signer_name = "Zzyzx Signer-9"
     secret(sign_up_email)
     secret(sign_up_password)
     secret(business_name)
+    secret(signer_name)
 
     anon = client_for(app)
     signed_up = anon.post("/api/sign-up", json={"email": sign_up_email, "locale": "en"})
@@ -104,6 +106,7 @@ def test_no_personal_data_ever_reaches_a_log(
                 "password": sign_up_password,
                 "business_name": business_name,
                 "country": "NL",
+                "name": signer_name,
             }
         ),
         headers={"content-type": "application/json"},
@@ -337,8 +340,10 @@ def test_no_personal_data_ever_reaches_a_log(
     # 7: invite flow — send, list, a wrong token, then accept with a brand-new account.
     invite_email = fresh_email()
     invite_password = "Invite-Pw7-55"
+    invitee_name = "Zzyzx Invitee-7"
     secret(invite_email)
     secret(invite_password)
+    secret(invitee_name)
 
     assert owner.post("/api/invites", json={"email": invite_email}).status_code == 201
     assert owner.get("/api/invites").status_code == 200
@@ -351,15 +356,44 @@ def test_no_personal_data_ever_reaches_a_log(
     flipped = "A" if secret_part[-1] != "A" else "B"
     wrong_token = f"{tenant_part}.{secret_part[:-1]}{flipped}"
     wrong_accept = client_for(app).post(
-        "/api/invites/accept", json={"token": wrong_token, "password": invite_password}
+        "/api/invites/accept",
+        json={"token": wrong_token, "password": invite_password, "name": invitee_name},
     )
     assert wrong_accept.status_code == 400
 
     accepted = client_for(app).post(
-        "/api/invites/accept", json={"token": invite_token, "password": invite_password}
+        "/api/invites/accept",
+        json={"token": invite_token, "password": invite_password, "name": invitee_name},
     )
     assert accepted.status_code == 201
     cookie_secret(accepted)
+
+    # 7b: a person from before names were asked for gives theirs.
+    legacy_name = "Zzyzx Legacy-3"
+    secret(legacy_name)
+    with migrate_engine.begin() as conn:
+        conn.execute(text("UPDATE users SET name = NULL WHERE id = :u"), {"u": people.only_b})
+    assert (
+        signed_in(app, people.b, people.only_b)
+        .put("/api/session/name", json={"name": legacy_name})
+        .status_code
+        == 200
+    )
+    # Names are never event details or targets either (the audit trail is not a log, but the same
+    # rule holds: it would be read by whoever reads events).
+    with migrate_engine.begin() as conn:
+        conn.execute(text("SET LOCAL app.audit_review = 'on'"))
+        recorded = json.dumps(
+            [
+                dict(row)
+                for row in conn.execute(
+                    text("SELECT action, target, details FROM audit_events")
+                ).mappings()
+            ],
+            default=str,
+        )
+    for value in (signer_name, invitee_name, legacy_name):
+        assert value not in recorded, value
 
     # 8: forced 500, a real duplicate-email error, the email known only at runtime.
     def duplicate_email() -> None:

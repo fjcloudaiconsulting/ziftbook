@@ -232,6 +232,7 @@ def complete_sign_up(client: TestClient, token: str, country: str = "NL") -> Res
         "password": PASSWORD,
         "business_name": "Studio Audit",
         "country": country,
+        "name": "Ana Silva",
     }
     return client.post("/api/sign-up/complete", json=body)
 

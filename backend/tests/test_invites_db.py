@@ -74,10 +74,16 @@ def new_accounts(people: People, migrate_engine: Engine) -> Iterator[list[NewAcc
         conn.execute(text("DELETE FROM users WHERE id = ANY(:u)"), {"u": ids})
 
 
-def call(tenant_id: uuid.UUID, token_hash: bytes | None, password_hash: str | None) -> Any:
+def call(
+    tenant_id: uuid.UUID,
+    token_hash: bytes | None,
+    password_hash: str | None,
+    name: str | None = "New Person",
+) -> Any:
     with tenant_context(tenant_id) as session:
         return session.execute(
-            text("SELECT * FROM accept_invite(:h, :p)"), {"h": token_hash, "p": password_hash}
+            text("SELECT * FROM accept_invite(:h, :p, :n)"),
+            {"h": token_hash, "p": password_hash, "n": name},
         ).one()
 
 
@@ -156,7 +162,7 @@ def test_accept_invite_is_a_pinned_and_non_public_definer(migrate_engine: Engine
         assert conn.scalar(
             text(
                 "SELECT has_function_privilege("
-                "'ziftbook_app', 'accept_invite(bytea,text)', 'EXECUTE')"
+                "'ziftbook_app', 'accept_invite(bytea,text,text)', 'EXECUTE')"
             )
         )
 
@@ -171,7 +177,8 @@ def test_accept_creates_an_account_and_a_membership(
 
     with tenant_context(people.a) as session:
         result = session.execute(
-            text("SELECT * FROM accept_invite(:h, :p)"), {"h": digest(secret), "p": HASH}
+            text("SELECT * FROM accept_invite(:h, :p, :n)"),
+            {"h": digest(secret), "p": HASH, "n": "New Person"},
         ).one()
         # accept_invite never changes the caller's tenant.
         assert session.scalar(text("SELECT current_setting('app.tenant_id')")) == str(people.a)
@@ -205,7 +212,8 @@ def test_accept_refuses_a_replayed_expired_or_unsent_invite(
     invite_id, secret = minted(people.a, email)
     with tenant_context(people.a) as session:
         first = session.execute(
-            text("SELECT * FROM accept_invite(:h, :p)"), {"h": digest(secret), "p": HASH}
+            text("SELECT * FROM accept_invite(:h, :p, :n)"),
+            {"h": digest(secret), "p": HASH, "n": "New Person"},
         ).one()
     assert first.outcome == "accepted"
     new_accounts.append(NewAccount(people.a, first.account_id))
@@ -255,7 +263,8 @@ def test_accept_binds_to_its_own_tenant(migrate_engine: Engine, people: People) 
 
     with pytest.raises(DBAPIError), SessionLocal.begin() as session:
         session.execute(
-            text("SELECT * FROM accept_invite(:h, :p)"), {"h": digest(secret), "p": HASH}
+            text("SELECT * FROM accept_invite(:h, :p, :n)"),
+            {"h": digest(secret), "p": HASH, "n": "New Person"},
         )
 
 
@@ -359,7 +368,8 @@ def test_concurrent_accepts_of_the_same_link_serialize(
 
     with SessionLocal(info={"tenant_id": people.a}) as session, session.begin():
         first = session.execute(
-            text("SELECT * FROM accept_invite(:h, :p)"), {"h": digest(secret), "p": HASH}
+            text("SELECT * FROM accept_invite(:h, :p, :n)"),
+            {"h": digest(secret), "p": HASH, "n": "New Person"},
         ).one()
         thread = threading.Thread(target=accept)
         thread.start()

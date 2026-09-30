@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import text
 
 from app import auth, limits, passwords
+from app.accounts import DisplayNameText
 from app.auth import CurrentOwner
 from app.db import SessionLocal, tenant_context
 from app.errors import ApiError, Error
@@ -46,6 +47,8 @@ class InviteDetails(BaseModel):
 
 class AcceptInvite(InviteToken):
     password: str
+    # Required for a new account (checked in accept); an existing one keeps its own, so ignored.
+    name: DisplayNameText | None = None
 
 
 INVITES = "SELECT id, email, expires_at, expires_at <= now() AS expired FROM invites"
@@ -222,6 +225,8 @@ def accept(body: AcceptInvite, request: Request, response: Response) -> auth.Ses
     found = find(body.token)  # before any hashing: a dead link costs nothing
     password_hash = None
     if found.user_id is None:
+        if body.name is None:
+            raise ApiError(422, "name_required")  # before hashing; the link stays usable
         # A weak password is a 422 and the link stays usable.
         password_hash = passwords.hash_password(passwords.check_new_password(body.password))
     else:
@@ -248,7 +253,8 @@ def accept(body: AcceptInvite, request: Request, response: Response) -> auth.Ses
         ):  # reset while it was being checked
             raise ApiError(401, "invalid_credentials")
         result = session.execute(
-            text("SELECT * FROM accept_invite(:h, :p)"), {"h": found.digest, "p": password_hash}
+            text("SELECT * FROM accept_invite(:h, :p, :n)"),
+            {"h": found.digest, "p": password_hash, "n": body.name},
         ).one()
         if result.outcome == "accepted":
             auth.record(

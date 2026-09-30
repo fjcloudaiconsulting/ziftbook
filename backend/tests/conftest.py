@@ -352,13 +352,26 @@ class People:
     both: uuid.UUID  # user, owner in a and worker in b
 
 
-def add_user(engine: Engine, email: str | None = None, locale: str | None = None) -> uuid.UUID:
+def add_user(
+    engine: Engine,
+    email: str | None = None,
+    locale: str | None = None,
+    name: str | None = "Test Person",
+) -> uuid.UUID:
     # The id comes from the app: a new user is invisible to its own policy, so RETURNING would fail.
+    # name=None is an account from before ZIF-131: registration not complete.
     user_id = uuid.uuid7()
     with engine.begin() as conn:
         conn.execute(
-            text("INSERT INTO users (id, email, locale) VALUES (:id, :email, :locale)"),
-            {"id": user_id, "email": email or f"{user_id}@example.com", "locale": locale},
+            text(
+                "INSERT INTO users (id, email, locale, name) VALUES (:id, :email, :locale, :name)"
+            ),
+            {
+                "id": user_id,
+                "email": email or f"{user_id}@example.com",
+                "locale": locale,
+                "name": name,
+            },
         )
     return user_id
 

@@ -24,6 +24,7 @@ NAME_ACL = """
 SELECT attacl FROM pg_attribute WHERE attrelid = 'tenants'::regclass AND attname = 'name'
 """
 FIVE_ARG = "SELECT to_regprocedure('complete_sign_up(bytea,text,text,text,text)')"
+SIX_ARG = "SELECT to_regprocedure('complete_sign_up(bytea,text,text,text,text,text)')"
 THREE_ARG = "SELECT to_regprocedure('complete_sign_up(bytea,text,text)')"
 THREE_ARG_TO_APP = (
     "SELECT has_function_privilege('ziftbook_app', 'complete_sign_up(bytea,text,text)', 'EXECUTE')"
@@ -32,7 +33,7 @@ THREE_ARG_TO_PUBLIC = (
     "SELECT has_function_privilege('public', 'complete_sign_up(bytea,text,text)', 'EXECUTE')"
 )
 INVITES_TABLE = "SELECT to_regclass('invites')"
-ACCEPT_INVITE = "SELECT to_regprocedure('accept_invite(bytea,text)')"
+ACCEPT_INVITE = "SELECT to_regprocedure('accept_invite(bytea,text,text)')"
 INVITES_PK = """
 SELECT conname FROM pg_constraint
 WHERE conrelid = 'invites'::regclass AND contype = 'p'
@@ -68,7 +69,7 @@ def test_downgrading_and_upgrading_0013_restores_its_columns_and_grants(
         assert not conn.scalar(text(TABLE_PRIVILEGE), {"priv": "DELETE"})
         assert conn.scalar(text(COLUMN_PRIVILEGE))
         assert conn.scalar(text(NAME_ACL)) is not None
-        assert conn.scalar(text(FIVE_ARG)) is not None
+        assert conn.scalar(text(SIX_ARG)) is not None
         # 0022 (above 0013 in the chain) drops it again once undone here.
         assert conn.scalar(text(THREE_ARG)) is None
         assert conn.scalar(text(INVITES_TABLE)) is not None
@@ -95,7 +96,7 @@ def test_downgrading_and_upgrading_0022_restores_the_three_arg_complete_sign_up_
         command.upgrade(cfg, "head")
     with migrate_engine.connect() as conn:
         assert conn.scalar(text(THREE_ARG)) is None
-        assert conn.scalar(text(FIVE_ARG)) is not None
+        assert conn.scalar(text(SIX_ARG)) is not None
 
 
 MEMBERSHIP_COLUMNS = text(

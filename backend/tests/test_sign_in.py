@@ -78,6 +78,7 @@ def test_signing_in_starts_a_session_in_the_business(
         "business_name": "a",
         "currency": "EUR",
         "display_name": None,
+        "name": "Test Person",
         "slug": slug,
     }
     client.cookies.set(auth.COOKIE, SimpleCookie(response.headers["set-cookie"])[auth.COOKIE].value)
