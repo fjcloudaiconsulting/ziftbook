@@ -225,11 +225,13 @@ const FIELD_ERROR_KEY = {
   endNotAfterStart: "errorEndNotAfterStart",
 } as const;
 
-function BlockedTimeForm({
+export function BlockedTimeForm({
   memberId,
   tz,
   personName,
   editing,
+  prefill,
+  compact,
   onDone,
   onCancel,
 }: {
@@ -237,6 +239,10 @@ function BlockedTimeForm({
   tz: string;
   personName: string;
   editing: TimeOffOut | null;
+  /** A part of one day to start from (the calendar's empty spot); ignored when editing. */
+  prefill?: { firstDay: string; startTime: string; endTime: string };
+  /** Inside the calendar's panel, which has its own title: no heading or lede of its own. */
+  compact?: boolean;
   onDone(saved: TimeOffOut | null): void;
   onCancel(): void;
 }) {
@@ -244,7 +250,9 @@ function BlockedTimeForm({
   const t = useTranslations("Console.timeOff");
   const tConsole = useTranslations("Console");
   const form = useTranslations("Form");
-  const [initial] = useState<FormState>(() => (editing ? fromBlock(editing, tz) : blank()));
+  const [initial] = useState<FormState>(() =>
+    editing ? fromBlock(editing, tz) : prefill ? { ...blank(), allDay: false, lastDay: prefill.firstDay, ...prefill } : blank(),
+  );
   const [state, setState] = useState<FormState>(initial);
   const [fieldError, setFieldError] = useState<string | null>(null);
   const [bannerError, setBannerError] = useState<string | null>(null);
@@ -327,8 +335,12 @@ function BlockedTimeForm({
 
   return (
     <>
-      <Heading focus>{editing ? t("editTitle") : t("newTitle")}</Heading>
-      <p className={uiStyles.lede}>{t("zoneLede", { name: personName, city: zoneCity(settings.timezone) })}</p>
+      {!compact && (
+        <>
+          <Heading focus>{editing ? t("editTitle") : t("newTitle")}</Heading>
+          <p className={uiStyles.lede}>{t("zoneLede", { name: personName, city: zoneCity(settings.timezone) })}</p>
+        </>
+      )}
       {signedOut && <SignedOutBanner />}
       {bannerError && <Banner tone="error">{bannerError}</Banner>}
       <form className={`${uiStyles.stack} ${styles.colWide}`} noValidate onSubmit={onSubmit}>

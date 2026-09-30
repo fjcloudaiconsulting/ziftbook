@@ -1,0 +1,8 @@
+Booking moved
+Hello,
+
+$client, $service: moved from $old_date at $old_time to $date at $time ($zone), now with $member.
+
+$link
+
+ziftbook

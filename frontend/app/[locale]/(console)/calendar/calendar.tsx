@@ -15,10 +15,11 @@ import {
   type TimeOffRangeOut,
 } from "@/api-client";
 import { Link, useRouter } from "@/i18n/navigation";
-import { closedDay, daySlices, dayWindow, hourRange, hrefFor, lanes, nowTop, parseView, type Slice, visibleDays, weekdayOf } from "@/lib/calendar";
+import { closedDay, daySlices, dayWindow, hourRange, hrefFor, lanes, nowTop, type Panel, parseView, type Slice, visibleDays, weekdayOf } from "@/lib/calendar";
 import { dateLocale } from "@/lib/console";
 import { type Locale, type NameMap, serviceName } from "@/lib/services";
-import { addDaysISO, localDateISO, localTime } from "@/lib/time-off";
+import { hhmm, messageShown, slotAt } from "@/lib/new-booking";
+import { addDaysISO, localDateISO, localTime, localToInstant } from "@/lib/time-off";
 import { agendaPhase, blockLabel, mergeAgenda, nowLineAt } from "@/lib/today";
 
 import { useConsole } from "../../_ui/console";
@@ -26,15 +27,18 @@ import styles from "../../_ui/console.module.css";
 import { Heading, problem } from "../../_ui/parts";
 import uiStyles from "../../_ui/ui.module.css";
 import { chipOf, LoadFailure, Skeleton } from "../today";
+import { BlockPanel } from "./block-panel";
 import { BookingDetail } from "./booking-detail";
+import { BookingForm, type Done } from "./booking-form";
 import css from "./calendar.module.css";
 
 type Loaded = { key: string; bookings: AgendaOut[]; blocks: TimeOffRangeOut[]; opening: Shift[] };
 type Item = ReturnType<typeof mergeAgenda<AgendaOut, TimeOffRangeOut>>[number];
 type Cell = { item: Item; slice: Slice; lane: number; of: number };
 type Column = { key: string; day: string; label: string; ariaLabel: string; small?: string; cells: Cell[] };
+/** The empty-spot popover: where it sits on screen, and the start and person the click meant. */
+type Popover = { at: string; time: string; member: string; name: string; column: string; left: number; top: number };
 
-const hhmm = (minutes: number) => `${String(Math.floor((minutes % 1440) / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
 const memberOf = (item: Item) => (item.kind === "booking" ? item.booking.worker_id : item.block.member_id);
 
 export function Calendar() {
@@ -63,9 +67,45 @@ export function Calendar() {
   const [reload, setReload] = useState(0);
   const seq = useRef(0);
   const openedInApp = useRef(false);
+  const panelOpenedInApp = useRef(false);
   const lastBooking = useRef<string | null>(null);
+  const lastPanel = useRef<Panel | null>(null);
+  // What opened the panel, to give focus back to when it closes.
+  const invoker = useRef<HTMLElement | null>(null);
+  // A booking just made or moved: focus goes to its grid item once the window has been read again.
+  const justDone = useRef<{ id: string; before: Loaded | null } | null>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
+  const [popover, setPopover] = useState<Popover | null>(null);
+  // The hint under the heading: where it was made (booking, day, view), so it never lingers elsewhere.
+  const [message, setMessage] = useState<{ text: string; booking: string | null; date: string; view: string } | null>(null);
+  // What the screen reader hears: cleared before each set, so an identical message is announced again.
+  const [live, setLive] = useState("");
+  const liveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [settled, setSettled] = useState<string | null>(null);
+  useEffect(() => () => {
+    if (liveTimer.current) clearTimeout(liveTimer.current);
+  }, []);
+  function announce(text: string) {
+    if (liveTimer.current) clearTimeout(liveTimer.current);
+    setLive("");
+    liveTimer.current = setTimeout(() => setLive(text), 50);
+  }
 
   const view = parseView(params, todayISO, isOwner ? "owner" : "worker", session.member_id, members?.map((m) => m.member_id) ?? null);
+  // Skipping the heading's focus is for the booking just made or moved, once: any other booking (or none)
+  // in between clears it, so a reopened one focuses its heading again.
+  const [seenBooking, setSeenBooking] = useState(view.booking);
+  if (seenBooking !== view.booking) {
+    setSeenBooking(view.booking);
+    if (settled !== view.booking) setSettled(null);
+  }
+  // Opening a panel (reschedule, new, block) from the detail also ends that one-shot skip, so the detail
+  // focuses its heading again when the panel closes.
+  const [seenPanel, setSeenPanel] = useState(view.panel);
+  if (seenPanel !== view.panel) {
+    setSeenPanel(view.panel);
+    if (view.panel) setSettled(null);
+  }
   const days = visibleDays(view.view, view.date);
   const range = dayWindow(days[0], tz, days.length);
   const key = `${range.from}|${range.to}`;
@@ -90,16 +130,64 @@ export function Calendar() {
   }, [range.from, range.to, reload]);
 
   // Closing a booking returns focus to the item that opened it, or the page heading when it is gone.
+  // A panel replacing the open booking is not a close: the panel has its own focus.
   useEffect(() => {
     const before = lastBooking.current;
     lastBooking.current = view.booking;
-    if (!before || view.booking) return;
+    if (!before || view.booking || view.panel) return;
     const link = [...document.querySelectorAll<HTMLElement>(`[data-open="${CSS.escape(before)}"]`)].find((el) => el.offsetParent !== null);
     (link ?? document.querySelector<HTMLElement>("h1"))?.focus();
-  }, [view.booking]);
+  }, [view.booking, view.panel]);
+
+  // Closing a new-booking or block panel returns focus to what opened it (a move returns to the detail,
+  // which takes focus itself). After a success the window's own focus effect below takes over.
+  useEffect(() => {
+    const before = lastPanel.current;
+    lastPanel.current = view.panel;
+    if (view.panel) return;
+    panelOpenedInApp.current = false;
+    if (!before || before === "move" || justDone.current) return;
+    const el = invoker.current;
+    invoker.current = null;
+    (el?.isConnected ? el : document.querySelector<HTMLElement>("h1"))?.focus();
+  }, [view.panel]);
+
+  // The popover's own keyboard and pointer life: focus its first button, close on an outside press or a scroll.
+  useEffect(() => {
+    if (!popover) return;
+    popoverRef.current?.querySelector<HTMLElement>("a")?.focus();
+    const away = (event: Event) => {
+      if (event.type === "pointerdown" && popoverRef.current?.contains(event.target as Node)) return;
+      setPopover(null);
+    };
+    document.addEventListener("pointerdown", away);
+    window.addEventListener("scroll", away, true);
+    window.addEventListener("resize", away);
+    return () => {
+      document.removeEventListener("pointerdown", away);
+      window.removeEventListener("scroll", away, true);
+      window.removeEventListener("resize", away);
+    };
+  }, [popover]);
 
   const data = loaded && loaded.key === key ? loaded : null;
   const failed = failure && failure.key === key ? failure : null;
+
+  // After a booking was made or moved and the window was read again: focus its grid item (the phone's
+  // list is hidden behind the panel, so then its panel heading), else the page heading.
+  useEffect(() => {
+    const done = justDone.current;
+    if (!done) return;
+    // One shot, whether or not the window could be read again.
+    if (failed) {
+      justDone.current = null;
+      return;
+    }
+    if (!data || data === done.before) return;
+    justDone.current = null;
+    const link = [...document.querySelectorAll<HTMLElement>(`[data-open="${CSS.escape(done.id)}"]`)].find((el) => el.offsetParent !== null);
+    (link ?? document.getElementById("detail-title") ?? document.querySelector<HTMLElement>("h1"))?.focus();
+  }, [data, failed]);
   const href = (patch: Parameters<typeof hrefFor>[1]) => hrefFor(view, patch);
   const weekView = view.view === "week";
 
@@ -328,14 +416,95 @@ export function Calendar() {
     }
   }
 
+  // A click on a lane's empty area (never on an item) offers a booking or blocked time at that spot. The
+  // keyboard route to the same actions is the toolbar's two buttons: a tab stop per empty slot would be dozens.
+  function openSpot(event: MouseEvent<HTMLDivElement>, column: Column) {
+    if (event.target !== event.currentTarget) return;
+    const lane = event.currentTarget;
+    const hour = parseFloat(getComputedStyle(lane).getPropertyValue("--hour")) || 64;
+    const offset = ((event.clientY - lane.getBoundingClientRect().top) / hour) * 60;
+    const time = slotAt(offset, hours.from, settings.slot_step_minutes, hours.to);
+    const member = weekView ? selfMember : column.key;
+    const chosen = team.find((m) => m.member_id === member);
+    const name = chosen ? nameOf(chosen) : (session.display_name ?? person("nameNotSet"));
+    setPopover({
+      at: localToInstant(column.day, time, tz),
+      time,
+      member,
+      name,
+      column: column.key,
+      left: Math.max(8, Math.min(event.clientX, window.innerWidth - 232)),
+      top: Math.max(8, Math.min(event.clientY, window.innerHeight - 176)),
+    });
+  }
+
+  function openPanel(event: MouseEvent<HTMLElement>) {
+    invoker.current = event.currentTarget;
+    // A panel already open (a deep link from Today) has no calendar entry to go back to.
+    if (!view.panel) panelOpenedInApp.current = true;
+  }
+
+  function fromPopover(pop: Popover) {
+    invoker.current = document.querySelector<HTMLElement>(`[data-col="${CSS.escape(pop.column)}"]`);
+    if (!view.panel) panelOpenedInApp.current = true;
+    setPopover(null);
+  }
+
+  function closePanel(event: MouseEvent<HTMLAnchorElement>) {
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;
+    // Opened from this page: go back to where the person was. A deep link (Today's button) has no such place: replace.
+    if (panelOpenedInApp.current) {
+      event.preventDefault();
+      panelOpenedInApp.current = false;
+      router.back();
+    }
+  }
+
+  function cancelPanel() {
+    if (panelOpenedInApp.current) {
+      panelOpenedInApp.current = false;
+      router.back();
+    } else {
+      router.replace(href({ panel: null }), { scroll: false });
+    }
+  }
+
+  function blocked() {
+    setMessage({ text: t("blockedDone"), booking: null, date: view.date, view: view.view });
+    announce(t("blockedDone"));
+    setReload((n) => n + 1);
+    panelOpenedInApp.current = false;
+    router.replace(href({ panel: null }), { scroll: false });
+  }
+
+  function finished(done: Done) {
+    justDone.current = { id: done.id, before: loaded };
+    setSettled(done.id);
+    openedInApp.current = false;
+    const date = localDateISO(new Date(done.startsAt), tz);
+    setMessage({ text: done.message, booking: done.id, date, view: view.view });
+    announce(done.message);
+    setReload((n) => n + 1);
+    panelOpenedInApp.current = false;
+    router.replace(href({ panel: null, booking: done.id, date, at: null, with: null }), { scroll: false });
+  }
+
   const step = weekView ? 7 : 1;
   const colMember = weekView ? selfMember : view.member;
   const options = [...(weekView ? [] : [{ id: "all", name: t("everyone") }]), ...team.map((m) => ({ id: m.member_id, name: nameOf(m) }))];
   const empty = data !== null && everyCell.length === 0;
 
   return (
-    <div className={`${css.page} ${view.booking ? css.hasDetail : ""}`}>
+    <div className={`${css.page} ${view.booking || view.panel ? css.hasDetail : ""}`}>
       <Heading focus>{nav("calendar")}</Heading>
+      <p className={uiStyles.srOnly} role="status" aria-live="polite">
+        {live}
+      </p>
+      {message && messageShown(message, view) && (
+        <p className={uiStyles.hint} aria-hidden="true">
+          {message.text}
+        </p>
+      )}
       <div className={`${css.toolbar} ${css.hideWithDetail}`}>
         <p className={css.dateLabel} aria-live="polite">
           {dateLine}
@@ -370,6 +539,14 @@ export function Calendar() {
             </select>
           </div>
         )}
+        <span className={css.newActions}>
+          <Link className={`${uiStyles.button} ${uiStyles.primary} ${uiStyles.small}`} href={href({ panel: "new", at: null, with: null })} scroll={false} replace={Boolean(view.panel)} onClick={openPanel}>
+            {t("newBooking")}
+          </Link>
+          <Link className={`${uiStyles.button} ${uiStyles.secondary} ${uiStyles.small}`} href={href({ panel: "block", at: null, with: null })} scroll={false} replace={Boolean(view.panel)} onClick={openPanel}>
+            {t("blockTime")}
+          </Link>
+        </span>
       </div>
       {isOwner && members && (
         <nav className={`${css.chips} ${css.phoneOnly} ${css.hideWithDetail}`} aria-label={t("filter")}>
@@ -381,7 +558,7 @@ export function Calendar() {
         </nav>
       )}
 
-      <div className={`${css.body} ${view.booking ? css.hasPanel : ""}`}>
+      <div className={`${css.body} ${view.booking || view.panel ? css.hasPanel : ""}`}>
         <div>
           {failed ? (
             <LoadFailure
@@ -418,6 +595,14 @@ export function Calendar() {
                 ) : (
                   dayList(view.date)
                 )}
+                <div className={css.phoneActions}>
+                  <Link className={`${uiStyles.button} ${uiStyles.primary} ${uiStyles.small}`} href={href({ panel: "new", at: null, with: null })} scroll={false} onClick={openPanel}>
+                    {t("newBooking")}
+                  </Link>
+                  <Link className={`${uiStyles.button} ${uiStyles.secondary} ${uiStyles.small}`} href={href({ panel: "block", at: null, with: null })} scroll={false} onClick={openPanel}>
+                    {t("blockTime")}
+                  </Link>
+                </div>
               </div>
               <div className={`${css.deskOnly} ${uiStyles.stack}`}>
                 {(closedToday || empty) && (
@@ -441,7 +626,7 @@ export function Calendar() {
                     <div className={css.inner} style={{ "--cols": columns.length, "--mincol": weekView ? "0px" : "8rem" } as CSSProperties}>
                       <div className={css.heads}>
                         {columns.map((column) => (
-                          <div key={column.key} className={css.colHead} aria-current={weekView && column.day === todayISO ? "date" : undefined}>
+                          <div key={column.key} className={css.colHead} data-col={column.key} tabIndex={-1} aria-current={weekView && column.day === todayISO ? "date" : undefined}>
                             {column.label}
                             {column.small && <small>{column.small}</small>}
                           </div>
@@ -451,7 +636,7 @@ export function Calendar() {
                         {columns.map((column) => {
                           const line = nowTop(now, [column.day], hours, tz);
                           return (
-                            <div key={column.key} className={`${css.lane} ${closedDay(data.opening, weekdayOf(column.day)) ? css.closed : ""}`}>
+                            <div key={column.key} className={`${css.lane} ${closedDay(data.opening, weekdayOf(column.day)) ? css.closed : ""}`} onClick={(event) => openSpot(event, column)}>
                               <ul className={css.laneList} role="list" aria-label={column.ariaLabel}>
                                 {column.cells.map((cell) => renderCell(cell, column))}
                               </ul>
@@ -468,17 +653,83 @@ export function Calendar() {
             </>
           )}
         </div>
-        {view.booking && (
-          <BookingDetail
-            key={view.booking}
-            id={view.booking}
-            now={now}
-            closeHref={href({ booking: null })}
-            onClose={onClose}
-            onChanged={() => setReload((n) => n + 1)}
-          />
+        {view.panel && (!isOwner || members) ? (
+          view.panel === "block" ? (
+            <BlockPanel
+              key={`${view.at}|${view.with}`}
+              at={view.at}
+              member={view.with}
+              team={team}
+              date={view.date}
+              closeHref={href({ panel: null })}
+              onClose={closePanel}
+              onCancel={cancelPanel}
+              onDone={blocked}
+            />
+          ) : (
+            <BookingForm
+              key={`${view.panel}|${view.booking}|${view.at}|${view.with}`}
+              mode={view.panel}
+              bookingId={view.booking}
+              prefill={{ at: view.at, with: view.with }}
+              team={team}
+              todayISO={todayISO}
+              date={view.date}
+              closeHref={href({ panel: null })}
+              onClose={closePanel}
+              onDone={finished}
+            />
+          )
+        ) : view.panel ? (
+          <aside className={css.panel} aria-busy="true">
+            <Skeleton />
+          </aside>
+        ) : (
+          view.booking && (
+            <BookingDetail
+              key={view.booking}
+              id={view.booking}
+              now={now}
+              closeHref={href({ booking: null })}
+              onClose={onClose}
+              onChanged={() => setReload((n) => n + 1)}
+              moveHref={href({ panel: "move" })}
+              onMove={() => {
+                panelOpenedInApp.current = true;
+              }}
+              focusOnOpen={settled !== view.booking}
+            />
+          )
         )}
       </div>
+      {popover && (
+        <div
+          ref={popoverRef}
+          role="group"
+          aria-label={t("popoverGroup", { member: popover.name, time: popover.time })}
+          className={css.popover}
+          style={{ left: popover.left, top: popover.top }}
+          onBlur={(event) => {
+            // Tab out of the popover closes it (a null target is a click or the window losing focus).
+            if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget as Node)) setPopover(null);
+          }}
+          onKeyDown={(event) => {
+            if (event.key !== "Escape") return;
+            event.stopPropagation();
+            const column = document.querySelector<HTMLElement>(`[data-col="${CSS.escape(popover.column)}"]`);
+            setPopover(null);
+            column?.focus();
+          }}
+        >
+          <small aria-hidden="true">{`${popover.name} · ${popover.time}`}</small>
+          <Link href={href({ panel: "new", at: popover.at, with: popover.member })} scroll={false} replace={Boolean(view.panel)} onClick={() => fromPopover(popover)}>
+            {t("popoverNew")}
+          </Link>
+          <Link href={href({ panel: "block", at: popover.at, with: popover.member })} scroll={false} replace={Boolean(view.panel)} onClick={() => fromPopover(popover)}>
+            {t("popoverBlock")}
+          </Link>
+        </div>
+      )}
     </div>
   );
 }

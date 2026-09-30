@@ -100,6 +100,9 @@ Action = Literal[
     "booking_cancelled_by_merchant",
     "booking_completed",
     "booking_no_show_recorded",
+    # ZIF-57: a member books or moves on the calendar.
+    "booking_created",
+    "booking_rescheduled",
 ]
 
 

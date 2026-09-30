@@ -2948,6 +2948,124 @@
         }
       }
     },
+    "/api/services/{service_id}/availability": {
+      "get": {
+        "tags": [
+          "availability"
+        ],
+        "summary": "Merchant-Read",
+        "description": "Bookable starts for the calendar's new-booking and reschedule panels. Any member may ask:\nfree times are what the public page shows. No publish gate (a business books by hand before it\nopens its page) and no rate limit (a signed-in member, not an anonymous caller).\n\nexclude is a booking id whose own slot counts as free, for a reschedule. Honoured only for\na booking the caller may manage; any other id is 404, so it cannot probe a colleague's.",
+        "operationId": "availability-merchant-read",
+        "parameters": [
+          {
+            "name": "service_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Service Id"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date",
+              "title": "From"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date",
+              "title": "To"
+            }
+          },
+          {
+            "name": "member_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Member Id"
+            }
+          },
+          {
+            "name": "exclude",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Exclude"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/app__availability__AvailabilityOut"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          }
+        }
+      }
+    },
     "/api/public/booking-pages/{slug}": {
       "get": {
         "tags": [
@@ -3260,6 +3378,96 @@
             "description": "Unprocessable Content"
           }
         }
+      },
+      "post": {
+        "tags": [
+          "booking-approvals"
+        ],
+        "summary": "Create",
+        "description": "A member books a client in. Confirmed straight away, source `merchant`. The public route's\ngates do not apply: no Turnstile or rate limit (the caller is signed in), no publish gate (a\nbusiness books by hand before it opens its page), no pending cap (nothing is pending).\n\nAn owner books anyone; a worker only themselves. With `override` the grid is skipped - past\nstarts, off-hours, time off, buffers - and only the exclusion constraint holds (CONTRIBUTING.md,\n\"Bookings\").",
+        "operationId": "booking-approvals-create",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MerchantBookingIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/app__bookings__BookingOut"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          }
+        }
       }
     },
     "/api/bookings/{booking_id}": {
@@ -3371,6 +3579,110 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/BookingStatusOut"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          }
+        }
+      }
+    },
+    "/api/bookings/{booking_id}/reschedule": {
+      "post": {
+        "tags": [
+          "booking-approvals"
+        ],
+        "summary": "Reschedule",
+        "description": "A member moves a confirmed booking to another time and/or worker. A pending booking is not\nmoved (D7): accept it first. The client's own reschedule allowance is not spent.",
+        "operationId": "booking-approvals-reschedule",
+        "parameters": [
+          {
+            "name": "booking_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Booking Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/app__bookings__RescheduleIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RescheduledOut"
                 }
               }
             }
@@ -3719,7 +4031,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/RescheduleIn"
+                "$ref": "#/components/schemas/app__booking_links__RescheduleIn"
               }
             }
           },
@@ -5455,6 +5767,67 @@
         ],
         "title": "MemberOut"
       },
+      "MerchantBookingIn": {
+        "properties": {
+          "client_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Id"
+          },
+          "new_client": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ClientIn"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "service_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Service Id"
+          },
+          "member_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Member Id"
+          },
+          "starts_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Starts At"
+          },
+          "override": {
+            "type": "boolean",
+            "title": "Override",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "service_id",
+          "starts_at"
+        ],
+        "title": "MerchantBookingIn",
+        "description": "A member books on the calendar: a walk-in, a phone call, a regular. The client is named by\nid or created on the spot, never both and never neither."
+      },
       "NameIn": {
         "properties": {
           "name": {
@@ -5699,31 +6072,37 @@
         ],
         "title": "PublicServiceOut"
       },
-      "RescheduleIn": {
+      "RescheduledOut": {
         "properties": {
-          "booking_id": {
+          "id": {
             "type": "string",
             "format": "uuid",
-            "title": "Booking Id"
+            "title": "Id"
           },
           "starts_at": {
             "type": "string",
             "format": "date-time",
             "title": "Starts At"
           },
-          "reschedule_count": {
-            "type": "integer",
-            "title": "Reschedule Count"
+          "ends_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Ends At"
+          },
+          "worker_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Worker Id"
           }
         },
-        "additionalProperties": false,
         "type": "object",
         "required": [
-          "booking_id",
+          "id",
           "starts_at",
-          "reschedule_count"
+          "ends_at",
+          "worker_id"
         ],
-        "title": "RescheduleIn"
+        "title": "RescheduledOut"
       },
       "RoleChange": {
         "properties": {
@@ -6571,6 +6950,32 @@
         ],
         "title": "BookingOut"
       },
+      "app__booking_links__RescheduleIn": {
+        "properties": {
+          "booking_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Booking Id"
+          },
+          "starts_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Starts At"
+          },
+          "reschedule_count": {
+            "type": "integer",
+            "title": "Reschedule Count"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "booking_id",
+          "starts_at",
+          "reschedule_count"
+        ],
+        "title": "RescheduleIn"
+      },
       "app__bookings__BookingOut": {
         "properties": {
           "id": {
@@ -6648,6 +7053,38 @@
           "cancellation_policy_text"
         ],
         "title": "BookingOut"
+      },
+      "app__bookings__RescheduleIn": {
+        "properties": {
+          "starts_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Starts At"
+          },
+          "member_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Member Id"
+          },
+          "override": {
+            "type": "boolean",
+            "title": "Override",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "starts_at"
+        ],
+        "title": "RescheduleIn"
       }
     }
   }

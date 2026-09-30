@@ -128,8 +128,13 @@ describe("actionsFor (F7)", () => {
     assert.deepEqual(actionsFor({ ...base, status: "pending" }, "worker", now), ["accept", "decline"]);
   });
   test("confirmed: completed and no-show open at the start, not a minute before", () => {
-    assert.deepEqual(actionsFor({ ...base, status: "confirmed", starts_at: "2026-09-30T12:00:00Z" }, "owner", now), ["completed", "no_show", "cancel"]);
-    assert.deepEqual(actionsFor({ ...base, status: "confirmed", starts_at: "2026-09-30T12:01:00Z" }, "owner", now), ["cancel"]);
+    assert.deepEqual(actionsFor({ ...base, status: "confirmed", starts_at: "2026-09-30T12:00:00Z" }, "owner", now), ["completed", "no_show", "reschedule", "cancel"]);
+    assert.deepEqual(actionsFor({ ...base, status: "confirmed", starts_at: "2026-09-30T12:01:00Z" }, "owner", now), ["reschedule", "cancel"]);
+  });
+  test("only a confirmed booking can be rescheduled (a pending one is accepted first, D7)", () => {
+    for (const status of ["pending", "completed", "no_show", "awaiting_payment"]) {
+      assert.ok(!actionsFor({ ...base, status }, "owner", now).includes("reschedule"), status);
+    }
   });
   test("completed is the owner's to undo, a worker gets nothing", () => {
     assert.deepEqual(actionsFor({ ...base, status: "completed" }, "worker", now), []);
@@ -161,6 +166,24 @@ describe("historyLabel (F8)", () => {
     assert.deepEqual([first.params.fromTime, first.params.toTime, first.params.sameDay, first.params.k, first.params.max], ["13:00", "14:00", true, 1, 2]);
     const second = label(events, 2);
     assert.deepEqual([second.params.fromTime, second.params.fromDate, second.params.toDate, second.params.sameDay, second.params.k], ["00:30", "2026-10-01", "2026-10-01", true, 2]);
+  });
+  test("a move by the team reads Moved by {actor}, with no k of max", () => {
+    const team = ev("rescheduled", { actor: "team", actor_name: "Carol", details: { from: "2026-09-29T11:00:00Z", to: "2026-09-29T12:00:00Z" } });
+    const l = label([ev("created"), team], 1);
+    assert.equal(l.key, "historyMovedTeam");
+    assert.deepEqual([l.params.actor, l.params.fromTime, l.params.toTime, "k" in l.params], ["Carol", "13:00", "14:00", false]);
+  });
+  test("k counts only the client's own moves, in order", () => {
+    const d = { from: "2026-09-29T11:00:00Z", to: "2026-09-29T12:00:00Z" };
+    const events = [
+      ev("created"),
+      ev("rescheduled", { actor: "team", details: d }),
+      ev("rescheduled", { actor: "client", actor_name: null, details: d }),
+      ev("rescheduled", { actor: "team", details: d }),
+      ev("rescheduled", { actor: "client", actor_name: null, details: d }),
+    ];
+    assert.equal(label(events, 2).params.k, 1);
+    assert.equal(label(events, 4).params.k, 2);
   });
   test("a move across days says so", () => {
     const moved = ev("rescheduled", { details: { from: "2026-09-29T11:00:00Z", to: "2026-09-30T12:00:00Z" } });
@@ -207,6 +230,43 @@ describe("parseView (F9)", () => {
   });
 });
 
+describe("parseView panel state (F24)", () => {
+  const TODAY = "2026-09-30";
+  const parse = (query, role = "owner", members) => parseView(new URLSearchParams(query), TODAY, role, "me", members);
+  const AT = "2026-09-30T13:30:00.000Z";
+  test("new and block carry at and with, and drop the open booking", () => {
+    const v = parse(`panel=new&booking=b1&at=${AT}&with=abc`, "owner", ["abc"]);
+    assert.deepEqual([v.panel, v.booking, v.at, v.with], ["new", null, AT, "abc"]);
+    assert.equal(parse(`panel=block&booking=b1`).booking, null);
+  });
+  test("move without a booking is no panel at all", () => {
+    assert.equal(parse("panel=move").panel, null);
+    assert.equal(parse("panel=move&booking=b1").panel, "move");
+    assert.equal(parse("panel=move&booking=b1").booking, "b1");
+  });
+  test("an unknown panel is none", () => {
+    assert.equal(parse("panel=delete").panel, null);
+  });
+  test("a worker's with is always themselves, even with none given", () => {
+    assert.equal(parse("panel=new&with=other", "worker").with, "me");
+    assert.equal(parse("panel=block", "worker").with, "me");
+  });
+  test("an owner's with must be one of the members once they are known", () => {
+    assert.equal(parse("panel=new&with=ghost", "owner", ["abc"]).with, null);
+    assert.equal(parse("panel=new&with=abc", "owner", ["abc"]).with, "abc");
+  });
+  test("at must be a real instant, else it is dropped and never throws", () => {
+    for (const bad of ["nonsense", "2026-13-45T10:00:00Z", "", "2026-09-30", "99999999999999999-01-01T00:00:00Z"]) {
+      assert.equal(parse(`panel=new&at=${encodeURIComponent(bad)}`).at, null, bad);
+    }
+    assert.equal(parse("panel=new&at=2026-09-30T15:30:00%2B02:00").at, AT);
+  });
+  test("without a panel, at and with are nothing", () => {
+    const v = parse(`at=${AT}&with=abc`);
+    assert.deepEqual([v.panel, v.at, v.with], [null, null, null]);
+  });
+});
+
 describe("nowTop (F10)", () => {
   const now = new Date("2026-09-30T12:00:00Z"); // 14:00 in Amsterdam
   const range = { from: 9, to: 18 };
@@ -248,6 +308,26 @@ describe("hrefFor (G1)", () => {
   });
   test("a patch that changes nothing keeps the booking", () => {
     assert.equal(query(hrefFor(current, { date: "2026-09-30" })).booking, "b1");
+  });
+  test("moving the window drops panel, at and with", () => {
+    const open = { view: "day", date: "2026-09-30", member: "all", booking: null, panel: "new", at: "2026-09-30T13:30:00.000Z", with: "m1" };
+    for (const patch of [{ date: "2026-10-01" }, { view: "week" }, { member: "m2" }]) {
+      const q = query(hrefFor(open, patch));
+      assert.deepEqual([q.panel, q.at, q.with], [undefined, undefined, undefined], JSON.stringify(patch));
+    }
+  });
+  test("opening a panel carries its prefill; new drops the booking, move keeps it", () => {
+    const q = query(hrefFor(current, { panel: "new", at: "2026-09-30T13:30:00.000Z", with: "m1" }));
+    assert.deepEqual([q.panel, q.at, q.with, q.booking], ["new", "2026-09-30T13:30:00.000Z", "m1", undefined]);
+    assert.deepEqual([query(hrefFor(current, { panel: "move" })).panel, query(hrefFor(current, { panel: "move" })).booking], ["move", "b1"]);
+  });
+  test("closing the panel leaves the window and the booking", () => {
+    const open = { view: "day", date: "2026-09-30", member: "all", booking: "b1", panel: "move", at: null, with: null };
+    assert.deepEqual(query(hrefFor(open, { panel: null })), { view: "day", date: "2026-09-30", member: "all", booking: "b1" });
+  });
+  test("a finished booking moves to its day and opens its detail, panel gone", () => {
+    const open = { view: "day", date: "2026-09-30", member: "all", booking: null, panel: "new", at: null, with: null };
+    assert.deepEqual(query(hrefFor(open, { date: "2026-10-02", panel: null, booking: "b9" })), { view: "day", date: "2026-10-02", member: "all", booking: "b9" });
   });
   test("it points at the calendar", () => {
     assert.ok(hrefFor(current, {}).startsWith("/calendar?"));

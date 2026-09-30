@@ -18,6 +18,7 @@ import { Banner, FieldError, problem } from "../../_ui/parts";
 import uiStyles from "../../_ui/ui.module.css";
 import { CHIPS, chipOf, LoadFailure, Skeleton } from "../today";
 import css from "./calendar.module.css";
+import { PanelFrame } from "./panel-frame";
 
 const TARGET = { accept: "confirmed", completed: "completed", no_show: "no_show", restore: "confirmed", cancel: "cancelled_by_merchant" } as const;
 const DONE = {
@@ -37,6 +38,9 @@ export function BookingDetail({
   closeHref,
   onClose,
   onChanged,
+  moveHref,
+  onMove,
+  focusOnOpen = true,
 }: {
   id: string;
   now: Date;
@@ -44,6 +48,11 @@ export function BookingDetail({
   onClose(event: MouseEvent<HTMLAnchorElement>): void;
   /** The booking changed: the calendar reads its window again. */
   onChanged(): void;
+  /** Where "Reschedule" goes (the calendar's move panel for this booking), and what to note when it does. */
+  moveHref: string;
+  onMove(): void;
+  /** False right after a booking was made or moved: the calendar puts focus on the booking's grid item instead. */
+  focusOnOpen?: boolean;
 }) {
   const { session, settings, call, setPendingCount } = useConsole();
   const t = useTranslations("Console.calendar");
@@ -70,11 +79,6 @@ export function BookingDetail({
   const focusTarget = useRef<string | null>(null);
   const heading = useRef<HTMLHeadingElement>(null);
 
-  // Opening (or switching to) a booking moves focus to the panel: the phone list behind it is hidden.
-  useEffect(() => {
-    heading.current?.focus();
-  }, []);
-
   useEffect(() => {
     const target = focusTarget.current;
     if (!target) return;
@@ -100,7 +104,7 @@ export function BookingDetail({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
-  async function act(action: Action) {
+  async function act(action: Exclude<Action, "reschedule">) {
     // Only ever the booking the panel is showing, and only once that one is what has loaded.
     if (!detail || detail.id !== id || submitting.current) return;
     submitting.current = true;
@@ -172,7 +176,7 @@ export function BookingDetail({
   function historyLine(d: BookingDetailOut, i: number) {
     const { key, params } = historyLabel(d.history, i, d.source, d.max_reschedules, tz);
     const at = d.history[i].at;
-    const moved = key === "historyMoved";
+    const moved = key === "historyMoved" || key === "historyMovedTeam";
     const text = t(key, {
       actor: (params.actor as string | null) ?? t("aTeamMember"),
       client: d.client_name,
@@ -183,7 +187,7 @@ export function BookingDetail({
     const waiting = latest && d.status === "pending" && !d.expired && d.history[i].event === "created";
     const small = waiting
       ? t("historyWaiting", { when: stamp(at) })
-      : moved
+      : key === "historyMoved"
         ? `${stamp(at)} · ${t("changesUsed", { k: Number(params.k), max: Number(params.max) })}`
         : stamp(at);
     return (
@@ -206,7 +210,7 @@ export function BookingDetail({
     );
   }
 
-  const button = (action: Action, label: string, variant: "primary" | "secondary", extra = "", onClick?: () => void, buttonId?: string) => (
+  const button = (action: Exclude<Action, "reschedule">, label: string, variant: "primary" | "secondary", extra = "", onClick?: () => void, buttonId?: string) => (
     <button
       id={buttonId}
       className={`${uiStyles.button} ${uiStyles[variant]} ${uiStyles.small} ${extra}`}
@@ -258,7 +262,16 @@ export function BookingDetail({
           </div>
         )}
         {d.status === "confirmed" && !has("completed") && <p className={uiStyles.hint}>{t("pastHint")}</p>}
-        {has("cancel") && !cancelling && button("cancel", t("cancelAction"), "secondary", css.danger, openCancel, "detail-cancel")}
+        {!cancelling && (has("reschedule") || has("cancel")) && (
+          <div className={has("reschedule") && has("cancel") ? css.split : undefined}>
+            {has("reschedule") && (
+              <Link id="detail-reschedule" className={`${uiStyles.button} ${uiStyles.secondary} ${uiStyles.small}`} href={moveHref} scroll={false} onClick={onMove}>
+                {t("rescheduleAction")}
+              </Link>
+            )}
+            {has("cancel") && button("cancel", t("cancelAction"), "secondary", css.danger, openCancel, "detail-cancel")}
+          </div>
+        )}
         {has("cancel") && cancelling && (
           <div className={css.confirm}>
             <h3 id="detail-cancel-title" tabIndex={-1}>
@@ -278,27 +291,22 @@ export function BookingDetail({
   const chip = ready ? (ready.status === "pending" && ready.expired ? CHIPS.expired : chipOf(ready.status)) : undefined;
 
   return (
-    <aside className={css.panel} aria-labelledby="detail-title">
-      <Link className={css.backLink} href={closeHref} replace scroll={false} onClick={onClose}>
-        <span aria-hidden="true">{"‹ "}</span>
-        {t("back")}
-      </Link>
-      <div className={css.panelHead}>
-        <div>
-          <h2 id="detail-title" className={css.panelTitle} ref={heading} tabIndex={-1}>
-            {ready ? ready.client_name : t("detailTitle")}
-          </h2>
-          {chip && (
-            <span className={`${styles.chip} ${chip.style}`}>
-              <span aria-hidden="true">{chip.icon}</span>
-              {today(chip.word)}
-            </span>
-          )}
-        </div>
-        <Link className={css.close} href={closeHref} replace scroll={false} aria-label={t("close")} onClick={onClose}>
-          <span aria-hidden="true">{"✕"}</span>
-        </Link>
-      </div>
+    <PanelFrame
+      id="detail-title"
+      title={ready ? ready.client_name : t("detailTitle")}
+      meta={
+        chip && (
+          <span className={`${styles.chip} ${chip.style}`}>
+            <span aria-hidden="true">{chip.icon}</span>
+            {today(chip.word)}
+          </span>
+        )
+      }
+      headingRef={heading}
+      focusOnOpen={focusOnOpen}
+      closeHref={closeHref}
+      onClose={onClose}
+    >
       <p className={uiStyles.srOnly} role="status" aria-live="polite">
         {status}
       </p>
@@ -354,6 +362,6 @@ export function BookingDetail({
           </div>
         </>
       )}
-    </aside>
+    </PanelFrame>
   );
 }

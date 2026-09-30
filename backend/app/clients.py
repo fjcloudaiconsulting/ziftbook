@@ -357,20 +357,11 @@ def list_clients(
     return as_clients(rows, current_consents(current.db, [row.id for row in rows]))
 
 
-@router.post(
-    "/clients",
-    name="create",
-    status_code=201,
-    responses={s: {"model": Error} for s in (401, 409, 415, 422)},
-)
-def create_client(
-    new: ClientIn, current: CurrentSession, request: Request, response: Response
-) -> ClientOut:
-    """A plain insert, never the upsert: the console asking to create a client is not the booking
-    page refreshing one. A merchant who names an email already on file is told so (409), rather
-    than having that client's name silently overwritten."""
+def insert(db: Session, new: ClientIn) -> Row[Any]:
+    """A plain INSERT of a client, never the upsert; 409 email_taken on the tenant's unique email.
+    Shared by POST /api/clients and the calendar's new-booking form (ZIF-57)."""
     try:
-        row = current.db.execute(
+        return db.execute(
             text(f"""
             INSERT INTO clients (tenant_id, name, email, phone, locale)
             VALUES (current_setting('app.tenant_id')::uuid, :name, :email, :phone, :locale)
@@ -386,6 +377,21 @@ def create_client(
         ):
             raise ApiError(409, "email_taken") from None
         raise
+
+
+@router.post(
+    "/clients",
+    name="create",
+    status_code=201,
+    responses={s: {"model": Error} for s in (401, 409, 415, 422)},
+)
+def create_client(
+    new: ClientIn, current: CurrentSession, request: Request, response: Response
+) -> ClientOut:
+    """A plain insert, never the upsert: the console asking to create a client is not the booking
+    page refreshing one. A merchant who names an email already on file is told so (409), rather
+    than having that client's name silently overwritten."""
+    row = insert(current.db, new)
     client = as_clients([row], {})[0]  # a new client has no consents: {} with no query
     auth.record(
         current.db,

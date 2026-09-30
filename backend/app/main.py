@@ -142,6 +142,7 @@ def create_app() -> FastAPI:
     app.include_router(schedule.opening_router)
     app.include_router(time_off.router)
     app.include_router(availability.router)
+    app.include_router(availability.merchant_router)
     app.include_router(booking_page.router)
     app.include_router(bookings.router)
     app.include_router(bookings.merchant_router)

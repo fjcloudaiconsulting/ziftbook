@@ -171,6 +171,9 @@ migration 0026), not any code path. A race in a route somebody forgets to guard 
   horizon, not an unassigned worker, not an archived service. A write path re-derives the posted start **through
   `member_slots` itself**, never through a second validator — two implementations of "is this bookable" drift, and
   the drift is the bug.
+  The one deliberate exception is the merchant's `override` on `POST /api/bookings` and `/reschedule` (ZIF-57): a
+  member may book or move onto a start the grid does not offer (a walk-in, a favour after hours), so those skip
+  `member_slots` by design and the exclusion constraint is the only backstop.
 - Any transaction that inserts a booking takes its locks in this order: `services ... FOR SHARE` (mandatory —
   archiving takes `FOR NO KEY UPDATE` and the foreign key only `KEY SHARE`, so the key alone lets a booking land on a
   concurrently archived service), then `clients.find_or_create`, then the expiry `UPDATE`, then the savepoint and the

@@ -13,7 +13,7 @@ import json
 import logging
 from collections import Counter
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Annotated, Any, Literal, NamedTuple, Self
 from uuid import UUID
 from zoneinfo import ZoneInfo
@@ -382,7 +382,8 @@ ORDER BY e.id
 # qualifier are what make the transition exactly-once, and locking a membership row here would
 # take locks in an order CONTRIBUTING.md constrains around keep_an_owner.
 BOOKING = text("""
-SELECT m.user_id AS worker_user_id, b.status, b.starts_at, b.worker_id, now() AS now
+SELECT m.user_id AS worker_user_id, b.status, b.starts_at, b.ends_at, b.worker_id, b.service_id,
+       b.worker_display_name, now() AS now
 FROM bookings b
 JOIN memberships m ON m.tenant_id = b.tenant_id AND m.id = b.worker_id
 WHERE b.id = :id
@@ -528,6 +529,139 @@ RETURNING id, starts_at, ends_at, reschedule_count
 """)
 
 
+def by_load(
+    eligible: list[UUID],
+    booked_rows: list[tuple[UUID, datetime, datetime, int | None]],
+    day: date,
+    zone: str,
+) -> list[UUID]:
+    """Least loaded that day, then worker_id ascending - the tiebreak is deterministic, so
+    concurrent requests for the same slot pile onto the same worker by construction."""
+    load = Counter(
+        m
+        for m, starts_at, _ends_at, _o in booked_rows
+        if starts_at.astimezone(ZoneInfo(zone)).date() == day
+    )
+    return sorted(eligible, key=lambda m: (load[m], m))
+
+
+def place(
+    db: Session,
+    *,
+    settings: business_settings.BusinessSettings,
+    service: Row[Any],
+    service_id: UUID,
+    client_id: UUID,
+    queue: list[UUID],
+    names: dict[UUID, str | None],
+    starts_at: datetime,
+    status: str,
+    expires_at: datetime | None,
+    source: str,
+    event: dict[str, Any],
+) -> tuple[Row[Any], UUID]:
+    """The one insert path for a new booking (ZIF-57): the public create() and the merchant's both
+    land here, so the snapshot columns and the `created` event can never drift between them.
+
+    `queue` is the candidate order; the first worker that takes the slot wins. `event` carries the
+    `created` row's ip, user_agent, policy_version, consent_purposes (ALREADY serialised, or None:
+    json.dumps(None) is the jsonb literal 'null', which ck_booking_events_consent_purposes
+    refuses), actor_user_id and details. Returns the row and the worker it landed on; 409
+    slot_taken when every candidate is gone. The caller holds the tenant lock.
+    """
+    # The candidate loop: not "one retry" (§1.1). Under the tenant lock a loser acquires the lock
+    # only after the winner commits, re-derives, and 409s before it gets here; the loop survives as
+    # the backstop for a writer that forgot the lock (23P01) or a member removed concurrently
+    # (23503, B5).
+    booking: Row[Any] | None = None
+    candidate: UUID | None = None
+    while queue:
+        candidate = queue.pop(0)  # popped whether it loses to a row, a 23P01 or a 23503
+        try:
+            with db.begin_nested():
+                booking = db.execute(
+                    INSERT_BOOKING,
+                    {
+                        "client_id": client_id,
+                        "worker_id": candidate,
+                        "service_id": service_id,
+                        "starts_at": starts_at,
+                        "duration_minutes": service.duration_minutes,
+                        "status": status,
+                        "expires_at": expires_at,
+                        "source": source,
+                        "service_name": json.dumps(service.name),
+                        "price_amount_minor": service.price_amount_minor,
+                        "price_currency": service.price_currency,
+                        "cancellation_policy_text": settings.cancellation_policy_text or None,
+                        # ZIF-55: the thresholds in force NOW, snapshotted beside the
+                        # text. Never re-read at cancellation time.
+                        #
+                        # REJECTED (reviewer, ZIF-55 R2): a settings PUT committing
+                        # between business_settings.read() above and this INSERT
+                        # snapshots the PRE-change value, and no tenant advisory lock
+                        # closes that window. It is not a race to fix. The pre-change
+                        # value is precisely the policy the client was shown on the
+                        # booking page they are submitting; snapshotting the value that
+                        # replaced it a moment ago would sell them terms they never saw.
+                        "free_cancellation_hours": settings.free_cancellation_hours,
+                        "reschedule_cutoff_hours": settings.reschedule_cutoff_hours,
+                        "max_reschedules": settings.max_reschedules,
+                        "auto_confirm_at_booking": settings.auto_confirm,
+                        "worker_display_name": names[candidate],
+                    },
+                ).one()
+                # Inside the winning savepoint, immediately after the booking insert.
+                db.execute(
+                    INSERT_EVENT,
+                    {
+                        "booking_id": booking.id,
+                        "event": "created",
+                        **event,
+                    },
+                )
+        except IntegrityError as error:
+            if (
+                isinstance(error.orig, ExclusionViolation)
+                and error.orig.diag.constraint_name == OVERLAP
+            ):
+                continue  # a writer that bypassed the lock took this worker
+            # B5: the member was REMOVED while this request was under way. members.remove
+            # takes FOR UPDATE on the membership and NO advisory lock, so it races us
+            # freely: our insert blocks on the foreign key's FOR KEY SHARE, the owner
+            # commits, and our re-check finds the membership gone. Treat it as "this
+            # candidate went away" - the same situation as losing the slot - not as a 500.
+            if (
+                isinstance(error.orig, ForeignKeyViolation)
+                and error.orig.diag.constraint_name == members.BOOKINGS_WORKER
+            ):
+                continue
+            raise  # any other integrity error stays a 500
+        break
+    else:
+        raise ApiError(409, "slot_taken")
+    # mypy narrowing only: the `else` above raises, so these are bound. Stripped under
+    # `python -O`, which is why nothing below may depend on this running.
+    assert booking is not None and candidate is not None
+    return booking, candidate
+
+
+# ZIF-57. The merchant's move: worker and snapshot name travel with the time, and reschedule_count
+# is NOT touched (it is the client's allowance, cancellation.py's max_reschedules; the business
+# moving a booking must not spend it). earliest_starts_at takes LEAST because
+# ck_bookings_earliest_starts_at_current forces it when moving earlier; moving later leaves the
+# refund anchor where it was. `status = 'confirmed'` is a qualifier, as RESCHEDULE's: D7.
+MOVE = text("""
+UPDATE bookings SET starts_at = :new, ends_at = :new + (ends_at - starts_at),
+                    worker_id = :worker, worker_display_name = :name,
+                    earliest_starts_at = LEAST(earliest_starts_at, :new)
+WHERE id = :id AND status = 'confirmed'
+RETURNING id, starts_at, ends_at, worker_id
+""")
+
+WORKER_USER = text("SELECT user_id FROM memberships WHERE id = :id")
+
+
 router = APIRouter(prefix="/api/public", tags=["bookings"])
 
 
@@ -664,88 +798,28 @@ def create(  # sync def: turnstile.verify's urlopen blocks, and runs in FastAPI'
                 if status == "confirmed"
                 else row.now + timedelta(hours=settings.pending_ttl_hours)
             )
-            load = Counter(
-                m
-                for m, starts_at, _ends_at, _o in booked_rows
-                if starts_at.astimezone(ZoneInfo(zone)).date() == day
+            queue = by_load(eligible, booked_rows, day, zone)
+            booking, candidate = place(
+                db,
+                settings=settings,
+                service=row,
+                service_id=service_id,
+                client_id=found.id,
+                queue=queue,
+                names=names,
+                starts_at=new.starts_at,
+                status=status,
+                expires_at=expires_at,
+                source="booking_page",
+                event={
+                    "ip": origin_ip,
+                    "user_agent": user_agent,
+                    "policy_version": new.policy_version,
+                    "consent_purposes": json.dumps(new.consents),
+                    "actor_user_id": None,  # the client: nobody is signed in to act
+                    "details": None,
+                },
             )
-            queue = sorted(eligible, key=lambda m: (load[m], m))
-            booking: Row[Any] | None = None
-            candidate: UUID | None = None
-            while queue:
-                candidate = queue.pop(0)  # popped whether it loses to a row, a 23P01 or a 23503
-                try:
-                    with db.begin_nested():
-                        booking = db.execute(
-                            INSERT_BOOKING,
-                            {
-                                "client_id": found.id,
-                                "worker_id": candidate,
-                                "service_id": service_id,
-                                "starts_at": new.starts_at,
-                                "duration_minutes": row.duration_minutes,
-                                "status": status,
-                                "expires_at": expires_at,
-                                "source": "booking_page",
-                                "service_name": json.dumps(row.name),
-                                "price_amount_minor": row.price_amount_minor,
-                                "price_currency": row.price_currency,
-                                "cancellation_policy_text": settings.cancellation_policy_text
-                                or None,
-                                # ZIF-55: the thresholds in force NOW, snapshotted beside the
-                                # text. Never re-read at cancellation time.
-                                #
-                                # REJECTED (reviewer, ZIF-55 R2): a settings PUT committing
-                                # between business_settings.read() above and this INSERT
-                                # snapshots the PRE-change value, and no tenant advisory lock
-                                # closes that window. It is not a race to fix. The pre-change
-                                # value is precisely the policy the client was shown on the
-                                # booking page they are submitting; snapshotting the value that
-                                # replaced it a moment ago would sell them terms they never saw.
-                                "free_cancellation_hours": settings.free_cancellation_hours,
-                                "reschedule_cutoff_hours": settings.reschedule_cutoff_hours,
-                                "max_reschedules": settings.max_reschedules,
-                                "auto_confirm_at_booking": settings.auto_confirm,
-                                "worker_display_name": names[candidate],
-                            },
-                        ).one()
-                        # 15. Inside the winning savepoint, immediately after the booking insert.
-                        db.execute(
-                            INSERT_EVENT,
-                            {
-                                "booking_id": booking.id,
-                                "event": "created",
-                                "ip": origin_ip,
-                                "user_agent": user_agent,
-                                "policy_version": new.policy_version,
-                                "consent_purposes": json.dumps(new.consents),
-                                "actor_user_id": None,  # the client: nobody is signed in to act
-                                "details": None,
-                            },
-                        )
-                except IntegrityError as error:
-                    if (
-                        isinstance(error.orig, ExclusionViolation)
-                        and error.orig.diag.constraint_name == OVERLAP
-                    ):
-                        continue  # a writer that bypassed the lock took this worker
-                    # B5: the member was REMOVED while this request was under way. members.remove
-                    # takes FOR UPDATE on the membership and NO advisory lock, so it races us
-                    # freely: our insert blocks on the foreign key's FOR KEY SHARE, the owner
-                    # commits, and our re-check finds the membership gone. Treat it as "this
-                    # candidate went away" - the same situation as losing the slot - not as a 500.
-                    if (
-                        isinstance(error.orig, ForeignKeyViolation)
-                        and error.orig.diag.constraint_name == members.BOOKINGS_WORKER
-                    ):
-                        continue
-                    raise  # any other integrity error stays a 500
-                break
-            else:
-                raise ApiError(409, "slot_taken")
-            # mypy narrowing only: the `else` above raises, so these are bound. Stripped under
-            # `python -O`, which is why nothing below may depend on this running.
-            assert booking is not None and candidate is not None
             # ZIF-53. Same session as the status write, outside the savepoint: a rollback of the
             # savepoint (a lost race) drops nothing here, since this only runs after `break`.
             if status == "confirmed":
@@ -969,6 +1043,399 @@ def transition(
     )
     response.headers["Cache-Control"] = "no-store"  # 7
     return BookingStatusOut(id=changed.id, status=changed.status)
+
+
+class MerchantBookingIn(BaseModel):
+    """A member books on the calendar: a walk-in, a phone call, a regular. The client is named by
+    id or created on the spot, never both and never neither."""
+
+    model_config = STRICT
+    client_id: Annotated[UUID, Field(strict=False)] | None = None
+    new_client: clients.ClientIn | None = None
+    service_id: Annotated[UUID, Field(strict=False)]
+    member_id: Annotated[UUID, Field(strict=False)] | None = None  # None: "anyone"
+    starts_at: time_off_module.Instant
+    # A start the grid does not offer (a walk-in now, a favour after hours). Needs a person.
+    override: bool = False
+
+    @model_validator(mode="after")
+    def one_way_to_name_a_client(self) -> Self:
+        if (self.client_id is None) == (self.new_client is None):
+            raise ValueError("exactly one of client_id and new_client")
+        return self
+
+
+class RescheduleIn(BaseModel):
+    model_config = STRICT
+    starts_at: time_off_module.Instant
+    member_id: Annotated[UUID, Field(strict=False)] | None = None  # None: keep the worker
+    override: bool = False
+
+
+class RescheduledOut(BaseModel):
+    id: UUID
+    starts_at: datetime
+    ends_at: datetime
+    worker_id: UUID
+
+
+def may_book_for(current: auth.SignedIn, member_id: UUID | None) -> bool:
+    """members.may_manage for a member id: an owner books for anyone (an unknown id then answers
+    409 slot_unavailable, no probing), a worker for themselves only, and nobody as "anyone" - that
+    could land on a colleague."""
+    if members.is_owner(current):
+        return True
+    if member_id is None:
+        return False
+    return bool(current.db.scalar(WORKER_USER, {"id": member_id}) == current.user_id)
+
+
+def eligible_for(
+    db: Session,
+    *,
+    settings: business_settings.BusinessSettings,
+    now: datetime,
+    hours: dict[UUID, list[schedule.Row]],
+    starts_at: datetime,
+    duration: int,
+    buffer_minutes: int | None,
+    exclude: UUID | None = None,
+) -> tuple[list[UUID], list[tuple[UUID, datetime, datetime, int | None]]]:
+    """Who, of these members, can take this exact start: availability.offered, as create() asks it
+    (never a second validator). The booked rows ride along for by_load."""
+    zone = settings.timezone
+    day = starts_at.astimezone(ZoneInfo(zone)).date()
+    first, last, earliest = availability.window(
+        now, zone, day, day, settings.min_notice_minutes, settings.booking_horizon_days
+    )
+    if first > last:  # in the past, or beyond the horizon
+        return [], []
+    members_ = sorted(hours)
+    result = availability.offered(
+        db,
+        members=members_,
+        hours=hours,
+        opening=schedule.envelope(db),
+        settings=settings,
+        first=first,
+        last=last,
+        earliest=earliest,
+        duration=duration,
+        buffer=availability.buffer_for(duration, buffer_minutes, settings.buffer_pct),
+        exclude=exclude,
+    )
+    return [m for m in members_ if starts_at in result.slots[m]], result.booked
+
+
+def tell_team(
+    db: Session,
+    current: auth.SignedIn,
+    booking_id: UUID,
+    user_ids: list[UUID],
+    template: str,
+    *,
+    key_suffix: str = "",
+    extra: dict[str, str],
+) -> None:
+    """One email per person, never to the member who made the change (they know)."""
+    for user_id in dict.fromkeys(user_ids):
+        if user_id != current.user_id:
+            email(
+                db,
+                current.tenant_id,
+                booking_id,
+                template,
+                user_id=user_id,
+                key_suffix=key_suffix,
+                extra=extra,
+            )
+
+
+@merchant_router.post(
+    "/bookings",
+    name="create",
+    status_code=201,
+    responses={s: {"model": Error} for s in (401, 403, 404, 409, 415, 422)},
+)
+def book(
+    new: MerchantBookingIn, current: auth.CurrentSession, request: Request, response: Response
+) -> BookingOut:
+    """A member books a client in. Confirmed straight away, source `merchant`. The public route's
+    gates do not apply: no Turnstile or rate limit (the caller is signed in), no publish gate (a
+    business books by hand before it opens its page), no pending cap (nothing is pending).
+
+    An owner books anyone; a worker only themselves. With `override` the grid is skipped - past
+    starts, off-hours, time off, buffers - and only the exclusion constraint holds (CONTRIBUTING.md,
+    "Bookings")."""
+    db = current.db
+    db.execute(LOCK, {"key": LOCK_KEY})  # 1: nothing above this
+    row = db.execute(SERVICE, {"service_id": new.service_id}).first()  # 2
+    if row is None:
+        raise ApiError(404, "not_found")
+    if not may_book_for(current, new.member_id):  # 3
+        raise ApiError(403, "owner_only")
+    # 4. An off-grid "anyone" would pick by load and could land on someone on holiday.
+    if new.override and new.member_id is None:
+        raise ApiError(422, "member_required")
+    # 5. Checked, not left to the foreign key (a 500); RLS makes another business's id unknown.
+    if new.client_id is not None:
+        if db.scalar(text("SELECT 1 FROM clients WHERE id = :id"), {"id": new.client_id}) is None:
+            raise ApiError(422, "unknown_client")
+        client_id = new.client_id
+    else:
+        assert new.new_client is not None  # the validator: exactly one
+        # A plain INSERT, never find_or_create: its upsert would attach to someone else's record.
+        # Same transaction, so a 409 further down takes the new client with it.
+        created = clients.insert(db, new.new_client)
+        client_id = created.id
+        auth.record(
+            db,
+            request,
+            "client_created",
+            actor_user_id=current.user_id,
+            target=f"client:{client_id}",
+        )
+    # 6. A lapsed, unswept pending still sits in the exclusion predicate: 23P01 on an override.
+    db.execute(EXPIRE, {"expiring": list(availability.EXPIRING)})
+    # 7. No probing: unassigned, no hours and unknown member all read the same.
+    hours, names = availability.candidates(db, new.service_id, new.member_id)
+    if not hours:
+        raise ApiError(409, "slot_unavailable")
+    settings = business_settings.read(db)
+    if new.override:  # `hours` holds exactly the named member (step 4)
+        queue = sorted(hours)
+    else:
+        eligible, booked_rows = eligible_for(
+            db,
+            settings=settings,
+            now=row.now,
+            hours=hours,
+            starts_at=new.starts_at,
+            duration=row.duration_minutes,
+            buffer_minutes=row.buffer_minutes,
+        )
+        if not eligible:
+            raise ApiError(409, "slot_unavailable")
+        day = new.starts_at.astimezone(ZoneInfo(settings.timezone)).date()
+        queue = by_load(eligible, booked_rows, day, settings.timezone)
+    origin_ip, user_agent = auth.origin(request)
+    booking, worker_id = place(
+        db,
+        settings=settings,
+        service=row,
+        service_id=new.service_id,
+        client_id=client_id,
+        queue=queue,
+        names=names,
+        starts_at=new.starts_at,
+        status="confirmed",
+        expires_at=None,
+        source="merchant",
+        event={
+            "ip": origin_ip,
+            "user_agent": user_agent,
+            "policy_version": None,
+            "consent_purposes": None,  # never json.dumps(None): jsonb 'null' fails its CHECK
+            "actor_user_id": current.user_id,
+            "details": None,
+        },
+    )
+    # A booking recorded after the fact (0026's walk-in) tells nobody: it is over.
+    if booking.starts_at > row.now:
+        # Unconditional: send_booking returns on a client with no address.
+        email(
+            db,
+            current.tenant_id,
+            booking.id,
+            "booking_confirmed",
+            extra={"starts_at": booking.starts_at.isoformat()},
+        )
+        remind(db, current.tenant_id, booking.id, booking.starts_at, row.now)
+        # The booking's worker only, resolved AFTER "anyone" picked one; never email_merchants()
+        # (it fans out to every owner).
+        tell_team(
+            db,
+            current,
+            booking.id,
+            [db.scalar(WORKER_USER, {"id": worker_id})],
+            "booking_new",
+            extra={"starts_at": booking.starts_at.isoformat()},
+        )
+    auth.record(
+        db,
+        request,
+        "booking_created",
+        actor_user_id=current.user_id,
+        target=f"booking:{booking.id}",
+    )
+    response.headers["Cache-Control"] = "no-store"
+    logger.info("booking created", extra={"booking_id": str(booking.id)})
+    return BookingOut(
+        id=booking.id,
+        status=booking.status,
+        starts_at=booking.starts_at,
+        ends_at=booking.ends_at,
+        duration_minutes=row.duration_minutes,
+        service_name=row.name,
+        price=Price(amount_minor=row.price_amount_minor, currency=row.price_currency),
+        worker_id=worker_id,
+        worker_display_name=names[worker_id],
+        cancellation_policy_text=settings.cancellation_policy_text or None,
+    )
+
+
+@merchant_router.post(
+    "/bookings/{booking_id}/reschedule",
+    name="reschedule",
+    responses={s: {"model": Error} for s in (401, 403, 404, 409, 415, 422)},
+)
+def reschedule(
+    booking_id: UUID,
+    change: RescheduleIn,
+    current: auth.CurrentSession,
+    request: Request,
+    response: Response,
+) -> RescheduledOut:
+    """A member moves a confirmed booking to another time and/or worker. A pending booking is not
+    moved (D7): accept it first. The client's own reschedule allowance is not spent."""
+    db = current.db
+    db.execute(LOCK, {"key": LOCK_KEY})  # 1: nothing above this
+    row = db.execute(BOOKING, {"id": booking_id}).first()
+    if row is None:
+        raise ApiError(404, "not_found")
+    if not members.may_manage(current, row.worker_user_id):
+        raise ApiError(403, "owner_only")
+    worker_id = change.member_id or row.worker_id
+    # A worker cannot hand a booking to a colleague: the new worker must pass the same rule.
+    if worker_id != row.worker_id and not may_book_for(current, worker_id):
+        raise ApiError(403, "owner_only")
+    if row.status != "confirmed":  # D7; and a cancelled one is gone
+        raise ApiError(409, "invalid_transition")
+    if change.starts_at == row.starts_at and worker_id == row.worker_id:
+        raise ApiError(422, "unchanged")
+    db.execute(EXPIRE, {"expiring": list(availability.EXPIRING)})
+    # Override or not: the member must do this service and have hours, or the snapshot name below
+    # would name nobody and the exclusion constraint would be the only check left.
+    hours, names = availability.candidates(db, row.service_id, worker_id)
+    if not hours:
+        raise ApiError(409, "slot_unavailable")
+    if not change.override:
+        service = db.execute(SERVICE, {"service_id": row.service_id}).first()
+        if service is None:  # archived since it was booked
+            raise ApiError(409, "slot_unavailable")
+        eligible, _ = eligible_for(
+            db,
+            settings=business_settings.read(db),
+            now=row.now,
+            hours=hours,
+            starts_at=change.starts_at,
+            # The booking's own length, and its own slot free (exclude): as booking_links does.
+            duration=(row.ends_at - row.starts_at) // timedelta(minutes=1),
+            buffer_minutes=service.buffer_minutes,
+            exclude=booking_id,
+        )
+        if not eligible:
+            raise ApiError(409, "slot_unavailable")
+    try:
+        moved = db.execute(
+            MOVE,
+            {
+                "id": booking_id,
+                "new": change.starts_at,
+                "worker": worker_id,
+                "name": names[worker_id],
+            },
+        ).first()
+    except IntegrityError as error:
+        if (
+            isinstance(error.orig, ExclusionViolation)
+            and error.orig.diag.constraint_name == OVERLAP
+        ):
+            raise ApiError(409, "slot_taken") from None
+        # The worker was REMOVED meanwhile (B5): this candidate went away, not a 500.
+        if (
+            isinstance(error.orig, ForeignKeyViolation)
+            and error.orig.diag.constraint_name == members.BOOKINGS_WORKER
+        ):
+            raise ApiError(409, "slot_unavailable") from None
+        raise
+    if moved is None:  # lost a race under our own lock: the UPDATE's qualifier is the authority
+        raise ApiError(409, "invalid_transition")
+    origin_ip, user_agent = auth.origin(request)
+    db.execute(
+        INSERT_EVENT,
+        {
+            "booking_id": booking_id,
+            "event": "rescheduled",
+            "ip": origin_ip,
+            "user_agent": user_agent,
+            "policy_version": None,
+            "consent_purposes": None,
+            "actor_user_id": current.user_id,
+            # UTC ISO strings, whatever zone the session's driver hands back (as booking_links).
+            "details": json.dumps(
+                {
+                    "from": row.starts_at.astimezone(UTC).isoformat(),
+                    "to": moved.starts_at.astimezone(UTC).isoformat(),
+                }
+            ),
+        },
+    )
+    # A move into the past tells nobody (see book()).
+    if moved.starts_at > row.now:
+        new_iso = moved.starts_at.isoformat()
+        # reschedule_count does not move, so `:r{count}` would dedupe a move back to an earlier
+        # time; the transaction's clock is unique per move (they serialise on the tenant lock).
+        stamp = f":m{row.now.timestamp()}"
+        email(
+            db,
+            current.tenant_id,
+            booking_id,
+            "booking_confirmed",
+            key_suffix=stamp,
+            extra={"starts_at": new_iso},
+        )
+        remind(
+            db, current.tenant_id, booking_id, moved.starts_at, row.now
+        )  # the old one self-skips
+        changed_member = worker_id != row.worker_id
+        # The old worker hears it moved (away, when the member changed); the new one has a new
+        # booking, not a move "now with" themselves. The actor is skipped either way.
+        tell_team(
+            db,
+            current,
+            booking_id,
+            [row.worker_user_id],
+            "booking_moved_team",
+            key_suffix=stamp,
+            extra={
+                "starts_at": new_iso,
+                "previous_starts_at": row.starts_at.isoformat(),
+                **({"member_changed": "1"} if changed_member else {}),
+            },
+        )
+        if changed_member:
+            tell_team(
+                db,
+                current,
+                booking_id,
+                [db.scalar(WORKER_USER, {"id": worker_id})],
+                "booking_new",
+                key_suffix=stamp,
+                extra={"starts_at": new_iso},
+            )
+    auth.record(
+        db,
+        request,
+        "booking_rescheduled",
+        actor_user_id=current.user_id,
+        target=f"booking:{booking_id}",
+    )
+    response.headers["Cache-Control"] = "no-store"
+    logger.info("booking rescheduled", extra={"booking_id": str(booking_id)})
+    return RescheduledOut(
+        id=moved.id, starts_at=moved.starts_at, ends_at=moved.ends_at, worker_id=moved.worker_id
+    )
 
 
 def sweep() -> int:
