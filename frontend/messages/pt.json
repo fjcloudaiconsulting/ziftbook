@@ -309,7 +309,7 @@
       "wholeNumber": "Digite um número inteiro de {min} a {max}.",
       "saveChanges": "Salvar alterações",
       "unsavedChanges": "Alterações não salvas: {list}.",
-      "savedList": "Salvo: {list}.",
+      "savedList": "Alterações salvas: {list}.",
       "changed": {
         "timezone": "fuso horário",
         "language": "idioma dos e-mails",
@@ -321,7 +321,8 @@
         "pending_ttl_hours": "tempo para responder a um pedido",
         "max_pending_per_email": "pedidos em aberto por cliente",
         "max_reschedules": "alterações que um cliente pode fazer"
-      }
+      },
+      "savingHint": "Salvando suas alterações."
     },
     "errors": {
       "ownerOnly": "Só um proprietário pode fazer isso.",

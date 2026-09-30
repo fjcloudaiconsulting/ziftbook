@@ -321,7 +321,8 @@
         "pending_ttl_hours": "time to answer a request",
         "max_pending_per_email": "open requests per client",
         "max_reschedules": "changes a client can make"
-      }
+      },
+      "savingHint": "Saving your changes."
     },
     "errors": {
       "ownerOnly": "Only an owner can do this.",

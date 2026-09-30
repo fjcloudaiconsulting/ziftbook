@@ -135,11 +135,11 @@ describe("F10 numeric selects", () => {
 
 describe("F11 mergeSaved", () => {
   test("an unsent edit survives, a sent key takes the server value", () => {
-    const draft = { ...draftFrom(saved), buffer_pct: "20", max_reschedules: "5" };
+    const draft = { ...draftFrom(saved), buffer_pct: "020", max_reschedules: "5" };
     const data = { ...saved, buffer_pct: 20, max_reschedules: 2, published: true };
     const merged = mergeSaved(draft, data, ["buffer_pct"]);
     assert.equal(merged.max_reschedules, "5");
-    assert.equal(merged.buffer_pct, "20");
+    assert.equal(merged.buffer_pct, "20"); // the server's value, not the typed "020"
     assert.ok(!("published" in merged));
   });
 });
@@ -156,11 +156,14 @@ describe("guards", () => {
     assert.equal(effective(saved, { ...draftFrom(saved), buffer_pct: "20" }, "buffer_pct"), 20);
     assert.equal(effective(saved, { ...draftFrom(saved), buffer_pct: "x" }, "buffer_pct"), 10);
     assert.equal(effective(saved, { ...draftFrom(saved), slot_step_minutes: "30" }, "slot_step_minutes"), 30);
+    assert.equal(effective(saved, { ...draftFrom(saved), max_reschedules: "1e3" }, "max_reschedules"), 2);
+    assert.equal(effective(saved, { ...draftFrom(saved), max_reschedules: "0" }, "max_reschedules"), 0);
   });
   test("hint helpers", () => {
     assert.deepEqual(slotExamples(15), [540, 555, 570]);
     assert.equal(breakMinutes(10), 6);
     assert.equal(breakMinutes(15), 9);
     assert.equal(breakMinutes(1), 1);
+    assert.equal(breakMinutes(2), 2);
   });
 });

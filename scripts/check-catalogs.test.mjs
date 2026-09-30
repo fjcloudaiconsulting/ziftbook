@@ -53,3 +53,9 @@ test("a one-word plural branch isn't mistaken for a placeholder", () => {
   assert.deepEqual(compareCatalogs(en2, nl2), []);
   assert.deepEqual(compareCatalogs(en2, { unit: "{n, plural, one {dag} other {dagen}}" }).length, 1);
 });
+
+test("prose like 'one {service}' outside a plural block still reports a dropped placeholder", () => {
+  const en2 = { book: "Book one {service} now." };
+  const nl2 = { book: "Boek nu." };
+  assert.equal(compareCatalogs(en2, nl2).length, 1);
+});

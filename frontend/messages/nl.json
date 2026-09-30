@@ -321,7 +321,8 @@
         "pending_ttl_hours": "tijd om een aanvraag te beantwoorden",
         "max_pending_per_email": "openstaande aanvragen per klant",
         "max_reschedules": "wijzigingen die een klant kan aanbrengen"
-      }
+      },
+      "savingHint": "Je wijzigingen worden opgeslagen."
     },
     "errors": {
       "ownerOnly": "Alleen een eigenaar kan dit doen.",

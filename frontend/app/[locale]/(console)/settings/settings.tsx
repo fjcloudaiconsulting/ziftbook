@@ -12,6 +12,7 @@ import {
   draftFrom,
   effective,
   FIELDS,
+  type IntKey,
   type Key,
   mergeSaved,
   noticeOptions,
@@ -26,11 +27,9 @@ import {
 import { SignedOutBanner, useConsole } from "../../_ui/console";
 import styles from "../../_ui/console.module.css";
 import { NAMES } from "../../_ui/header";
-import { Banner, FieldError, Heading, problem, Submit } from "../../_ui/parts";
+import { Banner, Chevron, FieldError, Heading, problem, Submit } from "../../_ui/parts";
 import { SaveBar } from "../../_ui/save-bar";
 import uiStyles from "../../_ui/ui.module.css";
-
-const bare = { border: 0, margin: 0, minWidth: 0 } as const;
 
 /** Label, control, then unit, error and hint, all tied to the control with aria-describedby. */
 function Field({
@@ -58,8 +57,8 @@ function Field({
         {label}
       </label>
       {unit ? (
-        <div style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
-          <div className={uiStyles.input} style={{ width: "7rem" }}>
+        <div className={styles.unitRow}>
+          <div className={`${uiStyles.input} ${styles.unitInput}`}>
             {control}
           </div>
           <span className={uiStyles.hint} id={`${id}-unit`}>
@@ -67,7 +66,7 @@ function Field({
           </span>
         </div>
       ) : (
-        <div className={uiStyles.input} style={short ? { maxWidth: "12rem" } : undefined}>
+        <div className={`${uiStyles.input} ${short ? styles.shortInput : ""}`}>
           {control}
         </div>
       )}
@@ -81,14 +80,6 @@ function Field({
         )
       )}
     </div>
-  );
-}
-
-function Chevron() {
-  return (
-    <svg aria-hidden="true" className={uiStyles.selectChevron} viewBox="0 0 12 12" width="12" height="12">
-      <path d="M2 4.5l4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
   );
 }
 
@@ -145,6 +136,7 @@ export function Settings() {
   const err = (key: Key) => invalid.includes(key) && rangeMsg(key);
   const step = effective(settings, draft, "slot_step_minutes");
   const pct = effective(settings, draft, "buffer_pct");
+  const count = (key: IntKey) => effective(settings, draft, key);
 
   async function onTogglePublish() {
     if (publishingRef.current) return;
@@ -262,7 +254,7 @@ export function Settings() {
           </option>
         ))}
       </select>
-      <Chevron />
+      <Chevron select />
     </>
   );
   const fid = (key: Key) => `${formId}-${key}`;
@@ -276,7 +268,7 @@ export function Settings() {
       </div>
       {signedOut && <SignedOutBanner />}
       {message && (
-        <div ref={messageRef} tabIndex={-1}>
+        <div ref={messageRef} tabIndex={-1} className={styles.message}>
           <Banner tone={message.tone}>{message.text}</Banner>
         </div>
       )}
@@ -338,10 +330,10 @@ export function Settings() {
         {settings.published && <p className={uiStyles.hint}>{t("unpublishHint")}</p>}
       </div>
 
-      <form id={formId} noValidate onSubmit={onSubmit} className={uiStyles.stack} style={{ gap: 0 }}>
-        <fieldset className={styles.section} style={bare} disabled={saving}>
-          <legend style={{ padding: 0, marginBottom: "0.9rem" }}>
-            <h2 style={{ margin: 0 }}>{t("yourBusinessHeading")}</h2>
+      <form id={formId} noValidate onSubmit={onSubmit}>
+        <fieldset className={`${styles.section} ${styles.settingsSection}`} disabled={saving}>
+          <legend>
+            <h2>{t("yourBusinessHeading")}</h2>
           </legend>
           <Field id={fid("timezone")} label={t("timezoneLabel")} hint={t("timezoneHint")}>
             {(p) => pick("timezone", p.id, p.describedBy, zones.map((z) => ({ value: z, label: z })))}
@@ -351,20 +343,19 @@ export function Settings() {
           </Field>
         </fieldset>
 
-        <fieldset className={styles.section} style={{ ...bare, marginTop: "1.25rem" }} disabled={saving}>
-          <legend style={{ padding: 0, marginBottom: "0.9rem" }}>
-            <h2 style={{ margin: 0 }}>{t("bookingsHeading")}</h2>
+        <fieldset className={`${styles.section} ${styles.settingsSection}`} disabled={saving}>
+          <legend>
+            <h2>{t("bookingsHeading")}</h2>
           </legend>
-          <div style={{ display: "flex", gap: "0.75rem", alignItems: "flex-start" }}>
+          <div className={styles.checkRow}>
             <input
               id={fid("auto_confirm")}
               type="checkbox"
               checked={draft.auto_confirm as boolean}
               onChange={(e) => set("auto_confirm", e.target.checked)}
               aria-describedby={`${fid("auto_confirm")}-hint`}
-              style={{ width: "1.5rem", height: "1.5rem", margin: "0.1rem 0 0", accentColor: "var(--primary)", flex: "none" }}
             />
-            <div className={uiStyles.field} style={{ gap: "0.15rem" }}>
+            <div className={`${uiStyles.field} ${styles.checkText}`}>
               <label className={uiStyles.label} htmlFor={fid("auto_confirm")}>
                 {t("autoConfirmLabel")}
               </label>
@@ -394,7 +385,7 @@ export function Settings() {
           <Field
             id={fid("booking_horizon_days")}
             label={t("horizonLabel")}
-            unit={t("daysUnit", { count: Number(draft.booking_horizon_days) || settings.booking_horizon_days })}
+            unit={t("daysUnit", { count: count("booking_horizon_days") })}
             error={err("booking_horizon_days")}
           >
             {(p) => int("booking_horizon_days", p.id, p.describedBy, p.invalid)}
@@ -411,7 +402,7 @@ export function Settings() {
           <Field
             id={fid("pending_ttl_hours")}
             label={t("ttlLabel")}
-            unit={t("hoursUnit", { count: Number(draft.pending_ttl_hours) || settings.pending_ttl_hours })}
+            unit={t("hoursUnit", { count: count("pending_ttl_hours") })}
             hint={t("ttlHint")}
             error={err("pending_ttl_hours")}
           >
@@ -420,21 +411,21 @@ export function Settings() {
           <Field
             id={fid("max_pending_per_email")}
             label={t("pendingLabel")}
-            unit={t("atATimeUnit", { count: Number(draft.max_pending_per_email) || settings.max_pending_per_email })}
+            unit={t("atATimeUnit", { count: count("max_pending_per_email") })}
             error={err("max_pending_per_email")}
           >
             {(p) => int("max_pending_per_email", p.id, p.describedBy, p.invalid)}
           </Field>
         </fieldset>
 
-        <fieldset className={styles.section} style={{ ...bare, marginTop: "1.25rem", borderBottom: 0 }} disabled={saving}>
-          <legend style={{ padding: 0, marginBottom: "0.9rem" }}>
-            <h2 style={{ margin: 0 }}>{t("cancellingHeading")}</h2>
+        <fieldset className={`${styles.section} ${styles.settingsSection}`} disabled={saving}>
+          <legend>
+            <h2>{t("cancellingHeading")}</h2>
           </legend>
           <Field
             id={fid("max_reschedules")}
             label={t("maxReschedulesLabel")}
-            unit={t("timesUnit", { count: Number(draft.max_reschedules) || 0 })}
+            unit={t("timesUnit", { count: count("max_reschedules") })}
             hint={t("maxReschedulesHint")}
             error={err("max_reschedules")}
           >
@@ -445,7 +436,7 @@ export function Settings() {
         {showBar && (
           <SaveBar
             formId={formId}
-            hint={saving ? tWeek("savingHint") : dirty ? t("unsavedChanges", { list: list(changed) }) : ""}
+            hint={saving ? t("savingHint") : dirty ? t("unsavedChanges", { list: list(changed) }) : ""}
             busy={saving}
             onUndo={saving ? undefined : undo}
             saveLabel={t("saveChanges")}

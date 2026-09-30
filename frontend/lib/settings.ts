@@ -122,7 +122,8 @@ export function breakMinutes(pct: number): number {
 }
 
 /** A numeric field's draft value while it parses, else the saved one (what computed hints show). */
-export function effective(saved: Settings, draft: Draft, key: "slot_step_minutes" | "buffer_pct"): number {
+export type IntKey = "slot_step_minutes" | "buffer_pct" | "booking_horizon_days" | "pending_ttl_hours" | "max_pending_per_email" | "max_reschedules";
+export function effective(saved: Settings, draft: Draft, key: IntKey): number {
   const value = parse(FIELDS.find((f) => f.key === key)!, draft[key]);
   return typeof value === "number" ? value : saved[key];
 }
