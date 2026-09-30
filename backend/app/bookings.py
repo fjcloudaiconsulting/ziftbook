@@ -53,6 +53,7 @@ IP_LIMIT, EMAIL_LIMIT, LIMIT_WINDOW = 30, 5, timedelta(hours=1)
 # disjoint first arguments, so the two locks can never collide.
 LOCK_KEY = 51
 OVERLAP = "ex_bookings_worker_overlap"  # migration 0026; answered with 409 slot_taken
+MAX_AGENDA_WINDOW = timedelta(days=8)  # a 7-day local week across a clock change is 7d +- 1h
 
 
 class BookingIn(BaseModel):
@@ -199,11 +200,13 @@ class BookingStatusOut(BaseModel):
     status: Target
 
 
-class PendingOut(BaseModel):
+class BookingRow(BaseModel):
+    """What the pending queue and the agenda both say about a booking. No client email or phone:
+    a list never carries them (the detail does)."""
+
     id: UUID
     starts_at: datetime
     ends_at: datetime
-    expires_at: datetime  # NOT NULL for every pending: ck_bookings_expires_at
     service_id: UUID
     service_name: dict[str, str]  # all three locales, as snapshotted
     price: Price  # app.services.Price
@@ -211,6 +214,39 @@ class PendingOut(BaseModel):
     worker_display_name: str | None
     client_id: UUID
     client_name: str
+    created_at: datetime  # "booked online 2 hours ago"
+
+
+class PendingOut(BookingRow):
+    expires_at: datetime  # NOT NULL for every pending: ck_bookings_expires_at
+
+
+class AgendaOut(BookingRow):
+    expires_at: datetime | None  # set while a hold is live; null once settled
+    status: str
+    source: str  # booking_page, merchant (a walk-in) or marketplace
+
+
+class EventOut(BaseModel):
+    event: str
+    at: datetime
+    actor: Literal["client", "team", "system"]
+    actor_name: str | None  # null for a removed member, and for a pre-0033 team event
+    details: dict[str, Any] | None
+
+
+class BookingDetailOut(AgendaOut):
+    client_email: str | None
+    client_phone: str | None
+    client_note: str | None
+    decline_message: str | None
+    cancellation_policy_text: str | None
+    reschedule_count: int
+    max_reschedules: int
+    # A lapsed hold nobody has swept yet still reads status `pending`; this says it is over, so the
+    # panel never offers Accept on it (PATCH would 409).
+    expired: bool
+    history: list[EventOut]
 
 
 LOCK = text("SELECT pg_advisory_xact_lock(:key, hashtext(current_setting('app.tenant_id')))")
@@ -258,10 +294,18 @@ RETURNING id, status, starts_at, ends_at
 
 INSERT_EVENT = text("""
 INSERT INTO booking_events (tenant_id, booking_id, event, ip, user_agent, policy_version,
-                            consent_purposes)
+                            consent_purposes, actor_user_id, details)
 VALUES (current_setting('app.tenant_id')::uuid, :booking_id, :event, CAST(:ip AS inet),
-        :user_agent, :policy_version, CAST(:consent_purposes AS jsonb))
+        :user_agent, :policy_version, CAST(:consent_purposes AS jsonb), :actor_user_id,
+        CAST(:details AS jsonb))
 """)
+
+# The columns QUEUE and RANGE share, so the two lists can never drift apart.
+LIST_COLUMNS = """
+b.id, b.starts_at, b.ends_at, b.service_id, b.service_name,
+jsonb_build_object('amount_minor', b.price_amount_minor, 'currency', b.price_currency) AS price,
+b.worker_id, b.worker_display_name, b.client_id, c.name AS client_name, b.created_at
+"""
 
 # ponytail: limit=50 (100 max) with no cursor, so a business holding more live pendings than that
 # sees only the soonest ones and the tail stays invisible until the TTL thins it. Bounded by
@@ -273,17 +317,65 @@ VALUES (current_setting('app.tenant_id')::uuid, :booking_id, :event, CAST(:ip AS
 # able to settle it rather than have it vanish until the TTL, and recording a booking whose time has
 # passed is a case migration 0026 explicitly supports (its walk-in comment, 0026:159-171). Top of
 # the list is the right urgency order for it.
-QUEUE = text("""
-SELECT b.id, b.starts_at, b.ends_at, b.expires_at, b.service_id, b.service_name,
-       jsonb_build_object('amount_minor', b.price_amount_minor,
-                          'currency', b.price_currency) AS price,
-       b.worker_id, b.worker_display_name, b.client_id, c.name AS client_name
+QUEUE = text(f"""
+SELECT {LIST_COLUMNS}, b.expires_at
 FROM bookings b
 JOIN clients c ON c.tenant_id = b.tenant_id AND c.id = b.client_id
 WHERE b.status = 'pending' AND b.expires_at > now()
   AND (:everyone OR b.worker_id = (SELECT id FROM memberships WHERE user_id = :me))
 ORDER BY b.starts_at, b.id
 LIMIT :limit
+""")
+
+# ZIF-57. The agenda: bookings overlapping [from, to), half-open on both sides.
+#  * `starts_at > :from - 12 hours` is the look-back ck_bookings_at_most_12_hours (0026:91) gives:
+#    with `ends_at > :from` strict and the CHECK `<=`, a booking that overlaps :from started no
+#    earlier than 12 hours before it. Zero margin, on purpose: it is exactly the CHECK.
+#  * The statuses are the occupying four plus no_show (an outcome the day still shows); declined,
+#    expired and both cancellations are history, not agenda.
+#  * A lapsed hold nobody has swept yet is hidden, as QUEUE and availability.BOOKED hide it.
+#  * The visibility clause is QUEUE's verbatim, so the two lists and PATCH agree on who sees what.
+# ponytail: no limit or cursor. The 8-day span cap is the bound (one worker's day holds a few dozen
+# bookings at most); the upgrade is a (starts_at, id) cursor like app/clients.py:63.
+RANGE = text(f"""
+SELECT {LIST_COLUMNS}, b.expires_at, b.status, b.source
+FROM bookings b
+JOIN clients c ON c.tenant_id = b.tenant_id AND c.id = b.client_id
+WHERE b.starts_at < :to AND b.ends_at > :from
+  AND b.starts_at > CAST(:from AS timestamptz) - interval '12 hours'
+  AND b.status = ANY(CAST(:statuses AS text[]))
+  AND NOT (b.status = ANY(CAST(:expiring AS text[])) AND b.expires_at <= now())
+  AND (:everyone OR b.worker_id = (SELECT id FROM memberships WHERE user_id = :me))
+ORDER BY b.starts_at, b.id
+""")
+
+# One booking for its panel, any status. The worker's user_id rides along for may_manage. Never
+# selects clients.internal_note (the merchant's private note about a person) and never the event
+# personal data below.
+DETAIL = text(f"""
+SELECT {LIST_COLUMNS}, b.expires_at, b.status, b.source, wm.user_id AS worker_user_id,
+       c.email AS client_email, c.phone AS client_phone, c.client_note, b.decline_message,
+       b.cancellation_policy_text, b.reschedule_count, b.max_reschedules,
+       coalesce(b.status = ANY(CAST(:expiring AS text[])) AND b.expires_at <= now(), false)
+         AS expired
+FROM bookings b
+JOIN clients c ON c.tenant_id = b.tenant_id AND c.id = b.client_id
+JOIN memberships wm ON wm.tenant_id = b.tenant_id AND wm.id = b.worker_id
+WHERE b.id = :id
+""")
+
+# Named columns, never SELECT *: ip, user_agent, policy_version and consent_purposes are the
+# employee's and the guest's personal data (0026:219-223) and stay out of this response. The actor
+# is joined to memberships by user_id and to users only through that membership, so a removed
+# member reads as a null name rather than vanishing the event.
+HISTORY = text("""
+SELECT e.event, e.created_at AS at, e.actor_user_id, e.details,
+       coalesce(m.display_name, u.name) AS actor_name
+FROM booking_events e
+LEFT JOIN memberships m ON m.tenant_id = e.tenant_id AND m.user_id = e.actor_user_id
+LEFT JOIN users u ON u.id = m.user_id
+WHERE e.booking_id = :id
+ORDER BY e.id
 """)
 
 # The booking and who holds it. No FOR UPDATE (D5): the advisory lock and TRANSITION's own
@@ -627,6 +719,8 @@ def create(  # sync def: turnstile.verify's urlopen blocks, and runs in FastAPI'
                                 "user_agent": user_agent,
                                 "policy_version": new.policy_version,
                                 "consent_purposes": json.dumps(new.consents),
+                                "actor_user_id": None,  # the client: nobody is signed in to act
+                                "details": None,
                             },
                         )
                 except IntegrityError as error:
@@ -713,6 +807,80 @@ def pending(
     return [PendingOut.model_validate(row, from_attributes=True) for row in rows]
 
 
+@merchant_router.get("/bookings", name="range", responses={s: {"model": Error} for s in (401, 422)})
+def agenda(
+    current: auth.CurrentSession,
+    response: Response,
+    from_: Annotated[time_off_module.Instant, Query(alias="from")],
+    to: time_off_module.Instant,
+) -> list[AgendaOut]:
+    """The bookings that overlap [from, to) by start time, for a day or a week of the calendar.
+    An owner sees everyone's, a worker their own (the same rule as the pending queue). The window
+    may not exceed 8 days: a local week is 7 days plus or minus an hour across a clock change."""
+    if to <= from_ or to - from_ > MAX_AGENDA_WINDOW:
+        raise ApiError(422, "invalid_window")
+    rows = current.db.execute(
+        RANGE,
+        {
+            "from": from_,
+            "to": to,
+            "statuses": [*availability.OCCUPYING, "no_show"],
+            "expiring": list(availability.EXPIRING),
+            "everyone": members.is_owner(current),
+            "me": current.user_id,
+        },
+    ).all()
+    response.headers["Cache-Control"] = "no-store"
+    return [AgendaOut.model_validate(row, from_attributes=True) for row in rows]
+
+
+def actor_of(
+    event: str, actor_user_id: UUID | None, source: str
+) -> Literal["client", "team", "system"]:
+    """Who an event was by. A recorded actor is the team. Without one (every row before 0033, and
+    the client's own actions) it is read from the event: a merchant transition is the team's
+    whichever way it was written, `created` is the team's only for a walk-in the merchant recorded
+    (a booking_page or marketplace booking is the client's), `expired` is the system's, and the
+    rest (cancelled_by_client, rescheduled, consent_confirmed) are the client's."""
+    if actor_user_id is not None or event in TRANSITIONS:
+        return "team"
+    if event == "created":
+        return "team" if source == "merchant" else "client"
+    return "system" if event == "expired" else "client"
+
+
+@merchant_router.get(
+    "/bookings/{booking_id}",
+    name="read",
+    responses={s: {"model": Error} for s in (401, 403, 404, 422)},
+)
+def detail(booking_id: UUID, current: auth.CurrentSession, response: Response) -> BookingDetailOut:
+    """One booking with its client's contact details and its history, any status. An owner, or the
+    membership in bookings.worker_id, may read it: the rule and the code of PATCH. Another
+    business's booking is 404."""
+    row = current.db.execute(
+        DETAIL, {"id": booking_id, "expiring": list(availability.EXPIRING)}
+    ).first()
+    if row is None:
+        raise ApiError(404, "not_found")
+    if not members.may_manage(current, row.worker_user_id):
+        raise ApiError(403, "owner_only")
+    history = [
+        EventOut(
+            event=e.event,
+            at=e.at,
+            actor=actor_of(e.event, e.actor_user_id, row.source),
+            actor_name=e.actor_name,
+            details=e.details,
+        )
+        for e in current.db.execute(HISTORY, {"id": booking_id})
+    ]
+    response.headers["Cache-Control"] = "no-store"
+    return BookingDetailOut.model_validate(
+        {**row._mapping, "history": history}, from_attributes=True
+    )
+
+
 @merchant_router.patch(
     "/bookings/{booking_id}",
     name="update",
@@ -772,6 +940,8 @@ def transition(
             "user_agent": user_agent,
             "policy_version": None,
             "consent_purposes": None,
+            "actor_user_id": current.user_id,
+            "details": None,
         },
     )
     # ZIF-53, before auth.record on purpose: a statement that fails after this must roll the job

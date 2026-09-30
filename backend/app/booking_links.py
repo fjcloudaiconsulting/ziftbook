@@ -3,8 +3,9 @@ Every failure to find a live link is the SAME 404 `link_expired` (D4, test 6).
 """
 
 import hashlib
+import json
 import logging
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from types import SimpleNamespace
 from typing import Annotated, Any
 from uuid import UUID
@@ -212,7 +213,12 @@ def _policy(row: Any) -> cancellation.Policy:
 
 
 def _event(
-    db: Session, booking_id: UUID, event: str, ip: str | None, user_agent: str | None
+    db: Session,
+    booking_id: UUID,
+    event: str,
+    ip: str | None,
+    user_agent: str | None,
+    details: dict[str, str] | None = None,
 ) -> None:
     db.execute(
         INSERT_EVENT,
@@ -223,6 +229,8 @@ def _event(
             "user_agent": user_agent,
             "policy_version": None,
             "consent_purposes": None,
+            "actor_user_id": None,  # always the client, who has no account here
+            "details": None if details is None else json.dumps(details),
         },
     )
 
@@ -475,7 +483,18 @@ def reschedule(body: RescheduleIn, request: Request) -> LinkedBooking:
                 raise
             if changed is None:  # the echo was stale under our own lock: the CHECK is the backstop
                 raise ApiError(409, "changed")
-            _event(db, row.booking_id, "rescheduled", origin_ip, user_agent)
+            _event(
+                db,
+                row.booking_id,
+                "rescheduled",
+                origin_ip,
+                user_agent,
+                # UTC ISO strings, whatever zone the session's driver hands back.
+                {
+                    "from": row.starts_at.astimezone(UTC).isoformat(),
+                    "to": changed.starts_at.astimezone(UTC).isoformat(),
+                },
+            )
             suffix = f":r{changed.reschedule_count}"
             new_iso = changed.starts_at.isoformat()
             bookings.email(

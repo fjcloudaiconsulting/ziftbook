@@ -1250,3 +1250,83 @@ def test_a_day_block_behaves_like_a_partial_one_for_visibility_audit_and_cascade
         ).scalar()
     assert removed == 0
     assert untouched == 1
+
+
+def insert_day_block(tenant_id: uuid.UUID, member: uuid.UUID, first_day: str, last_day: str) -> str:
+    with tenant_context(tenant_id) as session:
+        found: uuid.UUID = session.scalar(
+            text("""
+            INSERT INTO time_off (tenant_id, member_id, first_day, last_day)
+            VALUES (:t, :m, :f, :l) RETURNING id
+            """),
+            {"t": tenant_id, "m": member, "f": first_day, "l": last_day},
+        )
+    return str(found)
+
+
+RANGE = "/api/time-off"
+# One Amsterdam day, 2031-03-10 (CET, before the March 30 switch).
+LOCAL_DAY = {"from": "2031-03-09T23:00:00Z", "to": "2031-03-10T23:00:00Z"}
+
+
+# F21 (ZIF-57): the business-wide range shows a colleague's block to a worker with the reason
+# hidden, their own with it, and names the member. Kills a range that skips the reason rule.
+def test_the_business_wide_range_hides_a_colleagues_reason_and_names_the_member(
+    people: People, app: FastAPI
+) -> None:
+    worker_member = member_id(people.a, people.only_a)
+    owner_member = member_id(people.a, people.both)
+    mine = insert_block(
+        people.a, worker_member, "2031-03-10T08:00:00Z", "2031-03-10T09:00:00Z", reason="Dentist"
+    )
+    theirs = insert_block(
+        people.a, owner_member, "2031-03-10T10:00:00Z", "2031-03-10T11:00:00Z", reason="Surgery"
+    )
+
+    as_worker = signed_in(app, people.a, people.only_a).get(RANGE, params=LOCAL_DAY)
+    as_owner = signed_in(app, people.a, people.both).get(RANGE, params=LOCAL_DAY)
+
+    assert as_worker.status_code == 200
+    seen = {b["id"]: b for b in as_worker.json()}
+    assert [b["id"] for b in as_worker.json()] == [str(mine), str(theirs)]
+    assert (seen[str(mine)]["reason"], seen[str(theirs)]["reason"]) == ("Dentist", None)
+    assert seen[str(theirs)]["member_name"] == "Test Person"
+    assert {b["id"]: b["reason"] for b in as_owner.json()} == {
+        str(mine): "Dentist",
+        str(theirs): "Surgery",
+    }
+    assert as_worker.headers["cache-control"] == "no-store"
+
+
+# F22: whole-day blocks match by local date: the day itself and a spanning block are in, the next
+# day (and the day before) are out. Kills `first_day >= :first` and a missing day branch.
+def test_the_range_returns_day_blocks_by_local_date(people: People, app: FastAPI) -> None:
+    member = member_id(people.a, people.only_a)
+    same_day = insert_day_block(people.a, member, "2031-03-10", "2031-03-10")
+    spanning = insert_day_block(people.a, member, "2031-03-08", "2031-03-12")
+    insert_day_block(people.a, member, "2031-03-11", "2031-03-11")
+    insert_day_block(people.a, member, "2031-03-09", "2031-03-09")
+
+    response = signed_in(app, people.a, people.both).get(RANGE, params=LOCAL_DAY)
+
+    assert response.status_code == 200
+    assert sorted(b["id"] for b in response.json()) == sorted([same_day, spanning])
+
+
+# F23: the business-wide range is capped at 8 days (the per-member route keeps its 366).
+def test_the_range_window_is_capped_at_eight_days(people: People, app: FastAPI) -> None:
+    owner = signed_in(app, people.a, people.both)
+
+    for params in (
+        {"from": "2031-03-01T00:00:00Z", "to": "2031-03-09T00:00:01Z"},
+        {"from": "2031-03-01T00:00:00Z", "to": "2031-03-01T00:00:00Z"},
+        {"from": "2031-03-02T00:00:00Z", "to": "2031-03-01T00:00:00Z"},
+    ):
+        response = owner.get(RANGE, params=params)
+        assert (response.status_code, response.json()) == (422, {"code": "invalid_window"})
+    assert (
+        owner.get(
+            RANGE, params={"from": "2031-03-01T00:00:00Z", "to": "2031-03-09T00:00:00Z"}
+        ).status_code
+        == 200
+    )

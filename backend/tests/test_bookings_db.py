@@ -515,12 +515,15 @@ def test_every_booking_event_column_but_id_and_created_at_is_insertable(
         "user_agent",
         "policy_version",
         "consent_purposes",
+        "actor_user_id",  # 0033 (ZIF-57)
+        "details",
     }
     # (b) Catches a NEW column silently gaining or missing a grant.
     assert all_columns - insertable == {"id", "created_at"}
-    # (c) The migration constant is still honest.
+    # (c) The migration constants are still honest: 0026's grant plus what 0033 added.
+    added = load_migration("0033_booking_events_actor").ADDED_COLUMNS.split(", ")
     migration = load_migration("0026_bookings")
-    assert set(migration.EVENT_COLUMNS.split(", ")) == insertable
+    assert set(migration.EVENT_COLUMNS.split(", ")) | set(added) == insertable
 
 
 # 10: FENCE + positive control. Wrong impl: any of the three composite FKs written plain,
