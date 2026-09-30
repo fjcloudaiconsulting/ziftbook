@@ -46,3 +46,10 @@ test("a real placeholder dropped inside an ICU plural branch is still caught", (
   const nl2 = { count: "{count, plural, =1 {Eén dag} other {# dagen}}" };
   assert.deepEqual(compareCatalogs(en2, nl2), ["placeholders differ at count: expected {count,list}, got {count}"]);
 });
+
+test("a one-word plural branch isn't mistaken for a placeholder", () => {
+  const en2 = { unit: "{count, plural, one {day} other {days}}" };
+  const nl2 = { unit: "{count, plural, one {dag} other {dagen}}" };
+  assert.deepEqual(compareCatalogs(en2, nl2), []);
+  assert.deepEqual(compareCatalogs(en2, { unit: "{n, plural, one {dag} other {dagen}}" }).length, 1);
+});

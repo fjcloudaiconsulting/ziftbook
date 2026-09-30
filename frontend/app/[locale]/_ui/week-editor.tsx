@@ -21,9 +21,10 @@ import {
   weekProblems,
 } from "@/lib/week";
 
-import { FooterPortal, SignedOutBanner } from "./console";
+import { SignedOutBanner } from "./console";
 import styles from "./console.module.css";
-import { Banner, FieldError, type Outcome, problem, Submit } from "./parts";
+import { Banner, FieldError, type Outcome, problem } from "./parts";
+import { SaveBar } from "./save-bar";
 import uiStyles from "./ui.module.css";
 
 type T = ReturnType<typeof useTranslations>;
@@ -248,35 +249,6 @@ export function WeekEditor({
             ? tWeek("unsavedChanges", { days: daysSummary(changed, dl, (from, to) => tWeek("dayRange", { from, to })) })
             : "";
 
-  const savebarContent = (
-    <>
-      <p className={uiStyles.hint} role={status === "saving" ? "status" : undefined}>
-        {savebarHint}
-      </p>
-      {status === "dirty" || status === "error" ? (
-        <button className={uiStyles.textButton} type="button" onClick={undo}>
-          {tWeek("undo")}
-        </button>
-      ) : null}
-      {status === "idle" || status === "saved" ? (
-        <button
-          className={`${uiStyles.button} ${uiStyles.primary} ${styles.saveButton} ${styles.saveIdle}`}
-          type="submit"
-          form={formId}
-          aria-disabled="true"
-        >
-          {tWeek("save")}
-        </button>
-      ) : (
-        <div className={styles.saveButton}>
-          <Submit busy={busy} busyLabel={tWeek("saving")} form={formId}>
-            {tWeek("save")}
-          </Submit>
-        </div>
-      )}
-    </>
-  );
-
   return (
     <form id={formId} className={uiStyles.stack} noValidate onSubmit={onSubmit}>
       {writeFailure?.status === 401 && <SignedOutBanner />}
@@ -427,12 +399,16 @@ export function WeekEditor({
       {footNote && <p className={uiStyles.hint}>{footNote}</p>}
       </div>
 
-      {/* Phone: stacked directly on the tab bar, in the shell's own bottom bar - see FooterPortal.
-          Desktop: the duplicate below, sticky on its own (each hidden where the other applies). */}
-      <FooterPortal>
-        <div className={styles.savebar}>{savebarContent}</div>
-      </FooterPortal>
-      <div className={`${styles.savebar} ${styles.savebarDesktop}`}>{savebarContent}</div>
+      <SaveBar
+        formId={formId}
+        hint={savebarHint}
+        busy={busy}
+        idle={status === "idle" || status === "saved"}
+        onUndo={status === "dirty" || status === "error" ? undo : undefined}
+        saveLabel={tWeek("save")}
+        savingLabel={tWeek("saving")}
+        undoLabel={tWeek("undo")}
+      />
     </form>
   );
 }

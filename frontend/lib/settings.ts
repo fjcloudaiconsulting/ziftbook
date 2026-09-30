@@ -120,3 +120,9 @@ export function slotExamples(step: number): number[] {
 export function breakMinutes(pct: number): number {
   return Math.ceil((60 * pct) / 100);
 }
+
+/** A numeric field's draft value while it parses, else the saved one (what computed hints show). */
+export function effective(saved: Settings, draft: Draft, key: "slot_step_minutes" | "buffer_pct"): number {
+  const value = parse(FIELDS.find((f) => f.key === key)!, draft[key]);
+  return typeof value === "number" ? value : saved[key];
+}

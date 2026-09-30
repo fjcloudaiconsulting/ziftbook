@@ -7,6 +7,7 @@ import {
   breakMinutes,
   changedKeys,
   draftFrom,
+  effective,
   FIELDS,
   mergeSaved,
   noticeOptions,
@@ -150,6 +151,11 @@ describe("guards", () => {
   });
   test("G2 untouched draft is clean", () => {
     assert.deepEqual(changedKeys(saved, draftFrom(saved)), []);
+  });
+  test("G3 effective follows a valid draft, else the saved value", () => {
+    assert.equal(effective(saved, { ...draftFrom(saved), buffer_pct: "20" }, "buffer_pct"), 20);
+    assert.equal(effective(saved, { ...draftFrom(saved), buffer_pct: "x" }, "buffer_pct"), 10);
+    assert.equal(effective(saved, { ...draftFrom(saved), slot_step_minutes: "30" }, "slot_step_minutes"), 30);
   });
   test("hint helpers", () => {
     assert.deepEqual(slotExamples(15), [540, 555, 570]);
