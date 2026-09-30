@@ -587,6 +587,41 @@ def test_reschedule_into_a_free_slot_succeeds_and_others_still_block(
     assert blocked.json()["code"] == "slot_unavailable"
 
 
+# ZIF-57. fence. A lapsed-but-unswept pending still sits in the exclusion constraint while the
+# availability read already offers its slot: the reschedule must expire it first, as create() does.
+def test_reschedule_into_a_slot_a_lapsed_pending_held_succeeds(
+    people: People, app: FastAPI, ready: str, owner: TestClient
+) -> None:
+    # Made first: every create() sweeps, so a later one would expire the lapsed pending for us.
+    booking_id = confirmed_booking(app, people.a, ready, starts_at=at("14:00"))
+    assert patch(owner, booking_id, "confirmed").status_code == 200
+    lapsed = make_pending(app, people.a, ready, starts_at=at("10:00"))
+    expire(people.a, lapsed)
+
+    moved = post(
+        linked(app, people.a, booking_id),
+        "/reschedule",
+        reschedule_body(booking_id, at("10:00"), 0),
+    )
+
+    assert moved.status_code == 200, moved.json()
+    with tenant_context(people.a) as db:
+        assert (
+            db.scalar(text("SELECT status FROM bookings WHERE id = :id"), {"id": lapsed})
+            == "expired"
+        )
+        assert (
+            db.scalar(
+                text(
+                    "SELECT count(*) FROM booking_events "
+                    "WHERE booking_id = :id AND event = 'expired'"
+                ),
+                {"id": lapsed},
+            )
+            == 1
+        )
+
+
 # 16. fence. A raw UPDATE past max_reschedules raises 23514. Kills a Python-only cap.
 def test_a_raw_update_past_max_reschedules_raises_the_check(
     people: People, app: FastAPI, ready: str, owner: TestClient, migrate_engine: Engine

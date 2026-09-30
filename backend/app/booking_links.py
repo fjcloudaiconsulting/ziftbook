@@ -469,6 +469,9 @@ def reschedule(body: RescheduleIn, request: Request) -> LinkedBooking:
             slots = _slots(db, row, settings, row.now, day, day, lock=True)
             if slots is None or body.starts_at not in slots:
                 raise ApiError(409, "slot_unavailable")
+            # Like create() (bookings.py step 9): the offered slots carve lapsed pendings out at
+            # read time, but the exclusion constraint still counts them until they are expired.
+            db.execute(bookings.EXPIRE, {"expiring": list(availability.EXPIRING)})
             try:
                 changed = db.execute(
                     RESCHEDULE,
