@@ -1,7 +1,7 @@
 "use client";
 
 import { useLocale, useTranslations } from "next-intl";
-import { type MouseEvent, useEffect, useRef, useState } from "react";
+import { type MouseEvent, type ReactNode, useEffect, useRef, useState } from "react";
 
 import { type BookingDetailOut, bookingApprovalsRead, bookingApprovalsUpdate } from "@/api-client";
 import { Link } from "@/i18n/navigation";
@@ -210,7 +210,7 @@ export function BookingDetail({
     );
   }
 
-  const button = (action: Exclude<Action, "reschedule">, label: string, variant: "primary" | "secondary" | "danger", extra = "", onClick?: () => void, buttonId?: string) => (
+  const button = (action: Exclude<Action, "reschedule">, label: ReactNode, variant: "primary" | "secondary" | "danger", extra = "", onClick?: () => void, buttonId?: string) => (
     <button
       id={buttonId}
       className={`${uiStyles.button} ${variant === "danger" ? styles.danger : uiStyles[variant]} ${uiStyles.small} ${extra}`}
