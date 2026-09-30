@@ -13,7 +13,7 @@ import json
 import logging
 from collections import Counter
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Annotated, Any, Literal, NamedTuple, Self
 from uuid import UUID
 from zoneinfo import ZoneInfo
@@ -528,6 +528,123 @@ RETURNING id, starts_at, ends_at, reschedule_count
 """)
 
 
+def by_load(
+    eligible: list[UUID],
+    booked_rows: list[tuple[UUID, datetime, datetime, int | None]],
+    day: date,
+    zone: str,
+) -> list[UUID]:
+    """Least loaded that day, then worker_id ascending - the tiebreak is deterministic, so
+    concurrent requests for the same slot pile onto the same worker by construction."""
+    load = Counter(
+        m
+        for m, starts_at, _ends_at, _o in booked_rows
+        if starts_at.astimezone(ZoneInfo(zone)).date() == day
+    )
+    return sorted(eligible, key=lambda m: (load[m], m))
+
+
+def place(
+    db: Session,
+    *,
+    settings: business_settings.BusinessSettings,
+    service: Row[Any],
+    service_id: UUID,
+    client_id: UUID,
+    queue: list[UUID],
+    names: dict[UUID, str | None],
+    starts_at: datetime,
+    status: str,
+    expires_at: datetime | None,
+    source: str,
+    event: dict[str, Any],
+) -> tuple[Row[Any], UUID]:
+    """The one insert path for a new booking (ZIF-57): the public create() and the merchant's both
+    land here, so the snapshot columns and the `created` event can never drift between them.
+
+    `queue` is the candidate order; the first worker that takes the slot wins. `event` carries the
+    `created` row's ip, user_agent, policy_version, consent_purposes (ALREADY serialised, or None:
+    json.dumps(None) is the jsonb literal 'null', which ck_booking_events_consent_purposes
+    refuses), actor_user_id and details. Returns the row and the worker it landed on; 409
+    slot_taken when every candidate is gone. The caller holds the tenant lock.
+    """
+    # The candidate loop: not "one retry" (§1.1). Under the tenant lock a loser acquires the lock
+    # only after the winner commits, re-derives, and 409s before it gets here; the loop survives as
+    # the backstop for a writer that forgot the lock (23P01) or a member removed concurrently
+    # (23503, B5).
+    booking: Row[Any] | None = None
+    candidate: UUID | None = None
+    while queue:
+        candidate = queue.pop(0)  # popped whether it loses to a row, a 23P01 or a 23503
+        try:
+            with db.begin_nested():
+                booking = db.execute(
+                    INSERT_BOOKING,
+                    {
+                        "client_id": client_id,
+                        "worker_id": candidate,
+                        "service_id": service_id,
+                        "starts_at": starts_at,
+                        "duration_minutes": service.duration_minutes,
+                        "status": status,
+                        "expires_at": expires_at,
+                        "source": source,
+                        "service_name": json.dumps(service.name),
+                        "price_amount_minor": service.price_amount_minor,
+                        "price_currency": service.price_currency,
+                        "cancellation_policy_text": settings.cancellation_policy_text or None,
+                        # ZIF-55: the thresholds in force NOW, snapshotted beside the
+                        # text. Never re-read at cancellation time.
+                        #
+                        # REJECTED (reviewer, ZIF-55 R2): a settings PUT committing
+                        # between business_settings.read() above and this INSERT
+                        # snapshots the PRE-change value, and no tenant advisory lock
+                        # closes that window. It is not a race to fix. The pre-change
+                        # value is precisely the policy the client was shown on the
+                        # booking page they are submitting; snapshotting the value that
+                        # replaced it a moment ago would sell them terms they never saw.
+                        "free_cancellation_hours": settings.free_cancellation_hours,
+                        "reschedule_cutoff_hours": settings.reschedule_cutoff_hours,
+                        "max_reschedules": settings.max_reschedules,
+                        "auto_confirm_at_booking": settings.auto_confirm,
+                        "worker_display_name": names[candidate],
+                    },
+                ).one()
+                # Inside the winning savepoint, immediately after the booking insert.
+                db.execute(
+                    INSERT_EVENT,
+                    {
+                        "booking_id": booking.id,
+                        "event": "created",
+                        **event,
+                    },
+                )
+        except IntegrityError as error:
+            if (
+                isinstance(error.orig, ExclusionViolation)
+                and error.orig.diag.constraint_name == OVERLAP
+            ):
+                continue  # a writer that bypassed the lock took this worker
+            # B5: the member was REMOVED while this request was under way. members.remove
+            # takes FOR UPDATE on the membership and NO advisory lock, so it races us
+            # freely: our insert blocks on the foreign key's FOR KEY SHARE, the owner
+            # commits, and our re-check finds the membership gone. Treat it as "this
+            # candidate went away" - the same situation as losing the slot - not as a 500.
+            if (
+                isinstance(error.orig, ForeignKeyViolation)
+                and error.orig.diag.constraint_name == members.BOOKINGS_WORKER
+            ):
+                continue
+            raise  # any other integrity error stays a 500
+        break
+    else:
+        raise ApiError(409, "slot_taken")
+    # mypy narrowing only: the `else` above raises, so these are bound. Stripped under
+    # `python -O`, which is why nothing below may depend on this running.
+    assert booking is not None and candidate is not None
+    return booking, candidate
+
+
 router = APIRouter(prefix="/api/public", tags=["bookings"])
 
 
@@ -664,88 +781,28 @@ def create(  # sync def: turnstile.verify's urlopen blocks, and runs in FastAPI'
                 if status == "confirmed"
                 else row.now + timedelta(hours=settings.pending_ttl_hours)
             )
-            load = Counter(
-                m
-                for m, starts_at, _ends_at, _o in booked_rows
-                if starts_at.astimezone(ZoneInfo(zone)).date() == day
+            queue = by_load(eligible, booked_rows, day, zone)
+            booking, candidate = place(
+                db,
+                settings=settings,
+                service=row,
+                service_id=service_id,
+                client_id=found.id,
+                queue=queue,
+                names=names,
+                starts_at=new.starts_at,
+                status=status,
+                expires_at=expires_at,
+                source="booking_page",
+                event={
+                    "ip": origin_ip,
+                    "user_agent": user_agent,
+                    "policy_version": new.policy_version,
+                    "consent_purposes": json.dumps(new.consents),
+                    "actor_user_id": None,  # the client: nobody is signed in to act
+                    "details": None,
+                },
             )
-            queue = sorted(eligible, key=lambda m: (load[m], m))
-            booking: Row[Any] | None = None
-            candidate: UUID | None = None
-            while queue:
-                candidate = queue.pop(0)  # popped whether it loses to a row, a 23P01 or a 23503
-                try:
-                    with db.begin_nested():
-                        booking = db.execute(
-                            INSERT_BOOKING,
-                            {
-                                "client_id": found.id,
-                                "worker_id": candidate,
-                                "service_id": service_id,
-                                "starts_at": new.starts_at,
-                                "duration_minutes": row.duration_minutes,
-                                "status": status,
-                                "expires_at": expires_at,
-                                "source": "booking_page",
-                                "service_name": json.dumps(row.name),
-                                "price_amount_minor": row.price_amount_minor,
-                                "price_currency": row.price_currency,
-                                "cancellation_policy_text": settings.cancellation_policy_text
-                                or None,
-                                # ZIF-55: the thresholds in force NOW, snapshotted beside the
-                                # text. Never re-read at cancellation time.
-                                #
-                                # REJECTED (reviewer, ZIF-55 R2): a settings PUT committing
-                                # between business_settings.read() above and this INSERT
-                                # snapshots the PRE-change value, and no tenant advisory lock
-                                # closes that window. It is not a race to fix. The pre-change
-                                # value is precisely the policy the client was shown on the
-                                # booking page they are submitting; snapshotting the value that
-                                # replaced it a moment ago would sell them terms they never saw.
-                                "free_cancellation_hours": settings.free_cancellation_hours,
-                                "reschedule_cutoff_hours": settings.reschedule_cutoff_hours,
-                                "max_reschedules": settings.max_reschedules,
-                                "auto_confirm_at_booking": settings.auto_confirm,
-                                "worker_display_name": names[candidate],
-                            },
-                        ).one()
-                        # 15. Inside the winning savepoint, immediately after the booking insert.
-                        db.execute(
-                            INSERT_EVENT,
-                            {
-                                "booking_id": booking.id,
-                                "event": "created",
-                                "ip": origin_ip,
-                                "user_agent": user_agent,
-                                "policy_version": new.policy_version,
-                                "consent_purposes": json.dumps(new.consents),
-                                "actor_user_id": None,  # the client: nobody is signed in to act
-                                "details": None,
-                            },
-                        )
-                except IntegrityError as error:
-                    if (
-                        isinstance(error.orig, ExclusionViolation)
-                        and error.orig.diag.constraint_name == OVERLAP
-                    ):
-                        continue  # a writer that bypassed the lock took this worker
-                    # B5: the member was REMOVED while this request was under way. members.remove
-                    # takes FOR UPDATE on the membership and NO advisory lock, so it races us
-                    # freely: our insert blocks on the foreign key's FOR KEY SHARE, the owner
-                    # commits, and our re-check finds the membership gone. Treat it as "this
-                    # candidate went away" - the same situation as losing the slot - not as a 500.
-                    if (
-                        isinstance(error.orig, ForeignKeyViolation)
-                        and error.orig.diag.constraint_name == members.BOOKINGS_WORKER
-                    ):
-                        continue
-                    raise  # any other integrity error stays a 500
-                break
-            else:
-                raise ApiError(409, "slot_taken")
-            # mypy narrowing only: the `else` above raises, so these are bound. Stripped under
-            # `python -O`, which is why nothing below may depend on this running.
-            assert booking is not None and candidate is not None
             # ZIF-53. Same session as the status write, outside the savepoint: a rollback of the
             # savepoint (a lost race) drops nothing here, since this only runs after `break`.
             if status == "confirmed":
