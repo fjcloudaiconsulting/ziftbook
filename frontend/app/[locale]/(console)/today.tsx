@@ -17,7 +17,7 @@ import { dateLocale, showPublishStep, todayLabel } from "@/lib/console";
 import { formatMoney } from "@/lib/money";
 import { type NameMap, type Locale, serviceName } from "@/lib/services";
 import { listWindow, localTime } from "@/lib/time-off";
-import { type Answer, agendaPhase, applyAnswers, dayRelation, declineBody, expiryLabel, mergeAgenda, nowLineAt, relativeAgo, sortQueue } from "@/lib/today";
+import { type Answer, agendaPhase, applyAnswers, blockLabel, dayRelation, declineBody, expiryLabel, leaveQueue, mergeAgenda, nowLineAt, relativeAgo, sortQueue, todayEmpty } from "@/lib/today";
 
 import { SignedOutBanner, useConsole } from "../_ui/console";
 import styles from "../_ui/console.module.css";
@@ -35,13 +35,16 @@ const CHIPS = {
 type Row = { declining: boolean; message: string; busy: boolean; error: string | null };
 const BLANK: Row = { declining: false, message: "", busy: false, error: null };
 
-function Skeleton() {
+/** `quiet`: another skeleton on the page already announces "Loading", so the page has one live region. */
+function Skeleton({ quiet }: { quiet?: boolean }) {
   const t = useTranslations("Console.today");
   return (
     <div aria-busy="true">
-      <p className={uiStyles.srOnly} role="status">
-        {t("loading")}
-      </p>
+      {!quiet && (
+        <p className={uiStyles.srOnly} role="status">
+          {t("loading")}
+        </p>
+      )}
       <div className={uiStyles.stack}>
         <div className={styles.skeleton} />
         <div className={styles.skeleton} />
@@ -174,7 +177,6 @@ export function Today() {
       if (focused && !next.some((booking) => booking.id === focused.dataset.booking)) focusTarget.current = "heading";
       setQueueFailure(null);
       setQueue(next);
-      setPendingCount(next.length);
     });
   }
 
@@ -188,6 +190,11 @@ export function Today() {
       setBlocks(off.data);
     });
   }
+
+  // The nav badge follows the queue, whichever update (load or answer) last changed it.
+  useEffect(() => {
+    if (queue) setPendingCount(queue.length);
+  }, [queue, setPendingCount]);
 
   useEffect(() => {
     loadQueue();
@@ -218,9 +225,7 @@ export function Today() {
     const neighbour = [...rowEls.slice(at + 1), ...rowEls.slice(0, at).reverse()].find(usable);
     focusTarget.current = neighbour ? `accept-${neighbour.dataset.booking}` : "heading";
     answers.current.set(booking.id, answer);
-    const next = (queue ?? []).filter((b) => b.id !== booking.id);
-    setQueue(next);
-    setPendingCount(next.length);
+    setQueue((current) => leaveQueue(current, answers.current));
     // The agenda follows the answer: an accepted booking is confirmed there now, a declined one is gone.
     if (answer !== "stale") setAgenda((current) => applyAnswers(current ?? [], answers.current, "agenda"));
   }
@@ -265,7 +270,7 @@ export function Today() {
     const relation = dayRelation(instant, now, tz);
     if (relation === "today") return t("whenToday", { time });
     if (relation === "tomorrow") return t("whenTomorrow", { time });
-    return `${dateFormat.format(new Date(instant))} ${time}`;
+    return t("whenLater", { date: dateFormat.format(new Date(instant)), time });
   }
   const minutes = (start: string, end: string) => t("minutes", { n: Math.round((new Date(end).getTime() - new Date(start).getTime()) / 60_000) });
   const worker = (name: string | null) => t("withWorker", { name: name ?? person("nameNotSet") });
@@ -278,10 +283,10 @@ export function Today() {
     return t.rich(key, { time, date: dateFormat.format(new Date(expiresAt)), long: (chunks) => <span className={styles.desktopOnly}>{chunks}</span> });
   }
 
-  const settled = queue !== null && agenda !== null && blocks !== null;
-  const items = settled ? mergeAgenda(agenda, blocks, tz, dayWindow, { role: isOwner ? "owner" : "worker", memberId: session.member_id }) : [];
-  const line = nowLineAt(items, now.getTime());
-  const nothing = settled && queue.length === 0 && items.length === 0;
+  // The agenda shows when its own data is in (or failed), whatever the queue's load did.
+  const items = agenda !== null && blocks !== null ? mergeAgenda(agenda, blocks, tz, dayWindow, { role: isOwner ? "owner" : "worker", memberId: session.member_id }) : null;
+  const line = nowLineAt(items ?? [], now.getTime());
+  const nothing = todayEmpty({ queue, items, failed: Boolean(queueFailure || agendaFailure) });
 
   const head = (
     <>
@@ -385,7 +390,7 @@ export function Today() {
                             className={`${uiStyles.button} ${uiStyles.secondary} ${uiStyles.small}`}
                             type="button"
                             aria-disabled={row.busy || undefined}
-                            onClick={() => openDecline(booking.id)}
+                            onClick={() => !row.busy && openDecline(booking.id)}
                           >
                             {t("decline")}
                           </button>
@@ -459,8 +464,8 @@ export function Today() {
         </h2>
         {agendaFailure ? (
           <LoadFailure failure={agendaFailure} onRetry={loadAgenda} />
-        ) : !settled ? (
-          <Skeleton />
+        ) : items === null ? (
+          <Skeleton quiet={queue === null && !queueFailure} />
         ) : items.length === 0 ? (
           <p className={uiStyles.hint}>{t("nothingToday")}</p>
         ) : (
@@ -474,16 +479,20 @@ export function Today() {
               );
               if (item.kind === "block") {
                 const { block } = item;
+                const when = blockLabel(item, dayWindow, now, tz);
                 return [
                   nowLine,
                   <li key={item.key} className={`${styles.agendaBlock} ${past}`}>
                     <div className={styles.agendaTime}>
-                      {item.startedBefore
-                        ? t("until", { time: localTime(new Date(item.end).toISOString(), tz) })
-                        : item.allDay
-                          ? t("allDay")
-                          : localTime(new Date(item.start).toISOString(), tz)}
-                      {!item.startedBefore && !item.allDay && <small>{minutes(new Date(item.start).toISOString(), new Date(item.end).toISOString())}</small>}
+                      {when.kind === "allDay" ? t("allDay") : when.kind === "until" ? t("until", { time: when.time }) : when.time}
+                      {when.kind === "timed" && <small>{t("minutes", { n: when.minutes })}</small>}
+                      {when.kind === "from" && (
+                        <small>
+                          {when.endsOn === "tomorrow"
+                            ? t("untilTomorrow", { time: when.endTime })
+                            : t("untilLater", { date: dateFormat.format(new Date(when.endInstant)), time: when.endTime })}
+                        </small>
+                      )}
                     </div>
                     <div className={styles.agendaWhat}>
                       {block.reason ? t("blockedReason", { reason: block.reason }) : t("blocked")}

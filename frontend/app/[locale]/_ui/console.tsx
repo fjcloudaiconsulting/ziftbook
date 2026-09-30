@@ -373,12 +373,8 @@ export function Shell({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let cancelled = false;
-    // The badge's count rides the same Promise.all: no extra round trip. Its answer is only ever
-    // read for a 200 (a nameless session's 403, or any failure, just means no badge).
-    // ponytail: limit=100, so a badge can't count past 100 (it shows "99+" anyway).
-    Promise.all([send(sessionRead()), send(settingsRead()), send(bookingApprovalsList({ query: { limit: 100 } }))]).then(([sessionOutcome, settingsOutcome, pendingOutcome]) => {
+    Promise.all([send(sessionRead()), send(settingsRead())]).then(([sessionOutcome, settingsOutcome]) => {
       if (cancelled) return;
-      if (pendingOutcome.status === 200 && pendingOutcome.data) setPendingCount(pendingOutcome.data.length);
       if (sessionOutcome.status === 401 || settingsOutcome.status === 401) {
         router.replace("/sign-in");
         return;
@@ -391,6 +387,15 @@ export function Shell({ children }: { children: ReactNode }) {
         setSettings(settingsOutcome.data);
       } else {
         setFailure(problem(sessionOutcome.status !== 200 ? sessionOutcome : settingsOutcome));
+      }
+      // The badge's count is read after the gate resolves and never holds it: only a 200 counts (a
+      // nameless session's 403, or any failure, just means no badge).
+      // ponytail: limit=100, so a badge can't count past 100 (it shows "99+" anyway).
+      if (sessionOutcome.status === 200 && settingsOutcome.status === 200) {
+        send(bookingApprovalsList({ query: { limit: 100 } })).then((pending) => {
+          const rows = pending.status === 200 ? pending.data : undefined;
+          if (!cancelled && rows) setPendingCount((current) => current ?? rows.length);
+        });
       }
     });
     return () => {
