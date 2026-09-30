@@ -134,7 +134,7 @@ export function nowTop(now: Date, days: string[], range: { from: number; to: num
   return minutes >= range.from * 60 && minutes < range.to * 60 ? minutes - range.from * 60 : null;
 }
 
-export type Action = "accept" | "decline" | "completed" | "no_show" | "restore" | "cancel";
+export type Action = "accept" | "decline" | "completed" | "no_show" | "restore" | "cancel" | "reschedule";
 
 /** What a booking's panel offers, mirroring the API's TRANSITIONS and OWNER_ONLY_SOURCES (the API
  * decides; this only keeps buttons that would 409 off the screen). Completed and no-show wait for the
@@ -145,7 +145,8 @@ export function actionsFor(detail: { status: string; expired: boolean; starts_at
     case "pending":
       return detail.expired ? [] : ["accept", "decline"];
     case "confirmed":
-      return started ? ["completed", "no_show", "cancel"] : ["cancel"];
+      // Only a confirmed booking moves: a pending one is accepted first (the client's request was for that time).
+      return started ? ["completed", "no_show", "reschedule", "cancel"] : ["reschedule", "cancel"];
     case "completed":
       return role === "owner" ? ["restore", "no_show", "cancel"] : [];
     default:
@@ -153,7 +154,7 @@ export function actionsFor(detail: { status: string; expired: boolean; starts_at
   }
 }
 
-export type HistoryEvent = { event: string; at: string; actor_name: string | null; details: { [key: string]: unknown } | null };
+export type HistoryEvent = { event: string; at: string; actor?: string; actor_name: string | null; details: { [key: string]: unknown } | null };
 export type HistoryKey =
   | "historyRequested"
   | "historyAdded"
@@ -167,6 +168,7 @@ export type HistoryKey =
   | "historyConsent"
   | "historyExpired"
   | "historyMoved"
+  | "historyMovedTeam"
   | "historyUpdated";
 
 const BY_TEAM: Record<string, HistoryKey> = {
@@ -210,45 +212,80 @@ export function historyLabel(
       }
       const fromDate = localDateISO(new Date(from), tz);
       const toDate = localDateISO(new Date(to), tz);
-      const k = events.slice(0, i + 1).filter((x) => x.event === "rescheduled").length;
-      return {
-        key: "historyMoved",
-        params: { fromTime: localTime(from, tz), toTime: localTime(to, tz), fromDate, toDate, sameDay: fromDate === toDate, k, max: maxReschedules },
-      };
+      const parts = { fromTime: localTime(from, tz), toTime: localTime(to, tz), fromDate, toDate, sameDay: fromDate === toDate };
+      // The business moving a booking does not spend the client's changes: no "k of max", and k counts theirs only.
+      if (e.actor === "team") return { key: "historyMovedTeam", params: { actor, ...parts } };
+      const k = events.slice(0, i + 1).filter((x) => x.event === "rescheduled" && x.actor !== "team").length;
+      return { key: "historyMoved", params: { ...parts, k, max: maxReschedules } };
     }
     default:
       return { key: BY_TEAM[e.event] ?? "historyUpdated", params: BY_TEAM[e.event] ? { actor } : {} };
   }
 }
 
-export type CalendarView = { view: View; date: string; member: string; booking: string | null };
+export type Panel = "new" | "block" | "move";
+export type CalendarView = { view: View; date: string; member: string; booking: string | null; panel: Panel | null; at: string | null; with: string | null };
 
 function validDate(value: string | null): value is string {
   return value !== null && /^\d{4}-\d{2}-\d{2}$/.test(value) && addDaysISO(value, 0) === value;
 }
 
+/** An instant the URL carries, as canonical UTC ISO, or null: never a string that would throw later. */
+function validInstant(value: string | null): string | null {
+  if (!value || !/^\d{4}-\d{2}-\d{2}T/.test(value) || Number.isNaN(Date.parse(value))) return null;
+  return new Date(value).toISOString();
+}
+
 /** The URL's state, never trusted: a bad date is today, an unknown view is the day, a worker is always
  * themselves, an owner's member is `all` or an id (an id that is not one of `memberIds` once those are
- * known is `all`). */
+ * known is `all`). A panel is `new`, `block` or `move` (which needs a booking); `new` and `block` replace
+ * the open booking and carry `at` (an instant) and `with` (a member); a worker's `with` is themselves. */
 export function parseView(params: { get(name: string): string | null }, todayISO: string, role: Role, selfId: string, memberIds?: string[] | null): CalendarView {
   const date = params.get("date");
   const asked = params.get("member");
   let member = role === "worker" ? selfId : (asked ?? "all");
   if (role === "owner" && member !== "all" && memberIds && !memberIds.includes(member)) member = "all";
+  const wanted = params.get("panel");
+  let booking = params.get("booking") || null;
+  let panel: Panel | null = wanted === "new" || wanted === "block" || wanted === "move" ? wanted : null;
+  if (panel === "move" && !booking) panel = null;
+  if (panel === "new" || panel === "block") booking = null;
+  const prefill = panel === "new" || panel === "block";
+  let withMember: string | null = null;
+  if (prefill) {
+    const asWith = params.get("with");
+    withMember = role === "worker" ? selfId : asWith && (!memberIds || memberIds.includes(asWith)) ? asWith : null;
+  }
   return {
     view: params.get("view") === "week" ? "week" : "day",
     date: validDate(date) ? date : todayISO,
     member,
-    booking: params.get("booking") || null,
+    booking,
+    panel,
+    at: prefill ? validInstant(params.get("at")) : null,
+    with: withMember,
   };
 }
 
-/** A calendar URL (no locale: the locale-aware Link adds it). The open booking is dropped whenever the
- * patch moves the window (date, view or member): a detail never outlives what it was opened from. */
-export function hrefFor(current: CalendarView, patch: Partial<CalendarView>): string {
+/** A calendar URL (no locale: the locale-aware Link adds it). Whatever the patch does not name is
+ * dropped when it moves the window (date, view or member): an open booking or panel never outlives what
+ * it was opened from. `new` and `block` replace the open booking; `move` needs one. */
+export function hrefFor(current: Partial<CalendarView> & Pick<CalendarView, "view" | "date" | "member">, patch: Partial<CalendarView>): string {
   const next = { ...current, ...patch };
   const moved = next.date !== current.date || next.view !== current.view || next.member !== current.member;
+  const carry = (name: "booking" | "panel" | "at" | "with") => (moved && !(name in patch) ? null : (next[name] ?? null));
+  let booking = carry("booking");
+  let panel = carry("panel");
+  if (panel === "new" || panel === "block") booking = null;
+  if (panel === "move" && !booking) panel = null;
   const query = new URLSearchParams({ view: next.view, date: next.date, member: next.member });
-  if (next.booking && !(moved && !("booking" in patch))) query.set("booking", next.booking);
+  if (booking) query.set("booking", booking);
+  if (panel) {
+    query.set("panel", panel);
+    const at = carry("at");
+    const withMember = carry("with");
+    if (at) query.set("at", at);
+    if (withMember) query.set("with", withMember);
+  }
   return `/calendar?${query}`;
 }
