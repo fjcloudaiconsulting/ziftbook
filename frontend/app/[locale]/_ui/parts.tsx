@@ -419,3 +419,19 @@ export function useLinkToken(key: string): string | null | undefined {
 export function forgetToken(key: string) {
   taken.delete(key);
 }
+
+/** A chevron: pointing down inside a native select (`select`), else pointing right at a row's end. */
+export function Chevron({ select }: { select?: boolean }) {
+  return (
+    <svg className={select ? styles.selectChevron : styles.chev} aria-hidden="true" viewBox="0 0 12 12" width="12" height="12">
+      <path
+        d={select ? "M2 4.5l4 4 4-4" : "M4.5 2.5l3 3.5-3 3.5"}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}

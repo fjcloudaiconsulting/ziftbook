@@ -22,7 +22,7 @@ import { HoursSection } from "../hours-section";
 import { BlockedTime, PersonTabs } from "../time-off-section";
 import { JSON_WRITE, SignedOutBanner, useConsole } from "../../_ui/console";
 import styles from "../../_ui/console.module.css";
-import { Banner, EmailField, FieldError, Heading, Mark, problem, Submit } from "../../_ui/parts";
+import { Banner, Chevron, EmailField, FieldError, Heading, Mark, problem, Submit } from "../../_ui/parts";
 import uiStyles from "../../_ui/ui.module.css";
 
 /** A member's "Works {days}" (or "No working hours yet") row meta, from one working-hours GET.
@@ -475,14 +475,6 @@ export function TeamList() {
         </>
       )}
     </>
-  );
-}
-
-function Chevron() {
-  return (
-    <svg className={styles.chev} aria-hidden="true" viewBox="0 0 12 12" width="12" height="12">
-      <path d="M4.5 2.5l3 3.5-3 3.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
   );
 }
 

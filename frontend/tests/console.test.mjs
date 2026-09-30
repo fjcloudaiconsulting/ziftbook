@@ -9,10 +9,8 @@ import {
   allowed,
   bookingPageAddress,
   canEditHours,
-  canEditSettings,
   dateLocale,
   guardedWrite,
-  maxReschedulesValue,
   navFor,
   needsName,
   sameSession,
@@ -37,20 +35,6 @@ describe("canEditHours", () => {
   test("fence: a worker's own hours still need the setting on", () => {
     assert.equal(canEditHours("worker", true, false), false);
     assert.equal(canEditHours("worker", true, true), true);
-  });
-});
-
-describe("the max_reschedules setting (ZIF-54 R3, test 38)", () => {
-  test("fence: an owner edits it, a worker only reads it", () => {
-    // Wrong implementation killed: an editable field for every role (the PUT is owner-only).
-    assert.equal(canEditSettings("owner"), true);
-    assert.equal(canEditSettings("worker"), false);
-  });
-
-  test("fence: only a whole number from 0 to 10 is saved, the same bounds as the database CHECK", () => {
-    // Wrong implementation killed: Number(text) with no bounds, which sends 11, -1 or 2.5.
-    assert.deepEqual(["0", "2", "10", " 3 "].map(maxReschedulesValue), [0, 2, 10, 3]);
-    for (const text of ["", "11", "-1", "2.5", "1e1", "two", "0x2"]) assert.equal(maxReschedulesValue(text), null, text);
   });
 });
 

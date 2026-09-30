@@ -9,7 +9,7 @@ import { beyondHorizon, canEditBlock, clientProblem, dateOrTimeChanged, listWind
 import { zoneCity } from "@/lib/week";
 import { JSON_WRITE, SignedOutBanner, useConsole } from "../_ui/console";
 import styles from "../_ui/console.module.css";
-import { Banner, FieldError, Heading, Mark, problem, Submit } from "../_ui/parts";
+import { Banner, Chevron, FieldError, Heading, Mark, problem, Submit } from "../_ui/parts";
 import uiStyles from "../_ui/ui.module.css";
 import { blockMeta, blockTitle } from "./time-off-labels";
 
@@ -212,14 +212,6 @@ export function BlockedTime({
       </ul>
       <p className={uiStyles.hint}>{t("reasonListHint")}</p>
     </>
-  );
-}
-
-function Chevron() {
-  return (
-    <svg className={styles.chev} aria-hidden="true" viewBox="0 0 12 12" width="12" height="12">
-      <path d="M4.5 2.5l3 3.5-3 3.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
   );
 }
 

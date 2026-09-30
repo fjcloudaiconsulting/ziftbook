@@ -12,7 +12,7 @@ type Locale = (typeof routing.locales)[number];
 
 // Each language names itself, as on the landing page. Untranslated by design: these are endonyms,
 // not messages, so they never route through the catalogs.
-const NAMES: Record<Locale, string> = { en: "English", nl: "Nederlands", pt: "Português" };
+export const NAMES: Record<Locale, string> = { en: "English", nl: "Nederlands", pt: "Português" };
 
 // One small inline flag per language, next to NAMES: adding a language later means adding a
 // catalog, a name here, a flag here, and a routing entry, nothing else. Never emoji flags: they

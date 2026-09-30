@@ -11,7 +11,25 @@ const CATALOG_SETS = [
 // `,`. An ICU plural/select branch's message ("=1 {One day needs attention.}") opens a brace with
 // its own literal text, which starts the same way but isn't a placeholder: the lookahead tells the
 // two apart without a full ICU parser.
-const placeholders = (text) => [...new Set([...text.matchAll(/\{(\w+)(?=[,}])/g)].map((m) => m[1]))].sort().join(",");
+// A one-word branch ("one {day}") looks like a placeholder, so branch openers are blanked, but only
+// inside a {x, plural|select|selectordinal, ...} block: prose like "Book one {service}" keeps its own.
+function blankBranches(text) {
+  let out = "";
+  let i = 0;
+  for (const m of text.matchAll(/\{\w+,\s*(?:plural|select|selectordinal)\s*,/g)) {
+    if (m.index < i) continue;
+    let depth = 0;
+    let end = m.index;
+    for (; end < text.length; end++) {
+      if (text[end] === "{") depth++;
+      else if (text[end] === "}" && --depth === 0) break;
+    }
+    out += text.slice(i, m.index) + text.slice(m.index, end + 1).replace(/\b(?:zero|one|two|few|many|other|=\d+)\s*\{/g, "[");
+    i = end + 1;
+  }
+  return out + text.slice(i);
+}
+const placeholders = (text) => [...new Set([...blankBranches(text).matchAll(/\{(\w+)(?=[,}])/g)].map((m) => m[1]))].sort().join(",");
 const kind = (value) => (typeof value === "string" ? "string" : "group");
 
 export function compareCatalogs(source, translation, prefix = "") {
