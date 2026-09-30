@@ -15,7 +15,7 @@ import {
   type TimeOffRangeOut,
 } from "@/api-client";
 import { Link, useRouter } from "@/i18n/navigation";
-import { closedDay, daySlices, dayWindow, hourRange, hrefFor, lanes, nowTop, type Panel, parseView, type Slice, visibleDays, weekdayOf } from "@/lib/calendar";
+import { closedDay, closedDetail, daySlices, dayWindow, hourRange, hrefFor, type CalendarView, lanes, nowTop, type Panel, parseView, type Slice, spanTimes, visibleDays, weekdayOf } from "@/lib/calendar";
 import { dateLocale } from "@/lib/console";
 import { type Locale, type NameMap, serviceName } from "@/lib/services";
 import { hhmm, messageShown, slotAt } from "@/lib/new-booking";
@@ -68,7 +68,7 @@ export function Calendar() {
   const seq = useRef(0);
   const openedInApp = useRef(false);
   const panelOpenedInApp = useRef(false);
-  const lastBooking = useRef<string | null>(null);
+  const lastView = useRef<CalendarView | null>(null);
   const lastPanel = useRef<Panel | null>(null);
   // What opened the panel, to give focus back to when it closes.
   const invoker = useRef<HTMLElement | null>(null);
@@ -130,14 +130,16 @@ export function Calendar() {
   }, [range.from, range.to, reload]);
 
   // Closing a booking returns focus to the item that opened it, or the page heading when it is gone.
-  // A panel replacing the open booking is not a close: the panel has its own focus.
+  // A panel replacing the open booking is not a close: the panel has its own focus. Moving the date, view
+  // or member drops the booking too, but that is not a close either: focus stays put.
   useEffect(() => {
-    const before = lastBooking.current;
-    lastBooking.current = view.booking;
-    if (!before || view.booking || view.panel) return;
-    const link = [...document.querySelectorAll<HTMLElement>(`[data-open="${CSS.escape(before)}"]`)].find((el) => el.offsetParent !== null);
+    const before = lastView.current;
+    lastView.current = view;
+    if (!before?.booking || view.panel || !closedDetail(before, view)) return;
+    const link = [...document.querySelectorAll<HTMLElement>(`[data-open="${CSS.escape(before.booking)}"]`)].find((el) => el.offsetParent !== null);
     (link ?? document.querySelector<HTMLElement>("h1"))?.focus();
-  }, [view.booking, view.panel]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view.booking, view.panel, view.date, view.view, view.member]);
 
   // Closing a new-booking or block panel returns focus to what opened it (a move returns to the detail,
   // which takes focus itself). After a success the window's own focus effect below takes over.
@@ -258,15 +260,13 @@ export function Calendar() {
     if (item.kind === "block") {
       const text = blockText(item);
       const reason = item.block.reason;
-      const full = item.allDay
-        ? t("blockAllDay", { label: text.label })
-        : t("blockTimes", { label: text.label, start: hhmm(slice.start), end: hhmm(slice.end) });
+      const times = spanTimes(item, tz);
+      const full = item.allDay ? t("blockAllDay", { label: text.label }) : t("blockTimes", { label: text.label, ...times });
       return (
         <li key={`${item.key}-${column.key}`} className={css.block} style={place}>
           <span className={uiStyles.srOnly}>{full}</span>
           <span aria-hidden="true">
-            <b>{text.head}</b>
-            {reason}
+            {weekView ? <b>{reason || text.head}</b> : <><b>{text.head}</b>{reason}</>}
           </span>
         </li>
       );
@@ -277,7 +277,8 @@ export function Calendar() {
       booking.status === "pending" ? t("wordWaiting") : booking.status === "no_show" ? t("wordNoShow") : null,
       booking.source === "merchant" ? today("walkIn") : null,
     ].filter(Boolean);
-    const short = slice.end - slice.start < 30;
+    const short = (item.end - item.start) / 60_000 < 45; // one line: a 30-minute item is about 32px tall
+    const second = weekView ? (short ? words : []) : [serviceOf(booking), ...words];
     const selected = booking.id === view.booking;
     const name = t("itemLabel", {
       start: localTime(booking.starts_at, tz),
@@ -311,9 +312,9 @@ export function Calendar() {
             {booking.client_name}
           </b>
           {short ? (
-            words.length > 0 && <span>{` · ${words.join(" · ")}`}</span>
+            second.length > 0 && <span>{` · ${second.join(" · ")}`}</span>
           ) : (
-            <span>{weekView ? null : [serviceOf(booking), ...words].join(" · ")}</span>
+            <span>{second.join(" · ")}</span>
           )}
         </Link>
       </li>
