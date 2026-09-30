@@ -161,6 +161,59 @@ MEMBER_PATH = "/members/{member_id}/time-off"
 BLOCK_PATH = "/time-off/{time_off_id}"
 
 
+class TimeOffRangeOut(TimeOffOut):
+    member_name: (
+        str | None
+    )  # coalesce(display_name, users.name): the booking events' actor_name rule
+
+
+def blocks_overlapping(
+    current: SignedIn, from_: datetime, to: datetime, member_id: UUID | None
+) -> list[TimeOffRangeOut]:
+    """Blocks that overlap [from, to), by effective start (a day block's local midnight): one
+    member's, or with member_id None the whole business's. The reason is the row's own member's and
+    an owner's; every other caller gets null per row, exactly as fields() gives it."""
+    # Read once: day rows match by local date, and midnight is monotonic in the date, so this
+    # exact-not-padded window is safe even though `to` is exclusive on the instant side.
+    zone = business_settings.read(current.db).timezone
+    tz = ZoneInfo(zone)
+    first = from_.astimezone(tz).date()
+    last = (to - timedelta(microseconds=1)).astimezone(tz).date()
+    rows = current.db.execute(
+        text("""
+        SELECT t.id, t.member_id, t.starts_at, t.ends_at, t.first_day, t.last_day, t.source,
+               CASE WHEN :owner OR m.user_id = :me THEN t.reason END AS reason,
+               coalesce(m.display_name, u.name) AS member_name
+        FROM time_off t
+        JOIN memberships m ON m.tenant_id = t.tenant_id AND m.id = t.member_id
+        LEFT JOIN users u ON u.id = m.user_id
+        WHERE (CAST(:member AS uuid) IS NULL OR t.member_id = :member)
+          AND ((t.starts_at < :to AND t.ends_at > :from)
+            OR (t.first_day <= :last AND t.last_day >= :first))
+        """),
+        {
+            "member": member_id,
+            "owner": members.is_owner(current),
+            "me": current.user_id,
+            "from": from_,
+            "to": to,
+            "first": first,
+            "last": last,
+        },
+    )
+    blocks = [TimeOffRangeOut.model_validate(r, from_attributes=True) for r in rows]
+
+    # SQL cannot compute this: AT TIME ZONE is banned (Postgres lacks 113 tzdata names).
+    def effective_start(b: TimeOffOut) -> datetime:
+        if b.starts_at is not None:
+            return b.starts_at
+        assert b.first_day is not None  # ck_time_off_kind: exactly one pair is non-null
+        return availability.day_span(b.first_day, b.first_day, zone)[0]
+
+    blocks.sort(key=lambda b: (effective_start(b), b.id))
+    return blocks
+
+
 @router.get(MEMBER_PATH, name="list", responses={s: {"model": Error} for s in (401, 404, 422)})
 def list_time_off(
     member_id: UUID,
@@ -173,32 +226,26 @@ def list_time_off(
     midnight). Anyone in the business may read them; the reason only the member and owners."""
     if to <= from_ or to - from_ > LONGEST:
         raise ApiError(422, "invalid_window")
-    user_id = members.member_user(current, member_id, lock=False)
-    # Read once: day rows match by local date, and midnight is monotonic in the date, so this
-    # exact-not-padded window is safe even though `to` is exclusive on the instant side.
-    zone = business_settings.read(current.db).timezone
-    tz = ZoneInfo(zone)
-    first = from_.astimezone(tz).date()
-    last = (to - timedelta(microseconds=1)).astimezone(tz).date()
-    rows = current.db.execute(
-        text(f"""
-        SELECT {fields(members.may_manage(current, user_id))} FROM time_off
-        WHERE member_id = :id
-          AND ((starts_at < :to AND ends_at > :from)
-            OR (first_day <= :last AND last_day >= :first))
-        """),
-        {"id": member_id, "from": from_, "to": to, "first": first, "last": last},
-    )
-    blocks = [TimeOffOut.model_validate(r, from_attributes=True) for r in rows]
+    members.member_user(current, member_id, lock=False)  # the 404 for an unknown member
+    blocks = blocks_overlapping(current, from_, to, member_id)
+    response.headers["Cache-Control"] = "no-store"
+    return [TimeOffOut.model_validate(b, from_attributes=True) for b in blocks]
 
-    # SQL cannot compute this: AT TIME ZONE is banned (Postgres lacks 113 tzdata names).
-    def effective_start(b: TimeOffOut) -> datetime:
-        if b.starts_at is not None:
-            return b.starts_at
-        assert b.first_day is not None  # ck_time_off_kind: exactly one pair is non-null
-        return availability.day_span(b.first_day, b.first_day, zone)[0]
 
-    blocks.sort(key=lambda b: (effective_start(b), b.id))
+@router.get("/time-off", name="range", responses={s: {"model": Error} for s in (401, 422)})
+def time_off_range(
+    from_: Annotated[Instant, Query(alias="from")],
+    to: Instant,
+    current: CurrentSession,
+    response: Response,
+) -> list[TimeOffRangeOut]:
+    """Everyone's blocks that overlap [from, to), for one day or week of the calendar. Any member
+    may read them (time off is visible to the whole business); the reason only its member and
+    owners. Capped at 8 days, unlike the per-member route's 366: this one reads every member at
+    once, and the calendar never asks for more than a week."""
+    if to <= from_ or to - from_ > timedelta(days=8):
+        raise ApiError(422, "invalid_window")
+    blocks = blocks_overlapping(current, from_, to, None)
     response.headers["Cache-Control"] = "no-store"
     return blocks
 

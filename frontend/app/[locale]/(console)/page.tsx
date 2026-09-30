@@ -1,6 +1,6 @@
 import { getTranslations } from "next-intl/server";
 
-import { Today } from "./sections";
+import { Today } from "./today";
 
 export async function generateMetadata() {
   const t = await getTranslations("Console.nav");
