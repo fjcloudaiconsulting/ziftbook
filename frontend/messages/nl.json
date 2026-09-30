@@ -290,7 +290,7 @@
       "changesUsed": "{k} van {max, plural, one {# wijziging} other {# wijzigingen}} gebruikt",
       "historyWaiting": "{when} · wacht sindsdien op je antwoord",
       "aTeamMember": "een teamlid",
-      "completedAction": "✓ Afgerond",
+      "completedAction": "Afgerond",
       "expiresToday": "Verloopt om {time} als je niet antwoordt.",
       "expiresTomorrow": "Verloopt morgen om {time} als je niet antwoordt.",
       "expiresLater": "Verloopt {date} om {time} als je niet antwoordt.",

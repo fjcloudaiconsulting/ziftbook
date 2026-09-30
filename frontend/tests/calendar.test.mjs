@@ -373,12 +373,18 @@ describe("visibleDays and whenParts", () => {
 describe("spanTimes", () => {
   test("a 5-minute block reads its real end, not the padded slice end", () => {
     const item = { start: at("2026-09-30T10:30:00Z"), end: at("2026-09-30T10:35:00Z") }; // 12:30 - 12:35 Amsterdam
-    assert.deepEqual(spanTimes(item, AMS), { start: "12:30", end: "12:35" });
+    assert.deepEqual(spanTimes(item, AMS, "2026-09-30"), { start: "12:30", end: "12:35", startDay: null, endDay: null, allDay: false });
     assert.equal(daySlices(item, ["2026-09-30"], AMS)[0].end, 12 * 60 + 30 + 23);
   });
   test("it follows the business zone, a +14 zone included", () => {
     const item = { start: at("2026-09-30T10:00:00Z"), end: at("2026-09-30T10:05:00Z") };
-    assert.deepEqual(spanTimes(item, "Pacific/Kiritimati"), { start: "00:00", end: "00:05" });
+    assert.deepEqual(spanTimes(item, "Pacific/Kiritimati", "2026-10-01"), { start: "00:00", end: "00:05", startDay: null, endDay: null, allDay: false });
+  });
+  test("a block over several days names its other days, and a middle day reads all day", () => {
+    const item = { start: at("2026-09-28T20:00:00Z"), end: at("2026-09-30T00:00:00Z") }; // Mon 22:00 - Wed 02:00 Amsterdam
+    assert.deepEqual(spanTimes(item, AMS, "2026-09-28"), { start: "22:00", end: "02:00", startDay: null, endDay: "2026-09-30", allDay: false });
+    assert.equal(spanTimes(item, AMS, "2026-09-29").allDay, true);
+    assert.deepEqual(spanTimes(item, AMS, "2026-09-30"), { start: "22:00", end: "02:00", startDay: "2026-09-28", endDay: null, allDay: false });
   });
 });
 
@@ -412,9 +418,22 @@ describe("closedDetail", () => {
   });
 });
 
+describe("hourRange uses real ends, not padded slices", () => {
+  test("a 15-minute booking ending at closing time adds no empty hour", () => {
+    const item = { start: at("2026-09-30T15:45:00Z"), end: at("2026-09-30T16:00:00Z") }; // 17:45 - 18:00 Amsterdam
+    const [slice] = daySlices(item, ["2026-09-30"], AMS);
+    assert.equal(slice.realEnd, 18 * 60);
+    const opening = [{ weekday: 3, starts_at: "09:00", ends_at: "18:00" }];
+    assert.deepEqual(hourRange(opening, [3], [{ start: slice.start, end: slice.realEnd }]), { from: 9, to: 18 });
+  });
+});
+
 describe("telHref", () => {
-  test("keeps only + and digits", () => {
-    assert.equal(telHref("+31 (0)6 1234-5678"), "tel:+310612345678");
+  test("keeps only + and digits, drops the (0) trunk digit and any extension", () => {
+    assert.equal(telHref("+31 (0)6 1234-5678"), "tel:+31612345678");
+    assert.equal(telHref("+31 20 123 4567 ext 89"), "tel:+31201234567");
+    assert.equal(telHref("06-123 x12"), "tel:06123");
+    assert.equal(telHref("0031 6 1234 5678"), "tel:0031612345678");
   });
   test("no digits, no link", () => {
     assert.equal(telHref("ask at the desk"), null);

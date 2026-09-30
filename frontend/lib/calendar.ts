@@ -50,11 +50,25 @@ export function whenParts(startISO: string, endISO: string, now: Date, tz: strin
 
 /** The clock times of an item's real instants in `tz`, for its accessible name: a slice's end is padded
  * to MIN_MINUTES for drawing and must never be read out. */
-export function spanTimes(item: { start: number; end: number }, tz: string): { start: string; end: string } {
-  return { start: localTime(new Date(item.start).toISOString(), tz), end: localTime(new Date(item.end).toISOString(), tz) };
+export function spanTimes(
+  item: { start: number; end: number },
+  tz: string,
+  day: string,
+): { start: string; end: string; startDay: string | null; endDay: string | null; allDay: boolean } {
+  const startDay = localDateISO(new Date(item.start), tz);
+  const endDay = localDateISO(new Date(item.end - 1), tz);
+  return {
+    start: localTime(new Date(item.start).toISOString(), tz),
+    end: localTime(new Date(item.end).toISOString(), tz),
+    // The other day, when the block starts or ends on one; null when it is this column's day.
+    startDay: startDay === day ? null : startDay,
+    endDay: endDay === day ? null : endDay,
+    allDay: startDay < day && endDay > day,
+  };
 }
 
-export type Slice = { day: string; start: number; end: number };
+/** `end` is padded to MIN_MINUTES for drawing and packing; `realEnd` is where the item really ends. */
+export type Slice = { day: string; start: number; end: number; realEnd: number };
 
 function localMinutes(instant: number, tz: string): number {
   const [h, m] = localTime(new Date(instant).toISOString(), tz).split(":").map(Number);
@@ -72,7 +86,7 @@ export function daySlices(item: { start: number; end: number }, days: string[], 
     if (item.end <= dayStart || item.start >= nextStart) continue;
     const start = localMinutes(Math.max(item.start, dayStart), tz);
     const end = item.end >= nextStart ? 1440 : localMinutes(item.end, tz);
-    slices.push({ day, start, end: Math.max(end, Math.min(1440, start + MIN_MINUTES)) });
+    slices.push({ day, start, end: Math.max(end, Math.min(1440, start + MIN_MINUTES)), realEnd: end });
   }
   return slices;
 }
@@ -240,7 +254,10 @@ export function isWaiting(detail: { status: string; expired: boolean; history: {
 
 /** A `tel:` link from free-text phone input: only `+` and digits survive, nothing to dial is no link. */
 export function telHref(phone: string): string | null {
-  const dial = phone.replace(/[^+\d]/g, "");
+  // "+31 (0)6 ...": the bracketed trunk 0 is never dialled after a country code; an extension
+  // ("ext 89", "x12", ";89") is not part of the number.
+  const number = phone.replace(/\(0\)/g, "").split(/\s*(?:ext\.?|x|;|,)\s*\d*$/i)[0];
+  const dial = number.replace(/[^+\d]/g, "");
   return /\d/.test(dial) ? `tel:${dial}` : null;
 }
 

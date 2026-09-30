@@ -238,7 +238,7 @@ export function Calendar() {
   const hours = hourRange(
     data?.opening ?? [],
     days.map(weekdayOf),
-    everyCell.map((cell) => ({ start: cell.slice.start, end: cell.slice.end, allDay: cell.item.kind === "block" && cell.item.allDay })),
+    everyCell.map((cell) => ({ start: cell.slice.start, end: cell.slice.realEnd, allDay: cell.item.kind === "block" && cell.item.allDay })),
   );
   const closedToday = !weekView && closedDay(data?.opening ?? [], weekdayOf(view.date));
 
@@ -260,8 +260,13 @@ export function Calendar() {
     if (item.kind === "block") {
       const text = blockText(item);
       const reason = item.block.reason;
-      const times = spanTimes(item, tz);
-      const full = item.allDay ? t("blockAllDay", { label: text.label }) : t("blockTimes", { label: text.label, ...times });
+      const span = spanTimes(item, tz, column.day);
+      // A block over several days names the other day on its ends; a day it covers whole reads all day.
+      const onDay = (time: string, other: string | null) => (other ? `${weekdayShort.format(asDate(other))} ${time}` : time);
+      const full =
+        item.allDay || span.allDay
+          ? t("blockAllDay", { label: text.label })
+          : t("blockTimes", { label: text.label, start: onDay(span.start, span.startDay), end: onDay(span.end, span.endDay) });
       return (
         <li key={`${item.key}-${column.key}`} className={css.block} style={place}>
           <span className={uiStyles.srOnly}>{full}</span>
