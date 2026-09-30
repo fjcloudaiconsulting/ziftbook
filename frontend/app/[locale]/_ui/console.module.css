@@ -438,3 +438,75 @@
 .copyButton:hover { border-color: var(--muted); }
 .body { margin: 0; font-size: 0.9375rem; color: var(--ink); text-wrap: pretty; }
 .row { margin: 0; display: flex; flex-wrap: wrap; gap: 0.5rem 1.25rem; align-items: center; }
+
+/* Nav badge: requests waiting for an answer, on Today's side-nav item (pushed to the row's end) and
+ * its phone tab (in the label's top-right corner). Its words are in a srOnly sibling. */
+.navBadge, .tabBadge, .count {
+  min-width: 1.4rem; height: 1.4rem; padding: 0 0.4rem; border-radius: 999px; background: var(--primary); color: var(--on-primary);
+  font: 600 0.75rem/1.4rem var(--font-body), system-ui, sans-serif; text-align: center; font-variant-numeric: tabular-nums;
+}
+.navBadge { margin-inline-start: auto; }
+.tabBadge { position: absolute; top: 0.1rem; left: calc(50% + 0.5rem); min-width: 1.1rem; height: 1.1rem; font-size: 0.6875rem; line-height: 1.1rem; padding: 0 0.25rem; }
+
+/* Today: the requests queue and the day's appointments (calendar-design boards 1-2). */
+.todaySection { display: flex; flex-direction: column; gap: 0.9rem; }
+.sectionHead { margin: 0; display: flex; align-items: center; gap: 0.6rem; font: 400 1.2rem/1.2 var(--font-display), Georgia, serif; }
+.sectionHead:focus { outline: none; }
+@media (min-width: 56rem) { .sectionHead { font-size: 1.375rem; } }
+.req { display: grid; grid-template-columns: 1fr; gap: 0.35rem; padding: 0.9rem; }
+.when { font-weight: 600; line-height: 1.3; }
+.when small { font-weight: 400; color: var(--muted); font-size: 0.875rem; }
+.when small::before { content: " \00b7  "; }
+@media (min-width: 56rem) { .when small { display: block; } .when small::before { content: none; } }
+.what { line-height: 1.35; min-width: 0; overflow-wrap: anywhere; }
+.what b { font-weight: 600; }
+.what > span { display: block; color: var(--muted); font-size: 0.875rem; }
+.acts { display: flex; gap: 0.5rem; }
+.acts > button { flex: 1; width: auto; }
+.expires { font-size: 0.8125rem; color: oklch(0.42 0.08 70); }
+.desktopOnly { display: none; }
+.declining { display: flex; flex-direction: column; gap: 0.6rem; padding-top: 0.25rem; }
+.rowError { grid-column: 1 / -1; }
+/* Phone shows the first two requests; "Show n more" opens the rest. Desktop shows every one. */
+.reqExtra { display: none; }
+.queueOpen .reqExtra { display: list-item; }
+.showMore { align-self: flex-start; }
+@media (min-width: 56rem) {
+  .req { grid-template-columns: 7.5rem 1fr auto; gap: 0.25rem 1.25rem; padding: 1rem 1.1rem; align-items: center; }
+  .expires { grid-column: 2 / -1; }
+  .desktopOnly { display: inline; }
+  .acts > button { flex: none; }
+  .declining { grid-column: 1 / -1; }
+  .reqExtra { display: list-item; }
+  .showMore { display: none; }
+}
+
+.agenda { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.agenda > li { display: grid; grid-template-columns: 4.5rem 1fr auto; gap: 0.1rem 1rem; padding: 0.8rem 0; border-bottom: 1px solid var(--line); align-items: start; }
+.agenda > li:last-child { border-bottom: 0; }
+.agendaTime { font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.35; }
+.agendaTime small { display: block; font-weight: 400; color: var(--muted); font-size: 0.8125rem; }
+.agendaWhat { line-height: 1.35; min-width: 0; overflow-wrap: anywhere; }
+.agendaWhat span { display: block; color: var(--muted); font-size: 0.875rem; }
+.agendaBlock .agendaWhat { color: var(--muted); }
+.agendaPast { opacity: 0.75; }
+.agenda > .nowLine { display: block; position: relative; height: 0; padding: 0; border: 0; border-top: 2px solid var(--primary); margin: 0.1rem 0; }
+.nowLine::before { content: ""; position: absolute; left: -2px; top: -5px; width: 8px; height: 8px; border-radius: 50%; background: var(--primary); }
+.nowLine span { position: absolute; right: 0; top: -0.75rem; background: var(--bg); padding: 0 0 0 0.4rem; font: 600 0.75rem/1.5 var(--font-body), system-ui, sans-serif; color: var(--primary); }
+
+/* Status chips: shape, icon and word, never colour alone. On phone the word is srOnly (board 2). */
+.chip { display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.15rem 0.6rem; border-radius: 999px; font: 600 0.8125rem/1.5 var(--font-body), system-ui, sans-serif; border: 1px solid var(--line); background: var(--bg); color: var(--muted); white-space: nowrap; }
+.chipWait { border: 1.5px dashed oklch(0.42 0.08 70); color: oklch(0.42 0.08 70); background: var(--note-soft); }
+.chipOk { color: var(--ok); border-color: oklch(0.85 0.06 152); background: oklch(0.97 0.025 152); }
+.chipOff { background: var(--surface); }
+@media (max-width: 55.999rem) {
+  .chipWord { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .chip { padding: 0.15rem 0.45rem; }
+}
+
+/* Loading: three muted placeholder rows, the same height as a request row. */
+.skeleton { height: 4.5rem; border-radius: 0.75rem; background: var(--surface); }
+@media (prefers-reduced-motion: no-preference) {
+  .skeleton { animation: pulse 1.4s ease-in-out infinite; }
+}
+@keyframes pulse { 50% { opacity: 0.55; } }

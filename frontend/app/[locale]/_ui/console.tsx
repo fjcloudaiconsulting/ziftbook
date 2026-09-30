@@ -6,6 +6,7 @@ import { createPortal } from "react-dom";
 
 import {
   accountGiveName,
+  bookingApprovalsList,
   type BusinessSettingsOutput,
   type SessionOut,
   sessionRead,
@@ -16,6 +17,7 @@ import {
 import { Link, usePathname, useRouter } from "@/i18n/navigation";
 import { trimmedName } from "@/lib/account";
 import { allowed, guardedWrite, navFor, needsName, type Role, sectionOf, type Section, writeOutcome } from "@/lib/console";
+import { badgeText } from "@/lib/today";
 
 import { LanguageSwitcher } from "./header";
 import { Banner, FieldError, Heading, NoScript, type Outcome, problem, send, Submit } from "./parts";
@@ -38,6 +40,11 @@ type ConsoleContextValue = {
   /** Patches the console's own settings state from a PUT's response (ZIF-145: publish/unpublish),
    * so a dependent screen (Today's step 5) updates live, with no reload. */
   updateSettings(patch: Partial<BusinessSettingsOutput>): void;
+  /** Requests waiting for an answer, for the Today badge in the nav. `null` until the Shell's own
+   * read lands, and for good if that read failed: no badge, never a failed console. Today sets it
+   * after it loads and after each answer, so the badge follows what the page shows. */
+  pendingCount: number | null;
+  setPendingCount(count: number): void;
   /** Where a page's own bottom action bar (the week editor's savebar) renders on phone, so it
    * stacks directly on the tab bar as one element with no gap between them - never a sticky offset
    * computed to line up with a separately-stickied tab bar, which a page nested many levels deep
@@ -151,6 +158,7 @@ function NavLink({
   className,
   onClick,
   variant = "item",
+  badge,
 }: {
   section: Section;
   current: Section | null;
@@ -159,6 +167,8 @@ function NavLink({
   /** "tab" ellipsizes its label (the phone tab bar, where space is tight); "item" (sidebar, More
    * sheet) renders it plainly, at the same size as every other row. */
   variant?: "item" | "tab";
+  /** Requests waiting (Today only): a number in the corner, with its words for a screen reader. */
+  badge?: number | null;
 }) {
   const t = useTranslations("Console.nav");
   const labelKey = section === "my-hours" ? "myHours" : section === "opening-hours" ? "openingHours" : section;
@@ -167,6 +177,14 @@ function NavLink({
     <Link href={HREF[section]} className={className} aria-current={current === section ? "page" : undefined} onClick={onClick}>
       {ICONS[section]}
       {variant === "tab" ? <span className={styles.tabLabel}>{label}</span> : label}
+      {badge ? (
+        <>
+          <span className={variant === "tab" ? styles.tabBadge : styles.navBadge} aria-hidden="true">
+            {badgeText(badge)}
+          </span>
+          <span className={uiStyles.srOnly}>{t("waiting", { count: badge })}</span>
+        </>
+      ) : null}
     </Link>
   );
 }
@@ -351,11 +369,16 @@ export function Shell({ children }: { children: ReactNode }) {
   const [signOutFailure, setSignOutFailure] = useState<ReturnType<typeof problem> | null>(null);
   const [moreOpen, setMoreOpen] = useState(false);
   const [footerSlot, setFooterSlot] = useState<HTMLDivElement | null>(null);
+  const [pendingCount, setPendingCount] = useState<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([send(sessionRead()), send(settingsRead())]).then(([sessionOutcome, settingsOutcome]) => {
+    // The badge's count rides the same Promise.all: no extra round trip. Its answer is only ever
+    // read for a 200 (a nameless session's 403, or any failure, just means no badge).
+    // ponytail: limit=100, so a badge can't count past 100 (it shows "99+" anyway).
+    Promise.all([send(sessionRead()), send(settingsRead()), send(bookingApprovalsList({ query: { limit: 100 } }))]).then(([sessionOutcome, settingsOutcome, pendingOutcome]) => {
       if (cancelled) return;
+      if (pendingOutcome.status === 200 && pendingOutcome.data) setPendingCount(pendingOutcome.data.length);
       if (sessionOutcome.status === 401 || settingsOutcome.status === 401) {
         router.replace("/sign-in");
         return;
@@ -455,7 +478,7 @@ export function Shell({ children }: { children: ReactNode }) {
   const current = sectionOf(pathname);
 
   return (
-    <ConsoleContext.Provider value={{ session, settings, call, updateSession, updateSettings, footerSlot }}>
+    <ConsoleContext.Provider value={{ session, settings, call, updateSession, updateSettings, pendingCount, setPendingCount, footerSlot }}>
       <div className={styles.shell}>
         <header className={styles.topbar}>
           <span className={styles.brand}>
@@ -485,7 +508,7 @@ export function Shell({ children }: { children: ReactNode }) {
         <div className={styles.body}>
           <nav className={styles.sidebar} aria-label={navT("sections")}>
             {nav.sidebar.map((section) => (
-              <NavLink key={section} section={section} current={current} className={styles.navItem} />
+              <NavLink key={section} section={section} current={current} className={styles.navItem} badge={section === "today" ? pendingCount : null} />
             ))}
           </nav>
 
@@ -519,7 +542,7 @@ export function Shell({ children }: { children: ReactNode }) {
                   <span className={styles.tabLabel}>{navT("more")}</span>
                 </button>
               ) : (
-                <NavLink key={section} section={section} current={current} className={styles.tab} variant="tab" />
+                <NavLink key={section} section={section} current={current} className={styles.tab} variant="tab" badge={section === "today" ? pendingCount : null} />
               ),
             )}
           </nav>
