@@ -2,7 +2,6 @@
 booking detail with its history. See docs/specs/2026-09-30-zif-57-pr1-spec.md; F# and G# are that
 spec's fences and guards."""
 
-import json
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -12,10 +11,12 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from httpx2 import Response
 from psycopg.errors import InsufficientPrivilege
-from sqlalchemy import Engine, text
+from sqlalchemy import Connection, Engine, text
+from sqlalchemy import event as sa_event
 from sqlalchemy.exc import DBAPIError
+from sqlalchemy.orm import Session
 
-from app.db import tenant_context
+from app.db import SessionLocal, tenant_context
 from app.main import create_app
 from tests.conftest import (
     People,
@@ -129,6 +130,17 @@ def test_detail_is_403_for_a_colleagues_booking_and_404_across_businesses(
     elsewhere = signed_in(app, people.b, people.both)
     assert elsewhere.get(f"/api/bookings/{theirs}").status_code == 404
     assert worker.get(f"/api/bookings/{uuid.uuid7()}").status_code == 404
+
+
+# F2b: a worker reads the detail of their OWN booking. Kills gating the detail on is_owner alone.
+def test_a_worker_reads_their_own_booking_detail(
+    people: People, shop: dict[str, Any], worker: TestClient
+) -> None:
+    mine = put(people, shop, "worker", hour(10), hour(11))
+
+    response = worker.get(f"/api/bookings/{mine}")
+
+    assert (response.status_code, response.json()["id"]) == (200, mine)
 
 
 # F3: a booking 23:30-00:30 that overlaps `from` is returned; one ending exactly at `from` is not.
@@ -323,17 +335,26 @@ def test_the_app_role_still_cannot_update_or_delete_a_booking_event(
 
 
 # F13: a client's reschedule through their link lands in the history with from and to, in UTC.
-# Kills a reschedule write site left untouched.
+# Kills a reschedule write site left untouched, and a dropped .astimezone(UTC) (the test runs the
+# reschedule in an Amsterdam-zoned session, where the driver would otherwise render +02:00).
 def test_a_clients_reschedule_is_in_the_history_with_both_times(
     app: FastAPI, people: People, ready: str, owner: TestClient
 ) -> None:
     booking_id = make_pending(app, people.a, ready, starts_at=at("10:00"))
     assert patch(owner, booking_id, "confirmed").status_code == 200
-    moved = post(
-        linked(app, people.a, booking_id),
-        "/reschedule",
-        reschedule_body(booking_id, at("10:30"), 0),
-    )
+
+    def amsterdam_session(_: Session, __: Any, connection: Connection) -> None:
+        connection.execute(text("SET LOCAL TimeZone = 'Europe/Amsterdam'"))  # driver gives +02:00
+
+    sa_event.listen(SessionLocal, "after_begin", amsterdam_session)
+    try:
+        moved = post(
+            linked(app, people.a, booking_id),
+            "/reschedule",
+            reschedule_body(booking_id, at("10:30"), 0),
+        )
+    finally:
+        sa_event.remove(SessionLocal, "after_begin", amsterdam_session)
     assert moved.status_code == 200
 
     events = owner.get(f"/api/bookings/{booking_id}").json()["history"]
@@ -342,6 +363,7 @@ def test_a_clients_reschedule_is_in_the_history_with_both_times(
     assert (rescheduled["event"], rescheduled["actor"]) == ("rescheduled", "client")
     assert set(rescheduled["details"]) == {"from", "to"}
     assert rescheduled["details"]["from"].endswith("+00:00")
+    assert rescheduled["details"]["to"].endswith("+00:00")
     assert datetime.fromisoformat(rescheduled["details"]["from"]) == datetime.fromisoformat(
         at("10:00")
     )
@@ -363,35 +385,9 @@ def test_actor_user_id_has_no_foreign_key(migrate_engine: Engine) -> None:
         assert conn.scalar(query, {"column": "actor_user_id"}) == 0
 
 
-DETAIL_KEYS = {
-    "id",
-    "starts_at",
-    "ends_at",
-    "expires_at",
-    "service_id",
-    "service_name",
-    "price",
-    "worker_id",
-    "worker_display_name",
-    "client_id",
-    "client_name",
-    "created_at",
-    "status",
-    "source",
-    "client_email",
-    "client_phone",
-    "client_note",
-    "decline_message",
-    "cancellation_policy_text",
-    "reschedule_count",
-    "max_reschedules",
-    "expired",
-    "history",
-}
-
-
-# F15: the detail never carries the private notes or the event's personal data, in the response or
-# in the published schema. Kills SELECT * and reusing ClientOut.
+# F15: the published schema never offers the private notes or the event's personal data. Kills
+# reusing ClientOut or an event model with those fields (pydantic drops extra columns from a
+# response, so the body cannot prove it; the schema is the fence).
 def test_the_detail_carries_no_internal_note_or_event_personal_data(
     app: FastAPI, people: People, ready: str, owner: TestClient
 ) -> None:
@@ -401,10 +397,8 @@ def test_the_detail_carries_no_internal_note_or_event_personal_data(
 
     body = owner.get(f"/api/bookings/{booking_id}").json()
 
-    assert set(body) == DETAIL_KEYS
     assert body["client_note"] == "hi"
     assert set(body["history"][0]) == {"event", "at", "actor", "actor_name", "details"}
-    assert "secret" not in json.dumps(body)
     schemas = app.openapi()["components"]["schemas"]
     exposed = set(schemas["BookingDetailOut"]["properties"]) | set(
         schemas["EventOut"]["properties"]

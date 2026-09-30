@@ -1276,6 +1276,12 @@ def test_the_business_wide_range_hides_a_colleagues_reason_and_names_the_member(
 ) -> None:
     worker_member = member_id(people.a, people.only_a)
     owner_member = member_id(people.a, people.both)
+    with tenant_context(people.a) as session:  # distinct names: a wrong join cannot hide
+        for user, name in ((people.only_a, "Wanda"), (people.both, "Olga")):
+            session.execute(
+                text("UPDATE memberships SET display_name = :n WHERE user_id = :u"),
+                {"n": name, "u": user},
+            )
     mine = insert_block(
         people.a, worker_member, "2031-03-10T08:00:00Z", "2031-03-10T09:00:00Z", reason="Dentist"
     )
@@ -1290,7 +1296,7 @@ def test_the_business_wide_range_hides_a_colleagues_reason_and_names_the_member(
     seen = {b["id"]: b for b in as_worker.json()}
     assert [b["id"] for b in as_worker.json()] == [str(mine), str(theirs)]
     assert (seen[str(mine)]["reason"], seen[str(theirs)]["reason"]) == ("Dentist", None)
-    assert seen[str(theirs)]["member_name"] == "Test Person"
+    assert (seen[str(mine)]["member_name"], seen[str(theirs)]["member_name"]) == ("Wanda", "Olga")
     assert {b["id"]: b["reason"] for b in as_owner.json()} == {
         str(mine): "Dentist",
         str(theirs): "Surgery",
@@ -1330,3 +1336,24 @@ def test_the_range_window_is_capped_at_eight_days(people: People, app: FastAPI) 
         ).status_code
         == 200
     )
+
+
+# A window at the edge of the calendar is refused by the Instant type (years 2000..2999, checked
+# before any astimezone), so no zone can overflow into a 500, on either route. Kills loosening
+# year_bounds while blocks_overlapping converts to the business zone.
+@pytest.mark.parametrize(
+    ("zone", "window"),
+    [
+        ("America/Los_Angeles", {"from": "0001-01-01T00:00:00Z", "to": "0001-06-01T00:00:00Z"}),
+        ("Asia/Tokyo", {"from": "9999-06-01T00:00:00Z", "to": "9999-12-31T23:59:59Z"}),
+    ],
+)
+def test_a_window_at_the_calendar_edge_is_refused_not_a_500(
+    people: People, app: FastAPI, zone: str, window: dict[str, str]
+) -> None:
+    owner = signed_in(app, people.a, people.both)
+    assert put_settings(owner, {"timezone": zone}).status_code == 200
+
+    for url in (path(member_id(people.a, people.only_a)), RANGE):
+        response = owner.get(url, params=window)
+        assert (response.status_code, response.json()) == (422, {"code": "invalid_request"}), url

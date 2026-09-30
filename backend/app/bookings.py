@@ -814,7 +814,7 @@ def agenda(
     from_: Annotated[time_off_module.Instant, Query(alias="from")],
     to: time_off_module.Instant,
 ) -> list[AgendaOut]:
-    """The bookings that overlap [from, to) by start time, for a day or a week of the calendar.
+    """The bookings whose interval overlaps [from, to), for a day or a week of the calendar.
     An owner sees everyone's, a worker their own (the same rule as the pending queue). The window
     may not exceed 8 days: a local week is 7 days plus or minus an hour across a clock change."""
     if to <= from_ or to - from_ > MAX_AGENDA_WINDOW:
