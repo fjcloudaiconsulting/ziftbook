@@ -119,6 +119,9 @@ Passwords and sign-in tokens live in tables the app role can't read or write (`p
 - The `sign_in` policy lets `ziftbook_migrate` read memberships across tenants only while `app.sign_in` is `on`. A
   function that relies on it sets and restores `app.sign_in` itself; any other definer function that reads memberships
   must clear it, because a caller can set it.
+- `complete_sign_up`, `accept_invite` and `set_own_name` are the only writers of `users.name` (the app role has no
+  UPDATE policy on `users`). `set_own_name` names a person who has none (legacy accounts only) and also fills the
+  `display_name` of every business of theirs where it is unset, including one an owner had cleared.
 
 ## Client records
 
@@ -191,7 +194,8 @@ migration 0026), not any code path. A race in a route somebody forgets to guard 
 
 ## Audit log
 
-`audit_events` records who signed in, out, or reset a password, and when a business was created, so after an incident
+`audit_events` records who signed in, out, or reset a password, when a business was created, and when a person gave
+their name (`user_name_set`, never with the name in its details), so after an incident
 we can show which businesses were not affected.
 
 - The app role can add events and read its own business's. It can never change or delete one, or set `id` or

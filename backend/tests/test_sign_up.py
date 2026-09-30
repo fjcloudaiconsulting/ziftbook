@@ -68,10 +68,13 @@ def complete(
     password: str = PASSWORD,
     business: str = "Studio Ana",
     country: str | None | object = MISSING,
+    name: str | None | object = "Ana Silva",
 ) -> Response:
     body: dict[str, Any] = {"token": token, "password": password, "business_name": business}
     if country is not MISSING:
         body["country"] = country
+    if name is not MISSING:
+        body["name"] = name
     # Encoded here: json.dumps escapes a lone surrogate the way a browser can send it.
     return client.post(
         "/api/sign-up/complete",

@@ -20,14 +20,17 @@ export function CompleteSignUp() {
   const router = useRouter();
   const token = useLinkToken(TOKEN_KEY);
   const locale = useLocale();
+  const personId = useId();
   const nameId = useId();
   const countryId = useId();
+  const [personName, setPersonName] = useState("");
   const [name, setName] = useState("");
   const [country, setCountry] = useState<Country | "">(() => likelyCountry(locale));
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [ended, setEnded] = useState<"expired" | "exists" | null>(null);
   const [passwordError, setPasswordError] = useState<string>();
+  const [personNameError, setPersonNameError] = useState<string>();
   const [nameError, setNameError] = useState<string>();
   const [countryError, setCountryError] = useState<string>();
   const [message, setMessage] = useState<{ tone: "error" | "note"; text: string } | null>(null);
@@ -35,12 +38,14 @@ export function CompleteSignUp() {
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
     if (busy || !token) return;
-    const request = signUpRequest(name, country);
+    const request = signUpRequest(personName, name, country);
     if ("errors" in request) {
+      setPersonNameError(request.errors.personName && t(request.errors.personName));
       setNameError(request.errors.name && t(request.errors.name));
       setCountryError(request.errors.country && t(request.errors.country));
       return;
     }
+    setPersonNameError(undefined);
     setNameError(undefined);
     setCountryError(undefined);
     setBusy(true);
@@ -108,6 +113,31 @@ export function CompleteSignUp() {
       <p className={styles.lede}>{t("lede")}</p>
       {message && <Banner tone={message.tone}>{message.text}</Banner>}
       <form className={styles.form} method="post" onSubmit={onSubmit}>
+        <div className={styles.field}>
+          <label className={styles.label} htmlFor={personId}>
+            {t("personName")}
+          </label>
+          <div className={styles.input}>
+            <input
+              id={personId}
+              name="name"
+              autoComplete="name"
+              required
+              maxLength={60}
+              value={personName}
+              onChange={(event) => setPersonName(event.target.value)}
+              aria-invalid={personNameError ? true : undefined}
+              aria-describedby={`${personId}-hint`}
+            />
+          </div>
+          {personNameError ? (
+            <FieldError id={`${personId}-hint`}>{personNameError}</FieldError>
+          ) : (
+            <p className={styles.hint} id={`${personId}-hint`}>
+              {t("personNameHint")}
+            </p>
+          )}
+        </div>
         <div className={styles.field}>
           <label className={styles.label} htmlFor={nameId}>
             {t("businessName")}

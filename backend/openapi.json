@@ -347,6 +347,78 @@
         }
       }
     },
+    "/api/session/name": {
+      "put": {
+        "tags": [
+          "account"
+        ],
+        "summary": "Give Name",
+        "description": "A person from before registration asked for a name gives theirs, once. The name fills in\ntheir unset display names in every business (set_own_name); it is never an event detail.",
+        "operationId": "account-give_name",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NameIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionOut"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Content",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/password-reset": {
       "post": {
         "tags": [
@@ -3625,6 +3697,19 @@
           "password": {
             "type": "string",
             "title": "Password"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 60,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
           }
         },
         "type": "object",
@@ -4392,6 +4477,12 @@
             "type": "string",
             "title": "Password"
           },
+          "name": {
+            "type": "string",
+            "maxLength": 60,
+            "minLength": 1,
+            "title": "Name"
+          },
           "business_name": {
             "type": "string",
             "maxLength": 100,
@@ -4414,6 +4505,7 @@
         "required": [
           "token",
           "password",
+          "name",
           "business_name",
           "country"
         ],
@@ -4813,6 +4905,22 @@
           "display_name"
         ],
         "title": "MemberOut"
+      },
+      "NameIn": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 60,
+            "minLength": 1,
+            "title": "Name"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "NameIn"
       },
       "NewInvite": {
         "properties": {
@@ -5339,6 +5447,17 @@
             ],
             "title": "Display Name"
           },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
           "business_name": {
             "type": "string",
             "title": "Business Name"
@@ -5360,6 +5479,7 @@
           "role",
           "email",
           "display_name",
+          "name",
           "business_name",
           "currency",
           "slug"

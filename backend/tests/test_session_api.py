@@ -96,6 +96,7 @@ def test_a_signed_in_user_sees_their_session(
         "business_name": "a",
         "currency": "EUR",
         "display_name": None,
+        "name": "Test Person",
         "slug": slug,
     }
 

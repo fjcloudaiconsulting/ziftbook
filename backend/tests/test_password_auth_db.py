@@ -182,13 +182,14 @@ def complete_sign_up(
 ) -> Created:
     with engine.begin() as conn:
         row = conn.execute(
-            text("SELECT * FROM complete_sign_up(:h, :p, :n, :c, :cur)"),
+            text("SELECT * FROM complete_sign_up(:h, :p, :n, :c, :cur, :name)"),
             {
                 "h": digest(token),
                 "p": HASH,
                 "n": f"Studio {email}",
                 "c": country,
                 "cur": currency,
+                "name": "Ana Silva",
             },
         ).one()
     return Created(*row)
@@ -283,8 +284,15 @@ def test_two_links_for_one_email_completed_together_create_one_account(
     with app_engine.begin() as conn:
         outcomes["first"] = Created(
             *conn.execute(
-                text("SELECT * FROM complete_sign_up(:h, :p, :n, :c, :cur)"),
-                {"h": digest(first), "p": HASH, "n": f"Studio {email}", "c": "NL", "cur": "EUR"},
+                text("SELECT * FROM complete_sign_up(:h, :p, :n, :c, :cur, :name)"),
+                {
+                    "h": digest(first),
+                    "p": HASH,
+                    "n": f"Studio {email}",
+                    "c": "NL",
+                    "cur": "EUR",
+                    "name": "Ana Silva",
+                },
             ).one()
         )
         # The second completion must be waiting on the first's uncommitted user row.
@@ -311,8 +319,15 @@ def test_completing_sign_up_leaves_the_callers_tenant_as_it_was(
 
     with tenant_context(people.a) as session:
         row = session.execute(
-            text("SELECT * FROM complete_sign_up(:h, :p, :n, :c, :cur)"),
-            {"h": digest(token), "p": HASH, "n": f"Studio {email}", "c": "NL", "cur": "EUR"},
+            text("SELECT * FROM complete_sign_up(:h, :p, :n, :c, :cur, :name)"),
+            {
+                "h": digest(token),
+                "p": HASH,
+                "n": f"Studio {email}",
+                "c": "NL",
+                "cur": "EUR",
+                "name": "Ana Silva",
+            },
         ).one()
         assert session.scalar(text("SELECT current_setting('app.tenant_id')")) == str(people.a)
     created.append(Created(*row))

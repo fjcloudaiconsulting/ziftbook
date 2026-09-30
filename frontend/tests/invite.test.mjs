@@ -70,6 +70,7 @@ describe("what an accept answer means", () => {
       [{ status: 422, code: "password_too_short" }, "password_too_short"],
       [{ status: 422, code: "password_too_long" }, "password_too_long"],
       [{ status: 422, code: "password_too_common" }, "password_too_common"],
+      [{ status: 422, code: "name_required" }, "nameRequired"],
       [{ status: 429, code: "rate_limited" }, "tooMany"],
     ];
     for (const [answer, meaning] of cases) assert.equal(acceptOutcome(answer), meaning, JSON.stringify(answer));

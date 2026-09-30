@@ -1,10 +1,11 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-import { createContext, type ReactNode, useContext, useEffect, useRef, useState } from "react";
+import { createContext, type FormEvent, type ReactNode, useContext, useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import {
+  accountGiveName,
   type BusinessSettingsOutput,
   type SessionOut,
   sessionRead,
@@ -13,10 +14,11 @@ import {
   settingsRead,
 } from "@/api-client";
 import { Link, usePathname, useRouter } from "@/i18n/navigation";
-import { allowed, guardedWrite, navFor, type Role, sectionOf, type Section, writeOutcome } from "@/lib/console";
+import { trimmedName } from "@/lib/account";
+import { allowed, guardedWrite, navFor, needsName, type Role, sectionOf, type Section, writeOutcome } from "@/lib/console";
 
 import { LanguageSwitcher } from "./header";
-import { Banner, NoScript, type Outcome, problem, send } from "./parts";
+import { Banner, FieldError, Heading, NoScript, type Outcome, problem, send, Submit } from "./parts";
 import styles from "./console.module.css";
 import uiStyles from "./ui.module.css";
 
@@ -250,6 +252,93 @@ function MoreSheet({ more, current, open, onClose }: { more: Section[]; current:
   );
 }
 
+/** The first thing anyone without a name sees (ZIF-131): until they give one the API refuses everything else,
+ * so this replaces the whole console. It runs outside ConsoleContext, which needs the settings the API won't
+ * yet give: the one write here is a plain `send`, not `call()`. */
+function NameStep({
+  onNamed,
+  onSignOut,
+  signOutFailure,
+}: {
+  onNamed(session: SessionOut): Promise<void>;
+  onSignOut(everywhere: boolean): void;
+  signOutFailure: ReturnType<typeof problem> | null;
+}) {
+  const t = useTranslations("Console.nameStep");
+  const accountT = useTranslations("Console.account");
+  const form = useTranslations("Form");
+  const router = useRouter();
+  const id = useId();
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string>();
+  const [failure, setFailure] = useState<ReturnType<typeof problem> | null>(null);
+
+  async function onSubmit(event: FormEvent) {
+    event.preventDefault();
+    if (busy) return;
+    const given = trimmedName(name);
+    if (!given) {
+      setError(t("required"));
+      return;
+    }
+    setError(undefined);
+    setFailure(null);
+    setBusy(true);
+    let outcome = await send(accountGiveName({ body: { name: given } }));
+    // 409: named in another tab meanwhile. The session has the name already: carry on with it.
+    if (outcome.status === 409) outcome = await send(sessionRead());
+    if (outcome.status === 200 && outcome.data) await onNamed(outcome.data);
+    else if (outcome.status === 401) router.replace("/sign-in");
+    else setFailure(problem(outcome));
+    setBusy(false);
+  }
+
+  return (
+    // .shell: the same focus rules as the console (no ring on a heading focused by script).
+    <div className={styles.shell}>
+      <header className={styles.topbar}>
+        <span className={uiStyles.wordmark}>ziftbook</span>
+        <button className={styles.plainLink} type="button" onClick={() => onSignOut(false)}>
+          {accountT("signOut")}
+        </button>
+      </header>
+      <main id="content" className={uiStyles.screen}>
+        <div className={uiStyles.col}>
+          {signOutFailure && <Banner tone="error">{form(signOutFailure)}</Banner>}
+          <Heading focus>{t("title")}</Heading>
+          <p className={uiStyles.lede}>{t("lede")}</p>
+          {failure && <Banner tone={failure === "busy" ? "note" : "error"}>{form(failure)}</Banner>}
+          <form className={uiStyles.form} method="post" onSubmit={onSubmit}>
+            <div className={uiStyles.field}>
+              <label className={uiStyles.label} htmlFor={id}>
+                {t("label")}
+              </label>
+              <div className={uiStyles.input}>
+                <input
+                  id={id}
+                  name="name"
+                  autoComplete="name"
+                  required
+                  maxLength={60}
+                  value={name}
+                  onChange={(event) => setName(event.target.value)}
+                  aria-invalid={error ? true : undefined}
+                  aria-describedby={error ? `${id}-error` : undefined}
+                />
+              </div>
+              {error && <FieldError id={`${id}-error`}>{error}</FieldError>}
+            </div>
+            <Submit busy={busy} busyLabel={t("save")}>
+              {t("save")}
+            </Submit>
+          </form>
+        </div>
+      </main>
+    </div>
+  );
+}
+
 export function Shell({ children }: { children: ReactNode }) {
   const form = useTranslations("Form");
   const navT = useTranslations("Console.nav");
@@ -271,7 +360,10 @@ export function Shell({ children }: { children: ReactNode }) {
         router.replace("/sign-in");
         return;
       }
-      if (sessionOutcome.status === 200 && sessionOutcome.data && settingsOutcome.status === 200 && settingsOutcome.data) {
+      if (sessionOutcome.status === 200 && sessionOutcome.data && needsName(sessionOutcome.data.name)) {
+        // The API refuses the settings (403 name_required) until the name is given: no failure banner.
+        setSession(sessionOutcome.data);
+      } else if (sessionOutcome.status === 200 && sessionOutcome.data && settingsOutcome.status === 200 && settingsOutcome.data) {
         setSession(sessionOutcome.data);
         setSettings(settingsOutcome.data);
       } else {
@@ -318,11 +410,28 @@ export function Shell({ children }: { children: ReactNode }) {
     setSettings((current) => (current ? { ...current, ...patch } : current));
   }
 
+  /** The name is saved: read the settings the API now allows, then show the page that was asked for. */
+  async function onNamed(named: SessionOut) {
+    const outcome = await send(settingsRead());
+    if (outcome.status === 401) {
+      router.replace("/sign-in");
+      return;
+    }
+    setSession(named);
+    if (outcome.status === 200 && outcome.data) setSettings(outcome.data);
+    else setFailure(problem(outcome));
+  }
+
   async function onSignOut(everywhere: boolean) {
     const outcome = await send(everywhere ? sessionSignOutEverywhere(JSON_WRITE) : sessionSignOut(JSON_WRITE));
     // 401: the session had already ended, which is where signing out leads anyway.
     if (outcome.status === 204 || outcome.status === 401) router.replace("/sign-in");
     else setSignOutFailure(problem(outcome));
+  }
+
+  // Before the early return below and before any failure: a nameless person has no settings to wait for.
+  if (session && needsName(session.name)) {
+    return <NameStep onNamed={onNamed} onSignOut={onSignOut} signOutFailure={signOutFailure} />;
   }
 
   if (!session || !settings) {

@@ -5,7 +5,7 @@ from datetime import timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Request, Response
-from pydantic import AfterValidator, BaseModel, Field, StringConstraints
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints
 from sqlalchemy import text
 
 from app import auth, business_settings, limits, passwords
@@ -66,9 +66,26 @@ BusinessName = Annotated[
 ]
 
 
+# A person's name: a member's display name (app/members.py) and the platform name given at sign-up,
+# invite and first sign-in. Defined here because members imports this module, not the reverse.
+# ponytail: printable() blocks C* and Zl/Zp, so ZWJ, RLO and BOM are 422; strip_whitespace is what
+# empties an NBSP-only name (and min_length then refuses it). It does not block 60 combining
+# marks (Zalgo), blank-rendering glyphs (U+2800 Braille blank, U+3164 Hangul filler) or
+# homoglyphs. Accepted: a display name takes an authenticated member, damages only that business's
+# own page, and any owner can overwrite it; a platform name (users.name) is set once by its own
+# person, so no owner can overwrite it, but it only shows to their own businesses' teams and
+# clients. Add a normalisation/blocklist only if a real person is hit.
+DisplayNameText = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=60),
+    AfterValidator(printable),
+]
+
+
 class CompleteSignUp(BaseModel):
     token: str = Field(min_length=1, max_length=100)  # from the link's fragment
     password: str
+    name: DisplayNameText  # the person's own; never logged, never in an event
     business_name: BusinessName
     country: Country
 
@@ -102,13 +119,14 @@ def complete_sign_up(
     with SessionLocal.begin() as session:
         created = session.execute(
             text("""SELECT * FROM complete_sign_up(
-                    :hash, :password_hash, :business_name, :country, :currency)"""),
+                    :hash, :password_hash, :business_name, :country, :currency, :name)"""),
             {
                 "hash": digest,
                 "password_hash": password_hash,
                 "business_name": details.business_name,
                 "country": country,
                 "currency": defaults.currency,
+                "name": details.name,
             },
         ).one()
         if created.outcome == "created":
@@ -130,6 +148,36 @@ def complete_sign_up(
     auth.set_cookie(response, token)
     response.headers["Cache-Control"] = "no-store"
     return signed_in_as
+
+
+class NameIn(BaseModel):
+    # Its own model, field by field: nothing else a client sends is accepted.
+    model_config = ConfigDict(strict=True, extra="forbid")
+    name: DisplayNameText
+
+
+@router.put(
+    "/session/name",
+    responses={s: {"model": Error} for s in (401, 409, 415, 422)},
+)
+def give_name(
+    body: NameIn, current: auth.AnySession, request: Request, response: Response
+) -> auth.SessionOut:
+    """A person from before registration asked for a name gives theirs, once. The name fills in
+    their unset display names in every business (set_own_name); it is never an event detail."""
+    response.headers["Cache-Control"] = "no-store"
+    if not current.db.scalar(
+        text("SELECT set_own_name(:u, :name)"), {"u": current.user_id, "name": body.name}
+    ):
+        raise ApiError(409, "name_already_set")
+    auth.record(
+        current.db,
+        request,
+        "user_name_set",
+        actor_user_id=current.user_id,
+        target=f"user:{current.user_id}",
+    )
+    return auth.describe(current.db, current.user_id)
 
 
 @router.post(

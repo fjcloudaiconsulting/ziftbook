@@ -52,6 +52,9 @@
   "CompleteSignUp": {
     "title": "Set up your business",
     "lede": "Your email is confirmed. A few last details and you're in.",
+    "personName": "Your name",
+    "personNameHint": "Your team and the clients who book with you see this.",
+    "personNameRequired": "Enter your name.",
     "businessName": "Business name",
     "businessHint": "Clients see this when they book. You can change it later.",
     "nameRequired": "Enter your business name.",
@@ -115,6 +118,8 @@
     "tooMany": "Too many attempts for now. Wait 15 minutes and try again.",
     "joinTitle": "Join {business}",
     "newLede": "Choose a password to see your appointments and working hours.",
+    "personName": "Your name",
+    "personNameRequired": "Enter your name.",
     "existingLede": "Sign in with your ziftbook password to see your appointments here too.",
     "newSubmit": "Join the team",
     "signInSubmit": "Sign in to accept",
@@ -160,6 +165,13 @@
       "nameRequired": "Enter a name.",
       "lede": "{email} · {role} · times are in {city} time",
       "notFound": "This person could not be found."
+    },
+    "nameStep": {
+      "title": "What should we call you?",
+      "lede": "Your team and the clients who book with you see this name. We only ask once.",
+      "label": "Your name",
+      "save": "Save and continue",
+      "required": "Enter your name."
     },
     "today": {
       "ownerEmptyTitle": "No appointments yet",

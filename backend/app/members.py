@@ -1,17 +1,17 @@
 """A business's members: listed, promoted, demoted and removed by its owners, and each member's
 display name set by an owner or by that member."""
 
-from typing import Annotated, Literal
+from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Request, Response
 from psycopg.errors import CheckViolation, ForeignKeyViolation
-from pydantic import AfterValidator, BaseModel, ConfigDict, StringConstraints
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
 from app import auth
-from app.accounts import printable
+from app.accounts import DisplayNameText
 from app.auth import CurrentOwner, CurrentSession, SignedIn
 from app.errors import ApiError, Error
 
@@ -34,19 +34,6 @@ class RoleChange(BaseModel):
     # Its own model, field by field: nothing a client sends can name a user or a business.
     model_config = ConfigDict(strict=True, extra="forbid")
     role: Role
-
-
-# ponytail: printable() blocks C* and Zl/Zp, so ZWJ, RLO and BOM are 422; strip_whitespace is what
-# empties an NBSP-only name (and min_length then refuses it). It does not block 60 combining
-# marks (Zalgo), blank-rendering glyphs (U+2800 Braille blank, U+3164 Hangul filler) or
-# homoglyphs. Accepted: it takes an authenticated member of that business, it damages only that
-# business's own page, and any owner can overwrite it. Add a normalisation/blocklist only if a
-# real business is hit.
-DisplayNameText = Annotated[
-    str,
-    StringConstraints(strip_whitespace=True, min_length=1, max_length=60),
-    AfterValidator(printable),
-]
 
 
 class DisplayNameChange(BaseModel):

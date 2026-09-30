@@ -46,21 +46,31 @@ export function byName(locale: string, name: (country: Country) => string): Coun
   return [...COUNTRIES].sort((a, b) => name(a).localeCompare(name(b), locale));
 }
 
-type SignUpRequestErrors = { name?: "nameRequired"; country?: "countryRequired" };
+/** A person's name as it goes to the server (which strips spaces too), or null when nothing is left: a blank
+ * name never becomes a request, only a field error. */
+export function trimmedName(text: string): string | null {
+  return text.trim() || null;
+}
+
+type SignUpRequestErrors = { personName?: "personNameRequired"; name?: "nameRequired"; country?: "countryRequired" };
 
 /**
  * Validates the sign-up form and builds the request body, or reports which fields are missing.
  * The server strips spaces too; a blank name would only come back as a vague "invalid request".
+ * `personName` is the owner's own name, `name` the business's.
  */
 export function signUpRequest(
+  personName: string,
   name: string,
   country: Country | "",
-): { errors: SignUpRequestErrors } | { body: { business_name: string; country: Country } } {
-  if (!name.trim() || !country) {
+): { errors: SignUpRequestErrors } | { body: { name: string; business_name: string; country: Country } } {
+  const owner = trimmedName(personName);
+  if (!owner || !name.trim() || !country) {
     const errors: SignUpRequestErrors = {};
+    if (!owner) errors.personName = "personNameRequired";
     if (!name.trim()) errors.name = "nameRequired";
     if (!country) errors.country = "countryRequired";
     return { errors };
   }
-  return { body: { business_name: name, country } };
+  return { body: { name: owner, business_name: name, country } };
 }

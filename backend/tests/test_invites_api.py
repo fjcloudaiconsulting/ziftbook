@@ -339,7 +339,7 @@ def test_invite_audit_events(
     third = owner.post("/api/invites", json={"email": accepted_email}).json()
     token = mint(monkeypatch, people.a, uuid.UUID(third["id"]))
     accepted = new_client(app).post(
-        "/api/invites/accept", json={"token": token, "password": PASSWORD}
+        "/api/invites/accept", json={"token": token, "password": PASSWORD, "name": "New Person"}
     )
     assert accepted.status_code == 201
     new_user_id = uuid.UUID(accepted.json()["user_id"])
@@ -434,8 +434,8 @@ def test_lookup_of_an_unusable_link(
     accept_id, accept_secret = minted(people.a, fresh_email())
     with tenant_context(people.a) as session:
         accepted = session.execute(
-            text("SELECT * FROM accept_invite(:h, :p)"),
-            {"h": hashlib.sha256(accept_secret.encode()).digest(), "p": HASH},
+            text("SELECT * FROM accept_invite(:h, :p, :n)"),
+            {"h": hashlib.sha256(accept_secret.encode()).digest(), "p": HASH, "n": "New Person"},
         ).one()
     new_accounts.append(NewAccount(tenant_id=people.a, user_id=accepted.account_id))
     bad_tokens.append(f"{people.a}.{accept_secret}")
@@ -473,7 +473,9 @@ def test_lookup_does_not_consume_the_link(
 
     assert client.post("/api/invites/lookup", json={"token": token}).status_code == 200
     assert client.post("/api/invites/lookup", json={"token": token}).status_code == 200
-    response = client.post("/api/invites/accept", json={"token": token, "password": PASSWORD})
+    response = client.post(
+        "/api/invites/accept", json={"token": token, "password": PASSWORD, "name": "New Person"}
+    )
 
     assert response.status_code == 201
     new_accounts.append(
@@ -527,7 +529,9 @@ def test_accepting_creates_an_account_and_signs_in(
     token = mint(monkeypatch, people.a, uuid.UUID(created["id"]))
     client = new_client(app)
 
-    response = client.post("/api/invites/accept", json={"token": token, "password": PASSWORD})
+    response = client.post(
+        "/api/invites/accept", json={"token": token, "password": PASSWORD, "name": "New Person"}
+    )
 
     assert response.status_code == 201
     body = response.json()
@@ -545,7 +549,7 @@ def test_accepting_creates_an_account_and_signs_in(
     )
     assert sign_in_response.status_code == 200
     replay = new_client(app).post(
-        "/api/invites/accept", json={"token": token, "password": PASSWORD}
+        "/api/invites/accept", json={"token": token, "password": PASSWORD, "name": "New Person"}
     )
     assert replay.status_code == 400
 
@@ -575,7 +579,9 @@ def test_accepting_with_an_existing_account_and_correct_password(
 
     monkeypatch.setattr(passwords, "hash_password", spy)
 
-    response = client.post("/api/invites/accept", json={"token": token, "password": "short"})
+    response = client.post(
+        "/api/invites/accept", json={"token": token, "password": "short", "name": "New Person"}
+    )
 
     assert response.status_code == 201
     assert response.json()["tenant_id"] == str(people.a)
@@ -624,7 +630,8 @@ def test_accepting_with_an_existing_account_and_wrong_password(
     client = new_client(app, address)
 
     response = client.post(
-        "/api/invites/accept", json={"token": token, "password": "totally-wrong-pass"}
+        "/api/invites/accept",
+        json={"token": token, "password": "totally-wrong-pass", "name": "New Person"},
     )
 
     assert (response.status_code, response.json()) == (401, {"code": "invalid_credentials"})
@@ -649,7 +656,9 @@ def test_accepting_with_an_existing_account_and_wrong_password(
     assert matching[0]["target"] == f"user:{people.only_b}"
     assert matching[0]["tenant_id"] is None
 
-    ok = client.post("/api/invites/accept", json={"token": token, "password": PASSWORD})
+    ok = client.post(
+        "/api/invites/accept", json={"token": token, "password": PASSWORD, "name": "New Person"}
+    )
     assert ok.status_code == 201
 
 
@@ -666,7 +675,9 @@ def test_accepting_with_an_existing_account_and_an_empty_password(
     token = mint(monkeypatch, people.a, uuid.UUID(created["id"]))
     client = new_client(app)
 
-    response = client.post("/api/invites/accept", json={"token": token, "password": ""})
+    response = client.post(
+        "/api/invites/accept", json={"token": token, "password": "", "name": "New Person"}
+    )
 
     assert (response.status_code, response.json()) == (401, {"code": "invalid_credentials"})
     assert "__Host-session" not in response.cookies
@@ -702,7 +713,9 @@ def test_accepting_when_the_password_was_reset_meanwhile(
     monkeypatch.setattr(passwords, "verify", verify_then_reset)
     client = new_client(app)
 
-    response = client.post("/api/invites/accept", json={"token": token, "password": PASSWORD})
+    response = client.post(
+        "/api/invites/accept", json={"token": token, "password": PASSWORD, "name": "New Person"}
+    )
 
     assert response.status_code == 401
     with tenant_context(people.a) as session:
@@ -746,7 +759,9 @@ def test_accepting_when_an_account_appears_meanwhile(
     monkeypatch.setattr(passwords, "hash_password", racing)
     client = new_client(app)
 
-    response = client.post("/api/invites/accept", json={"token": token, "password": PASSWORD})
+    response = client.post(
+        "/api/invites/accept", json={"token": token, "password": PASSWORD, "name": "New Person"}
+    )
 
     assert (response.status_code, response.json()) == (409, {"code": "account_exists"})
     with tenant_context(people.a) as session:
@@ -781,7 +796,9 @@ def test_accepting_when_already_a_member(
     token = mint(monkeypatch, people.a, invite_id)
     client = new_client(app)
 
-    response = client.post("/api/invites/accept", json={"token": token, "password": PASSWORD})
+    response = client.post(
+        "/api/invites/accept", json={"token": token, "password": PASSWORD, "name": "New Person"}
+    )
 
     assert (response.status_code, response.json()) == (409, {"code": "already_member"})
     assert "__Host-session" not in response.cookies
@@ -810,14 +827,22 @@ def test_accepting_checks_the_password_before_the_link(
     token = mint(monkeypatch, people.a, uuid.UUID(created["id"]))
     client = new_client(app)
 
-    short = client.post("/api/invites/accept", json={"token": token, "password": "short"})
+    short = client.post(
+        "/api/invites/accept", json={"token": token, "password": "short", "name": "New Person"}
+    )
     assert (short.status_code, short.json()) == (422, {"code": "password_too_short"})
     assert client.post("/api/invites/lookup", json={"token": token}).status_code == 200
 
-    common = client.post("/api/invites/accept", json={"token": token, "password": "password1234"})
+    common = client.post(
+        "/api/invites/accept",
+        json={"token": token, "password": "password1234", "name": "New Person"},
+    )
     assert (common.status_code, common.json()) == (422, {"code": "password_too_common"})
 
-    dead = client.post("/api/invites/accept", json={"token": "not-a-uuid.x", "password": PASSWORD})
+    dead = client.post(
+        "/api/invites/accept",
+        json={"token": "not-a-uuid.x", "password": PASSWORD, "name": "New Person"},
+    )
     assert (dead.status_code, dead.json()) == (400, {"code": "invalid_token"})
     assert no_hashing == []
 
@@ -831,10 +856,14 @@ def test_accept_rate_limits(
     client = new_client(app, address)
     for _ in range(10):
         response = client.post(
-            "/api/invites/accept", json={"token": "nope.nope", "password": PASSWORD}
+            "/api/invites/accept",
+            json={"token": "nope.nope", "password": PASSWORD, "name": "New Person"},
         )
         assert response.status_code == 400
-    over = client.post("/api/invites/accept", json={"token": "nope.nope", "password": PASSWORD})
+    over = client.post(
+        "/api/invites/accept",
+        json={"token": "nope.nope", "password": PASSWORD, "name": "New Person"},
+    )
     assert over.status_code == 429
 
     # Per account: 10 wrong sign-ins for only_b, from fresh IPs, exhaust its own budget.
@@ -850,7 +879,9 @@ def test_accept_rate_limits(
         .json()
     )
     token = mint(monkeypatch, people.a, uuid.UUID(created["id"]))
-    final = new_client(app).post("/api/invites/accept", json={"token": token, "password": PASSWORD})
+    final = new_client(app).post(
+        "/api/invites/accept", json={"token": token, "password": PASSWORD, "name": "New Person"}
+    )
     assert final.status_code == 429
     with tenant_context(people.a) as session:
         member = session.scalar(
@@ -871,7 +902,9 @@ def test_a_failed_sign_in_leaves_the_invite_unused_and_no_account(
     failing(monkeypatch, auth, "start")
     client = new_client(app)
 
-    response = client.post("/api/invites/accept", json={"token": token, "password": PASSWORD})
+    response = client.post(
+        "/api/invites/accept", json={"token": token, "password": PASSWORD, "name": "New Person"}
+    )
 
     assert response.status_code == 500
     with tenant_context(people.a) as session:
