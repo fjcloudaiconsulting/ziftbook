@@ -9,7 +9,7 @@ process.env.TZ = "America/Sao_Paulo";
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { agendaPhase, applyAnswers, badgeText, declineBody, expiryLabel, mergeAgenda, nowLineAt, relativeAgo, sortQueue } from "../lib/today.ts";
+import { agendaPhase, applyAnswers, badgeText, blockLabel, declineBody, leaveQueue, todayEmpty, expiryLabel, mergeAgenda, nowLineAt, relativeAgo, sortQueue } from "../lib/today.ts";
 import { listWindow } from "../lib/time-off.ts";
 
 const AMS = "Europe/Amsterdam";
@@ -162,5 +162,70 @@ describe("badgeText and relativeAgo", () => {
     assert.deepEqual(relativeAgo("2026-09-30T10:00:00Z", now), { value: -2, unit: "hour" });
     assert.deepEqual(relativeAgo("2026-09-27T12:00:00Z", now), { value: -3, unit: "day" });
     assert.deepEqual(relativeAgo("2026-09-30T12:00:05Z", now), { value: 0, unit: "minute" });
+  });
+});
+
+describe("declineBody strips what the API refuses", () => {
+  test("zero-width joiner, line separators, tabs and carriage returns; newlines stay", () => {
+    assert.deepEqual(declineBody("a\u200Db\u2028c\u2029d\te\rf\ng"), { status: "declined", message: "ab" + "cd e" + "f\ng" });
+  });
+});
+
+describe("sortQueue compares instants, not strings", () => {
+  test("12:00:00Z is before 12:00:00.5Z even though '.' sorts before 'Z'", () => {
+    const rows = [
+      { id: "a", expires_at: "2026-09-30T12:00:00.5Z" },
+      { id: "b", expires_at: "2026-09-30T12:00:00Z" },
+    ];
+    assert.deepEqual(sortQueue(rows).map((r) => r.id), ["b", "a"]);
+  });
+});
+
+describe("leaveQueue (stale closure)", () => {
+  test("two answers in a row, then a refetch: each works from the list as it is now", () => {
+    const answers = new Map();
+    let state = [{ id: "a" }, { id: "b" }, { id: "c" }];
+    answers.set("a", "confirmed");
+    state = leaveQueue(state, answers);
+    // a refetch lands meanwhile with a new row n (and still lists a, which the answers filter)
+    state = leaveQueue([{ id: "a" }, { id: "b" }, { id: "c" }, { id: "n" }], answers);
+    answers.set("b", "declined");
+    state = leaveQueue(state, answers);
+    assert.deepEqual(state.map((r) => r.id), ["c", "n"]);
+    assert.deepEqual(leaveQueue(null, answers), []);
+  });
+});
+
+describe("todayEmpty", () => {
+  test("empty only when both loads worked and both are empty", () => {
+    assert.equal(todayEmpty({ queue: [], items: [], failed: false }), true);
+    assert.equal(todayEmpty({ queue: [], items: [], failed: true }), false);
+    assert.equal(todayEmpty({ queue: null, items: [], failed: false }), false);
+    assert.equal(todayEmpty({ queue: [], items: null, failed: false }), false);
+    assert.equal(todayEmpty({ queue: [1], items: [], failed: false }), false);
+  });
+});
+
+describe("multi-day day block and blockLabel", () => {
+  const win = { from: "2026-09-29T22:00:00.000Z", to: "2026-09-30T22:00:00.000Z" };
+  const min = (iso) => Date.parse(iso);
+  const at = (start, end, allDay = false) => ({ start: min(start), end: min(end), allDay });
+
+  test("a day block that started yesterday is flagged startedBefore by mergeAgenda, yet reads All day", () => {
+    const [item] = mergeAgenda([], [{ id: "t", member_id: "m1", starts_at: null, ends_at: null, first_day: "2026-09-29", last_day: "2026-10-01" }], AMS, win, { role: "owner", memberId: "m1" });
+    assert.equal(item.allDay, true);
+    assert.equal(item.startedBefore, true);
+    assert.deepEqual(blockLabel(item, win, NOW, AMS), { kind: "allDay" });
+  });
+
+  test("timed block: started before and ends today reads until; ends later reads All day", () => {
+    assert.deepEqual(blockLabel(at("2026-09-29T20:00:00Z", "2026-09-30T07:00:00Z"), win, NOW, AMS), { kind: "until", time: "09:00" });
+    assert.deepEqual(blockLabel(at("2026-09-29T20:00:00Z", "2026-10-01T07:00:00Z"), win, NOW, AMS), { kind: "allDay" });
+  });
+
+  test("timed block: inside today shows start and minutes; crossing midnight shows where it ends", () => {
+    assert.deepEqual(blockLabel(at("2026-09-30T10:00:00Z", "2026-09-30T11:00:00Z"), win, NOW, AMS), { kind: "timed", time: "12:00", minutes: 60 });
+    assert.deepEqual(blockLabel(at("2026-09-30T20:00:00Z", "2026-10-01T07:00:00Z"), win, NOW, AMS), { kind: "from", time: "22:00", endsOn: "tomorrow", endInstant: "2026-10-01T07:00:00.000Z", endTime: "09:00" });
+    assert.equal(blockLabel(at("2026-09-30T20:00:00Z", "2026-10-03T07:00:00Z"), win, NOW, AMS).endsOn, "later");
   });
 });

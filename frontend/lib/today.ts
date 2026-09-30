@@ -38,13 +38,14 @@ export function nowLineAt(items: { start: number; end: number }[], now: number):
  * empty one, min_length=1); a tab becomes a space and a carriage return goes, since the API only
  * takes printable text and newlines. */
 export function declineBody(message: string): { status: "declined"; message?: string } {
-  const text = message.replace(/\t/g, " ").replace(/\r/g, "").trim();
+  // Everything the API's multiline() refuses: Unicode C* (controls, zero-width, unassigned), Zl and Zp; "\n" stays.
+  const text = message.replace(/\t/g, " ").replace(/[^\P{C}\n]|[\p{Zl}\p{Zp}]/gu, "").trim();
   return text ? { status: "declined", message: text } : { status: "declined" };
 }
 
 /** Soonest expiry first (the API orders by start), the id as the tie-break. */
 export function sortQueue<T extends { id: string; expires_at: string }>(rows: T[]): T[] {
-  return [...rows].sort((a, b) => (a.expires_at < b.expires_at ? -1 : a.expires_at > b.expires_at ? 1 : a.id < b.id ? -1 : 1));
+  return [...rows].sort((a, b) => Date.parse(a.expires_at) - Date.parse(b.expires_at) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 }
 
 export type Answer = "confirmed" | "declined" | "stale";
@@ -55,6 +56,18 @@ export type Answer = "confirmed" | "declined" | "stale";
 export function applyAnswers<T extends { id: string; status?: string }>(rows: T[], answers: Map<string, Answer>, list: "queue" | "agenda"): T[] {
   if (list === "queue") return rows.filter((row) => !answers.has(row.id));
   return rows.filter((row) => answers.get(row.id) !== "declined").map((row) => (answers.get(row.id) === "confirmed" ? { ...row, status: "confirmed" } : row));
+}
+
+/** The queue after an answer, from the list as it is NOW (a functional state update's current value),
+ * never a click-time snapshot: a snapshot brings an earlier answered row back and overwrites a refetch. */
+export function leaveQueue<T extends { id: string }>(current: T[] | null, answers: Map<string, Answer>): T[] {
+  return applyAnswers(current ?? [], answers, "queue");
+}
+
+/** Nothing to show is only ever true when every load worked: a failure is never an empty day.
+ * `items` is null until the agenda's own data is in. */
+export function todayEmpty(s: { queue: unknown[] | null; items: unknown[] | null; failed: boolean }): boolean {
+  return !s.failed && s.queue !== null && s.items !== null && s.queue.length === 0 && s.items.length === 0;
 }
 
 type BookingLike = { id: string; starts_at: string; ends_at: string };
@@ -91,6 +104,27 @@ export function mergeAgenda<B extends BookingLike, T extends BlockLike>(
     items.push({ kind: "block", key: block.id, start, end, block, allDay, startedBefore: start < from });
   }
   return items.sort((a, b) => a.start - b.start || (a.key < b.key ? -1 : 1));
+}
+
+export type BlockLabel =
+  | { kind: "allDay" }
+  | { kind: "until"; time: string }
+  | { kind: "timed"; time: string; minutes: number }
+  | { kind: "from"; time: string; endsOn: "tomorrow" | "later"; endInstant: string; endTime: string };
+
+/** How a blocked-time row's time column reads in the day window. A day block is always "All day"
+ * (even a multi-day one that began yesterday); a timed block that began before today reads "until
+ * {end}" if it ends today and "All day" if it runs past today; one that starts today and ends after
+ * it shows its start plus where it ends, never a multi-day duration. */
+export function blockLabel(item: { start: number; end: number; allDay: boolean }, window: { from: string; to: string }, now: Date, tz: string): BlockLabel {
+  if (item.allDay) return { kind: "allDay" };
+  const startISO = new Date(item.start).toISOString();
+  const endISO = new Date(item.end).toISOString();
+  const endsToday = item.end <= new Date(window.to).getTime();
+  if (item.start < new Date(window.from).getTime()) return endsToday ? { kind: "until", time: localTime(endISO, tz) } : { kind: "allDay" };
+  if (endsToday) return { kind: "timed", time: localTime(startISO, tz), minutes: Math.round((item.end - item.start) / 60_000) };
+  const endsOn = dayRelation(endISO, now, tz) === "tomorrow" ? "tomorrow" : "later";
+  return { kind: "from", time: localTime(startISO, tz), endsOn, endInstant: endISO, endTime: localTime(endISO, tz) };
 }
 
 /** The nav badge's text: a count over 99 reads "99+". */
