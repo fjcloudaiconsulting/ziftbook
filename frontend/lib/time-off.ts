@@ -156,7 +156,7 @@ export function patchBody(initial: BlockForm, current: BlockForm): Patch {
 }
 
 /** "Today" as a plain YYYY-MM-DD, in `tz` rather than the runner's own zone. */
-function localDateISO(instant: Date, tz: string): string {
+export function localDateISO(instant: Date, tz: string): string {
   const parts = new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(instant);
   const map = Object.fromEntries(parts.map((p) => [p.type, p.value]));
   return `${map.year}-${map.month}-${map.day}`;
@@ -165,7 +165,7 @@ function localDateISO(instant: Date, tz: string): string {
 /** A calendar date `days` after `dateISO`, plain date arithmetic (no zone involved, and never a
  * fixed 24h-per-day offset: a calendar day near a DST change can be 23 or 25 real hours, so a
  * caller adding `n * 86_400_000` ms can land on the wrong calendar date entirely). */
-function addDaysISO(dateISO: string, days: number): string {
+export function addDaysISO(dateISO: string, days: number): string {
   const [y, m, d] = dateISO.split("-").map(Number);
   const date = new Date(Date.UTC(y, m - 1, d + days));
   return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
@@ -199,7 +199,7 @@ export type BlockLabel =
   | { kind: "partialRange"; from: string; to: string; start: string; end: string };
 
 /** "HH:MM" in `tz`, from an instant. */
-function localTime(instant: string, tz: string): string {
+export function localTime(instant: string, tz: string): string {
   return new Intl.DateTimeFormat("en-GB", { timeZone: tz, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date(instant));
 }
 
