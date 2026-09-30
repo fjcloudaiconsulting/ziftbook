@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { actionsFor, closedDay, daySlices, dayWindow, historyLabel, hourRange, hrefFor, lanes, nowTop, parseView, visibleDays, weekStart, weekdayOf, whenParts } from "../lib/calendar.ts";
+import { actionsFor, closedDay, closedDetail, isWaiting, spanTimes, telHref, daySlices, dayWindow, historyLabel, hourRange, hrefFor, lanes, nowTop, parseView, visibleDays, weekStart, weekdayOf, whenParts } from "../lib/calendar.ts";
 
 const AMS = "Europe/Amsterdam";
 const at = (iso) => new Date(iso).getTime();
@@ -91,6 +91,21 @@ describe("lanes (F5)", () => {
       { lane: 0, of: 1 },
     ]);
   });
+  test("a clustered 10-11, 10-11 and a following 11-12: the third is full width again", () => {
+    assert.deepEqual(lanes([span(10, 11), span(10, 11), span(11, 12)]), [
+      { lane: 0, of: 2 },
+      { lane: 1, of: 2 },
+      { lane: 0, of: 1 },
+    ]);
+  });
+  test("two back-to-back 15-minute bookings are drawn 23 minutes tall and so take lanes", () => {
+    const slices = [at("2026-09-30T08:00:00Z"), at("2026-09-30T08:15:00Z")].flatMap((start) => daySlices({ start, end: start + 15 * 60_000 }, ["2026-09-30"], AMS));
+    assert.deepEqual(slices.map((s) => s.end - s.start), [23, 23]);
+    assert.deepEqual(lanes(slices), [
+      { lane: 0, of: 2 },
+      { lane: 1, of: 2 },
+    ]);
+  });
   test("02:15 before and after the clocks go back are two bookings side by side", () => {
     const first = at("2026-10-25T00:15:00Z"); // 02:15 CEST
     const second = at("2026-10-25T01:15:00Z"); // 02:15 CET
@@ -158,6 +173,10 @@ describe("historyLabel (F8)", () => {
     assert.equal(label([ev("created"), ev("confirmed")], 1).key, "historyAccepted");
     assert.equal(label([ev("created"), ev("confirmed"), ev("completed"), ev("confirmed")], 3).key, "historyUndone");
   });
+  test("an undo is read against the previous status event, not the previous event", () => {
+    const events = [ev("created"), ev("confirmed"), ev("completed"), ev("consent_confirmed"), ev("confirmed")];
+    assert.equal(label(events, 4).key, "historyUndone");
+  });
   test("rescheduled shows the business zone times and which change it is", () => {
     const moved = (from, to) => ev("rescheduled", { actor: "client", actor_name: null, details: { from, to } });
     const events = [ev("created"), moved("2026-09-29T11:00:00Z", "2026-09-29T12:00:00Z"), moved("2026-09-30T22:30:00Z", "2026-10-01T08:00:00Z")];
@@ -224,8 +243,11 @@ describe("parseView (F9)", () => {
     assert.equal(parse("member=ghost", "owner", ["abc"]).member, "all");
     assert.equal(parse("member=ghost", "owner", null).member, "ghost");
   });
-  test("booking passes through, absent is null", () => {
-    assert.equal(parse("booking=b1").booking, "b1");
+  test("booking passes through when it is a UUID, anything else or absent is null", () => {
+    const id = "0b6f3c1e-8a4d-4f1e-9c2b-5d7e8f9a0b1c";
+    assert.equal(parse(`booking=${id}`).booking, id);
+    assert.equal(parse("booking=b1").booking, null);
+    assert.equal(parse("booking=").booking, null);
     assert.equal(parse("").booking, null);
   });
 });
@@ -235,14 +257,14 @@ describe("parseView panel state (F24)", () => {
   const parse = (query, role = "owner", members) => parseView(new URLSearchParams(query), TODAY, role, "me", members);
   const AT = "2026-09-30T13:30:00.000Z";
   test("new and block carry at and with, and drop the open booking", () => {
-    const v = parse(`panel=new&booking=b1&at=${AT}&with=abc`, "owner", ["abc"]);
+    const v = parse(`panel=new&booking=0b6f3c1e-8a4d-4f1e-9c2b-5d7e8f9a0b1c&at=${AT}&with=abc`, "owner", ["abc"]);
     assert.deepEqual([v.panel, v.booking, v.at, v.with], ["new", null, AT, "abc"]);
-    assert.equal(parse(`panel=block&booking=b1`).booking, null);
+    assert.equal(parse(`panel=block&booking=0b6f3c1e-8a4d-4f1e-9c2b-5d7e8f9a0b1c`).booking, null);
   });
   test("move without a booking is no panel at all", () => {
     assert.equal(parse("panel=move").panel, null);
-    assert.equal(parse("panel=move&booking=b1").panel, "move");
-    assert.equal(parse("panel=move&booking=b1").booking, "b1");
+    assert.equal(parse("panel=move&booking=0b6f3c1e-8a4d-4f1e-9c2b-5d7e8f9a0b1c").panel, "move");
+    assert.equal(parse("panel=move&booking=0b6f3c1e-8a4d-4f1e-9c2b-5d7e8f9a0b1c").booking, "0b6f3c1e-8a4d-4f1e-9c2b-5d7e8f9a0b1c");
   });
   test("an unknown panel is none", () => {
     assert.equal(parse("panel=delete").panel, null);
@@ -345,5 +367,66 @@ describe("visibleDays and whenParts", () => {
     // 23:30 - 00:30 Amsterdam: still the 30th at the start, ends the next local day
     assert.deepEqual(whenParts("2026-09-30T21:30:00Z", "2026-09-30T22:30:00Z", now, AMS), { today: true, startTime: "23:30", endTime: "00:30", endsLater: true });
     assert.equal(whenParts("2026-10-01T08:00:00Z", "2026-10-01T09:00:00Z", now, AMS).today, false);
+  });
+});
+
+describe("spanTimes", () => {
+  test("a 5-minute block reads its real end, not the padded slice end", () => {
+    const item = { start: at("2026-09-30T10:30:00Z"), end: at("2026-09-30T10:35:00Z") }; // 12:30 - 12:35 Amsterdam
+    assert.deepEqual(spanTimes(item, AMS), { start: "12:30", end: "12:35" });
+    assert.equal(daySlices(item, ["2026-09-30"], AMS)[0].end, 12 * 60 + 30 + 23);
+  });
+  test("it follows the business zone, a +14 zone included", () => {
+    const item = { start: at("2026-09-30T10:00:00Z"), end: at("2026-09-30T10:05:00Z") };
+    assert.deepEqual(spanTimes(item, "Pacific/Kiritimati"), { start: "00:00", end: "00:05" });
+  });
+});
+
+describe("isWaiting", () => {
+  const history = (...events) => events.map((event) => ({ event }));
+  test("the created line of a live pending waits, even after a consent confirmation", () => {
+    const d = { status: "pending", expired: false, history: history("created", "consent_confirmed") };
+    assert.equal(isWaiting(d, 0), true);
+    assert.equal(isWaiting(d, 1), false);
+  });
+  test("a lapsed or answered booking waits for nobody", () => {
+    assert.equal(isWaiting({ status: "pending", expired: true, history: history("created") }, 0), false);
+    assert.equal(isWaiting({ status: "confirmed", expired: false, history: history("created", "confirmed") }, 0), false);
+  });
+});
+
+describe("closedDetail", () => {
+  const open = { view: "day", date: "2026-09-30", member: "all", booking: "b1" };
+  test("closing the booking in the same window is a close", () => {
+    assert.equal(closedDetail(open, { ...open, booking: null }), true);
+  });
+  test("a new date, view or member dropping the booking is not", () => {
+    assert.equal(closedDetail(open, { ...open, booking: null, date: "2026-10-01" }), false);
+    assert.equal(closedDetail(open, { ...open, booking: null, view: "week" }), false);
+    assert.equal(closedDetail(open, { ...open, booking: null, member: "m2" }), false);
+  });
+  test("nothing was open, or one still is: no close", () => {
+    assert.equal(closedDetail(null, { ...open, booking: null }), false);
+    assert.equal(closedDetail({ ...open, booking: null }, { ...open, booking: null }), false);
+    assert.equal(closedDetail(open, { ...open, booking: "b2" }), false);
+  });
+});
+
+describe("telHref", () => {
+  test("keeps only + and digits", () => {
+    assert.equal(telHref("+31 (0)6 1234-5678"), "tel:+310612345678");
+  });
+  test("no digits, no link", () => {
+    assert.equal(telHref("ask at the desk"), null);
+    assert.equal(telHref("+"), null);
+  });
+});
+
+describe("historyLabel in a +14 zone", () => {
+  test("the moved times and days are the business zone's, and the instants ride along", () => {
+    const from = "2026-09-30T09:00:00Z"; // 23:00 on the 30th in Kiritimati
+    const to = "2026-09-30T11:00:00Z"; // 01:00 on Oct 1st
+    const l = historyLabel([{ event: "rescheduled", at: from, actor_name: null, details: { from, to } }], 0, "booking_page", 2, "Pacific/Kiritimati");
+    assert.deepEqual([l.params.fromTime, l.params.fromDate, l.params.toDate, l.params.from, l.params.sameDay], ["23:00", "2026-09-30", "2026-10-01", from, false]);
   });
 });
