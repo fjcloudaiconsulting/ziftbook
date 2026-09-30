@@ -511,16 +511,21 @@ def test_f19_a_move_back_is_a_new_confirmation(
 def test_f20_moving_to_another_member_updates_the_snapshot(
     people: People, app: FastAPI, owner: TestClient, team: str
 ) -> None:
+    with tenant_context(people.a) as session:
+        session.execute(
+            text("UPDATE memberships SET display_name = :n WHERE id = :m"),
+            [
+                {"n": "Boss", "m": boss(people)},
+                {"n": "Ana", "m": ana_id(people)},
+            ],
+        )
     booking_id = book(owner, team, member_id=boss(people)).json()["id"]
+    assert row_of(people.a, booking_id)["worker_display_name"] == "Boss"
     response = move(owner, booking_id, starts_at=at("09:00"), member_id=ana_id(people))
     assert response.status_code == 200, response.json()
     row = row_of(people.a, booking_id)
     assert row["worker_id"] == ana_id(people)
-    with tenant_context(people.a) as session:
-        name = session.scalar(
-            text("SELECT display_name FROM memberships WHERE id = :m"), {"m": ana_id(people)}
-        )
-    assert row["worker_display_name"] == name
+    assert row["worker_display_name"] == "Ana"
 
 
 # Sign-off r1. Kills: a member the service does not use (override must not bypass candidates).
