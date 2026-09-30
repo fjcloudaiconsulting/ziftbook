@@ -5406,6 +5406,20 @@
               "no_show"
             ],
             "title": "Status"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1000,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message",
+            "description": "Only with status `declined`: sent to the client in the decline email."
           }
         },
         "additionalProperties": false,

@@ -264,7 +264,7 @@ LINKED = frozenset({"booking_received", "booking_confirmed", "booking_reminder"}
 BOOKING = text("""
 SELECT c.email AS client_email, c.locale AS client_locale, c.name AS client_name,
        t.name AS business, b.client_id, b.status, b.starts_at, b.ends_at, b.expires_at,
-       b.service_name, b.reschedule_count, now() AS now
+       b.service_name, b.reschedule_count, b.decline_message, now() AS now
 FROM bookings b
 JOIN clients c ON c.tenant_id = b.tenant_id AND c.id = b.client_id
 JOIN tenants t ON t.id = b.tenant_id
@@ -279,6 +279,17 @@ VALUES (:hash, current_setting('app.tenant_id')::uuid, :booking_id)
 MERCHANT = text("""
 SELECT u.email, u.locale FROM users u JOIN memberships m ON m.user_id = u.id WHERE u.id = :id
 """)
+
+
+def _quoted(message: str) -> str:
+    """Every line prefixed "> " (a blank one is ">"), a run of blank lines collapsed to one."""
+    lines: list[str] = []
+    for line in message.split("\n"):
+        if line.strip():
+            lines.append(f"> {line}")
+        elif lines[-1:] != [">"]:
+            lines.append(">")
+    return "\n".join(lines)
 
 
 def _local_text(value: dict[str, str], locale: str) -> str:
@@ -436,7 +447,14 @@ def send_booking(job: Job) -> None:
             values["expires"] = (
                 expires_local.strftime(f"{DATE_FORMAT[locale]} %H:%M") + f" ({zone})"
             )
-        subject, body = render(template, locale, values)
+        file = template
+        if template == "booking_declined" and row.decline_message is not None:
+            # ZIF-121: only the file rendered differs. `template` stays booking_declined for
+            # STATUS_FOR, the outbox row and the log. The text is a value, never rescanned, and
+            # quoted so a merchant cannot pass their words off as the platform's own footer.
+            file = "booking_declined_message"
+            values["message"] = _quoted(row.decline_message)
+        subject, body = render(file, locale, values)
         status = _outbox(session, job, recipient_id, template, subject)
         if status == "pending" and token is not None:
             session.execute(
