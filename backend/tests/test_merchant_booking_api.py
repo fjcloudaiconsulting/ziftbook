@@ -13,7 +13,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from httpx2 import Response
-from sqlalchemy import Engine, text
+from sqlalchemy import Engine, event, text
 
 from app.db import tenant_context
 from tests.conftest import (
@@ -425,19 +425,26 @@ def test_f14_a_move_keeps_the_clients_allowance_and_records_the_team(
     app_engine: Engine,
     owner: TestClient,
     ready: str,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     booking_id = book(owner, ready, member_id=boss(people)).json()["id"]
-    # A session that hands timestamps back in Amsterdam time (libpq reads PGTZ at connect), so only
-    # an explicit .astimezone(UTC) yields +00:00; a UTC session would pass either way.
-    monkeypatch.setenv("PGTZ", "Europe/Amsterdam")
-    app_engine.dispose()
+    # A session that hands timestamps back in Amsterdam time, so only an explicit .astimezone(UTC)
+    # yields +00:00; a UTC session would pass either way. Set on each new connection and committed,
+    # so the pool's reset-on-return rollback can't undo it.
     from app.db import SessionLocal
 
-    SessionLocal.kw["bind"].dispose()
-    response = move(owner, booking_id, starts_at=at("11:00"))
-    monkeypatch.delenv("PGTZ")
-    SessionLocal.kw["bind"].dispose()  # no Amsterdam connections left in the shared pool
+    engine = SessionLocal.kw["bind"]
+
+    def amsterdam(dbapi_connection: Any, _record: object) -> None:
+        dbapi_connection.execute("SET TIME ZONE 'Europe/Amsterdam'")
+        dbapi_connection.commit()
+
+    event.listen(engine, "connect", amsterdam)
+    engine.dispose()
+    try:
+        response = move(owner, booking_id, starts_at=at("11:00"))
+    finally:
+        event.remove(engine, "connect", amsterdam)
+        engine.dispose()  # no Amsterdam connections left in the shared pool
     assert response.status_code == 200, response.json()
     assert datetime.fromisoformat(response.json()["starts_at"]) == datetime.fromisoformat(
         at("11:00").replace("Z", "+00:00")
