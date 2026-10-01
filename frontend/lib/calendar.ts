@@ -7,7 +7,10 @@ import { addDaysISO, localDateISO, localTime, localToInstant } from "./time-off.
 export type Role = "owner" | "worker";
 export type View = "day" | "week";
 
-const MIN_MINUTES = 15; // the shortest an item is drawn (and packed): keeps a 5-minute block, or a fall-back hour that reads 02:15 to 02:15, visible
+// The shortest an item is drawn and packed: the 24px tap target at 64px an hour is 22.5 minutes, so two
+// back-to-back 15-minute bookings take lanes instead of overlapping under their minimum height. It also
+// keeps a 5-minute block, or a fall-back hour that reads 02:15 to 02:15, visible.
+const MIN_MINUTES = 23;
 
 /** ISO weekday of a YYYY-MM-DD: Monday 1 .. Sunday 7. Plain UTC arithmetic, never the runner's zone. */
 export function weekdayOf(dateISO: string): number {
@@ -45,7 +48,27 @@ export function whenParts(startISO: string, endISO: string, now: Date, tz: strin
   };
 }
 
-export type Slice = { day: string; start: number; end: number };
+/** The clock times of an item's real instants in `tz`, for its accessible name: a slice's end is padded
+ * to MIN_MINUTES for drawing and must never be read out. */
+export function spanTimes(
+  item: { start: number; end: number },
+  tz: string,
+  day: string,
+): { start: string; end: string; startDay: string | null; endDay: string | null; allDay: boolean } {
+  const startDay = localDateISO(new Date(item.start), tz);
+  const endDay = localDateISO(new Date(item.end - 1), tz);
+  return {
+    start: localTime(new Date(item.start).toISOString(), tz),
+    end: localTime(new Date(item.end).toISOString(), tz),
+    // The other day, when the block starts or ends on one; null when it is this column's day.
+    startDay: startDay === day ? null : startDay,
+    endDay: endDay === day ? null : endDay,
+    allDay: startDay < day && endDay > day,
+  };
+}
+
+/** `end` is padded to MIN_MINUTES for drawing and packing; `realEnd` is where the item really ends. */
+export type Slice = { day: string; start: number; end: number; realEnd: number };
 
 function localMinutes(instant: number, tz: string): number {
   const [h, m] = localTime(new Date(instant).toISOString(), tz).split(":").map(Number);
@@ -63,7 +86,7 @@ export function daySlices(item: { start: number; end: number }, days: string[], 
     if (item.end <= dayStart || item.start >= nextStart) continue;
     const start = localMinutes(Math.max(item.start, dayStart), tz);
     const end = item.end >= nextStart ? 1440 : localMinutes(item.end, tz);
-    slices.push({ day, start, end: Math.max(end, Math.min(1440, start + MIN_MINUTES)) });
+    slices.push({ day, start, end: Math.max(end, Math.min(1440, start + MIN_MINUTES)), realEnd: end });
   }
   return slices;
 }
@@ -212,7 +235,7 @@ export function historyLabel(
       }
       const fromDate = localDateISO(new Date(from), tz);
       const toDate = localDateISO(new Date(to), tz);
-      const parts = { fromTime: localTime(from, tz), toTime: localTime(to, tz), fromDate, toDate, sameDay: fromDate === toDate };
+      const parts = { fromTime: localTime(from, tz), toTime: localTime(to, tz), from, to, fromDate, toDate, sameDay: fromDate === toDate };
       // The business moving a booking does not spend the client's changes: no "k of max", and k counts theirs only.
       if (e.actor === "team") return { key: "historyMovedTeam", params: { actor, ...parts } };
       const k = events.slice(0, i + 1).filter((x) => x.event === "rescheduled" && x.actor !== "team").length;
@@ -223,8 +246,25 @@ export function historyLabel(
   }
 }
 
+/** Whether a booking's line reads "waiting for your answer since then": the `created` line of a booking
+ * still live pending, whatever happened after (a consent confirmation does not answer it). */
+export function isWaiting(detail: { status: string; expired: boolean; history: { event: string }[] }, i: number): boolean {
+  return detail.status === "pending" && !detail.expired && detail.history[i].event === "created";
+}
+
+/** A `tel:` link from free-text phone input: only `+` and digits survive, nothing to dial is no link. */
+export function telHref(phone: string): string | null {
+  // "+31 (0)6 ...": the bracketed trunk 0 is never dialled after a country code; an extension
+  // ("ext 89", "x12", ";89") is not part of the number.
+  const number = phone.replace(/\(0\)/g, "").split(/\s*(?:ext\.?|x|;|,)\s*\d*$/i)[0];
+  const dial = number.replace(/[^+\d]/g, "");
+  return /\d/.test(dial) ? `tel:${dial}` : null;
+}
+
 export type Panel = "new" | "block" | "move";
 export type CalendarView = { view: View; date: string; member: string; booking: string | null; panel: Panel | null; at: string | null; with: string | null };
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function validDate(value: string | null): value is string {
   return value !== null && /^\d{4}-\d{2}-\d{2}$/.test(value) && addDaysISO(value, 0) === value;
@@ -246,7 +286,8 @@ export function parseView(params: { get(name: string): string | null }, todayISO
   let member = role === "worker" ? selfId : (asked ?? "all");
   if (role === "owner" && member !== "all" && memberIds && !memberIds.includes(member)) member = "all";
   const wanted = params.get("panel");
-  let booking = params.get("booking") || null;
+  const asBooking = params.get("booking");
+  let booking = asBooking !== null && UUID.test(asBooking) ? asBooking : null;
   let panel: Panel | null = wanted === "new" || wanted === "block" || wanted === "move" ? wanted : null;
   if (panel === "move" && !booking) panel = null;
   if (panel === "new" || panel === "block") booking = null;
@@ -265,6 +306,12 @@ export function parseView(params: { get(name: string): string | null }, todayISO
     at: prefill ? validInstant(params.get("at")) : null,
     with: withMember,
   };
+}
+
+/** A real close of the open booking (✕, Back, the browser's Back): it was open and now is not, in the
+ * same window. A new date, view or member drops it too, but that is navigation, not a close. */
+export function closedDetail(before: CalendarView | null, now: CalendarView): boolean {
+  return Boolean(before?.booking) && !now.booking && before!.date === now.date && before!.view === now.view && before!.member === now.member;
 }
 
 /** A calendar URL (no locale: the locale-aware Link adds it). Whatever the patch does not name is

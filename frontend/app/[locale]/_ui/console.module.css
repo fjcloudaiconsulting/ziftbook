@@ -501,7 +501,7 @@ a.newPhone { display: flex; }
 
 /* Status chips: shape, icon and word, never colour alone. On phone the word is srOnly (board 2). */
 .chip { display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.15rem 0.6rem; border-radius: 999px; font: 600 0.8125rem/1.5 var(--font-body), system-ui, sans-serif; border: 1px solid var(--line); background: var(--bg); color: var(--muted); white-space: nowrap; }
-.chipWait { border: 1.5px dashed oklch(0.42 0.08 70); color: oklch(0.42 0.08 70); background: var(--note-soft); }
+.chipWait { border: 1.5px dashed var(--note-ink); color: var(--note-ink); background: var(--note-soft); }
 .chipOk { color: var(--ok); border-color: oklch(0.85 0.06 152); background: oklch(0.97 0.025 152); }
 .chipOff { background: var(--surface); }
 @media (max-width: 55.999rem) {

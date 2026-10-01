@@ -18,6 +18,9 @@
   --ok: oklch(0.47 0.11 152);
   --note-soft: oklch(0.97 0.012 80);
   --note-line: oklch(0.88 0.05 80);
+  --note-ink: oklch(0.42 0.08 70);
+  --primary-soft: oklch(0.96 0.025 28);
+  --primary-line: oklch(0.82 0.08 28);
 
   --gutter: clamp(1.25rem, 0.6rem + 3vw, 3.5rem);
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);

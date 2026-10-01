@@ -1,11 +1,11 @@
 "use client";
 
 import { useLocale, useTranslations } from "next-intl";
-import { type MouseEvent, useEffect, useRef, useState } from "react";
+import { type MouseEvent, type ReactNode, useEffect, useRef, useState } from "react";
 
 import { type BookingDetailOut, bookingApprovalsRead, bookingApprovalsUpdate } from "@/api-client";
 import { Link } from "@/i18n/navigation";
-import { type Action, actionsFor, historyLabel, whenParts } from "@/lib/calendar";
+import { type Action, actionsFor, historyLabel, isWaiting, telHref, whenParts } from "@/lib/calendar";
 import { dateLocale } from "@/lib/console";
 import { formatMoney } from "@/lib/money";
 import { type Locale, type NameMap, serviceName } from "@/lib/services";
@@ -163,7 +163,7 @@ export function BookingDetail({
   const ready = detail !== null && detail.id === id ? detail : null;
   const failed = load !== null && load.id === id ? load : null;
   const dateFormat = new Intl.DateTimeFormat(dateLocale(locale), { weekday: "short", day: "numeric", month: "short", timeZone: tz });
-  const dayOf = (iso: string) => dateFormat.format(new Date(`${iso}T12:00:00Z`));
+  const dayOf = (instant: unknown) => dateFormat.format(new Date(String(instant)));
   const stamp = (instant: string) => `${dateFormat.format(new Date(instant))} ${localTime(instant, tz)}`;
 
   function when(d: BookingDetailOut): string {
@@ -180,11 +180,11 @@ export function BookingDetail({
     const text = t(key, {
       actor: (params.actor as string | null) ?? t("aTeamMember"),
       client: d.client_name,
-      from: moved ? (params.sameDay ? `${params.fromTime}` : `${dayOf(String(params.fromDate))} ${params.fromTime}`) : "",
-      to: moved ? (params.sameDay ? `${params.toTime}` : `${dayOf(String(params.toDate))} ${params.toTime}`) : "",
+      from: moved ? (params.sameDay ? `${params.fromTime}` : `${dayOf(params.from)} ${params.fromTime}`) : "",
+      to: moved ? (params.sameDay ? `${params.toTime}` : `${dayOf(params.to)} ${params.toTime}`) : "",
     });
     const latest = i === d.history.length - 1;
-    const waiting = latest && d.status === "pending" && !d.expired && d.history[i].event === "created";
+    const waiting = isWaiting(d, i);
     const small = waiting
       ? t("historyWaiting", { when: stamp(at) })
       : key === "historyMoved"
@@ -205,15 +205,15 @@ export function BookingDetail({
     return (
       <p className={css.expiry}>
         <span aria-hidden="true">{"◷ "}</span>
-        {today.rich(key, { time, date: dateFormat.format(new Date(d.expires_at)), long: (chunks) => <span>{chunks}</span> })}
+        {t(key, { time, date: dateFormat.format(new Date(d.expires_at)) })}
       </p>
     );
   }
 
-  const button = (action: Exclude<Action, "reschedule">, label: string, variant: "primary" | "secondary", extra = "", onClick?: () => void, buttonId?: string) => (
+  const button = (action: Exclude<Action, "reschedule">, label: ReactNode, variant: "primary" | "secondary" | "danger", extra = "", onClick?: () => void, buttonId?: string) => (
     <button
       id={buttonId}
-      className={`${uiStyles.button} ${uiStyles[variant]} ${uiStyles.small} ${extra}`}
+      className={`${uiStyles.button} ${variant === "danger" ? styles.danger : uiStyles[variant]} ${uiStyles.small} ${extra}`}
       type="button"
       aria-disabled={busy || undefined}
       onClick={() => !busy && (onClick ?? (() => act(action)))()}
@@ -257,7 +257,7 @@ export function BookingDetail({
         {has("accept") && expiryLine(d)}
         {(has("completed") || has("restore")) && (
           <div className={css.split}>
-            {has("restore") ? button("restore", t("restoreAction"), "primary") : button("completed", t("completedAction"), "primary")}
+            {has("restore") ? button("restore", t("restoreAction"), "primary") : button("completed", <><span aria-hidden="true">{"✓ "}</span>{t("completedAction")}</>, "primary")}
             {has("no_show") && button("no_show", t("noShowAction"), "secondary")}
           </div>
         )}
@@ -269,7 +269,7 @@ export function BookingDetail({
                 {t("rescheduleAction")}
               </Link>
             )}
-            {has("cancel") && button("cancel", t("cancelAction"), "secondary", css.danger, openCancel, "detail-cancel")}
+            {has("cancel") && button("cancel", t("cancelAction"), "danger", "", openCancel, "detail-cancel")}
           </div>
         )}
         {has("cancel") && cancelling && (
@@ -337,7 +337,7 @@ export function BookingDetail({
               <>
                 <dt>{t("factPhone")}</dt>
                 <dd>
-                  <a href={`tel:${ready.client_phone}`}>{ready.client_phone}</a>
+                  {telHref(ready.client_phone) ? <a href={telHref(ready.client_phone)!}>{ready.client_phone}</a> : ready.client_phone}
                 </dd>
               </>
             )}
@@ -350,7 +350,9 @@ export function BookingDetail({
             {ready.client_note && (
               <>
                 <dt>{t("factNote")}</dt>
-                <dd>{ready.client_note}</dd>
+                <dd>
+                  <q>{ready.client_note}</q>
+                </dd>
               </>
             )}
           </dl>
