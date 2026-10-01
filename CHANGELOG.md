@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.20.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.19.0...v0.20.0) (2026-10-01)
+
+
+### Features
+
+* **backend:** a declined client reads the business's message in their email (ZIF-121) ([#138](https://github.com/fjcloudaiconsulting/ziftbook/issues/138)) ([d6c8d73](https://github.com/fjcloudaiconsulting/ziftbook/commit/d6c8d735826b079cfd925dbb43b4033ae5a16a20))
+* **backend:** the worker settles expired pending bookings on its own (ZIF-122) ([#136](https://github.com/fjcloudaiconsulting/ziftbook/issues/136)) ([b21c3b3](https://github.com/fjcloudaiconsulting/ziftbook/commit/b21c3b39e00134e7062c5a2e1d46dcbfcd468eed))
+* everyone gives a name when they create an account (ZIF-131) ([#139](https://github.com/fjcloudaiconsulting/ziftbook/issues/139)) ([90117c6](https://github.com/fjcloudaiconsulting/ziftbook/commit/90117c6e5be32b9667fada839fc125601eb33037))
+* **frontend:** owners change their business and booking settings in one place (ZIF-42) ([#140](https://github.com/fjcloudaiconsulting/ziftbook/issues/140)) ([0cb7b25](https://github.com/fjcloudaiconsulting/ziftbook/commit/0cb7b2516a5b33413eae53ca3857d0dd91f97d01))
+* **frontend:** owners see their calendar and act on a booking from it (ZIF-57) ([#143](https://github.com/fjcloudaiconsulting/ziftbook/issues/143)) ([30f7b8b](https://github.com/fjcloudaiconsulting/ziftbook/commit/30f7b8b0730b01e5365c0b791b52c116e0f39372))
+* **frontend:** owners set cancelling rules and team hours in Settings (ZIF-42) ([#141](https://github.com/fjcloudaiconsulting/ziftbook/issues/141)) ([ad2c78a](https://github.com/fjcloudaiconsulting/ziftbook/commit/ad2c78a5a8df3a76cb2c5273ff82859572805414))
+* owners and team book walk-ins, move bookings and block time from the calendar (ZIF-57) ([#145](https://github.com/fjcloudaiconsulting/ziftbook/issues/145)) ([5d3ded7](https://github.com/fjcloudaiconsulting/ziftbook/commit/5d3ded718fab5b06de9f1007ec0dc13096077dc0))
+* owners answer requests and see their day on Today (ZIF-57) ([#142](https://github.com/fjcloudaiconsulting/ziftbook/issues/142)) ([1786de6](https://github.com/fjcloudaiconsulting/ziftbook/commit/1786de689c09f16cf1271cf2a470727b0a0cc029))
+
+
+### Bug Fixes
+
+* **backend:** a client can move their booking into a slot a lapsed request was holding (ZIF-57) ([#144](https://github.com/fjcloudaiconsulting/ziftbook/issues/144)) ([7fe3fc4](https://github.com/fjcloudaiconsulting/ziftbook/commit/7fe3fc4a577535717235473ee7db5f45691437f2))
+* **frontend:** land the calendar review fixes left out of [#143](https://github.com/fjcloudaiconsulting/ziftbook/issues/143) (ZIF-57) ([#146](https://github.com/fjcloudaiconsulting/ziftbook/issues/146)) ([710fe47](https://github.com/fjcloudaiconsulting/ziftbook/commit/710fe47dd3814b6c0e73415be8fdfb5f6bc54e67))
+
 ## [0.19.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.18.1...v0.19.0) (2026-09-29)
 
 
