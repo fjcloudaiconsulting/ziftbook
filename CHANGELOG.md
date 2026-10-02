@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.20.1](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.20.0...v0.20.1) (2026-10-02)
+
+
+### Bug Fixes
+
+* **deps:** update dependency psycopg to v3.3.6 ([#153](https://github.com/fjcloudaiconsulting/ziftbook/issues/153)) ([06137a5](https://github.com/fjcloudaiconsulting/ziftbook/commit/06137a53902c36cd37b604340b70d12fe69ebfb7))
+
 ## [0.20.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.19.0...v0.20.0) (2026-10-01)
 
 
