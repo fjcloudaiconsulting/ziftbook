@@ -45,7 +45,7 @@ jobs:
         working-directory: backend
     services:
       postgres:
-        image: postgres:18
+        image: postgres:18@sha256:5a5a84b19854a9ffaa54082c166ff4ec27473a361e496e5ea167f298f2da9722
         env:
           POSTGRES_USER: ziftbook
           POSTGRES_PASSWORD: ziftbook
@@ -58,7 +58,7 @@ jobs:
           --health-timeout 3s
           --health-retries 30
       mailpit:
-        image: axllent/mailpit:v1.31.1
+        image: axllent/mailpit:v1.31.1@sha256:98b916bd3c8d61f7633a52d3ea2f58d00620cb01ca57ab59edde68c347a95365
         ports:
           - 1025:1025
           - 8025:8025
