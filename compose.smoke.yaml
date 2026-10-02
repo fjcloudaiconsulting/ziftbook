@@ -13,9 +13,10 @@ services:
       timeout: 3s
       retries: 30
 
-  # Creates the database roles; idempotent.
+  # Creates the database roles; idempotent. Only runs with the migrations (profile migrate), so `up --wait` never sees an exited service.
   db-init:
     image: postgres:18
+    profiles: [migrate]
     depends_on:
       postgres:
         condition: service_healthy
