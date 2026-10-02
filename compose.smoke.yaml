@@ -2,7 +2,7 @@
 # throwaway literals for a database that lives for one CI run.
 services:
   postgres:
-    image: postgres:18
+    image: postgres:18@sha256:5a5a84b19854a9ffaa54082c166ff4ec27473a361e496e5ea167f298f2da9722
     environment:
       POSTGRES_USER: ziftbook
       POSTGRES_PASSWORD: smoke
@@ -15,7 +15,7 @@ services:
 
   # Creates the database roles; idempotent. Only runs with the migrations (profile migrate), so `up --wait` never sees an exited service.
   db-init:
-    image: postgres:18
+    image: postgres:18@sha256:5a5a84b19854a9ffaa54082c166ff4ec27473a361e496e5ea167f298f2da9722
     profiles: [migrate]
     depends_on:
       postgres:
