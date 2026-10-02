@@ -19,8 +19,10 @@ jobs:
     name: Repo checks
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
       - run: sh .githooks/commit-msg.test.sh
@@ -70,8 +72,10 @@ jobs:
       ZIF_SMTP_PORT: "1025"
       ZIF_SMTP_STARTTLS: "false"
     steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
         with:
           version: "0.12.13"
           enable-cache: true
@@ -98,10 +102,10 @@ jobs:
     strategy:
       matrix:
         include:
-          - { image: backend, context: backend, target: '', build-contexts: '' }
+          - { image: backend, context: backend, target: prod, build-contexts: '' }
           - { image: migrations, context: backend, target: migrations, build-contexts: '' }
           # The frontend build reads the committed OpenAPI contract from the backend directory.
-          - { image: frontend, context: frontend, target: '', build-contexts: 'backend=backend' }
+          - { image: frontend, context: frontend, target: prod, build-contexts: 'backend=backend' }
     permissions: { contents: read, packages: write }
     uses: fjcloudaiconsulting/.github/.github/workflows/build-image.yml@v1
     with:
@@ -117,15 +121,17 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
       # pnpm version comes from packageManager in frontend/package.json.
       - run: corepack enable
       - id: pnpm-store
         run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@v6
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ steps.pnpm-store.outputs.path }}
           key: pnpm-${{ runner.os }}-${{ hashFiles('frontend/pnpm-lock.yaml') }}
@@ -143,8 +149,10 @@ jobs:
       run:
         working-directory: landing
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
       - run: npm test
@@ -177,9 +185,7 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [repo, api, image, web, landing]
     runs-on: ubuntu-latest
-    concurrency:
-      group: release
-      cancel-in-progress: false
+    environment: release
     permissions:
       contents: read
     outputs:
@@ -201,6 +207,9 @@ jobs:
         with:
           app-id: ${{ secrets.RELEASE_APP_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-issues: write
       - id: release
         if: steps.head.outputs.latest == 'true'
         uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
@@ -225,4 +234,4 @@ jobs:
     uses: fjcloudaiconsulting/.github/.github/workflows/smoke.yml@v1
     with:
       version: ${{ needs.release.outputs.version }}
-      health-url: http://localhost:8000/api/healthz
+      health-url: http://localhost:3000/api/healthz

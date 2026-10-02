@@ -26,6 +26,8 @@ commits on `main` (`feat` bumps the minor version while we are below 1.0, `fix` 
   ship.
 - Images: `ghcr.io/fjcloudaiconsulting/ziftbook/{backend,frontend,migrations}`, tagged `sha-<short>` on every `main`
   commit and `vX.Y.Z` on releases (the same digest; private packages). No `latest` or `X.Y` tags.
+- Promote and smoke run only when release-please created a release in that run. If `main` moved on before the release job ran,
+  the next `main` run creates the release (rerun promote if it raced the image builds).
 - If promoting or the smoke test fails after the tag exists, rerun the failed jobs of that run (promotion is idempotent).
 - The pipeline is the shared workflows in `fjcloudaiconsulting/.github` (`@v1`); the contract is in that repo's
   `RELEASE_CONTRACT.md`. release-please runs as a GitHub App (secrets `RELEASE_APP_ID`, `RELEASE_APP_PRIVATE_KEY`).

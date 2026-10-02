@@ -48,8 +48,6 @@ services:
         condition: service_healthy
     environment:
       ZIF_DATABASE_URL: postgresql+psycopg://ziftbook_app:smoke_app@postgres:5432/ziftbook
-    ports:
-      - "8000:8000"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/healthz')"]
       interval: 5s
@@ -63,3 +61,5 @@ services:
         condition: service_healthy
     environment:
       ZIF_API_URL: http://backend:8000
+    ports:
+      - "3000:3000"
