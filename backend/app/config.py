@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="ZIF_", env_ignore_empty=True)
 
     app_version: str = "dev"
+    app_revision: str = "dev"
     # Addresses or networks (comma-separated) whose X-Forwarded-For the API believes: the web app
     # only. Empty trusts nobody. Compose: the frontend's fixed address. Staging: the pod network.
     trusted_proxies: str = ""

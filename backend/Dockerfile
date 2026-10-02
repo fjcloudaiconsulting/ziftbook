@@ -44,7 +44,9 @@ CMD ["alembic", "upgrade", "head"]
 
 # Backend image. The worker reuses it with another command.
 FROM runtime AS prod
-ARG ZIF_APP_VERSION=dev
-ENV ZIF_APP_VERSION=$ZIF_APP_VERSION
+ARG APP_VERSION=dev
+ARG APP_REVISION=dev
+ENV ZIF_APP_VERSION=$APP_VERSION \
+    ZIF_APP_REVISION=$APP_REVISION
 EXPOSE 8000
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-proxy-headers"]

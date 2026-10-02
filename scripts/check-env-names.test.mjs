@@ -51,6 +51,10 @@ test("SQL: psql \\getenv reads need the prefix", () => {
   assert.deepEqual(unprefixedNames("bootstrap.sql", source), ["APP_PASSWORD"]);
 });
 
+test("Dockerfile: the shared workflow's build args are allowed", () => {
+  assert.deepEqual(unprefixedNames("Dockerfile", "ARG APP_VERSION=dev\nARG APP_REVISION=dev\n"), []);
+});
+
 test("Dockerfile: build args need the prefix", () => {
   const source = "ARG ZIF_APP_VERSION=dev\nARG VERSION\nENV PYTHONUNBUFFERED=1\n";
   assert.deepEqual(unprefixedNames("Dockerfile", source), ["VERSION"]);

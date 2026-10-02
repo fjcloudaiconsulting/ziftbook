@@ -8,25 +8,13 @@ on:
 permissions:
   contents: read
 
-# A newer commit cancels a superseded pull request run, but never a main run that may be releasing.
+# A newer commit cancels a superseded pull request run, but never a main run that may be releasing. Main runs are
+# keyed by sha so a queued run is never replaced by a newer push: every main commit needs its own sha-<7> images.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event_name == 'push' && github.sha || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  pr-title:
-    name: PR title is a Conventional Commit
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      # Squash merges make the PR title the commit on main, which release-please reads.
-      - env:
-          TITLE: ${{ github.event.pull_request.title }}
-        run: |
-          printf '%s\n' "$TITLE" > "$RUNNER_TEMP/title"
-          sh .githooks/commit-msg "$RUNNER_TEMP/title"
-
   repo:
     name: Repo checks
     runs-on: ubuntu-latest
@@ -105,28 +93,22 @@ jobs:
       - run: uv run pytest -q tests/test_parallel_safety.py
       - run: uv run pytest -n auto
 
+  # Built once, on the main push, as sha-<7> (pull requests build without pushing). Release only retags these.
   image:
-    name: ${{ matrix.image }} image builds
-    runs-on: ubuntu-latest
     strategy:
       matrix:
         include:
-          - { image: backend, context: backend, target: prod }
-          - { image: migrations, context: backend, target: migrations }
-          - { image: frontend, context: frontend, target: prod }
-    steps:
-      - uses: actions/checkout@v7
-      - uses: docker/setup-buildx-action@v4
-      - uses: docker/build-push-action@v7
-        with:
-          context: ${{ matrix.context }}
+          - { image: backend, context: backend, target: '', build-contexts: '' }
+          - { image: migrations, context: backend, target: migrations, build-contexts: '' }
           # The frontend build reads the committed OpenAPI contract from the backend directory.
-          build-contexts: backend=backend
-          target: ${{ matrix.target }}
-          platforms: linux/amd64
-          push: false
-          cache-from: type=gha,scope=${{ matrix.image }}
-          cache-to: type=gha,scope=${{ matrix.image }},mode=max
+          - { image: frontend, context: frontend, target: '', build-contexts: 'backend=backend' }
+    permissions: { contents: read, packages: write }
+    uses: fjcloudaiconsulting/.github/.github/workflows/build-image.yml@v1
+    with:
+      image: ${{ matrix.image }}
+      context: ${{ matrix.context }}
+      target: ${{ matrix.target }}
+      build-contexts: ${{ matrix.build-contexts }}
 
   web:
     name: Web
@@ -167,17 +149,80 @@ jobs:
           node-version: 24
       - run: npm test
 
-  # Releases only when every check above passed on this commit of main.
+  # Aggregate checks, the names branch protection requires. Always run; fail unless every gated job passed or was skipped.
+  backend-checks:
+    name: Backend Checks
+    if: always()
+    needs: [repo, api, image]
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: jq -e 'all(.[]; .result == "success" or .result == "skipped")' <<<"$NEEDS"
+
+  frontend-checks:
+    name: Frontend Checks
+    if: always()
+    needs: [web, landing, image]
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: jq -e 'all(.[]; .result == "success" or .result == "skipped")' <<<"$NEEDS"
+
+  # Releases only when every job above passed on this commit of main. Same run as the image builds, so the tagged
+  # release commit's sha-<7> images exist by the time promote runs.
   release:
-    name: Release
+    name: Release PR and tag
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [repo, api, image, web, landing]
+    runs-on: ubuntu-latest
     concurrency:
       group: release
       cancel-in-progress: false
     permissions:
-      contents: write
-      pull-requests: write
-      issues: write
-      packages: write
-    uses: ./.github/workflows/release.yml
+      contents: read
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      # release-please acts on main as it is now, not on this commit. If main has moved on, a merged Release PR there
+      # has not passed CI yet, so leave it to the newer commit's run.
+      - id: head
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          head=$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)
+          if [ "$head" = "$GITHUB_SHA" ]; then echo "latest=true" >> "$GITHUB_OUTPUT"; else echo "main is at $head; skipping"; fi
+      # An App token, not GITHUB_TOKEN, so the Release PR triggers CI and can satisfy required checks.
+      - id: app
+        if: steps.head.outputs.latest == 'true'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+      - id: release
+        if: steps.head.outputs.latest == 'true'
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          token: ${{ steps.app.outputs.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  promote:
+    needs: [release, image]
+    if: needs.release.outputs.release_created == 'true'
+    permissions: { contents: read, packages: write }
+    uses: fjcloudaiconsulting/.github/.github/workflows/promote-release.yml@v1
+    with:
+      version: ${{ needs.release.outputs.version }}
+      images: backend frontend migrations
+
+  smoke:
+    needs: [release, promote]
+    if: needs.release.outputs.release_created == 'true'
+    permissions: { contents: read, packages: read }
+    uses: fjcloudaiconsulting/.github/.github/workflows/smoke.yml@v1
+    with:
+      version: ${{ needs.release.outputs.version }}
+      health-url: http://localhost:8000/api/healthz

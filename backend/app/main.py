@@ -52,6 +52,7 @@ access_logger = logging.getLogger("app.access")
 class Health(BaseModel):
     status: str
     version: str
+    revision: str
 
 
 def _access_fields(request: Request, status: int, started: float) -> dict[str, Any]:
@@ -117,7 +118,7 @@ def create_app() -> FastAPI:
 
     @router.get("/healthz", tags=["health"])
     def healthz() -> Health:
-        return Health(status="ok", version=settings.app_version)
+        return Health(status="ok", version=settings.app_version, revision=settings.app_revision)
 
     # No deploy version in the OpenAPI document: it is a committed contract
     # and must not vary per environment.
