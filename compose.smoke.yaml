@@ -1,0 +1,65 @@
+# Post-release smoke test (shared smoke workflow): the published images by tag, no build. Passwords are
+# throwaway literals for a database that lives for one CI run.
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: ziftbook
+      POSTGRES_PASSWORD: smoke
+      POSTGRES_DB: ziftbook
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ziftbook -d ziftbook"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  # Creates the database roles; idempotent. Only runs with the migrations (profile migrate), so `up --wait` never sees an exited service.
+  db-init:
+    image: postgres:18
+    profiles: [migrate]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGHOST: postgres
+      PGUSER: ziftbook
+      PGPASSWORD: smoke
+      PGDATABASE: ziftbook
+      ZIF_MIGRATE_PASSWORD: smoke_migrate
+      ZIF_APP_PASSWORD: smoke_app
+    volumes:
+      - ./backend/migrations/bootstrap.sql:/bootstrap.sql:ro
+    command: ["psql", "-v", "ON_ERROR_STOP=1", "-f", "/bootstrap.sql"]
+
+  # One-shot: the workflow runs it twice (the second run must be a no-op) before `up`. Not a dependency of the backend.
+  migrations:
+    image: ${IMAGE_PREFIX}/migrations:${TAG}
+    profiles: [migrate]
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+    environment:
+      ZIF_MIGRATE_DATABASE_URL: postgresql+psycopg://ziftbook_migrate:smoke_migrate@postgres:5432/ziftbook
+
+  backend:
+    image: ${IMAGE_PREFIX}/backend:${TAG}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      ZIF_DATABASE_URL: postgresql+psycopg://ziftbook_app:smoke_app@postgres:5432/ziftbook
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/healthz')"]
+      interval: 5s
+      start_period: 30s
+      start_interval: 1s
+
+  frontend:
+    image: ${IMAGE_PREFIX}/frontend:${TAG}
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      ZIF_API_URL: http://backend:8000
+    ports:
+      - "3000:3000"

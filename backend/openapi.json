@@ -5591,12 +5591,17 @@
           "version": {
             "type": "string",
             "title": "Version"
+          },
+          "revision": {
+            "type": "string",
+            "title": "Revision"
           }
         },
         "type": "object",
         "required": [
           "status",
-          "version"
+          "version",
+          "revision"
         ],
         "title": "Health"
       },

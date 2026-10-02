@@ -17,18 +17,20 @@ commits on `main` (`feat` bumps the minor version while we are below 1.0, `fix` 
 
 | Step | You do | What runs | Releases? |
 |---|---|---|---|
-| 1 | Merge a PR | CI on `main`. If every check passes, release-please opens or updates the Release PR (`chore(main): release X.Y.Z`) | No |
-| 2 | Nothing | The Release PR update starts CI on its branch. GitHub holds it for approval (bot-created PR); approving only runs the checks | No |
-| 3 | Merge the Release PR | CI on `main`. If every check passes: tag `vX.Y.Z`, GitHub Release, publish the three images to GHCR, smoke test | **Yes** |
+| 1 | Merge a PR | CI on `main` builds the three images once as `sha-<short>`. If every check passes, release-please opens or updates the Release PR (`chore(main): release X.Y.Z`) | No |
+| 2 | Nothing | The Release PR update starts CI on its branch (it is created with the release App's token, so no approval is needed to run) | No |
+| 3 | Merge the Release PR | CI on `main`. If every check passes: tag `vX.Y.Z`, GitHub Release, retag that commit's `sha-<short>` images as `vX.Y.Z` (no rebuild), smoke test the published images | **Yes** |
 
-- There is no need to approve CI on Release PRs: step 3 runs every check on `main` before anything is released. A
-  failed check on `main` means no release.
+- Step 3 runs every check on `main` before anything is released. A failed check on `main` means no release.
 - Every merge refreshes the Release PR, which always contains everything merged so far. Merge it when you want to
-  ship. A superseded, never-approved run on its branch shows as failed with no jobs; that is harmless.
-- Images: `ghcr.io/fjcloudaiconsulting/ziftbook/{backend,frontend,migrations}`, tagged `vX.Y.Z`, `X.Y` and
-  `sha-<short>` (private packages).
-- If publishing fails after the tag exists, rerun the failed jobs, or run the Release workflow manually with that
-  version.
+  ship.
+- Images: `ghcr.io/fjcloudaiconsulting/ziftbook/{backend,frontend,migrations}`, tagged `sha-<short>` on every `main`
+  commit and `vX.Y.Z` on releases (the same digest; private packages). No `latest` or `X.Y` tags.
+- Promote and smoke run only when release-please created a release in that run. If `main` moved on before the release job ran,
+  the next `main` run creates the release (rerun promote if it raced the image builds).
+- If promoting or the smoke test fails after the tag exists, rerun the failed jobs of that run (promotion is idempotent).
+- The pipeline is the shared workflows in `fjcloudaiconsulting/.github` (`@v1`); the contract is in that repo's
+  `RELEASE_CONTRACT.md`. release-please runs as a GitHub App (secrets `RELEASE_APP_ID`, `RELEASE_APP_PRIVATE_KEY`).
 
 ## Database migrations: expand, then contract
 
@@ -486,6 +488,7 @@ ZIF-38). An empty variable means the default: `env_ignore_empty=True` on the bas
 | `ZIF_LOG_SQL` | api, worker, migrations | `false` | no | no | Logs SQL statements (never values) when the level is `DEBUG`. |
 | **Runtime** | | | | | |
 | `ZIF_APP_VERSION` | api | `dev` | no | no | Baked into the backend image at build time. |
+| `ZIF_APP_REVISION` | api | `dev` | no | no | Git sha of the build, baked into the backend image. |
 | `ZIF_HEALTHCHECK_URL` | worker | none | no | no | Pinged after every successful loop. |
 | `ZIF_IMAGE_TAG` | compose | none | yes | no | Release tag (`vX.Y.Z`) for the three GHCR images. |
 | `ZIF_API_URL` | frontend | none | yes | no | Backend base URL the web app proxies `/api` to. |

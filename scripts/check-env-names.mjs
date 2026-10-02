@@ -6,6 +6,8 @@ import { readFileSync } from "node:fs";
 // TZ is interpreted by the runtime itself (libc/ICU), never read by ziftbook code as configuration:
 // tests set it so Intl and Date formatting is deterministic regardless of the host's own zone.
 const ALLOWED = new Set(["NODE_ENV", "PYTEST_XDIST_WORKER", "TZ"]);
+// Build args the shared build-image workflow passes (release contract); the Dockerfile maps them to the ZIF_ variables.
+const BUILD_ARGS = new Set(["APP_VERSION", "APP_REVISION"]);
 const NAME = "([A-Za-z_][A-Za-z0-9_]*)";
 
 const READERS = {
@@ -38,7 +40,8 @@ export function unprefixedNames(path, source) {
     .sort((a, b) => a.index - b.index)
     .map((f) => f.name)
     // OTEL_* names are read by the OpenTelemetry SDK itself, never by our own config classes.
-    .filter((name) => !name.startsWith("ZIF_") && !name.startsWith("OTEL_") && !ALLOWED.has(name));
+    .filter((name) => !name.startsWith("ZIF_") && !name.startsWith("OTEL_") && !ALLOWED.has(name))
+    .filter((name) => !(language === "dockerfile" && BUILD_ARGS.has(name)));
   if (language === "py" && /\(BaseSettings\)/.test(source) && !/env_prefix\s*=\s*["']ZIF_["']/.test(source)) {
     problems.push('BaseSettings without env_prefix="ZIF_"');
   }

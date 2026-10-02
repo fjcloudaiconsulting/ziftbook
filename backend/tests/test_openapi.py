@@ -73,7 +73,7 @@ def test_healthz_response_is_a_named_schema_with_required_fields() -> None:
     ref = response["content"]["application/json"]["schema"]["$ref"]
 
     schema = spec["components"]["schemas"][ref.rsplit("/", 1)[-1]]
-    assert schema["required"] == ["status", "version"]
+    assert schema["required"] == ["status", "version", "revision"]
 
 
 # 31/40: FENCE, narrowed in ZIF-51. Wrong impl: add internal_note to a public RESPONSE schema (or
