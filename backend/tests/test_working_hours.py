@@ -58,17 +58,13 @@ def stored(tenant_id: uuid.UUID, user_id: uuid.UUID) -> list[tuple[int, str, str
     """A member's working hours, read the same way the app reads them."""
     target = member_id(tenant_id, user_id)
     with tenant_context(tenant_id) as session:
-        rows = (
-            session.execute(
-                text(
-                    "SELECT weekday, starts_at, ends_at FROM working_hours "
-                    "WHERE member_id = :m ORDER BY weekday, starts_at"
-                ),
-                {"m": target},
-            )
-            .tuples()
-            .all()
-        )
+        rows = session.execute(
+            text(
+                "SELECT weekday, starts_at, ends_at FROM working_hours "
+                "WHERE member_id = :m ORDER BY weekday, starts_at"
+            ),
+            {"m": target},
+        ).all()
     return [(w, f"{s:%H:%M}", f"{e:%H:%M}") for w, s, e in rows]
 
 
@@ -161,16 +157,14 @@ def test_working_hours_schema_has_no_extra_unique_index(migrate_engine: Engine) 
                 """)
             ).scalars()
         )
-        types = dict(
+        types: dict[str, str] = dict(
             conn.execute(
                 text("""
                 SELECT column_name, data_type FROM information_schema.columns
                 WHERE table_name = 'working_hours'
                   AND column_name IN ('weekday', 'starts_at', 'ends_at')
                 """)
-            )
-            .tuples()
-            .all()
+            ).all()
         )
     assert unique_indexes == ["pk_working_hours", "uq_working_hours_tenant_id_id"]
     assert types == {

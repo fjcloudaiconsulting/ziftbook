@@ -277,9 +277,7 @@ def lock_members(current: SignedIn, member_ids: list[UUID]) -> dict[UUID, UUID]:
             WHERE id = ANY(CAST(:ids AS uuid[])) ORDER BY id FOR NO KEY UPDATE
             """),
             {"ids": member_ids},
-        )
-        .tuples()
-        .all()
+        ).all()
     )
 
 

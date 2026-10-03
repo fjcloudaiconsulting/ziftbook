@@ -43,16 +43,11 @@ def seed_opening(tenant_id: Any, rows: list[tuple[int, str, str]]) -> None:
 def stored_opening(tenant_id: Any) -> list[tuple[int, str, str]]:
     """A business's opening hours, read the same way the app reads them."""
     with tenant_context(tenant_id) as session:
-        rows = (
-            session.execute(
-                text(
-                    "SELECT weekday, starts_at, ends_at FROM opening_hours "
-                    "ORDER BY weekday, starts_at"
-                )
+        rows = session.execute(
+            text(
+                "SELECT weekday, starts_at, ends_at FROM opening_hours ORDER BY weekday, starts_at"
             )
-            .tuples()
-            .all()
-        )
+        ).all()
     return [(w, f"{s:%H:%M}", f"{e:%H:%M}") for w, s, e in rows]
 
 
@@ -132,16 +127,14 @@ def test_the_schema_has_no_member_id_and_the_right_types(migrate_engine: Engine)
                 )
             )
         )
-        types = dict(
+        types: dict[str, str] = dict(
             conn.execute(
                 text("""
                 SELECT column_name, data_type FROM information_schema.columns
                 WHERE table_name = 'opening_hours'
                   AND column_name IN ('weekday', 'starts_at', 'ends_at')
                 """)
-            )
-            .tuples()
-            .all()
+            ).all()
         )
         unique_indexes = sorted(
             conn.execute(

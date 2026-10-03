@@ -112,7 +112,7 @@ def read(db: Session) -> BusinessSettings:
     A saved key no longer in the registry is ignored; a saved value that no longer validates raises
     rather than quietly becoming the default.
     """
-    saved = db.execute(text("SELECT key, value FROM settings")).tuples()
+    saved = db.execute(text("SELECT key, value FROM settings"))
     return BusinessSettings.model_validate(
         {key: value for key, value in saved if key in BusinessSettings.model_fields}
     )

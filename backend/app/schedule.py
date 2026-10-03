@@ -92,7 +92,7 @@ def envelope(db: Session) -> dict[int, list[tuple[time, time]]]:
     from, so "never configured" stays a plain truth test on the result.
     """
     rows: list[Row] = list(
-        db.execute(text("SELECT weekday, starts_at, ends_at FROM opening_hours")).tuples()
+        db.execute(text("SELECT weekday, starts_at, ends_at FROM opening_hours"))
     )
     return by_weekday(rows)
 
@@ -172,17 +172,12 @@ def replace_week(
         for weekday, start, end in rows:
             if not within((start, end), open_days.get(weekday, [])):
                 raise ApiError(422, "outside_opening_hours", weekday=weekday)
-    old = (
-        current.db.execute(
-            text(
-                "DELETE FROM working_hours WHERE member_id = :id "
-                "RETURNING weekday, starts_at, ends_at"
-            ),
-            {"id": member_id},
-        )
-        .tuples()
-        .all()
-    )
+    old = current.db.execute(
+        text(
+            "DELETE FROM working_hours WHERE member_id = :id RETURNING weekday, starts_at, ends_at"
+        ),
+        {"id": member_id},
+    ).all()
     if rows:  # an empty list would run the statement once with no values
         try:
             current.db.execute(
@@ -308,17 +303,13 @@ def replace_opening_hours(
         raise ApiError(422, "overlapping_hours")
     # The WHERE is redundant - row-level security already scopes it - and deliberate: this exact
     # statement copied into a psql session as a superuser would otherwise wipe every tenant's week.
-    old = (
-        current.db.execute(
-            text(
-                "DELETE FROM opening_hours "
-                "WHERE tenant_id = current_setting('app.tenant_id')::uuid "
-                "RETURNING weekday, starts_at, ends_at"
-            )
+    old = current.db.execute(
+        text(
+            "DELETE FROM opening_hours "
+            "WHERE tenant_id = current_setting('app.tenant_id')::uuid "
+            "RETURNING weekday, starts_at, ends_at"
         )
-        .tuples()
-        .all()
-    )
+    ).all()
     try:  # no `if rows:` guard: the empty week was refused above
         current.db.execute(
             text("""
