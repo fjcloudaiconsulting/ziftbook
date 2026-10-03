@@ -1,4 +1,18 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["github>fjcloudaiconsulting/.github#v1"]
+  "extends": ["github>fjcloudaiconsulting/.github#v1"],
+  "packageRules": [
+    {
+      "description": "Hold ESLint 10 until eslint-plugin-react (used by eslint-config-next) lists eslint 10 in its peer range and lints without 'getFilename is not a function'. Re-check: npm view eslint-plugin-react peerDependencies.",
+      "matchPackageNames": ["eslint", "@eslint/js"],
+      "matchUpdateTypes": ["major"],
+      "enabled": false
+    },
+    {
+      "description": "Hold TypeScript 7 until typescript-eslint's peer range admits it (currently <6.1.0, tracking issue typescript-eslint#10940). Re-check: npm view typescript-eslint peerDependencies.",
+      "matchPackageNames": ["typescript"],
+      "matchUpdateTypes": ["major"],
+      "enabled": false
+    }
+  ]
 }
