@@ -716,7 +716,7 @@ def booking_jobs(app_engine: Engine, tenant_id: uuid.UUID, booking_id: str) -> l
             ORDER BY id  -- uuidv7: insertion order
             """),
             {"t": tenant_id, "b": str(booking_id)},
-        ).tuples()
+        )
         return [Job(id_, kind, tenant_id, payload) for id_, kind, payload in rows]
 
 

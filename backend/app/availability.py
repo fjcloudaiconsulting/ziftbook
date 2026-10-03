@@ -231,7 +231,7 @@ def booked(
                 "expiring": list(EXPIRING),
                 "exclude": exclude,
             },
-        ).tuples()
+        )
     )
 
 
@@ -273,7 +273,7 @@ def time_off(
     for member_id, starts_at, ends_at, first_day, last_day in db.execute(
         TIME_OFF,
         {"members": members, "start": start, "end": end, "first": first, "last": last},
-    ).tuples():
+    ):
         if first_day is not None:
             out[member_id].append(day_span(first_day, last_day, zone))
         else:
@@ -363,7 +363,7 @@ def candidates(
     names: dict[UUID, str | None] = {}
     for m, display_name, weekday, starts_at, ends_at in db.execute(
         CANDIDATES, {"service_id": service_id, "member_id": member_id}
-    ).tuples():
+    ):
         hours[m].append((weekday, starts_at, ends_at))
         names[m] = display_name
     return hours, names

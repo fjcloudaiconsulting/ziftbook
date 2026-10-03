@@ -337,9 +337,7 @@ def test_downgrading_and_upgrading_0027_restores_both_thresholds(
     try:
         command.downgrade(cfg, "0026")
         with migrate_engine.connect() as conn:
-            assert dict(conn.execute(NEW_COLUMNS).tuples().all()) == {
-                "cancellation_policy_text": "YES"
-            }
+            assert dict(conn.execute(NEW_COLUMNS).all()) == {"cancellation_policy_text": "YES"}
             assert conn.scalars(NEW_CHECKS).all() == []
             # Table-level UPDATE is back, exactly as 0026 leaves it.
             assert conn.scalars(NO_UPDATE).all() == []
@@ -354,7 +352,7 @@ def test_downgrading_and_upgrading_0027_restores_both_thresholds(
             delete_bookings(conn, (people.a, people.b))
         command.upgrade(cfg, "head")
     with migrate_engine.connect() as conn:
-        assert dict(conn.execute(NEW_COLUMNS).tuples().all()) == {
+        assert dict(conn.execute(NEW_COLUMNS).all()) == {
             "cancellation_policy_text": "YES",
             "free_cancellation_hours": "NO",
             "reschedule_cutoff_hours": "NO",
@@ -534,15 +532,13 @@ def test_0028_downgrade_refuses_while_a_whole_day_row_exists(
                 )
             )
             assert {"first_day", "last_day"}.isdisjoint(columns)
-            not_null = dict(
+            not_null: dict[str, str] = dict(
                 conn.execute(
                     text(
                         "SELECT column_name, is_nullable FROM information_schema.columns "
                         "WHERE table_name = 'time_off' AND column_name IN ('starts_at', 'ends_at')"
                     )
-                )
-                .tuples()
-                .all()
+                ).all()
             )
             assert not_null == {"starts_at": "NO", "ends_at": "NO"}
     finally:
@@ -763,7 +759,7 @@ def test_0030_round_trips(
                 )
         command.upgrade(cfg, "0030")
         with migrate_engine.connect() as conn:
-            before = conn.execute(SLUGS, {"ids": ids}).tuples().all()
+            before = conn.execute(SLUGS, {"ids": ids}).all()
             assert [s for _, s in before] == [f"round-{tag}", f"trip-{tag}"]
             assert (
                 conn.scalar(
@@ -795,7 +791,7 @@ def test_0030_round_trips(
         except Exception:
             pass
     with migrate_engine.begin() as conn:
-        assert conn.execute(SLUGS, {"ids": ids}).tuples().all() == before
+        assert conn.execute(SLUGS, {"ids": ids}).all() == before
         conn.execute(text("DELETE FROM tenants WHERE id = ANY(:ids)"), {"ids": ids})
 
 
@@ -817,7 +813,7 @@ def test_0030_backfills_oldest_first(
     finally:
         command.upgrade(cfg, "head")
     with migrate_engine.begin() as conn:
-        slugs = dict(conn.execute(SLUGS, {"ids": [older, newer]}).tuples().all())
+        slugs: dict[uuid.UUID, str] = dict(conn.execute(SLUGS, {"ids": [older, newer]}).all())
         conn.execute(text("DELETE FROM tenants WHERE id = ANY(:ids)"), {"ids": [older, newer]})
     assert (slugs[older], slugs[newer]) == (f"nail-bar-{tag}", f"nail-bar-{tag}-2")
 

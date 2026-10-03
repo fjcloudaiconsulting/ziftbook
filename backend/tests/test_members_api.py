@@ -105,7 +105,7 @@ def test_a_worker_is_refused_every_members_endpoint(
     assert (response.status_code, response.json()) == (403, {"code": "owner_only"})
     with tenant_context(people.a) as session:
         roles: dict[uuid.UUID, str] = dict(
-            session.execute(text("SELECT user_id, role FROM memberships")).tuples().all()
+            session.execute(text("SELECT user_id, role FROM memberships")).all()
         )
     assert roles == {people.only_a: "worker", people.both: "owner"}
     assert owner_session.get("/api/session").status_code == 200
@@ -146,7 +146,7 @@ def test_a_non_json_write_is_refused_before_auth(
     assert (response.status_code, response.json()) == (415, {"code": "unsupported_media_type"})
     with tenant_context(people.a) as session:
         roles: dict[uuid.UUID, str] = dict(
-            session.execute(text("SELECT user_id, role FROM memberships")).tuples().all()
+            session.execute(text("SELECT user_id, role FROM memberships")).all()
         )
     assert roles == {people.only_a: "worker", people.both: "owner"}
 

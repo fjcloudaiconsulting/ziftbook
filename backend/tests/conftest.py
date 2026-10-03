@@ -522,7 +522,7 @@ def put_settings(client: TestClient, body: Any) -> Response:
 
 def saved_settings(tenant_id: uuid.UUID) -> dict[str, Any]:
     with tenant_context(tenant_id) as session:
-        return dict(session.execute(text("SELECT key, value FROM settings")).tuples().all())
+        return dict(session.execute(text("SELECT key, value FROM settings")).all())
 
 
 def save_setting(tenant_id: uuid.UUID, key: str, value: Any) -> None:
