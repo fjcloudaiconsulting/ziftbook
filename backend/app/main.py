@@ -129,6 +129,16 @@ def create_app() -> FastAPI:
         generate_unique_id_function=operation_id,
         lifespan=lifespan,
         redirect_slashes=False,
+        # FastAPI 0.142 emits its own spans, metrics, logs and OTLP exporters. The app owns all
+        # four (app/tracing.py, app/logs.py), so the native layer stays off: it would add a second
+        # SERVER span per request.
+        telemetry={
+            "tracing": False,
+            "metrics": False,
+            "logs": False,
+            "operation_spans": False,
+            "auto_configure": False,
+        },
     )
     app.include_router(router)
     app.include_router(auth.router)
