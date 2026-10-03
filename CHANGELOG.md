@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.20.3](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.20.2...v0.20.3) (2026-10-03)
+
+
+### Bug Fixes
+
+* **ci:** release token carries the workflows permission (INFRA-78) ([#172](https://github.com/fjcloudaiconsulting/ziftbook/issues/172)) ([4e88489](https://github.com/fjcloudaiconsulting/ziftbook/commit/4e884894b9c3fd836c1e1b95c735b3846ccb6471))
+* **deps:** update dependency fastapi to v0.142.2 ([#166](https://github.com/fjcloudaiconsulting/ziftbook/issues/166)) ([12547e1](https://github.com/fjcloudaiconsulting/ziftbook/commit/12547e1808203266983dcae7cdeec492ced8fa62))
+* **deps:** update dependency next-intl to v4.14.9 ([#152](https://github.com/fjcloudaiconsulting/ziftbook/issues/152)) ([869dc9a](https://github.com/fjcloudaiconsulting/ziftbook/commit/869dc9ac23e9b7fbf8b122181c0570cf72d83ffb))
+* **deps:** update dependency sqlalchemy to v2.1.3 ([#167](https://github.com/fjcloudaiconsulting/ziftbook/issues/167)) ([fce1740](https://github.com/fjcloudaiconsulting/ziftbook/commit/fce1740e1a1a3a7b713ed7931c223fda26b42af7))
+* **deps:** update dependency tzdata to v2026.5 ([#174](https://github.com/fjcloudaiconsulting/ziftbook/issues/174)) ([7b85401](https://github.com/fjcloudaiconsulting/ziftbook/commit/7b85401b80db8faa1b8b520f70e05e182411714b))
+* **deps:** update dependency uvicorn to v0.54.0 ([#168](https://github.com/fjcloudaiconsulting/ziftbook/issues/168)) ([13ecff4](https://github.com/fjcloudaiconsulting/ziftbook/commit/13ecff4070a77fe506b65b3fbcc5d24a9a72b32d))
+* **deps:** update opentelemetry-python monorepo to v1.45.0 ([#169](https://github.com/fjcloudaiconsulting/ziftbook/issues/169)) ([04dcd6c](https://github.com/fjcloudaiconsulting/ziftbook/commit/04dcd6c4612a842c2d5adf13e6a19bb36fb63e8c))
+
 ## [0.20.2](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.20.1...v0.20.2) (2026-10-03)
 
 
