@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.20.2](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.20.1...v0.20.2) (2026-10-03)
+
+
+### Bug Fixes
+
+* **deps:** update nextjs monorepo to v16.3.8 ([#154](https://github.com/fjcloudaiconsulting/ziftbook/issues/154)) ([8b2e60e](https://github.com/fjcloudaiconsulting/ziftbook/commit/8b2e60ee3c4ce849c82637e66fe4f3999814d9a1))
+
 ## [0.20.1](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.20.0...v0.20.1) (2026-10-02)
 
 
