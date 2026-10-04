@@ -17,11 +17,10 @@ logProvider([new SimpleLogRecordProcessor({ exporter: otlpExporter })]);
 
 const HEAD_KEYS = ["ts", "level", "msg", "trace_id", "span_id"];
 
-// The exported LogRecord, turned back into a line-shaped object, mirroring backend/tests/
-// conftest.py's _rebuild: ts from the hrTime timestamp, level from severityText, msg from body,
-// logger/extras/exc from attributes, trace_id/span_id from spanContext when present. Used to
-// deepEqual against JSON.parse of the stdout line -- the same one-to-one parity fence as the
-// backend (ZIF-137 spec, test 13).
+// The exported LogRecord, turned back into a line-shaped object: ts from the hrTime timestamp,
+// level from severityText, msg from body, logger/extras/exc from attributes, trace_id/span_id
+// from spanContext when present. Used to deepEqual against JSON.parse of the stdout line, a
+// one-to-one parity fence (ZIF-137 spec, test 13). The backend no longer exports logs (INFRA-106).
 function rebuild(rec) {
   const [seconds, nanos] = rec.hrTime;
   const ts = new Date(seconds * 1000 + Math.round(nanos / 1e6)).toISOString();

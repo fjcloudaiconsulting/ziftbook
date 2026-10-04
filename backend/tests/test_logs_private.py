@@ -15,6 +15,8 @@ from zoneinfo import ZoneInfo
 
 import pytest
 from fastapi import FastAPI
+from opentelemetry.sdk.metrics.export import InMemoryMetricReader
+from opentelemetry.sdk.trace import ReadableSpan
 from sqlalchemy import Engine, text
 
 from app import auth, bookings
@@ -65,6 +67,8 @@ def test_no_personal_data_ever_reaches_a_log(
     migrate_engine: Engine,
     log_lines: Callable[[], list[dict[str, Any]]],
     monkeypatch: pytest.MonkeyPatch,
+    spans: Callable[[], list[ReadableSpan]],
+    metric_reader: InMemoryMetricReader,
 ) -> None:
     never: list[str] = ["2001:db8:", "@example.com", UA["User-Agent"]]
     # The audit table persists across runs: only this run's rows are scanned for names.
@@ -447,8 +451,11 @@ def test_no_personal_data_ever_reaches_a_log(
     for value in never:
         assert value not in dumped, value
 
-    # ZIF-137 test 1: the exported OTLP records too (body, attributes, resource), not just stdout.
-    exported = json.dumps([r.to_json() for r in log_lines.records()])  # type: ignore[attr-defined]
+    # INFRA-106: what leaves over OTLP too, every span and metric point of the same flows.
+    exported = json.dumps([s.to_json() for s in spans()])
+    data = metric_reader.get_metrics_data()
+    assert data is not None
+    exported += data.to_json()
     for value in never:
         assert value not in exported, value
 

@@ -41,6 +41,7 @@ from app.config import DatabaseSettings, Settings
 from app.db import SessionLocal
 from app.errors import ApiError
 
+HEALTH_PATH = "/api/healthz"
 REQUEST_ID = re.compile(r"[A-Za-z0-9._:-]{1,64}")
 # _OTHER for anything else: the client controls the method, so span-name cardinality must stay
 # bounded.
@@ -129,15 +130,18 @@ def create_app() -> FastAPI:
         generate_unique_id_function=operation_id,
         lifespan=lifespan,
         redirect_slashes=False,
-        # FastAPI 0.142 emits its own spans, metrics, logs and OTLP exporters. The app owns all
-        # four (app/tracing.py, app/logs.py), so the native layer stays off: it would add a second
-        # SERVER span per request.
+        # The telemetry standard (aws-infra docs/architecture.md, Telemetry). Native metrics only,
+        # recorded on the MeterProvider tracing.configure() registered (its View is the attribute
+        # allowlist). The app owns the SERVER span and the logs: native tracing would add a second
+        # SERVER span carrying url.path and url.query, native logs export exception messages, and
+        # auto_configure would add a second exporter to our providers.
         telemetry={
             "tracing": False,
-            "metrics": False,
+            "metrics": True,
             "logs": False,
             "operation_spans": False,
             "auto_configure": False,
+            "exclude": lambda scope: scope["path"] == HEALTH_PATH,
         },
     )
     app.include_router(router)
@@ -200,7 +204,7 @@ def create_app() -> FastAPI:
             return response
 
         # No span for the healthcheck: nothing else below runs for it either.
-        if request.url.path == "/api/healthz":
+        if request.url.path == HEALTH_PATH:
             try:
                 return await run()
             finally:

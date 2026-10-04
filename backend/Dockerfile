@@ -40,6 +40,9 @@ USER app
 FROM runtime AS migrations
 COPY pyproject.toml ./
 COPY migrations ./migrations
+# service.version on its telemetry, like the backend's (app/tracing.py).
+ARG APP_VERSION=dev
+ENV ZIF_APP_VERSION=$APP_VERSION
 CMD ["alembic", "upgrade", "head"]
 
 # Backend image. The worker reuses it with another command.

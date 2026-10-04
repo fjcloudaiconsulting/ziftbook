@@ -4,19 +4,19 @@ recording is off everywhere (R2): a span's error status carries logs.error_summa
 exception's own message or the SDK's default record_exception, both of which can quote an email.
 """
 
-import logging
 import os
 import re
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
 
-from opentelemetry import trace
+from opentelemetry import metrics, trace
 from opentelemetry.context import Context
-from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
+from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-from opentelemetry.sdk._logs import LoggerProvider
-from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
+from opentelemetry.sdk.metrics import AlwaysOffExemplarFilter, MeterProvider
+from opentelemetry.sdk.metrics.export import MetricReader, PeriodicExportingMetricReader
+from opentelemetry.sdk.metrics.view import View
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
@@ -25,12 +25,21 @@ from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapProp
 from sqlalchemy import Engine, event
 
 from app import logs
+from app.config import Settings
 
 # Only W3C tracecontext: never the global propagator, whose default also reads baggage (R3), which
 # would let arbitrary client data ride into the global jobs table.
 PROPAGATOR = TraceContextTextMapPropagator()
 
 _SQL_KEYWORD = re.compile(r"^\s*(\w+)")
+# The HTTP metrics' allowlist, like the SERVER span's: FastAPI also records url.scheme and
+# network.protocol.version, and a later release could add more. A View drops everything else.
+HTTP_METRIC_ATTRIBUTES = {
+    "http.request.method",
+    "http.route",
+    "http.response.status_code",
+    "error.type",
+}
 
 _configured = False
 
@@ -47,10 +56,16 @@ def _enabled(signal: str) -> bool:
     return bool(endpoint.strip()) and exporter.strip().lower() != "none"
 
 
+def _resource(service: str) -> Resource:
+    """service.name and service.version default to the process and its image's version; an
+    explicit OTEL_SERVICE_NAME or OTEL_RESOURCE_ATTRIBUTES value still wins."""
+    os.environ.setdefault("OTEL_SERVICE_NAME", service)
+    return Resource({"service.version": Settings().app_version}).merge(Resource.create())
+
+
 def _provider(service: str) -> TracerProvider:
     """Pure, so tests call it directly with a monkeypatched environment."""
-    os.environ.setdefault("OTEL_SERVICE_NAME", service)  # an explicit env value still wins
-    provider = TracerProvider(resource=Resource.create())
+    provider = TracerProvider(resource=_resource(service))
     # Gated: without an endpoint the exporter falls back to localhost:4318 and logs WARNING/ERROR
     # noise plus a slow exit (measured, 7.7s) on every process that has no collector.
     if _enabled("TRACES"):
@@ -58,13 +73,20 @@ def _provider(service: str) -> TracerProvider:
     return provider
 
 
-def _log_provider() -> LoggerProvider | None:
-    """Pure. None unless the logs signal is on: no processor, no atexit hook, no slow exit."""
-    if not _enabled("LOGS"):
-        return None
-    provider = LoggerProvider(resource=Resource.create())
-    provider.add_log_record_processor(BatchLogRecordProcessor(OTLPLogExporter()))
-    return provider
+def _meter_provider(service: str) -> MeterProvider:
+    """Pure, like _provider. Always an SDK provider, so FastAPI's HTTP metrics have somewhere to go
+    and tests can add a reader; the OTLP reader (an export thread and a final export at exit) only
+    when the metrics signal is on. Exemplars stay off: they would re-attach the attributes the
+    View drops."""
+    readers: list[MetricReader] = []
+    if _enabled("METRICS"):
+        readers.append(PeriodicExportingMetricReader(OTLPMetricExporter()))
+    return MeterProvider(
+        metric_readers=readers,
+        resource=_resource(service),
+        views=[View(instrument_name="http.server.*", attribute_keys=HTTP_METRIC_ATTRIBUTES)],
+        exemplar_filter=AlwaysOffExemplarFilter(),
+    )
 
 
 def configure(service: str) -> None:
@@ -74,8 +96,7 @@ def configure(service: str) -> None:
         return
     _configured = True
     trace.set_tracer_provider(_provider(service))
-    if (provider := _log_provider()) is not None:
-        logging.getLogger().addHandler(logs.OtlpHandler(provider))
+    metrics.set_meter_provider(_meter_provider(service))
 
 
 @contextmanager
