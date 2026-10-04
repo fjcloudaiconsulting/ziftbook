@@ -38,7 +38,7 @@
       "groupName": "opentelemetry"
     },
     {
-      "description": "Library majors wait for approval on the Dependency Dashboard, then land one at a time after the non-major groups.",
+      "description": "All majors (libraries, actions, images) wait for approval on the Dependency Dashboard, approve them one at a time, after the non-major groups have landed.",
       "matchUpdateTypes": ["major"],
       "dependencyDashboardApproval": true
     },
@@ -57,7 +57,7 @@
       "dependencyDashboardApproval": true
     },
     {
-      "description": "Datastore image majors are never proposed: production versions are owned by aws-infra (clusters/platform/data), and local and CI images follow them.",
+      "description": "Datastore image majors are never proposed: production versions are owned by aws-infra (clusters/platform/data), and local and CI images must not run ahead of them.",
       "matchDatasources": ["docker"],
       "matchPackageNames": ["postgres"],
       "matchUpdateTypes": ["major"],
