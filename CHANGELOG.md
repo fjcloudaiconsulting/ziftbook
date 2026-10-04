@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.21.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.20.4...v0.21.0) (2026-10-04)
+
+
+### Features
+
+* **backend:** HTTP metrics on, logs leave on stdout only (INFRA-106) ([#183](https://github.com/fjcloudaiconsulting/ziftbook/issues/183)) ([93a49df](https://github.com/fjcloudaiconsulting/ziftbook/commit/93a49df55dffa3246620751c0a469060bd63545e))
+
 ## [0.20.4](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.20.3...v0.20.4) (2026-10-04)
 
 
