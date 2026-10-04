@@ -63,6 +63,7 @@ services:
       OTEL_EXPORTER_OTLP_HEADERS: ${ZIF_OTEL_EXPORTER_OTLP_HEADERS:-}
       OTEL_TRACES_EXPORTER: ${ZIF_OTEL_TRACES_EXPORTER:-otlp}
       OTEL_METRICS_EXPORTER: ${ZIF_OTEL_METRICS_EXPORTER:-otlp}
+      OTEL_LOGS_EXPORTER: none # stdout only; also keeps a rolled-back image (OTLP logs) quiet
 
   backend:
     build:
@@ -79,6 +80,7 @@ services:
       OTEL_EXPORTER_OTLP_HEADERS: ${ZIF_OTEL_EXPORTER_OTLP_HEADERS:-}
       OTEL_TRACES_EXPORTER: ${ZIF_OTEL_TRACES_EXPORTER:-otlp}
       OTEL_METRICS_EXPORTER: ${ZIF_OTEL_METRICS_EXPORTER:-otlp}
+      OTEL_LOGS_EXPORTER: none # stdout only; also keeps a rolled-back image (OTLP logs) quiet
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -122,6 +124,7 @@ services:
       OTEL_EXPORTER_OTLP_HEADERS: ${ZIF_OTEL_EXPORTER_OTLP_HEADERS:-}
       OTEL_TRACES_EXPORTER: ${ZIF_OTEL_TRACES_EXPORTER:-otlp}
       OTEL_METRICS_EXPORTER: ${ZIF_OTEL_METRICS_EXPORTER:-otlp}
+      OTEL_LOGS_EXPORTER: none # stdout only; also keeps a rolled-back image (OTLP logs) quiet
     develop:
       watch:
         - action: sync+restart

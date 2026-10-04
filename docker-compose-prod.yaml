@@ -70,6 +70,7 @@ services:
       OTEL_EXPORTER_OTLP_HEADERS: ${ZIF_OTEL_EXPORTER_OTLP_HEADERS:-}
       OTEL_TRACES_EXPORTER: ${ZIF_OTEL_TRACES_EXPORTER:-otlp}
       OTEL_METRICS_EXPORTER: ${ZIF_OTEL_METRICS_EXPORTER:-otlp}
+      OTEL_LOGS_EXPORTER: none # stdout only; also keeps a rolled-back image (OTLP logs) quiet
       OTEL_TRACES_SAMPLER: ${ZIF_OTEL_TRACES_SAMPLER:-parentbased_traceidratio}
       OTEL_TRACES_SAMPLER_ARG: ${ZIF_OTEL_TRACES_SAMPLER_ARG:-0.1}
 
@@ -90,6 +91,7 @@ services:
       OTEL_EXPORTER_OTLP_HEADERS: ${ZIF_OTEL_EXPORTER_OTLP_HEADERS:-}
       OTEL_TRACES_EXPORTER: ${ZIF_OTEL_TRACES_EXPORTER:-otlp}
       OTEL_METRICS_EXPORTER: ${ZIF_OTEL_METRICS_EXPORTER:-otlp}
+      OTEL_LOGS_EXPORTER: none # stdout only; also keeps a rolled-back image (OTLP logs) quiet
       OTEL_TRACES_SAMPLER: ${ZIF_OTEL_TRACES_SAMPLER:-parentbased_traceidratio}
       OTEL_TRACES_SAMPLER_ARG: ${ZIF_OTEL_TRACES_SAMPLER_ARG:-0.1}
     healthcheck:
@@ -118,6 +120,7 @@ services:
       OTEL_EXPORTER_OTLP_HEADERS: ${ZIF_OTEL_EXPORTER_OTLP_HEADERS:-}
       OTEL_TRACES_EXPORTER: ${ZIF_OTEL_TRACES_EXPORTER:-otlp}
       OTEL_METRICS_EXPORTER: ${ZIF_OTEL_METRICS_EXPORTER:-otlp}
+      OTEL_LOGS_EXPORTER: none # stdout only; also keeps a rolled-back image (OTLP logs) quiet
       OTEL_TRACES_SAMPLER: ${ZIF_OTEL_TRACES_SAMPLER:-parentbased_traceidratio}
       OTEL_TRACES_SAMPLER_ARG: ${ZIF_OTEL_TRACES_SAMPLER_ARG:-0.1}
       # Mailgun EU SMTP by default (see MailSettings).
