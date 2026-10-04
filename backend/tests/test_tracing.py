@@ -2,6 +2,7 @@
 
 import asyncio
 import http.server
+import json
 import logging
 import os
 import re
@@ -16,10 +17,11 @@ from typing import Any
 
 import pytest
 from fastapi.responses import JSONResponse
-from opentelemetry import trace
-from opentelemetry.proto.collector.logs.v1.logs_service_pb2 import ExportLogsServiceRequest
-from opentelemetry.sdk._logs import LoggerProvider
-from opentelemetry.sdk.resources import Resource
+from opentelemetry import metrics, trace
+from opentelemetry.proto.collector.metrics.v1.metrics_service_pb2 import (
+    ExportMetricsServiceRequest,
+)
+from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 from opentelemetry.sdk.trace import ReadableSpan
 from opentelemetry.trace import SpanKind
 from sqlalchemy import Engine, text
@@ -36,10 +38,6 @@ from tests.test_invite_email import run_jobs
 
 Lines = Callable[[], list[dict[str, Any]]]
 Spans = Callable[[], list[ReadableSpan]]
-
-
-def _records(lines: Lines) -> list[Any]:
-    return lines.records()  # type: ignore[attr-defined,no-any-return]
 
 
 def _one(spans: Iterable[ReadableSpan], **match: Any) -> ReadableSpan:
@@ -324,11 +322,12 @@ def test_t8_configure_is_idempotent_and_silent(
 ) -> None:
     monkeypatch.setattr(tracing, "_configured", False)
     calls: list[str] = []
-    monkeypatch.setattr(trace, "set_tracer_provider", lambda provider: calls.append("set"))
+    monkeypatch.setattr(trace, "set_tracer_provider", lambda provider: calls.append("traces"))
+    monkeypatch.setattr(metrics, "set_meter_provider", lambda provider: calls.append("metrics"))
     with caplog.at_level(logging.WARNING):
         tracing.configure("t8-a")
         tracing.configure("t8-b")
-    assert calls == ["set"]
+    assert calls == ["traces", "metrics"]
     assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
 
 
@@ -496,55 +495,137 @@ def test_t12_incoming_traceparent_is_the_parent(people: People, spans: Spans) ->
     assert format(server.parent.span_id, "016x") == parent_span_id
 
 
-# ZIF-137: export logs over OTLP with the same allowlist as stdout. Test numbers below match
-# docs/specs/2026-09-24-zif-137-spec.md's "Tests" section.
+# INFRA-106: the telemetry standard (aws-infra docs/architecture.md, Telemetry). FastAPI's native
+# HTTP metrics on, behind an attribute allowlist; the SERVER span stays the app's own.
 
 
-# 4: fence. Native ids equal the span's inside it, no trace_id/span_id attribute; and once the
-# span has exited, with the ids still in CONTEXT (the access_log pattern), they are still native,
-# not attributes. Kills: reading trace.get_current_span() / context=None instead of the line's own
-# fields.
-def test_native_ids_match_the_span_inside_and_after_it_exits(log_lines: Lines) -> None:
-    logger = logging.getLogger("app.tests.tracing")
-    with tracing.span("test.span", SpanKind.INTERNAL, {}) as current:
-        span_context = current.get_span_context()
-        logger.info("inside span")
+def _readers(provider: Any) -> set[Any]:
+    """The readers registered on this provider (MeterProvider._all_metric_readers is class-wide)."""
+    return set(provider._measurement_consumer._reader_storages)
 
-    log_lines()
-    record = _records(log_lines)[-1].log_record
-    assert record.trace_id == span_context.trace_id
-    assert record.span_id == span_context.span_id
-    assert "trace_id" not in record.attributes
-    assert "span_id" not in record.attributes
 
-    before = dict(logs.CONTEXT.get({}))
-    with tracing.span("test.span2", SpanKind.INTERNAL, {}) as current2:
-        span_context2 = current2.get_span_context()
-        logs.CONTEXT.set(
-            {
-                **logs.CONTEXT.get({}),
-                "trace_id": format(span_context2.trace_id, "032x"),
-                "span_id": format(span_context2.span_id, "016x"),
-            }
-        )
+def _points(reader: InMemoryMetricReader, name: str) -> list[Any]:
+    data = reader.get_metrics_data()
+    if data is None:
+        return []
+    return [
+        point
+        for resource_metrics in data.resource_metrics
+        for scope_metrics in resource_metrics.scope_metrics
+        for metric in scope_metrics.metrics
+        if metric.name == name
+        for point in metric.data.data_points
+    ]
+
+
+# T1: fence. One SERVER span with exactly the allowlisted keys, and the query's email in no span.
+# Kills: FastAPI's native tracing switched on (a second SERVER span carrying url.path/url.query).
+def test_a_request_exports_one_allowlisted_server_span_and_no_query(
+    people: People, spans: Spans
+) -> None:
+    owner = signed_in(create_app(), people.a, people.both)
+    assert owner.get("/api/clients", params={"q": "a@b.c"}).status_code == 200
+
+    finished = spans()
+    server = _one(finished, kind=SpanKind.SERVER)
+    assert set(_attrs(server)) == {
+        "http.request.method",
+        "http.route",
+        "http.response.status_code",
+    }
+    assert _attrs(server)["http.route"] == "/api/clients"
+    dumped = json.dumps([s.to_json() for s in finished])
+    assert "a@b.c" not in dumped
+    assert "a%40b.c" not in dumped
+
+
+# T2: fence. The duration histogram is recorded per route, with no url.* attribute and no email.
+# Kills: metrics off, the provider never registered, the View removed (url.scheme comes back).
+def test_the_request_duration_metric_has_the_route_and_no_url(
+    people: People, metric_reader: InMemoryMetricReader
+) -> None:
+    owner = signed_in(create_app(), people.a, people.both)
+    assert owner.get("/api/clients", params={"q": "a@b.c"}).status_code == 200
+
+    points = _points(metric_reader, "http.server.request.duration")
+    routes = [dict(p.attributes) for p in points]
+    assert {
+        "http.request.method": "GET",
+        "http.route": "/api/clients",
+        "http.response.status_code": 200,
+    } in routes
+    for name in ("http.server.request.duration", "http.server.active_requests"):
+        for point in _points(metric_reader, name):
+            assert set(point.attributes) <= tracing.HTTP_METRIC_ATTRIBUTES
+            assert not [key for key in point.attributes if key.startswith("url.")]
+    data = metric_reader.get_metrics_data()
+    assert data is not None
+    assert "a@b.c" not in data.to_json()
+
+
+# T3: fence. The health check records no series; a real request in the same test does.
+# Kills: the exclude predicate dropped (a readiness probe every few seconds in every histogram).
+def test_the_health_check_records_no_metric(
+    people: People, metric_reader: InMemoryMetricReader
+) -> None:
+    app = create_app()
+    assert new_client(app).get("/api/healthz").status_code == 200
+    owner = signed_in(app, people.a, people.both)
+    assert owner.get("/api/clients").status_code == 200
+
+    routes = {
+        p.attributes.get("http.route")
+        for p in _points(metric_reader, "http.server.request.duration")
+    }
+    assert "/api/clients" in routes
+    assert "/api/healthz" not in routes
+
+
+# T5: fence. No exemplars: a sampled span is current while FastAPI records, and an exemplar would
+# carry the attributes the View dropped. Kills: the default trace-based exemplar filter.
+def test_metric_points_carry_no_exemplars(metric_reader: InMemoryMetricReader) -> None:
+    meter = metrics.get_meter_provider().get_meter("fastapi")
+    histogram = meter.create_histogram("http.server.request.duration", unit="s")
+    with tracing.span("test.exemplar", SpanKind.SERVER, {}):
+        histogram.record(0.1, {"http.route": "/x", "url.path": "/x?q=a@b.c"})
+
+    [point] = [
+        p
+        for p in _points(metric_reader, "http.server.request.duration")
+        if p.attributes.get("http.route") == "/x"
+    ]
+    assert "url.path" not in point.attributes
+    assert point.exemplars == []
+
+
+# T6: fence. Both providers carry service.version from the image's ZIF_APP_VERSION; an explicit
+# OTEL_RESOURCE_ATTRIBUTES value still wins. Kills: a provider built without the resource (metrics
+# are the only signal staging exports), a hard-coded version, the app overriding the environment.
+def test_service_version_defaults_to_the_app_version(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("OTEL_RESOURCE_ATTRIBUTES", raising=False)
+    monkeypatch.setenv("ZIF_APP_VERSION", "v9.9.9")
+    tracer_provider = tracing._provider("t6")
+    meter_provider = tracing._meter_provider("t6")
     try:
-        logger.info("after span exited")  # no current span; CONTEXT still carries the ids
-
-        log_lines()
-        after = _records(log_lines)[-1].log_record
-        assert after.trace_id == span_context2.trace_id
-        assert after.span_id == span_context2.span_id
-        assert "trace_id" not in after.attributes
-        assert "span_id" not in after.attributes
+        assert tracer_provider.resource.attributes["service.version"] == "v9.9.9"
+        assert meter_provider._sdk_config.resource.attributes["service.version"] == "v9.9.9"
     finally:
-        logs.CONTEXT.set(before)
+        tracer_provider.shutdown()
+        meter_provider.shutdown()
+
+    monkeypatch.delenv("ZIF_APP_VERSION")
+    monkeypatch.setenv("OTEL_RESOURCE_ATTRIBUTES", "service.version=x,service.namespace=ziftbook")
+    attributes = tracing._resource("t6").attributes
+    assert attributes["service.version"] == "x"
+    assert attributes["service.namespace"] == "ziftbook"
 
 
-# 7: fence. The gate: an endpoint (either name), stripped, and OTEL_<SIGNAL>_EXPORTER stripped and
-# lower-cased != "none". Each signal is switched independently. Kills: trusting the SDK to read
-# OTEL_*_EXPORTER, an ungated log exporter (localhost fallback, slow exit), one shared switch.
+# T4: fence. The gate: an endpoint (either name), stripped, and OTEL_<SIGNAL>_EXPORTER stripped and
+# lower-cased != "none", each signal switched on its own. Staging's shape is the endpoint with
+# traces "none": metrics on. Kills: an ungated metric reader (localhost fallback, slow exit), the
+# traces switch reused for metrics, trusting the SDK to read OTEL_METRICS_EXPORTER.
 @pytest.mark.parametrize(
-    ("env", "traces_on", "logs_on"),
+    ("env", "traces_on", "metrics_on"),
     [
         ({}, False, False),
         ({"OTEL_EXPORTER_OTLP_ENDPOINT": "   "}, False, False),
@@ -560,12 +641,12 @@ def test_native_ids_match_the_span_inside_and_after_it_exits(log_lines: Lines) -
         (
             {
                 "OTEL_EXPORTER_OTLP_ENDPOINT": "http://127.0.0.1:9",
-                "OTEL_LOGS_EXPORTER": " NONE ",
+                "OTEL_METRICS_EXPORTER": " NONE ",
             },
             True,
             False,
         ),
-        ({"OTEL_EXPORTER_OTLP_LOGS_ENDPOINT": "http://127.0.0.1:9"}, False, True),
+        ({"OTEL_EXPORTER_OTLP_METRICS_ENDPOINT": "http://127.0.0.1:9"}, False, True),
         ({"OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http://127.0.0.1:9"}, True, False),
     ],
 )
@@ -574,7 +655,7 @@ def test_the_signal_gate(
     caplog: pytest.LogCaptureFixture,
     env: dict[str, str],
     traces_on: bool,
-    logs_on: bool,
+    metrics_on: bool,
 ) -> None:
     for name in [n for n in os.environ if n.startswith("OTEL_")]:
         monkeypatch.delenv(name, raising=False)
@@ -583,45 +664,45 @@ def test_the_signal_gate(
 
     with caplog.at_level(logging.WARNING):
         provider = tracing._provider("test-gate")
-        log_provider = tracing._log_provider()
+        meter_provider = tracing._meter_provider("test-gate")
     try:
         assert (len(provider._active_span_processor._span_processors) > 0) is traces_on
-        assert (log_provider is not None) is logs_on
+        assert (len(_readers(meter_provider)) > 0) is metrics_on
         assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
     finally:
         provider.shutdown()
-        if log_provider is not None:
-            log_provider.shutdown()
+        meter_provider.shutdown()
 
 
-# 11: guard. configure() is idempotent with logs on: exactly one zif-otlp handler on the root.
-def test_configure_is_idempotent_with_logs_on(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(tracing, "_configured", False)
-    monkeypatch.setattr(trace, "set_tracer_provider", lambda provider: None)
-    memory_provider = LoggerProvider(resource=Resource.create(), shutdown_on_exit=False)
-    monkeypatch.setattr(tracing, "_log_provider", lambda: memory_provider)
-    root = logging.getLogger()
-    try:
-        tracing.configure("t")
-        logs.configure()
-        tracing.configure("t")
+# T7: fence. FastAPI's own auto-configuration stays off: with an endpoint set, starting the app
+# adds no second reader or span processor to the providers tracing.configure() registered.
+# Kills: auto_configure left at its default (every series and span exported twice).
+def test_starting_the_app_adds_no_exporter(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:9")
+    meter_provider = metrics.get_meter_provider()
+    tracer_provider = trace.get_tracer_provider()
+    readers = _readers(meter_provider)
+    processors = tracer_provider._active_span_processor._span_processors  # type: ignore[attr-defined]
 
-        handlers = [h for h in root.handlers if h.name == logs.OtlpHandler.name]
-        assert len(handlers) == 1
-    finally:
-        for handler in [h for h in root.handlers if h.name == logs.OtlpHandler.name]:
-            root.removeHandler(handler)
+    with new_client(create_app()) as client:
+        assert client.get("/api/healthz").status_code == 200
+
+    assert _readers(meter_provider) == readers
+    assert (
+        tracer_provider._active_span_processor._span_processors  # type: ignore[attr-defined]
+        == processors
+    )
 
 
-class _LogsReceiver(http.server.BaseHTTPRequestHandler):
+class _MetricsReceiver(http.server.BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         length = int(self.headers.get("Content-Length", "0"))
         body = self.rfile.read(length)
-        if self.path != "/v1/logs":
+        if self.path != "/v1/metrics":
             self.send_response(404)
             self.end_headers()
             return
-        request = ExportLogsServiceRequest()
+        request = ExportMetricsServiceRequest()
         request.ParseFromString(body)
         self.server.received.append(request)  # type: ignore[attr-defined]
         self.send_response(200)
@@ -632,14 +713,14 @@ class _LogsReceiver(http.server.BaseHTTPRequestHandler):
         pass  # silence the request log; nothing this test needs
 
 
-# 10: fence. End to end, the only test with a real exporter: a stdlib http.server on
-# 127.0.0.1:0 decodes ExportLogsServiceRequest at /v1/logs. A child process with the endpoint set
-# runs logs.configure() and tracing.configure("ziftbook-migrations"), logs one line, then dies on
-# an uncaught error. Both records must arrive, under service.name=ziftbook-migrations. Kills:
-# shutdown_on_exit=False / no flush, a missing processor, a wrong endpoint path, a gate that never
-# builds the real exporter, a wrong service name.
-def test_t10_logs_reach_a_real_collector_end_to_end() -> None:
-    server = http.server.HTTPServer(("127.0.0.1", 0), _LogsReceiver)
+# T10: fence. End to end, the only test with a real exporter: a stdlib http.server on
+# 127.0.0.1:0 decodes ExportMetricsServiceRequest at /v1/metrics. A child process with the
+# endpoint set runs tracing.configure("ziftbook-migrations"), records one point and exits; the
+# final export at exit must deliver it under service.name ziftbook-migrations with the image's
+# service.version. Kills: no flush at exit, a missing reader, a wrong endpoint path, a gate that
+# never builds the real exporter, a provider without the resource.
+def test_t10_metrics_reach_a_real_collector_end_to_end() -> None:
+    server = http.server.HTTPServer(("127.0.0.1", 0), _MetricsReceiver)
     server.received = []  # type: ignore[attr-defined]
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -647,14 +728,12 @@ def test_t10_logs_reach_a_real_collector_end_to_end() -> None:
         port = server.server_address[1]
         env = {k: v for k, v in os.environ.items() if not k.startswith("OTEL_")}
         env["OTEL_EXPORTER_OTLP_ENDPOINT"] = f"http://127.0.0.1:{port}"
+        env["ZIF_APP_VERSION"] = "v9.9.9"
         body = (
-            "import logging\n"
-            "import app.logs as logs\n"
+            "from opentelemetry import metrics\n"
             "import app.tracing as tracing\n"
-            "logs.configure()\n"
             "tracing.configure('ziftbook-migrations')\n"
-            "logging.getLogger('app.tests.tracing').info('e2e line')\n"
-            "raise RuntimeError('boom')\n"
+            "metrics.get_meter('t10').create_counter('t10.e2e').add(1)\n"
         )
         subprocess.run(
             [sys.executable, "-c", body],
@@ -668,22 +747,16 @@ def test_t10_logs_reach_a_real_collector_end_to_end() -> None:
         server.shutdown()
         thread.join(timeout=5)
 
-    seen: list[tuple[str | None, Any]] = []
+    seen: list[tuple[dict[str, str], str]] = []
     for request in server.received:  # type: ignore[attr-defined]
-        for resource_logs in request.resource_logs:
-            service_name = next(
-                (
-                    kv.value.string_value
-                    for kv in resource_logs.resource.attributes
-                    if kv.key == "service.name"
-                ),
-                None,
-            )
-            for scope_logs in resource_logs.scope_logs:
-                seen.extend((service_name, record) for record in scope_logs.log_records)
+        for resource_metrics in request.resource_metrics:
+            resource = {
+                kv.key: kv.value.string_value for kv in resource_metrics.resource.attributes
+            }
+            for scope_metrics in resource_metrics.scope_metrics:
+                seen.extend((resource, metric.name) for metric in scope_metrics.metrics)
 
-    assert len(seen) == 2, seen
-    assert all(service_name == "ziftbook-migrations" for service_name, _ in seen)
-    bodies = {record.body.string_value for _, record in seen}
-    assert "e2e line" in bodies
-    assert any(record.severity_text == "CRITICAL" for _, record in seen)
+    assert [name for _, name in seen] == ["t10.e2e"], seen
+    resource = seen[0][0]
+    assert resource["service.name"] == "ziftbook-migrations"
+    assert resource["service.version"] == "v9.9.9"
