@@ -18,6 +18,13 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    # INFRA-113: CLOUDFLARE_API_TOKEN is a secret of the `landing` environment (deployment branches: main only),
+    # an account-owned token with the Editor role scoped to the ziftbook-landing Worker alone. Not a repo secret
+    # that a workflow on any branch could read.
+    environment: landing
+    env:
+      # 'true' once the token is stored; until then the deploy and smoke steps skip and the job stays green.
+      HAS_CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN != '' }}
     defaults:
       run:
         working-directory: landing
@@ -30,16 +37,22 @@ jobs:
           node-version: 24
       - run: npm test
       - run: npm run build
-      # Worker, assets, both custom domains (DNS records and certificates) and the account all come from wrangler.jsonc.
-      - uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0 # v4.1.3
+      - name: Skip deploy (no CLOUDFLARE_API_TOKEN)
+        if: env.HAS_CF_TOKEN != 'true'
+        run: echo "::notice::CLOUDFLARE_API_TOKEN is not set in the landing environment, skipping the ziftbook-landing deploy"
+      # Worker, assets and account come from wrangler.jsonc. The custom domains are attached in the dashboard and a
+      # deploy leaves them alone (see wrangler.jsonc).
+      - if: env.HAS_CF_TOKEN == 'true'
+        uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0 # v4.1.3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           wranglerVersion: "4.147.0"
           workingDirectory: landing
           command: deploy
       - name: Smoke test the live site
+        if: env.HAS_CF_TOKEN == 'true'
         run: |
-          # Retries cover certificate provisioning on a first deploy of a new custom domain.
+          # Retries ride out a slow rollout of the new version.
           check() {
             for _ in $(seq 1 60); do
               headers=$(curl -sI --max-time 10 "$1" || true)

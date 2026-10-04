@@ -10,9 +10,12 @@
     // Every request hits worker.js first so www and plain http are redirected on every path, not just "/".
     "run_worker_first": true
   },
-  // Custom domains: wrangler creates and owns the DNS records and certificates for both hostnames.
-  "routes": [
-    { "pattern": "ziftbook.com", "custom_domain": true },
-    { "pattern": "www.ziftbook.com", "custom_domain": true }
-  ]
+  // No routes on purpose (INFRA-113): the custom domains ziftbook.com and www.ziftbook.com stay attached in the
+  // Cloudflare dashboard, owner-held. A deploy then leaves them alone, so the CI token can be an Editor scoped to
+  // this Worker alone (custom domains and routes need zone-level permissions). Re-adding "routes" here breaks the
+  // deploy with that token.
+  // Without routes wrangler turns workers.dev on by default; keep it and preview URLs off so the Worker is public
+  // only on the custom domains.
+  "workers_dev": false,
+  "preview_urls": false
 }
