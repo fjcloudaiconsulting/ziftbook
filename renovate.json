@@ -3,6 +3,67 @@
   "extends": ["github>fjcloudaiconsulting/.github#v1"],
   "packageRules": [
     {
+      "description": "Python non-major updates in one PR. FastAPI and uvicorn stay out and get their own PRs: a FastAPI minor can change telemetry behavior (INFRA-84, INFRA-105).",
+      "matchManagers": ["pep621"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "matchPackageNames": ["!fastapi", "!uvicorn"],
+      "groupName": "python non-major"
+    },
+    {
+      "description": "npm non-major updates in one PR.",
+      "matchManagers": ["npm"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "npm non-major"
+    },
+    {
+      "description": "npm updates wait 1 day after publishing: pnpm refuses younger packages (ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION, INFRA-77), and one fresh package would fail the whole npm group.",
+      "matchDatasources": ["npm"],
+      "minimumReleaseAge": "1 day"
+    },
+    {
+      "description": "GitHub Actions non-major and digest updates in one PR.",
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["minor", "patch", "digest"],
+      "groupName": "github-actions non-major"
+    },
+    {
+      "description": "Docker non-major and digest updates in one PR.",
+      "matchDatasources": ["docker"],
+      "matchUpdateTypes": ["minor", "patch", "digest"],
+      "groupName": "docker non-major"
+    },
+    {
+      "description": "OpenTelemetry packages move together in their own PR, apart from the ecosystem groups: their versions are released in lockstep, and INFRA-84 owns the telemetry standard.",
+      "matchPackageNames": ["opentelemetry-*", "@opentelemetry/**"],
+      "groupName": "opentelemetry"
+    },
+    {
+      "description": "All majors (libraries, actions, images) wait for approval on the Dependency Dashboard, approve them one at a time, after the non-major groups have landed.",
+      "matchUpdateTypes": ["major"],
+      "dependencyDashboardApproval": true
+    },
+    {
+      "description": "Python runtime upgrade (a new 3.x is a minor in Renovate's terms): Dockerfiles, requires-python and CI move together in one PR, on dashboard approval only.",
+      "matchDepNames": ["python"],
+      "matchUpdateTypes": ["major", "minor"],
+      "groupName": "python runtime",
+      "dependencyDashboardApproval": true
+    },
+    {
+      "description": "Node runtime major: Dockerfiles, CI and @types/node move together in one PR, on dashboard approval only.",
+      "matchDepNames": ["node", "@types/node"],
+      "matchUpdateTypes": ["major"],
+      "groupName": "node runtime",
+      "dependencyDashboardApproval": true
+    },
+    {
+      "description": "Datastore image majors are never proposed: production versions are owned by aws-infra (clusters/platform/data), and local and CI images must not run ahead of them.",
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["postgres"],
+      "matchUpdateTypes": ["major"],
+      "enabled": false
+    },
+    {
       "description": "Hold ESLint 10 until eslint-plugin-react (used by eslint-config-next) lists eslint 10 in its peer range and lints without 'getFilename is not a function'. Re-check: npm view eslint-plugin-react peerDependencies.",
       "matchPackageNames": ["eslint", "@eslint/js"],
       "matchUpdateTypes": ["major"],

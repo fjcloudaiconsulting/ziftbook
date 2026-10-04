@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.20.4](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.20.3...v0.20.4) (2026-10-04)
+
+
+### Bug Fixes
+
+* **landing:** deploy with a Worker-scoped token from the landing environment (INFRA-113) ([#181](https://github.com/fjcloudaiconsulting/ziftbook/issues/181)) ([e507a66](https://github.com/fjcloudaiconsulting/ziftbook/commit/e507a66a3318b02a5bf2b511a5f1a4feb84e8402))
+
 ## [0.20.3](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.20.2...v0.20.3) (2026-10-03)
 
 
