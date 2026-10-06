@@ -101,3 +101,37 @@ describe("lib/trace.ts (W1)", () => {
     assert.equal(inner.parentSpanContext, undefined);
   });
 });
+
+describe("trace export gate: enabled()", () => {
+  const DEAD = "http://127.0.0.1:9";
+  const clear = () => {
+    for (const key of Object.keys(process.env)) if (key.startsWith("OTEL_")) delete process.env[key];
+  };
+  const gate = async (env) => {
+    clear();
+    Object.assign(process.env, env);
+    try {
+      return (await freshTrace()).enabled();
+    } finally {
+      clear();
+    }
+  };
+
+  test("only the traces-specific endpoint turns it on", async () => {
+    assert.equal(await gate({ OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: DEAD }), true);
+  });
+  test("a logs-only endpoint does not", async () => {
+    assert.equal(await gate({ OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: DEAD }), false);
+  });
+  test("a whitespace-only endpoint is off", async () => {
+    assert.equal(await gate({ OTEL_EXPORTER_OTLP_ENDPOINT: "   " }), false);
+  });
+  test('OTEL_TRACES_EXPORTER "none", " none " and "NONE" are off with an endpoint set', async () => {
+    for (const v of ["none", " none ", "NONE"]) {
+      assert.equal(await gate({ OTEL_EXPORTER_OTLP_ENDPOINT: DEAD, OTEL_TRACES_EXPORTER: v }), false, v);
+    }
+  });
+  test("an empty traces endpoint falls back to the generic one", async () => {
+    assert.equal(await gate({ OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "", OTEL_EXPORTER_OTLP_ENDPOINT: DEAD }), true);
+  });
+});
