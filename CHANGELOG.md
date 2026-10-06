@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.22.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.21.0...v0.22.0) (2026-10-06)
+
+
+### Features
+
+* **backend:** database health check and live smoke script (INFRA-120) ([#190](https://github.com/fjcloudaiconsulting/ziftbook/issues/190)) ([b1f5db3](https://github.com/fjcloudaiconsulting/ziftbook/commit/b1f5db3d7dac619d7012c42513f56cb025669de6))
+* **web:** drop OTLP log export, logs are stdout JSON only (INFRA-118) ([#189](https://github.com/fjcloudaiconsulting/ziftbook/issues/189)) ([e161ee1](https://github.com/fjcloudaiconsulting/ziftbook/commit/e161ee1f335934d0926bb47ad519ddb1df093a23))
+
 ## [0.21.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.20.4...v0.21.0) (2026-10-04)
 
 
