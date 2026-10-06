@@ -15,7 +15,7 @@ from fastapi.routing import APIRoute
 from opentelemetry import trace
 from opentelemetry.trace import SpanKind
 from pydantic import BaseModel
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from app import (
@@ -39,7 +39,7 @@ from app import (
 )
 from app.config import DatabaseSettings, Settings
 from app.db import SessionLocal
-from app.errors import ApiError
+from app.errors import ApiError, Error
 
 HEALTH_PATH = "/api/healthz"
 REQUEST_ID = re.compile(r"[A-Za-z0-9._:-]{1,64}")
@@ -54,6 +54,11 @@ class Health(BaseModel):
     status: str
     version: str
     revision: str
+
+
+class Dependencies(BaseModel):
+    status: str
+    database: str
 
 
 def _access_fields(request: Request, status: int, started: float) -> dict[str, Any]:
@@ -120,6 +125,28 @@ def create_app() -> FastAPI:
     @router.get("/healthz", tags=["health"])
     def healthz() -> Health:
         return Health(status="ok", version=settings.app_version, revision=settings.app_revision)
+
+    # INFRA-120. The truth surface for the post-deploy smoke, as TBD's /health/dependencies: 503
+    # when a required dependency is unusable. /healthz stays cheap and database-free.
+    # Unauthenticated: a coarse code only, never the driver message or host.
+    # The 503 is the Error shape (the contract requires it), so unlike TBD's it does not name the
+    # dependency; the log line does.
+    # ponytail: no probe timeout and no per-IP limit, so a flood against a hung database ties up
+    # threads. Fine for staging; add a Cloudflare rate rule or a DB timeout before prod.
+    @router.get(
+        "/health/dependencies",
+        tags=["health"],
+        response_model=Dependencies,
+        responses={503: {"model": Error}},
+    )
+    def dependencies() -> Any:
+        try:
+            with SessionLocal() as session:
+                session.execute(text("SELECT 1"))
+        except Exception:
+            logger.error("dependencies unhealthy", extra={"dependency": "database"}, exc_info=True)
+            return JSONResponse({"code": "database_unavailable"}, status_code=503)
+        return Dependencies(status="ok", database="ok")
 
     # No deploy version in the OpenAPI document: it is a committed contract
     # and must not vary per environment.

@@ -26,6 +26,37 @@
         }
       }
     },
+    "/api/health/dependencies": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "summary": "Dependencies",
+        "operationId": "health-dependencies",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Dependencies"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/session": {
       "get": {
         "tags": [
@@ -5408,6 +5439,24 @@
           "password"
         ],
         "title": "Credentials"
+      },
+      "Dependencies": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "database": {
+            "type": "string",
+            "title": "Database"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "database"
+        ],
+        "title": "Dependencies"
       },
       "DisplayNameChange": {
         "properties": {
