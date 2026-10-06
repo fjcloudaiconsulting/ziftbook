@@ -370,7 +370,7 @@ from `.env`; it fixes the log settings at `DEBUG`/`text`, passes no `ZIF_LOG_SQL
 
 | Signal | Leaves the app as | On | Off | Tune |
 |---|---|---|---|---|
-| Logs | JSON lines on stdout (`ZIF_LOG_FORMAT=json`, the default; `text` in dev). The API, worker, migrations and web app never send logs over OTLP: a log collector reads their stdout (none is set up yet). The web app is the same: stdout only | always (stdout) | stdout cannot be turned off; raise `ZIF_LOG_LEVEL` to `ERROR` for the least | `ZIF_LOG_LEVEL` (default `INFO`), `ZIF_LOG_SQL` (see Logging) |
+| Logs | JSON lines on stdout (`ZIF_LOG_FORMAT=json`, the default; `text` in dev). The API, worker, migrations and web app never send logs over OTLP: a log collector reads their stdout (none is set up yet). | always (stdout) | stdout cannot be turned off; raise `ZIF_LOG_LEVEL` to `ERROR` for the least | `ZIF_LOG_LEVEL` (default `INFO`), `ZIF_LOG_SQL` (see Logging) |
 | Traces | OTLP/HTTP to `ZIF_OTEL_EXPORTER_OTLP_ENDPOINT` | set the endpoint (plus `ZIF_OTEL_EXPORTER_OTLP_HEADERS` if the collector wants auth) | leave the endpoint unset: no spans are exported and no connection is attempted. `ZIF_OTEL_TRACES_EXPORTER=none` turns traces off with the endpoint still set. In prod you can also set `ZIF_OTEL_TRACES_SAMPLER=always_off` | prod: `ZIF_OTEL_TRACES_SAMPLER` / `_ARG` (default 10% of new traces, following the caller's decision); dev: 100% |
 | Metrics | API only: FastAPI's `http.server.request.duration` and `http.server.active_requests`, over OTLP/HTTP to `ZIF_OTEL_EXPORTER_OTLP_ENDPOINT` every 60s | set the endpoint | leave the endpoint unset: no reader, no connection. `ZIF_OTEL_METRICS_EXPORTER=none` turns metrics off with the endpoint still set | every 60s (the SDK's `OTEL_METRIC_EXPORT_INTERVAL`, which compose does not pass) |
 
@@ -419,8 +419,8 @@ To follow a request, open Grafana at http://127.0.0.1:3300, then Explore:
    and email it queued. Or search Tempo by service name (`{resource.service.name="ziftbook-api"}`).
 
 The API's request metrics are in Prometheus as `http_server_request_duration_seconds` (label
-`http_route`). Only the web app's logs land in Loki (`service_name` = `ziftbook-web`); the API,
-worker and migrations log to the terminal (`docker compose logs`).
+`http_route`). No logs land in Loki: every process, the web app included, logs to the terminal
+(`docker compose logs`).
 
 ## API contract
 

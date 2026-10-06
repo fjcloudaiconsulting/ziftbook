@@ -168,6 +168,11 @@ describe("logger (L7)", () => {
 });
 
 describe("errorFields (L8)", () => {
+  test("a cause's message never reaches the serialised output", () => {
+    const out = JSON.stringify(errorFields(new Error("x", { cause: new Error("root a@b.c") })));
+    assert.doesNotMatch(out, /a@b\.c/);
+  });
+
   test("never leaks message text into the serialised output", () => {
     const err = new Error("a@b.c secret");
     const fields = errorFields(err);

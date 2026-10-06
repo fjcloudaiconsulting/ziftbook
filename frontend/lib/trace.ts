@@ -14,9 +14,7 @@ import { BasicTracerProvider, BatchSpanProcessor, type SpanProcessor } from "@op
 
 let built: BasicTracerProvider | undefined;
 
-// The gate, also in lib/log.ts (lib/ files never import a sibling -- see its header comment --
-// so the few lines are duplicated rather than shared). This file only ever serves traces, so the
-// signal is fixed rather than a parameter. An endpoint (the signal-specific or generic
+// The gate: an endpoint (the signal-specific or generic
 // OTEL_EXPORTER_OTLP_*_ENDPOINT, trimmed) and OTEL_TRACES_EXPORTER, trimmed and lower-cased, not
 // "none". `||`, not `??`, for the signal-specific-to-generic endpoint fallback: an empty
 // OTEL_EXPORTER_OTLP_TRACES_ENDPOINT must still fall through to the generic one.
