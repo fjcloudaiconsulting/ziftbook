@@ -7,8 +7,9 @@
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",
-    // Every request hits worker.js first so www and plain http are redirected on every path, not just "/".
-    "run_worker_first": true
+    // Only "/" runs worker.js (the language redirect needs Accept-Language); every other path is a static asset and
+    // is not a Worker request. www is redirected by the zone rule in aws-infra, and the zone's Always Use HTTPS covers http.
+    "run_worker_first": ["/"]
   },
   // No routes on purpose (INFRA-113): the custom domains ziftbook.com and www.ziftbook.com stay attached in the
   // Cloudflare dashboard, owner-held. A deploy then leaves them alone, so the CI token can be an Editor scoped to

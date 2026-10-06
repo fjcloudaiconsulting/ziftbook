@@ -37,22 +37,10 @@ test("any other path is served from static assets", async () => {
 const assets = { ASSETS: { fetch: () => new Response("asset") } };
 const HSTS = "max-age=31536000; includeSubDomains";
 
-test("www redirects permanently to the apex, keeping path and query", async () => {
-  const response = await worker.fetch(new Request("https://www.ziftbook.com/nl/?ref=card"), assets);
-  assert.equal(response.status, 301);
-  assert.equal(response.headers.get("Location"), "https://ziftbook.com/nl/?ref=card");
-  assert.equal(response.headers.get("Strict-Transport-Security"), HSTS);
-});
-
 test("plain http on the apex redirects permanently to https", async () => {
   const response = await worker.fetch(new Request("http://ziftbook.com/pt/"), assets);
   assert.equal(response.status, 301);
   assert.equal(response.headers.get("Location"), "https://ziftbook.com/pt/");
-});
-
-test("http on www goes straight to https apex in one hop", async () => {
-  const response = await worker.fetch(new Request("http://www.ziftbook.com/"), assets);
-  assert.equal(response.headers.get("Location"), "https://ziftbook.com/");
 });
 
 test("the language redirect carries HSTS", async () => {

@@ -1,5 +1,6 @@
-// Runs for every request (wrangler.jsonc run_worker_first: true):
-// 1. www and plain http go to https://ziftbook.com, 2. "/" goes to the visitor's language, 3. everything else is a static asset.
+// Runs only for "/" (wrangler.jsonc run_worker_first), everything else is a static asset served without a Worker request.
+// www.ziftbook.com is 301ed to the apex by the zone's Single Redirect rule (aws-infra, INFRA-131), before the Worker.
+// 1. plain http goes to https://ziftbook.com, 2. "/" goes to the visitor's language, 3. anything else is a static asset.
 const APEX = "ziftbook.com";
 const HSTS = "max-age=31536000; includeSubDomains";
 const SUPPORTED = ["en", "nl", "pt"];
@@ -28,9 +29,8 @@ function redirect(location, status, headers = {}) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    const production = url.hostname === APEX || url.hostname === `www.${APEX}`;
 
-    if (production && (url.hostname !== APEX || url.protocol !== "https:")) {
+    if (url.hostname === APEX && url.protocol !== "https:") {
       return redirect(`https://${APEX}${url.pathname}${url.search}`, 301);
     }
     if (url.pathname === "/") {
