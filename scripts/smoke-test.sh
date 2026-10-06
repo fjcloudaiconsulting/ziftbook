@@ -6,7 +6,7 @@
 #   2. GET /api/health/dependencies 200 only when the database answers SELECT 1
 #
 # Env: SMOKE_BASE_URL (required, e.g. https://dev.ziftbook.com). SMOKE_USERNAME / SMOKE_PASSWORD are
-# accepted for interface parity and unused: there is no login check yet.
+# ignored (interface parity with TBD): there is no login check yet.
 # Exit: 0 all passed, 1 a check failed, 2 SMOKE_BASE_URL missing.
 set -uo pipefail
 

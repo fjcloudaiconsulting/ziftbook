@@ -129,7 +129,10 @@ def create_app() -> FastAPI:
     # INFRA-120. The truth surface for the post-deploy smoke, as TBD's /health/dependencies: 503
     # when a required dependency is unusable. /healthz stays cheap and database-free.
     # Unauthenticated: a coarse code only, never the driver message or host.
-    # ponytail: no probe timeout; an unreachable host is bounded by the smoke's own curl --max-time.
+    # The 503 is the Error shape (the contract requires it), so unlike TBD's it does not name the
+    # dependency; the log line does.
+    # ponytail: no probe timeout and no per-IP limit, so a flood against a hung database ties up
+    # threads. Fine for staging; add a Cloudflare rate rule or a DB timeout before prod.
     @router.get(
         "/health/dependencies",
         tags=["health"],
@@ -141,7 +144,7 @@ def create_app() -> FastAPI:
             with SessionLocal() as session:
                 session.execute(text("SELECT 1"))
         except Exception:
-            logger.error("dependencies unhealthy: database", exc_info=True)
+            logger.error("dependencies unhealthy", extra={"dependency": "database"}, exc_info=True)
             return JSONResponse({"code": "database_unavailable"}, status_code=503)
         return Dependencies(status="ok", database="ok")
 
