@@ -141,7 +141,7 @@ def create_app() -> FastAPI:
             with SessionLocal() as session:
                 session.execute(text("SELECT 1"))
         except Exception:
-            logger.error("dependencies unhealthy: database")
+            logger.error("dependencies unhealthy: database", exc_info=True)
             return JSONResponse({"code": "database_unavailable"}, status_code=503)
         return Dependencies(status="ok", database="ok")
 

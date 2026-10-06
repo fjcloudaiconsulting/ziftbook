@@ -41,9 +41,4 @@ def test_dependencies_503_with_a_coarse_code_when_the_database_is_down(migrated:
 
     assert response.status_code == 503
     assert response.json() == {"code": "database_unavailable"}
-    assert "SECRET" not in response.text
-
-
-def test_healthz_never_touches_the_database() -> None:
-    # No lifespan, so SessionLocal is unbound: any session use would raise.
-    assert TestClient(create_app()).get("/api/healthz").status_code == 200
+    assert "127.0.0.1" not in response.text

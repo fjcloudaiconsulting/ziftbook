@@ -19,7 +19,7 @@ check() { # <path>: expects 200
   local body status
   body="$(mktemp)"
   status="$(curl --silent --show-error --max-time 15 --connect-timeout 5 -o "$body" -w '%{http_code}' \
-    "$BASE_URL$1" 2>/dev/null)" || status=000
+    "$BASE_URL$1")" || status=000
   if [[ "$status" == 200 ]]; then echo "ok   GET $1 (200)"
   else echo "FAIL GET $1: expected 200, got $status; body: $(head -c 200 "$body" | tr -d '\n')"; failed=1; fi
   rm -f "$body"
