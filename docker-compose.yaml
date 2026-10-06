@@ -153,7 +153,7 @@ services:
       OTEL_EXPORTER_OTLP_ENDPOINT: ${ZIF_OTEL_EXPORTER_OTLP_ENDPOINT:-}
       OTEL_EXPORTER_OTLP_HEADERS: ${ZIF_OTEL_EXPORTER_OTLP_HEADERS:-}
       OTEL_TRACES_EXPORTER: ${ZIF_OTEL_TRACES_EXPORTER:-otlp}
-      OTEL_LOGS_EXPORTER: ${ZIF_OTEL_LOGS_EXPORTER:-otlp}
+      OTEL_LOGS_EXPORTER: none # stdout only; also keeps a rolled-back image (OTLP logs) quiet
     networks:
       default:
         ipv4_address: 172.28.0.10
