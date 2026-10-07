@@ -44,7 +44,11 @@ class LocalRedirects(urllib.request.HTTPRedirectHandler):
     def redirect_request(
         self, req: Any, fp: Any, code: Any, msg: Any, headers: Any, newurl: Any
     ) -> Any:
-        check_local(newurl)
+        try:
+            check_local(newurl)
+        except SystemExit:
+            fp.close()  # the 302's own response, which nothing else will now read
+            raise
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
