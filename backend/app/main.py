@@ -200,7 +200,12 @@ def create_app() -> FastAPI:
         booking_links.router,
     ):
         for route in each.routes:
-            if isinstance(route, APIRoute) and route.methods & {"POST", "PUT", "PATCH", "DELETE"}:
+            if isinstance(route, APIRoute) and set(route.methods or ()) & {
+                "POST",
+                "PUT",
+                "PATCH",
+                "DELETE",
+            }:
                 route.responses.setdefault(413, {"model": Error})
         app.include_router(each)
 

@@ -1,13 +1,19 @@
 """ZIF-83: a request body over MAX_BODY is a 413, declared (Content-Length) or counted (chunked)."""
 
+import json
+import uuid
 from collections.abc import Callable, Iterator
-from typing import Any
+from typing import Any, get_args
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from pydantic import BaseModel
 
+from app.business_settings import Locale
+from app.clients import NoteChange
 from app.main import MAX_BODY, create_app
+from app.services import ServiceIn
 from tests.conftest import People, new_client, signed_in
 
 JSON = {"content-type": "application/json"}
@@ -103,3 +109,60 @@ def test_the_contract_declares_413_on_every_write_route_and_no_get_route() -> No
             if not write and declared:
                 wrong.append(f"{method.upper()} {path} declares 413")
     assert wrong == []
+
+
+def limit(schema: dict[str, Any], node: Any, key: str) -> int:
+    """The first `key` (maxLength, maxItems) under this schema node, through $ref, anyOf and the
+    additionalProperties of a dict."""
+    if isinstance(node, dict):
+        if key in node:
+            return int(node[key])
+        if "$ref" in node:
+            return limit(schema, schema["$defs"][node["$ref"].rsplit("/", 1)[-1]], key)
+        for child in node.values():
+            try:
+                return limit(schema, child, key)
+            except LookupError:
+                pass
+    if isinstance(node, list):
+        for child in node:
+            try:
+                return limit(schema, child, key)
+            except LookupError:
+                pass
+    raise LookupError(key)
+
+
+# ZIF-83 F7: the cap must stay above the largest body the models themselves allow. Read the bounds
+# from the models, so raising one fails here and not in production. "𝐀" is a letter, outside the
+# BMP: json.dumps escapes it to 12 bytes, the worst case per character.
+def worst_note_change() -> tuple[type[BaseModel], dict[str, Any]]:
+    schema = NoteChange.model_json_schema()
+    note = "𝐀" * limit(schema, schema["properties"]["client_note"], "maxLength")
+    return NoteChange, {"client_note": note, "internal_note": note}
+
+
+def worst_service_in() -> tuple[type[BaseModel], dict[str, Any]]:
+    schema = ServiceIn.model_json_schema()
+    props = schema["properties"]
+    name = "𝐀" * limit(schema, props["name"], "maxLength")
+    description = "𝐀" * limit(schema, props["description"], "maxLength")
+    workers = limit(schema, props["worker_ids"], "maxItems")
+    return ServiceIn, {
+        "name": dict.fromkeys(get_args(Locale), name),
+        "description": dict.fromkeys(get_args(Locale), description),
+        "price": {"amount_minor": 1_000_000},
+        "duration_minutes": 720,
+        "buffer_minutes": 240,
+        "worker_ids": [str(uuid.uuid4()) for _ in range(workers)],
+    }
+
+
+@pytest.mark.parametrize("worst", [worst_note_change, worst_service_in])
+def test_the_largest_legitimate_bodies_fit_under_the_cap(
+    worst: Callable[[], tuple[type[BaseModel], dict[str, Any]]],
+) -> None:
+    model, body = worst()
+
+    model.model_validate(body)  # it is a legitimate body, not just a big one
+    assert len(json.dumps(body).encode()) <= MAX_BODY
