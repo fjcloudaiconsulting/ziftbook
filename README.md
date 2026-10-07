@@ -34,6 +34,20 @@ To start over with an empty database (every local account, business and booking 
 make reset   # docker compose down -v, then make up
 ```
 
+To fill the running app with synthetic data (two businesses, four people, a booking in every state):
+
+```sh
+make seed   # needs make up running; prints the logins, the public booking pages and a guest booking link
+```
+
+It signs everyone up through the real API, so the worker and Mailpit must be running. Run it in a second terminal
+after `make reset` has finished starting the stack (`make reset` ends in a foreground `make up`); if the old stack is
+still up, it says "already seeded" and changes nothing. A second run makes no business data, but it signs in again
+(one session and one audit row each). If a run fails part-way, `make reset`, then `make seed`. The pending bookings it
+makes lapse a week later. It only talks to `localhost`, `127.0.0.1` or `::1`, never through a proxy, so it cannot
+reach production; the check is on the first hop only, so a local `pnpm dev` whose `ZIF_API_URL` points elsewhere
+forwards the calls there.
+
 `make up` needs host ports 3000, 8000, 5432, 1025 and 8025 free, and fails naming whatever holds one it isn't already
 using itself. If another project's Mailpit (or anything else) is squatting on 1025/8025, stop it, or free just that
 port and recreate Mailpit: `docker compose up -d --force-recreate --no-deps mailpit`.
