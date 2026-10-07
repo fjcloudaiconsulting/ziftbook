@@ -177,24 +177,32 @@ def create_app() -> FastAPI:
             "exclude": lambda scope: scope["path"] == HEALTH_PATH,
         },
     )
-    app.include_router(router)
-    app.include_router(auth.router)
-    app.include_router(accounts.router)
-    app.include_router(audit.router)
-    app.include_router(business_settings.router)
-    app.include_router(clients.router)
-    app.include_router(services.router)
-    app.include_router(members.router)
-    app.include_router(invites.router)
-    app.include_router(schedule.router)
-    app.include_router(schedule.opening_router)
-    app.include_router(time_off.router)
-    app.include_router(availability.router)
-    app.include_router(availability.merchant_router)
-    app.include_router(booking_page.router)
-    app.include_router(bookings.router)
-    app.include_router(bookings.merchant_router)
-    app.include_router(booking_links.router)
+    # The body cap can answer any write route, whatever it declares: add the 413 to each, on the
+    # router itself (app.routes holds only wrappers by now), before it is included.
+    for each in (
+        router,
+        auth.router,
+        accounts.router,
+        audit.router,
+        business_settings.router,
+        clients.router,
+        services.router,
+        members.router,
+        invites.router,
+        schedule.router,
+        schedule.opening_router,
+        time_off.router,
+        availability.router,
+        availability.merchant_router,
+        booking_page.router,
+        bookings.router,
+        bookings.merchant_router,
+        booking_links.router,
+    ):
+        for route in each.routes:
+            if isinstance(route, APIRoute) and route.methods & {"POST", "PUT", "PATCH", "DELETE"}:
+                route.responses.setdefault(413, {"model": Error})
+        app.include_router(each)
 
     # Registered before json_only, so innermost: the byte counter for a chunked body (the proxy
     # strips content-length and streams). Only json_only's fast path stops a body that was declared

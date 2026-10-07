@@ -84,3 +84,22 @@ def test_the_access_line_records_the_413(client: TestClient, log_lines: Lines) -
 
     line = next(rec for rec in reversed(log_lines()) if rec["msg"] == "access")
     assert line["status"] == 413
+
+
+def test_the_contract_declares_413_on_every_write_route_and_no_get_route() -> None:
+    spec = create_app().openapi()
+    wrong = []
+    for path, operations in spec["paths"].items():
+        for method, operation in operations.items():
+            declared = operation["responses"].get("413")
+            write = method.upper() in ("POST", "PUT", "PATCH", "DELETE")
+            expected = {"$ref": "#/components/schemas/Error"}
+            if (
+                write
+                and (declared or {}).get("content", {}).get("application/json", {}).get("schema")
+                != expected
+            ):
+                wrong.append(f"{method.upper()} {path} lacks 413")
+            if not write and declared:
+                wrong.append(f"{method.upper()} {path} declares 413")
+    assert wrong == []
