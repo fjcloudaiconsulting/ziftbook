@@ -1,4 +1,4 @@
-"""GET /api/bookings?from&to and GET /api/bookings/{id} (ZIF-57 PR1): the agenda range and the
+"""GET /api/bookings?from&to and GET /api/bookings/{id} (ZIF-57): the agenda range and the
 booking detail with its history. See docs/specs/2026-09-30-zif-57-pr1-spec.md; F# and G# are that
 spec's fences and guards."""
 

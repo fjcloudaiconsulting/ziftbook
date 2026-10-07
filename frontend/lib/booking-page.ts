@@ -1,4 +1,4 @@
-// Pure logic behind the public booking page (ZIF-56 PR2), kept free of React (and of any sibling
+// Pure logic behind the public booking page (ZIF-56), kept free of React (and of any sibling
 // import besides lib/booking-link.ts's addDays) so node --test can run it directly: cancellation
 // terms, the business's own policy text, email typo suggestions, the POST body, the answer-to-
 // outcome mapping, day-part grouping and the availability window.

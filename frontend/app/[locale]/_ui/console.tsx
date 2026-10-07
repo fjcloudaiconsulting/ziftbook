@@ -214,8 +214,7 @@ function AccountPopover({ session, onSignOut }: { session: SessionOut; onSignOut
 }
 
 /** The banner a write shows when `call()`'s session check finds the cookie already signed out
- * (U3). No PR 1 screen writes anything besides sign-out (which has its own, opposite meaning for a
- * 401: already signed out), so this has no caller yet — PR 2's save button is the first. */
+ * (U3). Sign-out is the one write that does not use it: a 401 there just means already signed out. */
 export function SignedOutBanner() {
   const t = useTranslations("Console.errors");
   return (
