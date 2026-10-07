@@ -399,10 +399,9 @@ class AvailabilityOut(BaseModel):
     duration_minutes: int
     workers: list[WorkerOut]  # assigned to the service and with working hours
     slots: list[datetime]  # UTC starts, ascending, unique
-    # Parallel to slots (ZIF-100): slot_workers[i] holds the indices into THIS response's
-    # workers (sorted by id, NOT the booking page's roster order), ascending and never empty, of
-    # who can take slots[i]. With member_id set, every entry is that worker's roster index.
-    # Display only, never a reservation: "no preference" is still assigned at booking time.
+    # Parallel to slots: who can take slots[i], as ascending indices into this response's workers
+    # (sorted by id, not the booking page's order). Display only: "no preference" is assigned when
+    # the booking is made.
     slot_workers: list[list[int]]
 
 
@@ -497,15 +496,15 @@ def compute(
         )
         # Indexed from the full roster, never from chosen: with member_id set, chosen is one.
         for i, m in enumerate(workers):
-            if member_id in (None, m):
-                for slot in result.slots[m]:
-                    by_slot.setdefault(slot, []).append(i)
+            for slot in result.slots.get(m, ()):
+                by_slot.setdefault(slot, []).append(i)
+    order = sorted(by_slot)
     return AvailabilityOut(
         timezone=zone,
         duration_minutes=service.duration_minutes,
         workers=[WorkerOut(id=m, display_name=names[m]) for m in workers],
-        slots=sorted(by_slot),
-        slot_workers=[by_slot[slot] for slot in sorted(by_slot)],
+        slots=order,
+        slot_workers=[by_slot[slot] for slot in order],
     )
 
 
