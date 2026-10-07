@@ -47,6 +47,11 @@ def sign_up(details: LinkRequest, request: Request) -> None:
     send_link("sign_up", details, request)
 
 
+# Glyphs that draw nothing: the Hangul fillers (category Lo, so a letter test alone passes them),
+# the Braille blank and the musical null notehead (both So).
+BLANK_GLYPHS = frozenset("\u115f\u1160\u3164\uffa0\u2800\U0001d159")
+
+
 def printable(name: str) -> str:
     # No control, format (zero-width) or unassigned characters: a name that looks empty, or that
     # the database refuses (NUL), is a 422, not a blank business or a 500. Zl/Zp (U+2028, U+2029)
@@ -56,29 +61,45 @@ def printable(name: str) -> str:
         for c in name
     ):
         raise ValueError("unprintable characters")
+    # Looks empty: only blank glyphs, whitespace and combining marks. One such glyph between real
+    # text is fine, so a stored description with spacer lines still saves.
+    if all(
+        c in BLANK_GLYPHS or c.isspace() or unicodedata.category(c).startswith("M") for c in name
+    ):
+        raise ValueError("blank-looking text")
+    return name
+
+
+def named(name: str) -> str:
+    # printable, plus: no blank glyph anywhere, and at least one letter or number, so a name is
+    # never emoji-only, marks-only or empty-looking. For names only: free text keeps "🏖".
+    printable(name)
+    if BLANK_GLYPHS & set(name) or not any(unicodedata.category(c)[0] in "LN" for c in name):
+        raise ValueError("a name needs a letter or number and no blank glyphs")
     return name
 
 
 BusinessName = Annotated[
     str,
     StringConstraints(strip_whitespace=True, min_length=1, max_length=100),
-    AfterValidator(printable),
+    AfterValidator(named),
 ]
 
 
 # A person's name: a member's display name (app/members.py) and the platform name given at sign-up,
 # invite and first sign-in. Defined here because members imports this module, not the reverse.
 # ponytail: printable() blocks C* and Zl/Zp, so ZWJ, RLO and BOM are 422; strip_whitespace is what
-# empties an NBSP-only name (and min_length then refuses it). It does not block 60 combining
-# marks (Zalgo), blank-rendering glyphs (U+2800 Braille blank, U+3164 Hangul filler) or
-# homoglyphs. Accepted: a display name takes an authenticated member, damages only that business's
-# own page, and any owner can overwrite it; a platform name (users.name) is set once by its own
-# person, so no owner can overwrite it, but it only shows to their own businesses' teams and
-# clients. Add a normalisation/blocklist only if a real person is hit.
+# empties an NBSP-only name (and min_length then refuses it); named() refuses the blank glyphs
+# (U+2800 Braille blank, U+3164 Hangul filler and kin) and a name with no letter or number. It does
+# not block 60 combining marks (Zalgo) after a letter or homoglyphs. Accepted: a display name takes
+# an authenticated member, damages only that business's own page, and any owner can overwrite it; a
+# platform name (users.name) is set once by its own person, so no owner can overwrite it, but it
+# only shows to their own businesses' teams and clients. Add a normalisation/blocklist only if a
+# real person is hit.
 DisplayNameText = Annotated[
     str,
     StringConstraints(strip_whitespace=True, min_length=1, max_length=60),
-    AfterValidator(printable),
+    AfterValidator(named),
 ]
 
 

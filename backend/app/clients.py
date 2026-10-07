@@ -14,7 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app import auth, passwords
-from app.accounts import printable
+from app.accounts import named, printable
 from app.auth import CurrentSession
 from app.business_settings import Locale
 from app.errors import ApiError, Error
@@ -28,7 +28,7 @@ Source = Literal["booking_page", "merchant", "import"]
 ClientName = Annotated[
     str,
     StringConstraints(strip_whitespace=True, min_length=1, max_length=100),
-    AfterValidator(printable),
+    AfterValidator(named),
 ]
 Phone = Annotated[
     str,
