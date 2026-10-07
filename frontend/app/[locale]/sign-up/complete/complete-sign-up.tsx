@@ -87,6 +87,19 @@ function SignUpForm({ link }: { link: OpenedLink | null }) {
     }
   }
 
+  if (ended === "exists") {
+    return (
+      <Outcome icon="person" title={t("existsTitle")} lede={t("existsLede")}>
+        <Link className={`${styles.button} ${styles.primary}`} href="/sign-in">
+          {t("signIn")}
+        </Link>
+        <p className={styles.aside}>
+          <Link href="/forgot-password">{t("forgot")}</Link>
+        </p>
+      </Outcome>
+    );
+  }
+
   // Longer than any link we send: mangled on the way, so it can't work either.
   if (token === null || token.length > 100 || ended === "expired") {
     return (
@@ -101,19 +114,6 @@ function SignUpForm({ link }: { link: OpenedLink | null }) {
         }
         submit={t("newLink")}
       />
-    );
-  }
-
-  if (ended === "exists") {
-    return (
-      <Outcome icon="person" title={t("existsTitle")} lede={t("existsLede")}>
-        <Link className={`${styles.button} ${styles.primary}`} href="/sign-in">
-          {t("signIn")}
-        </Link>
-        <p className={styles.aside}>
-          <Link href="/forgot-password">{t("forgot")}</Link>
-        </p>
-      </Outcome>
     );
   }
 

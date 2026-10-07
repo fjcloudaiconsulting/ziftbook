@@ -61,8 +61,8 @@ describe("link store", () => {
     store.subscribe(() => {});
     win.open("a.1");
     const link = store.snapshot();
-    store.forget(link);
     win.open(null);
+    store.forget(link);
     assert.deepEqual(store.snapshot(), { token: null, opened: link.opened });
   });
 
@@ -76,5 +76,17 @@ describe("link store", () => {
     const newer = store.snapshot();
     store.forget(older);
     assert.equal(store.snapshot(), newer);
+  });
+
+  test("an answer for the same link's earlier opening does not forget the later one", () => {
+    const win = fakeWindow();
+    const store = linkStore(win.take, win.target);
+    store.subscribe(() => {});
+    win.open("a.1");
+    const earlier = store.snapshot();
+    win.open("a.1");
+    const later = store.snapshot();
+    store.forget(earlier);
+    assert.equal(store.snapshot(), later);
   });
 });
