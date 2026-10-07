@@ -399,6 +399,11 @@ class AvailabilityOut(BaseModel):
     duration_minutes: int
     workers: list[WorkerOut]  # assigned to the service and with working hours
     slots: list[datetime]  # UTC starts, ascending, unique
+    # Parallel to slots (ZIF-100): slot_workers[i] holds the indices into THIS response's
+    # workers (sorted by id, NOT the booking page's roster order), ascending and never empty, of
+    # who can take slots[i]. With member_id set, every entry is that worker's roster index.
+    # Display only, never a reservation: "no preference" is still assigned at booking time.
+    slot_workers: list[list[int]]
 
 
 @router.get(
@@ -473,7 +478,7 @@ def compute(
         settings.min_notice_minutes,
         settings.booking_horizon_days,
     )
-    found: set[datetime] = set()
+    by_slot: dict[datetime, list[int]] = {}
     # Dates only after clamping: to=9999-12-31 would overflow below.
     if chosen and first <= last:
         buffer = buffer_for(service.duration_minutes, service.buffer_minutes, settings.buffer_pct)
@@ -490,13 +495,17 @@ def compute(
             buffer=buffer,
             exclude=exclude,
         )
-        for m in chosen:
-            found.update(result.slots[m])
+        # Indexed from the full roster, never from chosen: with member_id set, chosen is one.
+        for i, m in enumerate(workers):
+            if member_id in (None, m):
+                for slot in result.slots[m]:
+                    by_slot.setdefault(slot, []).append(i)
     return AvailabilityOut(
         timezone=zone,
         duration_minutes=service.duration_minutes,
         workers=[WorkerOut(id=m, display_name=names[m]) for m in workers],
-        slots=sorted(found),
+        slots=sorted(by_slot),
+        slot_workers=[by_slot[slot] for slot in sorted(by_slot)],
     )
 
 

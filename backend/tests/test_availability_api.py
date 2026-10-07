@@ -114,7 +114,7 @@ def test_anyone_reads_a_service_s_free_slots_without_a_session(
 
     assert response.status_code == 200
     body = response.json()
-    assert set(body) == {"timezone", "duration_minutes", "workers", "slots"}
+    assert set(body) == {"timezone", "duration_minutes", "workers", "slots", "slot_workers"}
     assert body["timezone"] == ZONE
     assert body["duration_minutes"] == 30
     assert body["workers"] == [{"id": str(member_id(people.a, people.both)), "display_name": None}]
@@ -217,6 +217,78 @@ def test_one_worker_or_anyone(people: People, app: FastAPI, owner: TestClient) -
         ],
         key=lambda w: str(w["id"]),
     )
+
+
+# 3b. who can take each slot (ZIF-100)
+
+
+def staggered(people: People, owner: TestClient) -> tuple[str, list[uuid.UUID]]:
+    """Two workers; the roster's index 0 works 10:00-12:00 and index 1 09:00-11:00, so index 0 owns
+    the LATER slots and the two overlap from 10:00. Returns the service and the roster."""
+    roster = sorted([member_id(people.a, people.both), member_id(people.a, people.only_a)])
+    users = {member_id(people.a, u): u for u in (people.both, people.only_a)}
+    service_id = new_service(owner)
+    seed(people.a, users[roster[0]], weekdays("10:00", "12:00"))
+    seed(people.a, users[roster[1]], weekdays("09:00", "11:00"))
+    assign(people.a, service_id, *roster)
+    return service_id, roster
+
+
+def test_each_slot_lists_exactly_the_workers_who_can_take_it(
+    people: People, app: FastAPI, owner: TestClient
+) -> None:
+    service_id, roster = staggered(people, owner)
+    body = get(new_client(app), people.a, service_id).json()
+
+    assert [w["id"] for w in body["workers"]] == [str(m) for m in roster]
+    by_slot = dict(zip(body["slots"], body["slot_workers"], strict=True))
+    assert by_slot[local(MONDAY, "09:00")] == [1]
+    assert by_slot[local(MONDAY, "10:00")] == [0, 1]
+    assert by_slot[local(MONDAY, "10:30")] == [0, 1]
+    assert by_slot[local(MONDAY, "11:30")] == [0]
+    for i in (0, 1):
+        assert any(i in ws for ws in body["slot_workers"])
+    assert all(ws == sorted(ws) and ws for ws in body["slot_workers"])
+
+
+def test_slots_derived_per_worker_match_that_worker_s_own_answer(
+    people: People, app: FastAPI, owner: TestClient
+) -> None:
+    service_id, roster = staggered(people, owner)
+    client = new_client(app)
+    anyone = get(client, people.a, service_id).json()
+
+    for i, m in enumerate(roster):
+        derived = [
+            s for s, ws in zip(anyone["slots"], anyone["slot_workers"], strict=True) if i in ws
+        ]
+        assert derived
+        assert derived == get(client, people.a, service_id, member_id=m).json()["slots"]
+
+
+def test_a_chosen_worker_is_indexed_in_the_full_roster(
+    people: People, app: FastAPI, owner: TestClient
+) -> None:
+    service_id, roster = staggered(people, owner)
+    client = new_client(app)
+    body = get(client, people.a, service_id, member_id=roster[1]).json()
+
+    assert body["workers"][1]["id"] == str(roster[1])  # fixture check: not the first
+    assert body["slots"]
+    assert body["slot_workers"] == [[1]] * len(body["slots"])
+
+
+def test_no_slots_still_carries_the_empty_slot_workers(
+    people: People, app: FastAPI, owner: TestClient
+) -> None:
+    service_id, _ = staggered(people, owner)
+    client = new_client(app)
+    past = get(client, people.a, service_id, "0001-01-01", "0001-01-02").json()
+    nobody = get(client, people.a, service_id, member_id=uuid.uuid4()).json()
+
+    for body in (past, nobody):
+        assert body["slots"] == []
+        assert body["slot_workers"] == []
 
 
 def test_anyone_lists_each_start_once(people: People, app: FastAPI, owner: TestClient) -> None:
@@ -897,4 +969,10 @@ def test_the_public_response_carries_no_time_off_fields_for_a_whole_day_block(
     response = get(new_client(app), people.a, ready)
     assert response.status_code == 200
     assert marker not in response.text
-    assert set(response.json()) == {"timezone", "duration_minutes", "workers", "slots"}
+    assert set(response.json()) == {
+        "timezone",
+        "duration_minutes",
+        "workers",
+        "slots",
+        "slot_workers",
+    }

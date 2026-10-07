@@ -6881,6 +6881,16 @@
             },
             "type": "array",
             "title": "Slots"
+          },
+          "slot_workers": {
+            "items": {
+              "items": {
+                "type": "integer"
+              },
+              "type": "array"
+            },
+            "type": "array",
+            "title": "Slot Workers"
           }
         },
         "type": "object",
@@ -6888,7 +6898,8 @@
           "timezone",
           "duration_minutes",
           "workers",
-          "slots"
+          "slots",
+          "slot_workers"
         ],
         "title": "AvailabilityOut"
       },

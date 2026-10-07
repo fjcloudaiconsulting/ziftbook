@@ -160,6 +160,7 @@ def test_f1_an_unpublished_business_can_still_book_and_look_up_times_by_hand(
     response = availability(owner, ready)
     assert response.status_code == 200
     assert response.json()["slots"]
+    assert len(response.json()["slot_workers"]) == len(response.json()["slots"])
     public = new_client(app).get(
         f"/api/public/businesses/{people.a}/services/{ready}/availability",
         params={"from": DAY.isoformat(), "to": DAY.isoformat()},
