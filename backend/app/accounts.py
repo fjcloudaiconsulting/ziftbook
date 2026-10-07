@@ -47,8 +47,8 @@ def sign_up(details: LinkRequest, request: Request) -> None:
     send_link("sign_up", details, request)
 
 
-# Glyphs that draw nothing: the Hangul fillers (category Lo, so a letter test alone passes them)
-# the Braille blank and the musical null notehead (So).
+# Glyphs that draw nothing: the Hangul fillers (category Lo, so a letter test alone passes them),
+# the Braille blank and the musical null notehead (both So).
 BLANK_GLYPHS = frozenset("\u115f\u1160\u3164\uffa0\u2800\U0001d159")
 
 
