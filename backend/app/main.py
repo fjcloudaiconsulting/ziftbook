@@ -44,11 +44,11 @@ from app.errors import ApiError, Error
 
 HEALTH_PATH = "/api/healthz"
 REQUEST_ID = re.compile(r"[A-Za-z0-9._:-]{1,64}")
-# 18 digits at most: int() of a longer one is slow, and nothing real is that large.
-CONTENT_LENGTH = re.compile(r"[0-9]{1,18}")
+CONTENT_LENGTH = re.compile(r"[0-9]+")
 # _OTHER for anything else: the client controls the method, so span-name cardinality must stay
 # bounded.
 METHODS = {"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"}
+WRITE = {"POST", "PUT", "PATCH", "DELETE"}
 # The largest legitimate bodies are NoteChange (clients.py, ~48.0 KB worst case, astral characters
 # escaped by json.dumps) and ServiceIn (~47.6 KB); a browser sends raw UTF-8 (~21 KB worst).
 MAX_BODY = 64 * 1024
@@ -200,12 +200,7 @@ def create_app() -> FastAPI:
         booking_links.router,
     ):
         for route in each.routes:
-            if isinstance(route, APIRoute) and set(route.methods or ()) & {
-                "POST",
-                "PUT",
-                "PATCH",
-                "DELETE",
-            }:
+            if isinstance(route, APIRoute) and WRITE & set(route.methods or ()):
                 route.responses.setdefault(413, {"model": Error})
         app.include_router(each)
 
@@ -224,7 +219,10 @@ def create_app() -> FastAPI:
         declared = request.headers.get("content-length", "")
         # Every method, before the handler: a write that takes no body (DELETE /api/sessions) is
         # stopped only here, not by the byte counter. A non-numeric length counts as absent.
-        if CONTENT_LENGTH.fullmatch(declared) and int(declared) > MAX_BODY:
+        # Compared by length first (leading zeros dropped): int() of a huge digit string is slow.
+        if CONTENT_LENGTH.fullmatch(declared) and (
+            len(declared.lstrip("0")) > len(str(MAX_BODY)) or int(declared) > MAX_BODY
+        ):
             response: Response = JSONResponse({"code": "content_too_large"}, status_code=413)
         elif request.method not in ("GET", "HEAD", "OPTIONS") and media_type != "application/json":
             response = JSONResponse({"code": "unsupported_media_type"}, status_code=415)

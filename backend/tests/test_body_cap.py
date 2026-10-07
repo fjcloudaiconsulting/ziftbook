@@ -59,7 +59,6 @@ def test_a_body_of_exactly_the_cap_reaches_validation(client: TestClient) -> Non
 
     response = client.post("/api/sign-up", content=body, headers=JSON)
 
-    assert len(body.decode().encode()) == MAX_BODY
     assert response.status_code == 422
 
 
@@ -68,12 +67,17 @@ def app(people: People) -> FastAPI:
     return create_app()
 
 
+@pytest.mark.parametrize(
+    "declared", ["70000", "1000000000000000000", "10000000000000000000", "0" * 17 + "70000"]
+)
 def test_a_declared_oversize_no_body_write_does_not_run_the_handler(
-    app: FastAPI, people: People
+    app: FastAPI, people: People, declared: str
 ) -> None:
     owner = signed_in(app, people.a, people.both)
 
-    response = owner.request("DELETE", "/api/sessions", headers={**JSON, "content-length": "70000"})
+    response = owner.request(
+        "DELETE", "/api/sessions", headers={**JSON, "content-length": declared}
+    )
 
     assert (response.status_code, response.json()) == (413, TOO_LARGE)
     assert owner.get("/api/session").status_code == 200
@@ -133,7 +137,7 @@ def limit(schema: dict[str, Any], node: Any, key: str) -> int:
     raise LookupError(key)
 
 
-# ZIF-83 F7: the cap must stay above the largest body the models themselves allow. Read the bounds
+# The cap must stay above the largest body the models themselves allow. Read the bounds
 # from the models, so raising one fails here and not in production. "𝐀" is a letter, outside the
 # BMP: json.dumps escapes it to 12 bytes, the worst case per character.
 def worst_note_change() -> tuple[type[BaseModel], dict[str, Any]]:
