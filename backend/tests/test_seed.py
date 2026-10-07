@@ -127,7 +127,7 @@ def nows() -> list[tuple[str, datetime]]:
 
 
 def past_ends(plan: seed.Plan) -> list[datetime]:
-    return [plan.completed + HOUR, plan.no_show + HOUR]
+    return [plan.completed + HOUR]
 
 
 def test_today_role_is_the_zones_today() -> None:  # F2

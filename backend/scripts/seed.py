@@ -120,8 +120,7 @@ def on_grid(instant: datetime, up: bool = False) -> datetime:
 class Plan:
     """The start of each merchant-made booking, by role, and the day the far public ones go to."""
 
-    completed: datetime  # past, ends before now
-    no_show: datetime  # the same moment, in the other business
+    completed: datetime  # past, ends before now (the no-show in the other business too)
     today: datetime  # starts on the business's own date today
     near: datetime  # in the future but under 24 hours away (no reminder is queued for it)
     far_date: date  # the local date three days out: at least 48 hours from now at any hour
@@ -143,7 +142,7 @@ def plan(now: datetime, zone: str, duration: int = 60) -> Plan:
     else:
         today_start = past
     near = today_start if today_start > now else on_grid(now + timedelta(hours=3), up=True)
-    return Plan(past, past, today_start, near, today + timedelta(days=3))
+    return Plan(past, today_start, near, today + timedelta(days=3))
 
 
 PASSWORD = "Ziftbook-seed-2026"  # one shared password, printed; only ever on this machine
@@ -389,9 +388,7 @@ class Seed:
     def run(self) -> None:
         self.wait_for_app()
         status, data = self.sign_in("both")
-        if status == 401:
-            pass  # nothing seeded yet
-        elif status == 200:
+        if status == 200:
             status, data = self.sign_in("owner")
             # owner.seed is invited before it is made an owner: only the last step finishes it.
             if status == 401 or (status == 200 and data["role"] != "owner"):
@@ -401,7 +398,7 @@ class Seed:
             print("already seeded (if an earlier run failed part-way: make reset, then make seed)")
             self.print_logins()
             return
-        else:
+        if status != 401:  # 401: nothing seeded yet
             self.refuse("both.seed", status, data)
         both, both_session = self.sign_up("both", "nl", "Seedwijk Kapsalon", "NL")
         owner_b, owner_b_session = self.sign_up("ownerworker", "pt", "Estudio Seedsol", "BR")
@@ -431,7 +428,6 @@ class Seed:
             "pt",
             {
                 "auto_confirm": True,
-                "pending_ttl_hours": 168,
                 "free_cancellation_hours": 48,
                 "reschedule_cutoff_hours": 24,
                 "max_reschedules": 2,
@@ -528,13 +524,12 @@ class Seed:
         # Merchant-made ones first, so the public availability already leaves them out. The plan
         # is made from the server's clock right before, not from step 0's.
         self.now = now = self.server_now()
-        plans = {a.name: plan(now, a.zone), b.name: plan(now, b.zone)}
-        pa, pb = plans[a.name], plans[b.name]
+        pa, pb = plan(now, a.zone), plan(now, b.zone)
         long_a, short_a = a.services or ["", ""]
         long_b, short_b = b.services or ["", ""]
         done = self.override("completed", a, long_a, team_a[0], pa.completed, "walkin.one", PAST)
         self.transition(done, "completed")
-        gone = self.override("no show", b, long_b, team_b[0], pb.no_show, "walkin.two", PAST)
+        gone = self.override("no show", b, long_b, team_b[0], pb.completed, "walkin.two", PAST)
         self.transition(gone, "no_show")
         for biz, p, service, team, tag in (
             (a, pa, long_a, team_a, "a"),
