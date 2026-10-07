@@ -38,9 +38,19 @@ def check_local(*urls: str) -> None:
             sys.exit(2)
 
 
+class LocalRedirects(urllib.request.HTTPRedirectHandler):
+    """Follow a redirect only to this machine: urllib resends the cookies to wherever it points."""
+
+    def redirect_request(
+        self, req: Any, fp: Any, code: Any, msg: Any, headers: Any, newurl: Any
+    ) -> Any:
+        check_local(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
 def opener() -> urllib.request.OpenerDirector:
     """No proxies, ever: urllib would send these writes to http_proxy even for localhost."""
-    return urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    return urllib.request.build_opener(urllib.request.ProxyHandler({}), LocalRedirects)
 
 
 class Api:
@@ -134,9 +144,10 @@ WEEK = [{"weekday": d, "starts_at": "07:00", "ends_at": "22:00"} for d in range(
 SIGN_UP_LINK = r"/sign-up/complete#([A-Za-z0-9_-]+)"
 INVITE_LINK = r"/invite#([0-9a-f-]{36}\.[A-Za-z0-9_-]{43})"
 BOOKING_LINK = r"/booking#([0-9a-f-]{36}\.[A-Za-z0-9_-]{43})"
-MAX_RETRIES = (
-    5  # slot_unavailable retries per run: each attempt counts against the booking IP limit
-)
+# Far public bookings start on a local date three days out or more: 48 hours at the least.
+FURTHER = {"further"}
+# slot_unavailable retries per run: each attempt counts against the booking IP limit.
+MAX_RETRIES = 5
 
 
 def email_of(name: str) -> str:
@@ -217,6 +228,16 @@ class Seed:
         probe.ok("GET", "/api/healthz")
         # ponytail: the host clock if a proxy strips the Date header; off by the host's drift only.
         return probe.date or datetime.now(UTC)
+
+    def sign_in(self, who: str) -> tuple[int, Any]:
+        return Api(self.base).call(
+            "POST", "/api/session", {"email": email_of(who), "password": PASSWORD}
+        )
+
+    def refuse(self, who: str, status: int, data: Any) -> None:
+        code = data.get("code") if isinstance(data, dict) else data
+        hint = " (wait 15 minutes)" if status == 429 else ""
+        sys.exit(f"signing in as {who} to see what is seeded: {status} {code}{hint}")
 
     def wait_for_app(self) -> None:
         deadline = time.monotonic() + 120
@@ -315,10 +336,9 @@ class Seed:
         booking: dict[str, Any],
         status: str,
         client: str,
-        expect: set[str] | None = None,
+        expect: set[str],
     ) -> Booked:
         start = datetime.fromisoformat(booking["starts_at"]).astimezone(UTC)
-        expect = expect or {bucket(start, self.now, biz.zone)}
         entry = Booked(label, biz, booking["id"], status, start, expect, client)
         self.booked.append(entry)
         return entry
@@ -358,27 +378,27 @@ class Seed:
 
     def run(self) -> None:
         self.wait_for_app()
-        probe = Api(self.base)
-        status, _ = probe.call(
-            "POST", "/api/session", {"email": email_of("both"), "password": PASSWORD}
-        )
-        if status == 429:
-            sys.exit("sign-in is rate limited; wait 15 minutes and retry")
-        if status == 200:
-            last, _ = Api(self.base).call(
-                "POST", "/api/session", {"email": email_of("owner"), "password": PASSWORD}
-            )
-            if last != 200:
+        status, data = self.sign_in("both")
+        if status == 401:
+            pass  # nothing seeded yet
+        elif status == 200:
+            status, data = self.sign_in("owner")
+            # owner.seed is invited before it is made an owner: only the last step finishes it.
+            if status == 401 or (status == 200 and data["role"] != "owner"):
                 sys.exit("a previous run stopped part-way: make reset, then make seed")
+            if status != 200:
+                self.refuse("owner.seed", status, data)
             print("already seeded (if an earlier run failed part-way: make reset, then make seed)")
             self.print_logins()
             return
-        both, both_session = self.sign_up("both", "nl", "Kapsalon De Vlinder", "NL")
-        owner_b, owner_b_session = self.sign_up("ownerworker", "pt", "Estudio Sol Nascente", "BR")
+        else:
+            self.refuse("both.seed", status, data)
+        both, both_session = self.sign_up("both", "nl", "Seedwijk Kapsalon", "NL")
+        owner_b, owner_b_session = self.sign_up("ownerworker", "pt", "Estudio Seedsol", "BR")
         # pending_ttl_hours 168, the most there is: a day would lapse every seeded pending
         # tomorrow (a week from now they lapse anyway).
         a = Business(
-            "Kapsalon De Vlinder",
+            "Seedwijk Kapsalon",
             "NL",
             "Europe/Amsterdam",
             "nl",
@@ -395,7 +415,7 @@ class Seed:
             tenant_id=both_session["tenant_id"],
         )
         b = Business(
-            "Estudio Sol Nascente",
+            "Estudio Seedsol",
             "BR",
             "America/Sao_Paulo",
             "pt",
@@ -539,21 +559,23 @@ class Seed:
         _, booking, who = self.book_public(
             a, long_a, today_a, today_a + timedelta(days=1), "pending.near", "en"
         )
-        self.keep("pending, within 24h", a, booking, "pending", who)
+        self.keep("pending, within 24h", a, booking, "pending", who, {"today", "within_24h"})
         _, booking, who = self.book_public(a, long_a, pa.far_date, pa.far_date, "pending.far", "nl")
-        self.keep("pending, further out", a, booking, "pending", who)
+        self.keep("pending, further out", a, booking, "pending", who, FURTHER)
         _, booking, who = self.book_public(a, short_a, pa.far_date, pa.far_date, "accepted", "pt")
         self.transition(
-            self.keep("confirmed by the owner", a, booking, "pending", who), "confirmed"
+            self.keep("confirmed by the owner", a, booking, "pending", who, FURTHER), "confirmed"
         )
         _, booking, who = self.book_public(a, short_a, pa.far_date, pa.far_date, "declined", "en")
         self.transition(
-            self.keep("declined", a, booking, "pending", who), "declined", "Sorry, we are closed."
+            self.keep("declined", a, booking, "pending", who, FURTHER),
+            "declined",
+            "Sorry, we are closed.",
         )
 
         _, booking, who = self.book_public(b, long_b, pb.far_date, pb.far_date, "withdrawn", "pt")
         self.transition(
-            self.keep("cancelled by the owner", b, booking, "confirmed", who),
+            self.keep("cancelled by the owner", b, booking, "confirmed", who, FURTHER),
             "cancelled_by_merchant",
         )
         far = (pb.far_date, pb.far_date)
@@ -584,12 +606,12 @@ class Seed:
             {"booking_id": entry.id, "starts_at": target, "reschedule_count": 0},
         )
         entry.start = datetime.fromisoformat(moved["booking"]["starts_at"]).astimezone(UTC)
-        entry.expect, entry.reschedules = {bucket(entry.start, now, b.zone)}, 1
+        entry.reschedules = 1
         # A client with an account: a worker of A booking as a client at B, signed in.
         signed_in = Api(self.base)
         signed_in.ok("POST", "/api/session", {"email": email_of("worker"), "password": PASSWORD})
         _, booking, who = self.book_public(b, short_b, *far, "worker", "en", guest=signed_in)
-        self.keep("client with an account", b, booking, "confirmed", who)
+        self.keep("client with an account", b, booking, "confirmed", who, FURTHER)
         _, _, token = self.confirmed_with_link(b, short_b, far, "guest.link", "pt", "guest link")
         self.link = f"{self.base}/pt/booking#{token}"
 
@@ -608,7 +630,7 @@ class Seed:
         guest, booking, email = self.book_public(biz, service, *days, who, locale)
         token = self.mail.link(email, BOOKING_LINK, known)
         guest.ok("POST", "/api/public/booking-link/session", {"token": token})
-        entry = self.keep(label, biz, booking, "confirmed", email)
+        entry = self.keep(label, biz, booking, "confirmed", email, FURTHER)
         return guest, entry, token
 
     def read_back(self) -> None:
@@ -634,17 +656,17 @@ class Seed:
 
     def print_logins(self) -> None:
         rows = [
-            ("both", "Kapsalon De Vlinder owner; Estudio Sol Nascente worker", "nl"),
-            ("owner", "Kapsalon De Vlinder owner (no services)", "none"),
-            ("worker", "Kapsalon De Vlinder worker; client at Estudio Sol Nascente", "none"),
-            ("ownerworker", "Estudio Sol Nascente owner and worker", "pt"),
+            ("both", "Seedwijk Kapsalon owner; Estudio Seedsol worker", "nl"),
+            ("owner", "Seedwijk Kapsalon owner (no services)", "none"),
+            ("worker", "Seedwijk Kapsalon worker; client at Estudio Seedsol", "none"),
+            ("ownerworker", "Estudio Seedsol owner and worker", "pt"),
         ]
         print(f"\nPassword for all: {PASSWORD}")
         for who, role, language in rows:
             print(f"  {email_of(who):<28} {language:<5} {role}")
         print(
             "Accounts made by an invite have no language of their own: open /en, /nl or /pt "
-            "in the URL.\nboth.seed's role at Estudio Sol Nascente is not reachable from the "
+            "in the URL.\nboth.seed's role at Estudio Seedsol is not reachable from the "
             "sign-in until ZIF-81 (it opens the oldest business)."
         )
 
@@ -658,7 +680,7 @@ class Seed:
         for biz in (a, b):
             print(f"  {self.base}/{biz.language}/{biz.slug}")
         print(f"\nGuest manage link (an untouched confirmed booking): {self.link}")
-        print("Pending bookings in Kapsalon De Vlinder lapse a week after seeding.")
+        print("Pending bookings in Seedwijk Kapsalon lapse a week after seeding.")
 
 
 def main() -> None:

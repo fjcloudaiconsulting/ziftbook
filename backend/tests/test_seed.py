@@ -1,5 +1,8 @@
 """The fences around scripts/seed.py: what it must never talk to, and its time arithmetic.
 
+Pure: no database, no network beyond local stub servers. Run alone with
+`uv run pytest --noconftest tests/test_seed.py` (the conftest otherwise builds a test database).
+
 The script itself is exercised live (make seed against a real stack); these are the pieces whose
 mistakes would not show there: a request that leaves the machine, and a plan that is wrong only at
 certain hours of the day.
@@ -49,10 +52,13 @@ def test_guard_accepts_only_local_urls() -> None:  # F1a
 
 class Counter(http.server.BaseHTTPRequestHandler):
     hits = 0
+    location: str | None = None  # answer 302 to here instead of 200
 
     def do_GET(self) -> None:
         type(self).hits += 1
-        self.send_response(200)
+        self.send_response(302 if self.location else 200)
+        if self.location:
+            self.send_header("Location", self.location)
         self.send_header("Content-Type", "application/json")
         self.end_headers()
         self.wfile.write(b"{}")
@@ -96,6 +102,17 @@ def test_requests_ignore_proxy_environment(
     assert "urlopen(" not in Path(seed.__file__ or "").read_text()
 
 
+def test_requests_refuse_redirects_off_the_machine(
+    stubs: tuple[http.server.HTTPServer, type[Counter], http.server.HTTPServer, type[Counter]],
+) -> None:  # F1c
+    _, _, target, target_hits = stubs
+    target_hits.location = "http://example.invalid/x"
+    with pytest.raises(SystemExit) as refused:
+        seed.Api(f"http://127.0.0.1:{target.server_port}").call("GET", "/x")
+    assert refused.value.code == 2
+    assert target_hits.hits == 1
+
+
 def nows() -> list[tuple[str, datetime]]:
     """Moments where the zone's date differs from UTC's, and the edges of its day."""
     return [
@@ -119,14 +136,23 @@ def test_today_role_is_the_zones_today() -> None:  # F2
         assert all(end <= now for end in past_ends(plan)), (zone, now)
 
 
+def edges() -> list[tuple[str, datetime]]:
+    """The first minutes of the local day (no room for a past booking today) and its last."""
+    return [
+        (zone, local(zone, 2026, 6, 15, hour, minute))
+        for zone in (AMSTERDAM, SAO_PAULO)
+        for hour, minute in [(0, 30), (1, 0), (1, 30), (23, 50)]
+    ]
+
+
 def test_today_role_at_the_edges_of_the_day() -> None:  # F3
-    for zone, now in nows()[2:]:
+    for zone, now in edges():
         plan = seed.plan(now, zone)
         assert local_date(plan.today, zone) == local_date(now, zone), (zone, now)
         assert all(end <= now for end in past_ends(plan)), (zone, now)
         if local_date(plan.completed, zone) != local_date(now, zone):
             # A past booking on another day never carries "today": an ahead one does.
-            assert plan.today > now, (zone, now)
+            assert plan.today - now >= timedelta(minutes=30), (zone, now)
         else:
             assert plan.today == plan.completed, (zone, now)
 
@@ -141,8 +167,9 @@ def test_near_role_is_ahead_but_under_a_day() -> None:  # F4
 def test_roles_hold_across_clock_changes() -> None:  # F5
     for now in [
         local(AMSTERDAM, 2026, 10, 25, 1, 50),
-        datetime(2026, 10, 25, 1, 50, fold=1, tzinfo=ZoneInfo(AMSTERDAM)).astimezone(UTC),
         local(AMSTERDAM, 2026, 3, 29, 1, 50),
+        local(AMSTERDAM, 2026, 10, 25, 0, 30),
+        local(AMSTERDAM, 2026, 3, 29, 0, 30),
         local(AMSTERDAM, 2026, 10, 24, 23, 50),
     ]:
         plan = seed.plan(now, AMSTERDAM)
