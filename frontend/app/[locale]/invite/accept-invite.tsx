@@ -7,36 +7,16 @@ import { type InviteDetails, invitesAccept, invitesLookup } from "@/api-client";
 import { Link, useRouter } from "@/i18n/navigation";
 import { takeToken, trimmedName } from "@/lib/account";
 import { acceptOutcome, firstStage, inviteScreen } from "@/lib/invite";
-import { type OpenedLink, openedLink } from "@/lib/link";
+import { linkStore, type OpenedLink } from "@/lib/link";
 
 import { Banner, FieldError, Heading, NoScript, Outcome, PasswordField, problem, send, Submit } from "../_ui/parts";
 import styles from "../_ui/ui.module.css";
 
-let shown: OpenedLink | null = null;
-let opened = 0;
-
-// Only a new link in the address bar fires hashchange: taking the token out uses replaceState, which doesn't.
-function onLinkOpened(changed: () => void) {
-  const opening = () => {
-    opened += 1;
-    changed();
-  };
-  window.addEventListener("hashchange", opening);
-  return () => window.removeEventListener("hashchange", opening);
-}
+const store = linkStore(() => takeToken(window), globalThis);
 
 /** The link that opened this page, or the one opened since; undefined on the server and while hydrating. */
 function useInviteLink(): OpenedLink | null | undefined {
-  return useSyncExternalStore(
-    onLinkOpened,
-    () => (shown = openedLink(shown, takeToken(window), opened)),
-    () => undefined,
-  );
-}
-
-/** A link that has ended (expired, joined, already a member): coming back to the page doesn't look it up again. */
-function forgetLink() {
-  shown = null;
+  return useSyncExternalStore(store.subscribe, store.snapshot, () => undefined);
 }
 
 type Message = { tone: "error" | "note" | "info"; text: string };
@@ -63,10 +43,11 @@ export function AcceptInvite() {
     );
   }
   // Keyed: every link opened in this tab starts over.
-  return <Invite key={link?.opened ?? -1} token={link?.token ?? null} />;
+  return <Invite key={link?.opened ?? -1} link={link} />;
 }
 
-function Invite({ token }: { token: string | null }) {
+function Invite({ link }: { link: OpenedLink | null }) {
+  const token = link?.token ?? null;
   const t = useTranslations("Invite");
   const form = useTranslations("Form");
   const signIn = useTranslations("SignIn");
@@ -94,7 +75,7 @@ function Invite({ token }: { token: string | null }) {
     if (!token || firstStage(token) !== "checking") return;
     send(invitesLookup({ body: { token } })).then((outcome) => {
       const screen = inviteScreen(outcome);
-      if (screen === "expired") forgetLink();
+      if (screen === "expired") store.forget(link);
       setStage(
         screen === "new" || screen === "existing"
           ? { is: "form", invite: outcome.data! }
@@ -103,7 +84,7 @@ function Invite({ token }: { token: string | null }) {
             : { is: "retry", message: problemText(outcome) },
       );
     });
-  }, [token, problemText]);
+  }, [link, token, problemText]);
 
   useEffect(() => {
     lookUp();
@@ -127,7 +108,7 @@ function Invite({ token }: { token: string | null }) {
     setMessage(null);
 
     const meaning = acceptOutcome(outcome);
-    if (meaning === "joined" || meaning === "expired" || meaning === "alreadyMember") forgetLink();
+    if (meaning === "joined" || meaning === "expired" || meaning === "alreadyMember") store.forget(link);
     if (meaning === "joined") {
       router.replace("/");
     } else if (meaning === "expired") {

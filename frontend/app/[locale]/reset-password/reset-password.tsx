@@ -5,15 +5,16 @@ import { type FormEvent, useState } from "react";
 
 import { accountCompletePasswordReset } from "@/api-client";
 import { Link } from "@/i18n/navigation";
+import { type OpenedLink } from "@/lib/link";
 
-import { Banner, forgetToken, NoScript, Outcome, PasswordField, problem, send, Submit, useLinkToken } from "../_ui/parts";
+import { Banner, forgetLink, NoScript, Outcome, PasswordField, problem, send, Submit, useLink } from "../_ui/parts";
 import styles from "../_ui/ui.module.css";
 
 const TOKEN_KEY = "reset-link";
 const PASSWORD_CODES = ["password_too_short", "password_too_long", "password_too_common"] as const;
 
 export function ResetPassword() {
-  const link = useLinkToken(TOKEN_KEY);
+  const link = useLink(TOKEN_KEY);
   const t = useTranslations("ResetPassword");
   const form = useTranslations("Form");
 
@@ -28,10 +29,11 @@ export function ResetPassword() {
   }
 
   // Every opening of a link starts over: the old link's screen doesn't outlive it.
-  return <ResetForm key={link?.opened} token={link?.token ?? null} />;
+  return <ResetForm key={link?.opened} link={link} />;
 }
 
-function ResetForm({ token }: { token: string | null }) {
+function ResetForm({ link }: { link: OpenedLink | null }) {
+  const token = link?.token ?? null;
   const t = useTranslations("ResetPassword");
   const form = useTranslations("Form");
   const [password, setPassword] = useState("");
@@ -51,7 +53,7 @@ function ResetForm({ token }: { token: string | null }) {
 
     const code = PASSWORD_CODES.find((c) => c === outcome.code);
     if (outcome.status === 204 || outcome.status === 400) {
-      forgetToken(TOKEN_KEY);
+      forgetLink(TOKEN_KEY, link);
       setEnded(outcome.status === 204 ? "done" : "expired");
     } else if (code) {
       setPasswordError(form(code));

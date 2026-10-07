@@ -405,14 +405,14 @@ function storeFor(key: string) {
  * the no-JavaScript one. A new link pasted into the same tab only changes the fragment, so the page listens for
  * that too; every opening, even of the same link, gets a new `opened` for the page to start over on.
  */
-export function useLinkToken(key: string): OpenedLink | null | undefined {
+export function useLink(key: string): OpenedLink | null | undefined {
   const store = storeFor(key);
   return useSyncExternalStore(store.subscribe, store.snapshot, () => undefined);
 }
 
 /** Once a link has been used, the page doesn't offer its form again. */
-export function forgetToken(key: string) {
-  storeFor(key).forget();
+export function forgetLink(key: string, link: OpenedLink | null) {
+  storeFor(key).forget(link);
 }
 
 /** A chevron: pointing down inside a native select (`select`), else pointing right at a row's end. */

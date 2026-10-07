@@ -15,7 +15,7 @@ import {
 import { takeToken } from "@/lib/account";
 import { addDays, answerScreen, copyMessage, firstStage, localDay, localWhen, refundMessage, slotsByDay, weekDays } from "@/lib/booking-link";
 import { dateLocale } from "@/lib/console";
-import { type OpenedLink, openedLink } from "@/lib/link";
+import { linkStore, type OpenedLink } from "@/lib/link";
 import { formatMoney } from "@/lib/money";
 import { type Locale, serviceName } from "@/lib/services";
 import { problemList, zoneCity } from "@/lib/week";
@@ -23,26 +23,11 @@ import { problemList, zoneCity } from "@/lib/week";
 import { Banner, Heading, NoScript, type Outcome as Answer, Outcome, send, Submit } from "../_ui/parts";
 import styles from "../_ui/ui.module.css";
 
-let shown: OpenedLink | null = null;
-let opened = 0;
-
-// Only a new link in the address bar fires hashchange: taking the token out uses replaceState, which doesn't.
-function onLinkOpened(changed: () => void) {
-  const opening = () => {
-    opened += 1;
-    changed();
-  };
-  window.addEventListener("hashchange", opening);
-  return () => window.removeEventListener("hashchange", opening);
-}
+const store = linkStore(() => takeToken(window), globalThis);
 
 /** The link that opened this page, or the one opened since; undefined on the server and while hydrating. */
 function useBookingLink(): OpenedLink | null | undefined {
-  return useSyncExternalStore(
-    onLinkOpened,
-    () => (shown = openedLink(shown, takeToken(window), opened)),
-    () => undefined,
-  );
+  return useSyncExternalStore(store.subscribe, store.snapshot, () => undefined);
 }
 
 type Note = "termsChanged" | "changed" | "notAllowed" | "consentDone";

@@ -48,11 +48,33 @@ describe("link store", () => {
     const store = linkStore(win.take, win.target);
     store.subscribe(() => {});
     win.set("a.1");
-    store.snapshot();
-    store.forget();
-    assert.equal(store.snapshot(), null);
-    assert.equal(store.snapshot(), null);
+    store.forget(store.snapshot());
+    assert.equal(store.snapshot().token, null);
+    assert.equal(store.snapshot().token, null);
     win.open("a.1");
     assert.deepEqual(store.snapshot(), { token: "a.1", opened: 1 });
+  });
+
+  test("forgetting a link keeps the opening the page is showing", () => {
+    const win = fakeWindow();
+    const store = linkStore(win.take, win.target);
+    store.subscribe(() => {});
+    win.open("a.1");
+    const link = store.snapshot();
+    store.forget(link);
+    win.open(null);
+    assert.deepEqual(store.snapshot(), { token: null, opened: link.opened });
+  });
+
+  test("an answer for an older link does not forget a newer one", () => {
+    const win = fakeWindow();
+    const store = linkStore(win.take, win.target);
+    store.subscribe(() => {});
+    win.open("a.1");
+    const older = store.snapshot();
+    win.open("b.2");
+    const newer = store.snapshot();
+    store.forget(older);
+    assert.equal(store.snapshot(), newer);
   });
 });
