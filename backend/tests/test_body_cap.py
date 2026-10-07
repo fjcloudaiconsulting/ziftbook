@@ -68,7 +68,14 @@ def app(people: People) -> FastAPI:
 
 
 @pytest.mark.parametrize(
-    "declared", ["70000", "1000000000000000000", "10000000000000000000", "0" * 17 + "70000"]
+    "declared",
+    [
+        "70000",
+        "1000000000000000000",
+        "10000000000000000000",
+        "0" * 17 + "70000",
+        "0" * 5000 + "70000",  # past int()'s digit limit before the zeros are dropped
+    ],
 )
 def test_a_declared_oversize_no_body_write_does_not_run_the_handler(
     app: FastAPI, people: People, declared: str

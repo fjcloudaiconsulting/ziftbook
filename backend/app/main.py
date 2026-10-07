@@ -220,8 +220,9 @@ def create_app() -> FastAPI:
         # Every method, before the handler: a write that takes no body (DELETE /api/sessions) is
         # stopped only here, not by the byte counter. A non-numeric length counts as absent.
         # Compared by length first (leading zeros dropped): int() of a huge digit string is slow.
+        digits = declared.lstrip("0")
         if CONTENT_LENGTH.fullmatch(declared) and (
-            len(declared.lstrip("0")) > len(str(MAX_BODY)) or int(declared) > MAX_BODY
+            len(digits) > len(str(MAX_BODY)) or int(digits or "0") > MAX_BODY
         ):
             response: Response = JSONResponse({"code": "content_too_large"}, status_code=413)
         elif request.method not in ("GET", "HEAD", "OPTIONS") and media_type != "application/json":
