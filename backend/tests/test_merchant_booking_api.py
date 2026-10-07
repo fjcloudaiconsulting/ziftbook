@@ -1,5 +1,5 @@
 """POST /api/bookings, POST /api/bookings/{id}/reschedule and GET /api/services/{id}/availability
-(ZIF-57 PR3): a member books, moves and looks up times from the calendar. Each fence names the
+(ZIF-57): a member books, moves and looks up times from the calendar. Each fence names the
 wrong implementation it kills (docs/specs/2026-09-30-zif-57-pr3-spec.md, tests F1-F20)."""
 
 import json

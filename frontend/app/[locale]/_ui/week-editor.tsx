@@ -107,7 +107,7 @@ export function WeekEditor({
   const dl = dateLocale(locale);
   const [committed, setCommitted] = useState(initial);
   const [days, setDays] = useState(initial);
-  // Checked on load too (spec PR 4, §5 item 6), not only on submit: a shift left outside the
+  // Checked on load too (spec §5 item 6), not only on submit: a shift left outside the
   // envelope after the owner narrowed it is flagged in the field, before the save the server would
   // refuse. `byDay` only, never `overall` (`loadTimeProblems`): an untouched, freshly-loaded empty
   // week (opening hours' own "Set the opening week" empty state) must start idle, not greeted with
@@ -236,6 +236,18 @@ export function WeekEditor({
   const ownerOnlyFailure = writeFailure?.status === 403 && writeFailure.code === "owner_only";
   const genericFailure = writeFailure && writeFailure.status !== 401 && !ownerOnlyFailure;
 
+  // Refusals that are not about one day, in banner order: each is a banner, and the first is also the
+  // save bar's hint, which has no per-day count to give. One list, so the two can't drift apart.
+  const refusals = [
+    ownerOnlyFailure && errors("ownerOnly"),
+    genericFailure && form(problem(writeFailure!)),
+    (problems.overall === "opening_hours_required" || serverProblem === "opening_hours_required") &&
+      t("allClosedRefusal"),
+    problems.overall === "too_many" && tWeek("tooMany"),
+    serverProblem === "end_not_after_start" && tWeek("serverEndNotAfterStart"),
+    serverProblem === "overlapping_hours" && tWeek("serverOverlapping"),
+  ].filter((text): text is string => Boolean(text));
+
   const savebarHint =
     status === "saving"
       ? tWeek("savingHint")
@@ -244,7 +256,7 @@ export function WeekEditor({
         : status === "error"
           ? problemWeekdays.length > 0
             ? tWeek("attentionHint", { count: problemWeekdays.length })
-            : ""
+            : (refusals[0] ?? "")
           : status === "dirty"
             ? tWeek("unsavedChanges", { days: daysSummary(changed, dl, (from, to) => tWeek("dayRange", { from, to })) })
             : "";
@@ -252,14 +264,11 @@ export function WeekEditor({
   return (
     <form id={formId} className={uiStyles.stack} noValidate onSubmit={onSubmit}>
       {writeFailure?.status === 401 && <SignedOutBanner />}
-      {ownerOnlyFailure && <Banner tone="error">{errors("ownerOnly")}</Banner>}
-      {genericFailure && <Banner tone="error">{form(problem(writeFailure!))}</Banner>}
-      {(problems.overall === "opening_hours_required" || serverProblem === "opening_hours_required") && (
-        <Banner tone="error">{t("allClosedRefusal")}</Banner>
-      )}
-      {problems.overall === "too_many" && <Banner tone="error">{tWeek("tooMany")}</Banner>}
-      {serverProblem === "end_not_after_start" && <Banner tone="error">{tWeek("serverEndNotAfterStart")}</Banner>}
-      {serverProblem === "overlapping_hours" && <Banner tone="error">{tWeek("serverOverlapping")}</Banner>}
+      {refusals.map((text) => (
+        <Banner key={text} tone="error">
+          {text}
+        </Banner>
+      ))}
       {phase === "error" && problemWeekdays.length > 0 && (
         <Banner tone="error">
           {tWeek("notSaved", {

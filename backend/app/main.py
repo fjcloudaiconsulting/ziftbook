@@ -16,6 +16,7 @@ from opentelemetry import trace
 from opentelemetry.trace import SpanKind
 from pydantic import BaseModel
 from sqlalchemy import create_engine, text
+from starlette.middleware.body_limit import RequestBodyLimitMiddleware
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from app import (
@@ -43,9 +44,14 @@ from app.errors import ApiError, Error
 
 HEALTH_PATH = "/api/healthz"
 REQUEST_ID = re.compile(r"[A-Za-z0-9._:-]{1,64}")
+CONTENT_LENGTH = re.compile(r"[0-9]+")
 # _OTHER for anything else: the client controls the method, so span-name cardinality must stay
 # bounded.
 METHODS = {"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"}
+WRITE = {"POST", "PUT", "PATCH", "DELETE"}
+# The largest legitimate bodies are NoteChange (clients.py, ~48.0 KB worst case, astral characters
+# escaped by json.dumps) and ServiceIn (~47.6 KB); a browser sends raw UTF-8 (~21 KB worst).
+MAX_BODY = 64 * 1024
 logger = logging.getLogger(__name__)
 access_logger = logging.getLogger("app.access")
 
@@ -171,24 +177,37 @@ def create_app() -> FastAPI:
             "exclude": lambda scope: scope["path"] == HEALTH_PATH,
         },
     )
-    app.include_router(router)
-    app.include_router(auth.router)
-    app.include_router(accounts.router)
-    app.include_router(audit.router)
-    app.include_router(business_settings.router)
-    app.include_router(clients.router)
-    app.include_router(services.router)
-    app.include_router(members.router)
-    app.include_router(invites.router)
-    app.include_router(schedule.router)
-    app.include_router(schedule.opening_router)
-    app.include_router(time_off.router)
-    app.include_router(availability.router)
-    app.include_router(availability.merchant_router)
-    app.include_router(booking_page.router)
-    app.include_router(bookings.router)
-    app.include_router(bookings.merchant_router)
-    app.include_router(booking_links.router)
+    # The body cap can answer any write route, whatever it declares: add the 413 to each, on the
+    # router itself (app.routes holds only wrappers by now), before it is included.
+    for each in (
+        router,
+        auth.router,
+        accounts.router,
+        audit.router,
+        business_settings.router,
+        clients.router,
+        services.router,
+        members.router,
+        invites.router,
+        schedule.router,
+        schedule.opening_router,
+        time_off.router,
+        availability.router,
+        availability.merchant_router,
+        booking_page.router,
+        bookings.router,
+        bookings.merchant_router,
+        booking_links.router,
+    ):
+        for route in each.routes:
+            if isinstance(route, APIRoute) and WRITE & set(route.methods or ()):
+                route.responses.setdefault(413, {"model": Error})
+        app.include_router(each)
+
+    # Registered before json_only, so innermost: the byte counter for a chunked body (the proxy
+    # strips content-length and streams). Only json_only's fast path stops a body that was declared
+    # too large before the handler runs; here Starlette would swap the response after the fact.
+    app.add_middleware(RequestBodyLimitMiddleware, max_body_size=MAX_BODY)
 
     @app.middleware("http")
     async def json_only(
@@ -197,8 +216,17 @@ def create_app() -> FastAPI:
         # CSRF defence: browsers send JSON cross-origin only after a CORS preflight, never granted.
         # Parse the media type: "text/plain; application/json" is still a plain form type.
         media_type = request.headers.get("content-type", "").split(";")[0].strip().lower()
-        if request.method not in ("GET", "HEAD", "OPTIONS") and media_type != "application/json":
-            response: Response = JSONResponse({"code": "unsupported_media_type"}, status_code=415)
+        declared = request.headers.get("content-length", "")
+        # Every method, before the handler: a write that takes no body (DELETE /api/sessions) is
+        # stopped only here, not by the byte counter. A non-numeric length counts as absent.
+        # Compared by length first (leading zeros dropped): int() of a huge digit string is slow.
+        digits = declared.lstrip("0")
+        if CONTENT_LENGTH.fullmatch(declared) and (
+            len(digits) > len(str(MAX_BODY)) or int(digits or "0") > MAX_BODY
+        ):
+            response: Response = JSONResponse({"code": "content_too_large"}, status_code=413)
+        elif request.method not in ("GET", "HEAD", "OPTIONS") and media_type != "application/json":
+            response = JSONResponse({"code": "unsupported_media_type"}, status_code=415)
         else:
             response = await call_next(request)
         # No API response is a page to link from.
@@ -281,6 +309,10 @@ def create_app() -> FastAPI:
         if error.weekday is not None:
             body["weekday"] = error.weekday
         return JSONResponse(body, status_code=error.status_code)
+
+    @app.exception_handler(413)
+    async def too_large(request: Request, error: Exception) -> JSONResponse:
+        return JSONResponse({"code": "content_too_large"}, status_code=413)
 
     @app.exception_handler(RequestValidationError)
     async def invalid_request(request: Request, error: RequestValidationError) -> JSONResponse:

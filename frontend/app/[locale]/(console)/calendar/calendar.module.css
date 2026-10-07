@@ -89,7 +89,7 @@
 .confirm h3 { margin: 0; font: 600 0.9375rem/1.3 var(--font-body), system-ui, sans-serif; }
 .confirm h3:focus { outline: none; }
 
-/* New booking, move and block time (ZIF-57 PR3, boards 3, 6, 7, 8, 9). */
+/* New booking, move and block time (ZIF-57, design boards 3, 6, 7, 8, 9). */
 .newActions { display: none; gap: 0.5rem; }
 .phoneActions { display: flex; flex-wrap: wrap; gap: 0.5rem; padding-top: 1rem; }
 .lane { cursor: cell; }

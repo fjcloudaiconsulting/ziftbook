@@ -6,19 +6,39 @@ import { type FormEvent, useId, useState } from "react";
 import { accountCompleteSignUp } from "@/api-client";
 import { Link, useRouter } from "@/i18n/navigation";
 import { byName, type Country, likelyCountry, signUpRequest } from "@/lib/account";
+import { type OpenedLink } from "@/lib/link";
 
 import { LinkRequest } from "../../_ui/link-request";
-import { Banner, FieldError, forgetToken, Heading, Mark, NoScript, Outcome, PasswordField, problem, send, Submit, useLinkToken } from "../../_ui/parts";
+import { Banner, FieldError, forgetLink, Heading, Mark, NoScript, Outcome, PasswordField, problem, send, Submit, useLink } from "../../_ui/parts";
 import styles from "../../_ui/ui.module.css";
 
 const TOKEN_KEY = "sign-up-link";
 const PASSWORD_CODES = ["password_too_short", "password_too_long", "password_too_common"] as const;
 
 export function CompleteSignUp() {
+  const link = useLink(TOKEN_KEY);
+  const t = useTranslations("CompleteSignUp");
+  const form = useTranslations("Form");
+
+  if (link === undefined) {
+    // Server-rendered and before the page runs: without JavaScript the link can't be used.
+    return (
+      <>
+        <h1 className={styles.heading}>{t("title")}</h1>
+        <NoScript>{form("noScript")}</NoScript>
+      </>
+    );
+  }
+
+  // Every opening of a link starts over: the old link's screen doesn't outlive it.
+  return <SignUpForm key={link?.opened} link={link} />;
+}
+
+function SignUpForm({ link }: { link: OpenedLink | null }) {
+  const token = link?.token ?? null;
   const t = useTranslations("CompleteSignUp");
   const form = useTranslations("Form");
   const router = useRouter();
-  const token = useLinkToken(TOKEN_KEY);
   const locale = useLocale();
   const personId = useId();
   const nameId = useId();
@@ -58,7 +78,7 @@ export function CompleteSignUp() {
     if (outcome.status === 201) {
       router.replace("/");
     } else if (outcome.status === 400 || outcome.status === 409) {
-      forgetToken(TOKEN_KEY);
+      forgetLink(TOKEN_KEY, link);
       setEnded(outcome.status === 400 ? "expired" : "exists");
     } else if (code) {
       setPasswordError(form(code));
@@ -67,13 +87,16 @@ export function CompleteSignUp() {
     }
   }
 
-  if (token === undefined) {
-    // Server-rendered and before the page runs: without JavaScript the link can't be used.
+  if (ended === "exists") {
     return (
-      <>
-        <h1 className={styles.heading}>{t("title")}</h1>
-        <NoScript>{form("noScript")}</NoScript>
-      </>
+      <Outcome icon="person" title={t("existsTitle")} lede={t("existsLede")}>
+        <Link className={`${styles.button} ${styles.primary}`} href="/sign-in">
+          {t("signIn")}
+        </Link>
+        <p className={styles.aside}>
+          <Link href="/forgot-password">{t("forgot")}</Link>
+        </p>
+      </Outcome>
     );
   }
 
@@ -91,19 +114,6 @@ export function CompleteSignUp() {
         }
         submit={t("newLink")}
       />
-    );
-  }
-
-  if (ended === "exists") {
-    return (
-      <Outcome icon="person" title={t("existsTitle")} lede={t("existsLede")}>
-        <Link className={`${styles.button} ${styles.primary}`} href="/sign-in">
-          {t("signIn")}
-        </Link>
-        <p className={styles.aside}>
-          <Link href="/forgot-password">{t("forgot")}</Link>
-        </p>
-      </Outcome>
     );
   }
 

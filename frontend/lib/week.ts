@@ -121,7 +121,7 @@ export function weekProblems(days: Day[], envelope: Day[] | null, options?: { al
 }
 
 /**
- * The per-day problems worth flagging as soon as a week loads (spec PR 4, §5 item 6): a shift left
+ * The per-day problems worth flagging as soon as a week loads (spec §5 item 6): a shift left
  * outside the envelope after the owner narrowed it, caught before the save the server would
  * refuse. Never `overall`: `too_many` and `opening_hours_required` are submit-time refusals of
  * what the person just did, not something to greet an untouched, freshly-loaded week with (an
