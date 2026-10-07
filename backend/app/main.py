@@ -16,6 +16,7 @@ from opentelemetry import trace
 from opentelemetry.trace import SpanKind
 from pydantic import BaseModel
 from sqlalchemy import create_engine, text
+from starlette.middleware.body_limit import RequestBodyLimitMiddleware
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from app import (
@@ -43,9 +44,14 @@ from app.errors import ApiError, Error
 
 HEALTH_PATH = "/api/healthz"
 REQUEST_ID = re.compile(r"[A-Za-z0-9._:-]{1,64}")
+# 18 digits at most: int() of a longer one is slow, and nothing real is that large.
+CONTENT_LENGTH = re.compile(r"[0-9]{1,18}")
 # _OTHER for anything else: the client controls the method, so span-name cardinality must stay
 # bounded.
 METHODS = {"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"}
+# The largest legitimate bodies are NoteChange (clients.py, ~48.0 KB worst case, astral characters
+# escaped by json.dumps) and ServiceIn (~47.6 KB); a browser sends raw UTF-8 (~21 KB worst).
+MAX_BODY = 64 * 1024
 logger = logging.getLogger(__name__)
 access_logger = logging.getLogger("app.access")
 
@@ -190,6 +196,11 @@ def create_app() -> FastAPI:
     app.include_router(bookings.merchant_router)
     app.include_router(booking_links.router)
 
+    # Registered before json_only, so innermost: the byte counter for a chunked body (the proxy
+    # strips content-length and streams). Only json_only's fast path stops a body that was declared
+    # too large before the handler runs; here Starlette would swap the response after the fact.
+    app.add_middleware(RequestBodyLimitMiddleware, max_body_size=MAX_BODY)
+
     @app.middleware("http")
     async def json_only(
         request: Request, call_next: Callable[[Request], Awaitable[Response]]
@@ -197,8 +208,13 @@ def create_app() -> FastAPI:
         # CSRF defence: browsers send JSON cross-origin only after a CORS preflight, never granted.
         # Parse the media type: "text/plain; application/json" is still a plain form type.
         media_type = request.headers.get("content-type", "").split(";")[0].strip().lower()
-        if request.method not in ("GET", "HEAD", "OPTIONS") and media_type != "application/json":
-            response: Response = JSONResponse({"code": "unsupported_media_type"}, status_code=415)
+        declared = request.headers.get("content-length", "")
+        # Every method, before the handler: a write that takes no body (DELETE /api/sessions) is
+        # stopped only here, not by the byte counter. A non-numeric length counts as absent.
+        if CONTENT_LENGTH.fullmatch(declared) and int(declared) > MAX_BODY:
+            response: Response = JSONResponse({"code": "content_too_large"}, status_code=413)
+        elif request.method not in ("GET", "HEAD", "OPTIONS") and media_type != "application/json":
+            response = JSONResponse({"code": "unsupported_media_type"}, status_code=415)
         else:
             response = await call_next(request)
         # No API response is a page to link from.
@@ -281,6 +297,10 @@ def create_app() -> FastAPI:
         if error.weekday is not None:
             body["weekday"] = error.weekday
         return JSONResponse(body, status_code=error.status_code)
+
+    @app.exception_handler(413)
+    async def too_large(request: Request, error: Exception) -> JSONResponse:
+        return JSONResponse({"code": "content_too_large"}, status_code=413)
 
     @app.exception_handler(RequestValidationError)
     async def invalid_request(request: Request, error: RequestValidationError) -> JSONResponse:
