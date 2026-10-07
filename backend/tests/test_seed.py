@@ -43,6 +43,7 @@ def test_guard_accepts_only_local_urls() -> None:  # F1a
         ("http://10.0.0.5:3000", "http://127.0.0.1:8025"),
         ("http://localhost.evil.com", "http://127.0.0.1:8025"),
         ("http://localhost@evil.com", "http://127.0.0.1:8025"),
+        ("http://evil.example\\@127.0.0.1:3000", "http://127.0.0.1:8025"),
         ("http://127.0.0.1:3000", "http://mail.example.com:8025"),
     ]:
         with pytest.raises(SystemExit) as refused:

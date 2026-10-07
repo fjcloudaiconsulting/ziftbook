@@ -30,10 +30,13 @@ def check_local(*urls: str) -> None:
     password, so a mistyped --base must not reach anyone else's server."""
     for url in urls:
         try:
-            host = urlsplit(url).hostname
+            parts = urlsplit(url)
+            host, netloc = parts.hostname, parts.netloc
         except ValueError:
-            host = None
-        if host not in LOCAL_HOSTS:
+            host, netloc = None, ""
+        # urllib and urlsplit disagree on where a host with userinfo ends ("evil\@127.0.0.1"):
+        # no seed URL needs userinfo, so any "@" in the authority is refused outright.
+        if host not in LOCAL_HOSTS or "@" in netloc:
             print(f"refusing {url}: make seed only talks to this machine", file=sys.stderr)
             sys.exit(2)
 
@@ -149,7 +152,8 @@ SIGN_UP_LINK = r"/sign-up/complete#([A-Za-z0-9_-]+)"
 INVITE_LINK = r"/invite#([0-9a-f-]{36}\.[A-Za-z0-9_-]{43})"
 BOOKING_LINK = r"/booking#([0-9a-f-]{36}\.[A-Za-z0-9_-]{43})"
 # Far public bookings start on a local date three days out or more: 48 hours at the least.
-FURTHER = {"further"}
+FURTHER = frozenset({"further"})
+NEAR = frozenset({"today", "within_24h"})
 # slot_unavailable retries per run: each attempt counts against the booking IP limit.
 MAX_RETRIES = 5
 
@@ -213,7 +217,7 @@ class Booked:
     id: str
     status: str  # what the owner should read back
     start: datetime
-    expect: set[str]  # the buckets the start may sit in
+    expect: frozenset[str]  # the buckets the start may sit in
     client: str
     reschedules: int = 0
 
@@ -340,7 +344,7 @@ class Seed:
         booking: dict[str, Any],
         status: str,
         client: str,
-        expect: set[str],
+        expect: frozenset[str],
     ) -> Booked:
         start = datetime.fromisoformat(booking["starts_at"]).astimezone(UTC)
         entry = Booked(label, biz, booking["id"], status, start, expect, client)
@@ -355,7 +359,7 @@ class Seed:
         member: str,
         start: datetime,
         who: str,
-        expect: set[str],
+        expect: frozenset[str],
     ) -> Booked:
         """The owner books a client in at any start (a walk-in, or one already past)."""
         booking = biz.owner.ok(
@@ -555,7 +559,7 @@ class Seed:
                     team[1],
                     p.near,
                     f"walkin.near.{tag}",
-                    {"today", "within_24h"},
+                    NEAR,
                 )
         today_a = now.astimezone(ZoneInfo(a.zone)).date()
         today_b = now.astimezone(ZoneInfo(b.zone)).date()
@@ -563,7 +567,7 @@ class Seed:
         _, booking, who = self.book_public(
             a, long_a, today_a, today_a + timedelta(days=1), "pending.near", "en"
         )
-        self.keep("pending, within 24h", a, booking, "pending", who, {"today", "within_24h"})
+        self.keep("pending, within 24h", a, booking, "pending", who, NEAR)
         _, booking, who = self.book_public(a, long_a, pa.far_date, pa.far_date, "pending.far", "nl")
         self.keep("pending, further out", a, booking, "pending", who, FURTHER)
         _, booking, who = self.book_public(a, short_a, pa.far_date, pa.far_date, "accepted", "pt")
