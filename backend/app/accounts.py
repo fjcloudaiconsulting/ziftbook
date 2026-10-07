@@ -48,8 +48,8 @@ def sign_up(details: LinkRequest, request: Request) -> None:
 
 
 # Glyphs that draw nothing: the Hangul fillers (category Lo, so a letter test alone passes them)
-# and the Braille blank (So).
-BLANK_GLYPHS = frozenset("\u115f\u1160\u3164\uffa0\u2800")
+# the Braille blank and the musical null notehead (So).
+BLANK_GLYPHS = frozenset("\u115f\u1160\u3164\uffa0\u2800\U0001d159")
 
 
 def printable(name: str) -> str:

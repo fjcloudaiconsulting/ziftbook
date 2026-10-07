@@ -838,12 +838,10 @@ def test_the_accepted_ceiling_of_the_display_name_validator(people: People, app:
     assert response.status_code == 200
 
 
-def test_a_blank_glyph_display_name_is_refused(people: People, app: FastAPI) -> None:
+def test_an_emoji_only_display_name_is_refused(people: People, app: FastAPI) -> None:
     owner = signed_in(app, people.a, people.both)
     only_a_member = member_id(people.a, people.only_a)
 
-    response = owner.put(
-        f"/api/members/{only_a_member}/display-name", json={"display_name": "\u2800"}
-    )
+    response = owner.put(f"/api/members/{only_a_member}/display-name", json={"display_name": "☕"})
 
     assert (response.status_code, response.json()) == (422, {"code": "invalid_request"})
