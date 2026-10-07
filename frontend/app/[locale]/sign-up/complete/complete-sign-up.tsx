@@ -15,10 +15,28 @@ const TOKEN_KEY = "sign-up-link";
 const PASSWORD_CODES = ["password_too_short", "password_too_long", "password_too_common"] as const;
 
 export function CompleteSignUp() {
+  const link = useLinkToken(TOKEN_KEY);
+  const t = useTranslations("CompleteSignUp");
+  const form = useTranslations("Form");
+
+  if (link === undefined) {
+    // Server-rendered and before the page runs: without JavaScript the link can't be used.
+    return (
+      <>
+        <h1 className={styles.heading}>{t("title")}</h1>
+        <NoScript>{form("noScript")}</NoScript>
+      </>
+    );
+  }
+
+  // Every opening of a link starts over: the old link's screen doesn't outlive it.
+  return <SignUpForm key={link?.opened} token={link?.token ?? null} />;
+}
+
+function SignUpForm({ token }: { token: string | null }) {
   const t = useTranslations("CompleteSignUp");
   const form = useTranslations("Form");
   const router = useRouter();
-  const token = useLinkToken(TOKEN_KEY);
   const locale = useLocale();
   const personId = useId();
   const nameId = useId();
@@ -65,16 +83,6 @@ export function CompleteSignUp() {
     } else {
       setMessage({ tone: outcome.status === 503 ? "note" : "error", text: form(problem(outcome)) });
     }
-  }
-
-  if (token === undefined) {
-    // Server-rendered and before the page runs: without JavaScript the link can't be used.
-    return (
-      <>
-        <h1 className={styles.heading}>{t("title")}</h1>
-        <NoScript>{form("noScript")}</NoScript>
-      </>
-    );
   }
 
   // Longer than any link we send: mangled on the way, so it can't work either.

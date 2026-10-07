@@ -4,6 +4,7 @@ import { useTranslations } from "next-intl";
 import { type ReactNode, type Ref, useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 
 import { clock, RESEND_AFTER_MS, secondsLeft, takeToken } from "@/lib/account";
+import { linkStore, type OpenedLink } from "@/lib/link";
 
 import { Header } from "./header";
 import styles from "./ui.module.css";
@@ -391,33 +392,27 @@ export function CheckInbox({ email, lede, resend, differentEmail, sentAt, error 
   );
 }
 
-const taken = new Map<string, string>();
+const links = new Map<string, ReturnType<typeof linkStore>>();
 
-function onHashChange(changed: () => void) {
-  window.addEventListener("hashchange", changed);
-  return () => window.removeEventListener("hashchange", changed);
+function storeFor(key: string) {
+  let store = links.get(key);
+  if (!store) links.set(key, (store = linkStore(() => takeToken(window), globalThis)));
+  return store;
 }
 
 /**
- * The token from the link that opened this page: undefined on the server and while hydrating, so the
- * server-rendered page is the no-JavaScript one. A new link pasted into the same tab only changes the
- * fragment, so the page listens for that too.
+ * The link that opened this page: undefined on the server and while hydrating, so the server-rendered page is
+ * the no-JavaScript one. A new link pasted into the same tab only changes the fragment, so the page listens for
+ * that too; every opening, even of the same link, gets a new `opened` for the page to start over on.
  */
-export function useLinkToken(key: string): string | null | undefined {
-  return useSyncExternalStore(
-    onHashChange,
-    () => {
-      const token = takeToken(window);
-      if (token) taken.set(key, token);
-      return taken.get(key) ?? null;
-    },
-    () => undefined,
-  );
+export function useLinkToken(key: string): OpenedLink | null | undefined {
+  const store = storeFor(key);
+  return useSyncExternalStore(store.subscribe, store.snapshot, () => undefined);
 }
 
 /** Once a link has been used, the page doesn't offer its form again. */
 export function forgetToken(key: string) {
-  taken.delete(key);
+  storeFor(key).forget();
 }
 
 /** A chevron: pointing down inside a native select (`select`), else pointing right at a row's end. */

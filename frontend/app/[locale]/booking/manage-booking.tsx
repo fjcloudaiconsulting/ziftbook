@@ -15,7 +15,7 @@ import {
 import { takeToken } from "@/lib/account";
 import { addDays, answerScreen, copyMessage, firstStage, localDay, localWhen, refundMessage, slotsByDay, weekDays } from "@/lib/booking-link";
 import { dateLocale } from "@/lib/console";
-import { type OpenedLink, openedLink } from "@/lib/invite";
+import { type OpenedLink, openedLink } from "@/lib/link";
 import { formatMoney } from "@/lib/money";
 import { type Locale, serviceName } from "@/lib/services";
 import { problemList, zoneCity } from "@/lib/week";

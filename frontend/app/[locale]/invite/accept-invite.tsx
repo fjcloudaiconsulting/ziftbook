@@ -6,7 +6,8 @@ import { type FormEvent, useCallback, useEffect, useId, useRef, useState, useSyn
 import { type InviteDetails, invitesAccept, invitesLookup } from "@/api-client";
 import { Link, useRouter } from "@/i18n/navigation";
 import { takeToken, trimmedName } from "@/lib/account";
-import { acceptOutcome, firstStage, inviteScreen, type OpenedLink, openedLink } from "@/lib/invite";
+import { acceptOutcome, firstStage, inviteScreen } from "@/lib/invite";
+import { type OpenedLink, openedLink } from "@/lib/link";
 
 import { Banner, FieldError, Heading, NoScript, Outcome, PasswordField, problem, send, Submit } from "../_ui/parts";
 import styles from "../_ui/ui.module.css";
