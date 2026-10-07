@@ -47,6 +47,11 @@ def sign_up(details: LinkRequest, request: Request) -> None:
     send_link("sign_up", details, request)
 
 
+# Glyphs that draw nothing: the Hangul fillers (category Lo, so a letter test alone passes them)
+# and the Braille blank (So).
+BLANK_GLYPHS = frozenset("\u115f\u1160\u3164\uffa0\u2800")
+
+
 def printable(name: str) -> str:
     # No control, format (zero-width) or unassigned characters: a name that looks empty, or that
     # the database refuses (NUL), is a 422, not a blank business or a 500. Zl/Zp (U+2028, U+2029)
@@ -56,12 +61,13 @@ def printable(name: str) -> str:
         for c in name
     ):
         raise ValueError("unprintable characters")
+    # Looks empty: only blank glyphs, whitespace and combining marks. One such glyph between real
+    # text is fine, so a stored description with spacer lines still saves.
+    if all(
+        c in BLANK_GLYPHS or c.isspace() or unicodedata.category(c).startswith("M") for c in name
+    ):
+        raise ValueError("blank-looking text")
     return name
-
-
-# Glyphs that draw nothing: the Hangul fillers (category Lo, so a letter test alone passes them)
-# and the Braille blank (So).
-BLANK_GLYPHS = frozenset("\u115f\u1160\u3164\uffa0\u2800")
 
 
 def named(name: str) -> str:

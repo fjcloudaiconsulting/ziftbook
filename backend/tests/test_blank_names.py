@@ -38,3 +38,25 @@ def test_a_blank_business_name_at_sign_up_is_a_422() -> None:
     response = complete(new_client(create_app()), "x", business="⠀", country="NL")
 
     assert (response.status_code, response.json()) == (422, {"code": "invalid_request"})
+
+
+@pytest.mark.parametrize("kind", FREE_TEXT)
+@pytest.mark.parametrize("value", ["🏖", "-", "a⠀b"])
+def test_free_text_keeps_emoji_punctuation_and_a_blank_glyph_between_words(
+    kind: Any, value: str
+) -> None:
+    assert TypeAdapter(kind).validate_python(value) == value
+
+
+@pytest.mark.parametrize("kind", [NoteText, DescriptionText])
+def test_multiline_text_keeps_a_spacer_line_between_real_lines(kind: Any) -> None:
+    value = "line one\n⠀\nline two"
+
+    assert TypeAdapter(kind).validate_python(value) == value
+
+
+@pytest.mark.parametrize("kind", FREE_TEXT)
+@pytest.mark.parametrize("value", ["⠀", "ㅤ ㅤ", "́̂"])
+def test_free_text_that_renders_blank_is_refused(kind: Any, value: str) -> None:
+    with pytest.raises(ValidationError):
+        TypeAdapter(kind).validate_python(value)
