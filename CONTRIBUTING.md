@@ -394,6 +394,8 @@ from `.env`; it fixes the log settings at `DEBUG`/`text`, passes no `ZIF_LOG_SQL
 
 ### Locally
 
+`make seed` fills a running `make up` with synthetic businesses, people and bookings (README, "make seed").
+
 `make observe` is `make up` with traces and metrics exported to one Grafana LGTM stack (Loki, Tempo,
 Prometheus and Grafana behind a built-in OpenTelemetry Collector) that runs outside this project
 and is shared by every project on the machine. `make up` is unchanged and exports nothing.

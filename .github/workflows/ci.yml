@@ -91,7 +91,7 @@ jobs:
           < migrations/bootstrap.sql
       - run: uv run ruff check .
       - run: uv run ruff format --check .
-      - run: uv run mypy app tests migrations
+      - run: uv run mypy app tests migrations scripts
       # Serial, no -n: the file whose own tests assert the serial path (ZIF-111) still passes
       # without xdist.
       - run: uv run pytest -q tests/test_parallel_safety.py

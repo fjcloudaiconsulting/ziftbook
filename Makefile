@@ -1,4 +1,4 @@
-.PHONY: setup up observe down reset migrate migration openapi lint typecheck test test-hooks
+.PHONY: setup up observe down reset seed migrate migration openapi lint typecheck test test-hooks
 
 API := uv run --directory backend
 PNPM ?= pnpm
@@ -27,6 +27,9 @@ reset: ## Delete the local database (every account, business and booking) and st
 	docker compose down -v
 	$(MAKE) up
 
+seed: ## Fill the running local app with synthetic businesses, people and bookings (make up first)
+	$(API) python scripts/seed.py
+
 migrate: ## Apply database migrations (as ziftbook_migrate)
 	docker compose run --rm --build migrate
 
@@ -45,7 +48,7 @@ lint:
 	$(WEB) lint
 
 typecheck:
-	$(API) mypy app tests migrations
+	$(API) mypy app tests migrations scripts
 	$(WEB) typecheck
 
 test: test-hooks
