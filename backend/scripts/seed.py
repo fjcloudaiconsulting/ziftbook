@@ -154,6 +154,8 @@ BOOKING_LINK = r"/booking#([0-9a-f-]{36}\.[A-Za-z0-9_-]{43})"
 # Far public bookings start on a local date three days out or more: 48 hours at the least.
 FURTHER = frozenset({"further"})
 NEAR = frozenset({"today", "within_24h"})
+PAST = frozenset({"past"})
+TODAY = frozenset({"today"})
 # slot_unavailable retries per run: each attempt counts against the booking IP limit.
 MAX_RETRIES = 5
 
@@ -530,11 +532,9 @@ class Seed:
         pa, pb = plans[a.name], plans[b.name]
         long_a, short_a = a.services or ["", ""]
         long_b, short_b = b.services or ["", ""]
-        done = self.override(
-            "completed", a, long_a, team_a[0], pa.completed, "walkin.one", {"past"}
-        )
+        done = self.override("completed", a, long_a, team_a[0], pa.completed, "walkin.one", PAST)
         self.transition(done, "completed")
-        gone = self.override("no show", b, long_b, team_b[0], pb.no_show, "walkin.two", {"past"})
+        gone = self.override("no show", b, long_b, team_b[0], pb.no_show, "walkin.two", PAST)
         self.transition(gone, "no_show")
         for biz, p, service, team, tag in (
             (a, pa, long_a, team_a, "a"),
@@ -549,7 +549,7 @@ class Seed:
                     team[1],
                     p.today,
                     f"walkin.today.{tag}",
-                    {"today"},
+                    TODAY,
                 )
             if p.near != p.today:
                 self.override(
