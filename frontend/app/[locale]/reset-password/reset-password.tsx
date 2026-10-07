@@ -5,17 +5,37 @@ import { type FormEvent, useState } from "react";
 
 import { accountCompletePasswordReset } from "@/api-client";
 import { Link } from "@/i18n/navigation";
+import { type OpenedLink } from "@/lib/link";
 
-import { Banner, forgetToken, NoScript, Outcome, PasswordField, problem, send, Submit, useLinkToken } from "../_ui/parts";
+import { Banner, forgetLink, NoScript, Outcome, PasswordField, problem, send, Submit, useLink } from "../_ui/parts";
 import styles from "../_ui/ui.module.css";
 
 const TOKEN_KEY = "reset-link";
 const PASSWORD_CODES = ["password_too_short", "password_too_long", "password_too_common"] as const;
 
 export function ResetPassword() {
+  const link = useLink(TOKEN_KEY);
   const t = useTranslations("ResetPassword");
   const form = useTranslations("Form");
-  const token = useLinkToken(TOKEN_KEY);
+
+  if (link === undefined) {
+    // Server-rendered and before the page runs: without JavaScript the link can't be used.
+    return (
+      <>
+        <h1 className={styles.heading}>{t("title")}</h1>
+        <NoScript>{form("noScript")}</NoScript>
+      </>
+    );
+  }
+
+  // Every opening of a link starts over: the old link's screen doesn't outlive it.
+  return <ResetForm key={link?.opened} link={link} />;
+}
+
+function ResetForm({ link }: { link: OpenedLink | null }) {
+  const token = link?.token ?? null;
+  const t = useTranslations("ResetPassword");
+  const form = useTranslations("Form");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [ended, setEnded] = useState<"done" | "expired" | null>(null);
@@ -33,23 +53,13 @@ export function ResetPassword() {
 
     const code = PASSWORD_CODES.find((c) => c === outcome.code);
     if (outcome.status === 204 || outcome.status === 400) {
-      forgetToken(TOKEN_KEY);
+      forgetLink(TOKEN_KEY, link);
       setEnded(outcome.status === 204 ? "done" : "expired");
     } else if (code) {
       setPasswordError(form(code));
     } else {
       setMessage({ tone: outcome.status === 503 ? "note" : "error", text: form(problem(outcome)) });
     }
-  }
-
-  if (token === undefined) {
-    // Server-rendered and before the page runs: without JavaScript the link can't be used.
-    return (
-      <>
-        <h1 className={styles.heading}>{t("title")}</h1>
-        <NoScript>{form("noScript")}</NoScript>
-      </>
-    );
   }
 
   if (ended === "done") {
