@@ -1,4 +1,4 @@
-// Pure logic behind the public booking page (ZIF-56 PR2): cancellation terms, the business's own
+// Pure logic behind the public booking page (ZIF-56): cancellation terms, the business's own
 // policy text, email typo suggestions, the POST body, the answer-to-outcome mapping, day-part
 // grouping in the business's own time zone, and the availability window.
 process.env.TZ = "America/Sao_Paulo"; // F6: the viewer's zone must never leak into business-local grouping

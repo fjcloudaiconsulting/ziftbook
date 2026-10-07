@@ -1,4 +1,4 @@
-// Pure logic behind the merchant's new-booking, move and block-time panels (ZIF-57 PR3).
+// Pure logic behind the merchant's new-booking, move and block-time panels (ZIF-57).
 // No TZ is pinned: run under TZ=America/New_York and TZ=Pacific/Kiritimati as well.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
