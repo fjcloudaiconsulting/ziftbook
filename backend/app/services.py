@@ -18,7 +18,7 @@ from pydantic.json_schema import SkipJsonSchema
 from sqlalchemy import text
 
 from app import auth
-from app.accounts import printable
+from app.accounts import named, printable
 from app.auth import CurrentOwner, CurrentSession, SignedIn
 from app.business_settings import Locale
 from app.errors import ApiError, Error
@@ -39,7 +39,7 @@ def multiline(value: str) -> str:
 NameText = Annotated[
     str,
     StringConstraints(strip_whitespace=True, min_length=1, max_length=100),
-    AfterValidator(printable),
+    AfterValidator(named),
 ]
 DescriptionText = Annotated[
     str,
