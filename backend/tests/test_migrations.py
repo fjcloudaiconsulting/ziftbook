@@ -893,3 +893,43 @@ def test_the_decline_message_check(people: People) -> None:
             assert bites.value.orig.diag.constraint_name == "ck_bookings_decline_message"
         session.execute(SET_MESSAGE, {"m": "a" * 1000, "id": declined_id})
         session.execute(SET_MESSAGE, {"m": None, "id": declined_id})  # ZIF-58's erasure path
+
+
+HOLD_PRIVILEGE = "SELECT has_table_privilege('ziftbook_app', 'booking_holds', :p)"
+HOLD_COLUMN_PRIVILEGE = "SELECT has_column_privilege('ziftbook_app', 'booking_holds', :c, :p)"
+
+
+# ZIF-117 G2. guard: 0034 is one new table and nothing else; its downgrade drops it and its
+# upgrade restores forced row-level security and exactly the grants app.holds needs: no UPDATE but
+# the token hash, no say over id or created_at (the link's 24 hours run from it).
+def test_0034_round_trips_booking_holds(
+    people: People, migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = lock_timeout_config(monkeypatch)
+    try:
+        command.downgrade(cfg, "0033")
+        with migrate_engine.connect() as conn:
+            assert conn.scalar(text("SELECT to_regclass('booking_holds')")) is None
+    finally:
+        command.upgrade(cfg, "head")
+    with migrate_engine.connect() as conn:
+        assert conn.execute(
+            text(
+                "SELECT relrowsecurity, relforcerowsecurity FROM pg_class "
+                "WHERE oid = 'booking_holds'::regclass"
+            )
+        ).one() == (True, True)
+        for privilege, expected in (("SELECT", True), ("DELETE", True), ("UPDATE", False)):
+            assert conn.scalar(text(HOLD_PRIVILEGE), {"p": privilege}) == expected, privilege
+        for column, privilege, expected in (
+            ("token_hash", "UPDATE", True),
+            ("expires_at", "UPDATE", False),
+            ("email", "INSERT", True),
+            ("secret_hash", "INSERT", True),
+            ("id", "INSERT", False),
+            ("created_at", "INSERT", False),
+            ("token_hash", "INSERT", False),
+        ):
+            assert (
+                conn.scalar(text(HOLD_COLUMN_PRIVILEGE), {"c": column, "p": privilege}) == expected
+            ), (column, privilege)

@@ -126,8 +126,7 @@ class HoldView(BaseModel):
     starts_at: datetime
     ends_at: datetime
     price: Price
-    worker_display_name: str | None
-    anyone: bool
+    worker_display_name: str | None  # the held worker's; null reads as "anyone available"
     cancellation: CancellationOut
     auto_confirm: bool
     policy_version: str
@@ -252,6 +251,36 @@ def create(  # sync def: turnstile.verify blocks, as bookings.create
     return HoldOut(starts_at=hold.starts_at, expires_at=hold.expires_at, secret=secret)
 
 
+class ReleaseIn(BaseModel):
+    model_config = STRICT
+    secret: Annotated[str, StringConstraints(max_length=64)]
+
+
+@router.post(
+    "/businesses/{tenant_id}/holds/release",
+    name="release",
+    status_code=204,
+    responses={s: {"model": Error} for s in (415, 422, 429, 503)},
+)
+def release(tenant_id: UUID, body: ReleaseIn, request: Request) -> None:
+    """ "Choose another time" (design §2): the page that placed a hold lets its time go, and its
+    link dies with it. Only that page's secret does anything; every answer is the same 204, so it
+    says nothing about which secrets exist."""
+    ip = request.client.host if request.client else None
+    if limits.hit({limits.ip_key("booking_hold_release", ip): WRITE_LIMIT}, WRITE_WINDOW):
+        raise ApiError(429, "rate_limited")
+    request.state.tenant_id = tenant_id
+    hold_hash = hashlib.sha256(body.secret.encode()).digest()
+    try:
+        with tenant_context(tenant_id) as db:
+            db.execute(bookings.LOCK, {"key": bookings.LOCK_KEY})  # first, always (0034)
+            db.execute(
+                text("DELETE FROM booking_holds WHERE secret_hash = :hash"), {"hash": hold_hash}
+            )
+    except OperationalError:
+        raise ApiError(503, "busy") from None
+
+
 link_router = APIRouter(prefix="/api/public/booking-hold", tags=["booking-holds"])
 
 
@@ -280,7 +309,6 @@ def read(body: TokenIn, request: Request, response: Response) -> HoldView:
         ends_at=hold.ends_at,
         price=Price(amount_minor=view.price_amount_minor, currency=view.price_currency),
         worker_display_name=view.worker_display_name,
-        anyone=hold.anyone,
         cancellation=CancellationOut(
             text=settings.cancellation_policy_text or None,
             free_cancellation_hours=settings.free_cancellation_hours,

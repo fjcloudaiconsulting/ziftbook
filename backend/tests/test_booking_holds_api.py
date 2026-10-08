@@ -213,7 +213,6 @@ def test_reading_the_link_writes_nothing(
         "ends_at",
         "price",
         "worker_display_name",
-        "anyone",
         "cancellation",
         "auto_confirm",
         "policy_version",
@@ -367,6 +366,31 @@ def test_only_the_secret_replaces_a_hold_and_a_refused_replace_keeps_it(
     assert at("09:00") in slots(app, people.a, ready)
     assert read(new_client(app), first_token).status_code == 404
     assert read(new_client(app), second_token).json()["starts_at"].startswith(DAY.isoformat())
+
+
+# F6b: FENCE. Wrong impl: "Choose another time" leaves the hold (the booker's own time stays
+# taken for 15 minutes), or a release that answers differently for an unknown secret.
+def test_choosing_another_time_releases_the_hold_and_kills_its_link(
+    people: People, app: FastAPI, ready: str, app_engine: Engine
+) -> None:
+    email = fresh_email()
+    placed = post_hold(new_client(app), people.a, ready, email=email)
+    token = link(people.a, email)
+    release = f"/api/public/businesses/{people.a}/holds/release"
+
+    unknown = new_client(app).post(release, json={"secret": "A" * 43})
+    assert unknown.status_code == 204
+    assert read(new_client(app), token).status_code == 200
+
+    executed = recorded(
+        app_engine,
+        lambda: new_client(app).post(release, json={"secret": placed.json()["secret"]}),
+    )
+
+    statement, params = first_after_tenant(executed)
+    assert (statement.startswith("SELECT pg_advisory_xact_lock("), params) == (True, {"key": 51})
+    assert at("09:00") in slots(app, people.a, ready)
+    assert read(new_client(app), token).status_code == 404
 
 
 # F7: FENCE. Wrong impl: confirm skips max_pending_per_email (and ZIF-115's auto-confirm arm).
