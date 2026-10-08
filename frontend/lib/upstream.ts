@@ -4,8 +4,8 @@
 import { isIP } from "node:net";
 
 // Read per request, like apiUrl(). Set only where every request reaches this server through a
-// proxy that overwrites the header (staging: cf-connecting-ip). Unset: the API sees this
-// server's address.
+// proxy that overwrites the header (production and staging: cf-connecting-ip). Unset: the API
+// sees this server's address.
 export function clientIp(headers: { get(name: string): string | null }): string | undefined {
   const name = process.env.ZIF_CLIENT_IP_HEADER;
   const value = name ? (headers.get(name) ?? "").trim().replace(/^::ffff:(?=\d+\.)/i, "") : "";

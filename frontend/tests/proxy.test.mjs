@@ -10,14 +10,18 @@ import { gzipSync } from "node:zlib";
 const WEB_DIR = new URL("..", import.meta.url).pathname;
 
 function stubApi(version) {
+  // seen: the headers of the last request per path, for requests this server makes itself (the
+  // booking page's loader) whose response never reaches the test.
+  const seen = new Map();
   return new Promise((resolve) => {
     const server = createServer((req, res) => {
+      seen.set(req.url, req.headers);
       // Echoes the request's own x-request-id back as a response header (E1): lets a test check
       // the id the proxy forwarded without depending on its random value.
       if (req.headers["x-request-id"]) res.setHeader("X-Request-ID", req.headers["x-request-id"]);
       res.setHeader("Content-Type", "application/json");
       res.end(JSON.stringify({ status: "ok", version, path: req.url, headers: req.headers }));
-    }).listen(0, "127.0.0.1", () => resolve(server));
+    }).listen(0, "127.0.0.1", () => resolve(Object.assign(server, { seen })));
   });
 }
 
@@ -389,6 +393,23 @@ describe("the visitor's address", () => {
     const { headers } = await response.json();
 
     assert.equal(headers["x-forwarded-for"], "203.0.113.8");
+  });
+
+  // ZIF-140: the booking page's server loader calls the API itself; without this every visitor's
+  // page load would share this server's address and its per-IP limit.
+  test("set: the booking page's loader forwards each visitor's own address", async () => {
+    const path = "/api/public/booking-pages/corner-salon";
+    for (const visitor of ["203.0.113.21", "203.0.113.22"]) {
+      await (await fetch("http://127.0.0.1:3206/en/corner-salon", { headers: { ...forged, "CF-Connecting-IP": visitor } })).text();
+      assert.equal(api.seen.get(path)?.["x-forwarded-for"], visitor);
+    }
+  });
+
+  test("unset: the booking page's loader forwards no address", async () => {
+    const path = "/api/public/booking-pages/quiet-salon";
+    await (await fetch("http://127.0.0.1:3205/en/quiet-salon", { headers: { ...forged, "CF-Connecting-IP": "203.0.113.23" } })).text();
+    assert.ok(api.seen.has(path), "the loader called the API");
+    assert.equal(api.seen.get(path)["x-forwarded-for"], undefined);
   });
 });
 

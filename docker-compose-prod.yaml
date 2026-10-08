@@ -5,7 +5,8 @@
 # the repo root (copy it to a .env next to this file) and the "Environment variables" table in
 # CONTRIBUTING.md.
 # ZIF_CLIENT_IP_HEADER is not passed through here on purpose. Port 3000 is published directly, so any
-# header can be forged.
+# header can be forged, and every visitor shares the web app's address and its per-IP rate limits. Fine
+# for trying a release; production runs on k3s behind Cloudflare (CONTRIBUTING.md, "Client IP").
 name: ziftbook
 
 # Fixed addresses, so the backend can trust exactly the frontend (ZIF_TRUSTED_PROXIES). If this
