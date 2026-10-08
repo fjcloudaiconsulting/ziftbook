@@ -897,6 +897,26 @@ def test_only_the_signed_in_address_itself_books_here_and_nothing_is_written_bef
     assert (row.name, row.phone, row.user_id, booked) == ("Victim", None, None, 0)
 
 
+# ZIF-117 FENCE. Wrong impl: the 403 below the per-IP limit, so refused anonymous posts spend the
+# IP's budget and lock the next signed-in booker on that network out.
+def test_a_refused_anonymous_post_spends_no_limit(people: People, app: FastAPI, ready: str) -> None:
+    address = fresh_address()
+    for _ in range(bookings.IP_LIMIT + 1):
+        anonymous = new_client(app, address).post(
+            booking_url(people.a, ready),
+            json={
+                "starts_at": at("09:00"),
+                "name": "Guest",
+                "email": fresh_email(),
+                "policy_version": "2026-09-01",
+                "consents": {},
+            },
+        )
+        assert anonymous.status_code == 403
+
+    assert post_booking(new_client(app, address), people.a, ready).status_code == 201
+
+
 # 26a: GUARD + FENCE.
 def test_the_address_s_own_account_refreshes_and_links_a_new_client_row(
     people: People, app: FastAPI, ready: str

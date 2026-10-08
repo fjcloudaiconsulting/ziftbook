@@ -36,6 +36,7 @@ from tests.conftest import (
     signed_in,
     token_in,
 )
+from tests.test_bookings_api import sign_in_as
 from tests.test_working_hours import seed
 
 UA = {"User-Agent": "zif-never-log-agent/7"}
@@ -277,11 +278,14 @@ def test_no_personal_data_ever_reaches_a_log(
     secret(booker_name)
     secret(booker_email)
     secret(booker_phone)
+    # ZIF-117: the public POST books only for the signed-in address itself.
+    booker = client_for(app)
+    sign_in_as(booker, people.a, booker_email)
 
     # 6f (ZIF-53): a pending booking sends booking_received (client) and booking_request (merchant);
     # the owner's confirm then sends booking_confirmed with its .ics. The reminder's due_at is a day
     # away, so run_once leaves it queued.
-    booked = client_for(app).post(
+    booked = booker.post(
         f"/api/public/businesses/{people.a}/services/{created.json()['id']}/bookings",
         json={
             "starts_at": slots[0],
@@ -300,7 +304,7 @@ def test_no_personal_data_ever_reaches_a_log(
 
     # 6g (ZIF-122): a second booking's hold runs out and the sweep settles it, logging its count.
     assert len(slots) >= 2  # slots[-1] must not be 6f's slot, which is taken
-    lapsed = client_for(app).post(
+    lapsed = booker.post(
         f"/api/public/businesses/{people.a}/services/{created.json()['id']}/bookings",
         json={
             "starts_at": slots[-1],
@@ -321,7 +325,7 @@ def test_no_personal_data_ever_reaches_a_log(
 
     # 6h (ZIF-121): a decline with a message; the text goes to the client's email and nowhere else.
     assert len(slots) >= 4  # clear of 6f's slot and its buffer; 6g's expired hold is free again
-    declined = client_for(app).post(
+    declined = booker.post(
         f"/api/public/businesses/{people.a}/services/{created.json()['id']}/bookings",
         json={
             "starts_at": slots[-2],

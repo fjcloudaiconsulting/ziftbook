@@ -462,39 +462,11 @@ export function BookingPage({ page, locale, turnstileSiteKey, initialService = n
     const memberId = f.pick ?? (f.worker === "any" ? null : f.worker);
     // ZIF-117: anyone but the signed-in address itself gets a link by email first ("Send the email
     // again" comes back here too, replacing the hold on screen).
-    const again = sent;
-    if (again || linkFirst) {
-      const held = await send(
-        bookingHoldsCreate({
-          path: { tenant_id: page.id, service_id: f.service.id },
-          body: holdBody({ startsAt: f.slot!, memberId, email: f.email, locale: loc, turnstileToken: token, replaces: again?.secret ?? f.replaces }),
-        }),
-      );
-      working.current = false;
-      if (turnstileSiteKey) resetTurnstile();
-      const outcome = answerState(held);
-      if (outcome.kind === "done" && held.data) {
-        const email = f.email.trim();
-        setSent({
-          secret: held.data.secret,
-          email,
-          startsAt: held.data.starts_at,
-          heldUntil: held.data.expires_at,
-          service: f.service,
-          who: withName(f.service.workers, f.worker, f.pick, t("anyone")),
-          notice: again ? { tone: "note", text: t("sentAgain", { email }) } : null,
-        });
-        setFlow((cur) => ({ ...cur, busy: false, replaces: null }));
-        return;
-      }
-      if (again && outcome.kind !== "slotTaken" && outcome.kind !== "serviceGone") {
-        // Stays on "Check your email": the hold and its link are as they were.
-        setSent({ ...again, notice: { tone: "error", text: failureText(outcome.kind) } });
-        setFlow((cur) => ({ ...cur, busy: false }));
-        return;
-      }
-      setSent(null);
-      return afterRefusal(f, outcome);
+    if (sent || linkFirst) return doHold(f, memberId, token);
+    if (f.replaces) {
+      // Back to the signed-in address after a link went elsewhere: that hold would block its own time.
+      await send(bookingHoldsRelease({ path: { tenant_id: page.id }, body: { secret: f.replaces } }));
+      setFlow((cur) => ({ ...cur, replaces: null }));
     }
     const body = bookingBody({
       startsAt: f.slot!,
@@ -508,15 +480,15 @@ export function BookingPage({ page, locale, turnstileSiteKey, initialService = n
     });
     const answer = await send(bookingsCreate({ path: { tenant_id: page.id, service_id: f.service.id }, body: { ...body, locale: loc } }));
     working.current = false;
-    // Reset after EVERY answer, 201 included: a fresh "Book another" must never reuse this token.
-    if (turnstileSiteKey) resetTurnstile();
-
     const outcome = answerState(answer);
+    // Reset after EVERY answer, 201 included: a fresh "Book another" must never reuse this token.
+    if (turnstileSiteKey && outcome.kind !== "verifyEmail") resetTurnstile();
+
     if (outcome.kind === "verifyEmail") {
-      // The session ended, or isn't this address's: the form becomes the email-only one.
+      // The session ended, or isn't this address's: refused before Turnstile, so the same token
+      // goes to the hold instead, and the form becomes the email-only one.
       setSessionEmail(null);
-      setFlow((cur) => ({ ...cur, busy: false }));
-      return;
+      return doHold(f, memberId, token);
     }
     if (outcome.kind === "done" && answer.data) {
       setDone({
@@ -530,6 +502,47 @@ export function BookingPage({ page, locale, turnstileSiteKey, initialService = n
       return;
     }
     await afterRefusal(f, outcome);
+  }
+
+  /** ZIF-117: the hold POST, a first link or "Send the email again" (which replaces the hold on
+   * screen; "Wrong address" leaves its secret in flow.replaces). */
+  async function doHold(f: Step2Plus, memberId: string | null, token: string | null) {
+    const again = sent;
+    const replaces = again?.secret ?? f.replaces;
+    working.current = true;
+    const held = await send(
+      bookingHoldsCreate({
+        path: { tenant_id: page.id, service_id: f.service.id },
+        body: holdBody({ startsAt: f.slot!, memberId, email: f.email, locale: loc, turnstileToken: token, replaces }),
+      }),
+    );
+    working.current = false;
+    if (turnstileSiteKey) resetTurnstile();
+    const outcome = answerState(held);
+    if (outcome.kind === "done" && held.data) {
+      const email = f.email.trim();
+      setSent({
+        secret: held.data.secret,
+        email,
+        startsAt: held.data.starts_at,
+        heldUntil: held.data.expires_at,
+        service: f.service,
+        who: withName(f.service.workers, f.worker, f.pick, t("anyone")),
+        notice: again ? { tone: "note", text: t("sentAgain", { email }) } : null,
+      });
+      setFlow((cur) => ({ ...cur, busy: false, replaces: null }));
+      return;
+    }
+    if (again && outcome.kind !== "slotTaken" && outcome.kind !== "serviceGone") {
+      // Stays on "Check your email": the hold and its link are as they were.
+      setSent({ ...again, notice: { tone: "error", text: failureText(outcome.kind) } });
+      setFlow((cur) => ({ ...cur, busy: false }));
+      return;
+    }
+    // Refused: whatever the booker does next, its hold still replaces the one it had.
+    setSent(null);
+    setFlow((cur) => ({ ...cur, replaces }));
+    return afterRefusal({ ...f, replaces }, outcome);
   }
 
   function failureText(kind: AnswerOutcome["kind"]): string {
@@ -604,7 +617,8 @@ export function BookingPage({ page, locale, turnstileSiteKey, initialService = n
     working.current = false;
     setSent(null);
     const f = flow as Step2Plus;
-    setFlow((cur) => ({ ...cur, step: 2, slot: null, pick: null, banner: null }));
+    // Kept for the next hold anyway: if the release didn't land, that hold replaces this one.
+    setFlow((cur) => ({ ...cur, step: 2, slot: null, pick: null, banner: null, replaces: sent.secret }));
     setFocusStep(2);
     void ensureWeek(f.service, f.worker, f.weekStart, true);
   }

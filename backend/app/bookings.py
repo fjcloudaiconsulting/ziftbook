@@ -713,7 +713,7 @@ def book_online(
     and catches OperationalError as 503 busy.
 
     address: the client's email, already normalised (never `email`: that names this module's
-    enqueue helper). user_id and refresh follow app.clients.find_or_create's CALLER'S DUTY.
+    enqueue helper). user_id follows app.clients.find_or_create's CALLER'S DUTY.
     exclude: a hold id that re-derivation must not see as a conflict with itself
     (availability.booked). prefer: a worker to try first when eligible - the one the hold blocked.
     """
