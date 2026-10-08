@@ -1,0 +1,19 @@
+Confirme seu agendamento em $business
+Olá,
+
+Alguém, provavelmente você, pediu para agendar em $business com este e-mail:
+
+$service
+$date às $time ($zone)
+
+Para concluir o agendamento, abra este link e informe seu nome:
+
+$link
+
+Reservamos este horário até $held_until. Depois disso, o link ainda funciona até $link_until, se o horário ainda estiver livre.
+
+Não foi você? Ignore este e-mail. Nada foi agendado, e seu endereço é apagado em até 24 horas.
+
+Para escolher outro horário: $page
+
+ziftbook

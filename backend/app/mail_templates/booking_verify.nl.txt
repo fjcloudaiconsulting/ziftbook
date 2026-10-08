@@ -1,0 +1,19 @@
+Bevestig je afspraak bij $business
+Hallo,
+
+Iemand, hopelijk jij, wil met dit e-mailadres een afspraak maken bij $business:
+
+$service
+$date om $time ($zone)
+
+Open deze link en vul je naam in om de afspraak af te ronden:
+
+$link
+
+We houden deze tijd vast tot $held_until. Daarna werkt de link nog tot $link_until, als de tijd nog vrij is.
+
+Heb je hier niet om gevraagd? Negeer deze e-mail. Er is niets geboekt en je adres wordt binnen 24 uur verwijderd.
+
+Een andere tijd kiezen: $page
+
+ziftbook

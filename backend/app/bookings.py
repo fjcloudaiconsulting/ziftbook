@@ -54,6 +54,11 @@ IP_LIMIT, EMAIL_LIMIT, LIMIT_WINDOW = 30, 5, timedelta(hours=1)
 LOCK_KEY = 51
 OVERLAP = "ex_bookings_worker_overlap"  # migration 0026; answered with 409 slot_taken
 MAX_AGENDA_WINDOW = timedelta(days=8)  # a 7-day local week across a clock change is 7d +- 1h
+# ZIF-117 (migration 0034). A guest's chosen time is held this long while they open the emailed
+# link, and the link itself lives LINK_TTL from the hold's created_at. Code constants, never
+# settings: the first is what the booking page promises, the second what the email does.
+HOLD_TTL = timedelta(minutes=15)
+LINK_TTL = timedelta(hours=24)
 
 
 class BookingIn(BaseModel):
@@ -268,6 +273,20 @@ WITH gone AS (
 INSERT INTO booking_events (tenant_id, booking_id, event)
 SELECT tenant_id, id, 'expired' FROM gone
 RETURNING 1
+""")
+
+# ZIF-117. The sweep's half for holds: a hold goes once its LINK is dead, not when its 15 minutes
+# end, because a late click still books a time that is free. Under the sweep's tenant lock.
+SWEEP_HOLDS = text("""
+DELETE FROM booking_holds WHERE created_at <= now() - CAST(:link_ttl AS interval) RETURNING 1
+""")
+
+# ZIF-117. The console's non-override create names a live hold instead of a bare slot_unavailable:
+# the latest live hold on these workers that overlaps the asked-for time, or NULL.
+HELD = text("""
+SELECT max(expires_at) FROM booking_holds
+WHERE worker_id = ANY(CAST(:members AS uuid[])) AND expires_at > now()
+  AND starts_at < :end AND ends_at > :start
 """)
 
 # What max_pending_per_email caps: live pendings, plus (ZIF-115, owner ruling 2026-10-08) upcoming
@@ -669,6 +688,177 @@ RETURNING id, starts_at, ends_at, worker_id
 WORKER_USER = text("SELECT user_id FROM memberships WHERE id = :id")
 
 
+def book_online(
+    db: Session,
+    *,
+    tenant_id: UUID,
+    service_id: UUID,
+    member_id: UUID | None,
+    starts_at: datetime,
+    name: str,
+    address: str,
+    phone: str | None,
+    locale: str | None,
+    user_id: UUID | None,
+    refresh: bool,
+    policy_version: str,
+    consents: dict[Purpose, bool],
+    origin_ip: str | None,
+    user_agent: str | None,
+    exclude: UUID | None = None,
+    prefer: UUID | None = None,
+) -> BookingOut:
+    """A client's own booking, from the booking page (create()) or from a confirmed booking-hold
+    link (app.holds, ZIF-117): ONE body for both, so the gates, the cap, the snapshot and the emails
+    can never drift apart. The caller holds the tenant lock (its transaction's first statement)
+    and catches OperationalError as 503 busy.
+
+    address: the client's email, already normalised (never `email`: that names this module's
+    enqueue helper). user_id and refresh follow app.clients.find_or_create's CALLER'S DUTY.
+    exclude: a hold id that re-derivation must not see as a conflict with itself
+    (availability.booked). prefer: a worker to try first when eligible - the one the hold blocked.
+    """
+    # 2. FOR SHARE is mandatory: archiving takes FOR NO KEY UPDATE and the booking's foreign
+    #    key check only KEY SHARE, so without this a booking can land on a service archived
+    #    concurrently. Postgres now() rides on this row and is the transaction's clock.
+    row = db.execute(SERVICE, {"service_id": service_id}).first()
+    if row is None:
+        raise ApiError(404, "not_found")
+    settings = business_settings.read(db)  # 3
+    # ZIF-145. After Turnstile and the limits, so unpublished answers like unknown (F10);
+    # before any write. A booking that read published=true before a concurrent unpublish
+    # commits still lands: it was placed first, and the owner sees it.
+    if not settings.published:
+        raise ApiError(404, "not_found")
+    opening = schedule.envelope(db)  # 4: once, never per worker or per day
+    hours, names = availability.candidates(db, service_id, member_id)
+    candidates = sorted(hours)  # 5
+    # 6. Validate the WHOLE posted map here, before any write, so a bad policy version is a
+    #    422 with nothing written - regardless of whether anything was withdrawn.
+    clients.texts_for(policy_version, consents)
+    # Consent WITHDRAWALS only; grants ride the booking_events row instead (ruling 18, §10).
+    withdrawals: dict[Purpose, bool] = {p: g for p, g in consents.items() if not g}
+    # 7. Once, before the savepoint: the row lock this takes is what the pending cap needs,
+    #    and ROLLBACK TO SAVEPOINT would release a lock taken inside one.
+    found = clients.find_or_create(
+        db, name=name, email=address, phone=phone, locale=locale, user_id=user_id, refresh=refresh
+    )
+    if withdrawals:  # 8: record_consents calls texts_for again - its own trust boundary
+        clients.record_consents(
+            db,
+            client_id=found.id,
+            policy_version=policy_version,
+            purposes=withdrawals,
+            source="booking_page",
+            ip=origin_ip,
+            user_agent=user_agent,
+        )
+    # 9. Exact under the lock, rather than best-effort: EXPIRE's now() is step 2's clock.
+    db.execute(EXPIRE, {"expiring": list(availability.EXPIRING)})
+    zone = settings.timezone
+    day = starts_at.astimezone(ZoneInfo(zone)).date()
+    first, last, earliest = availability.window(
+        row.now, zone, day, day, settings.min_notice_minutes, settings.booking_horizon_days
+    )
+    if first > last:  # in the past, or beyond the horizon
+        raise ApiError(409, "slot_unavailable")
+    buffer = availability.buffer_for(row.duration_minutes, row.buffer_minutes, settings.buffer_pct)
+    # 10-12. ONE implementation of "is this slot bookable" (availability.offered), never a
+    #     bespoke validator: the constraint alone does not catch a buffer tail, opening
+    #     hours, the worker's own hours, time off, the slot grid, min_notice, the horizon,
+    #     an unassigned worker or an archived service. offered() itself no-ops (no query)
+    #     when candidates is empty.
+    result = availability.offered(
+        db,
+        members=candidates,
+        hours=hours,
+        opening=opening,
+        settings=settings,
+        first=first,
+        last=last,
+        earliest=earliest,
+        duration=row.duration_minutes,
+        buffer=buffer,
+        exclude=exclude,
+    )
+    booked_rows = result.booked
+    offered = result.slots
+    eligible = [c for c in candidates if starts_at in offered[c]]  # keys every member
+    if not eligible:
+        raise ApiError(409, "slot_unavailable")
+    # 13. AFTER re-derivation, never before (B6): counting before it makes 429-vs-409 an
+    #     oracle for "this address books here" against a deliberately unbookable slot.
+    pending = db.scalar(
+        PENDING_COUNT,
+        {"client_id": found.id, "expiring": list(availability.EXPIRING), "now": row.now},
+    )
+    if (pending or 0) >= settings.max_pending_per_email:
+        raise ApiError(429, "rate_limited")
+    # 14. The candidate loop: not "one retry" (§1.1). Least loaded that day, then worker_id
+    #     ascending - the tiebreak is deterministic, so concurrent requests for the same
+    #     slot pile onto the same worker by construction. Under the tenant lock a loser
+    #     acquires the lock only after the winner commits, re-derives, and 409s above; the
+    #     loop survives as the backstop for a writer that forgot the lock (23P01) or a
+    #     member removed concurrently (23503, B5).
+    status = "confirmed" if settings.auto_confirm else "pending"
+    expires_at = (
+        None if status == "confirmed" else row.now + timedelta(hours=settings.pending_ttl_hours)
+    )
+    queue = by_load(eligible, booked_rows, day, zone)
+    if prefer in queue:  # ZIF-117: the worker the hold blocked, first
+        queue.remove(prefer)
+        queue.insert(0, prefer)
+    booking, candidate = place(
+        db,
+        settings=settings,
+        service=row,
+        service_id=service_id,
+        client_id=found.id,
+        queue=queue,
+        names=names,
+        starts_at=starts_at,
+        status=status,
+        expires_at=expires_at,
+        source="booking_page",
+        event={
+            "ip": origin_ip,
+            "user_agent": user_agent,
+            "policy_version": policy_version,
+            "consent_purposes": json.dumps(consents),
+            "actor_user_id": None,  # the client: nobody is signed in to act
+            "details": None,
+        },
+    )
+    # ZIF-53. Same session as the status write, outside the savepoint: a rollback of the
+    # savepoint (a lost race) drops nothing here, since this only runs after `break`.
+    if status == "confirmed":
+        # starts_at (ZIF-54 D10): a reschedule before this runs makes it skip itself.
+        email(
+            db,
+            tenant_id,
+            booking.id,
+            "booking_confirmed",
+            extra={"starts_at": booking.starts_at.isoformat()},
+        )
+        remind(db, tenant_id, booking.id, booking.starts_at, row.now)
+        email_merchants(db, tenant_id, booking.id, candidate, "booking_new")
+    else:
+        email(db, tenant_id, booking.id, "booking_received")
+        email_merchants(db, tenant_id, booking.id, candidate, "booking_request")
+    return BookingOut(
+        id=booking.id,
+        status=booking.status,
+        starts_at=booking.starts_at,
+        ends_at=booking.ends_at,
+        duration_minutes=row.duration_minutes,
+        service_name=row.name,
+        price=Price(amount_minor=row.price_amount_minor, currency=row.price_currency),
+        worker_id=candidate,
+        worker_display_name=names[candidate],
+        cancellation_policy_text=settings.cancellation_policy_text or None,
+    )
+
+
 router = APIRouter(prefix="/api/public", tags=["bookings"])
 
 
@@ -703,157 +893,29 @@ def create(  # sync def: turnstile.verify's urlopen blocks, and runs in FastAPI'
     request.state.tenant_id = tenant_id
     response.headers["Cache-Control"] = "no-store"
     origin_ip, user_agent = auth.origin(request)
+    # Keyed on AUTHENTICATION, never on the route: a signed-in user typing somebody else's address
+    # is anonymous for this purpose.
+    mine = signed_in_as is not None and signed_in_as.email == new.email
     try:
         with tenant_context(tenant_id) as db:
             # 1. The first statement of the transaction, always, nothing above it.
             db.execute(LOCK, {"key": LOCK_KEY})
-            # 2. FOR SHARE is mandatory: archiving takes FOR NO KEY UPDATE and the booking's foreign
-            #    key check only KEY SHARE, so without this a booking can land on a service archived
-            #    concurrently. Postgres now() rides on this row and is the transaction's clock.
-            row = db.execute(SERVICE, {"service_id": service_id}).first()
-            if row is None:
-                raise ApiError(404, "not_found")
-            settings = business_settings.read(db)  # 3
-            # ZIF-145. After Turnstile and the limits, so unpublished answers like unknown (F10);
-            # before any write. A booking that read published=true before a concurrent unpublish
-            # commits still lands: it was placed first, and the owner sees it.
-            if not settings.published:
-                raise ApiError(404, "not_found")
-            opening = schedule.envelope(db)  # 4: once, never per worker or per day
-            hours, names = availability.candidates(db, service_id, new.member_id)
-            candidates = sorted(hours)  # 5
-            # 6. Validate the WHOLE posted map here, before any write, so a bad policy version is a
-            #    422 with nothing written - regardless of whether anything was withdrawn.
-            clients.texts_for(new.policy_version, new.consents)
-            # Consent WITHDRAWALS only; grants ride the booking_events row instead (ruling 18, §10).
-            withdrawals: dict[Purpose, bool] = {p: g for p, g in new.consents.items() if not g}
-            # Keyed on AUTHENTICATION, never on the route: a signed-in user typing somebody else's
-            # address is anonymous for this purpose.
-            mine = signed_in_as is not None and signed_in_as.email == new.email
-            # 7. Once, before the savepoint: the row lock this takes is what the pending cap needs,
-            #    and ROLLBACK TO SAVEPOINT would release a lock taken inside one.
-            found = clients.find_or_create(
+            return book_online(
                 db,
+                tenant_id=tenant_id,
+                service_id=service_id,
+                member_id=new.member_id,
+                starts_at=new.starts_at,
                 name=new.name,
-                email=new.email,
+                address=new.email,
                 phone=new.phone,
                 locale=new.locale,
                 user_id=signed_in_as.user_id if signed_in_as is not None and mine else None,
                 refresh=mine,
-            )
-            if withdrawals:  # 8: record_consents calls texts_for again - its own trust boundary
-                clients.record_consents(
-                    db,
-                    client_id=found.id,
-                    policy_version=new.policy_version,
-                    purposes=withdrawals,
-                    source="booking_page",
-                    ip=origin_ip,
-                    user_agent=user_agent,
-                )
-            # 9. Exact under the lock, rather than best-effort: EXPIRE's now() is step 2's clock.
-            db.execute(EXPIRE, {"expiring": list(availability.EXPIRING)})
-            zone = settings.timezone
-            day = new.starts_at.astimezone(ZoneInfo(zone)).date()
-            first, last, earliest = availability.window(
-                row.now, zone, day, day, settings.min_notice_minutes, settings.booking_horizon_days
-            )
-            if first > last:  # in the past, or beyond the horizon
-                raise ApiError(409, "slot_unavailable")
-            buffer = availability.buffer_for(
-                row.duration_minutes, row.buffer_minutes, settings.buffer_pct
-            )
-            # 10-12. ONE implementation of "is this slot bookable" (availability.offered), never a
-            #     bespoke validator: the constraint alone does not catch a buffer tail, opening
-            #     hours, the worker's own hours, time off, the slot grid, min_notice, the horizon,
-            #     an unassigned worker or an archived service. offered() itself no-ops (no query)
-            #     when candidates is empty.
-            result = availability.offered(
-                db,
-                members=candidates,
-                hours=hours,
-                opening=opening,
-                settings=settings,
-                first=first,
-                last=last,
-                earliest=earliest,
-                duration=row.duration_minutes,
-                buffer=buffer,
-            )
-            booked_rows = result.booked
-            offered = result.slots
-            eligible = [c for c in candidates if new.starts_at in offered[c]]  # keys every member
-            if not eligible:
-                raise ApiError(409, "slot_unavailable")
-            # 13. AFTER re-derivation, never before (B6): counting before it makes 429-vs-409 an
-            #     oracle for "this address books here" against a deliberately unbookable slot.
-            pending = db.scalar(
-                PENDING_COUNT,
-                {"client_id": found.id, "expiring": list(availability.EXPIRING), "now": row.now},
-            )
-            if (pending or 0) >= settings.max_pending_per_email:
-                raise ApiError(429, "rate_limited")
-            # 14. The candidate loop: not "one retry" (§1.1). Least loaded that day, then worker_id
-            #     ascending - the tiebreak is deterministic, so concurrent requests for the same
-            #     slot pile onto the same worker by construction. Under the tenant lock a loser
-            #     acquires the lock only after the winner commits, re-derives, and 409s above; the
-            #     loop survives as the backstop for a writer that forgot the lock (23P01) or a
-            #     member removed concurrently (23503, B5).
-            status = "confirmed" if settings.auto_confirm else "pending"
-            expires_at = (
-                None
-                if status == "confirmed"
-                else row.now + timedelta(hours=settings.pending_ttl_hours)
-            )
-            queue = by_load(eligible, booked_rows, day, zone)
-            booking, candidate = place(
-                db,
-                settings=settings,
-                service=row,
-                service_id=service_id,
-                client_id=found.id,
-                queue=queue,
-                names=names,
-                starts_at=new.starts_at,
-                status=status,
-                expires_at=expires_at,
-                source="booking_page",
-                event={
-                    "ip": origin_ip,
-                    "user_agent": user_agent,
-                    "policy_version": new.policy_version,
-                    "consent_purposes": json.dumps(new.consents),
-                    "actor_user_id": None,  # the client: nobody is signed in to act
-                    "details": None,
-                },
-            )
-            # ZIF-53. Same session as the status write, outside the savepoint: a rollback of the
-            # savepoint (a lost race) drops nothing here, since this only runs after `break`.
-            if status == "confirmed":
-                # starts_at (ZIF-54 D10): a reschedule before this runs makes it skip itself.
-                email(
-                    db,
-                    tenant_id,
-                    booking.id,
-                    "booking_confirmed",
-                    extra={"starts_at": booking.starts_at.isoformat()},
-                )
-                remind(db, tenant_id, booking.id, booking.starts_at, row.now)
-                email_merchants(db, tenant_id, booking.id, candidate, "booking_new")
-            else:
-                email(db, tenant_id, booking.id, "booking_received")
-                email_merchants(db, tenant_id, booking.id, candidate, "booking_request")
-            return BookingOut(
-                id=booking.id,
-                status=booking.status,
-                starts_at=booking.starts_at,
-                ends_at=booking.ends_at,
-                duration_minutes=row.duration_minutes,
-                service_name=row.name,
-                price=Price(amount_minor=row.price_amount_minor, currency=row.price_currency),
-                worker_id=candidate,
-                worker_display_name=names[candidate],
-                cancellation_policy_text=settings.cancellation_policy_text or None,
+                policy_version=new.policy_version,
+                consents=new.consents,
+                origin_ip=origin_ip,
+                user_agent=user_agent,
             )
     except OperationalError:
         # DeadlockDetected (40P01) and serialization failures arrive here, NOT as IntegrityError,
@@ -1233,6 +1295,18 @@ def book(
             buffer_minutes=row.buffer_minutes,
         )
         if not eligible:
+            # ZIF-117: a time an online booker is holding reads as held, with when it frees up,
+            # so the member knows override books it anyway (the guest's click then 409s).
+            held_until = db.scalar(
+                HELD,
+                {
+                    "members": sorted(hours),
+                    "start": new.starts_at,
+                    "end": new.starts_at + timedelta(minutes=row.duration_minutes),
+                },
+            )
+            if held_until is not None:
+                raise ApiError(409, "slot_held", held_until=held_until)
             raise ApiError(409, "slot_unavailable")
         day = new.starts_at.astimezone(ZoneInfo(settings.timezone)).date()
         queue = by_load(eligible, booked_rows, day, settings.timezone)
@@ -1457,8 +1531,9 @@ def reschedule(
 
 
 def sweep() -> int:
-    """Expire every tenant's due pendings; the worker's housekeeping, never correctness (create()
-    and availability.booked() already treat them as gone). Returns how many it settled."""
+    """Expire every tenant's due pendings and delete its dead booking holds (ZIF-117); the worker's
+    housekeeping, never correctness (create() and availability.booked() already treat both as
+    gone). Returns how many bookings it settled."""
     # The ids in their own short session, closed before the loop: the worker's pool is exactly 21.
     with SessionLocal() as session:
         tenant_ids = session.scalars(text("SELECT id FROM tenants")).all()
@@ -1475,5 +1550,9 @@ def sweep() -> int:
                 if count:
                     logger.info("bookings expired", extra={"count": count})
                 expired += count
+                # ZIF-117: an unproven address is kept at most LINK_TTL (plus one sweep interval).
+                gone = len(db.execute(SWEEP_HOLDS, {"link_ttl": LINK_TTL}).all())
+                if gone:
+                    logger.info("booking holds deleted", extra={"count": gone})
         span.set_attribute("expired", expired)
     return expired
