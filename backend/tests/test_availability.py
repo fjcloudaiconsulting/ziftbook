@@ -215,7 +215,7 @@ def test_shifts_around_the_skipped_hour_give_each_start_once_in_order() -> None:
     assert found == [utc(f"2026-03-29T01:{m}0") for m in range(6)]
 
 
-# ZIF-113: a slot is only ever an instant whose clock reading lies inside a declared shift.
+# ZIF-113: a skipped time never yields a slot whose clock reading is outside the declared shift.
 # 2027-03-28 Amsterdam skips 02:00-03:00 (01:00Z); the old to_utc moved a skipped time an hour on.
 def test_a_skipped_time_converts_to_the_instant_the_clock_jumps() -> None:
     assert local(date(2027, 3, 28), "02:00") == utc("2027-03-28T01:00")

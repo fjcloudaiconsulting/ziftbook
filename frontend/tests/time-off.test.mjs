@@ -40,16 +40,16 @@ describe("localToInstant", () => {
     assert.equal(localToInstant("2026-10-25", "02:30", "Europe/Amsterdam"), "2026-10-25T00:30:00.000Z");
   });
 
-  test("New York 2026-03-08 02:30 is a skipped (spring-forward) wall-clock time: the offset from BEFORE the change (EST), per schedule.to_utc", () => {
-    assert.equal(localToInstant("2026-03-08", "02:30", "America/New_York"), "2026-03-08T07:30:00.000Z");
+  test("New York 2026-03-08 02:30 is a skipped (spring-forward) wall-clock time: the instant the clock jumps (03:00 EDT), per schedule.to_utc", () => {
+    assert.equal(localToInstant("2026-03-08", "02:30", "America/New_York"), "2026-03-08T07:00:00.000Z");
   });
 
   test("Sydney 2026-04-05 02:30 is a repeated (fall-back) wall-clock time: the FIRST occurrence, AEDT, per schedule.to_utc", () => {
     assert.equal(localToInstant("2026-04-05", "02:30", "Australia/Sydney"), "2026-04-04T15:30:00.000Z");
   });
 
-  test("Santiago 2026-09-06 00:30 is a skipped (spring-forward) wall-clock time: the offset from BEFORE the change, per schedule.to_utc", () => {
-    assert.equal(localToInstant("2026-09-06", "00:30", "America/Santiago"), "2026-09-06T04:30:00.000Z");
+  test("Santiago 2026-09-06 00:30 is a skipped (spring-forward) wall-clock time: the instant the clock jumps (01:00), per schedule.to_utc", () => {
+    assert.equal(localToInstant("2026-09-06", "00:30", "America/Santiago"), "2026-09-06T04:00:00.000Z");
   });
 });
 
