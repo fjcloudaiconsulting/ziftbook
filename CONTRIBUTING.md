@@ -233,27 +233,38 @@ we can show which businesses were not affected.
 
 Rate limits and audit events key on the visitor's address. Each deployment has exactly one trusted source for it:
 
-- The web app (`frontend/proxy.ts`) drops every forwarding header the browser sent. If `ZIF_CLIENT_IP_HEADER`
-  is set (staging: `cf-connecting-ip`), it forwards that header's value, when it is a valid IP address, as
-  `X-Forwarded-For`. Set it only where every request reaches the web app through a proxy that overwrites that
-  header; otherwise anyone can pick their address.
-- The API believes `X-Forwarded-For` only from the addresses in `ZIF_TRUSTED_PROXIES` (compose: the frontend's
-  fixed `172.28.0.10`; staging: the pod network, with NetworkPolicies that only let the web app reach the API).
-  Empty trusts nobody. The images run uvicorn with `--no-proxy-headers`, and so should you when running it
-  outside Docker.
+- The web app (`frontend/proxy.ts`, and the booking page's server loader) drops every forwarding header the
+  browser sent. If `ZIF_CLIENT_IP_HEADER` is set, it forwards that header's value, when it is a valid IP
+  address, as `X-Forwarded-For`. Set it only where every request reaches the web app through a proxy that
+  overwrites that header; otherwise anyone can pick their address.
+- The API believes `X-Forwarded-For` only from the addresses in `ZIF_TRUSTED_PROXIES`. Empty trusts nobody.
+  The images run uvicorn with `--no-proxy-headers`, and so should you when running it outside Docker.
 - In app code, read `request.client.host`. Never read `X-Forwarded-For`, `X-Real-IP`, `Forwarded` or
   `CF-Connecting-IP` yourself.
-- **Staging risk:** the trusted CIDR is the whole pod network (`10.42.0.0/16`), so anything that reaches the
+
+Where each deployment gets it:
+
+- **Production and staging** (k3s; `app.ziftbook.com` and `dev.ziftbook.com`, manifests in aws-infra
+  `clusters/platform/ziftbook-{prod,staging}`): Cloudflare (proxied) to Traefik to the web app to the API.
+  Cloudflare overwrites `CF-Connecting-IP` on every request, the node admits 443 from Cloudflare only, and
+  Traefik completes TLS only with clients showing our zone's Authenticated Origin Pulls certificate, so no
+  other path reaches the web app. The web app sets `ZIF_CLIENT_IP_HEADER=cf-connecting-ip`; the API sets
+  `ZIF_TRUSTED_PROXIES=10.42.0.0/16` (the pod network), and NetworkPolicies admit only the web app's pods to
+  it. Each visitor gets their own per-IP limits.
+- **`docker-compose-prod.yaml`** publishes the web app's port 3000 directly, so it leaves `ZIF_CLIENT_IP_HEADER`
+  unset (any client could forge the header) and the API trusts only the web app's fixed `172.28.0.10`. Every
+  visitor then shares that one address and its per-IP limits: after ZIF-54's 10 booking-link exchanges in 15
+  minutes, every further one is refused, for every client of every business. Use it to try a release, never
+  for public traffic as it stands.
+- **Pod-network risk (k3s):** the trusted CIDR is the whole pod network, so anything that reaches the
   backend from inside it is trusted, including traffic SNATed to a node's cluster-internal address
   (`10.42.x.1`): a NodePort or LoadBalancer Service, a hostNetwork pod, or any other node-local caller, and
   any of those could set its own `X-Forwarded-For`. k3s/flannel doesn't SNAT pod-to-ClusterIP traffic, but
   that is not the safeguard: the backend Service must never be exposed via NodePort, LoadBalancer or
   Ingress, and NetworkPolicies must admit only the web app's pods.
-- **Production prerequisite (ZIF-54):** `/api/public/booking-link/*`'s per-IP limits
-  (`booking_link_open`/`booking_link_read`/`booking_link_write`) key on `request.client.host` exactly like
-  every other public route. Without `ZIF_CLIENT_IP_HEADER` set wherever a proxy fronts the web app, every
-  visitor's booking-link traffic arrives at the API under the web server's one address: after 10
-  exchanges in 15 minutes, every further one is refused, for every client of every business behind it.
+- **Worker residual (aws-infra INFRA-145):** a Cloudflare Worker attached to the `ziftbook.com` zone runs
+  inside it, so its code can send its own `CF-Connecting-IP` to the zone's node hostnames. Only whoever
+  merges to this repo's `main`, or holds the landing Worker's deploy token, can change that code.
 
 ## Business settings
 
@@ -485,8 +496,8 @@ ZIF-38). An empty variable means the default: `env_ignore_empty=True` on the bas
 | **Security** | | | | | |
 | `ZIF_TURNSTILE_SECRET` | api | `""` | no | yes | Cloudflare Turnstile secret. Unset skips verification, logged on the `api started` line. |
 | `ZIF_TURNSTILE_SITE_KEY` | frontend | none | no | no | Cloudflare Turnstile site key, rendered on the public booking page. Set both the site key and the secret, or neither: a site key with no secret shows a widget the API never checks; a secret with no site key never gets a token to check. Never `NEXT_PUBLIC_*`: read server-side at request time (`process.env`, ZIF-56's page loader), not baked into the client bundle at build time. |
-| `ZIF_TRUSTED_PROXIES` | api | `""` | yes | no | Addresses whose `X-Forwarded-For` the API believes. Empty trusts nobody. |
-| `ZIF_CLIENT_IP_HEADER` | frontend | none | yes, behind a proxy | no | Header the web app trusts for the visitor's address (staging: `cf-connecting-ip`). Set only behind a proxy that overwrites it; unset there, every visitor shares the proxy's address and its per-IP limits. |
+| `ZIF_TRUSTED_PROXIES` | api | `""` | yes | no | Addresses whose `X-Forwarded-For` the API believes (production and staging: the pod network `10.42.0.0/16`; compose: the web app's `172.28.0.10`). Empty trusts nobody. |
+| `ZIF_CLIENT_IP_HEADER` | frontend | none | yes, behind a proxy | no | Header the web app trusts for the visitor's address (production and staging: `cf-connecting-ip`). Set only behind a proxy that overwrites it; unset there, every visitor shares the proxy's address and its per-IP limits. |
 | **Logging** | | | | | |
 | `ZIF_LOG_LEVEL` | api, worker, migrations, frontend | `INFO` | no | no | `DEBUG`/`INFO`/`WARNING`/`ERROR`. |
 | `ZIF_LOG_FORMAT` | api, worker, migrations, frontend | `json` | no | no | `json` or `text`. |
