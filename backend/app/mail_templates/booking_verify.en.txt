@@ -1,0 +1,19 @@
+Confirm your booking at $business
+Hello,
+
+Someone, hopefully you, asked to book at $business with this email address:
+
+$service
+$date at $time ($zone)
+
+To finish booking, open this link and add your name:
+
+$link
+
+We're holding this time until $held_until. After that the link still works until $link_until, if the time is still free.
+
+Didn't ask for this? Ignore this email. Nothing is booked, and your address is deleted within 24 hours.
+
+To choose another time: $page
+
+ziftbook

@@ -85,6 +85,9 @@ def test_healthz_response_is_a_named_schema_with_required_fields() -> None:
 # public route that genuinely needs one of these names it in its own schema and edits this list,
 # deliberately, in that ticket.
 PRIVATE_TO_THE_CONSOLE = ("internal_note", "phone", "email", "locale")
+# ZIF-117: the confirm page says "Booking as {email}". It is the hold's own address, never a stored
+# client field, and the link's bearer received the email at it. Nothing else is allowed.
+PUBLIC_ON_PURPOSE = {("HoldView", "email")}
 
 
 def test_no_public_response_exposes_a_clients_private_field() -> None:
@@ -106,13 +109,16 @@ def test_no_public_response_exposes_a_clients_private_field() -> None:
         for name in reachable
         for field in PRIVATE_TO_THE_CONSOLE
         if field in spec["components"]["schemas"][name].get("properties", {})
+        and (name, field) not in PUBLIC_ON_PURPOSE
     ]
     assert offending == []
 
 
 # 41: FENCE, new in ZIF-51. Wrong impl: (a) publish ClientIn from a public route and run
 # `make openapi`; (b) remove all three of email, phone and locale from BookingIn.
-BOOKING_REQUEST = {"BookingIn"}
+# ZIF-117 adds the hold (the address only) and the confirm click (name and phone, after the address
+# is proven).
+BOOKING_REQUEST = {"BookingIn", "HoldIn", "ConfirmIn"}
 
 
 def test_the_only_public_request_schema_with_contact_details_is_the_booking() -> None:

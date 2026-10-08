@@ -30,6 +30,8 @@ class Error(BaseModel):
     # first, and how many there are in all.
     bookings: list[InTheWay] | None = None
     total: int | None = None
+    # Only slot_held sets it (ZIF-117): when the online booker's hold on that time ends.
+    held_until: datetime | None = None
 
 
 class ApiError(Exception):
@@ -41,9 +43,11 @@ class ApiError(Exception):
         *,
         bookings: list[InTheWay] | None = None,
         total: int | None = None,
+        held_until: datetime | None = None,
     ) -> None:
         self.status_code = status_code
         self.code = code
         self.weekday = weekday
         self.bookings = bookings
         self.total = total
+        self.held_until = held_until

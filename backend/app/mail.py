@@ -23,7 +23,7 @@ from opentelemetry.trace import SpanKind
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app import business_settings, passwords, tracing
+from app import bookings, business_settings, passwords, tracing
 from app.business_settings import Locale
 from app.config import MailSettings
 from app.db import SessionLocal, tenant_context
@@ -46,13 +46,15 @@ logger = logging.getLogger(__name__)
 def render(template: str, locale: str, values: dict[str, str] | None = None) -> tuple[str, str]:
     """A template is one text file per locale: the first line is the subject, the rest the body.
 
-    With values, $placeholders in the body are filled in; a missing one raises.
+    With values, $placeholders in the subject and the body are filled in; a missing one raises.
     """
     if not re.fullmatch(r"[a-z_]+", template):
         raise ValueError(f"invalid template name {template!r}")
     lines = (TEMPLATES / f"{template}.{locale}.txt").read_text().splitlines()
     body = "\n".join(lines[1:]).strip() + "\n"
-    return lines[0], Template(body).substitute(values) if values is not None else body
+    if values is None:
+        return lines[0], body
+    return Template(lines[0]).substitute(values), Template(body).substitute(values)
 
 
 class MailNotConfigured(RuntimeError):
@@ -235,6 +237,68 @@ def send_invite(job: Job) -> None:
         link = f"{app_url}/{language}/invite#{job.tenant_id}.{token}"
         subject, body = render("invite", language, {"link": link, "business": invite.business})
         deliver("invite", invite.email, subject, body)
+
+
+# ZIF-117. The token's hash lands only while the link can still be used; RETURNING carries what the
+# email says. created_at, not expires_at: a mail delayed past the 15-minute hold still goes out.
+MINT_HOLD = text("""
+UPDATE booking_holds h SET token_hash = :hash
+WHERE h.id = :id AND h.created_at > now() - CAST(:link_ttl AS interval)
+RETURNING h.email, h.locale, h.starts_at, h.expires_at, h.created_at,
+          (SELECT s.name FROM services s WHERE s.id = h.service_id) AS service_name,
+          (SELECT t.name FROM tenants t WHERE t.id = h.tenant_id) AS business,
+          (SELECT t.slug FROM tenants t WHERE t.id = h.tenant_id) AS slug
+""")
+
+
+def send_booking_verify(job: Job) -> None:
+    """The email.booking_verify job (ZIF-117): mail the link that confirms a held booking. Payload:
+    hold_id.
+
+    Mints at send time, as send_invite, but in a short transaction of its own that takes the tenant
+    lock first (every booking_holds writer does, migration 0034) and commits BEFORE the send: the
+    lock is never held across Mailgun (CONTRIBUTING, "Bookings"). A failed send is retried and
+    mints again, overwriting the hash, so only the newest mailed link ever works. A hold confirmed,
+    replaced or swept meanwhile sends nothing. No outbox row: there is no client or user to tie it
+    to, as for send_token.
+    """
+    if job.tenant_id is None:
+        raise ValueError("email.booking_verify needs a tenant")
+    token = secrets.token_urlsafe(32)
+    app_url = MailSettings().app_url.rstrip("/")
+    with tenant_context(job.tenant_id) as session:
+        session.execute(bookings.LOCK, {"key": bookings.LOCK_KEY})
+        hold = session.execute(
+            MINT_HOLD,
+            {
+                "id": job.payload["hold_id"],
+                "hash": hashlib.sha256(token.encode()).digest(),
+                "link_ttl": bookings.LINK_TTL,
+            },
+        ).first()
+        if hold is None:
+            return
+        settings = business_settings.read(session)
+    locale = hold.locale or settings.language
+    zone = ZoneInfo(settings.timezone)
+    starts_local = hold.starts_at.astimezone(zone)
+    link_until = (hold.created_at + bookings.LINK_TTL).astimezone(zone)
+    subject, body = render(
+        "booking_verify",
+        locale,
+        {
+            "business": hold.business,
+            "service": _local_text(hold.service_name, locale),
+            "date": starts_local.strftime(DATE_FORMAT[locale]),
+            "time": starts_local.strftime("%H:%M"),
+            "zone": settings.timezone,
+            "held_until": hold.expires_at.astimezone(zone).strftime("%H:%M"),
+            "link_until": link_until.strftime(f"{DATE_FORMAT[locale]} %H:%M"),
+            "link": f"{app_url}/{locale}/booking/confirm#{job.tenant_id}.{token}",
+            "page": f"{app_url}/{locale}/{hold.slug}",
+        },
+    )
+    deliver("booking_verify", hold.email, subject, body)
 
 
 def _outbox(

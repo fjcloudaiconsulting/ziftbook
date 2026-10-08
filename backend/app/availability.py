@@ -175,6 +175,15 @@ WHERE b.worker_id = ANY(CAST(:members AS uuid[]))
   AND b.status = ANY(CAST(:occupying AS text[]))
   AND (b.status <> ALL(CAST(:expiring AS text[])) OR b.expires_at > now())
   AND b.id IS DISTINCT FROM CAST(:exclude AS uuid)
+UNION ALL
+SELECT h.worker_id, h.starts_at, h.ends_at, s.buffer_minutes
+FROM booking_holds h
+JOIN services s ON s.tenant_id = h.tenant_id AND s.id = h.service_id
+WHERE h.worker_id = ANY(CAST(:members AS uuid[]))
+  AND h.starts_at < :end AND h.ends_at > :start
+  AND h.starts_at > CAST(:start AS timestamptz) - interval '1 day'
+  AND h.expires_at > now()
+  AND h.id IS DISTINCT FROM CAST(:exclude AS uuid)
 """)
 
 
@@ -185,7 +194,15 @@ def booked(
     their service's buffer_minutes).
 
     exclude (ZIF-54): a booking id to leave out, so a reschedule can check whether the booking's
-    OWN slot is offered without seeing its own row as a conflict with itself.
+    OWN slot is offered without seeing its own row as a conflict with itself. ZIF-117: or a hold's
+    id, so the confirm click re-derives its own slot. Booking and hold ids are both uuidv7, so one
+    parameter serves both arms and never matches a row of the other table.
+
+    ZIF-117. The second arm reads live booking_holds (migration 0034) exactly like the first: a
+    guest's held time occupies its worker, buffer included, for every caller of offered(). Live
+    means `expires_at > now()`, the 15-minute hold, NEVER the 24-hour link (created_at): an
+    unconfirmed link must not keep a time from anyone once its hold is over. The same one-day
+    look-back holds, from ck_booking_holds_at_most_12_hours.
 
     ONE statement, shaped like the time_off read beside it: = ANY(uuid[]), the same two-sided
     window predicate, and the same bounded look-back (time_off uses `- interval '366 days'`, its own

@@ -164,6 +164,12 @@ migration 0026), not any code path. A race in a route somebody forgets to guard 
   for database work, never across an outbound call, so a queue of bookers clears well inside that. The engine's
   `connect_args` replaces any `options` in `ZIF_DATABASE_URL`. The worker has no `lock_timeout`; its
   `statement_timeout` (30s) bounds its waits.
+- **`booking_holds` (ZIF-117, migration 0034) follows the same rule.** A guest's chosen time is held there for 15
+  minutes while they open the emailed link (which lives 24 hours); `app.availability.BOOKED` reads live holds beside
+  bookings, so every `offered()` caller respects them. There is no `EXCLUDE` on it ("live" needs `now()`), so the
+  tenant lock plus re-derivation is all that keeps two holds apart: its writers (`app.holds` hold POST, release and
+  confirm, `mail.send_booking_verify`'s token mint, `bookings.sweep`) each take lock 51 first. The mint commits
+  before the send, never holding the lock across Mailgun.
 - The constraint's predicate is the four **occupying** statuses. That set lives in three places — the predicate,
   `app.availability.OCCUPYING`, and `ck_bookings_status` — and `tests/test_bookings_db.py` fences all three against
   each other. Changing it later takes `ACCESS EXCLUSIVE` and a full gist rebuild: there is no

@@ -138,8 +138,12 @@ def find_or_create(
 
     refresh. REQUIRED, and keyed on AUTHENTICATION, not on the route. Pass True only when the
     request carries a live session AND the posted email equals that session's verified account
-    email. Everything else - a guest booking, a merchant console action on someone else's address,
-    a signed-in person typing a third party's address - passes False, which fills blanks only:
+    email, or (ZIF-117) when the booker confirmed a booking-hold link mailed to that address
+    (app.holds.confirm): opening the mailed link is the same proof of the mailbox as a verified
+    account email, so what they type is what they own. That path passes user_id=None: the link
+    proves an address, not a platform account. Everything else - a guest booking, a merchant
+    console action on someone else's address, a signed-in person typing a third party's address -
+    passes False, which fills blanks only:
     phone = coalesce(clients.phone, excluded.phone), the same for locale, and the stored name is
     left alone. This replaces ZIF-49's shipped rule that the booker's name always wins. The reason
     it replaced it: `name = excluded.name` reachable without authentication is a write primitive
