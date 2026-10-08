@@ -16,7 +16,7 @@ import {
 } from "@/api-client";
 import { Link, useRouter } from "@/i18n/navigation";
 import { closedDay, closedDetail, daySlices, dayWindow, hourRange, hrefFor, type CalendarView, lanes, monToSun, nowTop, type Panel, parseView, type Slice, spanTimes, switchDate, type View, visibleDays, weekdayOf } from "@/lib/calendar";
-import { dateLocale } from "@/lib/console";
+import { canAnswerRequests, dateLocale, type Role } from "@/lib/console";
 import { type Locale, type NameMap, serviceName } from "@/lib/services";
 import { messageShown, slotAt } from "@/lib/new-booking";
 import { addDaysISO, localDateISO, localTime, localToInstant } from "@/lib/time-off";
@@ -60,6 +60,7 @@ export function Calendar() {
   const locale = useLocale();
   const tz = settings.timezone;
   const isOwner = session.role === "owner";
+  const canAnswer = canAnswerRequests(session.role as Role, settings.workers_answer_requests);
   const params = useSearchParams();
   const router = useRouter();
 
@@ -689,7 +690,7 @@ export function Calendar() {
                     </div>
                   </div>
                 </div>
-                <p className={css.legend}>{t("legend")}</p>
+                <p className={css.legend}>{t(canAnswer ? "legend" : "legendOwner")}</p>
               </div>
             </>
           )}

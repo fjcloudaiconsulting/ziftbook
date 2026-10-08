@@ -8,6 +8,7 @@ import { describe, test } from "node:test";
 import {
   allowed,
   bookingPageAddress,
+  canAnswerRequests,
   canEditHours,
   dateLocale,
   guardedWrite,
@@ -20,6 +21,14 @@ import {
   todayLabel,
   writeOutcome,
 } from "../lib/console.ts";
+
+describe("canAnswerRequests (ZIF-143)", () => {
+  test("an owner always answers; a worker only while the business allows it", () => {
+    assert.equal(canAnswerRequests("owner", false), true);
+    assert.equal(canAnswerRequests("worker", true), true);
+    assert.equal(canAnswerRequests("worker", false), false);
+  });
+});
 
 describe("canEditHours", () => {
   test("guard: an owner always may, self or not", () => {

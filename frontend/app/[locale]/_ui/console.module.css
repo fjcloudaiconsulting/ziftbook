@@ -462,7 +462,7 @@
 .sectionHead { margin: 0; display: flex; align-items: center; gap: 0.6rem; font: 400 1.2rem/1.2 var(--font-display), Georgia, serif; }
 .sectionHead:focus { outline: none; }
 @media (min-width: 56rem) { .sectionHead { font-size: 1.375rem; } }
-.req { display: grid; grid-template-columns: 1fr; gap: 0.35rem; padding: 0.9rem; }
+.req { position: relative; display: grid; grid-template-columns: 1fr; gap: 0.35rem; padding: 0.9rem; }
 .when { font-weight: 600; line-height: 1.3; }
 .when small { font-weight: 400; color: var(--muted); font-size: 0.875rem; }
 .when small::before { content: " \00b7  "; }
@@ -472,6 +472,10 @@
 .what > span { display: block; color: var(--muted); font-size: 0.875rem; }
 .acts { display: flex; gap: 0.5rem; }
 .acts > button { flex: 1; width: auto; }
+/* ZIF-143: for a worker who can't answer, the Waiting chip takes the buttons' place; on a phone it
+   sits top-right of the row. */
+.reqChip { position: absolute; top: 0.9rem; right: 0.9rem; }
+.queueHint { margin-top: -0.5rem; }
 .expires { font-size: 0.8125rem; color: oklch(0.42 0.08 70); }
 .desktopOnly { display: none; }
 /* Today's "+ New booking": beside the heading on desktop, a full-width button at the bottom on a phone. */
@@ -491,6 +495,7 @@ a.newPhone { display: flex; }
   a.newDesktop, a.openCalendar { display: inline-flex; }
   a.newPhone { display: none; }
   .acts > button { flex: none; }
+  .reqChip { position: static; justify-self: end; }
   .declining { grid-column: 1 / -1; }
   .reqExtra { display: grid; }
   .showMore { display: none; }

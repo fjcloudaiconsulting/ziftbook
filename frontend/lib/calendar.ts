@@ -2,6 +2,7 @@
 // day column (wall-clock minutes of the business zone, never ms since midnight), lane packing, the
 // visible hour range, which actions a booking offers, its history lines and the URL state. Free of
 // React so node --test can run it in any runner zone.
+import { canAnswerRequests } from "./console.ts";
 import { addDaysISO, localDateISO, localTime, localToInstant } from "./time-off.ts";
 
 export type Role = "owner" | "worker";
@@ -177,12 +178,13 @@ export type Action = "accept" | "decline" | "completed" | "no_show" | "restore" 
 
 /** What a booking's panel offers, mirroring the API's TRANSITIONS and OWNER_ONLY_SOURCES (the API
  * decides; this only keeps buttons that would 409 off the screen). Completed and no-show wait for the
- * start; leaving `completed` is the owner's alone. */
-export function actionsFor(detail: { status: string; expired: boolean; starts_at: string }, role: Role, now: Date): Action[] {
+ * start; leaving `completed` is the owner's alone, and a pending is answered only by who
+ * `canAnswerRequests` allows. */
+export function actionsFor(detail: { status: string; expired: boolean; starts_at: string }, role: Role, now: Date, workersAnswerRequests: boolean): Action[] {
   const started = new Date(detail.starts_at).getTime() <= now.getTime();
   switch (detail.status) {
     case "pending":
-      return detail.expired ? [] : ["accept", "decline"];
+      return detail.expired || !canAnswerRequests(role, workersAnswerRequests) ? [] : ["accept", "decline"];
     case "confirmed":
       // Only a confirmed booking moves: a pending one is accepted first (the client's request was for that time).
       return started ? ["completed", "no_show", "reschedule", "cancel"] : ["reschedule", "cancel"];

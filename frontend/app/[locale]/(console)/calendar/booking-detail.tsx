@@ -6,7 +6,7 @@ import { type MouseEvent, type ReactNode, useEffect, useRef, useState } from "re
 import { type BookingDetailOut, bookingApprovalsRead, bookingApprovalsUpdate } from "@/api-client";
 import { Link } from "@/i18n/navigation";
 import { type Action, actionsFor, historyLabel, isWaiting, telHref, whenParts } from "@/lib/calendar";
-import { dateLocale } from "@/lib/console";
+import { canAnswerRequests, dateLocale } from "@/lib/console";
 import { formatMoney } from "@/lib/money";
 import { type Locale, type NameMap, serviceName } from "@/lib/services";
 import { localTime } from "@/lib/time-off";
@@ -63,6 +63,7 @@ export function BookingDetail({
   const locale = useLocale();
   const tz = settings.timezone;
   const role = session.role === "owner" ? "owner" : "worker";
+  const canAnswer = canAnswerRequests(role, settings.workers_answer_requests);
 
   const [detail, setDetail] = useState<BookingDetailOut | null>(null);
   const [load, setLoad] = useState<Load | null>(null);
@@ -186,7 +187,7 @@ export function BookingDetail({
     const latest = i === d.history.length - 1;
     const waiting = isWaiting(d, i);
     const small = waiting
-      ? t("historyWaiting", { when: stamp(at) })
+      ? t(canAnswer ? "historyWaiting" : "historyWaitingOwner", { when: stamp(at) })
       : key === "historyMoved"
         ? `${stamp(at)} · ${t("changesUsed", { k: Number(params.k), max: Number(params.max) })}`
         : stamp(at);
@@ -205,7 +206,7 @@ export function BookingDetail({
     return (
       <p className={css.expiry}>
         <span aria-hidden="true">{"◷ "}</span>
-        {t(key, { time, date: dateFormat.format(new Date(d.expires_at)) })}
+        {t(canAnswer ? key : `${key}Owner`, { time, date: dateFormat.format(new Date(d.expires_at)) })}
       </p>
     );
   }
@@ -223,7 +224,16 @@ export function BookingDetail({
   );
 
   function actions(d: BookingDetailOut) {
-    const list = actionsFor(d, role, now);
+    const list = actionsFor(d, role, now, settings.workers_answer_requests);
+    // ZIF-143: where Accept and Decline sit, a worker who can't answer reads who does.
+    if (d.status === "pending" && !d.expired && !canAnswer) {
+      return (
+        <>
+          <Banner tone="note">{t("ownerAnswersNote")}</Banner>
+          {expiryLine(d)}
+        </>
+      );
+    }
     if (list.length === 0) return null;
     const has = (a: Action) => list.includes(a);
     const name = d.client_name;

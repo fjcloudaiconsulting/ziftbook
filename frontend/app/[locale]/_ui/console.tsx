@@ -16,7 +16,7 @@ import {
 } from "@/api-client";
 import { Link, usePathname, useRouter } from "@/i18n/navigation";
 import { trimmedName } from "@/lib/account";
-import { allowed, guardedWrite, navFor, needsName, type Role, sectionOf, type Section, writeOutcome } from "@/lib/console";
+import { allowed, canAnswerRequests, guardedWrite, navFor, needsName, type Role, sectionOf, type Section, writeOutcome } from "@/lib/console";
 import { badgeText } from "@/lib/today";
 
 import { LanguageSwitcher } from "./header";
@@ -480,6 +480,8 @@ export function Shell({ children }: { children: ReactNode }) {
 
   const nav = navFor(session.role as Role);
   const current = sectionOf(pathname);
+  // The badge counts requests for this person to answer: none for a worker who can't (ZIF-143).
+  const badge = canAnswerRequests(session.role as Role, settings.workers_answer_requests) ? pendingCount : null;
 
   return (
     <ConsoleContext.Provider value={{ session, settings, call, updateSession, updateSettings, pendingCount, setPendingCount, footerSlot }}>
@@ -512,7 +514,7 @@ export function Shell({ children }: { children: ReactNode }) {
         <div className={styles.body}>
           <nav className={styles.sidebar} aria-label={navT("sections")}>
             {nav.sidebar.map((section) => (
-              <NavLink key={section} section={section} current={current} className={styles.navItem} badge={section === "today" ? pendingCount : null} />
+              <NavLink key={section} section={section} current={current} className={styles.navItem} badge={section === "today" ? badge : null} />
             ))}
           </nav>
 
@@ -546,7 +548,7 @@ export function Shell({ children }: { children: ReactNode }) {
                   <span className={styles.tabLabel}>{navT("more")}</span>
                 </button>
               ) : (
-                <NavLink key={section} section={section} current={current} className={styles.tab} variant="tab" badge={section === "today" ? pendingCount : null} />
+                <NavLink key={section} section={section} current={current} className={styles.tab} variant="tab" badge={section === "today" ? badge : null} />
               ),
             )}
           </nav>
