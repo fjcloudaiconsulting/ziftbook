@@ -1472,7 +1472,7 @@ def book_while_the_tenant_lock_is_held(tenant_id: uuid.UUID, service_id: str, ho
 
     suite_bind = SessionLocal.kw["bind"]
     try:
-        with new_client(create_app()) as client:  # entering runs the lifespan, which binds its engine
+        with new_client(create_app()) as client:  # entering runs the lifespan: its engine
             thread = threading.Thread(target=holder)
             thread.start()
             assert holding.wait(timeout=10)
