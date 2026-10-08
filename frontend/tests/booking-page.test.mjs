@@ -20,6 +20,7 @@ import {
   nextWeekDisabled,
   ownPolicyText,
   scanWindow,
+  slotsFor,
   slotWho,
   slugLooksValid,
 } from "../lib/booking-page.ts";
@@ -269,6 +270,15 @@ describe("ZIF-100 who is free at a time", () => {
     assert.deepEqual(slotWho([[0, 2], [1]], workers), [["a1", "c3"], ["b2"]]);
   });
 
+  test("fence: a person's week is the shared window filtered to their times, and the empty-week scan sees only those", () => {
+    // Wrong implementation killed: ignoring the person (the whole team's times shown under one
+    // name), which also makes the scan stop at a day only someone else is free.
+    const win = { slots: ["2026-10-02T09:00:00Z", "2026-10-09T09:00:00Z"], who: [["a1"], ["a1", "b2"]] };
+    assert.deepEqual(slotsFor(win, "any"), win.slots);
+    assert.deepEqual(slotsFor(win, "b2"), ["2026-10-09T09:00:00Z"]);
+    assert.equal(firstFreeDayFrom(slotsFor(win, "b2"), "2026-10-01", "Europe/Amsterdam"), "2026-10-09");
+  });
+
   test("fence: free named people come in roster order, without unnamed people or unknown ids", () => {
     // Wrong implementation killed: keeping availability (id) order, offering an unnamed person, or
     // offering an id the page roster does not know.
@@ -276,11 +286,13 @@ describe("ZIF-100 who is free at a time", () => {
     assert.deepEqual(freeNamed(roster, ["a1"]), []);
   });
 
-  test("fence: a pick is kept only when that person is free at the new time", () => {
-    // Wrong implementation killed: always keeping (books someone who is busy then) or always clearing.
+  test("fence: a pick is kept only when that person is free at the new time and there is a choice", () => {
+    // Wrong implementation killed: always keeping (books someone who is busy then), always
+    // clearing, or keeping a pick where only that one person is free (that books as no preference).
     assert.equal(keepPick("b2", ["b2", "c3"]), "b2");
-    assert.equal(keepPick("b2", ["c3"]), null);
-    assert.equal(keepPick(null, ["c3"]), null);
+    assert.equal(keepPick("b2", ["a1", "c3"]), null);
+    assert.equal(keepPick("b2", ["b2"]), null);
+    assert.equal(keepPick(null, ["b2", "c3"]), null);
   });
 
   test("fence: after the picked person is taken, stay only when someone else is still free then", () => {

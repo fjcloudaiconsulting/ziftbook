@@ -203,15 +203,23 @@ export function slotWho(slotWorkers: number[][], workers: { id: string }[]): str
   return slotWorkers.map((ix) => ix.map((i) => workers[i].id));
 }
 
+/** One person's times out of the "any" window (ZIF-100): the page fetches each window once, for
+ * everyone, and filters it locally instead of sending one request per person. */
+export function slotsFor(win: { slots: string[]; who: string[][] }, worker: string): string[] {
+  return worker === "any" ? win.slots : win.slots.filter((_, i) => win.who[i].includes(worker));
+}
+
 /** The people a client may choose at a time: roster order, named only (unnamed people are never
  * offered, decision 6 option A), ids the roster doesn't know dropped. */
 export function freeNamed<W extends { id: string; display_name: string | null }>(roster: W[], free: string[]): W[] {
   return roster.filter((w) => w.display_name && free.includes(w.id));
 }
 
-/** A step 3 pick survives picking another time only if that person is free at the new one. */
-export function keepPick(pick: string | null, free: string[]): string | null {
-  return pick && free.includes(pick) ? pick : null;
+/** A step 3 pick survives picking another time only if the new time offers a choice again (two
+ * or more named people free) and that person is one of them: with one person free, the booking
+ * goes in as no preference (decision 3). `named` is freeNamed's ids at the new time. */
+export function keepPick(pick: string | null, named: string[]): string | null {
+  return pick && named.length > 1 && named.includes(pick) ? pick : null;
 }
 
 /** After a 409 on a picked person: who is still free at that time without them (stay in step 3),
