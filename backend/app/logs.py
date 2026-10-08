@@ -8,6 +8,7 @@ constraint/table names.
 
 import json
 import logging
+import re
 import sys
 import threading
 import traceback
@@ -129,8 +130,14 @@ def error_summary(error: BaseException) -> str:
     return type(error).__name__
 
 
+# Same set as the web server's text format (frontend/lib/log.ts): CR and LF could split a line, and
+# so could every other control byte (plus U+2028/9, which some renderers treat as a newline).
+_CONTROL = re.compile("[\x00-\x1f\x7f-\x9f\u2028\u2029]")
+
+
 def _escape(value: object) -> str:
-    return str(value).replace("\r", "\\r").replace("\n", "\\n")
+    text = str(value).replace("\r", "\\r").replace("\n", "\\n")
+    return _CONTROL.sub(lambda m: f"\\u{ord(m.group()):04x}", text)
 
 
 class Formatter(logging.Formatter):

@@ -233,6 +233,29 @@ def test_text_format_is_one_line_with_control_characters_escaped() -> None:
     assert "k=x\\ry" in line
 
 
+# 7b: every other control character (C0, DEL, C1, U+2028/9) gets a \uXXXX escape, as in the web
+# server's text format (ZIF-136): any of them could still split or rewrite a line downstream.
+@pytest.mark.parametrize("char", ["\x00", "\t", "\x1b", "\x7f", "\x85", "\x9f", " ", " "])
+def test_text_format_escapes_every_control_character(char: str) -> None:
+    record = logging.LogRecord(
+        name="app.tests.logs",
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=1,
+        msg=f"a{char}b",
+        args=(),
+        exc_info=None,
+    )
+    record.k = f"x{char}y"
+
+    line = logs.Formatter("text").format(record)
+
+    escaped = f"\\u{ord(char):04x}"
+    assert char not in line
+    assert f"a{escaped}b" in line
+    assert f"k=x{escaped}y" in line
+
+
 # 8: the request id is echoed when valid, replaced with a fresh one when not.
 def test_a_valid_request_id_is_echoed_and_matches_the_access_line(log_lines: Lines) -> None:
     app = create_app()

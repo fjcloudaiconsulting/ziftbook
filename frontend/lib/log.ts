@@ -24,10 +24,9 @@ export function parseFormat(value: string | undefined): Format {
 
 const RESERVED = new Set(["ts", "level", "logger", "msg"]);
 
-// Stricter than backend/app/logs.py's _escape, which only escapes \r and \n: those two could
-// split a text line, but every other control byte (plus the Unicode line/paragraph separators,
-// which some renderers treat as a newline) could still inject one, so all of them get a \uXXXX
-// escape instead of passing through.
+// Same set as backend/app/logs.py's _escape: \r and \n could split a text line, and so could every
+// other control byte (plus the Unicode line/paragraph separators, which some renderers treat as a
+// newline), so all of them get a \uXXXX escape instead of passing through.
 function escape(value: string): string {
   return value
     .replace(/\r/g, "\\r")
