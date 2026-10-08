@@ -198,9 +198,10 @@ export function firstFreeDayFrom(slots: string[], from: string, timeZone: string
 }
 
 /** The ids free at each slot (ZIF-100): `slot_workers[i]` holds indices into THAT response's own
- * `workers` (sorted by id), never into the page's roster (sorted by name). */
+ * `workers` (sorted by id), never into the page's roster (sorted by name). An index out of range
+ * is skipped rather than thrown on, so a skewed answer can't leave the week loading forever. */
 export function slotWho(slotWorkers: number[][], workers: { id: string }[]): string[][] {
-  return slotWorkers.map((ix) => ix.map((i) => workers[i].id));
+  return slotWorkers.map((ix) => ix.flatMap((i) => (workers[i] ? [workers[i].id] : [])));
 }
 
 /** One person's times out of the "any" window (ZIF-100): the page fetches each window once, for
@@ -217,9 +218,17 @@ export function freeNamed<W extends { id: string; display_name: string | null }>
 
 /** A step 3 pick survives picking another time only if the new time offers a choice again (two
  * or more named people free) and that person is one of them: with one person free, the booking
- * goes in as no preference (decision 3). `named` is freeNamed's ids at the new time. */
-export function keepPick(pick: string | null, named: string[]): string | null {
-  return pick && named.length > 1 && named.includes(pick) ? pick : null;
+ * goes in as no preference (decision 3). */
+export function keepPick(pick: string | null, roster: { id: string; display_name: string | null }[], free: string[]): string | null {
+  const named = freeNamed(roster, free);
+  return pick && named.length > 1 && named.some((w) => w.id === pick) ? pick : null;
+}
+
+/** Who the booking goes to (the step 3 pick, else the step 2 filter): their name, `anyone`, or
+ * null for a person with no name (shown nowhere, decision 6 option A). */
+export function withName(roster: { id: string; display_name: string | null }[], worker: string, pick: string | null, anyone: string): string | null {
+  const id = pick ?? (worker === "any" ? null : worker);
+  return id === null ? anyone : (roster.find((w) => w.id === id)?.display_name ?? null);
 }
 
 /** After a 409 on a picked person: who is still free at that time without them (stay in step 3),

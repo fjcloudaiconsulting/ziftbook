@@ -22,6 +22,7 @@ import {
   scanWindow,
   slotsFor,
   slotWho,
+  withName,
 } from "@/lib/booking-page";
 import { dateLocale } from "@/lib/console";
 import { formatMoney } from "@/lib/money";
@@ -91,13 +92,6 @@ type Done = { status: string; service: Service; worker: Worker | null; starts_at
 // `who[i]`: the ids free at `slots[i]`.
 type TimesWindow = { slots: string[]; who: string[][] };
 type CacheEntry = TimesWindow | "error" | "loading";
-
-/** Who the booking goes to (the step 3 pick, else the step 2 filter): their name, "Anyone
- * available", or null for a person with no name (shown nowhere, decision 6 option A). */
-function withName(s2: Step2Plus, anyone: string): string | null {
-  const id = s2.pick ?? (s2.worker === "any" ? null : s2.worker);
-  return id === null ? anyone : (s2.service.workers.find((w) => w.id === id)?.display_name ?? null);
-}
 
 export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingPageOut; locale: string; turnstileSiteKey: string | null }) {
   const t = useTranslations("BookingPage");
@@ -299,7 +293,7 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
   }
 
   function pickSlot(slot: string, free: string[]) {
-    setFlow((f) => (f.step >= 2 ? { ...f, slot, free, pick: keepPick(f.pick, freeNamed(f.service!.workers, free).map((w) => w.id)), step: 3, banner: f.banner?.where === 3 ? null : f.banner } : f));
+    setFlow((f) => (f.step >= 2 ? { ...f, slot, free, pick: keepPick(f.pick, f.service!.workers, free), step: 3, banner: f.banner?.where === 3 ? null : f.banner } : f));
     setFocusStep(3);
   }
 
@@ -471,14 +465,20 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
         const rest = afterPickTaken(fresh === "error" || at < 0 ? null : fresh.who[at], f.pick);
         if (rest) {
           const name = f.service.workers.find((w) => w.id === f.pick)?.display_name ?? "";
-          setFlow((cur) => ({ ...cur, step: 3, pick: null, free: rest, busy: false, banner: { where: 3, tone: "note", text: t("pickTaken", { name, time }) } }));
+          // Only onto the same time: one picked meanwhile (from step 2, reopened) is left alone.
+          setFlow((cur) => (cur.slot !== f.slot ? { ...cur, busy: false } : { ...cur, step: 3, pick: null, free: rest, busy: false, banner: { where: 3, tone: "note", text: t("pickTaken", { name, time }) } }));
           // Not setFocusStep(3): it is usually 3 already (from picking the time), so it wouldn't re-fire.
           headingRefs.current[3]?.focus();
           return;
         }
       }
       // Functional: a pick's refetch above awaited, and anything typed meanwhile must survive.
-      setFlow((cur) => ({ ...cur, slot: null, pick: null, step: 2, taken: new Set([...cur.taken, f.slot!]), busy: false, banner: { where: 2, tone: "note", text: t("slotTaken", { time }) } }));
+      setFlow((cur) => ({
+        ...cur,
+        taken: new Set([...cur.taken, f.slot!]),
+        busy: false,
+        ...(cur.slot === f.slot ? { slot: null, pick: null, step: 2 as const, banner: { where: 2 as const, tone: "note" as const, text: t("slotTaken", { time }) } } : {}),
+      }));
       setFocusStep(2);
       // The cached window is stale (it still offers the just-taken slot): bypass it, unless the
       // pick's refetch above just refreshed it.
@@ -516,7 +516,7 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
   // Not gated by flow.step: the checkout summary (and step 2/3's own folded rows) must keep
   // showing what's already chosen even while step 1 is reopened via "Change".
   const s2 = flow.service ? (flow as Step2Plus) : null;
-  const s2With = s2 ? withName(s2, t("anyone")) : null;
+  const s2With = s2 ? withName(s2.service.workers, s2.worker, s2.pick, t("anyone")) : null;
 
   if (page.services.length === 0) {
     return (
@@ -1144,7 +1144,7 @@ function Checkout({
   const service = s2?.service ?? null;
   const slot = s2?.slot ?? null;
   // undefined: nothing chosen yet; null: a person with no name, so no "With" row at all.
-  const workerName = s2 ? withName(s2, t("anyone")) : undefined;
+  const workerName = s2 ? withName(s2.service.workers, s2.worker, s2.pick, t("anyone")) : undefined;
   const name = service ? localized(service.name, locale as Locale, businessLanguage) : null;
   const ownText = ownPolicyText(c.text, locale, businessLanguage);
 

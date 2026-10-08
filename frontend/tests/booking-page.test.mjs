@@ -7,12 +7,12 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
 import {
+  afterPickTaken,
   answerState,
   bookingBody,
   cancellationState,
   dayPart,
   emailSuggestion,
-  afterPickTaken,
   firstFreeDayFrom,
   freeNamed,
   groupByDayPart,
@@ -23,6 +23,7 @@ import {
   slotsFor,
   slotWho,
   slugLooksValid,
+  withName,
 } from "../lib/booking-page.ts";
 
 describe("F1 cancellation terms", () => {
@@ -266,7 +267,7 @@ describe("ZIF-100 who is free at a time", () => {
   ];
 
   test("fence: slot_workers indices resolve through the response's own workers, not the roster", () => {
-    // Wrong implementation killed: indexing the page roster (name order), which names the wrong person.
+    // Wrong implementation killed: returning the raw indices, or an off-by-one into `workers`.
     assert.deepEqual(slotWho([[0, 2], [1]], workers), [["a1", "c3"], ["b2"]]);
   });
 
@@ -289,10 +290,21 @@ describe("ZIF-100 who is free at a time", () => {
   test("fence: a pick is kept only when that person is free at the new time and there is a choice", () => {
     // Wrong implementation killed: always keeping (books someone who is busy then), always
     // clearing, or keeping a pick where only that one person is free (that books as no preference).
-    assert.equal(keepPick("b2", ["b2", "c3"]), "b2");
-    assert.equal(keepPick("b2", ["a1", "c3"]), null);
-    assert.equal(keepPick("b2", ["b2"]), null);
-    assert.equal(keepPick(null, ["b2", "c3"]), null);
+    // An unnamed person free too (a1) is not a choice: Bea alone is still booked as no preference.
+    assert.equal(keepPick("b2", roster, ["b2", "c3"]), "b2");
+    assert.equal(keepPick("b2", roster, ["a1", "c3"]), null);
+    assert.equal(keepPick("b2", roster, ["b2"]), null);
+    assert.equal(keepPick("b2", roster, ["b2", "a1"]), null);
+    assert.equal(keepPick(null, roster, ["b2", "c3"]), null);
+  });
+
+  test("fence: the With line names the step 3 pick first, then the filter; an unnamed person gives no line", () => {
+    // Wrong implementation killed: ignoring the pick ("Anyone available" after choosing Bea), or
+    // rendering an unnamed person as an empty name.
+    assert.equal(withName(roster, "any", null, "Anyone"), "Anyone");
+    assert.equal(withName(roster, "any", "b2", "Anyone"), "Bea");
+    assert.equal(withName(roster, "c3", null, "Anyone"), "Ana");
+    assert.equal(withName(roster, "a1", null, "Anyone"), null);
   });
 
   test("fence: after the picked person is taken, stay only when someone else is still free then", () => {
