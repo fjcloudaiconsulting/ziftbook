@@ -116,6 +116,14 @@ export function Calendar() {
       // Nothing to remember in: the URL still carries the view.
     }
   }, [view.view]);
+  // A URL without a view takes the one it opened in, so Back and another tab's switch never change it.
+  useEffect(() => {
+    if (params.get("view") !== null) return;
+    const query = new URLSearchParams(params.toString());
+    query.set("view", view.view);
+    router.replace(`/calendar?${query}`, { scroll: false });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params]);
   // Skipping the heading's focus is for the booking just made or moved, once: any other booking (or none)
   // in between clears it, so a reopened one focuses its heading again.
   const [seenBooking, setSeenBooking] = useState(view.booking);

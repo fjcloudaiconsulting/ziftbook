@@ -462,6 +462,7 @@ describe("seven days and Mon-Sun (ZIF-143)", () => {
     assert.equal(parse("view=week").view, "week");
     assert.equal(parse("view=day", "days").view, "day");
     assert.equal(parse("view=week", "days").view, "week");
+    assert.equal(parse("view=year", "days").view, "day");
   });
   test("with no view in the URL the remembered one opens, else the day (F2)", () => {
     assert.equal(parse("", "days").view, "days");
