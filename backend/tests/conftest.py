@@ -125,20 +125,26 @@ def worker_url(url: str, worker: str | None) -> str:
     """That worker's own database, or the URL untouched when there is no worker.
 
     The guard is on the worker id being set to something, not on the variable merely existing: an
-    exported but empty PYTEST_XDIST_WORKER would otherwise aim the whole suite at `ziftbook_`.
+    exported but empty PYTEST_XDIST_WORKER would otherwise aim the whole suite at `<base>_`. The
+    base is capped at 50 characters: Postgres truncates identifiers to 63 bytes, and a truncated
+    `<base>_gw10` could collide with `<base>_gw1`.
 
-    Residual: a *serial* run (no worker id) still points at the shared `ziftbook` that `make up`
-    runs the app against -- the original instance-wide false-green risk this ticket fixed for
-    parallel runs survives, unchanged, for a serial one.
+    Residual: a *serial* run (no worker id) still points at the base database (`ziftbook` is the
+    one `make up` runs the app against) -- the original instance-wide false-green risk this ticket
+    fixed for parallel runs survives, unchanged, for a serial one.
     """
     if not worker:
         return url
     parsed = make_url(url)
-    if not re.fullmatch(r"[a-z_][a-z0-9_]*", parsed.database or ""):
+    if not re.fullmatch(r"[a-z_][a-z0-9_]{0,49}", parsed.database or ""):
         raise RuntimeError(f"database name {parsed.database!r} is not a plain identifier")
     return parsed.set(database=f"{parsed.database}_{worker}").render_as_string(hide_password=False)
 
 
+# Both roles must land on the one database this worker creates: split bases would send the app
+# role to another checkout's live worker database.
+if XDIST_WORKER and len({make_url(os.environ[name]).database for name in URL_NAMES}) != 1:
+    raise RuntimeError("ZIF_MIGRATE_DATABASE_URL and ZIF_DATABASE_URL name different databases")
 for _name in URL_NAMES:
     os.environ[_name] = worker_url(os.environ[_name], XDIST_WORKER)
 if XDIST_WORKER:
