@@ -122,9 +122,12 @@ export function activeServices<T extends { archived: boolean }>(services: T[]): 
   return services.filter((s) => !s.archived);
 }
 
-/** The owner list's `<details>` "Archived (n)" group. */
-export function archivedServices<T extends { archived: boolean }>(services: T[]): T[] {
-  return services.filter((s) => s.archived);
+/** The owner list's `<details>` "Archived (n)" group, newest archived first. Compared as instants,
+ * not as text: two offsets would sort wrong. A missing date (never sent for an archived service)
+ * goes last. */
+export function archivedServices<T extends { archived: boolean; archived_at?: string | null }>(services: T[]): T[] {
+  const time = (s: T) => (s.archived_at ? new Date(s.archived_at).getTime() : 0);
+  return services.filter((s) => s.archived).sort((a, b) => time(b) - time(a));
 }
 
 /** Whether a service's "no one assigned" warning pill shows. A worker count can never really be

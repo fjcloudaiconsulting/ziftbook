@@ -96,6 +96,19 @@ export function todayLabel(now: Date, timeZone: string, locale: string): string 
   return new Intl.DateTimeFormat(dateLocale(locale), { weekday: "long", day: "numeric", month: "long", timeZone }).format(now);
 }
 
+/** An archived service's "4 August", or "12 December 2025" when it isn't this year: the day and both
+ * years read in the business's time zone. */
+export function archivedDate(at: string, now: Date, timeZone: string, locale: string): string {
+  const year = (instant: Date) => new Intl.DateTimeFormat("en-GB", { year: "numeric", timeZone }).format(instant);
+  const when = new Date(at);
+  return new Intl.DateTimeFormat(dateLocale(locale), {
+    day: "numeric",
+    month: "long",
+    year: year(when) === year(now) ? undefined : "numeric",
+    timeZone,
+  }).format(when);
+}
+
 /** Whether two session reads are the same person in the same business. A sign-in as someone else in
  * another tab replaces the cookie with neither a 401 nor any other signal, so every write compares
  * against a fresh read first. */

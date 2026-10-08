@@ -391,6 +391,7 @@
       "rowMeta": "{minutes} min · {price}",
       "rowMetaPeople": "{minutes} min · {price} · {n, plural, one {# pessoa} other {# pessoas}}",
       "archivedMeta": "{minutes} min · {price} · arquivado",
+      "archivedMetaOn": "{minutes} min · {price} · arquivado em {date}",
       "warningPill": "Ninguém atribuído, então ninguém pode agendar",
       "archived": "Arquivados ({n})",
       "archivedHint": "Serviços arquivados continuam nos agendamentos anteriores e nos relatórios. Clientes não podem agendá-los.",

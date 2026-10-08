@@ -2,6 +2,7 @@
 Services are archived, never deleted."""
 
 import json
+from datetime import datetime
 from typing import Annotated
 from uuid import UUID
 
@@ -113,13 +114,14 @@ class ServiceOut(BaseModel):
     duration_minutes: int
     buffer_minutes: int | None
     archived: bool
+    archived_at: datetime | None  # when it was first archived; null while it is live
     worker_ids: list[UUID]  # member ids, in id order; [] for none
 
 
 FIELDS = """
 id, name, description,
 jsonb_build_object('amount_minor', price_amount_minor, 'currency', price_currency) AS price,
-duration_minutes, buffer_minutes, archived_at IS NOT NULL AS archived,
+duration_minutes, buffer_minutes, archived_at IS NOT NULL AS archived, archived_at,
 ARRAY(SELECT sw.member_id FROM service_workers sw
       WHERE sw.service_id = services.id ORDER BY sw.member_id) AS worker_ids
 """

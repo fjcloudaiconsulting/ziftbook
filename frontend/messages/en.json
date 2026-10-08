@@ -391,6 +391,7 @@
       "rowMeta": "{minutes} min · {price}",
       "rowMetaPeople": "{minutes} min · {price} · {n, plural, one {# person} other {# people}}",
       "archivedMeta": "{minutes} min · {price} · archived",
+      "archivedMetaOn": "{minutes} min · {price} · archived {date}",
       "warningPill": "No one assigned, so nobody can book it",
       "archived": "Archived ({n})",
       "archivedHint": "Archived services stay on past appointments and reports. Clients cannot book them.",
