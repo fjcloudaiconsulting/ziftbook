@@ -14,6 +14,7 @@ import {
   envelopeFromShifts,
   envelopeShiftsFor,
   loadTimeProblems,
+  openingWeek,
   overlapWindow,
   problemList,
   saveResult,
@@ -200,6 +201,59 @@ describe("copyToEveryDay", () => {
 
   test("guard: an unknown source weekday leaves the week unchanged", () => {
     assert.deepEqual(copyToEveryDay(days, null, 99), days);
+  });
+});
+
+describe("openingWeek", () => {
+  const envelope = [
+    { weekday: 2, shifts: [{ start: "09:00", end: "18:00" }] },
+    { weekday: 3, shifts: [] },
+    { weekday: 6, shifts: [{ start: "13:30", end: "17:00" }, { start: "09:00", end: "12:30" }] },
+  ];
+
+  test("fence: a split shift keeps both blocks, sorted by start", () => {
+    assert.deepEqual(openingWeek(envelope).find((d) => d.weekday === 6).shifts, [
+      { start: "09:00", end: "12:30" },
+      { start: "13:30", end: "17:00" },
+    ]);
+  });
+
+  test("fence: all seven weekdays, Monday first, and a day without opening shifts is empty", () => {
+    const week = openingWeek(envelope);
+    assert.deepEqual(
+      week.map((d) => d.weekday),
+      [1, 2, 3, 4, 5, 6, 7],
+    );
+    for (const weekday of [1, 3, 4, 5, 7]) assert.deepEqual(week.find((d) => d.weekday === weekday).shifts, []);
+  });
+
+  test("fence: an existing week is replaced, a stale shift on a shop-closed day included", () => {
+    // Unlike "Copy to every day", which leaves a closed day as it was.
+    const existing = daysFromShifts([
+      { weekday: 1, starts_at: "08:00", ends_at: "10:00" },
+      { weekday: 2, starts_at: "10:00", ends_at: "16:00" },
+    ]);
+    const filled = openingWeek(envelope);
+    assert.deepEqual(filled.find((d) => d.weekday === 1).shifts, []);
+    assert.deepEqual(changedDays(existing, filled), [1, 2, 6]);
+  });
+
+  test("guard: a week already equal to the opening hours has nothing to change, whatever the shift order", () => {
+    const same = [
+      { weekday: 2, shifts: [{ start: "09:00", end: "18:00" }] },
+      { weekday: 6, shifts: [{ start: "13:30", end: "17:00" }, { start: "09:00", end: "12:30" }] },
+    ];
+    assert.deepEqual(changedDays(same, openingWeek(envelope)), []);
+  });
+
+  test("guard: the filled week always passes the envelope check, touching shifts included", () => {
+    const touching = [...envelope, { weekday: 4, shifts: [{ start: "12:00", end: "15:00" }, { start: "09:00", end: "12:00" }] }];
+    assert.deepEqual(weekProblems(openingWeek(touching), touching, { allowEmptyWeek: true }), { byDay: {} });
+  });
+
+  test("guard: the filled shifts are copies, so editing one never touches the envelope", () => {
+    openingWeek(envelope).find((d) => d.weekday === 2).shifts[0].start = "07:00";
+    assert.equal(envelope[0].shifts[0].start, "09:00");
   });
 });
 

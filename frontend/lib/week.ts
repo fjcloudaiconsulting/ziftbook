@@ -193,6 +193,13 @@ export function envelopeShiftsFor(envelope: Day[], weekday: number): Shift[] {
   return sortShifts(envelope.find((d) => d.weekday === weekday)?.shifts ?? []);
 }
 
+/** "Use the shop's opening hours": every weekday takes the envelope's shifts as they are (split shifts
+ * included, sorted), and a day the shop is closed ends up empty. Unlike `copyToEveryDay`, an existing
+ * shift on a closed day goes too: the result is the opening week, so it always fits the envelope. */
+export function openingWeek(envelope: Day[]): Day[] {
+  return WEEKDAYS.map((weekday) => ({ weekday, shifts: envelopeShiftsFor(envelope, weekday).map((s) => ({ ...s })) }));
+}
+
 /** "09:00 – 18:00" or, for two blocks, "09:00 – 13:00 · 14:00 – 18:00": the working-hours day
  * head's "Shop open {ranges}" line. Only the punctuation is fixed here (an en dash and a
  * middot, the same locale-invariant separators the shift row and the services meta line already
