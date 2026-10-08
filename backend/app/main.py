@@ -302,12 +302,12 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(ApiError)
     async def api_error(request: Request, error: ApiError) -> JSONResponse:
-        # weekday only when set: every error body that names no day stays exactly {"code": ...},
-        # which is what the whole suite asserts. Emitting it unconditionally fails 135 tests
-        # across 15 files (measured, ZIF-105).
-        body: dict[str, object] = {"code": error.code}
-        if error.weekday is not None:
-            body["weekday"] = error.weekday
+        # Only the keys that are set: every other error body stays exactly {"code": ...}, which is
+        # what the whole suite asserts. Emitting them unconditionally fails 135 tests across 15
+        # files (measured, ZIF-105).
+        body = Error(
+            code=error.code, weekday=error.weekday, bookings=error.bookings, total=error.total
+        ).model_dump(mode="json", exclude_none=True)
         return JSONResponse(body, status_code=error.status_code)
 
     @app.exception_handler(413)
