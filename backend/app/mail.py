@@ -279,7 +279,8 @@ VALUES (:hash, current_setting('app.tenant_id')::uuid, :booking_id)
 """)
 
 MERCHANT = text("""
-SELECT u.email, u.locale FROM users u JOIN memberships m ON m.user_id = u.id WHERE u.id = :id
+SELECT u.email, u.locale, m.role FROM users u JOIN memberships m ON m.user_id = u.id
+WHERE u.id = :id
 """)
 
 
@@ -403,6 +404,7 @@ def send_booking(job: Job) -> None:
             return
 
         user_id = payload.get("user_id")
+        role = None  # the merchant recipient's, ZIF-143
         if user_id is None:
             recipient_id = row.client_id
             if row.client_email is None:  # erased, or merchant-created with no address
@@ -413,7 +415,7 @@ def send_booking(job: Job) -> None:
             if merchant is None:  # RLS: a member only through a membership in THIS tenant
                 return
             recipient_id = user_id
-            recipient_email, recipient_locale = merchant.email, merchant.locale
+            recipient_email, recipient_locale, role = merchant.email, merchant.locale, merchant.role
 
         settings = business_settings.read(session)
         locale = recipient_locale or settings.language
@@ -454,6 +456,14 @@ def send_booking(job: Job) -> None:
             # row and the log keep the template's own name.
             file = "booking_moved_team_member"
             values["member"] = row.worker_display_name
+        if (
+            template == "booking_request"
+            and role == "worker"
+            and not settings.workers_answer_requests
+        ):
+            # ZIF-143: a worker who can't answer learns of the request, worded for the owner
+            # answering it. Only the file differs, as below.
+            file = "booking_request_team_member"
         if template == "booking_request":
             expires_local = row.expires_at.astimezone(ZoneInfo(zone))
             values["expires"] = (

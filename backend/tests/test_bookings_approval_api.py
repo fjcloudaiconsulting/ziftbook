@@ -310,6 +310,7 @@ def test_only_the_assigned_worker_or_an_owner_may_transition(
     seed(people.a, worker_a_user, weekdays("09:00", "17:00"))
     seed(people.a, worker_b_user, weekdays("09:00", "17:00"))
     assign(people.a, service_id, worker_a)
+    save_setting(people.a, "workers_answer_requests", True)  # ZIF-143: off, only owners answer
 
     booking_1 = make_pending(
         app, people.a, service_id, member_id=str(worker_a), starts_at=at("09:00")
@@ -1098,8 +1099,9 @@ def worker_completed(
 ) -> tuple[TestClient, str]:
     """A past booking the assigned NON-OWNER worker has taken all the way to `completed` on their
     own - which they may, and which is the whole point: the trap starts from a state they can
-    reach without an owner."""
+    reach without an owner (once the business lets workers answer requests, ZIF-143)."""
     worker_user, service_id = worker_ready
+    save_setting(people.a, "workers_answer_requests", True)
     worker = signed_in(app, people.a, worker_user)
     booking_id = make_pending(
         app,
@@ -1143,11 +1145,17 @@ def test_only_an_owner_may_transition_out_of_completed(
 
 
 # F27 (T28) - and the worker can still do their job. The owner-only rule is keyed on the SOURCE,
-# so recording the outcome of an appointment they performed is untouched.
-# Kills: making `completed` or `no_show` owner-only targets instead - both legs 403.
+# so recording the outcome of an appointment they performed is untouched - also with
+# workers_answer_requests off (ZIF-143), where the owner accepted it.
+# Kills: making `completed` or `no_show` owner-only targets instead - both legs 403; ZIF-143's
+# check keyed on the worker alone rather than on a pending source.
 @pytest.mark.parametrize("target", ["completed", "no_show"])
 def test_the_assigned_worker_still_records_the_outcome_of_their_own_appointment(
-    people: People, app: FastAPI, worker_ready: tuple[uuid.UUID, str], target: str
+    people: People,
+    app: FastAPI,
+    owner: TestClient,
+    worker_ready: tuple[uuid.UUID, str],
+    target: str,
 ) -> None:
     worker_user, service_id = worker_ready
     worker = signed_in(app, people.a, worker_user)
@@ -1158,7 +1166,7 @@ def test_the_assigned_worker_still_records_the_outcome_of_their_own_appointment(
         member_id=str(member_id(people.a, worker_user)),
         starts_at=at("09:00"),
     )
-    assert patch(worker, booking_id, "confirmed").status_code == 200
+    assert patch(owner, booking_id, "confirmed").status_code == 200
     shift(people.a, booking_id, PAST)
 
     assert patch(worker, booking_id, target).status_code == 200
@@ -1197,3 +1205,54 @@ def test_a_swept_booking_cannot_be_confirmed(
     response = patch(owner, booking_id, "confirmed")
 
     assert (response.status_code, response.json()) == (409, {"code": "invalid_transition"})
+
+
+def worker_pending(
+    app: FastAPI, people: People, worker_ready: tuple[uuid.UUID, str]
+) -> tuple[TestClient, str]:
+    """A live pending booking assigned to the NON-OWNER worker, and that worker signed in."""
+    worker_user, service_id = worker_ready
+    booking_id = make_pending(
+        app,
+        people.a,
+        service_id,
+        member_id=str(member_id(people.a, worker_user)),
+        starts_at=at("09:00"),
+    )
+    return signed_in(app, people.a, worker_user), booking_id
+
+
+# ZIF-143 F1 - answering a request is the owner's unless the business turns
+# workers_answer_requests on. Keyed on the SOURCE, like OWNER_ONLY_SOURCES: a worker's cancel of
+# their pending is refused too (the panel offers nothing on a pending to a worker who can't answer).
+# Kills: no check (200); a check on the `confirmed` target only (decline and cancel pass).
+@pytest.mark.parametrize("target", ["confirmed", "declined", "cancelled_by_merchant"])
+def test_with_the_setting_off_a_worker_cannot_answer_their_own_request(
+    people: People,
+    app: FastAPI,
+    owner: TestClient,
+    worker_ready: tuple[uuid.UUID, str],
+    target: str,
+) -> None:
+    worker, booking_id = worker_pending(app, people, worker_ready)
+
+    refused = patch(worker, booking_id, target)
+
+    assert (refused.status_code, refused.json()) == (403, {"code": "owner_only"})
+    assert status_of(people.a, booking_id) == "pending"
+    assert events_of(people.a, booking_id) == []
+    # The owner, who is not the assigned worker, still answers it.
+    assert patch(owner, booking_id, target).status_code == 200
+
+
+# ZIF-143 F2 - with the setting on, the assigned worker answers their own request.
+# Kills: a check that ignores the setting (403 here), for any of the three ways out of pending.
+@pytest.mark.parametrize("target", ["confirmed", "declined", "cancelled_by_merchant"])
+def test_with_the_setting_on_a_worker_answers_their_own_request(
+    people: People, app: FastAPI, worker_ready: tuple[uuid.UUID, str], target: str
+) -> None:
+    save_setting(people.a, "workers_answer_requests", True)
+    worker, booking_id = worker_pending(app, people, worker_ready)
+
+    assert patch(worker, booking_id, target).status_code == 200
+    assert status_of(people.a, booking_id) == target

@@ -1,0 +1,15 @@
+New booking request
+Hello,
+
+A client has asked to book:
+
+Client: $client
+
+$service
+$date at $time ($zone)
+
+The business owner accepts or declines it. If nobody answers before $expires, the request expires.
+
+$link
+
+ziftbook

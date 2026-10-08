@@ -3569,7 +3569,7 @@
           "booking-approvals"
         ],
         "summary": "List",
-        "description": "The business's live pending bookings, soonest first. An owner sees the whole queue; a\nworker sees only bookings assigned to them - members.is_owner, the same owner half that\nmembers.may_manage applies to the transition, so the list and the transition can never\ndisagree.",
+        "description": "The business's live pending bookings, soonest first. An owner sees the whole queue; a\nworker sees only bookings assigned to them - members.is_owner, the same owner half that\nmembers.may_manage applies to the transition, so a worker never lists a booking they can't\nread. Whether they may answer it is the business's workers_answer_requests (ZIF-143).",
         "operationId": "booking-approvals-list",
         "parameters": [
           {
@@ -3869,7 +3869,7 @@
           "booking-approvals"
         ],
         "summary": "Update",
-        "description": "A merchant settles a booking: accept, decline, cancel, or record how it went.\n\nAn owner, or the membership in bookings.worker_id, may transition; anyone else on this business\ngets 403, and another business's booking is 404. Undoing a booking already marked `completed`\nis the owner's alone. A transition the booking's current status does not allow, or an outcome\nrecorded before the appointment starts, is 409 `invalid_transition`.",
+        "description": "A merchant settles a booking: accept, decline, cancel, or record how it went.\n\nAn owner, or the membership in bookings.worker_id, may transition; anyone else on this business\ngets 403, and another business's booking is 404. Undoing a booking already marked `completed`\nis the owner's alone, and so is any transition out of `pending` unless the business setting\n`workers_answer_requests` is on (403 `owner_only`). A transition the booking's current status\ndoes not allow, or an outcome recorded before the appointment starts, is 409\n`invalid_transition`.",
         "operationId": "booking-approvals-update",
         "parameters": [
           {
@@ -5214,6 +5214,11 @@
             "title": "Workers Edit Own Hours",
             "default": false
           },
+          "workers_answer_requests": {
+            "type": "boolean",
+            "title": "Workers Answer Requests",
+            "default": false
+          },
           "buffer_pct": {
             "type": "integer",
             "maximum": 100.0,
@@ -5326,6 +5331,11 @@
             "title": "Workers Edit Own Hours",
             "default": false
           },
+          "workers_answer_requests": {
+            "type": "boolean",
+            "title": "Workers Answer Requests",
+            "default": false
+          },
           "buffer_pct": {
             "type": "integer",
             "maximum": 100.0,
@@ -5414,6 +5424,7 @@
           "auto_confirm",
           "language",
           "workers_edit_own_hours",
+          "workers_answer_requests",
           "buffer_pct",
           "slot_step_minutes",
           "min_notice_minutes",

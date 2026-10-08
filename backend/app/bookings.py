@@ -390,8 +390,8 @@ WHERE b.id = :id
 """)
 
 # ZIF-53. Every active owner (memberships never soft-delete today; members.remove deletes) plus the
-# assigned worker: the people who can settle the booking, the same set members.may_manage and the
-# pending queue use.
+# assigned worker: the people who see the request, the same set members.may_manage and the pending
+# queue use. Whether the worker may also answer it is workers_answer_requests (ZIF-143).
 MERCHANTS = text("SELECT DISTINCT user_id FROM memberships WHERE role = 'owner' OR id = :worker_id")
 
 
@@ -871,8 +871,8 @@ def pending(
 ) -> list[PendingOut]:
     """The business's live pending bookings, soonest first. An owner sees the whole queue; a
     worker sees only bookings assigned to them - members.is_owner, the same owner half that
-    members.may_manage applies to the transition, so the list and the transition can never
-    disagree."""
+    members.may_manage applies to the transition, so a worker never lists a booking they can't
+    read. Whether they may answer it is the business's workers_answer_requests (ZIF-143)."""
     rows = current.db.execute(
         QUEUE,
         {"everyone": members.is_owner(current), "me": current.user_id, "limit": limit},
@@ -971,8 +971,10 @@ def transition(
 
     An owner, or the membership in bookings.worker_id, may transition; anyone else on this business
     gets 403, and another business's booking is 404. Undoing a booking already marked `completed`
-    is the owner's alone. A transition the booking's current status does not allow, or an outcome
-    recorded before the appointment starts, is 409 `invalid_transition`.
+    is the owner's alone, and so is any transition out of `pending` unless the business setting
+    `workers_answer_requests` is on (403 `owner_only`). A transition the booking's current status
+    does not allow, or an outcome recorded before the appointment starts, is 409
+    `invalid_transition`.
     """
     # Internals, deliberately not in the public schema: the UPDATE's own qualifier is the only
     # authority on whether a transition is legal - the SELECT above it exists for the 404/403 pair
@@ -990,6 +992,15 @@ def transition(
     if not members.may_manage(current, row.worker_user_id):  # 3
         raise ApiError(403, "owner_only")
     if row.status in OWNER_ONLY_SOURCES and not members.is_owner(current):  # 3b
+        raise ApiError(403, "owner_only")
+    # 3c, ZIF-143 (replaces ZIF-53 ruling R1): answering a request is the owner's unless the
+    # business lets workers. Keyed on the source like 3b, so a worker's cancel of a pending is
+    # refused too: the panel offers nothing on a pending to a worker who can't answer.
+    if (
+        row.status == "pending"
+        and not members.is_owner(current)
+        and not business_settings.read(current.db).workers_answer_requests
+    ):
         raise ApiError(403, "owner_only")
     rule = TRANSITIONS[change.status]
     changed = current.db.execute(
