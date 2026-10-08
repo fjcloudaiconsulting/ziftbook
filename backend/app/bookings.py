@@ -270,9 +270,16 @@ SELECT tenant_id, id, 'expired' FROM gone
 RETURNING 1
 """)
 
+# What max_pending_per_email caps: live pendings, plus (ZIF-115, owner ruling 2026-10-08) upcoming
+# bookings the booking page auto-confirmed. Those are born with no TTL, so without the second arm
+# auto_confirm left one address uncapped. A booking the merchant accepted or made does not count,
+# so auto_confirm off behaves as before; the refusal stays the generic 429.
 PENDING_COUNT = text("""
 SELECT count(*) FROM bookings
-WHERE client_id = :client_id AND status = ANY(CAST(:expiring AS text[])) AND expires_at > :now
+WHERE client_id = :client_id
+  AND ((status = ANY(CAST(:expiring AS text[])) AND expires_at > :now)
+       OR (status = 'confirmed' AND auto_confirm_at_booking AND source = 'booking_page'
+           AND starts_at > :now))
 """)
 
 INSERT_BOOKING = text("""
