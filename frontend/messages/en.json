@@ -425,6 +425,7 @@
         "gapFixedLabel": "Set a fixed gap for this service",
         "gapFixedHint": "Between 0 and 240 minutes",
         "gapFixedNumberLabel": "Fixed gap, in minutes",
+        "gapEditHint": "Appointments already booked keep their times.",
         "gapRange": "Enter a gap between 0 and 240 minutes.",
         "whoLegend": "Who performs it",
         "whoHint": "Clients can only book a service with someone who performs it.",

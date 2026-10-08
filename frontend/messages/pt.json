@@ -425,6 +425,7 @@
         "gapFixedLabel": "Definir um intervalo fixo para este serviço",
         "gapFixedHint": "Entre 0 e 240 minutos",
         "gapFixedNumberLabel": "Intervalo fixo, em minutos",
+        "gapEditHint": "Agendamentos já marcados mantêm seus horários.",
         "gapRange": "Digite um intervalo entre 0 e 240 minutos.",
         "whoLegend": "Quem realiza este serviço",
         "whoHint": "Os clientes só podem agendar com quem realiza este serviço.",

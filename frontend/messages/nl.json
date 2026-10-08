@@ -425,6 +425,7 @@
         "gapFixedLabel": "Stel een vaste pauze in voor deze dienst",
         "gapFixedHint": "Tussen 0 en 240 minuten",
         "gapFixedNumberLabel": "Vaste pauze, in minuten",
+        "gapEditHint": "Afspraken die al geboekt zijn, houden hun tijden.",
         "gapRange": "Vul een pauze in tussen 0 en 240 minuten.",
         "whoLegend": "Wie deze dienst uitvoert",
         "whoHint": "Klanten kunnen alleen boeken bij iemand die deze dienst uitvoert.",

@@ -15,8 +15,8 @@ import {
   serviceName,
 } from "../lib/services.ts";
 
-function body(form, options) {
-  return serviceBody(form, options, parseMoney);
+function body(form) {
+  return serviceBody(form, parseMoney);
 }
 
 describe("serviceName", () => {
@@ -34,12 +34,9 @@ describe("serviceName", () => {
 });
 
 describe("serviceBody", () => {
-  const base = { mode: "create" };
-
   test("blank or whitespace-only languages are omitted, never sent as \"\"", () => {
     const result = body(
       { name: { nl: "Manicure", en: "  ", pt: "" }, description: {}, price: "35,00", duration: "45", gap: "default" },
-      { ...base },
     );
     assert.ok(!("errors" in result));
     assert.deepEqual(result.body.name, { nl: "Manicure" });
@@ -48,7 +45,6 @@ describe("serviceBody", () => {
   test("edit that empties pt keeps every other language, and sends name without pt", () => {
     const result = body(
       { name: { nl: "Manicure", en: "Manicure", pt: "" }, description: {}, price: "35,00", duration: "45", gap: "default" },
-      { mode: "edit" },
     );
     assert.ok(!("errors" in result));
     assert.deepEqual(result.body.name, { nl: "Manicure", en: "Manicure" });
@@ -57,25 +53,32 @@ describe("serviceBody", () => {
   test('"use the business default" sends buffer_minutes: null, never 0', () => {
     const result = body(
       { name: { nl: "Manicure" }, description: {}, price: "35,00", duration: "45", gap: "default" },
-      { ...base },
     );
     assert.ok(!("errors" in result));
     assert.equal(result.body.buffer_minutes, null);
   });
 
-  test("edit body has only name, price and duration_minutes: never description or buffer_minutes", () => {
-    const result = body(
-      { name: { nl: "Manicure" }, description: { nl: "would be dropped" }, price: "35,00", duration: "45", gap: "fixed", fixedGap: "10" },
-      { mode: "edit" },
+  test("fence: edit body carries the description and the gap, as create does (ZIF-126)", () => {
+    const fixed = body(
+      { name: { nl: "Manicure" }, description: { nl: " Gel ", en: "  " }, price: "35,00", duration: "45", gap: "fixed", fixedGap: "10" },
     );
-    assert.ok(!("errors" in result));
-    assert.deepEqual(Object.keys(result.body).sort(), ["duration_minutes", "name", "price"]);
+    assert.ok(!("errors" in fixed));
+    assert.deepEqual(fixed.body.description, { nl: "Gel" });
+    assert.equal(fixed.body.buffer_minutes, 10);
+
+    // Back to the business default is null, never left out: leaving it out would keep the old gap.
+    const byDefault = body(
+      { name: { nl: "Manicure" }, description: {}, price: "35,00", duration: "45", gap: "default", fixedGap: "10" },
+    );
+    assert.ok(!("errors" in byDefault));
+    assert.deepEqual(byDefault.body.description, {});
+    assert.ok("buffer_minutes" in byDefault.body);
+    assert.equal(byDefault.body.buffer_minutes, null);
   });
 
   test("create with an en-only name is valid: any one language satisfies it, never a specific one", () => {
     const result = body(
       { name: { pt: "", en: "Test" }, description: {}, price: "35,00", duration: "45", gap: "default" },
-      { mode: "create" },
     );
     assert.ok(!("errors" in result), JSON.stringify(result));
     assert.deepEqual(result.body.name, { en: "Test" });
@@ -84,7 +87,6 @@ describe("serviceBody", () => {
   test("create with every language blank: nameRequired", () => {
     const result = body(
       { name: { nl: "", en: "", pt: "" }, description: {}, price: "35,00", duration: "45", gap: "default" },
-      { ...base },
     );
     assert.equal(result.errors?.name, "nameRequired");
   });
@@ -92,7 +94,6 @@ describe("serviceBody", () => {
   test("edit of {pt: Unhas} is a valid body: a name in any single language is enough", () => {
     const result = body(
       { name: { nl: "", pt: "Unhas" }, description: {}, price: "35,00", duration: "45", gap: "default" },
-      { mode: "edit" },
     );
     assert.ok(!("errors" in result), JSON.stringify(result));
     assert.deepEqual(result.body.name, { pt: "Unhas" });
@@ -101,7 +102,6 @@ describe("serviceBody", () => {
   test("edit with every language blank: still nameRequired", () => {
     const result = body(
       { name: { nl: "", en: "", pt: "" }, description: {}, price: "35,00", duration: "45", gap: "default" },
-      { mode: "edit" },
     );
     assert.equal(result.errors?.name, "nameRequired");
   });
@@ -109,12 +109,10 @@ describe("serviceBody", () => {
   test("duration outside 5..720 is a field error", () => {
     const tooShort = body(
       { name: { nl: "Manicure" }, description: {}, price: "35,00", duration: "4", gap: "default" },
-      { ...base },
     );
     assert.equal(tooShort.errors?.duration, "durationRange");
     const tooLong = body(
       { name: { nl: "Manicure" }, description: {}, price: "35,00", duration: "721", gap: "default" },
-      { ...base },
     );
     assert.equal(tooLong.errors?.duration, "durationRange");
   });
@@ -122,7 +120,6 @@ describe("serviceBody", () => {
   test("a fixed gap outside 0..240 is a field error", () => {
     const result = body(
       { name: { nl: "Manicure" }, description: {}, price: "35,00", duration: "45", gap: "fixed", fixedGap: "241" },
-      { ...base },
     );
     assert.equal(result.errors?.gap, "gapRange");
   });
@@ -130,7 +127,6 @@ describe("serviceBody", () => {
   test("an unparsable price is a field error", () => {
     const result = body(
       { name: { nl: "Manicure" }, description: {}, price: "not a number", duration: "45", gap: "default" },
-      { ...base },
     );
     assert.equal(result.errors?.price, "priceInvalid");
   });
@@ -138,7 +134,6 @@ describe("serviceBody", () => {
   test("blank description languages are omitted too, never sent as \"\"", () => {
     const result = body(
       { name: { nl: "Manicure" }, description: { nl: "  ", en: "Real text", pt: "" }, price: "35,00", duration: "45", gap: "default" },
-      { ...base },
     );
     assert.ok(!("errors" in result));
     assert.deepEqual(result.body.description, { en: "Real text" });
@@ -146,7 +141,7 @@ describe("serviceBody", () => {
 
   test("duration boundaries: 5 and 720 are valid, 4 and 721 are not", () => {
     for (const [value, valid] of [["5", true], ["720", true], ["4", false], ["721", false]]) {
-      const result = body({ name: { nl: "Manicure" }, description: {}, price: "35,00", duration: value, gap: "default" }, { ...base });
+      const result = body({ name: { nl: "Manicure" }, description: {}, price: "35,00", duration: value, gap: "default" });
       assert.equal(!("errors" in result), valid, `duration ${value}`);
     }
   });
@@ -155,17 +150,16 @@ describe("serviceBody", () => {
     for (const [value, valid] of [["0", true], ["240", true], ["-1", false], ["241", false]]) {
       const result = body(
         { name: { nl: "Manicure" }, description: {}, price: "35,00", duration: "45", gap: "fixed", fixedGap: value },
-        { ...base },
       );
       assert.equal(!("errors" in result), valid, `fixed gap ${value}`);
     }
   });
 
   test("price boundaries: 0 and 1_000_000 minor units are valid", () => {
-    const zero = body({ name: { nl: "Manicure" }, description: {}, price: "0", duration: "45", gap: "default" }, { ...base });
+    const zero = body({ name: { nl: "Manicure" }, description: {}, price: "0", duration: "45", gap: "default" });
     assert.ok(!("errors" in zero));
     assert.equal(zero.body.price.amount_minor, 0);
-    const max = body({ name: { nl: "Manicure" }, description: {}, price: "10000,00", duration: "45", gap: "default" }, { ...base });
+    const max = body({ name: { nl: "Manicure" }, description: {}, price: "10000,00", duration: "45", gap: "default" });
     assert.ok(!("errors" in max));
     assert.equal(max.body.price.amount_minor, 1_000_000);
   });
