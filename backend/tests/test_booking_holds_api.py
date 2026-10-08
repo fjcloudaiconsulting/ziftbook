@@ -33,6 +33,7 @@ from tests.conftest import (
     fresh_email,
     member_id,
     new_client,
+    put_settings,
     save_setting,
     sent_to,
     signed_in,
@@ -445,6 +446,26 @@ def test_anyone_falls_back_to_a_free_colleague_and_a_named_worker_never_does(
     assert (refused.status_code, refused.json()) == (409, {"code": "slot_unavailable"})
 
 
+# F8b: FENCE. Wrong impl: confirm ignores the held worker and re-picks by load, moving a guest who
+# was shown "With Ana" to a colleague although Ana is still free.
+def test_the_click_keeps_the_held_worker_while_they_are_free(
+    people: People,
+    app: FastAPI,
+    ready: str,
+    two: tuple[uuid.UUID, uuid.UUID],
+    migrate_engine: Engine,
+) -> None:
+    email, token = held(app, people.a, ready, starts_at=at("11:00"))
+    (hold,) = holds_of(migrate_engine, people.a, email)
+    # Now the held worker is the busier one that day: by load alone the colleague would come first.
+    seed_booking(people.a, ready, hold.worker_id, at("14:00"), at("14:30"))
+
+    booked = confirm(new_client(app), token)
+
+    assert booked.status_code == 201
+    assert booked.json()["worker_id"] == str(hold.worker_id)
+
+
 # F9: FENCE. Wrong impl: the sweep deletes on the 15-minute expires_at, or deletes nothing.
 def test_the_sweep_deletes_a_hold_once_its_link_is_dead(
     people: People, app: FastAPI, ready: str, migrate_engine: Engine
@@ -463,13 +484,14 @@ def test_the_sweep_deletes_a_hold_once_its_link_is_dead(
 # F10: FENCE. Wrong impl: no cross-business key, so one address can be mailed by every business.
 def test_one_address_is_limited_across_businesses(people: People, app: FastAPI, ready: str) -> None:
     email = fresh_email()
-    for _ in range(10):  # ten holds at other businesses this hour
+    for _ in range(9):  # nine holds at other businesses this hour
         assert not limits.hit({limits.email_key("booking_verify", email): 10}, timedelta(hours=1))
 
-    answer = post_hold(new_client(app), people.a, ready, email=email)
+    tenth = post_hold(new_client(app), people.a, ready, email=email)
+    eleventh = post_hold(new_client(app), people.a, ready, email=email, starts_at=at("10:00"))
 
-    assert (answer.status_code, answer.json()) == (429, {"code": "rate_limited"})
-    assert post_hold(new_client(app), people.a, ready).status_code == 202
+    assert tenth.status_code == 202
+    assert (eleventh.status_code, eleventh.json()) == (429, {"code": "rate_limited"})
 
 
 # F11: FENCE (decision 4, option A). Wrong impl: FILL at confirm (the stored name survives), or a
@@ -614,6 +636,8 @@ def test_the_verify_email_carries_the_one_working_link(
     assert message["Subject"] == f"Confirme seu agendamento em {business}"
     assert f"/pt/booking/confirm#{token}" in message["Text"]
     assert f"/pt/{slug}\n" in message["Text"]
+    # Business-local clock and date, never UTC: 09:00 in Amsterdam is 07:00 or 08:00 UTC.
+    assert f"{DAY.strftime('%d/%m/%Y')} às 09:00 (Europe/Amsterdam)" in message["Text"]
     assert hold.token_hash == hashlib.sha256(token.split(".", 1)[1].encode()).digest()
 
     mail.send_booking_verify(
@@ -687,6 +711,36 @@ def test_the_console_names_a_hold_and_override_wins_over_it(
     assert owner.post("/api/bookings", json={**body, "override": True}).status_code == 201
     late = confirm(new_client(app), token)
     assert (late.status_code, late.json()) == (409, {"code": "slot_unavailable"})
+
+
+# F16b: FENCE. Wrong impl: HELD without its expiry, naming a hold that ended as if it still held.
+def test_the_console_never_names_a_hold_that_has_ended(
+    people: People, app: FastAPI, ready: str, owner: TestClient, migrate_engine: Engine
+) -> None:
+    email, _ = held(app, people.a, ready)
+    age(migrate_engine, people.a, email, "expires_at", "1 second")
+    body = {
+        "new_client": {"name": "Walk-in"},
+        "service_id": ready,
+        "member_id": str(member_id(people.a, people.both)),
+        "starts_at": at("09:00"),
+    }
+
+    assert owner.post("/api/bookings", json=body).status_code == 201
+
+
+# G5: GUARD. A hold is a booking-page action: an unpublished page or an archived service is 404.
+def test_no_hold_on_an_unpublished_page_or_an_archived_service(
+    people: People, app: FastAPI, ready: str, owner: TestClient
+) -> None:
+    assert put_settings(owner, {"published": False}).status_code == 200
+    unpublished = post_hold(new_client(app), people.a, ready)
+    assert put_settings(owner, {"published": True}).status_code == 200
+    assert owner.patch(f"/api/services/{ready}", json={"archived": True}).status_code == 200
+    archived = post_hold(new_client(app), people.a, ready)
+
+    for answer in (unpublished, archived):
+        assert (answer.status_code, answer.json()) == (404, {"code": "not_found"})
 
 
 # G3: GUARD. The hold takes no personal detail but the address.
