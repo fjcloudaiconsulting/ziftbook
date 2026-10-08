@@ -4,7 +4,7 @@ import { type NextRequest, NextResponse } from "next/server";
 import { routing } from "./i18n/routing";
 import { errorFields, logger, requestId } from "./lib/log";
 import { endProxySpan, startProxySpan, traceparent } from "./lib/trace";
-import { apiUrl, clientIp } from "./lib/upstream";
+import { apiUrl, clientIp, MAX_BODY_BYTES } from "./lib/upstream";
 
 const localize = createMiddleware(routing);
 const log = logger("web.proxy");
@@ -26,6 +26,34 @@ const TRACE_HEADERS = ["traceparent", "tracestate", "baggage"];
 
 function unavailable(id: string): NextResponse {
   return NextResponse.json({ code: "api_unavailable" }, { status: 502, headers: { "X-Request-ID": id } });
+}
+
+// The whole request body, or null once it passes MAX_BODY_BYTES (ZIF-136). Read here, not streamed
+// to the API: Next ends a body it cut at proxyClientMaxBodySize as if it were complete, and only
+// counting the bytes tells the two apart. A client hanging up mid-upload aborts request.signal,
+// which cancels the read (Next's copy of the body never ends on its own then); the fetch below
+// then never starts, as the same signal is already aborted.
+async function readBody(request: NextRequest): Promise<Uint8Array<ArrayBuffer> | null> {
+  const reader = request.body?.getReader();
+  if (!reader) return new Uint8Array();
+  const cancel = () => void reader.cancel();
+  request.signal.addEventListener("abort", cancel, { once: true });
+  try {
+    // An abort before the listener was added never fires it.
+    request.signal.throwIfAborted();
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      // Copied into a plain ArrayBuffer: fetch's BodyInit type refuses Buffer's ArrayBufferLike.
+      if (done) return new Uint8Array(Buffer.concat(chunks));
+      size += value.byteLength;
+      if (size > MAX_BODY_BYTES) return null;
+      chunks.push(value);
+    }
+  } finally {
+    request.signal.removeEventListener("abort", cancel);
+  }
 }
 
 // R1: fetch, not NextResponse.rewrite. A rewrite that can't connect makes Next answer 500
@@ -57,19 +85,19 @@ async function forwardApi(request: NextRequest): Promise<Response> {
   if (tp) headers.set("traceparent", tp);
 
   try {
-    const upstreamResponse = await fetch(
-      new URL(pathname + search, upstream),
-      {
-        method: request.method,
-        headers,
-        body: request.method === "GET" || request.method === "HEAD" ? undefined : request.body,
-        duplex: "half",
-        redirect: "manual",
-        signal: AbortSignal.any([request.signal, AbortSignal.timeout(30_000)]),
-        // duplex isn't in lib.dom.d.ts's RequestInit yet, though Node's fetch (undici) requires it
-        // for a streamed body.
-      } as RequestInit & { duplex: "half" },
-    );
+    const body = request.method === "GET" || request.method === "HEAD" ? undefined : await readBody(request);
+    if (body === null) {
+      log.info("body too large", { request_id: id, method: request.method, ...spanIds });
+      endProxySpan(span, 413);
+      return NextResponse.json({ code: "content_too_large" }, { status: 413, headers: { "X-Request-ID": id } });
+    }
+    const upstreamResponse = await fetch(new URL(pathname + search, upstream), {
+      method: request.method,
+      headers,
+      body,
+      redirect: "manual",
+      signal: AbortSignal.any([request.signal, AbortSignal.timeout(30_000)]),
+    });
     // Headers iteration (unlike a naive Map) already yields each Set-Cookie as its own [name,
     // value] pair (measured), so no separate getSetCookie() rebuild is needed to keep them apart.
     // content-encoding/content-length are dropped because undici has already decoded the body;

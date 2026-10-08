@@ -21,3 +21,8 @@ export function apiUrl(): string | undefined {
 // (F7): every path except /api itself (not merely prefixed by it, so a public slug like "apiary"
 // still gets locale routing), Next internals, and files with an extension.
 export const LOCALE_MATCHER = "/((?!api(?:/|$)|_next|_vercel|.*\\..*).*)";
+
+// The largest request body proxy.ts forwards: the API's own MAX_BODY (backend/app/main.py), kept
+// equal by tests/proxy.test.mjs. Read here as well, because Next hands the proxy a body it cut at
+// proxyClientMaxBodySize (next.config.ts) as if it were complete.
+export const MAX_BODY_BYTES = 64 * 1024;
