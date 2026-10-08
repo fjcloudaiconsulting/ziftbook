@@ -118,7 +118,13 @@ export function BookingPage({ page, locale, turnstileSiteKey, initialService = n
   const businessLanguage = page.language as Locale;
   const dLocale = dateLocale(locale);
 
-  const [flow, setFlow] = useState<Flow>({ ...INITIAL, name: "", email: "", phone: "" });
+  // ZIF-117: the confirm page's "Choose another time" lands here with ?service=: its times open.
+  const [flow, setFlow] = useState<Flow>(() => {
+    const service = page.services.find((svc) => svc.id === initialService) ?? null;
+    if (!service) return { ...INITIAL, name: "", email: "", phone: "" };
+    const worker = service.workers.length === 1 ? service.workers[0].id : "any";
+    return { ...INITIAL, name: "", email: "", phone: "", step: 2, service, worker, weekStart: localDay(new Date(), page.timezone) };
+  });
   const [done, setDone] = useState<Done | null>(null);
   const [sent, setSent] = useState<Sent | null>(null);
   // ZIF-117: the signed-in account's own address. Only that address books straight away; any other
@@ -176,10 +182,13 @@ export function BookingPage({ page, locale, turnstileSiteKey, initialService = n
     };
   }, []);
 
-  // ZIF-117: the dead-link page's "Choose another time" lands here with ?service=: open its times.
+  // ...and loads them once mounted, a tick later (never a state update in the effect's own body).
   useEffect(() => {
-    const service = page.services.find((svc) => svc.id === initialService);
-    if (service) selectService(service);
+    if (!flow.service) return;
+    const service = flow.service;
+    const timer = setTimeout(() => void ensureWeek(service, flow.worker, flow.weekStart));
+    return () => clearTimeout(timer);
+    // Mount only.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
