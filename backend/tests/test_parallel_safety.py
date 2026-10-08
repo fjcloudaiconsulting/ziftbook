@@ -138,10 +138,13 @@ def test_wait_until_blocked_sees_an_app_role_waiter_from_a_migrate_connection(
 def test_each_xdist_worker_targets_its_own_database() -> None:
     assert make_url(worker_url(SAMPLE, "gw9")).database == "ziftbook_gw9"
     assert make_url(worker_url(SAMPLE, "gw9")).password == make_url(SAMPLE).password
+    other = make_url(SAMPLE).set(database="ziftbook_143").render_as_string(hide_password=False)
+    assert make_url(worker_url(other, "gw9")).database == "ziftbook_143_gw9"
 
     if XDIST_WORKER:
         for name in URL_NAMES:
-            assert make_url(os.environ[name]).database == f"ziftbook_{XDIST_WORKER}"
+            base = make_url(ORIGINAL_URLS[name]).database
+            assert make_url(os.environ[name]).database == f"{base}_{XDIST_WORKER}"
 
 
 # 5 (FENCE): the inverse defect. A serial run must be left alone. Rewriting unconditionally gives
