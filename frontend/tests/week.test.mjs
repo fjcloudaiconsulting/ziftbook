@@ -227,8 +227,9 @@ describe("openingWeek", () => {
     for (const weekday of [1, 3, 4, 5, 7]) assert.deepEqual(week.find((d) => d.weekday === weekday).shifts, []);
   });
 
-  test("fence: an existing week is replaced, a stale shift on a shop-closed day included", () => {
-    // Unlike "Copy to every day", which leaves a closed day as it was.
+  test("guard: replacing an existing week changes every differing day, a stale shift on a shop-closed day included", () => {
+    // The ask's "Changes {days}". Unlike "Copy to every day", which leaves a closed day as it was:
+    // the fill never reads the existing week, it replaces it.
     const existing = daysFromShifts([
       { weekday: 1, starts_at: "08:00", ends_at: "10:00" },
       { weekday: 2, starts_at: "10:00", ends_at: "16:00" },

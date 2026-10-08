@@ -132,9 +132,13 @@ export function WeekEditor({
   // (the screen reader's "Filled in ..." line, cleared by the next edit, Undo or a save).
   const [asking, setAsking] = useState(false);
   const [filled, setFilled] = useState(false);
+  const opening = envelope && openingWeek(envelope);
+  const fillChanges = opening ? changedDays(days, opening) : [];
+  const firstFilledId = (week: Day[]) => `shift-${week.find((d) => d.shifts.length > 0)?.weekday}-0-start`;
   // An element id to focus after the next render, as in the booking detail: the fill button
-  // unmounts once the week equals the opening hours, so focus moves to the first filled time.
-  const focusTarget = useRef<string | null>(null);
+  // unmounts once the week equals the opening hours, so focus moves to the first filled time (on
+  // mount too, for the empty state's fill).
+  const focusTarget = useRef<string | null>(startFilled && opening ? firstFilledId(opening) : null);
 
   useEffect(() => {
     const target = focusTarget.current;
@@ -143,16 +147,11 @@ export function WeekEditor({
     document.getElementById(target)?.focus();
   });
 
-  const opening = envelope && openingWeek(envelope);
-  const fillChanges = opening ? changedDays(days, opening) : [];
-  const firstFilledId = (week: Day[]) => `shift-${week.find((d) => d.shifts.length > 0)?.weekday}-0-start`;
-
   useEffect(() => {
-    // The empty state's fill, focused and announced like a fill from the button. The status line
-    // mounts with this editor, and text already there when it appears is never read out, so it
-    // only gets its text a tick later.
+    // The empty state's fill is announced like a fill from the button. The status line mounts with
+    // this editor, and text already there when it appears is never read out, so it only gets its
+    // text a tick later.
     if (!startFilled || !opening) return;
-    document.getElementById(firstFilledId(opening))?.focus();
     const timer = setTimeout(() => setFilled(true));
     return () => clearTimeout(timer);
     // Mount only.
@@ -269,6 +268,8 @@ export function WeekEditor({
         // envelope this editor was given is now stale (the "Shop open ..." lines still show the
         // old times), so the caller re-reads it.
         setProblems({ byDay: { [result.weekday]: "outside_opening_hours" } });
+        // A fill from the reloaded envelope is a new one, and is announced again.
+        setFilled(false);
         setServerProblem(null);
         setWriteFailure(null);
         setPhase("error");
