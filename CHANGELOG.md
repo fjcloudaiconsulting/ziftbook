@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.23.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.22.0...v0.23.0) (2026-10-08)
+
+
+### Features
+
+* **backend:** availability says which workers can take each slot (ZIF-100) ([#198](https://github.com/fjcloudaiconsulting/ziftbook/issues/198)) ([2dcadaf](https://github.com/fjcloudaiconsulting/ziftbook/commit/2dcadaf35ae34414ad09761287b67d24c0906c3f))
+* **backend:** hold a guest's time until they confirm the emailed link (ZIF-117) ([#218](https://github.com/fjcloudaiconsulting/ziftbook/issues/218)) ([f3531fa](https://github.com/fjcloudaiconsulting/ziftbook/commit/f3531fa278f1e152f55c7aabb4d7d4971e56ad09))
+* **backend:** make seed fills the local app with synthetic businesses, people and bookings (ZIF-142) ([#194](https://github.com/fjcloudaiconsulting/ziftbook/issues/194)) ([d1074d5](https://github.com/fjcloudaiconsulting/ziftbook/commit/d1074d54dd3ff6b1d5b854344752aff24ca4253a))
+* **backend:** owners answer booking requests unless the business lets team members (ZIF-143) ([#208](https://github.com/fjcloudaiconsulting/ziftbook/issues/208)) ([2c7781b](https://github.com/fjcloudaiconsulting/ziftbook/commit/2c7781bf80da9c53d6db08378ec7ba9c17913e2d))
+* **backend:** send mail through the Mailgun HTTP API, never SMTP (ZIF-151) ([#211](https://github.com/fjcloudaiconsulting/ziftbook/issues/211)) ([60d3249](https://github.com/fjcloudaiconsulting/ziftbook/commit/60d3249d4453138c67fdd72ab07b70d16210cad2))
+* **frontend:** booking page clients pick a time and see who is free (ZIF-100) ([#206](https://github.com/fjcloudaiconsulting/ziftbook/issues/206)) ([e2d76ec](https://github.com/fjcloudaiconsulting/ziftbook/commit/e2d76ec21ee9f82d9d77f4ba61d1f57ad0404612))
+* **frontend:** calendar shows 7 days from today, or Mon-Sun, and remembers the view (ZIF-143) ([#204](https://github.com/fjcloudaiconsulting/ziftbook/issues/204)) ([4d42428](https://github.com/fjcloudaiconsulting/ziftbook/commit/4d42428e764ee2f44bdaa26c74ebf906e5d99fc1))
+* **frontend:** change a person's name and role from their page (ZIF-126) ([#214](https://github.com/fjcloudaiconsulting/ziftbook/issues/214)) ([6a511cf](https://github.com/fjcloudaiconsulting/ziftbook/commit/6a511cf405a388d35e8fb75a31a11aec08bd174e))
+* **frontend:** edit a service's description and gap (ZIF-126) ([#215](https://github.com/fjcloudaiconsulting/ziftbook/issues/215)) ([b72313f](https://github.com/fjcloudaiconsulting/ziftbook/commit/b72313fdec875380d95b23417ebc70b9439b6a46))
+* **frontend:** guests confirm the emailed link before their booking exists (ZIF-117) ([#220](https://github.com/fjcloudaiconsulting/ziftbook/issues/220)) ([c8fbf83](https://github.com/fjcloudaiconsulting/ziftbook/commit/c8fbf832682daa045818ce49ec76ef7e48b0a3e2))
+* **frontend:** team members see their requests read only unless the business lets them answer (ZIF-143) ([#209](https://github.com/fjcloudaiconsulting/ziftbook/issues/209)) ([cf594bc](https://github.com/fjcloudaiconsulting/ziftbook/commit/cf594bc44c6335c5ac5c4ebec9be98cb1ec06f33))
+* **frontend:** working hours start from the shop's opening hours in one click (ZIF-134) ([#207](https://github.com/fjcloudaiconsulting/ziftbook/issues/207)) ([8979e1f](https://github.com/fjcloudaiconsulting/ziftbook/commit/8979e1f18b4f1353e3bfdd8da61cb1e0c8d50e73))
+* **services:** show when a service was archived (ZIF-126) ([#213](https://github.com/fjcloudaiconsulting/ziftbook/issues/213)) ([820b967](https://github.com/fjcloudaiconsulting/ziftbook/commit/820b967970fc4db7b83753b1e8941d61a339b300))
+* **time-off:** blocking time over an appointment is refused and names it (ZIF-130) ([#212](https://github.com/fjcloudaiconsulting/ziftbook/issues/212)) ([c843f9e](https://github.com/fjcloudaiconsulting/ziftbook/commit/c843f9ed23aa9da24cdfea3f5de9fe3592190526))
+
+
+### Bug Fixes
+
+* **backend:** a stalled lock holder costs a booker a 503, not a hang for every tenant (ZIF-114) ([#217](https://github.com/fjcloudaiconsulting/ziftbook/issues/217)) ([29b370f](https://github.com/fjcloudaiconsulting/ziftbook/commit/29b370f58993e9c895966fbbf2f0856c60f96584))
+* **backend:** auto-confirmed bookings count toward the per-address cap (ZIF-115) ([#216](https://github.com/fjcloudaiconsulting/ziftbook/issues/216)) ([712cfb9](https://github.com/fjcloudaiconsulting/ziftbook/commit/712cfb9809f6a7fda433311453f9fbfe3c96ccef))
+* **backend:** cap request bodies at 64 KiB and refuse blank-looking names (ZIF-83) ([#196](https://github.com/fjcloudaiconsulting/ziftbook/issues/196)) ([622fb43](https://github.com/fjcloudaiconsulting/ziftbook/commit/622fb435e5e04c2347de19148521b69c18199b53))
+* **deps:** update opentelemetry to v1.45.1 ([#192](https://github.com/fjcloudaiconsulting/ziftbook/issues/192)) ([23e8ef3](https://github.com/fjcloudaiconsulting/ziftbook/commit/23e8ef3654432a2258f0c503ef327da727095a4f))
+* **frontend:** reopening a sign-up or reset link in an open tab starts the page over (ZIF-94) ([#195](https://github.com/fjcloudaiconsulting/ziftbook/issues/195)) ([d0a7cef](https://github.com/fjcloudaiconsulting/ziftbook/commit/d0a7cef7ab83d460fa8197d798485ddef746a271))
+* **frontend:** week save bar names a refusal that is not about one day, and history comments go (ZIF-127) ([#197](https://github.com/fjcloudaiconsulting/ziftbook/issues/197)) ([4fc440e](https://github.com/fjcloudaiconsulting/ziftbook/commit/4fc440e1e1fb8e8f11bf2eded9477500e316226b))
+* **landing:** www redirect moves to the zone rule, Worker runs only for / (INFRA-131) ([#188](https://github.com/fjcloudaiconsulting/ziftbook/issues/188)) ([d024cb4](https://github.com/fjcloudaiconsulting/ziftbook/commit/d024cb44f2abd28de464f9ad817ce9e064310a1f))
+
 ## [0.22.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.21.0...v0.22.0) (2026-10-06)
 
 
