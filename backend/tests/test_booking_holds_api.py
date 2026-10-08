@@ -123,10 +123,10 @@ def held(
     return email, link(tenant_id, email)
 
 
-def as_operator(migrate_engine: Engine, tenant_id: object, sql: str, **params: Any) -> Any:
+def as_operator(migrate_engine: Engine, tenant_id: object, sql: str, **params: Any) -> list[Any]:
     with migrate_engine.begin() as conn:
         conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(tenant_id)})
-        return conn.execute(text(sql), params).all()
+        return list(conn.execute(text(sql), params).all())
 
 
 def age(migrate_engine: Engine, tenant_id: object, email: str, column: str, ago: str) -> None:
