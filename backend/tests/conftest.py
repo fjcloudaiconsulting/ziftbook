@@ -89,11 +89,13 @@ ADMIN_DATABASE_URL = (
 # One database per xdist worker (ZIF-111). Dropped, recreated and migrated every run, not reused: a
 # reused database keeps its rows, and `jobs` is not tenant-scoped (ZIF-110), so mailed()'s run_once
 # drains every earlier run's backlog and the suite silently degrades 2.7x (65s -> 178s over three
-# runs). No WITH (FORCE) here: two suites on one instance can both claim ziftbook_gw0 (worker ids
-# are assigned independently per run), and FORCE would let the second DROP the first's database out
-# from under it mid-run. Without FORCE that collision is a loud ObjectInUse refusal instead of a
-# silent kill -- the rule is one Postgres instance per checkout. All of it at import, not in a
-# fixture:
+# runs). Worker databases are named after the base database (ziftbook -> ziftbook_gw0), so
+# checkouts can share one Postgres instance by giving each its own base name (ziftbook_143 ->
+# ziftbook_143_gw0). No WITH (FORCE) here: two suites on one base name can both claim its _gw0
+# (worker ids are assigned independently per run), and FORCE would let the second DROP the first's
+# database out from under it mid-run. Without FORCE that collision is a loud ObjectInUse refusal
+# instead of a silent kill -- the rule is one base database name per checkout. All of it at
+# import, not in a fixture:
 #   - migrations/env.py:20-22 reads ZIF_MIGRATE_DATABASE_URL at module level, and
 #     test_logs/test_api_database spawn subprocesses that inherit os.environ;
 #   - test_logs.py's `python -m alembic current` does not depend on `migrated`, so a worker that
@@ -105,8 +107,9 @@ XDIST_WORKER = os.environ.get("PYTEST_XDIST_WORKER")
 # shell, a CI matrix, a parent pytest) that happens to share the name, and it must not silently
 # steer this suite at a per-"worker" database -- a serial run with PYTEST_XDIST_WORKER=prod would
 # otherwise drop and recreate ziftbook_prod. It also closes an injection path: an unvalidated value
-# renders straight into a URL (make_url(url).set(database=f"ziftbook_{worker}")), so
-# "gw0?host=evil" would happily reinterpret the connection target.
+# renders straight into a URL and into CREATE DATABASE, so "gw0?host=evil" would happily reinterpret
+# the connection target. The base name renders into the same places, so it is held to plain
+# identifier characters too.
 if XDIST_WORKER is not None and not re.fullmatch(r"gw\d+", XDIST_WORKER):
     raise RuntimeError(
         f"PYTEST_XDIST_WORKER={XDIST_WORKER!r} is not a pytest-xdist worker id (expected gw<N>); "
@@ -122,21 +125,30 @@ def worker_url(url: str, worker: str | None) -> str:
     """That worker's own database, or the URL untouched when there is no worker.
 
     The guard is on the worker id being set to something, not on the variable merely existing: an
-    exported but empty PYTEST_XDIST_WORKER would otherwise aim the whole suite at `ziftbook_`.
+    exported but empty PYTEST_XDIST_WORKER would otherwise aim the whole suite at `<base>_`. The
+    base is capped at 50 characters: Postgres truncates identifiers to 63 bytes, and a truncated
+    `<base>_gw10` could collide with `<base>_gw1`.
 
-    Residual: a *serial* run (no worker id) still points at the shared `ziftbook` that `make up`
-    runs the app against -- the original instance-wide false-green risk this ticket fixed for
-    parallel runs survives, unchanged, for a serial one.
+    Residual: a *serial* run (no worker id) still points at the base database (`ziftbook` is the
+    one `make up` runs the app against) -- the original instance-wide false-green risk this ticket
+    fixed for parallel runs survives, unchanged, for a serial one.
     """
     if not worker:
         return url
-    return make_url(url).set(database=f"ziftbook_{worker}").render_as_string(hide_password=False)
+    parsed = make_url(url)
+    if not re.fullmatch(r"[a-z_][a-z0-9_]{0,49}", parsed.database or ""):
+        raise RuntimeError(f"database name {parsed.database!r} is not a plain identifier")
+    return parsed.set(database=f"{parsed.database}_{worker}").render_as_string(hide_password=False)
 
 
+# Both roles must land on the one database this worker creates: split bases would send the app
+# role to another checkout's live worker database.
+if XDIST_WORKER and len({make_url(os.environ[name]).database for name in URL_NAMES}) != 1:
+    raise RuntimeError("ZIF_MIGRATE_DATABASE_URL and ZIF_DATABASE_URL name different databases")
 for _name in URL_NAMES:
     os.environ[_name] = worker_url(os.environ[_name], XDIST_WORKER)
 if XDIST_WORKER:
-    _database = f"ziftbook_{XDIST_WORKER}"
+    _database = make_url(os.environ["ZIF_MIGRATE_DATABASE_URL"]).database
     _admin = create_engine(ADMIN_DATABASE_URL, isolation_level="AUTOCOMMIT")
     with _admin.connect() as _conn:
         _conn.execute(text(f"DROP DATABASE IF EXISTS {_database}"))
