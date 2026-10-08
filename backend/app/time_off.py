@@ -3,7 +3,7 @@ reason is shown only to the block's member and to owners."""
 
 import re
 from datetime import UTC, date, datetime, timedelta
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -25,7 +25,7 @@ from sqlalchemy import text
 from app import auth, availability, business_settings, members
 from app.accounts import printable
 from app.auth import CurrentSession, SignedIn
-from app.errors import ApiError, Error
+from app.errors import ApiError, Error, InTheWay
 
 LONGEST = timedelta(days=366)  # migration 0019, ck_time_off_at_most_366_days
 LONGEST_DAYS = 366  # migration 0028, ck_time_off_days: last_day - first_day < 366
@@ -147,13 +147,77 @@ def manual_block(current: SignedIn, time_off_id: UUID) -> tuple[UUID, UUID]:
     )
     if member_id is None:
         raise ApiError(404, "not_found")
-    # The member first, then their blocks: the same order as removing a member (membership row,
-    # then the cascade to time_off), so the two never deadlock. Never lock tenants: keep_an_owner
-    # locks memberships and then tenants (migration 0014).
+    # The member, then their blocks: the same order as removing a member (membership row, then the
+    # cascade to time_off), so the two never deadlock. The booking lock comes before both (it takes
+    # no row lock, and nothing that holds a membership row takes it). Never lock tenants:
+    # keep_an_owner locks memberships and then tenants (migration 0014).
     user_id = members.member_user(current, member_id, lock=True)
     if not members.may_manage(current, user_id):
         raise ApiError(403, "owner_only")
     return member_id, user_id
+
+
+def lock_bookings(current: SignedIn) -> None:
+    """The booking writers' tenant lock (CONTRIBUTING.md, "Bookings"), as the first statement, so
+    no booking lands between the overlap check and the write: every booking writer but the
+    merchant's override re-reads time off under it (ZIF-130)."""
+    from app import bookings  # here, not at the top: app.bookings imports this module
+
+    current.db.execute(bookings.LOCK, {"key": bookings.LOCK_KEY})
+
+
+# A member's live appointments in [start, end) that [old_start, old_end) didn't already cover
+# (ZIF-130): confirmed, or pending on a hold that hasn't lapsed, and not over yet. Raw intervals,
+# no buffer. The look-back is RANGE's (app/bookings.py), from ck_bookings_at_most_12_hours.
+# `completed` never counts, even when marked before it ends.
+IN_THE_WAY = text("""
+SELECT b.id, b.starts_at, b.ends_at, c.name AS client_name, b.service_name, b.status,
+       count(*) OVER () AS total
+FROM bookings b
+JOIN clients c ON c.tenant_id = b.tenant_id AND c.id = b.client_id
+WHERE b.worker_id = :member_id
+  AND b.starts_at < :end AND b.ends_at > :start
+  AND b.starts_at > CAST(:start AS timestamptz) - interval '12 hours'
+  AND b.ends_at > now()
+  AND (b.status = 'confirmed' OR (b.status = 'pending' AND b.expires_at > now()))
+  AND NOT coalesce(b.starts_at < :old_end AND b.ends_at > :old_start, false)
+ORDER BY b.starts_at, b.id
+LIMIT 5
+""")
+
+
+def refuse_over_bookings(
+    current: SignedIn, member_id: UUID, after: dict[str, Any], before: dict[str, Any] | None
+) -> None:
+    """409 overlaps_bookings when the block `after` covers an appointment that `before` (the block
+    as it was, None for a new one) didn't: an edit never refuses what a block already held, such as
+    an override booking, so a shrink or a reason change always saves."""
+    zone = business_settings.read(current.db).timezone
+
+    def span(pair: dict[str, Any]) -> tuple[datetime, datetime]:
+        if pair["starts_at"] is not None:
+            return pair["starts_at"], pair["ends_at"]
+        return availability.day_span(pair["first_day"], pair["last_day"], zone)
+
+    start, end = span(after)
+    old_start, old_end = span(before) if before is not None else (None, None)
+    found = current.db.execute(
+        IN_THE_WAY,
+        {
+            "member_id": member_id,
+            "start": start,
+            "end": end,
+            "old_start": old_start,
+            "old_end": old_end,
+        },
+    ).all()
+    if found:
+        raise ApiError(
+            409,
+            "overlaps_bookings",
+            bookings=[InTheWay.model_validate(r, from_attributes=True) for r in found],
+            total=found[0].total,
+        )
 
 
 router = APIRouter(prefix="/api", tags=["time-off"])
@@ -254,11 +318,12 @@ def time_off_range(
     MEMBER_PATH,
     name="create",
     status_code=201,
-    responses={s: {"model": Error} for s in (401, 403, 404, 415, 422)},
+    responses={s: {"model": Error} for s in (401, 403, 404, 409, 415, 422)},
 )
 def create_time_off(
     member_id: UUID, new: TimeOffIn, current: CurrentSession, request: Request, response: Response
 ) -> TimeOffOut:
+    lock_bookings(current)
     # Locked: a member removed meanwhile is a 404 here, not a foreign key 500 at the insert.
     user_id = members.member_user(current, member_id, lock=True)
     if not members.may_manage(current, user_id):
@@ -269,6 +334,7 @@ def create_time_off(
     else:
         assert new.first_day is not None and new.last_day is not None
         checked_days(new.first_day, new.last_day)
+    refuse_over_bookings(current, member_id, new.model_dump(), None)
     row = current.db.execute(
         text(f"""
         INSERT INTO time_off (tenant_id, member_id, starts_at, ends_at, first_day, last_day, reason)
@@ -291,7 +357,9 @@ def create_time_off(
 
 
 @router.patch(
-    BLOCK_PATH, name="update", responses={s: {"model": Error} for s in (401, 403, 404, 415, 422)}
+    BLOCK_PATH,
+    name="update",
+    responses={s: {"model": Error} for s in (401, 403, 404, 409, 415, 422)},
 )
 def update_time_off(
     time_off_id: UUID,
@@ -300,6 +368,7 @@ def update_time_off(
     request: Request,
     response: Response,
 ) -> TimeOffOut:
+    lock_bookings(current)
     member_id, user_id = manual_block(current, time_off_id)
     # A new statement after the lock: READ COMMITTED sees a change committed while we waited.
     params = {"id": time_off_id, "member_id": member_id}
@@ -360,6 +429,7 @@ def update_time_off(
     response.headers["Cache-Control"] = "no-store"
     if after == before:
         return block  # {} or the same values: nothing written, nothing recorded
+    refuse_over_bookings(current, member_id, after, before)
     row = current.db.execute(
         text(f"""
         UPDATE time_off SET starts_at = :starts_at, ends_at = :ends_at, first_day = :first_day,
@@ -385,6 +455,7 @@ def update_time_off(
     responses={s: {"model": Error} for s in (401, 403, 404, 415, 422)},
 )
 def delete_time_off(time_off_id: UUID, current: CurrentSession, request: Request) -> None:
+    # No booking lock: removing a block can't put it over an appointment.
     member_id, user_id = manual_block(current, time_off_id)
     deleted = current.db.scalar(
         text(

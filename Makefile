@@ -55,7 +55,6 @@ test: test-hooks
 	node --test "scripts/*.test.mjs"
 	npm --prefix landing test
 	docker compose run --rm db-init
-	docker compose up -d mailpit
 	$(API) pytest -n auto
 	$(WEB) build
 	$(WEB) test

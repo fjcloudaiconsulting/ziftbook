@@ -2,8 +2,9 @@
 
 import threading
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, time, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import psycopg.errors as pg_errors
 import pytest
@@ -1362,3 +1363,350 @@ def test_a_window_at_the_calendar_edge_is_refused_not_a_500(
     for url in (path(member_id(people.a, people.only_a)), RANGE):
         response = owner.get(url, params=window)
         assert (response.status_code, response.json()) == (422, {"code": "invalid_request"}), url
+
+
+# ZIF-130: a block may not cover a pending or confirmed appointment of its member.
+
+
+# Two days ahead on the hour, once per run: a test crossing an hour mustn't see it move.
+SOON = (datetime.now(UTC) + timedelta(days=2)).replace(minute=0, second=0, microsecond=0)
+
+
+def soon(hours: float = 0) -> datetime:
+    return SOON + timedelta(hours=hours)
+
+
+def local_day(at: datetime) -> str:
+    return at.astimezone(ZoneInfo("Europe/Amsterdam")).date().isoformat()  # the default zone
+
+
+def iso(at: datetime) -> str:
+    return at.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def new_service(owner: TestClient) -> str:
+    response = owner.post(
+        "/api/services",
+        json={
+            "name": {"en": "Gel manicure", "nl": "Gel"},
+            "price": {"amount_minor": 2500},
+            "duration_minutes": 30,
+            "buffer_minutes": 15,
+        },
+    )
+    assert response.status_code == 201
+    service_id: str = response.json()["id"]
+    return service_id
+
+
+SEED_BOOKING = text("""
+WITH c AS (
+  INSERT INTO clients (tenant_id, name)
+  VALUES (current_setting('app.tenant_id')::uuid, :client) RETURNING id)
+INSERT INTO bookings (tenant_id, client_id, worker_id, service_id, starts_at, ends_at, status,
+    expires_at, source, service_name, price_amount_minor, price_currency, duration_minutes,
+    auto_confirm_at_booking, free_cancellation_hours, reschedule_cutoff_hours)
+SELECT current_setting('app.tenant_id')::uuid, c.id, :worker_id, s.id, :starts_at, :ends_at,
+       :status, :expires_at, 'merchant', s.name, s.price_amount_minor, s.price_currency,
+       s.duration_minutes, true, 48, 24
+FROM services s, c WHERE s.id = :service_id
+RETURNING id
+""")
+
+
+def seed_booking(
+    tenant_id: uuid.UUID,
+    service_id: str,
+    worker_id: uuid.UUID,
+    starts_at: datetime,
+    ends_at: datetime,
+    *,
+    status: str = "confirmed",
+    expires_at: datetime | None = None,
+    client: str = "Sofia Almeida",
+) -> str:
+    """A booking row inserted directly, under the booking lock (as the console's override would
+    land one inside a block)."""
+    with tenant_context(tenant_id) as session:
+        session.execute(
+            text("SELECT pg_advisory_xact_lock(51, hashtext(current_setting('app.tenant_id')))")
+        )
+        found = session.scalar(
+            SEED_BOOKING,
+            {
+                "client": client,
+                "worker_id": worker_id,
+                "service_id": service_id,
+                "starts_at": starts_at,
+                "ends_at": ends_at,
+                "status": status,
+                "expires_at": expires_at,
+            },
+        )
+    return str(found)
+
+
+# Z1. fence: a block over a confirmed appointment is a 409 naming it, and nothing is written; the
+# appointment's raw interval counts, not its service's buffer. Kills: no check at all (201), and
+# reusing availability's buffered intervals (409 for a block that starts as it ends).
+def test_a_block_over_an_appointment_is_refused_and_names_it(people: People, app: FastAPI) -> None:
+    owner = signed_in(app, people.a, people.both)
+    worker = signed_in(app, people.a, people.only_a)
+    only_a = member_id(people.a, people.only_a)
+    service_id = new_service(owner)
+    booking_id = seed_booking(people.a, service_id, only_a, soon(1), soon(1.5))
+
+    refused = block(worker, only_a, starts_at=iso(soon()), ends_at=iso(soon(2)))
+
+    assert refused.status_code == 409
+    assert refused.json() == {
+        "code": "overlaps_bookings",
+        "bookings": [
+            {
+                "id": booking_id,
+                "starts_at": iso(soon(1)),
+                "ends_at": iso(soon(1.5)),
+                "client_name": "Sofia Almeida",
+                "service_name": {"en": "Gel manicure", "nl": "Gel"},
+                "status": "confirmed",
+            }
+        ],
+        "total": 1,
+    }
+    assert rows(people.a) == []
+    # Half-open, no buffer: blocks ending where it starts and starting where it ends are fine.
+    assert block(worker, only_a, starts_at=iso(soon()), ends_at=iso(soon(1))).status_code == 201
+    assert block(worker, only_a, starts_at=iso(soon(1.5)), ends_at=iso(soon(2))).status_code == 201
+
+
+# Z1b. fence: who may block comes before what is in the way. Kills: the overlap check ahead of
+# may_manage, which would show a worker a colleague's client names.
+def test_a_worker_blocking_a_colleague_over_an_appointment_gets_owner_only(
+    people: People, app: FastAPI
+) -> None:
+    owner = signed_in(app, people.a, people.both)
+    worker = signed_in(app, people.a, people.only_a)
+    both_member = member_id(people.a, people.both)
+    seed_booking(people.a, new_service(owner), both_member, soon(1), soon(1.5))
+
+    response = block(worker, both_member, starts_at=iso(soon()), ends_at=iso(soon(2)))
+
+    assert (response.status_code, response.json()) == (403, {"code": "owner_only"})
+
+
+# Z2. fence: whole days are the business zone's local days, both days included and no more. Kills:
+# UTC midnights or the default zone (the 00:30 local appointment falls outside them, the 00:30
+# next-day one inside), and a span widened by a day at either end.
+def test_a_day_block_covers_the_business_zones_local_days(people: People, app: FastAPI) -> None:
+    owner = signed_in(app, people.a, people.both)
+    zone = ZoneInfo("America/Sao_Paulo")  # not the default zone
+    assert put_settings(owner, {"timezone": "America/Sao_Paulo"}).status_code == 200
+    only_a = member_id(people.a, people.only_a)
+    service_id = new_service(owner)
+    day = (datetime.now(zone) + timedelta(days=30)).date()
+    midnight = datetime.combine(day, time(), zone)
+    next_midnight = datetime.combine(day + timedelta(days=1), time(), zone)
+    seed_booking(
+        people.a,
+        service_id,
+        only_a,
+        midnight - timedelta(minutes=30),
+        midnight - timedelta(minutes=10),
+    )
+    early = seed_booking(
+        people.a,
+        service_id,
+        only_a,
+        midnight + timedelta(minutes=30),
+        midnight + timedelta(hours=1),
+    )
+    late = seed_booking(
+        people.a,
+        service_id,
+        only_a,
+        next_midnight - timedelta(minutes=30),
+        next_midnight - timedelta(minutes=10),
+    )
+    seed_booking(
+        people.a,
+        service_id,
+        only_a,
+        next_midnight + timedelta(minutes=30),
+        next_midnight + timedelta(hours=1),
+    )
+
+    refused = day_block(owner, only_a, first_day=day.isoformat(), last_day=day.isoformat())
+
+    assert refused.status_code == 409
+    assert [b["id"] for b in refused.json()["bookings"]] == [early, late]
+    assert refused.json()["total"] == 2
+
+
+# Z3. fence: only a live pending or a confirmed appointment that hasn't ended counts, one under way
+# included. Kills: the occupying statuses (completed), no expiry or past filter, a past filter on
+# the start rather than the end, and any of the settled statuses.
+def test_only_live_pending_and_upcoming_confirmed_appointments_count(
+    people: People, app: FastAPI
+) -> None:
+    owner = signed_in(app, people.a, people.both)
+    only_a = member_id(people.a, people.only_a)
+    service_id = new_service(owner)
+    now = datetime.now(UTC)
+    live = seed_booking(
+        people.a, service_id, only_a, soon(), soon(0.5), status="pending", expires_at=soon(-1)
+    )
+    seed_booking(
+        people.a,
+        service_id,
+        only_a,
+        soon(1),
+        soon(1.5),
+        status="pending",
+        expires_at=now - timedelta(minutes=1),
+    )
+    for status in (
+        "declined",
+        "cancelled_by_merchant",
+        "cancelled_by_client",
+        "expired",
+        "no_show",
+    ):
+        seed_booking(people.a, service_id, only_a, soon(), soon(0.5), status=status)
+    seed_booking(people.a, service_id, only_a, soon(1.5), soon(2), status="completed")
+    seed_booking(people.a, service_id, only_a, now - timedelta(hours=3), now - timedelta(hours=2))
+    under_way = seed_booking(
+        people.a, service_id, only_a, now - timedelta(minutes=10), now + timedelta(minutes=20)
+    )
+
+    refused = block(owner, only_a, starts_at=iso(now - timedelta(hours=4)), ends_at=iso(soon(2)))
+
+    assert refused.status_code == 409
+    assert [(b["id"], b["status"]) for b in refused.json()["bookings"]] == [
+        (under_way, "confirmed"),
+        (live, "pending"),
+    ]
+    assert refused.json()["total"] == 2
+
+
+# Z4. fence: at most five, soonest first, and the total counts them all. Kills: an unbounded or
+# unordered list, and a total that counts only what was listed.
+def test_five_appointments_soonest_first_and_the_total(people: People, app: FastAPI) -> None:
+    owner = signed_in(app, people.a, people.both)
+    only_a = member_id(people.a, people.only_a)
+    service_id = new_service(owner)
+    ids = [
+        seed_booking(people.a, service_id, only_a, soon(h), soon(h + 0.5))
+        for h in (6, 5, 4, 3, 2, 1, 0)
+    ]
+
+    refused = block(owner, only_a, starts_at=iso(soon()), ends_at=iso(soon(8)))
+
+    assert refused.status_code == 409
+    assert [b["id"] for b in refused.json()["bookings"]] == ids[::-1][:5]
+    assert refused.json()["total"] == 7
+
+
+# Z5. fence: another member's appointment is not in the way. Kills: no worker filter.
+def test_another_members_appointment_does_not_count(people: People, app: FastAPI) -> None:
+    owner = signed_in(app, people.a, people.both)
+    service_id = new_service(owner)
+    seed_booking(people.a, service_id, member_id(people.a, people.both), soon(), soon(1))
+
+    created = block(
+        owner, member_id(people.a, people.only_a), starts_at=iso(soon()), ends_at=iso(soon(2))
+    )
+
+    assert created.status_code == 201
+
+
+# Z6. fence: an edit is refused only for an appointment it newly covers. Growing over one is a 409
+# with the row unchanged; a reason-only edit or a shrink of a block already over an appointment
+# (an override booking, or one made before this check) still saves. Kills: checking the resulting
+# interval (that block could then only be deleted), and no check on PATCH.
+def test_an_edit_is_refused_only_over_an_appointment_it_newly_covers(
+    people: People, app: FastAPI
+) -> None:
+    owner = signed_in(app, people.a, people.both)
+    only_a = member_id(people.a, people.only_a)
+    service_id = new_service(owner)
+    grows = block(owner, only_a, starts_at=iso(soon()), ends_at=iso(soon(1))).json()["id"]
+    holds = block(owner, only_a, starts_at=iso(soon(4)), ends_at=iso(soon(8))).json()["id"]
+    later = local_day(soon(48))
+    days = day_block(owner, only_a, first_day=later, last_day=later).json()["id"]
+    held = seed_booking(people.a, service_id, only_a, soon(0.25), soon(0.5))  # under `grows`
+    in_the_way = seed_booking(people.a, service_id, only_a, soon(2), soon(2.5))
+    seed_booking(people.a, service_id, only_a, soon(5), soon(5.5))
+    seed_booking(people.a, service_id, only_a, soon(48), soon(48.5))
+    before = rows(people.a)
+
+    refused = owner.patch(block_path(grows), json={"ends_at": iso(soon(3))})
+
+    assert refused.status_code == 409
+    assert [b["id"] for b in refused.json()["bookings"]] == [in_the_way]
+    assert refused.json()["total"] == 1
+    assert rows(people.a) == before
+    assert owner.patch(block_path(holds), json={"reason": "Dentist"}).status_code == 200
+    assert owner.patch(block_path(holds), json={"ends_at": iso(soon(7))}).status_code == 200
+    assert owner.patch(block_path(days), json={"reason": "Dentist"}).status_code == 200
+    # Switching to whole days that take in the appointment is a 409 too.
+    switched = owner.patch(
+        block_path(grows),
+        json={"first_day": local_day(soon(2)), "last_day": local_day(soon(2))},
+    )
+    assert switched.status_code == 409
+    listed = [b["id"] for b in switched.json()["bookings"]]
+    assert in_the_way in listed
+    assert held not in listed
+
+
+# Z7. fence: the check and the write run under the booking lock. A booking writer holding it
+# commits an appointment; the block waits, then sees it and is refused. Kills: no lock on either
+# route (the write runs at once, cannot see the uncommitted booking, and saves).
+@pytest.mark.parametrize("op", ["POST", "PATCH"])
+def test_a_block_waits_for_a_booking_in_flight_and_then_sees_it(
+    people: People, app: FastAPI, app_engine: Engine, op: str
+) -> None:
+    owner = signed_in(app, people.a, people.both)
+    only_a = member_id(people.a, people.only_a)
+    service_id = new_service(owner)
+    existing = None
+    if op == "PATCH":
+        existing = block(owner, only_a, starts_at=iso(soon()), ends_at=iso(soon(0.5))).json()["id"]
+    before = rows(people.a)
+    results: list[Response] = []
+
+    def request() -> None:
+        if op == "POST":
+            results.append(block(owner, only_a, starts_at=iso(soon()), ends_at=iso(soon(2))))
+        else:
+            results.append(owner.patch(block_path(existing), json={"ends_at": iso(soon(2))}))
+
+    with app_engine.connect() as holder:
+        with holder.begin():
+            holder.execute(
+                text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(people.a)}
+            )
+            holder.execute(
+                text("SELECT pg_advisory_xact_lock(51, hashtext(current_setting('app.tenant_id')))")
+            )
+            holder.execute(
+                SEED_BOOKING,
+                {
+                    "client": "Mark de Vries",
+                    "worker_id": only_a,
+                    "service_id": service_id,
+                    "starts_at": soon(1),
+                    "ends_at": soon(1.5),
+                    "status": "confirmed",
+                    "expires_at": None,
+                },
+            )
+            thread = threading.Thread(target=request)
+            thread.start()
+            wait_until_blocked(app_engine, 1)
+        thread.join(timeout=10)
+
+    assert not thread.is_alive()
+    assert results[0].status_code == 409
+    assert results[0].json()["bookings"][0]["client_name"] == "Mark de Vries"
+    assert rows(people.a) == before

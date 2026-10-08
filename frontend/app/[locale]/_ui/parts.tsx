@@ -3,6 +3,7 @@
 import { useTranslations } from "next-intl";
 import { type ReactNode, type Ref, useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 
+import type { Error as ApiError, InTheWay } from "@/api-client";
 import { clock, RESEND_AFTER_MS, secondsLeft, takeToken } from "@/lib/account";
 import { linkStore, type OpenedLink } from "@/lib/link";
 
@@ -10,15 +11,23 @@ import { Header } from "./header";
 import styles from "./ui.module.css";
 
 /** What an API call came back with: status 0 means the request never got an answer.
- * `weekday`: only `outside_opening_hours` carries it (`errors.py:8-13`), so the working-hours
- * screen can name the day the server refused. */
-export type Outcome<T> = { status: number; code?: string; weekday?: number; data?: T };
+ * `weekday`: only `outside_opening_hours` carries it (`errors.py`), so the working-hours
+ * screen can name the day the server refused. `bookings` and `total`: only `overlaps_bookings`
+ * (ZIF-130), the appointments a time-off block would cover. */
+export type Outcome<T> = { status: number; code?: string; weekday?: number; bookings?: InTheWay[]; total?: number; data?: T };
 
 export async function send<T>(request: Promise<{ data?: T; error?: unknown; response?: Response }>): Promise<Outcome<T>> {
   try {
     const { data, error, response } = await request;
-    const body = error as { code?: string; weekday?: number | null } | undefined;
-    return { status: response?.status ?? 0, code: body?.code, weekday: body?.weekday ?? undefined, data };
+    const body = error as ApiError | undefined;
+    return {
+      status: response?.status ?? 0,
+      code: body?.code,
+      weekday: body?.weekday ?? undefined,
+      bookings: body?.bookings ?? undefined,
+      total: body?.total ?? undefined,
+      data,
+    };
   } catch {
     return { status: 0 };
   }
