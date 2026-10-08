@@ -5,7 +5,9 @@
 import { addDaysISO, localDateISO, localTime, localToInstant } from "./time-off.ts";
 
 export type Role = "owner" | "worker";
-export type View = "day" | "week";
+// `week` is Monday to Sunday (old links keep that meaning); `days` is seven days from the shown date.
+export type View = "day" | "week" | "days";
+const VIEWS: string[] = ["day", "week", "days"];
 
 // The shortest an item is drawn and packed: the 24px tap target at 64px an hour is 22.5 minutes, so two
 // back-to-back 15-minute bookings take lanes instead of overlapping under their minimum height. It also
@@ -30,10 +32,24 @@ export function dayWindow(dateISO: string, tz: string, n: number): { from: strin
   return { from: localToInstant(dateISO, "00:00", tz), to: localToInstant(addDaysISO(dateISO, n), "00:00", tz) };
 }
 
-/** The local days a view shows: its seven days from Monday, or the one day. */
+/** The local days a view shows: seven from Monday, seven from the date, or the one day. */
 export function visibleDays(view: View, dateISO: string): string[] {
   const first = view === "week" ? weekStart(dateISO) : dateISO;
-  return Array.from({ length: view === "week" ? 7 : 1 }, (_, i) => addDaysISO(first, i));
+  return Array.from({ length: view === "day" ? 1 : 7 }, (_, i) => addDaysISO(first, i));
+}
+
+/** The date a view switch lands on, so the place is kept: Mon-Sun to 7 days starts at today when today is
+ * in that week, else at its Monday. Every other switch keeps the date (Mon-Sun shows the Monday week that
+ * holds the first visible day by itself). */
+export function switchDate(from: View, to: View, dateISO: string, todayISO: string): string {
+  if (from !== "week" || to !== "days") return dateISO;
+  return weekStart(todayISO) === weekStart(dateISO) ? todayISO : weekStart(dateISO);
+}
+
+/** The Mon-Sun switch's label from Intl short weekday names, so every locale gets its own; a trailing
+ * period goes ("seg.–dom." reads "seg–dom", as designed). `weekday` formats in UTC. */
+export function monToSun(weekday: Intl.DateTimeFormat): string {
+  return ["2026-10-05", "2026-10-11"].map((day) => weekday.format(new Date(`${day}T12:00:00Z`)).replace(/\.$/, "")).join("–");
 }
 
 /** The booking panel's "When", in `tz`: whether the start is today, both clock times, and whether the
@@ -276,12 +292,21 @@ function validInstant(value: string | null): string | null {
   return new Date(value).toISOString();
 }
 
-/** The URL's state, never trusted: a bad date is today, an unknown view is the day, a worker is always
- * themselves, an owner's member is `all` or an id (an id that is not one of `memberIds` once those are
- * known is `all`). A panel is `new`, `block` or `move` (which needs a booking); `new` and `block` replace
- * the open booking and carry `at` (an instant) and `with` (a member); a worker's `with` is themselves. */
-export function parseView(params: { get(name: string): string | null }, todayISO: string, role: Role, selfId: string, memberIds?: string[] | null): CalendarView {
+/** The URL's state, never trusted: a bad date is today, a URL without a view opens the `remembered` one,
+ * an unknown view is the day, a worker is always themselves, an owner's member is `all` or an id (an id
+ * that is not one of `memberIds` once those are known is `all`). A panel is `new`, `block` or `move`
+ * (which needs a booking); `new` and `block` replace the open booking and carry `at` (an instant) and
+ * `with` (a member); a worker's `with` is themselves. */
+export function parseView(
+  params: { get(name: string): string | null },
+  todayISO: string,
+  role: Role,
+  selfId: string,
+  memberIds?: string[] | null,
+  remembered?: string | null,
+): CalendarView {
   const date = params.get("date");
+  const view = params.get("view") ?? remembered ?? "day";
   const asked = params.get("member");
   let member = role === "worker" ? selfId : (asked ?? "all");
   if (role === "owner" && member !== "all" && memberIds && !memberIds.includes(member)) member = "all";
@@ -298,7 +323,7 @@ export function parseView(params: { get(name: string): string | null }, todayISO
     withMember = role === "worker" ? selfId : asWith && (!memberIds || memberIds.includes(asWith)) ? asWith : null;
   }
   return {
-    view: params.get("view") === "week" ? "week" : "day",
+    view: VIEWS.includes(view) ? (view as View) : "day",
     date: validDate(date) ? date : todayISO,
     member,
     booking,
