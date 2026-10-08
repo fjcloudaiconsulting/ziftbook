@@ -16,6 +16,7 @@ from opentelemetry import trace
 from opentelemetry.trace import SpanKind
 from pydantic import BaseModel
 from sqlalchemy import create_engine, text
+from sqlalchemy.exc import OperationalError
 from starlette.middleware.body_limit import RequestBodyLimitMiddleware
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
@@ -97,7 +98,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # message-free one so nothing repeats the leak.
     try:
         engine = create_engine(
-            DatabaseSettings().database_url, pool_pre_ping=True, hide_parameters=True
+            DatabaseSettings().database_url,
+            pool_pre_ping=True,
+            hide_parameters=True,
+            # ZIF-114. No request waits longer than this for any lock, the tenant advisory lock
+            # included: past it the statement fails with 55P03, which every route answers as 503
+            # busy (lock_timed_out below). Without it one stalled holder pins a pooled
+            # connection per waiting request until every tenant's requests hang on checkout.
+            # Booking writers hold the lock for milliseconds, so 5s is hundreds of queued bookings.
+            connect_args={"options": "-c lock_timeout=5s"},
         )
         SessionLocal.configure(bind=engine)
     except Exception:
@@ -317,6 +326,16 @@ def create_app() -> FastAPI:
     async def invalid_request(request: Request, error: RequestValidationError) -> JSONResponse:
         # A code, not FastAPI's description of the body: errors are codes.
         return JSONResponse({"code": "invalid_request"}, status_code=422)
+
+    # A lock wait past the engine's lock_timeout (ZIF-114), on any route that does not catch it
+    # itself. Every other OperationalError (a lost connection, say) goes on to internal_error.
+    @app.exception_handler(OperationalError)
+    async def lock_timed_out(request: Request, error: OperationalError) -> JSONResponse:
+        if getattr(error.orig, "sqlstate", None) != "55P03":
+            raise error
+        # Not an error: the request did nothing. Still worth a line, it means a holder stalled.
+        logger.warning("lock wait timed out")
+        return JSONResponse({"code": "busy"}, status_code=503)
 
     # Anything unexpected, including a commit that fails after the endpoint returned. This runs
     # outside the middleware above, so it sets Referrer-Policy itself.
