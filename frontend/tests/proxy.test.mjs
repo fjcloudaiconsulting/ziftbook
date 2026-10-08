@@ -2,10 +2,13 @@
 // Requires a build first: `pnpm build && pnpm test`.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { createServer, request as httpRequest } from "node:http";
 import { connect } from "node:net";
 import { after, before, describe, test } from "node:test";
 import { gzipSync } from "node:zlib";
+
+import { MAX_BODY_BYTES } from "../lib/upstream.ts";
 
 const WEB_DIR = new URL("..", import.meta.url).pathname;
 
@@ -37,16 +40,19 @@ function stubGzipCookies(version) {
   });
 }
 
+// requests: the headers of every request it got, so a test can assert none arrived.
 function stubEcho() {
+  const requests = [];
   return new Promise((resolve) => {
     const server = createServer((req, res) => {
+      requests.push(req.headers);
       const chunks = [];
       req.on("data", (chunk) => chunks.push(chunk));
       req.on("end", () => {
         res.setHeader("Content-Type", "application/json");
         res.end(JSON.stringify({ method: req.method, body: Buffer.concat(chunks).toString("utf8") }));
       });
-    }).listen(0, "127.0.0.1", () => resolve(server));
+    }).listen(0, "127.0.0.1", () => resolve(Object.assign(server, { requests })));
   });
 }
 
@@ -84,6 +90,24 @@ function postWithExpectContinue(port, path, payload) {
     );
     req.on("error", reject);
     req.end(payload);
+  });
+}
+
+// Sends each part as written: with a Content-Length for the total, or chunked (no Content-Length),
+// which fetch() only does for a stream body. No parts: no body and neither header.
+function send(port, path, parts, { method = "POST", chunked = false } = {}) {
+  const length = parts.reduce((total, part) => total + part.length, 0);
+  const declared = chunked || parts.length === 0 ? {} : { "Content-Length": length };
+  const headers = { "Content-Type": "application/json", ...declared };
+  return new Promise((resolve, reject) => {
+    const req = httpRequest({ host: "127.0.0.1", port, path, method, headers }, (res) => {
+      const chunks = [];
+      res.on("data", (chunk) => chunks.push(chunk));
+      res.on("end", () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks).toString("utf8") }));
+    });
+    req.on("error", reject);
+    for (const part of parts) req.write(part);
+    req.end();
   });
 }
 
@@ -533,6 +557,85 @@ describe("body and redirects (E4)", () => {
       await stop(web);
       api.close();
     }
+  });
+});
+
+// ZIF-136: Next hands the proxy a body cut at proxyClientMaxBodySize, ended as if complete. The
+// proxy reads at most MAX_BODY_BYTES itself, so an oversized body never reaches the API, cut or whole.
+describe("request body cap (ZIF-136)", () => {
+  const port = 3219;
+  let api;
+  let web;
+  before(async () => {
+    api = await stubEcho();
+    // DEBUG: the hang-up test reads the proxy's "client closed" line.
+    web = await startWeb(`http://127.0.0.1:${api.address().port}`, port, { ZIF_LOG_LEVEL: "DEBUG" });
+  });
+  after(async () => {
+    await stop(web);
+    api.close();
+  });
+
+  test("fence: a declared body one byte over the cap is a 413, and the API never sees it", async () => {
+    // Wrong implementation killed: forwarding it and leaving the limit to the API.
+    api.requests.length = 0;
+    const { status, headers, body } = await send(port, "/api/x", [Buffer.alloc(MAX_BODY_BYTES + 1, "a")]);
+    assert.equal(status, 413);
+    assert.deepEqual(JSON.parse(body), { code: "content_too_large" });
+    assert.match(headers["x-request-id"], /.+/);
+    assert.equal(api.requests.length, 0);
+  });
+
+  test("fence: a chunked body past Next's own limit is a 413, never forwarded cut", async () => {
+    // Wrong implementations killed: a check on Content-Length only, and trusting Next's limit
+    // (2 MiB here; Next ends its copy at 1 MiB as if the body were complete).
+    api.requests.length = 0;
+    const parts = Array.from({ length: 32 }, () => Buffer.alloc(64 * 1024, "a"));
+    const { status, body } = await send(port, "/api/x", parts, { chunked: true });
+    assert.equal(status, 413);
+    assert.deepEqual(JSON.parse(body), { code: "content_too_large" });
+    assert.equal(api.requests.length, 0);
+  });
+
+  test("fence: a chunked body of exactly the cap arrives whole, with its Content-Length", async () => {
+    // Wrong implementations killed: `>=` instead of `>`, and a read that drops the last chunk.
+    api.requests.length = 0;
+    const parts = Array.from({ length: 4 }, (_, i) => Buffer.alloc(MAX_BODY_BYTES / 4, "abcd"[i]));
+    const { status, body } = await send(port, "/api/x", parts, { chunked: true });
+    assert.equal(status, 200);
+    assert.equal(JSON.parse(body).body, Buffer.concat(parts).toString("utf8"));
+    assert.equal(api.requests[0]["content-length"], String(MAX_BODY_BYTES));
+  });
+
+  test("fence: a DELETE with no body at all still goes through", async () => {
+    // Wrong implementation killed: refusing any write without a Content-Length (logout sends none).
+    const { status, body } = await send(port, "/api/sessions", [], { method: "DELETE" });
+    assert.equal(status, 200);
+    assert.deepEqual(JSON.parse(body), { method: "DELETE", body: "" });
+  });
+
+  test("fence: a client hanging up mid-upload is logged as gone, and the API gets nothing", async () => {
+    // Wrong implementation killed: a read not cancelled on request.signal, which waits forever on
+    // Next's copy of the body (it never ends after a hang-up), so the request never finishes.
+    api.requests.length = 0;
+    const req = httpRequest({ host: "127.0.0.1", port, path: "/api/x", method: "POST", headers: { "Content-Type": "application/json" } });
+    req.on("error", () => {});
+    req.write('{"a":');
+    await new Promise((r) => setTimeout(r, 300));
+    req.destroy();
+    const lines = await waitForLog(web.logs.stdout, "client closed");
+    assert.equal(lines.length, 1);
+    assert.equal(api.requests.length, 0);
+  });
+
+  test("guard: the cap equals the API's MAX_BODY, and Next's own limit stays a socket read above it", () => {
+    // Next ends a body it cuts at proxyClientMaxBodySize, minus up to one socket read (64 KiB), as
+    // if complete: that cut must always land above the cap, where the proxy refuses it.
+    const product = (expr) => expr.split("*").reduce((total, n) => total * Number(n.trim()), 1);
+    const main = readFileSync(new URL("../../backend/app/main.py", import.meta.url), "utf8");
+    const config = readFileSync(new URL("../next.config.ts", import.meta.url), "utf8");
+    assert.equal(product(/^MAX_BODY = ([\d *]+)$/m.exec(main)[1]), MAX_BODY_BYTES);
+    assert.ok(product(/proxyClientMaxBodySize: ([\d *]+)/.exec(config)[1]) >= MAX_BODY_BYTES + 64 * 1024);
   });
 });
 
