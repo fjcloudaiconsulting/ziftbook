@@ -513,7 +513,7 @@ export function BookingPage({ page, locale, turnstileSiteKey, initialService = n
     const held = await send(
       bookingHoldsCreate({
         path: { tenant_id: page.id, service_id: f.service.id },
-        body: holdBody({ startsAt: f.slot!, memberId, email: f.email, locale: loc, turnstileToken: token, replaces }),
+        body: { ...holdBody({ startsAt: f.slot!, memberId, email: f.email, locale: loc, turnstileToken: token, replaces }), locale: loc },
       }),
     );
     working.current = false;
