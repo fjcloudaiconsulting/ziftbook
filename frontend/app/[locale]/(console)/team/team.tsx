@@ -845,7 +845,10 @@ export function Person({ memberId, tab }: { memberId: string; tab: "hours" | "ti
               own: memberId === session.member_id,
               onChanged: (role) => {
                 setMembers((current) => current && current.map((m) => (m.member_id === memberId ? { ...m, role } : m)));
-                setChangedFor(roleName);
+                // Emptied first, then set on the next frame: a second change for the same person
+                // must still change the live region's text, or it is not announced.
+                setChangedFor(null);
+                requestAnimationFrame(() => setChangedFor(roleName));
               },
             }}
           />
