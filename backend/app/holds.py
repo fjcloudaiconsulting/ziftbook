@@ -217,21 +217,20 @@ def create(  # sync def: turnstile.verify blocks, as bookings.create
             day = new.starts_at.astimezone(ZoneInfo(settings.timezone)).date()
             worker_id = bookings.by_load(eligible, booked_rows, day, settings.timezone)[0]
             try:
-                with db.begin_nested():
-                    hold = db.execute(
-                        INSERT_HOLD,
-                        {
-                            "service_id": service_id,
-                            "worker_id": worker_id,
-                            "anyone": new.member_id is None,
-                            "starts_at": new.starts_at,
-                            "duration_minutes": row.duration_minutes,
-                            "email": new.email,
-                            "locale": new.locale,
-                            "secret_hash": hashlib.sha256(secret.encode()).digest(),
-                            "hold_ttl": bookings.HOLD_TTL,
-                        },
-                    ).one()
+                hold = db.execute(
+                    INSERT_HOLD,
+                    {
+                        "service_id": service_id,
+                        "worker_id": worker_id,
+                        "anyone": new.member_id is None,
+                        "starts_at": new.starts_at,
+                        "duration_minutes": row.duration_minutes,
+                        "email": new.email,
+                        "locale": new.locale,
+                        "secret_hash": hashlib.sha256(secret.encode()).digest(),
+                        "hold_ttl": bookings.HOLD_TTL,
+                    },
+                ).one()
             except IntegrityError as error:
                 # The worker was REMOVED meanwhile (bookings.place's B5): this time went away.
                 if isinstance(error.orig, ForeignKeyViolation):
