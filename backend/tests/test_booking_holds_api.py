@@ -713,20 +713,25 @@ def test_the_console_names_a_hold_and_override_wins_over_it(
     assert (late.status_code, late.json()) == (409, {"code": "slot_unavailable"})
 
 
-# F16b: FENCE. Wrong impl: HELD without its expiry, naming a hold that ended as if it still held.
+# F16b: FENCE. Wrong impl: HELD without its expiry, so a time taken for another reason reads as
+# "held" because of a hold that has already ended.
 def test_the_console_never_names_a_hold_that_has_ended(
     people: People, app: FastAPI, ready: str, owner: TestClient, migrate_engine: Engine
 ) -> None:
     email, _ = held(app, people.a, ready)
     age(migrate_engine, people.a, email, "expires_at", "1 second")
+    worker = member_id(people.a, people.both)
+    seed_booking(people.a, ready, worker, at("09:00"), at("09:30"))
     body = {
         "new_client": {"name": "Walk-in"},
         "service_id": ready,
-        "member_id": str(member_id(people.a, people.both)),
+        "member_id": str(worker),
         "starts_at": at("09:00"),
     }
 
-    assert owner.post("/api/bookings", json=body).status_code == 201
+    refused = owner.post("/api/bookings", json=body)
+
+    assert (refused.status_code, refused.json()) == (409, {"code": "slot_unavailable"})
 
 
 # G5: GUARD. A hold is a booking-page action: an unpublished page or an archived service is 404.
