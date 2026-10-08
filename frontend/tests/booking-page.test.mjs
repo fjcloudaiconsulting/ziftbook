@@ -12,11 +12,15 @@ import {
   cancellationState,
   dayPart,
   emailSuggestion,
+  afterPickTaken,
   firstFreeDayFrom,
+  freeNamed,
   groupByDayPart,
+  keepPick,
   nextWeekDisabled,
   ownPolicyText,
   scanWindow,
+  slotWho,
   slugLooksValid,
 } from "../lib/booking-page.ts";
 
@@ -248,5 +252,42 @@ describe("B8 firstFreeDayFrom: the already-fetched window is checked before any 
 
   test("no free day anywhere in the window is null", () => {
     assert.equal(firstFreeDayFrom([], "2026-10-01", ZONE), null);
+  });
+});
+
+describe("ZIF-100 who is free at a time", () => {
+  // The availability response's workers are sorted by id; the page's roster is sorted by name.
+  const workers = [{ id: "a1" }, { id: "b2" }, { id: "c3" }];
+  const roster = [
+    { id: "c3", display_name: "Ana" },
+    { id: "a1", display_name: null },
+    { id: "b2", display_name: "Bea" },
+  ];
+
+  test("fence: slot_workers indices resolve through the response's own workers, not the roster", () => {
+    // Wrong implementation killed: indexing the page roster (name order), which names the wrong person.
+    assert.deepEqual(slotWho([[0, 2], [1]], workers), [["a1", "c3"], ["b2"]]);
+  });
+
+  test("fence: free named people come in roster order, without unnamed people or unknown ids", () => {
+    // Wrong implementation killed: keeping availability (id) order, offering an unnamed person, or
+    // offering an id the page roster does not know.
+    assert.deepEqual(freeNamed(roster, ["a1", "b2", "c3", "zz"]).map((w) => w.id), ["c3", "b2"]);
+    assert.deepEqual(freeNamed(roster, ["a1"]), []);
+  });
+
+  test("fence: a pick is kept only when that person is free at the new time", () => {
+    // Wrong implementation killed: always keeping (books someone who is busy then) or always clearing.
+    assert.equal(keepPick("b2", ["b2", "c3"]), "b2");
+    assert.equal(keepPick("b2", ["c3"]), null);
+    assert.equal(keepPick(null, ["c3"]), null);
+  });
+
+  test("fence: after the picked person is taken, stay only when someone else is still free then", () => {
+    // Wrong implementation killed: staying whenever the slot is still offered (even if only the
+    // taken person is listed), or keeping the taken person in the list.
+    assert.deepEqual(afterPickTaken(["a1", "b2", "c3"], "b2"), ["a1", "c3"]);
+    assert.equal(afterPickTaken(["b2"], "b2"), null);
+    assert.equal(afterPickTaken(null, "b2"), null);
   });
 });

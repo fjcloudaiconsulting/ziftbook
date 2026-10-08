@@ -196,3 +196,28 @@ export function firstFreeDayFrom(slots: string[], from: string, timeZone: string
     .sort();
   return days[0] ?? null;
 }
+
+/** The ids free at each slot (ZIF-100): `slot_workers[i]` holds indices into THAT response's own
+ * `workers` (sorted by id), never into the page's roster (sorted by name). */
+export function slotWho(slotWorkers: number[][], workers: { id: string }[]): string[][] {
+  return slotWorkers.map((ix) => ix.map((i) => workers[i].id));
+}
+
+/** The people a client may choose at a time: roster order, named only (unnamed people are never
+ * offered, decision 6 option A), ids the roster doesn't know dropped. */
+export function freeNamed<W extends { id: string; display_name: string | null }>(roster: W[], free: string[]): W[] {
+  return roster.filter((w) => w.display_name && free.includes(w.id));
+}
+
+/** A step 3 pick survives picking another time only if that person is free at the new one. */
+export function keepPick(pick: string | null, free: string[]): string | null {
+  return pick && free.includes(pick) ? pick : null;
+}
+
+/** After a 409 on a picked person: who is still free at that time without them (stay in step 3),
+ * or null (the time is gone, or nobody else is free then: today's "choose another time" path).
+ * `free` is null when the refreshed window no longer offers the time at all. */
+export function afterPickTaken(free: string[] | null, pick: string): string[] | null {
+  const rest = (free ?? []).filter((id) => id !== pick);
+  return rest.length > 0 ? rest : null;
+}
