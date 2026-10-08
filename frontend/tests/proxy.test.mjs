@@ -400,14 +400,14 @@ describe("the visitor's address", () => {
   test("set: the booking page's loader forwards each visitor's own address", async () => {
     const path = "/api/public/booking-pages/corner-salon";
     for (const visitor of ["203.0.113.21", "203.0.113.22"]) {
-      await fetch("http://127.0.0.1:3206/en/corner-salon", { headers: { ...forged, "CF-Connecting-IP": visitor } });
+      await (await fetch("http://127.0.0.1:3206/en/corner-salon", { headers: { ...forged, "CF-Connecting-IP": visitor } })).text();
       assert.equal(api.seen.get(path)?.["x-forwarded-for"], visitor);
     }
   });
 
   test("unset: the booking page's loader forwards no address", async () => {
     const path = "/api/public/booking-pages/quiet-salon";
-    await fetch("http://127.0.0.1:3205/en/quiet-salon", { headers: { ...forged, "CF-Connecting-IP": "203.0.113.23" } });
+    await (await fetch("http://127.0.0.1:3205/en/quiet-salon", { headers: { ...forged, "CF-Connecting-IP": "203.0.113.23" } })).text();
     assert.ok(api.seen.has(path), "the loader called the API");
     assert.equal(api.seen.get(path)["x-forwarded-for"], undefined);
   });
