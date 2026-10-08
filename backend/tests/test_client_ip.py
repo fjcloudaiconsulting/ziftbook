@@ -152,13 +152,14 @@ def test_the_sign_up_bucket_ignores_a_forged_header_from_an_untrusted_peer(
     assert statuses == [202] * 10 + [429]
 
 
-# ZIF-140: deployments trust a network (k3s: the pod network), so "network" is the case production runs.
+# ZIF-140: deployments trust a network (k3s: the pod network), so "network" is what production runs.
 @pytest.mark.parametrize("trust", ["address", "network"])
 def test_the_sign_up_bucket_is_keyed_on_the_trusted_forwarded_address(
     monkeypatch: pytest.MonkeyPatch, bound: None, trust: str
 ) -> None:
     peer = fresh_address()
-    app = app_trusting(monkeypatch, peer if trust == "address" else peer.removesuffix("::1") + "::/64")
+    trusted = peer if trust == "address" else peer.removesuffix("::1") + "::/64"
+    app = app_trusting(monkeypatch, trusted)
     client = new_client(app, peer)
     address_a, address_b = fresh_address(), fresh_address()
 
