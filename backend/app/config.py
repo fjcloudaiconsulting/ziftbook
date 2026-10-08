@@ -1,5 +1,6 @@
 from typing import Literal
 
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -59,7 +60,7 @@ class MailSettings(Settings):
 
     # Resolved at runtime from a secret, never committed. Unset: the worker still starts and logs
     # `mail: "off"`, and every email job fails (and retries) until it is set.
-    mailgun_api_key: str = ""
+    mailgun_api_key: SecretStr = SecretStr("")
     # The sending domain; also the From address's domain.
     mailgun_domain: str = ""
     mailgun_region: Literal["eu", "us"] = "eu"

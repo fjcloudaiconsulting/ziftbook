@@ -65,7 +65,7 @@ MAILGUN_API = {"eu": "api.eu.mailgun.net", "us": "api.mailgun.net"}
 
 def transport(settings: MailSettings) -> Literal["mailgun", "mailpit", "off"]:
     """The way mail goes. The key wins, so a stray Mailpit URL cannot divert a deployment's mail."""
-    if settings.mailgun_api_key:
+    if settings.mailgun_api_key.get_secret_value():
         return "mailgun" if settings.mailgun_domain else "off"
     return "mailpit" if settings.mailpit_url else "off"
 
@@ -76,21 +76,20 @@ def deliver(
     subject: str,
     body: str,
     *,
-    track_clicks: bool = True,
     ics: bytes | None = None,
 ) -> None:
     """Hand one message for one address to Mailgun (Mailpit in development), and log it by template.
 
-    track_clicks=False keeps Mailgun from rewriting the links (each carries a secret) through its
-    tracking domain. With ics, the message becomes multipart/mixed with the plain-text body first,
-    and a calendar part (text/calendar; method=PUBLISH).
+    Click tracking is always off: Mailgun would otherwise rewrite every link through its tracking
+    domain, and most carry a secret. With ics, the message becomes multipart/mixed with the
+    plain-text body first, and a calendar part (text/calendar; method=PUBLISH).
 
     The job's id comes from its bound context. Never the address, subject or body, and on failure
     the error's class only, plus the HTTP status when there was one (a 401 is a bad key, a 400 a bad
     message); the error still propagates, so the job is retried.
     """
     try:
-        _send(to, subject, body, track_clicks, ics)
+        _send(to, subject, body, ics)
     except Exception as error:
         status = getattr(getattr(error, "response", None), "status_code", None)
         logger.warning(
@@ -102,11 +101,14 @@ def deliver(
     logger.info("email sent", extra={"template": template})
 
 
-def _send(to: str, subject: str, body: str, track_clicks: bool, ics: bytes | None) -> None:
+def _send(to: str, subject: str, body: str, ics: bytes | None) -> None:
+    settings = MailSettings()
+    way = transport(settings)
+    if way == "off":
+        raise MailNotConfigured("set ZIF_MAILGUN_API_KEY and ZIF_MAILGUN_DOMAIN")
     # Exactly the one stored address: Mailgun splits `to` on commas, so a row that reads as a list
     # ("a@x, victim@y", written around the API) must not reach a second inbox.
     to = passwords.normalise_email(to)
-    settings = MailSettings()
     sender = f"no-reply@{settings.mailgun_domain or 'localhost'}"
     message = EmailMessage()
     message["From"] = f"ziftbook <{sender}>"
@@ -121,32 +123,29 @@ def _send(to: str, subject: str, body: str, track_clicks: bool, ics: bytes | Non
             filename="booking.ics",
             params={"method": "PUBLISH", "charset": "utf-8"},
         )
-    way = transport(settings)
-    if way == "off":
-        raise MailNotConfigured("set ZIF_MAILGUN_API_KEY and ZIF_MAILGUN_DOMAIN")
     mailpit = urlsplit(settings.mailpit_url or "")
     host, port = (
         (MAILGUN_API[settings.mailgun_region], 443)
         if way == "mailgun"
-        else (mailpit.hostname or "", mailpit.port or 80)
+        else (mailpit.hostname or "", mailpit.port or (443 if mailpit.scheme == "https" else 80))
     )
     # Never the recipient, subject, body or template values: only the server this deployment talks
     # to.
     with tracing.span("email send", SpanKind.CLIENT, {"server.address": host, "server.port": port}):
         if way == "mailgun":
             # No SDK retries: its default retries a timed-out POST (a second copy) and would outlast
-            # the job's 30s timeout. The job runner retries instead. 10s per phase, as TBD.
-            # ponytail: no aggregate cap like TBD's 20s; the job's 30s timeout stands in, and a send
-            # still running past it can duplicate (at least once, as documented on send()).
+            # the job's 30s timeout. The job runner retries instead. 10s per phase.
+            # ponytail: no cap on the whole send; the job's 30s timeout stands in, and a send still
+            # running past it can duplicate (at least once, as documented on send()).
             with Client(
-                auth=("api", settings.mailgun_api_key),
+                auth=("api", settings.mailgun_api_key.get_secret_value()),
                 api_url=f"https://{host}",
                 timeout=(10.0, 10.0),
                 retry_policy=RetryPolicy(max_retries=0),
             ) as client:
                 # The MIME as built above, so the calendar part goes out exactly as typed.
                 response = client.mimemessage.create(
-                    data={"to": to} | ({} if track_clicks else {"o:tracking-clicks": "no"}),
+                    data={"to": to, "o:tracking-clicks": "no"},
                     files={"message": ("message.mime", message.as_bytes())},
                     domain=settings.mailgun_domain,
                 )
@@ -207,8 +206,7 @@ def send_token(job: Job) -> None:
             template = row.purpose
             link = f"{app_url}/{row.locale}/{PAGES[row.purpose]}#{token}"
             subject, body = render(template, row.locale, {"link": link})
-        # Mailgun would otherwise rewrite the link, token included, through its tracking domain.
-        deliver(template, row.email, subject, body, track_clicks=False)
+        deliver(template, row.email, subject, body)
 
 
 def send_invite(job: Job) -> None:
@@ -236,8 +234,7 @@ def send_invite(job: Job) -> None:
         language = business_settings.read(session).language
         link = f"{app_url}/{language}/invite#{job.tenant_id}.{token}"
         subject, body = render("invite", language, {"link": link, "business": invite.business})
-        # Mailgun would otherwise rewrite the link, secret included, through its tracking domain.
-        deliver("invite", invite.email, subject, body, track_clicks=False)
+        deliver("invite", invite.email, subject, body)
 
 
 def _outbox(
@@ -557,7 +554,5 @@ def send_booking(job: Job) -> None:
             datetime.now(UTC),
             sequence=row.reschedule_count,
         )
-    # Mailgun would otherwise rewrite the link, token included, through its tracking domain.
-    track_clicks = not (template in LINKED and user_id is None)
-    deliver(template, recipient_email, subject, body, track_clicks=track_clicks, ics=booking_ics)
+    deliver(template, recipient_email, subject, body, ics=booking_ics)
     _mark_sent(job)

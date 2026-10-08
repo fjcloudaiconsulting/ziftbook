@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 import requests
+from mailgun.handlers.error_handler import ApiError
 from sqlalchemy import Engine, text
 
 from app import mail
@@ -202,21 +203,21 @@ def test_a_failed_email_logs_the_error_class_and_the_job_retries(
 
 # ZIF-151 fence: the request the SDK sends. Kills the messages route (the calendar part would be
 # retyped by Mailgun), the US host for an EU account, a dropped domain, the SDK's 60s default
-# timeout, and the click-tracking option going missing (each link carries a secret).
+# timeout, the click-tracking option going missing (links carry secrets), and a From off the
+# sending domain (fails DMARC alignment).
 def test_mail_goes_to_mailguns_eu_mime_route_with_the_message_as_built() -> None:
     address = f"{uuid.uuid4()}@example.com"
 
-    mail.deliver("hello", address, "Subject", "Body\n", track_clicks=False)
-    mail.deliver("hello", address, "Second", "Body\n")
+    mail.deliver("hello", address, "Subject", "Body\n")
 
-    second, first = sent_to(address)
-    assert first["URL"] == "https://api.eu.mailgun.net/v3/test.ziftbook.invalid/messages.mime"
-    assert first["Auth"] == ("api", "test-key")
-    assert first["Timeout"] == (10.0, 10.0)
-    assert first["Form"] == {"to": address, "o:tracking-clicks": "no"}
-    assert first["Headers"]["From"] == ["ziftbook <no-reply@test.ziftbook.invalid>"]
-    assert (first["Subject"], first["Text"]) == ("Subject", "Body\n")
-    assert second["Form"] == {"to": address}
+    (sent,) = sent_to(address)
+    assert sent["URL"] == "https://api.eu.mailgun.net/v3/test.ziftbook.invalid/messages.mime"
+    assert sent["Auth"] == ("api", "test-key")
+    assert sent["Timeout"] == (10.0, 10.0)
+    assert sent["Form"] == {"to": address, "o:tracking-clicks": "no"}
+    assert sent["Headers"]["From"] == ["ziftbook <no-reply@test.ziftbook.invalid>"]
+    assert sent["Headers"]["To"] == [address]
+    assert (sent["Subject"], sent["Text"]) == ("Subject", "Body\n")
 
 
 def test_a_us_account_uses_mailguns_us_host(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -252,12 +253,27 @@ def test_a_redirect_is_not_a_sent_email(mailgun_replies: dict[str, int | Excepti
         mail.deliver("hello", address, "Subject", "Body\n")
 
 
+# ZIF-151 fence: a dropped connection fails the send too (the SDK wraps it in its ApiError), so the
+# job keeps its email. Kills catching the SDK's errors as if sent.
+def test_a_dropped_connection_is_not_a_sent_email(
+    mailgun_replies: dict[str, int | Exception],
+) -> None:
+    address = f"{uuid.uuid4()}@example.com"
+    mailgun_replies[address] = requests.ConnectionError()
+
+    with pytest.raises(ApiError):
+        mail.deliver("hello", address, "Subject", "Body\n")
+
+    assert sent_to(address) == []
+
+
 # ZIF-151 fence: development sends through Mailpit's HTTP API (never SMTP), and only when there is
 # no Mailgun key. Kills a wrong payload, and Mailpit winning over a deployment's key.
 def test_development_mail_goes_to_mailpits_http_api(monkeypatch: pytest.MonkeyPatch) -> None:
     requests: list[urllib.request.Request] = []
 
     def capture(request: urllib.request.Request, timeout: float) -> io.BytesIO:
+        assert timeout == 10
         requests.append(request)
         return io.BytesIO(b'{"ID": "x"}')
 
@@ -276,6 +292,7 @@ def test_development_mail_goes_to_mailpits_http_api(monkeypatch: pytest.MonkeyPa
         "http://mailpit.test:8025/api/v1/send",
         "POST",
     )
+    assert request.get_header("Content-type") == "application/json"
     assert isinstance(request.data, bytes)
     assert json.loads(request.data) == {
         "From": {"Email": "no-reply@test.ziftbook.invalid", "Name": "ziftbook"},

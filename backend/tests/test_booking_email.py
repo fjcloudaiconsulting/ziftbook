@@ -939,8 +939,6 @@ def test_merchant_templates_never_carry_the_manage_link_fragment(
     assert len(texts) == 3
     for body in texts:
         assert "/booking#" not in body
-    # No secret in a console link, so Mailgun's click tracking stays on (ZIF-151).
-    assert [m["Form"] for m in _search(owner_email)] == [{"to": owner_email}] * 3
 
 
 # 3. fence. After the confirmation and then the reminder, BOTH emailed links still exchange.
