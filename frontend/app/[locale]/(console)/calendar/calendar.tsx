@@ -15,7 +15,7 @@ import {
   type TimeOffRangeOut,
 } from "@/api-client";
 import { Link, useRouter } from "@/i18n/navigation";
-import { closedDay, closedDetail, daySlices, dayWindow, hourRange, hrefFor, type CalendarView, lanes, nowTop, type Panel, parseView, type Slice, spanTimes, visibleDays, weekdayOf } from "@/lib/calendar";
+import { closedDay, closedDetail, daySlices, dayWindow, hourRange, hrefFor, type CalendarView, lanes, monToSun, nowTop, type Panel, parseView, type Slice, spanTimes, switchDate, type View, visibleDays, weekdayOf } from "@/lib/calendar";
 import { dateLocale } from "@/lib/console";
 import { type Locale, type NameMap, serviceName } from "@/lib/services";
 import { messageShown, slotAt } from "@/lib/new-booking";
@@ -38,6 +38,16 @@ type Cell = { item: Item; slice: Slice; lane: number; of: number };
 type Column = { key: string; day: string; label: string; ariaLabel: string; small?: string; cells: Cell[] };
 /** The empty-spot popover: where it sits on screen, and the start and person the click meant. */
 type Popover = { at: string; time: string; member: string; name: string; column: string; left: number; top: number };
+
+// The last view, per browser (ZIF-143). Blocked storage reads nothing, and the calendar opens in Day as before.
+const VIEW_KEY = "ziftbook.calendar.view";
+function rememberedView(): string | null {
+  try {
+    return localStorage.getItem(VIEW_KEY);
+  } catch {
+    return null;
+  }
+}
 
 const memberOf = (item: Item) => (item.kind === "booking" ? item.booking.worker_id : item.block.member_id);
 
@@ -91,7 +101,29 @@ export function Calendar() {
     liveTimer.current = setTimeout(() => setLive(text), 50);
   }
 
-  const view = parseView(params, todayISO, isOwner ? "owner" : "worker", session.member_id, members?.map((m) => m.member_id) ?? null);
+  const view = parseView(
+    params,
+    todayISO,
+    isOwner ? "owner" : "worker",
+    session.member_id,
+    members?.map((m) => m.member_id) ?? null,
+    params.get("view") === null ? rememberedView() : null,
+  );
+  useEffect(() => {
+    try {
+      localStorage.setItem(VIEW_KEY, view.view);
+    } catch {
+      // Nothing to remember in: the URL still carries the view.
+    }
+  }, [view.view]);
+  // A URL without a view takes the one it opened in, so Back and another tab's switch never change it.
+  useEffect(() => {
+    if (params.get("view") !== null) return;
+    const query = new URLSearchParams(params.toString());
+    query.set("view", view.view);
+    router.replace(`/calendar?${query}`, { scroll: false });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params]);
   // Skipping the heading's focus is for the booking just made or moved, once: any other booking (or none)
   // in between clears it, so a reopened one focuses its heading again.
   const [seenBooking, setSeenBooking] = useState(view.booking);
@@ -191,7 +223,9 @@ export function Calendar() {
     (link ?? document.getElementById("detail-title") ?? document.querySelector<HTMLElement>("h1"))?.focus();
   }, [data, failed]);
   const href = (patch: Parameters<typeof hrefFor>[1]) => hrefFor(view, patch);
-  const weekView = view.view === "week";
+  // Both seven-day views draw the same grid; only the stepper and the switch tell them apart.
+  const weekView = view.view !== "day";
+  const sevenDays = view.view === "days";
 
   const longDay = new Intl.DateTimeFormat(dateLocale(locale), { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" });
   const monthDay = new Intl.DateTimeFormat(dateLocale(locale), { day: "numeric", month: "long", timeZone: "UTC" });
@@ -487,7 +521,9 @@ export function Calendar() {
     justDone.current = { id: done.id, before: loaded };
     setSettled(done.id);
     openedInApp.current = false;
-    const date = localDateISO(new Date(done.startsAt), tz);
+    const day = localDateISO(new Date(done.startsAt), tz);
+    // A day already in the 7 days keeps the window where it was; any other view goes to the booking's day.
+    const date = sevenDays && days.includes(day) ? view.date : day;
     setMessage({ text: done.message, booking: done.id, date, view: view.view });
     announce(done.message);
     setReload((n) => n + 1);
@@ -516,23 +552,22 @@ export function Calendar() {
           {dateLine}
         </p>
         <span className={css.stepper}>
-          <Link href={href({ date: addDaysISO(view.date, -step) })} scroll={false} aria-label={weekView ? t("prevWeek") : t("prevDay")}>
+          <Link href={href({ date: addDaysISO(view.date, -step) })} scroll={false} aria-label={sevenDays ? t("prevDays") : weekView ? t("prevWeek") : t("prevDay")}>
             <span aria-hidden="true">{"‹"}</span>
           </Link>
           <Link href={href({ date: todayISO })} scroll={false}>
-            {weekView ? t("thisWeek") : t("today")}
+            {view.view === "week" ? t("thisWeek") : t("today")}
           </Link>
-          <Link href={href({ date: addDaysISO(view.date, step) })} scroll={false} aria-label={weekView ? t("nextWeek") : t("nextDay")}>
+          <Link href={href({ date: addDaysISO(view.date, step) })} scroll={false} aria-label={sevenDays ? t("nextDays") : weekView ? t("nextWeek") : t("nextDay")}>
             <span aria-hidden="true">{"›"}</span>
           </Link>
         </span>
         <nav className={css.seg} aria-label={t("view")}>
-          <Link href={href({ view: "day" })} scroll={false} aria-current={weekView ? undefined : "true"}>
-            {t("day")}
-          </Link>
-          <Link href={href({ view: "week" })} scroll={false} aria-current={weekView ? "true" : undefined}>
-            {t("week")}
-          </Link>
+          {(["day", "days", "week"] as View[]).map((to) => (
+            <Link key={to} href={href({ view: to, date: switchDate(view.view, to, view.date, todayISO) })} scroll={false} aria-current={view.view === to ? "true" : undefined}>
+              {to === "day" ? t("day") : to === "days" ? t("days") : monToSun(weekdayShort)}
+            </Link>
+          ))}
         </nav>
         {isOwner && members && (
           <div className={`${uiStyles.input} ${css.member} ${css.deskOnly}`}>
