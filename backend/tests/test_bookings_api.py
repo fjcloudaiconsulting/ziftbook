@@ -10,10 +10,10 @@ seeded on every weekday so the test never cares which weekday it lands on.
 
 import json
 import threading
-import time
 import urllib.parse
 import urllib.request
 import uuid
+from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
 from datetime import time as time_cls
 from typing import Any
@@ -1459,35 +1459,45 @@ def test_an_operational_error_is_a_503_not_a_500(
     assert (response.status_code, response.json()) == (503, {"code": "busy"})
 
 
-def book_while_the_tenant_lock_is_held(tenant_id: uuid.UUID, service_id: str, hold: float) -> Any:
-    """Post a booking through the API's own engine (the lifespan's, not the suite's) while a second
-    session holds the tenant lock for `hold` seconds."""
-    holding = threading.Event()
+def while_the_tenant_lock_is_held(
+    client: TestClient, tenant_id: uuid.UUID, hold: float, send: Callable[[TestClient], Response]
+) -> Response:
+    """Send a request through the API's own engine (the lifespan's, not the suite's) while a second
+    session holds the tenant lock, for at most `hold` seconds and never past the response."""
+    holding, release = threading.Event(), threading.Event()
 
     def holder() -> None:
         with tenant_context(tenant_id) as session:
             session.execute(bookings.LOCK, {"key": bookings.LOCK_KEY})
             holding.set()
-            time.sleep(hold)
+            release.wait(timeout=hold)
 
     suite_bind = SessionLocal.kw["bind"]
     try:
-        with new_client(create_app()) as client:  # entering runs the lifespan: its engine
+        with client:  # entering runs the lifespan, which binds the production engine
             thread = threading.Thread(target=holder)
             thread.start()
             assert holding.wait(timeout=10)
-            response = post_booking(client, tenant_id, service_id, starts_at=at("09:00"))
+            response = send(client)
+            release.set()
             thread.join(timeout=10)
     finally:
         SessionLocal.configure(bind=suite_bind)  # the lifespan unbinds on exit; teardown needs it
     return response
 
 
+def merchant_book(client: TestClient, service_id: str) -> Response:
+    body = {"service_id": service_id, "new_client": {"name": "Walk-in"}, "starts_at": at("09:00")}
+    return client.post("/api/bookings", json=body)
+
+
 # 52b: FENCE (ZIF-114). A stalled holder of the tenant lock costs a booker a 503 after the API's
 # lock_timeout, not a wait that pins a pooled connection until every tenant's requests hang on
 # checkout. Kills: the API engine without a lock_timeout (the booking waits out the hold, 201).
 def test_a_stalled_tenant_lock_holder_is_a_503_not_a_hang(people: People, ready: str) -> None:
-    response = book_while_the_tenant_lock_is_held(people.a, ready, hold=8)
+    response = while_the_tenant_lock_is_held(
+        new_client(create_app()), people.a, 30, lambda c: post_booking(c, people.a, ready)
+    )
 
     assert (response.status_code, response.json()) == (503, {"code": "busy"})
 
@@ -1495,9 +1505,36 @@ def test_a_stalled_tenant_lock_holder_is_a_503_not_a_hang(people: People, ready:
 # 52c: FENCE (ZIF-114). A brief, legitimate wait (a queue of bookers) still books. Kills: a timeout
 # too short for a queue, such as `-c lock_timeout=5`, which Postgres reads as 5 milliseconds.
 def test_a_booker_queued_behind_a_brief_holder_still_books(people: People, ready: str) -> None:
-    response = book_while_the_tenant_lock_is_held(people.a, ready, hold=1)
+    response = while_the_tenant_lock_is_held(
+        new_client(create_app()), people.a, 1, lambda c: post_booking(c, people.a, ready)
+    )
 
     assert response.status_code == 201
+
+
+# 52d: FENCE (ZIF-114). A route with no OperationalError catch of its own (the merchant booking)
+# answers a lock timeout as 503 busy too. Kills: no app-level 55P03 handler (500 internal).
+def test_a_lock_timeout_on_a_merchant_route_is_a_503(people: People, ready: str) -> None:
+    owner = signed_in(create_app(), people.a, people.both)
+
+    response = while_the_tenant_lock_is_held(owner, people.a, 30, lambda c: merchant_book(c, ready))
+
+    assert (response.status_code, response.json()) == (503, {"code": "busy"})
+
+
+# 52e: GUARD (ZIF-114). Any other OperationalError on that route is still a 500, logged: a lost
+# database is not "busy". Kills: the app-level handler answering every OperationalError with 503.
+def test_another_operational_error_on_a_merchant_route_is_still_a_500(
+    owner: TestClient, ready: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def boom(*args: object) -> Any:
+        raise OperationalError("boom", {}, Exception("boom"))
+
+    monkeypatch.setattr(availability, "candidates", boom)
+
+    response = merchant_book(owner, ready)
+
+    assert (response.status_code, response.json()) == (500, {"code": "internal"})
 
 
 def thresholds_of(tenant_id: uuid.UUID, booking_id: str) -> tuple[int, int]:
