@@ -7,7 +7,7 @@
 .stepper a + a { border-left: 1px solid var(--line); }
 .stepper a:hover { background: var(--surface); }
 .seg { display: inline-flex; padding: 3px; background: var(--surface); border-radius: 999px; }
-.seg a { min-height: 38px; padding: 0 1rem; display: grid; place-items: center; border-radius: 999px; font-weight: 600; font-size: 0.9375rem; color: var(--muted); text-decoration: none; }
+.seg a { min-height: 38px; padding: 0 1rem; display: grid; place-items: center; border-radius: 999px; font-weight: 600; font-size: 0.9375rem; color: var(--muted); text-decoration: none; white-space: nowrap; }
 .seg a[aria-current="true"] { background: var(--bg); color: var(--ink); box-shadow: 0 1px 3px oklch(0.23 0.025 28 / 0.15); }
 /* Phone: the date sits on its own line under the stepper. Desktop: first in the toolbar, as drawn. */
 .dateLabel { margin: 0; flex-basis: 100%; order: 3; color: var(--muted); font-size: 0.9375rem; }
