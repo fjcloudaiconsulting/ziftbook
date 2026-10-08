@@ -47,7 +47,7 @@ def test_send_invite_mints_and_mails_a_link(
     mail.send_invite(Job(uuid4(), "email.invite", people.a, {"invite_id": str(invite_id)}))
 
     (sent,) = inbox(email)
-    body, headers = message(sent["ID"])
+    body, options = message(sent["ID"])
     link = link_in(body)
     page, fragment = link.split("#")
     assert page == f"{APP_URL}/en/invite" and "?" not in link
@@ -59,7 +59,7 @@ def test_send_invite_mints_and_mails_a_link(
     )
     assert token_hash == hashlib.sha256(secret.encode()).digest()
     assert timedelta(days=6, hours=23, minutes=59) < lifetime <= timedelta(days=7)
-    assert headers["X-Mailgun-Track-Clicks"] == ["no"]
+    assert options["o:tracking-clicks"] == "no"
     assert sent["Subject"] == "You're invited to join a business on ziftbook"
 
 
@@ -187,7 +187,7 @@ def test_a_failed_send_leaves_no_hash(
     invite_id = pending(people.a, email)
 
     def broken(*args: object, **kwargs: object) -> None:
-        raise OSError("SMTP unavailable")
+        raise OSError("Mailgun unavailable")
 
     monkeypatch.setattr(mail, "deliver", broken)
     with pytest.raises(OSError):

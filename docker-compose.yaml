@@ -115,9 +115,8 @@ services:
         condition: service_healthy
     environment:
       ZIF_DATABASE_URL: postgresql+psycopg://ziftbook_app:ziftbook_app@postgres:5432/ziftbook
-      ZIF_SMTP_HOST: mailpit
-      ZIF_SMTP_PORT: "1025"
-      ZIF_SMTP_STARTTLS: "false"
+      # Mailpit's HTTP send API, never SMTP (ZIF-151); a Mailgun key would take precedence.
+      ZIF_MAILPIT_URL: http://mailpit:8025
       ZIF_LOG_LEVEL: DEBUG
       ZIF_LOG_FORMAT: text
       OTEL_EXPORTER_OTLP_ENDPOINT: ${ZIF_OTEL_EXPORTER_OTLP_ENDPOINT:-}
@@ -174,11 +173,10 @@ services:
         - action: rebuild
           path: backend/openapi.json
 
-  # Catches every email sent locally: http://localhost:8025
+  # Catches every email sent locally, through its HTTP API: http://localhost:8025
   mailpit:
     image: axllent/mailpit:v1.31.4@sha256:b68349e3a014b90c5610bfb26b2ae36f3892d7b8cf25ee140c6c71c98d2fcf48
     ports:
-      - "127.0.0.1:1025:1025"
       - "127.0.0.1:8025:8025"
     # The image's own check plus a network: a retry after a failed port bind can leave Mailpit
     # running with no network at all, which readyz alone reports as healthy (ZIF-91).

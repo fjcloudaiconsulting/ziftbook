@@ -1,8 +1,7 @@
 import asyncio
+import base64
+import io
 import json
-import os
-import socket
-import urllib.parse
 import urllib.request
 import uuid
 from collections.abc import Callable, Iterator
@@ -10,6 +9,7 @@ from datetime import timedelta
 from typing import Any
 
 import pytest
+import requests
 from sqlalchemy import Engine, text
 
 from app import mail
@@ -17,9 +17,7 @@ from app.db import SessionLocal, tenant_context
 from app.jobs import JobKind, enqueue, run_once
 from app.mail import LOCALES, TEMPLATES, render
 from app.worker import KINDS
-from tests.conftest import People, save_setting
-
-MAILPIT = f"http://{os.environ['ZIF_SMTP_HOST']}:8025"
+from tests.conftest import MAILGUN_CALLS, People, save_setting, sent_to
 
 
 @pytest.fixture
@@ -55,9 +53,7 @@ def send_hello(tenant_id: uuid.UUID, recipient_id: uuid.UUID) -> uuid.UUID:
 
 
 def subjects_sent_to(user_id: uuid.UUID) -> list[str]:
-    query = urllib.parse.urlencode({"query": f"to:{user_id}@example.com"})
-    with urllib.request.urlopen(f"{MAILPIT}/api/v1/search?{query}", timeout=5) as response:
-        return [message["Subject"] for message in json.load(response)["messages"]]
+    return [message["Subject"] for message in sent_to(f"{user_id}@example.com")]
 
 
 def test_every_template_exists_in_every_locale() -> None:
@@ -152,20 +148,19 @@ def test_a_sent_email_logs_its_template_and_job(
     ]
 
 
-# ZIF-95: a failed send logs its template and the error's class, and still fails the job, so it
-# is retried. Its own kind: a broken SMTP port must not fail anyone else's queued email.
+# ZIF-95: a failed send logs its template, the error's class and Mailgun's status, and still fails
+# the job, so it is retried. Its own kind: a refused send must not fail anyone else's queued email.
+# ZIF-151 fence: one POST only (the SDK's default retry policy would make four), and the 503 raises
+# (without raise_for_status the job would complete with nothing sent).
 def test_a_failed_email_logs_the_error_class_and_the_job_retries(
     people: People,
     clean_outbox: None,
     app_engine: Engine,
     log_lines: Lines,
-    monkeypatch: pytest.MonkeyPatch,
+    mailgun_replies: dict[str, int | Exception],
 ) -> None:
-    with socket.socket() as probe:  # a port nothing listens on once closed
-        probe.bind(("127.0.0.1", 0))
-        port = probe.getsockname()[1]
-    monkeypatch.setenv("ZIF_SMTP_HOST", "127.0.0.1")
-    monkeypatch.setenv("ZIF_SMTP_PORT", str(port))
+    mailgun_replies[f"{people.only_a}@example.com"] = 503
+    calls = len(MAILGUN_CALLS)
     kind = f"test.mail.{uuid.uuid4().hex}"
     with SessionLocal.begin() as session:
         enqueue(
@@ -190,14 +185,108 @@ def test_a_failed_email_logs_the_error_class_and_the_job_retries(
                 "job_kind": kind,
                 "tenant_id": str(people.a),
                 "template": "hello",
-                "error": "ConnectionRefusedError",
+                "error": "HTTPError",
+                "status": 503,
             }
         ]
+        assert [c["Status"] for c in MAILGUN_CALLS[calls:]] == [503]
         assert completed is None
         assert [line["error"] for line in log_lines() if line["msg"] == "job failed"] == [
-            "ConnectionRefusedError"
+            "HTTPError"
         ]
         assert subjects_sent_to(people.only_a) == []
     finally:
         with app_engine.begin() as conn:
             conn.execute(text("DELETE FROM jobs WHERE kind = :kind"), {"kind": kind})
+
+
+# ZIF-151 fence: the request the SDK sends. Kills the messages route (the calendar part would be
+# retyped by Mailgun), the US host for an EU account, a dropped domain, the SDK's 60s default
+# timeout, and the click-tracking option going missing (each link carries a secret).
+def test_mail_goes_to_mailguns_eu_mime_route_with_the_message_as_built() -> None:
+    address = f"{uuid.uuid4()}@example.com"
+
+    mail.deliver("hello", address, "Subject", "Body\n", track_clicks=False)
+    mail.deliver("hello", address, "Second", "Body\n")
+
+    second, first = sent_to(address)
+    assert first["URL"] == "https://api.eu.mailgun.net/v3/test.ziftbook.invalid/messages.mime"
+    assert first["Auth"] == ("api", "test-key")
+    assert first["Timeout"] == (10.0, 10.0)
+    assert first["Form"] == {"to": address, "o:tracking-clicks": "no"}
+    assert first["Headers"]["From"] == ["ziftbook <no-reply@test.ziftbook.invalid>"]
+    assert (first["Subject"], first["Text"]) == ("Subject", "Body\n")
+    assert second["Form"] == {"to": address}
+
+
+def test_a_us_account_uses_mailguns_us_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ZIF_MAILGUN_REGION", "us")
+    address = f"{uuid.uuid4()}@example.com"
+
+    mail.deliver("hello", address, "Subject", "Body\n")
+
+    (sent,) = sent_to(address)
+    assert sent["URL"] == "https://api.mailgun.net/v3/test.ziftbook.invalid/messages.mime"
+
+
+# ZIF-151 fence: no key (staging before the owner adds it) fails the send, so the job keeps its
+# email for the retry. Kills logging and returning as if sent, which would mark the outbox 'sent'.
+@pytest.mark.parametrize("unset", ["ZIF_MAILGUN_API_KEY", "ZIF_MAILGUN_DOMAIN"])
+def test_with_no_mail_transport_the_send_fails(monkeypatch: pytest.MonkeyPatch, unset: str) -> None:
+    monkeypatch.delenv(unset)
+    address = f"{uuid.uuid4()}@example.com"
+
+    with pytest.raises(mail.MailNotConfigured):
+        mail.deliver("hello", address, "Subject", "Body\n")
+
+    assert [c for c in MAILGUN_CALLS if c["To"] == address] == []
+
+
+# ZIF-151 fence: only a 200 means queued. Kills raise_for_status alone, which lets a redirect (the
+# SDK never follows one) through as sent.
+def test_a_redirect_is_not_a_sent_email(mailgun_replies: dict[str, int | Exception]) -> None:
+    address = f"{uuid.uuid4()}@example.com"
+    mailgun_replies[address] = 302
+
+    with pytest.raises(requests.HTTPError):
+        mail.deliver("hello", address, "Subject", "Body\n")
+
+
+# ZIF-151 fence: development sends through Mailpit's HTTP API (never SMTP), and only when there is
+# no Mailgun key. Kills a wrong payload, and Mailpit winning over a deployment's key.
+def test_development_mail_goes_to_mailpits_http_api(monkeypatch: pytest.MonkeyPatch) -> None:
+    requests: list[urllib.request.Request] = []
+
+    def capture(request: urllib.request.Request, timeout: float) -> io.BytesIO:
+        requests.append(request)
+        return io.BytesIO(b'{"ID": "x"}')
+
+    monkeypatch.setattr(urllib.request, "urlopen", capture)
+    monkeypatch.setenv("ZIF_MAILPIT_URL", "http://mailpit.test:8025/")
+    address = f"{uuid.uuid4()}@example.com"
+
+    mail.deliver("hello", address, "Subject", "Body\n")  # the key is still set: Mailgun
+    assert requests == [] and len(sent_to(address)) == 1
+
+    monkeypatch.delenv("ZIF_MAILGUN_API_KEY")
+    mail.deliver("hello", address, "Subject", "Body\n", ics=b"BEGIN:VCALENDAR\r\n")
+
+    (request,) = requests
+    assert (request.full_url, request.get_method()) == (
+        "http://mailpit.test:8025/api/v1/send",
+        "POST",
+    )
+    assert isinstance(request.data, bytes)
+    assert json.loads(request.data) == {
+        "From": {"Email": "no-reply@test.ziftbook.invalid", "Name": "ziftbook"},
+        "To": [{"Email": address}],
+        "Subject": "Subject",
+        "Text": "Body\n",
+        "Attachments": [
+            {
+                "Content": base64.b64encode(b"BEGIN:VCALENDAR\r\n").decode(),
+                "Filename": "booking.ics",
+                "ContentType": "text/calendar; method=PUBLISH; charset=utf-8",
+            }
+        ],
+    }

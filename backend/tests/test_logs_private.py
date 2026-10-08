@@ -7,7 +7,6 @@ name, business or service name, IP address, user agent, request body, query stri
 import asyncio
 import hashlib
 import json
-import smtplib
 from collections.abc import Callable, Iterator
 from datetime import datetime, timedelta
 from typing import Any
@@ -66,7 +65,7 @@ def test_no_personal_data_ever_reaches_a_log(
     app: FastAPI,
     migrate_engine: Engine,
     log_lines: Callable[[], list[dict[str, Any]]],
-    monkeypatch: pytest.MonkeyPatch,
+    mailgun_replies: dict[str, int | Exception],
     spans: Callable[[], list[ReadableSpan]],
     metric_reader: InMemoryMetricReader,
 ) -> None:
@@ -420,7 +419,7 @@ def test_no_personal_data_ever_reaches_a_log(
     forced = client_for(app).post("/api/test/duplicate-email", json={})
     assert forced.status_code == 500
 
-    # 9: forced SMTP failure on a fresh sign-up link, run directly.
+    # 9: Mailgun refuses a fresh sign-up link, its reply quoting the address; run directly.
     fail_email = fresh_email()
     secret(fail_email)
     assert (
@@ -428,13 +427,7 @@ def test_no_personal_data_ever_reaches_a_log(
         == 202
     )
 
-    def refuse(
-        self: smtplib.SMTP, msg: Any, *, to_addrs: list[str] | None = None, **kwargs: Any
-    ) -> None:
-        to = (to_addrs or [msg["To"]])[0]
-        raise smtplib.SMTPRecipientsRefused({to: (550, f"<{to}> unknown".encode())})
-
-    monkeypatch.setattr(smtplib.SMTP, "send_message", refuse)
+    mailgun_replies[fail_email] = 400
     try:
         asyncio.run(run_once(KINDS))
     finally:
@@ -465,11 +458,11 @@ def test_no_personal_data_ever_reaches_a_log(
     assert len(unhandled) == 1
     failed = [line for line in lines if line["msg"] == "job failed"]
     assert len(failed) == 1
-    assert failed[0]["error"] == "SMTPRecipientsRefused"
+    assert failed[0]["error"] == "HTTPError"
     sent = {line["template"] for line in lines if line["msg"] == "email sent"}
     assert {"sign_up", "sign_up_registered", "password_reset", "invite"} <= sent
     assert {"booking_received", "booking_request", "booking_confirmed", "booking_declined"} <= sent
     email_failed = [line for line in lines if line["msg"] == "email failed"]
     assert [(line["template"], line["error"]) for line in email_failed] == [
-        ("sign_up", "SMTPRecipientsRefused")
+        ("sign_up", "HTTPError")
     ]

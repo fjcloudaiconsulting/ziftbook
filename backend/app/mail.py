@@ -1,24 +1,29 @@
-"""Email over SMTP: Mailpit in development, Mailgun's EU endpoint when deployed. One code path."""
+"""Email through Mailgun's HTTP API when deployed, Mailpit's HTTP API in development. Never SMTP."""
 
+import base64
 import hashlib
+import json
 import logging
 import re
 import secrets
-import smtplib
-import ssl
+import urllib.request
 from datetime import UTC, datetime
 from email.message import EmailMessage
 from pathlib import Path
 from string import Template
-from typing import get_args
+from typing import Any, Literal, get_args
+from urllib.parse import urlsplit
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
+import requests
+from mailgun.client import Client
+from mailgun.config import RetryPolicy
 from opentelemetry.trace import SpanKind
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app import business_settings, tracing
+from app import business_settings, passwords, tracing
 from app.business_settings import Locale
 from app.config import MailSettings
 from app.db import SessionLocal, tenant_context
@@ -50,45 +55,63 @@ def render(template: str, locale: str, values: dict[str, str] | None = None) -> 
     return lines[0], Template(body).substitute(values) if values is not None else body
 
 
+class MailNotConfigured(RuntimeError):
+    """Neither Mailgun nor Mailpit is configured: the email stays queued for the retry."""
+
+
+# Mailgun's regional API hosts (the EU one keeps the data in the EU).
+MAILGUN_API = {"eu": "api.eu.mailgun.net", "us": "api.mailgun.net"}
+
+
+def transport(settings: MailSettings) -> Literal["mailgun", "mailpit", "off"]:
+    """The way mail goes. The key wins, so a stray Mailpit URL cannot divert a deployment's mail."""
+    if settings.mailgun_api_key:
+        return "mailgun" if settings.mailgun_domain else "off"
+    return "mailpit" if settings.mailpit_url else "off"
+
+
 def deliver(
     template: str,
     to: str,
     subject: str,
     body: str,
-    headers: dict[str, str] | None = None,
+    *,
+    track_clicks: bool = True,
     ics: bytes | None = None,
 ) -> None:
-    """Hand one message for one address to the SMTP server, and log it by template.
+    """Hand one message for one address to Mailgun (Mailpit in development), and log it by template.
 
-    With ics, the message becomes multipart/mixed with the plain-text body first, as a calendar
-    part (text/calendar; method=PUBLISH).
+    track_clicks=False keeps Mailgun from rewriting the links (each carries a secret) through its
+    tracking domain. With ics, the message becomes multipart/mixed with the plain-text body first,
+    and a calendar part (text/calendar; method=PUBLISH).
 
     The job's id comes from its bound context. Never the address, subject or body, and on failure
-    the error's class only (SMTPRecipientsRefused quotes the address); the error still propagates,
-    so the job is retried.
+    the error's class only, plus the HTTP status when there was one (a 401 is a bad key, a 400 a bad
+    message); the error still propagates, so the job is retried.
     """
     try:
-        _send(to, subject, body, headers, ics)
+        _send(to, subject, body, track_clicks, ics)
     except Exception as error:
-        logger.warning("email failed", extra={"template": template, "error": type(error).__name__})
+        status = getattr(getattr(error, "response", None), "status_code", None)
+        logger.warning(
+            "email failed",
+            extra={"template": template, "error": type(error).__name__}
+            | ({"status": status} if status is not None else {}),
+        )
         raise
     logger.info("email sent", extra={"template": template})
 
 
-def _send(
-    to: str,
-    subject: str,
-    body: str,
-    headers: dict[str, str] | None,
-    ics: bytes | None,
-) -> None:
+def _send(to: str, subject: str, body: str, track_clicks: bool, ics: bytes | None) -> None:
+    # Exactly the one stored address: Mailgun splits `to` on commas, so a row that reads as a list
+    # ("a@x, victim@y", written around the API) must not reach a second inbox.
+    to = passwords.normalise_email(to)
     settings = MailSettings()
+    sender = f"no-reply@{settings.mailgun_domain or 'localhost'}"
     message = EmailMessage()
-    message["From"] = settings.smtp_from
+    message["From"] = f"ziftbook <{sender}>"
     message["To"] = to
     message["Subject"] = subject
-    for name, value in (headers or {}).items():
-        message[name] = value
     message.set_content(body)
     if ics is not None:
         message.add_attachment(
@@ -98,27 +121,62 @@ def _send(
             filename="booking.ics",
             params={"method": "PUBLISH", "charset": "utf-8"},
         )
+    way = transport(settings)
+    if way == "off":
+        raise MailNotConfigured("set ZIF_MAILGUN_API_KEY and ZIF_MAILGUN_DOMAIN")
+    mailpit = urlsplit(settings.mailpit_url or "")
+    host, port = (
+        (MAILGUN_API[settings.mailgun_region], 443)
+        if way == "mailgun"
+        else (mailpit.hostname or "", mailpit.port or 80)
+    )
     # Never the recipient, subject, body or template values: only the server this deployment talks
     # to.
-    with tracing.span(
-        "smtp send",
-        SpanKind.CLIENT,
-        {"server.address": settings.smtp_host, "server.port": settings.smtp_port},
-    ):
-        smtp = smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=10)
-        try:
-            if settings.smtp_starttls:
-                smtp.starttls(context=ssl.create_default_context())
-            if settings.smtp_username:
-                smtp.login(settings.smtp_username, settings.smtp_password)
-            # to_addrs: exactly the one stored address, even if its text reads as a list ("a, b").
-            smtp.send_message(message, to_addrs=[to])
-        finally:
-            # Once the server accepted the message, a failed goodbye must not undo it (and resend).
-            try:
-                smtp.quit()
-            except smtplib.SMTPException, OSError:
-                smtp.close()
+    with tracing.span("email send", SpanKind.CLIENT, {"server.address": host, "server.port": port}):
+        if way == "mailgun":
+            # No SDK retries: its default retries a timed-out POST (a second copy) and would outlast
+            # the job's 30s timeout. The job runner retries instead. 10s per phase, as TBD.
+            # ponytail: no aggregate cap like TBD's 20s; the job's 30s timeout stands in, and a send
+            # still running past it can duplicate (at least once, as documented on send()).
+            with Client(
+                auth=("api", settings.mailgun_api_key),
+                api_url=f"https://{host}",
+                timeout=(10.0, 10.0),
+                retry_policy=RetryPolicy(max_retries=0),
+            ) as client:
+                # The MIME as built above, so the calendar part goes out exactly as typed.
+                response = client.mimemessage.create(
+                    data={"to": to} | ({} if track_clicks else {"o:tracking-clicks": "no"}),
+                    files={"message": ("message.mime", message.as_bytes())},
+                    domain=settings.mailgun_domain,
+                )
+            # Only a 200 is "queued": a redirect (never followed) must not mark the email sent.
+            if response.status_code != 200:
+                status = response.status_code
+                raise requests.HTTPError(f"Mailgun answered {status}", response=response)
+        else:
+            # Mailpit's HTTP send API: development only, never SMTP.
+            payload: dict[str, Any] = {
+                "From": {"Email": sender, "Name": "ziftbook"},
+                "To": [{"Email": to}],
+                "Subject": subject,
+                "Text": body,
+            }
+            if ics is not None:
+                payload["Attachments"] = [
+                    {
+                        "Content": base64.b64encode(ics).decode(),
+                        "Filename": "booking.ics",
+                        "ContentType": "text/calendar; method=PUBLISH; charset=utf-8",
+                    }
+                ]
+            request = urllib.request.Request(
+                f"{mailpit.geturl().rstrip('/')}/api/v1/send",
+                data=json.dumps(payload).encode(),
+                headers={"Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(request, timeout=10):
+                pass
 
 
 # The page each purpose's link opens; the token rides in the fragment, which no server ever sees.
@@ -150,7 +208,7 @@ def send_token(job: Job) -> None:
             link = f"{app_url}/{row.locale}/{PAGES[row.purpose]}#{token}"
             subject, body = render(template, row.locale, {"link": link})
         # Mailgun would otherwise rewrite the link, token included, through its tracking domain.
-        deliver(template, row.email, subject, body, {"X-Mailgun-Track-Clicks": "no"})
+        deliver(template, row.email, subject, body, track_clicks=False)
 
 
 def send_invite(job: Job) -> None:
@@ -179,7 +237,7 @@ def send_invite(job: Job) -> None:
         link = f"{app_url}/{language}/invite#{job.tenant_id}.{token}"
         subject, body = render("invite", language, {"link": link, "business": invite.business})
         # Mailgun would otherwise rewrite the link, secret included, through its tracking domain.
-        deliver("invite", invite.email, subject, body, {"X-Mailgun-Track-Clicks": "no"})
+        deliver("invite", invite.email, subject, body, track_clicks=False)
 
 
 def _outbox(
@@ -217,8 +275,8 @@ def send(job: Job) -> None:
     """The email.send job. Payload: recipient_id (a user), template.
 
     The address and language come from users, inside the job's tenant: someone who isn't a member of
-    that tenant (any more) gets nothing. Delivery is at least once: a crash between the SMTP handoff
-    and recording it sends again.
+    that tenant (any more) gets nothing. Delivery is at least once: a crash between the Mailgun
+    handoff and recording it sends again.
     """
     if job.tenant_id is None:
         raise ValueError("email.send needs a tenant")
@@ -231,7 +289,7 @@ def send(job: Job) -> None:
         ).first()
         if recipient is None:
             # Not (or no longer) a member of this tenant. If a crash left a 'pending' row after the
-            # SMTP handoff, it stays pending: only the audit trail is off, nobody is emailed.
+            # Mailgun handoff, it stays pending: only the audit trail is off, nobody is emailed.
             return
         # The person's own language, else their business's.
         locale = recipient.locale or business_settings.read(session).language
@@ -500,6 +558,6 @@ def send_booking(job: Job) -> None:
             sequence=row.reschedule_count,
         )
     # Mailgun would otherwise rewrite the link, token included, through its tracking domain.
-    headers = {"X-Mailgun-Track-Clicks": "no"} if template in LINKED and user_id is None else None
-    deliver(template, recipient_email, subject, body, headers, ics=booking_ics)
+    track_clicks = not (template in LINKED and user_id is None)
+    deliver(template, recipient_email, subject, body, track_clicks=track_clicks, ics=booking_ics)
     _mark_sent(job)
