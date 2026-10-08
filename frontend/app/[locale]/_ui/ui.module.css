@@ -239,6 +239,9 @@ a.textButton { display: inline-flex; align-items: center; }
  * without this the icon's own brand-red .mark colour was muted by this rule's higher specificity. */
 .empty span:not(.mark) { color: var(--muted); font-size: 0.9375rem; }
 .empty .button { width: auto; margin-top: 0.3rem; }
+/* Two empty-state actions side by side (working hours: set the week, or use the opening hours). */
+.emptyActs { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.3rem; }
+.emptyActs .button { margin-top: 0; }
 
 /* Screen head: heading plus a header-level action (services' "Add a service"). */
 .screenHead { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 0.75rem 1rem; }

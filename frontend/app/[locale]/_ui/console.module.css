@@ -244,6 +244,16 @@
 
 /* Week editor (opening hours; working hours later): the day list and its sticky savebar. */
 .days { display: grid; gap: 0.5rem; }
+/* "Use the shop's opening hours": the inline ask before a week with hours is replaced. */
+.confirm { display: flex; flex-direction: column; gap: 0.6rem; padding: 0.9rem; border: 1px solid var(--line); border-radius: 0.85rem; background: var(--nav); }
+.confirm h3 { margin: 0; font: 600 0.9375rem/1.3 var(--font-body), system-ui, sans-serif; }
+.confirm h3:focus { outline: none; }
+.split { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; }
+.split > * { width: 100%; }
+@media (min-width: 56rem) {
+  .split { display: flex; }
+  .split > * { width: auto; }
+}
 .day { border: 1px solid var(--line); border-radius: 0.85rem; padding: 0.75rem 0.9rem; background: var(--bg); }
 .dayHead { display: flex; flex-wrap: wrap; align-items: center; gap: 0.25rem 0.75rem; min-height: 2.5rem; }
 .dayHead .dayName { margin-inline-end: auto; }

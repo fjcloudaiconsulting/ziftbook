@@ -1,7 +1,7 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-import { type FormEvent, type ReactNode, useId, useRef, useState } from "react";
+import { type FormEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
 
 import { dateLocale } from "@/lib/console";
 import {
@@ -12,6 +12,7 @@ import {
   daysSummary,
   envelopeShiftsFor,
   loadTimeProblems,
+  openingWeek,
   overlapWindow,
   problemList,
   saveResult,
@@ -85,6 +86,9 @@ type WeekEditorProps = {
    * now stale. The caller re-reads it; `envelope` is a plain prop, so a fresh value here re-renders
    * with no need to remount. */
   onStaleEnvelope?: () => void;
+  /** Working hours' empty state "Use the shop's opening hours": the editor opens already filled
+   * from `envelope`, as unsaved changes (Undo puts the saved, empty week back). */
+  startFilled?: boolean;
 };
 
 export function WeekEditor({
@@ -100,13 +104,14 @@ export function WeekEditor({
   footNote,
   allowEmptyWeek,
   onStaleEnvelope,
+  startFilled,
 }: WeekEditorProps) {
   const form = useTranslations("Form");
   const errors = useTranslations("Console.errors");
   const formId = useId();
   const dl = dateLocale(locale);
   const [committed, setCommitted] = useState(initial);
-  const [days, setDays] = useState(initial);
+  const [days, setDays] = useState(() => (startFilled && envelope ? openingWeek(envelope) : initial));
   // Checked on load too (spec §5 item 6), not only on submit: a shift left outside the
   // envelope after the owner narrowed it is flagged in the field, before the save the server would
   // refuse. `byDay` only, never `overall` (`loadTimeProblems`): an untouched, freshly-loaded empty
@@ -123,6 +128,36 @@ export function WeekEditor({
   // event all read the same stale `busy` before any re-render), so the actual guard is this ref,
   // set the instant a submit starts and cleared when it's done - not the `busy` derived below.
   const submitting = useRef(false);
+  // "Use the shop's opening hours": the inline ask, and whether the week on screen is that fill
+  // (the screen reader's "Filled in ..." line, cleared by the next edit, Undo or a save).
+  const [asking, setAsking] = useState(false);
+  const [filled, setFilled] = useState(false);
+  // An element id to focus after the next render, as in the booking detail: the fill button
+  // unmounts once the week equals the opening hours, so focus moves to the first filled time.
+  const focusTarget = useRef<string | null>(null);
+
+  useEffect(() => {
+    const target = focusTarget.current;
+    if (!target) return;
+    focusTarget.current = null;
+    document.getElementById(target)?.focus();
+  });
+
+  const opening = envelope && openingWeek(envelope);
+  const fillChanges = opening ? changedDays(days, opening) : [];
+  const firstFilledId = (week: Day[]) => `shift-${week.find((d) => d.shifts.length > 0)?.weekday}-0-start`;
+
+  useEffect(() => {
+    // The empty state's fill, focused and announced like a fill from the button. The status line
+    // mounts with this editor, and text already there when it appears is never read out, so it
+    // only gets its text a tick later.
+    if (!startFilled || !opening) return;
+    document.getElementById(firstFilledId(opening))?.focus();
+    const timer = setTimeout(() => setFilled(true));
+    return () => clearTimeout(timer);
+    // Mount only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const changed = changedDays(committed, days);
   const isDirty = changed.length > 0;
@@ -131,6 +166,8 @@ export function WeekEditor({
 
   function edit(next: Day[]) {
     setDays(next);
+    setAsking(false);
+    setFilled(false);
     if (phase !== "saving") {
       setPhase("idle");
       setProblems({ byDay: {} });
@@ -163,8 +200,28 @@ export function WeekEditor({
     edit(copyToEveryDayIn(days, envelope, weekday));
   }
 
+  function fill() {
+    if (!opening) return;
+    edit(opening);
+    setFilled(true);
+    focusTarget.current = firstFilledId(opening);
+  }
+
+  function askOrFill() {
+    if (!days.some((d) => d.shifts.length > 0)) return fill();
+    setAsking(true);
+    focusTarget.current = "fill-ask-title";
+  }
+
+  function keepHours() {
+    setAsking(false);
+    focusTarget.current = "fill-use";
+  }
+
   function undo() {
     setDays(committed);
+    setAsking(false);
+    setFilled(false);
     setPhase("idle");
     setProblems({ byDay: {} });
     setServerProblem(null);
@@ -201,6 +258,7 @@ export function WeekEditor({
         const next = daysFromShifts(result.data as ApiShift[]);
         setCommitted(next);
         setDays(next);
+        setAsking(false);
         setProblems({ byDay: {} });
         setServerProblem(null);
         setWriteFailure(null);
@@ -282,6 +340,35 @@ export function WeekEditor({
       )}
 
       {envelope !== null && envelopeNote && <Banner tone="note">{envelopeNote}</Banner>}
+
+      {fillChanges.length > 0 &&
+        (asking ? (
+          <div className={styles.confirm} role="group" aria-labelledby="fill-ask-title">
+            <h3 id="fill-ask-title" tabIndex={-1}>
+              {t("fillAsk")}
+            </h3>
+            <p className={uiStyles.hint}>
+              {t("fillAskHint", { days: daysSummary(fillChanges, dl, (from, to) => tWeek("dayRange", { from, to })) })}
+            </p>
+            <div className={styles.split}>
+              <button className={`${uiStyles.button} ${uiStyles.primary} ${uiStyles.small}`} type="button" disabled={busy} onClick={fill}>
+                {t("fillReplace")}
+              </button>
+              <button className={`${uiStyles.button} ${uiStyles.secondary} ${uiStyles.small}`} type="button" disabled={busy} onClick={keepHours}>
+                {t("fillKeep")}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div>
+            <button id="fill-use" className={`${uiStyles.button} ${uiStyles.secondary} ${uiStyles.small}`} type="button" disabled={busy} onClick={askOrFill}>
+              {t("useOpeningHours")}
+            </button>
+          </div>
+        ))}
+      <p className={uiStyles.srOnly} role="status" aria-live="polite">
+        {filled && isDirty ? t("filled") : ""}
+      </p>
 
       {/* Keeps the days and their footnote flush: the parent .stack would put its gap between them. */}
       <div>
