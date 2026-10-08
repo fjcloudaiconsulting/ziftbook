@@ -6,7 +6,6 @@ import json
 import logging
 import os
 import re
-import smtplib
 import subprocess
 import sys
 import threading
@@ -16,6 +15,7 @@ from datetime import timedelta
 from typing import Any
 
 import pytest
+import requests
 from fastapi.responses import JSONResponse
 from opentelemetry import metrics, trace
 from opentelemetry.proto.collector.metrics.v1.metrics_service_pb2 import (
@@ -77,7 +77,7 @@ def test_t1_request_job_email_is_one_trace(people: People, spans: Spans) -> None
     assert sql_children, "the request's own SQL statements should be children of the SERVER span"
 
     # By name and trace, not name alone: the shared `jobs` table can carry an unrelated leftover
-    # job from another test, which would otherwise also match "job email.invite"/"smtp send".
+    # job from another test, which would otherwise also match "job email.invite"/"email send".
     consumer_candidates = [
         s
         for s in finished
@@ -90,17 +90,17 @@ def test_t1_request_job_email_is_one_trace(people: People, spans: Spans) -> None
     assert consumer.parent is not None
     assert consumer.parent.span_id == server.context.span_id
 
-    smtp_candidates = [
+    send_candidates = [
         s
         for s in finished
-        if s.name == "smtp send"
+        if s.name == "email send"
         and s.parent is not None
         and s.parent.span_id == consumer.context.span_id
     ]
-    assert len(smtp_candidates) == 1
-    smtp = smtp_candidates[0]
-    assert smtp.parent is not None
-    assert smtp.parent.trace_id == server.context.trace_id
+    assert len(send_candidates) == 1
+    send = send_candidates[0]
+    assert send.parent is not None
+    assert send.parent.trace_id == server.context.trace_id
 
 
 # T2: no span anywhere carries the email, the password, or a literal "?" (a raw query string).
@@ -117,7 +117,7 @@ def test_t2_no_span_carries_pii(people: People, spans: Spans) -> None:
     password = "correct horse battery staple 9"
     signup_body = {"email": signup_email, "locale": "en", "password": password}
     new_client(app).post("/api/sign-up", json=signup_body)
-    run_jobs()  # also sweeps its own job/smtp spans below, and never leaves the row behind
+    run_jobs()  # also sweeps its own job/email send spans below, and never leaves the row behind
 
     dupe_email = fresh_email()
     add_client(owner, {"name": "First", "email": dupe_email})
@@ -191,35 +191,27 @@ def test_t4_unique_violation_sql_span(people: People, spans: Spans) -> None:
     assert email not in query_text
 
 
-# T5: an SMTP failure never records the recipient; the SDK's own exception recording stays off.
-def test_t5_smtp_failure_span(monkeypatch: pytest.MonkeyPatch, spans: Spans) -> None:
+# T5: a refused send never records the recipient (Mailgun's reply quotes it); the SDK's own
+# exception recording stays off.
+def test_t5_send_failure_span(mailgun_replies: dict[str, int | Exception], spans: Spans) -> None:
     address = fresh_email()
+    mailgun_replies[address] = 400
 
-    class FakeSMTP:
-        def __init__(self, host: str, port: int, timeout: float = 10) -> None:
-            pass
-
-        def send_message(self, msg: Any, to_addrs: list[str]) -> None:
-            raise smtplib.SMTPRecipientsRefused({to_addrs[0]: (550, b"no such user")})
-
-        def quit(self) -> None:
-            pass
-
-    monkeypatch.setattr(smtplib, "SMTP", FakeSMTP)
-
-    with pytest.raises(smtplib.SMTPRecipientsRefused):
+    with pytest.raises(requests.HTTPError):
         mail.deliver("hello", address, "subject", "body")
 
-    smtp_span = _one(spans(), name="smtp send")
-    assert smtp_span.events == ()
-    smtp_attrs = _attrs(smtp_span)
-    assert smtp_attrs.get("error.type") == "SMTPRecipientsRefused"
+    send_span = _one(spans(), name="email send")
+    assert send_span.events == ()
+    send_attrs = _attrs(send_span)
+    assert send_attrs.get("error.type") == "HTTPError"
     # error.type is set on failure; server.address/server.port are the only attributes the span
     # ever starts with.
-    assert set(smtp_attrs) - {"error.type"} == {"server.address", "server.port"}
-    for value in smtp_attrs.values():
-        assert address not in str(value)
-    assert smtp_span.status.description is None or address not in smtp_span.status.description
+    assert send_attrs == {
+        "server.address": "api.eu.mailgun.net",
+        "server.port": 443,
+        "error.type": "HTTPError",
+    }
+    assert send_span.status.description is None or address not in send_span.status.description
 
 
 # T6: enqueue only ever adds traceparent, inside a span, never touching the caller's dict.

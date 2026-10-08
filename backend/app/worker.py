@@ -77,14 +77,15 @@ async def serve(settings: WorkerSettings) -> None:
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, stop.set)
     mail_settings = MailSettings()
-    # Never the SMTP credentials or the healthcheck URL.
+    # Never the Mailgun key or the healthcheck URL. "off": email jobs fail until the key is set.
     logger.info(
         "worker started",
         extra={
             **logs.settings_fields(),
             "kinds": sorted(KINDS),
-            "smtp_host": mail_settings.smtp_host,
-            "smtp_port": mail_settings.smtp_port,
+            "mail": mail.transport(mail_settings),
+            "mailgun_domain": mail_settings.mailgun_domain,
+            "mailgun_region": mail_settings.mailgun_region,
         },
     )
     await work(KINDS, settings.healthcheck_url, stop)

@@ -1,6 +1,5 @@
 import asyncio
 import os
-import smtplib
 import threading
 import uuid
 from collections import Counter
@@ -8,6 +7,7 @@ from collections.abc import Iterator
 from datetime import timedelta
 
 import pytest
+import requests
 from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.pool import NullPool
 
@@ -98,17 +98,17 @@ def test_a_handler_that_times_out_is_retried() -> None:
     assert (attempts, completed, len(calls)) == (2, True, 2)
 
 
-def test_a_failed_smtp_job_stores_the_class_never_the_address() -> None:
+def test_a_failed_mail_job_stores_the_class_never_the_address() -> None:
     address = f"{uuid.uuid4()}@example.com"
 
     def refuse(job: Job) -> None:
-        raise smtplib.SMTPRecipientsRefused({address: (550, b"unknown")})
+        raise requests.HTTPError(f"400 rejected {address}")
 
-    add("test.smtp_fail", "test.smtp_fail:1")
-    run_until_idle({"test.smtp_fail": JobKind(refuse, 5, timedelta(hours=1))})
+    add("test.mail_fail", "test.mail_fail:1")
+    run_until_idle({"test.mail_fail": JobKind(refuse, 5, timedelta(hours=1))})
 
-    _, last_error, _, _ = job("test.smtp_fail:1")
-    assert last_error == "SMTPRecipientsRefused"
+    _, last_error, _, _ = job("test.mail_fail:1")
+    assert last_error == "HTTPError"
     assert address not in (last_error or "")
 
 

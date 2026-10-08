@@ -13,10 +13,13 @@ import urllib.request
 import uuid
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
+from email import message_from_bytes
+from email.policy import default as email_policy
 from pathlib import Path
 from typing import Any, cast
 
 import pytest
+import requests
 from alembic import command
 from alembic.config import Config
 from fastapi import FastAPI
@@ -32,7 +35,7 @@ from sqlalchemy import Connection, Engine, create_engine, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.pool import NullPool
 
-from app import auth, logs, passwords, tracing
+from app import auth, logs, mail, passwords, tracing
 from app.db import SessionLocal, tenant_context
 from app.jobs import run_once
 from app.worker import KINDS
@@ -157,11 +160,78 @@ if XDIST_WORKER:
         _conn.execute(text(f"CREATE DATABASE {_database} OWNER ziftbook_migrate"))
     _admin.dispose()
     command.upgrade(Config(toml_file=str(API_DIR / "pyproject.toml")), "head")
-# Mailpit from docker-compose.yaml.
-os.environ.setdefault("ZIF_SMTP_HOST", "localhost")
-os.environ.setdefault("ZIF_SMTP_PORT", "1025")
-os.environ.setdefault("ZIF_SMTP_STARTTLS", "false")
-MAILPIT = f"http://{os.environ['ZIF_SMTP_HOST']}:8025"
+# Mail (ZIF-151): the suite runs the production path, mail.py through the Mailgun SDK down to its
+# own HTTP call, and records each message here instead of sending it. Forced, not setdefault: a
+# developer's real key must never send from the suite. Subprocesses inherit the fake key but not
+# the patch: one that sends mail would get a 401 from the real Mailgun, so keep them mail-free.
+os.environ["ZIF_MAILGUN_API_KEY"] = "test-key"
+os.environ["ZIF_MAILGUN_DOMAIN"] = "test.ziftbook.invalid"
+os.environ.pop("ZIF_MAILGUN_REGION", None)
+os.environ.pop("ZIF_MAILPIT_URL", None)
+# Every Mailgun call this process made, oldest first; each one parsed from the MIME it carried.
+MAILGUN_CALLS: list[dict[str, Any]] = []
+# What the next Mailgun call for an address gets instead of a 200: a status code, or an exception
+# to raise. By address, so a job running alongside in the same batch cannot take it.
+MAILGUN_REPLIES: dict[str, int | Exception] = {}
+_session_post = requests.Session.post
+
+
+def _mailgun_post(self: requests.Session, url: str, *args: Any, **kwargs: Any) -> requests.Response:
+    """requests.Session.post, which the SDK sends with, with Mailgun's hosts answered here.
+
+    Patched for the whole process at import, not per test: a test's monkeypatch.undo() would
+    otherwise drop it and send for real. An error reply quotes the address, as Mailgun's do, so a
+    leak of the response into logs or spans shows."""
+    if urllib.parse.urlsplit(url).hostname not in mail.MAILGUN_API.values():
+        return _session_post(self, url, *args, **kwargs)
+    reply = MAILGUN_REPLIES.pop(kwargs["data"]["to"], 200)
+    raw: bytes = kwargs["files"]["message"][1]
+    parsed = message_from_bytes(raw, policy=email_policy)
+    text_part = parsed.get_body(("plain",))
+    MAILGUN_CALLS.append(
+        {
+            "ID": str(uuid.uuid4()),
+            "Status": reply if isinstance(reply, int) else type(reply).__name__,
+            "URL": url,
+            "Auth": tuple(kwargs["auth"]),
+            "Timeout": kwargs["timeout"],
+            "Form": dict(kwargs["data"]),
+            "To": kwargs["data"]["to"],
+            "Subject": parsed["Subject"],
+            "Text": text_part.get_content() if text_part is not None else "",
+            "Raw": raw.decode(),
+            "Headers": {name: parsed.get_all(name) for name in parsed},
+        }
+    )
+    if isinstance(reply, Exception):
+        raise reply
+    response = requests.Response()
+    response.status_code = reply
+    response.url = url
+    response._content = json.dumps(
+        {"id": "<test>", "message": "Queued. Thank you."}
+        if reply < 400
+        else {"message": f"rejected {kwargs['data']['to']}"}
+    ).encode()
+    return response
+
+
+requests.Session.post = _mailgun_post  # type: ignore[method-assign,assignment]
+
+
+@pytest.fixture
+def mailgun_replies() -> Iterator[dict[str, int | Exception]]:
+    """Set what the next Mailgun call for an address answers. One left unused fails the test: the
+    send it was meant for never happened."""
+    yield MAILGUN_REPLIES
+    unused = dict(MAILGUN_REPLIES)
+    MAILGUN_REPLIES.clear()
+    assert not unused, unused
+
+
+def sent_to(email: str) -> list[dict[str, Any]]:
+    """Every message Mailgun accepted for exactly this address, newest first."""
+    return [c for c in reversed(MAILGUN_CALLS) if c["To"] == email and c["Status"] == 200]
 
 
 @pytest.fixture(autouse=True)
@@ -377,19 +447,15 @@ def jobs_for(migrate_engine: Engine, email: str) -> int:
 
 
 def mailed(email: str) -> dict[str, Any]:
-    """Runs the queued jobs, then returns the one message Mailpit got for email."""
+    """Runs the queued jobs, then returns the one message sent to email."""
 
     async def run_until_idle() -> None:
         while await run_once(KINDS):
             pass
 
     asyncio.run(run_until_idle())
-    query = urllib.parse.urlencode({"query": f"to:{email}"})
-    with urllib.request.urlopen(f"{MAILPIT}/api/v1/search?{query}", timeout=5) as found:
-        (sent,) = json.load(found)["messages"]
-    with urllib.request.urlopen(f"{MAILPIT}/api/v1/message/{sent['ID']}", timeout=5) as body:
-        message: dict[str, Any] = json.load(body)
-    return message
+    (sent,) = sent_to(email)
+    return sent
 
 
 def token_in(message: dict[str, Any]) -> str:

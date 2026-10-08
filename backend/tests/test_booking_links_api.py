@@ -9,7 +9,6 @@ import hashlib
 import logging
 import secrets
 import threading
-import urllib.request
 import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime, time, timedelta
@@ -43,7 +42,6 @@ from tests.conftest import (
 )
 from tests.test_availability_api import assign, new_service, weekdays
 from tests.test_booking_email import (
-    MAILPIT,
     _client_email,
     _search,
     clean_outbox,  # noqa: F401 -- autouse: these tests send mail, so they leave outbox rows
@@ -765,8 +763,7 @@ def test_reschedule_enqueues_confirmation_merchant_email_and_reminder(
     ]
     mail.send_booking(confirmation)
     (sent,) = _search(client_email)
-    with urllib.request.urlopen(f"{MAILPIT}/api/v1/message/{sent['ID']}/raw", timeout=5) as raw:
-        parsed = email_module.message_from_bytes(raw.read())
+    parsed = email_module.message_from_string(sent["Raw"])
     (calendar,) = [p for p in parsed.walk() if p.get_content_type() == "text/calendar"]
     ics = calendar.get_payload(decode=True)
     assert isinstance(ics, bytes)

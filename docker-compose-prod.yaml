@@ -123,10 +123,10 @@ services:
       OTEL_LOGS_EXPORTER: none # stdout only; also keeps a rolled-back image (OTLP logs) quiet
       OTEL_TRACES_SAMPLER: ${ZIF_OTEL_TRACES_SAMPLER:-parentbased_traceidratio}
       OTEL_TRACES_SAMPLER_ARG: ${ZIF_OTEL_TRACES_SAMPLER_ARG:-0.1}
-      # Mailgun EU SMTP by default (see MailSettings).
-      ZIF_SMTP_USERNAME: ${ZIF_SMTP_USERNAME:-}
-      ZIF_SMTP_PASSWORD: ${ZIF_SMTP_PASSWORD:-}
-      ZIF_SMTP_FROM: ${ZIF_SMTP_FROM:-}
+      # Mailgun's HTTP API (see MailSettings); no key: the worker runs and email jobs fail.
+      ZIF_MAILGUN_API_KEY: ${ZIF_MAILGUN_API_KEY:-}
+      ZIF_MAILGUN_DOMAIN: ${ZIF_MAILGUN_DOMAIN:-}
+      ZIF_MAILGUN_REGION: ${ZIF_MAILGUN_REGION:-}
       ZIF_APP_URL: ${ZIF_APP_URL:?set ZIF_APP_URL}
 
   # The only published port; /api is forwarded to the backend on the internal network.

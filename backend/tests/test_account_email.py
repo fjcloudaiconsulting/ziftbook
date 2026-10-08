@@ -1,10 +1,5 @@
 import asyncio
 import hashlib
-import json
-import os
-import smtplib
-import urllib.parse
-import urllib.request
 import uuid
 from collections.abc import Iterator
 from typing import Any
@@ -17,9 +12,8 @@ from app.db import SessionLocal
 from app.jobs import Job, enqueue, run_once
 from app.mail import LOCALES, render
 from app.worker import KINDS
-from tests.conftest import People
+from tests.conftest import MAILGUN_CALLS, People, sent_to
 
-MAILPIT = f"http://{os.environ['ZIF_SMTP_HOST']}:8025"
 APP_URL = "https://app.example.test"
 
 
@@ -42,20 +36,13 @@ def request(app_engine: Engine, purpose: str, email: str, locale: str) -> Job:
 
 
 def inbox(email: str) -> list[dict[str, Any]]:
-    query = urllib.parse.urlencode({"query": f"to:{email}"})
-    with urllib.request.urlopen(f"{MAILPIT}/api/v1/search?{query}", timeout=5) as response:
-        messages: list[dict[str, Any]] = json.load(response)["messages"]
-    return messages
+    return sent_to(email)
 
 
-def message(message_id: str) -> tuple[str, dict[str, list[str]]]:
-    with urllib.request.urlopen(f"{MAILPIT}/api/v1/message/{message_id}", timeout=5) as response:
-        body = json.load(response)["Text"]
-    with urllib.request.urlopen(
-        f"{MAILPIT}/api/v1/message/{message_id}/headers", timeout=5
-    ) as response:
-        headers: dict[str, list[str]] = json.load(response)
-    return body, headers
+def message(message_id: str) -> tuple[str, dict[str, str]]:
+    """The body and Mailgun options of the message sent with this id."""
+    (sent,) = [c for c in MAILGUN_CALLS if c["ID"] == message_id]
+    return sent["Text"], sent["Form"]
 
 
 def stored_hash(migrate_engine: Engine, email: str) -> bytes | None:
@@ -94,13 +81,13 @@ def test_a_sign_up_link_carries_its_token_only_in_the_fragment(
     mail.send_token(job)
 
     (sent,) = inbox(email)
-    body, headers = message(sent["ID"])
+    body, options = message(sent["ID"])
     link = link_in(body)
     page, token = link.split("#")
     assert page == f"{APP_URL}/pt/sign-up/complete" and "?" not in link
     assert sent["Subject"] == "Configure seu negócio no ziftbook"
     assert hashlib.sha256(token.encode()).digest() == stored_hash(migrate_engine, email)
-    assert headers["X-Mailgun-Track-Clicks"] == ["no"]
+    assert options["o:tracking-clicks"] == "no"
 
 
 def test_a_reset_link_uses_the_users_own_language(
@@ -110,9 +97,9 @@ def test_a_reset_link_uses_the_users_own_language(
     mail.send_token(request(app_engine, "password_reset", email, "pt"))
 
     (sent,) = inbox(email)
-    body, headers = message(sent["ID"])
+    body, options = message(sent["ID"])
     page, token = link_in(body).split("#")
-    assert headers["X-Mailgun-Track-Clicks"] == ["no"]
+    assert options["o:tracking-clicks"] == "no"
     assert sent["Subject"] == "Stel je ziftbook-wachtwoord opnieuw in"
     assert page == f"{APP_URL}/nl/reset-password"
     assert hashlib.sha256(token.encode()).digest() == stored_hash(migrate_engine, email)
@@ -170,7 +157,7 @@ def test_a_failed_send_keeps_the_request_for_the_retry(
     job = request(app_engine, "sign_up", email, "en")
 
     def broken(*args: object, **kwargs: object) -> None:
-        raise OSError("SMTP unavailable")
+        raise OSError("Mailgun unavailable")
 
     monkeypatch.setattr(mail, "deliver", broken)
     with pytest.raises(OSError):
@@ -206,7 +193,8 @@ def test_an_address_that_reads_as_a_list_reaches_no_second_inbox(app_engine: Eng
     victim = f"{uuid.uuid4()}@example.com"
     stored = f"{uuid.uuid4()}@example.com, {victim}"
 
-    with pytest.raises(smtplib.SMTPRecipientsRefused):
+    with pytest.raises(ValueError):
         mail.send_token(request(app_engine, "sign_up", stored, "en"))
 
-    assert inbox(victim) == []
+    # Mailgun splits `to` on commas: nothing may reach it at all.
+    assert [c for c in MAILGUN_CALLS if victim in c["To"]] == []
