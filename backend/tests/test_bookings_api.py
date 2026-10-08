@@ -726,6 +726,75 @@ def test_the_pending_cap_is_the_setting_and_not_a_constant(
     assert (fourth.status_code, fourth.json()) == (429, {"code": "rate_limited"})
 
 
+def book_twice_under_auto_confirm(
+    people: People, app: FastAPI, owner: TestClient, ready: str, change: str | None = None
+) -> Response:
+    """Cap 1 with auto_confirm on: one confirmed booking, `change` applied to it, then the same
+    address books again."""
+    settings = {"auto_confirm": True, "max_pending_per_email": 1}
+    assert put_settings(owner, settings).status_code == 200
+    client = new_client(app)
+    email = fresh_email()
+    first = post_booking(client, people.a, ready, email=email, starts_at=at("09:00"))
+    assert (first.status_code, first.json()["status"]) == (201, "confirmed")
+    if change is not None:
+        with tenant_context(people.a) as session:
+            session.execute(
+                text(f"UPDATE bookings SET {change} WHERE id = :id"), {"id": first.json()["id"]}
+            )
+    return post_booking(client, people.a, ready, email=email, starts_at=at("11:00"))
+
+
+# 23c: FENCE - ZIF-115. Wrong impl: PENDING_COUNT counting only live pendings, as before the fix -
+# an auto-confirmed booking has no TTL, so one address booked without limit.
+def test_auto_confirmed_bookings_count_toward_the_cap(
+    people: People, app: FastAPI, owner: TestClient, ready: str
+) -> None:
+    second = book_twice_under_auto_confirm(people, app, owner, ready)
+
+    assert (second.status_code, second.json()) == (429, {"code": "rate_limited"})
+
+
+# 23d: FENCE - ZIF-115, one wrong impl per case: drop `status = 'confirmed'` (a cancelled booking
+# keeps the address capped for ever), drop `starts_at > :now` (a regular's past appointments lock
+# them out), drop `source = 'booking_page'` (bookings the merchant made count against the client).
+@pytest.mark.parametrize(
+    "change",
+    [
+        "status = 'cancelled_by_client'",
+        # earliest_starts_at moves with it: ck_bookings_earliest_starts_at_current.
+        "starts_at = starts_at - interval '3 days', ends_at = ends_at - interval '3 days', "
+        "earliest_starts_at = earliest_starts_at - interval '3 days'",
+        "source = 'merchant'",
+    ],
+    ids=["cancelled", "past", "merchant"],
+)
+def test_only_upcoming_self_booked_confirmations_count(
+    people: People, app: FastAPI, owner: TestClient, ready: str, change: str
+) -> None:
+    second = book_twice_under_auto_confirm(people, app, owner, ready, change)
+
+    assert second.status_code == 201, second.json()
+
+
+# 23e: GUARD - ZIF-115: auto_confirm off is unchanged, so a booking the owner accepted does not
+# count. Also the fence for dropping `auto_confirm_at_booking` from PENDING_COUNT.
+def test_an_accepted_booking_does_not_count_toward_the_cap(
+    people: People, app: FastAPI, owner: TestClient, ready: str
+) -> None:
+    assert put_settings(owner, {"max_pending_per_email": 1}).status_code == 200
+    client = new_client(app)
+    email = fresh_email()
+    first = post_booking(client, people.a, ready, email=email, starts_at=at("09:00"))
+    assert (first.status_code, first.json()["status"]) == (201, "pending")
+    accepted = owner.patch(f"/api/bookings/{first.json()['id']}", json={"status": "confirmed"})
+    assert accepted.status_code == 200, accepted.json()
+
+    second = post_booking(client, people.a, ready, email=email, starts_at=at("11:00"))
+
+    assert second.status_code == 201, second.json()
+
+
 # 24: FENCE - ruling 8.
 def test_an_unauthenticated_booking_cannot_rewrite_a_clients_name_or_phone(
     people: People, app: FastAPI, ready: str
