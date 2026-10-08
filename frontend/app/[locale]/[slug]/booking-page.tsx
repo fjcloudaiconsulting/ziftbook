@@ -8,15 +8,20 @@ import { useEffect, useRef, useState } from "react";
 import { availabilityRead, bookingsCreate, type BookingPageOut, sessionRead } from "@/api-client";
 import { addDays, localDay, localWhen, slotsByDay, weekDays } from "@/lib/booking-link";
 import {
+  afterPickTaken,
   answerState,
   bookingBody,
   cancellationState,
   emailSuggestion,
   firstFreeDayFrom,
+  freeNamed,
   groupByDayPart,
+  keepPick,
   nextWeekDisabled,
   ownPolicyText,
   scanWindow,
+  slotsFor,
+  slotWho,
 } from "@/lib/booking-page";
 import { dateLocale } from "@/lib/console";
 import { formatMoney } from "@/lib/money";
@@ -48,13 +53,17 @@ type Flow = {
   weekStart: string;
   day: string | null;
   slot: string | null;
+  // ZIF-100: the step 3 "who" choice, kept apart from the step 2 filter `worker`, and the ids free
+  // at `slot` (from the window it was picked in).
+  pick: string | null;
+  free: string[];
   taken: Set<string>;
   name: string;
   email: string;
   phone: string;
   errors: { name?: string; email?: string };
   suggest: string | null;
-  banner: { where: 1 | 2 | "c"; tone: "note" | "error"; text: string } | null;
+  banner: { where: 1 | 2 | 3 | "c"; tone: "note" | "error"; text: string } | null;
   busy: boolean;
 };
 // Once `service` is set (steps 2 and 3), these fields are meaningful; this alias just documents
@@ -68,6 +77,8 @@ const INITIAL: Omit<Flow, "name" | "email" | "phone"> = {
   weekStart: "",
   day: null,
   slot: null,
+  pick: null,
+  free: [],
   taken: new Set(),
   errors: {},
   suggest: null,
@@ -77,7 +88,16 @@ const INITIAL: Omit<Flow, "name" | "email" | "phone"> = {
 
 type Done = { status: string; service: Service; worker: Worker | null; starts_at: string; price: { amount_minor: number; currency: string }; email: string };
 
-type CacheEntry = { slots: string[] } | "error" | "loading";
+// `who[i]`: the ids free at `slots[i]`.
+type TimesWindow = { slots: string[]; who: string[][] };
+type CacheEntry = TimesWindow | "error" | "loading";
+
+/** Who the booking goes to (the step 3 pick, else the step 2 filter): their name, "Anyone
+ * available", or null for a person with no name (shown nowhere, decision 6 option A). */
+function withName(s2: Step2Plus, anyone: string): string | null {
+  const id = s2.pick ?? (s2.worker === "any" ? null : s2.worker);
+  return id === null ? anyone : (s2.service.workers.find((w) => w.id === id)?.display_name ?? null);
+}
 
 export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingPageOut; locale: string; turnstileSiteKey: string | null }) {
   const t = useTranslations("BookingPage");
@@ -151,8 +171,9 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
     else if (focusField?.field === "email") emailRef.current?.focus();
   }, [focusField, flow.step]);
 
-  function cacheKey(service: string, worker: string, from: string) {
-    return `${service}|${worker}|${from}`;
+  // One window for everyone (ZIF-100): a person's times are filtered out of it locally (slotsFor).
+  function cacheKey(service: string, from: string) {
+    return `${service}|${from}`;
   }
 
   /** Sends the client back to step 1 with a note, and re-fetches the page's own data (a service
@@ -167,8 +188,8 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
   /** The 14-day window starting at `from`, cached so paging within it needs no new fetch. Never
    * resolves to "loading": that value only ever marks an in-flight fetch in the cache map itself.
    * `bypass`: skip a cached entry and fetch fresh (after a 409, the cached window is stale). */
-  async function loadWindow(service: Service, worker: string, from: string, bypass = false): Promise<{ slots: string[] } | "error"> {
-    const key = cacheKey(service.id, worker, from);
+  async function loadWindow(service: Service, from: string, bypass = false): Promise<TimesWindow | "error" | "gone"> {
+    const key = cacheKey(service.id, from);
     if (!bypass) {
       const existing = cache.get(key);
       if (existing && existing !== "loading") return existing;
@@ -176,17 +197,17 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
     setCache((m) => new Map(m).set(key, "loading"));
     const { from: qFrom, to } = scanWindow(from);
     const answer = await send(
-      availabilityRead({ path: { tenant_id: page.id, service_id: service.id }, query: { from: qFrom, to, member_id: worker === "any" ? null : worker } }),
+      availabilityRead({ path: { tenant_id: page.id, service_id: service.id }, query: { from: qFrom, to } }),
     );
     if (answer.status === 200 && answer.data) {
-      const entry: CacheEntry = { slots: answer.data.slots };
+      const entry: TimesWindow = { slots: answer.data.slots, who: slotWho(answer.data.slot_workers, answer.data.workers) };
       setCache((m) => new Map(m).set(key, entry));
       return entry;
     }
     if (answer.status === 404) {
       // The service (or every worker on it) is gone: same path as a 404 on Book (spec's mapping).
       backToStep1(t("serviceGone"));
-      return "error";
+      return "gone";
     }
     setCache((m) => new Map(m).set(key, "error"));
     return "error";
@@ -207,26 +228,27 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
     const isCurrent = () => ensureWeekToken.current.get(entryKey) === myToken;
 
     const windowFrom = windowFromFor(weekStart, weekStart);
-    const entry = await loadWindow(service, worker, windowFrom, bypass);
-    if (entry === "error" || !isCurrent()) return;
+    const entry = await loadWindow(service, windowFrom, bypass);
+    if (typeof entry === "string" || !isCurrent()) return;
+    const mine = slotsFor(entry, worker);
 
-    const visibleWeekEmpty = weekDays(weekStart).every((d) => !(slotsByDay(entry.slots, zone).get(d) ?? []).length);
+    const visibleWeekEmpty = weekDays(weekStart).every((d) => !(slotsByDay(mine, zone).get(d) ?? []).length);
     if (!visibleWeekEmpty) return;
 
     // B8: what's already in hand (this SAME 14-day fetch covers the following week too) is
-    // checked before any further request — a free day may already be sitting in `entry.slots`.
-    let first = firstFreeDayFrom(entry.slots, weekStart, zone);
+    // checked before any further request — a free day may already be sitting in this window.
+    let first = firstFreeDayFrom(mine, weekStart, zone);
     if (first === null && !scanned.current.has(entryKey)) {
       let from = windowFrom;
       const businessToday = localDay(new Date(), zone);
       for (let i = 0; i < 5; i++) {
         from = addDays(from, 14);
         if (nextWeekDisabled(businessToday, from, page.booking_horizon_days)) break;
-        const next = await loadWindow(service, worker, from);
+        const next = await loadWindow(service, from);
         // A stale scan (superseded while awaiting) never marks the key scanned: an incomplete
         // scan isn't a real "nothing found" result, and a later call must be free to redo it.
-        if (next === "error" || !isCurrent()) return;
-        first = firstFreeDayFrom(next.slots, from, zone);
+        if (typeof next === "string" || !isCurrent()) return;
+        first = firstFreeDayFrom(slotsFor(next, worker), from, zone);
         if (first !== null) break;
       }
       // Reached here only by completing the scan (found something, hit the horizon, or the cap) —
@@ -248,13 +270,15 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
     }
     const worker = service.workers.length === 1 ? service.workers[0].id : "any";
     const weekStart = localDay(new Date(), zone);
-    setFlow((f) => ({ ...f, step: 2, service, worker, weekStart, day: null, slot: null, taken: new Set(), banner: null }));
+    setFlow((f) => ({ ...f, step: 2, service, worker, weekStart, day: null, slot: null, pick: null, taken: new Set(), banner: null }));
     setFocusStep(2);
     void ensureWeek(service, worker, weekStart);
   }
 
+  /** Keeps the day (PickerWeek falls back to the first day with times when this person has none
+   * that day); clears the time, which this person may not be free at. */
   function chooseWorker(worker: string) {
-    setFlow((f) => (f.step >= 2 ? { ...f, worker, day: null, slot: null } : f));
+    setFlow((f) => (f.step >= 2 ? { ...f, worker, slot: null, pick: null, banner: f.banner?.where === 3 ? null : f.banner } : f));
     const f = flow as Step2Plus;
     void ensureWeek(f.service, worker, f.weekStart);
   }
@@ -274,8 +298,8 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
     void ensureWeek(f.service, f.worker, weekStart);
   }
 
-  function pickSlot(slot: string) {
-    setFlow((f) => (f.step >= 2 ? { ...f, slot, step: 3 } : f));
+  function pickSlot(slot: string, free: string[]) {
+    setFlow((f) => (f.step >= 2 ? { ...f, slot, free, pick: keepPick(f.pick, freeNamed(f.service!.workers, free).map((w) => w.id)), step: 3, banner: f.banner?.where === 3 ? null : f.banner } : f));
     setFocusStep(3);
   }
 
@@ -405,7 +429,7 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
     const f = flow as Step2Plus;
     const body = bookingBody({
       startsAt: f.slot!,
-      memberId: f.worker === "any" ? null : f.worker,
+      memberId: f.pick ?? (f.worker === "any" ? null : f.worker),
       name: f.name,
       email: f.email,
       phone: f.phone,
@@ -432,10 +456,33 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
     }
     if (outcome.kind === "slotTaken") {
       const time = localWhen(f.slot!, zone, dateLocale(locale)).time;
-      setFlow({ ...f, slot: null, step: 2, taken: new Set([...f.taken, f.slot!]), busy: false, banner: { where: 2, tone: "note", text: t("slotTaken", { time }) } });
+      // The window holding the slot, not the visible week's: "Change" plus "Next week" keeps the slot.
+      const slotWindow = windowFromFor(f.weekStart, localDay(f.slot!, zone));
+      let fresh: TimesWindow | "error" | "gone" = "error";
+      if (f.pick) {
+        // A person picked at that time was taken: if someone else is still free then, keep the
+        // time and drop the pick (decision 5); nothing is booked until Book is pressed again.
+        // Still working: a second Book press must not POST the stale pick while this refetches.
+        working.current = true;
+        fresh = await loadWindow(f.service, slotWindow, true);
+        working.current = false;
+        if (fresh === "gone") return; // loadWindow already sent the client back to step 1
+        const at = fresh === "error" ? -1 : fresh.slots.indexOf(f.slot!);
+        const rest = afterPickTaken(fresh === "error" || at < 0 ? null : fresh.who[at], f.pick);
+        if (rest) {
+          const name = f.service.workers.find((w) => w.id === f.pick)?.display_name ?? "";
+          setFlow((cur) => ({ ...cur, step: 3, pick: null, free: rest, busy: false, banner: { where: 3, tone: "note", text: t("pickTaken", { name, time }) } }));
+          // Not setFocusStep(3): it is usually 3 already (from picking the time), so it wouldn't re-fire.
+          headingRefs.current[3]?.focus();
+          return;
+        }
+      }
+      // Functional: a pick's refetch above awaited, and anything typed meanwhile must survive.
+      setFlow((cur) => ({ ...cur, slot: null, pick: null, step: 2, taken: new Set([...cur.taken, f.slot!]), busy: false, banner: { where: 2, tone: "note", text: t("slotTaken", { time }) } }));
       setFocusStep(2);
-      // The cached window is stale (it still offers the just-taken slot): bypass it.
-      void ensureWeek(f.service, f.worker, f.weekStart, true);
+      // The cached window is stale (it still offers the just-taken slot): bypass it, unless the
+      // pick's refetch above just refreshed it.
+      void ensureWeek(f.service, f.worker, f.weekStart, fresh === "error" || slotWindow !== f.weekStart);
       return;
     }
     if (outcome.kind === "serviceGone") {
@@ -469,6 +516,7 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
   // Not gated by flow.step: the checkout summary (and step 2/3's own folded rows) must keep
   // showing what's already chosen even while step 1 is reopened via "Change".
   const s2 = flow.service ? (flow as Step2Plus) : null;
+  const s2With = s2 ? withName(s2, t("anyone")) : null;
 
   if (page.services.length === 0) {
     return (
@@ -607,7 +655,7 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
                           {", "}
                           {localWhen(s2.slot, zone, dLocale).time}
                         </b>
-                        <span>{t("with", { name: s2.worker === "any" ? t("anyone") : (s2.service.workers.find((w) => w.id === s2.worker)?.display_name ?? "") })}</span>
+                        {s2With !== null && <span>{t("with", { name: s2With })}</span>}
                       </span>
                       <button className={styles.textButton} type="button" onClick={() => goTo(2)}>
                         {t("change")}
@@ -632,6 +680,7 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
                   </h2>
                 </div>
                 <div className={styles.stepBody}>
+                {s2 && flow.step === 3 && <WhoAt s2={s2} banner={flow.banner?.where === 3 ? flow.banner : null} zone={zone} dLocale={dLocale} t={t} onPick={(pick) => setFlow((f) => ({ ...f, pick }))} />}
                 {s2 && flow.step === 3 && (
                   <div className={styles.form}>
                     <div className={styles.row2}>
@@ -777,6 +826,57 @@ function MoveIcon() {
   );
 }
 
+/** Step 3's "who" choice (ZIF-100): only when the time was picked under "Anyone available" on a
+ * service with more than one person. Two or more named people free: native radios, "Anyone"
+ * preselected; exactly one: a plain line. The 409 note (decision 5) sits above it. */
+function WhoAt({
+  s2,
+  banner,
+  zone,
+  dLocale,
+  t,
+  onPick,
+}: {
+  s2: Step2Plus;
+  banner: { tone: "note" | "error"; text: string } | null;
+  zone: string;
+  dLocale: string;
+  t: ReturnType<typeof useTranslations>;
+  onPick(id: string | null): void;
+}) {
+  const named = s2.slot && s2.worker === "any" && s2.service.workers.length > 1 ? freeNamed(s2.service.workers, s2.free) : [];
+  const time = s2.slot ? localWhen(s2.slot, zone, dLocale).time : "";
+  return (
+    <>
+      {banner && <Banner tone={banner.tone}>{banner.text}</Banner>}
+      {named.length > 1 && (
+        <fieldset className={styles.pillSet} aria-describedby="bp-who-hint">
+          <legend className={styles.label}>{t("whoAt", { time })}</legend>
+          <p className={styles.hint} id="bp-who-hint">
+            {t("whoHint")}
+          </p>
+          <div className={styles.pills}>
+            <label className={styles.pill2}>
+              <input type="radio" name="pick" checked={s2.pick === null} onChange={() => onPick(null)} />
+              {s2.pick === null && "✓ "}
+              {t("anyone")}
+            </label>
+            {named.map((w) => (
+              <label className={styles.pill2} key={w.id}>
+                <input type="radio" name="pick" checked={s2.pick === w.id} onChange={() => onPick(w.id)} />
+                {s2.pick === w.id && "✓ "}
+                {w.display_name}
+              </label>
+            ))}
+          </div>
+        </fieldset>
+      )}
+      {/* Anyone else free then (unnamed, or not on this page's roster yet) may still be assigned. */}
+      {named.length === 1 && <p className={styles.lone}>{t(s2.free.length > 1 ? "onlyChoosable" : "onlyFree", { name: named[0].display_name!, time })}</p>}
+    </>
+  );
+}
+
 function Picker({
   page,
   s2,
@@ -805,12 +905,14 @@ function Picker({
   onWorker(id: string): void;
   onWeek(delta: number): void;
   onDay(day: string): void;
-  onSlot(slot: string): void;
+  onSlot(slot: string, free: string[]): void;
   onJump(day: string): void;
   onAnyone(): void;
   onRetry(): void;
 }) {
   const { service, worker } = s2;
+  // Unnamed people are never offered (decision 6 option A); their times stay under "Anyone".
+  const named = service.workers.filter((w) => w.display_name);
   const today = localDay(new Date(), zone);
   const days = weekDays(s2.weekStart);
   const dayLabel = (day: string, options: Intl.DateTimeFormatOptions) =>
@@ -819,15 +921,15 @@ function Picker({
   let from = s2.weekStart;
   while (addDays(from, 13) < s2.weekStart) from = addDays(from, 14);
   while (s2.weekStart < from) from = addDays(from, -14);
-  const entry = cache.get(`${service.id}|${worker}|${from}`);
+  const entry = cache.get(`${service.id}|${from}`);
 
   const nextDisabled = nextWeekDisabled(today, addDays(s2.weekStart, 7), page.booking_horizon_days);
 
   return (
     <div className={styles.picker}>
       {banner && <Banner tone={banner.tone}>{banner.text}</Banner>}
-      {service.workers.length > 1 && (
-        <fieldset className={styles.pills}>
+      {service.workers.length > 1 && named.length > 0 && (
+        <fieldset className={styles.pillSet}>
           <legend className={styles.hint}>{t("withWho")}</legend>
           <div className={styles.pills}>
             <label className={styles.pill2}>
@@ -835,7 +937,7 @@ function Picker({
               {worker === "any" && "✓ "}
               {t("anyone")}
             </label>
-            {service.workers.map((w) => (
+            {named.map((w) => (
               <label className={styles.pill2} key={w.id}>
                 <input type="radio" name="worker" checked={worker === w.id} onChange={() => onWorker(w.id)} />
                 {worker === w.id && "✓ "}
@@ -845,7 +947,7 @@ function Picker({
           </div>
         </fieldset>
       )}
-      {service.workers.length === 1 && <p className={styles.hint}>{t("with", { name: service.workers[0].display_name ?? "" })}</p>}
+      {service.workers.length === 1 && service.workers[0].display_name && <p className={styles.hint}>{t("with", { name: service.workers[0].display_name })}</p>}
 
       <div className={styles.weekHead}>
         <strong>
@@ -873,7 +975,7 @@ function Picker({
           </button>
         </>
       ) : (
-        <PickerWeek page={page} s2={s2} slots={entry.slots} firstFree={firstFree} today={today} days={days} dayLabel={dayLabel} zone={zone} dLocale={dLocale} t={t} onDay={onDay} onSlot={onSlot} onJump={onJump} onAnyone={onAnyone} />
+        <PickerWeek page={page} s2={s2} slots={slotsFor(entry, worker)} win={entry} firstFree={firstFree} today={today} days={days} dayLabel={dayLabel} zone={zone} dLocale={dLocale} t={t} onDay={onDay} onSlot={onSlot} onJump={onJump} onAnyone={onAnyone} />
       )}
 
       {nextDisabled && <p className={styles.hint}>{t("horizon", { n: page.booking_horizon_days })}</p>}
@@ -884,6 +986,7 @@ function Picker({
 function PickerWeek({
   s2,
   slots,
+  win,
   firstFree,
   today,
   days,
@@ -899,6 +1002,7 @@ function PickerWeek({
   page: BookingPageOut;
   s2: Step2Plus;
   slots: string[];
+  win: TimesWindow;
   firstFree: string | null;
   today: string;
   days: string[];
@@ -907,7 +1011,7 @@ function PickerWeek({
   dLocale: string;
   t: ReturnType<typeof useTranslations>;
   onDay(day: string): void;
-  onSlot(slot: string): void;
+  onSlot(slot: string, free: string[]): void;
   onJump(day: string): void;
   onAnyone(): void;
 }) {
@@ -989,7 +1093,7 @@ function PickerWeek({
                       disabled={struck}
                       aria-pressed={struck ? undefined : on}
                       aria-label={struck ? t("takenLabel", { time }) : undefined}
-                      onClick={() => onSlot(slot)}
+                      onClick={() => onSlot(slot, s2.worker === "any" ? (win.who[win.slots.indexOf(slot)] ?? []) : [])}
                     >
                       {time}
                     </button>
@@ -1039,8 +1143,8 @@ function Checkout({
   const c = page.cancellation;
   const service = s2?.service ?? null;
   const slot = s2?.slot ?? null;
-  const worker = s2?.worker ?? null;
-  const workerName = !service ? null : service.workers.length === 1 ? service.workers[0].display_name : worker === "any" ? t("anyone") : (service.workers.find((w) => w.id === worker)?.display_name ?? "");
+  // undefined: nothing chosen yet; null: a person with no name, so no "With" row at all.
+  const workerName = s2 ? withName(s2, t("anyone")) : undefined;
   const name = service ? localized(service.name, locale as Locale, businessLanguage) : null;
   const ownText = ownPolicyText(c.text, locale, businessLanguage);
 
@@ -1098,10 +1202,12 @@ function Checkout({
           <dt>{t("when")}</dt>
           {whenText}
         </div>
-        <div className={styles.summaryRow}>
-          <dt>{t("withRow")}</dt>
-          {workerName !== null ? <dd>{workerName}</dd> : <dd className={styles.unset}>{t("notChosen")}</dd>}
-        </div>
+        {workerName !== null && (
+          <div className={styles.summaryRow}>
+            <dt>{t("withRow")}</dt>
+            {workerName !== undefined ? <dd>{workerName}</dd> : <dd className={styles.unset}>{t("notChosen")}</dd>}
+          </div>
+        )}
         <div className={styles.summaryRow}>
           <dt>{t("price")}</dt>
           {service ? <dd>{formatMoney(service.price.amount_minor, service.price.currency, locale)}</dd> : <dd className={styles.unset}>{t("notChosen")}</dd>}
@@ -1190,7 +1296,8 @@ function DoneScreen({
             {")"}
           </li>
           <li>
-            {done.worker?.display_name ?? ""} · {formatMoney(done.price.amount_minor, done.price.currency, locale)}
+            {done.worker?.display_name && `${done.worker.display_name} · `}
+            {formatMoney(done.price.amount_minor, done.price.currency, locale)}
           </li>
         </ul>
         <p className={styles.hint}>{t("spam")}</p>
