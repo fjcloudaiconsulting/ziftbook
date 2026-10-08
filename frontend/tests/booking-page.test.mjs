@@ -7,17 +7,23 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
 import {
+  afterPickTaken,
   answerState,
   bookingBody,
   cancellationState,
   dayPart,
   emailSuggestion,
   firstFreeDayFrom,
+  freeNamed,
   groupByDayPart,
+  keepPick,
   nextWeekDisabled,
   ownPolicyText,
   scanWindow,
+  slotsFor,
+  slotWho,
   slugLooksValid,
+  withName,
 } from "../lib/booking-page.ts";
 
 describe("F1 cancellation terms", () => {
@@ -248,5 +254,64 @@ describe("B8 firstFreeDayFrom: the already-fetched window is checked before any 
 
   test("no free day anywhere in the window is null", () => {
     assert.equal(firstFreeDayFrom([], "2026-10-01", ZONE), null);
+  });
+});
+
+describe("ZIF-100 who is free at a time", () => {
+  // The availability response's workers are sorted by id; the page's roster is sorted by name.
+  const workers = [{ id: "a1" }, { id: "b2" }, { id: "c3" }];
+  const roster = [
+    { id: "c3", display_name: "Ana" },
+    { id: "a1", display_name: null },
+    { id: "b2", display_name: "Bea" },
+  ];
+
+  test("fence: slot_workers indices resolve through the response's own workers, not the roster", () => {
+    // Wrong implementation killed: returning the raw indices, or an off-by-one into `workers`.
+    assert.deepEqual(slotWho([[0, 2], [1]], workers), [["a1", "c3"], ["b2"]]);
+  });
+
+  test("fence: a person's week is the shared window filtered to their times, and the empty-week scan sees only those", () => {
+    // Wrong implementation killed: ignoring the person (the whole team's times shown under one
+    // name), which also makes the scan stop at a day only someone else is free.
+    const win = { slots: ["2026-10-02T09:00:00Z", "2026-10-09T09:00:00Z"], who: [["a1"], ["a1", "b2"]] };
+    assert.deepEqual(slotsFor(win, "any"), win.slots);
+    assert.deepEqual(slotsFor(win, "b2"), ["2026-10-09T09:00:00Z"]);
+    assert.equal(firstFreeDayFrom(slotsFor(win, "b2"), "2026-10-01", "Europe/Amsterdam"), "2026-10-09");
+  });
+
+  test("fence: free named people come in roster order, without unnamed people or unknown ids", () => {
+    // Wrong implementation killed: keeping availability (id) order, offering an unnamed person, or
+    // offering an id the page roster does not know.
+    assert.deepEqual(freeNamed(roster, ["a1", "b2", "c3", "zz"]).map((w) => w.id), ["c3", "b2"]);
+    assert.deepEqual(freeNamed(roster, ["a1"]), []);
+  });
+
+  test("fence: a pick is kept only when that person is free at the new time and there is a choice", () => {
+    // Wrong implementation killed: always keeping (books someone who is busy then), always
+    // clearing, or keeping a pick where only that one person is free (that books as no preference).
+    // An unnamed person free too (a1) is not a choice: Bea alone is still booked as no preference.
+    assert.equal(keepPick("b2", roster, ["b2", "c3"]), "b2");
+    assert.equal(keepPick("b2", roster, ["a1", "c3"]), null);
+    assert.equal(keepPick("b2", roster, ["b2"]), null);
+    assert.equal(keepPick("b2", roster, ["b2", "a1"]), null);
+    assert.equal(keepPick(null, roster, ["b2", "c3"]), null);
+  });
+
+  test("fence: the With line names the step 3 pick first, then the filter; an unnamed person gives no line", () => {
+    // Wrong implementation killed: ignoring the pick ("Anyone available" after choosing Bea), or
+    // rendering an unnamed person as an empty name.
+    assert.equal(withName(roster, "any", null, "Anyone"), "Anyone");
+    assert.equal(withName(roster, "any", "b2", "Anyone"), "Bea");
+    assert.equal(withName(roster, "c3", null, "Anyone"), "Ana");
+    assert.equal(withName(roster, "a1", null, "Anyone"), null);
+  });
+
+  test("fence: after the picked person is taken, stay only when someone else is still free then", () => {
+    // Wrong implementation killed: staying whenever the slot is still offered (even if only the
+    // taken person is listed), or keeping the taken person in the list.
+    assert.deepEqual(afterPickTaken(["a1", "b2", "c3"], "b2"), ["a1", "c3"]);
+    assert.equal(afterPickTaken(["b2"], "b2"), null);
+    assert.equal(afterPickTaken(null, "b2"), null);
   });
 });
