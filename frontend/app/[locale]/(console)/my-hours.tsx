@@ -7,6 +7,7 @@ import { canEditHours, type Role } from "@/lib/console";
 import { zoneCity } from "@/lib/week";
 
 import { HoursSection } from "./hours-section";
+import { PersonActions } from "./team/team";
 import { BlockedTime, PersonTabs } from "./time-off-section";
 import { useConsole } from "../_ui/console";
 import { Heading } from "../_ui/parts";
@@ -16,7 +17,7 @@ import uiStyles from "../_ui/ui.module.css";
  * lede, so switching tabs never makes the header jump. While the blocked-time tab is showing its
  * own form, this header hides so the form's own heading is the only `<h1>` on screen. */
 export function MyHours({ tab }: { tab: "hours" | "timeOff" }) {
-  const { session, settings } = useConsole();
+  const { session, settings, updateSession } = useConsole();
   const t = useTranslations("Console.hours");
   const nav = useTranslations("Console.nav");
   const person = useTranslations("Console.person");
@@ -31,6 +32,12 @@ export function MyHours({ tab }: { tab: "hours" | "timeOff" }) {
         <>
           <Heading focus>{nav("myHours")}</Heading>
           <p className={uiStyles.lede}>{t("myHoursLede", { city })}</p>
+          {/* Your own name, so a team member can fix it too (the API allows it: may_manage). */}
+          <PersonActions
+            memberId={session.member_id}
+            displayName={session.display_name}
+            onNameSaved={(saved) => updateSession({ display_name: saved })}
+          />
           <PersonTabs workingHoursHref="/my-hours" blockedTimeHref="/my-hours/time-off" active={tab} />
         </>
       )}

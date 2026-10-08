@@ -165,7 +165,19 @@
       "cancel": "Annuleren",
       "nameRequired": "Vul een naam in.",
       "lede": "{email} · {role} · tijden zijn in {city}-tijd",
-      "notFound": "Deze persoon kon niet worden gevonden."
+      "notFound": "Deze persoon kon niet worden gevonden.",
+      "changeName": "Naam wijzigen",
+      "changeRole": "Rol wijzigen",
+      "promoteTitle": "{name} eigenaar maken?",
+      "promoteBody": "Eigenaren beheren diensten, het team, klanten, openingstijden en instellingen, en kunnen ieders rol wijzigen behalve hun eigen. {name} wordt uitgelogd en ziet de wijziging na opnieuw inloggen.",
+      "promoteYes": "{name} eigenaar maken",
+      "demoteTitle": "{name} medewerker maken?",
+      "demoteBody": "{name} beheert dan geen diensten, team, klanten, openingstijden of instellingen meer. Afspraken en werktijden blijven zoals ze zijn. {name} wordt uitgelogd en ziet de wijziging na opnieuw inloggen.",
+      "demoteYes": "{name} medewerker maken",
+      "keepRole": "Huidige rol houden",
+      "roleChanged": "Rol gewijzigd. {name} ziet het na opnieuw inloggen.",
+      "ownRoleHint": "Alleen een andere eigenaar kan je rol wijzigen.",
+      "lastOwner": "Een bedrijf heeft minstens één eigenaar nodig, dus de rol is niet gewijzigd."
     },
     "nameStep": {
       "title": "Hoe mogen we je noemen?",
@@ -647,7 +659,7 @@
     "timeOff": {
       "tabWorkingHours": "Werktijden",
       "tabBlockedTime": "Geblokkeerde tijd",
-      "tabsLabel": "Wat u wilt beheren",
+      "tabsLabel": "Wat je wilt beheren",
       "zoneLede": "{name} · {city}-tijd",
       "emptyTitle": "Niets geblokkeerd",
       "emptyBody": "Blokkeer tijd wanneer deze persoon niet beschikbaar is, ook al valt dit binnen de werktijden: een vakantie, een cursus, een eigen afspraak. Klanten kunnen dan niet boeken.",
@@ -678,7 +690,7 @@
       "cancel": "Annuleren",
       "removeButton": "Dit blok verwijderen",
       "removeHint": "De tijd is meteen weer boekbaar.",
-      "multiDayNote": "Dit blok beslaat meer dan één dag. Als u hier de tijd wijzigt, wordt het teruggebracht tot één dag.",
+      "multiDayNote": "Dit blok beslaat meer dan één dag. Als je hier de tijd wijzigt, wordt het teruggebracht tot één dag.",
       "removeConfirmTitle": "Dit blok verwijderen?",
       "removeConfirm": "Verwijderen",
       "notBlocked": "Deze tijd is niet geblokkeerd. Controleer de datums hieronder en probeer het opnieuw.",

@@ -3,7 +3,7 @@ process.env.TZ = "America/Sao_Paulo";
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { canInvite, expiresIn, isRowExpired, upsertInvite } from "../lib/team.ts";
+import { canInvite, expiresIn, isRowExpired, otherRole, roleChangeError, upsertInvite } from "../lib/team.ts";
 
 describe("canInvite", () => {
   test("owner may invite", () => {
@@ -80,5 +80,27 @@ describe("upsertInvite", () => {
       result.map((r) => r.id),
       ["1", "9", "3"],
     );
+  });
+});
+
+describe("otherRole", () => {
+  test("fence: the ask always offers the role the person doesn't have", () => {
+    assert.equal(otherRole("worker"), "owner");
+    assert.equal(otherRole("owner"), "worker");
+  });
+});
+
+describe("roleChangeError", () => {
+  test("fence: only a 409 last_owner reads as the one-owner refusal", () => {
+    assert.equal(roleChangeError({ status: 409, code: "last_owner" }), "lastOwner");
+    assert.equal(roleChangeError({ status: 409, code: "has_bookings" }), null);
+    assert.equal(roleChangeError({ status: 409 }), null);
+  });
+
+  test("fence: signed out and a person gone have their own messages; the rest falls through", () => {
+    assert.equal(roleChangeError({ status: 401 }), "signedOut");
+    assert.equal(roleChangeError({ status: 404, code: "not_found" }), "notFound");
+    assert.equal(roleChangeError({ status: 403, code: "owner_only" }), null);
+    assert.equal(roleChangeError({ status: 0 }), null);
   });
 });

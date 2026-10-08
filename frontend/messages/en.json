@@ -165,7 +165,19 @@
       "cancel": "Cancel",
       "nameRequired": "Enter a name.",
       "lede": "{email} · {role} · times are in {city} time",
-      "notFound": "This person could not be found."
+      "notFound": "This person could not be found.",
+      "changeName": "Change name",
+      "changeRole": "Change role",
+      "promoteTitle": "Make {name} an owner?",
+      "promoteBody": "Owners manage services, the team, clients, opening hours and settings, and can change anyone's role except their own. {name} is signed out and sees the change after signing in again.",
+      "promoteYes": "Make {name} an owner",
+      "demoteTitle": "Make {name} staff?",
+      "demoteBody": "{name} will no longer manage services, the team, clients, opening hours or settings. Their appointments and working hours stay as they are. {name} is signed out and sees the change after signing in again.",
+      "demoteYes": "Make {name} staff",
+      "keepRole": "Keep current role",
+      "roleChanged": "Role changed. {name} sees it after signing in again.",
+      "ownRoleHint": "Only another owner can change your role.",
+      "lastOwner": "A business needs at least one owner, so the role was not changed."
     },
     "nameStep": {
       "title": "What should we call you?",
