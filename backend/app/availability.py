@@ -47,11 +47,8 @@ def clip(
 ) -> list[tuple[time, time]]:
     """One weekday's shifts cut to that weekday's opening shifts, in LOCAL WALL CLOCK.
 
-    Never in UTC. In UTC a shift that starts inside an hour the clock skips converts to an instant
-    *later* than a shift that starts after the change (02:30 -> 01:30Z but 03:00 -> 01:00Z on
-    2026-03-29 Amsterdam, app/schedule.py's to_utc), so max() in UTC picks the wrong bound; and the
-    anchor would then have to be rebuilt from an instant that has two local names on the fall-back
-    day.
+    Never in UTC: the anchor would then have to be rebuilt from an instant that has two local
+    names on the fall-back day.
 
     Both inputs come from day_shifts, so both are sorted, disjoint and non-touching, and so is the
     result: each shift meets the pieces in order, each piece is cut to that shift, and two cuts of
@@ -135,11 +132,9 @@ def member_slots(
             opens = schedule.to_utc(day, local_start, zone)
             closes = schedule.to_utc(day, local_end, zone)
             at = anchor(local_start, step)
-            if at is None or closes <= opens:  # past midnight, or inside a skipped hour (ZIF-46)
+            if at is None or closes <= opens:  # past midnight, or inside a skipped hour (ZIF-113)
                 continue
             t = schedule.to_utc(day, at, zone)
-            while t < opens:  # an anchor the clock skipped can land before the shift opens
-                t += stride
             while t - stride >= opens:  # a repeated hour: on-grid time before the anchor
                 t -= stride
             # ponytail: ~80k iterations at worst (20 workers, 14 days, 5-minute step; measured
@@ -153,8 +148,8 @@ def member_slots(
                     out.append(t)
                 t += stride
         day += timedelta(days=1)
-    # Shifts in a skipped hour can overlap once converted: ascending and unique all the same.
-    return sorted(set(out))
+    # to_utc never decreases as the wall clock moves on, so disjoint local shifts stay disjoint.
+    return out
 
 
 # The three-place status set. This tuple, migration 0026's OCCUPYING, and the nine values of
