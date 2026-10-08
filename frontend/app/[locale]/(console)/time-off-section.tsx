@@ -251,7 +251,6 @@ export function BlockedTimeForm({
   onCancel(): void;
 }) {
   const { call, settings } = useConsole();
-  const locale = useLocale();
   const t = useTranslations("Console.timeOff");
   const tConsole = useTranslations("Console");
   const form = useTranslations("Form");
@@ -368,7 +367,7 @@ export function BlockedTimeForm({
           <Banner tone="error">{bannerError}</Banner>
         </div>
       )}
-      {inTheWay && !otherMember && <InTheWayList {...inTheWay} tz={tz} locale={locale} compact={compact} />}
+      {inTheWay && !otherMember && <InTheWayList {...inTheWay} tz={tz} compact={compact} />}
       <form className={`${uiStyles.stack} ${styles.colWide}`} noValidate onSubmit={onSubmit}>
         <label className={styles.choice}>
           <input
@@ -532,8 +531,9 @@ export function BlockedTimeForm({
 
 /** The appointments in the way of a refused block (ZIF-130): the first five as list rows, each
  * opening its booking in the calendar, then how many more there are. */
-function InTheWayList({ bookings, total, member, tz, locale, compact }: { bookings: InTheWay[]; total: number; member: string; tz: string; locale: string; compact?: boolean }) {
+function InTheWayList({ bookings, total, member, tz, compact }: { bookings: InTheWay[]; total: number; member: string; tz: string; compact?: boolean }) {
   const { settings } = useConsole();
+  const locale = useLocale();
   const t = useTranslations("Console.timeOff");
   const tToday = useTranslations("Console.today");
   const day = new Intl.DateTimeFormat(dateLocale(locale), { weekday: "short", day: "numeric", month: "short", timeZone: tz });
