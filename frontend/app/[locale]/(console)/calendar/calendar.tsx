@@ -60,6 +60,7 @@ export function Calendar() {
   const locale = useLocale();
   const tz = settings.timezone;
   const isOwner = session.role === "owner";
+  const canAnswer = canAnswerRequests(session.role as Role, settings.workers_answer_requests);
   const params = useSearchParams();
   const router = useRouter();
 
@@ -689,7 +690,7 @@ export function Calendar() {
                     </div>
                   </div>
                 </div>
-                <p className={css.legend}>{t(canAnswerRequests(session.role as Role, settings.workers_answer_requests) ? "legend" : "legendOwner")}</p>
+                <p className={css.legend}>{t(canAnswer ? "legend" : "legendOwner")}</p>
               </div>
             </>
           )}
