@@ -134,6 +134,7 @@ function Confirm({ link }: { link: OpenedLink | null }) {
   if (view.is === "opening") {
     return (
       <Page>
+        <h1 className={styles.heading}>{t("confirmTitle")}</h1>
         <p className={styles.hint} role="status">
           {opening("opening")}
         </p>
@@ -212,11 +213,8 @@ function Confirm({ link }: { link: OpenedLink | null }) {
           <h2 className={styles.pageTitle}>{t("confirmTitle")}</h2>
           <div className={styles.stack}>
             <Held>{holdEnded(hold.held_until, new Date()) ? t("confirmLate", { until }) : t("confirmHold", { until })}</Held>
-            <div className={styles.readonly}>
-              {/* No prefill, ever: a forwarded link must not show what the business holds. */}
-              <span>{t("bookingAs", { email: "" }).trim()}</span>
-              <b>{hold.email}</b>
-            </div>
+            {/* No prefill, ever: a forwarded link must not show what the business holds. */}
+            <p className={styles.readonly}>{t("bookingAs", { email: hold.email })}</p>
             <div className={styles.form}>
               <div className={styles.row2}>
                 <div className={styles.field}>

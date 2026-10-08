@@ -182,7 +182,8 @@ export function BookingPage({ page, locale, turnstileSiteKey, initialService = n
     };
   }, []);
 
-  // ...and loads them once mounted, a tick later (never a state update in the effect's own body).
+  // ZIF-117: with ?service=, that service's times load once mounted, a tick later (never a state
+  // update in the effect's own body).
   useEffect(() => {
     if (!flow.service) return;
     const service = flow.service;
@@ -213,7 +214,7 @@ export function BookingPage({ page, locale, turnstileSiteKey, initialService = n
    * and a 404 on the week GET — the spec gives both the same path. */
   function backToStep1(noteText: string) {
     router.refresh();
-    setFlow((f) => ({ ...INITIAL, name: f.name, email: f.email, phone: f.phone, banner: { where: 1, tone: "note", text: noteText } }));
+    setFlow((f) => ({ ...INITIAL, name: f.name, email: f.email, phone: f.phone, replaces: f.replaces, banner: { where: 1, tone: "note", text: noteText } }));
     setFocusStep(1);
   }
 
@@ -465,8 +466,8 @@ export function BookingPage({ page, locale, turnstileSiteKey, initialService = n
     if (sent || linkFirst) return doHold(f, memberId, token);
     if (f.replaces) {
       // Back to the signed-in address after a link went elsewhere: that hold would block its own time.
-      await send(bookingHoldsRelease({ path: { tenant_id: page.id }, body: { secret: f.replaces } }));
-      setFlow((cur) => ({ ...cur, replaces: null }));
+      const released = await send(bookingHoldsRelease({ path: { tenant_id: page.id }, body: { secret: f.replaces } }));
+      if (released.status === 204) setFlow((cur) => ({ ...cur, replaces: null }));
     }
     const body = bookingBody({
       startsAt: f.slot!,
