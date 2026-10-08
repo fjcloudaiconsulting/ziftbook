@@ -95,6 +95,7 @@ describe("roleChangeError", () => {
     assert.equal(roleChangeError({ status: 409, code: "last_owner" }), "lastOwner");
     assert.equal(roleChangeError({ status: 409, code: "has_bookings" }), null);
     assert.equal(roleChangeError({ status: 409 }), null);
+    assert.equal(roleChangeError({ status: 422, code: "last_owner" }), null);
   });
 
   test("fence: signed out and a person gone have their own messages; the rest falls through", () => {

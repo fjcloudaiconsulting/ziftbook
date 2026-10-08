@@ -587,7 +587,7 @@ function SetNameField({
   );
 }
 
-/** "Change role": asks straight for the one other role, no picker (ZIF-126). Promoting uses the
+/** "Change role": asks straight for the one other role, no picker. Promoting uses the
  * neutral box, demoting the danger zone's, since it takes access away. Focus goes to the main
  * button; the person is signed out of this business by the API (members.py:166-171). */
 function RoleAsk({
@@ -690,8 +690,6 @@ export function PersonActions({
 }) {
   const t = useTranslations("Console.person");
   const [open, setOpen] = useState<"name" | "role" | null>(null);
-  // Who the last role change was for: the done line stays until the page goes.
-  const [changedFor, setChangedFor] = useState<string | null>(null);
   const nameButton = useRef<HTMLButtonElement>(null);
   const roleButton = useRef<HTMLButtonElement>(null);
   const closedFrom = useRef<"name" | "role" | null>(null);
@@ -709,14 +707,6 @@ export function PersonActions({
 
   return (
     <>
-      {changedFor !== null && (
-        <div className={uiStyles.statusNote} role="status">
-          <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16">
-            <path d="M3.5 8.5l3 3 6-7" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-          <p>{t("roleChanged", { name: changedFor })}</p>
-        </div>
-      )}
       {open === "name" && (
         <SetNameField
           memberId={memberId}
@@ -735,7 +725,6 @@ export function PersonActions({
           name={role.name}
           onChanged={(changed) => {
             role.onChanged(changed);
-            setChangedFor(role.name);
             close("role");
           }}
           onCancel={() => close("role")}
@@ -775,6 +764,8 @@ export function Person({ memberId, tab }: { memberId: string; tab: "hours" | "ti
   const [displayName, setDisplayName] = useState<string | null>(null);
   const [failure, setFailure] = useState<ReturnType<typeof problem> | null>(null);
   const [inForm, setInForm] = useState(false);
+  // Who the last role change was for: the done line stays until the person leaves the page.
+  const [changedFor, setChangedFor] = useState<string | null>(null);
 
   function load() {
     call(() => membersList()).then((outcome) => {
@@ -819,14 +810,28 @@ export function Person({ memberId, tab }: { memberId: string; tab: "hours" | "ti
   }
 
   const name = displayName ? displayName : t("nameNotSet");
+  // Named by display name, or by email while the name isn't set.
+  const roleName = displayName || member.email;
 
   return (
     <>
+      <p className={uiStyles.srOnly} role="status" aria-live="polite">
+        {changedFor !== null && t("roleChanged", { name: changedFor })}
+      </p>
       {!inForm && (
         <>
           <BackLink />
           <Heading focus>{displayName ? displayName : <span className={styles.unset}>{t("nameNotSet")}</span>}</Heading>
           <p className={uiStyles.lede}>{t("lede", { email: member.email, role: account(member.role === "owner" ? "owner" : "worker"), city })}</p>
+          {/* aria-hidden: the live region above already announces it (as on Today). */}
+          {changedFor !== null && (
+            <div className={uiStyles.statusNote} aria-hidden="true">
+              <svg width="16" height="16" viewBox="0 0 16 16">
+                <path d="M3.5 8.5l3 3 6-7" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              <p>{t("roleChanged", { name: changedFor })}</p>
+            </div>
+          )}
           <PersonActions
             memberId={memberId}
             displayName={displayName}
@@ -836,10 +841,12 @@ export function Person({ memberId, tab }: { memberId: string; tab: "hours" | "ti
             }}
             role={{
               current: member.role,
-              // Named by display name, or by email while the name isn't set.
-              name: displayName || member.email,
+              name: roleName,
               own: memberId === session.member_id,
-              onChanged: (role) => setMembers((current) => current && current.map((m) => (m.member_id === memberId ? { ...m, role } : m))),
+              onChanged: (role) => {
+                setMembers((current) => current && current.map((m) => (m.member_id === memberId ? { ...m, role } : m)));
+                setChangedFor(roleName);
+              },
             }}
           />
           <PersonTabs workingHoursHref={`/team/${memberId}`} blockedTimeHref={`/team/${memberId}/time-off`} active={tab} />

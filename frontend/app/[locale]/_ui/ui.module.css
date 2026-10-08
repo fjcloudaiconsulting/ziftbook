@@ -294,8 +294,9 @@ a.textButton { display: inline-flex; align-items: center; }
 .dangerZone p { margin: 0; font-size: 0.9375rem; color: var(--ink); max-width: 60ch; }
 .danger { background: var(--bg); color: var(--error); border-color: var(--error-line); }
 .danger:hover { background: var(--error-soft); }
+.danger[aria-disabled="true"] { opacity: 0.85; cursor: progress; }
 
-/* The person header's text actions (ZIF-126): side by side, wrapping on a phone. */
+/* The person header's text actions: side by side, wrapping on a phone. */
 .personActions { display: flex; flex-wrap: wrap; gap: 0 1.5rem; margin-top: -0.5rem; }
 /* The neutral inline ask (promote), the danger zone's shape in the console's own colours. */
 .confirm { display: grid; gap: 0.6rem; padding: 1rem; border: 1px solid var(--line); border-radius: 1rem; background: var(--nav); }
