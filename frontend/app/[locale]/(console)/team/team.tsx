@@ -10,12 +10,13 @@ import {
   type InviteOut,
   membersList,
   membersSetDisplayName,
+  membersUpdate,
   type MemberOut,
   workingHoursRead,
 } from "@/api-client";
 import { Link } from "@/i18n/navigation";
 import { canEditHours, dateLocale, type Role, showSetName } from "@/lib/console";
-import { canInvite, expiresIn, isRowExpired, upsertInvite } from "@/lib/team";
+import { canInvite, expiresIn, isRowExpired, otherRole, roleChangeError, upsertInvite } from "@/lib/team";
 import { teamHoursSummary, zoneCity } from "@/lib/week";
 
 import { HoursSection } from "../hours-section";
@@ -490,29 +491,38 @@ function BackLink() {
   );
 }
 
-function SetNameField({ memberId, onSaved }: { memberId: string; onSaved(name: string): void }) {
+/** The name form, opened from "Set a name clients can see" or "Change name": filled with the
+ * current name and its text selected, so typing replaces it and an arrow key edits it. */
+function SetNameField({
+  memberId,
+  initial,
+  onSaved,
+  onCancel,
+}: {
+  memberId: string;
+  initial: string | null;
+  onSaved(name: string): void;
+  onCancel(): void;
+}) {
   const t = useTranslations("Console.person");
   const form = useTranslations("Form");
   const { call } = useConsole();
   const id = useId();
-  const [open, setOpen] = useState(false);
-  const [value, setValue] = useState("");
+  const [value, setValue] = useState(initial ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [signedOut, setSignedOut] = useState(false);
   const [fieldError, setFieldError] = useState<string | null>(null);
   const errorId = `${id}-error`;
+  const input = useRef<HTMLInputElement>(null);
   // A state flag lags a tick behind synchronous re-entrant calls (three requestSubmit()s in one
   // event all read the same stale `saving` before any re-render), so the actual guard is this ref.
   const submitting = useRef(false);
 
-  if (!open) {
-    return (
-      <button className={uiStyles.textButton} type="button" onClick={() => setOpen(true)}>
-        {t("setName")}
-      </button>
-    );
-  }
+  useEffect(() => {
+    input.current?.focus();
+    input.current?.select();
+  }, []);
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
@@ -535,7 +545,6 @@ function SetNameField({ memberId, onSaved }: { memberId: string; onSaved(name: s
     submitting.current = false;
     if (outcome.status === 200 && outcome.data) {
       onSaved(outcome.data.display_name ?? trimmed);
-      setOpen(false);
     } else if (outcome.status === 401) {
       setSignedOut(true);
     } else {
@@ -553,6 +562,7 @@ function SetNameField({ memberId, onSaved }: { memberId: string; onSaved(name: s
         </label>
         <div className={uiStyles.input}>
           <input
+            ref={input}
             id={id}
             type="text"
             maxLength={60}
@@ -569,11 +579,173 @@ function SetNameField({ memberId, onSaved }: { memberId: string; onSaved(name: s
         <Submit busy={saving} busyLabel={form("sending")}>
           {t("save")}
         </Submit>
-        <button className={uiStyles.textButton} type="button" disabled={saving} onClick={() => setOpen(false)}>
+        <button className={uiStyles.textButton} type="button" disabled={saving} onClick={onCancel}>
           {t("cancel")}
         </button>
       </div>
     </form>
+  );
+}
+
+/** "Change role": asks straight for the one other role, no picker. Promoting uses the
+ * neutral box, demoting the danger zone's, since it takes access away. Focus goes to the main
+ * button; the person is signed out of this business by the API (members.py:166-171). */
+function RoleAsk({
+  memberId,
+  role,
+  name,
+  onChanged,
+  onCancel,
+}: {
+  memberId: string;
+  role: Role;
+  name: string;
+  onChanged(role: Role): void;
+  onCancel(): void;
+}) {
+  const t = useTranslations("Console.person");
+  const tConsole = useTranslations("Console");
+  const form = useTranslations("Form");
+  const { call } = useConsole();
+  const titleId = useId();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [signedOut, setSignedOut] = useState(false);
+  const submitting = useRef(false);
+  const yes = useRef<HTMLButtonElement>(null);
+  const to = otherRole(role);
+  const promote = to === "owner";
+
+  useEffect(() => {
+    yes.current?.focus();
+  }, []);
+
+  async function change() {
+    if (submitting.current) return;
+    submitting.current = true;
+    setBusy(true);
+    setError(null);
+    setSignedOut(false);
+    try {
+      const outcome = await call(() => membersUpdate({ path: { member_id: memberId }, body: { role: to } }), { write: true });
+      if (outcome.status === 200 && outcome.data) {
+        onChanged(outcome.data.role);
+        return;
+      }
+      const known = roleChangeError(outcome);
+      if (known === "signedOut") setSignedOut(true);
+      else if (known) setError(t(known));
+      else setError(`${form(problem(outcome))} ${tConsole("notSaved")}`);
+    } finally {
+      submitting.current = false;
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className={promote ? uiStyles.confirm : uiStyles.dangerZone} role="group" aria-labelledby={titleId}>
+      <strong id={titleId}>{t(promote ? "promoteTitle" : "demoteTitle", { name })}</strong>
+      <p>{t(promote ? "promoteBody" : "demoteBody", { name })}</p>
+      {signedOut && <SignedOutBanner />}
+      {error && <Banner tone="error">{error}</Banner>}
+      <div className={uiStyles.actions}>
+        <button
+          ref={yes}
+          className={`${uiStyles.button} ${promote ? uiStyles.primary : uiStyles.danger}`}
+          type="button"
+          aria-disabled={busy || undefined}
+          onClick={change}
+        >
+          {t(promote ? "promoteYes" : "demoteYes", { name })}
+        </button>
+        <button
+          className={`${uiStyles.button} ${uiStyles.secondary}`}
+          type="button"
+          aria-disabled={busy || undefined}
+          onClick={() => {
+            if (!busy) onCancel();
+          }}
+        >
+          {t("keepRole")}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** The text actions under a person's lede: "Change name" (or "Set a name clients can see" while
+ * unset) and, given `role`, "Change role", or on your own page the line saying only another owner
+ * can. The name form or the role ask opens in place of the row, never both, and closing either
+ * puts focus back on the button that opened it. My hours uses it without `role`. */
+export function PersonActions({
+  memberId,
+  displayName,
+  onNameSaved,
+  role,
+}: {
+  memberId: string;
+  displayName: string | null;
+  onNameSaved(name: string): void;
+  role?: { current: Role; name: string; own: boolean; onChanged(role: Role): void };
+}) {
+  const t = useTranslations("Console.person");
+  const [open, setOpen] = useState<"name" | "role" | null>(null);
+  const nameButton = useRef<HTMLButtonElement>(null);
+  const roleButton = useRef<HTMLButtonElement>(null);
+  const closedFrom = useRef<"name" | "role" | null>(null);
+
+  useEffect(() => {
+    if (open !== null || closedFrom.current === null) return;
+    (closedFrom.current === "name" ? nameButton : roleButton).current?.focus();
+    closedFrom.current = null;
+  }, [open]);
+
+  function close(from: "name" | "role") {
+    closedFrom.current = from;
+    setOpen(null);
+  }
+
+  return (
+    <>
+      {open === "name" && (
+        <SetNameField
+          memberId={memberId}
+          initial={displayName}
+          onSaved={(saved) => {
+            onNameSaved(saved);
+            close("name");
+          }}
+          onCancel={() => close("name")}
+        />
+      )}
+      {open === "role" && role && (
+        <RoleAsk
+          memberId={memberId}
+          role={role.current}
+          name={role.name}
+          onChanged={(changed) => {
+            role.onChanged(changed);
+            close("role");
+          }}
+          onCancel={() => close("role")}
+        />
+      )}
+      {open === null && (
+        <>
+          <div className={uiStyles.personActions}>
+            <button ref={nameButton} className={uiStyles.textButton} type="button" onClick={() => setOpen("name")}>
+              {showSetName(displayName) ? t("setName") : t("changeName")}
+            </button>
+            {role && !role.own && (
+              <button ref={roleButton} className={uiStyles.textButton} type="button" onClick={() => setOpen("role")}>
+                {t("changeRole")}
+              </button>
+            )}
+          </div>
+          {role?.own && <p className={uiStyles.hint}>{t("ownRoleHint")}</p>}
+        </>
+      )}
+    </>
   );
 }
 
@@ -592,6 +764,8 @@ export function Person({ memberId, tab }: { memberId: string; tab: "hours" | "ti
   const [displayName, setDisplayName] = useState<string | null>(null);
   const [failure, setFailure] = useState<ReturnType<typeof problem> | null>(null);
   const [inForm, setInForm] = useState(false);
+  // Who the last role change was for: the done line stays until the person leaves the page.
+  const [changedFor, setChangedFor] = useState<string | null>(null);
 
   function load() {
     call(() => membersList()).then((outcome) => {
@@ -636,23 +810,48 @@ export function Person({ memberId, tab }: { memberId: string; tab: "hours" | "ti
   }
 
   const name = displayName ? displayName : t("nameNotSet");
+  // Named by display name, or by email while the name isn't set.
+  const roleName = displayName || member.email;
 
   return (
     <>
+      <p className={uiStyles.srOnly} role="status" aria-live="polite">
+        {changedFor !== null && t("roleChanged", { name: changedFor })}
+      </p>
       {!inForm && (
         <>
           <BackLink />
           <Heading focus>{displayName ? displayName : <span className={styles.unset}>{t("nameNotSet")}</span>}</Heading>
           <p className={uiStyles.lede}>{t("lede", { email: member.email, role: account(member.role === "owner" ? "owner" : "worker"), city })}</p>
-          {showSetName(displayName) && (
-            <SetNameField
-              memberId={memberId}
-              onSaved={(saved) => {
-                setDisplayName(saved);
-                if (memberId === session.member_id) updateSession({ display_name: saved });
-              }}
-            />
+          {/* aria-hidden: the live region above already announces it (as on Today). */}
+          {changedFor !== null && (
+            <div className={uiStyles.statusNote} aria-hidden="true">
+              <svg width="16" height="16" viewBox="0 0 16 16">
+                <path d="M3.5 8.5l3 3 6-7" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              <p>{t("roleChanged", { name: changedFor })}</p>
+            </div>
           )}
+          <PersonActions
+            memberId={memberId}
+            displayName={displayName}
+            onNameSaved={(saved) => {
+              setDisplayName(saved);
+              if (memberId === session.member_id) updateSession({ display_name: saved });
+            }}
+            role={{
+              current: member.role,
+              name: roleName,
+              own: memberId === session.member_id,
+              onChanged: (role) => {
+                setMembers((current) => current && current.map((m) => (m.member_id === memberId ? { ...m, role } : m)));
+                // Emptied first, then set on the next frame: a second change for the same person
+                // must still change the live region's text, or it is not announced.
+                setChangedFor(null);
+                requestAnimationFrame(() => setChangedFor(roleName));
+              },
+            }}
+          />
           <PersonTabs workingHoursHref={`/team/${memberId}`} blockedTimeHref={`/team/${memberId}/time-off`} active={tab} />
         </>
       )}

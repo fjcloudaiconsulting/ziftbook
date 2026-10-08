@@ -66,8 +66,8 @@ export function needsName(name: string | null): boolean {
   return name === null;
 }
 
-/** "Set a name clients can see" shows only while the name is genuinely unset, never for any other
- * falsy-looking value the API might send. */
+/** The name button reads "Set a name clients can see" only while the name is genuinely unset
+ * (never for any other falsy-looking value the API might send), and "Change name" otherwise. */
 export function showSetName(displayName: string | null): boolean {
   return displayName === null;
 }

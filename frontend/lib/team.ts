@@ -36,3 +36,19 @@ export function upsertInvite<T extends Invite>(list: T[], invite: T): T[] {
   next[index] = invite;
   return next;
 }
+
+/** "Change role" asks straight for the one role the person doesn't have: with two roles there is
+ * nothing to pick. */
+export function otherRole(role: "owner" | "worker"): "owner" | "worker" {
+  return role === "owner" ? "worker" : "owner";
+}
+
+/** The refusals the role ask names itself; null for the rest, which read as the generic problem
+ * plus "Nothing was saved". The keep_an_owner trigger's 409 can't really reach this ask (you stay
+ * an owner, and your own role has no button), but it keeps its own message all the same. */
+export function roleChangeError(outcome: { status: number; code?: string }): "signedOut" | "notFound" | "lastOwner" | null {
+  if (outcome.status === 401) return "signedOut";
+  if (outcome.status === 404) return "notFound";
+  if (outcome.status === 409 && outcome.code === "last_owner") return "lastOwner";
+  return null;
+}

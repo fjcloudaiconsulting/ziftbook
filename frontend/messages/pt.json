@@ -165,7 +165,19 @@
       "cancel": "Cancelar",
       "nameRequired": "Digite um nome.",
       "lede": "{email} · {role} · horários no fuso de {city}",
-      "notFound": "Esta pessoa não foi encontrada."
+      "notFound": "Esta pessoa não foi encontrada.",
+      "changeName": "Alterar nome",
+      "changeRole": "Alterar função",
+      "promoteTitle": "Tornar {name} responsável?",
+      "promoteBody": "Responsáveis gerenciam serviços, equipe, clientes, horário de funcionamento e configurações, e podem alterar a função de qualquer pessoa, menos a própria. A sessão de {name} será encerrada, e a mudança aparece quando entrar de novo.",
+      "promoteYes": "Tornar {name} responsável",
+      "demoteTitle": "Passar {name} para a equipe?",
+      "demoteBody": "{name} deixa de gerenciar serviços, equipe, clientes, horário de funcionamento e configurações. Os agendamentos e o horário de trabalho continuam como estão. A sessão de {name} será encerrada, e a mudança aparece quando entrar de novo.",
+      "demoteYes": "Passar {name} para a equipe",
+      "keepRole": "Manter a função atual",
+      "roleChanged": "Função alterada. {name} vê a mudança ao entrar de novo.",
+      "ownRoleHint": "Só outro responsável pode alterar a sua função.",
+      "lastOwner": "Um negócio precisa de pelo menos um responsável, então a função não foi alterada."
     },
     "nameStep": {
       "title": "Como devemos chamar você?",
