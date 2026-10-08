@@ -118,7 +118,7 @@ def error_summary(error: BaseException) -> str:
     constraint for a database error (ZIF-93: jobs.last_error, which erasure doesn't cover).
     Reuses _chain's walk so this and a log record find the same sqlstate/constraint.
 
-    e.g. "SMTPRecipientsRefused" or "IntegrityError sqlstate=23505 constraint=uq_users_email".
+    e.g. "HTTPError" or "IntegrityError sqlstate=23505 constraint=uq_users_email".
     """
     for link in _chain(error):
         if sqlstate := link.get("sqlstate"):
@@ -283,6 +283,9 @@ def configure() -> None:
         "httpx2": logging.WARNING,  # the test client; its INFO line has the URL and query
         # Its WARNING quotes a malformed OTEL_EXPORTER_OTLP_HEADERS entry verbatim, token included.
         "opentelemetry.util.re": logging.ERROR,
+        # Off: mail.deliver logs every failed send once, by template; the SDK's own lines would
+        # repeat it, a dropped connection at CRITICAL.
+        "mailgun": logging.CRITICAL + 1,
     }.items():
         logging.getLogger(name).setLevel(value)
     # uvicorn configured these before importing the app (see "uvicorn" in the spec): drop its

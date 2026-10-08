@@ -46,9 +46,9 @@ second terminal once the stack is up (`make reset` ends in a foreground `make up
 `::1`, never through a proxy; the check is on the first hop only, so a local `pnpm dev` whose `ZIF_API_URL` points
 elsewhere forwards the calls there.
 
-`make up` needs host ports 3000, 8000, 5432, 1025 and 8025 free, and fails naming whatever holds one it isn't already
-using itself. If another project's Mailpit (or anything else) is squatting on 1025/8025, stop it, or free just that
-port and recreate Mailpit: `docker compose up -d --force-recreate --no-deps mailpit`.
+`make up` needs host ports 3000, 8000, 5432 and 8025 free, and fails naming whatever holds one it isn't already
+using itself. If another project's Mailpit (or anything else) is squatting on 8025, stop it, or free just that port
+and recreate Mailpit: `docker compose up -d --force-recreate --no-deps mailpit`.
 
 `docker-compose.yaml` is this local stack. `docker-compose-prod.yaml` runs a released version from GHCR
 (`ghcr.io/fjcloudaiconsulting/ziftbook/{backend,frontend,migrations}`); see `.env.example` and the CONTRIBUTING.md
@@ -68,7 +68,7 @@ make migration name="add bookings"   # new file in backend/migrations/versions
 make migrate                         # apply
 ```
 
-Tests need Docker running: `make test` starts Postgres and Mailpit and bootstraps the roles.
+Tests need Docker running: `make test` starts Postgres and bootstraps the roles.
 Parallel workers get databases named after the base one (`ziftbook_gw0`, ...), so several checkouts can share one Postgres: give each its own base (`ziftbook_143` in both `ZIF_MIGRATE_DATABASE_URL` and `ZIF_DATABASE_URL`), created with the GRANTs in `backend/migrations/bootstrap.sql`.
 
 After changing an api route, regenerate the committed contract the web client is built from:

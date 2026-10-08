@@ -107,17 +107,16 @@ def test_worker_main_configures_logging_first(monkeypatch: pytest.MonkeyPatch) -
     assert order[0] == "configure", order
 
 
-# ZIF-95: one startup line with the effective settings, never the SMTP password or the
-# healthcheck URL (a secret-ish check id).
+# ZIF-95: one startup line with the effective settings, never the Mailgun key or the healthcheck
+# URL (a secret-ish check id).
 def test_the_worker_logs_its_settings_once_at_startup(
     log_lines: Lines, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     secret = uuid.uuid4().hex
     monkeypatch.setenv("ZIF_APP_VERSION", "9.8.7")
-    monkeypatch.setenv("ZIF_SMTP_HOST", "smtp.example.test")
-    monkeypatch.setenv("ZIF_SMTP_PORT", "2525")
-    monkeypatch.setenv("ZIF_SMTP_USERNAME", f"user-{secret}")
-    monkeypatch.setenv("ZIF_SMTP_PASSWORD", secret)
+    monkeypatch.setenv("ZIF_MAILGUN_API_KEY", secret)
+    monkeypatch.setenv("ZIF_MAILGUN_DOMAIN", "m.example.test")
+    monkeypatch.setenv("ZIF_MAILGUN_REGION", "us")
     monkeypatch.setenv("ZIF_HEALTHCHECK_URL", f"https://hc.example.test/{secret}")
 
     async def work(*args: object) -> None:
@@ -140,8 +139,9 @@ def test_the_worker_logs_its_settings_once_at_startup(
             "log_format": "json",
             "log_sql": False,
             "kinds": sorted(worker.KINDS),
-            "smtp_host": "smtp.example.test",
-            "smtp_port": 2525,
+            "mail": "mailgun",
+            "mailgun_domain": "m.example.test",
+            "mailgun_region": "us",
         }
     ]
     dumped = json.dumps(log_lines())
