@@ -568,7 +568,8 @@ describe("request body cap (ZIF-136)", () => {
   let web;
   before(async () => {
     api = await stubEcho();
-    web = await startWeb(`http://127.0.0.1:${api.address().port}`, port);
+    // DEBUG: the hang-up test reads the proxy's "client closed" line.
+    web = await startWeb(`http://127.0.0.1:${api.address().port}`, port, { ZIF_LOG_LEVEL: "DEBUG" });
   });
   after(async () => {
     await stop(web);
@@ -606,27 +607,28 @@ describe("request body cap (ZIF-136)", () => {
     assert.equal(api.requests[0]["content-length"], String(MAX_BODY_BYTES));
   });
 
-  test("a DELETE with no body at all still goes through", async () => {
+  test("fence: a DELETE with no body at all still goes through", async () => {
     // Wrong implementation killed: refusing any write without a Content-Length (logout sends none).
     const { status, body } = await send(port, "/api/sessions", [], { method: "DELETE" });
     assert.equal(status, 200);
     assert.deepEqual(JSON.parse(body), { method: "DELETE", body: "" });
   });
 
-  test("a client hanging up mid-upload sends the API nothing (guard)", async () => {
-    // Guard, not a fence: a cancelled read ends as `done`, and the part that arrived before the
-    // hang-up would be forwarded as the whole body, were the fetch not tied to the same signal.
+  test("fence: a client hanging up mid-upload is logged as gone, and the API gets nothing", async () => {
+    // Wrong implementation killed: a read not cancelled on request.signal, which waits forever on
+    // Next's copy of the body (it never ends after a hang-up), so the request never finishes.
     api.requests.length = 0;
     const req = httpRequest({ host: "127.0.0.1", port, path: "/api/x", method: "POST", headers: { "Content-Type": "application/json" } });
     req.on("error", () => {});
     req.write('{"a":');
     await new Promise((r) => setTimeout(r, 300));
     req.destroy();
-    await new Promise((r) => setTimeout(r, 500));
+    const lines = await waitForLog(web.logs.stdout, "client closed");
+    assert.equal(lines.length, 1);
     assert.equal(api.requests.length, 0);
   });
 
-  test("the cap equals the API's MAX_BODY, and Next's own limit stays a socket read above it", () => {
+  test("guard: the cap equals the API's MAX_BODY, and Next's own limit stays a socket read above it", () => {
     // Next ends a body it cuts at proxyClientMaxBodySize, minus up to one socket read (64 KiB), as
     // if complete: that cut must always land above the cap, where the proxy refuses it.
     const product = (expr) => expr.split("*").reduce((total, n) => total * Number(n.trim()), 1);

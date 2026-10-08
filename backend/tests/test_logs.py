@@ -235,7 +235,7 @@ def test_text_format_is_one_line_with_control_characters_escaped() -> None:
 
 # 7b: every other control character (C0, DEL, C1, U+2028/9) gets a \uXXXX escape, as in the web
 # server's text format (ZIF-136): any of them could still split or rewrite a line downstream.
-@pytest.mark.parametrize("char", ["\x00", "\t", "\x1b", "\x7f", "\x85", "\x9f", " ", " "])
+@pytest.mark.parametrize("char", ["\x00", "\t", "\x1b", "\x7f", "\x85", "\x9f", "\u2028", "\u2029"])
 def test_text_format_escapes_every_control_character(char: str) -> None:
     record = logging.LogRecord(
         name="app.tests.logs",
