@@ -472,6 +472,7 @@ describe("seven days and Mon-Sun (ZIF-143)", () => {
     assert.equal(parse("").view, "day");
   });
   test("Mon-Sun to 7 days starts at today inside that week, else at its Monday (F3)", () => {
+    assert.equal(switchDate("week", "days", "2026-10-05", TODAY), TODAY);
     assert.equal(switchDate("week", "days", "2026-10-09", TODAY), TODAY);
     assert.equal(switchDate("week", "days", "2026-10-11", TODAY), TODAY);
     assert.equal(switchDate("week", "days", "2026-10-15", TODAY), "2026-10-12");
@@ -492,5 +493,6 @@ describe("seven days and Mon-Sun (ZIF-143)", () => {
   test("links carry the 7-day view", () => {
     const query = (href) => Object.fromEntries(new URL(href, "http://x").searchParams);
     assert.equal(query(hrefFor({ view: "days", date: TODAY, member: "all" }, {})).view, "days");
+    assert.equal(query(hrefFor({ view: "days", date: TODAY, member: "all" }, { view: "week" })).view, "week");
   });
 });

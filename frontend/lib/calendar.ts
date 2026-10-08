@@ -293,9 +293,8 @@ function validInstant(value: string | null): string | null {
 }
 
 /** The URL's state, never trusted: a bad date is today, a URL without a view opens the `remembered` one,
- * an unknown view is the day, a worker is always
- * themselves, an owner's member is `all` or an id (an id that is not one of `memberIds` once those are
- * known is `all`). A panel is `new`, `block` or `move` (which needs a booking); `new` and `block` replace
+ * an unknown view is the day, a worker is always themselves, an owner's member is `all` or an id (an id
+ * that is not one of `memberIds` once those are known is `all`). A panel is `new`, `block` or `move` (which needs a booking); `new` and `block` replace
  * the open booking and carry `at` (an instant) and `with` (a member); a worker's `with` is themselves. */
 export function parseView(
   params: { get(name: string): string | null },
