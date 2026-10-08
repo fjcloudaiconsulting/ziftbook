@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { actionsFor, closedDay, closedDetail, isWaiting, spanTimes, telHref, daySlices, dayWindow, historyLabel, hourRange, hrefFor, lanes, nowTop, parseView, switchDate, visibleDays, weekStart, weekdayOf, whenParts } from "../lib/calendar.ts";
+import { actionsFor, closedDay, closedDetail, isWaiting, spanTimes, telHref, daySlices, dayWindow, historyLabel, hourRange, hrefFor, lanes, monToSun, nowTop, parseView, switchDate, visibleDays, weekStart, weekdayOf, whenParts } from "../lib/calendar.ts";
 
 const AMS = "Europe/Amsterdam";
 const at = (iso) => new Date(iso).getTime();
@@ -481,6 +481,12 @@ describe("seven days and Mon-Sun (ZIF-143)", () => {
     assert.equal(switchDate("day", "days", "2026-10-09", TODAY), "2026-10-09");
     assert.equal(switchDate("week", "day", "2026-10-09", TODAY), "2026-10-09");
     assert.equal(switchDate("days", "days", "2026-10-09", TODAY), "2026-10-09");
+  });
+  test("Mon-Sun is named by Intl in each language, without abbreviation dots", () => {
+    const label = (locale) => monToSun(new Intl.DateTimeFormat(locale, { weekday: "short", timeZone: "UTC" }));
+    assert.equal(label("en-GB"), "Mon–Sun");
+    assert.equal(label("nl"), "ma–zo");
+    assert.equal(label("pt"), "seg–dom");
   });
   test("links carry the 7-day view", () => {
     const query = (href) => Object.fromEntries(new URL(href, "http://x").searchParams);

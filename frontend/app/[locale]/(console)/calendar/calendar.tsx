@@ -15,7 +15,7 @@ import {
   type TimeOffRangeOut,
 } from "@/api-client";
 import { Link, useRouter } from "@/i18n/navigation";
-import { closedDay, closedDetail, daySlices, dayWindow, hourRange, hrefFor, type CalendarView, lanes, nowTop, type Panel, parseView, type Slice, spanTimes, switchDate, type View, visibleDays, weekdayOf, weekStart } from "@/lib/calendar";
+import { closedDay, closedDetail, daySlices, dayWindow, hourRange, hrefFor, type CalendarView, lanes, monToSun, nowTop, type Panel, parseView, type Slice, spanTimes, switchDate, type View, visibleDays, weekdayOf } from "@/lib/calendar";
 import { dateLocale } from "@/lib/console";
 import { type Locale, type NameMap, serviceName } from "@/lib/services";
 import { messageShown, slotAt } from "@/lib/new-booking";
@@ -224,8 +224,6 @@ export function Calendar() {
   const weekdayShort = new Intl.DateTimeFormat(dateLocale(locale), { weekday: "short", timeZone: "UTC" });
   const dayNumber = new Intl.DateTimeFormat(dateLocale(locale), { day: "numeric", timeZone: "UTC" });
   const asDate = (iso: string) => new Date(`${iso}T12:00:00Z`);
-  // "Mon–Sun" in the reader's language; a trailing period goes ("seg.–dom." reads "seg–dom").
-  const monSun = [weekStart(todayISO), addDaysISO(weekStart(todayISO), 6)].map((day) => weekdayShort.format(asDate(day)).replace(/\.$/, "")).join("–");
   const dateLine = weekView ? t("weekRange", { from: monthDay.format(asDate(days[0])), to: monthDay.format(asDate(days[6])) }) : longDay.format(asDate(view.date));
 
   const team = members ?? [];
@@ -559,7 +557,7 @@ export function Calendar() {
         <nav className={css.seg} aria-label={t("view")}>
           {(["day", "days", "week"] as View[]).map((to) => (
             <Link key={to} href={href({ view: to, date: switchDate(view.view, to, view.date, todayISO) })} scroll={false} aria-current={view.view === to ? "true" : undefined}>
-              {to === "day" ? t("day") : to === "days" ? t("days") : monSun}
+              {to === "day" ? t("day") : to === "days" ? t("days") : monToSun(weekdayShort)}
             </Link>
           ))}
         </nav>

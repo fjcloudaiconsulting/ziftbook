@@ -46,6 +46,12 @@ export function switchDate(from: View, to: View, dateISO: string, todayISO: stri
   return weekStart(todayISO) === weekStart(dateISO) ? todayISO : weekStart(dateISO);
 }
 
+/** The Mon-Sun switch's label from Intl short weekday names, so every locale gets its own; a trailing
+ * period goes ("seg.–dom." reads "seg–dom", as designed). `weekday` formats in UTC. */
+export function monToSun(weekday: Intl.DateTimeFormat): string {
+  return ["2026-10-05", "2026-10-11"].map((day) => weekday.format(new Date(`${day}T12:00:00Z`)).replace(/\.$/, "")).join("–");
+}
+
 /** The booking panel's "When", in `tz`: whether the start is today, both clock times, and whether the
  * end falls on a later local day (so the line names its date). */
 export function whenParts(startISO: string, endISO: string, now: Date, tz: string) {
