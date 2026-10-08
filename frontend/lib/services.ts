@@ -1,7 +1,8 @@
 // Pure logic behind the service create/edit form: which name a reader sees (services.py:47-49),
-// the create/edit request body and its field errors, and the default-gap hint. Kept free of React
-// (and of any sibling import, as lib/week.ts) so node --test can run it directly with no module
-// resolution to configure: `parseMoney` (lib/money.ts) is passed in as a callback instead.
+// the request body (the same for create and edit) and its field errors, and the default-gap hint.
+// Kept free of React (and of any sibling import, as lib/week.ts) so node --test can run it
+// directly with no module resolution to configure: `parseMoney` (lib/money.ts) is passed in as a
+// callback instead.
 export type Locale = "en" | "nl" | "pt";
 export const LOCALES: Locale[] = ["en", "nl", "pt"];
 export type NameMap = Partial<Record<Locale, string>>;
@@ -40,10 +41,10 @@ export type ServiceForm = {
 
 export type ServiceBody = {
   name: NameMap;
-  description?: NameMap;
+  description: NameMap;
   price: { amount_minor: number };
   duration_minutes: number;
-  buffer_minutes?: number | null;
+  buffer_minutes: number | null;
 };
 
 export type ServiceBodyResult = { body: ServiceBody; errors?: never } | { body?: never; errors: Record<string, string> };
@@ -54,12 +55,9 @@ export type ServiceBodyResult = { body: ServiceBody; errors?: never } | { body?:
  * error demanding the business language specifically. `serviceName`'s display fallback order
  * (reader's language, then the business's, then any) is unaffected — this only decides which
  * name(s) satisfy validation. No `businessLanguage` parameter here: the required-name check never
- * touches it, on create or edit alike. */
-export function serviceBody(
-  form: ServiceForm,
-  options: { mode: "create" | "edit" },
-  parsePrice: (text: string) => number | null,
-): ServiceBodyResult {
+ * touches it, on create or edit alike. Edit sends the same body as create: the form is filled from
+ * the service, and PATCH records only the fields whose value changed (services.py:225-233). */
+export function serviceBody(form: ServiceForm, parsePrice: (text: string) => number | null): ServiceBodyResult {
   const errors: Record<string, string> = {};
 
   const name: NameMap = {};
@@ -79,7 +77,8 @@ export function serviceBody(
   let bufferMinutes: number | null = null;
   if (form.gap === "fixed") {
     const fixed = Number(form.fixedGap);
-    if (!Number.isInteger(fixed) || fixed < 0 || fixed > 240) errors.gap = "gapRange";
+    // Number("") is 0: an emptied field is an error, never a 0-minute gap.
+    if (!form.fixedGap?.trim() || !Number.isInteger(fixed) || fixed < 0 || fixed > 240) errors.gap = "gapRange";
     else bufferMinutes = fixed;
   }
 
@@ -89,13 +88,6 @@ export function serviceBody(
   for (const [locale, value] of Object.entries(form.description) as [Locale, string | undefined][]) {
     const trimmed = (value ?? "").trim();
     if (trimmed) description[locale] = trimmed;
-  }
-
-  if (options.mode === "edit") {
-    // The PATCH body is never the create body reused: description and buffer_minutes are
-    // create-only fields (design-r2.html:905-947), and PATCH applies every field it is sent
-    // (services.py:81-91), so including them here would reset them on every edit.
-    return { body: { name, price: { amount_minor: minor as number }, duration_minutes: duration } };
   }
 
   return {

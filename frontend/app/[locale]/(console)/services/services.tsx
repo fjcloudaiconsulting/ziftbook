@@ -493,7 +493,7 @@ function ServiceFormBody(props: Props) {
     // `await`, so only the first call in a tick ever gets past it.
     if (submitting.current) return;
     const form: ServiceForm = { name, description, price, duration, gap, fixedGap };
-    const result = serviceBody(form, { mode: editing ? "edit" : "create" }, parseMoney);
+    const result = serviceBody(form, parseMoney);
     if ("errors" in result && result.errors) {
       setErrors(result.errors);
       return;
@@ -582,21 +582,19 @@ function ServiceFormBody(props: Props) {
       />
       <p className={styles.hint}>{t("nameHint")}</p>
 
-      {!editing && (
-        <LangField
-          heading={t("descriptionLabel")}
-          headingHint={t("descriptionOptional")}
-          values={description}
-          onChange={(loc, value) => {
-            markDirty();
-            setDescription((current) => ({ ...current, [loc]: value }));
-          }}
-          initialTab={initialLanguageTab(locale as Locale, description)}
-          hint={t("descriptionOptional")}
-          placeholder={t("descriptionPlaceholder")}
-          multiline
-        />
-      )}
+      <LangField
+        heading={t("descriptionLabel")}
+        headingHint={t("descriptionOptional")}
+        values={description}
+        onChange={(loc, value) => {
+          markDirty();
+          setDescription((current) => ({ ...current, [loc]: value }));
+        }}
+        initialTab={initialLanguageTab(locale as Locale, description)}
+        hint={t("descriptionOptional")}
+        placeholder={t("descriptionPlaceholder")}
+        multiline
+      />
 
       <div className={styles.row2}>
         <div className={styles.field}>
@@ -656,70 +654,69 @@ function ServiceFormBody(props: Props) {
         </div>
       </div>
 
-      {!editing && (
-        <fieldset className={styles.field} style={{ border: 0, margin: 0, padding: 0 }}>
-          <legend className={styles.label} style={{ padding: 0 }}>
-            {t("gapLegend")}
-          </legend>
-          <p className={styles.hint}>{t("gapHint")}</p>
-          <div className={styles.choices} style={{ marginTop: "0.5rem" }}>
-            <label className={styles.choice}>
-              <input
-                type="radio"
-                name="gap"
-                checked={gap === "default"}
-                onChange={() => {
-                  markDirty();
-                  setGap("default");
-                }}
-              />
-              <span>
-                <b>{t("gapDefaultLabel")}</b>
-                <em>{t("gapDefaultHint", { pct: settings.buffer_pct, n: defaultBuffer(Number(duration) || 0, settings.buffer_pct) })}</em>
-              </span>
+      <fieldset className={styles.field} style={{ border: 0, margin: 0, padding: 0 }}>
+        <legend className={styles.label} style={{ padding: 0 }}>
+          {t("gapLegend")}
+        </legend>
+        <p className={styles.hint}>{t("gapHint")}</p>
+        <div className={styles.choices} style={{ marginTop: "0.5rem" }}>
+          <label className={styles.choice}>
+            <input
+              type="radio"
+              name="gap"
+              checked={gap === "default"}
+              onChange={() => {
+                markDirty();
+                setGap("default");
+              }}
+            />
+            <span>
+              <b>{t("gapDefaultLabel")}</b>
+              <em>{t("gapDefaultHint", { pct: settings.buffer_pct, n: defaultBuffer(Number(duration) || 0, settings.buffer_pct) })}</em>
+            </span>
+          </label>
+          <label className={styles.choice}>
+            <input
+              type="radio"
+              name="gap"
+              checked={gap === "fixed"}
+              onChange={() => {
+                markDirty();
+                setGap("fixed");
+              }}
+            />
+            <span>
+              <b>{t("gapFixedLabel")}</b>
+              <em>{t("gapFixedHint")}</em>
+            </span>
+          </label>
+        </div>
+        {gap === "fixed" && (
+          <div className={styles.field}>
+            <label className={styles.srOnly} htmlFor="service-fixed-gap">
+              {t("gapFixedNumberLabel")}
             </label>
-            <label className={styles.choice}>
+            <div className={styles.input}>
               <input
-                type="radio"
-                name="gap"
-                checked={gap === "fixed"}
-                onChange={() => {
+                id="service-fixed-gap"
+                type="number"
+                inputMode="numeric"
+                min={0}
+                max={240}
+                value={fixedGap}
+                onChange={(event) => {
                   markDirty();
-                  setGap("fixed");
+                  setFixedGap(event.target.value);
                 }}
+                aria-invalid={errors.gap ? true : undefined}
+                aria-describedby={errors.gap ? "service-gap-error" : undefined}
               />
-              <span>
-                <b>{t("gapFixedLabel")}</b>
-                <em>{t("gapFixedHint")}</em>
-              </span>
-            </label>
-          </div>
-          {gap === "fixed" && (
-            <div className={styles.field}>
-              <label className={styles.srOnly} htmlFor="service-fixed-gap">
-                {t("gapFixedNumberLabel")}
-              </label>
-              <div className={styles.input}>
-                <input
-                  id="service-fixed-gap"
-                  type="number"
-                  inputMode="numeric"
-                  min={0}
-                  max={240}
-                  value={fixedGap}
-                  onChange={(event) => {
-                    markDirty();
-                    setFixedGap(event.target.value);
-                  }}
-                  aria-invalid={errors.gap ? true : undefined}
-                  aria-describedby={errors.gap ? "service-gap-error" : undefined}
-                />
-              </div>
-              {errors.gap && <FieldError id="service-gap-error">{t("gapRange")}</FieldError>}
             </div>
-          )}
-        </fieldset>
-      )}
+            {errors.gap && <FieldError id="service-gap-error">{t("gapRange")}</FieldError>}
+          </div>
+        )}
+        {editing && <p className={styles.hint}>{t("gapEditHint")}</p>}
+      </fieldset>
 
       <fieldset className={styles.field} style={{ border: 0, margin: 0, padding: 0 }}>
         <legend className={styles.label} style={{ padding: 0 }}>
