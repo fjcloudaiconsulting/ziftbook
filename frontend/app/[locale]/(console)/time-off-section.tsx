@@ -339,6 +339,7 @@ export function BlockedTimeForm({
 
   async function onRemove() {
     if (!editing || submitting.current) return;
+    resetMessages();
     submitting.current = true;
     setRemoving(true);
     const outcome = await call(() => timeOffDelete({ path: { time_off_id: editing.id }, ...JSON_WRITE }), { write: true });
