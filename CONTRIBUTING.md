@@ -247,8 +247,8 @@ Where each deployment gets it:
 - **Production and staging** (k3s; `app.ziftbook.com` and `dev.ziftbook.com`, manifests in aws-infra
   `clusters/platform/ziftbook-{prod,staging}`): Cloudflare (proxied) to Traefik to the web app to the API.
   Cloudflare overwrites `CF-Connecting-IP` on every request, the node admits 443 from Cloudflare only, and
-  Traefik completes TLS only with clients showing our zone's Authenticated Origin Pulls certificate, so no
-  other path reaches the web app. The web app sets `ZIF_CLIENT_IP_HEADER=cf-connecting-ip`; the API sets
+  Traefik completes TLS only with clients showing our zones' Authenticated Origin Pulls certificate (one
+  certificate, shared with thebetterdecision.com), so no other path reaches the web app. The web app sets `ZIF_CLIENT_IP_HEADER=cf-connecting-ip`; the API sets
   `ZIF_TRUSTED_PROXIES=10.42.0.0/16` (the pod network), and NetworkPolicies admit only the web app's pods to
   it. Each visitor gets their own per-IP limits.
 - **`docker-compose-prod.yaml`** publishes the web app's port 3000 directly, so it leaves `ZIF_CLIENT_IP_HEADER`
