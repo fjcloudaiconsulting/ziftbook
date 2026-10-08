@@ -472,12 +472,10 @@ ZIF-38). An empty variable means the default: `env_ignore_empty=True` on the bas
 | `ZIF_MIGRATE_PASSWORD` | compose (`bootstrap.sql`) | none | yes | yes | `ziftbook_migrate` role password. |
 | `ZIF_APP_PASSWORD` | compose (`bootstrap.sql`) | none | yes | yes | `ziftbook_app` role password. |
 | **Mail** | | | | | |
-| `ZIF_SMTP_HOST` | worker | `smtp.eu.mailgun.org` | no | no | SMTP host. |
-| `ZIF_SMTP_PORT` | worker | `587` | no | no | SMTP port. |
-| `ZIF_SMTP_STARTTLS` | worker | `true` | no | no | Use STARTTLS. |
-| `ZIF_SMTP_USERNAME` | worker | none | needed to send mail | yes | SMTP auth username (Mailgun EU). |
-| `ZIF_SMTP_PASSWORD` | worker | `""` | needed to send mail | yes | SMTP auth password. |
-| `ZIF_SMTP_FROM` | worker | `ziftbook <no-reply@ziftbook.com>` | no | no | `From` header on outgoing email. |
+| `ZIF_MAILGUN_API_KEY` | worker | `""` | needed to send mail | yes | Mailgun sending API key. Unset: the worker logs `mail: "off"` and every email job fails (and retries) until it is set. |
+| `ZIF_MAILGUN_DOMAIN` | worker | `""` | needed to send mail | no | Mailgun sending domain; mail goes from `no-reply@` it. |
+| `ZIF_MAILGUN_REGION` | worker | `eu` | no | no | `eu` or `us`: which Mailgun API host the account lives on. |
+| `ZIF_MAILPIT_URL` | worker | none | no (development only) | no | Mailpit's base URL; with no Mailgun key, mail goes to its HTTP send API. Never SMTP. |
 | `ZIF_APP_URL` | worker | `http://localhost:3000` | yes | no | Where links in emails point; must be the public web URL in production. |
 | **Security** | | | | | |
 | `ZIF_TURNSTILE_SECRET` | api | `""` | no | yes | Cloudflare Turnstile secret. Unset skips verification, logged on the `api started` line. |

@@ -1,5 +1,6 @@
 from typing import Literal
 
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -54,13 +55,16 @@ class TurnstileSettings(Settings):
 
 
 class MailSettings(Settings):
-    """SMTP for outgoing email. Deployed: Mailgun EU (smtp.eu.mailgun.org:587, STARTTLS)."""
+    """Outgoing email: Mailgun's HTTP API when deployed, Mailpit's HTTP API in development. Never
+    SMTP (owner ruling, ZIF-151)."""
 
-    smtp_host: str = "smtp.eu.mailgun.org"
-    smtp_port: int = 587
-    smtp_starttls: bool = True
-    smtp_username: str | None = None
-    smtp_password: str = ""
-    smtp_from: str = "ziftbook <no-reply@ziftbook.com>"
+    # Resolved at runtime from a secret, never committed. Unset: the worker still starts and logs
+    # `mail: "off"`, and every email job fails (and retries) until it is set.
+    mailgun_api_key: SecretStr = SecretStr("")
+    # The sending domain; also the From address's domain.
+    mailgun_domain: str = ""
+    mailgun_region: Literal["eu", "us"] = "eu"
+    # Development only (compose): Mailpit's base URL. Ignored once mailgun_api_key is set.
+    mailpit_url: str | None = None
     # Where links in emails point: the web app, as people reach it.
     app_url: str = "http://localhost:3000"

@@ -5,9 +5,6 @@ then run the jobs."""
 
 import asyncio
 import json
-import os
-import urllib.parse
-import urllib.request
 import uuid
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta, timezone
@@ -32,6 +29,7 @@ from tests.conftest import (
     new_client,
     put_settings,
     save_setting,
+    sent_to,
     set_role,
     signed_in,
 )
@@ -39,8 +37,6 @@ from tests.test_availability_api import assign, new_service, weekdays
 from tests.test_bookings_api import at, post_booking
 from tests.test_bookings_approval_api import expire, make_pending, patch
 from tests.test_working_hours import seed
-
-MAILPIT = f"http://{os.environ['ZIF_SMTP_HOST']}:8025"
 
 
 @pytest.fixture(autouse=True)
@@ -80,15 +76,12 @@ def ready(people: People, owner: TestClient) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Mailpit
+# Sent mail (conftest's Mailgun recorder)
 # ---------------------------------------------------------------------------
 
 
 def _search(email: str) -> list[dict[str, Any]]:
-    query = urllib.parse.urlencode({"query": f"to:{email}"})
-    with urllib.request.urlopen(f"{MAILPIT}/api/v1/search?{query}", timeout=5) as response:
-        messages: list[dict[str, Any]] = json.load(response)["messages"]
-        return messages
+    return sent_to(email)
 
 
 def subjects_sent_to(email: str) -> list[str]:
@@ -96,18 +89,15 @@ def subjects_sent_to(email: str) -> list[str]:
 
 
 def mail_for(email: str) -> dict[str, Any]:
-    """The one message Mailpit got for email, its parsed summary."""
+    """The one message sent to email."""
     (sent,) = _search(email)
-    with urllib.request.urlopen(f"{MAILPIT}/api/v1/message/{sent['ID']}", timeout=5) as body:
-        message: dict[str, Any] = json.load(body)
-        return message
+    return sent
 
 
 def raw_for(email: str) -> str:
-    """The one message Mailpit got for email, its raw source."""
-    (sent,) = _search(email)
-    with urllib.request.urlopen(f"{MAILPIT}/api/v1/message/{sent['ID']}/raw", timeout=5) as raw:
-        return raw.read().decode()  # type: ignore[no-any-return]
+    """The one message sent to email, its raw source."""
+    raw: str = mail_for(email)["Raw"]
+    return raw
 
 
 # ---------------------------------------------------------------------------
@@ -884,8 +874,7 @@ def test_a_linked_client_email_carries_a_fragment_token_that_hashes_into_booking
             default=str,
         )
     assert token not in outbox_blob
-    raw = raw_for(client_email)
-    assert "X-Mailgun-Track-Clicks: no" in raw
+    assert message["Form"]["o:tracking-clicks"] == "no"
 
 
 # fence (D1). A job already sent, run again, stores no second booking_links row: the token it
@@ -905,12 +894,8 @@ def test_a_rerun_of_a_sent_job_stores_no_link(
 
 
 def texts_to(email: str) -> list[str]:
-    """The text body of every message Mailpit got for email."""
-    out = []
-    for sent in _search(email):
-        with urllib.request.urlopen(f"{MAILPIT}/api/v1/message/{sent['ID']}", timeout=5) as body:
-            out.append(json.load(body)["Text"])
-    return out
+    """The text body of every message sent to email."""
+    return [sent["Text"] for sent in _search(email)]
 
 
 def starts_at_of(tenant_id: uuid.UUID, booking_id: str) -> str:
@@ -1004,8 +989,8 @@ def test_the_confirmation_ics_sequence_is_the_reschedule_count(
 
 
 # 34. fence. Kills losing an already-sent link, or a retry that never gets a usable one, when a
-# later send in the same booking's life fails at SMTP.
-def test_an_smtp_failure_leaves_the_earlier_link_valid_and_the_retry_mints_its_own(
+# later send in the same booking's life fails at Mailgun.
+def test_a_failed_send_leaves_the_earlier_link_valid_and_the_retry_mints_its_own(
     people: People,
     app: FastAPI,
     ready: str,
@@ -1023,7 +1008,7 @@ def test_an_smtp_failure_leaves_the_earlier_link_valid_and_the_retry_mints_its_o
     assert earlier_hashes  # booking_received minted one
 
     def broken_send(*args: Any, **kwargs: Any) -> None:
-        raise ConnectionRefusedError("smtp down")
+        raise ConnectionRefusedError("mailgun down")
 
     monkeypatch.setattr(mail, "_send", broken_send)
     job = Job(
@@ -1047,9 +1032,7 @@ def test_an_smtp_failure_leaves_the_earlier_link_valid_and_the_retry_mints_its_o
     (confirmed,) = [
         m for m in _search(client_email) if m["Subject"] == _subject("booking_confirmed", "en")
     ]
-    with urllib.request.urlopen(f"{MAILPIT}/api/v1/message/{confirmed['ID']}", timeout=5) as body:
-        message: dict[str, Any] = json.load(body)
-    assert "#" in message["Text"]
+    assert "#" in confirmed["Text"]
 
 
 # ZIF-143 fence. With workers_answer_requests off (the default) the assigned worker's request

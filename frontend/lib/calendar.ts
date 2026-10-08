@@ -363,3 +363,9 @@ export function hrefFor(current: Partial<CalendarView> & Pick<CalendarView, "vie
   }
   return `/calendar?${query}`;
 }
+
+/** Where an appointment opens in the calendar (ZIF-130's refused block): its day there, in the
+ * business zone (never the instant's UTC date), that member's column, the booking's panel. */
+export function bookingHref(booking: { id: string; starts_at: string }, member: string, tz: string): string {
+  return hrefFor({ view: "day", date: localDateISO(new Date(booking.starts_at), tz), member }, { booking: booking.id });
+}
