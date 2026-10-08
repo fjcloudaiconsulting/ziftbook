@@ -13,6 +13,7 @@ import threading
 import urllib.parse
 import urllib.request
 import uuid
+import weakref
 from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
 from datetime import time as time_cls
@@ -27,7 +28,7 @@ from psycopg.errors import QueryCanceled
 from sqlalchemy import Engine, event, text
 from sqlalchemy.exc import OperationalError
 
-from app import availability, bookings, members, schedule, turnstile
+from app import auth, availability, bookings, members, schedule, turnstile
 from app.db import SessionLocal, tenant_context
 from app.main import create_app
 from app.schedule import to_utc
@@ -103,9 +104,57 @@ def booking_url(tenant_id: object, service_id: object) -> str:
     return f"/api/public/businesses/{tenant_id}/services/{service_id}/bookings"
 
 
+# Clients post_booking signed in itself, and as which address: a later call with another address
+# signs in again. One account per address, however many bookings it makes; a lock, because
+# concurrency tests post from threads.
+HELPER_SESSIONS: weakref.WeakKeyDictionary[TestClient, str] = weakref.WeakKeyDictionary()
+HELPER_USERS: dict[str, uuid.UUID] = {}
+HELPER_LOCK = threading.Lock()
+
+
+def sign_in_as(client: TestClient, tenant_id: object, email: str) -> None:
+    """ZIF-117: the public POST books only for the signed-in address itself (anyone else confirms
+    an emailed link, tests/test_booking_holds_api.py). A member of the business with exactly this
+    address, and its session on this client. No hours and no service: never a candidate. A session
+    proves the address whatever its business, so an unknown business borrows the newest real one
+    (its POST must still answer 404, not 403)."""
+    with HELPER_LOCK:
+        if email not in HELPER_USERS:
+            user_id = uuid.uuid7()
+            with SessionLocal.begin() as session:
+                session.execute(
+                    text("INSERT INTO users (id, email, name) VALUES (:id, :email, 'Guest')"),
+                    {"id": user_id, "email": email},
+                )
+            HELPER_USERS[email] = user_id
+        user_id = HELPER_USERS[email]
+        with SessionLocal.begin() as session:
+            home = session.scalar(
+                text(
+                    "SELECT coalesce((SELECT id FROM tenants WHERE id = :t), "
+                    "(SELECT id FROM tenants ORDER BY id DESC LIMIT 1))"
+                ),
+                {"t": str(tenant_id)},
+            )
+        with tenant_context(home) as session:
+            session.execute(
+                text(
+                    "INSERT INTO memberships (tenant_id, user_id, role) "
+                    "VALUES (current_setting('app.tenant_id')::uuid, :u, 'worker') "
+                    "ON CONFLICT DO NOTHING"
+                ),
+                {"u": user_id},
+            )
+            token = auth.create(session, user_id, ip=None, user_agent=None)
+    client.cookies.set(auth.COOKIE, token)
+    HELPER_SESSIONS[client] = email
+
+
 def post_booking(
     client: TestClient, tenant_id: object, service_id: object, **overrides: Any
 ) -> Response:
+    """The public booking POST, signed in as the posted address (ZIF-117) unless the test's own
+    client already holds a session it chose."""
     body: dict[str, Any] = {
         "starts_at": at("09:00"),
         "name": "Guest",
@@ -114,6 +163,9 @@ def post_booking(
         "consents": {},
         **overrides,
     }
+    mine = HELPER_SESSIONS.get(client)
+    if (auth.COOKIE not in client.cookies or mine is not None) and mine != body["email"]:
+        sign_in_as(client, tenant_id, body["email"])
     return client.post(booking_url(tenant_id, service_id), json=body)
 
 
@@ -800,94 +852,49 @@ def test_an_accepted_booking_does_not_count_toward_the_cap(
     assert second.status_code == 201, second.json()
 
 
-# 24: FENCE - ruling 8.
-def test_an_unauthenticated_booking_cannot_rewrite_a_clients_name_or_phone(
-    people: People, app: FastAPI, ready: str
+# 24/25: FENCE, rewritten for ZIF-117 (owner ruling 2026-10-08; replaces ruling 8's FILL). Wrong
+# impl: the old create() that books anyone and fills a blank phone, or a 403 after Turnstile (the
+# page's single-use token would be spent before the hold POST could use it).
+@pytest.mark.parametrize("who", ["anonymous", "signed-in stranger"])
+def test_only_the_signed_in_address_itself_books_here_and_nothing_is_written_before(
+    people: People, app: FastAPI, ready: str, monkeypatch: pytest.MonkeyPatch, who: str
 ) -> None:
     email = fresh_email()
     with tenant_context(people.a) as session:
         session.execute(
             text("""
-            INSERT INTO clients (tenant_id, name, email, phone)
-            VALUES (current_setting('app.tenant_id')::uuid, 'Victim', :email, '+31600000000')
+            INSERT INTO clients (tenant_id, name, email)
+            VALUES (current_setting('app.tenant_id')::uuid, 'Victim', :email)
             """),
             {"email": email},
         )
+    verified: list[object] = []
 
-    response = post_booking(
-        new_client(app),
-        people.a,
-        ready,
-        starts_at=at("09:00"),
-        name="Attacker",
-        email=email,
-        phone="+31611111111",
-    )
+    def verify(*args: object) -> bool:
+        verified.append(args)
+        return True
 
-    assert response.status_code == 201
+    monkeypatch.setattr(turnstile, "verify", verify)
+    client = new_client(app) if who == "anonymous" else signed_in(app, people.a, people.both)
+    body = {
+        "starts_at": at("09:00"),
+        "name": "Attacker",
+        "email": email,
+        "phone": "+31611111111",
+        "policy_version": "2026-09-01",
+        "consents": {},
+    }
+
+    response = client.post(booking_url(people.a, ready), json=body)
+
+    assert (response.status_code, response.json()) == (403, {"code": "verify_email"})
+    assert verified == []
     with tenant_context(people.a) as session:
         row = session.execute(
             text("SELECT name, phone, user_id FROM clients WHERE email = :e"), {"e": email}
         ).one()
-    assert (row.name, row.phone, row.user_id) == ("Victim", "+31600000000", None)
-
-    blank_email = fresh_email()
-    with tenant_context(people.a) as session:
-        session.execute(
-            text("""
-            INSERT INTO clients (tenant_id, name, email)
-            VALUES (current_setting('app.tenant_id')::uuid, 'Blank', :email)
-            """),
-            {"email": blank_email},
-        )
-    filled = post_booking(
-        new_client(app),
-        people.a,
-        ready,
-        starts_at=at("11:00"),
-        name="Anyone",
-        email=blank_email,
-        phone="+31699999999",
-    )
-    assert filled.status_code == 201
-    with tenant_context(people.a) as session:
-        blank_row = session.execute(
-            text("SELECT phone FROM clients WHERE email = :e"), {"e": blank_email}
-        ).one()
-    assert blank_row.phone == "+31699999999"
-
-
-# 25: FENCE.
-def test_a_signed_in_stranger_is_anonymous_for_the_refresh(
-    people: People, app: FastAPI, ready: str
-) -> None:
-    stranger_email = fresh_email()
-    with tenant_context(people.a) as session:
-        session.execute(
-            text("""
-            INSERT INTO clients (tenant_id, name, email, phone)
-            VALUES (current_setting('app.tenant_id')::uuid, 'Victim', :email, '+31600000000')
-            """),
-            {"email": stranger_email},
-        )
-    signed = signed_in(app, people.a, people.both)
-
-    response = post_booking(
-        signed,
-        people.a,
-        ready,
-        starts_at=at("09:00"),
-        name="Impersonator",
-        email=stranger_email,
-        phone="+31611111111",
-    )
-
-    assert response.status_code == 201
-    with tenant_context(people.a) as session:
-        row = session.execute(
-            text("SELECT name, phone, user_id FROM clients WHERE email = :e"), {"e": stranger_email}
-        ).one()
-    assert (row.name, row.phone, row.user_id) == ("Victim", "+31600000000", None)
+        booked = session.scalar(text("SELECT count(*) FROM bookings"))
+    assert (row.name, row.phone, row.user_id, booked) == ("Victim", None, None, 0)
 
 
 # 26a: GUARD + FENCE.
@@ -1455,15 +1462,22 @@ def test_the_booking_transaction_takes_the_tenant_lock_first(
     def count(conn: object, cursor: object, statement: str, parameters: Any, *args: Any) -> None:
         executed.append((statement, parameters))
 
+    client, email = new_client(app), fresh_email()
+    sign_in_as(client, people.a, email)  # its own statements, not the booking's
     event.listen(app_engine, "before_cursor_execute", count)
     try:
-        response = post_booking(new_client(app), people.a, ready, starts_at=at("09:00"))
+        response = post_booking(client, people.a, ready, starts_at=at("09:00"), email=email)
     finally:
         event.remove(app_engine, "before_cursor_execute", count)
 
     assert response.status_code == 201
-    tenant_set = next(
-        i for i, (s, _) in enumerate(executed) if s.startswith("SELECT set_config('app.tenant_id'")
+    # The booking's own transaction: the last tenant switch before the service row is read (step 0's
+    # account() reads the session under its own tenant first, ZIF-117).
+    service_read = next(i for i, (s, _) in enumerate(executed) if "FOR SHARE" in s)
+    tenant_set = max(
+        i
+        for i, (s, _) in enumerate(executed[:service_read])
+        if s.startswith("SELECT set_config('app.tenant_id'")
     )
     lock_statement, lock_params = executed[tenant_set + 1]
     assert lock_statement.startswith("SELECT pg_advisory_xact_lock(")

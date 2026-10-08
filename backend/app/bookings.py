@@ -700,7 +700,6 @@ def book_online(
     phone: str | None,
     locale: str | None,
     user_id: UUID | None,
-    refresh: bool,
     policy_version: str,
     consents: dict[Purpose, bool],
     origin_ip: str | None,
@@ -741,7 +740,7 @@ def book_online(
     # 7. Once, before the savepoint: the row lock this takes is what the pending cap needs,
     #    and ROLLBACK TO SAVEPOINT would release a lock taken inside one.
     found = clients.find_or_create(
-        db, name=name, email=address, phone=phone, locale=locale, user_id=user_id, refresh=refresh
+        db, name=name, email=address, phone=phone, locale=locale, user_id=user_id
     )
     if withdrawals:  # 8: record_consents calls texts_for again - its own trust boundary
         clients.record_consents(
@@ -871,10 +870,13 @@ router = APIRouter(prefix="/api/public", tags=["bookings"])
 def create(  # sync def: turnstile.verify's urlopen blocks, and runs in FastAPI's threadpool
     tenant_id: UUID, service_id: UUID, new: BookingIn, request: Request, response: Response
 ) -> BookingOut:
-    """Book a free slot as a guest. Public: no session required; a cookie, if present, only decides
-    whether the client record for the posted address is refreshed from what was typed
-    (app.clients.find_or_create), and only when it belongs to the signed-in account."""
+    """Book a free slot straight away, signed in with the posted address. Anyone else answers 403
+    `verify_email` and books through an emailed link instead (app.holds, ZIF-117)."""
     signed_in_as = account(request)  # step 0: its own transaction, opened and closed here
+    # ZIF-117. Before the limits and Turnstile, so the page can spend its unspent token on the hold
+    # POST instead. Keyed on the caller's own session alone: it says nothing about the address.
+    if signed_in_as is None or signed_in_as.email != new.email:
+        raise ApiError(403, "verify_email")
     ip = request.client.host if request.client else None
     # 1. Per IP first, before any outbound call: Turnstile ahead of a limit would give an anonymous
     #    caller a free outbound HTTPS POST per request.
@@ -893,9 +895,6 @@ def create(  # sync def: turnstile.verify's urlopen blocks, and runs in FastAPI'
     request.state.tenant_id = tenant_id
     response.headers["Cache-Control"] = "no-store"
     origin_ip, user_agent = auth.origin(request)
-    # Keyed on AUTHENTICATION, never on the route: a signed-in user typing somebody else's address
-    # is anonymous for this purpose.
-    mine = signed_in_as is not None and signed_in_as.email == new.email
     try:
         with tenant_context(tenant_id) as db:
             # 1. The first statement of the transaction, always, nothing above it.
@@ -910,8 +909,7 @@ def create(  # sync def: turnstile.verify's urlopen blocks, and runs in FastAPI'
                 address=new.email,
                 phone=new.phone,
                 locale=new.locale,
-                user_id=signed_in_as.user_id if signed_in_as is not None and mine else None,
-                refresh=mine,
+                user_id=signed_in_as.user_id,
                 policy_version=new.policy_version,
                 consents=new.consents,
                 origin_ip=origin_ip,

@@ -118,6 +118,7 @@ export function bookingBody(form: BookingForm): BookingBody {
 
 export type AnswerOutcome =
   | { kind: "done" }
+  | { kind: "verifyEmail" }
   | { kind: "slotTaken" }
   | { kind: "serviceGone" }
   | { kind: "policyChanged" }
@@ -130,9 +131,12 @@ export type AnswerOutcome =
 const SLOT_TAKEN_CODES = new Set(["slot_taken", "slot_unavailable"]);
 const POLICY_CHANGED_CODES = new Set(["unknown_policy_version", "purpose_not_in_policy_version"]);
 
-/** What the POST answer means for the page (spec's "POST answer mapping" table). */
+/** What the POST answer means for the page (spec's "POST answer mapping" table). ZIF-117: the
+ * hold POST's 202 is its "done" (the email is on its way), and today's POST answers 403
+ * verify_email to anyone not signed in with the address typed. */
 export function answerState(answer: { status: number; code?: string }): AnswerOutcome {
-  if (answer.status === 201) return { kind: "done" };
+  if (answer.status === 201 || answer.status === 202) return { kind: "done" };
+  if (answer.status === 403 && answer.code === "verify_email") return { kind: "verifyEmail" };
   if (answer.status === 409 && answer.code && SLOT_TAKEN_CODES.has(answer.code)) return { kind: "slotTaken" };
   if (answer.status === 404) return { kind: "serviceGone" };
   if (answer.status === 422 && answer.code && POLICY_CHANGED_CODES.has(answer.code)) return { kind: "policyChanged" };
@@ -237,4 +241,54 @@ export function withName(roster: { id: string; display_name: string | null }[], 
 export function afterPickTaken(free: string[] | null, pick: string): string[] | null {
   const rest = (free ?? []).filter((id) => id !== pick);
   return rest.length > 0 ? rest : null;
+}
+
+/** ZIF-117: whether step 3 books straight away (today's form) or emails a link first. Only a person
+ * signed in with exactly the address typed books straight away; the backend compares the same way
+ * (its stored form is trimmed and lower-cased). */
+export function signedInAs(sessionEmail: string | null, typed: string): boolean {
+  return sessionEmail !== null && typed.trim().toLowerCase() === sessionEmail.trim().toLowerCase();
+}
+
+export type HoldBody = {
+  starts_at: string;
+  member_id: string | null;
+  email: string;
+  locale: string;
+  turnstile_token: string | null;
+  replaces?: string;
+};
+
+/** The hold POST body (ZIF-117): the time and the address, nothing else about the person.
+ * `replaces` (the secret of the hold this one takes over: send again, wrong address) is omitted,
+ * never sent as null, when there is none. `starts_at` passes through unchanged, as bookingBody's. */
+export function holdBody(form: { startsAt: string; memberId: string | null; email: string; locale: string; turnstileToken: string | null; replaces: string | null }): HoldBody {
+  return {
+    starts_at: form.startsAt,
+    member_id: form.memberId,
+    email: form.email.trim(),
+    locale: form.locale,
+    turnstile_token: form.turnstileToken,
+    ...(form.replaces ? { replaces: form.replaces } : {}),
+  };
+}
+
+export type ConfirmScreen = "done" | "dead" | "taken" | "tooMany" | "policyChanged" | "fieldErrors" | "unknown";
+
+/** What the confirm click's answer means (ZIF-117). Every 404 is the dead-link screen, whatever the
+ * cause; a 409 is "that time was just taken"; a 503 or a network failure may or may not have
+ * booked, so it says to check the email before trying again. */
+export function confirmScreen(answer: { status: number; code?: string }): ConfirmScreen {
+  if (answer.status === 201) return "done";
+  if (answer.status === 404) return "dead";
+  if (answer.status === 409) return "taken";
+  if (answer.status === 429) return "tooMany";
+  if (answer.status === 422 && answer.code && POLICY_CHANGED_CODES.has(answer.code)) return "policyChanged";
+  if (answer.status === 422) return "fieldErrors";
+  return "unknown";
+}
+
+/** Whether the confirm page opens after the 15-minute hold ended (the late-click line). */
+export function holdEnded(heldUntil: string, now: Date): boolean {
+  return Date.parse(heldUntil) <= now.getTime();
 }

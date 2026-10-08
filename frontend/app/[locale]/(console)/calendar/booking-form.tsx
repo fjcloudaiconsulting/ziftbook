@@ -306,6 +306,7 @@ function Fields({ prefill, team, todayISO, date, onDone, services, booking }: Pr
       const chosen = withId ? memberName(withId) : null;
       const failure = submitFailure(outcome, override, chosen);
       if (failure === "signedOut") setSignedOut(true);
+      else if (failure === "slotHeld" && outcome.held_until) setBanner(t("slotHeld", { until: localTime(outcome.held_until, tz) }));
       else if (failure === "slotTaken" || failure === "memberUnavailable") {
         setBanner(failure === "slotTaken" ? t("slotTaken") : t("slotUnavailable", { member: chosen ?? "" }));
         clearTime();
