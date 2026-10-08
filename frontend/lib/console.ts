@@ -53,6 +53,13 @@ export function canEditHours(role: Role, isSelf: boolean, workersEditOwnHours: b
   return role === "owner" || (isSelf && workersEditOwnHours);
 }
 
+/** Whether a role may accept or decline its pending requests, mirroring the API's transition
+ * (`bookings.py`, ZIF-143): an owner always; a worker their own, only while the business allows it.
+ * Off, a worker still sees their requests, read only. */
+export function canAnswerRequests(role: Role, workersAnswerRequests: boolean): boolean {
+  return role === "owner" || workersAnswerRequests;
+}
+
 /** Whether the person still has to give their own name: the API refuses everything else with
  * `name_required` until they do, so the console asks before showing any page. */
 export function needsName(name: string | null): boolean {

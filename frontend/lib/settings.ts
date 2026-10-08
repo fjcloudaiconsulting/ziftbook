@@ -17,6 +17,7 @@ export type Settings = {
   max_reschedules: number;
   cancellation_policy_text: string;
   workers_edit_own_hours: boolean;
+  workers_answer_requests: boolean;
 };
 export type Key = keyof Settings;
 export type Draft = Record<Key, string | boolean>;
@@ -41,6 +42,7 @@ export const FIELDS: Field[] = [
   // Compared and sent exactly as typed (no trim); the textarea's maxLength and the API cap its length.
   { key: "cancellation_policy_text", kind: "text" },
   { key: "workers_edit_own_hours", kind: "bool" },
+  { key: "workers_answer_requests", kind: "bool" },
 ];
 
 export const SLOT_STEPS = [5, 10, 15, 20, 30, 60];

@@ -468,6 +468,7 @@ export function Settings() {
             <h2>{t("teamHeading")}</h2>
           </legend>
           {check("workers_edit_own_hours", t("workersEditLabel"), t("workersEditHint"))}
+          {check("workers_answer_requests", t("workersAnswerLabel"), t("workersAnswerHint"))}
         </fieldset>
 
         {showBar && (

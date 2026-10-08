@@ -13,7 +13,7 @@ import {
   type TimeOffRangeOut,
 } from "@/api-client";
 import { Link } from "@/i18n/navigation";
-import { dateLocale, showPublishStep, todayLabel } from "@/lib/console";
+import { canAnswerRequests, dateLocale, type Role, showPublishStep, todayLabel } from "@/lib/console";
 import { formatMoney } from "@/lib/money";
 import { type NameMap, type Locale, serviceName } from "@/lib/services";
 import { listWindow, localTime } from "@/lib/time-off";
@@ -146,6 +146,8 @@ export function Today() {
   const locale = useLocale();
   const tz = settings.timezone;
   const isOwner = session.role === "owner";
+  // Off (ZIF-143): the queue is read only, a Waiting chip where Accept and Decline sit.
+  const canAnswer = canAnswerRequests(session.role as Role, settings.workers_answer_requests);
 
   // "Now" is read once per render pass, and never ticks: the "now" line and the expiry days only
   // move when something reloads, which is enough for a screen people leave open for minutes.
@@ -291,7 +293,7 @@ export function Today() {
   function expiry(expiresAt: string) {
     const { when, time } = expiryLabel(expiresAt, now, tz);
     const key = when === "today" ? "expiresToday" : when === "tomorrow" ? "expiresTomorrow" : "expiresLater";
-    return t.rich(key, { time, date: dateFormat.format(new Date(expiresAt)), long: (chunks) => <span className={styles.desktopOnly}>{chunks}</span> });
+    return t.rich(canAnswer ? key : `${key}Owner`, { time, date: dateFormat.format(new Date(expiresAt)), long: (chunks) => <span className={styles.desktopOnly}>{chunks}</span> });
   }
 
   // The agenda shows when its own data is in (or failed), whatever the queue's load did.
@@ -375,9 +377,10 @@ export function Today() {
       {(queueFailure || queue === null || queue.length > 0) && (
         <section className={styles.todaySection} aria-labelledby="queue-head">
           <h2 id="queue-head" className={styles.sectionHead} ref={queueHead} tabIndex={-1}>
-            {t("queueTitle")}
-            {queue && queue.length > 0 && <span className={styles.count}>{queue.length}</span>}
+            {canAnswer ? t("queueTitle") : t("queueTitleOwner")}
+            {canAnswer && queue && queue.length > 0 && <span className={styles.count}>{queue.length}</span>}
           </h2>
+          {!canAnswer && <p className={`${uiStyles.hint} ${styles.queueHint}`}>{t("queueHintOwner")}</p>}
           {queueFailure ? (
             <LoadFailure failure={queueFailure} onRetry={loadQueue} />
           ) : queue === null ? (
@@ -405,7 +408,13 @@ export function Today() {
                           <span className={styles.desktopOnly}> · {t("bookedOnline", { relative: relative.format(created.value, created.unit) })}</span>
                         </span>
                       </div>
-                      {!row.declining && (
+                      {!canAnswer && (
+                        <span className={`${styles.chip} ${CHIPS.pending.style} ${styles.reqChip}`}>
+                          <span aria-hidden="true">{CHIPS.pending.icon}</span>
+                          <span className={styles.chipWord}>{t(CHIPS.pending.word)}</span>
+                        </span>
+                      )}
+                      {canAnswer && !row.declining && (
                         <div className={styles.acts}>
                           <button
                             id={`accept-${booking.id}`}
