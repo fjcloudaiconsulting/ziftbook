@@ -49,8 +49,16 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
   return { title: loaded.status === 200 ? loaded.data.name : FALLBACK_TITLE };
 }
 
-export default async function PublicBookingPage({ params }: { params: Promise<{ slug: string; locale: string }> }) {
+export default async function PublicBookingPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ slug: string; locale: string }>;
+  searchParams: Promise<{ service?: string | string[] }>;
+}) {
   const { slug, locale } = await params;
+  // ZIF-117: "Choose another time" from the confirm page opens this service's times.
+  const { service } = await searchParams;
   const loaded = await load(slug);
 
   if (loaded.status === 404) notFound();
@@ -76,7 +84,12 @@ export default async function PublicBookingPage({ params }: { params: Promise<{ 
   return (
     <>
       <header className={styles.minimalHeader}><LanguageSwitcher /></header>
-      <BookingPage page={loaded.data} locale={locale} turnstileSiteKey={process.env.ZIF_TURNSTILE_SITE_KEY ?? null} />
+      <BookingPage
+        page={loaded.data}
+        locale={locale}
+        turnstileSiteKey={process.env.ZIF_TURNSTILE_SITE_KEY ?? null}
+        initialService={typeof service === "string" ? service : null}
+      />
     </>
   );
 }

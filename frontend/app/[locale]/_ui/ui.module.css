@@ -469,6 +469,16 @@ a.textButton { display: inline-flex; align-items: center; }
 .doneList { list-style: none; margin: 0; padding: 0.9rem 1rem; border: 1px solid var(--line); border-radius: 1rem; display: flex; flex-direction: column; gap: 0.15rem; }
 .doneList li:first-child { font-weight: 600; }
 .doneList li:not(:first-child) { font-size: 0.875rem; color: var(--muted); }
+/* ZIF-117: how long a time is held, the confirmed address, the confirm page's title, a button pair. */
+.held { display: flex; gap: 0.55rem; align-items: flex-start; padding: 0.75rem 0.9rem; border-radius: 0.75rem; border: 1px solid var(--note-line); background: var(--note-soft); font-size: 0.9375rem; }
+.held svg { flex: none; margin-top: 0.2rem; }
+.readonly { margin: 0; padding: 0.7rem 0.9rem; border-radius: 0.75rem; background: var(--surface); font-size: 0.9375rem; overflow-wrap: anywhere; }
+.pageTitle { margin: 0 0 0.25rem; font: 400 1.5rem/1.2 var(--font-display), Georgia, serif; }
+.btnRow { display: flex; flex-direction: column; gap: 0.6rem; }
+@media (min-width: 40rem) {
+  .btnRow { flex-direction: row; flex-wrap: wrap; }
+  .btnRow .button { width: auto; }
+}
 
 .minimalFooter {
   border-top: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: 0.25rem 1rem; justify-content: center;

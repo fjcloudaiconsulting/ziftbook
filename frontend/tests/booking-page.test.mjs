@@ -11,15 +11,19 @@ import {
   answerState,
   bookingBody,
   cancellationState,
+  confirmScreen,
   dayPart,
   emailSuggestion,
   firstFreeDayFrom,
   freeNamed,
   groupByDayPart,
+  holdBody,
+  holdEnded,
   keepPick,
   nextWeekDisabled,
   ownPolicyText,
   scanWindow,
+  signedInAs,
   slotsFor,
   slotWho,
   slugLooksValid,
@@ -313,5 +317,42 @@ describe("ZIF-100 who is free at a time", () => {
     assert.deepEqual(afterPickTaken(["a1", "b2", "c3"], "b2"), ["a1", "c3"]);
     assert.equal(afterPickTaken(["b2"], "b2"), null);
     assert.equal(afterPickTaken(null, "b2"), null);
+  });
+});
+
+describe("ZIF-117 confirm by email", () => {
+  test("fence: only the signed-in address itself books straight away", () => {
+    assert.equal(signedInAs(null, "ana@example.com"), false);
+    assert.equal(signedInAs("ana@example.com", " Ana@Example.com "), true);
+    assert.equal(signedInAs("ana@example.com", "ana@example.org"), false);
+    assert.equal(signedInAs("ana@example.com", ""), false);
+  });
+
+  test("fence: the hold body carries the address and the time only, replaces only when set", () => {
+    const form = { startsAt: "2026-10-15T08:30:00+00:00", memberId: null, email: " ana@example.com ", locale: "pt", turnstileToken: "tok", replaces: null };
+    assert.deepEqual(holdBody(form), { starts_at: "2026-10-15T08:30:00+00:00", member_id: null, email: "ana@example.com", locale: "pt", turnstile_token: "tok" });
+    assert.equal(holdBody({ ...form, replaces: "s3cret" }).replaces, "s3cret");
+  });
+
+  test("fence: 202 is the hold's done and 403 verify_email is its own outcome, never 'verify failed'", () => {
+    assert.equal(answerState({ status: 202 }).kind, "done");
+    assert.equal(answerState({ status: 403, code: "verify_email" }).kind, "verifyEmail");
+    assert.equal(answerState({ status: 403, code: "turnstile_failed" }).kind, "verifyFailed");
+  });
+
+  test("fence: every 404 on the click is the dead link, every 409 the taken time", () => {
+    assert.equal(confirmScreen({ status: 201 }), "done");
+    for (const code of ["link_expired", "not_found"]) assert.equal(confirmScreen({ status: 404, code }), "dead");
+    for (const code of ["slot_unavailable", "slot_taken"]) assert.equal(confirmScreen({ status: 409, code }), "taken");
+    assert.equal(confirmScreen({ status: 429, code: "rate_limited" }), "tooMany");
+    assert.equal(confirmScreen({ status: 422, code: "unknown_policy_version" }), "policyChanged");
+    assert.equal(confirmScreen({ status: 422, code: "invalid_request" }), "fieldErrors");
+    for (const status of [0, 500, 503]) assert.equal(confirmScreen({ status }), "unknown");
+  });
+
+  test("fence: the hold has ended AT its until, not a minute later", () => {
+    const until = "2026-10-15T08:47:00Z";
+    assert.equal(holdEnded(until, new Date("2026-10-15T08:46:59Z")), false);
+    assert.equal(holdEnded(until, new Date("2026-10-15T08:47:00Z")), true);
   });
 });

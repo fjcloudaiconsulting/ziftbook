@@ -3455,7 +3455,7 @@
           "bookings"
         ],
         "summary": "Create",
-        "description": "Book a free slot as a guest. Public: no session required; a cookie, if present, only decides\nwhether the client record for the posted address is refreshed from what was typed\n(app.clients.find_or_create), and only when it belongs to the signed-in account.",
+        "description": "Book a free slot straight away, signed in with the posted address. Anyone else answers 403\n`verify_email` and books through an emailed link instead (app.holds, ZIF-117).",
         "operationId": "bookings-create",
         "parameters": [
           {

@@ -5,10 +5,11 @@ import Script from "next/script";
 import { useTranslations } from "next-intl";
 import { useEffect, useRef, useState } from "react";
 
-import { availabilityRead, bookingsCreate, type BookingPageOut, sessionRead } from "@/api-client";
+import { availabilityRead, bookingHoldsCreate, bookingHoldsRelease, bookingsCreate, type BookingPageOut, sessionRead } from "@/api-client";
 import { addDays, localDay, localWhen, slotsByDay, weekDays } from "@/lib/booking-link";
 import {
   afterPickTaken,
+  type AnswerOutcome,
   answerState,
   bookingBody,
   cancellationState,
@@ -16,10 +17,12 @@ import {
   firstFreeDayFrom,
   freeNamed,
   groupByDayPart,
+  holdBody,
   keepPick,
   nextWeekDisabled,
   ownPolicyText,
   scanWindow,
+  signedInAs,
   slotsFor,
   slotWho,
   withName,
@@ -66,6 +69,8 @@ type Flow = {
   suggest: string | null;
   banner: { where: 1 | 2 | 3 | "c"; tone: "note" | "error"; text: string } | null;
   busy: boolean;
+  // ZIF-117: the secret of the hold the next "Email me a link" takes over (after "Wrong address?").
+  replaces: string | null;
 };
 // Once `service` is set (steps 2 and 3), these fields are meaningful; this alias just documents
 // that at call sites instead of re-asserting it.
@@ -85,15 +90,27 @@ const INITIAL: Omit<Flow, "name" | "email" | "phone"> = {
   suggest: null,
   banner: null,
   busy: false,
+  replaces: null,
 };
 
-type Done = { status: string; service: Service; worker: Worker | null; starts_at: string; price: { amount_minor: number; currency: string }; email: string };
+// ZIF-117: the "Check your email" screen. `secret` (the hold POST's answer) lives in this page's
+// memory only; it is what replaces or releases the hold, so nobody else can.
+type Sent = { secret: string; email: string; startsAt: string; heldUntil: string; service: Service; who: string | null; notice: { tone: "note" | "error"; text: string } | null };
+
+export type Done = {
+  status: string;
+  service: Pick<Service, "name" | "duration_minutes">;
+  worker: Pick<Worker, "display_name"> | null;
+  starts_at: string;
+  price: { amount_minor: number; currency: string };
+  email: string;
+};
 
 // `who[i]`: the ids free at `slots[i]`.
 type TimesWindow = { slots: string[]; who: string[][] };
 type CacheEntry = TimesWindow | "error" | "loading";
 
-export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingPageOut; locale: string; turnstileSiteKey: string | null }) {
+export function BookingPage({ page, locale, turnstileSiteKey, initialService = null }: { page: BookingPageOut; locale: string; turnstileSiteKey: string | null; initialService?: string | null }) {
   const t = useTranslations("BookingPage");
   const router = useRouter();
   const loc = locale as Locale;
@@ -101,8 +118,18 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
   const businessLanguage = page.language as Locale;
   const dLocale = dateLocale(locale);
 
-  const [flow, setFlow] = useState<Flow>({ ...INITIAL, name: "", email: "", phone: "" });
+  // ZIF-117: the confirm page's "Choose another time" lands here with ?service=: its times open.
+  const [flow, setFlow] = useState<Flow>(() => {
+    const service = page.services.find((svc) => svc.id === initialService) ?? null;
+    if (!service) return { ...INITIAL, name: "", email: "", phone: "" };
+    const worker = service.workers.length === 1 ? service.workers[0].id : "any";
+    return { ...INITIAL, name: "", email: "", phone: "", step: 2, service, worker, weekStart: localDay(new Date(), page.timezone) };
+  });
   const [done, setDone] = useState<Done | null>(null);
+  const [sent, setSent] = useState<Sent | null>(null);
+  // ZIF-117: the signed-in account's own address. Only that address books straight away; any other
+  // gets a link by email first (signedInAs).
+  const [sessionEmail, setSessionEmail] = useState<string | null>(null);
   // State, not a ref: read during render (the picker), so it must trigger a re-render on change.
   const [cache, setCache] = useState(new Map<string, CacheEntry>());
   const scanned = useRef(new Set<string>()); // service|worker keys already auto-scanned once
@@ -142,6 +169,7 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
     void (async () => {
       const answer = await send(sessionRead());
       if (cancelled || answer.status !== 200 || !answer.data) return;
+      setSessionEmail(answer.data.email);
       setFlow((f) => {
         const name = f.name || answer.data!.name || f.name;
         const email = f.email || answer.data!.email || f.email;
@@ -152,6 +180,17 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  // ZIF-117: with ?service=, that service's times load once mounted, a tick later (never a state
+  // update in the effect's own body).
+  useEffect(() => {
+    if (!flow.service) return;
+    const service = flow.service;
+    const timer = setTimeout(() => void ensureWeek(service, flow.worker, flow.weekStart));
+    return () => clearTimeout(timer);
+    // Mount only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -175,7 +214,7 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
    * and a 404 on the week GET — the spec gives both the same path. */
   function backToStep1(noteText: string) {
     router.refresh();
-    setFlow((f) => ({ ...INITIAL, name: f.name, email: f.email, phone: f.phone, banner: { where: 1, tone: "note", text: noteText } }));
+    setFlow((f) => ({ ...INITIAL, name: f.name, email: f.email, phone: f.phone, replaces: f.replaces, banner: { where: 1, tone: "note", text: noteText } }));
     setFocusStep(1);
   }
 
@@ -391,7 +430,7 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
       return;
     }
     const errors: Flow["errors"] = {};
-    if (!flow.name.trim()) errors.name = t("errName");
+    if (!linkFirst && !flow.name.trim()) errors.name = t("errName");
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(flow.email.trim())) errors.email = t("errEmail");
     if (Object.keys(errors).length > 0) {
       // Step 3's inputs only exist in the DOM while it's the open step: open it first (if it
@@ -421,9 +460,18 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
     working.current = true;
     setFlow((f) => ({ ...f, busy: true, banner: null }));
     const f = flow as Step2Plus;
+    const memberId = f.pick ?? (f.worker === "any" ? null : f.worker);
+    // ZIF-117: anyone but the signed-in address itself gets a link by email first ("Send the email
+    // again" comes back here too, replacing the hold on screen).
+    if (sent || linkFirst) return doHold(f, memberId, token);
+    if (f.replaces) {
+      // Back to the signed-in address after a link went elsewhere: that hold would block its own time.
+      const released = await send(bookingHoldsRelease({ path: { tenant_id: page.id }, body: { secret: f.replaces } }));
+      if (released.status === 204) setFlow((cur) => ({ ...cur, replaces: null }));
+    }
     const body = bookingBody({
       startsAt: f.slot!,
-      memberId: f.pick ?? (f.worker === "any" ? null : f.worker),
+      memberId,
       name: f.name,
       email: f.email,
       phone: f.phone,
@@ -433,10 +481,16 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
     });
     const answer = await send(bookingsCreate({ path: { tenant_id: page.id, service_id: f.service.id }, body: { ...body, locale: loc } }));
     working.current = false;
-    // Reset after EVERY answer, 201 included: a fresh "Book another" must never reuse this token.
-    if (turnstileSiteKey) resetTurnstile();
-
     const outcome = answerState(answer);
+    // Reset after EVERY answer, 201 included: a fresh "Book another" must never reuse this token.
+    if (turnstileSiteKey && outcome.kind !== "verifyEmail") resetTurnstile();
+
+    if (outcome.kind === "verifyEmail") {
+      // The session ended, or isn't this address's: refused before Turnstile, so the same token
+      // goes to the hold instead, and the form becomes the email-only one.
+      setSessionEmail(null);
+      return doHold(f, memberId, token);
+    }
     if (outcome.kind === "done" && answer.data) {
       setDone({
         status: answer.data.status,
@@ -448,6 +502,65 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
       });
       return;
     }
+    await afterRefusal(f, outcome);
+  }
+
+  /** ZIF-117: the hold POST, a first link or "Send the email again" (which replaces the hold on
+   * screen; "Wrong address" leaves its secret in flow.replaces). */
+  async function doHold(f: Step2Plus, memberId: string | null, token: string | null) {
+    const again = sent;
+    const replaces = again?.secret ?? f.replaces;
+    working.current = true;
+    const held = await send(
+      bookingHoldsCreate({
+        path: { tenant_id: page.id, service_id: f.service.id },
+        body: { ...holdBody({ startsAt: f.slot!, memberId, email: f.email, locale: loc, turnstileToken: token, replaces }), locale: loc },
+      }),
+    );
+    working.current = false;
+    if (turnstileSiteKey) resetTurnstile();
+    const outcome = answerState(held);
+    if (outcome.kind === "done" && held.data) {
+      const email = f.email.trim();
+      setSent({
+        secret: held.data.secret,
+        email,
+        startsAt: held.data.starts_at,
+        heldUntil: held.data.expires_at,
+        service: f.service,
+        who: withName(f.service.workers, f.worker, f.pick, t("anyone")),
+        notice: again ? { tone: "note", text: t("sentAgain", { email }) } : null,
+      });
+      setFlow((cur) => ({ ...cur, busy: false, replaces: null }));
+      return;
+    }
+    if (again && outcome.kind !== "slotTaken" && outcome.kind !== "serviceGone") {
+      // Stays on "Check your email": the hold and its link are as they were.
+      setSent({ ...again, notice: { tone: "error", text: failureText(outcome.kind) } });
+      setFlow((cur) => ({ ...cur, busy: false }));
+      return;
+    }
+    // Refused: whatever the booker does next, its hold still replaces the one it had.
+    setSent(null);
+    setFlow((cur) => ({ ...cur, replaces }));
+    return afterRefusal({ ...f, replaces }, outcome);
+  }
+
+  function failureText(kind: AnswerOutcome["kind"]): string {
+    return kind === "verifyFailed"
+      ? t("verifyFailed")
+      : kind === "tooMany"
+        ? t("tooMany")
+        : kind === "nothingBooked"
+          ? t("nothingBooked")
+          : kind === "fieldErrors"
+            ? t("checkDetails")
+            : t("unknownOutcome");
+  }
+
+  /** Every refused POST, today's or the hold's: the time taken, the service gone, the terms
+   * changed, or a banner by the button. */
+  async function afterRefusal(f: Step2Plus, outcome: AnswerOutcome) {
     if (outcome.kind === "slotTaken") {
       const time = localWhen(f.slot!, zone, dateLocale(locale)).time;
       // The window holding the slot, not the visible week's: "Change" plus "Next week" keeps the slot.
@@ -494,22 +607,36 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
       setFlow({ ...f, busy: false, banner: { where: "c", tone: "error", text: t("policyChanged") } });
       return;
     }
-    const text =
-      outcome.kind === "verifyFailed"
-        ? t("verifyFailed")
-        : outcome.kind === "tooMany"
-          ? t("tooMany")
-          : outcome.kind === "nothingBooked"
-            ? t("nothingBooked")
-            : outcome.kind === "fieldErrors"
-              ? t("checkDetails")
-              : t("unknownOutcome");
-    setFlow({ ...f, busy: false, banner: { where: "c", tone: "error", text } });
+    setFlow({ ...f, busy: false, banner: { where: "c", tone: "error", text: failureText(outcome.kind) } });
+  }
+
+  /** "Choose another time": the hold goes (its link with it) and the times show it free again. */
+  async function otherTime() {
+    if (!sent || working.current) return;
+    working.current = true;
+    await send(bookingHoldsRelease({ path: { tenant_id: page.id }, body: { secret: sent.secret } }));
+    working.current = false;
+    setSent(null);
+    const f = flow as Step2Plus;
+    // Kept for the next hold anyway: if the release didn't land, that hold replaces this one.
+    setFlow((cur) => ({ ...cur, step: 2, slot: null, pick: null, banner: null, replaces: sent.secret }));
+    setFocusStep(2);
+    void ensureWeek(f.service, f.worker, f.weekStart, true);
+  }
+
+  /** "Wrong address? Change it": back to the address; the next link replaces this hold. */
+  function wrongAddress() {
+    if (!sent) return;
+    setFlow((cur) => ({ ...cur, step: 3, replaces: sent.secret }));
+    setSent(null);
+    focusFieldGen.current += 1;
+    setFocusField({ field: "email", gen: focusFieldGen.current });
   }
   useEffect(() => {
     doBookRef.current = doBook;
   });
 
+  const linkFirst = !signedInAs(sessionEmail, flow.email);
   const service1Done = flow.service;
   // flow.service is checked, not just flow.step: TS doesn't propagate that narrowing through the
   // ternary's inferred type, so the cast documents what the runtime check already guarantees.
@@ -548,6 +675,21 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
           <div className={styles.flowCol}>
             {done ? (
               <DoneScreen page={page} done={done} locale={loc} dLocale={dLocale} zone={zone} t={t} onAgain={() => { setDone(null); setFlow({ ...INITIAL, name: sessionFill.current.name, email: sessionFill.current.email, phone: "" }); }} />
+            ) : sent ? (
+              <CheckEmail
+                page={page}
+                sent={sent}
+                locale={loc}
+                dLocale={dLocale}
+                zone={zone}
+                t={t}
+                busy={flow.busy}
+                verifying={verifying}
+                banner={flow.banner?.where === "c" ? flow.banner : null}
+                onAgain={() => void book()}
+                onOtherTime={() => void otherTime()}
+                onWrongAddress={wrongAddress}
+              />
             ) : (
               <>
               {/* Step 1: service */}
@@ -676,13 +818,16 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
                     {3}
                   </span>
                   <h2 id="step3-h" ref={(el) => { headingRefs.current[3] = el; }} tabIndex={-1}>
-                    {t("step3")}
+                    {linkFirst ? t("step3Email") : t("step3")}
                   </h2>
                 </div>
                 <div className={styles.stepBody}>
                 {s2 && flow.step === 3 && <WhoAt s2={s2} banner={flow.banner?.where === 3 ? flow.banner : null} zone={zone} dLocale={dLocale} t={t} onPick={(pick) => setFlow((f) => ({ ...f, pick }))} />}
                 {s2 && flow.step === 3 && (
                   <div className={styles.form}>
+                    {/* ZIF-117: name and phone only for the signed-in address itself; anyone else
+                     * gives them on the confirm page, after the emailed link. */}
+                    {!linkFirst && (
                     <div className={styles.row2}>
                       <div className={styles.field}>
                         <label className={styles.label} htmlFor="bp-name">
@@ -722,6 +867,7 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
                         </p>
                       </div>
                     </div>
+                    )}
                     <div className={styles.field}>
                       <label className={styles.label} htmlFor="bp-email">
                         {t("email")}
@@ -742,7 +888,7 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
                         />
                       </div>
                       <p className={styles.hint} id="bp-email-hint">
-                        {t("emailHint")}
+                        {linkFirst ? t("emailLinkHint") : t("emailHint")}
                       </p>
                       {flow.errors.email && <FieldError id="bp-email-err">{flow.errors.email}</FieldError>}
                       <div aria-live="polite">
@@ -779,6 +925,8 @@ export function BookingPage({ page, locale, turnstileSiteKey }: { page: BookingP
             onTurnstileLoad={onTurnstileLoad}
             onBook={() => void book()}
             hidden={done !== null}
+            bare={sent !== null}
+            linkFirst={linkFirst}
           />
         </div>
       </div>
@@ -1107,7 +1255,16 @@ function PickerWeek({
   );
 }
 
-function Checkout({
+/** What the checkout aside needs to know about the choice: today's flow, or (ZIF-117) the held
+ * booking on the confirm page. */
+export type Chosen = {
+  service: Pick<Service, "name" | "duration_minutes" | "price" | "workers">;
+  slot: string | null;
+  worker: string;
+  pick: string | null;
+};
+
+export function Checkout({
   page,
   s2,
   locale,
@@ -1122,9 +1279,11 @@ function Checkout({
   onTurnstileLoad,
   onBook,
   hidden,
+  bare = false,
+  linkFirst = false,
 }: {
-  page: BookingPageOut;
-  s2: Step2Plus | null;
+  page: Pick<BookingPageOut, "name" | "cancellation" | "auto_confirm">;
+  s2: Chosen | null;
   locale: string;
   dLocale: string;
   zone: string;
@@ -1137,6 +1296,11 @@ function Checkout({
   /** True on the done screen: the aside (Turnstile included) stays mounted — never conditionally
    * removed, so the same live widget survives into the next "Book another" cycle — just hidden. */
   hidden: boolean;
+  /** ZIF-117, on "Check your email": only the Turnstile box, so "Send the email again" can still
+   * show a challenge (the same live widget, never remounted). */
+  bare?: boolean;
+  /** ZIF-117: the button emails a link, and the hold note replaces the fine print under it. */
+  linkFirst?: boolean;
   onTurnstileLoad(): void;
   onBook(): void;
 }) {
@@ -1186,10 +1350,12 @@ function Checkout({
     );
   }
 
-  const label = busy ? (page.auto_confirm ? t("booking") : t("sending")) : page.auto_confirm ? t("book") : t("request");
+  const label = linkFirst ? (busy ? t("sending") : t("emailLink")) : busy ? (page.auto_confirm ? t("booking") : t("sending")) : page.auto_confirm ? t("book") : t("request");
 
   return (
-    <aside className={styles.checkout} aria-labelledby="checkout-h" hidden={hidden}>
+    <aside className={bare ? undefined : styles.checkout} aria-labelledby={bare ? undefined : "checkout-h"} hidden={hidden}>
+      {!bare && (
+      <>
       <h2 id="checkout-h" className={styles.checkoutHead}>
         {t("yourBooking")}
       </h2>
@@ -1232,6 +1398,8 @@ function Checkout({
       {!page.auto_confirm && <Banner tone="note">{t("approvalNote", { biz: page.name })}</Banner>}
       {verifying && <Banner tone="note">{t("verifying")}</Banner>}
       {banner && <Banner tone={banner.tone}>{banner.text}</Banner>}
+      </>
+      )}
       {/* Rendered visibly (never display:none) and kept mounted for the whole page's life — an
        * interaction-only challenge must be able to actually appear here, and "Book another" must
        * reuse the same live widget rather than a dead one from a screen that unmounted it. */}
@@ -1246,22 +1414,28 @@ function Checkout({
           <Script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" strategy="afterInteractive" onReady={onTurnstileLoad} />
         </>
       )}
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          onBook();
-        }}
-      >
-        <Submit busy={busy} busyLabel={label}>
-          {label}
-        </Submit>
-      </form>
-      <p className={styles.fine}>{t("fine", { biz: page.name })}</p>
+      {!bare && (
+        <>
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              onBook();
+            }}
+          >
+            <Submit busy={busy} busyLabel={label}>
+              {label}
+            </Submit>
+          </form>
+          <p className={styles.fine}>{linkFirst ? t("holdNote") : t("fine", { biz: page.name })}</p>
+        </>
+      )}
     </aside>
   );
 }
 
-function DoneScreen({
+/** The booked / requested screen: today's page, and (ZIF-117) the confirm page after the click,
+ * which has no "Book another appointment" (no flow to restart there). */
+export function DoneScreen({
   page,
   done,
   locale,
@@ -1270,13 +1444,13 @@ function DoneScreen({
   t,
   onAgain,
 }: {
-  page: BookingPageOut;
+  page: Pick<BookingPageOut, "name" | "language">;
   done: Done;
   locale: Locale;
   dLocale: string;
   zone: string;
   t: ReturnType<typeof useTranslations>;
-  onAgain(): void;
+  onAgain?(): void;
 }) {
   const pending = done.status === "pending";
   const start = new Date(done.starts_at);
@@ -1301,8 +1475,93 @@ function DoneScreen({
           </li>
         </ul>
         <p className={styles.hint}>{t("spam")}</p>
-        <button className={`${styles.button} ${styles.secondary}`} type="button" onClick={onAgain}>
-          {t("another")}
+        {onAgain && (
+          <button className={`${styles.button} ${styles.secondary}`} type="button" onClick={onAgain}>
+            {t("another")}
+          </button>
+        )}
+      </Outcome>
+    </div>
+  );
+}
+
+/** The clock-and-note line (ZIF-117): how long a time is held. */
+export function Held({ children }: { children: React.ReactNode }) {
+  return (
+    <div className={styles.held}>
+      <svg aria-hidden="true" viewBox="0 0 16 16" width="16" height="16">
+        <circle cx="8" cy="8" r="6.3" fill="none" stroke="currentColor" strokeWidth="1.5" />
+        <path d="M8 4.8V8l2.2 1.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      </svg>
+      <span>{children}</span>
+    </div>
+  );
+}
+
+/** ZIF-117 "Check your email": replaces the done screen for anyone the link is mailed to. It never
+ * learns about the click (no polling), which is why it says the page can be closed. */
+function CheckEmail({
+  page,
+  sent,
+  locale,
+  dLocale,
+  zone,
+  t,
+  busy,
+  verifying,
+  banner,
+  onAgain,
+  onOtherTime,
+  onWrongAddress,
+}: {
+  page: BookingPageOut;
+  sent: Sent;
+  locale: Locale;
+  dLocale: string;
+  zone: string;
+  t: ReturnType<typeof useTranslations>;
+  busy: boolean;
+  verifying: boolean;
+  banner: { tone: "note" | "error"; text: string } | null;
+  onAgain(): void;
+  onOtherTime(): void;
+  onWrongAddress(): void;
+}) {
+  const end = new Date(Date.parse(sent.startsAt) + sent.service.duration_minutes * 60_000);
+  const w = localWhen(sent.startsAt, zone, dLocale);
+  const endTime = new Intl.DateTimeFormat(dLocale, { hour: "2-digit", minute: "2-digit", timeZone: zone }).format(end);
+  const until = localWhen(sent.heldUntil, zone, dLocale).time;
+  const name = localized(sent.service.name, locale, page.language as Locale);
+  return (
+    <div className={styles.outcomeGrid}>
+      <Outcome icon="mail" title={t("checkTitle")} lede={t("checkLede", { email: sent.email })}>
+        {sent.notice && <Banner tone={sent.notice.tone}>{sent.notice.text}</Banner>}
+        {verifying && <Banner tone="note">{t("verifying")}</Banner>}
+        {banner && <Banner tone={banner.tone}>{banner.text}</Banner>}
+        <ul className={styles.doneList}>
+          <li lang={name.lang ?? undefined}>{name.text}</li>
+          <li>
+            {t("whenFormat", { day: w.date, from: w.time, to: endTime })} {"("}
+            {zoneCity(zone)}
+            {")"}
+          </li>
+          <li>
+            {sent.who && `${sent.who} · `}
+            {formatMoney(sent.service.price.amount_minor, sent.service.price.currency, locale)}
+          </li>
+        </ul>
+        <Held>{t("checkHold", { time: w.time, until })}</Held>
+        <p className={styles.hint}>{t("checkHint")}</p>
+        <div className={styles.btnRow}>
+          <button className={`${styles.button} ${styles.secondary}`} type="button" disabled={busy} onClick={onAgain}>
+            {t("sendAgain")}
+          </button>
+          <button className={`${styles.button} ${styles.secondary}`} type="button" disabled={busy} onClick={onOtherTime}>
+            {t("otherTime")}
+          </button>
+        </div>
+        <button className={styles.textButton} type="button" onClick={onWrongAddress}>
+          {t("wrongAddress")}
         </button>
       </Outcome>
     </div>

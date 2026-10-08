@@ -186,6 +186,10 @@ describe("submitFailure", () => {
     assert.equal(submitFailure({ status: 409, code: "slot_taken" }, true, "Ana"), "slotTaken");
     assert.equal(submitFailure({ status: 409, code: "other" }, true, "Ana"), "problem");
   });
+  test("ZIF-117 fence: slot_held is its own message, never 'just taken'", () => {
+    assert.equal(submitFailure({ status: 409, code: "slot_held" }, false, "Ana"), "slotHeld");
+    assert.equal(submitFailure({ status: 409, code: "slot_held" }, false, null), "slotHeld");
+  });
   test("the other answers keep their own messages", () => {
     assert.equal(submitFailure({ status: 409, code: "email_taken" }, false, null), "emailTaken");
     assert.equal(submitFailure({ status: 409, code: "invalid_transition" }, true, null), "changed");

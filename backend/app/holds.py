@@ -363,7 +363,6 @@ def confirm(body: ConfirmIn, request: Request, response: Response) -> bookings.B
                 # Opening the emailed link proves the address as a verified account email does:
                 # what they type now is what they own (app.clients.find_or_create).
                 user_id=None,
-                refresh=True,
                 policy_version=body.policy_version,
                 consents=body.consents,
                 origin_ip=origin_ip,

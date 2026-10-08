@@ -94,23 +94,14 @@ ON CONFLICT (tenant_id, email) DO UPDATE SET
 """
 _RETURNING = "\nRETURNING id, phone, locale\n"
 
-# The address's own account is signing in and booking: what they type is what they own.
+# The address is proven (its account is signed in, or its emailed link was confirmed, ZIF-117):
+# what they type is what they own.
 REFRESH = text(
     _INSERT
     + """
   name = excluded.name,
   phone = coalesce(excluded.phone, clients.phone),
   locale = coalesce(excluded.locale, clients.locale)
-"""
-    + _RETURNING
-)
-# Anyone else, including a signed-in person typing a third party's address. Blanks are filled;
-# nothing stored is ever replaced. Not DO NOTHING: that returns no row.
-FILL = text(
-    _INSERT
-    + """
-  phone = coalesce(clients.phone, excluded.phone),
-  locale = coalesce(clients.locale, excluded.locale)
 """
     + _RETURNING
 )
@@ -124,7 +115,6 @@ def find_or_create(
     phone: str | None,
     locale: str | None,
     user_id: UUID | None = None,
-    refresh: bool,
 ) -> Found:
     """The business's own record for this client, created or refreshed. `email` must already be
     normalised (app.passwords.normalise_email); ZIF-51's request model does that.
@@ -136,32 +126,26 @@ def find_or_create(
     CALLER'S DUTY (ZIF-51). This docstring is the one home for the rules below; CONTRIBUTING
     points here rather than restating them.
 
-    refresh. REQUIRED, and keyed on AUTHENTICATION, not on the route. Pass True only when the
-    request carries a live session AND the posted email equals that session's verified account
-    email, or (ZIF-117) when the booker confirmed a booking-hold link mailed to that address
-    (app.holds.confirm): opening the mailed link is the same proof of the mailbox as a verified
-    account email, so what they type is what they own. That path passes user_id=None: the link
-    proves an address, not a platform account. Everything else - a guest booking, a merchant
-    console action on someone else's address, a signed-in person typing a third party's address -
-    passes False, which fills blanks only:
-    phone = coalesce(clients.phone, excluded.phone), the same for locale, and the stored name is
-    left alone. This replaces ZIF-49's shipped rule that the booker's name always wins. The reason
-    it replaced it: `name = excluded.name` reachable without authentication is a write primitive
-    that rewrites a merchant's client record and points that client's appointment reminders at a
-    phone an attacker owns. A rate limit caps that; it does not stop it.
+    The address must be PROVEN (ZIF-117, owner ruling 2026-10-08). Call it only when the request
+    carries a live session whose verified account email equals the posted one
+    (app.bookings.create, which answers 403 verify_email otherwise), or when the booker confirmed a
+    booking-hold link mailed to that address (app.holds.confirm): opening the mailed link is the
+    same proof of the mailbox as a verified account email. Then what they type is what they own:
+    the name is replaced, and phone and locale are coalesced from what was typed. Nothing an
+    unproven person types ever reaches this statement. That replaces ZIF-51's FILL, which let an
+    unauthenticated booker fill a blank phone on someone else's record and point that client's
+    reminders at a phone the booker owns.
 
     Reading. phone and locale come back as *stored*, because coalesce keeps the old value when the
-    booker left the field empty, and under refresh=False the stored value always wins. On the
-    public booking page the requester is not authenticated, so echoing Found.phone or Found.locale
-    into the response would hand anyone who guesses an address that person's stored contact
-    details. Use them to write the booking, never to fill a public answer;
+    booker left the field empty. Use them to write the booking, never to fill a public answer;
     tests/test_openapi.py holds that fence for every public RESPONSE schema.
 
-    user_id. Set it from the booker's own session and never from a request body, only alongside
-    refresh=True, and it goes in the INSERT list only - never in either DO UPDATE SET list. There,
-    an anonymous booking would null a client's platform link and a signed-in stranger's booking
-    would claim a client row as their own account. tests/test_clients_db.py test 2 fences the SET
-    lists; tests/test_openapi.py fences user_id out of every request schema.
+    user_id. Set it from the booker's own session and never from a request body (the confirmed
+    link passes None: it proves an address, not a platform account), and it goes in the INSERT
+    list only - never in the DO UPDATE SET list. There, a link-confirmed booking would null a
+    client's platform link and a stranger's account could claim a client row as its own.
+    tests/test_clients_db.py test 2 fences the SET list; tests/test_openapi.py fences user_id out
+    of every request schema.
 
     Locking. The ON CONFLICT DO UPDATE takes a row lock on the client. ZIF-51 calls this BEFORE
     opening its savepoint, exactly once. ROLLBACK TO SAVEPOINT releases locks taken inside the
@@ -169,9 +153,8 @@ def find_or_create(
     same-email bookings that each lost an attempt would both re-count pendings on a fresh snapshot
     and both pass the cap.
     """
-    statement = REFRESH if refresh else FILL
     row = db.execute(
-        statement,
+        REFRESH,
         {"name": name, "email": email, "phone": phone, "locale": locale, "user_id": user_id},
     ).one()
     return Found(id=row.id, phone=row.phone, locale=row.locale)

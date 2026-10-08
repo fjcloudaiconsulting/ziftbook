@@ -14,7 +14,7 @@ import styles from "./ui.module.css";
  * `weekday`: only `outside_opening_hours` carries it (`errors.py`), so the working-hours
  * screen can name the day the server refused. `bookings` and `total`: only `overlaps_bookings`
  * (ZIF-130), the appointments a time-off block would cover. */
-export type Outcome<T> = { status: number; code?: string; weekday?: number; bookings?: InTheWay[]; total?: number; data?: T };
+export type Outcome<T> = { status: number; code?: string; weekday?: number; bookings?: InTheWay[]; total?: number; held_until?: string; data?: T };
 
 export async function send<T>(request: Promise<{ data?: T; error?: unknown; response?: Response }>): Promise<Outcome<T>> {
   try {
@@ -26,6 +26,7 @@ export async function send<T>(request: Promise<{ data?: T; error?: unknown; resp
       weekday: body?.weekday ?? undefined,
       bookings: body?.bookings ?? undefined,
       total: body?.total ?? undefined,
+      held_until: body?.held_until ?? undefined,
       data,
     };
   } catch {
