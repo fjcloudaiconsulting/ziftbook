@@ -1,7 +1,8 @@
 // Pure logic behind the service create/edit form: which name a reader sees (services.py:47-49),
-// the create/edit request body (the same for both) and its field errors, and the default-gap hint. Kept free of React
-// (and of any sibling import, as lib/week.ts) so node --test can run it directly with no module
-// resolution to configure: `parseMoney` (lib/money.ts) is passed in as a callback instead.
+// the request body (the same for create and edit) and its field errors, and the default-gap hint.
+// Kept free of React (and of any sibling import, as lib/week.ts) so node --test can run it
+// directly with no module resolution to configure: `parseMoney` (lib/money.ts) is passed in as a
+// callback instead.
 export type Locale = "en" | "nl" | "pt";
 export const LOCALES: Locale[] = ["en", "nl", "pt"];
 export type NameMap = Partial<Record<Locale, string>>;
@@ -55,7 +56,7 @@ export type ServiceBodyResult = { body: ServiceBody; errors?: never } | { body?:
  * (reader's language, then the business's, then any) is unaffected — this only decides which
  * name(s) satisfy validation. No `businessLanguage` parameter here: the required-name check never
  * touches it, on create or edit alike. Edit sends the same body as create: the form is filled from
- * the service, and PATCH records only the fields whose value changed (services.py:224-234). */
+ * the service, and PATCH records only the fields whose value changed (services.py:225-233). */
 export function serviceBody(form: ServiceForm, parsePrice: (text: string) => number | null): ServiceBodyResult {
   const errors: Record<string, string> = {};
 
@@ -76,7 +77,8 @@ export function serviceBody(form: ServiceForm, parsePrice: (text: string) => num
   let bufferMinutes: number | null = null;
   if (form.gap === "fixed") {
     const fixed = Number(form.fixedGap);
-    if (!Number.isInteger(fixed) || fixed < 0 || fixed > 240) errors.gap = "gapRange";
+    // Number("") is 0: an emptied field is an error, never a 0-minute gap.
+    if (!form.fixedGap?.trim() || !Number.isInteger(fixed) || fixed < 0 || fixed > 240) errors.gap = "gapRange";
     else bufferMinutes = fixed;
   }
 

@@ -1,5 +1,5 @@
-// Pure logic behind the service create/edit form: which name a reader sees, the create/edit PATCH
-// body (and its field errors), and the default-gap hint. Kept free of React so node --test can
+// Pure logic behind the service create/edit form: which name a reader sees, the request body (the
+// same for create and edit) and its field errors, and the default-gap hint. Kept free of React so node --test can
 // run it directly.
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
@@ -42,7 +42,7 @@ describe("serviceBody", () => {
     assert.deepEqual(result.body.name, { nl: "Manicure" });
   });
 
-  test("edit that empties pt keeps every other language, and sends name without pt", () => {
+  test("emptying pt keeps every other language, and sends name without pt", () => {
     const result = body(
       { name: { nl: "Manicure", en: "Manicure", pt: "" }, description: {}, price: "35,00", duration: "45", gap: "default" },
     );
@@ -58,7 +58,7 @@ describe("serviceBody", () => {
     assert.equal(result.body.buffer_minutes, null);
   });
 
-  test("fence: edit body carries the description and the gap, as create does (ZIF-126)", () => {
+  test("fence: the body carries the description and the gap, on edit as on create", () => {
     const fixed = body(
       { name: { nl: "Manicure" }, description: { nl: " Gel ", en: "  " }, price: "35,00", duration: "45", gap: "fixed", fixedGap: "10" },
     );
@@ -76,7 +76,7 @@ describe("serviceBody", () => {
     assert.equal(byDefault.body.buffer_minutes, null);
   });
 
-  test("create with an en-only name is valid: any one language satisfies it, never a specific one", () => {
+  test("an en-only name is valid: any one language satisfies it, never a specific one", () => {
     const result = body(
       { name: { pt: "", en: "Test" }, description: {}, price: "35,00", duration: "45", gap: "default" },
     );
@@ -84,22 +84,7 @@ describe("serviceBody", () => {
     assert.deepEqual(result.body.name, { en: "Test" });
   });
 
-  test("create with every language blank: nameRequired", () => {
-    const result = body(
-      { name: { nl: "", en: "", pt: "" }, description: {}, price: "35,00", duration: "45", gap: "default" },
-    );
-    assert.equal(result.errors?.name, "nameRequired");
-  });
-
-  test("edit of {pt: Unhas} is a valid body: a name in any single language is enough", () => {
-    const result = body(
-      { name: { nl: "", pt: "Unhas" }, description: {}, price: "35,00", duration: "45", gap: "default" },
-    );
-    assert.ok(!("errors" in result), JSON.stringify(result));
-    assert.deepEqual(result.body.name, { pt: "Unhas" });
-  });
-
-  test("edit with every language blank: still nameRequired", () => {
+  test("every language blank: nameRequired", () => {
     const result = body(
       { name: { nl: "", en: "", pt: "" }, description: {}, price: "35,00", duration: "45", gap: "default" },
     );
@@ -146,8 +131,9 @@ describe("serviceBody", () => {
     }
   });
 
-  test("fixed gap boundaries: 0 and 240 are valid, -1 and 241 are not", () => {
-    for (const [value, valid] of [["0", true], ["240", true], ["-1", false], ["241", false]]) {
+  test("fixed gap boundaries: 0 and 240 are valid, -1, 241 and an empty field are not", () => {
+    // Number("") is 0: a gap cleared to retype it must not save as 0 minutes.
+    for (const [value, valid] of [["0", true], ["240", true], ["-1", false], ["241", false], ["", false], [" ", false]]) {
       const result = body(
         { name: { nl: "Manicure" }, description: {}, price: "35,00", duration: "45", gap: "fixed", fixedGap: value },
       );
