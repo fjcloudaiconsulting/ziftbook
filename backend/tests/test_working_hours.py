@@ -685,11 +685,11 @@ def test_the_dst_acceptance_case_runs_through_the_api(people: People, app: FastA
         assert schedule.to_utc(day, time.fromisoformat(row["starts_at"]), zone) == expected
 
 
-# A shift starting inside a skipped hour converts to an interval that ends before it starts;
-# ZIF-48 must drop or clamp such an interval. Pins the DST edges it inherits from to_utc.
+# A skipped time is the instant the clock jumps past it (ZIF-113); a repeated one is the first.
+# Pins the DST edges ZIF-48 inherits from to_utc.
 def test_to_utc_pins_the_dst_edges_zif_48_inherits() -> None:
     assert schedule.to_utc(date(2026, 3, 29), time(2, 30), "Europe/Amsterdam") == datetime(
-        2026, 3, 29, 1, 30, tzinfo=UTC
+        2026, 3, 29, 1, 0, tzinfo=UTC
     )
     assert schedule.to_utc(date(2026, 10, 25), time(2, 30), "Europe/Amsterdam") == datetime(
         2026, 10, 25, 0, 30, tzinfo=UTC

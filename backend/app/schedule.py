@@ -5,7 +5,7 @@ every bookable slot must fall inside.
 """
 
 from collections.abc import Sequence
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime, time, timedelta
 from itertools import pairwise
 from typing import Annotated, Any
 from uuid import UUID
@@ -33,15 +33,17 @@ HH_MM = r"^([01][0-9]|2[0-3]):[0-5][0-9]$"
 def to_utc(day: date, at: time, zone: str) -> datetime:
     """The instant a business's clock shows `at` on `day`, in UTC.
 
-    Convert here, never with SQL AT TIME ZONE (CONTRIBUTING). A time the clock skips (02:30 as
-    summer time starts) takes the offset from before the change, so it lands at 03:30 summer time.
-    A time the clock shows twice is the first of the two. A shift starting inside a skipped hour
-    (02:30-03:15 on 2026-03-29 Amsterdam) converts to an interval that ends before it starts, and a
-    caller (availability, ZIF-48) must drop or clamp an interval whose end isn't after its start.
-
-    Availability (ZIF-48) is its first caller; until then only tests use it.
+    Convert here, never with SQL AT TIME ZONE (CONTRIBUTING). A time the clock shows twice is the
+    first of the two. A time the clock skips (02:30 as summer time starts) is the instant the clock
+    jumps past it, 03:00 summer time (ZIF-113): never relocated an hour later, so a shift keeps
+    only the instants its clock reading covers and one wholly inside a skipped hour is empty.
     """
-    return datetime.combine(day, at, ZoneInfo(zone)).astimezone(UTC)
+    tz = ZoneInfo(zone)
+    wall = datetime.combine(day, at)
+    # ponytail: minute walk across the gap (60 steps for a 1h jump), runs only for skipped times.
+    while wall.replace(tzinfo=tz).astimezone(UTC).astimezone(tz).replace(tzinfo=None) != wall:
+        wall += timedelta(minutes=1)
+    return wall.replace(tzinfo=tz).astimezone(UTC)
 
 
 class Shift(BaseModel):

@@ -209,20 +209,42 @@ def test_a_shift_opening_in_the_repeated_hour_offers_the_grid_before_its_anchor(
 
 
 def test_shifts_around_the_skipped_hour_give_each_start_once_in_order() -> None:
-    # 02:10-02:40 converts to 01:10Z-01:40Z, inside 03:00-04:00 (01:00Z-02:00Z).
+    # 02:10-02:40 never shows on the clock (both ends are 01:00Z); 03:00-04:00 is 01:00Z-02:00Z.
     around = rows(7, ("02:10", "02:40"), ("03:00", "04:00"))
     found = slots(around, date(2026, 3, 29), duration=10, step=10)
     assert found == [utc(f"2026-03-29T01:{m}0") for m in range(6)]
 
 
+# ZIF-113: a skipped time never yields a slot whose clock reading is outside the declared shift.
+# 2027-03-28 Amsterdam skips 02:00-03:00 (01:00Z); the old to_utc moved a skipped time an hour on.
+def test_a_skipped_time_converts_to_the_instant_the_clock_jumps() -> None:
+    assert local(date(2027, 3, 28), "02:00") == utc("2027-03-28T01:00")
+    assert local(date(2027, 3, 28), "02:15") == utc("2027-03-28T01:00")  # not 01:15Z (03:15)
+    assert local(date(2027, 3, 28), "03:00") == utc("2027-03-28T01:00")
+    assert local(date(2027, 3, 28), "01:59") == utc("2027-03-28T00:59")
+
+
 def test_a_shift_inside_the_skipped_hour_is_dropped() -> None:
-    assert slots(rows(7, ("02:30", "03:15")), date(2026, 3, 29), duration=15, step=15) == []
+    # The worker declared no real time: no 03:15 slot (ZIF-113's measured defect).
+    assert slots(rows(7, ("02:15", "02:45")), date(2027, 3, 28), duration=30, step=15) == []
+
+
+def test_a_shift_ending_in_the_skipped_hour_ends_when_the_clock_jumps() -> None:
+    # 01:30-02:30 is 01:30-02:00 winter time; never a slot at 03:00.
+    found = slots(rows(7, ("01:30", "02:30")), date(2027, 3, 28), duration=30, step=30)
+    assert found == [utc("2027-03-28T00:30")]
+
+
+def test_a_shift_starting_in_the_skipped_hour_opens_when_the_clock_jumps() -> None:
+    # 02:30-03:15 keeps 03:00-03:15 summer time, which the clock does show.
+    found = slots(rows(7, ("02:30", "03:15")), date(2027, 3, 28), duration=15, step=15)
+    assert found == [utc("2027-03-28T01:00")]
 
 
 def test_an_anchor_the_clock_skipped_never_lands_before_the_shift_opens() -> None:
     found = slots(rows(7, ("02:50", "05:00")), date(2026, 3, 29), duration=15, step=15)
-    assert found[0] == utc("2026-03-29T02:00")  # 04:00 summer time
-    assert min(found) >= utc("2026-03-29T01:50")  # 02:50 converts to 01:50Z
+    # 03:00 summer time onwards; not 04:00 (02:50 relocated to 03:50).
+    assert found == [utc("2026-03-29T01:00") + timedelta(minutes=15 * k) for k in range(8)]
 
 
 def test_a_split_shift_has_no_slot_in_the_gap() -> None:
@@ -398,9 +420,7 @@ def test_the_envelope_is_clipped_in_local_time_not_in_utc() -> None:
     # F3: the spring-forward DST fence. Europe/Amsterdam, 2026-03-29, 02:00 CET -> 03:00 CEST.
     # Worker 02:30-05:00, opening 03:00-05:00. Clipped in local wall clock: max(02:30, 03:00)
     # = 03:00 -> piece (03:00, 05:00) -> opens=01:00Z, closes=03:00Z, anchor(03:00, 60)=03:00 ->
-    # t=01:00Z, neither walk loop moves it. Clipping in UTC instead would compare 02:30 local
-    # (01:30Z, still on winter time) with 03:00 local (01:00Z) and keep the later 01:30Z as the
-    # start, losing this 01:00Z slot.
+    # t=01:00Z, the walk loop doesn't move it.
     found = slots(
         rows(7, ("02:30", "05:00")),
         date(2026, 3, 29),

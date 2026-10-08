@@ -38,9 +38,9 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 /**
  * A local wall-clock date + time in `tz`, turned into the instant the API takes (`starts_at` /
  * `ends_at`), matching the server's own rule exactly (backend `schedule.to_utc`): a wall-clock
- * time the change SKIPS (spring-forward) uses the offset from before the change; a wall-clock
- * time the change repeats (fall-back) resolves to its FIRST occurrence, i.e. also the offset from
- * before the change. Never `new Date(\`${date}T${time}\`)` (the runner's own zone) and never a
+ * time the change SKIPS (spring-forward) is the instant the clock jumps past it (ZIF-113); a
+ * wall-clock time the change repeats (fall-back) resolves to its FIRST occurrence, i.e. the offset
+ * from before the change. Never `new Date(\`${date}T${time}\`)` (the runner's own zone) and never a
  * single offset lookup: a transition on the date in question needs both sides' offsets to tell an
  * ordinary time from a skipped or repeated one.
  */
@@ -70,9 +70,11 @@ export function localToInstant(date: string, time: string, tz: string): string {
   }
   if (consistentBefore) return new Date(candidateBefore).toISOString();
   if (consistentAfter) return new Date(candidateAfter).toISOString();
-  // Skipped wall-clock time (spring-forward): neither reading is real. Use the offset from
-  // before the change, per the server's rule.
-  return new Date(candidateBefore).toISOString();
+  // Skipped wall-clock time (spring-forward): neither reading is real. The instant the clock jumps
+  // past it, the first minute after the gap, per the server's rule (ZIF-113).
+  let wall = local;
+  while (offsetAt(wall - offsetAfter, tz) !== offsetAfter) wall += 60_000;
+  return new Date(wall - offsetAfter).toISOString();
 }
 
 export type BlockForm = {
