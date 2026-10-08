@@ -7,6 +7,7 @@ import { describe, test } from "node:test";
 
 import {
   allowed,
+  archivedDate,
   bookingPageAddress,
   canAnswerRequests,
   canEditHours,
@@ -143,6 +144,28 @@ describe("todayLabel", () => {
 
   test("en reads day, day-number, month, with no comma", () => {
     assert.equal(todayLabel(new Date("2026-09-22T10:00:00Z"), "Europe/Amsterdam", "en"), "Tuesday 22 September");
+  });
+});
+
+describe("archivedDate", () => {
+  test("fence: no year in the current year, the year in any other", () => {
+    // A "now" years from the real clock: an implementation that reads the clock itself fails.
+    const now = new Date("2030-10-08T10:00:00Z");
+    assert.equal(archivedDate("2030-08-04T09:00:00Z", now, "Europe/Amsterdam", "en"), "4 August");
+    assert.equal(archivedDate("2029-12-12T09:00:00Z", now, "Europe/Amsterdam", "en"), "12 December 2029");
+    assert.equal(archivedDate("2030-08-04T09:00:00Z", now, "Europe/Amsterdam", "nl"), "4 augustus");
+    assert.equal(archivedDate("2030-08-04T09:00:00Z", now, "Europe/Amsterdam", "pt"), "4 de agosto");
+  });
+
+  test("fence: the day and both years are read in the business time zone, not UTC", () => {
+    // 23:30 UTC on 31 December is already 1 January in Amsterdam, and so is "now" (00:30): same
+    // year there, though UTC (and São Paulo, this process's zone) still says 2025 for the first.
+    const now = new Date("2025-12-31T23:30:00Z");
+    assert.equal(archivedDate("2025-12-31T23:10:00Z", now, "Europe/Amsterdam", "en"), "1 January");
+    // Now in 2026 in Amsterdam, archived in 2025 there: the year shows.
+    assert.equal(archivedDate("2025-12-31T22:50:00Z", now, "Europe/Amsterdam", "en"), "31 December 2025");
+    // Archived on 1 January in Amsterdam, read in June: same year there, 2025 against 2026 in UTC.
+    assert.equal(archivedDate("2025-12-31T23:30:00Z", new Date("2026-06-01T12:00:00Z"), "Europe/Amsterdam", "en"), "1 January");
   });
 });
 

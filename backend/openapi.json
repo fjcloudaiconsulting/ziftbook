@@ -6738,6 +6738,18 @@
             "type": "boolean",
             "title": "Archived"
           },
+          "archived_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archived At"
+          },
           "worker_ids": {
             "items": {
               "type": "string",
@@ -6756,6 +6768,7 @@
           "duration_minutes",
           "buffer_minutes",
           "archived",
+          "archived_at",
           "worker_ids"
         ],
         "title": "ServiceOut"

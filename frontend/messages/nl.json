@@ -391,6 +391,7 @@
       "rowMeta": "{minutes} min · {price}",
       "rowMetaPeople": "{minutes} min · {price} · {n, plural, one {# persoon} other {# personen}}",
       "archivedMeta": "{minutes} min · {price} · gearchiveerd",
+      "archivedMetaOn": "{minutes} min · {price} · gearchiveerd op {date}",
       "warningPill": "Niemand toegewezen, dus niemand kan dit boeken",
       "archived": "Gearchiveerd ({n})",
       "archivedHint": "Gearchiveerde diensten blijven op eerdere afspraken en in rapportages staan. Klanten kunnen ze niet boeken.",

@@ -14,6 +14,7 @@ import {
   servicesUpdate,
 } from "@/api-client";
 import { Link, useRouter } from "@/i18n/navigation";
+import { archivedDate } from "@/lib/console";
 import { currencySign, formatMoney, parseMoney, priceText, signFirst } from "@/lib/money";
 import {
   activeServices,
@@ -140,7 +141,11 @@ function ArchivedRow({ service, locale, onBroughtBack }: { service: ServiceOut; 
       <div className={styles.rowStatic}>
         <span className={styles.rowMain}>
           <span className={styles.rowTitle}>{name}</span>
-          <span className={styles.rowMeta}>{t("archivedMeta", { minutes: service.duration_minutes, price })}</span>
+          <span className={styles.rowMeta}>
+            {service.archived_at
+              ? t("archivedMetaOn", { minutes: service.duration_minutes, price, date: archivedDate(service.archived_at, new Date(), settings.timezone, locale) })
+              : t("archivedMeta", { minutes: service.duration_minutes, price })}
+          </span>
         </span>
         <span className={styles.rowEnd}>
           <button className={`${styles.button} ${styles.secondary} ${styles.small}`} type="button" aria-disabled={busy || undefined} onClick={bringBack}>

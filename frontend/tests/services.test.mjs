@@ -185,6 +185,17 @@ describe("activeServices / archivedServices", () => {
   test("archivedServices keeps only the archived ones", () => {
     assert.deepEqual(archivedServices(services).map((s) => s.id), ["b"]);
   });
+
+  test("fence: archivedServices lists the newest archived first, whatever the id order", () => {
+    const archived = [
+      { id: "a", archived: true, archived_at: "2025-12-12T09:00:00Z" },
+      { id: "b", archived: false, archived_at: null },
+      { id: "c", archived: true, archived_at: "2026-08-04T09:00:00+02:00" },
+      { id: "d", archived: true, archived_at: "2026-08-04T08:30:00Z" },
+    ];
+    // c (07:00 UTC) is older than d (08:30 UTC), though its text sorts after d's.
+    assert.deepEqual(archivedServices(archived).map((s) => s.id), ["d", "c", "a"]);
+  });
 });
 
 describe("needsWorkerWarning", () => {

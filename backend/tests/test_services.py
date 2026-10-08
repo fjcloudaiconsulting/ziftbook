@@ -2,6 +2,7 @@
 archived ones included."""
 
 import uuid
+from datetime import datetime
 from typing import Any
 
 import pytest
@@ -63,6 +64,7 @@ def test_an_owner_creates_a_service_and_any_member_reads_it(
         "duration_minutes": 30,
         "buffer_minutes": None,
         "archived": False,
+        "archived_at": None,
         "worker_ids": [],
     }
     assert response.headers["cache-control"] == "no-store"
@@ -279,6 +281,10 @@ def test_archiving_keeps_a_service_listed_and_remembers_when(
     rows_by_id = {str(row["id"]): row for row in stored(people.a)}
     first_archived_at = rows_by_id[first["id"]]["archived_at"]
     assert first_archived_at is not None
+    # The API sends the stored time itself, in the response and on every read after it.
+    assert datetime.fromisoformat(archived.json()["archived_at"]) == first_archived_at
+    read = owner.get(f"/api/services/{first['id']}").json()
+    assert datetime.fromisoformat(read["archived_at"]) == first_archived_at
 
     listed = owner.get("/api/services").json()
     assert [s["id"] for s in listed] == [first["id"], second["id"]]
@@ -288,6 +294,7 @@ def test_archiving_keeps_a_service_listed_and_remembers_when(
         f"/api/services/{first['id']}", json={"archived": True, "duration_minutes": 45}
     )
     assert (reput.status_code, reput.json()["duration_minutes"]) == (200, 45)
+    assert datetime.fromisoformat(reput.json()["archived_at"]) == first_archived_at
     rows_by_id = {str(row["id"]): row for row in stored(people.a)}
     assert rows_by_id[first["id"]]["archived_at"] == first_archived_at
 
@@ -302,6 +309,8 @@ def test_archiving_keeps_a_service_listed_and_remembers_when(
     assert (unarchived.status_code, unarchived.json()["archived"]) == (200, False)
     rows_by_id = {str(row["id"]): row for row in stored(people.a)}
     assert rows_by_id[first["id"]]["archived_at"] is None
+    assert unarchived.json()["archived_at"] is None
+    assert owner.get(f"/api/services/{first['id']}").json()["archived_at"] is None
 
 
 # omitted vs null
