@@ -575,7 +575,7 @@ function InTheWayList({ bookings, total, member, tz, compact }: { bookings: InTh
         })}
       </ul>
       {total > bookings.length && (
-        <Link className={uiStyles.textButton} href={hrefFor({ view: "week", date: localDateISO(new Date(bookings[bookings.length - 1].starts_at), tz), member }, {})} scroll={scroll}>
+        <Link className={uiStyles.textButton} href={hrefFor({ view: "days", date: localDateISO(new Date(bookings[bookings.length - 1].starts_at), tz), member }, {})} scroll={scroll}>
           {t("inTheWayMore", { count: total - bookings.length })}
         </Link>
       )}
