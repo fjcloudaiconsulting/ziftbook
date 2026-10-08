@@ -1246,8 +1246,8 @@ def test_with_the_setting_off_a_worker_cannot_answer_their_own_request(
 
 
 # ZIF-143 F2 - with the setting on, the assigned worker answers their own request.
-# Kills: a check that ignores the setting (403 here).
-@pytest.mark.parametrize("target", ["confirmed", "declined"])
+# Kills: a check that ignores the setting (403 here), for any of the three ways out of pending.
+@pytest.mark.parametrize("target", ["confirmed", "declined", "cancelled_by_merchant"])
 def test_with_the_setting_on_a_worker_answers_their_own_request(
     people: People, app: FastAPI, worker_ready: tuple[uuid.UUID, str], target: str
 ) -> None:

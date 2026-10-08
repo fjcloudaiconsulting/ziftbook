@@ -1053,9 +1053,11 @@ def test_an_smtp_failure_leaves_the_earlier_link_valid_and_the_retry_mints_its_o
 
 
 # ZIF-143 fence. With workers_answer_requests off (the default) the assigned worker's request
-# email says the owner answers it; the owner's keeps "Accept or decline"; with it on, the worker
-# gets the owner's wording. Kills: the variant for everyone (owner leg), never (worker leg), or
-# regardless of the setting (last leg).
+# email says the owner answers it; an owner's keeps "Accept or decline", also when they are the
+# assigned worker; the setting is read when the email is sent, not when it was queued. Kills: the
+# variant for everyone (owner legs), for "the assigned worker" rather than the worker role (the
+# owner-assigned leg), never (worker leg), regardless of the setting or from the setting at enqueue
+# (last leg).
 def test_a_worker_who_cannot_answer_gets_the_owner_answers_variant(
     people: People, app: FastAPI, ready: str, app_engine: Engine
 ) -> None:
@@ -1063,24 +1065,23 @@ def test_a_worker_who_cannot_answer_gets_the_owner_answers_variant(
     seed(people.a, worker, weekdays("09:00", "17:00"))
     assign(people.a, ready, member_id(people.a, worker))
 
-    make_pending(
-        app, people.a, ready, member_id=str(member_id(people.a, worker)), starts_at=at("09:00")
-    )
+    as_worker = str(member_id(people.a, worker))
+    make_pending(app, people.a, ready, member_id=as_worker, starts_at=at("09:00"))
+    as_owner = str(member_id(people.a, people.both))
+    make_pending(app, people.a, ready, member_id=as_owner, starts_at=at("11:00"))
     run_jobs()
 
     (worker_text,) = texts_to(email_of(worker))
     assert "The business owner accepts or declines it." in worker_text
     assert "Accept or decline" not in worker_text
-    (owner_text,) = texts_to(email_of(people.both))
-    assert "Accepteer of wijs de aanvraag af" in owner_text  # people.both reads nl
+    owner_texts = texts_to(email_of(people.both))  # people.both reads nl
+    assert len(owner_texts) == 2
+    assert all("Accepteer of wijs de aanvraag af" in text for text in owner_texts)
 
+    # Queued while off, sent after the owner turned it on: the worker may answer it by then.
+    make_pending(app, people.a, ready, member_id=as_worker, starts_at=at("10:00"))
     save_setting(people.a, "workers_answer_requests", True)
-    make_pending(
-        app, people.a, ready, member_id=str(member_id(people.a, worker)), starts_at=at("10:00")
-    )
     run_jobs()
 
-    assert sorted("Accept or decline" in text for text in texts_to(email_of(worker))) == [
-        False,
-        True,
-    ]
+    worker_texts = texts_to(email_of(worker))
+    assert sorted("Accept or decline" in text for text in worker_texts) == [False, True]
