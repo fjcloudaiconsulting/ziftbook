@@ -333,6 +333,8 @@ def create_app() -> FastAPI:
     async def lock_timed_out(request: Request, error: OperationalError) -> JSONResponse:
         if getattr(error.orig, "sqlstate", None) != "55P03":
             raise error
+        # Not an error: the request did nothing. Still worth a line, it means a holder stalled.
+        logger.warning("lock wait timed out")
         return JSONResponse({"code": "busy"}, status_code=503)
 
     # Anything unexpected, including a commit that fails after the endpoint returned. This runs

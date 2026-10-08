@@ -23,6 +23,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from httpx2 import Response
+from psycopg.errors import QueryCanceled
 from sqlalchemy import Engine, event, text
 from sqlalchemy.exc import OperationalError
 
@@ -1478,9 +1479,11 @@ def while_the_tenant_lock_is_held(
             thread = threading.Thread(target=holder)
             thread.start()
             assert holding.wait(timeout=10)
-            response = send(client)
-            release.set()
-            thread.join(timeout=10)
+            try:
+                response = send(client)
+            finally:
+                release.set()
+                thread.join(timeout=10)
     finally:
         SessionLocal.configure(bind=suite_bind)  # the lifespan unbinds on exit; teardown needs it
     return response
@@ -1528,7 +1531,7 @@ def test_another_operational_error_on_a_merchant_route_is_still_a_500(
     owner: TestClient, ready: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     def boom(*args: object) -> Any:
-        raise OperationalError("boom", {}, Exception("boom"))
+        raise OperationalError("boom", {}, QueryCanceled())  # a sqlstate, just not 55P03
 
     monkeypatch.setattr(availability, "candidates", boom)
 
