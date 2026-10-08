@@ -344,6 +344,19 @@ def test_no_personal_data_ever_reaches_a_log(
     )
     asyncio.run(run_once(KINDS))
 
+    # 6i (ZIF-130): a block over 6f's confirmed booking is refused with its client's name in the
+    # body, and only there.
+    in_the_way = datetime.fromisoformat(slots[0])
+    refused = owner.post(
+        f"/api/members/{target}/time-off",
+        json={
+            "starts_at": in_the_way.isoformat(),
+            "ends_at": (in_the_way + timedelta(minutes=30)).isoformat(),
+        },
+    )
+    assert refused.status_code == 409
+    assert refused.json()["bookings"][0]["client_name"] == booker_name
+
     # 7: invite flow — send, list, a wrong token, then accept with a brand-new account.
     invite_email = fresh_email()
     invite_password = "Invite-Pw7-55"
