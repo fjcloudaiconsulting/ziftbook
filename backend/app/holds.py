@@ -90,6 +90,7 @@ WHERE s.id = :service_id
 """)
 
 DELETE_HOLD = text("DELETE FROM booking_holds WHERE id = :id")
+RELEASE = text("DELETE FROM booking_holds WHERE secret_hash = :hash")
 
 
 class HoldIn(BaseModel):
@@ -274,9 +275,7 @@ def release(tenant_id: UUID, body: ReleaseIn, request: Request) -> None:
     try:
         with tenant_context(tenant_id) as db:
             db.execute(bookings.LOCK, {"key": bookings.LOCK_KEY})  # first, always (0034)
-            db.execute(
-                text("DELETE FROM booking_holds WHERE secret_hash = :hash"), {"hash": hold_hash}
-            )
+            db.execute(RELEASE, {"hash": hold_hash})
     except OperationalError:
         raise ApiError(503, "busy") from None
 
@@ -284,7 +283,9 @@ def release(tenant_id: UUID, body: ReleaseIn, request: Request) -> None:
 link_router = APIRouter(prefix="/api/public/booking-hold", tags=["booking-holds"])
 
 
-@link_router.post("", name="read", responses={s: {"model": Error} for s in (404, 415, 422, 429)})
+@link_router.post(
+    "", name="read", responses={s: {"model": Error} for s in (404, 415, 422, 429, 503)}
+)
 def read(body: TokenIn, request: Request, response: Response) -> HoldView:
     """The held booking behind an emailed link, for the confirm page. Writes nothing (no lock, no
     update): opening the link, or a mail scanner fetching the page, changes nothing."""
@@ -292,12 +293,17 @@ def read(body: TokenIn, request: Request, response: Response) -> HoldView:
         request, "booking_hold_read", READ_LIMIT, READ_WINDOW, token=body.token
     )
     response.headers["Cache-Control"] = "no-store"
-    with tenant_context(tenant_id) as db:
-        hold = db.execute(LIVE, {"hash": token_hash, "link_ttl": bookings.LINK_TTL}).first()
-        if hold is None:
-            raise ApiError(404, "link_expired")
-        view = db.execute(VIEW, {"service_id": hold.service_id, "worker_id": hold.worker_id}).one()
-        settings = business_settings.read(db)
+    try:
+        with tenant_context(tenant_id) as db:
+            hold = db.execute(LIVE, {"hash": token_hash, "link_ttl": bookings.LINK_TTL}).first()
+            if hold is None:
+                raise ApiError(404, "link_expired")
+            view = db.execute(
+                VIEW, {"service_id": hold.service_id, "worker_id": hold.worker_id}
+            ).one()
+            settings = business_settings.read(db)
+    except OperationalError:
+        raise ApiError(503, "busy") from None
     return HoldView(
         business=view.business,
         slug=view.slug,
