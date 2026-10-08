@@ -3,15 +3,19 @@
 import { useLocale, useTranslations } from "next-intl";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 
-import { timeOffCreate, timeOffDelete, timeOffList, timeOffUpdate, type TimeOffOut } from "@/api-client";
+import { type InTheWay, timeOffCreate, timeOffDelete, timeOffList, timeOffUpdate, type TimeOffOut } from "@/api-client";
 import { Link } from "@/i18n/navigation";
-import { beyondHorizon, canEditBlock, clientProblem, dateOrTimeChanged, listWindow, patchBody, requestBody } from "@/lib/time-off";
+import { hrefFor } from "@/lib/calendar";
+import { dateLocale } from "@/lib/console";
+import { type Locale, type NameMap, serviceName } from "@/lib/services";
+import { beyondHorizon, canEditBlock, clientProblem, dateOrTimeChanged, listWindow, localDateISO, localTime, patchBody, requestBody } from "@/lib/time-off";
 import { zoneCity } from "@/lib/week";
 import { JSON_WRITE, SignedOutBanner, useConsole } from "../_ui/console";
 import styles from "../_ui/console.module.css";
 import { Banner, Chevron, FieldError, Heading, Mark, problem, Submit } from "../_ui/parts";
 import uiStyles from "../_ui/ui.module.css";
 import { blockMeta, blockTitle } from "./time-off-labels";
+import { chipOf } from "./today";
 
 /** The two-tab bar on a person's frame (working hours / blocked time), shared by the owner's
  * `/team/[memberId]` and the worker's `/my-hours` frames. The label is one catalog string (never
@@ -247,6 +251,7 @@ export function BlockedTimeForm({
   onCancel(): void;
 }) {
   const { call, settings } = useConsole();
+  const locale = useLocale();
   const t = useTranslations("Console.timeOff");
   const tConsole = useTranslations("Console");
   const form = useTranslations("Form");
@@ -256,6 +261,10 @@ export function BlockedTimeForm({
   const [state, setState] = useState<FormState>(initial);
   const [fieldError, setFieldError] = useState<string | null>(null);
   const [bannerError, setBannerError] = useState<string | null>(null);
+  // ZIF-130: the appointments a refused block would cover, shown under the banner. The member is
+  // the one the block was for when it was refused, not whoever the panel's "Who" names now.
+  const [inTheWay, setInTheWay] = useState<{ bookings: InTheWay[]; total: number; member: string } | null>(null);
+  const bannerRef = useRef<HTMLDivElement>(null);
   const [signedOut, setSignedOut] = useState(false);
   const [saving, setSaving] = useState(false);
   const [confirmingRemove, setConfirmingRemove] = useState(false);
@@ -269,9 +278,14 @@ export function BlockedTimeForm({
     if (confirmingRemove) confirmRef.current?.focus();
   }, [confirmingRemove]);
 
+  useEffect(() => {
+    if (inTheWay) bannerRef.current?.focus();
+  }, [inTheWay]);
+
   function resetMessages() {
     setFieldError(null);
     setBannerError(null);
+    setInTheWay(null);
     setSignedOut(false);
   }
 
@@ -298,6 +312,11 @@ export function BlockedTimeForm({
         return;
       }
       if (outcome.status === 401) return setSignedOut(true);
+      if (outcome.status === 409 && outcome.code === "overlaps_bookings" && outcome.bookings && outcome.total) {
+        setBannerError(t("inTheWay", { count: outcome.total }));
+        setInTheWay({ bookings: outcome.bookings, total: outcome.total, member: memberId });
+        return;
+      }
       const dayOrTimeCode = outcome.code === "last_day_before_first_day" || outcome.code === "time_off_too_long" || outcome.code === "end_not_after_start";
       if (outcome.status === 422 && dayOrTimeCode) {
         setBannerError(t("notBlocked"));
@@ -342,7 +361,12 @@ export function BlockedTimeForm({
         </>
       )}
       {signedOut && <SignedOutBanner />}
-      {bannerError && <Banner tone="error">{bannerError}</Banner>}
+      {bannerError && (
+        <div ref={bannerRef} tabIndex={-1} className={styles.message}>
+          <Banner tone="error">{bannerError}</Banner>
+        </div>
+      )}
+      {inTheWay && <InTheWayList {...inTheWay} tz={tz} locale={locale} compact={compact} />}
       <form className={`${uiStyles.stack} ${styles.colWide}`} noValidate onSubmit={onSubmit}>
         <label className={styles.choice}>
           <input
@@ -500,6 +524,59 @@ export function BlockedTimeForm({
           </>
         )}
       </form>
+    </>
+  );
+}
+
+/** The appointments in the way of a refused block (ZIF-130): the first five as list rows, each
+ * opening its booking in the calendar, then how many more there are. */
+function InTheWayList({ bookings, total, member, tz, locale, compact }: { bookings: InTheWay[]; total: number; member: string; tz: string; locale: string; compact?: boolean }) {
+  const { settings } = useConsole();
+  const t = useTranslations("Console.timeOff");
+  const tToday = useTranslations("Console.today");
+  const day = new Intl.DateTimeFormat(dateLocale(locale), { weekday: "short", day: "numeric", month: "short", timeZone: tz });
+  const dateOf = (instant: string) => localDateISO(new Date(instant), tz);
+  // Inside the calendar's panel the booking replaces the panel, kept in history so Back returns.
+  const scroll = !compact;
+  return (
+    <>
+      <ul className={`${styles.list} ${styles.colWide}`}>
+        {bookings.map((booking) => {
+          const chip = chipOf(booking.status);
+          return (
+            <li key={booking.id}>
+              <Link className={styles.rowLink} href={hrefFor({ view: "day", date: dateOf(booking.starts_at), member }, { booking: booking.id })} scroll={scroll}>
+                <span className={styles.rowMain}>
+                  <span className={styles.rowTitle}>{booking.client_name}</span>
+                  <span className={styles.rowMeta}>
+                    {t("inTheWayMeta", {
+                      date: day.format(new Date(booking.starts_at)),
+                      start: localTime(booking.starts_at, tz),
+                      end: localTime(booking.ends_at, tz),
+                      service: serviceName(booking.service_name as NameMap, locale as Locale, settings.language as Locale),
+                    })}
+                  </span>
+                </span>
+                <span className={styles.rowEnd}>
+                  {chip && (
+                    <span className={`${styles.chip} ${chip.style}`}>
+                      <span aria-hidden="true">{chip.icon}</span>
+                      <span className={styles.chipWord}>{tToday(chip.word)}</span>
+                    </span>
+                  )}
+                  <Chevron />
+                </span>
+                <span className={uiStyles.srOnly}>{t("inTheWayOpen", { client: booking.client_name })}</span>
+              </Link>
+            </li>
+          );
+        })}
+      </ul>
+      {total > bookings.length && (
+        <Link className={uiStyles.textButton} href={hrefFor({ view: "week", date: dateOf(bookings[bookings.length - 1].starts_at), member }, {})} scroll={scroll}>
+          {t("inTheWayMore", { count: total - bookings.length })}
+        </Link>
+      )}
     </>
   );
 }
