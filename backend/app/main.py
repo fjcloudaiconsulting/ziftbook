@@ -97,7 +97,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # message-free one so nothing repeats the leak.
     try:
         engine = create_engine(
-            DatabaseSettings().database_url, pool_pre_ping=True, hide_parameters=True
+            DatabaseSettings().database_url,
+            pool_pre_ping=True,
+            hide_parameters=True,
+            # ZIF-114. No request waits longer than this for any lock, the tenant advisory lock
+            # included: past it the statement fails with 55P03, an OperationalError, which the
+            # booking routes answer as 503 busy. Without it one stalled holder pins a pooled
+            # connection per waiting request until every tenant's requests hang on checkout.
+            # Booking writers hold the lock for milliseconds, so 5s is hundreds of queued bookings.
+            connect_args={"options": "-c lock_timeout=5s"},
         )
         SessionLocal.configure(bind=engine)
     except Exception:

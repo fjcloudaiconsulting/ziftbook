@@ -159,6 +159,10 @@ migration 0026), not any code path. A race in a route somebody forgets to guard 
   cannot be recovered by `ROLLBACK TO SAVEPOINT`. Keyed on the tenant alone — a late-evening booking ends on the next
   local day, and an "anyone" booking has no worker yet. The key space is the ticket number, as `app/schedule.py:229`
   already does with `105`.
+- **The API waits at most 5 seconds for any lock** (`lock_timeout` on its engine, `app/main.py`, ZIF-114), then the
+  statement fails as `OperationalError` (55P03): the booking routes answer `503 busy`. Hold the tenant lock only for
+  database work, never across an outbound call, so a queue of bookers clears well inside that. The worker has no
+  `lock_timeout`; its `statement_timeout` (30s) bounds its waits.
 - The constraint's predicate is the four **occupying** statuses. That set lives in three places — the predicate,
   `app.availability.OCCUPYING`, and `ck_bookings_status` — and `tests/test_bookings_db.py` fences all three against
   each other. Changing it later takes `ACCESS EXCLUSIVE` and a full gist rebuild: there is no

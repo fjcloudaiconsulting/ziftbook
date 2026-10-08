@@ -10,6 +10,7 @@ seeded on every weekday so the test never cares which weekday it lands on.
 
 import json
 import threading
+import time
 import urllib.parse
 import urllib.request
 import uuid
@@ -26,7 +27,7 @@ from sqlalchemy import Engine, event, text
 from sqlalchemy.exc import OperationalError
 
 from app import availability, bookings, members, schedule, turnstile
-from app.db import tenant_context
+from app.db import SessionLocal, tenant_context
 from app.main import create_app
 from app.schedule import to_utc
 from tests.conftest import (
@@ -1456,6 +1457,47 @@ def test_an_operational_error_is_a_503_not_a_500(
     response = post_booking(new_client(app), people.a, ready, starts_at=at("09:00"))
 
     assert (response.status_code, response.json()) == (503, {"code": "busy"})
+
+
+def book_while_the_tenant_lock_is_held(tenant_id: uuid.UUID, service_id: str, hold: float) -> Any:
+    """Post a booking through the API's own engine (the lifespan's, not the suite's) while a second
+    session holds the tenant lock for `hold` seconds."""
+    holding = threading.Event()
+
+    def holder() -> None:
+        with tenant_context(tenant_id) as session:
+            session.execute(bookings.LOCK, {"key": bookings.LOCK_KEY})
+            holding.set()
+            time.sleep(hold)
+
+    suite_bind = SessionLocal.kw["bind"]
+    try:
+        with new_client(create_app()) as client:  # entering runs the lifespan, which binds its engine
+            thread = threading.Thread(target=holder)
+            thread.start()
+            assert holding.wait(timeout=10)
+            response = post_booking(client, tenant_id, service_id, starts_at=at("09:00"))
+            thread.join(timeout=10)
+    finally:
+        SessionLocal.configure(bind=suite_bind)  # the lifespan unbinds on exit; teardown needs it
+    return response
+
+
+# 52b: FENCE (ZIF-114). A stalled holder of the tenant lock costs a booker a 503 after the API's
+# lock_timeout, not a wait that pins a pooled connection until every tenant's requests hang on
+# checkout. Kills: the API engine without a lock_timeout (the booking waits out the hold, 201).
+def test_a_stalled_tenant_lock_holder_is_a_503_not_a_hang(people: People, ready: str) -> None:
+    response = book_while_the_tenant_lock_is_held(people.a, ready, hold=8)
+
+    assert (response.status_code, response.json()) == (503, {"code": "busy"})
+
+
+# 52c: FENCE (ZIF-114). A brief, legitimate wait (a queue of bookers) still books. Kills: a timeout
+# too short for a queue, such as `-c lock_timeout=5`, which Postgres reads as 5 milliseconds.
+def test_a_booker_queued_behind_a_brief_holder_still_books(people: People, ready: str) -> None:
+    response = book_while_the_tenant_lock_is_held(people.a, ready, hold=1)
+
+    assert response.status_code == 201
 
 
 def thresholds_of(tenant_id: uuid.UUID, booking_id: str) -> tuple[int, int]:
