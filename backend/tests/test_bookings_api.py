@@ -745,14 +745,17 @@ def book_twice_under_auto_confirm(
     return post_booking(client, people.a, ready, email=email, starts_at=at("11:00"))
 
 
-# 23c: FENCE - ZIF-115. Wrong impl: PENDING_COUNT counting only live pendings, as before the fix -
-# an auto-confirmed booking has no TTL, so one address booked without limit.
+# 23c: FENCE - ZIF-115. Wrong impls: PENDING_COUNT counting only live pendings, as before the fix
+# (an auto-confirmed booking has no TTL, so one address booked without limit), and the new arm
+# escaping the client_id filter (counting every address's bookings).
 def test_auto_confirmed_bookings_count_toward_the_cap(
     people: People, app: FastAPI, owner: TestClient, ready: str
 ) -> None:
     second = book_twice_under_auto_confirm(people, app, owner, ready)
+    other = post_booking(new_client(app), people.a, ready, starts_at=at("13:00"))
 
     assert (second.status_code, second.json()) == (429, {"code": "rate_limited"})
+    assert other.status_code == 201, other.json()
 
 
 # 23d: FENCE - ZIF-115, one wrong impl per case: drop `status = 'confirmed'` (a cancelled booking

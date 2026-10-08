@@ -277,9 +277,9 @@ RETURNING 1
 PENDING_COUNT = text("""
 SELECT count(*) FROM bookings
 WHERE client_id = :client_id
-  AND (status = ANY(CAST(:expiring AS text[])) AND expires_at > :now
-       OR status = 'confirmed' AND auto_confirm_at_booking AND source = 'booking_page'
-          AND starts_at > :now)
+  AND ((status = ANY(CAST(:expiring AS text[])) AND expires_at > :now)
+       OR (status = 'confirmed' AND auto_confirm_at_booking AND source = 'booking_page'
+           AND starts_at > :now))
 """)
 
 INSERT_BOOKING = text("""
