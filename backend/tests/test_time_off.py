@@ -1368,10 +1368,12 @@ def test_a_window_at_the_calendar_edge_is_refused_not_a_500(
 # ZIF-130: a block may not cover a pending or confirmed appointment of its member.
 
 
+# Two days ahead on the hour, once per run: a test crossing an hour mustn't see it move.
+SOON = (datetime.now(UTC) + timedelta(days=2)).replace(minute=0, second=0, microsecond=0)
+
+
 def soon(hours: float = 0) -> datetime:
-    """Two days ahead on the hour, plus `hours`: future whatever day the suite runs."""
-    base = (datetime.now(UTC) + timedelta(days=2)).replace(minute=0, second=0, microsecond=0)
-    return base + timedelta(hours=hours)
+    return SOON + timedelta(hours=hours)
 
 
 def local_day(at: datetime) -> str:
@@ -1631,7 +1633,7 @@ def test_an_edit_is_refused_only_over_an_appointment_it_newly_covers(
     holds = block(owner, only_a, starts_at=iso(soon(4)), ends_at=iso(soon(8))).json()["id"]
     later = local_day(soon(48))
     days = day_block(owner, only_a, first_day=later, last_day=later).json()["id"]
-    seed_booking(people.a, service_id, only_a, soon(0.25), soon(0.5))  # already under `grows`
+    held = seed_booking(people.a, service_id, only_a, soon(0.25), soon(0.5))  # under `grows`
     in_the_way = seed_booking(people.a, service_id, only_a, soon(2), soon(2.5))
     seed_booking(people.a, service_id, only_a, soon(5), soon(5.5))
     seed_booking(people.a, service_id, only_a, soon(48), soon(48.5))
@@ -1652,6 +1654,9 @@ def test_an_edit_is_refused_only_over_an_appointment_it_newly_covers(
         json={"first_day": local_day(soon(2)), "last_day": local_day(soon(2))},
     )
     assert switched.status_code == 409
+    listed = [b["id"] for b in switched.json()["bookings"]]
+    assert in_the_way in listed
+    assert held not in listed
 
 
 # Z7. fence: the check and the write run under the booking lock. A booking writer holding it

@@ -273,6 +273,8 @@ export function BlockedTimeForm({
   const confirmRef = useRef<HTMLButtonElement>(null);
   const wasMultiDayPartial = editing ? isMultiDayPartial(editing, tz) : false;
   const dateOrTimeTouched = !state.allDay && dateOrTimeChanged({ ...initial, tz }, { ...state, tz });
+  // The calendar panel's "Who" changed since the refusal: it was about someone else.
+  const otherMember = inTheWay !== null && inTheWay.member !== memberId;
 
   useEffect(() => {
     if (confirmingRemove) confirmRef.current?.focus();
@@ -361,12 +363,12 @@ export function BlockedTimeForm({
         </>
       )}
       {signedOut && <SignedOutBanner />}
-      {bannerError && (
+      {bannerError && !otherMember && (
         <div ref={bannerRef} tabIndex={-1} className={styles.message}>
           <Banner tone="error">{bannerError}</Banner>
         </div>
       )}
-      {inTheWay && <InTheWayList {...inTheWay} tz={tz} locale={locale} compact={compact} />}
+      {inTheWay && !otherMember && <InTheWayList {...inTheWay} tz={tz} locale={locale} compact={compact} />}
       <form className={`${uiStyles.stack} ${styles.colWide}`} noValidate onSubmit={onSubmit}>
         <label className={styles.choice}>
           <input
