@@ -622,7 +622,7 @@ def test_every_booking_template_renders_service_and_when() -> None:
         "old_date": "OLD-DATE-MARKER",
         "old_time": "OLD-TIME-MARKER",
     }
-    for template in STATUS_FOR:
+    for template in [*STATUS_FOR, "booking_request_team_member"]:  # ZIF-143's file variant
         for locale in LOCALES:
             _, body = render(template, locale, values)
             assert "SVC-MARKER" in body, (template, locale)
@@ -1050,3 +1050,37 @@ def test_an_smtp_failure_leaves_the_earlier_link_valid_and_the_retry_mints_its_o
     with urllib.request.urlopen(f"{MAILPIT}/api/v1/message/{confirmed['ID']}", timeout=5) as body:
         message: dict[str, Any] = json.load(body)
     assert "#" in message["Text"]
+
+
+# ZIF-143 fence. With workers_answer_requests off (the default) the assigned worker's request
+# email says the owner answers it; the owner's keeps "Accept or decline"; with it on, the worker
+# gets the owner's wording. Kills: the variant for everyone (owner leg), never (worker leg), or
+# regardless of the setting (last leg).
+def test_a_worker_who_cannot_answer_gets_the_owner_answers_variant(
+    people: People, app: FastAPI, ready: str, app_engine: Engine
+) -> None:
+    worker = add_worker(app_engine, people.a)
+    seed(people.a, worker, weekdays("09:00", "17:00"))
+    assign(people.a, ready, member_id(people.a, worker))
+
+    make_pending(
+        app, people.a, ready, member_id=str(member_id(people.a, worker)), starts_at=at("09:00")
+    )
+    run_jobs()
+
+    (worker_text,) = texts_to(email_of(worker))
+    assert "The business owner accepts or declines it." in worker_text
+    assert "Accept or decline" not in worker_text
+    (owner_text,) = texts_to(email_of(people.both))
+    assert "Accepteer of wijs de aanvraag af" in owner_text  # people.both reads nl
+
+    save_setting(people.a, "workers_answer_requests", True)
+    make_pending(
+        app, people.a, ready, member_id=str(member_id(people.a, worker)), starts_at=at("10:00")
+    )
+    run_jobs()
+
+    assert sorted("Accept or decline" in text for text in texts_to(email_of(worker))) == [
+        False,
+        True,
+    ]

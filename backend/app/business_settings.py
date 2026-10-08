@@ -53,6 +53,10 @@ class BusinessSettings(BaseModel):
     language: Locale = "en"
     # Whether a worker may change their own working hours; owners always may.
     workers_edit_own_hours: bool = False
+    # ZIF-143. Whether the assigned worker may accept or decline their own pending booking; owners
+    # always may. Off: the API refuses a worker's answer (app/bookings.py transition) and their
+    # new-request email says the owner answers it (app/mail.py send_booking).
+    workers_answer_requests: bool = False
     # Availability (ZIF-48). The buffer after an appointment when its service has no override,
     # as a whole percentage of its duration, rounded up to a minute.
     buffer_pct: Annotated[int, Field(ge=0, le=100)] = 10

@@ -5214,6 +5214,11 @@
             "title": "Workers Edit Own Hours",
             "default": false
           },
+          "workers_answer_requests": {
+            "type": "boolean",
+            "title": "Workers Answer Requests",
+            "default": false
+          },
           "buffer_pct": {
             "type": "integer",
             "maximum": 100.0,
@@ -5326,6 +5331,11 @@
             "title": "Workers Edit Own Hours",
             "default": false
           },
+          "workers_answer_requests": {
+            "type": "boolean",
+            "title": "Workers Answer Requests",
+            "default": false
+          },
           "buffer_pct": {
             "type": "integer",
             "maximum": 100.0,
@@ -5414,6 +5424,7 @@
           "auto_confirm",
           "language",
           "workers_edit_own_hours",
+          "workers_answer_requests",
           "buffer_pct",
           "slot_step_minutes",
           "min_notice_minutes",

@@ -991,6 +991,15 @@ def transition(
         raise ApiError(403, "owner_only")
     if row.status in OWNER_ONLY_SOURCES and not members.is_owner(current):  # 3b
         raise ApiError(403, "owner_only")
+    # 3c, ZIF-143 (replaces ZIF-53 ruling R1): answering a request is the owner's unless the
+    # business lets workers. Keyed on the source like 3b, so a worker's cancel of a pending is
+    # refused too: the panel offers nothing on a pending to a worker who can't answer.
+    if (
+        row.status == "pending"
+        and not members.is_owner(current)
+        and not business_settings.read(current.db).workers_answer_requests
+    ):
+        raise ApiError(403, "owner_only")
     rule = TRANSITIONS[change.status]
     changed = current.db.execute(
         TRANSITION,
