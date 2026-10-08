@@ -35,7 +35,8 @@ export function HoursSection({ memberId, editable, ownerView }: HoursSectionProp
   const [days, setDays] = useState<Day[] | null>(null);
   const [envelope, setEnvelope] = useState<Day[] | null>(null);
   const [rawEmpty, setRawEmpty] = useState(false);
-  const [showEditor, setShowEditor] = useState(false);
+  // The empty state's two ways in: a blank week, or one already filled from the opening hours.
+  const [showEditor, setShowEditor] = useState<false | "blank" | "filled">(false);
   const [failure, setFailure] = useState<ReturnType<typeof problem> | null>(null);
 
   function load() {
@@ -128,9 +129,16 @@ export function HoursSection({ memberId, editable, ownerView }: HoursSectionProp
         <div className={uiStyles.empty}>
           <strong>{t("emptyTitle")}</strong>
           <span>{t("emptyBody")}</span>
-          <button className={`${uiStyles.button} ${uiStyles.primary}`} type="button" onClick={() => setShowEditor(true)}>
-            {t("emptyCta")}
-          </button>
+          <div className={uiStyles.emptyActs}>
+            <button className={`${uiStyles.button} ${uiStyles.primary}`} type="button" onClick={() => setShowEditor("blank")}>
+              {t("emptyCta")}
+            </button>
+            {envelope !== null && (
+              <button className={`${uiStyles.button} ${uiStyles.secondary}`} type="button" onClick={() => setShowEditor("filled")}>
+                {t("useOpeningHours")}
+              </button>
+            )}
+          </div>
         </div>
         {envelope !== null && (
           <p className={uiStyles.hint}>
@@ -155,6 +163,7 @@ export function HoursSection({ memberId, editable, ownerView }: HoursSectionProp
       openingHoursLink={ownerView ? changeLink(t("changeOpeningHours")) : undefined}
       allowEmptyWeek
       onStaleEnvelope={reloadEnvelope}
+      startFilled={showEditor === "filled"}
       onSave={(body) => call(() => workingHoursReplace({ path: { member_id: memberId }, body }), { write: true })}
     />
   );
