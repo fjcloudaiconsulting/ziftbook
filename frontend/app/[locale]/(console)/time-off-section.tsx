@@ -5,7 +5,7 @@ import { type FormEvent, useEffect, useRef, useState } from "react";
 
 import { type InTheWay, timeOffCreate, timeOffDelete, timeOffList, timeOffUpdate, type TimeOffOut } from "@/api-client";
 import { Link } from "@/i18n/navigation";
-import { hrefFor } from "@/lib/calendar";
+import { bookingHref, hrefFor } from "@/lib/calendar";
 import { dateLocale } from "@/lib/console";
 import { type Locale, type NameMap, serviceName } from "@/lib/services";
 import { beyondHorizon, canEditBlock, clientProblem, dateOrTimeChanged, listWindow, localDateISO, localTime, patchBody, requestBody } from "@/lib/time-off";
@@ -535,7 +535,6 @@ function InTheWayList({ bookings, total, member, tz, locale, compact }: { bookin
   const t = useTranslations("Console.timeOff");
   const tToday = useTranslations("Console.today");
   const day = new Intl.DateTimeFormat(dateLocale(locale), { weekday: "short", day: "numeric", month: "short", timeZone: tz });
-  const dateOf = (instant: string) => localDateISO(new Date(instant), tz);
   // Inside the calendar's panel the booking replaces the panel, kept in history so Back returns.
   const scroll = !compact;
   return (
@@ -545,7 +544,7 @@ function InTheWayList({ bookings, total, member, tz, locale, compact }: { bookin
           const chip = chipOf(booking.status);
           return (
             <li key={booking.id}>
-              <Link className={styles.rowLink} href={hrefFor({ view: "day", date: dateOf(booking.starts_at), member }, { booking: booking.id })} scroll={scroll}>
+              <Link className={styles.rowLink} href={bookingHref(booking, member, tz)} scroll={scroll}>
                 <span className={styles.rowMain}>
                   <span className={styles.rowTitle}>{booking.client_name}</span>
                   <span className={styles.rowMeta}>
@@ -573,7 +572,7 @@ function InTheWayList({ bookings, total, member, tz, locale, compact }: { bookin
         })}
       </ul>
       {total > bookings.length && (
-        <Link className={uiStyles.textButton} href={hrefFor({ view: "week", date: dateOf(bookings[bookings.length - 1].starts_at), member }, {})} scroll={scroll}>
+        <Link className={uiStyles.textButton} href={hrefFor({ view: "week", date: localDateISO(new Date(bookings[bookings.length - 1].starts_at), tz), member }, {})} scroll={scroll}>
           {t("inTheWayMore", { count: total - bookings.length })}
         </Link>
       )}

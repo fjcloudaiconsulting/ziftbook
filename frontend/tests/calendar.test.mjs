@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { actionsFor, closedDay, closedDetail, isWaiting, spanTimes, telHref, daySlices, dayWindow, historyLabel, hourRange, hrefFor, lanes, monToSun, nowTop, parseView, switchDate, visibleDays, weekStart, weekdayOf, whenParts } from "../lib/calendar.ts";
+import { actionsFor, bookingHref, closedDay, closedDetail, isWaiting, spanTimes, telHref, daySlices, dayWindow, historyLabel, hourRange, hrefFor, lanes, monToSun, nowTop, parseView, switchDate, visibleDays, weekStart, weekdayOf, whenParts } from "../lib/calendar.ts";
 
 const AMS = "Europe/Amsterdam";
 const at = (iso) => new Date(iso).getTime();
@@ -494,5 +494,19 @@ describe("seven days and Mon-Sun (ZIF-143)", () => {
     const query = (href) => Object.fromEntries(new URL(href, "http://x").searchParams);
     assert.equal(query(hrefFor({ view: "days", date: TODAY, member: "all" }, {})).view, "days");
     assert.equal(query(hrefFor({ view: "days", date: TODAY, member: "all" }, { view: "week" })).view, "week");
+  });
+});
+
+describe("bookingHref (ZIF-130)", () => {
+  test("a 23:30 appointment opens on its own day in the business zone, not the UTC one", () => {
+    const id = "6f1c9a52-6a0e-4c69-9a59-3c1f3f2b8d10";
+    assert.equal(
+      bookingHref({ id, starts_at: "2026-10-09T21:30:00Z" }, "m1", AMS),
+      `/calendar?view=day&date=2026-10-09&member=m1&booking=${id}`,
+    );
+    assert.equal(
+      bookingHref({ id, starts_at: "2026-10-09T22:30:00Z" }, "m1", AMS),
+      `/calendar?view=day&date=2026-10-10&member=m1&booking=${id}`,
+    );
   });
 });
