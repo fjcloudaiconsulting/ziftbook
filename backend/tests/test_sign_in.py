@@ -292,25 +292,27 @@ def test_a_rush_of_sign_ins_is_turned_away_without_stalling_the_api(
     real = passwords._verify_hash
     hashing = threading.Semaphore(0)
     release = threading.Event()
-    released: list[bool] = []
+    held: list[bool] = []
     waits: list[bool] = []
+    slots = passwords._slots
+    take = slots.acquire
 
     # Holds its slot until the test lets go, so the rush and the reader below find the house full
-    # however slowly the machine runs. False: it gave up waiting, so the reader took that long.
+    # however slowly the machine runs. False: it gave up waiting, so the reader or the rush took
+    # that long.
     def hold(stored: str, password: str) -> bool:
         hashing.release()
-        released.append(release.wait(timeout=30))
+        held.append(release.wait(timeout=30))
         release.set()  # one that gave up lets the rest through: a stall fails in 30s, not 48 x 30s
         return real(stored, password)
 
-    # "At once" is the property, so the slots say whether anyone asked to wait, not a stopwatch.
-    class Slots(threading.BoundedSemaphore):
-        def acquire(self, blocking: bool = True, timeout: float | None = None) -> bool:
-            waits.append(blocking)
-            return super().acquire(blocking, timeout)
+    # "At once" is the property, so the real slots record whether anyone asked to wait.
+    def acquire(blocking: bool = True, timeout: float | None = None) -> bool:
+        waits.append(blocking)
+        return take(blocking, timeout)
 
     monkeypatch.setattr(passwords, "_verify_hash", hold)
-    monkeypatch.setattr(passwords, "_slots", Slots(4))
+    monkeypatch.setattr(slots, "acquire", acquire)
     with tenant_context(people.a) as session:
         token = auth.create(session, people.only_a, ip=None, user_agent=None)
     statuses: list[int] = []
@@ -341,7 +343,7 @@ def test_a_rush_of_sign_ins_is_turned_away_without_stalling_the_api(
             assert all(hashing.acquire(timeout=30) for _ in range(4))  # four hold the four slots
             # A header, not the client's cookie jar, which the sign-ins would rotate away.
             reader = shared.get("/api/session", headers={"cookie": f"{auth.COOKIE}={token}"})
-            assert turned_away.wait(timeout=30)  # the other 44 met a full house, however late
+            assert turned_away.wait(timeout=30)  # the other 44 have answered, however late
             release.set()
             for thread in threads:
                 thread.join()
@@ -349,9 +351,9 @@ def test_a_rush_of_sign_ins_is_turned_away_without_stalling_the_api(
         SessionLocal.configure(bind=app_engine)  # the lifespan unbound it on the way out
 
     # Answered while all four hashes were still running: none of them gave up waiting for it.
-    assert reader.status_code == 200 and released == [True] * 4
+    assert reader.status_code == 200 and held == [True] * 4
     assert (statuses.count(503), statuses.count(401)) == (44, 4)
-    assert waits == [False] * 48
+    assert waits == [False] * 48 and slots._value == 4  # nobody waited, and every slot came back
 
 
 def test_the_decoy_hash_costs_what_a_real_one_does() -> None:
