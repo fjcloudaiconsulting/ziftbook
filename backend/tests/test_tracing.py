@@ -447,7 +447,11 @@ def test_extract_never_reads_tracestate(people: People, migrate_engine: Engine) 
 
     with migrate_engine.connect() as conn:
         stored = conn.execute(
-            text("SELECT payload FROM jobs WHERE kind = 'email.invite' ORDER BY id DESC LIMIT 1")
+            text("""
+            SELECT payload FROM jobs
+            WHERE tenant_id = :t AND kind = 'email.invite' ORDER BY id DESC LIMIT 1
+            """),
+            {"t": people.a},
         ).scalar_one()
     assert "tracestate" not in stored
 
