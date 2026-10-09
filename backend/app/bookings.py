@@ -42,7 +42,7 @@ from app import (
 from app import time_off as time_off_module
 from app.business_settings import Locale
 from app.clients import ClientName, Phone, PolicyVersion, Purpose
-from app.db import SessionLocal, join_tenant, tenant_context
+from app.db import SessionLocal, count_after_commit, join_tenant, tenant_context
 from app.errors import ApiError, Error
 from app.services import STRICT, DescriptionText, Price
 
@@ -669,6 +669,9 @@ def place(
     # mypy narrowing only: the `else` above raises, so these are bound. Stripped under
     # `python -O`, which is why nothing below may depend on this running.
     assert booking is not None and candidate is not None
+    # Both callers run in the request's transaction; this waits for its commit. place() is the only
+    # insert path and `source` is one of its two callers' literals, so the attribute is closed.
+    count_after_commit(db, tracing.BOOKINGS_CREATED, {"booking.source": source})
     return booking, candidate
 
 

@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 import requests
 from mailgun.handlers.error_handler import ApiError
+from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 from sqlalchemy import Engine, text
 
 from app import mail
@@ -18,7 +19,7 @@ from app.db import SessionLocal, tenant_context
 from app.jobs import JobKind, enqueue, run_once
 from app.mail import LOCALES, TEMPLATES, render
 from app.worker import KINDS
-from tests.conftest import MAILGUN_CALLS, People, save_setting, sent_to
+from tests.conftest import MAILGUN_CALLS, People, closed, points, save_setting, sent_to
 
 
 @pytest.fixture
@@ -307,3 +308,23 @@ def test_development_mail_goes_to_mailpits_http_api(monkeypatch: pytest.MonkeyPa
             }
         ],
     }
+
+
+# M5 fence: a delivery counts once, as sent or as failed (the error still raises).
+# Kills: counting before _send (a failure counted as sent), a failure not counted.
+def test_a_delivery_counts_as_sent_or_failed_by_template(
+    metric_reader: InMemoryMetricReader, mailgun_replies: dict[str, int | Exception]
+) -> None:
+    sent, refused = f"{uuid.uuid4()}@example.com", f"{uuid.uuid4()}@example.com"
+    mailgun_replies[sent] = 200
+    mailgun_replies[refused] = 503
+
+    mail.deliver("hello", sent, "Subject", "Body\n")
+    with pytest.raises(requests.HTTPError):
+        mail.deliver("hello", refused, "Subject", "Body\n")
+
+    assert {
+        (p.attributes["email.template"], p.attributes["email.outcome"]): p.value
+        for p in points(metric_reader, "ziftbook.email.deliveries")
+    } == {("hello", "sent"): 1, ("hello", "failed"): 1}
+    closed(metric_reader)

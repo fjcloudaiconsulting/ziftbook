@@ -5,12 +5,15 @@ import logging
 import signal
 import time
 import urllib.request
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 
+from opentelemetry import metrics
+from opentelemetry.metrics import CallbackOptions, Observation
 from sqlalchemy import create_engine
 
-from app import bookings, logs, mail, tracing
+from app import bookings, jobs, logs, mail, tracing
 from app.config import MailSettings, WorkerSettings
 from app.db import SessionLocal
 from app.jobs import JobKind, run_once
@@ -31,6 +34,33 @@ KINDS: dict[str, JobKind] = {
         mail.send_booking_verify, timeout=30, grace=timedelta(hours=24)
     ),
 }
+
+
+def _queue_gauge(index: int) -> Callable[[CallbackOptions], list[Observation]]:
+    """Runs on the export thread, one small indexed query per export. A database error propagates:
+    the SDK logs it and that export has no queue point, a gap being the honest value."""
+
+    def observe(options: CallbackOptions) -> list[Observation]:
+        # Tests import this module with no session bound; there is no database to ask.
+        if SessionLocal.kw.get("bind") is None:
+            return []
+        waiting = jobs.queue(list(KINDS))
+        # Every kind, 0 when empty: a drained kind reports 0 instead of going stale.
+        return [
+            Observation(waiting.get(kind, (0, 0.0))[index], {"job.kind": kind}) for kind in KINDS
+        ]
+
+    return observe
+
+
+# Per worker: with several, query max(), not sum().
+_meter = metrics.get_meter("ziftbook")
+_meter.create_observable_up_down_counter(
+    "ziftbook.job.queue.size", callbacks=[_queue_gauge(0)], unit="{job}"
+)
+_meter.create_observable_gauge(
+    "ziftbook.job.queue.oldest_age", callbacks=[_queue_gauge(1)], unit="s"
+)
 
 POLL_SECONDS = 30
 # ZIF-122: settle expired pending bookings; housekeeping, so it runs on a timer, not every poll.
@@ -104,7 +134,8 @@ def main() -> None:
         settings.database_url,
         pool_pre_ping=True,
         hide_parameters=True,  # no statement values (emails, token hashes) in logs
-        pool_size=21,  # 20 handler threads and the claim
+        # 20 executor threads (handlers, claim, sweep) and the export thread's queue query.
+        pool_size=21,
         max_overflow=0,
         # Hard limits for handlers that outlive their timeout: their threads can't be killed.
         connect_args={

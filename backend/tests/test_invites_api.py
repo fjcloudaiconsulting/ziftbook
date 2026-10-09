@@ -9,6 +9,7 @@ from uuid import uuid4
 
 import pytest
 from fastapi import FastAPI
+from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 from sqlalchemy import Engine, text
 
 from app import auth, mail, passwords
@@ -19,12 +20,14 @@ from tests.conftest import (
     PASSWORD,
     People,
     add_password,
+    closed,
     email_of,
     events,
     failing,
     fresh_address,
     fresh_email,
     new_client,
+    points,
     set_role,
     signed_in,
 )
@@ -75,13 +78,16 @@ def invite_jobs(migrate_engine: Engine, tenant_id: uuid.UUID) -> int:
 
 # I1: a normalised email, a job queued with the right dedupe key and payload.
 def test_creating_an_invite_queues_its_email_job(
-    people: People, app: FastAPI, migrate_engine: Engine
+    people: People, app: FastAPI, migrate_engine: Engine, metric_reader: InMemoryMetricReader
 ) -> None:
     owner = signed_in(app, people.a, people.both)
 
     response = owner.post("/api/invites", json={"email": " New@Example.com "})
 
     assert response.status_code == 201
+    # M7 fence. Kills: the counter wired to another call site, or not at all.
+    assert [p.value for p in points(metric_reader, "ziftbook.invite.sent")] == [1]
+    closed(metric_reader)
     assert response.headers["cache-control"] == "no-store"
     body = response.json()
     assert body["email"] == "new@example.com"
@@ -522,6 +528,7 @@ def test_accepting_creates_an_account_and_signs_in(
     people: People,
     app: FastAPI,
     monkeypatch: pytest.MonkeyPatch,
+    metric_reader: InMemoryMetricReader,
     new_accounts: list[NewAccount],  # noqa: F811
 ) -> None:
     email = fresh_email()
@@ -536,6 +543,9 @@ def test_accepting_creates_an_account_and_signs_in(
     )
 
     assert response.status_code == 201
+    # M7 fence. Kills: accepted counted at the wrong call site, or at lookup.
+    assert [p.value for p in points(metric_reader, "ziftbook.invite.accepted")] == [1]
+    closed(metric_reader)
     body = response.json()
     assert (body["tenant_id"], body["role"], body["email"]) == (str(people.a), "worker", email)
     assert "__Host-session" in response.cookies

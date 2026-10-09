@@ -103,7 +103,25 @@ WHERE id = ANY(ARRAY(
 RETURNING id, kind, tenant_id, payload, attempts, now() - due_at AS overdue
 """)
 
+# The backlog the queue gauges report: claimable right now (due, not leased, not in backoff, not
+# given up), on CLAIM's predicate so it is an index scan. Age runs from when a job last became
+# claimable, so a job retrying normally does not look stuck.
+QUEUE = text(f"""
+SELECT kind, count(*) AS size, extract(epoch FROM now() - min(next_attempt_at)) AS oldest
+FROM jobs
+WHERE completed_at IS NULL AND attempts < {MAX_ATTEMPTS}
+  AND next_attempt_at <= now() AND kind = ANY(:kinds)
+GROUP BY kind
+""")
+
 logger = logging.getLogger(__name__)
+
+
+def queue(kinds: list[str]) -> dict[str, tuple[int, float]]:
+    """Per kind with a backlog: its size and the age in seconds of its oldest waiting job."""
+    with SessionLocal.begin() as session:
+        rows = session.execute(QUEUE, {"kinds": kinds}).all()
+    return {row.kind: (row.size, float(row.oldest)) for row in rows}
 
 
 def _claim(kinds: list[str]) -> list[tuple[Job, int, timedelta]]:
@@ -126,6 +144,8 @@ async def _run(kind: JobKind, job: Job, attempts: int, overdue: timedelta) -> No
         context["tenant_id"] = str(job.tenant_id)
     # attempts rides on the job events only, not on everything the handler logs.
     attempt = {"attempts": attempts}
+    # job.kind is closed: CLAIM only returns the registered kinds.
+    labels = {"job.kind": job.kind}
     # A non-string value (an older or odd row) makes extract raise TypeError, which would escape
     # gather and fail run_once's whole batch; isinstance keeps a malformed value as no context
     # instead, and the job still runs as a root span.
@@ -148,7 +168,9 @@ async def _run(kind: JobKind, job: Job, attempts: int, overdue: timedelta) -> No
                 "UPDATE jobs SET completed_at = now(), skipped = true WHERE id = :id",
             )
             logger.info("job skipped", extra=attempt)
+            tracing.JOB_RUNS.add(1, labels | {"job.outcome": "skipped"})
             return
+        tracing.JOB_RUNNING.add(1, labels)
         try:
             # A timed-out handler thread cannot be stopped and keeps running; its own I/O timeouts
             # bound it. The job was already claimed, so it is retried after its backoff.
@@ -163,6 +185,8 @@ async def _run(kind: JobKind, job: Job, attempts: int, overdue: timedelta) -> No
                 extra={"error": type(error).__name__, **attempt},
                 exc_info=error,
             )
+            # Before the _record below: a database error there must not lose the count.
+            tracing.JOB_RUNS.add(1, labels | {"job.outcome": "gave_up" if last else "failed"})
             # The handler's error never escapes _run, so tracing.span never sees it; set on the
             # job span explicitly instead.
             job_span.set_status(trace.Status(trace.StatusCode.ERROR, logs.error_summary(error)))
@@ -178,6 +202,10 @@ async def _run(kind: JobKind, job: Job, attempts: int, overdue: timedelta) -> No
                 _record, job.id, "UPDATE jobs SET completed_at = now() WHERE id = :id"
             )
             logger.info("job done", extra=attempt)
+            tracing.JOB_RUNS.add(1, labels | {"job.outcome": "done"})
+            tracing.JOB_ATTEMPTS.record(attempts, labels)
+        finally:
+            tracing.JOB_RUNNING.add(-1, labels)
 
 
 async def run_once(kinds: dict[str, JobKind]) -> int:

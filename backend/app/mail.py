@@ -99,8 +99,11 @@ def deliver(
             extra={"template": template, "error": type(error).__name__}
             | ({"status": status} if status is not None else {}),
         )
+        # template is one of the logical names in mail_templates/: render() and STATUS_FOR bound it.
+        tracing.EMAIL_DELIVERIES.add(1, {"email.template": template, "email.outcome": "failed"})
         raise
     logger.info("email sent", extra={"template": template})
+    tracing.EMAIL_DELIVERIES.add(1, {"email.template": template, "email.outcome": "sent"})
 
 
 def _send(to: str, subject: str, body: str, ics: bytes | None) -> None:

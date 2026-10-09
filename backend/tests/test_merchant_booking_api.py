@@ -13,15 +13,19 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from httpx2 import Response
+from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 from sqlalchemy import Engine, event, text
 
+from app import auth
 from app.db import tenant_context
 from tests.conftest import (
     People,
     add_membership,
     add_user,
+    closed,
     member_id,
     new_client,
+    points,
     save_setting,
     signed_in,
 )
@@ -208,10 +212,16 @@ def test_f2_no_public_gating_no_turnstile_no_pending_cap(
 
 # F3. Kills: status from auto_confirm, source booking_page, NULL actor, consent 'null' jsonb.
 def test_f3_the_row_the_event_and_the_history(
-    people: People, owner: TestClient, ready: str
+    people: People, owner: TestClient, ready: str, metric_reader: InMemoryMetricReader
 ) -> None:
     response = book(owner, ready, member_id=boss(people), new_client={"name": "Dana"})
     assert response.status_code == 201, response.json()
+    # M7 fence. Kills: a counter with the wrong source.
+    assert {
+        p.attributes["booking.source"]: p.value
+        for p in points(metric_reader, "ziftbook.booking.created")
+    } == {"merchant": 1}
+    closed(metric_reader)
     booking_id = response.json()["id"]
     row = row_of(people.a, booking_id)
     assert (row["status"], row["source"], row["expires_at"]) == ("confirmed", "merchant", None)
@@ -222,6 +232,29 @@ def test_f3_the_row_the_event_and_the_history(
     history = owner.get(f"/api/bookings/{booking_id}").json()["history"]
     assert [(h["event"], h["actor"]) for h in history] == [("created", "team")]
     assert history[0]["actor_name"]
+
+
+# M8 fence: a booking whose transaction rolls back after place() is not counted.
+# Kills: counting at the call site instead of after the commit.
+def test_m8_a_booking_that_rolls_back_is_not_counted(
+    owner: TestClient,
+    ready: str,
+    monkeypatch: pytest.MonkeyPatch,
+    metric_reader: InMemoryMetricReader,
+) -> None:
+    real = auth.record
+
+    def record(db: Any, request: Any, action: Any, **kwargs: Any) -> None:
+        if action == "booking_created":  # the last write, after place()
+            raise RuntimeError("record failed")
+        real(db, request, action, **kwargs)
+
+    monkeypatch.setattr(auth, "record", record)
+
+    assert book(owner, ready).status_code == 500
+
+    assert points(metric_reader, "ziftbook.booking.created") == []
+    closed(metric_reader)
 
 
 # F4. Kills: override ignored, or always on.

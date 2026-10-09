@@ -290,6 +290,47 @@ def metric_reader() -> Iterator[InMemoryMetricReader]:
     provider.remove_metric_reader(reader)
 
 
+def points(reader: InMemoryMetricReader, name: str) -> list[Any]:
+    data = reader.get_metrics_data()
+    if data is None:
+        return []
+    return [
+        point
+        for resource_metrics in data.resource_metrics
+        for scope_metrics in resource_metrics.scope_metrics
+        for metric in scope_metrics.metrics
+        if metric.name == name
+        for point in metric.data.data_points
+    ]
+
+
+METRIC_KEYS = {
+    "job.kind",
+    "job.outcome",
+    "email.template",
+    "email.outcome",
+    "booking.source",
+    "db.client.connection.state",
+    "db.client.connection.pool.name",
+}
+ID_LIKE = re.compile(r"@|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+
+
+def closed(reader: InMemoryMetricReader) -> None:
+    """Our metrics carry only the closed attribute set, and no value holds an id or an address."""
+    data = reader.get_metrics_data()
+    for resource_metrics in data.resource_metrics if data else []:
+        for scope_metrics in resource_metrics.scope_metrics:
+            for metric in scope_metrics.metrics:
+                if not metric.name.startswith(("ziftbook.", "db.client.")):
+                    continue
+                for point in metric.data.data_points:
+                    attributes = dict(point.attributes or {})
+                    assert set(attributes) <= METRIC_KEYS, (metric.name, attributes)
+                    for value in attributes.values():
+                        assert not ID_LIKE.search(str(value)), (metric.name, attributes)
+
+
 @pytest.fixture(scope="session")
 def migrated() -> None:
     command.upgrade(Config(toml_file=str(API_DIR / "pyproject.toml")), "head")

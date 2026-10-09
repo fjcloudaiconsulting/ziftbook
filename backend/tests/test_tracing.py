@@ -31,7 +31,7 @@ from app import logs, mail, tracing, worker
 from app.db import SessionLocal
 from app.jobs import JobKind, enqueue, run_once
 from app.main import create_app
-from tests.conftest import API_DIR, People, failing, fresh_email, new_client, signed_in
+from tests.conftest import API_DIR, People, failing, fresh_email, new_client, points, signed_in
 from tests.test_account_email import bound, inbox, link_in, message  # noqa: F401
 from tests.test_clients_api import add_client
 from tests.test_invite_email import run_jobs
@@ -500,20 +500,6 @@ def _readers(provider: Any) -> set[Any]:
     return set(provider._measurement_consumer._reader_storages)
 
 
-def _points(reader: InMemoryMetricReader, name: str) -> list[Any]:
-    data = reader.get_metrics_data()
-    if data is None:
-        return []
-    return [
-        point
-        for resource_metrics in data.resource_metrics
-        for scope_metrics in resource_metrics.scope_metrics
-        for metric in scope_metrics.metrics
-        if metric.name == name
-        for point in metric.data.data_points
-    ]
-
-
 # T1: fence. One SERVER span with exactly the allowlisted keys, and the query's email in no span.
 # Kills: FastAPI's native tracing switched on (a second SERVER span carrying url.path/url.query).
 def test_a_request_exports_one_allowlisted_server_span_and_no_query(
@@ -543,15 +529,15 @@ def test_the_request_duration_metric_has_the_route_and_no_url(
     owner = signed_in(create_app(), people.a, people.both)
     assert owner.get("/api/clients", params={"q": "a@b.c"}).status_code == 200
 
-    points = _points(metric_reader, "http.server.request.duration")
-    routes = [dict(p.attributes) for p in points]
+    duration = points(metric_reader, "http.server.request.duration")
+    routes = [dict(p.attributes) for p in duration]
     assert {
         "http.request.method": "GET",
         "http.route": "/api/clients",
         "http.response.status_code": 200,
     } in routes
     for name in ("http.server.request.duration", "http.server.active_requests"):
-        for point in _points(metric_reader, name):
+        for point in points(metric_reader, name):
             assert set(point.attributes) <= tracing.HTTP_METRIC_ATTRIBUTES
             assert not [key for key in point.attributes if key.startswith("url.")]
     data = metric_reader.get_metrics_data()
@@ -571,7 +557,7 @@ def test_the_health_check_records_no_metric(
 
     routes = {
         p.attributes.get("http.route")
-        for p in _points(metric_reader, "http.server.request.duration")
+        for p in points(metric_reader, "http.server.request.duration")
     }
     assert "/api/clients" in routes
     assert "/api/healthz" not in routes
@@ -587,7 +573,7 @@ def test_metric_points_carry_no_exemplars(metric_reader: InMemoryMetricReader) -
 
     [point] = [
         p
-        for p in _points(metric_reader, "http.server.request.duration")
+        for p in points(metric_reader, "http.server.request.duration")
         if p.attributes.get("http.route") == "/x"
     ]
     assert "url.path" not in point.attributes

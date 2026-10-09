@@ -41,6 +41,23 @@ HTTP_METRIC_ATTRIBUTES = {
     "error.type",
 }
 
+
+# Our own push instruments (the queue gauges live in worker.py, the pool ones in db.py). Each is
+# recorded at one site with a literal attribute dict, so the closed value sets are auditable here;
+# they match no View, so the SDK keeps those attributes as written. Never an id or a typed value.
+_meter = metrics.get_meter("ziftbook")
+JOB_RUNS = _meter.create_counter("ziftbook.job.runs", unit="{run}")
+# Boundaries 1-4 make each of the 5 attempts its own bucket; the defaults would merge them.
+JOB_ATTEMPTS = _meter.create_histogram(
+    "ziftbook.job.attempts", unit="{attempt}", explicit_bucket_boundaries_advisory=[1, 2, 3, 4]
+)
+JOB_RUNNING = _meter.create_up_down_counter("ziftbook.job.running", unit="{job}")
+EMAIL_DELIVERIES = _meter.create_counter("ziftbook.email.deliveries", unit="{message}")
+SIGN_UPS = _meter.create_counter("ziftbook.sign_up.completed", unit="{sign_up}")
+INVITES_SENT = _meter.create_counter("ziftbook.invite.sent", unit="{invite}")
+INVITES_ACCEPTED = _meter.create_counter("ziftbook.invite.accepted", unit="{invite}")
+BOOKINGS_CREATED = _meter.create_counter("ziftbook.booking.created", unit="{booking}")
+
 _configured = False
 
 
