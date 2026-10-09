@@ -11,6 +11,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from httpx2 import Response
+from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 from sqlalchemy import Engine, text
 
 from app import auth, limits
@@ -20,6 +21,7 @@ from tests.conftest import (
     PASSWORD,
     People,
     add_password,
+    closed,
     delete_services,
     email_of,
     events,
@@ -29,6 +31,7 @@ from tests.conftest import (
     issue_link,
     live,
     new_client,
+    points,
     put_settings,
     signed_in,
 )
@@ -243,6 +246,7 @@ def test_a_new_business_is_recorded_with_its_first_sign_in(
     app_engine: Engine,
     migrate_engine: Engine,
     businesses: list[uuid.UUID],
+    metric_reader: InMemoryMetricReader,
     country: str,
 ) -> None:
     token = issue_link(app_engine, "sign_up", fresh_email())
@@ -261,6 +265,9 @@ def test_a_new_business_is_recorded_with_its_first_sign_in(
         ("sign_in_succeeded", tenant_id, user_id),
     ]
     assert [e["details"] for e in recorded] == [None, None]
+    # M7 fence. Kills: the counter wired to another call site, or not at all.
+    assert [p.value for p in points(metric_reader, "ziftbook.sign_up.completed")] == [1]
+    closed(metric_reader)
 
 
 def test_a_business_whose_event_fails_is_not_created(

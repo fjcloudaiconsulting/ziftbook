@@ -24,6 +24,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from httpx2 import Response
+from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 from psycopg.errors import QueryCanceled
 from sqlalchemy import Engine, event, text
 from sqlalchemy.exc import OperationalError
@@ -36,6 +37,7 @@ from tests.conftest import (
     People,
     add_membership,
     add_user,
+    closed,
     delete_bookings,
     email_of,
     events,
@@ -43,6 +45,7 @@ from tests.conftest import (
     fresh_email,
     member_id,
     new_client,
+    points,
     put_settings,
     save_setting,
     set_role,
@@ -171,7 +174,7 @@ def post_booking(
 
 # 14: GUARD. The happy path.
 def test_a_guest_books_a_slot_the_public_page_offered(
-    people: People, app: FastAPI, ready: str
+    people: People, app: FastAPI, ready: str, metric_reader: InMemoryMetricReader
 ) -> None:
     client = new_client(app)
     availability_response = client.get(
@@ -199,6 +202,12 @@ def test_a_guest_books_a_slot_the_public_page_offered(
     }
     assert body["status"] == "pending"
     assert response.headers["cache-control"] == "no-store"
+    # M7 fence. Kills: a counter with the wrong source.
+    assert {
+        p.attributes["booking.source"]: p.value
+        for p in points(metric_reader, "ziftbook.booking.created")
+    } == {"booking_page": 1}
+    closed(metric_reader)
 
     second = client.get(
         f"/api/public/businesses/{people.a}/services/{ready}/availability",

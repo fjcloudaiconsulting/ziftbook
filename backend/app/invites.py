@@ -9,10 +9,10 @@ from fastapi import APIRouter, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import text
 
-from app import auth, limits, passwords
+from app import auth, limits, passwords, tracing
 from app.accounts import DisplayNameText
 from app.auth import CurrentOwner
-from app.db import SessionLocal, tenant_context
+from app.db import SessionLocal, count_after_commit, tenant_context
 from app.errors import ApiError, Error
 from app.jobs import enqueue
 
@@ -98,6 +98,7 @@ def create(
         {"invite_id": str(row.id)},
         tenant_id=tenant,
     )
+    count_after_commit(current.db, tracing.INVITES_SENT)  # a resend is a sent invite too
     auth.record(
         current.db,
         request,
@@ -257,6 +258,7 @@ def accept(body: AcceptInvite, request: Request, response: Response) -> auth.Ses
             {"h": found.digest, "p": password_hash, "n": body.name},
         ).one()
         if result.outcome == "accepted":
+            count_after_commit(session, tracing.INVITES_ACCEPTED)
             auth.record(
                 session,
                 request,

@@ -343,6 +343,10 @@ loggers (`web.*`); Next's own stderr output (banners, SSR error traces) is not i
   default.
 - Ids only: never a password, token or its hash, cookie, email address, name, business or service name,
   IP address, user agent, request body, query string or header.
+- Metric attributes follow the same rule, stricter: never a user, tenant, request, job, booking or
+  session id, nor any value a client typed; only a small closed set (a job kind, an email template, an
+  outcome, a route template). A new value set needs a code change, never data. Count business events
+  with `db.count_after_commit`, never before the commit.
 - Errors: log the class (`type(error).__name__`) or pass `exc_info`, never `%r`/`str(error)` and never
   `logger.warning(error)`: an error's text can quote an address or a row. `exc` holds the chain's class
   names, frames (with their source line), and for a database error, its SQLSTATE and table/constraint
@@ -396,15 +400,30 @@ from `.env`; it fixes the log settings at `DEBUG`/`text`, passes no `ZIF_LOG_SQL
 |---|---|---|---|---|
 | Logs | JSON lines on stdout (`ZIF_LOG_FORMAT=json`, the default; `text` in dev). The API, worker, migrations and web app never send logs over OTLP: a log collector reads their stdout (none is set up yet). | always (stdout) | stdout cannot be turned off; raise `ZIF_LOG_LEVEL` to `ERROR` for the least | `ZIF_LOG_LEVEL` (default `INFO`), `ZIF_LOG_SQL` (see Logging) |
 | Traces | OTLP/HTTP to `ZIF_OTEL_EXPORTER_OTLP_ENDPOINT` | set the endpoint (plus `ZIF_OTEL_EXPORTER_OTLP_HEADERS` if the collector wants auth) | leave the endpoint unset: no spans are exported and no connection is attempted. `ZIF_OTEL_TRACES_EXPORTER=none` turns traces off with the endpoint still set. In prod you can also set `ZIF_OTEL_TRACES_SAMPLER=always_off` | prod: `ZIF_OTEL_TRACES_SAMPLER` / `_ARG` (default 10% of new traces, following the caller's decision); dev: 100% |
-| Metrics | API only: FastAPI's `http.server.request.duration` and `http.server.active_requests`, over OTLP/HTTP to `ZIF_OTEL_EXPORTER_OTLP_ENDPOINT` every 60s | set the endpoint | leave the endpoint unset: no reader, no connection. `ZIF_OTEL_METRICS_EXPORTER=none` turns metrics off with the endpoint still set | every 60s (the SDK's `OTEL_METRIC_EXPORT_INTERVAL`, which compose does not pass) |
+| Metrics | API: `http.server.*`, `db.client.connection.*`, business counters (`ziftbook.sign_up.*`, `ziftbook.invite.*`, `ziftbook.booking.created`); worker: `ziftbook.job.*`, `ziftbook.email.deliveries`, `db.client.connection.*`; over OTLP/HTTP to `ZIF_OTEL_EXPORTER_OTLP_ENDPOINT` every 60s | set the endpoint | leave the endpoint unset: no reader, no connection. `ZIF_OTEL_METRICS_EXPORTER=none` turns metrics off with the endpoint still set | every 60s (the SDK's `OTEL_METRIC_EXPORT_INTERVAL`, which compose does not pass) |
 
 - Next's own startup banner (standalone `server.js`) is plain text and ignores `ZIF_LOG_*`;
   every other web server line follows them.
 - Logs go to stdout because that is what every platform collects (the Docker logging driver, a
   Kubernetes node agent, an OpenTelemetry Collector's `filelog` receiver).
-- Metric attributes are an allowlist, like the API span's: `http.request.method`, `http.route`
-  (the template, never the path), `http.response.status_code` and `error.type`. The health check
-  records nothing.
+- Metric attributes are an allowlist, like the API span's. `http.server.*` keeps `http.request.method`,
+  `http.route` (the template, never the path), `http.response.status_code` and `error.type`; the health
+  check records nothing. Our own instruments, each with a closed attribute set:
+
+  | Name | Kind | Attributes | Process |
+  |---|---|---|---|
+  | `ziftbook.job.runs` | counter | `job.kind`, `job.outcome` (done, failed, gave_up, skipped) | worker |
+  | `ziftbook.job.attempts` | histogram | `job.kind` (done jobs only) | worker |
+  | `ziftbook.job.running` | up-down counter | `job.kind` | worker |
+  | `ziftbook.job.queue.size` (observable up-down counter), `ziftbook.job.queue.oldest_age` (observable gauge, s) | | `job.kind` (0 when empty) | worker |
+  | `ziftbook.email.deliveries` | counter | `email.template`, `email.outcome` (sent, failed) | worker |
+  | `db.client.connection.count` | observable up-down counter | `db.client.connection.state` (used, idle), `db.client.connection.pool.name` | api, worker |
+  | `db.client.connection.pending_requests` | observable up-down counter | `db.client.connection.pool.name` | api, worker |
+  | `ziftbook.sign_up.completed`, `ziftbook.invite.sent`, `ziftbook.invite.accepted` | counters | none | api |
+  | `ziftbook.booking.created` | counter | `booking.source` (booking_page, merchant) | api |
+
+  The queue series come from every worker, so aggregate them with `max`, not `sum`. `job.running`
+  excludes handler threads that timed out and are still running.
 - With a dead collector, each signal's shutdown retries for up to about 7s (a process with
   traces and metrics on can exit about 14s late).
 - The sampler variables are the OpenTelemetry standard values (`always_on`, `always_off`,

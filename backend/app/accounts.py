@@ -8,10 +8,10 @@ from fastapi import APIRouter, Request, Response
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints
 from sqlalchemy import text
 
-from app import auth, business_settings, limits, passwords
+from app import auth, business_settings, limits, passwords, tracing
 from app.business_settings import BusinessSettings, Locale
 from app.countries import COUNTRIES, Country
-from app.db import SessionLocal, join_tenant, tenant_context
+from app.db import SessionLocal, count_after_commit, join_tenant, tenant_context
 from app.errors import ApiError, Error
 from app.jobs import enqueue
 
@@ -157,6 +157,7 @@ def complete_sign_up(
             for key, value in starting.model_dump(exclude_unset=True).items():
                 business_settings.save(session, key, value)
             auth.record(session, request, "business_created", actor_user_id=created.user_id)
+            count_after_commit(session, tracing.SIGN_UPS)
     # Outside the transaction: raising inside would roll back using up the link.
     if created.outcome == "invalid_token":  # used up since the liveness check
         raise ApiError(400, "invalid_token")

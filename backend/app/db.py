@@ -3,8 +3,11 @@ from contextlib import contextmanager
 from uuid import UUID
 
 from alembic import op
+from opentelemetry import metrics
+from opentelemetry.metrics import CallbackOptions, Counter, Observation
 from sqlalchemy import Connection, MetaData, event, text
 from sqlalchemy.orm import Session, SessionTransaction, sessionmaker
+from sqlalchemy.pool import QueuePool
 
 from app import logs
 
@@ -35,6 +38,65 @@ def _set_tenant(session: Session, transaction: SessionTransaction, connection: C
             text("SELECT set_config('app.tenant_id', :tenant_id, true)"),
             {"tenant_id": str(tenant_id)},
         )
+
+
+def count_after_commit(
+    session: Session, counter: Counter, attributes: dict[str, str] | None = None
+) -> None:
+    """Add 1 once this session's transaction commits; nothing if it rolls back. Call it in the
+    transaction, outside any savepoint that may roll back."""
+    session.info.setdefault("counts", []).append((counter, attributes))
+
+
+@event.listens_for(SessionLocal, "after_commit")
+def _count(session: Session) -> None:
+    if session.in_nested_transaction():  # a released savepoint: nothing is committed yet
+        return
+    for counter, attributes in session.info.pop("counts", ()):
+        counter.add(1, attributes)
+
+
+@event.listens_for(SessionLocal, "after_transaction_end")
+def _forget(session: Session, transaction: SessionTransaction) -> None:
+    if transaction.parent is None:  # the root ended: a commit already took them, a rollback drops
+        session.info.pop("counts", None)
+
+
+POOL = {"db.client.connection.pool.name": "default"}
+
+
+def _pool() -> QueuePool | None:
+    """The one engine each process binds to SessionLocal (NullPool in tests, unbound: nothing)."""
+    pool = getattr(SessionLocal.kw.get("bind"), "pool", None)
+    return pool if isinstance(pool, QueuePool) else None
+
+
+def _connections(options: CallbackOptions) -> list[Observation]:
+    pool = _pool()
+    if pool is None:
+        return []
+    return [
+        Observation(pool.checkedout(), POOL | {"db.client.connection.state": "used"}),
+        Observation(pool.checkedin(), POOL | {"db.client.connection.state": "idle"}),
+    ]
+
+
+def _pending(options: CallbackOptions) -> list[Observation]:
+    pool = _pool()
+    if pool is None:
+        return []
+    # ponytail: SQLAlchemy has no public waiter count; this reads QueuePool's and CPython's
+    # internals (SQLAlchemy 2.1, Python 3.14). The pool gauge test fails if either moves.
+    return [Observation(len(pool._pool.not_empty._waiters), POOL)]  # type: ignore[attr-defined]
+
+
+_meter = metrics.get_meter("ziftbook")
+_meter.create_observable_up_down_counter(
+    "db.client.connection.count", callbacks=[_connections], unit="{connection}"
+)
+_meter.create_observable_up_down_counter(
+    "db.client.connection.pending_requests", callbacks=[_pending], unit="{request}"
+)
 
 
 @contextmanager
