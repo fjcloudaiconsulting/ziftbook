@@ -23,8 +23,9 @@ def verify(token: str | None, ip: str | None) -> bool:
     """Whether Cloudflare says this token passed. FAILS CLOSED on any verification failure and on
     any network or parse error: a visitor who cannot be verified is not admitted.
 
-    No secret configured means verification is skipped and this returns True, so development and the
-    test suite need no network. app/main.py prints that state on the `api started` line.
+    No secret configured means no visitor can be verified, so this returns False, unless
+    ZIF_TURNSTILE_DISABLED opts out (development and the test suite, which need no network). The
+    API logs an ERROR at startup while it refuses (app/main.py).
 
     EXACTLY ONE call to urlopen per request, and NEVER a retry - spec C9, and a rule rather than a
     preference. A Turnstile token is single use and lives 300 seconds, and the first call spends it
@@ -33,9 +34,10 @@ def verify(token: str | None, ip: str | None) -> bool:
     rejection for that visitor. Do not wrap this in a retry helper and do not retry at the call
     site. idempotency_key exists for the retry case and is deliberately unused.
     """
-    secret = TurnstileSettings().turnstile_secret
+    settings = TurnstileSettings()
+    secret = settings.turnstile_secret
     if not secret:
-        return True
+        return settings.turnstile_disabled
     if not token or len(token) > MAX_TOKEN:
         return False
     form = {"secret": secret, "response": token}

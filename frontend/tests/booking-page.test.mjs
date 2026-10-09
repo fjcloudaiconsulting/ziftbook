@@ -146,7 +146,12 @@ describe("F5 answer -> outcome mapping", () => {
   });
 
   test("fence: 403 turnstile_failed is 'verify', never the network/unknown copy", () => {
-    assert.equal(answerState({ status: 403, code: "turnstile_failed" }).kind, "verifyFailed");
+    assert.equal(answerState({ status: 403, code: "turnstile_failed" }, true).kind, "verifyFailed");
+  });
+
+  test("fence (ZIF-116): with no widget, 403 turnstile_failed is 'unavailable', never 'try again'", () => {
+    assert.equal(answerState({ status: 403, code: "turnstile_failed" }, false).kind, "unavailable");
+    assert.equal(answerState({ status: 403, code: "verify_email" }, false).kind, "verifyEmail");
   });
 
   test("fence: 0, 502 and 500 are the unknown outcome, never 'nothing was booked'", () => {
@@ -337,7 +342,7 @@ describe("ZIF-117 confirm by email", () => {
   test("fence: 202 is the hold's done and 403 verify_email is its own outcome, never 'verify failed'", () => {
     assert.equal(answerState({ status: 202 }).kind, "done");
     assert.equal(answerState({ status: 403, code: "verify_email" }).kind, "verifyEmail");
-    assert.equal(answerState({ status: 403, code: "turnstile_failed" }).kind, "verifyFailed");
+    assert.equal(answerState({ status: 403, code: "turnstile_failed" }, true).kind, "verifyFailed");
   });
 
   test("fence: every 404 on the click is the dead link, every 409 the taken time", () => {

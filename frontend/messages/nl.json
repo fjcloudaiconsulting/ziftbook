@@ -845,6 +845,7 @@
     "takenLabel": "{time}, net geboekt",
     "verifying": "Bezig met verifiëren…",
     "verifyFailed": "We konden niet verifiëren dat je geen robot bent. Probeer het opnieuw.",
+    "bookingUnavailable": "Boeken is nu niet mogelijk. Probeer het later opnieuw.",
     "verifyTimeout": "De verificatie kon niet laden; schakel blokkers uit of probeer een andere browser. Er is niets geboekt.",
     "tooMany": "Te veel pogingen. Probeer het later opnieuw.",
     "nothingBooked": "Er is niets geboekt. Probeer het opnieuw.",

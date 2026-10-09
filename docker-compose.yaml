@@ -74,6 +74,7 @@ services:
     environment:
       ZIF_DATABASE_URL: postgresql+psycopg://ziftbook_app:ziftbook_app@postgres:5432/ziftbook
       ZIF_TRUSTED_PROXIES: 172.28.0.10
+      ZIF_TURNSTILE_DISABLED: "true" # no secret in development; without it every public booking is refused
       ZIF_LOG_LEVEL: DEBUG
       ZIF_LOG_FORMAT: text
       OTEL_EXPORTER_OTLP_ENDPOINT: ${ZIF_OTEL_EXPORTER_OTLP_ENDPOINT:-}

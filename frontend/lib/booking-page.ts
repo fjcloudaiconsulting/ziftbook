@@ -124,6 +124,7 @@ export type AnswerOutcome =
   | { kind: "policyChanged" }
   | { kind: "fieldErrors" }
   | { kind: "verifyFailed" }
+  | { kind: "unavailable" }
   | { kind: "tooMany" }
   | { kind: "nothingBooked" }
   | { kind: "unknown" };
@@ -133,15 +134,16 @@ const POLICY_CHANGED_CODES = new Set(["unknown_policy_version", "purpose_not_in_
 
 /** What the POST answer means for the page (spec's "POST answer mapping" table). ZIF-117: the
  * hold POST's 202 is its "done" (the email is on its way), and today's POST answers 403
- * verify_email to anyone not signed in with the address typed. */
-export function answerState(answer: { status: number; code?: string }): AnswerOutcome {
+ * verify_email to anyone not signed in with the address typed. `widget`: the page shows Turnstile;
+ * without one a Turnstile refusal is the deployment's, and trying again cannot help (ZIF-116). */
+export function answerState(answer: { status: number; code?: string }, widget: boolean): AnswerOutcome {
   if (answer.status === 201 || answer.status === 202) return { kind: "done" };
   if (answer.status === 403 && answer.code === "verify_email") return { kind: "verifyEmail" };
   if (answer.status === 409 && answer.code && SLOT_TAKEN_CODES.has(answer.code)) return { kind: "slotTaken" };
   if (answer.status === 404) return { kind: "serviceGone" };
   if (answer.status === 422 && answer.code && POLICY_CHANGED_CODES.has(answer.code)) return { kind: "policyChanged" };
   if (answer.status === 422) return { kind: "fieldErrors" };
-  if (answer.status === 403 && answer.code === "turnstile_failed") return { kind: "verifyFailed" };
+  if (answer.status === 403 && answer.code === "turnstile_failed") return { kind: widget ? "verifyFailed" : "unavailable" };
   if (answer.status === 429) return { kind: "tooMany" };
   if (answer.status === 503 && answer.code === "busy") return { kind: "nothingBooked" };
   return { kind: "unknown" };

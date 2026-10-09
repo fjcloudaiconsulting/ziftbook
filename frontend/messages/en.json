@@ -845,6 +845,7 @@
     "takenLabel": "{time}, just taken",
     "verifying": "Verifying…",
     "verifyFailed": "We couldn't verify you're not a robot. Try again.",
+    "bookingUnavailable": "Booking isn't available right now. Try again later.",
     "verifyTimeout": "Verification couldn't load; disable blockers or try another browser. Nothing was booked.",
     "tooMany": "Too many attempts. Please try again later.",
     "nothingBooked": "Nothing was booked. Try again.",
