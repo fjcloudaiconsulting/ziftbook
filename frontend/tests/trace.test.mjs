@@ -183,6 +183,22 @@ describe("proxy request metrics (ZIF-88)", () => {
       "http.route",
     ]);
     assert.equal(bad[0].attributes["error.type"], "TypeError");
+
+    // No error object (the API URL unset): the status stands in, as on the span.
+    endProxySpan(startProxySpan("GET"), 502);
+    const [unset] = await points("http.server.request.duration");
+    assert.equal(unset.attributes["error.type"], "502");
+  });
+
+  test("F1: the duration is in seconds, from the span's start to its end", async (t) => {
+    const { startProxySpan, endProxySpan, points } = await harness();
+    let now = 1_000;
+    t.mock.method(performance, "now", () => now);
+    const span = startProxySpan("GET");
+    now = 3_500;
+    endProxySpan(span, 200);
+    const [point] = await points("http.server.request.duration");
+    assert.equal(point.value.sum, 2.5);
   });
 
   test("F2: an unknown method is recorded as _OTHER, a standard one as itself", async () => {
@@ -207,5 +223,7 @@ describe("proxy request metrics (ZIF-88)", () => {
     assert.equal(await count({}), 0);
     assert.equal(await count({ OTEL_EXPORTER_OTLP_ENDPOINT: DEAD, OTEL_METRICS_EXPORTER: "none" }), 0);
     assert.equal(await count({ OTEL_EXPORTER_OTLP_ENDPOINT: DEAD }), 1);
+    assert.equal(await count({ OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: DEAD }), 1);
+    assert.equal(await count({ OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: DEAD }), 0);
   });
 });
