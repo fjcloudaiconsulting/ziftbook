@@ -119,7 +119,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         extra={
             **logs.settings_fields(),
             "trusted_proxies": Settings().trusted_proxies,
-            # Never the secret. "off" means every booking POST skips verification.
+            # Never the secret. "off": every public booking is refused, unless ZIF_TURNSTILE_DISABLED.
             "turnstile": "on" if turnstile.enabled() else "off",
         },
     )

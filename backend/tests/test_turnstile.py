@@ -1,5 +1,5 @@
-"""app.turnstile.verify: fails closed, skips cleanly with no secret, and never retries a spent
-token (spec C9)."""
+"""app.turnstile.verify: fails closed, refuses with no secret unless explicitly disabled (ZIF-116),
+and never retries a spent token (spec C9)."""
 
 import http.client
 import json
@@ -8,6 +8,7 @@ from collections.abc import Callable
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 from app import turnstile
 from app.config import TurnstileSettings
@@ -48,6 +49,17 @@ def test_no_secret_refuses_unless_turnstile_is_disabled(
     monkeypatch.setattr(urllib.request, "urlopen", never_called)
 
     assert turnstile.verify("a-token", "203.0.113.1") is False
+
+
+# ZIF-116 FENCE. Wrong impl: the flag compared as a string (`== "true"`), so a typo silently refuses
+# every booking instead of stopping startup like any other malformed setting.
+def test_a_malformed_disabled_flag_is_an_error_not_a_quiet_refusal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ZIF_TURNSTILE_DISABLED", "yes-please")
+
+    with pytest.raises(ValidationError):
+        turnstile.verify("a-token", "203.0.113.1")
 
 
 # ZIF-116 FENCE. Wrong impl: the flag checked before the secret, so a forgotten opt-out turns off a

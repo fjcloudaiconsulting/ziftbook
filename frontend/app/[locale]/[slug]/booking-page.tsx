@@ -551,13 +551,13 @@ export function BookingPage({ page, locale, turnstileSiteKey, initialService = n
       ? t("verifyFailed")
       : kind === "unavailable"
         ? t("bookingUnavailable")
-      : kind === "tooMany"
-        ? t("tooMany")
-        : kind === "nothingBooked"
-          ? t("nothingBooked")
-          : kind === "fieldErrors"
-            ? t("checkDetails")
-            : t("unknownOutcome");
+        : kind === "tooMany"
+          ? t("tooMany")
+          : kind === "nothingBooked"
+            ? t("nothingBooked")
+            : kind === "fieldErrors"
+              ? t("checkDetails")
+              : t("unknownOutcome");
   }
 
   /** Every refused POST, today's or the hold's: the time taken, the service gone, the terms
