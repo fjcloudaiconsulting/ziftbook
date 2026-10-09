@@ -116,6 +116,12 @@ export function Settings() {
   const publishingRef = useRef(false);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
   const addressRef = useRef<HTMLSpanElement>(null);
+  // The button reads "Copied" for a moment, then goes back to "Copy" for the next click.
+  useEffect(() => {
+    if (copyState !== "copied") return;
+    const timer = setTimeout(() => setCopyState("idle"), 2000);
+    return () => clearTimeout(timer);
+  }, [copyState]);
 
   const changed = changedKeys(settings, draft);
   const dirty = changed.length > 0;
@@ -317,7 +323,7 @@ export function Settings() {
               <b className={styles.urlSlug}>{session.slug}</b>
             </span>
             <button className={styles.copyButton} type="button" onClick={onCopy}>
-              {t("copy")}
+              {copyState === "copied" ? t("copied") : t("copy")}
             </button>
           </div>
           <p className={uiStyles.srOnly} role="status" aria-live="polite">
