@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { SpanStatusCode } from "@opentelemetry/api";
+import { AggregationTemporality, InMemoryMetricExporter, PeriodicExportingMetricReader } from "@opentelemetry/sdk-metrics";
 
 const MODULE_PATH = "../lib/trace.ts";
 
@@ -133,5 +134,96 @@ describe("trace export gate: enabled()", () => {
   });
   test("an empty traces endpoint falls back to the generic one", async () => {
     assert.equal(await gate({ OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "", OTEL_EXPORTER_OTLP_ENDPOINT: DEAD }), true);
+  });
+});
+
+describe("proxy request metrics (ZIF-88)", () => {
+  const DEAD = "http://127.0.0.1:9";
+  const clear = () => {
+    for (const key of Object.keys(process.env)) if (key.startsWith("OTEL_")) delete process.env[key];
+  };
+  const harness = async () => {
+    clear();
+    const trace = await freshTrace();
+    const exporter = new InMemoryMetricExporter(AggregationTemporality.DELTA);
+    const reader = new PeriodicExportingMetricReader({ exporter, exportIntervalMillis: 3_600_000 });
+    trace.meterProvider([reader]);
+    trace.provider();
+    const points = async (name) => {
+      await reader.forceFlush();
+      const found = exporter
+        .getMetrics()
+        .flatMap((rm) => rm.scopeMetrics)
+        .flatMap((sm) => sm.metrics)
+        .filter((m) => m.descriptor.name === name)
+        .flatMap((m) => m.dataPoints);
+      exporter.reset();
+      return found;
+    };
+    return { ...trace, points };
+  };
+
+  test("F1: a 2xx ends with one point whose keys are exactly the three; a 502 adds error.type", async () => {
+    const { startProxySpan, endProxySpan, points } = await harness();
+    endProxySpan(startProxySpan("GET"), 200);
+    const ok = await points("http.server.request.duration");
+    assert.equal(ok.length, 1);
+    assert.deepEqual(Object.keys(ok[0].attributes).sort(), ["http.request.method", "http.response.status_code", "http.route"]);
+    assert.equal(ok[0].attributes["http.route"], "/api/:path*");
+    assert.equal(ok[0].attributes["http.response.status_code"], 200);
+    assert.equal(ok[0].value.count, 1);
+
+    endProxySpan(startProxySpan("GET"), 502, new TypeError());
+    const bad = await points("http.server.request.duration");
+    assert.equal(bad.length, 1);
+    assert.deepEqual(Object.keys(bad[0].attributes).sort(), [
+      "error.type",
+      "http.request.method",
+      "http.response.status_code",
+      "http.route",
+    ]);
+    assert.equal(bad[0].attributes["error.type"], "TypeError");
+
+    // No error object (the API URL unset): the status stands in, as on the span.
+    endProxySpan(startProxySpan("GET"), 502);
+    const [unset] = await points("http.server.request.duration");
+    assert.equal(unset.attributes["error.type"], "502");
+  });
+
+  test("F1: the duration is in seconds, from the span's start to its end", async (t) => {
+    const { startProxySpan, endProxySpan, points } = await harness();
+    let now = 1_000;
+    t.mock.method(performance, "now", () => now);
+    const span = startProxySpan("GET");
+    now = 3_500;
+    endProxySpan(span, 200);
+    const [point] = await points("http.server.request.duration");
+    assert.equal(point.value.sum, 2.5);
+  });
+
+  test("F2: an unknown method is recorded as _OTHER, a standard one as itself", async () => {
+    const { startProxySpan, endProxySpan, points } = await harness();
+    endProxySpan(startProxySpan("FOO"), 200);
+    endProxySpan(startProxySpan("PATCH"), 200);
+    const methods = (await points("http.server.request.duration")).map((p) => p.attributes["http.request.method"]).sort();
+    assert.deepEqual(methods, ["PATCH", "_OTHER"]);
+  });
+
+  test("F3: no endpoint, or OTEL_METRICS_EXPORTER=none, attaches no reader of its own", async () => {
+    const count = async (env) => {
+      clear();
+      Object.assign(process.env, env);
+      try {
+        const { meterProvider } = await freshTrace();
+        return meterProvider()["_sharedState"].metricCollectors.length;
+      } finally {
+        clear();
+      }
+    };
+    assert.equal(await count({}), 0);
+    assert.equal(await count({ OTEL_EXPORTER_OTLP_ENDPOINT: DEAD, OTEL_METRICS_EXPORTER: "none" }), 0);
+    assert.equal(await count({ OTEL_EXPORTER_OTLP_ENDPOINT: DEAD }), 1);
+    assert.equal(await count({ OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: DEAD }), 1);
+    assert.equal(await count({ OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: DEAD }), 0);
   });
 });
