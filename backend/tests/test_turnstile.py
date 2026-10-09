@@ -24,14 +24,49 @@ def never_called(*args: object, **kwargs: object) -> Any:
     raise AssertionError("urlopen must not be called")
 
 
-# 44: GUARD.
-def test_verification_is_skipped_when_no_secret_is_configured(
+# 44: GUARD. Development and the suite (conftest) opt out explicitly and need no network.
+def test_verification_is_skipped_when_no_secret_is_configured_and_it_is_disabled(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setenv("ZIF_TURNSTILE_DISABLED", "true")
     monkeypatch.setattr(urllib.request, "urlopen", never_called)
 
     assert turnstile.verify(None, None) is True
     assert turnstile.verify("a-token", "203.0.113.1") is True
+
+
+# ZIF-116 FENCE. Wrong impl: `if not secret: return True` (fail open, the old default), or reading
+# the flag as a truthy string (`bool(os.environ.get(...))`, so "false" opts out).
+@pytest.mark.parametrize("disabled", [None, "false", "0"])
+def test_no_secret_refuses_unless_turnstile_is_disabled(
+    monkeypatch: pytest.MonkeyPatch, disabled: str | None
+) -> None:
+    if disabled is None:
+        monkeypatch.delenv("ZIF_TURNSTILE_DISABLED", raising=False)
+    else:
+        monkeypatch.setenv("ZIF_TURNSTILE_DISABLED", disabled)
+    monkeypatch.setattr(urllib.request, "urlopen", never_called)
+
+    assert turnstile.verify("a-token", "203.0.113.1") is False
+
+
+# ZIF-116 FENCE. Wrong impl: the flag checked before the secret, so a forgotten opt-out turns off a
+# configured secret.
+def test_a_configured_secret_is_checked_even_when_turnstile_is_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ZIF_TURNSTILE_SECRET", "shhh")
+    monkeypatch.setenv("ZIF_TURNSTILE_DISABLED", "true")
+    calls: list[object] = []
+
+    def fake_urlopen(request: object, timeout: float | None = None) -> Any:
+        calls.append(request)
+        return json_answer({"success": False})
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
+    assert turnstile.verify("a-token", "203.0.113.1") is False
+    assert len(calls) == 1
 
 
 class FakeAnswer:
@@ -126,6 +161,33 @@ def test_the_api_started_line_says_whether_turnstile_is_on(
     on = [line for line in log_lines() if line["msg"] == "api started"]
     assert on[-1]["turnstile"] == "on"
     assert "a-very-secret-value" not in json.dumps(log_lines())
+
+
+# ZIF-116 FENCE. Wrong impl: no ERROR (only the INFO "off" field, which nobody acted on), an ERROR
+# also when disabled or configured, or refusing to start (the whole API down over public booking).
+@pytest.mark.parametrize(
+    ("secret", "disabled", "errors"),
+    [(None, None, 1), (None, "true", 0), ("shhh", None, 0)],
+    ids=["unset", "disabled", "configured"],
+)
+def test_startup_logs_an_error_while_public_bookings_are_refused(
+    log_lines: Callable[[], list[dict[str, Any]]],
+    monkeypatch: pytest.MonkeyPatch,
+    secret: str | None,
+    disabled: str | None,
+    errors: int,
+) -> None:
+    for name, value in (("ZIF_TURNSTILE_SECRET", secret), ("ZIF_TURNSTILE_DISABLED", disabled)):
+        if value is None:
+            monkeypatch.delenv(name, raising=False)
+        else:
+            monkeypatch.setenv(name, value)
+
+    with new_client(create_app()) as client:
+        assert client.get("/api/healthz").status_code == 200
+
+    refused = [line for line in log_lines() if "public bookings refused" in line["msg"]]
+    assert [line["level"] for line in refused] == ["ERROR"] * errors
 
 
 # 49: FENCE — C9. Wrong impl: wrap the urlopen call in a retry loop, or add a caller-side second

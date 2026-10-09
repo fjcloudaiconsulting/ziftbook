@@ -275,6 +275,23 @@ def test_nothing_is_written_about_a_person_before_the_click(
     assert after["booking_holds"] == before["booking_holds"] + 2
 
 
+# ZIF-116 FENCE. Wrong impl: verify() fails open with no secret (the old default), or the refusal
+# lives in one route only, so the other public write still books with no bot check.
+def test_with_no_secret_every_public_write_is_refused_and_nothing_is_written(
+    people: People, app: FastAPI, ready: str, migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("ZIF_TURNSTILE_SECRET", raising=False)
+    monkeypatch.delenv("ZIF_TURNSTILE_DISABLED", raising=False)
+    before = counts(migrate_engine, people.a)
+
+    hold = post_hold(new_client(app), people.a, ready)
+    booking = post_booking(new_client(app), people.a, ready, starts_at=at("10:00"))
+
+    assert (hold.status_code, hold.json()["code"]) == (403, "turnstile_failed")
+    assert (booking.status_code, booking.json()["code"]) == (403, "turnstile_failed")
+    assert counts(migrate_engine, people.a) == before
+
+
 # F4: FENCE. Wrong impl: a distinct answer per cause, or a lookup without the 24h filter.
 def test_every_dead_link_is_the_same_404(
     people: People, app: FastAPI, ready: str, migrate_engine: Engine

@@ -40,7 +40,7 @@ from app import (
     tracing,
     turnstile,
 )
-from app.config import DatabaseSettings, Settings
+from app.config import DatabaseSettings, Settings, TurnstileSettings
 from app.db import SessionLocal
 from app.errors import ApiError, Error
 
@@ -123,6 +123,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             "turnstile": "on" if turnstile.enabled() else "off",
         },
     )
+    # ZIF-116: logged, never a refusal to start. The deployments run one replica with Recreate, so a
+    # failed start would take the whole API down over a control only public booking needs.
+    if not turnstile.enabled() and not TurnstileSettings().turnstile_disabled:
+        logger.error("turnstile secret unset: public bookings refused")
     try:
         yield
     finally:
