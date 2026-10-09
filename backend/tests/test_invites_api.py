@@ -57,9 +57,14 @@ def invite_row_count(tenant_id: uuid.UUID) -> int:
     return int(result)
 
 
-def invite_jobs(migrate_engine: Engine) -> int:
+def invite_jobs(migrate_engine: Engine, tenant_id: uuid.UUID) -> int:
+    # By tenant: jobs has no row-level security, so a whole-table count also sees rows an earlier,
+    # interrupted run left behind in a reused database (ZIF-139).
     with migrate_engine.connect() as conn:
-        count = conn.scalar(text("SELECT count(*) FROM jobs WHERE kind = 'email.invite'"))
+        count = conn.scalar(
+            text("SELECT count(*) FROM jobs WHERE tenant_id = :t AND kind = 'email.invite'"),
+            {"t": tenant_id},
+        )
     return int(count)
 
 
@@ -171,7 +176,7 @@ def test_a_worker_cannot_manage_invites(
 
     assert (response.status_code, response.json()) == (403, {"code": "owner_only"})
     assert invite_row_count(people.a) == 0
-    assert invite_jobs(migrate_engine) == 0
+    assert invite_jobs(migrate_engine, people.a) == 0
 
 
 # I4: inviting an existing member of this business is 409; a member of another business is fine.
@@ -187,7 +192,7 @@ def test_inviting_an_existing_member_is_refused(
     )
     assert owner.post("/api/invites", json={"email": email_of(people.both)}).status_code == 409
     assert invite_row_count(people.a) == 0
-    assert invite_jobs(migrate_engine) == 0
+    assert invite_jobs(migrate_engine, people.a) == 0
     assert owner.post("/api/invites", json={"email": email_of(people.only_b)}).status_code == 201
 
 
@@ -365,7 +370,7 @@ def test_a_failed_audit_write_leaves_no_invite_or_job(
 
     assert response.status_code == 500
     assert invite_row_count(people.a) == 0
-    assert invite_jobs(migrate_engine) == 0
+    assert invite_jobs(migrate_engine, people.a) == 0
 
 
 # ---------------------------------------------------------------------------
