@@ -400,7 +400,7 @@ from `.env`; it fixes the log settings at `DEBUG`/`text`, passes no `ZIF_LOG_SQL
 |---|---|---|---|---|
 | Logs | JSON lines on stdout (`ZIF_LOG_FORMAT=json`, the default; `text` in dev). The API, worker, migrations and web app never send logs over OTLP: a log collector reads their stdout (none is set up yet). | always (stdout) | stdout cannot be turned off; raise `ZIF_LOG_LEVEL` to `ERROR` for the least | `ZIF_LOG_LEVEL` (default `INFO`), `ZIF_LOG_SQL` (see Logging) |
 | Traces | OTLP/HTTP to `ZIF_OTEL_EXPORTER_OTLP_ENDPOINT` | set the endpoint (plus `ZIF_OTEL_EXPORTER_OTLP_HEADERS` if the collector wants auth) | leave the endpoint unset: no spans are exported and no connection is attempted. `ZIF_OTEL_TRACES_EXPORTER=none` turns traces off with the endpoint still set. In prod you can also set `ZIF_OTEL_TRACES_SAMPLER=always_off` | prod: `ZIF_OTEL_TRACES_SAMPLER` / `_ARG` (default 10% of new traces, following the caller's decision); dev: 100% |
-| Metrics | API: `http.server.*`, `db.client.connection.*`, business counters (`ziftbook.sign_up.*`, `ziftbook.invite.*`, `ziftbook.booking.created`); worker: `ziftbook.job.*`, `ziftbook.email.deliveries`, `db.client.connection.*`; over OTLP/HTTP to `ZIF_OTEL_EXPORTER_OTLP_ENDPOINT` every 60s | set the endpoint | leave the endpoint unset: no reader, no connection. `ZIF_OTEL_METRICS_EXPORTER=none` turns metrics off with the endpoint still set | every 60s (the SDK's `OTEL_METRIC_EXPORT_INTERVAL`, which compose does not pass) |
+| Metrics | API: `http.server.*`, `db.client.connection.*`, business counters (`ziftbook.sign_up.*`, `ziftbook.invite.*`, `ziftbook.booking.created`); worker: `ziftbook.job.*`, `ziftbook.email.deliveries`, `db.client.connection.*`; web: `http.server.request.duration` for `/api` only, `ziftbook.web.request.errors` for pages; over OTLP/HTTP to `ZIF_OTEL_EXPORTER_OTLP_ENDPOINT` every 60s | set the endpoint | leave the endpoint unset: no reader, no connection. `ZIF_OTEL_METRICS_EXPORTER=none` turns metrics off with the endpoint still set | every 60s (the SDK's `OTEL_METRIC_EXPORT_INTERVAL`, which compose does not pass) |
 
 - Next's own startup banner (standalone `server.js`) is plain text and ignores `ZIF_LOG_*`;
   every other web server line follows them.
@@ -421,9 +421,12 @@ from `.env`; it fixes the log settings at `DEBUG`/`text`, passes no `ZIF_LOG_SQL
   | `db.client.connection.pending_requests` | observable up-down counter | `db.client.connection.pool.name` | api, worker |
   | `ziftbook.sign_up.completed`, `ziftbook.invite.sent`, `ziftbook.invite.accepted` | counters | none | api |
   | `ziftbook.booking.created` | counter | `booking.source` (booking_page, merchant) | api |
+  | `ziftbook.web.request.errors` | counter | `http.route` (the template) | web |
 
   The queue series come from every worker, so aggregate them with `max`, not `sum`. `job.running`
   excludes handler threads that timed out and are still running.
+- Page request rate and duration are not measured in-app: Next would have to be instrumented
+  globally, which records raw URLs. Measure them at the edge.
 - With a dead collector, each signal's shutdown retries for up to about 7s (a process with
   traces and metrics on can exit about 14s late).
 - The sampler variables are the OpenTelemetry standard values (`always_on`, `always_off`,
@@ -542,7 +545,7 @@ ZIF-38). An empty variable means the default: `env_ignore_empty=True` on the bas
 | `ZIF_OTEL_TRACES_SAMPLER` | compose, prod only (api, worker, migrations, frontend) | `parentbased_traceidratio` | no | no | Feeds `OTEL_TRACES_SAMPLER`; `always_off` stops traces with the endpoint still set. Dev compose sets neither sampler variable, so dev stays at the SDK's own default, 100% (`parentbased_always_on`). |
 | `ZIF_OTEL_TRACES_SAMPLER_ARG` | compose, prod only (api, worker, migrations, frontend) | `0.1` | no | no | Feeds `OTEL_TRACES_SAMPLER_ARG`. |
 | `ZIF_OTEL_TRACES_EXPORTER` | compose (api, worker, migrations, frontend) | `otlp` | no | no | Feeds `OTEL_TRACES_EXPORTER`; `none` turns traces off with the endpoint still set. Any other value (`otlp`, unset) means on; only `otlp` is implemented. |
-| `ZIF_OTEL_METRICS_EXPORTER` | compose (api, worker, migrations) | `otlp` | no | no | Feeds `OTEL_METRICS_EXPORTER`; `none` turns metrics off with the endpoint still set. Any other value (`otlp`, unset) means on; only `otlp` is implemented. |
+| `ZIF_OTEL_METRICS_EXPORTER` | compose (api, worker, migrations, frontend) | `otlp` | no | no | Feeds `OTEL_METRICS_EXPORTER`; `none` turns metrics off with the endpoint still set. Any other value (`otlp`, unset) means on; only `otlp` is implemented. |
 | `OTEL_SERVICE_NAME` | api, worker, migrations, frontend | `ziftbook-api`/`ziftbook-worker`/`ziftbook-migrations`/`ziftbook-web` | no | no | Read by the OTel SDK itself; each process sets its own default if unset. Not set by compose. |
 | `OTEL_RESOURCE_ATTRIBUTES` | api, worker, migrations, frontend | none | no | no | Read by the OTel SDK itself; extra resource attributes. Not set by compose. |
 
