@@ -23,7 +23,7 @@ networks:
 
 services:
   postgres:
-    image: postgres:18@sha256:fc973eb97c9fd04bfa1840e0f510719a584ccb3be8debfe6a4144637a9dfe8cf
+    image: postgres:18@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336
     restart: unless-stopped
     environment:
       POSTGRES_USER: ziftbook
@@ -40,7 +40,7 @@ services:
 
   # Creates or updates the database roles (backend/migrations/bootstrap.sql); idempotent, runs on every start.
   db-init:
-    image: postgres:18@sha256:fc973eb97c9fd04bfa1840e0f510719a584ccb3be8debfe6a4144637a9dfe8cf
+    image: postgres:18@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336
     depends_on:
       postgres:
         condition: service_healthy
