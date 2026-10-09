@@ -88,7 +88,7 @@ def small_pool(monkeypatch: pytest.MonkeyPatch, migrated: None) -> Iterator[Engi
     # The worker's queue gauge would take the only connection while the test holds it.
     monkeypatch.setattr(jobs, "queue", lambda kinds: {})
     engine = create_engine(
-        os.environ["ZIF_DATABASE_URL"], pool_size=1, max_overflow=0, pool_timeout=5
+        os.environ["ZIF_DATABASE_URL"], pool_size=1, max_overflow=0, pool_timeout=15
     )
     SessionLocal.configure(bind=engine)
     yield engine

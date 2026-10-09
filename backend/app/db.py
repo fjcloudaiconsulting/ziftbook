@@ -83,10 +83,10 @@ def _connections(options: CallbackOptions) -> list[Observation]:
 
 def _pending(options: CallbackOptions) -> list[Observation]:
     pool = _pool()
-    # ponytail: SQLAlchemy has no public waiter count; this reads QueuePool's and CPython's
-    # internals (SQLAlchemy 2.1, Python 3.14). The pool gauge test fails if either moves.
     if pool is None:
         return []
+    # ponytail: SQLAlchemy has no public waiter count; this reads QueuePool's and CPython's
+    # internals (SQLAlchemy 2.1, Python 3.14). The pool gauge test fails if either moves.
     return [Observation(len(pool._pool.not_empty._waiters), POOL)]  # type: ignore[attr-defined]
 
 

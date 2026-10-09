@@ -669,8 +669,7 @@ def place(
     # mypy narrowing only: the `else` above raises, so these are bound. Stripped under
     # `python -O`, which is why nothing below may depend on this running.
     assert booking is not None and candidate is not None
-    # Both callers run in the request's transaction; this waits for its commit. place() is the only
-    # insert path and `source` is one of its two callers' literals, so the attribute is closed.
+    # Waits for the caller's root commit; `source` is always a caller's literal, so it stays closed.
     count_after_commit(db, tracing.BOOKINGS_CREATED, {"booking.source": source})
     return booking, candidate
 

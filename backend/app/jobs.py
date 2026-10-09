@@ -205,6 +205,7 @@ async def _run(kind: JobKind, job: Job, attempts: int, overdue: timedelta) -> No
             tracing.JOB_RUNS.add(1, labels | {"job.outcome": "done"})
             tracing.JOB_ATTEMPTS.record(attempts, labels)
         finally:
+            # A timed-out handler's thread may still run; it leaves the count here regardless.
             tracing.JOB_RUNNING.add(-1, labels)
 
 

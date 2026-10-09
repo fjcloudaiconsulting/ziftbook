@@ -415,9 +415,10 @@ from `.env`; it fixes the log settings at `DEBUG`/`text`, passes no `ZIF_LOG_SQL
   | `ziftbook.job.runs` | counter | `job.kind`, `job.outcome` (done, failed, gave_up, skipped) | worker |
   | `ziftbook.job.attempts` | histogram | `job.kind` (done jobs only) | worker |
   | `ziftbook.job.running` | up-down counter | `job.kind` | worker |
-  | `ziftbook.job.queue.size`, `ziftbook.job.queue.oldest_age` (s) | observable gauges | `job.kind` (0 when empty) | worker |
+  | `ziftbook.job.queue.size` (observable up-down counter), `ziftbook.job.queue.oldest_age` (observable gauge, s) | | `job.kind` (0 when empty) | worker |
   | `ziftbook.email.deliveries` | counter | `email.template`, `email.outcome` (sent, failed) | worker |
-  | `db.client.connection.count`, `db.client.connection.pending_requests` | observable gauges | `db.client.connection.state` (used, idle), `db.client.connection.pool.name` | api, worker |
+  | `db.client.connection.count` | observable up-down counter | `db.client.connection.state` (used, idle), `db.client.connection.pool.name` | api, worker |
+  | `db.client.connection.pending_requests` | observable up-down counter | `db.client.connection.pool.name` | api, worker |
   | `ziftbook.sign_up.completed`, `ziftbook.invite.sent`, `ziftbook.invite.accepted` | counters | none | api |
   | `ziftbook.booking.created` | counter | `booking.source` (booking_page, merchant) | api |
 

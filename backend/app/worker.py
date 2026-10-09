@@ -37,8 +37,8 @@ KINDS: dict[str, JobKind] = {
 
 
 def _queue_gauge(index: int) -> Callable[[CallbackOptions], list[Observation]]:
-    """Runs on the export thread, one small indexed query per export. A database error propagates:
-    the SDK logs it and that export has no queue point, a gap being the honest value."""
+    """Runs on the export thread, one small indexed query per instrument. A database error
+    propagates: the SDK logs it and that export has no queue point, a gap being the honest value."""
 
     def observe(options: CallbackOptions) -> list[Observation]:
         # Tests import this module with no session bound; there is no database to ask.
