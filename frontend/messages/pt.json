@@ -845,6 +845,7 @@
     "takenLabel": "{time}, acabou de ser reservado",
     "verifying": "Verificando…",
     "verifyFailed": "Não conseguimos verificar que você não é um robô. Tente de novo.",
+    "bookingUnavailable": "Não é possível agendar agora. Tente de novo mais tarde.",
     "verifyTimeout": "Não foi possível carregar a verificação; desative bloqueadores ou tente outro navegador. Nada foi reservado.",
     "tooMany": "Muitas tentativas. Tente de novo mais tarde.",
     "nothingBooked": "Nada foi reservado. Tente de novo.",

@@ -330,7 +330,10 @@ class Seed:
             if status == 201:
                 return guest, data, email
             if status == 403 and "turnstile_failed" in str(data):
-                sys.exit("booking refused by Turnstile: unset ZIF_TURNSTILE_SECRET and restart")
+                sys.exit(
+                    "booking refused by Turnstile: unset ZIF_TURNSTILE_SECRET, set "
+                    "ZIF_TURNSTILE_DISABLED=true and restart"
+                )
             if status != 409:
                 sys.exit(f"booking {who} at {biz.name}: {status} {data}")
             self.retries += 1

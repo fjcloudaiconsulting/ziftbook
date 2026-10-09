@@ -481,7 +481,7 @@ export function BookingPage({ page, locale, turnstileSiteKey, initialService = n
     });
     const answer = await send(bookingsCreate({ path: { tenant_id: page.id, service_id: f.service.id }, body: { ...body, locale: loc } }));
     working.current = false;
-    const outcome = answerState(answer);
+    const outcome = answerState(answer, Boolean(turnstileSiteKey));
     // Reset after EVERY answer, 201 included: a fresh "Book another" must never reuse this token.
     if (turnstileSiteKey && outcome.kind !== "verifyEmail") resetTurnstile();
 
@@ -519,7 +519,7 @@ export function BookingPage({ page, locale, turnstileSiteKey, initialService = n
     );
     working.current = false;
     if (turnstileSiteKey) resetTurnstile();
-    const outcome = answerState(held);
+    const outcome = answerState(held, Boolean(turnstileSiteKey));
     if (outcome.kind === "done" && held.data) {
       const email = f.email.trim();
       setSent({
@@ -549,6 +549,8 @@ export function BookingPage({ page, locale, turnstileSiteKey, initialService = n
   function failureText(kind: AnswerOutcome["kind"]): string {
     return kind === "verifyFailed"
       ? t("verifyFailed")
+      : kind === "unavailable"
+        ? t("bookingUnavailable")
       : kind === "tooMany"
         ? t("tooMany")
         : kind === "nothingBooked"
