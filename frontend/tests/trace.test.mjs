@@ -151,12 +151,14 @@ describe("proxy request metrics (ZIF-88)", () => {
     trace.provider();
     const points = async (name) => {
       await reader.forceFlush();
-      return exporter
+      const found = exporter
         .getMetrics()
         .flatMap((rm) => rm.scopeMetrics)
         .flatMap((sm) => sm.metrics)
         .filter((m) => m.descriptor.name === name)
         .flatMap((m) => m.dataPoints);
+      exporter.reset();
+      return found;
     };
     return { ...trace, points };
   };
