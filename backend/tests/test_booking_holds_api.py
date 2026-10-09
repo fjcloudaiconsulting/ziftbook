@@ -278,7 +278,11 @@ def test_nothing_is_written_about_a_person_before_the_click(
 # ZIF-116 FENCE. Wrong impl: verify() fails open with no secret (the old default), or the refusal
 # lives in one route only, so the other public write still books with no bot check.
 def test_with_no_secret_every_public_write_is_refused_and_nothing_is_written(
-    people: People, app: FastAPI, ready: str, migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+    people: People,
+    app: FastAPI,
+    ready: str,
+    migrate_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("ZIF_TURNSTILE_SECRET", raising=False)
     monkeypatch.delenv("ZIF_TURNSTILE_DISABLED", raising=False)
