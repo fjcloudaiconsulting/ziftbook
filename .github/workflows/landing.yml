@@ -17,6 +17,7 @@ concurrency:
 
 jobs:
   deploy:
+    name: Deploy Landing
     runs-on: ubuntu-latest
     # INFRA-113: CLOUDFLARE_API_TOKEN is a secret of the `landing` environment (deployment branches: main only),
     # an account-owned token with the Editor role scoped to the ziftbook-landing Worker alone. Not a repo secret
@@ -31,14 +32,18 @@ jobs:
       run:
         working-directory: landing
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .nvmrc
-      - run: npm test
-      - run: npm run build
+      - name: Run landing tests
+        run: npm test
+      - name: Build landing
+        run: npm run build
       - name: Skip deploy (no CLOUDFLARE_API_TOKEN)
         if: env.HAS_CF_TOKEN != 'true'
         run: echo "::notice::CLOUDFLARE_API_TOKEN is not set in the landing environment, skipping the ziftbook-landing deploy"

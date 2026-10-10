@@ -16,30 +16,38 @@ concurrency:
 
 jobs:
   repo:
-    name: Repo checks
+    name: Repo Checks
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .nvmrc
-      - run: sh .githooks/commit-msg.test.sh
-      - run: node --test "scripts/*.test.mjs"
-      - run: node scripts/check-catalogs.mjs
-      - run: node scripts/check-env-names.mjs
-      - run: node scripts/check-env-doc.mjs
+      - name: Test the commit-msg hook
+        run: sh .githooks/commit-msg.test.sh
+      - name: Run repo script tests
+        run: node --test "scripts/*.test.mjs"
+      - name: Check message catalogs
+        run: node scripts/check-catalogs.mjs
+      - name: Check env names
+        run: node scripts/check-env-names.mjs
+      - name: Check env docs
+        run: node scripts/check-env-doc.mjs
       - name: No build-time public env vars in the web app
         run: |
           if grep -rn "NEXT_PUBLIC_" frontend --include='*.ts' --include='*.tsx' --include='*.mjs' --include='*.json' \
                --exclude-dir=node_modules --exclude-dir=.next; then
             echo "NEXT_PUBLIC_* is baked in at build time; read configuration at runtime instead." && exit 1
           fi
-      - uses: fjcloudaiconsulting/.github/actions/no-docker-hub@v1
+      - name: No Docker Hub images
+        uses: fjcloudaiconsulting/.github/actions/no-docker-hub@v1
 
   api:
-    name: API
+    name: Backend Tests
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -65,11 +73,13 @@ jobs:
       ZIF_MIGRATE_DATABASE_URL: postgresql+psycopg://ziftbook_migrate:ziftbook_migrate@localhost:5432/ziftbook
       ZIF_DATABASE_URL: postgresql+psycopg://ziftbook_app:ziftbook_app@localhost:5432/ziftbook
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       # uv version from backend/.tool-versions (uv line only), Python from backend/.python-version.
-      - uses: fjcloudaiconsulting/.github/actions/uv-sync@v1
+      - name: Install backend dependencies
+        uses: fjcloudaiconsulting/.github/actions/uv-sync@v1
       # Same role bootstrap as local dev and future hosting, using the service container's own psql.
       - name: Bootstrap database roles
         run: >-
@@ -78,16 +88,22 @@ jobs:
           ${{ job.services.postgres.id }}
           psql -v ON_ERROR_STOP=1 -U ziftbook -d ziftbook -f -
           < migrations/bootstrap.sql
-      - run: uv run ruff check .
-      - run: uv run ruff format --check .
-      - run: uv run mypy app tests migrations scripts
+      - name: Lint backend
+        run: uv run ruff check .
+      - name: Check backend format
+        run: uv run ruff format --check .
+      - name: Type-check backend
+        run: uv run mypy app tests migrations scripts
       # Serial, no -n: the file whose own tests assert the serial path (ZIF-111) still passes
       # without xdist.
-      - run: uv run pytest -q tests/test_parallel_safety.py
-      - run: uv run pytest -n auto
+      - name: Run backend tests (serial path)
+        run: uv run pytest -q tests/test_parallel_safety.py
+      - name: Run backend tests
+        run: uv run pytest -n auto
 
   # Built once, on the main push, as sha-<7> (pull requests build without pushing). Release only retags these.
   image:
+    name: Image (${{ matrix.image }})
     strategy:
       matrix:
         include:
@@ -104,36 +120,45 @@ jobs:
       build-contexts: ${{ matrix.build-contexts }}
 
   web:
-    name: Web
+    name: Frontend Tests
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       # Node from .nvmrc, pnpm from packageManager in frontend/package.json.
-      - uses: fjcloudaiconsulting/.github/actions/pnpm-install@v1
-      - run: pnpm lint
-      - run: pnpm typecheck
-      - run: pnpm build
-      - run: pnpm test
+      - name: Install frontend dependencies
+        uses: fjcloudaiconsulting/.github/actions/pnpm-install@v1
+      - name: Lint frontend
+        run: pnpm lint
+      - name: Type-check frontend
+        run: pnpm typecheck
+      - name: Build frontend
+        run: pnpm build
+      - name: Run frontend tests
+        run: pnpm test
 
   landing:
-    name: Landing
+    name: Landing Tests
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: landing
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .nvmrc
-      - run: npm test
+      - name: Run landing tests
+        run: npm test
 
   # Aggregate checks, the names branch protection requires. Always run; fail unless every gated job passed or was skipped.
   backend-checks:
@@ -142,7 +167,8 @@ jobs:
     needs: [repo, api, image]
     runs-on: ubuntu-latest
     steps:
-      - env:
+      - name: Verify every gated job passed
+        env:
           NEEDS: ${{ toJSON(needs) }}
         run: jq -e 'all(.[]; .result == "success" or .result == "skipped")' <<<"$NEEDS"
 
@@ -152,14 +178,15 @@ jobs:
     needs: [web, landing, image]
     runs-on: ubuntu-latest
     steps:
-      - env:
+      - name: Verify every gated job passed
+        env:
           NEEDS: ${{ toJSON(needs) }}
         run: jq -e 'all(.[]; .result == "success" or .result == "skipped")' <<<"$NEEDS"
 
   # Releases only when every job above passed on this commit of main. Same run as the image builds, so the tagged
   # release commit's sha-<7> images exist by the time promote runs.
   release:
-    name: Release PR and tag
+    name: Release
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [repo, api, image, web, landing]
     runs-on: ubuntu-latest
