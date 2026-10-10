@@ -68,7 +68,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # uv version from [tool.uv] required-version, Python from backend/.python-version.
+      # uv version from backend/.tool-versions (uv line only), Python from backend/.python-version.
       - uses: fjcloudaiconsulting/.github/actions/uv-sync@v1
       # Same role bootstrap as local dev and future hosting, using the service container's own psql.
       - name: Bootstrap database roles
