@@ -43,6 +43,11 @@
       "dependencyDashboardApproval": true
     },
     {
+      "description": "uv is pinned twice (backend/.tool-versions for CI, the uv image in backend/Dockerfile); move both in one PR.",
+      "matchPackageNames": ["astral-sh/uv", "ghcr.io/astral-sh/uv"],
+      "groupName": "uv"
+    },
+    {
       "description": "Python runtime upgrade (a new 3.x is a minor in Renovate's terms): Dockerfiles, requires-python and CI move together in one PR, on dashboard approval only.",
       "matchDepNames": ["python", "mirror.gcr.io/library/python"],
       "matchUpdateTypes": ["major", "minor"],
