@@ -184,66 +184,19 @@ jobs:
         run: jq -e 'all(.[]; .result == "success" or .result == "skipped")' <<<"$NEEDS"
 
   # Releases only when every job above passed on this commit of main. Same run as the image builds, so the tagged
-  # release commit's sha-<7> images exist by the time promote runs.
+  # release commit's sha-<7> images exist by the time promote runs. The shared workflow runs release-please (App
+  # token from this repo's `release` environment), then promote and smoke on a release.
   release:
     name: Release
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [repo, api, image, web, landing]
-    runs-on: ubuntu-latest
-    environment: release
     permissions:
       contents: read
-    outputs:
-      release_created: ${{ steps.release.outputs.release_created }}
-      version: ${{ steps.release.outputs.version }}
-    steps:
-      # release-please acts on main as it is now, not on this commit. If main has moved on, a merged Release PR there
-      # has not passed CI yet, so leave it to the newer commit's run.
-      - name: Check main is at this commit
-        id: head
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          head=$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)
-          if [ "$head" = "$GITHUB_SHA" ]; then echo "latest=true" >> "$GITHUB_OUTPUT"; else echo "main is at $head; skipping"; fi
-      # An App token, not GITHUB_TOKEN, so the Release PR triggers CI and can satisfy required checks.
-      - name: Create release token
-        id: app
-        if: steps.head.outputs.latest == 'true'
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-        with:
-          app-id: ${{ secrets.RELEASE_APP_ID }}
-          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
-          permission-contents: write
-          permission-pull-requests: write
-          permission-issues: write
-          # A tag on the release commit counts as creating its workflow files when a later main commit changed one.
-          permission-workflows: write
-      - name: Run release-please
-        id: release
-        if: steps.head.outputs.latest == 'true'
-        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
-        with:
-          token: ${{ steps.app.outputs.token }}
-          config-file: release-please-config.json
-          manifest-file: .release-please-manifest.json
-
-  promote:
-    name: Promote
-    needs: [release, image]
-    if: needs.release.outputs.release_created == 'true'
-    permissions: { contents: read, packages: write }
-    uses: fjcloudaiconsulting/.github/.github/workflows/promote-release.yml@v1
+      checks: read
+      pull-requests: read
+      packages: write
+    uses: fjcloudaiconsulting/.github/.github/workflows/release.yml@v1
     with:
-      version: ${{ needs.release.outputs.version }}
       images: backend frontend migrations
-
-  smoke:
-    name: Smoke
-    needs: [release, promote]
-    if: needs.release.outputs.release_created == 'true'
-    permissions: { contents: read, packages: read }
-    uses: fjcloudaiconsulting/.github/.github/workflows/smoke.yml@v1
-    with:
-      version: ${{ needs.release.outputs.version }}
       health-url: http://localhost:3000/api/healthz
+    secrets: inherit
