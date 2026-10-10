@@ -16,36 +16,38 @@ concurrency:
 
 jobs:
   repo:
-    name: Repo checks
+    name: Repo Checks
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 24
-      - run: sh .githooks/commit-msg.test.sh
-      - run: node --test "scripts/*.test.mjs"
-      - run: node scripts/check-catalogs.mjs
-      - run: node scripts/check-env-names.mjs
-      - run: node scripts/check-env-doc.mjs
+          node-version-file: .nvmrc
+      - name: Test the commit-msg hook
+        run: sh .githooks/commit-msg.test.sh
+      - name: Run repo script tests
+        run: node --test "scripts/*.test.mjs"
+      - name: Check message catalogs
+        run: node scripts/check-catalogs.mjs
+      - name: Check env names
+        run: node scripts/check-env-names.mjs
+      - name: Check env docs
+        run: node scripts/check-env-doc.mjs
       - name: No build-time public env vars in the web app
         run: |
           if grep -rn "NEXT_PUBLIC_" frontend --include='*.ts' --include='*.tsx' --include='*.mjs' --include='*.json' \
                --exclude-dir=node_modules --exclude-dir=.next; then
             echo "NEXT_PUBLIC_* is baked in at build time; read configuration at runtime instead." && exit 1
           fi
-      # Anonymous Docker Hub pulls from shared runner IPs hit 429s and auth outages (INFRA-152).
-      - name: No Docker Hub image references
-        run: |
-          if git grep -nE '(^|[[:space:]])(FROM|image:)[[:space:]]+"?(--platform=[^[:space:]]+[[:space:]]+)?(docker\.io/|index\.docker\.io/|[a-z0-9_-]+(/[a-z0-9._-]+)*[:@])|syntax=(docker\.io/|[a-z0-9_-]+(/[a-z0-9._-]+)*[:@])' \
-               -- '*Dockerfile*' '*compose*.yml' '*compose*.yaml' '.github/workflows/*.yml'; then
-            echo "Pull Docker Hub images through mirror.gcr.io (mirror.gcr.io/library/<name> for official images)." && exit 1
-          fi
+      - name: No Docker Hub images
+        uses: fjcloudaiconsulting/.github/actions/no-docker-hub@v1
 
   api:
-    name: API
+    name: Backend Tests
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -71,15 +73,13 @@ jobs:
       ZIF_MIGRATE_DATABASE_URL: postgresql+psycopg://ziftbook_migrate:ziftbook_migrate@localhost:5432/ziftbook
       ZIF_DATABASE_URL: postgresql+psycopg://ziftbook_app:ziftbook_app@localhost:5432/ziftbook
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
-        with:
-          version: "0.12.24"
-          enable-cache: true
-          cache-dependency-glob: backend/uv.lock
-      - run: uv sync --locked
+      # uv version from backend/.tool-versions (uv line only), Python from backend/.python-version.
+      - name: Install backend dependencies
+        uses: fjcloudaiconsulting/.github/actions/uv-sync@v1
       # Same role bootstrap as local dev and future hosting, using the service container's own psql.
       - name: Bootstrap database roles
         run: >-
@@ -88,16 +88,22 @@ jobs:
           ${{ job.services.postgres.id }}
           psql -v ON_ERROR_STOP=1 -U ziftbook -d ziftbook -f -
           < migrations/bootstrap.sql
-      - run: uv run ruff check .
-      - run: uv run ruff format --check .
-      - run: uv run mypy app tests migrations scripts
+      - name: Lint backend
+        run: uv run ruff check .
+      - name: Check backend format
+        run: uv run ruff format --check .
+      - name: Type-check backend
+        run: uv run mypy app tests migrations scripts
       # Serial, no -n: the file whose own tests assert the serial path (ZIF-111) still passes
       # without xdist.
-      - run: uv run pytest -q tests/test_parallel_safety.py
-      - run: uv run pytest -n auto
+      - name: Run backend tests (serial path)
+        run: uv run pytest -q tests/test_parallel_safety.py
+      - name: Run backend tests
+        run: uv run pytest -n auto
 
   # Built once, on the main push, as sha-<7> (pull requests build without pushing). Release only retags these.
   image:
+    name: Image (${{ matrix.image }})
     strategy:
       matrix:
         include:
@@ -114,47 +120,45 @@ jobs:
       build-contexts: ${{ matrix.build-contexts }}
 
   web:
-    name: Web
+    name: Frontend Tests
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 24
-      # pnpm version comes from packageManager in frontend/package.json.
-      - run: corepack enable
-      - id: pnpm-store
-        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ steps.pnpm-store.outputs.path }}
-          key: pnpm-${{ runner.os }}-${{ hashFiles('frontend/pnpm-lock.yaml') }}
-          restore-keys: pnpm-${{ runner.os }}-
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm lint
-      - run: pnpm typecheck
-      - run: pnpm build
-      - run: pnpm test
+      # Node from .nvmrc, pnpm from packageManager in frontend/package.json.
+      - name: Install frontend dependencies
+        uses: fjcloudaiconsulting/.github/actions/pnpm-install@v1
+      - name: Lint frontend
+        run: pnpm lint
+      - name: Type-check frontend
+        run: pnpm typecheck
+      - name: Build frontend
+        run: pnpm build
+      - name: Run frontend tests
+        run: pnpm test
 
   landing:
-    name: Landing
+    name: Landing Tests
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: landing
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 24
-      - run: npm test
+          node-version-file: .nvmrc
+      - name: Run landing tests
+        run: npm test
 
   # Aggregate checks, the names branch protection requires. Always run; fail unless every gated job passed or was skipped.
   backend-checks:
@@ -163,7 +167,8 @@ jobs:
     needs: [repo, api, image]
     runs-on: ubuntu-latest
     steps:
-      - env:
+      - name: Verify every gated job passed
+        env:
           NEEDS: ${{ toJSON(needs) }}
         run: jq -e 'all(.[]; .result == "success" or .result == "skipped")' <<<"$NEEDS"
 
@@ -173,66 +178,25 @@ jobs:
     needs: [web, landing, image]
     runs-on: ubuntu-latest
     steps:
-      - env:
+      - name: Verify every gated job passed
+        env:
           NEEDS: ${{ toJSON(needs) }}
         run: jq -e 'all(.[]; .result == "success" or .result == "skipped")' <<<"$NEEDS"
 
   # Releases only when every job above passed on this commit of main. Same run as the image builds, so the tagged
-  # release commit's sha-<7> images exist by the time promote runs.
+  # release commit's sha-<7> images exist by the time promote runs. The shared workflow runs release-please (App
+  # token from this repo's `release` environment), then promote and smoke on a release.
   release:
-    name: Release PR and tag
+    name: Release
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [repo, api, image, web, landing]
-    runs-on: ubuntu-latest
-    environment: release
     permissions:
       contents: read
-    outputs:
-      release_created: ${{ steps.release.outputs.release_created }}
-      version: ${{ steps.release.outputs.version }}
-    steps:
-      # release-please acts on main as it is now, not on this commit. If main has moved on, a merged Release PR there
-      # has not passed CI yet, so leave it to the newer commit's run.
-      - id: head
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          head=$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)
-          if [ "$head" = "$GITHUB_SHA" ]; then echo "latest=true" >> "$GITHUB_OUTPUT"; else echo "main is at $head; skipping"; fi
-      # An App token, not GITHUB_TOKEN, so the Release PR triggers CI and can satisfy required checks.
-      - id: app
-        if: steps.head.outputs.latest == 'true'
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-        with:
-          app-id: ${{ secrets.RELEASE_APP_ID }}
-          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
-          permission-contents: write
-          permission-pull-requests: write
-          permission-issues: write
-          # A tag on the release commit counts as creating its workflow files when a later main commit changed one.
-          permission-workflows: write
-      - id: release
-        if: steps.head.outputs.latest == 'true'
-        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
-        with:
-          token: ${{ steps.app.outputs.token }}
-          config-file: release-please-config.json
-          manifest-file: .release-please-manifest.json
-
-  promote:
-    needs: [release, image]
-    if: needs.release.outputs.release_created == 'true'
-    permissions: { contents: read, packages: write }
-    uses: fjcloudaiconsulting/.github/.github/workflows/promote-release.yml@v1
+      checks: read
+      pull-requests: read
+      packages: write
+    uses: fjcloudaiconsulting/.github/.github/workflows/release.yml@v1
     with:
-      version: ${{ needs.release.outputs.version }}
       images: backend frontend migrations
-
-  smoke:
-    needs: [release, promote]
-    if: needs.release.outputs.release_created == 'true'
-    permissions: { contents: read, packages: read }
-    uses: fjcloudaiconsulting/.github/.github/workflows/smoke.yml@v1
-    with:
-      version: ${{ needs.release.outputs.version }}
       health-url: http://localhost:3000/api/healthz
+    secrets: inherit
