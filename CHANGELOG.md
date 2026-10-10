@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.24.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.23.0...v0.24.0) (2026-10-10)
+
+
+### Features
+
+* **backend:** jobs, email, database pool and business metrics over OTLP (ZIF-88) ([#228](https://github.com/fjcloudaiconsulting/ziftbook/issues/228)) ([ce3e0f5](https://github.com/fjcloudaiconsulting/ziftbook/commit/ce3e0f56b566c42a2b5719503eac9f7169a9e522))
+
+
+### Bug Fixes
+
+* **backend:** a shift inside the hour DST skips is no longer relocated (ZIF-113) ([#221](https://github.com/fjcloudaiconsulting/ziftbook/issues/221)) ([227c5b0](https://github.com/fjcloudaiconsulting/ziftbook/commit/227c5b09b8a4298fe137b03f8be1207d1a47e0ac))
+* **backend:** public bookings fail closed when no Turnstile secret is set (ZIF-116) ([#231](https://github.com/fjcloudaiconsulting/ziftbook/issues/231)) ([605db71](https://github.com/fjcloudaiconsulting/ziftbook/commit/605db7126a415e31433a6881b1bf59da24958a90))
+* **deps:** update dependency fastapi to v0.143.0 ([#199](https://github.com/fjcloudaiconsulting/ziftbook/issues/199)) ([83a195f](https://github.com/fjcloudaiconsulting/ziftbook/commit/83a195fb721f789d724885c581b35ee0b615e651))
+* **deps:** update npm non-major ([#202](https://github.com/fjcloudaiconsulting/ziftbook/issues/202)) ([0429ce4](https://github.com/fjcloudaiconsulting/ziftbook/commit/0429ce4959d28537e409f5d8400d84c938a04343))
+* **deps:** update opentelemetry ([#203](https://github.com/fjcloudaiconsulting/ziftbook/issues/203)) ([c462380](https://github.com/fjcloudaiconsulting/ziftbook/commit/c46238094bfddf68b62d4e226523d0deefc95afb))
+* **deps:** update python non-major ([#200](https://github.com/fjcloudaiconsulting/ziftbook/issues/200)) ([7ef0f7e](https://github.com/fjcloudaiconsulting/ziftbook/commit/7ef0f7e0beb16afe66a983c51efec7e1e7ca6f7d))
+* **frontend:** an API request body over 64 KiB gets a 413 and never reaches the API truncated (ZIF-136) ([#222](https://github.com/fjcloudaiconsulting/ziftbook/issues/222)) ([a46d383](https://github.com/fjcloudaiconsulting/ziftbook/commit/a46d383ebd42e24b72ae8e541d09d79708af87c0))
+* **frontend:** the Copy button shows Copied after copying the booking page address ([#224](https://github.com/fjcloudaiconsulting/ziftbook/issues/224)) ([6e888a6](https://github.com/fjcloudaiconsulting/ziftbook/commit/6e888a69af2c85aba25f05a85246133fbae02af9))
+
 ## [0.23.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.22.0...v0.23.0) (2026-10-08)
 
 
