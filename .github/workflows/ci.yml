@@ -24,7 +24,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 24
+          node-version-file: .nvmrc
       - run: sh .githooks/commit-msg.test.sh
       - run: node --test "scripts/*.test.mjs"
       - run: node scripts/check-catalogs.mjs
@@ -36,13 +36,7 @@ jobs:
                --exclude-dir=node_modules --exclude-dir=.next; then
             echo "NEXT_PUBLIC_* is baked in at build time; read configuration at runtime instead." && exit 1
           fi
-      # Anonymous Docker Hub pulls from shared runner IPs hit 429s and auth outages (INFRA-152).
-      - name: No Docker Hub image references
-        run: |
-          if git grep -nE '(^|[[:space:]])(FROM|image:)[[:space:]]+"?(--platform=[^[:space:]]+[[:space:]]+)?(docker\.io/|index\.docker\.io/|[a-z0-9_-]+(/[a-z0-9._-]+)*[:@])|syntax=(docker\.io/|[a-z0-9_-]+(/[a-z0-9._-]+)*[:@])' \
-               -- '*Dockerfile*' '*compose*.yml' '*compose*.yaml' '.github/workflows/*.yml'; then
-            echo "Pull Docker Hub images through mirror.gcr.io (mirror.gcr.io/library/<name> for official images)." && exit 1
-          fi
+      - uses: fjcloudaiconsulting/.github/actions/no-docker-hub@v1
 
   api:
     name: API
@@ -74,12 +68,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
-        with:
-          version: "0.12.24"
-          enable-cache: true
-          cache-dependency-glob: backend/uv.lock
-      - run: uv sync --locked
+      # uv version from [tool.uv] required-version, Python from backend/.python-version.
+      - uses: fjcloudaiconsulting/.github/actions/uv-sync@v1
       # Same role bootstrap as local dev and future hosting, using the service container's own psql.
       - name: Bootstrap database roles
         run: >-
@@ -123,19 +113,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 24
-      # pnpm version comes from packageManager in frontend/package.json.
-      - run: corepack enable
-      - id: pnpm-store
-        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ steps.pnpm-store.outputs.path }}
-          key: pnpm-${{ runner.os }}-${{ hashFiles('frontend/pnpm-lock.yaml') }}
-          restore-keys: pnpm-${{ runner.os }}-
-      - run: pnpm install --frozen-lockfile
+      # Node from .nvmrc, pnpm from packageManager in frontend/package.json.
+      - uses: fjcloudaiconsulting/.github/actions/pnpm-install@v1
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm build
@@ -153,7 +132,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 24
+          node-version-file: .nvmrc
       - run: npm test
 
   # Aggregate checks, the names branch protection requires. Always run; fail unless every gated job passed or was skipped.
