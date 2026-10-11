@@ -6,7 +6,7 @@
   ],
   "packageRules": [
     {
-      "description": "npm non-major updates in one PR.",
+      "description": "npm non-major updates in one PR. OpenTelemetry stays out: the preset's opentelemetry group comes first, and this later rule would otherwise pull @opentelemetry/* back into this group.",
       "matchManagers": [
         "npm"
       ],
@@ -14,7 +14,10 @@
         "minor",
         "patch"
       ],
-      "groupName": "npm non-major"
+      "groupName": "npm non-major",
+      "matchPackageNames": [
+        "!@opentelemetry/**"
+      ]
     },
     {
       "description": "Hold ESLint 10 until eslint-plugin-react (used by eslint-config-next) lists eslint 10 in its peer range and lints without 'getFilename is not a function'. Re-check: npm view eslint-plugin-react peerDependencies.",
