@@ -491,7 +491,7 @@ def test_t12_incoming_traceparent_is_the_parent(people: People, spans: Spans) ->
     assert format(server.parent.span_id, "016x") == parent_span_id
 
 
-# INFRA-106: the telemetry standard (aws-infra docs/architecture.md, Telemetry). FastAPI's native
+# INFRA-106: the telemetry standard (cloud-infra docs/architecture.md, Telemetry). FastAPI's native
 # HTTP metrics on, behind an attribute allowlist; the SERVER span stays the app's own.
 
 

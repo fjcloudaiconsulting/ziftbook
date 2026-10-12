@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Post-deploy smoke (INFRA-120), same interface as TBD's scripts/smoke-test.sh. Run by aws-infra's
+# Post-deploy smoke (INFRA-120), same interface as TBD's scripts/smoke-test.sh. Run by cloud-infra's
 # post-deploy-smoke.sh against the live URL at the deployed tag. Read-only: two GETs, no writes.
 #
 #   1. GET /api/healthz             liveness, no dependencies

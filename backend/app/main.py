@@ -177,7 +177,7 @@ def create_app() -> FastAPI:
         generate_unique_id_function=operation_id,
         lifespan=lifespan,
         redirect_slashes=False,
-        # The telemetry standard (aws-infra docs/architecture.md, Telemetry). Native metrics only,
+        # The telemetry standard (cloud-infra docs/architecture.md, Telemetry). Native metrics only,
         # recorded on the MeterProvider tracing.configure() registered (its View is the attribute
         # allowlist). The app owns the SERVER span and the logs: native tracing would add a second
         # SERVER span carrying url.path and url.query, native logs export exception messages, and
