@@ -112,7 +112,7 @@ jobs:
           # The frontend build reads the committed OpenAPI contract from the backend directory.
           - { image: frontend, context: frontend, target: prod, build-contexts: 'backend=backend' }
     permissions: { contents: read, packages: write }
-    uses: fjcloudaiconsulting/.github/.github/workflows/build-image.yml@v1
+    uses: fjcloudaiconsulting/.github/.github/workflows/build-image.yml@feat/INFRA-164-multi-arch-images
     with:
       image: ${{ matrix.image }}
       context: ${{ matrix.context }}
