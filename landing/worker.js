@@ -1,5 +1,5 @@
 // Runs only for "/" (wrangler.jsonc run_worker_first), everything else is a static asset served without a Worker request.
-// www.ziftbook.com is 301ed to the apex by the zone's Single Redirect rule (aws-infra, INFRA-131), before the Worker.
+// www.ziftbook.com is 301ed to the apex by the zone's Single Redirect rule (cloud-infra, INFRA-131), before the Worker.
 // 1. plain http goes to https://ziftbook.com, 2. "/" goes to the visitor's language, 3. anything else is a static asset.
 const APEX = "ziftbook.com";
 const HSTS = "max-age=31536000; includeSubDomains";

@@ -250,7 +250,7 @@ Rate limits and audit events key on the visitor's address. Each deployment has e
 
 Where each deployment gets it:
 
-- **Production and staging** (k3s; `app.ziftbook.com` and `dev.ziftbook.com`, manifests in aws-infra
+- **Production and staging** (k3s; `app.ziftbook.com` and `dev.ziftbook.com`, manifests in cloud-infra
   `clusters/platform/ziftbook-{prod,staging}`): Cloudflare (proxied) to Traefik to the web app to the API.
   Cloudflare overwrites `CF-Connecting-IP` on every request, the node admits 443 from Cloudflare only, and
   Traefik completes TLS only with clients showing our Authenticated Origin Pulls certificate, so no other
@@ -268,7 +268,7 @@ Where each deployment gets it:
   any of those could set its own `X-Forwarded-For`. k3s/flannel doesn't SNAT pod-to-ClusterIP traffic, but
   that is not the safeguard: the backend Service must never be exposed via NodePort, LoadBalancer or
   Ingress, and NetworkPolicies must admit only the web app's pods.
-- **Worker residual (aws-infra INFRA-145):** a Cloudflare Worker attached to the `ziftbook.com` zone runs
+- **Worker residual (cloud-infra INFRA-145):** a Cloudflare Worker attached to the `ziftbook.com` zone runs
   inside it, so its code can send its own `CF-Connecting-IP` to the zone's node hostnames, production
   included: it could dodge per-IP limits, lock a chosen address out, and write forged addresses into audit
   events. Only whoever merges to this repo's `main`, or holds the landing Worker's deploy token, can change
@@ -385,7 +385,7 @@ Attributes on every span come from an explicit allowlist instead.
 ## Observability
 
 Every signal leaves the app in a vendor-neutral form: logs as JSON lines on stdout, traces and
-metrics over OTLP to one endpoint. This follows the platform's telemetry standard (aws-infra
+metrics over OTLP to one endpoint. This follows the platform's telemetry standard (cloud-infra
 `docs/architecture.md`, Telemetry). What sits behind that endpoint (the
 Grafana LGTM stack today; Prometheus, fluentd or anything else later) is an OpenTelemetry
 Collector's configuration, never app code. So no vendor agent, SDK or protocol belongs in this
