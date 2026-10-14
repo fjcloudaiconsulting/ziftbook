@@ -266,8 +266,8 @@ def test_a_malformed_or_reserved_slug_is_refused(app_engine: Engine, slug: str) 
         assert slug_of(conn, "Foo", slug) == "23514"
 
 
-# 7b. fence — review nit: every word in 0030's RESERVED array, not just a sample. Kills dropping
-# any single one (e.g. www, admin, login) from that list.
+# 7b. fence — review nit: every word in the newest RESERVED list (0030 + 0035), not a sample.
+# Kills dropping any single one (e.g. www, admin, login) from that list.
 RESERVED = [
     "booking", "forgot-password", "invite", "reset-password", "sign-in", "sign-up",
     "calendar", "clients", "my-hours", "opening-hours", "services", "settings", "team",

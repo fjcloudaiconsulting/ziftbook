@@ -43,7 +43,11 @@ describe("newestReservedWords (ZIF-70)", () => {
     "0031_other.py": `revision = "0031"\n`,
     "0035_reserve_setup_slug.py": `OLD_RESERVED = """'booking','admin'"""\nRESERVED = """\n  'booking','admin','setup'\n"""\n`,
   };
-  const readFile = (path) => files[path.split("/").pop()];
+  const readFile = (path) => {
+    const source = files[path.split("/").pop()];
+    if (source === undefined) throw new Error(`read a non-migration: ${path}`);
+    return source;
+  };
 
   // Fence: kills a check still hard-wired to 0030, which would let a route reserved by a later
   // migration fail (or a later un-reservation pass).
@@ -55,6 +59,15 @@ describe("newestReservedWords (ZIF-70)", () => {
   test("falls back to an older one when the newest is gone", () => {
     const readdir = () => Object.keys(files).filter((f) => !f.startsWith("0035"));
     assert.deepEqual(newestReservedWords("versions", readdir, readFile), ["booking", "admin"]);
+  });
+
+  // A newer migration holding only an OLD_RESERVED block (a revert's leftovers) is not the list,
+  // and nothing but NNNN_*.py is read.
+  test("skips OLD_RESERVED-only migrations and non-migration files", () => {
+    const more = { ...files, "0040_revert.py": `OLD_RESERVED = """'x'"""\n` };
+    const readdir = () => [...Object.keys(more), "__init__.py", "__pycache__", "notes.md"];
+    const read = (path) => more[path.split("/").pop()] ?? readFile(path);
+    assert.ok(newestReservedWords("versions", readdir, read).includes("setup"));
   });
 });
 

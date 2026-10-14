@@ -1,6 +1,6 @@
 // F8: every top-level route under frontend/app/[locale] must be in the newest reserved-slug list
-// (0030's, replaced by later migrations such as 0035), so a future route can never be shadowed by a business slug. Route groups ("(console)") are
-// flattened to their children; "_ui" (a private folder) and "[slug]" (a dynamic segment) are
+// (0030's, replaced by later migrations such as 0035), so a future route can never be shadowed by
+// a business slug. Route groups ("(console)") are flattened to their children; "_ui" (a private folder) and "[slug]" (a dynamic segment) are
 // skipped. Checked by scripts/check-reserved-routes.test.mjs, which node --test "scripts/*.test.mjs"
 // already runs against the real tree — no separate CLI entrypoint.
 import { readdirSync, readFileSync } from "node:fs";

@@ -47,6 +47,9 @@ $$"""
 
 
 def upgrade() -> None:
+    # free_slug's lock (0030), held to commit: a sign-up during the deploy waits for the new slug_ok
+    # instead of taking "setup" between the check below and this commit.
+    op.execute("SELECT pg_advisory_xact_lock(56, 0)")
     op.execute("""
     DO $$ BEGIN
       IF EXISTS (SELECT FROM tenants WHERE slug = 'setup') THEN
