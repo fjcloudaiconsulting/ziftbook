@@ -297,13 +297,18 @@ def test_concurrent_submissions_of_one_code_pass_once(
 
 
 # fence: the right proof at a step outside now +-1 is refused and moves nothing. Kills no window
-# bound, where one poisoned future step locks the admin out for good. Injected by deleting BETWEEN.
-@pytest.mark.parametrize("ahead", [2, 1000])
+# bound (one poisoned future step locks the admin out for good) and no lower bound (an old, unused
+# code still passes). Injected by deleting BETWEEN, then separately its lower bound.
+@pytest.mark.parametrize("ahead", [2, 1000, -2])
 def test_steps_outside_the_window_are_refused(
     app_engine: Engine, migrate_engine: Engine, ahead: int
 ) -> None:
     e = enrolled(app_engine, migrate_engine)
     session = half_session(app_engine, migrate_engine, e.user_id)
+    with migrate_engine.begin() as conn:  # so only the window can refuse a step in the past
+        conn.execute(
+            text("UPDATE second_factors SET last_step = 0 WHERE user_id = :u"), {"u": e.user_id}
+        )
     before = factor(migrate_engine, e.user_id)["last_step"]
     sql = text(f"SELECT outcome FROM pass_second_factor(:id, :p, {NOW_STEP} + :ahead)")
 

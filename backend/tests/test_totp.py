@@ -33,6 +33,9 @@ def test_matching_step() -> None:
     for step in (t - 1, t, t + 1):
         assert totp.matching_step(SECRET, totp.code(SECRET, step), now) == step
     assert totp.matching_step(SECRET, totp.code(SECRET, t + 2), now) is None
+    assert totp.matching_step(SECRET, totp.code(SECRET, t - 2), now) is None
+    for typed in ("٠١٢٣٤٥", "\ud800"):  # Arabic-Indic digits, a lone surrogate: None, not a raise
+        assert totp.matching_step(SECRET, typed, now) is None
 
 
 # fence: no AAD, so one user's ciphertext decrypts as another's. Injected by passing None as AAD.
@@ -71,6 +74,7 @@ def test_key_states(monkeypatch: pytest.MonkeyPatch) -> None:
         (base64.b64encode(bytes(31)).decode(), "invalid"),
         ("not base64 at all", "invalid"),
         (good[:20] + "!" + good[20:], "invalid"),  # validate=False would drop the "!"
+        ("\u201c" + good + "\u201d", "invalid"),  # pasted with curly quotes: non-ASCII
     ]:
         monkeypatch.setenv("ZIF_TOTP_KEY", value)
         assert totp.key_state() == state, value
@@ -96,9 +100,10 @@ def test_codes_and_normalise() -> None:
     [
         (None, "unset", 1),
         ("bm90IDMyIGJ5dGVz", "invalid", 1),
+        ("\u201cbm90IGFzY2lp\u201d", "invalid", 1),
         ("c3RhcnR1cC10ZXN0LWtleS10aGlydHktdHdvLWJ5dGU=", "set", 0),
     ],
-    ids=["unset", "invalid", "set"],
+    ids=["unset", "invalid", "non-ascii", "set"],
 )
 def test_startup_totp_key_field(
     app_engine: Engine,

@@ -9,7 +9,6 @@ takes the value it stores (migration 0039).
 """
 
 import base64
-import binascii
 import hashlib
 import hmac
 import os
@@ -42,8 +41,10 @@ def code(secret: bytes, step: int) -> str:
 
 
 def matching_step(secret: bytes, typed: str, now: datetime) -> int | None:
-    """The step among t-1, t and t+1 whose code is `typed`, or None. The caller passes ASCII digits
-    only: compare_digest raises TypeError on non-ASCII str."""
+    """The step among t-1, t and t+1 whose code is `typed`, or None (also for non-ASCII text, which
+    `\\d` and str.isdigit accept but can never be a code)."""
+    if not typed.isascii():
+        return None
     t = int(now.timestamp()) // STEP
     for step in (t - 1, t, t + 1):
         if hmac.compare_digest(code(secret, step).encode(), typed.encode("ascii")):
@@ -77,7 +78,7 @@ def key() -> bytes | None:
     try:
         # validate=True: otherwise stray characters are silently dropped.
         decoded = base64.b64decode(value, validate=True)
-    except binascii.Error:
+    except ValueError:  # binascii.Error, and a plain ValueError for non-ASCII text
         return None
     return decoded if len(decoded) == KEY_BYTES else None
 
