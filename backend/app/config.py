@@ -80,3 +80,13 @@ class SetupSettings(Settings):
     # Resolved at runtime from a secret, never committed (as turnstile_secret). Only needed until
     # setup is done; the operator may remove it afterwards.
     setup_token: SecretStr = SecretStr("")
+
+
+class SecondFactorSettings(Settings):
+    """Platform admins' TOTP (ZIF-71): the key that encrypts every stored TOTP secret, base64 of 32
+    bytes. Unset or invalid: the API logs an ERROR at startup and TOTP answers 503 (recovery codes
+    still work); startup never fails over it."""
+
+    # Resolved at runtime from a secret, never committed (as turnstile_secret). Losing it makes
+    # every stored secret unreadable: back it up with the database credentials.
+    totp_key: SecretStr = SecretStr("")

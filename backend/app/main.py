@@ -39,6 +39,7 @@ from app import (
     services,
     setup,
     time_off,
+    totp,
     tracing,
     turnstile,
 )
@@ -118,6 +119,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.critical("startup failed", exc_info=True)
         raise RuntimeError("startup failed") from None
     setup_token = setup.token_state()
+    totp_key = totp.key_state()
     # Here, not at import: `python -m app.main` prints the OpenAPI document to stdout.
     logger.info(
         "api started",
@@ -128,6 +130,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             "turnstile": "on" if turnstile.enabled() else "off",
             # Never the token. "unset"/"weak": first-run setup is refused (ZIF-70).
             "setup_token": setup_token,
+            # Never the key. "unset"/"invalid": admin TOTP answers 503 (ZIF-71).
+            "totp_key": totp_key,
         },
     )
     # ZIF-116: logged, never a refusal to start. The deployments run one replica with Recreate, so a
@@ -138,6 +142,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # refusal to start, and a database error skips the line.
     if setup_token != "set" and setup.needed_at_startup(DatabaseSettings().database_url):
         logger.error("setup token unset: first-run setup refused")
+    # Unconditional, unlike the setup token: the key is needed for the deployment's whole life.
+    # Never a refusal to start (one replica, Recreate): recovery codes still let admins in.
+    if totp_key != "set":
+        logger.error("totp key unset: admin second factor unavailable")
     try:
         yield
     finally:
