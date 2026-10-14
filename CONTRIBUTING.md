@@ -51,6 +51,12 @@ Specifics:
   rather than editing a merged migration.
 - `CREATE INDEX CONCURRENTLY` cannot run inside a transaction; put it in its own migration using Alembic's
   `autocommit_block()`.
+- A migration statement waits at most 5 seconds for a table or row lock (`lock_timeout`, set in `migrations/env.py`),
+  so a migration stuck behind a long app transaction fails with `LockNotAvailable` instead of making every query on
+  that table queue behind it. The migrations container exits non-zero and is retried. If it keeps failing, find
+  the transaction holding the lock (`pg_locks` joined to `pg_stat_activity`), or split the migration so each step
+  locks less (one table per migration; add a constraint `NOT VALID` and validate it in a later one). Waiting for
+  another migration run to finish is not bounded: concurrent runs take turns.
 - Migrations run as `ziftbook_migrate`, never on app startup. The app connects as `ziftbook_app`, which owns
   nothing: never grant it ownership, `BYPASSRLS` or DDL rights.
 
