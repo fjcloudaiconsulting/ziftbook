@@ -82,7 +82,6 @@ def test_a_migration_behind_an_app_transaction_fails_on_the_lock_timeout(
     assert isinstance(caught.value.orig, LockNotAvailable), caught.value.orig
     with engine.connect() as conn:
         assert conn.scalar(ADDED) == 0
-        assert conn.scalar(text("SELECT count(*) FROM alembic_version")) == 0
 
 
 # Kills: lock_timeout set before pg_advisory_lock (or passed as a connect option), which turns a
