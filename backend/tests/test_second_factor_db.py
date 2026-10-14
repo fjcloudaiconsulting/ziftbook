@@ -172,16 +172,25 @@ def wrong() -> bytes:
     "sql",
     [
         "SELECT * FROM second_factors",
-        "INSERT INTO second_factors (user_id) VALUES (gen_random_uuid())",
+        "INSERT INTO second_factors (user_id) VALUES (:u)",
         "UPDATE second_factors SET failed_attempts = 0",
         "DELETE FROM second_factors",
-        "SELECT live_admin_user('\\x00'::bytea)",
     ],
 )
 def test_app_role_has_no_access_to_second_factors(app_engine: Engine, sql: str) -> None:
+    user_id = add_user(app_engine)  # a real user: the INSERT must fail on privilege, not the FK
     with pytest.raises(ProgrammingError) as error, app_engine.begin() as conn:
-        conn.execute(text(sql))
+        conn.execute(text(sql), {"u": user_id})
     assert isinstance(error.value.orig, InsufficientPrivilege)
+
+
+# guard: live_admin_user is no definer and not the app's to call (calling it would fail anyway on
+# admin_sessions, which the app role can't read). Kills a REVOKE left out.
+def test_app_role_cannot_call_live_admin_user(app_engine: Engine) -> None:
+    with app_engine.connect() as conn:
+        assert not conn.scalar(
+            text("SELECT has_function_privilege('live_admin_user(bytea)', 'EXECUTE')")
+        )
 
 
 # fence: a half session plus a made-up proof never passes. Kills a function that trusts the step
@@ -317,11 +326,14 @@ def test_ten_failures_lock_and_success_resets(app_engine: Engine, migrate_engine
     assert pass_(app_engine, session, proof, step) == ("passed", 9)
     assert factor(migrate_engine, e.user_id)["failed_attempts"] == 0
 
+    # A second admin: a second success for the first would need step t0 + 2, which the window
+    # refuses until the database's clock reaches t0 + 1, so the lock would not be what refused it.
+    e = enrolled(app_engine, migrate_engine)
     session = half_session(app_engine, migrate_engine, e.user_id)
     step = next_step(migrate_engine, e.user_id)
     for n in range(1, 11):
         assert pass_(app_engine, session, wrong(), step) == ("failed", n)
-    assert pass_(app_engine, session, proof, step) == ("locked", 10)
+    assert pass_(app_engine, session, totp.proof(e.secret), step) == ("locked", 10)
     assert resolved(app_engine, session)["factor_passed"] is False
 
 
