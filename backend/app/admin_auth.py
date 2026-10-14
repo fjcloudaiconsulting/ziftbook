@@ -270,9 +270,7 @@ def _secret(session: Session, id_hash: bytes, user_id: UUID) -> bytes | None:
     "/session/second-factor",
     responses={status: {"model": Error} for status in (401, 403, 409, 415, 422, 429, 503)},
 )
-def pass_second_factor(
-    body: CodeIn, current: HalfAdmin, request: Request, response: Response
-) -> AdminSession:
+def pass_second_factor(body: CodeIn, current: HalfAdmin, request: Request) -> AdminSession:
     """Pass the second factor with a 6-digit code or a recovery code. Also the 15-minute re-check:
     a new step, or another recovery code, refreshes it."""
     if not current.enrolled:
@@ -371,7 +369,6 @@ def pass_second_factor(
         raise error
     if passed_as is None:
         raise ApiError(401, "unauthenticated")
-    response.headers["Cache-Control"] = "no-store"
     return AdminSession.model_validate(passed_as, from_attributes=True)
 
 
@@ -379,9 +376,7 @@ def pass_second_factor(
     "/totp/enrolment",
     responses={status: {"model": Error} for status in (401, 409, 415, 422, 429, 503)},
 )
-def begin_enrolment(
-    body: TicketIn, current: HalfAdmin, request: Request, response: Response
-) -> EnrolmentOut:
+def begin_enrolment(body: TicketIn, current: HalfAdmin, request: Request) -> EnrolmentOut:
     """Start TOTP enrolment with the ticket `python -m app.admin enrol` printed. Until it is
     confirmed, starting again with the same ticket replaces the secret."""
     _limited(request, "admin_enrol", 10)
@@ -409,7 +404,6 @@ def begin_enrolment(
     if outcome == "already_enrolled":
         raise ApiError(409, "already_enrolled")
     uri = totp.otpauth_uri(s, current.email)
-    response.headers["Cache-Control"] = "no-store"  # the secret
     return EnrolmentOut(
         secret=base64.b32encode(s).decode(), otpauth_uri=uri, qr=totp.qr_data_uri(uri)
     )
@@ -419,9 +413,7 @@ def begin_enrolment(
     "/totp/enrolment/confirm",
     responses={status: {"model": Error} for status in (401, 403, 409, 415, 422, 429, 503)},
 )
-def confirm_enrolment(
-    body: CodeIn, current: HalfAdmin, request: Request, response: Response
-) -> RecoveryCodesOut:
+def confirm_enrolment(body: CodeIn, current: HalfAdmin, request: Request) -> RecoveryCodesOut:
     """Confirm enrolment with a code from the app. Passes the second factor, ends this admin's
     other sessions, and answers the 10 recovery codes, once."""
     _limited(request, "admin_2fa", 20)
@@ -459,7 +451,6 @@ def confirm_enrolment(
         raise ApiError(403, "second_factor_locked")
     if outcome == "none":  # nothing begun, or the ticket expired
         raise ApiError(409, "no_pending_enrolment")
-    response.headers["Cache-Control"] = "no-store"  # the recovery codes
     return RecoveryCodesOut(recovery_codes=codes)
 
 

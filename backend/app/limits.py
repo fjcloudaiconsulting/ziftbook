@@ -61,8 +61,10 @@ def ip_key(action: str, host: str | None) -> str:
         return f"{action}:ip:unknown"
     if isinstance(address, ipaddress.IPv6Address):
         if address.ipv4_mapped is None:
-            # ponytail: a /48 holder can rotate 65,536 /64s; the per-email limit still caps each
-            # account. Widen to /56 if credential stuffing from IPv6 shows up.
+            # ponytail: a /48 holder can rotate 65,536 /64s. The per-email limit still caps each
+            # business account; admin sign-in keys email and address together (ZIF-71), so there
+            # only the second factor caps it. Widen to /56 if credential stuffing from IPv6 shows
+            # up.
             return f"{action}:ip:{ipaddress.IPv6Network((int(address), 64), strict=False)}"
         address = address.ipv4_mapped
     return f"{action}:ip:{address}"

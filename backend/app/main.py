@@ -271,8 +271,11 @@ def create_app() -> FastAPI:
             response = await call_next(request)
         # No API response is a page to link from.
         response.headers["Referrer-Policy"] = "no-referrer"
-        # ZIF-54 spec S4: every guest-link answer, errors included, is private to its bearer.
-        if request.url.path.startswith(("/api/public/booking-link", "/api/public/booking-pages")):
+        # ZIF-54 spec S4: every guest-link answer, errors included, is private to its bearer. So is
+        # every admin answer (ZIF-71): some carry a TOTP secret or recovery codes.
+        if request.url.path.startswith(
+            ("/api/public/booking-link", "/api/public/booking-pages", "/api/admin")
+        ):
             response.headers["Cache-Control"] = "no-store"
         return response
 

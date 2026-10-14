@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.routing import APIRoute
 from sqlalchemy import Engine
 
+from app import admin_auth
 from app.main import create_app
 from tests.conftest import PASSWORD, People, add_password, email_of, signed_in
 
@@ -62,6 +63,19 @@ def test_owner_never_gets_2xx_on_admin_routes(
 def test_admin_routes_are_the_allowlist() -> None:
     assert admin_routes(create_app()) == {
         ("POST", "/api/admin/session"),
+        ("GET", "/api/admin/session"),
+        ("DELETE", "/api/admin/session"),
+        ("POST", "/api/admin/session/second-factor"),
+        ("POST", "/api/admin/totp/enrolment"),
+        ("POST", "/api/admin/totp/enrolment/confirm"),
+    }
+    # The password alone reaches only these: a later route on admin_half_router fails here.
+    assert {
+        (method, route.path)
+        for route in admin_auth.admin_half_router.routes
+        if isinstance(route, APIRoute)
+        for method in route.methods or ()
+    } == {
         ("GET", "/api/admin/session"),
         ("DELETE", "/api/admin/session"),
         ("POST", "/api/admin/session/second-factor"),

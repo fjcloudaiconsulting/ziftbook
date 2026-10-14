@@ -72,7 +72,7 @@ def verified_client(app: FastAPI, migrate_engine: Engine, user_id: uuid.UUID) ->
 
     Step rule: confirm used t0 (last_step, read as migrate), so a pass at t0 is a replay. A later
     leg that expects "passes" sends totp.code(s, t0 + 1), valid while the clock's step is t0 to
-    t0 + 2: at least 60 s after this returns. A leg that expects a refusal never needs a fresh step.
+    t0 + 2: at least 30 s after this returns. A leg that expects a refusal never needs a fresh step.
     """
     ticket = issue_ticket(user_id)  # before sign-in: enrol ends the admin's sessions
     client = sign_in(app, user_id)
@@ -219,7 +219,10 @@ def test_wrong_key_is_unavailable_not_a_failure(
 
     assert answer(refused) == (503, {"code": "second_factor_unavailable"})
     assert failed_attempts(migrate_engine, an_admin) == 0
-    assert "ERROR" in {line["level"] for line in log_lines()}
+    undecryptable = [line for line in log_lines() if line["level"] == "ERROR"]
+    assert [line["msg"] for line in undecryptable] == [
+        "totp secret undecryptable: check ZIF_TOTP_KEY"
+    ]
 
 
 # fence: wrong passwords from one address don't lock the admin out of another. Kills ZIF-70's
@@ -235,21 +238,27 @@ def test_sign_in_limit_is_per_email_and_address(app: FastAPI, an_admin: uuid.UUI
     sign_in(app, an_admin, fresh_address())  # asserts 200
 
 
-# fence: the secret and the recovery codes are never kept by a cache. Kills a missing no-store.
-# Injected by deleting the header line on confirm.
+# fence: the secret and the recovery codes are never kept by a cache, nor is any other admin
+# answer, errors included. Kills a missing no-store. Injected by dropping /api/admin from the
+# no-store prefixes in main.py.
 def test_enrolment_answers_are_not_cached(
     app: FastAPI, migrate_engine: Engine, an_admin: uuid.UUID
 ) -> None:
     v = verified_client(app, migrate_engine, an_admin)
+    refused = new_client(app).post(PASS, json={"code": "000000"})
 
-    assert v.begun.headers.get("cache-control") == "no-store"
-    assert v.confirmed.headers.get("cache-control") == "no-store"
+    assert refused.status_code == 401
+    for response in (v.begun, v.confirmed, refused):
+        assert response.headers.get("cache-control") == "no-store"
 
 
 # fence: the 10th wrong code answers locked, once, and a recovery code unlocks, audited. Kills a
 # lock that answers 401 forever (the web app could never offer recovery), or no unlock record.
 def test_lock_is_reported_and_audited(
-    app: FastAPI, migrate_engine: Engine, an_admin: uuid.UUID
+    app: FastAPI,
+    migrate_engine: Engine,
+    an_admin: uuid.UUID,
+    log_lines: Callable[[], list[dict[str, Any]]],
 ) -> None:
     v = verified_client(app, migrate_engine, an_admin)
     half = sign_in(app, an_admin)
@@ -261,9 +270,14 @@ def test_lock_is_reported_and_audited(
     assert tries[-1].json() == {"code": "second_factor_locked"}
     actions = [action for action, _ in audit(migrate_engine, an_admin)]
     assert actions.count("second_factor_locked") == 1
+    assert [line["msg"] for line in log_lines() if line["level"] == "ERROR"] == [
+        "second factor locked"
+    ]
     right = half.post(PASS, json={"code": totp.code(v.secret, v.t0 + 1)})
     assert answer(right) == (403, {"code": "second_factor_locked"})
-    assert half.post(PASS, json={"code": v.codes[0]}).status_code == 200
+    # Typed loosely: lower case, no dashes.
+    typed = v.codes[0].lower().replace("-", "")
+    assert half.post(PASS, json={"code": typed}).status_code == 200
     events = audit(migrate_engine, an_admin)
     assert ("recovery_code_used", {"codes_left": 9}) in events
     assert "second_factor_unlocked" in [action for action, _ in events]
@@ -359,3 +373,16 @@ def test_code_input_never_500s(app: FastAPI, migrate_engine: Engine, an_admin: u
             PASS, content=json.dumps({"code": typed}), headers={"content-type": "application/json"}
         )
         assert answer(refused) == (422, {"code": "invalid_request"})
+
+
+# guard: the 409s tell the web app which step is missing.
+def test_out_of_order_steps_answer_409(
+    app: FastAPI, migrate_engine: Engine, an_admin: uuid.UUID
+) -> None:
+    half = sign_in(app, an_admin)
+    code = {"code": "123456"}
+    assert answer(half.post(PASS, json=code)) == (409, {"code": "enrolment_required"})
+    assert answer(half.post(CONFIRM, json=code)) == (409, {"code": "no_pending_enrolment"})
+    v = verified_client(app, migrate_engine, an_admin)
+    again = v.client.post(BEGIN, json={"ticket": totp.new_code()})
+    assert answer(again) == (409, {"code": "already_enrolled"})
