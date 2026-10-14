@@ -28,6 +28,11 @@ with engine.connect() as connection:
     # released when the connection closes. Commit so Alembic can open its own
     # transaction per migration.
     connection.execute(text("SELECT pg_advisory_lock(:id)"), {"id": MIGRATION_LOCK_ID})
+    # After the advisory lock, so a run waiting its turn waits unbounded; before any migration, so
+    # one stuck behind an app transaction fails in 5s instead of queueing every query on that
+    # table behind its own lock (ZIF-34). SET, not SET LOCAL: it must outlive this commit and
+    # every per-migration transaction after it.
+    connection.execute(text("SET lock_timeout = '5s'"))
     connection.commit()
 
     context.configure(
