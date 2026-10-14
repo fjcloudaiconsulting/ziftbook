@@ -45,8 +45,8 @@ def scratch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[C
     database it migrates: this worker's own, created here with a `probe` table and dropped after."""
     base = make_url(os.environ["ZIF_MIGRATE_DATABASE_URL"])
     name = f"{base.database}_lock_timeout"
-    # It renders into DROP DATABASE as the superuser: a plain identifier only, and within 63 bytes so
-    # Postgres can't truncate the suffix away and leave the name of the database the suite runs on.
+    # It renders into DROP DATABASE as the superuser: a plain identifier only, and within 63 bytes
+    # so Postgres can't truncate the suffix away and leave the name of the database the suite uses.
     if not re.fullmatch(r"[a-z_][a-z0-9_]{0,62}", name):
         raise RuntimeError(f"database name {name!r} is not a plain identifier of 63 bytes or less")
     admin = create_engine(ADMIN_DATABASE_URL, isolation_level="AUTOCOMMIT", poolclass=NullPool)
