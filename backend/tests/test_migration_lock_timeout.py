@@ -2,6 +2,7 @@
 rollout, while a run waiting its turn on the advisory lock waits as long as it takes (ZIF-34)."""
 
 import os
+import re
 import threading
 import time
 from collections.abc import Iterator
@@ -43,6 +44,10 @@ def scratch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[C
     """A Config that runs the real env.py with only the probe revision, and an engine on the
     database it migrates: this worker's own, created here with a `probe` table and dropped after."""
     base = make_url(os.environ["ZIF_MIGRATE_DATABASE_URL"])
+    # It renders into DROP DATABASE as the superuser: a plain identifier only, and short enough that
+    # Postgres's 63-byte truncation can't cut the suffix off and leave the base database's name.
+    if not re.fullmatch(r"[a-z_][a-z0-9_]{0,49}", base.database or ""):
+        raise RuntimeError(f"database name {base.database!r} is not a plain identifier")
     name = f"{base.database}_lock_timeout"
     admin = create_engine(ADMIN_DATABASE_URL, isolation_level="AUTOCOMMIT", poolclass=NullPool)
     with admin.connect() as conn:
@@ -64,12 +69,13 @@ def scratch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[C
     finally:
         engine.dispose()
         with admin.connect() as conn:
-            conn.execute(text(f"DROP DATABASE IF EXISTS {name}"))
+            # FORCE: this worker's own database, and a run that never finished must not keep it.
+            conn.execute(text(f"DROP DATABASE IF EXISTS {name} WITH (FORCE)"))
         admin.dispose()
 
 
 # Kills: no lock_timeout (the ALTER waits for the backstop and fails as QueryCanceled), SET LOCAL
-# (gone at the commit right after it, same), a timeout set only after the migrations started.
+# (gone at the commit right after it, same), a timeout far above 5s (the elapsed bound).
 def test_a_migration_behind_an_app_transaction_fails_on_the_lock_timeout(
     scratch: tuple[Config, Engine],
 ) -> None:
@@ -77,9 +83,13 @@ def test_a_migration_behind_an_app_transaction_fails_on_the_lock_timeout(
     with engine.connect() as app_transaction:
         # ACCESS SHARE on probe until this transaction ends, as any open read in the app holds.
         app_transaction.execute(text("SELECT FROM probe"))
+        started = time.monotonic()
         with pytest.raises(OperationalError) as caught:
             command.upgrade(cfg, "head")
+        elapsed = time.monotonic() - started
     assert isinstance(caught.value.orig, LockNotAvailable), caught.value.orig
+    # 5s plus start-up; a timeout set to anything near the 30s backstop fails here.
+    assert elapsed < 10, elapsed
     with engine.connect() as conn:
         assert conn.scalar(ADDED) == 0
 
@@ -110,6 +120,7 @@ def test_a_run_waiting_its_turn_waits_past_the_lock_timeout(
         finally:
             other_run.execute(text("SELECT pg_advisory_unlock(:id)"), {"id": MIGRATION_LOCK_ID})
             waiting.join(timeout=30)
+    assert not waiting.is_alive()
     assert not errors, errors
     with engine.connect() as conn:
         assert conn.scalar(ADDED) == 1

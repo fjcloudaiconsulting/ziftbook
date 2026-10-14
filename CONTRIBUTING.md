@@ -49,14 +49,17 @@ Specifics:
   migration, rebase it onto `main` and set its `down_revision` to the current head; `alembic heads` must print one line.
   If both are already merged, add a merge revision (`down_revision = ("a", "b")`, empty upgrade and downgrade)
   rather than editing a merged migration.
-- `CREATE INDEX CONCURRENTLY` cannot run inside a transaction; put it in its own migration using Alembic's
-  `autocommit_block()`.
 - A migration statement waits at most 5 seconds for a table or row lock (`lock_timeout`, set in `migrations/env.py`),
   so a migration stuck behind a long app transaction fails with `LockNotAvailable` instead of making every query on
-  that table queue behind it. The migrations container exits non-zero and is retried. If it keeps failing, find
-  the transaction holding the lock (`pg_locks` joined to `pg_stat_activity`), or split the migration so each step
-  locks less (one table per migration; add a constraint `NOT VALID` and validate it in a later one). Waiting for
-  another migration run to finish is not bounded: concurrent runs take turns.
+  that table queue behind it. The migrations run exits non-zero and the app does not start on the new version; run
+  it again once the lock is free. If it keeps failing, find the transaction holding the lock (`pg_locks` joined to
+  `pg_stat_activity`), or split the migration so each step locks less (one table per migration; add a constraint
+  `NOT VALID` and validate it in a later one). Waiting for another migration run to finish is not bounded:
+  concurrent runs take turns.
+- `CREATE INDEX CONCURRENTLY` cannot run inside a transaction; put it in its own migration using Alembic's
+  `autocommit_block()`. It also waits for every older transaction in the database, and on the 5-second timeout it
+  leaves an invalid index behind. Inside the block, run `DROP INDEX CONCURRENTLY IF EXISTS` first, then
+  `SET lock_timeout = 0` before it and `SET lock_timeout = '5s'` after: its wait blocks no app query.
 - Migrations run as `ziftbook_migrate`, never on app startup. The app connects as `ziftbook_app`, which owns
   nothing: never grant it ownership, `BYPASSRLS` or DDL rights.
 
