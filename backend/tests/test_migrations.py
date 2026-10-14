@@ -933,3 +933,53 @@ def test_0034_round_trips_booking_holds(
             assert (
                 conn.scalar(text(HOLD_COLUMN_PRIVILEGE), {"c": column, "p": privilege}) == expected
             ), (column, privilege)
+
+
+SLUG_OK_DEF = text("SELECT pg_get_functiondef('slug_ok(text)'::regprocedure)")
+SLUG_OK_GRANTS = text(
+    "SELECT has_function_privilege('ziftbook_app', 'slug_ok(text)', 'EXECUTE'), "
+    "has_function_privilege('public', 'slug_ok(text)', 'EXECUTE')"
+)
+VERSION = text("SELECT version_num FROM alembic_version")
+
+
+# ZIF-70 PR0 guard: 0035's downgrade puts 0030's slug_ok back and the upgrade restores its own,
+# grants untouched (CREATE OR REPLACE keeps them).
+def test_0035_round_trips_slug_ok(migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = lock_timeout_config(monkeypatch)
+    with migrate_engine.connect() as conn:
+        at_head = conn.scalar(SLUG_OK_DEF)
+    assert "'setup'" in at_head
+    try:
+        command.downgrade(cfg, "0034")
+        with migrate_engine.connect() as conn:
+            before = conn.scalar(SLUG_OK_DEF)
+            assert conn.scalar(text("SELECT slug_ok('setup')")) is True
+            assert tuple(conn.execute(SLUG_OK_GRANTS).one()) == (True, False)
+    finally:
+        command.upgrade(cfg, "head")
+    assert before == at_head.replace(",'setup'", "")
+    with migrate_engine.connect() as conn:
+        assert conn.scalar(SLUG_OK_DEF) == at_head
+        assert tuple(conn.execute(SLUG_OK_GRANTS).one()) == (True, False)
+
+
+# ZIF-70 PR0 fence: 0035 refuses to upgrade while a business holds "setup", instead of silently
+# grandfathering it (CHECKs are not re-run on existing rows). Kills an upgrade without the
+# precondition.
+def test_0035_refuses_while_a_business_holds_setup(
+    migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = lock_timeout_config(monkeypatch)
+    try:
+        command.downgrade(cfg, "0034")
+        with migrate_engine.begin() as conn:
+            conn.execute(text("INSERT INTO tenants (name, slug) VALUES ('Setup', 'setup')"))
+        with pytest.raises(DBAPIError, match='holds the slug "setup"'):
+            command.upgrade(cfg, "0035")
+        with migrate_engine.connect() as conn:
+            assert conn.scalar(VERSION) == "0034"
+    finally:
+        with migrate_engine.begin() as conn:
+            conn.execute(text("DELETE FROM tenants WHERE slug = 'setup'"))
+        command.upgrade(cfg, "head")
