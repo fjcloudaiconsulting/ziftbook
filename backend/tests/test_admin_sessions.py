@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 from httpx2 import Response
 from sqlalchemy import Engine, text
 
-from app import admin, auth
+from app import admin, auth, passwords
 from app.admin_auth import ADMIN_COOKIE, AdminSession, business
 from app.errors import ApiError
 from app.main import create_app
@@ -196,11 +196,22 @@ def test_admin_sign_in(app: FastAPI, migrate_engine: Engine, an_admin: uuid.UUID
     ]
 
 
-# fence: the sixth attempt for one email in the window is refused even with the right password.
-# Kills counting after the password check, or no limit at all.
-def test_admin_sign_in_rate_limited(app: FastAPI, an_admin: uuid.UUID) -> None:
+# fence: the sixth attempt for one email in the window is refused even with the right password,
+# before any password is checked. Kills counting only failures, a limit checked after the hash (an
+# attacker's guesses past the limit still cost a hash each), or no limit at all.
+def test_admin_sign_in_rate_limited(
+    app: FastAPI, an_admin: uuid.UUID, monkeypatch: pytest.MonkeyPatch
+) -> None:
     client = new_client(app)
     email = email_of(an_admin)
+    verify = passwords.verify
+    checked: list[str] = []
+
+    def counting(stored: str | None, password: str) -> bool:
+        checked.append(password)
+        return verify(stored, password)
+
+    monkeypatch.setattr(passwords, "verify", counting)
 
     wrong = [admin_sign_in(client, email, "wrong-password-123").status_code for _ in range(5)]
 
@@ -209,6 +220,7 @@ def test_admin_sign_in_rate_limited(app: FastAPI, an_admin: uuid.UUID) -> None:
     assert response.status_code == 429
     assert response.json() == {"code": "rate_limited"}
     assert "set-cookie" not in response.headers
+    assert len(checked) == 5  # the sixth was never hashed
 
 
 # fence: 30 minutes idle ends a session, and use keeps it alive. Kills reusing auth.IDLE (7 days),

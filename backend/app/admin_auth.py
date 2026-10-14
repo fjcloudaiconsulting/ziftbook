@@ -122,19 +122,20 @@ def sign_in(credentials: auth.Credentials, request: Request, response: Response)
             admin.record(
                 session, request, "admin_sign_in_failed", actor_user_id=None, target=target
             )
+        else:
+            # One transaction with the start: a session row never exists without its audit event.
+            assert account is not None
+            # Whatever admin session this browser had ends here, as auth.start does.
+            if old := request.cookies.get(ADMIN_COOKIE):
+                session.execute(
+                    text("SELECT end_admin_session(:id_hash)"), {"id_hash": auth.hash_token(old)}
+                )
+            admin.record(session, request, "admin_signed_in", actor_user_id=account.user_id)
+            signed_in_as = AdminSession.model_validate(
+                session.execute(RESOLVE, {"id_hash": id_hash}).one(), from_attributes=True
+            )
     if not started:
         raise ApiError(401, "invalid_credentials")
-    assert account is not None
-    with SessionLocal.begin() as session:
-        # Whatever admin session this browser had ends here, as auth.start does.
-        if old := request.cookies.get(ADMIN_COOKIE):
-            session.execute(
-                text("SELECT end_admin_session(:id_hash)"), {"id_hash": auth.hash_token(old)}
-            )
-        admin.record(session, request, "admin_signed_in", actor_user_id=account.user_id)
-        signed_in_as = AdminSession.model_validate(
-            session.execute(RESOLVE, {"id_hash": id_hash}).one(), from_attributes=True
-        )
     set_admin_cookie(response, token)
     response.headers["Cache-Control"] = "no-store"
     return signed_in_as

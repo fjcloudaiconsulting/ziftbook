@@ -1,8 +1,10 @@
 """A migration's downgrade must undo exactly what its upgrade did, grants included."""
 
+import importlib.util
 import os
 import uuid
 from datetime import UTC, datetime, timedelta
+from types import ModuleType
 from urllib.parse import urlencode
 
 import pytest
@@ -1021,3 +1023,21 @@ def test_0037_round_trips_admin_sessions(
         assert conn.scalar(RESET_DEF) == at_head
         assert tuple(conn.execute(ADMIN_SESSION_OBJECTS).one()) == (True,) * 4
         assert tuple(conn.execute(RESET_GRANTS).one()) == (True, False)
+
+
+def migration(name: str) -> ModuleType:
+    spec = importlib.util.spec_from_file_location(name, API_DIR / "migrations" / "versions" / name)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+# ZIF-70 PR2 guard: 0037's reset_password template, without the new line, is 0010's body verbatim,
+# so the downgrade restores what 0010 wrote, not a drifted copy.
+def test_0037_reset_password_is_0010s_plus_one_line() -> None:
+    old = migration("0010_audit_events.py").RESET_PASSWORD
+    new = migration("0037_admin_sessions.py")
+
+    assert new.reset_password("") == old.replace("CREATE FUNCTION", "CREATE OR REPLACE FUNCTION", 1)
+    assert new.reset_password(new.END_ADMIN_SESSIONS) != new.reset_password("")
