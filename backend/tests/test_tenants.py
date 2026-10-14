@@ -273,7 +273,7 @@ RESERVED = [
     "calendar", "clients", "my-hours", "opening-hours", "services", "settings", "team",
     "api", "admin", "www", "app", "static", "assets", "public", "help", "support", "about",
     "pricing", "legal", "privacy", "terms", "login", "logout", "account", "billing",
-    "dashboard", "ziftbook",
+    "dashboard", "ziftbook", "setup",
 ]  # fmt: skip
 
 
@@ -281,6 +281,17 @@ RESERVED = [
 def test_every_reserved_word_fails_slug_ok(app_engine: Engine, word: str) -> None:
     with app_engine.connect() as conn:
         assert conn.scalar(text("SELECT slug_ok(:s)"), {"s": word}) is False
+
+
+# ZIF-70 PR0 fence: /{locale}/setup is the first-run setup page (0035). Kills a migration that
+# leaves 'setup' out or never replaces slug_ok.
+def test_setup_is_not_a_valid_slug(app_engine: Engine) -> None:
+    with app_engine.connect() as conn:  # rolled back on close
+        conn.execute(TIMEOUT)
+        explicit = slug_of(conn, "x", "setup")
+        derived = slug_of(conn, "Setup")
+    assert explicit == "23514"
+    assert re.fullmatch(r"setup-\d+", derived), derived
 
 
 LOCALE_DIR = Path(__file__).parents[2] / "frontend" / "app" / "[locale]"
