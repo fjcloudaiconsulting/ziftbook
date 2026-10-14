@@ -32,8 +32,8 @@ def upgrade() -> None:
     op.execute("SELECT pg_advisory_xact_lock({GATE})")
     op.execute("INSERT INTO runs DEFAULT VALUES")
 """
-# One `alembic upgrade head` with the real env.py and only the probe revision. A process each, as two
-# pods would be: Alembic's `context` is process-global, so two runs in one process trample each other.
+# One `alembic upgrade head` with the real env.py and only the probe revision. A process each, as
+# two pods would be: Alembic's `context` is process-global, so two runs in one process collide.
 UPGRADE = """
 import sys
 from alembic import command
