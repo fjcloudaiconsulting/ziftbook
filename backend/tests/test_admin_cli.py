@@ -1,7 +1,9 @@
 """ZIF-70: platform_admins, platform_audit_events and the grant/revoke CLI (python -m app.admin)."""
 
+import json
 import uuid
-from typing import Any
+from collections.abc import Callable
+from typing import Any, get_args
 
 import pytest
 from sqlalchemy import Engine, text
@@ -95,7 +97,9 @@ def test_write_without_reason_is_refused(app_engine: Engine, reason: str | None)
 
 # guard: grant and revoke, each with exactly one audit event; a repeated grant changes nothing.
 def test_grant_and_revoke(
-    migrate_engine: Engine, app_engine: Engine, caplog: pytest.LogCaptureFixture
+    migrate_engine: Engine,
+    app_engine: Engine,
+    log_lines: Callable[[], list[dict[str, Any]]],
 ) -> None:
     user_id = add_user(app_engine)
     email = email_of(user_id)
@@ -114,14 +118,17 @@ def test_grant_and_revoke(
         {**cli, "action": "admin_granted", "reason": "on-call operator", "details": {"via": "cli"}},
         {**cli, "action": "admin_revoked", "reason": "left the team", "details": {"via": "cli"}},
     ]
-    assert email not in caplog.text
+    assert email not in json.dumps(log_lines())
 
 
 # guard: an unknown email changes nothing and says so with exit code 1.
 @pytest.mark.parametrize("command", ["grant", "revoke"])
-def test_unknown_email_exits_1(migrate_engine: Engine, command: str) -> None:
+def test_unknown_email_exits_1(
+    migrate_engine: Engine, command: str, log_lines: Callable[[], list[dict[str, Any]]]
+) -> None:
     email = f"{uuid.uuid4()}@example.com"
     assert admin.main([command, email, "--reason", "typo"]) == 1
+    assert email not in json.dumps(log_lines())
     with migrate_engine.connect() as conn:
         assert (
             conn.scalar(
@@ -136,7 +143,9 @@ def test_unknown_email_exits_1(migrate_engine: Engine, command: str) -> None:
 
 # fence: no reason, no change. Kills an optional --reason, which would fail mid-transaction on the
 # CHECK with a traceback instead of a usage error.
-@pytest.mark.parametrize("reason", [[], ["--reason", ""], ["--reason", " \t"]])
+@pytest.mark.parametrize(
+    "reason", [[], ["--reason", ""], ["--reason", " \t"], ["--reason", "x" * 501]]
+)
 def test_grant_needs_a_reason(
     migrate_engine: Engine, app_engine: Engine, reason: list[str]
 ) -> None:
@@ -146,3 +155,48 @@ def test_grant_needs_a_reason(
     assert exited.value.code == 2
     assert not is_admin(migrate_engine, user_id)
     assert audit_rows(migrate_engine, f"user:{user_id}") == []
+
+
+# fence: the change and its audit event commit together or not at all. Kills an audit row written
+# in its own transaction after the grant commits (an admin with no record of why).
+def test_grant_and_its_event_are_one_transaction(
+    migrate_engine: Engine, app_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user_id = add_user(app_engine)
+
+    def broken(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("audit down")
+
+    monkeypatch.setattr(admin, "record", broken)
+    with pytest.raises(RuntimeError):
+        admin.main(["grant", email_of(user_id), "--reason", "on-call"])
+    assert not is_admin(migrate_engine, user_id)
+
+
+# guard: the table's other CHECKs, whoever inserts.
+@pytest.mark.parametrize(
+    ("kind", "reason", "user_agent"),
+    [("other", None, None), ("read", "x" * 501, None), ("read", None, "x" * 513)],
+)
+def test_platform_audit_checks(
+    app_engine: Engine, kind: str, reason: str | None, user_agent: str | None
+) -> None:
+    insert = (
+        "INSERT INTO platform_audit_events (action, kind, reason, user_agent) "
+        "VALUES ('business_read', :k, :r, :ua)"
+    )
+    assert sqlstate(app_engine, insert, {"k": kind, "r": reason, "ua": user_agent}) == "23514"
+
+
+# guard: every action has a kind, or record() raises KeyError on its first use.
+def test_every_action_has_a_kind() -> None:
+    assert set(admin.KIND) == set(get_args(admin.Action))
+
+
+# guard: deleting a user ends their admin grant (ON DELETE CASCADE).
+def test_deleting_a_user_ends_the_grant(migrate_engine: Engine, app_engine: Engine) -> None:
+    user_id = add_user(app_engine)
+    assert admin.main(["grant", email_of(user_id), "--reason", "on-call"]) == 0
+    with migrate_engine.begin() as conn:
+        conn.execute(text("DELETE FROM users WHERE id = :u"), {"u": user_id})
+    assert not is_admin(migrate_engine, user_id)

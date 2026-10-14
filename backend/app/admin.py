@@ -22,7 +22,7 @@ from sqlalchemy.pool import NullPool
 from app import logs, passwords
 from app.auth import origin
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("app.admin")  # not __name__: "__main__" under python -m
 
 Action = Literal[
     "admin_granted",
@@ -91,7 +91,8 @@ def _reason(value: str) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """0 done (or nothing to do), 1 no account with that email, 2 usage error (argparse)."""
+    """0 done (or nothing to do), 1 no account with that email (or any uncaught error, logged
+    CRITICAL), 2 usage error (argparse)."""
     parser = argparse.ArgumentParser(prog="python -m app.admin", description=__doc__)
     parser.add_argument("command", choices=("grant", "revoke"))
     parser.add_argument("email")

@@ -102,8 +102,9 @@ every table that holds a tenant's data:
   customer-facing endpoints never select it.
 
 `tests/test_tenant_schema.py` fails for a table with `tenant_id` that is not isolated (forced row-level security),
-and for a foreign key between tenant-owned tables that does not pair `tenant_id`. `jobs` is exempt on purpose: it
-is global and claimed across tenants.
+and for a foreign key between tenant-owned tables that does not pair `tenant_id`. Exempt on purpose: `jobs` (global,
+claimed across tenants), `sessions` (how the tenant is found) and `platform_audit_events` (global; its `tenant_id`
+names the business a platform admin acted on).
 
 `tenants` is the root table: it isn't isolated with `enable_tenant_isolation` and has no row-level security of its
 own.
@@ -236,8 +237,9 @@ we can show which businesses were not affected.
 - Never write passwords, tokens, token hashes, cookie values or emails. `details` holds what an event changed
   (a setting's old and new value), which the business's owner reads, so never personal data either. `target` names what the event is about
   (`user:<id>`).
-- It is the one table with a `tenant_id` that is neither `NOT NULL REFERENCES tenants` nor set up with
-  `enable_tenant_isolation`: events outlive removed businesses and erased users, and some belong to no business.
+- It is one of two tables with a `tenant_id` that is neither `NOT NULL REFERENCES tenants` nor set up with
+  `enable_tenant_isolation` (the other is `platform_audit_events`, below): events outlive removed businesses and
+  erased users, and some belong to no business.
 - Operators read every event as `ziftbook_migrate`, in a transaction:
   `BEGIN; SET LOCAL app.audit_review = 'on'; SELECT DISTINCT tenant_id FROM audit_events WHERE created_at > ...;`
 - The app role can set `app.audit_review` too. A definer function owned by `ziftbook_migrate` that reads
@@ -253,8 +255,9 @@ A platform admin runs the platform across businesses (ZIF-70). `platform_admins`
 
 - The app role has no grant at all on `platform_admins`: it can neither read nor change who is an admin. Admins
   are granted and revoked with the CLI, which connects as `ziftbook_migrate` (`ZIF_MIGRATE_DATABASE_URL`):
-  `docker compose run --rm migrate python -m app.admin grant <email> --reason "..."` (or `revoke`). `--reason` is
-  required. Exit code 0 means done or nothing to do, 1 means no account has that email.
+  `docker compose run --rm --build migrate python -m app.admin grant <email> --reason "..."` (or `revoke`).
+  `--reason` is required. Exit code 0 means done or nothing to do, 1 no account has that email (or another error,
+  logged CRITICAL), 2 a usage error.
 - What admins do goes to `platform_audit_events`, a global table, not per business: add an event with
   `admin.record(session, request, action, actor_user_id=..., tenant_id=..., target=..., reason=...)` after adding
   the action to `admin.Action` and its kind to `admin.KIND`. The same rules as `auth.record`: never a password,
