@@ -15,8 +15,9 @@ VIOLATIONS = text("""
 SELECT c.relname || ': has tenant_id but no forced RLS with the tenant_isolation policy'
 FROM pg_class c
 WHERE c.relnamespace = 'public'::regnamespace AND c.relkind = 'r'
-  -- Global on purpose: jobs are claimed across tenants; a session is how the tenant is found.
-  AND c.relname NOT IN ('jobs', 'sessions')
+  -- Global on purpose: jobs are claimed across tenants; a session is how the tenant is found;
+  -- platform_audit_events records which business an admin acted on, and the app can't read it.
+  AND c.relname NOT IN ('jobs', 'sessions', 'platform_audit_events')
   AND EXISTS (
     SELECT FROM pg_attribute a
     WHERE a.attrelid = c.oid AND a.attname = 'tenant_id' AND NOT a.attisdropped)
