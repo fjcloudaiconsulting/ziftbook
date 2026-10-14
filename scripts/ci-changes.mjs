@@ -11,7 +11,8 @@ export function affected(paths) {
     if (DOCS.test(path)) continue;
     // The repo checks scan the whole tree (env names and docs, catalogs, Docker Hub references).
     jobs.repo = true;
-    if (path === "backend/openapi.json") jobs.backend = jobs.frontend = true;
+    // Frontend tests read both: the generated client and the API's MAX_BODY (tests/proxy.test.mjs).
+    if (path === "backend/openapi.json" || path === "backend/app/main.py") jobs.backend = jobs.frontend = true;
     else if (path.startsWith("backend/")) jobs.backend = true;
     else if (path.startsWith("frontend/")) jobs.frontend = true;
     else if (path.startsWith("landing/")) jobs.landing = true;

@@ -16,7 +16,8 @@ concurrency:
 
 jobs:
   # Pull requests run only the jobs their changed paths can affect (scripts/ci-changes.mjs). A skipped job still counts
-  # as passing in the aggregate checks below, which always run, so required checks never wait on a skipped job.
+  # as passing in the aggregate checks below, which always run, so required checks never wait on a skipped job. Jobs
+  # skip only on an explicit 'false': a missing or empty output runs them.
   changes:
     name: Detect Changes
     runs-on: ubuntu-latest
@@ -49,14 +50,20 @@ jobs:
           fi
           # A pull request checks out its merge commit, whose first parent is the base branch: the diff is the whole PR.
           git rev-parse -q --verify HEAD^2 >/dev/null || { echo "expected the pull request merge commit" >&2; exit 1; }
+          # Never echo the paths: a file name is PR input, and on stdout `::add-mask::true` would blank every output.
           git diff --name-only --no-renames HEAD^1 HEAD > "$RUNNER_TEMP/changed"
-          cat "$RUNNER_TEMP/changed"
+          # backend/tests/test_tenants.py reads the top-level route folders: adding, renaming or removing one runs it.
+          routes() {
+            git --literal-pathspecs ls-tree -d --name-only "$1" -- \
+              'frontend/app/[locale]/' 'frontend/app/[locale]/(console)/'
+          }
+          [ "$(routes HEAD^1)" = "$(routes HEAD)" ] || echo backend/tests/test_tenants.py >> "$RUNNER_TEMP/changed"
           node scripts/ci-changes.mjs < "$RUNNER_TEMP/changed" | tee -a "$GITHUB_OUTPUT"
 
   repo:
     name: Repo Checks
     needs: changes
-    if: needs.changes.outputs.repo == 'true'
+    if: needs.changes.outputs.repo != 'false'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -89,7 +96,7 @@ jobs:
   api:
     name: Backend Tests
     needs: changes
-    if: needs.changes.outputs.backend == 'true'
+    if: needs.changes.outputs.backend != 'false'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -147,7 +154,7 @@ jobs:
   backend-images:
     name: Image (${{ matrix.image }})
     needs: changes
-    if: needs.changes.outputs.backend == 'true'
+    if: needs.changes.outputs.backend != 'false'
     strategy:
       matrix:
         include:
@@ -163,7 +170,7 @@ jobs:
   frontend-image:
     name: Image (frontend)
     needs: changes
-    if: needs.changes.outputs.frontend == 'true'
+    if: needs.changes.outputs.frontend != 'false'
     permissions: { contents: read, packages: write }
     uses: fjcloudaiconsulting/.github/.github/workflows/build-image.yml@v1
     with:
@@ -176,7 +183,7 @@ jobs:
   web:
     name: Frontend Tests
     needs: changes
-    if: needs.changes.outputs.frontend == 'true'
+    if: needs.changes.outputs.frontend != 'false'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -201,7 +208,7 @@ jobs:
   landing:
     name: Landing Tests
     needs: changes
-    if: needs.changes.outputs.landing == 'true'
+    if: needs.changes.outputs.landing != 'false'
     runs-on: ubuntu-latest
     defaults:
       run:
