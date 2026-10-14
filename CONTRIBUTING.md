@@ -247,6 +247,21 @@ we can show which businesses were not affected.
   names every column, so a new app against the old schema fails on every event, not only the new one.
 - Nothing purges events yet. The ZIF-5 sweeper will remove failed sign-ins after 30 days and the rest after a year.
 
+### Platform admin
+
+A platform admin runs the platform across businesses (ZIF-70). `platform_admins` holds one row per admin.
+
+- The app role has no grant at all on `platform_admins`: it can neither read nor change who is an admin. Admins
+  are granted and revoked with the CLI, which connects as `ziftbook_migrate` (`ZIF_MIGRATE_DATABASE_URL`):
+  `docker compose run --rm migrate python -m app.admin grant <email> --reason "..."` (or `revoke`). `--reason` is
+  required. Exit code 0 means done or nothing to do, 1 means no account has that email.
+- What admins do goes to `platform_audit_events`, a global table, not per business: add an event with
+  `admin.record(session, request, action, actor_user_id=..., tenant_id=..., target=..., reason=...)` after adding
+  the action to `admin.Action` and its kind to `admin.KIND`. The same rules as `auth.record`: never a password,
+  token, cookie, email or personal data.
+- The app role may only append, naming its columns: never `id` or `created_at`, never read, change or delete. A
+  `write` event without a non-blank `reason` is refused by the database. Operators read it as `ziftbook_migrate`.
+
 ## Client IP
 
 Rate limits and audit events key on the visitor's address. Each deployment has exactly one trusted source for it:
