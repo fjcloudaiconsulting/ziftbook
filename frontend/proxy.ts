@@ -3,11 +3,13 @@ import { type NextRequest, NextResponse } from "next/server";
 
 import { routing } from "./i18n/routing";
 import { errorFields, logger, requestId } from "./lib/log";
+import { readNeedsSetup, setupGate, setupRedirect } from "./lib/setup-gate";
 import { endProxySpan, startProxySpan, traceparent } from "./lib/trace";
 import { apiUrl, clientIp, MAX_BODY_BYTES } from "./lib/upstream";
 
 const localize = createMiddleware(routing);
 const log = logger("web.proxy");
+const needsSetup = setupGate(readNeedsSetup);
 
 // Headers that name the visitor. Only the one this deployment trusts is forwarded, as
 // X-Forwarded-For.
@@ -126,12 +128,15 @@ async function forwardApi(request: NextRequest): Promise<Response> {
   }
 }
 
-export default function proxy(request: NextRequest) {
+export default async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   if (pathname === "/api" || pathname.startsWith("/api/")) {
     return forwardApi(request);
   }
+
+  const setup = setupRedirect(pathname, routing.locales);
+  if (setup && (await needsSetup())) return NextResponse.redirect(new URL(setup, request.url));
 
   return localize(request);
 }

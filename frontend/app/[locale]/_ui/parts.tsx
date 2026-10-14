@@ -151,7 +151,7 @@ export function Heading({ focus, children }: { focus?: boolean; children: ReactN
 }
 
 /** Where a flow ends: a mark, what happened, and the one way forward. */
-export function Outcome({ icon, title, lede, children }: { icon: keyof typeof MARKS; title: string; lede: string; children: ReactNode }) {
+export function Outcome({ icon, title, lede, children }: { icon: keyof typeof MARKS; title: string; lede: ReactNode; children: ReactNode }) {
   return (
     <>
       <Mark icon={icon} />
@@ -220,10 +220,12 @@ export function EmailField({
   error,
   autoComplete = "email",
   inputRef,
+  placeholder,
 }: {
   value: string;
   onChange(value: string): void;
   error?: string;
+  placeholder?: string;
   /** "off" for an invite form: the browser autofills the signed-in person's own address otherwise. */
   autoComplete?: "email" | "off";
   inputRef?: Ref<HTMLInputElement>;
@@ -244,7 +246,7 @@ export function EmailField({
           autoComplete={autoComplete}
           required
           maxLength={254}
-          placeholder={t("emailPlaceholder")}
+          placeholder={placeholder ?? t("emailPlaceholder")}
           value={value}
           onChange={(event) => onChange(event.target.value)}
           aria-invalid={error ? true : undefined}
