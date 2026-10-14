@@ -126,4 +126,4 @@ def test_startup_totp_key_field(
     ]
     assert [line["level"] for line in unavailable] == ["ERROR"] * errors
     if value:
-        assert value not in json.dumps(lines)
+        assert value not in json.dumps(lines, ensure_ascii=False)  # the raw text, unescaped
