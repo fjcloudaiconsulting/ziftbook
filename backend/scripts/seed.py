@@ -7,6 +7,7 @@ catches them. Refuses anything but this machine: see check_local().
 
 import argparse
 import json
+import os
 import re
 import sys
 import time
@@ -260,6 +261,28 @@ class Seed:
                 sys.exit(f"{self.base} did not answer in 120s: make up first")
             time.sleep(2)
 
+    def set_up(self) -> None:
+        """A fresh install takes no sign-up until its first-run setup is done (ZIF-70): do it, with
+        the token from the environment (make seed passes docker-compose.yaml's dev one)."""
+        api = Api(self.base)
+        if not api.ok("GET", "/api/setup")["needs_setup"]:
+            return
+        status, data = api.call(
+            "POST",
+            "/api/setup",
+            {
+                "token": os.environ.get("ZIF_SETUP_TOKEN", ""),
+                "email": email_of("admin"),
+                "password": PASSWORD,
+                "name": "Admin",
+                "locale": "en",
+            },
+        )
+        if status not in (201, 409):  # 409: someone else just did it
+            sys.exit(
+                f"first-run setup: {status} {data} (ZIF_SETUP_TOKEN as in docker-compose.yaml)"
+            )
+
     # People ----------------------------------------------------------------------------------
 
     def sign_up(self, who: str, locale: str, business: str, country: str) -> tuple[Api, Any]:
@@ -390,6 +413,7 @@ class Seed:
 
     def run(self) -> None:
         self.wait_for_app()
+        self.set_up()
         status, data = self.sign_in("both")
         if status == 200:
             status, data = self.sign_in("owner")
@@ -666,6 +690,7 @@ class Seed:
             ("owner", "Seedwijk Kapsalon owner (no services)", "none"),
             ("worker", "Seedwijk Kapsalon worker; client at Estudio Seedsol", "none"),
             ("ownerworker", "Estudio Seedsol owner and worker", "pt"),
+            ("admin", "platform admin, from first-run setup", "en"),
         ]
         print(f"\nPassword for all: {PASSWORD}")
         for who, role, language in rows:

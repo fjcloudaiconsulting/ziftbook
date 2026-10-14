@@ -132,6 +132,12 @@ def complete_sign_up(
     details: CompleteSignUp, request: Request, response: Response
 ) -> auth.SessionOut:
     """Create the business and its owner from a sign-up link, and sign the owner in."""
+    from app import setup  # here: setup imports this module for its name type
+
+    # Before the link is touched, so it still works once setup is done (ZIF-70). Without this a
+    # stranger's sign-up on a fresh install would close setup for good.
+    if setup.needed():
+        raise ApiError(409, "setup_required")
     password = passwords.check_new_password(details.password)
     digest = live_token(details.token, "sign_up")
     password_hash = passwords.hash_password(password)

@@ -40,6 +40,8 @@ To fill the running app with synthetic data (two businesses, four people, a book
 make seed   # needs make up running; prints the logins, the public booking pages and a guest booking link
 ```
 
+A fresh database takes no sign-up until its first-run setup is done; `make seed` does it first, with
+`docker-compose.yaml`'s development `ZIF_SETUP_TOKEN`, making `admin.seed@example.com` the platform admin.
 It signs everyone up through the real API, so the worker and Mailpit must be running. After `make reset`, run it in a
 second terminal once the stack is up (`make reset` ends in a foreground `make up`). If a run fails part-way,
 `make reset`, then `make seed`. Its pending bookings lapse a week later. It only talks to `localhost`, `127.0.0.1` or

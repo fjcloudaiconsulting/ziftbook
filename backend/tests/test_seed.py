@@ -10,6 +10,7 @@ certain hours of the day.
 
 import http.server
 import importlib
+import json
 import threading
 from collections.abc import Iterator
 from datetime import UTC, date, datetime, timedelta
@@ -112,6 +113,55 @@ def test_requests_refuse_redirects_off_the_machine(
         seed.Api(f"http://127.0.0.1:{target.server_port}").call("GET", "/x")
     assert refused.value.code == 2
     assert target_hits.hits == 1
+
+
+class SetupStub(http.server.BaseHTTPRequestHandler):
+    """GET /api/setup says whether setup is due; POST /api/setup records its body and answers."""
+
+    needs = True
+    status = 201
+    posted: list[dict[str, Any]] = []
+
+    def answer(self, status: int, body: object) -> None:
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(json.dumps(body).encode())
+
+    def do_GET(self) -> None:
+        self.answer(200, {"needs_setup": self.needs})
+
+    def do_POST(self) -> None:
+        length = int(self.headers["Content-Length"])
+        type(self).posted.append(json.loads(self.rfile.read(length)))
+        self.answer(self.status, {})
+
+    def log_message(self, *args: Any) -> None:
+        pass
+
+
+# ZIF-142 guard: a fresh install is set up first (sign-ups wait for it), an installed one is left
+# alone, and a lost race (409) counts as done.
+@pytest.mark.parametrize(
+    ("needs", "status", "posts"), [(True, 201, 1), (True, 409, 1), (False, 0, 0)]
+)
+def test_seed_does_first_run_setup_only_when_due(
+    monkeypatch: pytest.MonkeyPatch, needs: bool, status: int, posts: int
+) -> None:
+    monkeypatch.setenv("ZIF_SETUP_TOKEN", "t" * 32)
+    handler: type[SetupStub] = type(
+        "Handler", (SetupStub,), {"needs": needs, "status": status, "posted": []}
+    )
+    server = http.server.HTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        seed.Seed(f"http://127.0.0.1:{server.server_port}", "http://127.0.0.1:1").set_up()
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert [(p["token"], p["email"]) for p in handler.posted] == [
+        ("t" * 32, "admin.seed@example.com")
+    ] * posts
 
 
 def nows() -> list[tuple[str, datetime]]:
