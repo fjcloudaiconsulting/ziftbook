@@ -690,7 +690,7 @@ class Seed:
             ("owner", "Seedwijk Kapsalon owner (no services)", "none"),
             ("worker", "Seedwijk Kapsalon worker; client at Estudio Seedsol", "none"),
             ("ownerworker", "Estudio Seedsol owner and worker", "pt"),
-            ("admin", "platform admin, from first-run setup", "en"),
+            ("admin", "platform admin, if this database's setup was made by make seed", "en"),
         ]
         print(f"\nPassword for all: {PASSWORD}")
         for who, role, language in rows:

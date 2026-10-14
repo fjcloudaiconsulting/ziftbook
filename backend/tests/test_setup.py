@@ -181,11 +181,17 @@ def test_complete_setup_refuses_repeatable_read(
     assert count(empty_install.migrate, "users") == 0
 
 
-# FENCE. Wrong impl: comparing the token before the 409, which keeps it an oracle after setup.
-def test_installed_answers_409_before_the_token(app: FastAPI, configured: str) -> None:
+# FENCE. Wrong impls: comparing the token, or checking it is configured, before the 409: a guess
+# stays an oracle after setup, and removing the token afterwards turns the 409 into a 503.
+def test_installed_answers_409_before_the_token(
+    app: FastAPI, configured: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     assert post_setup(new_client(app), body()).status_code == 201
     again = post_setup(new_client(app), body(token="x" * 40, email="b@example.com"))
     assert (again.status_code, again.json()) == (409, {"code": "already_set_up"})
+    monkeypatch.delenv("ZIF_SETUP_TOKEN")  # operators may remove it once setup is done
+    removed = post_setup(new_client(app), body(token="", email="b@example.com"))
+    assert (removed.status_code, removed.json()) == (409, {"code": "already_set_up"})
 
 
 # FENCE. Wrong impls: compare_digest(b"", b"") accepting an empty token, or no minimum length.
@@ -211,15 +217,17 @@ def test_token_input_never_500s(
     configured: str,
     log_lines: Callable[[], list[dict[str, Any]]],
 ) -> None:
-    refused = post_setup(new_client(app), body(token="é" * 40))
-    assert (refused.status_code, refused.json()) == (403, {"code": "invalid_setup_token"})
+    for guess in ("é" * 40, "y" * 40):
+        refused = post_setup(new_client(app), body(token=guess))
+        assert (refused.status_code, refused.json()) == (403, {"code": "invalid_setup_token"})
     for guess in ("\ud800", "x" * 201):
         invalid = post_setup(new_client(app), body(token=guess))
         assert (invalid.status_code, invalid.json()) == (422, {"code": "invalid_request"})
     rejected = [line for line in log_lines() if line["msg"] == "setup token rejected"]
-    assert [line["level"] for line in rejected] == ["WARNING"]
-    logged = json.dumps(log_lines())
-    assert "éééé" not in logged and TOKEN not in logged and ADMIN_EMAIL not in logged
+    assert [line["level"] for line in rejected] == ["WARNING", "WARNING"]
+    logged = json.dumps(log_lines(), ensure_ascii=False)
+    for secret in ("é" * 40, "y" * 40, TOKEN, ADMIN_EMAIL):
+        assert secret not in logged
     assert count(empty_install.migrate, "users") == 0
 
 
