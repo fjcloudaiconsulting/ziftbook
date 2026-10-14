@@ -18,8 +18,8 @@ from tests.conftest import ADMIN_DATABASE_URL, API_DIR
 # Held by the test so the first run stops inside its migration, still holding env.py's lock.
 GATE = 119
 # The real env.py runs this one revision, against a database of its own: it parks on the gate, then
-# records that it ran. lock_timeout 0 because the gate is held on purpose, for longer than env.py's
-# own lock_timeout (ZIF-34) would allow.
+# records that it ran. lock_timeout 0 because the gate is held on purpose: env.py may bound lock
+# waits (ZIF-34), and a slow run must not turn that into a failure here.
 PROBE = f"""
 from alembic import op
 
@@ -59,17 +59,17 @@ def scratch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[P
     """A directory holding only the probe revision, and an engine on the database it migrates: this
     worker's own, created here with a `runs` table and dropped after."""
     base = make_url(os.environ["ZIF_MIGRATE_DATABASE_URL"])
-    # It renders into DROP DATABASE as the superuser: a plain identifier only, and short enough that
-    # Postgres's 63-byte truncation can't cut the suffix off and leave the base database's name.
-    if not re.fullmatch(r"[a-z_][a-z0-9_]{0,49}", base.database or ""):
-        raise RuntimeError(f"database name {base.database!r} is not a plain identifier")
     name = f"{base.database}_serialise"
+    # It renders into DROP DATABASE as the superuser: a plain identifier only, and within 63 bytes so
+    # Postgres can't truncate the suffix away and leave the name of the database the suite runs on.
+    if not re.fullmatch(r"[a-z_][a-z0-9_]{0,62}", name):
+        raise RuntimeError(f"database name {name!r} is not a plain identifier of 63 bytes or less")
     admin = create_engine(ADMIN_DATABASE_URL, isolation_level="AUTOCOMMIT", poolclass=NullPool)
     with admin.connect() as conn:
         conn.execute(text(f"DROP DATABASE IF EXISTS {name}"))
         conn.execute(text(f"CREATE DATABASE {name} OWNER ziftbook_migrate"))
-    # A backstop only: a run left waiting by a failed assertion ends after 30s, not never.
-    url = base.set(database=name).update_query_dict({"options": "-c statement_timeout=30s"})
+    # A backstop only: a run left waiting by a failed assertion ends after 60s, not never.
+    url = base.set(database=name).update_query_dict({"options": "-c statement_timeout=60s"})
     monkeypatch.setenv("ZIF_MIGRATE_DATABASE_URL", url.render_as_string(hide_password=False))
     engine = create_engine(url, poolclass=NullPool)
     with engine.begin() as conn:
@@ -80,7 +80,8 @@ def scratch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[P
     finally:
         engine.dispose()
         with admin.connect() as conn:
-            # FORCE: this worker's own database, and a run that never finished must not keep it.
+            # FORCE: a run that never finished must not keep it. The name is this worker's alone
+            # under conftest's one-base-name-per-checkout rule.
             conn.execute(text(f"DROP DATABASE IF EXISTS {name} WITH (FORCE)"))
         admin.dispose()
 
@@ -93,6 +94,15 @@ def start_upgrade(versions: Path) -> subprocess.Popen[str]:
         stderr=subprocess.STDOUT,
         text=True,
     )
+
+
+def finish(run: subprocess.Popen[str]) -> str:
+    """Its output once it exits; killed if it is still stuck after a minute."""
+    try:
+        return run.communicate(timeout=60)[0]
+    except subprocess.TimeoutExpired:
+        run.kill()
+        return run.communicate()[0]
 
 
 def advisory_waits(engine: Engine, count: int) -> list[tuple[int, int, list[int]]]:
@@ -129,7 +139,8 @@ def test_a_second_run_waits_for_the_first_to_finish(scratch: tuple[Path, Engine]
             assert by == [first], waits
         finally:
             gate.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": GATE})
-            outputs = [run.communicate(timeout=60)[0] for run in runs]
+            outputs = [finish(run) for run in runs]
+            print(*outputs, sep="\n")  # pytest shows it when an assertion above failed
     assert [run.returncode for run in runs] == [0, 0], outputs
     with engine.connect() as conn:
         assert conn.scalar(text("SELECT count(*) FROM runs")) == 1
