@@ -1,0 +1,115 @@
+/* Platform admin sign-in and two-factor screens (ZIF-71), on the account screens' tokens. */
+
+/* Codes, keys and commands are read character by character: a monospace face keeps 0/O and 1/l apart. */
+.mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace; font-variant-numeric: tabular-nums slashed-zero; font-variant-ligatures: none; }
+
+/* A command for whoever runs the server, with its copy button. */
+.command {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem 0.75rem;
+  padding: 0.75rem 0.75rem 0.75rem 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  background: var(--surface);
+}
+.command code { flex: 1 1 13rem; min-width: 0; font-size: 0.875rem; line-height: 1.5; overflow-wrap: anywhere; user-select: all; }
+
+.nowrap { white-space: nowrap; }
+.copy { flex: none; }
+.copy svg { color: var(--ok); }
+
+/* Scan */
+.qr {
+  margin: 0;
+  align-self: center;
+  width: min(100%, 12.5rem);
+  padding: 0.25rem; /* segno's SVG already carries the 4-module quiet zone */
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  background: oklch(1 0 0);
+}
+.qr img { display: block; width: 100%; height: auto; aspect-ratio: 1; image-rendering: pixelated; }
+
+.key {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.15rem 0.6rem;
+  margin: 0;
+  font-size: 1.0625rem;
+  letter-spacing: 0.04em;
+  user-select: all;
+}
+.keyRow { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.6rem 1rem; }
+
+/* A phone can't scan its own screen: offer the otpauth link there instead. */
+.onPhone { display: none; }
+@media (pointer: coarse) { .onPhone { display: inline-flex; } }
+/* Doubled: outranks the column's `.col a` link colour, as `.col a.primary` does. */
+a.onPhone.onPhone { color: var(--ink); }
+
+/* One-time code input: big, spaced digits so a misread is visible before it's sent. */
+.otp input { font-size: 1.375rem; letter-spacing: 0.3em; text-align: center; min-height: 56px; }
+.otp input::placeholder { letter-spacing: 0.3em; color: var(--field-line); }
+.recovery input { font-size: 1.0625rem; letter-spacing: 0.04em; text-transform: uppercase; }
+.recovery input::placeholder { text-transform: none; color: var(--field-line); }
+
+/* Recovery codes, shown once */
+.once {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.2rem 0.65rem;
+  padding: 0.9rem 1rem;
+  border: 2px solid var(--note-line);
+  border-radius: 0.75rem;
+  background: var(--note-soft);
+  font-size: 0.9375rem;
+}
+.once svg { grid-row: span 2; margin-top: 0.2rem; color: var(--note-ink); }
+.once strong { font-weight: 600; font-size: 1rem; }
+.once p { margin: 0; color: var(--ink); }
+
+.codes {
+  margin: 0;
+  padding: 0.5rem 0;
+  list-style: none;
+  counter-reset: code;
+  border: 1px solid var(--field-line);
+  border-radius: 0.75rem;
+  background: var(--bg);
+}
+.codes li {
+  counter-increment: code;
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  padding: 0.3rem 1rem;
+  font-size: 1rem;
+  letter-spacing: 0.03em;
+}
+.codes li::before {
+  content: counter(code);
+  min-width: 1.25rem;
+  text-align: right;
+  font: 400 0.8125rem/1 var(--font-body), system-ui, sans-serif;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.buttons { display: flex; flex-wrap: wrap; gap: 0.6rem; }
+.buttons > * { flex: 1 1 8rem; }
+
+.check { display: flex; align-items: flex-start; gap: 0.7rem; min-height: 44px; font-weight: 600; font-size: 0.9375rem; cursor: pointer; }
+.check input { width: 1.25rem; height: 1.25rem; margin: 0.1rem 0 0; accent-color: var(--primary); flex: none; }
+
+/* Who is signed in, under a two-factor step. */
+.who { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 0 0.75rem; margin: 0; font-size: 0.9375rem; color: var(--muted); }
+
+.section { display: flex; flex-direction: column; gap: 0.6rem; }
+.sectionTitle { margin: 0; font: 600 1rem/1.3 var(--font-body), system-ui, sans-serif; }
+
+.account { display: flex; align-items: center; gap: 0.9rem; padding: 0.9rem 1rem; border: 1px solid var(--line); border-radius: 1rem; }
+.account div { min-width: 0; display: flex; flex-direction: column; gap: 0.1rem; }
+.account strong { font-weight: 600; overflow-wrap: anywhere; }
+.account span { color: var(--muted); font-size: 0.9375rem; overflow-wrap: anywhere; }
