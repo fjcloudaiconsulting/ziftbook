@@ -251,7 +251,12 @@ def test_setup_creates_and_signs_in_an_admin(
     assert done.status_code == 201, done.content
     assert done.headers["cache-control"] == "no-store"
     user_id = done.json()["user_id"]
-    assert done.json() == {"user_id": user_id, "email": ADMIN_EMAIL, "name": "Ada"}
+    assert done.json() == {
+        "user_id": user_id,
+        "email": ADMIN_EMAIL,
+        "name": "Ada",
+        "second_factor": "enrolment_required",  # setup issues no enrolment ticket (ZIF-71)
+    }
     cookie = done.headers["set-cookie"]
     assert cookie.startswith(f"{ADMIN_COOKIE}=") and "SameSite=strict" in cookie
     assert client.get("/api/admin/session").json()["user_id"] == user_id

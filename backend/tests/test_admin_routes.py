@@ -55,11 +55,16 @@ def test_owner_never_gets_2xx_on_admin_routes(
     assert answers == dict.fromkeys(answers, 401)
 
 
-# fence: /api/admin is exactly the session routes. A data route (reading a business) needs ZIF-71's
-# second factor first: widen this list only with it. Kills a data route shipped before 2FA.
+# fence: /api/admin is exactly sign-in and what a half session needs (admin_half_router). A read
+# route goes on admin_auth.admin_router (second factor passed), a write on admin_write_router
+# (passed within 15 minutes), never on the half router: widen this list only with that. Kills a
+# data route shipped where a password alone reaches it.
 def test_admin_routes_are_the_allowlist() -> None:
     assert admin_routes(create_app()) == {
         ("POST", "/api/admin/session"),
         ("GET", "/api/admin/session"),
         ("DELETE", "/api/admin/session"),
+        ("POST", "/api/admin/session/second-factor"),
+        ("POST", "/api/admin/totp/enrolment"),
+        ("POST", "/api/admin/totp/enrolment/confirm"),
     }

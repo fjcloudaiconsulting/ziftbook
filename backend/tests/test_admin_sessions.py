@@ -182,7 +182,12 @@ def test_admin_sign_in(app: FastAPI, migrate_engine: Engine, an_admin: uuid.UUID
 
     assert response.status_code == 200
     assert response.headers["cache-control"] == "no-store"
-    expected = {"user_id": str(an_admin), "email": email_of(an_admin), "name": "Test Person"}
+    expected = {
+        "user_id": str(an_admin),
+        "email": email_of(an_admin),
+        "name": "Test Person",
+        "second_factor": "enrolment_required",  # the password only buys a half session
+    }
     assert response.json() == expected
     cookie = SimpleCookie(response.headers["set-cookie"])[ADMIN_COOKIE]
     assert (cookie["secure"], cookie["httponly"]) == (True, True)
@@ -333,7 +338,14 @@ def test_admin_sign_out(app: FastAPI, migrate_engine: Engine, an_admin: uuid.UUI
 def test_business_helper_records_and_isolates(
     people: People, migrate_engine: Engine, an_admin: uuid.UUID, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    current = AdminSession(user_id=an_admin, email=email_of(an_admin), name=None)
+    current = AdminSession(
+        user_id=an_admin,
+        email=email_of(an_admin),
+        name=None,
+        factor_passed=True,
+        factor_fresh=True,
+        enrolled=True,
+    )
     in_a, in_b = seed_service(people.a), seed_service(people.b)
     tag = uuid.uuid4().hex
 

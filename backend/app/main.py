@@ -234,7 +234,9 @@ def create_app() -> FastAPI:
         holds.router,
         holds.link_router,
         admin_auth.admin_sign_in_router,
+        admin_auth.admin_half_router,
         admin_auth.admin_router,
+        admin_auth.admin_write_router,
         setup.router,
     ):
         for route in each.routes:

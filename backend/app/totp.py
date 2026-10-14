@@ -16,12 +16,15 @@ import secrets
 import struct
 from datetime import datetime
 from typing import Literal
+from urllib.parse import quote, urlencode
 from uuid import UUID
 
+import segno
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from app.config import SecondFactorSettings
 
+ISSUER = "ZiftBook"
 STEP = 30  # seconds
 VERSION = b"\x01"  # the key version, the first byte of every stored ciphertext
 NONCE = 12
@@ -112,3 +115,26 @@ def decrypt(blob: bytes, user_id: UUID) -> bytes:
     if blob[:1] != VERSION:
         raise ValueError("unknown TOTP key version")
     return _aead().decrypt(blob[1 : 1 + NONCE], blob[1 + NONCE :], user_id.bytes)
+
+
+def otpauth_uri(secret: bytes, email: str) -> str:
+    """What an authenticator app scans: the key URI format every app reads."""
+    query = urlencode(
+        {
+            "secret": base64.b32encode(secret).decode(),
+            "issuer": ISSUER,
+            "algorithm": "SHA1",
+            "digits": 6,
+            "period": STEP,
+        }
+    )
+    return f"otpauth://totp/{quote(f'{ISSUER}:{email}', safe='@:')}?{query}"
+
+
+def qr_data_uri(uri: str) -> str:
+    """The URI as a QR code, an SVG data URI for <img src>: no markup reaches the page.
+
+    make_qr: a full QR code, never a Micro QR that authenticator apps can't read. omitsize: a
+    viewBox instead of a fixed 45px, so CSS can size the image.
+    """
+    return segno.make_qr(uri).svg_data_uri(omitsize=True)
