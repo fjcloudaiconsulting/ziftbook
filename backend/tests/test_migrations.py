@@ -1,8 +1,10 @@
 """A migration's downgrade must undo exactly what its upgrade did, grants included."""
 
+import importlib.util
 import os
 import uuid
 from datetime import UTC, datetime, timedelta
+from types import ModuleType
 from urllib.parse import urlencode
 
 import pytest
@@ -983,3 +985,59 @@ def test_0035_refuses_while_a_business_holds_setup(
         with migrate_engine.begin() as conn:
             conn.execute(text("DELETE FROM tenants WHERE slug = 'setup'"))
         command.upgrade(cfg, "head")
+
+
+RESET_DEF = text("SELECT pg_get_functiondef('reset_password(bytea,text)'::regprocedure)")
+RESET_GRANTS = text(
+    "SELECT has_function_privilege('ziftbook_app', 'reset_password(bytea,text)', 'EXECUTE'), "
+    "has_function_privilege('public', 'reset_password(bytea,text)', 'EXECUTE')"
+)
+ADMIN_SESSION_OBJECTS = text("""
+SELECT to_regclass('admin_sessions') IS NOT NULL,
+       to_regprocedure('start_admin_session(uuid,text,bytea,inet,text)') IS NOT NULL,
+       to_regprocedure('resolve_admin_session(bytea)') IS NOT NULL,
+       to_regprocedure('end_admin_session(bytea)') IS NOT NULL
+""")
+END_ADMIN_SESSIONS = "\n  DELETE FROM admin_sessions s WHERE s.user_id = v_user;"
+
+
+# ZIF-70 PR2 guard: 0037's downgrade drops admin sessions and puts 0010's reset_password back; the
+# upgrade restores its own, grants untouched (CREATE OR REPLACE keeps them).
+def test_0037_round_trips_admin_sessions(
+    migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = lock_timeout_config(monkeypatch)
+    with migrate_engine.connect() as conn:
+        at_head = conn.scalar(RESET_DEF)
+    assert END_ADMIN_SESSIONS in at_head
+    try:
+        command.downgrade(cfg, "0036")
+        with migrate_engine.connect() as conn:
+            before = conn.scalar(RESET_DEF)
+            assert tuple(conn.execute(ADMIN_SESSION_OBJECTS).one()) == (False,) * 4
+            assert tuple(conn.execute(RESET_GRANTS).one()) == (True, False)
+    finally:
+        command.upgrade(cfg, "head")
+    assert before == at_head.replace(END_ADMIN_SESSIONS, "")
+    with migrate_engine.connect() as conn:
+        assert conn.scalar(RESET_DEF) == at_head
+        assert tuple(conn.execute(ADMIN_SESSION_OBJECTS).one()) == (True,) * 4
+        assert tuple(conn.execute(RESET_GRANTS).one()) == (True, False)
+
+
+def migration(name: str) -> ModuleType:
+    spec = importlib.util.spec_from_file_location(name, API_DIR / "migrations" / "versions" / name)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+# ZIF-70 PR2 guard: 0037's reset_password template, without the new line, is 0010's body verbatim,
+# so the downgrade restores what 0010 wrote, not a drifted copy.
+def test_0037_reset_password_is_0010s_plus_one_line() -> None:
+    old = migration("0010_audit_events.py").RESET_PASSWORD
+    new = migration("0037_admin_sessions.py")
+
+    assert new.reset_password("") == old.replace("CREATE FUNCTION", "CREATE OR REPLACE FUNCTION", 1)
+    assert new.reset_password(new.END_ADMIN_SESSIONS) != new.reset_password("")
