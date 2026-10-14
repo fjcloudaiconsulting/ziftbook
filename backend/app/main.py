@@ -37,6 +37,7 @@ from app import (
     members,
     schedule,
     services,
+    setup,
     time_off,
     tracing,
     turnstile,
@@ -116,6 +117,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception:
         logger.critical("startup failed", exc_info=True)
         raise RuntimeError("startup failed") from None
+    setup_token = setup.token_state()
     # Here, not at import: `python -m app.main` prints the OpenAPI document to stdout.
     logger.info(
         "api started",
@@ -124,12 +126,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             "trusted_proxies": Settings().trusted_proxies,
             # Never the secret. "off": public bookings are refused unless ZIF_TURNSTILE_DISABLED.
             "turnstile": "on" if turnstile.enabled() else "off",
+            # Never the token. "unset"/"weak": first-run setup is refused (ZIF-70).
+            "setup_token": setup_token,
         },
     )
     # ZIF-116: logged, never a refusal to start. The deployments run one replica with Recreate, so a
     # failed start would take the whole API down over a control only public booking needs.
     if not turnstile.enabled() and not TurnstileSettings().turnstile_disabled:
         logger.error("turnstile secret unset: public bookings refused")
+    # Only while setup is still to be done: operators may remove the token afterwards. Never a
+    # refusal to start, and a database error skips the line.
+    if setup_token != "set" and setup.needed_at_startup(DatabaseSettings().database_url):
+        logger.error("setup token unset: first-run setup refused")
     try:
         yield
     finally:
@@ -219,6 +227,7 @@ def create_app() -> FastAPI:
         holds.link_router,
         admin_auth.admin_sign_in_router,
         admin_auth.admin_router,
+        setup.router,
     ):
         for route in each.routes:
             if isinstance(route, APIRoute) and WRITE & set(route.methods or ()):

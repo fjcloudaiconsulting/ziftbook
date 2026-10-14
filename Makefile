@@ -3,6 +3,9 @@
 API := uv run --directory backend
 PNPM ?= pnpm
 WEB := $(PNPM) --dir frontend
+# docker-compose.yaml's ZIF_SETUP_TOKEN: a development value, not a secret. make seed does first-run
+# setup with it.
+DEV_SETUP_TOKEN := dev-only-setup-token-not-a-secret-0000
 
 setup: ## One-time: enable the repo git hooks and install api and web dependencies
 	git config core.hooksPath .githooks
@@ -28,7 +31,7 @@ reset: ## Delete the local database (every account, business and booking) and st
 	$(MAKE) up
 
 seed: ## Fill the running local app with synthetic businesses, people and bookings (make up first)
-	$(API) python scripts/seed.py
+	ZIF_SETUP_TOKEN=$(DEV_SETUP_TOKEN) $(API) python scripts/seed.py
 
 migrate: ## Apply database migrations (as ziftbook_migrate)
 	docker compose run --rm --build migrate

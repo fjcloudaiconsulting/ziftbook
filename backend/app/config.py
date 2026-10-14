@@ -71,3 +71,12 @@ class MailSettings(Settings):
     mailpit_url: str | None = None
     # Where links in emails point: the web app, as people reach it.
     app_url: str = "http://localhost:3000"
+
+
+class SetupSettings(Settings):
+    """First-run setup (ZIF-70): the deployment token that lets the first person in become the
+    platform admin. Shorter than 32 characters counts as unset, so setup is refused."""
+
+    # Resolved at runtime from a secret, never committed (as turnstile_secret). Only needed until
+    # setup is done; the operator may remove it afterwards.
+    setup_token: SecretStr = SecretStr("")

@@ -147,6 +147,20 @@ def worker_url(url: str, worker: str | None) -> str:
     return parsed.set(database=f"{parsed.database}_{worker}").render_as_string(hide_password=False)
 
 
+def install() -> None:
+    """Make this database an installed one (ZIF-70): one user, so needs_setup() is false and sign-up
+    works. Setup tests use empty_install instead. As migrate: the app role can't read users."""
+    engine = create_engine(os.environ["ZIF_MIGRATE_DATABASE_URL"], poolclass=NullPool)
+    with engine.begin() as conn:
+        conn.execute(
+            text("""
+            INSERT INTO users (id, email, name) VALUES (uuidv7(), 'installed@example.invalid',
+            'Installed') ON CONFLICT (email) DO NOTHING
+            """)
+        )
+    engine.dispose()
+
+
 # Both roles must land on the one database this worker creates: split bases would send the app
 # role to another checkout's live worker database.
 if XDIST_WORKER and len({make_url(os.environ[name]).database for name in URL_NAMES}) != 1:
@@ -163,6 +177,7 @@ if XDIST_WORKER:
         _conn.execute(text(f"CREATE DATABASE {_database} OWNER ziftbook_migrate"))
     _admin.dispose()
     command.upgrade(Config(toml_file=str(API_DIR / "pyproject.toml")), "head")
+    install()
 # Mail (ZIF-151): the suite runs the production path, mail.py through the Mailgun SDK down to its
 # own HTTP call, and records each message here instead of sending it. Forced, not setdefault: a
 # developer's real key must never send from the suite. Subprocesses inherit the fake key but not
@@ -337,6 +352,70 @@ def closed(reader: InMemoryMetricReader) -> None:
 @pytest.fixture(scope="session")
 def migrated() -> None:
     command.upgrade(Config(toml_file=str(API_DIR / "pyproject.toml")), "head")
+    install()
+
+
+@dataclass(frozen=True)
+class EmptyInstall:
+    """A freshly migrated database with no user yet: first-run setup is still to be done."""
+
+    app_url: str
+    migrate: Engine  # ziftbook_migrate
+    app: Engine  # ziftbook_app
+
+
+@pytest.fixture(scope="session")
+def empty_database() -> Iterator[EmptyInstall]:
+    """This worker's own empty-install database on the shared test Postgres (never a container),
+    migrated to head and never install()ed. Dropped at the end of the session."""
+    urls = {name: make_url(os.environ[name]) for name in URL_NAMES}
+    name = f"{urls['ZIF_MIGRATE_DATABASE_URL'].database}_empty"
+    # It renders into DROP DATABASE as the superuser: a plain identifier within 63 bytes only.
+    if not re.fullmatch(r"[a-z_][a-z0-9_]{0,62}", name):
+        raise RuntimeError(f"database name {name!r} is not a plain identifier of 63 bytes or less")
+    admin = create_engine(ADMIN_DATABASE_URL, isolation_level="AUTOCOMMIT", poolclass=NullPool)
+    with admin.connect() as conn:
+        conn.execute(text(f"DROP DATABASE IF EXISTS {name}"))
+        conn.execute(text(f"CREATE DATABASE {name} OWNER ziftbook_migrate"))
+    rendered = {
+        key: url.set(database=name).render_as_string(hide_password=False)
+        for key, url in urls.items()
+    }
+    saved = {key: os.environ[key] for key in URL_NAMES}
+    os.environ.update(rendered)  # migrations/env.py reads the migrate URL from the environment
+    try:
+        command.upgrade(Config(toml_file=str(API_DIR / "pyproject.toml")), "head")
+    finally:
+        os.environ.update(saved)
+    empty = EmptyInstall(
+        app_url=rendered["ZIF_DATABASE_URL"],
+        migrate=create_engine(rendered["ZIF_MIGRATE_DATABASE_URL"], poolclass=NullPool),
+        app=create_engine(rendered["ZIF_DATABASE_URL"], poolclass=NullPool),
+    )
+    try:
+        yield empty
+    finally:
+        empty.migrate.dispose()
+        empty.app.dispose()
+        with admin.connect() as conn:
+            # FORCE: a test that failed mid-wait must not keep it. The name is this worker's alone.
+            conn.execute(text(f"DROP DATABASE IF EXISTS {name} WITH (FORCE)"))
+        admin.dispose()
+
+
+@pytest.fixture
+def empty_install(empty_database: EmptyInstall) -> Iterator[EmptyInstall]:
+    """The empty-install database emptied again, with SessionLocal bound to its app role."""
+    with empty_database.migrate.begin() as conn:
+        conn.execute(
+            text("""
+            TRUNCATE users, tenants, password_credentials, platform_admins, admin_sessions,
+              platform_audit_events, rate_limits, email_tokens, jobs CASCADE
+            """)
+        )
+    SessionLocal.configure(bind=empty_database.app)
+    yield empty_database
+    SessionLocal.configure(bind=None)
 
 
 @pytest.fixture
