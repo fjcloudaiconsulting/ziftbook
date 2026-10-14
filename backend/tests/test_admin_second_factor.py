@@ -242,8 +242,8 @@ def test_enrolment_answers_are_not_cached(
 ) -> None:
     v = verified_client(app, migrate_engine, an_admin)
 
-    assert v.begun.headers["cache-control"] == "no-store"
-    assert v.confirmed.headers["cache-control"] == "no-store"
+    assert v.begun.headers.get("cache-control") == "no-store"
+    assert v.confirmed.headers.get("cache-control") == "no-store"
 
 
 # fence: the 10th wrong code answers locked, once, and a recovery code unlocks, audited. Kills a
