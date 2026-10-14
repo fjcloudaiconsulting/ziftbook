@@ -180,6 +180,25 @@ if XDIST_WORKER:
     _admin.dispose()
     command.upgrade(Config(toml_file=str(API_DIR / "pyproject.toml")), "head")
     install()
+
+
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    """A worker drops the database it created above, after a green run only (ZIF-120).
+
+    A red or interrupted run keeps it to inspect; the next run's DROP above replaces it anyway. This
+    one name only, never a pattern: on a shared instance a LIKE '<base>_gw%' also matches another
+    run's live databases. No WITH (FORCE), for the reason above.
+    A connection still open to it raises ObjectInUse here, failing the run loudly rather than
+    forcing the drop. Residuals: a red `-n 16` run followed by `-n 4` still strands gw4 to gw15; and
+    two suites on one base name (against the rule above) give this DROP a second window to remove
+    the other's database between its tests.
+    """
+    if XDIST_WORKER and exitstatus == pytest.ExitCode.OK:
+        admin = create_engine(ADMIN_DATABASE_URL, isolation_level="AUTOCOMMIT", poolclass=NullPool)
+        with admin.connect() as conn:
+            conn.execute(text(f"DROP DATABASE IF EXISTS {_database}"))
+
+
 # Mail (ZIF-151): the suite runs the production path, mail.py through the Mailgun SDK down to its
 # own HTTP call, and records each message here instead of sending it. Forced, not setdefault: a
 # developer's real key must never send from the suite. Subprocesses inherit the fake key but not

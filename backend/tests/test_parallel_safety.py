@@ -5,10 +5,14 @@ without the interleaving it promised, or a URL rewrite that points every worker 
 database.
 """
 
+import hashlib
 import os
+import subprocess
+import sys
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
+from pathlib import Path
 
 import pytest
 from sqlalchemy import Engine, create_engine, text
@@ -17,6 +21,7 @@ from sqlalchemy.pool import NullPool
 
 from tests.conftest import (
     ADMIN_DATABASE_URL,
+    API_DIR,
     ORIGINAL_URLS,
     URL_NAMES,
     XDIST_WORKER,
@@ -179,3 +184,103 @@ def test_a_serial_run_targets_the_shared_database(worker: str | None) -> None:
 # advisory lock taken against a shared database, say) would serialise them. There used to be a
 # test here asserting exactly that fact against a throwaway database; it exercised PostgreSQL, not
 # env.py, and stayed green with env.py's lock deleted entirely, so it was deleted.
+
+
+# ZIF-120: a worker drops its own database at the end of a green run. Each test runs a nested suite
+# of one test on a base name of its own, derived from this worker's database so concurrent runs
+# never share it, and checks pg_database afterwards.
+GREEN = "def test_green() -> None:\n    pass\n"
+RED = "def test_red() -> None:\n    assert False\n"
+
+
+def exists(name: str) -> bool:
+    admin = create_engine(ADMIN_DATABASE_URL, poolclass=NullPool)
+    with admin.connect() as conn:
+        found = conn.scalar(text("SELECT 1 FROM pg_database WHERE datname = :n"), {"n": name})
+    return found is not None
+
+
+def create(name: str) -> None:
+    """Dropped first: one a killed earlier run left would otherwise fail every run after it."""
+    admin = create_engine(ADMIN_DATABASE_URL, isolation_level="AUTOCOMMIT", poolclass=NullPool)
+    with admin.connect() as conn:
+        conn.execute(text(f"DROP DATABASE IF EXISTS {name}"))
+        conn.execute(text(f"CREATE DATABASE {name} OWNER ziftbook_migrate"))
+
+
+def drop(*names: str) -> None:
+    # No FORCE: the nested suite has exited, so a refusal here means something still holds it.
+    admin = create_engine(ADMIN_DATABASE_URL, isolation_level="AUTOCOMMIT", poolclass=NullPool)
+    with admin.connect() as conn:
+        for name in names:
+            conn.execute(text(f"DROP DATABASE IF EXISTS {name}"))
+
+
+def nested_base(suffix: str) -> str:
+    """A short plain identifier unique to this worker's database: `<database>_<suffix>` itself
+    could pass the 50-character base cap and fail the nested run against correct code."""
+    database = make_url(os.environ["ZIF_MIGRATE_DATABASE_URL"]).database or ""
+    return f"zif_nested_{hashlib.sha256(database.encode()).hexdigest()[:12]}_{suffix}"
+
+
+def run_suite(tmp_path: Path, base: str, body: str, workers: bool) -> tuple[int, str]:
+    """The exit code and output of a suite of one test, loading this conftest, on databases named
+    after base.
+
+    Every PYTEST_* variable is stripped: the nested controller must not inherit this worker's id.
+    """
+    (tmp_path / "test_nested.py").write_text(body)
+    env = {k: v for k, v in os.environ.items() if not k.startswith("PYTEST_")}
+    for name in URL_NAMES:
+        env[name] = make_url(env[name]).set(database=base).render_as_string(hide_password=False)
+    args = ["-n", "1"] if workers else ["-p", "no:xdist"]
+    done = subprocess.run(
+        [sys.executable, "-m", "pytest", "-q", "-p", "tests.conftest", "-p", "no:cacheprovider"]
+        + args
+        + [str(tmp_path / "test_nested.py")],
+        cwd=API_DIR,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    return done.returncode, done.stdout[-2000:] + done.stderr[-2000:]
+
+
+# 6 (FENCE): a green run leaves no worker database behind, and drops only its own. Kills: no
+# cleanup at all (gw0 survives), and a pattern drop of `<base>_gw%` or of worker ids the run did
+# not use (the gw1 standing in for another run's database goes too).
+def test_a_green_run_drops_its_own_worker_database_only(tmp_path: Path) -> None:
+    base = nested_base("green")
+    create(f"{base}_gw1")
+    try:
+        code, output = run_suite(tmp_path, base, GREEN, workers=True)
+        assert code == 0, output
+        assert not exists(f"{base}_gw0")
+        assert exists(f"{base}_gw1")
+    finally:
+        drop(f"{base}_gw0", f"{base}_gw1")
+
+
+# 7 (FENCE): a red run keeps its worker database to inspect. Kills dropping it whatever the outcome.
+def test_a_red_run_keeps_its_worker_database(tmp_path: Path) -> None:
+    base = nested_base("red")
+    try:
+        code, output = run_suite(tmp_path, base, RED, workers=True)
+        assert code == 1, output
+        assert exists(f"{base}_gw0")
+    finally:
+        drop(f"{base}_gw0")
+
+
+# 8 (FENCE): a green serial run never drops the base database it ran on: in a serial run that is
+# the developer's `ziftbook`, the one `make up` serves. Kills a cleanup not gated on a worker id.
+def test_a_green_serial_run_keeps_the_base_database(tmp_path: Path) -> None:
+    base = nested_base("serial")
+    create(base)
+    try:
+        code, output = run_suite(tmp_path, base, GREEN, workers=False)
+        assert code == 0, output
+        assert exists(base)
+    finally:
+        drop(base)

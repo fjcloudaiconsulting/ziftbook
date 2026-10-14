@@ -71,7 +71,7 @@ make migrate                         # apply
 ```
 
 Tests need Docker running: `make test` starts Postgres and bootstraps the roles.
-Parallel workers get databases named after the base one (`ziftbook_gw0`, ...), so several checkouts can share one Postgres: give each its own base (`ziftbook_143` in both `ZIF_MIGRATE_DATABASE_URL` and `ZIF_DATABASE_URL`), created with the GRANTs in `backend/migrations/bootstrap.sql`.
+Parallel workers get databases named after the base one (`ziftbook_gw0`, ...), so several checkouts can share one Postgres: give each its own base (`ziftbook_143` in both `ZIF_MIGRATE_DATABASE_URL` and `ZIF_DATABASE_URL`), created with the GRANTs in `backend/migrations/bootstrap.sql`. Each worker drops its database when all of its tests pass, and keeps it otherwise for you to inspect.
 
 After changing an api route, regenerate the committed contract the web client is built from:
 
