@@ -22,6 +22,7 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from app import (
     accounts,
+    admin_auth,
     audit,
     auth,
     availability,
@@ -72,6 +73,7 @@ class Dependencies(BaseModel):
 def _access_fields(request: Request, status: int, started: float) -> dict[str, Any]:
     route = getattr(request.scope.get("route"), "path", "unmatched")
     tenant_id = getattr(request.state, "tenant_id", None)
+    admin_user_id = getattr(request.state, "admin_user_id", None)
     # The route template, never the path or query; no headers, cookies or bodies.
     return {
         "method": request.method,
@@ -79,6 +81,7 @@ def _access_fields(request: Request, status: int, started: float) -> dict[str, A
         "status": status,
         "duration_ms": round((time.perf_counter() - started) * 1000, 1),
         "tenant_id": str(tenant_id) if tenant_id else None,
+        "admin_user_id": str(admin_user_id) if admin_user_id else None,
     }
 
 
@@ -214,6 +217,8 @@ def create_app() -> FastAPI:
         booking_links.router,
         holds.router,
         holds.link_router,
+        admin_auth.admin_sign_in_router,
+        admin_auth.admin_router,
     ):
         for route in each.routes:
             if isinstance(route, APIRoute) and WRITE & set(route.methods or ()):
