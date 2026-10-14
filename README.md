@@ -78,3 +78,4 @@ make openapi
 ```
 
 Commit subjects follow [Conventional Commits](https://www.conventionalcommits.org/) (`feat(api): add health endpoint`). Releases and the changelog are generated from them.
+
