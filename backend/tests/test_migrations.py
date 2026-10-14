@@ -1041,3 +1041,50 @@ def test_0037_reset_password_is_0010s_plus_one_line() -> None:
 
     assert new.reset_password("") == old.replace("CREATE FUNCTION", "CREATE OR REPLACE FUNCTION", 1)
     assert new.reset_password(new.END_ADMIN_SESSIONS) != new.reset_password("")
+
+
+RESOLVE_DEF = text("SELECT pg_get_functiondef('resolve_admin_session(bytea)'::regprocedure)")
+RESOLVE_GRANTS = text(
+    "SELECT has_function_privilege('ziftbook_app', 'resolve_admin_session(bytea)', 'EXECUTE'), "
+    "has_function_privilege('public', 'resolve_admin_session(bytea)', 'EXECUTE')"
+)
+SECOND_FACTOR_OBJECTS = text("""
+SELECT to_regclass('second_factors') IS NOT NULL,
+       to_regprocedure('live_admin_user(bytea)') IS NOT NULL,
+       to_regprocedure('totp_ciphertext(bytea)') IS NOT NULL,
+       to_regprocedure('begin_totp_enrolment(bytea,bytea,bytea,bytea)') IS NOT NULL,
+       to_regprocedure('confirm_totp_enrolment(bytea,bytea,bigint,bytea[])') IS NOT NULL,
+       to_regprocedure('pass_second_factor(bytea,bytea,bigint)') IS NOT NULL,
+       to_regprocedure('use_recovery_code(bytea,bytea)') IS NOT NULL,
+       EXISTS (SELECT FROM information_schema.columns
+               WHERE table_name = 'admin_sessions' AND column_name = 'second_factor_at')
+""")
+
+
+# ZIF-71 PR1 guard: 0039's downgrade drops every second-factor object and puts 0037's
+# resolve_admin_session back, grants included; the upgrade brings them all back.
+def test_0039_round_trips_second_factors(
+    migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = lock_timeout_config(monkeypatch)
+    with migrate_engine.connect() as conn:
+        at_head = conn.scalar(RESOLVE_DEF)
+    try:
+        command.downgrade(cfg, "0038")
+        with migrate_engine.connect() as conn:
+            before = conn.scalar(RESOLVE_DEF)
+            assert tuple(conn.execute(SECOND_FACTOR_OBJECTS).one()) == (False,) * 8
+            assert tuple(conn.execute(RESOLVE_GRANTS).one()) == (True, False)
+    finally:
+        command.upgrade(cfg, "head")
+    assert "factor_passed" in at_head and "factor_passed" not in before
+    with migrate_engine.connect() as conn:
+        assert conn.scalar(RESOLVE_DEF) == at_head
+        assert tuple(conn.execute(SECOND_FACTOR_OBJECTS).one()) == (True,) * 8
+        assert tuple(conn.execute(RESOLVE_GRANTS).one()) == (True, False)
+
+
+# ZIF-71 PR1 guard: the downgrade's resolve_admin_session is 0037's text verbatim.
+def test_0039_restores_0037s_resolve_admin_session() -> None:
+    old = migration("0037_admin_sessions.py").FUNCTIONS["resolve_admin_session(bytea)"]
+    assert migration("0039_admin_second_factor.py").RESOLVE_0037 == old

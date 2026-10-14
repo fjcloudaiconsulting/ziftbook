@@ -258,6 +258,16 @@ A platform admin runs the platform across businesses (ZIF-70). `platform_admins`
   `docker compose run --rm --build migrate python -m app.admin grant <email> --reason "..."` (or `revoke`).
   `--reason` is required. Exit code 0 means done or nothing to do, 1 no account has that email (or another error,
   logged CRITICAL), 2 a usage error.
+- Admins sign in with a second factor (TOTP, ZIF-71). An admin enrols with a one-hour ticket from
+  `docker compose run --rm migrate python -m app.admin enrol <email> --reason "..."`, which wipes their current
+  factor and recovery codes and ends their admin sessions. It prints the ticket to the terminal, never to a log;
+  exit 1 means no admin has that email. Run it after `grant`, and again when an admin loses their authenticator and
+  their recovery codes.
+- Never enable statement or parameter logging (`log_statement`, `log_min_duration_statement` with parameters,
+  `auto_explain` with parameters) on the app database. Bind values include bearer proofs: a logged TOTP proof,
+  recovery-code proof or ticket proof lets anyone who can read the log and run SQL pass an admin's second factor.
+  No role setting enforces this: the app role could turn `log_parameter_max_length_on_error` back on, and a role
+  setting would miss `ziftbook_migrate`, which sends the CLI's ticket proof.
 - What admins do goes to `platform_audit_events`, a global table, not per business: add an event with
   `admin.record(session, request, action, actor_user_id=..., tenant_id=..., target=..., reason=...)` after adding
   the action to `admin.Action` and its kind to `admin.KIND`. The same rules as `auth.record`: never a password,
@@ -558,6 +568,7 @@ ZIF-38). An empty variable means the default: `env_ignore_empty=True` on the bas
 | `ZIF_TURNSTILE_DISABLED` | api | `false` | no | no | `true` serves public bookings with no Turnstile check when no secret is set (development, CI, tests). Ignored when a secret is set. Never on a public deployment. |
 | `ZIF_TURNSTILE_SITE_KEY` | frontend | none | no | no | Cloudflare Turnstile site key, rendered on the public booking page. Set both the site key and the secret, or neither: a site key with no secret shows a widget while the API refuses every booking; a secret with no site key never gets a token to check. Never `NEXT_PUBLIC_*`: read server-side at request time (`process.env`, ZIF-56's page loader), not baked into the client bundle at build time. |
 | `ZIF_SETUP_TOKEN` | api | `""` | until setup is done | yes | First-run setup token (ZIF-70): whoever sends it to `/setup` on an install with no account yet becomes the platform admin. At least 32 characters (`openssl rand -base64 32`); unset or shorter refuses setup (503 `setup_not_configured`), and the API logs an ERROR at startup while setup is still to be done. Once anyone has an account setup answers 409 whatever the token, so it can be removed afterwards. |
+| `ZIF_TOTP_KEY` | api | `""` | yes, once an admin exists | yes | Encrypts every platform admin's TOTP secret (ZIF-71): base64 of exactly 32 bytes (`openssl rand -base64 32`), AES-256-GCM. Unset or invalid: the API logs an ERROR at startup and admin TOTP answers 503 `second_factor_unavailable`, while recovery codes still work. Back it up with the database credentials: losing or changing it makes every stored secret unreadable, and each admin then re-enrols with `python -m app.admin enrol`. |
 | `ZIF_TRUSTED_PROXIES` | api | `""` | yes | no | Addresses whose `X-Forwarded-For` the API believes (production and staging: the pod network `10.42.0.0/16`; compose: the web app's `172.28.0.10`). Empty trusts nobody. |
 | `ZIF_CLIENT_IP_HEADER` | frontend | none | yes, behind a proxy | no | Header the web app trusts for the visitor's address (production and staging: `cf-connecting-ip`). Set only behind a proxy that overwrites it; unset there, every visitor shares the proxy's address and its per-IP limits. |
 | **Logging** | | | | | |

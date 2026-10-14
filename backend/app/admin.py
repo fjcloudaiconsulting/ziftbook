@@ -1,9 +1,11 @@
-"""Platform admins (ZIF-70): their audit record, and the grant/revoke CLI.
+"""Platform admins (ZIF-70): their audit record, and the grant/revoke/enrol CLI.
 
-    python -m app.admin grant|revoke <email> --reason "<why>"
+    python -m app.admin grant|revoke|enrol <email> --reason "<why>"
 
 The CLI connects as ziftbook_migrate (ZIF_MIGRATE_DATABASE_URL): the app role has no grant on
-platform_admins. One transaction per run writes the change and its audit event.
+platform_admins or second_factors. One transaction per run writes the change and its audit event.
+enrol (ZIF-71) wipes the admin's second factor, ends their admin sessions and prints a one-hour
+enrolment ticket.
 """
 
 import argparse
@@ -15,11 +17,11 @@ from typing import Literal
 from uuid import UUID
 
 from fastapi import Request
-from sqlalchemy import create_engine, text
+from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import NullPool
 
-from app import logs, passwords
+from app import logs, passwords, totp
 from app.auth import origin
 
 logger = logging.getLogger("app.admin")  # not __name__: "__main__" under python -m
@@ -32,6 +34,14 @@ Action = Literal[
     "admin_sign_in_failed",
     "admin_signed_out",
     "business_read",
+    "totp_enrolment_issued",
+    "totp_enrolment_failed",
+    "totp_enrolled",
+    "second_factor_passed",
+    "second_factor_failed",
+    "second_factor_locked",
+    "second_factor_unlocked",
+    "recovery_code_used",
 ]
 # A write needs a reason: the database refuses one without (platform_audit_events.reason_on_write).
 KIND: dict[Action, Literal["auth", "read", "write"]] = {
@@ -42,6 +52,14 @@ KIND: dict[Action, Literal["auth", "read", "write"]] = {
     "admin_sign_in_failed": "auth",
     "admin_signed_out": "auth",
     "business_read": "read",
+    "totp_enrolment_issued": "write",
+    "totp_enrolment_failed": "auth",
+    "totp_enrolled": "auth",
+    "second_factor_passed": "auth",
+    "second_factor_failed": "auth",
+    "second_factor_locked": "auth",
+    "second_factor_unlocked": "auth",
+    "recovery_code_used": "auth",
 }
 
 
@@ -90,11 +108,56 @@ def _reason(value: str) -> str:
     return value
 
 
+ISSUE_TICKET = text("""
+INSERT INTO second_factors (user_id, ticket_hash, ticket_expires_at)
+VALUES (:u, sha256(:ticket_proof), now() + interval '1 hour')
+ON CONFLICT (user_id) DO UPDATE SET
+  ticket_hash = excluded.ticket_hash, ticket_expires_at = excluded.ticket_expires_at,
+  secret_ct = NULL, proof_hash = NULL, confirmed_at = NULL, last_step = 0, failed_attempts = 0,
+  recovery_code_hashes = '{}'
+""")
+
+
+def enrol(engine: Engine, email: str, reason: str) -> int:
+    """Wipe the admin's second factor, end their admin sessions and print a one-hour enrolment
+    ticket. The ticket goes to stdout only, never to a log (logs ship off the host)."""
+    ticket = totp.new_code()
+    with Session(engine) as session, session.begin():
+        user_id = session.scalar(
+            text(
+                "SELECT u.id FROM users u JOIN platform_admins a ON a.user_id = u.id "
+                "WHERE u.email = :e"
+            ),
+            {"e": email},
+        )
+        if user_id is None:
+            logger.warning("second factor enrolment refused", extra={"outcome": "not_admin"})
+            return 1
+        # second_factors first, admin_sessions second: the order the 0039 functions lock them in,
+        # so a run racing an admin's code can't deadlock (40P01).
+        session.execute(
+            ISSUE_TICKET, {"u": user_id, "ticket_proof": totp.proof(totp.normalise(ticket))}
+        )
+        session.execute(text("DELETE FROM admin_sessions WHERE user_id = :u"), {"u": user_id})
+        record(
+            session,
+            None,
+            "totp_enrolment_issued",
+            actor_user_id=None,
+            target=f"user:{user_id}",
+            reason=reason,
+            details={"via": "cli"},
+        )
+    logger.info("second factor enrolment issued", extra={"user_id": str(user_id)})
+    print(f"Enrolment ticket, valid for 1 hour: {ticket}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
-    """0 done (or nothing to do), 1 no account with that email (or any uncaught error, logged
-    CRITICAL), 2 usage error (argparse)."""
+    """0 done (or nothing to do), 1 no account with that email, or for enrol no admin with it (or
+    any uncaught error, logged CRITICAL), 2 usage error (argparse)."""
     parser = argparse.ArgumentParser(prog="python -m app.admin", description=__doc__)
-    parser.add_argument("command", choices=("grant", "revoke"))
+    parser.add_argument("command", choices=("grant", "revoke", "enrol"))
     parser.add_argument("email")
     parser.add_argument("--reason", required=True, type=_reason, help="why, for the audit log")
     args = parser.parse_args(argv)
@@ -107,6 +170,8 @@ def main(argv: list[str] | None = None) -> int:
         os.environ["ZIF_MIGRATE_DATABASE_URL"], poolclass=NullPool, hide_parameters=True
     )
     try:
+        if args.command == "enrol":
+            return enrol(engine, email, args.reason)
         with Session(engine) as session, session.begin():
             user_id = session.scalar(text("SELECT id FROM users WHERE email = :e"), {"e": email})
             if user_id is None:
@@ -142,7 +207,11 @@ def main(argv: list[str] | None = None) -> int:
                 reason=args.reason,
                 details={"via": "cli"},
             )
-        msg = "platform admin granted" if grant else "platform admin revoked"
+        msg = (
+            "platform admin granted; next: python -m app.admin enrol"
+            if grant
+            else "platform admin revoked"
+        )
         logger.info(msg, extra={"user_id": str(user_id)})
         return 0
     finally:

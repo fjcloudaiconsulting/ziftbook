@@ -81,6 +81,8 @@ os.environ.setdefault(
 # No Turnstile secret here, so opt out explicitly as development does (ZIF-116): without it every
 # public booking is refused. Tests of the refusal itself delete it.
 os.environ.setdefault("ZIF_TURNSTILE_DISABLED", "true")
+# A fixed admin TOTP key (base64 of 32 bytes), test only. Tests of a missing key delete it.
+os.environ.setdefault("ZIF_TOTP_KEY", "dGVzdC1vbmx5LXRvdHAta2V5LW5vdC1hLXNlY3JldCE=")
 # Admin connection for CREATE/DROP DATABASE: ziftbook_migrate has rolcreatedb = f and must not be
 # granted it -- it is a production role. Derived from ZIF_MIGRATE_DATABASE_URL, never hardcoded, so
 # it always aims at the instance the suite is already talking to: a literal localhost:5432 would

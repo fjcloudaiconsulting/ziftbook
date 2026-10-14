@@ -1,16 +1,30 @@
 """ZIF-70: platform_admins, platform_audit_events and the grant/revoke CLI (python -m app.admin)."""
 
+import hashlib
 import json
 import uuid
 from collections.abc import Callable
+from datetime import timedelta
 from typing import Any, get_args
 
 import pytest
 from sqlalchemy import Engine, text
 from sqlalchemy.exc import DBAPIError
 
-from app import admin
+from app import admin, totp
 from tests.conftest import add_user, email_of
+from tests.test_second_factor_db import (
+    TICKET,
+    begin,
+    enrolled,
+    factor,
+    half_session,
+    issue_ticket,
+    new_admin,
+    pass_,
+    session_factor,
+    ticket_proof,
+)
 
 
 def sqlstate(engine: Engine, sql: str, params: dict[str, Any] | None = None) -> str | None:
@@ -200,3 +214,100 @@ def test_deleting_a_user_ends_the_grant(migrate_engine: Engine, app_engine: Engi
     with migrate_engine.begin() as conn:
         conn.execute(text("DELETE FROM users WHERE id = :u"), {"u": user_id})
     assert not is_admin(migrate_engine, user_id)
+
+
+ISSUED = text(
+    "SELECT ticket_hash, ticket_expires_at - now() AS lasts, recovery_code_hashes, failed_attempts "
+    "FROM second_factors WHERE user_id = :u"
+)
+
+
+# fence: the ticket goes to the operator's terminal and never to a log (logs ship to Loki). Kills
+# the ticket logged through logger. Injected by adding it to the INFO line's extra.
+def test_enrol_prints_the_ticket_and_never_logs_it(
+    app_engine: Engine,
+    migrate_engine: Engine,
+    capsys: pytest.CaptureFixture[str],
+    log_lines: Callable[[], list[dict[str, Any]]],
+) -> None:
+    user_id = new_admin(app_engine, migrate_engine)
+
+    assert admin.main(["enrol", email_of(user_id), "--reason", "new phone"]) == 0
+
+    found = TICKET.search(capsys.readouterr().out)
+    assert found is not None
+    lines = log_lines()
+    assert [
+        line["user_id"] for line in lines if line["msg"] == "second factor enrolment issued"
+    ] == [str(user_id)]
+    logged = json.dumps(lines)
+    assert found.group() not in logged and totp.normalise(found.group()) not in logged
+
+
+# fence: a ticket lasts one hour. Kills a 24-hour or missing expiry. Injected by '24 hours'.
+def test_enrol_ticket_lasts_one_hour(app_engine: Engine, migrate_engine: Engine) -> None:
+    user_id = new_admin(app_engine, migrate_engine)
+    ticket = issue_ticket(user_id)
+    with migrate_engine.connect() as conn:
+        row = conn.execute(ISSUED, {"u": user_id}).one()
+    assert row.ticket_hash == hashlib.sha256(ticket_proof(ticket)).digest()
+    assert timedelta(minutes=59) < row.lasts <= timedelta(minutes=60)
+
+
+# fence: enrol starts over: the old factor, its codes and its failures are gone, and so are the
+# admin's sessions. Kills a re-enrol that keeps old recovery codes, or a lock that survives.
+# Injected by deleting `recovery_code_hashes = '{}'` from the upsert.
+def test_enrol_wipes_the_factor_and_ends_sessions(
+    app_engine: Engine, migrate_engine: Engine
+) -> None:
+    e = enrolled(app_engine, migrate_engine)
+    pass_(app_engine, e.session, totp.proof(e.secret), None)  # one failure to wipe
+    assert factor(migrate_engine, e.user_id)["failed_attempts"] == 1
+
+    ticket = issue_ticket(e.user_id)
+
+    assert session_factor(migrate_engine, e.session) == "gone"
+    with migrate_engine.connect() as conn:
+        row = conn.execute(ISSUED, {"u": e.user_id}).one()
+        assert (
+            conn.scalar(
+                text("SELECT count(*) FROM admin_sessions WHERE user_id = :u"), {"u": e.user_id}
+            )
+            == 0
+        )
+    assert (row.recovery_code_hashes, row.failed_attempts) == ([], 0)
+    session = half_session(app_engine, migrate_engine, e.user_id)
+    step = factor(migrate_engine, e.user_id)["last_step"] + 1
+    assert pass_(app_engine, session, totp.proof(e.secret), step) == ("none", 0)
+    s = totp.new_secret()
+    assert begin(app_engine, session, ticket_proof(ticket), e.user_id, s) == "begun"
+
+
+# guard: one write event with the reason, from the CLI, about that user.
+def test_enrol_is_audited(app_engine: Engine, migrate_engine: Engine) -> None:
+    user_id = new_admin(app_engine, migrate_engine)
+    assert admin.main(["enrol", email_of(user_id), "--reason", "lost phone"]) == 0
+    target = f"user:{user_id}"
+    assert audit_rows(migrate_engine, target) == [
+        {
+            "actor_user_id": None,
+            "action": "totp_enrolment_issued",
+            "kind": "write",
+            "tenant_id": None,
+            "target": target,
+            "reason": "lost phone",
+            "details": {"via": "cli"},
+        }
+    ]
+
+
+# guard: enrol only for an admin; nothing written otherwise. --reason is required.
+def test_enrol_refuses_a_non_admin(app_engine: Engine, migrate_engine: Engine) -> None:
+    user_id = add_user(app_engine)
+    assert admin.main(["enrol", f"{uuid.uuid4()}@example.com", "--reason", "typo"]) == 1
+    assert admin.main(["enrol", email_of(user_id), "--reason", "not an admin"]) == 1
+    with pytest.raises(SystemExit) as exited:
+        admin.main(["enrol", email_of(new_admin(app_engine, migrate_engine))])
+    assert exited.value.code == 2
+    assert factor(migrate_engine, user_id) == {}
+    assert audit_rows(migrate_engine, f"user:{user_id}") == []
