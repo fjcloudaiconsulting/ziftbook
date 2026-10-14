@@ -7,6 +7,9 @@
   PRs are squash-merged, so the title becomes the commit on `main` and the changelog entry. CI checks it, and
   `make setup` installs the same check as a local commit hook.
 - `make lint typecheck test` runs locally what CI runs.
+- CI on a pull request runs only the jobs its changed paths can affect (`scripts/ci-changes.mjs`); a docs-only PR runs
+  just the title check and the two aggregate checks, `Backend Checks` and `Frontend Checks`, which pass when every job
+  they gate passed or was skipped. A push to `main` runs every job.
 
 ## Releases
 
