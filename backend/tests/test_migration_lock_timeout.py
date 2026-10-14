@@ -44,11 +44,11 @@ def scratch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[C
     """A Config that runs the real env.py with only the probe revision, and an engine on the
     database it migrates: this worker's own, created here with a `probe` table and dropped after."""
     base = make_url(os.environ["ZIF_MIGRATE_DATABASE_URL"])
-    # It renders into DROP DATABASE as the superuser: a plain identifier only, and short enough that
-    # Postgres's 63-byte truncation can't cut the suffix off and leave the base database's name.
-    if not re.fullmatch(r"[a-z_][a-z0-9_]{0,49}", base.database or ""):
-        raise RuntimeError(f"database name {base.database!r} is not a plain identifier")
     name = f"{base.database}_lock_timeout"
+    # It renders into DROP DATABASE as the superuser: a plain identifier only, and within 63 bytes so
+    # Postgres can't truncate the suffix away and leave the name of the database the suite runs on.
+    if not re.fullmatch(r"[a-z_][a-z0-9_]{0,62}", name):
+        raise RuntimeError(f"database name {name!r} is not a plain identifier of 63 bytes or less")
     admin = create_engine(ADMIN_DATABASE_URL, isolation_level="AUTOCOMMIT", poolclass=NullPool)
     with admin.connect() as conn:
         conn.execute(text(f"DROP DATABASE IF EXISTS {name}"))
@@ -69,7 +69,8 @@ def scratch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[C
     finally:
         engine.dispose()
         with admin.connect() as conn:
-            # FORCE: this worker's own database, and a run that never finished must not keep it.
+            # FORCE: a run that never finished must not keep it. The name is this worker's alone
+            # under conftest's one-base-name-per-checkout rule.
             conn.execute(text(f"DROP DATABASE IF EXISTS {name} WITH (FORCE)"))
         admin.dispose()
 
