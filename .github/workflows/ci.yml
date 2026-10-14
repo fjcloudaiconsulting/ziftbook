@@ -15,8 +15,48 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Pull requests run only the jobs their changed paths can affect (scripts/ci-changes.mjs). A skipped job still counts
+  # as passing in the aggregate checks below, which always run, so required checks never wait on a skipped job.
+  changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.affected.outputs.backend }}
+      frontend: ${{ steps.affected.outputs.frontend }}
+      landing: ${{ steps.affected.outputs.landing }}
+      repo: ${{ steps.affected.outputs.repo }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+      - name: Pick the jobs this change can affect
+        id: affected
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          # Main runs everything: promote retags every release commit's own sha-<7> images, and the release gate means
+          # every job passed on this exact commit, not on some earlier one.
+          if [ "$EVENT_NAME" != pull_request ]; then
+            printf '%s=true\n' backend frontend landing repo | tee -a "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # A pull request checks out its merge commit, whose first parent is the base branch: the diff is the whole PR.
+          git rev-parse -q --verify HEAD^2 >/dev/null || { echo "expected the pull request merge commit" >&2; exit 1; }
+          git diff --name-only --no-renames HEAD^1 HEAD > "$RUNNER_TEMP/changed"
+          cat "$RUNNER_TEMP/changed"
+          node scripts/ci-changes.mjs < "$RUNNER_TEMP/changed" | tee -a "$GITHUB_OUTPUT"
+
   repo:
     name: Repo Checks
+    needs: changes
+    if: needs.changes.outputs.repo == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -48,6 +88,8 @@ jobs:
 
   api:
     name: Backend Tests
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -102,25 +144,39 @@ jobs:
         run: uv run pytest -n auto
 
   # Built once, on the main push, as sha-<7> (pull requests build without pushing). Release only retags these.
-  image:
+  backend-images:
     name: Image (${{ matrix.image }})
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
     strategy:
       matrix:
         include:
-          - { image: backend, context: backend, target: prod, build-contexts: '' }
-          - { image: migrations, context: backend, target: migrations, build-contexts: '' }
-          # The frontend build reads the committed OpenAPI contract from the backend directory.
-          - { image: frontend, context: frontend, target: prod, build-contexts: 'backend=backend' }
+          - { image: backend, target: prod }
+          - { image: migrations, target: migrations }
     permissions: { contents: read, packages: write }
     uses: fjcloudaiconsulting/.github/.github/workflows/build-image.yml@v1
     with:
       image: ${{ matrix.image }}
-      context: ${{ matrix.context }}
+      context: backend
       target: ${{ matrix.target }}
-      build-contexts: ${{ matrix.build-contexts }}
+
+  frontend-image:
+    name: Image (frontend)
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    permissions: { contents: read, packages: write }
+    uses: fjcloudaiconsulting/.github/.github/workflows/build-image.yml@v1
+    with:
+      image: frontend
+      context: frontend
+      target: prod
+      # The frontend build reads the committed OpenAPI contract from the backend directory.
+      build-contexts: backend=backend
 
   web:
     name: Frontend Tests
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -144,6 +200,8 @@ jobs:
 
   landing:
     name: Landing Tests
+    needs: changes
+    if: needs.changes.outputs.landing == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -161,10 +219,11 @@ jobs:
         run: npm test
 
   # Aggregate checks, the names branch protection requires. Always run; fail unless every gated job passed or was skipped.
+  # `changes` is gated too: if it fails, every job after it skips, and skipped alone would read as passing.
   backend-checks:
     name: Backend Checks
     if: always()
-    needs: [repo, api, image]
+    needs: [changes, repo, api, backend-images]
     runs-on: ubuntu-latest
     steps:
       - name: Verify every gated job passed
@@ -175,7 +234,7 @@ jobs:
   frontend-checks:
     name: Frontend Checks
     if: always()
-    needs: [web, landing, image]
+    needs: [changes, web, landing, frontend-image]
     runs-on: ubuntu-latest
     steps:
       - name: Verify every gated job passed
@@ -183,13 +242,13 @@ jobs:
           NEEDS: ${{ toJSON(needs) }}
         run: jq -e 'all(.[]; .result == "success" or .result == "skipped")' <<<"$NEEDS"
 
-  # Releases only when every job above passed on this commit of main. Same run as the image builds, so the tagged
-  # release commit's sha-<7> images exist by the time promote runs. The shared workflow runs release-please (App
-  # token from this repo's `release` environment), then promote and smoke on a release.
+  # Releases only when both aggregate checks passed on this commit of main (main skips no job). Same run as the image
+  # builds, so the tagged release commit's sha-<7> images exist by the time promote runs. The shared workflow runs
+  # release-please (App token from this repo's `release` environment), then promote and smoke on a release.
   release:
     name: Release
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [repo, api, image, web, landing]
+    needs: [backend-checks, frontend-checks]
     permissions:
       contents: read
       checks: read
