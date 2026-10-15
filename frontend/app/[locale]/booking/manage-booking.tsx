@@ -13,7 +13,7 @@ import {
   type LinkedBooking,
 } from "@/api-client";
 import { takeToken } from "@/lib/account";
-import { addDays, answerScreen, copyMessage, firstStage, localDay, localWhen, refundMessage, slotsByDay, weekDays } from "@/lib/booking-link";
+import { addDays, answerScreen, copyMessage, firstStage, localDay, localWhen, refundMessage, withTaken } from "@/lib/booking-link";
 import { dateLocale } from "@/lib/console";
 import { linkStore, type OpenedLink } from "@/lib/link";
 import { formatMoney } from "@/lib/money";
@@ -21,6 +21,7 @@ import { type Locale, serviceName } from "@/lib/services";
 import { problemList, zoneCity } from "@/lib/week";
 
 import { Banner, Heading, NoScript, type Outcome as Answer, Outcome, send, Submit } from "../_ui/parts";
+import { Picker } from "../_ui/picker";
 import styles from "../_ui/ui.module.css";
 
 const store = linkStore(() => takeToken(window), globalThis);
@@ -31,7 +32,7 @@ function useBookingLink(): OpenedLink | null | undefined {
 }
 
 type Note = "termsChanged" | "changed" | "notAllowed" | "consentDone";
-type Pick = { is: "pick"; linked: LinkedBooking; first: string; slots?: Map<string, string[]>; day?: string; chosen?: string; taken?: boolean };
+type Pick = { is: "pick"; linked: LinkedBooking; first: string; slots?: string[]; day?: string; chosen?: string; taken?: string };
 type View =
   | { is: "opening" }
   | { is: "notActive" }
@@ -68,6 +69,8 @@ function Manage({ token }: { token: string | null }) {
   const [busy, setBusy] = useState(false);
   const working = useRef(false);
   const started = useRef(false);
+  const confirmPart = useRef<HTMLElement>(null);
+  const chosenTime = view.is === "pick" ? view.chosen : undefined;
 
   /** An answer no screen handles itself: every 404 is the same screen, link_changed its own, anything else a retry. */
   function otherwise(answer: Answer<unknown>, again: () => void) {
@@ -99,6 +102,11 @@ function Manage({ token }: { token: string | null }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // A chosen time brings the confirm part into view on a phone; focus stays on the time.
+  useEffect(() => {
+    if (chosenTime) confirmPart.current?.scrollIntoView({ block: "nearest" });
+  }, [chosenTime]);
+
   /** One action at a time; a second press does nothing. */
   async function act(run: () => Promise<void>) {
     if (working.current) return;
@@ -114,19 +122,18 @@ function Manage({ token }: { token: string | null }) {
     const screen = answerScreen(answer);
     if (screen === "termsChanged" || screen === "changed" || screen === "notAllowed") return refresh(screen);
     if (screen === "refresh") return refresh();
-    if (screen === "slotTaken" && pick) return loadWeek(pick.linked, pick.first, true);
+    if (screen === "slotTaken" && pick) return loadWeek(pick.linked, pick.first, pick.chosen);
     otherwise(answer, again);
   }
 
-  async function loadWeek(linked: LinkedBooking, first: string, taken?: boolean) {
-    setView({ is: "pick", linked, first, taken });
+  async function loadWeek(linked: LinkedBooking, first: string, taken?: string) {
+    // After a 409 the taken time's day stays on screen, its time struck through.
+    setView({ is: "pick", linked, first, taken, day: taken && localDay(taken, linked.booking.timezone) });
     const answer = await send(bookingLinkAvailability({ query: { from: first, to: addDays(first, 6) } }));
     if (answer.status === 200 && answer.data) {
-      const slots = slotsByDay(answer.data.slots, linked.booking.timezone);
-      // A later week asked for meanwhile wins. The first day with free times starts selected.
-      setView((current) =>
-        current.is === "pick" && current.first === first ? { ...current, slots, day: current.day ?? [...slots.keys()][0] } : current,
-      );
+      const slots = withTaken(answer.data.slots, taken);
+      // A later week asked for meanwhile wins. The picker selects the first day with free times.
+      setView((current) => (current.is === "pick" && current.first === first ? { ...current, slots } : current));
     } else {
       otherwise(answer, () => loadWeek(linked, first, taken));
     }
@@ -270,94 +277,67 @@ function Manage({ token }: { token: string | null }) {
 
   if (view.is === "pick") {
     const pick = view;
-    if (pick.chosen) {
-      return (
-        <>
-          <Heading focus key="move">
-            {t("confirmTitle")}
-          </Heading>
-          <Summary linked={linked} when={when} to={pick.chosen} />
-          <p className={styles.lede}>{t("changesAfter", { n: Math.max(engine.reschedules_left - 1, 0) })}</p>
-          {problem}
-          <form
-            className={styles.stack}
-            onSubmit={(event) => {
-              event.preventDefault();
-              move(pick);
-            }}
-          >
-            <Submit busy={busy} busyLabel={t("moving")}>
-              {t("confirm")}
-            </Submit>
-            <button className={`${styles.button} ${styles.secondary}`} type="button" onClick={() => !busy && setView({ ...pick, chosen: undefined })}>
-              {t("back")}
-            </button>
-          </form>
-        </>
-      );
-    }
-    const today = localDay(new Date(), zone);
-    const days = weekDays(pick.first);
-    const dayLabel = (day: string, options: Intl.DateTimeFormatOptions) =>
-      new Intl.DateTimeFormat(dateLocale(locale), { ...options, timeZone: "UTC" }).format(new Date(`${day}T12:00:00Z`));
-    const times = pick.day ? (pick.slots?.get(pick.day) ?? []) : [];
     return (
-      <div className={`${styles.col} ${styles.picker}`}>
-        <Heading focus key="pick">
+      <div className={styles.col}>
+        {/* Keyed by the taken time: after a 409 the heading takes focus again (the confirm part is gone). */}
+        <Heading focus key={pick.taken ?? "pick"}>
           {t("pickTitle")}
         </Heading>
         {pick.taken && <Banner tone="note">{t("slotTaken")}</Banner>}
-        {problem}
-        <div className={styles.screenHead}>
-          <button
-            className={`${styles.button} ${styles.secondary} ${styles.small}`}
-            type="button"
-            disabled={pick.first <= today}
-            onClick={() => loadWeek(linked, addDays(pick.first, -7))}
-          >
-            {t("previousWeek")}
-          </button>
-          <button className={`${styles.button} ${styles.secondary} ${styles.small}`} type="button" onClick={() => loadWeek(linked, addDays(pick.first, 7))}>
-            {t("nextWeek")}
-          </button>
+        {!pick.chosen && problem}
+        <div className={styles.stack} style={{ gap: "0.4rem" }}>
+          <p className={styles.hint}>{t("nowLabel")}</p>
+          {summary}
         </div>
-        {!pick.slots ? (
-          <p className={styles.lede} role="status">
-            {t("loadingTimes")}
-          </p>
-        ) : pick.slots.size === 0 ? (
-          <p className={styles.hint} role="status">
-            {t("noTimes")}
-          </p>
-        ) : (
-          <div className={styles.days}>
-            {days.map((day) => (
-              <button
-                key={day}
-                className={`${styles.button} ${day === pick.day ? styles.primary : styles.secondary}`}
-                type="button"
-                disabled={!pick.slots!.has(day)}
-                aria-pressed={day === pick.day}
-                aria-label={dayLabel(day, { weekday: "long", day: "numeric", month: "long" })}
-                onClick={() => setView({ ...pick, day })}
+        <Picker
+          weekStart={pick.first}
+          zone={zone}
+          slots={pick.slots ?? null}
+          day={pick.day ?? null}
+          slot={pick.chosen ?? null}
+          taken={new Set(pick.taken ? [pick.taken] : [])}
+          hint={<p className={styles.hint}>{t("timesIn", { zone: zoneCity(zone) })}</p>}
+          onWeek={(delta) => {
+            if (busy) return;
+            setFailed(null);
+            void loadWeek(linked, addDays(pick.first, delta), pick.taken);
+          }}
+          onDay={(day) => setView((v) => (v.is === "pick" ? { ...v, day } : v))}
+          onSlot={(slot) => {
+            if (busy) return;
+            // A failed Confirm's "Try again" would send the old time: it goes with the choice.
+            setFailed(null);
+            setView((v) => (v.is === "pick" ? { ...v, chosen: slot } : v));
+          }}
+        />
+        <p className={styles.srOnly} role="status">
+          {pick.chosen && t("newTime", { when: when(pick.chosen) })}
+        </p>
+        {pick.chosen && (
+          <>
+            <div className={styles.divider} />
+            <section className={styles.stack} aria-labelledby="move-h" ref={confirmPart}>
+              <h2 id="move-h" className={styles.checkoutHead}>
+                {t("confirmTitle")}
+              </h2>
+              <Summary linked={linked} when={when} to={pick.chosen} />
+              <p className={styles.hint}>{t("changesAfter", { n: Math.max(engine.reschedules_left - 1, 0) })}</p>
+              {problem}
+              <form
+                className={styles.stack}
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  move(pick);
+                }}
               >
-                <span>{dayLabel(day, { weekday: "short" })}</span>
-                <span>{dayLabel(day, { day: "numeric" })}</span>
-              </button>
-            ))}
-          </div>
+                <Submit busy={busy} busyLabel={t("moving")}>
+                  {t("confirm")}
+                </Submit>
+              </form>
+            </section>
+          </>
         )}
-        {times.length > 0 && <p className={styles.hint}>{t("timesIn", { zone: zoneCity(zone) })}</p>}
-        {times.length > 0 && (
-          <div className={styles.slots} role="group" aria-label={t("timesOn", { day: dayLabel(pick.day!, { weekday: "long", day: "numeric", month: "long" }) })}>
-            {times.map((slot) => (
-              <button key={slot} className={`${styles.button} ${styles.secondary}`} type="button" onClick={() => setView({ ...pick, chosen: slot })}>
-                {localWhen(slot, zone, dateLocale(locale)).time}
-              </button>
-            ))}
-          </div>
-        )}
-        <button className={`${styles.button} ${styles.secondary}`} type="button" onClick={() => setView({ is: "booking", linked })}>
+        <button className={`${styles.button} ${styles.secondary}`} type="button" onClick={() => !busy && setView({ is: "booking", linked })}>
           {t("back")}
         </button>
       </div>

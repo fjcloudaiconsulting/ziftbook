@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 import { describe, test } from "node:test";
 
 import { takeToken } from "../lib/account.ts";
-import { answerScreen, copyMessage, firstStage, localWhen, refundMessage, slotsByDay, weekDays } from "../lib/booking-link.ts";
+import { answerScreen, copyMessage, firstStage, localWhen, refundMessage, slotsByDay, weekDays, withTaken } from "../lib/booking-link.ts";
 
 const TENANT = "0192f3a4-5b6c-7d8e-9f01-23456789abcd";
 const SECRET = "Ab3_-".repeat(8) + "xyz"; // 43 URL-safe characters
@@ -116,6 +116,40 @@ describe("a week of free times", () => {
     const days = slotsByDay(slots, "Europe/Amsterdam");
     assert.deepEqual(days.get("2026-10-30"), ["2026-10-29T23:30:00Z", "2026-10-30T08:00:00Z", "2026-10-30T09:00:00Z"]);
     assert.equal(days.get("2026-10-29"), undefined);
+  });
+
+  test("fence: a just-taken time stays listed once after the week reloads (ZIF-149)", () => {
+    // Wrong implementations killed: the reloaded slots unchanged (the taken time vanishes instead of
+    // showing struck through) and a plain concat (listed twice when the server still offers it).
+    const reloaded = ["2026-10-20T07:00:00Z", "2026-10-20T09:00:00Z"];
+    assert.deepEqual(withTaken(reloaded, "2026-10-20T08:00:00Z"), ["2026-10-20T07:00:00Z", "2026-10-20T08:00:00Z", "2026-10-20T09:00:00Z"]);
+    assert.deepEqual(withTaken(reloaded, "2026-10-20T09:00:00Z"), reloaded);
+    assert.deepEqual(withTaken(reloaded, undefined), reloaded);
+  });
+});
+
+describe("one picker for booking and rescheduling (ZIF-149)", () => {
+  const read = (rel) => readFileSync(new URL(rel, import.meta.url), "utf8");
+
+  test("fence: both pages use the shared picker and neither draws its own day strip or times", () => {
+    // Wrong implementation killed: the reschedule page (or the booking page) keeping its own inline picker.
+    for (const page of ["../app/[locale]/booking/manage-booking.tsx", "../app/[locale]/[slug]/booking-page.tsx"]) {
+      const src = read(page);
+      assert.match(src, /import \{[^}]*\bPicker\b[^}]*\} from "\.\.\/_ui\/picker"/, page);
+      assert.doesNotMatch(src, /styles\.(days|slots|parts)\b/, page);
+    }
+  });
+
+  test("fence: the marks are drawn only inside the picker, never on the console's day strips", () => {
+    // Wrong implementations killed: an unscoped `.days .button::after` (dots under the working-hours
+    // days in the console, which share .days) and marks that were never written.
+    const css = read("../app/[locale]/_ui/ui.module.css");
+    for (const line of css.split("\n").filter((l) => /::after|line-through/.test(l) && /\.(days|slots)\b/.test(l))) {
+      assert.match(line, /^\.picker \.(days|slots) /, line);
+    }
+    assert.match(css, /^\.picker \.days \.button::after \{/m);
+    assert.match(css, /^\.picker \.days \.button:disabled span:last-child \{[^}]*line-through/m);
+    assert.match(css, /^\.picker \.slots \.button:disabled \{[^}]*line-through/m);
   });
 });
 

@@ -89,6 +89,11 @@ export function slotsByDay(slots: string[], timeZone: string): Map<string, strin
   return days;
 }
 
+/** A reloaded week's free times plus the one just taken, so it stays listed (struck through) instead of vanishing. */
+export function withTaken(slots: string[], taken: string | undefined): string[] {
+  return taken && !slots.includes(taken) ? [...slots, taken].sort() : slots;
+}
+
 /** An instant as the page writes it, in the business's time zone: "Friday 16 October" and "10:00"
  * in the given date locale (the page passes dateLocale(locale)). */
 export function localWhen(instant: string, timeZone: string, locale: string): { date: string; time: string } {
