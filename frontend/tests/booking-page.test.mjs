@@ -105,6 +105,7 @@ describe("F4 booking POST body", () => {
   test("ZIF-152 fence: the phone is always sent, trimmed (the server reads its format)", () => {
     // Wrong implementation killed: the old omit-when-blank, or a client-side reformat.
     assert.equal(bookingBody(base).phone, "06 1234 5678");
+    assert.equal(bookingBody({ ...base, phone: " " }).phone, "");
   });
 
   test("fence: starts_at is passed through byte for byte, never re-serialised", () => {

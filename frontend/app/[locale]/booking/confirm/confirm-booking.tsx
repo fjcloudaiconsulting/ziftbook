@@ -137,8 +137,7 @@ function Confirm({ link }: { link: OpenedLink | null }) {
     else if (screen === "phoneInvalid") {
       setPhoneError(t("errPhoneInvalid"));
       phoneRef.current?.focus();
-    }
-    else setBanner(screen === "tooMany" ? t("tooMany") : screen === "fieldErrors" ? t("checkDetails") : t("unknownOutcome"));
+    } else setBanner(screen === "tooMany" ? t("tooMany") : screen === "fieldErrors" ? t("checkDetails") : t("unknownOutcome"));
   }
 
   if (view.is === "opening") {

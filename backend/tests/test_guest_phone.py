@@ -75,7 +75,7 @@ def test_the_click_without_a_phone_books_nothing(
 
     answer = new_client(app).post("/api/public/booking-hold/confirm", json=body)
 
-    assert answer.status_code == 422
+    assert (answer.status_code, answer.json()) == (422, {"code": "invalid_request"})
     assert counts(people.a) == (0, 0)
     assert as_operator(migrate_engine, people.a, "SELECT 1 FROM booking_holds") == [(1,)]
 
@@ -86,7 +86,7 @@ def test_a_signed_in_booking_without_a_phone_books_nothing(
 ) -> None:
     answer = post_booking(new_client(app), people.a, ready, phone=None)
 
-    assert answer.status_code == 422
+    assert (answer.status_code, answer.json()) == (422, {"code": "invalid_request"})
     assert counts(people.a) == (0, 0)
 
 
@@ -118,8 +118,9 @@ def test_a_local_number_is_read_in_the_business_s_country(
 
 
 # F5, F6: FENCE. Wrong impl: only a parse failure refused (91 234 parses, but is no number), the
-# parse error left uncaught (a 500), or the generic invalid_request the page can't place.
-@pytest.mark.parametrize("typed", ["91 234", "abc"])
+# parse error left uncaught (a 500), letters read as a keypad's digits (06 1234 ABCD would be
+# +31612342223), or the generic invalid_request the page can't place.
+@pytest.mark.parametrize("typed", ["91 234", "abc", "06 1234 ABCD"])
 def test_an_unreadable_phone_is_refused_by_code_on_both_public_paths(
     people: People, app: FastAPI, ready: str, typed: str
 ) -> None:

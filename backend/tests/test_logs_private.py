@@ -236,6 +236,7 @@ def test_no_personal_data_ever_reaches_a_log(
     secret(client_name)
     secret(client_email)
     secret(client_phone)
+    secret("+31655443322")  # as stored (ZIF-152)
     secret(client_note)
     secret(internal_note)
     added_client = owner.post(
@@ -278,6 +279,7 @@ def test_no_personal_data_ever_reaches_a_log(
     secret(booker_name)
     secret(booker_email)
     secret(booker_phone)
+    secret("+31611223344")  # as stored (ZIF-152)
     # ZIF-117: the public POST books only for the signed-in address itself.
     booker = client_for(app)
     sign_in_as(booker, people.a, booker_email)

@@ -200,9 +200,8 @@ describe("submitFailure", () => {
     assert.equal(submitFailure({ status: 403 }, false, null), "problem");
     assert.equal(submitFailure({ status: 403, code: "name_required" }, false, null), "problem");
   });
-  test("ZIF-152 fence: an unreadable phone says so; any other 422 stays the general problem", () => {
+  test("ZIF-152 fence: an unreadable phone says so", () => {
     assert.equal(submitFailure({ status: 422, code: "phone_invalid" }, false, null), "phoneInvalid");
-    assert.equal(submitFailure({ status: 422, code: "invalid_request" }, false, null), "problem");
   });
   test("a 422 (which never names a field), a network failure or a 500 is the general banner", () => {
     assert.equal(submitFailure({ status: 422, code: "invalid_request" }, false, null), "problem");

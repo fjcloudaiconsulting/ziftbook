@@ -88,6 +88,8 @@ COUNTRY = text("SELECT country FROM tenants WHERE id = current_setting('app.tena
 def number(db: Session, phone: str) -> str | None:
     """A typed phone as +31612345678 (ZIF-152), or None when it is no phone number: a local number
     is read in the business's country, one starting with + in its own. An extension is dropped."""
+    if any(c.isalpha() for c in phone):  # parse() would read letters as a keypad's digits
+        return None
     try:
         parsed = phonenumbers.parse(phone, db.scalar(COUNTRY))
     except phonenumbers.NumberParseException:
@@ -156,13 +158,14 @@ def find_or_create(
     (app.bookings.create, which answers 403 verify_email otherwise), or when the booker confirmed a
     booking-hold link mailed to that address (app.holds.confirm): opening the mailed link is the
     same proof of the mailbox as a verified account email. Then what they type is what they own:
-    the name is replaced, and phone and locale are coalesced from what was typed. Nothing an
+    the name is replaced, the phone too (online bookings require one, ZIF-152), and locale is
+    coalesced from what was typed. Nothing an
     unproven person types ever reaches this statement. That replaces ZIF-51's FILL, which let an
     unauthenticated booker fill a blank phone on someone else's record and point that client's
     reminders at a phone the booker owns.
 
-    Reading. phone and locale come back as *stored*, because coalesce keeps the old value when the
-    booker left the field empty. Use them to write the booking, never to fill a public answer;
+    Reading. phone and locale come back as *stored*, because coalesce keeps the old value when
+    nothing was typed. Use them to write the booking, never to fill a public answer;
     tests/test_openapi.py holds that fence for every public RESPONSE schema.
 
     user_id. Set it from the booker's own session and never from a request body (the confirmed

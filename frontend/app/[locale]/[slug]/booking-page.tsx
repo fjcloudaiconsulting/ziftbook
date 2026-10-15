@@ -614,7 +614,7 @@ export function BookingPage({ page, locale, turnstileSiteKey, initialService = n
     }
     if (outcome.kind === "phoneInvalid") {
       // ZIF-152: under the field, never the banner; step 3 reopens if "Change" left it.
-      setFlow({ ...f, busy: false, step: 3, errors: { ...f.errors, phone: t("errPhoneInvalid") } });
+      setFlow({ ...f, busy: false, banner: null, step: 3, errors: { ...f.errors, phone: t("errPhoneInvalid") } });
       focusFieldGen.current += 1;
       setFocusField({ field: "phone", gen: focusFieldGen.current });
       return;
