@@ -148,6 +148,7 @@
   font: 600 0.875rem/1 var(--font-body), system-ui, sans-serif;
   cursor: pointer;
 }
+.fieldError .chip { color: inherit; }
 .fieldError { margin: 0; display: flex; gap: 0.4rem; align-items: flex-start; font-size: 0.875rem; font-weight: 600; color: var(--error); }
 .fieldError svg, .banner svg, .rules svg { flex: none; margin-top: 0.2rem; }
 .rules { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.3rem; font-size: 0.875rem; }
