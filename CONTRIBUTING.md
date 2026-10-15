@@ -291,10 +291,9 @@ Rate limits and audit events key on the visitor's address. Each deployment has e
 Where each deployment gets it:
 
 - **Production and staging** (k3s; `app.ziftbook.com` and `dev.ziftbook.com`, manifests in cloud-infra
-  `clusters/platform/ziftbook-{prod,staging}`): Cloudflare (proxied) to Traefik to the web app to the API.
-  Cloudflare overwrites `CF-Connecting-IP` on every request, the node admits 443 from Cloudflare only, and
-  Traefik completes TLS only with clients showing our Authenticated Origin Pulls certificate, so no other
-  path reaches the web app. The web app sets `ZIF_CLIENT_IP_HEADER=cf-connecting-ip`; the API sets
+  `clusters/hetzner/ziftbook-{prod,staging}`): Cloudflare to the Cloudflare Tunnel (`cloudflared` pod) to the
+  web app to the API. Cloudflare overwrites `CF-Connecting-IP` on every request, and NetworkPolicies admit only
+  the `cloudflared` pods to the web app, so no other path reaches it. The web app sets `ZIF_CLIENT_IP_HEADER=cf-connecting-ip`; the API sets
   `ZIF_TRUSTED_PROXIES=10.42.0.0/16` (the pod network), and NetworkPolicies admit only the web app's pods to
   it. Each visitor gets their own per-IP limits.
 - **`docker-compose-prod.yaml`** publishes the web app's port 3000 directly, so it leaves `ZIF_CLIENT_IP_HEADER`
