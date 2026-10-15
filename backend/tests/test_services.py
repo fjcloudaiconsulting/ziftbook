@@ -67,6 +67,7 @@ def test_an_owner_creates_a_service_and_any_member_reads_it(
         "archived_at": None,
         "worker_ids": [],
         "placeholder": "generic",
+        "photo": None,
     }
     assert response.headers["cache-control"] == "no-store"
 

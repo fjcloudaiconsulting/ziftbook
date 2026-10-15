@@ -9,7 +9,7 @@ from fastapi import APIRouter, Request
 from pydantic import BaseModel
 from sqlalchemy import text
 
-from app import business_settings, clients, limits
+from app import business_settings, clients, limits, photos
 from app.availability import WorkerOut
 from app.business_settings import Locale
 from app.countries import Country
@@ -28,6 +28,7 @@ SLUG = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*")  # slug_ok()'s format (migration 00
 SERVICES = text("""
 SELECT s.id, s.name, s.description, s.duration_minutes,
        s.price_amount_minor, s.price_currency, s.photo_placeholder,
+       s.photo_key, s.photo_width, s.photo_height,
        m.id AS member_id, m.display_name
 FROM services s
 JOIN service_workers sw ON sw.tenant_id = s.tenant_id AND sw.service_id = s.id
@@ -53,6 +54,7 @@ class PublicServiceOut(BaseModel):
     price: Price
     workers: list[WorkerOut]  # display_name (nulls last), then id; never empty
     placeholder: Placeholder
+    photo: photos.Photo | None
 
 
 class BookingPageOut(BaseModel):
@@ -112,6 +114,7 @@ def read(slug: str, request: Request) -> BookingPageOut:
                     price=Price(amount_minor=row.price_amount_minor, currency=row.price_currency),
                     workers=[],
                     placeholder=row.photo_placeholder,
+                    photo=photos.urls(row.photo_key, row.photo_width, row.photo_height),
                 )
             services[row.id].workers.append(
                 WorkerOut(id=row.member_id, display_name=row.display_name)
