@@ -302,8 +302,23 @@ describe("source guards (L11)", () => {
     assert.match(src, /export (async )?function onRequestError\b/);
   });
 
+  test("instrumentation.ts imports types only: Next also compiles it for Edge (ZIF-141)", () => {
+    // A value import pulls lib/log.ts (node:crypto, process.stdout) into the Edge build and warns on
+    // every compile; the Node-only code loads through a NEXT_RUNTIME-gated dynamic import instead.
+    const src = read("../instrumentation.ts");
+    assert.doesNotMatch(src, /^\s*(import(?!\s+type\b)|export\b[^;]*\bfrom\b)/m);
+    assert.equal(src.match(/NEXT_RUNTIME === "nodejs"\) \(await import\("\.\/instrumentation-node\.ts"\)\)/g)?.length, 2);
+  });
+
+  test("the locale layout ignores hydration mismatches on <body> only (ZIF-141)", () => {
+    // Browser extensions (Grammarly) add attributes to <body> before React hydrates.
+    const src = read("../app/[locale]/layout.tsx");
+    assert.match(src, /<body suppressHydrationWarning>/);
+    assert.equal(src.match(/suppressHydrationWarning/g).length, 1);
+  });
+
   test("proxy.ts, instrumentation.ts and lib/log.ts never call console.*", () => {
-    for (const rel of ["../proxy.ts", "../instrumentation.ts", "../lib/log.ts"]) {
+    for (const rel of ["../proxy.ts", "../instrumentation.ts", "../instrumentation-node.ts", "../lib/log.ts"]) {
       assert.doesNotMatch(read(rel), /\bconsole\./, rel);
     }
   });

@@ -10,6 +10,7 @@ test("TypeScript: process.env reads need the ZIF_ prefix", () => {
 
 test("TypeScript: framework variables are allowed", () => {
   assert.deepEqual(unprefixedNames("proxy.ts", 'if (process.env.NODE_ENV === "development") {}'), []);
+  assert.deepEqual(unprefixedNames("instrumentation.ts", 'if (process.env.NEXT_RUNTIME === "nodejs") {}'), []);
 });
 
 test("Python: os.environ, getenv and monkeypatch reads, including across lines", () => {
