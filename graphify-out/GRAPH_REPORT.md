@@ -1,255 +1,194 @@
-# Graph Report - ziftbook  (2026-10-09)
+# Graph Report - ziftbook  (2026-10-15)
 
 ## Corpus Check
-- 346 files · ~325,507 words
+- 94 files · ~357,367 words
 - Verdict: corpus is large enough that graph structure adds value.
-- Unclassified: 26 file(s) not represented in the graph (top: (none) 12, .woff2 6, .css 4)
 
 ## Summary
-- 4686 nodes · 17145 edges · 217 communities (118 shown, 99 thin omitted)
-- Extraction: 93% EXTRACTED · 7% INFERRED · 0% AMBIGUOUS · INFERRED: 1257 edges (avg confidence: 0.93)
-- Token cost: 66,944 input · 0 output
+- 5182 nodes · 18732 edges · 241 communities (138 shown, 103 thin omitted)
+- Extraction: 93% EXTRACTED · 7% INFERRED · 0% AMBIGUOUS · INFERRED: 1310 edges (avg confidence: 0.93)
+- Token cost: 110,759 input · 0 output
 
 ## Community Hubs (Navigation)
-- Shared UI And Manage Booking
-- Console Calendar Logic
-- Session API Tests
-- Seed Data Builders
-- Turnstile Booking Tests
-- Tracing Tests
-- Bookings Backend
-- Console Today Data
-- Public Booking Page UI
+- Calendar Agenda Client
+- Service Workers Tests
+- Database Engine And Sessions
+- Bookings API Tests
+- Admin Sign-in UI
+- Team Console Client
 - Availability API Tests
-- Worker And Config
-- Week Editor UI
-- Account Email Tests
-- Services Console UI
-- Time Off Backend
-- Job Runner Tests
-- Password Auth DB Tests
+- Test Fixtures Conftest
 - Password Hashing Core
+- Booking Holds Client
+- Time Off Tests
+- Booking Links API Tests
+- Booking Approval Tests
+- Bookings Agenda Backend
+- Booking Email Tests
+- Merchant Booking Tests
+- Job Runner Tests
+- Log Output Tests
+- Public Booking Page API
+- Mail Delivery
+- Week Editor UI
+- Accept Invite UI
+- Booking Holds Tests
+- Services Console UI
+- Pending Booking Jobs
+- Admin Sessions And Auth
+- Deployment Config
+- Members API Tests
 - Booking Links Backend
 - Clients Backend
-- Time Off Console UI
-- Accounts Backend
-- Availability Queries
-- Members Backend
-- Cancellation Policy
-- Settings Console UI
 - App Shell And Header
-- Services Backend
-- Team And Today Console
-- Schedule Backend
-- Logging Backend
-- Invites DB Tests
-- Web Logging Instrumentation
-- Clients DB Tests
-- Invites Backend
-- Test Fixtures Conftest
-- Prod Compose And API Main
-- Account Web Client
-- Seed Script
-- Seed Fixtures
-- Booking Holds Backend
-- Mail Sending
-- Tenant Isolation Tests
-- Seed Helpers
-- Audit Backend
-- Seed Test Helpers
-- JSON Only Tests
-- Landing Worker
-- Env Doc Check
-- Time Off Tests
-- Landing Build
-- Community 112
-- Community 117
-- Availability Engine
-- Booking Links API Tests
-- Booking Email Tests
-- Logging Tests
-- Clients API Tests
-- Merchant Booking Tests
-- Booking Holds Tests
-- Members API Tests
-- Mail Tests
+- Second Factor DB Tests
 - Working Hours Tests
-- Bookings Range Tests
 - Invites API Tests
-- Audit Recording Tests
-- Database Engine And Sessions
-- Booking And Availability Tests
+- Admin Second Factor Tests
+- Console Calendar Logic
+- Admin CLI
+- TOTP Secret Encryption
+- Time Off Backend
+- Landing And Mail Templates
+- Manage Booking Link UI
 - Booking Page API Tests
+- Bookings Range Tests
+- Migration Tests
+- Availability Engine
+- Clients API Tests
+- Sign In Tests
+- Logging Backend
+- First-run Setup Tests
 - Sign Up Tests
 - Opening Hours Tests
-- Sign In Tests
-- Migration Tests
-- Bookings DB Tests
-- Bookings API Tests
-- Display Names Tests
-- Password Reset Tests
-- Decline Message Tests
-- Tenant Tests
+- Password Auth DB Tests
+- Cancellation Mail Templates
+- Session Auth Core
+- Members Backend
 - Turnstile Tests
+- Bookings DB Tests
+- Display Names Tests
+- Cancellation Policy
+- Services Backend
+- Admin Sessions Tests
+- Session Cookie API Tests
+- Availability Slot Compute
+- Schedule Backend
+- Settings Page UI
+- Tenant Tests
 - Web Tracing
-- Body Size Cap Tests
-- Rate Limits
-- Owner Keeping Tests
-- Audit DB Tests
+- Decline Message Tests
+- Tracing Tests
+- Booking Mail Templates
+- Password Reset Tests
+- Invites DB Tests
+- FastAPI App Factory
 - Settings API Tests
+- Web Logging Instrumentation
+- Body Size Cap Tests
+- Account Lifecycle Backend
 - Backend Tracing Setup
-- API Proxy Upstream
-- Booking Approval Tests
+- Audit DB Tests
+- Web Proxy Middleware
+- Seed Bookings
+- Parallel Safety Tests
+- Booking Holds Backend
+- Seed Script
+- Client IP Tests
+- Database Role Tests
+- Frontend TS Config
 - Seed Tests
+- Seed API Client
+- CI Smoke And Release
+- API Proxy Upstream
 - Booking Sweep Tests
 - Settings Audit Tests
-- Repo Check Scripts
+- First-run Setup
+- Clients DB Tests
+- Contributor Docs
+- JSON Only Tests
 - Tenant Schema Docs
-- Private Log Tests
 - Audit Events API Tests
-- Service Workers Tests
-- Mail Rendering
-- Web Proxy Middleware
-- Catalog And Hook Checks
+- Private Log Tests
+- Session API Tests
+- Tenant Isolation Tests
+- Migration And Tenancy Rules
+- Team And Today Console
+- Env Doc Check Scripts
+- Slot Anchors And Buffers
+- Availability Queries
+- Accounts Backend
+- Worker Schedules
+- Observability And Settings Docs
+- Seed Test Helpers
+- Audit Backend
+- Docs Conventions
+- Frontend Dependencies
 - Blank Names Tests
 - Renovate And Commit Hooks
+- Mail Rendering
+- Tracing Spans
+- Admin Route Allowlist
+- Seed Setup Stub
+- Release 0.25.0 Docs
 - Readme Setup Docs
-- Community 113
-- Community 114
-- Community 115
-- Community 121
-- Community 122
-- Community 125
-- Community 164
-- Community 165
-- Community 167
-- Community 168
-- Community 169
-- Community 170
-- Community 173
-- Community 174
-- Community 182
-- Community 183
-- Community 184
-- Community 185
-- Community 186
-- Community 208
-- Contributor Docs
-- Docs Conventions
-- Project Docs
-- Frontend Dependencies
 - Frontend Build Deps
 - Frontend Test Deps
 - Landing Dependencies
-- Community 120
-- Community 123
-- Community 124
-- Community 126
-- Community 127
-- Community 128
-- Community 129
-- Community 130
-- Community 131
-- Community 132
-- Community 133
-- Community 134
-- Community 135
-- Community 136
-- Community 137
-- Community 138
-- Community 139
-- Community 140
-- Community 141
-- Community 142
-- Community 143
-- Community 144
-- Community 146
-- Community 147
-- Community 148
-- Community 149
-- Community 150
-- Community 151
-- Community 152
-- Community 154
-- Community 155
-- Community 156
-- Community 157
-- Community 158
-- Community 159
-- Community 160
-- Community 161
-- Community 162
-- Community 163
-- Community 166
-- Community 171
-- Community 172
-- Community 175
-- Community 176
-- Community 181
-- Community 187
-- Community 188
-- Community 189
-- Community 190
-- Community 191
-- Community 192
-- Community 193
-- Community 194
-- Community 201
-- Community 202
-- Community 203
-- Community 204
-- Community 205
-- Community 206
-- Community 207
-- Community 210
-- Community 211
-- Community 215
-- Community 216
-- Frontend TS Config
+- Repo Check Scripts
+- DST Day Span
+- Booking Setting Fixtures
+- Landing Deploy And Client IP
+- Project Docs
+- Landing Worker
+- Admin Sessions Migration
+- Turnstile Booking Tests
+- Landing Build
+- Catalog And Hook Checks
+- Community 112
+- Reserve Setup Slug Migration
+- Admin Second Factor Migration
+- App Role Delete Fixtures
+- CI Changed-Paths Script
+- Community 117
+- Dev Mail And Worker
 - Community 118
+- Commit-msg Hook Test
 - Community 119
-- Landing And Mail Templates
-- Cancellation Mail Templates
-- Booking Mail Templates
-- Community 177
-- Community 178
-- Community 179
-- Community 180
-- Community 195
-- Community 196
-- Community 197
-- Community 198
-- Community 199
-- Community 200
-- Community 209
-- Community 212
-- Community 213
-- Community 214
+- Community 115
+- Community 120
+- Community 121
+- Community 122
+- Community 126
 - Community 145
+- Booking Verify Mail Template
+- Community 164
+- Community 202
+- Prod Compose And API Main
 
 ## God Nodes (most connected - your core abstractions)
-1. `People` - 878 edges
-2. `tenant_context()` - 337 edges
-3. `signed_in()` - 326 edges
-4. `new_client()` - 293 edges
+1. `People` - 886 edges
+2. `tenant_context()` - 338 edges
+3. `signed_in()` - 330 edges
+4. `new_client()` - 320 edges
 5. `member_id()` - 260 edges
-6. `fresh_email()` - 165 edges
-7. `at()` - 153 edges
-8. `create_app()` - 132 edges
-9. `patch()` - 111 edges
-10. `events()` - 95 edges
+6. `fresh_email()` - 167 edges
+7. `at()` - 152 edges
+8. `create_app()` - 144 edges
+9. `patch()` - 109 edges
+10. `email_of()` - 99 edges
 
 ## Surprising Connections (you probably didn't know these)
-- `TurnstileSettings` --references--> `Production compose stack`  [INFERRED]
-  backend/app/config.py → docker-compose-prod.yaml
-- `healthz()` --references--> `CI job: post-release smoke`  [INFERRED]
-  backend/app/main.py → .github/workflows/ci.yml
-- `MailSettings` --references--> `prod worker service (python -m app.worker, Mailgun)`  [EXTRACTED]
-  backend/app/config.py → docker-compose-prod.yaml
-- `main()` --calls--> `prod worker service (python -m app.worker, Mailgun)`  [EXTRACTED]
-  backend/app/worker.py → docker-compose-prod.yaml
-- `main()` --calls--> `dev worker service (python -m app.worker, Mailpit)`  [EXTRACTED]
-  backend/app/worker.py → docker-compose.yaml
+- `Shared workflow pr-title.yml@v1` --references--> `github>fjcloudaiconsulting/.github#v1`  [INFERRED]
+  .github/workflows/pr-title.yml → renovate.json
+- `Schibsted Grotesk OFL license (frontend)` --semantically_similar_to--> `Schibsted Grotesk OFL license (landing)`  [INFERRED] [semantically similar]
+  frontend/licenses/schibsted-grotesk-OFL.txt → landing/licenses/schibsted-grotesk-OFL.txt
+- `Young Serif OFL license (frontend)` --semantically_similar_to--> `Young Serif OFL license (landing)`  [INFERRED] [semantically similar]
+  frontend/licenses/young-serif-OFL.txt → landing/licenses/young-serif-OFL.txt
+- `Landing live-site smoke test` --semantically_similar_to--> `Post-release smoke compose stack`  [INFERRED] [semantically similar]
+  .github/workflows/landing.yml → compose.smoke.yaml
+- `CI Repo Checks job` --implements--> `Translation catalogs (en source, nl, pt)`  [INFERRED]
+  .github/workflows/ci.yml → CONTRIBUTING.md
 
 ## Import Cycles
 - None detected.
@@ -260,484 +199,566 @@
 - **Booking request approval flow emails** — mail_template_booking_request, mail_template_booking_received, booking_approval_expiry [INFERRED 0.85]
 - **Business-facing client action notifications with link** — backend_app_mail_templates_booking_client_cancelled_template, backend_app_mail_templates_booking_client_rescheduled_template, backend_app_mail_templates_client, backend_app_mail_templates_link [INFERRED 0.85]
 - **Client-facing booking notification emails** — backend_app_mail_templates_booking_cancelled_template, backend_app_mail_templates_booking_cancelled_by_client_template, backend_app_mail_templates_booking_confirmed_template, backend_app_mail_templates_booking_declined_template, backend_app_mail_templates_booking_declined_message_template [INFERRED 0.85]
-- **Compose stacks running the same three release images** — docker_compose_prod, compose_smoke, docker_compose [INFERRED 0.85]
 - **Guest-facing booking emails** — mail_template_booking_received, mail_template_booking_reminder, guest_self_service_booking_link [INFERRED 0.85]
 - **Emailed single-use link flows proving address ownership** — backend_app_mail_templates_invite_en_template, backend_app_mail_templates_password_reset_en_template, backend_app_mail_templates_sign_up_en_template, backend_app_mail_templates_invite_en_single_use_link [INFERRED 0.85]
 - **Business/team-facing booking notifications** — mail_template_booking_moved_team, mail_template_booking_moved_team_member, mail_template_booking_new, mail_template_booking_request [INFERRED 0.85]
+- **Build-once, retag-on-release pipeline** — github_workflows_ci_backend_images_job, github_workflows_ci_frontend_image_job, github_workflows_ci_backend_checks, github_workflows_ci_frontend_checks, github_workflows_ci_release_job, compose_smoke_smoke_stack, contributing_release_process [INFERRED 0.85]
+- **Booking concurrency safety (exclusion constraint, tenant lock, holds, lock timeout)** — contributing_ex_bookings_worker_overlap, contributing_tenant_advisory_lock, contributing_booking_holds, contributing_api_lock_timeout [EXTRACTED 1.00]
+- **Role bootstrap shared by every compose stack and CI** — backend_migrations_bootstrap, docker_compose_dev_stack, docker_compose_prod_stack, compose_smoke_smoke_stack, github_workflows_ci_api_job [EXTRACTED 1.00]
 
-## Communities (217 total, 99 thin omitted)
+## Communities (241 total, 103 thin omitted)
 
-### Community 0 - "Shared UI And Manage Booking"
-Cohesion: 0.05
-Nodes (102): Note, Pick, View, Message, Stage, Message, Props, CheckInboxProps (+94 more)
-
-### Community 1 - "Console Calendar Logic"
+### Community 0 - "Calendar Agenda Client"
 Cohesion: 0.04
-Nodes (112): Load, Done, Props, Cell, Column, Item, Loaded, Popover (+104 more)
+Nodes (122): BookingDetail(), actions(), expiryLine(), historyLine(), keepBooking(), keepDecline(), openCancel(), openDecline() (+114 more)
 
-### Community 10 - "Session API Tests"
+### Community 1 - "Service Workers Tests"
 Cohesion: 0.06
-Nodes (80): Credentials, SessionOut, clear_cookie(), create(), describe(), hash_token(), read(), record() (+72 more)
+Nodes (86): events(), failing(), app(), businesses(), client_at(), complete_reset(), complete_sign_up(), sessions_of() (+78 more)
 
-### Community 103 - "Seed Data Builders"
-Cohesion: 0.32
-Nodes (3): Mailbox, Mailpit, read through its API., The first capture of `pattern` in a message to `to` that was not there before…
+### Community 2 - "Database Engine And Sessions"
+Cohesion: 0.02
+Nodes (24): enable_tenant_isolation(), upgrade(), upgrade(), upgrade(), upgrade(), upgrade(), upgrade(), upgrade() (+16 more)
 
-### Community 14 - "Tracing Tests"
-Cohesion: 0.05
-Nodes (66): _MetricsReceiver, create_app(), openapi_document(), span(), test_the_api_is_bound_to_its_database_while_it_runs(), test_the_contract_builds_without_a_database_url(), test_the_worker_still_requires_a_database_url(), test_importing_the_engine_drags_in_no_other_app_module() (+58 more)
+### Community 3 - "Bookings API Tests"
+Cohesion: 0.07
+Nodes (86): fresh_address(), new_client(), put_settings(), app(), at(), book_twice_under_auto_confirm(), booking_url(), commit_bypassing_the_lock() (+78 more)
 
-### Community 15 - "Bookings Backend"
+### Community 4 - "Admin Sign-in UI"
 Cohesion: 0.06
-Nodes (77): Account, AgendaOut, BookingDetailOut, BookingIn, BookingOut, BookingRow, BookingStatusOut, EventOut (+69 more)
+Nodes (80): AdminHome(), leave(), AdminPage(), CodeField(), CopyButton(), EnrolCommand(), SignedInAs(), AdminSignIn() (+72 more)
 
-### Community 19 - "Console Today Data"
-Cohesion: 0.05
-Nodes (66): Row, ConsoleContextValue, GuardedWriteResult, Identity, Nav, ReadOutcome, Role, Section (+58 more)
-
-### Community 2 - "Public Booking Page UI"
+### Community 5 - "Team Console Client"
 Cohesion: 0.04
-Nodes (99): View, CacheEntry, Chosen, Done, Flow, Sent, Service, Step2Plus (+91 more)
+Nodes (67): ConsoleLayout(), MyHours(), MyHoursPage(), MyHoursTimeOffPage(), PersonPage(), PersonTimeOffPage(), TeamPage(), BackLink() (+59 more)
 
-### Community 20 - "Availability API Tests"
-Cohesion: 0.10
-Nodes (66): People, app(), clear_time_off(), get(), insert_day_block(), local(), local_dt(), owner() (+58 more)
-
-### Community 23 - "Worker And Config"
-Cohesion: 0.05
-Nodes (50): DatabaseSettings, LogSettings, MailSettings, Settings, TurnstileSettings, WorkerSettings, settings_fields(), lifespan() (+42 more)
-
-### Community 24 - "Week Editor UI"
-Cohesion: 0.09
-Nodes (53): HoursSectionProps, ApiShift, Phase, ServerProblem, Status, T, WeekEditorProps, Day (+45 more)
-
-### Community 25 - "Account Email Tests"
-Cohesion: 0.09
-Nodes (54): Job, pending(), render(), send_invite(), send_token(), bound(), inbox(), link_in() (+46 more)
-
-### Community 26 - "Services Console UI"
+### Community 6 - "Availability API Tests"
 Cohesion: 0.08
-Nodes (46): Errors, Props, Locale, NameMap, ServiceBody, ServiceBodyResult, ServiceForm, NewServicePage() (+38 more)
-
-### Community 27 - "Time Off Backend"
-Cohesion: 0.08
-Nodes (50): ApiError, InTheWay, TimeOffChange, TimeOffIn, TimeOffOut, TimeOffRangeOut, blocks_overlapping(), checked() (+42 more)
-
-### Community 28 - "Job Runner Tests"
-Cohesion: 0.08
-Nodes (51): JobKind, _connections(), _pending(), _pool(), queue(), closed(), points(), test_a_delivery_counts_as_sent_or_failed_by_template() (+43 more)
-
-### Community 29 - "Password Auth DB Tests"
-Cohesion: 0.09
-Nodes (54): Created, delete_services(), wait_until_blocked(), blocked_elsewhere(), blocked_on(), elsewhere(), fence_row(), test_wait_until_blocked_ignores_another_databases_waiter() (+46 more)
-
-### Community 3 - "Password Hashing Core"
-Cohesion: 0.05
-Nodes (66): CountryDefaults, Error, named(), printable(), _inet(), operation_id(), check_new_password(), hash_password() (+58 more)
-
-### Community 30 - "Booking Links Backend"
-Cohesion: 0.10
-Nodes (53): AvailabilityOut, BookingOut, CancelIn, ConsentsIn, EngineOut, LinkedBooking, RescheduleIn, TokenIn (+45 more)
-
-### Community 35 - "Clients Backend"
-Cohesion: 0.08
-Nodes (45): ClientIn, ClientOut, ConsentIn, ConsentOut, NoteChange, add_consents(), as_clients(), create_client() (+37 more)
-
-### Community 39 - "Time Off Console UI"
-Cohesion: 0.11
-Nodes (39): FormState, Mode, Block, BlockForm, BlockLabel, Patch, blockMeta(), blockTitle() (+31 more)
-
-### Community 40 - "Accounts Backend"
-Cohesion: 0.06
-Nodes (42): CompleteReset, CompleteSignUp, LinkRequest, NameIn, BusinessSettings, complete_password_reset(), complete_sign_up(), give_name() (+34 more)
-
-### Community 43 - "Availability Queries"
-Cohesion: 0.08
-Nodes (40): AvailabilityOut, Offered, WorkerOut, BookingPageOut, CancellationOut, PublicServiceOut, booked(), compute() (+32 more)
-
-### Community 51 - "Members Backend"
-Cohesion: 0.09
-Nodes (36): SignedIn, DisplayNameChange, DisplayNameOut, MemberOut, RoleChange, named(), owner(), change_role() (+28 more)
-
-### Community 52 - "Cancellation Policy"
-Cohesion: 0.13
-Nodes (30): Decision, Policy, Unset, decide(), test_a_booking_an_hour_away_across_the_fold_can_still_be_cancelled(), test_a_booking_moved_out_after_its_original_start_passed_can_still_be_cancelled(), test_a_booking_under_way_across_the_fold_has_started(), test_a_naive_datetime_is_refused() (+22 more)
-
-### Community 54 - "Settings Console UI"
-Cohesion: 0.14
-Nodes (30): Draft, Field, IntKey, Key, Settings, SettingsPage(), Field(), Settings() (+22 more)
-
-### Community 55 - "App Shell And Header"
-Cohesion: 0.08
-Nodes (26): Loaded, Locale, AppConfig, generateMetadata(), PublicBookingPage(), Flag(), Header(), LanguageLinks() (+18 more)
-
-### Community 56 - "Services Backend"
-Cohesion: 0.12
-Nodes (33): PriceIn, ServiceChange, ServiceIn, ServiceOut, assign_workers(), create_service(), found(), list_services() (+25 more)
-
-### Community 6 - "Team And Today Console"
-Cohesion: 0.05
-Nodes (68): HoursSummaries, Invite, act(), read(), MyHours(), MyHoursPage(), MyHoursTimeOffPage(), OpeningHours() (+60 more)
-
-### Community 60 - "Schedule Backend"
-Cohesion: 0.11
-Nodes (32): Shift, lock_week(), opening_week(), overlapping(), read_opening_hours(), read_week(), replace_opening_hours(), replace_week() (+24 more)
-
-### Community 61 - "Logging Backend"
-Cohesion: 0.11
-Nodes (25): Formatter, _add_context(), _causes(), _chain(), error_summary(), _escape(), _invalid_env(), stream_handler() (+17 more)
-
-### Community 63 - "Invites DB Tests"
-Cohesion: 0.17
-Nodes (28): NewAccount, call(), digest(), _insert(), minted(), new_accounts(), pending(), test_accept_binds_to_its_own_tenant() (+20 more)
-
-### Community 65 - "Web Logging Instrumentation"
-Cohesion: 0.14
-Nodes (24): ErrorContext, ErrorRequest, ExcLink, Format, Level, onRequestError(), register(), errorFields() (+16 more)
-
-### Community 66 - "Clients DB Tests"
-Cohesion: 0.14
-Nodes (26): Found, find_or_create(), row_of(), seed_client(), test_a_booking_with_no_email_creates_a_new_client_every_time(), test_a_client_of_another_business_is_invisible(), test_a_consent_cannot_point_at_another_businesses_client(), test_every_consent_column_but_id_and_created_at_is_insertable() (+18 more)
-
-### Community 67 - "Invites Backend"
-Cohesion: 0.11
-Nodes (26): AcceptInvite, Found, InviteDetails, InviteOut, InviteToken, NewInvite, accept(), create() (+18 more)
+Nodes (71): People, app(), assign(), clear_time_off(), get(), insert_day_block(), local(), local_dt() (+63 more)
 
 ### Community 7 - "Test Fixtures Conftest"
 Cohesion: 0.04
-Nodes (76): Spy, _after_cursor_execute(), _before_cursor_execute(), _handle_error(), _queue_gauge(), bound(), _keep_pytest_thread_hook(), log_lines() (+68 more)
+Nodes (30): _after_cursor_execute(), _before_cursor_execute(), _handle_error(), app_engine(), bound(), empty_database(), empty_install(), install() (+22 more)
 
-### Community 71 - "Prod Compose And API Main"
-Cohesion: 0.11
-Nodes (24): Dependencies, Health, dependencies(), healthz(), Shared workflow smoke.yml@v1, CI job: post-release smoke, Fixed subnet so backend trusts exactly the frontend (ZIF_TRUSTED_PROXIES=172.28.0.10), ZIF_CLIENT_IP_HEADER deliberately not passed through (+16 more)
-
-### Community 73 - "Account Web Client"
-Cohesion: 0.13
-Nodes (14): Country, Place, SignUpRequestErrors, byName(), clock(), likelyCountry(), secondsLeft(), signUpRequest() (+6 more)
-
-### Community 74 - "Seed Script"
-Cohesion: 0.11
-Nodes (21): LocalRedirects, Plan, bucket(), check_local(), main(), on_grid(), opener(), test_bucket_checks_in_order() (+13 more)
-
-### Community 77 - "Seed Fixtures"
-Cohesion: 0.22
-Nodes (7): Api, Seed, email_of(), Any, Invite and accept, from a cookie-less connection: accepting replaces its…, One person's connection: its own cookies, so its own session., What the owners see for each booking is what was meant to be seeded.
-
-### Community 80 - "Booking Holds Backend"
-Cohesion: 0.13
-Nodes (19): ConfirmIn, HoldIn, HoldOut, HoldView, ReleaseIn, TokenIn, current_policy_version(), confirm() (+11 more)
-
-### Community 81 - "Mail Sending"
-Cohesion: 0.12
-Nodes (18): MailNotConfigured, _local_text(), _quoted(), _send(), send_booking_verify(), transport(), RuntimeError, Email through Mailgun's HTTP API when deployed, Mailpit's HTTP API in… (+10 more)
-
-### Community 90 - "Tenant Isolation Tests"
-Cohesion: 0.31
-Nodes (13): Base, Child, Parent, add_parent(), tenants(), test_a_query_without_tenant_context_raises(), test_a_tenant_cannot_read_another_tenants_rows(), test_a_tenant_cannot_reference_another_tenants_rows() (+5 more)
-
-### Community 95 - "Seed Helpers"
-Cohesion: 0.33
-Nodes (6): Booked, Business, date, A guest books the first slot offered in first..last, the next if it was just…, The owner books a client in at any start (a walk-in, or one already past)., A guest booking in an auto-confirming business, and a guest connection opened…
-
-### Community 96 - "Audit Backend"
-Cohesion: 0.18
-Nodes (11): AuditEventOut, list_events(), BaseModel, CurrentSession, ge, get, le, Query (+3 more)
-
-### Community 97 - "Seed Test Helpers"
-Cohesion: 0.25
-Nodes (9): Counter, stub(), stubs(), test_requests_ignore_proxy_environment(), test_requests_refuse_redirects_off_the_machine(), Any, fixture, MonkeyPatch (+1 more)
-
-### Community 100 - "JSON Only Tests"
-Cohesion: 0.39
-Nodes (8): client(), test_cross_origin_requests_are_never_allowed(), test_json_with_parameters_is_accepted(), test_safe_methods_need_no_content_type(), test_state_changing_requests_that_are_not_json_are_rejected(), fixture, parametrize, TestClient
-
-### Community 107 - "Landing Worker"
-Cohesion: 0.43
-Nodes (5): fetch(), pickLanguage(), redirect(), SUPPORTED, assets
-
-### Community 108 - "Env Doc Check"
-Cohesion: 0.43
-Nodes (5): documentedNames(), pydanticFieldNames(), usedNames(), SCAN_PATHS, SKIP
-
-### Community 11 - "Time Off Tests"
-Cohesion: 0.10
-Nodes (80): member_id(), app(), block(), block_path(), day_block(), google(), insert_block(), insert_day_block() (+72 more)
-
-### Community 111 - "Landing Build"
-Cohesion: 0.33
-Nodes (4): alternates, LOCALES, strings, template
-
-### Community 112 - "Community 112"
-Cohesion: 0.40
-Nodes (4): _access_fields(), access_log(), Any, Request
-
-### Community 117 - "Community 117"
-Cohesion: 0.67
-Nodes (3): run_until_idle(), verify(), verify_then_reset()
-
-### Community 12 - "Availability Engine"
+### Community 8 - "Password Hashing Core"
 Cohesion: 0.07
-Nodes (81): anchor(), clip(), day_span(), member_slots(), merged(), overlaps(), by_weekday(), day_shifts() (+73 more)
+Nodes (17): named(), printable(), CountryDefaults, join_tenant(), Error, InTheWay, check_new_password(), hash_password() (+9 more)
 
-### Community 13 - "Booking Links API Tests"
-Cohesion: 0.12
-Nodes (80): app(), booking_jobs(), cancel_body(), confirmed_booking(), counts(), email_of_user(), first_slot_after(), get() (+72 more)
-
-### Community 16 - "Booking Email Tests"
-Cohesion: 0.09
-Nodes (74): tenant_context(), _mark_sent(), send(), send_booking(), add_worker(), app(), clean_outbox(), _client_email() (+66 more)
-
-### Community 17 - "Logging Tests"
+### Community 9 - "Booking Holds Client"
 Cohesion: 0.05
-Nodes (65): bound(), configure(), _excepthook(), _boom(), _fields(), _raised(), raw_request(), _raw_request() (+57 more)
+Nodes (79): Confirm(), book(), read(), ConfirmBooking(), Page(), store, View, ConfirmBookingPage() (+71 more)
 
-### Community 18 - "Clients API Tests"
-Cohesion: 0.06
-Nodes (68): fresh_address(), app_trusting(), seen(), test_a_trusted_peers_forwarded_address_is_believed(), test_addresses_and_networks_together_are_accepted(), test_an_invalid_trusted_proxies_entry_stops_startup(), test_an_ipv6_forwarded_address_is_kept_whole(), test_an_unparseable_forwarded_value_is_stored_as_no_ip() (+60 more)
+### Community 10 - "Time Off Tests"
+Cohesion: 0.09
+Nodes (67): app(), block(), block_path(), day_block(), google(), insert_block(), insert_day_block(), iso() (+59 more)
 
-### Community 21 - "Merchant Booking Tests"
-Cohesion: 0.12
-Nodes (68): ana(), ana_id(), app(), availability(), book(), boss(), clean_outbox(), clear_jobs() (+60 more)
+### Community 11 - "Booking Links API Tests"
+Cohesion: 0.11
+Nodes (60): app(), booking_jobs(), cancel_body(), confirmed_booking(), counts(), email_of_user(), first_slot_after(), get() (+52 more)
+
+### Community 12 - "Booking Approval Tests"
+Cohesion: 0.10
+Nodes (58): ago(), app(), confirmed_in_the_past(), events_of(), expire(), expire_in_a_second(), hold_the_tenant_lock(), make_pending() (+50 more)
+
+### Community 13 - "Bookings Agenda Backend"
+Cohesion: 0.05
+Nodes (34): Account, actor_of(), agenda(), AgendaOut, book(), book_online(), BookingDetailOut, BookingIn (+26 more)
+
+### Community 14 - "Booking Email Tests"
+Cohesion: 0.09
+Nodes (59): tenant_context(), _mark_sent(), send_booking(), add_worker(), app(), clean_outbox(), _client_email(), client_id_of() (+51 more)
+
+### Community 15 - "Merchant Booking Tests"
+Cohesion: 0.11
+Nodes (58): ana(), ana_id(), app(), availability(), book(), boss(), clean_outbox(), clear_jobs() (+50 more)
+
+### Community 16 - "Job Runner Tests"
+Cohesion: 0.05
+Nodes (43): _connections(), _pending(), _pool(), _claim(), JobKind, queue(), _run(), run_once() (+35 more)
+
+### Community 17 - "Log Output Tests"
+Cohesion: 0.05
+Nodes (46): _boom(), _fields(), _raised(), raw_request(), _raw_request(), _run_uncaught_script(), test_a_database_error_never_quotes_the_row(), test_a_json_record_has_exactly_the_expected_keys_in_order() (+38 more)
+
+### Community 18 - "Public Booking Page API"
+Cohesion: 0.04
+Nodes (36): WorkerOut, BookingPageOut, CancellationOut, PublicServiceOut, read(), _count(), count_after_commit(), _forget() (+28 more)
+
+### Community 19 - "Mail Delivery"
+Cohesion: 0.05
+Nodes (35): MailSettings, deliver(), _local_text(), MailNotConfigured, _outbox(), _quoted(), render(), send() (+27 more)
+
+### Community 20 - "Week Editor UI"
+Cohesion: 0.08
+Nodes (56): act(), read(), HoursSection(), load(), reloadEnvelope(), HoursSectionProps, OpeningHours(), load() (+48 more)
+
+### Community 21 - "Accept Invite UI"
+Cohesion: 0.05
+Nodes (36): AcceptInvite(), Message, Stage, store, useInviteLink(), AcceptInvitePage(), CheckInboxProps, ICONS (+28 more)
 
 ### Community 22 - "Booking Holds Tests"
 Cohesion: 0.11
-Nodes (61): sent_to(), token_in(), seed_booking(), age(), app(), as_operator(), confirm(), counts() (+53 more)
+Nodes (43): token_in(), age(), app(), as_operator(), confirm(), counts(), first_after_tenant(), held() (+35 more)
 
-### Community 31 - "Members API Tests"
-Cohesion: 0.11
-Nodes (49): signed_in(), app(), seed_booking_for(), stored_name(), test_a_change_whose_event_fails_leaves_nothing_changed(), test_a_display_name_must_be_one_to_sixty_printable_characters(), test_a_malformed_role_change_is_refused(), test_a_member_of_another_business_is_not_found() (+41 more)
+### Community 23 - "Services Console UI"
+Cohesion: 0.07
+Nodes (42): NewServicePage(), ServicesPage(), EditServicePage(), ArchivedRow(), bringBack(), ArchiveZone(), archive(), BackLink() (+34 more)
 
-### Community 32 - "Mail Tests"
-Cohesion: 0.08
-Nodes (45): _claim(), enqueue(), _record(), _run(), run_once(), deliver(), run_until_idle(), run_until_idle() (+37 more)
-
-### Community 33 - "Working Hours Tests"
-Cohesion: 0.11
-Nodes (47): app(), hours_path(), shift(), stored(), test_a_failed_recording_leaves_the_week_unchanged(), test_a_malformed_body_is_refused(), test_a_member_outside_the_business_is_not_found(), test_a_non_uuid_path_is_refused() (+39 more)
-
-### Community 34 - "Bookings Range Tests"
-Cohesion: 0.14
-Nodes (44): app(), history(), hour(), ids(), insert_event(), iso(), owner(), put() (+36 more)
-
-### Community 36 - "Invites API Tests"
-Cohesion: 0.15
-Nodes (43): add_password(), app(), invite_jobs(), invite_row_count(), mint(), spy(), test_a_failed_audit_write_leaves_no_invite_or_job(), test_a_failed_sign_in_leaves_the_invite_unused_and_no_account() (+35 more)
-
-### Community 37 - "Audit Recording Tests"
-Cohesion: 0.14
-Nodes (43): events(), failing(), _mailgun_post(), app(), businesses(), client_at(), complete_reset(), complete_sign_up() (+35 more)
-
-### Community 4 - "Database Engine And Sessions"
-Cohesion: 0.03
-Nodes (35): _count(), enable_tenant_isolation(), _forget(), _set_tenant(), upgrade(), upgrade(), upgrade(), languages() (+27 more)
-
-### Community 41 - "Booking And Availability Tests"
-Cohesion: 0.14
-Nodes (40): assign(), new_service(), ready(), test_an_archived_service_is_not_found(), test_only_assigned_workers_with_hours_are_listed(), weekdays(), ready(), _published() (+32 more)
-
-### Community 42 - "Booking Page API Tests"
-Cohesion: 0.14
-Nodes (40): add_worker(), app(), hits(), owner(), page(), _published(), slug(), slug_of() (+32 more)
-
-### Community 44 - "Sign Up Tests"
-Cohesion: 0.20
-Nodes (38): fresh_email(), issue_link(), live(), app(), businesses(), client(), complete(), created() (+30 more)
-
-### Community 45 - "Opening Hours Tests"
-Cohesion: 0.12
-Nodes (36): _another_owner_replaces(), app(), seed_opening(), stored_opening(), test_a_change_to_the_week_is_recorded_once_with_no_details(), test_a_malformed_body_is_refused(), test_a_saved_week_is_read_back(), test_a_shift_spanning_two_touching_opening_rows_is_accepted() (+28 more)
-
-### Community 47 - "Sign In Tests"
-Cohesion: 0.12
-Nodes (32): holder(), app(), client(), sign_in(), stranger(), test_a_malformed_request_gets_a_code_not_a_description(), test_a_member_of_several_businesses_lands_in_the_oldest_membership(), test_a_password_is_matched_exactly_up_to_unicode_composition() (+24 more)
-
-### Community 48 - "Migration Tests"
-Cohesion: 0.12
-Nodes (36): delete_bookings(), delete_clients(), booked(), downgrade_outcome(), lock_timeout_config(), plain_insert(), test_0027_refuses_to_backfill_an_existing_booking(), test_0028_does_not_backfill_existing_partial_blocks() (+28 more)
-
-### Community 49 - "Bookings DB Tests"
-Cohesion: 0.13
-Nodes (34): book(), insert_booking(), load_migration(), seed_service(), statuses_in(), test_a_booking_cannot_point_at_another_businesses_client_worker_or_service(), test_a_cancelled_booking_frees_its_slot(), test_a_pending_booking_must_carry_an_expiry_and_an_expired_one_keeps_it() (+26 more)
-
-### Community 5 - "Bookings API Tests"
-Cohesion: 0.08
-Nodes (93): new_client(), put_settings(), app(), at(), book_twice_under_auto_confirm(), booking_url(), commit_bypassing_the_lock(), merchant_book() (+85 more)
-
-### Community 50 - "Display Names Tests"
-Cohesion: 0.17
-Nodes (36): app(), display_name(), invite_token(), routes_behind_signed_in(), uses(), set_user_name(), test_a_blank_name_does_not_use_up_the_invite(), test_a_nameless_account_joining_another_business_stays_nameless() (+28 more)
-
-### Community 53 - "Password Reset Tests"
-Cohesion: 0.16
-Nodes (35): app_engine(), email_of(), jobs_for(), app(), client(), complete(), request_reset(), sessions_of() (+27 more)
-
-### Community 57 - "Decline Message Tests"
-Cohesion: 0.19
-Nodes (31): clear_jobs(), app(), body_of(), clean_outbox(), decline(), message_of(), owner(), _published() (+23 more)
-
-### Community 58 - "Tenant Tests"
-Cohesion: 0.15
-Nodes (32): concurrent(), b(), drop_tenants(), routes(), slug_of(), tag(), test_a_business_country_must_be_two_uppercase_letters(), test_a_business_currency_must_be_three_uppercase_letters() (+24 more)
-
-### Community 62 - "Turnstile Tests"
-Cohesion: 0.15
-Nodes (26): verify(), json_answer(), never_called(), _no_secret_by_default(), test_a_configured_secret_is_checked_even_when_turnstile_is_disabled(), fake_urlopen(), test_a_malformed_disabled_flag_is_an_error_not_a_quiet_refusal(), test_a_missing_or_over_long_token_never_reaches_the_network() (+18 more)
-
-### Community 64 - "Web Tracing"
+### Community 24 - "Pending Booking Jobs"
 Cohesion: 0.09
-Nodes (23): enabled(), endProxySpan(), provider(), startProxySpan(), traceparent(), eslintConfig, engines, node (+15 more)
+Nodes (32): pending(), enqueue(), Job, _record(), send_invite(), send_token(), bound(), inbox() (+24 more)
 
-### Community 68 - "Body Size Cap Tests"
-Cohesion: 0.14
-Nodes (25): app(), client(), limit(), padded(), test_a_body_of_exactly_the_cap_reaches_validation(), test_a_chunked_oversize_body_is_a_413(), chunks(), test_a_declared_oversize_body_is_a_413_with_the_standard_headers() (+17 more)
-
-### Community 69 - "Rate Limits"
-Cohesion: 0.11
-Nodes (23): email_key(), hit(), ip_key(), action(), test_a_new_window_starts_counting_again(), test_addresses_that_do_not_parse_share_one_key(), test_an_attempt_counts_even_when_the_request_fails(), test_an_email_key_does_not_hold_the_address() (+15 more)
-
-### Community 70 - "Owner Keeping Tests"
-Cohesion: 0.15
-Nodes (22): add_membership(), add_user(), set_role(), test_a_non_read_committed_change_is_refused(), test_changing_the_only_owner_is_refused(), test_tearing_down_a_whole_business_in_one_statement_is_not_a_last_owner_violation(), test_the_function_and_privileges_the_trigger_needs(), test_the_trigger_lock_lets_a_new_membership_through() (+14 more)
-
-### Community 72 - "Audit DB Tests"
-Cohesion: 0.19
-Nodes (23): events(), in_business(), record(), reviewed(), target(), test_a_business_sees_only_its_own_events(), test_a_reused_connection_records_an_event_for_no_business(), test_an_event_cannot_be_written_for_another_business() (+15 more)
-
-### Community 75 - "Settings API Tests"
-Cohesion: 0.17
-Nodes (22): saved_settings(), app(), test_a_change_leaves_the_other_settings_as_they_were(), test_a_saved_setting_can_be_changed_and_set_back_to_its_default(), test_a_setting_of_the_wrong_kind_is_refused(), test_a_stored_setting_no_longer_in_the_registry_is_ignored(), test_a_stored_setting_that_no_longer_fits_fails_loudly(), test_an_old_timezone_name_is_kept_as_sent() (+14 more)
-
-### Community 76 - "Backend Tracing Setup"
-Cohesion: 0.14
-Nodes (21): configure(), _enabled(), _meter_provider(), _provider(), _resource(), test_service_version_defaults_to_the_app_version(), test_t11_provider_names_the_service(), test_t11_worker_and_migrations_configure_their_own_service_name() (+13 more)
-
-### Community 78 - "API Proxy Upstream"
-Cohesion: 0.11
-Nodes (8): parsedLogLines(), waitForLog(), LOCALE_MATCHER, MAX_BODY_BYTES, localeRegex, ref_node_http, ref_node_net, ref_node_zlib
-
-### Community 8 - "Booking Approval Tests"
+### Community 25 - "Admin Sessions And Auth"
 Cohesion: 0.08
-Nodes (83): save_setting(), _published(), ago(), app(), confirmed_in_the_past(), events_of(), expire(), expire_in_a_second() (+75 more)
+Nodes (24): admin_recently_verified(), admin_session(), admin_signed_in(), AdminSession, begin_enrolment(), business(), clear_admin_cookie(), CodeIn (+16 more)
 
-### Community 82 - "Seed Tests"
-Cohesion: 0.21
-Nodes (17): edges(), local(), local_date(), nows(), past_ends(), test_near_role_is_ahead_but_under_a_day(), test_roles_hold_across_clock_changes(), test_today_role_at_the_edges_of_the_day() (+9 more)
+### Community 26 - "Deployment Config"
+Cohesion: 0.06
+Nodes (19): DatabaseSettings, Settings, WorkerSettings, main(), ping(), _queue_gauge(), serve(), work() (+11 more)
 
-### Community 83 - "Booking Sweep Tests"
-Cohesion: 0.27
-Nodes (17): sweep(), due(), events_of(), seed(), status_of(), test_a_due_awaiting_payment_expires_as_well(), test_a_live_pending_and_a_confirmed_booking_are_left_alone(), test_a_second_sweep_expires_nothing_and_writes_no_events() (+9 more)
-
-### Community 84 - "Settings Audit Tests"
-Cohesion: 0.25
-Nodes (17): app(), changes(), test_a_change_that_fails_after_its_event_records_nothing(), test_a_change_whose_event_fails_is_not_saved(), test_a_changed_setting_is_recorded_with_its_old_and_new_value(), test_a_second_change_records_what_it_replaced(), test_a_setting_saved_as_it_already_was_is_not_recorded(), test_an_event_that_changed_nothing_has_no_details_at_all() (+9 more)
-
-### Community 86 - "Repo Check Scripts"
-Cohesion: 0.16
-Nodes (11): languageOf(), unprefixedNames(), reservedWords(), topLevelRoutes(), unreservedRoutes(), ALLOWED, BUILD_ARGS, READERS (+3 more)
-
-### Community 87 - "Tenant Schema Docs"
-Cohesion: 0.19
-Nodes (14): broken_tables(), test_schema_has_no_tenant_isolation_violations(), test_the_check_catches_plain_foreign_keys_and_unisolated_tables(), violations(), enable_tenant_isolation (app.db), keep_an_owner trigger, members.member_user(lock=True), tenants root table (+6 more)
-
-### Community 88 - "Private Log Tests"
-Cohesion: 0.17
-Nodes (14): mailed(), run_until_idle(), client_for(), test_no_personal_data_ever_reaches_a_log(), cookie_secret(), secret(), token_secret(), Any (+6 more)
-
-### Community 89 - "Audit Events API Tests"
-Cohesion: 0.28
-Nodes (14): add_event(), app(), test_a_page_holds_one_to_a_hundred_events(), test_an_owner_reads_only_their_business_newest_first(), test_an_owner_sees_the_address_and_browser_only_of_their_own_events(), test_only_an_owner_reads_the_log(), test_the_log_comes_in_pages_before_an_event(), test_the_log_needs_a_session() (+6 more)
-
-### Community 9 - "Service Workers Tests"
-Cohesion: 0.08
-Nodes (83): app(), b_service(), create(), ids(), owner(), pairs(), put(), svc() (+75 more)
-
-### Community 92 - "Mail Rendering"
-Cohesion: 0.15
-Nodes (10): ics(), _outbox(), test_ics_folds_by_octet_and_escapes_text(), test_ics_lines_and_stamps(), test_ics_strips_control_characters_from_summary(), datetime, Session, UUID (+2 more)
-
-### Community 93 - "Web Proxy Middleware"
-Cohesion: 0.21
-Nodes (12): forwardApi(), proxy(), readBody(), unavailable(), config, FORWARDING, HOP_BY_HOP, localize (+4 more)
-
-### Community 94 - "Catalog And Hook Checks"
-Cohesion: 0.22
-Nodes (10): blankBranches(), compareCatalogs(), kind(), placeholders(), CI job: Repo checks, No build-time NEXT_PUBLIC_* env vars check, check(), commit-msg.test.sh script (+2 more)
-
-### Community 98 - "Blank Names Tests"
-Cohesion: 0.38
-Nodes (9): test_a_name_in_any_script_is_accepted(), test_a_name_that_renders_blank_or_has_no_letter_or_digit_is_refused(), test_an_emoji_only_business_name_at_sign_up_is_a_422(), test_free_text_keeps_emoji_punctuation_and_a_blank_glyph_between_words(), test_free_text_that_renders_blank_is_refused(), test_multiline_text_keeps_a_spacer_line_between_real_lines(), Any, parametrize (+1 more)
-
-### Community 102 - "Renovate And Commit Hooks"
-Cohesion: 0.22
-Nodes (7): Shared workflow pr-title.yml@v1, commit-msg script, extends, packageRules, $schema, github>fjcloudaiconsulting/.github#v1, PR title workflow
-
-### Community 110 - "Readme Setup Docs"
-Cohesion: 0.33
-Nodes (6): Conventional Commits PR titles, GHCR images backend/frontend/migrations, release-please, Release PR (chore(main): release X.Y.Z), docker-compose-prod.yaml, Shared release workflows (fjcloudaiconsulting/.github RELEASE_CONTRACT.md)
-
-### Community 113 - "Community 113"
-Cohesion: 0.40
-Nodes (4): smoke db-init service (profile migrate), db-init service (bootstrap.sql role creation, idempotent), prod migrate init container, CI job: API (ruff, mypy, pytest against Postgres service)
-
-### Community 114 - "Community 114"
-Cohesion: 0.40
-Nodes (5): CI job: image build matrix (backend, migrations, frontend) as sha-<7>, CI job: promote release images, Shared workflow build-image.yml@v1, Shared workflow promote-release.yml@v1, CI concurrency: PR runs cancel, main runs keyed by sha
-
-### Community 115 - "Community 115"
-Cohesion: 0.50
-Nodes (3): CI job: Release PR and tag (release-please), packages, $schema
-
-### Community 85 - "Contributor Docs"
+### Community 27 - "Members API Tests"
 Cohesion: 0.12
-Nodes (18): app.availability.BOOKED / booked() / OCCUPYING, bookings.sweep worker expiry, app.clients.find_or_create, member_slots (single bookability validator), Alembic single-head migration chain, booking_holds (guest held times), clients (business-owned client records), ex_bookings_worker_overlap exclusion constraint (+10 more)
+Nodes (39): member_id(), set_role(), app(), seed_booking_for(), stored_name(), test_a_change_whose_event_fails_leaves_nothing_changed(), test_a_display_name_must_be_one_to_sixty_printable_characters(), test_a_malformed_role_change_is_refused() (+31 more)
 
-### Community 91 - "Docs Conventions"
+### Community 28 - "Booking Links Backend"
+Cohesion: 0.10
+Nodes (24): AvailabilityOut, BookingOut, cancel(), CancelIn, confirm_consents(), ConsentsIn, _decide(), EngineOut (+16 more)
+
+### Community 29 - "Clients Backend"
+Cohesion: 0.08
+Nodes (20): add_consents(), as_clients(), ClientIn, ClientOut, ConsentIn, ConsentOut, create_client(), current_consents() (+12 more)
+
+### Community 30 - "App Shell And Header"
+Cohesion: 0.07
+Nodes (27): ClientsPage(), Clients(), body, display, SignUpPage(), generateMetadata(), load, Loaded (+19 more)
+
+### Community 31 - "Second Factor DB Tests"
+Cohesion: 0.17
+Nodes (34): new_secret(), proof(), test_enrol_ticket_lasts_one_hour(), test_enrol_wipes_the_factor_and_ends_sessions(), begin(), call(), code_proofs(), Enrolled (+26 more)
+
+### Community 32 - "Working Hours Tests"
+Cohesion: 0.11
+Nodes (34): app(), hours_path(), shift(), stored(), test_a_failed_recording_leaves_the_week_unchanged(), test_a_malformed_body_is_refused(), test_a_member_outside_the_business_is_not_found(), test_a_non_uuid_path_is_refused() (+26 more)
+
+### Community 33 - "Invites API Tests"
+Cohesion: 0.15
+Nodes (35): add_password(), fresh_email(), test_a_client_of_another_business_is_invisible(), test_a_consent_cannot_point_at_another_businesses_client(), app(), invite_jobs(), invite_row_count(), mint() (+27 more)
+
+### Community 34 - "Admin Second Factor Tests"
+Cohesion: 0.15
+Nodes (26): code(), an_admin(), answer(), app(), audit(), failed_attempts(), probe(), sign_in() (+18 more)
+
+### Community 35 - "Console Calendar Logic"
+Cohesion: 0.11
+Nodes (32): BlockPanel(), Done, Fields(), clearTime(), submit(), Props, openSpot(), PanelFrame() (+24 more)
+
+### Community 36 - "Admin CLI"
+Cohesion: 0.10
+Nodes (26): main(), _reason(), lock_timed_out(), add_user(), audit_rows(), is_admin(), sqlstate(), test_app_role_can_only_append_platform_audit() (+18 more)
+
+### Community 37 - "TOTP Secret Encryption"
+Cohesion: 0.08
+Nodes (18): SecondFactorSettings, _aead(), decrypt(), encrypt(), key(), key_state(), matching_step(), new_code() (+10 more)
+
+### Community 38 - "Time Off Backend"
+Cohesion: 0.09
+Nodes (17): ApiError, blocks_overlapping(), checked(), checked_days(), create_time_off(), delete_time_off(), fields(), list_time_off() (+9 more)
+
+### Community 39 - "Landing And Mail Templates"
+Cohesion: 0.08
+Nodes (42): Booking verification email (Dutch), Booking verification email (Portuguese), Mail delivery check, Hello test email (English), Email localization (en, nl, pt), Hello test email (Dutch), Hello test email (Portuguese), Single-use time-limited email link (+34 more)
+
+### Community 40 - "Manage Booking Link UI"
+Cohesion: 0.08
+Nodes (31): Manage(), act(), afterWrite(), cancel(), confirmConsents(), loadWeek(), move(), open() (+23 more)
+
+### Community 41 - "Booking Page API Tests"
+Cohesion: 0.13
+Nodes (31): add_membership(), add_worker(), app(), hits(), owner(), page(), _published(), slug() (+23 more)
+
+### Community 42 - "Bookings Range Tests"
+Cohesion: 0.15
+Nodes (31): app(), history(), hour(), ids(), insert_event(), iso(), owner(), put() (+23 more)
+
+### Community 43 - "Migration Tests"
+Cohesion: 0.11
+Nodes (29): delete_bookings(), booked(), downgrade_outcome(), lock_timeout_config(), migration(), plain_insert(), test_0027_refuses_to_backfill_an_existing_booking(), test_0028_does_not_backfill_existing_partial_blocks() (+21 more)
+
+### Community 44 - "Availability Engine"
 Cohesion: 0.16
-Nodes (14): JobKind(handler, timeout, grace), jobs table (app/jobs.py), app.logs.configure() structured logging, tenant_context(tenant_id), app.tracing hand-written spans, email.booking job (ZIF-53), Shared local Grafana LGTM stack, /api/public routes (+6 more)
+Nodes (36): at(), local(), rows(), slots(), test_a_booking_blocks_its_own_override_buffer(), test_a_booking_without_an_override_blocks_a_percentage_of_its_length(), test_a_lunch_closure_splits_the_day_and_sells_nothing_in_the_gap(), test_a_new_slot_needs_its_own_buffer_before_the_next_booking() (+28 more)
 
-### Community 99 - "Project Docs"
+### Community 45 - "Clients API Tests"
+Cohesion: 0.11
+Nodes (27): add_client(), app(), test_a_client_answer_carries_the_current_consent_per_purpose(), test_a_client_of_another_business_is_not_found(), test_a_consent_call_must_name_at_least_one_purpose(), test_a_merchant_consent_stores_the_connection_address_not_a_forwarded_header(), test_a_non_uuid_client_id_is_refused(), test_a_search_for_a_wildcard_matches_it_literally() (+19 more)
+
+### Community 46 - "Sign In Tests"
+Cohesion: 0.12
+Nodes (24): email_of(), holder(), app(), client(), sign_in(), stranger(), test_a_malformed_request_gets_a_code_not_a_description(), test_a_member_of_several_businesses_lands_in_the_oldest_membership() (+16 more)
+
+### Community 47 - "Logging Backend"
+Cohesion: 0.09
+Nodes (15): LogSettings, _add_context(), bound(), _causes(), _chain(), configure(), error_summary(), _escape() (+7 more)
+
+### Community 48 - "First-run Setup Tests"
+Cohesion: 0.14
+Nodes (25): EmptyInstall, app(), body(), complete_sign_up(), configured(), count(), needs_setup(), password_hash() (+17 more)
+
+### Community 49 - "Sign Up Tests"
+Cohesion: 0.19
+Nodes (27): issue_link(), live(), app(), businesses(), client(), complete(), created(), test_a_business_created_with_a_country_reports_its_currency() (+19 more)
+
+### Community 50 - "Opening Hours Tests"
+Cohesion: 0.12
+Nodes (25): _another_owner_replaces(), app(), seed_opening(), stored_opening(), test_a_change_to_the_week_is_recorded_once_with_no_details(), test_a_malformed_body_is_refused(), test_a_saved_week_is_read_back(), test_a_shift_spanning_two_touching_opening_rows_is_accepted() (+17 more)
+
+### Community 51 - "Password Auth DB Tests"
+Cohesion: 0.15
+Nodes (30): complete_sign_up(), Created, digest(), email_of(), issue(), test_a_link_is_live_only_unexpired_and_for_its_purpose(), test_a_password_reset_ends_every_session_and_every_other_reset_link(), test_a_reset_link_can_not_be_forged_through_a_temporary_table() (+22 more)
+
+### Community 52 - "Cancellation Mail Templates"
+Cohesion: 0.12
+Nodes (35): booking_cancelled_by_client.en.txt (English), booking_cancelled_by_client.nl.txt (Dutch), booking_cancelled_by_client.pt.txt (Portuguese), Booking Cancelled by Client confirmation email (to client), booking_cancelled.en.txt (English), booking_cancelled.nl.txt (Dutch), booking_cancelled.pt.txt (Portuguese), Booking Cancelled by Business email (to client) (+27 more)
+
+### Community 53 - "Session Auth Core"
+Cohesion: 0.10
+Nodes (19): clear_cookie(), create(), Credentials, describe(), hash_token(), _inet(), named(), origin() (+11 more)
+
+### Community 54 - "Members Backend"
+Cohesion: 0.11
+Nodes (15): owner(), SignedIn, change_role(), DisplayNameChange, DisplayNameOut, guarded(), is_owner(), list_members() (+7 more)
+
+### Community 55 - "Turnstile Tests"
+Cohesion: 0.12
+Nodes (20): TurnstileSettings, lifespan(), needed_at_startup(), enabled(), verify(), json_answer(), never_called(), _no_secret_by_default() (+12 more)
+
+### Community 56 - "Bookings DB Tests"
+Cohesion: 0.13
+Nodes (23): book(), insert_booking(), load_migration(), seed_service(), statuses_in(), test_a_booking_cannot_point_at_another_businesses_client_worker_or_service(), test_a_cancelled_booking_frees_its_slot(), test_a_pending_booking_must_carry_an_expiry_and_an_expired_one_keeps_it() (+15 more)
+
+### Community 57 - "Display Names Tests"
+Cohesion: 0.17
+Nodes (28): app(), display_name(), invite_token(), routes_behind_signed_in(), uses(), set_user_name(), test_a_blank_name_does_not_use_up_the_invite(), test_a_nameless_account_joining_another_business_stays_nameless() (+20 more)
+
+### Community 58 - "Cancellation Policy"
+Cohesion: 0.13
+Nodes (20): decide(), Decision, Policy, test_a_booking_an_hour_away_across_the_fold_can_still_be_cancelled(), test_a_booking_moved_out_after_its_original_start_passed_can_still_be_cancelled(), test_a_booking_under_way_across_the_fold_has_started(), test_a_naive_datetime_is_refused(), test_a_negative_max_reschedules_is_refused() (+12 more)
+
+### Community 59 - "Services Backend"
+Cohesion: 0.12
+Nodes (13): assign_workers(), create_service(), found(), list_services(), lock_members(), Price, PriceIn, read_service() (+5 more)
+
+### Community 60 - "Admin Sessions Tests"
+Cohesion: 0.17
+Nodes (23): a_request(), admin_client(), admin_sign_in(), an_admin(), app(), platform_events(), sessions_of(), start() (+15 more)
+
+### Community 61 - "Session Cookie API Tests"
+Cohesion: 0.15
+Nodes (23): age(), app(), cleared(), client(), deferred_table(), last_seen(), sign_in(), test_a_cross_site_form_cannot_sign_anyone_out() (+15 more)
+
+### Community 62 - "Availability Slot Compute"
+Cohesion: 0.10
+Nodes (17): booked(), candidates(), clip(), compute(), member_slots(), merged(), now(), Offered (+9 more)
+
+### Community 63 - "Schedule Backend"
+Cohesion: 0.11
+Nodes (11): lock_week(), opening_week(), overlapping(), read_opening_hours(), read_week(), replace_opening_hours(), replace_week(), Shift (+3 more)
+
+### Community 64 - "Settings Page UI"
+Cohesion: 0.12
+Nodes (28): SettingsPage(), Field(), Settings(), onSubmit(), onTogglePublish(), breakMinutes(), changedKeys(), Draft (+20 more)
+
+### Community 65 - "Tenant Tests"
+Cohesion: 0.14
+Nodes (26): concurrent(), b(), drop_tenants(), routes(), slug_of(), tag(), test_a_business_country_must_be_two_uppercase_letters(), test_a_business_currency_must_be_three_uppercase_letters() (+18 more)
+
+### Community 66 - "Web Tracing"
+Cohesion: 0.08
+Nodes (27): eslintConfig, onRequestError(), enabled(), meterProvider(), provider(), STANDARD_METHODS, started, startProxySpan() (+19 more)
+
+### Community 67 - "Decline Message Tests"
+Cohesion: 0.19
+Nodes (22): clear_jobs(), app(), body_of(), clean_outbox(), decline(), message_of(), owner(), _published() (+14 more)
+
+### Community 68 - "Tracing Tests"
+Cohesion: 0.13
+Nodes (18): _attrs(), _MetricsReceiver, _one(), test_a_request_exports_one_allowlisted_server_span_and_no_query(), test_a_returned_500_still_gets_an_error_span(), test_extract_never_reads_tracestate(), test_http_request_method_attribute_is_bounded(), test_t10_log_lines_carry_the_active_spans_ids() (+10 more)
+
+### Community 69 - "Booking Mail Templates"
+Cohesion: 0.17
+Nodes (29): booking_moved_team.en.txt (English: "Booking moved"), booking_moved_team_member.en.txt (English: "Booking moved"), booking_moved_team_member.nl.txt (Dutch: "Boeking verzet"), booking_moved_team_member.pt.txt (Portuguese: "Agendamento remarcado"), booking_moved_team.nl.txt (Dutch: "Boeking verzet"), booking_moved_team.pt.txt (Portuguese: "Agendamento remarcado"), booking_new.en.txt (English: "New booking"), booking_new.nl.txt (Dutch: "Nieuwe boeking") (+21 more)
+
+### Community 70 - "Password Reset Tests"
+Cohesion: 0.17
+Nodes (22): jobs_for(), app(), client(), complete(), request_reset(), sessions_of(), sign_in(), test_a_dead_link_costs_no_password_hash() (+14 more)
+
+### Community 71 - "Invites DB Tests"
+Cohesion: 0.17
+Nodes (18): call(), digest(), _insert(), minted(), new_accounts(), NewAccount, pending(), test_accept_binds_to_its_own_tenant() (+10 more)
+
+### Community 72 - "FastAPI App Factory"
+Cohesion: 0.10
+Nodes (18): create_app(), dependencies(), healthz(), Dependencies, Health, openapi_document(), operation_id(), test_the_api_is_bound_to_its_database_while_it_runs() (+10 more)
+
+### Community 73 - "Settings API Tests"
+Cohesion: 0.18
+Nodes (17): saved_settings(), signed_in(), app(), test_a_change_leaves_the_other_settings_as_they_were(), test_a_saved_setting_can_be_changed_and_set_back_to_its_default(), test_a_setting_of_the_wrong_kind_is_refused(), test_a_stored_setting_no_longer_in_the_registry_is_ignored(), test_a_stored_setting_that_no_longer_fits_fails_loudly() (+9 more)
+
+### Community 74 - "Web Logging Instrumentation"
+Cohesion: 0.14
+Nodes (21): requestLog, startupLog, ErrorContext, errorFields(), errorLink(), ErrorRequest, errorType(), escape() (+13 more)
+
+### Community 75 - "Body Size Cap Tests"
+Cohesion: 0.14
+Nodes (15): app(), client(), limit(), padded(), test_a_body_of_exactly_the_cap_reaches_validation(), test_a_chunked_oversize_body_is_a_413(), chunks(), test_a_declared_oversize_body_is_a_413_with_the_standard_headers() (+7 more)
+
+### Community 76 - "Account Lifecycle Backend"
+Cohesion: 0.13
+Nodes (11): complete_password_reset(), complete_sign_up(), CompleteReset, CompleteSignUp, give_name(), LinkRequest, live_token(), NameIn (+3 more)
+
+### Community 77 - "Backend Tracing Setup"
+Cohesion: 0.12
+Nodes (13): configure(), _enabled(), _meter_provider(), _provider(), _resource(), _readers(), test_service_version_defaults_to_the_app_version(), test_starting_the_app_adds_no_exporter() (+5 more)
+
+### Community 78 - "Audit DB Tests"
+Cohesion: 0.20
+Nodes (13): events(), in_business(), record(), reviewed(), target(), test_a_business_sees_only_its_own_events(), test_a_reused_connection_records_an_event_for_no_business(), test_an_event_cannot_be_written_for_another_business() (+5 more)
+
+### Community 79 - "Web Proxy Middleware"
+Cohesion: 0.13
+Nodes (20): RFC-7230, SetupPage(), readNeedsSetup(), setupGate(), setupRedirect(), endProxySpan(), traceparent(), config (+12 more)
+
+### Community 80 - "Seed Bookings"
+Cohesion: 0.21
+Nodes (4): Booked, Business, email_of(), Seed
+
+### Community 81 - "Parallel Safety Tests"
+Cohesion: 0.15
+Nodes (11): wait_until_blocked(), worker_url(), blocked_elsewhere(), blocked_on(), elsewhere(), fence_row(), test_a_serial_run_targets_the_shared_database(), test_each_xdist_worker_targets_its_own_database() (+3 more)
+
+### Community 82 - "Booking Holds Backend"
+Cohesion: 0.13
+Nodes (11): current_policy_version(), confirm(), ConfirmIn, create(), HoldIn, HoldOut, HoldView, read() (+3 more)
+
+### Community 83 - "Seed Script"
+Cohesion: 0.12
+Nodes (8): bucket(), check_local(), LocalRedirects, main(), on_grid(), opener(), Plan, test_guard_accepts_only_local_urls()
+
+### Community 84 - "Client IP Tests"
 Cohesion: 0.24
-Nodes (10): auth.record, app.clients.CONSENT_TEXTS, join_tenant(session, tenant_id), audit_events audit log, booking_events append-only table, Production path Cloudflare -> Traefik -> web -> API (k3s), consents append-only table, ZIF_CLIENT_IP_HEADER (+2 more)
+Nodes (13): app_trusting(), seen(), test_a_trusted_peers_forwarded_address_is_believed(), test_addresses_and_networks_together_are_accepted(), test_an_invalid_trusted_proxies_entry_stops_startup(), test_an_ipv6_forwarded_address_is_kept_whole(), test_an_unparseable_forwarded_value_is_stored_as_no_ip(), test_an_untrusted_peers_headers_are_ignored() (+5 more)
 
-### Community 101 - "Frontend Dependencies"
-Cohesion: 0.22
-Nodes (9): dependencies, next, next-intl, @opentelemetry/api, @opentelemetry/exporter-trace-otlp-http, @opentelemetry/resources, @opentelemetry/sdk-trace-base, react (+1 more)
+### Community 85 - "Database Role Tests"
+Cohesion: 0.14
+Nodes (12): probe_table(), test_app_role_cannot_change_the_schema(), test_app_role_gets_row_access_to_new_tables(), test_app_role_has_no_elevated_attributes(), test_app_role_owns_nothing(), test_btree_gist_is_installed(), test_migrate_role_owns_the_alembic_version_table(), test_a_tenant_cannot_change_or_delete_a_user_it_shares() (+4 more)
 
-### Community 104 - "Frontend Build Deps"
-Cohesion: 0.25
-Nodes (8): devDependencies, eslint, eslint-config-next, @hey-api/openapi-ts, @types/node, @types/react, @types/react-dom, typescript
-
-### Community 105 - "Frontend Test Deps"
-Cohesion: 0.25
-Nodes (8): scripts, build, dev, generate, lint, start, test, typecheck
-
-### Community 106 - "Landing Dependencies"
-Cohesion: 0.25
-Nodes (7): name, private, scripts, build, dev, test, type
-
-### Community 79 - "Frontend TS Config"
+### Community 86 - "Frontend TS Config"
 Cohesion: 0.10
 Nodes (19): compilerOptions, allowImportingTsExtensions, allowJs, esModuleInterop, incremental, isolatedModules, jsx, lib (+11 more)
 
-### Community 118 - "Community 118"
-Cohesion: 0.67
-Nodes (3): Brand Red #b31513, Z Logo Mark (white stroked Z glyph), Ziftbook App Icon (favicon)
+### Community 87 - "Seed Tests"
+Cohesion: 0.22
+Nodes (10): edges(), local(), local_date(), nows(), past_ends(), test_bucket_checks_in_order(), test_near_role_is_ahead_but_under_a_day(), test_roles_hold_across_clock_changes() (+2 more)
 
-### Community 119 - "Community 119"
-Cohesion: 0.67
-Nodes (3): Brand Color #b31513 (Ziftbook red), Z Monogram Logo Mark, Landing Favicon (red rounded square with white Z)
+### Community 89 - "CI Smoke And Release"
+Cohesion: 0.13
+Nodes (18): Smoke test compose stack, Post-release smoke compose stack, Committed OpenAPI contract (backend/openapi.json), dev backend service, dev frontend service, CI workflow, CI Backend Tests job, Backend Checks aggregate (+10 more)
 
-### Community 38 - "Landing And Mail Templates"
-Cohesion: 0.08
-Nodes (44): Booking flow preview card (service, time, done), Features section for clients and businesses, Landing page HTML template, Language switcher popover menu, Legal footer: FJ Cloud & AI Consulting, KVK 42010737, Young Serif font preload, Mail delivery check, Email localization (en, nl, pt) (+36 more)
-
-### Community 46 - "Cancellation Mail Templates"
+### Community 90 - "API Proxy Upstream"
 Cohesion: 0.12
-Nodes (38): Booking Cancelled by Client confirmation email (to client), Booking Cancelled by Business email (to client), Client Cancelled notification email (to business), Client Rescheduled notification email (to business), Booking Confirmed email (to client), Booking Request Declined with Message email (to client), Booking Request Declined email (to client), Booking slot block ($service, $date, $time, $zone) (+30 more)
+Nodes (4): LOCALE_MATCHER, MAX_BODY_BYTES, parsedLogLines(), waitForLog()
 
-### Community 59 - "Booking Mail Templates"
+### Community 91 - "Booking Sweep Tests"
+Cohesion: 0.27
+Nodes (11): sweep(), due(), events_of(), seed(), status_of(), test_a_due_awaiting_payment_expires_as_well(), test_a_live_pending_and_a_confirmed_booking_are_left_alone(), test_a_second_sweep_expires_nothing_and_writes_no_events() (+3 more)
+
+### Community 92 - "Settings Audit Tests"
+Cohesion: 0.25
+Nodes (9): app(), changes(), test_a_change_that_fails_after_its_event_records_nothing(), test_a_change_whose_event_fails_is_not_saved(), test_a_changed_setting_is_recorded_with_its_old_and_new_value(), test_a_second_change_records_what_it_replaced(), test_a_setting_saved_as_it_already_was_is_not_recorded(), test_an_event_that_changed_nothing_has_no_details_at_all() (+1 more)
+
+### Community 93 - "First-run Setup"
+Cohesion: 0.14
+Nodes (7): SetupSettings, complete(), needed(), SetupIn, SetupState, state(), token_state()
+
+### Community 94 - "Clients DB Tests"
+Cohesion: 0.19
+Nodes (11): row_of(), test_an_imported_consent_is_never_mailable(), test_every_consent_column_but_id_and_created_at_is_insertable(), test_find_or_create_keeps_the_stored_phone_and_locale_when_the_booker_sends_none(), test_find_or_create_never_touches_the_notes_or_the_user_id(), test_the_app_role_cannot_backdate_a_consent(), test_the_app_role_cannot_delete_a_client(), test_the_app_role_cannot_update_or_delete_a_consent() (+3 more)
+
+### Community 95 - "Contributor Docs"
+Cohesion: 0.13
+Nodes (13): Stalled lock holder costs a 503, not a hang (ZIF-114), Hold a guest's time until they confirm (ZIF-117), app.availability.BOOKED / booked() / OCCUPYING, booking_holds (ZIF-117), bookings.sweep worker expiry, clients (business-owned client records), ex_bookings_worker_overlap exclusion constraint, app.clients.find_or_create (+5 more)
+
+### Community 96 - "JSON Only Tests"
+Cohesion: 0.18
+Nodes (9): test_dependencies_503_with_a_coarse_code_when_the_database_is_down(), test_dependencies_ok_when_the_database_answers(), test_healthz_defaults_to_dev_when_unset(), test_healthz_reports_ok_and_running_version(), client(), test_cross_origin_requests_are_never_allowed(), test_json_with_parameters_is_accepted(), test_safe_methods_need_no_content_type() (+1 more)
+
+### Community 97 - "Tenant Schema Docs"
+Cohesion: 0.19
+Nodes (8): broken_tables(), test_schema_has_no_tenant_isolation_violations(), test_the_check_catches_plain_foreign_keys_and_unisolated_tables(), violations(), enable_tenant_isolation (app.db), keep_an_owner trigger, members.member_user(lock=True), tenants root table
+
+### Community 98 - "Audit Events API Tests"
+Cohesion: 0.28
+Nodes (8): add_event(), app(), test_a_page_holds_one_to_a_hundred_events(), test_an_owner_reads_only_their_business_newest_first(), test_an_owner_sees_the_address_and_browser_only_of_their_own_events(), test_only_an_owner_reads_the_log(), test_the_log_comes_in_pages_before_an_event(), test_the_log_needs_a_session()
+
+### Community 99 - "Private Log Tests"
 Cohesion: 0.17
-Nodes (32): Team member booking assignment, Template first line is email subject, Booking request received (guest) email, Guest self-service view/change/cancel link, Booking reminder (guest) email, Booking moved (team) email, Booking request (owner) email, Booking request approval with expiry deadline (+24 more)
+Nodes (7): app(), clean_outbox(), client_for(), test_no_personal_data_ever_reaches_a_log(), cookie_secret(), secret(), token_secret()
+
+### Community 100 - "Session API Tests"
+Cohesion: 0.32
+Nodes (10): start(), stored(), test_a_role_change_requires_ending_the_sessions_first(), test_a_session_cannot_start_for_someone_outside_the_tenant(), test_a_session_needs_the_membership_and_role_it_claims(), test_only_the_hash_of_a_random_token_is_stored(), test_removing_a_membership_ends_only_its_sessions(), test_starting_a_session_purges_expired_ones() (+2 more)
+
+### Community 101 - "Tenant Isolation Tests"
+Cohesion: 0.31
+Nodes (9): add_parent(), Base, Child, Parent, tenants(), test_a_query_without_tenant_context_raises(), test_a_tenant_cannot_read_another_tenants_rows(), test_a_tenant_cannot_reference_another_tenants_rows() (+1 more)
+
+### Community 102 - "Migration And Tenancy Rules"
+Cohesion: 0.15
+Nodes (10): Migration lock fails in 5s (ZIF-34), Alembic single-head migration chain, ziftbook_app role, ziftbook_migrate role, prod backend service, prod frontend service (172.28.0.10), prod migrate init service, prod worker service (app.worker) (+2 more)
+
+### Community 103 - "Team And Today Console"
+Cohesion: 0.23
+Nodes (11): TodayPage(), Steps(), Today(), answer(), keepIt(), leave(), loadAgenda(), loadQueue() (+3 more)
+
+### Community 104 - "Env Doc Check Scripts"
+Cohesion: 0.19
+Nodes (10): documentedNames(), pydanticFieldNames(), SCAN_PATHS, SKIP, usedNames(), ALLOWED, BUILD_ARGS, languageOf() (+2 more)
+
+### Community 105 - "Slot Anchors And Buffers"
+Cohesion: 0.17
+Nodes (7): anchor(), buffer_for(), spans(), test_a_shift_s_first_slot_is_its_start_rounded_up_to_the_step(), test_clip_cuts_a_day_s_shifts_to_that_day_s_envelope(), test_day_span_tiles_with_no_gap_and_no_overlap(), test_the_buffer_is_the_override_else_a_percentage_rounded_up()
+
+### Community 106 - "Availability Queries"
+Cohesion: 0.23
+Nodes (3): AvailabilityOut, read_availability(), read_merchant_availability()
+
+### Community 107 - "Accounts Backend"
+Cohesion: 0.17
+Nodes (3): read_settings(), save(), update_settings()
+
+### Community 108 - "Worker Schedules"
+Cohesion: 0.20
+Nodes (4): by_weekday(), day_shifts(), envelope(), to_utc()
+
+### Community 109 - "Observability And Settings Docs"
+Cohesion: 0.24
+Nodes (9): Metrics over OTLP (ZIF-88), BusinessSettings typed settings model, Environment variables table, make observe with shared Grafana LGTM stack, Local development compose stack, Production compose stack (released GHCR images), make reset, make up local stack (+1 more)
+
+### Community 110 - "Seed Test Helpers"
+Cohesion: 0.23
+Nodes (6): Counter, stub(), stubs(), test_requests_ignore_proxy_environment(), test_requests_refuse_redirects_off_the_machine(), test_seed_does_first_run_setup_only_when_due()
+
+### Community 112 - "Docs Conventions"
+Cohesion: 0.22
+Nodes (9): jobs table background jobs (no broker), email.booking job (ZIF-53), JobKind(handler, timeout, grace), jobs table (app/jobs.py), Shared local Grafana LGTM stack, app.logs.configure() structured logging, tenant_context(tenant_id), app.tracing hand-written spans (+1 more)
+
+### Community 113 - "Frontend Dependencies"
+Cohesion: 0.18
+Nodes (11): dependencies, next, next-intl, @opentelemetry/api, @opentelemetry/exporter-metrics-otlp-http, @opentelemetry/exporter-trace-otlp-http, @opentelemetry/resources, @opentelemetry/sdk-metrics (+3 more)
+
+### Community 114 - "Blank Names Tests"
+Cohesion: 0.38
+Nodes (6): test_a_name_in_any_script_is_accepted(), test_a_name_that_renders_blank_or_has_no_letter_or_digit_is_refused(), test_an_emoji_only_business_name_at_sign_up_is_a_422(), test_free_text_keeps_emoji_punctuation_and_a_blank_glyph_between_words(), test_free_text_that_renders_blank_is_refused(), test_multiline_text_keeps_a_spacer_line_between_real_lines()
+
+### Community 115 - "Renovate And Commit Hooks"
+Cohesion: 0.20
+Nodes (7): PR title workflow, Shared workflow pr-title.yml@v1, github>fjcloudaiconsulting/.github:app-stack#v1, github>fjcloudaiconsulting/.github#v1, extends, packageRules, $schema
+
+### Community 116 - "Mail Rendering"
+Cohesion: 0.22
+Nodes (4): ics(), test_ics_folds_by_octet_and_escapes_text(), test_ics_lines_and_stamps(), test_ics_strips_control_characters_from_summary()
+
+### Community 117 - "Tracing Spans"
+Cohesion: 0.22
+Nodes (5): span(), test_metric_points_carry_no_exemplars(), test_t10_add_context_never_mutates_the_shared_dict(), test_the_health_check_records_no_metric(), test_the_request_duration_metric_has_the_route_and_no_url()
+
+### Community 118 - "Admin Route Allowlist"
+Cohesion: 0.36
+Nodes (3): admin_routes(), test_admin_routes_are_the_allowlist(), test_owner_never_gets_2xx_on_admin_routes()
+
+### Community 120 - "Release 0.25.0 Docs"
+Cohesion: 0.29
+Nodes (7): Release 0.25.0 (2026-10-15), First-run setup creates platform admin (ZIF-70), Admins need a second factor (ZIF-71), Platform admin (ZIF-70, TOTP ZIF-71), Mailpit local mail, make seed synthetic data, App version 0.25.0
+
+### Community 121 - "Readme Setup Docs"
+Cohesion: 0.25
+Nodes (8): Conventional Commits PR titles, GHCR images backend/frontend/migrations, Shared release workflows (fjcloudaiconsulting/.github RELEASE_CONTRACT.md), release-please, Release PR (chore(main): release X.Y.Z), Translation catalogs (en source, nl, pt), CI Repo Checks job, docker-compose-prod.yaml
+
+### Community 122 - "Frontend Build Deps"
+Cohesion: 0.25
+Nodes (8): devDependencies, eslint, eslint-config-next, @hey-api/openapi-ts, @types/node, @types/react, @types/react-dom, typescript
+
+### Community 123 - "Frontend Test Deps"
+Cohesion: 0.25
+Nodes (8): scripts, build, dev, generate, lint, start, test, typecheck
+
+### Community 124 - "Landing Dependencies"
+Cohesion: 0.25
+Nodes (7): name, private, scripts, build, dev, test, type
+
+### Community 125 - "Repo Check Scripts"
+Cohesion: 0.43
+Nodes (4): newestReservedWords(), reservedWords(), topLevelRoutes(), unreservedRoutes()
+
+### Community 126 - "DST Day Span"
+Cohesion: 0.29
+Nodes (6): day_span(), test_day_span_at_a_repeated_midnight_starts_at_the_first_occurrence(), test_day_span_at_a_skipped_midnight_starts_at_the_day_s_first_instant(), test_day_span_is_23_or_25_hours_around_a_clock_change(), test_day_span_is_not_a_bare_subtraction_of_two_aware_datetimes(), test_day_span_of_a_run_spans_all_of_it()
+
+### Community 127 - "Booking Setting Fixtures"
+Cohesion: 0.33
+Nodes (4): save_setting(), _published(), _published(), _published()
+
+### Community 128 - "Landing Deploy And Client IP"
+Cohesion: 0.33
+Nodes (6): Landing deploys with Worker-scoped token (INFRA-113), Production path Cloudflare -> Traefik -> web -> API (k3s), ZIF_CLIENT_IP_HEADER, ZIF_TRUSTED_PROXIES, Deploy Landing job, ziftbook-landing Cloudflare Worker
+
+### Community 129 - "Project Docs"
+Cohesion: 0.33
+Nodes (7): audit_events audit log, auth.record, booking_events append-only table, app.clients.CONSENT_TEXTS, consents append-only table, join_tenant(session, tenant_id), /api/public routes
+
+### Community 130 - "Landing Worker"
+Cohesion: 0.43
+Nodes (5): fetch(), pickLanguage(), redirect(), SUPPORTED, assets
+
+### Community 131 - "Admin Sessions Migration"
+Cohesion: 0.47
+Nodes (3): downgrade(), reset_password(), upgrade()
+
+### Community 133 - "Landing Build"
+Cohesion: 0.33
+Nodes (4): alternates, LOCALES, strings, template
+
+### Community 134 - "Catalog And Hook Checks"
+Cohesion: 0.53
+Nodes (5): blankBranches(), CATALOG_SETS, compareCatalogs(), kind(), placeholders()
+
+### Community 136 - "Reserve Setup Slug Migration"
+Cohesion: 0.60
+Nodes (3): downgrade(), slug_ok(), upgrade()
+
+### Community 137 - "Admin Second Factor Migration"
+Cohesion: 0.60
+Nodes (3): downgrade(), grant(), upgrade()
+
+### Community 139 - "CI Changed-Paths Script"
+Cohesion: 0.50
+Nodes (3): affected(), all, none
+
+### Community 140 - "Community 117"
+Cohesion: 0.50
+Nodes (4): counting(), run_until_idle(), verify(), verify_then_reset()
+
+### Community 142 - "Dev Mail And Worker"
+Cohesion: 0.67
+Nodes (3): Mail via Mailgun HTTP API, never SMTP (ZIF-151), Mailpit local mail catcher, dev worker service
+
+### Community 143 - "Community 118"
+Cohesion: 0.67
+Nodes (3): Ziftbook App Icon (favicon), Brand Red #b31513, Z Logo Mark (white stroked Z glyph)
+
+### Community 145 - "Community 119"
+Cohesion: 0.67
+Nodes (3): Brand Color #b31513 (Ziftbook red), Landing Favicon (red rounded square with white Z), Z Monogram Logo Mark
 
 ## Ambiguous Edges - Review These
 - `Landing page HTML template` → `Schibsted Grotesk font (landing)`  [AMBIGUOUS]
@@ -746,24 +767,28 @@ Nodes (32): Team member booking assignment, Template first line is email subject
   backend/licenses/seclists-MIT.txt · relation: conceptually_related_to
 
 ## Knowledge Gaps
-- **259 isolated node(s):** `Note`, `Pick`, `View`, `Message`, `Stage` (+254 more)
-  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 1256 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
-- **99 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **57 isolated node(s):** `docker-compose-prod.yaml`, `Shared release workflows (fjcloudaiconsulting/.github RELEASE_CONTRACT.md)`, `make openapi`, `backend/openapi.json committed API contract`, `Release 0.23.0 (2026-10-08)` (+52 more)
+  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 1383 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
+- **103 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
+
+- **Why does `app.logs.configure() structured logging` connect `Docs Conventions` to `Password Hashing Core`?**
+  _High betweenness centrality (0.310) - this node is a cross-community bridge._
+- **Are the 827 inferred relationships involving `People` (e.g. with `test_a_failed_send_keeps_the_request_for_the_retry()` and `test_a_reset_link_uses_the_users_own_language()`) actually correct?**
+  _`People` has 827 INFERRED edges - model-reasoned connections that need verification._
+- **What connects `docker-compose-prod.yaml`, `Shared release workflows (fjcloudaiconsulting/.github RELEASE_CONTRACT.md)`, `make openapi` to the rest of the system?**
+  _57 weakly-connected nodes found - possible documentation gaps or missing edges._
+- **Should `Calendar Agenda Client` be split into smaller, more focused modules?**
+  _Cohesion score 0.035023041474654376 - nodes in this community are weakly interconnected._
+- **Why does `app.tracing hand-written spans` connect `Docs Conventions` to `Web Proxy Middleware`?**
+  _High betweenness centrality (0.308) - this node is a cross-community bridge._
+
+### Low-confidence Hints
+_AMBIGUOUS edges — the extractor was unsure. Verify before acting on these._
 
 - **What is the exact relationship between `Landing page HTML template` and `Schibsted Grotesk font (landing)`?**
   _Edge tagged AMBIGUOUS (relation: references) - confidence is low._
 - **What is the exact relationship between `SecLists` and `Sign out on every device after password reset`?**
   _Edge tagged AMBIGUOUS (relation: conceptually_related_to) - confidence is low._
-- **Why does `app.logs.configure() structured logging` connect `Docs Conventions` to `Test Fixtures Conftest`?**
-  _High betweenness centrality (0.288) - this node is a cross-community bridge._
-- **Why does `app.tracing hand-written spans` connect `Docs Conventions` to `Web Proxy Middleware`?**
-  _High betweenness centrality (0.288) - this node is a cross-community bridge._
-- **Why does `next-intl` connect `Shared UI And Manage Booking` to `Web Tracing`, `Console Calendar Logic`, `Public Booking Page UI`, `Team And Today Console`, `Time Off Console UI`, `Console Today Data`, `Settings Console UI`, `App Shell And Header`, `Week Editor UI`, `Services Console UI`, `Web Proxy Middleware`?**
-  _High betweenness centrality (0.202) - this node is a cross-community bridge._
-- **Are the 821 inferred relationships involving `People` (e.g. with `test_a_sign_up_for_a_registered_email_says_to_sign_in_without_a_link()` and `test_a_failed_send_keeps_the_request_for_the_retry()`) actually correct?**
-  _`People` has 821 INFERRED edges - model-reasoned connections that need verification._
-- **What connects `Note`, `Pick`, `View` to the rest of the system?**
-  _259 weakly-connected nodes found - possible documentation gaps or missing edges._
