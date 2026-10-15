@@ -13,7 +13,7 @@ dependencies = [
     "opentelemetry-sdk==1.45.1",
     "psycopg[binary]==3.3.6",
     "pydantic==2.14.1",
-    "pydantic-settings==2.15.0",
+    "pydantic-settings==2.16.0",
     "requests==2.34.2",
     "segno==1.6.6",
     "sqlalchemy==2.1.4",
