@@ -1,4 +1,5 @@
 import asyncio
+import http.client
 import json
 import os
 import threading
@@ -149,32 +150,40 @@ def test_the_worker_logs_its_settings_once_at_startup(
     assert "postgresql" not in dumped
 
 
-# B7: a failed healthcheck ping logs the error's class only, never the URL (worker.py:49).
+# B7: a failed healthcheck ping logs the error's class only, never the URL.
+# ZIF-21: whatever the ping raises, the worker loops on. urlopen raises ValueError for a URL with
+# no scheme and http.client.HTTPException for a garbled response, neither of them an OSError.
+@pytest.mark.parametrize("error", [OSError, ValueError, http.client.BadStatusLine])
 def test_a_failed_ping_logs_the_class_only(
-    bound_session: None, log_lines: Lines, monkeypatch: pytest.MonkeyPatch
+    error: type[Exception], bound_session: None, log_lines: Lines, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     sentinel = uuid.uuid4().hex
+    calls: list[str] = []
     tried = threading.Event()
 
     def ping(url: str) -> None:
-        tried.set()
-        raise OSError(sentinel)
+        calls.append(url)
+        if len(calls) == 2:  # a second loop ran: the first failure didn't end the worker
+            tried.set()
+        raise error(sentinel)
 
     monkeypatch.setattr(worker, "ping", ping)
+    monkeypatch.setattr(worker, "POLL_SECONDS", 0.05)
     monkeypatch.setattr(bookings, "sweep", lambda: 0)
 
     async def scenario() -> None:
         stop = asyncio.Event()
         task = asyncio.create_task(worker.work({}, f"http://127.0.0.1:9/{sentinel}", stop))
-        await asyncio.to_thread(tried.wait, 10)
+        looped = await asyncio.to_thread(tried.wait, 10)
         stop.set()
         await asyncio.wait_for(task, 5)
+        assert looped, calls
 
     asyncio.run(scenario())
 
     line = next((rec for rec in log_lines() if rec.get("msg") == "healthcheck ping failed"), None)
     assert line is not None
-    assert line["error"] == "OSError"
+    assert line["error"] == error.__name__
     assert sentinel not in json.dumps(log_lines())
 
 
