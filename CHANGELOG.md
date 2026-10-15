@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.25.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.24.1...v0.25.0) (2026-10-15)
+
+
+### Features
+
+* **backend:** admins need a second factor (ZIF-71) ([#259](https://github.com/fjcloudaiconsulting/ziftbook/issues/259)) ([35e0d15](https://github.com/fjcloudaiconsulting/ziftbook/commit/35e0d150fa2b927e9a6cd83c4cbc537a348f8a3f))
+* **backend:** first-run setup creates the platform admin with a deployment token (ZIF-70) ([#256](https://github.com/fjcloudaiconsulting/ziftbook/issues/256)) ([1053e39](https://github.com/fjcloudaiconsulting/ziftbook/commit/1053e39c3e6526b7e8a9071fd4c1aab6ccd34cb1))
+* **backend:** platform admin role and grant/revoke CLI (ZIF-70) ([#253](https://github.com/fjcloudaiconsulting/ziftbook/issues/253)) ([b413b8b](https://github.com/fjcloudaiconsulting/ziftbook/commit/b413b8b4c6c05ba906175bcc06fdf5f6dfc9eaca))
+* **backend:** platform admins sign in to their own short-lived session (ZIF-70) ([#255](https://github.com/fjcloudaiconsulting/ziftbook/issues/255)) ([d5a3af7](https://github.com/fjcloudaiconsulting/ziftbook/commit/d5a3af75ab9a1be6711a35b180c2cbed9f6b69d3))
+* **backend:** reserve the setup slug for first-run setup (ZIF-70) ([#252](https://github.com/fjcloudaiconsulting/ziftbook/issues/252)) ([04a44a5](https://github.com/fjcloudaiconsulting/ziftbook/commit/04a44a5f16cdf71af0ebcaba5182e0bd20dcd0bc))
+* **backend:** TOTP credentials and the enrol CLI (ZIF-71) ([#258](https://github.com/fjcloudaiconsulting/ziftbook/issues/258)) ([1656f9b](https://github.com/fjcloudaiconsulting/ziftbook/commit/1656f9b532080e6f61438fa05882475cf2c83473))
+* **frontend:** the web app's API proxy and page errors as OTLP metrics (ZIF-88) ([#229](https://github.com/fjcloudaiconsulting/ziftbook/issues/229)) ([be17dbf](https://github.com/fjcloudaiconsulting/ziftbook/commit/be17dbfdf8e99ff14e72700575d73766a6e7aa0b))
+* **web:** admin sign-in with two-factor (ZIF-71) ([#261](https://github.com/fjcloudaiconsulting/ziftbook/issues/261)) ([2999630](https://github.com/fjcloudaiconsulting/ziftbook/commit/29996302c1711f2addf873317a2d7f328e9f402d))
+* **web:** first-run /setup page and redirect (ZIF-70) ([#262](https://github.com/fjcloudaiconsulting/ziftbook/issues/262)) ([1f59733](https://github.com/fjcloudaiconsulting/ziftbook/commit/1f597336b25ce668af442da85ab195ec8499faf1))
+
+
+### Bug Fixes
+
+* **deps:** update dependency fastapi to v0.143.1 ([#260](https://github.com/fjcloudaiconsulting/ziftbook/issues/260)) ([cc209a5](https://github.com/fjcloudaiconsulting/ziftbook/commit/cc209a58b45901a171eb698b6fd0f7b8c64a757b))
+* **deps:** update dependency pydantic-settings to v2.16.0 ([#257](https://github.com/fjcloudaiconsulting/ziftbook/issues/257)) ([40e33c9](https://github.com/fjcloudaiconsulting/ziftbook/commit/40e33c90fb2a8eebd3130407c5ebea32ce6775cd))
+* **migrations:** a migration that can't get a table lock fails in 5s instead of hanging the rollout (ZIF-34) ([#246](https://github.com/fjcloudaiconsulting/ziftbook/issues/246)) ([76c6cbc](https://github.com/fjcloudaiconsulting/ziftbook/commit/76c6cbcb44568d30664a9b64cb179759463843e3))
+
 ## [0.24.1](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.24.0...v0.24.1) (2026-10-12)
 
 
