@@ -341,8 +341,14 @@ value needs a redeploy it is an environment variable; otherwise it is a setting.
 Deferred and scheduled work goes through the `jobs` table (`app/jobs.py`); there is no broker or scheduler.
 
 - Enqueue with `enqueue(session, kind, dedupe_key, payload)` in the same transaction as the change that needs it.
-  The key runs once, ever: build it as `kind:tenant_id:natural id`, adding the due time when the same thing can be
-  rescheduled (`booking.reminder:<tenant>:<booking>:<starts_at>`).
+  The key runs once while its job is kept: a finished, skipped or given-up job is deleted 30 days after it finishes
+  (`jobs.prune`, on the worker's sweep timer), and then the same key enqueues a new job. Never count on the key to
+  stop a repeat further apart than that; gate the handler on current state instead, as booking emails do. A given-up
+  job's `last_error` is readable for those 30 days; `email_outbox` keeps the record of what was sent. Build the key as
+  `kind:tenant_id:natural id`, adding the due time when the same thing can be rescheduled
+  (`booking.reminder:<tenant>:<booking>:<starts_at>`).
+- Removing a job kind needs a migration that deletes its rows: the prune only removes finished jobs, and no worker
+  finishes a kind it no longer registers.
 - Payloads hold ids only; the handler loads what it needs inside `tenant_context(job.tenant_id)`. A job with no tenant
   (such as `email.token`, for sign-up and reset links) touches only global tables, through `SessionLocal.begin()`.
 - Handlers may run more than once for a job (a crash after the work but before it is recorded, or a timeout that
@@ -374,7 +380,8 @@ loggers (`web.*`); Next's own stderr output (banners, SSR error traces) is not i
   values in fields.
 - Events: `job claimed` (DEBUG), `job done` and `job skipped` (INFO, past its grace), `job failed`
   (WARNING, retried) and `job gave up` (ERROR, last attempt), with `attempts`;
-  `bookings expired` (INFO, `count`, `tenant_id`, from the worker's sweep); `email sent` (INFO) and
+  `bookings expired` (INFO, `count`, `tenant_id`, from the worker's sweep); `jobs pruned` (INFO, `count`, only when
+  something was deleted, from the same sweep); `email sent` (INFO) and
   `email failed` (WARNING) with `template` (and `error` on failure) plus the job context; never the
   address, subject or body. Each process logs one startup line (`api started`, `worker started`, `migrations started`) with its
   non-secret settings.

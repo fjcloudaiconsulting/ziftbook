@@ -13,7 +13,7 @@ import pytest
 from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.pool import NullPool
 
-from app import bookings, logs, worker
+from app import bookings, jobs, logs, worker
 from app.config import WorkerSettings
 from app.db import SessionLocal
 from app.jobs import Job, JobKind, enqueue
@@ -178,6 +178,14 @@ def test_a_failed_ping_logs_the_class_only(
     assert sentinel not in json.dumps(log_lines())
 
 
+async def until(condition: Callable[[], bool]) -> None:
+    for _ in range(200):
+        if condition():
+            return
+        await asyncio.sleep(0.05)
+    raise AssertionError("timed out")
+
+
 # ZIF-122: the expiry sweep runs on the first iteration, then every SWEEP_SECONDS. A sweep that
 # raises is logged, withholds the ping and is retried next iteration; jobs still run.
 def test_the_worker_sweeps_on_a_timer_and_retries_a_failing_sweep(
@@ -209,13 +217,6 @@ def test_the_worker_sweeps_on_a_timer_and_retries_a_failing_sweep(
         monkeypatch.setattr(worker, "POLL_SECONDS", 0.05)
         task = asyncio.create_task(work(kinds, "http://ping.invalid/x", stop))
 
-        async def until(condition: Callable[[], bool]) -> None:
-            for _ in range(200):
-                if condition():
-                    return
-                await asyncio.sleep(0.05)
-            raise AssertionError("timed out")
-
         await until(lambda: len(sweeps) >= 2)  # failed on iteration 1, retried on iteration 2
         assert pings == [] and len(ran) == 1  # no ping while it fails; the job still ran
         assert sweeps[0] == 1  # the first sweep came after the job, not before
@@ -230,4 +231,81 @@ def test_the_worker_sweeps_on_a_timer_and_retries_a_failing_sweep(
         await asyncio.wait_for(task, 5)
 
     asyncio.run(scenario())
+    assert any(line["msg"] == "worker iteration failed" for line in log_lines())
+
+
+# ZIF-35: prune rides the sweep timer, before the sweep. Kills: prune outside the timer `if` (every
+# poll), prune placed after the sweep (hostage to a failing tenant), prune not wired in.
+def test_the_worker_prunes_on_the_sweep_timer_not_every_poll(
+    bound_session: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    prunes: list[int] = []
+    sweeps: list[int] = []
+    fail_sweep = [False]
+    pings: list[str] = []
+    clock = [1000.0]
+
+    def sweep() -> int:
+        sweeps.append(len(prunes))  # prunes so far: prune comes first
+        if fail_sweep[0]:
+            raise RuntimeError("sweep boom")
+        return 0
+
+    def prune() -> int:
+        prunes.append(1)
+        return 0
+
+    monkeypatch.setattr(jobs, "prune", prune)
+    monkeypatch.setattr(bookings, "sweep", sweep)
+    monkeypatch.setattr(worker, "ping", pings.append)
+    monkeypatch.setattr(worker, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    monkeypatch.setattr(worker, "SWEEP_SECONDS", 100)
+    monkeypatch.setattr(worker, "POLL_SECONDS", 0.05)
+
+    async def scenario() -> None:
+        stop = asyncio.Event()
+        task = asyncio.create_task(work({}, "http://ping.invalid/x", stop))
+        await until(lambda: len(pings) >= 4)  # several polls, clock frozen
+        assert len(prunes) == 1 and sweeps == [1]
+        clock[0] += 101
+        await until(lambda: len(prunes) == 2)
+        fail_sweep[0] = True
+        clock[0] += 101
+        await until(lambda: len(sweeps) >= 3)  # the sweep raised on this tick...
+        assert sweeps[2] == 3  # ...and prune had already run on it (no race with the next poll)
+        stop.set()
+        await asyncio.wait_for(task, 5)
+
+    asyncio.run(scenario())
+
+
+# Kills: `try: prune() except Exception: log` (a swallowed failure: a timeout would never alert).
+def test_a_failing_prune_withholds_the_ping_and_retries(
+    bound_session: None, monkeypatch: pytest.MonkeyPatch, log_lines: Lines
+) -> None:
+    calls: list[int] = []
+    pings: list[str] = []
+    pings_at_retry: list[list[str]] = []
+
+    def prune() -> int:
+        calls.append(1)
+        if len(calls) == 1:
+            raise RuntimeError("prune boom")
+        pings_at_retry.append(list(pings))
+        return 0
+
+    monkeypatch.setattr(jobs, "prune", prune)
+    monkeypatch.setattr(bookings, "sweep", lambda: 0)
+    monkeypatch.setattr(worker, "ping", pings.append)
+    monkeypatch.setattr(worker, "POLL_SECONDS", 0.05)
+
+    async def scenario() -> None:
+        stop = asyncio.Event()
+        task = asyncio.create_task(work({}, "http://ping.invalid/x", stop))
+        await until(lambda: len(calls) >= 2)
+        stop.set()
+        await asyncio.wait_for(task, 5)
+
+    asyncio.run(scenario())
+    assert pings_at_retry[0] == []  # no ping after the failed iteration
     assert any(line["msg"] == "worker iteration failed" for line in log_lines())

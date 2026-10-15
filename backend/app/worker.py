@@ -81,9 +81,11 @@ async def work(kinds: dict[str, JobKind], healthcheck_url: str | None, stop: asy
         try:
             while await run_once(kinds) and not stop.is_set():
                 pass
-            # After the drain, so emails go first. A failing sweep skips the ping (alerts) and
-            # retries next poll, since the mark is only set on success.
+            # After the drain, so emails go first. A failing prune or sweep skips the ping (alerts)
+            # and retries next poll, since the mark is only set on success.
             if swept is None or time.monotonic() - swept >= SWEEP_SECONDS:
+                # Global and one statement, so before the sweep: never hostage to a failing tenant.
+                await asyncio.to_thread(jobs.prune)
                 await asyncio.to_thread(bookings.sweep)
                 swept = time.monotonic()
         except Exception:

@@ -3,8 +3,9 @@ import os
 import threading
 import uuid
 from collections import Counter
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from datetime import timedelta
+from typing import Any
 
 import pytest
 import requests
@@ -13,9 +14,9 @@ from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.pool import NullPool
 
 from app import jobs
-from app.db import SessionLocal
+from app.db import SessionLocal, tenant_context
 from app.jobs import Job, JobKind, enqueue, run_once
-from tests.conftest import closed, points
+from tests.conftest import People, closed, points
 
 
 @pytest.fixture(autouse=True)
@@ -230,3 +231,130 @@ def test_a_skipped_job_counts_skipped_and_exports_no_running_point(
     assert points(metric_reader, "ziftbook.job.running") == []
     assert points(metric_reader, "ziftbook.job.attempts") == []
     closed(metric_reader)
+
+
+# ZIF-35: prune. Rows are seeded with enqueue, then backdated; every assertion is by dedupe_key
+# because other tests share the database.
+def seed(key: str, **columns: str) -> str:
+    """Enqueue a test.prune job, then set columns to SQL expressions (now() - interval '1 day')."""
+    with SessionLocal.begin() as session:
+        enqueue(session, "test.prune", key, {})
+        if columns:
+            sets = ", ".join(f"{name} = {value}" for name, value in columns.items())
+            session.execute(text(f"UPDATE jobs SET {sets} WHERE dedupe_key = :key"), {"key": key})
+    return key
+
+
+def present(*keys: str) -> set[str]:
+    with SessionLocal() as session:
+        rows = session.scalars(
+            text("SELECT dedupe_key FROM jobs WHERE dedupe_key = ANY(:keys)"), {"keys": list(keys)}
+        )
+        return set(rows)
+
+
+def tag() -> str:
+    return uuid.uuid4().hex
+
+
+def days_ago(days: int) -> str:
+    return f"now() - interval '{days} days'"
+
+
+# An hour either side of RETENTION_DAYS (30), so a 29- or 31-day retention goes red too.
+OVER = "now() - interval '30 days 1 hour'"
+UNDER = "now() - interval '29 days 23 hours'"
+
+
+# Kills: a predicate on completed_at only (given-up rows kept forever), or on skipped /
+# last_error IS NOT NULL instead of attempts.
+def test_prune_deletes_jobs_finished_over_30_days_ago() -> None:
+    t = tag()
+    done = seed(f"test.prune:{t}:done", completed_at=OVER)
+    skipped = seed(f"test.prune:{t}:skipped", completed_at=OVER, skipped="true")
+    gave_up = seed(f"test.prune:{t}:gave_up", attempts="5", last_error="NULL", next_attempt_at=OVER)
+
+    jobs.prune()
+
+    assert present(done, skipped, gave_up) == set()
+
+
+# Kills: attempts >= 5 without the time bound, next_attempt_at < cutoff without the attempts /
+# completed guard (a stuck backlog), due_at as the age column, a < vs > cutoff flip, last_error
+# IS NOT NULL standing in for attempts >= 5.
+def test_prune_keeps_recent_and_unfinished_jobs() -> None:
+    t = tag()
+    keys = [
+        seed(f"test.prune:{t}:done29", completed_at=UNDER),
+        seed(f"test.prune:{t}:gaveup29", attempts="5", next_attempt_at=UNDER),
+        seed(
+            f"test.prune:{t}:retrying",
+            attempts="4",  # the last retry: kills attempts >= MAX_ATTEMPTS - 1
+            last_error="'RuntimeError'",
+            next_attempt_at=OVER,
+        ),
+        seed(f"test.prune:{t}:never", due_at=OVER, next_attempt_at=OVER),
+        seed(
+            f"test.prune:{t}:inflight",
+            attempts="5",
+            next_attempt_at="now() + interval '16 minutes'",
+        ),
+        # Finished long ago by due_at, but only just completed: due_at is not the age column.
+        seed(f"test.prune:{t}:olddue", due_at=days_ago(40), completed_at="now()"),
+    ]
+
+    jobs.prune()
+
+    assert present(*keys) == set(keys)
+
+
+# Kills: a cascade / "tidy up the outbox too" implementation, or a future FK ON DELETE CASCADE.
+def test_prune_keeps_the_email_outbox_row(people: People) -> None:
+    key = seed(f"test.prune:{tag()}:mail", completed_at=OVER)
+    with SessionLocal() as session:
+        job_id = session.scalar(text("SELECT id FROM jobs WHERE dedupe_key = :key"), {"key": key})
+    with tenant_context(people.a) as session:
+        session.execute(
+            text(
+                "INSERT INTO email_outbox (tenant_id, job_id, recipient_id, template, subject)"
+                " VALUES (:tenant, :job, :recipient, 'hello', 'Hi')"
+            ),
+            {"tenant": people.a, "job": job_id, "recipient": people.only_a},
+        )
+    try:
+        jobs.prune()
+
+        assert present(key) == set()
+        with tenant_context(people.a) as session:
+            kept = session.scalar(
+                text("SELECT count(*) FROM email_outbox WHERE job_id = :job"), {"job": job_id}
+            )
+        assert kept == 1
+    finally:
+        with tenant_context(people.a) as session:
+            session.execute(text("DELETE FROM email_outbox WHERE job_id = :job"), {"job": job_id})
+
+
+# Pins the documented dedupe caveat: a "keep a tombstone" change has to update the docs too.
+def test_a_pruned_dedupe_key_enqueues_again() -> None:
+    key = seed(f"test.prune:{tag()}:again", completed_at=OVER)
+
+    jobs.prune()
+
+    with SessionLocal.begin() as session:
+        assert enqueue(session, "test.prune", key, {}) is True
+
+
+# Guard: no log line when nothing is deleted (it runs every 5 minutes).
+def test_prune_logs_the_count(log_lines: Callable[[], list[dict[str, Any]]]) -> None:
+    t = tag()
+    seed(f"test.prune:{t}:a", completed_at=OVER)
+    seed(f"test.prune:{t}:b", completed_at=days_ago(32))
+
+    deleted = jobs.prune()
+
+    lines = [line for line in log_lines() if line["msg"] == "jobs pruned"]
+    assert deleted >= 2
+    assert [line["count"] for line in lines] == [deleted]
+    jobs.prune()
+    assert len([line for line in log_lines() if line["msg"] == "jobs pruned"]) == 1
