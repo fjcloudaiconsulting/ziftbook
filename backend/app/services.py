@@ -3,7 +3,7 @@ Services are archived, never deleted."""
 
 import json
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Body, Request, Response
@@ -54,6 +54,8 @@ Description = dict[Locale, DescriptionText]  # {} for none
 Amount = Annotated[int, Field(ge=0, le=1_000_000)]  # minor units, in the business's currency
 Duration = Annotated[int, Field(ge=5, le=720)]
 Buffer = Annotated[int, Field(ge=0, le=240)]
+# What a service without a photo shows (ZIF-133); the web app pre-selects it from the name.
+Placeholder = Literal["generic", "nails", "hair", "beauty", "massage"]
 
 # Built field by field: nothing a client sends can name a business, a currency or an id.
 STRICT = ConfigDict(strict=True, extra="forbid")
@@ -82,6 +84,7 @@ class ServiceIn(BaseModel):
     worker_ids: Annotated[
         list[Annotated[UUID, Field(strict=False)]], Field(max_length=MAX_WORKERS)
     ] = Field(default_factory=list)
+    placeholder: Placeholder = "generic"
 
 
 class ServiceChange(BaseModel):
@@ -96,8 +99,11 @@ class ServiceChange(BaseModel):
     duration_minutes: Duration | SkipJsonSchema[None] = None
     buffer_minutes: Buffer | None = None
     archived: bool | SkipJsonSchema[None] = None
+    placeholder: Placeholder | SkipJsonSchema[None] = None
 
-    @field_validator("name", "description", "price", "duration_minutes", "archived", mode="before")
+    @field_validator(
+        "name", "description", "price", "duration_minutes", "archived", "placeholder", mode="before"
+    )
     @classmethod
     def not_null(cls, value: object) -> object:
         # Runs only for fields that were sent: leaving one out is fine, null isn't.
@@ -116,12 +122,14 @@ class ServiceOut(BaseModel):
     archived: bool
     archived_at: datetime | None  # when it was first archived; null while it is live
     worker_ids: list[UUID]  # member ids, in id order; [] for none
+    placeholder: Placeholder
 
 
 FIELDS = """
 id, name, description,
 jsonb_build_object('amount_minor', price_amount_minor, 'currency', price_currency) AS price,
 duration_minutes, buffer_minutes, archived_at IS NOT NULL AS archived, archived_at,
+photo_placeholder AS placeholder,
 ARRAY(SELECT sw.member_id FROM service_workers sw
       WHERE sw.service_id = services.id ORDER BY sw.member_id) AS worker_ids
 """
@@ -175,9 +183,9 @@ def create_service(
     row = current.db.execute(
         text(f"""
         INSERT INTO services (tenant_id, name, description, price_amount_minor, price_currency,
-                              duration_minutes, buffer_minutes)
+                              duration_minutes, buffer_minutes, photo_placeholder)
         SELECT id, CAST(:name AS jsonb), CAST(:description AS jsonb), :amount_minor, currency,
-               :duration_minutes, :buffer_minutes
+               :duration_minutes, :buffer_minutes, :placeholder
         FROM tenants WHERE id = current_setting('app.tenant_id')::uuid
         RETURNING {FIELDS}
         """),
@@ -187,6 +195,7 @@ def create_service(
             "amount_minor": new.price.amount_minor,
             "duration_minutes": new.duration_minutes,
             "buffer_minutes": new.buffer_minutes,
+            "placeholder": new.placeholder,
         },
     ).one()
     service = ServiceOut.model_validate(row, from_attributes=True)
@@ -239,7 +248,7 @@ def update_service(
         UPDATE services SET
           name = CAST(:name AS jsonb), description = CAST(:description AS jsonb),
           price_amount_minor = :amount_minor, duration_minutes = :duration_minutes,
-          buffer_minutes = :buffer_minutes,
+          buffer_minutes = :buffer_minutes, photo_placeholder = :placeholder,
           -- An archived service keeps the time it was first archived.
           archived_at = CASE WHEN :archived THEN coalesce(archived_at, now()) END
         WHERE id = :id
@@ -253,6 +262,7 @@ def update_service(
             "duration_minutes": after["duration_minutes"],
             "buffer_minutes": after["buffer_minutes"],
             "archived": after["archived"],
+            "placeholder": after["placeholder"],
         },
     ).one()
     auth.record(

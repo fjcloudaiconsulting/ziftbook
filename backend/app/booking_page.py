@@ -15,7 +15,7 @@ from app.business_settings import Locale
 from app.countries import Country
 from app.db import SessionLocal, join_tenant
 from app.errors import ApiError, Error
-from app.services import Price
+from app.services import Placeholder, Price
 
 router = APIRouter(prefix="/api/public", tags=["booking-page"])
 LIMIT, LIMIT_WINDOW = 60, timedelta(minutes=1)
@@ -27,7 +27,7 @@ SLUG = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*")  # slug_ok()'s format (migration 00
 # ponytail: tens of services, no pagination.
 SERVICES = text("""
 SELECT s.id, s.name, s.description, s.duration_minutes,
-       s.price_amount_minor, s.price_currency,
+       s.price_amount_minor, s.price_currency, s.photo_placeholder,
        m.id AS member_id, m.display_name
 FROM services s
 JOIN service_workers sw ON sw.tenant_id = s.tenant_id AND sw.service_id = s.id
@@ -52,6 +52,7 @@ class PublicServiceOut(BaseModel):
     duration_minutes: int
     price: Price
     workers: list[WorkerOut]  # display_name (nulls last), then id; never empty
+    placeholder: Placeholder
 
 
 class BookingPageOut(BaseModel):
@@ -110,6 +111,7 @@ def read(slug: str, request: Request) -> BookingPageOut:
                     duration_minutes=row.duration_minutes,
                     price=Price(amount_minor=row.price_amount_minor, currency=row.price_currency),
                     workers=[],
+                    placeholder=row.photo_placeholder,
                 )
             services[row.id].workers.append(
                 WorkerOut(id=row.member_id, display_name=row.display_name)

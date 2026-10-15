@@ -528,6 +528,15 @@
         "descriptionOptional": "· opcional",
         "descriptionLangLabel": "Descrição em {language}",
         "descriptionPlaceholder": "O que o cliente pode esperar. Até 1000 caracteres.",
+        "placeholderLegend": "Sem foto, os clientes veem",
+        "placeholderKinds": {
+          "generic": "Geral",
+          "nails": "Unhas",
+          "hair": "Cabelo",
+          "beauty": "Beleza",
+          "massage": "Massagem"
+        },
+        "placeholderRuleHint": "Escolhido pelo nome do serviço. Troque se outro combinar melhor.",
         "priceLabel": "Preço",
         "priceHint": "Sua moeda é {currency}, definida quando o negócio foi criado. Todos veem o mesmo valor, escrito da forma como o idioma de cada um escreve números.",
         "priceInvalid": "Digite um preço, usando uma vírgula ou ponto para os centavos.",
