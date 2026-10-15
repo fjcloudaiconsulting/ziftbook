@@ -13,7 +13,7 @@ from opentelemetry import metrics
 from opentelemetry.metrics import CallbackOptions, Observation
 from sqlalchemy import create_engine
 
-from app import bookings, jobs, logs, mail, tracing
+from app import bookings, jobs, logs, mail, photos, tracing
 from app.config import MailSettings, WorkerSettings
 from app.db import SessionLocal
 from app.jobs import JobKind, run_once
@@ -33,6 +33,9 @@ KINDS: dict[str, JobKind] = {
     "email.booking_verify": JobKind(
         mail.send_booking_verify, timeout=30, grace=timedelta(hours=24)
     ),
+    # ZIF-133. A replaced or removed photo's objects; the grace is long because nothing is lost by
+    # waiting, and the handler re-checks that no service still uses the prefix.
+    "media.delete": JobKind(photos.media_delete, timeout=30, grace=timedelta(days=7)),
 }
 
 

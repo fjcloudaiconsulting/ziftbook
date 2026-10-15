@@ -90,3 +90,34 @@ class SecondFactorSettings(Settings):
     # Resolved at runtime from a secret, never committed (as turnstile_secret). Losing it makes
     # every stored secret unreadable: back it up with the database credentials.
     totp_key: SecretStr = SecretStr("")
+
+
+class StorageSettings(Settings):
+    """Photo storage (ZIF-133): an S3-compatible service with an uploads bucket (browser PUTs, a
+    lifecycle rule expires them) and a media bucket (the resized variants, served from media_url).
+    No default endpoint: while any of the six is unset the API logs a WARNING at startup and
+    refuses to set a photo (503 photos_unavailable); startup never fails over it."""
+
+    s3_endpoint: str = ""
+    # Development only (compose): the host the browser reaches, when s3_endpoint is a compose
+    # service name. Presigned URLs use it; unset in deployments.
+    s3_public_endpoint: str = ""
+    s3_uploads_bucket: str = ""
+    s3_media_bucket: str = ""
+    s3_access_key_id: str = ""
+    # Resolved at runtime from a secret, never committed (as turnstile_secret).
+    s3_secret_access_key: SecretStr = SecretStr("")
+    # Where the media bucket is served, no trailing slash needed: the photo URLs start with it.
+    media_url: str = ""
+
+    def configured(self) -> bool:
+        return all(
+            (
+                self.s3_endpoint,
+                self.s3_uploads_bucket,
+                self.s3_media_bucket,
+                self.s3_access_key_id,
+                self.s3_secret_access_key.get_secret_value(),
+                self.media_url,
+            )
+        )

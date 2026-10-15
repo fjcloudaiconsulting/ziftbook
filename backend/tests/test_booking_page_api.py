@@ -145,6 +145,7 @@ def test_the_page_answers_exactly_the_documented_fields(
             "price",
             "workers",
             "placeholder",
+            "photo",
         }
         assert set(service["price"]) == {"amount_minor", "currency"}
         for worker in service["workers"]:
@@ -156,6 +157,29 @@ def test_the_page_answers_exactly_the_documented_fields(
     assert by_id[ready]["price"] == {"amount_minor": 2500, "currency": "EUR"}
     assert len(by_id[second]["workers"]) == 2
     assert (by_id[ready]["placeholder"], by_id[second]["placeholder"]) == ("generic", "hair")
+
+
+# ZIF-133 G3. guard: the public page carries a service's photo URLs (null for none).
+def test_the_page_lists_a_services_photo(
+    people: People, app: FastAPI, slug: str, ready: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ZIF_MEDIA_URL", "https://img.example.test")
+    assert page(new_client(app), slug).json()["services"][0]["photo"] is None
+    key = f"{people.a}/{ready}/{uuid.uuid4()}"
+    with tenant_context(people.a) as session:
+        session.execute(
+            text("""
+            UPDATE services SET photo_key = :k, photo_content_type = 'image/webp',
+              photo_width = 1200, photo_height = 800 WHERE id = :s
+            """),
+            {"k": key, "s": ready},
+        )
+    assert page(new_client(app), slug).json()["services"][0]["photo"] == {
+        "thumb_url": f"https://img.example.test/{key}/thumb.webp",
+        "detail_url": f"https://img.example.test/{key}/detail.webp",
+        "width": 1200,
+        "height": 800,
+    }
 
 
 # F4/F5. fence. Kills: a one-way latch (publishing once can never be undone); an ungated PUT (a
