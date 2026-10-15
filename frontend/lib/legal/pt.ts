@@ -28,7 +28,7 @@ export const pt: Legal = {
       {
         heading: "Use o ziftbook de forma justa",
         body: [
-          "Informe os seus próprios dados, corretos, e só agende horários que você pretende cumprir. Não é permitido:",
+          "Informe os seus próprios dados, de forma correta, e só agende horários que você pretende cumprir. Não é permitido:",
           [
             "agendar com os dados de outra pessoa sem a permissão dela;",
             "agendar ou consultar horários de forma automática, ou copiar conteúdo do ziftbook em massa;",
@@ -59,8 +59,8 @@ export const pt: Legal = {
             "usamos apenas os prestadores de serviço listados no nosso aviso de privacidade, e avisamos você antes de incluir ou substituir algum, para que você possa se opor;",
             "impomos os mesmos compromissos a esses prestadores, e continuamos responsáveis por eles;",
             "avisamos você se acharmos que uma instrução viola a lei de proteção de dados;",
-            "ajudamos você a responder aos seus clientes quando eles exercem seus direitos de privacidade, e em questões de segurança e proteção de dados;",
-            "avisamos você sem demora injustificada se um incidente de segurança afetar os dados dos seus clientes;",
+            "ajudamos você a responder aos seus clientes quando eles exercem seus direitos de privacidade, e com segurança, notificações de violação de dados e relatórios de impacto à proteção de dados;",
+            "avisamos você sem demora injustificada se uma violação de dados pessoais afetar os dados dos seus clientes;",
             "quando você encerra a sua conta, entregamos uma cópia dos dados se você pedir, e depois os apagamos, a menos que a lei nos obrigue a mantê-los;",
             "fornecemos as informações de que você precisa para demonstrar que esse tratamento cumpre a lei, e permitimos que você ou um auditor de sua escolha verifique isso, com aviso prévio razoável.",
           ],
@@ -93,7 +93,7 @@ export const pt: Legal = {
       {
         heading: "Lei aplicável e conflitos",
         body: [
-          "Estes termos são regidos por [OWNER: lei aplicável, por exemplo a lei holandesa], e os conflitos vão para [OWNER: foro competente]. Se você é consumidor, mantém a proteção das leis obrigatórias do país onde mora.",
+          "Estes termos são regidos por [OWNER: lei aplicável, por exemplo a lei holandesa], e os conflitos vão para [OWNER: foro competente]. Se você é consumidor, mantém a proteção das normas obrigatórias do país onde mora.",
         ],
       },
       {
@@ -134,7 +134,7 @@ export const pt: Legal = {
             "se o estabelecimento perguntar se você quer receber ofertas ou novidades: a sua resposta, o texto exato que você viu, a data e a hora, e o seu endereço IP e navegador, como prova da sua escolha;",
             "anotações que o estabelecimento faz sobre você, se fizer alguma.",
           ],
-          "Usamos esses dados para criar e gerenciar a sua reserva, para enviar e-mails sobre ela (como um link para confirmar a sua reserva, uma confirmação ou a resposta do estabelecimento, um lembrete cerca de 24 horas antes, e mensagens quando ela for alterada ou cancelada), e para que o estabelecimento possa falar com você sobre o seu horário. A base legal é o acordo que você faz com o estabelecimento, o legítimo interesse dele em registrar as reservas e evitar abusos, e o seu consentimento para ofertas e novidades, que você pode retirar a qualquer momento.",
+          "Usamos esses dados para criar e gerenciar a sua reserva, para enviar e-mails sobre ela (como um link para confirmar a sua reserva, uma confirmação ou a resposta do estabelecimento, um lembrete cerca de 24 horas antes, e mensagens quando ela for alterada ou cancelada), e para que o estabelecimento possa falar com você sobre o seu horário. A base legal é o acordo que você faz com o estabelecimento, o legítimo interesse do estabelecimento em registrar as reservas, o nosso legítimo interesse em evitar abusos, e o seu consentimento para ofertas e novidades, que você pode retirar a qualquer momento.",
           "No ziftbook, só o estabelecimento onde você agendou (o dono e a equipe) vê os seus dados. A nossa equipe só acessa esses dados quando é necessário para operar ou dar suporte ao serviço. Cada estabelecimento tem a sua própria lista de clientes, separada, e os estabelecimentos não veem os clientes uns dos outros.",
           "Se você estiver conectado a uma conta do ziftbook ao agendar, preenchemos os seus dados a partir da sua conta e vinculamos a reserva a ela.",
         ],
