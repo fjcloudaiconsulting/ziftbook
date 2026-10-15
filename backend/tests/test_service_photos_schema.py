@@ -147,6 +147,20 @@ NAMES = [
     ({"en": "Bridal make-up"}, "beauty"),
     ({"pt": "Limpeza de pele"}, "beauty"),
     ({"en": "Wimper lift", "nl": "Manicure"}, "nails"),
+    # Real salon names (frontend/tests/placeholders.test.mjs runs the same table): a short keyword
+    # never matches the start of an unrelated word, and facial words are beauty.
+    ({"en": "Manicure"}, "nails"),
+    ({"en": "Gel manicure"}, "nails"),
+    ({"nl": "Gelnagels"}, "nails"),
+    ({"nl": "Gellak"}, "nails"),
+    ({"nl": "Nagels lakken"}, "nails"),
+    ({"pt": "Unhas de gel"}, "nails"),
+    ({"en": "Face treatment"}, "beauty"),
+    ({"nl": "Gelaatsbehandeling"}, "beauty"),
+    ({"nl": "Gezichtsbehandeling"}, "beauty"),
+    ({"pt": "Tratamento de rosto"}, "beauty"),
+    ({"pt": "Corte masculino"}, "hair"),
+    ({"nl": "Lakens wassen"}, "generic"),
 ]
 PHOTO_COLUMNS = text("""
 SELECT column_name FROM information_schema.columns

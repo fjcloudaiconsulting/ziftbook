@@ -23,18 +23,19 @@ UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
 FROM = "áàâãäåçéèêëíìîïñóòôõöúùûüýÿÁÀÂÃÄÅÇÉÈÊËÍÌÎÏÑÓÒÔÕÖÚÙÛÜÝ"
 TO = "aaaaaaceeeeiiiinooooouuuuyyAAAAAACEEEEIIIINOOOOOUUUUY"
 KINDS = {
-    "nails": "nail|mani|pedi|gel|polish|acryl|shellac|nagel|gellak|lak|unha|esmalte|alongamento",
+    "nails": "nail|mani|pedi|gel$|gelnagel|polish|acryl|shellac|nagel|gellak|lak$|unha|esmalte|"
+    "alongamento",
     "hair": "hair|haircut|trim|colour|color|blow|highlight|beard|haar|knip|kleur|fohn|baard|"
     "cabelo|corte|escova|coloracao|mechas|barba",
-    "beauty": "brow|lash|facial|make-up|makeup|wax|wenkbrauw|wimper|gezicht|harsen|sobrancelha|"
-    "cilio|limpeza de pele|maquiagem|depilacao",
+    "beauty": "brow|lash|facial|face|make-up|makeup|wax|wenkbrauw|wimper|gezicht|gelaat|harsen|"
+    "sobrancelha|cilio|limpeza de pele|rosto|maquiagem|depilacao",
     "massage": "massage|massagem",
 }
 # NFC first: a name pasted in decomposed form (macOS) carries its accents as separate marks.
 FOLDED = f"lower(translate(normalize(v, NFC), '{FROM}', '{TO}'))"
 CASES = " ".join(
     f"WHEN EXISTS (SELECT 1 FROM jsonb_each_text(name) AS t(k, v) "
-    f"WHERE {FOLDED} ~ '\\m({words})') THEN '{kind}'"
+    f"WHERE {FOLDED} ~ '\\m({words.replace('$', '\\M')})') THEN '{kind}'"
     for kind, words in KINDS.items()
 )
 
