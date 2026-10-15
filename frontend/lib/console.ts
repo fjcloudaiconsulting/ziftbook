@@ -1,6 +1,6 @@
-// The console shell's pure logic: which sections a role sees, which one a path is in, dates in the
-// business's own language, and comparing two sessions before a write. Kept free of React so
-// node --test can run it directly.
+// The console shell's logic: which sections a role sees, which one a path is in, dates in the
+// business's own language, comparing two sessions before a write, and measuring the sticky bars.
+// Kept free of React so node --test can run it directly.
 
 export type Role = "owner" | "worker";
 
@@ -107,6 +107,24 @@ export function archivedDate(at: string, now: Date, timeZone: string, locale: st
     year: year(when) === year(now) ? undefined : "numeric",
     timeZone,
   }).format(when);
+}
+
+/** A ref callback that keeps a sticky bar's live height in the custom property `name` on <html>,
+ * where console.module.css turns it into scroll-padding: keyboard focus then never scrolls a control
+ * in under the bar (WCAG 2.4.11). Measured, not a constant: the savebar's hint wraps with the locale
+ * and the list of changed fields. Create it once at module scope, so React keeps the observer across
+ * renders; one name per bar, and one such bar per page (a second would clear the first's on unmount). */
+export function stickyHeight(name: string) {
+  return (bar: HTMLElement | null) => {
+    if (!bar) return;
+    const root = document.documentElement.style;
+    const observer = new ResizeObserver(() => root.setProperty(name, `${bar.offsetHeight}px`));
+    observer.observe(bar, { box: "border-box" });
+    return () => {
+      observer.disconnect();
+      root.removeProperty(name);
+    };
+  };
 }
 
 /** Whether two session reads are the same person in the same business. A sign-in as someone else in

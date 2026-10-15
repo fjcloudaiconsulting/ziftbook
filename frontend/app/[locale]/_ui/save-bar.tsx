@@ -1,9 +1,14 @@
 "use client";
 
+import { stickyHeight } from "@/lib/console";
+
 import { FooterPortal } from "./console";
 import styles from "./console.module.css";
 import { Submit } from "./parts";
 import uiStyles from "./ui.module.css";
+
+// The phone instance needs none: it sits inside the shell's bottom bar, which is measured whole.
+const savebarHeight = stickyHeight("--savebar-height");
 
 /**
  * The sticky bottom bar of a form (week editor, settings): a hint, an optional Undo, and Save,
@@ -63,7 +68,7 @@ export function SaveBar({
       <FooterPortal>
         <div className={styles.savebar}>{content}</div>
       </FooterPortal>
-      <div className={`${styles.savebar} ${styles.savebarDesktop}`}>{content}</div>
+      <div ref={savebarHeight} className={`${styles.savebar} ${styles.savebarDesktop}`}>{content}</div>
     </>
   );
 }
