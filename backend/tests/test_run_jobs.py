@@ -261,14 +261,19 @@ def days_ago(days: int) -> str:
     return f"now() - interval '{days} days'"
 
 
+# An hour either side of RETENTION_DAYS (30), so a 29- or 31-day retention goes red too.
+OVER = "now() - interval '30 days 1 hour'"
+UNDER = "now() - interval '29 days 23 hours'"
+
+
 # Kills: a predicate on completed_at only (given-up rows kept forever), or on skipped /
 # last_error IS NOT NULL instead of attempts.
 def test_prune_deletes_jobs_finished_over_30_days_ago() -> None:
     t = tag()
-    done = seed(f"test.prune:{t}:done", completed_at=days_ago(31))
-    skipped = seed(f"test.prune:{t}:skipped", completed_at=days_ago(31), skipped="true")
+    done = seed(f"test.prune:{t}:done", completed_at=OVER)
+    skipped = seed(f"test.prune:{t}:skipped", completed_at=OVER, skipped="true")
     gave_up = seed(
-        f"test.prune:{t}:gave_up", attempts="5", last_error="NULL", next_attempt_at=days_ago(31)
+        f"test.prune:{t}:gave_up", attempts="5", last_error="NULL", next_attempt_at=OVER
     )
 
     jobs.prune()
@@ -282,15 +287,15 @@ def test_prune_deletes_jobs_finished_over_30_days_ago() -> None:
 def test_prune_keeps_recent_and_unfinished_jobs() -> None:
     t = tag()
     keys = [
-        seed(f"test.prune:{t}:done29", completed_at=days_ago(29)),
-        seed(f"test.prune:{t}:gaveup29", attempts="5", next_attempt_at=days_ago(29)),
+        seed(f"test.prune:{t}:done29", completed_at=UNDER),
+        seed(f"test.prune:{t}:gaveup29", attempts="5", next_attempt_at=UNDER),
         seed(
             f"test.prune:{t}:retrying",
-            attempts="3",
+            attempts="4",  # the last retry: kills attempts >= MAX_ATTEMPTS - 1
             last_error="'RuntimeError'",
-            next_attempt_at=days_ago(31),
+            next_attempt_at=OVER,
         ),
-        seed(f"test.prune:{t}:never", due_at=days_ago(31), next_attempt_at=days_ago(31)),
+        seed(f"test.prune:{t}:never", due_at=OVER, next_attempt_at=OVER),
         seed(
             f"test.prune:{t}:inflight",
             attempts="5",
@@ -307,7 +312,7 @@ def test_prune_keeps_recent_and_unfinished_jobs() -> None:
 
 # Kills: a cascade / "tidy up the outbox too" implementation, or a future FK ON DELETE CASCADE.
 def test_prune_keeps_the_email_outbox_row(people: People) -> None:
-    key = seed(f"test.prune:{tag()}:mail", completed_at=days_ago(31))
+    key = seed(f"test.prune:{tag()}:mail", completed_at=OVER)
     with SessionLocal() as session:
         job_id = session.scalar(text("SELECT id FROM jobs WHERE dedupe_key = :key"), {"key": key})
     with tenant_context(people.a) as session:
@@ -334,7 +339,7 @@ def test_prune_keeps_the_email_outbox_row(people: People) -> None:
 
 # Pins the documented dedupe caveat: a "keep a tombstone" change has to update the docs too.
 def test_a_pruned_dedupe_key_enqueues_again() -> None:
-    key = seed(f"test.prune:{tag()}:again", completed_at=days_ago(31))
+    key = seed(f"test.prune:{tag()}:again", completed_at=OVER)
 
     jobs.prune()
 
@@ -345,7 +350,7 @@ def test_a_pruned_dedupe_key_enqueues_again() -> None:
 # Guard: no log line when nothing is deleted (it runs every 5 minutes).
 def test_prune_logs_the_count(log_lines: Callable[[], list[dict[str, Any]]]) -> None:
     t = tag()
-    seed(f"test.prune:{t}:a", completed_at=days_ago(31))
+    seed(f"test.prune:{t}:a", completed_at=OVER)
     seed(f"test.prune:{t}:b", completed_at=days_ago(32))
 
     deleted = jobs.prune()
