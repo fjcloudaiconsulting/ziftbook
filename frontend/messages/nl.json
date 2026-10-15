@@ -641,6 +641,7 @@
     },
     "errors": {
       "ownerOnly": "Alleen een eigenaar kan dit doen.",
+      "phoneInvalid": "Dat lijkt geen telefoonnummer. Controleer de cijfers.",
       "signedOut": "Je sessie is verlopen. Log opnieuw in in een nieuw tabblad en probeer het hier dan opnieuw. <link>Inloggen</link>"
     },
     "notSaved": "Er is niets opgeslagen, je gegevens staan hier nog.",
@@ -903,8 +904,16 @@
     "email": "E-mail",
     "emailHint": "Je bevestiging en de link om te wijzigen of annuleren komen hier.",
     "phone": "Telefoon",
-    "optional": "(optioneel)",
-    "phoneHint": "Alleen als het bedrijf je over deze afspraak moet kunnen bereiken.",
+    "phoneHint": "Alleen zodat {biz} je over deze afspraak kan bereiken. Nummer van buiten {country}? Begin met + en de landcode.",
+    "phoneCountry": {
+      "NL": "Nederland",
+      "PT": "Portugal",
+      "BR": "Brazilië",
+      "GB": "het VK",
+      "US": "de VS"
+    },
+    "errPhone": "Vul je telefoonnummer in.",
+    "errPhoneInvalid": "Dat lijkt geen telefoonnummer. Controleer de cijfers.",
     "didYouMean": "Bedoelde je {email}?",
     "useSuggestion": "Dit adres gebruiken",
     "yourBooking": "Je afspraak",

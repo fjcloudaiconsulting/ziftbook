@@ -96,21 +96,15 @@ describe("F4 booking POST body", () => {
     memberId: null,
     name: "Ana",
     email: "ana@example.com",
-    phone: "",
+    phone: "  06 1234 5678  ",
     locale: "nl",
     policyVersion: "2026-01-01",
     turnstileToken: "tok",
   };
 
-  test("fence: a blank phone is omitted, never sent as an empty string", () => {
-    // Wrong implementation killed: `phone: ""`, which 422s on every phone-less booking
-    // (main.py's strict body).
-    const body = bookingBody(base);
-    assert.equal("phone" in body, false);
-  });
-
-  test("a typed phone, trimmed, is sent", () => {
-    assert.equal(bookingBody({ ...base, phone: "  +31 6 1234  " }).phone, "+31 6 1234");
+  test("ZIF-152 fence: the phone is always sent, trimmed (the server reads its format)", () => {
+    // Wrong implementation killed: the old omit-when-blank, or a client-side reformat.
+    assert.equal(bookingBody(base).phone, "06 1234 5678");
   });
 
   test("fence: starts_at is passed through byte for byte, never re-serialised", () => {
@@ -127,13 +121,9 @@ describe("F4 booking POST body", () => {
     assert.equal(body.member_id, null);
   });
 
-  test("fence: the key set is exactly the allowed list, nothing else, phone included when present", () => {
+  test("fence: the key set is exactly the allowed list, nothing else", () => {
     assert.deepEqual(
       Object.keys(bookingBody(base)).sort(),
-      ["consents", "email", "locale", "member_id", "name", "policy_version", "starts_at", "turnstile_token"].sort(),
-    );
-    assert.deepEqual(
-      Object.keys(bookingBody({ ...base, phone: "123" })).sort(),
       ["consents", "email", "locale", "member_id", "name", "phone", "policy_version", "starts_at", "turnstile_token"].sort(),
     );
   });
@@ -170,6 +160,10 @@ describe("F5 answer -> outcome mapping", () => {
     assert.equal(answerState({ status: 422, code: "unknown_policy_version" }).kind, "policyChanged");
     assert.equal(answerState({ status: 422, code: "purpose_not_in_policy_version" }).kind, "policyChanged");
     assert.equal(answerState({ status: 422, code: "invalid_request" }).kind, "fieldErrors");
+  });
+
+  test("ZIF-152 fence: an unreadable phone is its own outcome, for the field", () => {
+    assert.equal(answerState({ status: 422, code: "phone_invalid" }).kind, "phoneInvalid");
   });
 
   test("404 means the service is gone; 429 is the neutral too-many-attempts; 201 is done", () => {
@@ -352,6 +346,7 @@ describe("ZIF-117 confirm by email", () => {
     assert.equal(confirmScreen({ status: 429, code: "rate_limited" }), "tooMany");
     assert.equal(confirmScreen({ status: 422, code: "unknown_policy_version" }), "policyChanged");
     assert.equal(confirmScreen({ status: 422, code: "invalid_request" }), "fieldErrors");
+    assert.equal(confirmScreen({ status: 422, code: "phone_invalid" }), "phoneInvalid"); // ZIF-152 fence
     for (const status of [0, 500, 503]) assert.equal(confirmScreen({ status }), "unknown");
   });
 

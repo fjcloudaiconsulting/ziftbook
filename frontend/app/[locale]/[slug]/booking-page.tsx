@@ -65,7 +65,7 @@ type Flow = {
   name: string;
   email: string;
   phone: string;
-  errors: { name?: string; email?: string };
+  errors: { name?: string; email?: string; phone?: string };
   suggest: string | null;
   banner: { where: 1 | 2 | 3 | "c"; tone: "note" | "error"; text: string } | null;
   busy: boolean;
@@ -140,12 +140,13 @@ export function BookingPage({ page, locale, turnstileSiteKey, initialService = n
   const working = useRef(false);
   const nameRef = useRef<HTMLInputElement>(null);
   const emailRef = useRef<HTMLInputElement>(null);
+  const phoneRef = useRef<HTMLInputElement>(null);
   const headingRefs = useRef<Record<number, HTMLHeadingElement | null>>({});
   const [focusStep, setFocusStep] = useState<number | null>(null);
   // Paired with a generation counter, not just the field name: pressing Book twice with the SAME
   // field still missing both times must still re-focus it — a plain "name"/"name" value wouldn't
   // change, so the effect below wouldn't re-fire.
-  const [focusField, setFocusField] = useState<{ field: "name" | "email"; gen: number } | null>(null);
+  const [focusField, setFocusField] = useState<{ field: "name" | "email" | "phone"; gen: number } | null>(null);
   const focusFieldGen = useRef(0);
   const [verifying, setVerifying] = useState(false);
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
@@ -202,6 +203,7 @@ export function BookingPage({ page, locale, turnstileSiteKey, initialService = n
   useEffect(() => {
     if (focusField?.field === "name") nameRef.current?.focus();
     else if (focusField?.field === "email") emailRef.current?.focus();
+    else if (focusField?.field === "phone") phoneRef.current?.focus();
   }, [focusField, flow.step]);
 
   // One window for everyone (ZIF-100): a person's times are filtered out of it locally (slotsFor).
@@ -344,7 +346,7 @@ export function BookingPage({ page, locale, turnstileSiteKey, initialService = n
   function fieldChange(field: "name" | "email" | "phone", value: string) {
     setFlow((f) => {
       const next = { ...f, [field]: value };
-      if ((field === "name" || field === "email") && f.errors[field]) next.errors = { ...f.errors, [field]: undefined };
+      if (f.errors[field]) next.errors = { ...f.errors, [field]: undefined };
       // A suggestion computed from the email as it was at the last blur is stale the moment the
       // value changes again — clicking "Use this address" afterward must never apply it.
       if (field === "email" && f.suggest) next.suggest = null;
@@ -431,6 +433,7 @@ export function BookingPage({ page, locale, turnstileSiteKey, initialService = n
     }
     const errors: Flow["errors"] = {};
     if (!linkFirst && !flow.name.trim()) errors.name = t("errName");
+    if (!linkFirst && !flow.phone.trim()) errors.phone = t("errPhone");
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(flow.email.trim())) errors.email = t("errEmail");
     if (Object.keys(errors).length > 0) {
       // Step 3's inputs only exist in the DOM while it's the open step: open it first (if it
@@ -438,7 +441,7 @@ export function BookingPage({ page, locale, turnstileSiteKey, initialService = n
       // has — a step 2 "Change" reopen must not leave the error unfocusable.
       setFlow((f) => ({ ...f, errors, step: 3 }));
       focusFieldGen.current += 1;
-      setFocusField({ field: errors.name ? "name" : "email", gen: focusFieldGen.current });
+      setFocusField({ field: errors.name ? "name" : errors.phone ? "phone" : "email", gen: focusFieldGen.current });
       return;
     }
     if (turnstileSiteKey && !turnstileToken) {
@@ -607,6 +610,13 @@ export function BookingPage({ page, locale, turnstileSiteKey, initialService = n
     if (outcome.kind === "policyChanged") {
       router.refresh();
       setFlow({ ...f, busy: false, banner: { where: "c", tone: "error", text: t("policyChanged") } });
+      return;
+    }
+    if (outcome.kind === "phoneInvalid") {
+      // ZIF-152: under the field, never the banner; step 3 reopens if "Change" left it.
+      setFlow({ ...f, busy: false, step: 3, errors: { ...f.errors, phone: t("errPhoneInvalid") } });
+      focusFieldGen.current += 1;
+      setFocusField({ field: "phone", gen: focusFieldGen.current });
       return;
     }
     setFlow({ ...f, busy: false, banner: { where: "c", tone: "error", text: failureText(outcome.kind) } });
@@ -851,22 +861,26 @@ export function BookingPage({ page, locale, turnstileSiteKey, initialService = n
                       </div>
                       <div className={styles.field}>
                         <label className={styles.label} htmlFor="bp-phone">
-                          {t("phone")} <span className={styles.hint}>{t("optional")}</span>
+                          {t("phone")}
                         </label>
                         <div className={styles.input}>
                           <input
+                            ref={phoneRef}
                             id="bp-phone"
                             name="phone"
                             type="tel"
                             autoComplete="tel"
+                            maxLength={40}
                             value={flow.phone}
                             onChange={(e) => fieldChange("phone", e.target.value)}
-                            aria-describedby="bp-phone-hint"
+                            aria-invalid={flow.errors.phone ? true : undefined}
+                            aria-describedby={flow.errors.phone ? "bp-phone-hint bp-phone-err" : "bp-phone-hint"}
                           />
                         </div>
                         <p className={styles.hint} id="bp-phone-hint">
-                          {t("phoneHint")}
+                          {t("phoneHint", { biz: page.name, country: t(`phoneCountry.${page.country}`) })}
                         </p>
+                        {flow.errors.phone && <FieldError id="bp-phone-err">{flow.errors.phone}</FieldError>}
                       </div>
                     </div>
                     )}

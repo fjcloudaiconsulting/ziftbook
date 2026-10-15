@@ -641,6 +641,7 @@
     },
     "errors": {
       "ownerOnly": "Only an owner can do this.",
+      "phoneInvalid": "That doesn't look like a phone number. Check the digits.",
       "signedOut": "Your session ended. Sign in again in a new tab, then try again here. <link>Sign in</link>"
     },
     "notSaved": "Nothing was saved, and your details are still here.",
@@ -903,8 +904,16 @@
     "email": "Email",
     "emailHint": "Your confirmation and the link to change or cancel go here.",
     "phone": "Phone",
-    "optional": "(optional)",
-    "phoneHint": "Only if the business needs to reach you about this booking.",
+    "phoneHint": "Only for {biz} to reach you about this booking. Number from outside {country}? Start with + and the country code.",
+    "phoneCountry": {
+      "NL": "the Netherlands",
+      "PT": "Portugal",
+      "BR": "Brazil",
+      "GB": "the UK",
+      "US": "the US"
+    },
+    "errPhone": "Enter your phone number.",
+    "errPhoneInvalid": "That doesn't look like a phone number. Check the digits.",
     "didYouMean": "Did you mean {email}?",
     "useSuggestion": "Use this address",
     "yourBooking": "Your booking",
