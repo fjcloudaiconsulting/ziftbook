@@ -91,7 +91,13 @@ def read(client: TestClient, token: str) -> Response:
 
 
 def confirm(client: TestClient, token: str, **overrides: Any) -> Response:
-    body: dict[str, Any] = {"token": token, "name": "Ana", "policy_version": POLICY, "consents": {}}
+    body: dict[str, Any] = {
+        "token": token,
+        "name": "Ana",
+        "phone": "+31612345678",
+        "policy_version": POLICY,
+        "consents": {},
+    }
     return client.post("/api/public/booking-hold/confirm", json={**body, **overrides})
 
 
@@ -206,6 +212,7 @@ def test_reading_the_link_writes_nothing(
     assert set(body) == {
         "business",
         "slug",
+        "country",
         "timezone",
         "language",
         "service_id",
@@ -515,9 +522,9 @@ def test_one_address_is_limited_across_businesses(people: People, app: FastAPI, 
     assert (eleventh.status_code, eleventh.json()) == (429, {"code": "rate_limited"})
 
 
-# F11: FENCE (decision 4, option A). Wrong impl: FILL at confirm (the stored name survives), or a
-# blank phone nulling the stored one.
-def test_the_click_replaces_the_name_and_keeps_a_phone_left_blank(
+# F11: FENCE (decision 4, option A). Wrong impl: FILL at confirm (the stored name and phone
+# survive). ZIF-152: a phone is always typed now, so it always replaces the stored one.
+def test_the_click_replaces_the_name_and_the_phone(
     people: People, app: FastAPI, ready: str, migrate_engine: Engine
 ) -> None:
     email = fresh_email()
@@ -531,19 +538,12 @@ def test_the_click_replaces_the_name_and_keeps_a_phone_left_blank(
         )
     _, token = held(app, people.a, ready, email=email)
 
-    assert confirm(new_client(app), token, name="New Name").status_code == 201
+    assert confirm(new_client(app), token, name="New Name", phone="06 5544 3322").status_code == 201
 
     (client,) = as_operator(
         migrate_engine, people.a, "SELECT * FROM clients WHERE email = :e", e=email
     )
-    assert (client.name, client.phone, client.user_id) == ("New Name", "+31600000001", None)
-
-    _, typed = held(app, people.a, ready, email=email, starts_at=at("10:00"))
-    assert confirm(new_client(app), typed, phone="+31600000002").status_code == 201
-    (client,) = as_operator(
-        migrate_engine, people.a, "SELECT * FROM clients WHERE email = :e", e=email
-    )
-    assert client.phone == "+31600000002"
+    assert (client.name, client.phone, client.user_id) == ("New Name", "+31655443322", None)
 
 
 def first_after_tenant(executed: list[tuple[str, Any]]) -> tuple[str, Any]:
@@ -689,7 +689,7 @@ def test_the_click_books_and_emails_exactly_as_the_booking_page_did(
     save_setting(people.a, "auto_confirm", auto_confirm)
     email, token = held(app, people.a, ready)
 
-    answer = confirm(new_client(app), token, phone="+31600000003")
+    answer = confirm(new_client(app), token, phone="+31655443322")
 
     assert answer.status_code == 201
     assert answer.json()["status"] == ("confirmed" if auto_confirm else "pending")

@@ -69,11 +69,13 @@ function Confirm({ link }: { link: OpenedLink | null }) {
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [nameError, setNameError] = useState<string | null>(null);
+  const [phoneError, setPhoneError] = useState<string | null>(null);
   const [banner, setBanner] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const working = useRef(false);
   const started = useRef(false);
   const nameRef = useRef<HTMLInputElement>(null);
+  const phoneRef = useRef<HTMLInputElement>(null);
 
   /** Only reads: opening the link (or a mail scanner fetching this page) changes nothing. */
   async function read(note?: string) {
@@ -95,9 +97,13 @@ function Confirm({ link }: { link: OpenedLink | null }) {
 
   async function book(hold: HoldView) {
     if (working.current) return;
-    if (!name.trim()) {
-      setNameError(t("errName"));
-      nameRef.current?.focus();
+    // Name first, then phone; focus on the first missing.
+    const noName = !name.trim();
+    const noPhone = !phone.trim();
+    if (noName) setNameError(t("errName"));
+    if (noPhone) setPhoneError(t("errPhone"));
+    if (noName || noPhone) {
+      (noName ? nameRef : phoneRef).current?.focus();
       return;
     }
     working.current = true;
@@ -105,7 +111,7 @@ function Confirm({ link }: { link: OpenedLink | null }) {
     setBanner(null);
     const answer = await send(
       bookingHoldsConfirm({
-        body: { token: token!, name, ...(phone.trim() ? { phone: phone.trim() } : {}), policy_version: hold.policy_version, consents: {} },
+        body: { token: token!, name, phone: phone.trim(), policy_version: hold.policy_version, consents: {} },
       }),
     );
     working.current = false;
@@ -128,7 +134,10 @@ function Confirm({ link }: { link: OpenedLink | null }) {
     } else if (screen === "dead") setView({ is: "dead" });
     else if (screen === "taken") setView({ is: "taken", hold });
     else if (screen === "policyChanged") void read(t("policyChanged"));
-    else setBanner(screen === "tooMany" ? t("tooMany") : screen === "fieldErrors" ? t("checkDetails") : t("unknownOutcome"));
+    else if (screen === "phoneInvalid") {
+      setPhoneError(t("errPhoneInvalid"));
+      phoneRef.current?.focus();
+    } else setBanner(screen === "tooMany" ? t("tooMany") : screen === "fieldErrors" ? t("checkDetails") : t("unknownOutcome"));
   }
 
   if (view.is === "opening") {
@@ -240,14 +249,29 @@ function Confirm({ link }: { link: OpenedLink | null }) {
                 </div>
                 <div className={styles.field}>
                   <label className={styles.label} htmlFor="hc-phone">
-                    {t("phone")} <span className={styles.hint}>{t("optional")}</span>
+                    {t("phone")}
                   </label>
                   <div className={styles.input}>
-                    <input id="hc-phone" name="phone" type="tel" autoComplete="tel" value={phone} onChange={(e) => setPhone(e.target.value)} aria-describedby="hc-phone-hint" />
+                    <input
+                      ref={phoneRef}
+                      id="hc-phone"
+                      name="phone"
+                      type="tel"
+                      autoComplete="tel"
+                      maxLength={40}
+                      value={phone}
+                      onChange={(e) => {
+                        setPhone(e.target.value);
+                        setPhoneError(null);
+                      }}
+                      aria-invalid={phoneError ? true : undefined}
+                      aria-describedby={phoneError ? "hc-phone-hint hc-phone-err" : "hc-phone-hint"}
+                    />
                   </div>
                   <p className={styles.hint} id="hc-phone-hint">
-                    {t("phoneHint")}
+                    {t("phoneHint", { biz: hold.business, country: t(`phoneCountry.${hold.country}`) })}
                   </p>
+                  {phoneError && <FieldError id="hc-phone-err">{phoneError}</FieldError>}
                 </div>
               </div>
             </div>

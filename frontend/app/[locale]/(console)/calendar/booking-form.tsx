@@ -316,6 +316,7 @@ function Fields({ prefill, team, todayISO, date, onDone, services, booking }: Pr
         focusTarget.current = "bf-new-email";
       } else if (failure === "changed") setBanner(t("changedClose"));
       else if (failure === "ownerOnly") setBanner(errorsT("ownerOnly"));
+      else if (failure === "phoneInvalid") setBanner(errorsT("phoneInvalid"));
       else setBanner(form(problem(outcome)));
     } catch {
       setBanner(form("unexpected"));

@@ -1,11 +1,13 @@
 """A business's own copy of its clients, refreshed on each booking, and the append-only log of the
 marketing consent given to it, per purpose (ZIF-99)."""
 
+import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
+import phonenumbers
 from fastapi import APIRouter, Query, Request, Response
 from psycopg.errors import UniqueViolation
 from pydantic import AfterValidator, BaseModel, Field, StringConstraints
@@ -80,6 +82,32 @@ def texts_for(policy_version: str, purposes: Iterable[Purpose]) -> dict[Purpose,
     return texts
 
 
+COUNTRY = text("SELECT country FROM tenants WHERE id = current_setting('app.tenant_id')::uuid")
+
+
+def number(db: Session, phone: str) -> str | None:
+    """A typed phone as +31612345678 (ZIF-152), or None when it is no phone number: a local number
+    is read in the business's country, one starting with + in its own. A written extension (x,
+    ext) is refused."""
+    if any(c.isalpha() for c in phone):  # parse() would read letters as a keypad's digits
+        return None
+    try:
+        parsed = phonenumbers.parse(phone, db.scalar(COUNTRY))
+    except phonenumbers.NumberParseException:
+        return None
+    if not phonenumbers.is_valid_number(parsed):
+        return None
+    return phonenumbers.format_number(parsed, phonenumbers.PhoneNumberFormat.E164)
+
+
+def e164(db: Session, phone: str) -> str:
+    """number(), or 422 phone_invalid: every phone a client or the console types is stored so."""
+    found = number(db, phone)
+    if found is None:
+        raise ApiError(422, "phone_invalid")
+    return found
+
+
 @dataclass(frozen=True)
 class Found:
     id: UUID
@@ -131,13 +159,14 @@ def find_or_create(
     (app.bookings.create, which answers 403 verify_email otherwise), or when the booker confirmed a
     booking-hold link mailed to that address (app.holds.confirm): opening the mailed link is the
     same proof of the mailbox as a verified account email. Then what they type is what they own:
-    the name is replaced, and phone and locale are coalesced from what was typed. Nothing an
+    the name is replaced, the phone too (online bookings require one, ZIF-152), and locale is
+    coalesced from what was typed. Nothing an
     unproven person types ever reaches this statement. That replaces ZIF-51's FILL, which let an
     unauthenticated booker fill a blank phone on someone else's record and point that client's
     reminders at a phone the booker owns.
 
-    Reading. phone and locale come back as *stored*, because coalesce keeps the old value when the
-    booker left the field empty. Use them to write the booking, never to fill a public answer;
+    Reading. phone and locale come back as *stored*, because coalesce keeps the old value when
+    nothing was typed. Use them to write the booking, never to fill a public answer;
     tests/test_openapi.py holds that fence for every public RESPONSE schema.
 
     user_id. Set it from the booker's own session and never from a request body (the confirmed
@@ -329,16 +358,26 @@ def list_clients(
 ) -> list[ClientOut]:
     """This business's clients, newest first, optionally searched by name, email or phone."""
     stripped = q.strip() if q else None
+    # Phones are stored as +31612345678 (ZIF-152): "12 34 56" matches without its spaces, and
+    # "06 1234 5678" as the number it is. Older free-text phones still match as typed.
+    compact = re.sub(r"[\s().-]", "", stripped) if stripped else None
     rows = current.db.execute(
         text(f"""
         SELECT {FIELDS} FROM clients
         WHERE (CAST(:before AS uuid) IS NULL OR id < :before)
           AND (CAST(:q AS text) IS NULL
-               OR name ILIKE :q OR email ILIKE :q OR phone ILIKE :q)
+               OR name ILIKE :q OR email ILIKE :q OR phone ILIKE :q
+               OR phone ILIKE :compact OR phone = :number)
         ORDER BY id DESC  -- uuidv7: newest first
         LIMIT :limit
         """),
-        {"before": before, "q": like(stripped) if stripped else None, "limit": limit},
+        {
+            "before": before,
+            "q": like(stripped) if stripped else None,
+            "compact": like(compact) if compact else None,
+            "number": number(current.db, stripped) if stripped else None,
+            "limit": limit,
+        },
     ).all()
     response.headers["Cache-Control"] = "no-store"
     return as_clients(rows, current_consents(current.db, [row.id for row in rows]))
@@ -354,7 +393,12 @@ def insert(db: Session, new: ClientIn) -> Row[Any]:
             VALUES (current_setting('app.tenant_id')::uuid, :name, :email, :phone, :locale)
             RETURNING {FIELDS}
             """),
-            {"name": new.name, "email": new.email, "phone": new.phone, "locale": new.locale},
+            {
+                "name": new.name,
+                "email": new.email,
+                "phone": e164(db, new.phone) if new.phone else None,
+                "locale": new.locale,
+            },
         ).one()
     except IntegrityError as error:
         # Only the email conflict; any other integrity error stays a 500 (app.members.guarded).

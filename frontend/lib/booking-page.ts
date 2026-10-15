@@ -90,7 +90,7 @@ export type BookingBody = {
   member_id: string | null;
   name: string;
   email: string;
-  phone?: string;
+  phone: string;
   locale: string;
   policy_version: string;
   consents: Record<string, never>;
@@ -99,16 +99,15 @@ export type BookingBody = {
 
 /** The POST /api/public/bookings body, exactly the allowed key set. `starts_at` is passed through
  * unchanged (never re-serialised through `Date`, which can turn a "+00:00" offer into "...Z" and
- * no longer match what the availability GET offered). `phone` is omitted, never sent as `""`, when
- * blank after trim (the backend's strict body 422s on an empty string). */
+ * no longer match what the availability GET offered). `phone` is required (ZIF-152): the page
+ * refuses a blank one before it posts. */
 export function bookingBody(form: BookingForm): BookingBody {
-  const phone = form.phone.trim();
   return {
     starts_at: form.startsAt,
     member_id: form.memberId,
     name: form.name,
     email: form.email,
-    ...(phone ? { phone } : {}),
+    phone: form.phone.trim(),
     locale: form.locale,
     policy_version: form.policyVersion,
     consents: {},
@@ -123,6 +122,7 @@ export type AnswerOutcome =
   | { kind: "serviceGone" }
   | { kind: "policyChanged" }
   | { kind: "fieldErrors" }
+  | { kind: "phoneInvalid" }
   | { kind: "verifyFailed" }
   | { kind: "unavailable" }
   | { kind: "tooMany" }
@@ -142,6 +142,7 @@ export function answerState(answer: { status: number; code?: string }, widget: b
   if (answer.status === 409 && answer.code && SLOT_TAKEN_CODES.has(answer.code)) return { kind: "slotTaken" };
   if (answer.status === 404) return { kind: "serviceGone" };
   if (answer.status === 422 && answer.code && POLICY_CHANGED_CODES.has(answer.code)) return { kind: "policyChanged" };
+  if (answer.status === 422 && answer.code === "phone_invalid") return { kind: "phoneInvalid" };
   if (answer.status === 422) return { kind: "fieldErrors" };
   if (answer.status === 403 && answer.code === "turnstile_failed") return { kind: widget ? "verifyFailed" : "unavailable" };
   if (answer.status === 429) return { kind: "tooMany" };
@@ -275,7 +276,7 @@ export function holdBody(form: { startsAt: string; memberId: string | null; emai
   };
 }
 
-export type ConfirmScreen = "done" | "dead" | "taken" | "tooMany" | "policyChanged" | "fieldErrors" | "unknown";
+export type ConfirmScreen = "done" | "dead" | "taken" | "tooMany" | "policyChanged" | "fieldErrors" | "phoneInvalid" | "unknown";
 
 /** What the confirm click's answer means (ZIF-117). Every 404 is the dead-link screen, whatever the
  * cause; a 409 is "that time was just taken"; a 503 or a network failure may or may not have
@@ -286,6 +287,7 @@ export function confirmScreen(answer: { status: number; code?: string }): Confir
   if (answer.status === 409) return "taken";
   if (answer.status === 429) return "tooMany";
   if (answer.status === 422 && answer.code && POLICY_CHANGED_CODES.has(answer.code)) return "policyChanged";
+  if (answer.status === 422 && answer.code === "phone_invalid") return "phoneInvalid";
   if (answer.status === 422) return "fieldErrors";
   return "unknown";
 }

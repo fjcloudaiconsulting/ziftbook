@@ -641,6 +641,7 @@
     },
     "errors": {
       "ownerOnly": "Só um proprietário pode fazer isso.",
+      "phoneInvalid": "Isso não parece um número de telefone. Confira os dígitos.",
       "signedOut": "Sua sessão terminou. Entre novamente em uma nova aba e tente de novo aqui. <link>Entrar</link>"
     },
     "notSaved": "Nada foi salvo, seus dados ainda estão aqui.",
@@ -903,8 +904,16 @@
     "email": "E-mail",
     "emailHint": "Sua confirmação e o link para alterar ou cancelar chegam aqui.",
     "phone": "Telefone",
-    "optional": "(opcional)",
-    "phoneHint": "Só se o estabelecimento precisar falar com você sobre esta reserva.",
+    "phoneHint": "Só para {biz} falar com você sobre este agendamento. Número de fora {country}? Comece com + e o código do país.",
+    "phoneCountry": {
+      "NL": "dos Países Baixos",
+      "PT": "de Portugal",
+      "BR": "do Brasil",
+      "GB": "do Reino Unido",
+      "US": "dos Estados Unidos"
+    },
+    "errPhone": "Digite seu telefone.",
+    "errPhoneInvalid": "Isso não parece um número de telefone. Confira os dígitos.",
     "didYouMean": "Você quis dizer {email}?",
     "useSuggestion": "Usar este endereço",
     "yourBooking": "Sua reserva",

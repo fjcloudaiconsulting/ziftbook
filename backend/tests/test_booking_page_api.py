@@ -117,6 +117,7 @@ def test_the_page_answers_exactly_the_documented_fields(
         "id",
         "slug",
         "name",
+        "country",
         "timezone",
         "language",
         "booking_horizon_days",

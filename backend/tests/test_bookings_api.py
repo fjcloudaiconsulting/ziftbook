@@ -162,6 +162,7 @@ def post_booking(
         "starts_at": at("09:00"),
         "name": "Guest",
         "email": fresh_email(),
+        "phone": "+31612345678",
         "policy_version": "2026-09-01",
         "consents": {},
         **overrides,
@@ -917,6 +918,7 @@ def test_a_refused_anonymous_post_spends_no_limit(people: People, app: FastAPI, 
                 "starts_at": at("09:00"),
                 "name": "Guest",
                 "email": fresh_email(),
+                "phone": "+31612345678",
                 "policy_version": "2026-09-01",
                 "consents": {},
             },
@@ -1397,6 +1399,7 @@ def test_the_booking_answer_carries_no_contact_details(
 
     assert response.status_code == 201
     assert phone not in response.text
+    assert "+31612345678" not in response.text  # nor the one just typed (ZIF-152)
 
 
 # 42b: FENCE - B5.
