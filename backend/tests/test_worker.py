@@ -174,9 +174,10 @@ def test_a_failed_ping_logs_the_class_only(
     async def scenario() -> None:
         stop = asyncio.Event()
         task = asyncio.create_task(worker.work({}, f"http://127.0.0.1:9/{sentinel}", stop))
-        await asyncio.to_thread(tried.wait, 10)
+        looped = await asyncio.to_thread(tried.wait, 10)
         stop.set()
         await asyncio.wait_for(task, 5)
+        assert looped, calls
 
     asyncio.run(scenario())
 
