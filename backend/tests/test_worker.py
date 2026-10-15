@@ -150,21 +150,25 @@ def test_the_worker_logs_its_settings_once_at_startup(
     assert "postgresql" not in dumped
 
 
-# B7: a failed healthcheck ping logs the error's class only, never the URL (worker.py:49).
-# ZIF-21: whatever the ping raises, the worker carries on. urlopen raises ValueError for a URL with
+# B7: a failed healthcheck ping logs the error's class only, never the URL.
+# ZIF-21: whatever the ping raises, the worker loops on. urlopen raises ValueError for a URL with
 # no scheme and http.client.HTTPException for a garbled response, neither of them an OSError.
 @pytest.mark.parametrize("error", [OSError, ValueError, http.client.BadStatusLine])
 def test_a_failed_ping_logs_the_class_only(
     error: type[Exception], bound_session: None, log_lines: Lines, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     sentinel = uuid.uuid4().hex
+    calls: list[str] = []
     tried = threading.Event()
 
     def ping(url: str) -> None:
-        tried.set()
+        calls.append(url)
+        if len(calls) == 2:  # a second loop ran: the first failure didn't end the worker
+            tried.set()
         raise error(sentinel)
 
     monkeypatch.setattr(worker, "ping", ping)
+    monkeypatch.setattr(worker, "POLL_SECONDS", 0.05)
     monkeypatch.setattr(bookings, "sweep", lambda: 0)
 
     async def scenario() -> None:
