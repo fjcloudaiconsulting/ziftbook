@@ -87,7 +87,8 @@ COUNTRY = text("SELECT country FROM tenants WHERE id = current_setting('app.tena
 
 def number(db: Session, phone: str) -> str | None:
     """A typed phone as +31612345678 (ZIF-152), or None when it is no phone number: a local number
-    is read in the business's country, one starting with + in its own. An extension is dropped."""
+    is read in the business's country, one starting with + in its own. A written extension (x,
+    ext) is refused."""
     if any(c.isalpha() for c in phone):  # parse() would read letters as a keypad's digits
         return None
     try:
