@@ -106,7 +106,9 @@ def test_the_page_answers_exactly_the_documented_fields(
     people: People, app: FastAPI, owner: TestClient, slug: str, ready: str
 ) -> None:
     seed(people.a, people.only_a, weekdays("09:00", "12:00"))
-    second = new_service(owner, name={"en": "Colour", "nl": "Kleur"}, description={"en": "Long"})
+    second = new_service(
+        owner, name={"en": "Colour", "nl": "Kleur"}, description={"en": "Long"}, placeholder="hair"
+    )
     assign(people.a, second, member_id(people.a, people.both), member_id(people.a, people.only_a))
 
     response = page(new_client(app), slug)
@@ -135,7 +137,15 @@ def test_the_page_answers_exactly_the_documented_fields(
     }
     assert [s["id"] for s in body["services"]] == sorted([ready, second])
     for service in body["services"]:
-        assert set(service) == {"id", "name", "description", "duration_minutes", "price", "workers"}
+        assert set(service) == {
+            "id",
+            "name",
+            "description",
+            "duration_minutes",
+            "price",
+            "workers",
+            "placeholder",
+        }
         assert set(service["price"]) == {"amount_minor", "currency"}
         for worker in service["workers"]:
             assert set(worker) == {"id", "display_name"}
@@ -145,6 +155,7 @@ def test_the_page_answers_exactly_the_documented_fields(
     assert by_id[ready]["description"] == {}
     assert by_id[ready]["price"] == {"amount_minor": 2500, "currency": "EUR"}
     assert len(by_id[second]["workers"]) == 2
+    assert (by_id[ready]["placeholder"], by_id[second]["placeholder"]) == ("generic", "hair")
 
 
 # F4/F5. fence. Kills: a one-way latch (publishing once can never be undone); an ungated PUT (a

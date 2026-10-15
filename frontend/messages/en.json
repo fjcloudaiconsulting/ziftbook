@@ -528,6 +528,15 @@
         "descriptionOptional": "· optional",
         "descriptionLangLabel": "Description in {language}",
         "descriptionPlaceholder": "What the client can expect. Up to 1000 characters.",
+        "placeholderLegend": "Without a photo, clients see",
+        "placeholderKinds": {
+          "generic": "General",
+          "nails": "Nails",
+          "hair": "Hair",
+          "beauty": "Beauty",
+          "massage": "Massage"
+        },
+        "placeholderRuleHint": "Picked from the service name. Change it if another fits better.",
         "priceLabel": "Price",
         "priceHint": "Your currency is {currency}, set when the business was created. Everyone sees this same amount, written the way their own language writes numbers.",
         "priceInvalid": "Enter a price, using one comma or dot for the cents.",

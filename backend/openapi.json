@@ -7952,6 +7952,17 @@
             },
             "type": "array",
             "title": "Workers"
+          },
+          "placeholder": {
+            "type": "string",
+            "enum": [
+              "generic",
+              "nails",
+              "hair",
+              "beauty",
+              "massage"
+            ],
+            "title": "Placeholder"
           }
         },
         "type": "object",
@@ -7961,7 +7972,8 @@
           "description",
           "duration_minutes",
           "price",
-          "workers"
+          "workers",
+          "placeholder"
         ],
         "title": "PublicServiceOut"
       },
@@ -8107,6 +8119,17 @@
           "archived": {
             "type": "boolean",
             "title": "Archived"
+          },
+          "placeholder": {
+            "type": "string",
+            "enum": [
+              "generic",
+              "nails",
+              "hair",
+              "beauty",
+              "massage"
+            ],
+            "title": "Placeholder"
           }
         },
         "additionalProperties": false,
@@ -8179,6 +8202,18 @@
             "type": "array",
             "maxItems": 200,
             "title": "Worker Ids"
+          },
+          "placeholder": {
+            "type": "string",
+            "enum": [
+              "generic",
+              "nails",
+              "hair",
+              "beauty",
+              "massage"
+            ],
+            "title": "Placeholder",
+            "default": "generic"
           }
         },
         "additionalProperties": false,
@@ -8266,6 +8301,17 @@
             },
             "type": "array",
             "title": "Worker Ids"
+          },
+          "placeholder": {
+            "type": "string",
+            "enum": [
+              "generic",
+              "nails",
+              "hair",
+              "beauty",
+              "massage"
+            ],
+            "title": "Placeholder"
           }
         },
         "type": "object",
@@ -8278,7 +8324,8 @@
           "buffer_minutes",
           "archived",
           "archived_at",
-          "worker_ids"
+          "worker_ids",
+          "placeholder"
         ],
         "title": "ServiceOut"
       },

@@ -16,6 +16,7 @@ import {
 import { Link, useRouter } from "@/i18n/navigation";
 import { archivedDate } from "@/lib/console";
 import { currencySign, formatMoney, parseMoney, priceText, signFirst } from "@/lib/money";
+import { type Placeholder, PLACEHOLDERS, placeholderFor } from "@/lib/placeholders";
 import {
   activeServices,
   archivedServices,
@@ -32,6 +33,7 @@ import {
 
 import { SignedOutBanner, useConsole } from "../../_ui/console";
 import { Banner, FieldError, Heading, Mark, problem, Submit } from "../../_ui/parts";
+import { ServiceTile } from "../../_ui/service-tile";
 import styles from "../../_ui/ui.module.css";
 
 function useCurrencyName(currency: string, locale: string): string {
@@ -59,6 +61,7 @@ function Row({ service, locale }: { service: ServiceOut; locale: string }) {
   return (
     <li>
       <Link href={`/services/${service.id}`} className={styles.rowLink}>
+        <ServiceTile placeholder={service.placeholder} />
         <span className={styles.rowMain}>
           <span className={styles.rowTitle}>{name}</span>
           {!warn && <span className={styles.rowMeta}>{t("rowMetaPeople", { minutes: service.duration_minutes, price, n })}</span>}
@@ -95,6 +98,7 @@ function WorkerRow({ service, locale }: { service: ServiceOut; locale: string })
   return (
     <li>
       <div className={styles.rowStatic}>
+        <ServiceTile placeholder={service.placeholder} />
         <span className={styles.rowMain}>
           <span className={styles.rowTitle}>{name}</span>
           <span className={styles.rowMeta}>{t("rowMeta", { minutes: service.duration_minutes, price })}</span>
@@ -139,6 +143,7 @@ function ArchivedRow({ service, locale, onBroughtBack }: { service: ServiceOut; 
   return (
     <li>
       <div className={styles.rowStatic}>
+        <ServiceTile placeholder={service.placeholder} />
         <span className={styles.rowMain}>
           <span className={styles.rowTitle}>{name}</span>
           <span className={styles.rowMeta}>
@@ -457,6 +462,9 @@ function ServiceFormBody(props: Props) {
   const [duration, setDuration] = useState(() => (service ? String(service.duration_minutes) : "45"));
   const [gap, setGap] = useState<"default" | "fixed">(() => (service?.buffer_minutes != null ? "fixed" : "default"));
   const [fixedGap, setFixedGap] = useState(() => (service?.buffer_minutes != null ? String(service.buffer_minutes) : "0"));
+  // null: not picked yet, so a new service follows the name rule as the owner types (design 4c).
+  const [picked, setPicked] = useState<Placeholder | null>(service ? service.placeholder : null);
+  const placeholder = picked ?? placeholderFor(name);
 
   const [members, setMembers] = useState<MemberOut[] | null>(editing ? props.members : null);
   const [checked, setChecked] = useState<Set<string>>(() => new Set(editing ? props.service.worker_ids : [session.member_id]));
@@ -492,7 +500,7 @@ function ServiceFormBody(props: Props) {
     // closure and would all pass a state-based guard. The ref is set synchronously, before any
     // `await`, so only the first call in a tick ever gets past it.
     if (submitting.current) return;
-    const form: ServiceForm = { name, description, price, duration, gap, fixedGap };
+    const form: ServiceForm = { name, description, price, duration, gap, fixedGap, placeholder };
     const result = serviceBody(form, parseMoney);
     if ("errors" in result && result.errors) {
       setErrors(result.errors);
@@ -595,6 +603,34 @@ function ServiceFormBody(props: Props) {
         placeholder={t("descriptionPlaceholder")}
         multiline
       />
+
+      <fieldset className={styles.pillSet} aria-describedby={picked === null ? "service-placeholder-hint" : undefined}>
+        <legend className={styles.label}>{t("placeholderLegend")}</legend>
+        <div className={styles.pills}>
+          {PLACEHOLDERS.map((kind) => (
+            <label className={styles.pill2} key={kind}>
+              <input
+                type="radio"
+                name="placeholder"
+                checked={placeholder === kind}
+                onChange={() => {
+                  markDirty();
+                  setPicked(kind);
+                }}
+                // A click on the pill the rule already chose fires no change, but it is still a pick.
+                onClick={() => setPicked(kind)}
+              />
+              <ServiceTile placeholder={kind} />
+              {t(`placeholderKinds.${kind}`)}
+            </label>
+          ))}
+        </div>
+        {picked === null && (
+          <p className={styles.hint} id="service-placeholder-hint">
+            {t("placeholderRuleHint")}
+          </p>
+        )}
+      </fieldset>
 
       <div className={styles.row2}>
         <div className={styles.field}>
