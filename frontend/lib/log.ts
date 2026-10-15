@@ -162,8 +162,8 @@ export function requestId(header: string | null): string {
 export type ErrorRequest = { path: string; method: string; headers: Record<string, string | string[] | undefined> };
 export type ErrorContext = { routePath: string; routeType: string };
 
-/** The fields for instrumentation.ts's onRequestError log line, as a pure function so a test can
- * check them without going through a logger or importing instrumentation.ts itself. Never
+/** The fields for the onRequestError log line (instrumentation-node.ts), as a pure function so a
+ * test can check them without going through a logger or importing the instrumentation hooks. Never
  * request.path (carries the query string) or any header but x-request-id. */
 export function requestErrorFields(err: unknown, request: ErrorRequest, context: ErrorContext): Record<string, unknown> {
   const header = request.headers["x-request-id"];

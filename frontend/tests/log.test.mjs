@@ -305,7 +305,9 @@ describe("source guards (L11)", () => {
   test("instrumentation.ts imports types only: Next also compiles it for Edge (ZIF-141)", () => {
     // A value import pulls lib/log.ts (node:crypto, process.stdout) into the Edge build and warns on
     // every compile; the Node-only code loads through a NEXT_RUNTIME-gated dynamic import instead.
-    assert.doesNotMatch(read("../instrumentation.ts"), /^import (?!type\b)/m);
+    const src = read("../instrumentation.ts");
+    assert.doesNotMatch(src, /^\s*(import(?!\s+type\b)|export\b[^;]*\bfrom\b)/m);
+    assert.equal(src.match(/NEXT_RUNTIME === "nodejs"\) \(await import\("\.\/instrumentation-node\.ts"\)\)/g)?.length, 2);
   });
 
   test("the locale layout ignores hydration mismatches on <body> only (ZIF-141)", () => {
