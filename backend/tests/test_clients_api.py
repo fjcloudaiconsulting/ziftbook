@@ -84,6 +84,19 @@ def test_search_matches_name_email_and_phone_case_insensitively(
     assert ids_for("no-such-substring-zzz") == set()
 
 
+# ZIF-152 FENCE. Wrong impl: the search left as typed text, so a phone stored as +31612345678 is
+# no longer found the way the merchant types it ("06 1234 5678" or "12 34 56").
+@pytest.mark.parametrize("q", ["06 1234 5678", "0612345678", "12 34 56", "(6) 12-34"])
+def test_a_phone_is_found_the_way_it_is_typed(people: People, app: FastAPI, q: str) -> None:
+    owner = signed_in(app, people.a, people.both)
+    by_phone = add_client(owner, {"name": "Other", "phone": "06 1234 5678"})
+    add_client(owner, {"name": "Someone else", "phone": "+31 6 55 44 33 22"})
+
+    found = owner.get("/api/clients", params={"q": q}).json()
+
+    assert [c["id"] for c in found] == [by_phone["id"]]
+
+
 # 17: FENCE. Wrong impl: bind f"%{q}%" without like()'s escaping.
 def test_a_search_for_a_wildcard_matches_it_literally(people: People, app: FastAPI) -> None:
     owner = signed_in(app, people.a, people.both)
@@ -482,7 +495,7 @@ def test_creating_a_client_records_one_event_naming_the_client(
         json={
             "name": "Event Client Qzx",
             "email": email,
-            "phone": "+31 6 99 88 77 66",
+            "phone": "+31 6 55 44 33 22",
             "locale": "nl",
         },
     )
@@ -491,7 +504,7 @@ def test_creating_a_client_records_one_event_naming_the_client(
     # other test in this file still green.
     assert created.json()["name"] == "Event Client Qzx"
     assert created.json()["email"] == email
-    assert created.json()["phone"] == "+31 6 99 88 77 66"
+    assert created.json()["phone"] == "+31655443322"  # as stored (ZIF-152)
     assert created.json()["locale"] == "nl"
 
     recorded = events(migrate_engine, tenant_id=people.a, action="client_created")

@@ -1,6 +1,7 @@
 """A business's own copy of its clients, refreshed on each booking, and the append-only log of the
 marketing consent given to it, per purpose (ZIF-99)."""
 
+import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import Annotated, Any, Literal
@@ -84,16 +85,24 @@ def texts_for(policy_version: str, purposes: Iterable[Purpose]) -> dict[Purpose,
 COUNTRY = text("SELECT country FROM tenants WHERE id = current_setting('app.tenant_id')::uuid")
 
 
-def e164(db: Session, phone: str) -> str:
-    """A typed phone as +31612345678 (ZIF-152): a local number is read in the business's country,
-    one starting with + in its own. 422 phone_invalid when it is no phone number there."""
+def number(db: Session, phone: str) -> str | None:
+    """A typed phone as +31612345678 (ZIF-152), or None when it is no phone number: a local number
+    is read in the business's country, one starting with + in its own. An extension is dropped."""
     try:
-        number = phonenumbers.parse(phone, db.scalar(COUNTRY))
+        parsed = phonenumbers.parse(phone, db.scalar(COUNTRY))
     except phonenumbers.NumberParseException:
-        raise ApiError(422, "phone_invalid") from None
-    if not phonenumbers.is_valid_number(number):
+        return None
+    if not phonenumbers.is_valid_number(parsed):
+        return None
+    return phonenumbers.format_number(parsed, phonenumbers.PhoneNumberFormat.E164)
+
+
+def e164(db: Session, phone: str) -> str:
+    """number(), or 422 phone_invalid: every phone a client or the console types is stored so."""
+    found = number(db, phone)
+    if found is None:
         raise ApiError(422, "phone_invalid")
-    return phonenumbers.format_number(number, phonenumbers.PhoneNumberFormat.E164)
+    return found
 
 
 @dataclass(frozen=True)
@@ -345,16 +354,26 @@ def list_clients(
 ) -> list[ClientOut]:
     """This business's clients, newest first, optionally searched by name, email or phone."""
     stripped = q.strip() if q else None
+    # Phones are stored as +31612345678 (ZIF-152): "12 34 56" matches without its spaces, and
+    # "06 1234 5678" as the number it is. Older free-text phones still match as typed.
+    compact = re.sub(r"[\s().-]", "", stripped) if stripped else None
     rows = current.db.execute(
         text(f"""
         SELECT {FIELDS} FROM clients
         WHERE (CAST(:before AS uuid) IS NULL OR id < :before)
           AND (CAST(:q AS text) IS NULL
-               OR name ILIKE :q OR email ILIKE :q OR phone ILIKE :q)
+               OR name ILIKE :q OR email ILIKE :q OR phone ILIKE :q
+               OR phone ILIKE :compact OR phone = :number)
         ORDER BY id DESC  -- uuidv7: newest first
         LIMIT :limit
         """),
-        {"before": before, "q": like(stripped) if stripped else None, "limit": limit},
+        {
+            "before": before,
+            "q": like(stripped) if stripped else None,
+            "compact": like(compact) if compact else None,
+            "number": number(current.db, stripped) if stripped else None,
+            "limit": limit,
+        },
     ).all()
     response.headers["Cache-Control"] = "no-store"
     return as_clients(rows, current_consents(current.db, [row.id for row in rows]))
