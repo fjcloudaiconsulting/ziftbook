@@ -142,7 +142,7 @@ export const nl: Legal = {
           "Van eigenaren van bedrijven en teamleden verzamelen we:",
           [
             "je e-mailadres, naam en taal, en je wachtwoord, dat we alleen als veilige eenrichtingshash opslaan;",
-            "de naam en het land van je bedrijf, je rol, de naam die je klanten zien, je werktijden en vrije tijd;",
+            "de naam en het land van je bedrijf, je rol, de naam die je klanten zien, je werktijden en afwezigheid;",
             "de uitnodigingen die je verstuurt, met de e-mailadressen die je uitnodigt;",
             "je inlogsessies, met IP-adres en browsertype;",
             "een overzicht van wijzigingen in het account van je bedrijf: wie wat deed en wanneer, met IP-adres en browsertype.",
@@ -164,13 +164,13 @@ export const nl: Legal = {
       {
         heading: "Bescherming tegen misbruik",
         body: [
-          "Om geautomatiseerde en misbruikende boekingen te stoppen, gebruikt de boekingspagina Cloudflare Turnstile, dat controleert of er een mens boekt. Voor die controle stuurt je browser gegevens zoals je IP-adres naar Cloudflare. We tellen ook pogingen per IP-adres en per e-mailadres, en bewaren het e-mailadres voor die telling alleen als eenrichtingshash.",
+          "Om geautomatiseerde boekingen en misbruik te stoppen, gebruikt de boekingspagina Cloudflare Turnstile, dat controleert of er een mens boekt. Voor die controle stuurt je browser gegevens zoals je IP-adres naar Cloudflare. We tellen ook pogingen per IP-adres en per e-mailadres, en bewaren het e-mailadres voor die telling alleen als eenrichtingshash.",
         ],
       },
       {
         heading: "E-mails",
         body: [
-          "We versturen e-mails via Mailgun, vanuit de EU-regio. Links in onze e-mails worden niet gevolgd.",
+          "We versturen e-mails via Mailgun, vanuit de EU-regio. We houden niet bij of je op links in onze e-mails klikt.",
         ],
       },
       {
@@ -179,7 +179,7 @@ export const nl: Legal = {
           [
             "Hetzner Online: onze servers, in Duitsland.",
             "Amazon Web Services: versleutelde nachtelijke back-ups van onze database, in de EU.",
-            "Cloudflare: het netwerk voor onze site, en de Turnstile-controle.",
+            "Cloudflare: het netwerk vóór onze site, en de Turnstile-controle.",
             "Mailgun: het versturen van e-mails, vanuit de EU-regio.",
             "Grafana Labs: technische metingen, zoals hoe lang verzoeken duren, in de EU. Daarin staan geen namen, e-mailadressen of telefoonnummers.",
           ],

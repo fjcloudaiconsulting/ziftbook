@@ -941,9 +941,11 @@ export function BookingPage({ page, locale, turnstileSiteKey, initialService = n
       {/* ZIF-147. A new tab: leaving would lose a booking half filled in. */}
       <Link href="/terms" target="_blank">
         {t("footerTerms")}
+        <span className={styles.srOnly}> {t("newTab")}</span>
       </Link>
       <Link href="/privacy" target="_blank">
         {t("footerPrivacy")}
+        <span className={styles.srOnly}> {t("newTab")}</span>
       </Link>
     </footer>
     </>
@@ -1440,6 +1442,7 @@ export function Checkout({
             {linkFirst ? t("holdNote") : t("fine", { biz: page.name })}{" "}
             <Link href="/privacy" target="_blank">
               {t("finePrivacy")}
+              <span className={styles.srOnly}> {t("newTab")}</span>
             </Link>
           </p>
         </>

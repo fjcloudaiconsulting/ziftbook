@@ -128,7 +128,7 @@ export const pt: Legal = {
             "a reserva: o serviço, o horário, com quem, o preço, e se ela foi confirmada, alterada ou cancelada;",
             "o idioma que você usou;",
             "o seu endereço IP e o tipo de navegador, registrados a cada reserva, alteração e cancelamento, como registro de quem fez o quê;",
-            "se o estabelecimento perguntar se você quer receber ofertas ou novidades: a sua resposta, o texto exato que você viu, o horário, e o seu endereço IP e navegador, como prova da sua escolha;",
+            "se o estabelecimento perguntar se você quer receber ofertas ou novidades: a sua resposta, o texto exato que você viu, a data e a hora, e o seu endereço IP e navegador, como prova da sua escolha;",
             "anotações que o estabelecimento faz sobre você, se fizer alguma.",
           ],
           "Usamos esses dados para criar e gerenciar a sua reserva, para enviar e-mails sobre ela (uma confirmação, um lembrete 24 horas antes, e mensagens quando ela for alterada ou cancelada), e para que o estabelecimento possa falar com você sobre o seu horário. A base legal é o acordo que você faz com o estabelecimento, o legítimo interesse dele em registrar as reservas e evitar abusos, e o seu consentimento para ofertas e novidades, que você pode retirar a qualquer momento.",
@@ -201,7 +201,7 @@ export const pt: Legal = {
       {
         heading: "Os seus direitos",
         body: [
-          "Você pode pedir para ver os dados pessoais que temos sobre você, corrigi-los, apagá-los, limitar o seu uso, se opor ao seu uso, e recebê-los em um formato que possa levar para outro lugar. Quando você deu consentimento, pode retirá-lo a qualquer momento.",
+          "Você pode pedir para ver os dados pessoais que temos sobre você, corrigi-los, apagá-los, limitar o uso deles, se opor a esse uso, e recebê-los em um formato que possa levar para outro lugar. Quando você deu consentimento, pode retirá-lo a qualquer momento.",
           `Para uma reserva, quem cuida do seu pedido é o estabelecimento onde você agendou, então fale primeiro com ele. Você também pode escrever para ${EMAIL}, e nós ajudamos ou encaminhamos o seu pedido.`,
           "Se você achar que os seus dados estão sendo tratados de forma errada, pode reclamar à autoridade de proteção de dados do país da UE onde você mora ou trabalha.",
         ],

@@ -1,18 +1,22 @@
+import { getLocale } from "next-intl/server";
+
 import { LEGAL } from "@/lib/legal";
-import type { Locale } from "@/lib/services";
 
 import { Header } from "./header";
 import styles from "./ui.module.css";
 
-type Props = { params: Promise<{ locale: string }> };
+type Doc = "terms" | "privacy";
 
-export async function legalTitle({ params }: Props, doc: "terms" | "privacy") {
-  return { title: LEGAL[(await params).locale as Locale][doc].title };
+// getLocale(), never the raw param: i18n/request.ts answers an unknown locale with notFound().
+const read = async (doc: Doc) => LEGAL[await getLocale()][doc];
+
+export async function legalTitle(doc: Doc) {
+  return { title: (await read(doc)).title };
 }
 
 /** /terms and /privacy (ZIF-147): a plain document under the public header. */
-export async function LegalPage({ params, doc }: Props & { doc: "terms" | "privacy" }) {
-  const { title, updated, sections } = LEGAL[(await params).locale as Locale][doc];
+export async function LegalPage({ doc }: { doc: Doc }) {
+  const { title, updated, sections } = await read(doc);
   return (
     <>
       <Header />

@@ -18,4 +18,10 @@ describe("legal pages", () => {
       Object.values(docs).map((doc) => doc.sections.map((s) => s.body.map((b) => (Array.isArray(b) ? b.length : "p"))));
     for (const locale of ["nl", "pt"]) assert.deepEqual(shape(LEGAL[locale]), shape(LEGAL.en), locale);
   });
+
+  test("no em dash, and no list repeats an item (each is its own React key)", () => {
+    assert.ok(!JSON.stringify(LEGAL).includes("—"));
+    const lists = Object.values(LEGAL).flatMap((docs) => Object.values(docs).flatMap((doc) => doc.sections.flatMap((s) => s.body.filter(Array.isArray))));
+    for (const list of lists) assert.equal(new Set(list).size, list.length, list[0]);
+  });
 });

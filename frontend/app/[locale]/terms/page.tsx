@@ -1,7 +1,7 @@
 import { LegalPage, legalTitle } from "../_ui/legal";
 
-export const generateMetadata = (props: PageProps<"/[locale]/terms">) => legalTitle(props, "terms");
+export const generateMetadata = () => legalTitle("terms");
 
-export default function Page(props: PageProps<"/[locale]/terms">) {
-  return <LegalPage {...props} doc="terms" />;
+export default function Page() {
+  return <LegalPage doc="terms" />;
 }
