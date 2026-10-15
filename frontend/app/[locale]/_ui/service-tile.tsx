@@ -1,4 +1,6 @@
-import type { ReactNode } from "react";
+"use client";
+
+import { type ReactNode, useState } from "react";
 
 import type { Placeholder } from "@/lib/placeholders";
 
@@ -45,9 +47,20 @@ const GLYPHS: Record<Placeholder, ReactNode> = {
   ),
 };
 
-/** A service's square picture: its placeholder (decorative, aria-hidden: the name is always printed
- * next to it). `className` sets the size. */
-export function ServiceTile({ placeholder, className }: { placeholder: Placeholder; className?: string }) {
+/** A service's square picture: its photo, else its placeholder. Decorative either way (alt="",
+ * aria-hidden): the name is always printed next to it. A photo that fails to load turns into the
+ * placeholder; one still loading is the plain --surface tile. `className` sets the size. */
+export function ServiceTile({ placeholder, photo, className }: { placeholder: Placeholder; photo?: string | null; className?: string }) {
+  const [failed, setFailed] = useState<string | null>(null);
+  if (photo && failed !== photo) {
+    return (
+      <span className={`${styles.tile}${className ? ` ${className}` : ""}`}>
+        {/* The thumb variant is 320x320 (photos.py); the tile's CSS sets the shown size. */}
+        {/* eslint-disable-next-line @next/next/no-img-element -- the CDN serves sized variants: no optimiser */}
+        <img src={photo} width={320} height={320} alt="" loading="lazy" decoding="async" onError={() => setFailed(photo)} />
+      </span>
+    );
+  }
   return (
     <span className={`${styles.tile} ${styles.tilePlaceholder}${className ? ` ${className}` : ""}`} aria-hidden="true">
       <svg viewBox="0 0 24 24">{GLYPHS[placeholder]}</svg>
