@@ -38,14 +38,16 @@ const load = cache(async (slug: string): Promise<Loaded> => {
   }
 });
 
-// A fixed, generic title whenever the fetch didn't come back 200: never the upstream error body,
-// and never presented as if the page were real (search engines / link previews should not treat a
-// 404 or a failed load as a named business).
+// A fixed, generic title when the load failed: never the upstream error body, and never presented
+// as if the page were real (search engines / link previews should not treat a failed load as a
+// named business).
 const FALLBACK_TITLE = "ziftbook";
 
 export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
   const loaded = await load(slug);
+  // A 404 takes not-found's title (ZIF-148); returning one here would replace it in the browser.
+  if (loaded.status === 404) notFound();
   return { title: loaded.status === 200 ? loaded.data.name : FALLBACK_TITLE };
 }
 

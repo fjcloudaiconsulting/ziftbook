@@ -7,6 +7,13 @@
     "language": "Language",
     "languageName": "English"
   },
+  "NotFound": {
+    "title": "Page not found",
+    "heading": "We can't find this page",
+    "lede": "Check the address for a typo.",
+    "hint": "Got this link from a business? Their booking page may be closed for now. Ask them for the right link.",
+    "home": "Go to the home page"
+  },
   "Form": {
     "email": "Email",
     "emailPlaceholder": "you@yourbusiness.com",

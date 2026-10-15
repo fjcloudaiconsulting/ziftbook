@@ -7,6 +7,13 @@
     "language": "Idioma",
     "languageName": "Português"
   },
+  "NotFound": {
+    "title": "Página não encontrada",
+    "heading": "Não encontramos esta página",
+    "lede": "Confira se o endereço está digitado certo.",
+    "hint": "Recebeu este link de um estabelecimento? A página de agendamento pode estar fechada agora. Peça o link certo a eles.",
+    "home": "Ir para a página inicial"
+  },
   "Form": {
     "email": "E-mail",
     "emailPlaceholder": "voce@seunegocio.com.br",
