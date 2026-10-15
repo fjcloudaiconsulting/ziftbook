@@ -12,6 +12,7 @@ from sqlalchemy import text
 from app import business_settings, clients, limits
 from app.availability import WorkerOut
 from app.business_settings import Locale
+from app.countries import Country
 from app.db import SessionLocal, join_tenant
 from app.errors import ApiError, Error
 from app.services import Price
@@ -57,6 +58,7 @@ class BookingPageOut(BaseModel):
     id: UUID
     slug: str
     name: str
+    country: Country  # the phone hint's "outside {country}" (ZIF-152)
     timezone: str
     language: Locale
     booking_horizon_days: int
@@ -86,7 +88,7 @@ def read(slug: str, request: Request) -> BookingPageOut:
         raise ApiError(404, "not_found")
     with SessionLocal.begin() as db:
         tenant = db.execute(
-            text("SELECT id, slug, name FROM tenants WHERE slug = :slug"), {"slug": slug}
+            text("SELECT id, slug, name, country FROM tenants WHERE slug = :slug"), {"slug": slug}
         ).first()
         if tenant is None:
             raise ApiError(404, "not_found")
@@ -116,6 +118,7 @@ def read(slug: str, request: Request) -> BookingPageOut:
         id=tenant.id,
         slug=tenant.slug,
         name=tenant.name,
+        country=tenant.country,
         timezone=settings.timezone,
         language=settings.language,
         booking_horizon_days=settings.booking_horizon_days,

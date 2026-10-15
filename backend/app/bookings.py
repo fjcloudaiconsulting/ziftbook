@@ -76,7 +76,7 @@ class BookingIn(BaseModel):
     member_id: Annotated[UUID, Field(strict=False)] | None = None  # None: "anyone"
     name: ClientName  # app.clients.ClientName
     email: passwords.Email  # required: ZIF-53 has to reach this person
-    phone: Phone | None = None
+    phone: Phone  # required (ZIF-152); book_online stores it as E.164
     locale: Locale | None = None
     policy_version: PolicyVersion  # the CONSENT wording version; validated by texts_for()
     consents: dict[Purpose, bool] = Field(default_factory=dict)
@@ -699,7 +699,7 @@ def book_online(
     starts_at: datetime,
     name: str,
     address: str,
-    phone: str | None,
+    phone: str,
     locale: str | None,
     user_id: UUID | None,
     policy_version: str,
@@ -737,6 +737,7 @@ def book_online(
     # 6. Validate the WHOLE posted map here, before any write, so a bad policy version is a
     #    422 with nothing written - regardless of whether anything was withdrawn.
     clients.texts_for(policy_version, consents)
+    phone = clients.e164(db, phone)  # ZIF-152: also a 422 before any write, after the 404s
     # Consent WITHDRAWALS only; grants ride the booking_events row instead (ruling 18, §10).
     withdrawals: dict[Purpose, bool] = {p: g for p, g in consents.items() if not g}
     # 7. Once, before the savepoint: the row lock this takes is what the pending cap needs,

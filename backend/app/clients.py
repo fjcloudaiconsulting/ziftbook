@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
+import phonenumbers
 from fastapi import APIRouter, Query, Request, Response
 from psycopg.errors import UniqueViolation
 from pydantic import AfterValidator, BaseModel, Field, StringConstraints
@@ -78,6 +79,21 @@ def texts_for(policy_version: str, purposes: Iterable[Purpose]) -> dict[Purpose,
     if not set(purposes) <= set(texts):
         raise ApiError(422, "purpose_not_in_policy_version")
     return texts
+
+
+COUNTRY = text("SELECT country FROM tenants WHERE id = current_setting('app.tenant_id')::uuid")
+
+
+def e164(db: Session, phone: str) -> str:
+    """A typed phone as +31612345678 (ZIF-152): a local number is read in the business's country,
+    one starting with + in its own. 422 phone_invalid when it is no phone number there."""
+    try:
+        number = phonenumbers.parse(phone, db.scalar(COUNTRY))
+    except phonenumbers.NumberParseException:
+        raise ApiError(422, "phone_invalid") from None
+    if not phonenumbers.is_valid_number(number):
+        raise ApiError(422, "phone_invalid")
+    return phonenumbers.format_number(number, phonenumbers.PhoneNumberFormat.E164)
 
 
 @dataclass(frozen=True)
@@ -354,7 +370,12 @@ def insert(db: Session, new: ClientIn) -> Row[Any]:
             VALUES (current_setting('app.tenant_id')::uuid, :name, :email, :phone, :locale)
             RETURNING {FIELDS}
             """),
-            {"name": new.name, "email": new.email, "phone": new.phone, "locale": new.locale},
+            {
+                "name": new.name,
+                "email": new.email,
+                "phone": e164(db, new.phone) if new.phone else None,
+                "locale": new.locale,
+            },
         ).one()
     except IntegrityError as error:
         # Only the email conflict; any other integrity error stays a 500 (app.members.guarded).

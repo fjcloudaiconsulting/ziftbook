@@ -162,6 +162,7 @@ def post_booking(
         "starts_at": at("09:00"),
         "name": "Guest",
         "email": fresh_email(),
+        "phone": "+31612345678",
         "policy_version": "2026-09-01",
         "consents": {},
         **overrides,

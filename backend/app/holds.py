@@ -41,6 +41,7 @@ from app import (
 from app.booking_page import CancellationOut
 from app.business_settings import Locale
 from app.clients import ClientName, Phone, PolicyVersion, Purpose
+from app.countries import Country
 from app.db import tenant_context
 from app.errors import ApiError, Error
 from app.services import STRICT, Price
@@ -81,7 +82,7 @@ WHERE h.token_hash = :hash AND h.created_at > now() - CAST(:link_ttl AS interval
 # force at the click are the ones the booking keeps. A service archived meanwhile still reads; the
 # confirm then answers 404 not_found.
 VIEW = text("""
-SELECT t.name AS business, t.slug, s.name AS service_name, s.price_amount_minor,
+SELECT t.name AS business, t.slug, t.country, s.name AS service_name, s.price_amount_minor,
        s.price_currency, m.display_name AS worker_display_name
 FROM services s
 JOIN tenants t ON t.id = s.tenant_id
@@ -120,6 +121,7 @@ class HoldView(BaseModel):
 
     business: str
     slug: str
+    country: Country  # as BookingPageOut.country
     timezone: str
     language: Locale
     service_id: UUID
@@ -144,7 +146,7 @@ class ConfirmIn(BaseModel):
     model_config = STRICT
     token: str
     name: ClientName
-    phone: Phone | None = None
+    phone: Phone
     policy_version: PolicyVersion
     consents: dict[Purpose, bool] = Field(default_factory=dict)
 
@@ -306,6 +308,7 @@ def read(body: TokenIn, request: Request, response: Response) -> HoldView:
     return HoldView(
         business=view.business,
         slug=view.slug,
+        country=view.country,
         timezone=settings.timezone,
         language=settings.language,
         service_id=hold.service_id,

@@ -91,7 +91,13 @@ def read(client: TestClient, token: str) -> Response:
 
 
 def confirm(client: TestClient, token: str, **overrides: Any) -> Response:
-    body: dict[str, Any] = {"token": token, "name": "Ana", "policy_version": POLICY, "consents": {}}
+    body: dict[str, Any] = {
+        "token": token,
+        "name": "Ana",
+        "phone": "+31612345678",
+        "policy_version": POLICY,
+        "consents": {},
+    }
     return client.post("/api/public/booking-hold/confirm", json={**body, **overrides})
 
 

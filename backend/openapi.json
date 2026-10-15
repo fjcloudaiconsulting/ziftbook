@@ -6114,16 +6114,9 @@
             "title": "Email"
           },
           "phone": {
-            "anyOf": [
-              {
-                "type": "string",
-                "maxLength": 40,
-                "minLength": 1
-              },
-              {
-                "type": "null"
-              }
-            ],
+            "type": "string",
+            "maxLength": 40,
+            "minLength": 1,
             "title": "Phone"
           },
           "locale": {
@@ -6181,6 +6174,7 @@
           "starts_at",
           "name",
           "email",
+          "phone",
           "policy_version"
         ],
         "title": "BookingIn"
@@ -6199,6 +6193,17 @@
           "name": {
             "type": "string",
             "title": "Name"
+          },
+          "country": {
+            "type": "string",
+            "enum": [
+              "NL",
+              "PT",
+              "BR",
+              "GB",
+              "US"
+            ],
+            "title": "Country"
           },
           "timezone": {
             "type": "string",
@@ -6241,6 +6246,7 @@
           "id",
           "slug",
           "name",
+          "country",
           "timezone",
           "language",
           "booking_horizon_days",
@@ -6827,16 +6833,9 @@
             "title": "Name"
           },
           "phone": {
-            "anyOf": [
-              {
-                "type": "string",
-                "maxLength": 40,
-                "minLength": 1
-              },
-              {
-                "type": "null"
-              }
-            ],
+            "type": "string",
+            "maxLength": 40,
+            "minLength": 1,
             "title": "Phone"
           },
           "policy_version": {
@@ -6865,6 +6864,7 @@
         "required": [
           "token",
           "name",
+          "phone",
           "policy_version"
         ],
         "title": "ConfirmIn"
@@ -7341,6 +7341,17 @@
             "type": "string",
             "title": "Slug"
           },
+          "country": {
+            "type": "string",
+            "enum": [
+              "NL",
+              "PT",
+              "BR",
+              "GB",
+              "US"
+            ],
+            "title": "Country"
+          },
           "timezone": {
             "type": "string",
             "title": "Timezone"
@@ -7415,6 +7426,7 @@
         "required": [
           "business",
           "slug",
+          "country",
           "timezone",
           "language",
           "service_id",
