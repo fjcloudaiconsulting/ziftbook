@@ -139,6 +139,7 @@ describe("one picker for booking and rescheduling (ZIF-149)", () => {
     assert.equal(pickerDay(days, byDay, null), "2026-10-23");
     assert.equal(pickerDay(days, new Map([...byDay, ["2026-10-25", ["2026-10-25T09:00:00Z"]]]), "2026-10-25"), "2026-10-25");
     assert.equal(pickerDay(days, new Map(), null), null);
+    assert.match(read("../app/[locale]/_ui/picker.tsx"), /const day = pickerDay\(days, byDay, chosenDay\);/);
   });
 
   const read = (rel) => readFileSync(new URL(rel, import.meta.url), "utf8");
