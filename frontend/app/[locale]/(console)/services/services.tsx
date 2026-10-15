@@ -16,6 +16,7 @@ import {
 import { Link, useRouter } from "@/i18n/navigation";
 import { archivedDate } from "@/lib/console";
 import { currencySign, formatMoney, parseMoney, priceText, signFirst } from "@/lib/money";
+import { photoChange, savePhotoError } from "@/lib/photo-upload";
 import { type Placeholder, PLACEHOLDERS, placeholderFor } from "@/lib/placeholders";
 import {
   activeServices,
@@ -34,6 +35,7 @@ import {
 import { SignedOutBanner, useConsole } from "../../_ui/console";
 import { Banner, FieldError, Heading, Mark, problem, Submit } from "../../_ui/parts";
 import { ServiceTile } from "../../_ui/service-tile";
+import { type PhotoError, type PhotoField, PhotoFieldset } from "./photo-field";
 import styles from "../../_ui/ui.module.css";
 
 function useCurrencyName(currency: string, locale: string): string {
@@ -61,7 +63,7 @@ function Row({ service, locale }: { service: ServiceOut; locale: string }) {
   return (
     <li>
       <Link href={`/services/${service.id}`} className={styles.rowLink}>
-        <ServiceTile placeholder={service.placeholder} />
+        <ServiceTile placeholder={service.placeholder} photo={service.photo?.thumb_url} />
         <span className={styles.rowMain}>
           <span className={styles.rowTitle}>{name}</span>
           {!warn && <span className={styles.rowMeta}>{t("rowMetaPeople", { minutes: service.duration_minutes, price, n })}</span>}
@@ -98,7 +100,7 @@ function WorkerRow({ service, locale }: { service: ServiceOut; locale: string })
   return (
     <li>
       <div className={styles.rowStatic}>
-        <ServiceTile placeholder={service.placeholder} />
+        <ServiceTile placeholder={service.placeholder} photo={service.photo?.thumb_url} />
         <span className={styles.rowMain}>
           <span className={styles.rowTitle}>{name}</span>
           <span className={styles.rowMeta}>{t("rowMeta", { minutes: service.duration_minutes, price })}</span>
@@ -143,7 +145,7 @@ function ArchivedRow({ service, locale, onBroughtBack }: { service: ServiceOut; 
   return (
     <li>
       <div className={styles.rowStatic}>
-        <ServiceTile placeholder={service.placeholder} />
+        <ServiceTile placeholder={service.placeholder} photo={service.photo?.thumb_url} />
         <span className={styles.rowMain}>
           <span className={styles.rowTitle}>{name}</span>
           <span className={styles.rowMeta}>
@@ -465,6 +467,9 @@ function ServiceFormBody(props: Props) {
   // null: not picked yet, so a new service follows the name rule as the owner types (design 4c).
   const [picked, setPicked] = useState<Placeholder | null>(service ? service.placeholder : null);
   const placeholder = picked ?? placeholderFor(name);
+  const [photo, setPhoto] = useState<PhotoField>({ kind: "saved" });
+  const [photoError, setPhotoError] = useState<PhotoError | null>(null);
+  const photoErrorRef = useRef<HTMLDivElement>(null);
 
   const [members, setMembers] = useState<MemberOut[] | null>(editing ? props.members : null);
   const [checked, setChecked] = useState<Set<string>>(() => new Set(editing ? props.service.worker_ids : [session.member_id]));
@@ -493,6 +498,16 @@ function ServiceFormBody(props: Props) {
   const sign = currencySign(0, session.currency, locale);
   const trailing = !signFirst(session.currency, locale);
 
+  /** A Save refused over its new photo: the photo goes back to what was saved and the error shows
+   * under the field, not as a banner (design 1.4); the rest of the form is untouched. */
+  function photoRefused(code: string | undefined): boolean {
+    const refused = savePhotoError(photo, code);
+    if (photo.kind !== "ready" || !refused) return false;
+    setPhoto({ kind: photo.previous });
+    setPhotoError({ code: refused === "tooBig" ? "uploadFailed" : refused });
+    return true;
+  }
+
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
     // A ref, not `busy` state: several submits in the same tick (Enter plus a click, or a
@@ -506,6 +521,13 @@ function ServiceFormBody(props: Props) {
       setErrors(result.errors);
       return;
     }
+    const change = photoChange(photo);
+    if (change === "blocked") {
+      // Design error j: nothing is sent, the other fields stay as they are.
+      setPhotoError({ code: "early" });
+      setTimeout(() => photoErrorRef.current?.focus());
+      return;
+    }
     submitting.current = true;
     setErrors({});
     setBanner(null);
@@ -515,7 +537,7 @@ function ServiceFormBody(props: Props) {
     try {
       if (!editing) {
         const workerIds = [...checked];
-        const outcome = await call(() => servicesCreate({ body: { ...result.body, worker_ids: workerIds } }), { write: true });
+        const outcome = await call(() => servicesCreate({ body: { ...result.body, worker_ids: workerIds, ...change } }), { write: true });
         if (outcome.status === 201) {
           router.push("/services");
           return;
@@ -524,6 +546,7 @@ function ServiceFormBody(props: Props) {
           setSignedOut(true);
           return;
         }
+        if (photoRefused(outcome.code)) return;
         if (outcome.status === 422 && outcome.code === "unknown_member") setBanner("unknownMember");
         else setBanner(problem(outcome));
         setFailedOnce(true);
@@ -535,12 +558,13 @@ function ServiceFormBody(props: Props) {
       const after = checked;
       const workersChanged = before.size !== after.size || [...before].some((id) => !after.has(id));
 
-      const updateOutcome = await call(() => servicesUpdate({ path: { service_id: props.service.id }, body: result.body }), { write: true });
+      const updateOutcome = await call(() => servicesUpdate({ path: { service_id: props.service.id }, body: { ...result.body, ...change } }), { write: true });
       if (updateOutcome.status !== 200 || !updateOutcome.data) {
         if (updateOutcome.status === 401) {
           setSignedOut(true);
           return;
         }
+        if (photoRefused(updateOutcome.code)) return;
         setBanner(problem(updateOutcome));
         setFailedOnce(true);
         return;
@@ -604,33 +628,46 @@ function ServiceFormBody(props: Props) {
         multiline
       />
 
-      <fieldset className={styles.pillSet} aria-describedby={picked === null ? "service-placeholder-hint" : undefined}>
-        <legend className={styles.label}>{t("placeholderLegend")}</legend>
-        <div className={styles.pills}>
-          {PLACEHOLDERS.map((kind) => (
-            <label className={styles.pill2} key={kind}>
-              <input
-                type="radio"
-                name="placeholder"
-                checked={placeholder === kind}
-                onChange={() => {
-                  markDirty();
-                  setPicked(kind);
-                }}
-                // A click on the pill the rule already chose fires no change, but it is still a pick.
-                onClick={() => setPicked(kind)}
-              />
-              <ServiceTile placeholder={kind} />
-              {t(`placeholderKinds.${kind}`)}
-            </label>
-          ))}
-        </div>
-        {picked === null && (
-          <p className={styles.hint} id="service-placeholder-hint">
-            {t("placeholderRuleHint")}
-          </p>
-        )}
-      </fieldset>
+      <PhotoFieldset
+        saved={service?.photo ?? null}
+        placeholder={placeholder}
+        value={photo}
+        onChange={setPhoto}
+        error={photoError}
+        onError={setPhotoError}
+        errorRef={photoErrorRef}
+        markDirty={markDirty}
+        onSignedOut={() => setSignedOut(true)}
+        pills={
+          <fieldset className={styles.pillSet} aria-describedby={picked === null ? "service-placeholder-hint" : undefined}>
+            <legend className={styles.label}>{t("placeholderLegend")}</legend>
+            <div className={styles.pills}>
+              {PLACEHOLDERS.map((kind) => (
+                <label className={styles.pill2} key={kind}>
+                  <input
+                    type="radio"
+                    name="placeholder"
+                    checked={placeholder === kind}
+                    onChange={() => {
+                      markDirty();
+                      setPicked(kind);
+                    }}
+                    // A click on the pill the rule already chose fires no change, but it is still a pick.
+                    onClick={() => setPicked(kind)}
+                  />
+                  <ServiceTile placeholder={kind} />
+                  {t(`placeholderKinds.${kind}`)}
+                </label>
+              ))}
+            </div>
+            {picked === null && (
+              <p className={styles.hint} id="service-placeholder-hint">
+                {t("placeholderRuleHint")}
+              </p>
+            )}
+          </fieldset>
+        }
+      />
 
       <div className={styles.row2}>
         <div className={styles.field}>

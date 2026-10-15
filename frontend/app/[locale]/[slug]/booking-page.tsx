@@ -728,7 +728,7 @@ export function BookingPage({ page, locale, turnstileSiteKey, initialService = n
                           <li key={svc.id}>
                             <label className={styles.svcChoice}>
                               <input type="radio" name="service" checked={flow.service?.id === svc.id} readOnly onClick={() => selectService(svc)} />
-                              <ServiceTile placeholder={svc.placeholder} />
+                              <ServiceTile placeholder={svc.placeholder} photo={svc.photo?.thumb_url} />
                               <span className={styles.svcMain}>
                                 <span className={styles.svcTop}>
                                   <span className={styles.svcName} lang={name.lang ?? undefined}>
@@ -754,7 +754,7 @@ export function BookingPage({ page, locale, turnstileSiteKey, initialService = n
                   ) : (
                     service1Done && (
                       <div className={styles.stepDone}>
-                        <ServiceTile placeholder={service1Done.placeholder} className={styles.tile40} />
+                        <ServiceTile placeholder={service1Done.placeholder} photo={service1Done.photo?.thumb_url} className={styles.tile40} />
                         <span className={styles.stepDoneWhat}>
                           <b lang={localized(service1Done.name, loc, businessLanguage).lang ?? undefined}>{localized(service1Done.name, loc, businessLanguage).text}</b>
                           <span>
