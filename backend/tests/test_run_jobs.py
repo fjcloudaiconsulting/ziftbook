@@ -272,9 +272,7 @@ def test_prune_deletes_jobs_finished_over_30_days_ago() -> None:
     t = tag()
     done = seed(f"test.prune:{t}:done", completed_at=OVER)
     skipped = seed(f"test.prune:{t}:skipped", completed_at=OVER, skipped="true")
-    gave_up = seed(
-        f"test.prune:{t}:gave_up", attempts="5", last_error="NULL", next_attempt_at=OVER
-    )
+    gave_up = seed(f"test.prune:{t}:gave_up", attempts="5", last_error="NULL", next_attempt_at=OVER)
 
     jobs.prune()
 
