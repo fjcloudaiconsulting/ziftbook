@@ -179,7 +179,7 @@ services:
 
   # Catches every email sent locally, through its HTTP API: http://localhost:8025
   mailpit:
-    image: mirror.gcr.io/axllent/mailpit:v1.31.5@sha256:94f6b70c1436defae6799d9ac7ff0eeff9540465b842026d5cdb018f1c0234ea
+    image: mirror.gcr.io/axllent/mailpit:v1.31.6@sha256:23fe39e81bde596a918000b3135c0f85dc8bb4c9ea6be274b051143f3e300387
     ports:
       - "127.0.0.1:8025:8025"
     # The image's own check plus a network: a retry after a failed port bind can leave Mailpit
