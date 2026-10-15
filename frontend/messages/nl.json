@@ -7,6 +7,13 @@
     "language": "Taal",
     "languageName": "Nederlands"
   },
+  "NotFound": {
+    "title": "Pagina niet gevonden",
+    "heading": "We kunnen deze pagina niet vinden",
+    "lede": "Controleer het adres op een typefout.",
+    "hint": "Heb je deze link van een bedrijf? Misschien is hun boekingspagina nu gesloten. Vraag ze om de juiste link.",
+    "home": "Naar de startpagina"
+  },
   "Form": {
     "email": "E-mailadres",
     "emailPlaceholder": "jij@jouwbedrijf.nl",
