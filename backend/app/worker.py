@@ -95,8 +95,10 @@ async def work(kinds: dict[str, JobKind], healthcheck_url: str | None, stop: asy
             if healthcheck_url:
                 try:
                     await asyncio.to_thread(ping, healthcheck_url)
-                except OSError as error:
-                    # The URL is a secret-ish check id.
+                except Exception as error:
+                    # Any class, not just OSError: a URL with no scheme raises ValueError and a
+                    # garbled answer http.client.HTTPException, and a ping must never stop the
+                    # worker (ZIF-21). The URL is a secret-ish check id.
                     logger.warning("healthcheck ping failed", extra={"error": type(error).__name__})
         try:
             await asyncio.wait_for(stop.wait(), POLL_SECONDS)

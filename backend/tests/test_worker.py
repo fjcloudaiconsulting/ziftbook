@@ -1,4 +1,5 @@
 import asyncio
+import http.client
 import json
 import os
 import threading
@@ -150,15 +151,18 @@ def test_the_worker_logs_its_settings_once_at_startup(
 
 
 # B7: a failed healthcheck ping logs the error's class only, never the URL (worker.py:49).
+# ZIF-21: whatever the ping raises, the worker carries on. urlopen raises ValueError for a URL with
+# no scheme and http.client.HTTPException for a garbled response, neither of them an OSError.
+@pytest.mark.parametrize("error", [OSError, ValueError, http.client.BadStatusLine])
 def test_a_failed_ping_logs_the_class_only(
-    bound_session: None, log_lines: Lines, monkeypatch: pytest.MonkeyPatch
+    error: type[Exception], bound_session: None, log_lines: Lines, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     sentinel = uuid.uuid4().hex
     tried = threading.Event()
 
     def ping(url: str) -> None:
         tried.set()
-        raise OSError(sentinel)
+        raise error(sentinel)
 
     monkeypatch.setattr(worker, "ping", ping)
     monkeypatch.setattr(bookings, "sweep", lambda: 0)
@@ -174,7 +178,7 @@ def test_a_failed_ping_logs_the_class_only(
 
     line = next((rec for rec in log_lines() if rec.get("msg") == "healthcheck ping failed"), None)
     assert line is not None
-    assert line["error"] == "OSError"
+    assert line["error"] == error.__name__
     assert sentinel not in json.dumps(log_lines())
 
 
