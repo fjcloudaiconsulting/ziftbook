@@ -3,7 +3,7 @@
 import { useLocale, useTranslations } from "next-intl";
 import { type ReactNode, useEffect } from "react";
 
-import { localDay, localWhen, slotsByDay, weekDays } from "@/lib/booking-link";
+import { localDay, localWhen, pickerDay, slotsByDay, weekDays } from "@/lib/booking-link";
 import { groupByDayPart } from "@/lib/booking-page";
 import { dateLocale } from "@/lib/console";
 
@@ -59,7 +59,7 @@ export function Picker({
 
   const byDay = slotsByDay(slots ?? [], zone);
   const has = (d: string) => (byDay.get(d) ?? []).length > 0;
-  const day = chosenDay && has(chosenDay) ? chosenDay : (days.find(has) ?? null);
+  const day = pickerDay(days, byDay, chosenDay);
 
   // Selecting the week's first free day is a consequence of this render, not something to do
   // WHILE rendering (that would call the parent's setState mid-render): an effect, after.

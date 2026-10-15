@@ -297,14 +297,15 @@ function Manage({ token }: { token: string | null }) {
           slot={pick.chosen ?? null}
           taken={new Set(pick.taken ? [pick.taken] : [])}
           hint={<p className={styles.hint}>{t("timesIn", { zone: zoneCity(zone) })}</p>}
+          failed={failed ? <></> : undefined}
           onWeek={(delta) => {
-            if (busy) return;
+            if (working.current) return;
             setFailed(null);
             void loadWeek(linked, addDays(pick.first, delta), pick.taken);
           }}
           onDay={(day) => setView((v) => (v.is === "pick" ? { ...v, day } : v))}
           onSlot={(slot) => {
-            if (busy) return;
+            if (working.current) return;
             // A failed Confirm's "Try again" would send the old time: it goes with the choice.
             setFailed(null);
             setView((v) => (v.is === "pick" ? { ...v, chosen: slot } : v));

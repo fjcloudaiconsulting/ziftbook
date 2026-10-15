@@ -89,6 +89,13 @@ export function slotsByDay(slots: string[], timeZone: string): Map<string, strin
   return days;
 }
 
+/** The picker's day: the chosen one when it is in this week's strip and has times, else the week's
+ * first day with times (a 14-day window or a just-taken time can hold days outside the strip). */
+export function pickerDay(days: string[], byDay: Map<string, string[]>, chosen: string | null): string | null {
+  const has = (d: string) => (byDay.get(d) ?? []).length > 0;
+  return chosen && days.includes(chosen) && has(chosen) ? chosen : (days.find(has) ?? null);
+}
+
 /** A reloaded week's free times plus the one just taken, so it stays listed (struck through) instead of vanishing. */
 export function withTaken(slots: string[], taken: string | undefined): string[] {
   return taken && !slots.includes(taken) ? [...slots, taken].sort() : slots;
