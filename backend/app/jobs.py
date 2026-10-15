@@ -34,7 +34,8 @@ def enqueue(
     tenant_id: UUID | None = None,
     due_at: datetime | None = None,
 ) -> bool:
-    """Add a job in the caller's transaction, unless its dedupe_key was ever used.
+    """Add a job in the caller's transaction, unless a kept job has its dedupe_key (finished jobs
+    are pruned after RETENTION_DAYS, see prune).
 
     Returns whether it was added. Build the key as "kind:tenant_id:natural id", adding the due time
     when the same thing can be rescheduled ("booking.reminder:<tenant>:<booking>:<starts_at>").
@@ -83,6 +84,9 @@ class JobKind:
 # Attempts per job. The ix_jobs_claimable index (migration 0003) repeats it as a literal.
 MAX_ATTEMPTS = 5
 
+# How long a finished job is kept, so a given-up job's last_error stays readable for a human.
+RETENTION_DAYS = 30
+
 # One statement claims a batch: SKIP LOCKED keeps concurrent workers apart while claiming, and the
 # bumped next_attempt_at keeps them apart afterwards. It is both the lease and the backoff
 # (1, 2, 4, 8, 16 minutes), so a crashed worker's jobs come back on their own. = ANY(ARRAY(...)),
@@ -114,7 +118,35 @@ WHERE completed_at IS NULL AND attempts < {MAX_ATTEMPTS}
 GROUP BY kind
 """)
 
+# Finished jobs are deleted RETENTION_DAYS after they finish; email_outbox keeps the record of what
+# was sent (no FK, 0004). A given-up job has no finished time: its last claim set next_attempt_at
+# 16 minutes ahead (CLAIM), which is close enough, and still in the future while it runs.
+# shortcut: one unbatched DELETE and a seq scan of jobs every sweep, and a prune that times out
+# every poll also blocks bookings.sweep (the same withheld ping alerts); batch with LIMIT and add a
+# partial index on coalesce(completed_at, next_attempt_at) if jobs passes ~1M rows or prune shows up
+# in slow logs.
+PRUNE = text(f"""
+DELETE FROM jobs
+WHERE completed_at < now() - interval '{RETENTION_DAYS} days'
+   OR (completed_at IS NULL AND attempts >= {MAX_ATTEMPTS}
+       AND next_attempt_at < now() - interval '{RETENTION_DAYS} days')
+RETURNING id
+""")
+
 logger = logging.getLogger(__name__)
+
+
+def prune() -> int:
+    """Delete jobs finished (done, skipped or given up) more than RETENTION_DAYS ago, on the
+    worker's sweep timer. Returns how many."""
+    with tracing.span("jobs.prune", SpanKind.INTERNAL, {}) as span:
+        with SessionLocal.begin() as session:
+            # RETURNING, not rowcount: Session.execute gives a Result, which has none (mypy).
+            deleted = len(session.execute(PRUNE).all())
+        span.set_attribute("deleted", deleted)
+    if deleted:
+        logger.info("jobs pruned", extra={"count": deleted})
+    return deleted
 
 
 def queue(kinds: list[str]) -> dict[str, tuple[int, float]]:
