@@ -7,10 +7,11 @@ import { onRequestError } from "../instrumentation.ts";
 import { meterProvider } from "../lib/trace.ts";
 
 test("F4: a page error counts once by route template; the request path never reaches the export", async () => {
+  process.env.NEXT_RUNTIME = "nodejs"; // as Next sets it on the Node server (ZIF-141)
   const exporter = new InMemoryMetricExporter(AggregationTemporality.DELTA);
   const reader = new PeriodicExportingMetricReader({ exporter, exportIntervalMillis: 3_600_000 });
   meterProvider([reader]);
-  onRequestError(
+  await onRequestError(
     new Error("boom"),
     { path: "/nl/x?e=a@b.c", method: "GET", headers: {} },
     { routePath: "/[locale]/x", routeType: "render" },
