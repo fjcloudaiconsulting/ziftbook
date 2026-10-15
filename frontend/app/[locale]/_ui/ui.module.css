@@ -455,6 +455,7 @@ a.textButton { display: inline-flex; align-items: center; }
 .quote p { margin: 0; white-space: pre-line; }
 .quote footer { margin-top: 0.3rem; font-size: 0.8125rem; color: var(--muted); }
 .fine { margin: 0; font-size: 0.8125rem; color: var(--muted); }
+.col .fine a { color: var(--ink); text-underline-offset: 2px; }
 /* The Turnstile widget's own mount point, right above Book: never display:none while a challenge
  * might need to render there (the aside's `hidden` attribute, not this, is what hides it on the
  * done screen — hidden's display:none is fine there since no challenge is ever in flight then). */
@@ -486,4 +487,12 @@ a.textButton { display: inline-flex; align-items: center; }
   padding: 1rem var(--gutter); color: var(--muted); font-size: 0.8125rem;
 }
 .minimalFooter b { font-family: var(--font-display), Georgia, serif; color: var(--ink); font-weight: 400; }
-.minimalFooter a { color: inherit; }
+.minimalFooter a { color: inherit; text-underline-offset: 2px; }
+
+/* ZIF-147: the Terms and Privacy pages, a plain document in the wide column. */
+.legal { gap: 1.75rem; overflow-wrap: break-word; }
+.legal h2 { margin: 0 0 0.5rem; font: 400 1.3125rem/1.25 var(--font-display), Georgia, serif; text-wrap: balance; }
+.legal section p, .legal section ul { margin: 0 0 0.75rem; line-height: 1.55; text-wrap: pretty; }
+.legal section ul { padding-inline-start: 1.25rem; }
+.legal li + li { margin-top: 0.35rem; }
+.legal section > :last-child { margin-bottom: 0; }

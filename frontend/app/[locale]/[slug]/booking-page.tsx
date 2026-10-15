@@ -6,6 +6,7 @@ import { useTranslations } from "next-intl";
 import { useEffect, useRef, useState } from "react";
 
 import { availabilityRead, bookingHoldsCreate, bookingHoldsRelease, bookingsCreate, type BookingPageOut, sessionRead } from "@/api-client";
+import { Link } from "@/i18n/navigation";
 import { addDays, localDay, localWhen, slotsByDay, weekDays } from "@/lib/booking-link";
 import {
   afterPickTaken,
@@ -951,6 +952,15 @@ export function BookingPage({ page, locale, turnstileSiteKey, initialService = n
       <span>
         {t("footerBy")} <b>ziftbook</b>
       </span>
+      {/* ZIF-147. A new tab: leaving would lose a booking half filled in. */}
+      <Link href="/terms" target="_blank">
+        {t("footerTerms")}
+        <span className={styles.srOnly}> {t("newTab")}</span>
+      </Link>
+      <Link href="/privacy" target="_blank">
+        {t("footerPrivacy")}
+        <span className={styles.srOnly}> {t("newTab")}</span>
+      </Link>
     </footer>
     </>
   );
@@ -1442,7 +1452,13 @@ export function Checkout({
               {label}
             </Submit>
           </form>
-          <p className={styles.fine}>{linkFirst ? t("holdNote") : t("fine", { biz: page.name })}</p>
+          <p className={styles.fine}>
+            {linkFirst ? t("holdNote") : t("fine", { biz: page.name })}{" "}
+            <Link href="/privacy" target="_blank">
+              {t("finePrivacy")}
+              <span className={styles.srOnly}> {t("newTab")}</span>
+            </Link>
+          </p>
         </>
       )}
     </aside>
