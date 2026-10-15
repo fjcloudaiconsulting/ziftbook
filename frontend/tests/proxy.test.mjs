@@ -652,7 +652,7 @@ describe("bad ZIF_LOG_LEVEL at startup (E5)", () => {
       const timer = setTimeout(() => {
         child.kill();
         reject(new Error("next start did not exit within the startup wait"));
-      }, 5000);
+      }, 20_000); // startWeb's wait (100 x 200ms): a 5s cap failed on a loaded machine (ZIF-141)
       child.once("exit", (code) => {
         clearTimeout(timer);
         resolve(code);
