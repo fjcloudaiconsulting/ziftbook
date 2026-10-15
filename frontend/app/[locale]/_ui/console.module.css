@@ -141,6 +141,13 @@
  * use, which would otherwise draw a ring the design doesn't show here. This targets only that
  * tabindex=-1 heading, so a real focusable control's ring is untouched. */
 .shell h1[tabindex="-1"]:focus { outline: none; }
+/* Focus not obscured (WCAG 2.4.11): the page scrolls a focused control clear of the sticky top bar
+ * and, below, the phone tab bar with its savebar or the desktop savebar (only one of those two is
+ * ever displayed; the other measures 0). The heights are live (stickyHeight, lib/console.ts); the
+ * 0.5rem keeps the focus ring clear too. Scroll padding draws nothing, so pointer use looks the same. */
+:global(html):has(.shell) {
+  scroll-padding-block: calc(var(--topbar-height, 0px) + 0.5rem) calc(var(--bottombar-height, 0px) + var(--savebar-height, 0px) + 0.5rem);
+}
 
 /* Phone tab bar, and the shared sticky bar it shares with a page's own footer actions (the week
    editor's savebar, portaled in through FooterSlot/FooterPortal - console.tsx). Stacking both as

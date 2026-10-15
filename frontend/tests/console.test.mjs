@@ -3,6 +3,7 @@
 process.env.TZ = "America/Sao_Paulo";
 
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { describe, test } from "node:test";
 
 import {
@@ -19,6 +20,7 @@ import {
   sectionOf,
   showPublishStep,
   showSetName,
+  stickyHeight,
   todayLabel,
   writeOutcome,
 } from "../lib/console.ts";
@@ -302,5 +304,58 @@ describe("showPublishStep (ZIF-145, G1)", () => {
   test("guard: true only while unpublished, gone once published", () => {
     assert.equal(showPublishStep(false), true);
     assert.equal(showPublishStep(true), false);
+  });
+});
+
+describe("stickyHeight (ZIF-144)", () => {
+  test("fence: publishes the bar's live height on <html> and takes it back when the bar goes", () => {
+    // Wrong implementations killed: a height read once at mount (the savebar's hint wraps later),
+    // and a leftover value once the bar unmounts (a page without it would keep the padding).
+    const props = new Map();
+    const observers = [];
+    globalThis.document = { documentElement: { style: { setProperty: (k, v) => props.set(k, v), removeProperty: (k) => props.delete(k) } } };
+    globalThis.ResizeObserver = class {
+      constructor(callback) { this.callback = callback; this.disconnected = false; observers.push(this); }
+      observe() { this.callback(); }
+      disconnect() { this.disconnected = true; }
+    };
+    try {
+      const bar = { offsetHeight: 183 };
+      const cleanup = stickyHeight("--bottombar-height")(bar);
+      assert.equal(props.get("--bottombar-height"), "183px");
+      bar.offsetHeight = 211;
+      observers[0].callback();
+      assert.equal(props.get("--bottombar-height"), "211px");
+      cleanup();
+      assert.equal(props.has("--bottombar-height"), false);
+      assert.equal(observers[0].disconnected, true);
+    } finally {
+      delete globalThis.document;
+      delete globalThis.ResizeObserver;
+    }
+  });
+
+  test("fence: the console's scroll padding reads every height the bars publish", () => {
+    // Wrong implementations killed: no scroll padding at all (focus lands under the bars, as before
+    // ZIF-144), a property name the CSS and the ref callbacks spell differently, and a callback never
+    // attached to its bar. What this can't prove is the browser's scrolling itself; that was checked
+    // by tabbing in Chrome at 390x844 and 1280x800.
+    const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
+    const rule = read("../app/[locale]/_ui/console.module.css").match(/:global\(html\):has\(\.shell\)\s*\{([^}]*)\}/)?.[1] ?? "";
+    const [top, bottom] = rule.match(/scroll-padding-block:\s*(calc\([^;]*?\))\s+(calc\([^;]*\));/)?.slice(1) ?? [];
+    assert.ok(top && bottom, "html in the console sets scroll-padding-block with a top and a bottom");
+    const measured = {};
+    for (const path of ["../app/[locale]/_ui/console.tsx", "../app/[locale]/_ui/save-bar.tsx"]) {
+      const source = read(path);
+      for (const [, ref, name] of source.matchAll(/const (\w+) = stickyHeight\("(--[\w-]+)"\)/g)) {
+        // The bar the callback is attached to: the last styles class on the element carrying ref={...}.
+        const classes = source.match(new RegExp(`ref=\\{${ref}\\} className=\\{(.*)`))?.[1] ?? "";
+        measured[name] = [...classes.matchAll(/styles\.(\w+)/g)].at(-1)?.[1];
+      }
+    }
+    assert.deepEqual(measured, { "--topbar-height": "topbar", "--bottombar-height": "bottomBar", "--savebar-height": "savebarDesktop" });
+    assert.match(top, /var\(--topbar-height\b/);
+    assert.match(bottom, /var\(--bottombar-height\b/);
+    assert.match(bottom, /var\(--savebar-height\b/);
   });
 });

@@ -16,7 +16,7 @@ import {
 } from "@/api-client";
 import { Link, usePathname, useRouter } from "@/i18n/navigation";
 import { trimmedName } from "@/lib/account";
-import { allowed, canAnswerRequests, guardedWrite, navFor, needsName, type Role, sectionOf, type Section, writeOutcome } from "@/lib/console";
+import { allowed, canAnswerRequests, guardedWrite, navFor, needsName, type Role, sectionOf, type Section, stickyHeight, writeOutcome } from "@/lib/console";
 import { badgeText } from "@/lib/today";
 
 import { LanguageSwitcher } from "./header";
@@ -27,6 +27,10 @@ import uiStyles from "./ui.module.css";
 // The API only accepts JSON writes (its CSRF defence), and the client drops Content-Type from a
 // request with no body: these DELETEs send an empty JSON object.
 export const JSON_WRITE = { body: {} as never };
+
+// The shell's sticky bars, measured for the scroll padding that keeps keyboard focus clear of them.
+const topbarHeight = stickyHeight("--topbar-height");
+const bottombarHeight = stickyHeight("--bottombar-height");
 
 type ConsoleContextValue = {
   session: SessionOut;
@@ -486,7 +490,7 @@ export function Shell({ children }: { children: ReactNode }) {
   return (
     <ConsoleContext.Provider value={{ session, settings, call, updateSession, updateSettings, pendingCount, setPendingCount, footerSlot }}>
       <div className={styles.shell}>
-        <header className={styles.topbar}>
+        <header ref={topbarHeight} className={styles.topbar}>
           <span className={styles.brand}>
             <Link className={uiStyles.wordmark} href="/">
               ziftbook
@@ -527,7 +531,7 @@ export function Shell({ children }: { children: ReactNode }) {
             on the tab bar: adjacent children of the same box, so there is no gap either could show
             scrolled content through. Desktop has no tab bar and renders nothing here (a page's
             footer bar sticks on its own there, inside .content - see week-editor.tsx). */}
-        <div className={styles.bottomBar}>
+        <div ref={bottombarHeight} className={styles.bottomBar}>
           <div ref={setFooterSlot} className={styles.footerSlot} />
           <nav className={styles.tabbar} aria-label={navT("sections")}>
             {nav.tabs.map((section) =>
