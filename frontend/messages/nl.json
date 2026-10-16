@@ -528,6 +528,15 @@
         "descriptionOptional": "· optioneel",
         "descriptionLangLabel": "Beschrijving in het {language}",
         "descriptionPlaceholder": "Wat de klant kan verwachten. Tot 1000 tekens.",
+        "placeholderLegend": "Zonder foto zien klanten",
+        "placeholderKinds": {
+          "generic": "Algemeen",
+          "nails": "Nagels",
+          "hair": "Haar",
+          "beauty": "Beauty",
+          "massage": "Massage"
+        },
+        "placeholderRuleHint": "Gekozen op basis van de naam van de dienst. Kies een andere als die beter past.",
         "priceLabel": "Prijs",
         "priceHint": "Je valuta is {currency}, ingesteld toen het bedrijf werd aangemaakt. Iedereen ziet hetzelfde bedrag, geschreven zoals hun eigen taal getallen schrijft.",
         "priceInvalid": "Vul een prijs in, met één komma of punt voor de centen.",

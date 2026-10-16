@@ -66,6 +66,7 @@ def test_an_owner_creates_a_service_and_any_member_reads_it(
         "archived": False,
         "archived_at": None,
         "worker_ids": [],
+        "placeholder": "generic",
     }
     assert response.headers["cache-control"] == "no-store"
 
@@ -659,3 +660,24 @@ def test_an_empty_description_with_no_buffer_is_accepted(people: People) -> None
             },
         )
     assert len(stored(people.a)) == 1
+
+
+# ZIF-133 F5. fence. Kills: ServiceChange taking a null placeholder (NOT NULL -> 500, not 422); an
+# unknown kind stored; a change not audited like price.
+def test_the_placeholder_defaults_to_generic_is_changed_audited_and_never_null(
+    people: People, owner: TestClient, migrate_engine: Engine
+) -> None:
+    sid = service(owner).json()["id"]
+    assert stored(people.a)[0]["photo_placeholder"] == "generic"
+    assert service(owner, placeholder="nails").json()["placeholder"] == "nails"
+
+    changed = owner.patch(f"/api/services/{sid}", json={"placeholder": "massage"})
+    assert (changed.status_code, changed.json()["placeholder"]) == (200, "massage")
+    rows = events(migrate_engine, tenant_id=people.a, target=f"service:{sid}")
+    assert rows[-1]["details"] == {"placeholder": {"old": "generic", "new": "massage"}}
+
+    for body in ({"placeholder": None}, {"placeholder": "cats"}):
+        refused = owner.patch(f"/api/services/{sid}", json=body)
+        assert (refused.status_code, refused.json()["code"]) == (422, "invalid_request")
+    assert service(owner, placeholder="cats").status_code == 422
+    assert stored(people.a)[0]["photo_placeholder"] == "massage"

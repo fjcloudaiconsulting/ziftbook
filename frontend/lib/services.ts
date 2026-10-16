@@ -3,6 +3,9 @@
 // Kept free of React (and of any sibling import, as lib/week.ts) so node --test can run it
 // directly with no module resolution to configure: `parseMoney` (lib/money.ts) is passed in as a
 // callback instead.
+// A type-only import is erased before node runs this file, so the no-sibling-import rule holds.
+import type { Placeholder } from "./placeholders";
+
 export type Locale = "en" | "nl" | "pt";
 export const LOCALES: Locale[] = ["en", "nl", "pt"];
 export type NameMap = Partial<Record<Locale, string>>;
@@ -37,6 +40,8 @@ export type ServiceForm = {
   duration: string;
   gap: "default" | "fixed";
   fixedGap?: string;
+  // Optional so callers and tests that don't care need not name it; the server's default is generic.
+  placeholder?: Placeholder;
 };
 
 export type ServiceBody = {
@@ -45,6 +50,7 @@ export type ServiceBody = {
   price: { amount_minor: number };
   duration_minutes: number;
   buffer_minutes: number | null;
+  placeholder?: Placeholder;
 };
 
 export type ServiceBodyResult = { body: ServiceBody; errors?: never } | { body?: never; errors: Record<string, string> };
@@ -97,6 +103,7 @@ export function serviceBody(form: ServiceForm, parsePrice: (text: string) => num
       price: { amount_minor: minor as number },
       duration_minutes: duration,
       buffer_minutes: bufferMinutes, // "use the business default" is null, never 0 (services.py:77)
+      ...(form.placeholder ? { placeholder: form.placeholder } : {}),
     },
   };
 }
