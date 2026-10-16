@@ -35,6 +35,7 @@ from app import (
     invites,
     logs,
     members,
+    photos,
     schedule,
     services,
     setup,
@@ -43,7 +44,7 @@ from app import (
     tracing,
     turnstile,
 )
-from app.config import DatabaseSettings, Settings, TurnstileSettings
+from app.config import DatabaseSettings, Settings, StorageSettings, TurnstileSettings
 from app.db import SessionLocal
 from app.errors import ApiError, Error
 
@@ -120,6 +121,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         raise RuntimeError("startup failed") from None
     setup_token = setup.token_state()
     totp_key = totp.key_state()
+    storage_on = StorageSettings().configured()
     # Here, not at import: `python -m app.main` prints the OpenAPI document to stdout.
     logger.info(
         "api started",
@@ -132,6 +134,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             "setup_token": setup_token,
             # Never the key. "unset"/"invalid": admin TOTP answers 503 (ZIF-71).
             "totp_key": totp_key,
+            # "off": photo uploads answer 503 photos_unavailable (ZIF-133).
+            "storage": "on" if storage_on else "off",
         },
     )
     # ZIF-116: logged, never a refusal to start. The deployments run one replica with Recreate, so a
@@ -146,6 +150,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Never a refusal to start (one replica, Recreate): recovery codes still let admins in.
     if totp_key != "set":
         logger.error("totp key unset: admin second factor unavailable")
+    # A legitimate state until the object store exists: logged, never a refusal to start.
+    if not storage_on:
+        logger.warning("storage unset: photo uploads refused")
     try:
         yield
     finally:
@@ -220,6 +227,7 @@ def create_app() -> FastAPI:
         business_settings.router,
         clients.router,
         services.router,
+        photos.router,
         members.router,
         invites.router,
         schedule.router,

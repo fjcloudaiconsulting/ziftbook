@@ -569,6 +569,14 @@ ZIF-38). An empty variable means the default: `env_ignore_empty=True` on the bas
 | `ZIF_MAILGUN_REGION` | worker | `eu` | no | no | `eu` or `us`: which Mailgun API host the account lives on. |
 | `ZIF_MAILPIT_URL` | worker | none | no (development only) | no | Mailpit's base URL; with no Mailgun key, mail goes to its HTTP send API. Never SMTP. |
 | `ZIF_APP_URL` | worker | `http://localhost:3000` | yes | no | Where links in emails point; must be the public web URL in production. |
+| **Photo storage** | | | | | |
+| `ZIF_S3_ENDPOINT` | api, worker | `""` | for photos | no | The S3-compatible API (production and staging: the R2 account endpoint, `https://<account>.eu.r2.cloudflarestorage.com`; compose: SeaweedFS). No default in code. While any of the first six variables here is unset the API logs a WARNING at startup (`storage: "off"`) and answers 503 `photos_unavailable` to a photo; startup never fails over it. |
+| `ZIF_S3_UPLOADS_BUCKET` | api | `""` | for photos | no | Where the browser PUTs the original (presigned, 5 minutes). Nothing deletes from it: give it a 1-day lifecycle rule and a CORS rule allowing PUT with `content-type` from the web app's origin. |
+| `ZIF_S3_MEDIA_BUCKET` | api, worker | `""` | for photos | no | Where the resized variants are written, served publicly from `ZIF_MEDIA_URL`. |
+| `ZIF_S3_ACCESS_KEY_ID` | api, worker | `""` | for photos | no | Access key id for both buckets. |
+| `ZIF_S3_SECRET_ACCESS_KEY` | api, worker | `""` | for photos | yes | Its secret. |
+| `ZIF_MEDIA_URL` | api | `""` | for photos | no | Where the media bucket is served from (a custom domain origin, no trailing slash needed); photo URLs start with it. Unset: services list no photo. |
+| `ZIF_S3_PUBLIC_ENDPOINT` | api | `""` | no (development only) | no | The host the browser reaches the store on, when `ZIF_S3_ENDPOINT` is a compose service name; presigned upload URLs use it. Never set in a deployment. |
 | **Security** | | | | | |
 | `ZIF_TURNSTILE_SECRET` | api | `""` | yes, or `ZIF_TURNSTILE_DISABLED` | yes | Cloudflare Turnstile secret. Unset: every public booking and hold is refused (403 `turnstile_failed`) and the API logs an ERROR at startup, unless `ZIF_TURNSTILE_DISABLED=true`. |
 | `ZIF_TURNSTILE_DISABLED` | api | `false` | no | no | `true` serves public bookings with no Turnstile check when no secret is set (development, CI, tests). Ignored when a secret is set. Never on a public deployment. |

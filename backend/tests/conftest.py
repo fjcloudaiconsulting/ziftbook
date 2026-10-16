@@ -18,6 +18,7 @@ from email.policy import default as email_policy
 from pathlib import Path
 from typing import Any, cast
 
+import boto3
 import pytest
 import requests
 from alembic import command
@@ -25,12 +26,15 @@ from alembic.config import Config
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from httpx2 import Response
+from moto import mock_aws
+from mypy_boto3_s3 import S3Client
 from opentelemetry import metrics, trace
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from PIL import Image
 from sqlalchemy import Connection, Engine, create_engine, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.pool import NullPool
@@ -785,3 +789,44 @@ def people(app_engine: Engine, migrate_engine: Engine, bound: None) -> Iterator[
         delete_clients(conn, (a, b))
         delete_services(conn, (a, b))
         conn.execute(text("DELETE FROM tenants WHERE id IN (:a, :b)"), {"a": a, "b": b})
+
+
+S3_ENDPOINT = "https://s3.amazonaws.com"  # moto intercepts AWS hosts; a custom one needs an env var
+
+
+@pytest.fixture
+def s3(monkeypatch: pytest.MonkeyPatch) -> Iterator[S3Client]:
+    """Photo storage on moto, configured through the ZIF_S3_* variables; yields an admin client."""
+    for name, value in {
+        "ZIF_S3_ENDPOINT": S3_ENDPOINT,
+        "ZIF_S3_PUBLIC_ENDPOINT": "http://localhost:8333",
+        "ZIF_S3_ACCESS_KEY_ID": "dev",
+        "ZIF_S3_SECRET_ACCESS_KEY": "dev-secret",
+        "ZIF_S3_UPLOADS_BUCKET": "ziftbook-uploads",
+        "ZIF_S3_MEDIA_BUCKET": "ziftbook-media",
+        "ZIF_MEDIA_URL": "https://img.example.test/",
+    }.items():
+        monkeypatch.setenv(name, value)
+    with mock_aws():
+        # moto refuses CreateBucket in region "auto"; the app never creates buckets.
+        admin = boto3.client("s3", endpoint_url=S3_ENDPOINT, region_name="us-east-1")
+        admin.create_bucket(Bucket="ziftbook-uploads")
+        admin.create_bucket(Bucket="ziftbook-media")
+        yield admin
+
+
+def image(fmt: str, size: tuple[int, int], **kw: object) -> bytes:
+    buf = io.BytesIO()
+    Image.new("RGB", size, "red").save(buf, fmt, **kw)
+    return buf.getvalue()
+
+
+def upload(
+    s3: S3Client, tenant: uuid.UUID, data: bytes, content_type: str = "application/octet-stream"
+) -> uuid.UUID:
+    """The object a browser PUT would leave in the uploads bucket; returns its upload id."""
+    upload_id = uuid.uuid4()
+    s3.put_object(
+        Bucket="ziftbook-uploads", Key=f"{tenant}/{upload_id}", Body=data, ContentType=content_type
+    )
+    return upload_id
