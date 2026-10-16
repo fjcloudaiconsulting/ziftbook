@@ -17,7 +17,6 @@ import {
   emailSuggestion,
   firstFreeDayFrom,
   freeNamed,
-  groupByDayPart,
   holdBody,
   keepPick,
   nextWeekDisabled,
@@ -34,6 +33,7 @@ import { type Locale, serviceName } from "@/lib/services";
 import { zoneCity } from "@/lib/week";
 
 import { AlertIcon, Banner, FieldError, Outcome, send, Submit } from "../_ui/parts";
+import { CheckIcon, Picker as SharedPicker } from "../_ui/picker";
 import styles from "../_ui/ui.module.css";
 
 type Service = BookingPageOut["services"][number];
@@ -984,14 +984,6 @@ function ClockIcon() {
   );
 }
 
-function CheckIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 16 16" width="16" height="16">
-      <path d="M3 8.5l3 3 7-7" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
 function MoveIcon() {
   return (
     <svg aria-hidden="true" viewBox="0 0 16 16" width="15" height="15">
@@ -1088,19 +1080,20 @@ function Picker({
   // Unnamed people are never offered (decision 6 option A); their times stay under "Anyone".
   const named = service.workers.filter((w) => w.display_name);
   const today = localDay(new Date(), zone);
-  const days = weekDays(s2.weekStart);
-  const dayLabel = (day: string, options: Intl.DateTimeFormatOptions) =>
-    new Intl.DateTimeFormat(dLocale, { ...options, timeZone: "UTC" }).format(new Date(`${day}T12:00:00Z`));
 
   let from = s2.weekStart;
   while (addDays(from, 13) < s2.weekStart) from = addDays(from, 14);
   while (s2.weekStart < from) from = addDays(from, -14);
   const entry = cache.get(`${service.id}|${from}`);
+  const win = typeof entry === "object" ? entry : null;
 
   const nextDisabled = nextWeekDisabled(today, addDays(s2.weekStart, 7), page.booking_horizon_days);
+  const firstLabel = firstFree
+    ? new Intl.DateTimeFormat(dLocale, { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" }).format(new Date(`${firstFree}T12:00:00Z`))
+    : null;
 
   return (
-    <div className={styles.picker}>
+    <>
       {banner && <Banner tone={banner.tone}>{banner.text}</Banner>}
       {service.workers.length > 1 && named.length > 0 && (
         <fieldset className={styles.pillSet}>
@@ -1123,160 +1116,47 @@ function Picker({
       )}
       {service.workers.length === 1 && service.workers[0].display_name && <p className={styles.hint}>{t("with", { name: service.workers[0].display_name })}</p>}
 
-      <div className={styles.weekHead}>
-        <strong>
-          {dayLabel(s2.weekStart, { day: "numeric", month: "short" })} – {dayLabel(addDays(s2.weekStart, 6), { day: "numeric", month: "short" })}
-        </strong>
-        <div className={styles.weekNav}>
-          <button className={`${styles.button} ${styles.secondary} ${styles.small}`} type="button" disabled={s2.weekStart <= today} onClick={() => onWeek(-7)}>
-            {t("prevWeek")}
-          </button>
-          <button className={`${styles.button} ${styles.secondary} ${styles.small}`} type="button" disabled={nextDisabled} onClick={() => onWeek(7)}>
-            {t("nextWeek")}
-          </button>
-        </div>
-      </div>
-
-      {!entry || entry === "loading" ? (
-        <p className={styles.hint} role="status">
-          {t("loadingTimes")}
-        </p>
-      ) : entry === "error" ? (
-        <>
-          <Banner tone="error">{t("pickerError")}</Banner>
-          <button className={styles.textButton} type="button" onClick={onRetry}>
-            {t("tryAgain")}
-          </button>
-        </>
-      ) : (
-        <PickerWeek page={page} s2={s2} slots={slotsFor(entry, worker)} win={entry} firstFree={firstFree} today={today} days={days} dayLabel={dayLabel} zone={zone} dLocale={dLocale} t={t} onDay={onDay} onSlot={onSlot} onJump={onJump} onAnyone={onAnyone} />
-      )}
+      <SharedPicker
+        weekStart={s2.weekStart}
+        zone={zone}
+        slots={win && slotsFor(win, worker)}
+        day={s2.day}
+        slot={s2.slot}
+        taken={s2.taken}
+        nextDisabled={nextDisabled}
+        failed={
+          entry === "error" ? (
+            <>
+              <Banner tone="error">{t("pickerError")}</Banner>
+              <button className={styles.textButton} type="button" onClick={onRetry}>
+                {t("tryAgain")}
+              </button>
+            </>
+          ) : undefined
+        }
+        empty={
+          <>
+            {firstLabel && <span>{t("noWeekBody", { first: firstLabel })}</span>}
+            <div>
+              {firstFree && firstLabel && (
+                <button className={`${styles.button} ${styles.primary} ${styles.small}`} type="button" onClick={() => onJump(firstFree)}>
+                  {t("seeNext", { first: firstLabel })}
+                </button>
+              )}
+              {worker !== "any" && (
+                <button className={`${styles.button} ${styles.secondary} ${styles.small}`} type="button" onClick={onAnyone}>
+                  {t("tryAnyone")}
+                </button>
+              )}
+            </div>
+          </>
+        }
+        onWeek={onWeek}
+        onDay={onDay}
+        onSlot={(slot) => onSlot(slot, worker === "any" ? (win!.who[win!.slots.indexOf(slot)] ?? []) : [])}
+      />
 
       {nextDisabled && <p className={styles.hint}>{t("horizon", { n: page.booking_horizon_days })}</p>}
-    </div>
-  );
-}
-
-function PickerWeek({
-  s2,
-  slots,
-  win,
-  firstFree,
-  today,
-  days,
-  dayLabel,
-  zone,
-  dLocale,
-  t,
-  onDay,
-  onSlot,
-  onJump,
-  onAnyone,
-}: {
-  page: BookingPageOut;
-  s2: Step2Plus;
-  slots: string[];
-  win: TimesWindow;
-  firstFree: string | null;
-  today: string;
-  days: string[];
-  dayLabel(day: string, options: Intl.DateTimeFormatOptions): string;
-  zone: string;
-  dLocale: string;
-  t: ReturnType<typeof useTranslations>;
-  onDay(day: string): void;
-  onSlot(slot: string, free: string[]): void;
-  onJump(day: string): void;
-  onAnyone(): void;
-}) {
-  const byDay = slotsByDay(slots, zone);
-  const anyThisWeek = days.some((d) => (byDay.get(d) ?? []).length > 0);
-  const day = s2.day && (byDay.get(s2.day) ?? []).length > 0 ? s2.day : (days.find((d) => (byDay.get(d) ?? []).length > 0) ?? null);
-
-  // Selecting the week's first free day is a consequence of this render, not something to do
-  // WHILE rendering (that would call the parent's setState mid-render): an effect, after.
-  useEffect(() => {
-    if (day && s2.day !== day) onDay(day);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [day]);
-
-  if (!anyThisWeek) {
-    const firstLabel = firstFree ? dayLabel(firstFree, { weekday: "long", day: "numeric", month: "long" }) : null;
-    return (
-      <div className={styles.empty} role="status">
-        <strong>{t("noWeekTitle", { a: dayLabel(days[0], { weekday: "short", day: "numeric", month: "short" }), b: dayLabel(days[6], { weekday: "short", day: "numeric", month: "short" }) })}</strong>
-        {firstLabel && <span>{t("noWeekBody", { first: firstLabel })}</span>}
-        <div>
-          {firstFree && firstLabel && (
-            <button className={`${styles.button} ${styles.primary} ${styles.small}`} type="button" onClick={() => onJump(firstFree)}>
-              {t("seeNext", { first: firstLabel })}
-            </button>
-          )}
-          {s2.worker !== "any" && (
-            <button className={`${styles.button} ${styles.secondary} ${styles.small}`} type="button" onClick={onAnyone}>
-              {t("tryAnyone")}
-            </button>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  if (!day) return null;
-  const times = byDay.get(day) ?? [];
-  const grouped = groupByDayPart(times, zone);
-
-  return (
-    <>
-      <div className={styles.days} role="group" aria-label={`${dayLabel(days[0], { day: "numeric", month: "short" })} – ${dayLabel(days[6], { day: "numeric", month: "short" })}`}>
-        {days.map((d) => {
-          const has = (byDay.get(d) ?? []).length > 0;
-          const long = dayLabel(d, { weekday: "long", day: "numeric", month: "long" });
-          return (
-            <button
-              key={d}
-              className={`${styles.button} ${d === day ? styles.primary : styles.secondary}`}
-              type="button"
-              disabled={!has || d < today}
-              aria-pressed={d === day}
-              aria-label={has ? long : `${long}, ${t("closed")}`}
-              onClick={() => onDay(d)}
-            >
-              <span>{dayLabel(d, { weekday: "short" })}</span>
-              <span>{dayLabel(d, { day: "numeric" })}</span>
-            </button>
-          );
-        })}
-      </div>
-      <div className={styles.parts} role="group" aria-label={t("timesOn", { day: dayLabel(day, { weekday: "long", day: "numeric", month: "long" }) })}>
-        {(["morning", "afternoon", "evening"] as const)
-          .filter((part) => grouped[part].length > 0)
-          .map((part) => (
-            <div key={part}>
-              <h3>{t(part)}</h3>
-              <div className={styles.slots}>
-                {grouped[part].map((slot) => {
-                  const time = localWhen(slot, zone, dLocale).time;
-                  const on = s2.slot === slot;
-                  const struck = s2.taken.has(slot);
-                  return (
-                    <button
-                      key={slot}
-                      className={`${styles.button} ${styles.secondary}`}
-                      type="button"
-                      disabled={struck}
-                      aria-pressed={struck ? undefined : on}
-                      aria-label={struck ? t("takenLabel", { time }) : undefined}
-                      onClick={() => onSlot(slot, s2.worker === "any" ? (win.who[win.slots.indexOf(slot)] ?? []) : [])}
-                    >
-                      {time}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          ))}
-      </div>
     </>
   );
 }
