@@ -183,9 +183,9 @@ export const pt: Legal = {
           [
             "Hetzner Online: os nossos servidores, na Alemanha.",
             "Amazon Web Services: backups noturnos criptografados do nosso banco de dados, na UE.",
-            "Cloudflare: a rede na frente do nosso site, e a verificação Turnstile.",
+            "Cloudflare: a rede na frente do nosso site, e a verificação Turnstile. A Cloudflare também guarda as fotos que os estabelecimentos adicionam aos seus serviços, na UE.",
             "Mailgun: o envio de e-mails, na região da UE.",
-            "Grafana Labs: medições técnicas, como quanto tempo as requisições levam, na UE. Elas não contêm nomes, e-mails ou telefones.",
+            "Grafana Labs: medições técnicas, como quanto tempo as requisições levam, e os logs do nosso servidor, na UE. Eles não contêm nomes, e-mails ou telefones. Os logs do servidor são apagados em até 7 dias.",
           ],
           "Algumas dessas empresas têm sede nos Estados Unidos. Quando os dados podem sair da UE, usamos as salvaguardas que o Regulamento Geral de Proteção de Dados da UE (GDPR) exige, como as Cláusulas Contratuais Padrão da UE ou o Quadro de Privacidade de Dados UE-EUA.",
         ],

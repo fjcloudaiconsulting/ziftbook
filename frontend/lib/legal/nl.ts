@@ -183,9 +183,9 @@ export const nl: Legal = {
           [
             "Hetzner Online: onze servers, in Duitsland.",
             "Amazon Web Services: versleutelde nachtelijke back-ups van onze database, in de EU.",
-            "Cloudflare: het netwerk vóór onze site, en de Turnstile-controle.",
+            "Cloudflare: het netwerk vóór onze site, en de Turnstile-controle. Cloudflare bewaart ook de foto's die bedrijven bij hun diensten plaatsen, in de EU.",
             "Mailgun: het versturen van e-mails, vanuit de EU-regio.",
-            "Grafana Labs: technische metingen, zoals hoe lang verzoeken duren, in de EU. Daarin staan geen namen, e-mailadressen of telefoonnummers.",
+            "Grafana Labs: technische metingen, zoals hoe lang verzoeken duren, en onze serverlogs, in de EU. Daarin staan geen namen, e-mailadressen of telefoonnummers. Serverlogs worden na hooguit 7 dagen verwijderd.",
           ],
           "Sommige van deze bedrijven zijn gevestigd in de Verenigde Staten. Waar gegevens de EU kunnen verlaten, gebruiken we de waarborgen die de AVG vereist, zoals de EU-standaardcontractbepalingen of het EU-VS-kader voor gegevensbescherming.",
         ],
