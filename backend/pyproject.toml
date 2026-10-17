@@ -17,7 +17,7 @@ dependencies = [
     "pydantic-settings==2.16.0",
     "requests==2.34.2",
     "segno==1.6.6",
-    "sqlalchemy==2.1.4",
+    "sqlalchemy==2.1.5",
     "tzdata==2026.5",
     "uvicorn==0.54.0",
 ]
@@ -28,7 +28,7 @@ dev = [
     "mypy==2.4.0",
     "pytest",
     "pytest-xdist",
-    "ruff==0.17.0",
+    "ruff==0.17.1",
 ]
 
 [tool.uv]
