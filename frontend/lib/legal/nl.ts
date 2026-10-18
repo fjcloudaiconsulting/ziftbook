@@ -1,10 +1,10 @@
 import type { Legal } from "./index.ts";
-import { ADDRESS, EMAIL, ENTITY, REGISTRATION } from "./owner.ts";
+import { ADDRESS, EMAIL, ENTITY, REGISTRATION, VAT } from "./owner.ts";
 
 export const nl: Legal = {
   terms: {
     title: "Gebruiksvoorwaarden",
-    updated: "Laatst bijgewerkt: [OWNER: datum waarop deze voorwaarden ingaan]",
+    updated: "Laatst bijgewerkt: 18 oktober 2026",
     sections: [
       {
         heading: "Over deze voorwaarden",
@@ -93,18 +93,18 @@ export const nl: Legal = {
       {
         heading: "Recht en geschillen",
         body: [
-          "Op deze voorwaarden is [OWNER: toepasselijk recht, bijv. Nederlands recht] van toepassing, en geschillen gaan naar [OWNER: bevoegde rechter]. Ben je consument, dan houd je de bescherming van het dwingende recht van het land waar je woont.",
+          "Op deze voorwaarden is Nederlands recht van toepassing, en geschillen gaan naar de bevoegde rechter in Nederland. Ben je consument, dan houd je de bescherming van het dwingende recht van het land waar je woont.",
         ],
       },
       {
         heading: "Contact",
-        body: [`${ENTITY}, ${ADDRESS}. Registratienummer: ${REGISTRATION}. E-mail: ${EMAIL}.`],
+        body: [`${ENTITY}, ${ADDRESS}. Registratienummer: ${REGISTRATION}. Btw-id: ${VAT}. E-mail: ${EMAIL}.`],
       },
     ],
   },
   privacy: {
     title: "Privacyverklaring",
-    updated: "Laatst bijgewerkt: [OWNER: datum waarop deze verklaring ingaat]",
+    updated: "Laatst bijgewerkt: 18 oktober 2026",
     sections: [
       {
         heading: "Wie we zijn",

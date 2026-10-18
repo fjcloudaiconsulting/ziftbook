@@ -1,10 +1,10 @@
 import type { Legal } from "./index.ts";
-import { ADDRESS, EMAIL, ENTITY, REGISTRATION } from "./owner.ts";
+import { ADDRESS, EMAIL, ENTITY, REGISTRATION, VAT } from "./owner.ts";
 
 export const en: Legal = {
   terms: {
     title: "Terms of use",
-    updated: "Last updated: [OWNER: date these terms take effect]",
+    updated: "Last updated: 18 October 2026",
     sections: [
       {
         heading: "About these terms",
@@ -93,18 +93,18 @@ export const en: Legal = {
       {
         heading: "Law and disputes",
         body: [
-          "These terms are governed by [OWNER: governing law, e.g. Dutch law], and disputes go to [OWNER: competent court]. If you are a consumer, you keep the protection of the mandatory law of the country where you live.",
+          "These terms are governed by Dutch law, and disputes go to the competent court in the Netherlands. If you are a consumer, you keep the protection of the mandatory law of the country where you live.",
         ],
       },
       {
         heading: "Contact",
-        body: [`${ENTITY}, ${ADDRESS}. Registration number: ${REGISTRATION}. Email: ${EMAIL}.`],
+        body: [`${ENTITY}, ${ADDRESS}. Registration number: ${REGISTRATION}. VAT number: ${VAT}. Email: ${EMAIL}.`],
       },
     ],
   },
   privacy: {
     title: "Privacy notice",
-    updated: "Last updated: [OWNER: date this notice takes effect]",
+    updated: "Last updated: 18 October 2026",
     sections: [
       {
         heading: "Who we are",
