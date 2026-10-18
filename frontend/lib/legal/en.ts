@@ -183,9 +183,9 @@ export const en: Legal = {
           [
             "Hetzner Online: our servers, in Germany.",
             "Amazon Web Services: encrypted nightly backups of our database, in the EU.",
-            "Cloudflare: the network in front of our site, and the Turnstile check.",
+            "Cloudflare: the network in front of our site, and the Turnstile check. Cloudflare also stores the photos businesses add to their services, in the EU.",
             "Mailgun: sending emails, from its EU region.",
-            "Grafana Labs: technical measurements, such as how long requests take, in the EU. These do not contain names, email addresses or phone numbers.",
+            "Grafana Labs: technical measurements, such as how long requests take, and our server logs, in the EU. These do not contain names, email addresses or phone numbers. Server logs are deleted after at most 14 days.",
           ],
           "Some of these companies are based in the United States. Where data may leave the EU, we rely on the safeguards the GDPR requires, such as the EU Standard Contractual Clauses or the EU-US Data Privacy Framework.",
         ],
@@ -196,7 +196,7 @@ export const en: Legal = {
           [
             "Bookings and client details: for as long as the business uses ziftbook, unless you or the business ask us to delete them sooner. When a business closes its account, we delete its data within 30 days.",
             "Account data: for as long as the account exists. We delete it within 30 days after the account is closed.",
-            "Server logs: up to 7 days. They are kept to what we need to run the service, mostly ids rather than names, and never the content of your messages.",
+            "Server logs: kept on our servers up to 7 days, at Grafana Labs up to 14 days. They are kept to what we need to run the service, mostly ids rather than names, and never the content of your messages.",
             "Backups: deleted automatically within two weeks.",
           ],
           "We keep something longer only when the law requires it.",
