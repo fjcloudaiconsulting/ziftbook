@@ -2,14 +2,17 @@
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+from typing import TYPE_CHECKING
 
 import boto3
 from botocore.config import Config
 from botocore.exceptions import BotoCoreError, ClientError
-from mypy_boto3_s3 import S3Client
-from mypy_boto3_s3.type_defs import ObjectIdentifierTypeDef
 
 from app.config import StorageSettings
+
+if TYPE_CHECKING:  # stubs from the dev group, absent from the prod image (annotations are lazy)
+    from mypy_boto3_s3 import S3Client
+    from mypy_boto3_s3.type_defs import ObjectIdentifierTypeDef
 
 CACHE_CONTROL = "public, max-age=31536000, s-maxage=86400, immutable"
 MISSING = {"404", "NoSuchKey", "NotFound"}
