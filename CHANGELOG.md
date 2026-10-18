@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.26.1](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.26.0...v0.26.1) (2026-10-18)
+
+
+### Bug Fixes
+
+* **backend:** the backend image starts again; the S3 type stubs are imported for type checking only (ZIF-133) ([#287](https://github.com/fjcloudaiconsulting/ziftbook/issues/287)) ([25681e4](https://github.com/fjcloudaiconsulting/ziftbook/commit/25681e47305bd106635fdfb1987d023f02e60697))
+
 ## [0.26.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.25.0...v0.26.0) (2026-10-18)
 
 
