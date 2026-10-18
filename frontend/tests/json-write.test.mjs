@@ -37,13 +37,13 @@ function argsAt(text, open) {
 }
 
 test("the spec still has bodyless writes to check", () => {
-  // GUARD: a renamed operationId must not turn the fence below into a check of nothing.
+  // GUARD scan: a renamed operationId must not turn the fence below into a check of nothing.
   assert.ok(bodyless.includes("adminSignOut"), bodyless.join(", "));
   assert.ok(bodyless.includes("sessionSignOut"), bodyless.join(", "));
 });
 
 test("every call to a bodyless write sends JSON_WRITE", () => {
-  // FENCE: adminSignOut() with no argument answered 415 on prod, so admins could not sign out.
+  // FENCE json-write: adminSignOut() with no argument answered 415 on prod, so admins could not sign out.
   const missing = [];
   let calls = 0;
   for (const file of [...sources(join(frontend, "app")), ...sources(join(frontend, "lib"))]) {

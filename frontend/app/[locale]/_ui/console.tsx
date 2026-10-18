@@ -20,13 +20,11 @@ import { allowed, canAnswerRequests, guardedWrite, navFor, needsName, type Role,
 import { badgeText } from "@/lib/today";
 
 import { LanguageSwitcher } from "./header";
-import { Banner, FieldError, Heading, NoScript, type Outcome, problem, send, Submit } from "./parts";
+import { Banner, FieldError, Heading, JSON_WRITE, NoScript, type Outcome, problem, send, Submit } from "./parts";
 import styles from "./console.module.css";
 import uiStyles from "./ui.module.css";
 
-// The API only accepts JSON writes (its CSRF defence), and the client drops Content-Type from a
-// request with no body: these DELETEs send an empty JSON object.
-export const JSON_WRITE = { body: {} as never };
+export { JSON_WRITE } from "./parts";
 
 // The shell's sticky bars, measured for the scroll padding that keeps keyboard focus clear of them.
 const topbarHeight = stickyHeight("--topbar-height");

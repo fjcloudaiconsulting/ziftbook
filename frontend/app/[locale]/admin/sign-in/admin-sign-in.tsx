@@ -7,8 +7,7 @@ import { adminPassSecondFactor, type EnrolmentOut, adminRead, adminSignIn, admin
 import { Link, useRouter } from "@/i18n/navigation";
 import { appCode, factorState, stepFor } from "@/lib/admin";
 
-import { JSON_WRITE } from "../../_ui/console";
-import { Banner, EmailField, Heading, Mark, NoScript, PasswordField, problem, Screen, send, Submit } from "../../_ui/parts";
+import { Banner, EmailField, Heading, JSON_WRITE, Mark, NoScript, PasswordField, problem, Screen, send, Submit } from "../../_ui/parts";
 import styles from "../../_ui/ui.module.css";
 import admin from "../admin.module.css";
 import { CodeField, EnrolCommand, SignedInAs } from "../parts";
@@ -34,6 +33,7 @@ export function AdminSignIn() {
   const [step, setStep] = useState<Step>({ kind: "loading" });
   // After the first screen, each step change moves focus to its heading.
   const [moved, setMoved] = useState(false);
+  const [signOutFailure, setSignOutFailure] = useState<string | null>(null);
   // A ticket typed before the enrol command signed the admin out, kept (in memory only) for the next sign-in.
   const [kept, setKept] = useState({ ticket: "", email: "" });
 
@@ -64,7 +64,10 @@ export function AdminSignIn() {
   }
 
   async function leave() {
-    await send(adminSignOut(JSON_WRITE));
+    const outcome = await send(adminSignOut(JSON_WRITE));
+    // 401: the session had already ended, which is where signing out leads anyway.
+    if (outcome.status !== 204 && outcome.status !== 401) return setSignOutFailure(form(problem(outcome)));
+    setSignOutFailure(null);
     setKept({ ticket: "", email: "" });
     setMoved(true);
     setStep({ kind: "password" });
@@ -112,7 +115,12 @@ export function AdminSignIn() {
             setStep({ kind: "ticket", who: step.who });
           }} onExpired={expired} />
       )}
-      {(step.kind === "ticket" || step.kind === "scan" || step.kind === "code") && <SignedInAs email={step.who.email} onSignOut={leave} />}
+      {(step.kind === "ticket" || step.kind === "scan" || step.kind === "code") && (
+        <>
+          {signOutFailure && <Banner tone="error">{signOutFailure}</Banner>}
+          <SignedInAs email={step.who.email} onSignOut={leave} />
+        </>
+      )}
     </Screen>
   );
 }

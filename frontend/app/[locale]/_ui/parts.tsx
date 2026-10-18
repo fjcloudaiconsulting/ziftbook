@@ -16,6 +16,10 @@ import styles from "./ui.module.css";
  * (ZIF-130), the appointments a time-off block would cover. */
 export type Outcome<T> = { status: number; code?: string; weekday?: number; bookings?: InTheWay[]; total?: number; held_until?: string; data?: T };
 
+// The API only accepts JSON writes (its CSRF defence), and the client drops Content-Type from a
+// request with no body: these DELETEs send an empty JSON object.
+export const JSON_WRITE = { body: {} as never };
+
 export async function send<T>(request: Promise<{ data?: T; error?: unknown; response?: Response }>): Promise<Outcome<T>> {
   try {
     const { data, error, response } = await request;
