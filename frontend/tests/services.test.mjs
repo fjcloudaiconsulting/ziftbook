@@ -50,6 +50,14 @@ describe("serviceBody", () => {
     assert.deepEqual(result.body.name, { nl: "Manicure", en: "Manicure" });
   });
 
+  test("the placeholder pick is sent", () => {
+    const result = body(
+      { name: { nl: "Knippen" }, description: {}, price: "35,00", duration: "45", gap: "default", placeholder: "nails" },
+    );
+    assert.ok(!("errors" in result));
+    assert.equal(result.body.placeholder, "nails");
+  });
+
   test('"use the business default" sends buffer_minutes: null, never 0', () => {
     const result = body(
       { name: { nl: "Manicure" }, description: {}, price: "35,00", duration: "45", gap: "default" },
