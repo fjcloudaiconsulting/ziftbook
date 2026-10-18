@@ -33,7 +33,8 @@ export function AdminSignIn() {
   const [step, setStep] = useState<Step>({ kind: "loading" });
   // After the first screen, each step change moves focus to its heading.
   const [moved, setMoved] = useState(false);
-  const [signOutFailure, setSignOutFailure] = useState<string | null>(null);
+  // Tied to the step it happened on: any step change (a new object) drops it.
+  const [signOutFailure, setSignOutFailure] = useState<{ on: Step; text: string } | null>(null);
   // A ticket typed before the enrol command signed the admin out, kept (in memory only) for the next sign-in.
   const [kept, setKept] = useState({ ticket: "", email: "" });
 
@@ -66,8 +67,7 @@ export function AdminSignIn() {
   async function leave() {
     const outcome = await send(adminSignOut(JSON_WRITE));
     // 401: the session had already ended, which is where signing out leads anyway.
-    if (outcome.status !== 204 && outcome.status !== 401) return setSignOutFailure(form(problem(outcome)));
-    setSignOutFailure(null);
+    if (outcome.status !== 204 && outcome.status !== 401) return setSignOutFailure({ on: step, text: form(problem(outcome)) });
     setKept({ ticket: "", email: "" });
     setMoved(true);
     setStep({ kind: "password" });
@@ -117,7 +117,7 @@ export function AdminSignIn() {
       )}
       {(step.kind === "ticket" || step.kind === "scan" || step.kind === "code") && (
         <>
-          {signOutFailure && <Banner tone="error">{signOutFailure}</Banner>}
+          {signOutFailure?.on === step && <Banner tone="error">{signOutFailure.text}</Banner>}
           <SignedInAs email={step.who.email} onSignOut={leave} />
         </>
       )}
