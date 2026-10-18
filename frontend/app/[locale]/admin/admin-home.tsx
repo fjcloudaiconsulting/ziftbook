@@ -8,6 +8,7 @@ import { useRouter } from "@/i18n/navigation";
 import { adminRead, adminSignOut, type AdminSession } from "@/api-client";
 import { stepFor } from "@/lib/admin";
 
+import { JSON_WRITE } from "../_ui/console";
 import { Heading, Mark, Screen, send } from "../_ui/parts";
 import styles from "../_ui/ui.module.css";
 import admin from "./admin.module.css";
@@ -27,7 +28,7 @@ export function AdminHome() {
   }, [router]);
 
   async function leave() {
-    await send(adminSignOut());
+    await send(adminSignOut(JSON_WRITE));
     router.replace("/admin/sign-in");
   }
 

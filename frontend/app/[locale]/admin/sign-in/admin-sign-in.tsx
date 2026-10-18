@@ -7,6 +7,7 @@ import { adminPassSecondFactor, type EnrolmentOut, adminRead, adminSignIn, admin
 import { Link, useRouter } from "@/i18n/navigation";
 import { appCode, factorState, stepFor } from "@/lib/admin";
 
+import { JSON_WRITE } from "../../_ui/console";
 import { Banner, EmailField, Heading, Mark, NoScript, PasswordField, problem, Screen, send, Submit } from "../../_ui/parts";
 import styles from "../../_ui/ui.module.css";
 import admin from "../admin.module.css";
@@ -63,7 +64,7 @@ export function AdminSignIn() {
   }
 
   async function leave() {
-    await send(adminSignOut());
+    await send(adminSignOut(JSON_WRITE));
     setKept({ ticket: "", email: "" });
     setMoved(true);
     setStep({ kind: "password" });
