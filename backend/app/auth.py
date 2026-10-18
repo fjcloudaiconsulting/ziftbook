@@ -7,12 +7,12 @@ import secrets
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel, Field
-from sqlalchemy import text
+from sqlalchemy import Row, text
 from sqlalchemy.orm import Session
 
 from app import limits, passwords
@@ -197,7 +197,8 @@ class SignedIn:
     db: Session  # a tenant_context for the session's tenant
 
 
-def signed_in(request: Request) -> Iterator[SignedIn]:
+def resolve(request: Request) -> Row[Any]:
+    """The request's session (tenant_id, user_id, role), or 401."""
     token = request.cookies.get(COOKIE)
     row = None
     if token:
@@ -213,6 +214,11 @@ def signed_in(request: Request) -> Iterator[SignedIn]:
     # For the access line: this dependency runs in a worker thread whose context the middleware
     # never sees.
     request.state.tenant_id = row.tenant_id
+    return row
+
+
+def signed_in(request: Request) -> Iterator[SignedIn]:
+    row = resolve(request)
     with tenant_context(row.tenant_id) as db:
         yield SignedIn(row.user_id, row.tenant_id, row.role, db)
 

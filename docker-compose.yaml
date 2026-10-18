@@ -77,6 +77,15 @@ services:
       ZIF_TURNSTILE_DISABLED: "true" # no secret in development; without it every public booking is refused
       ZIF_SETUP_TOKEN: dev-only-setup-token-not-a-secret-0000 # development only, not a secret; make seed uses it (Makefile)
       ZIF_TOTP_KEY: ZGV2LW9ubHktdG90cC1rZXktbm90LWEtc2VjcmV0ISE= # development only, not a secret
+      # Photo storage (ZIF-133): the dev object store below. Dev keys, not secrets. The browser
+      # PUTs to the public endpoint; the services reach the store by its compose name.
+      ZIF_S3_ENDPOINT: http://seaweedfs:8333
+      ZIF_S3_PUBLIC_ENDPOINT: http://localhost:8333
+      ZIF_S3_UPLOADS_BUCKET: ziftbook-uploads
+      ZIF_S3_MEDIA_BUCKET: ziftbook-media
+      ZIF_S3_ACCESS_KEY_ID: dev
+      ZIF_S3_SECRET_ACCESS_KEY: dev-secret
+      ZIF_MEDIA_URL: http://localhost:8333/ziftbook-media
       ZIF_LOG_LEVEL: DEBUG
       ZIF_LOG_FORMAT: text
       OTEL_EXPORTER_OTLP_ENDPOINT: ${ZIF_OTEL_EXPORTER_OTLP_ENDPOINT:-}
@@ -89,6 +98,8 @@ services:
         condition: service_completed_successfully
       mailpit:
         condition: service_healthy
+      seaweedfs-init:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/healthz')"]
       start_period: 60s
@@ -116,10 +127,21 @@ services:
         condition: service_completed_successfully
       mailpit:
         condition: service_healthy
+      seaweedfs-init:
+        condition: service_completed_successfully
     environment:
       ZIF_DATABASE_URL: postgresql+psycopg://ziftbook_app:ziftbook_app@postgres:5432/ziftbook
       # Mailpit's HTTP send API, never SMTP (ZIF-151); a Mailgun key would take precedence.
       ZIF_MAILPIT_URL: http://mailpit:8025
+      # Photo storage (ZIF-133): the dev object store below. Dev keys, not secrets. The browser
+      # PUTs to the public endpoint; the services reach the store by its compose name.
+      ZIF_S3_ENDPOINT: http://seaweedfs:8333
+      ZIF_S3_PUBLIC_ENDPOINT: http://localhost:8333
+      ZIF_S3_UPLOADS_BUCKET: ziftbook-uploads
+      ZIF_S3_MEDIA_BUCKET: ziftbook-media
+      ZIF_S3_ACCESS_KEY_ID: dev
+      ZIF_S3_SECRET_ACCESS_KEY: dev-secret
+      ZIF_MEDIA_URL: http://localhost:8333/ziftbook-media
       ZIF_LOG_LEVEL: DEBUG
       ZIF_LOG_FORMAT: text
       OTEL_EXPORTER_OTLP_ENDPOINT: ${ZIF_OTEL_EXPORTER_OTLP_ENDPOINT:-}
@@ -190,5 +212,52 @@ services:
       start_interval: 1s
       interval: 15s
 
+  # Photo storage in development (ZIF-133): an S3-compatible API on http://localhost:8333, one dev
+  # identity (the keys in the backend's environment) and no anonymous access; the bucket
+  # policy below opens the media bucket for reading.
+  seaweedfs:
+    image: mirror.gcr.io/chrislusf/seaweedfs:4.48@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d
+    command: ["server", "-s3", "-s3.config=/etc/seaweedfs/s3.json", "-dir=/data"]
+    ports:
+      - "127.0.0.1:8333:8333"
+    volumes:
+      - seaweedfs:/data
+    configs:
+      - source: seaweedfs-s3
+        target: /etc/seaweedfs/s3.json
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8333/status || exit 1"]
+      start_period: 20s
+      start_interval: 1s
+      interval: 15s
+
+  # Creates the two buckets, the media bucket's public-read policy and the uploads bucket's CORS
+  # (the browser PUTs from the web app's origin) on every start; idempotent.
+  seaweedfs-init:
+    image: mirror.gcr.io/amazon/aws-cli:2.34.0@sha256:97cc5f847898f54432492c128408c62e0df2153d9ad36573be8e5a03826123b0
+    depends_on:
+      seaweedfs:
+        condition: service_healthy
+    environment:
+      AWS_ENDPOINT_URL: http://seaweedfs:8333
+      AWS_ACCESS_KEY_ID: dev
+      AWS_SECRET_ACCESS_KEY: dev-secret
+      AWS_DEFAULT_REGION: us-east-1
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        for bucket in ziftbook-uploads ziftbook-media; do
+          aws s3api head-bucket --bucket $$bucket 2>/dev/null || aws s3api create-bucket --bucket $$bucket
+        done
+        aws s3api put-bucket-policy --bucket ziftbook-media --policy '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":"s3:GetObject","Resource":"arn:aws:s3:::ziftbook-media/*"}]}'
+        aws s3api put-bucket-cors --bucket ziftbook-uploads --cors-configuration '{"CORSRules":[{"AllowedOrigins":["http://localhost:3000"],"AllowedMethods":["PUT"],"AllowedHeaders":["content-type"],"MaxAgeSeconds":3600}]}'
+
+configs:
+  seaweedfs-s3:
+    content: |
+      {"identities": [{"name": "dev", "credentials": [{"accessKey": "dev", "secretKey": "dev-secret"}],
+        "actions": ["Admin", "Read", "Write", "List", "Tagging"]}]}
+
 volumes:
   pgdata:
+  seaweedfs:
