@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.26.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.25.0...v0.26.0) (2026-10-18)
+
+
+### Features
+
+* **backend:** owners upload a service photo, checked and resized before it is linked (ZIF-133) ([#279](https://github.com/fjcloudaiconsulting/ziftbook/issues/279)) ([aed5670](https://github.com/fjcloudaiconsulting/ziftbook/commit/aed56701af8d664536e6274fa5e81dfe0ee9c6f7))
+* **backend:** the worker prunes jobs finished more than 30 days ago (ZIF-35) ([#267](https://github.com/fjcloudaiconsulting/ziftbook/issues/267)) ([6c9ca48](https://github.com/fjcloudaiconsulting/ziftbook/commit/6c9ca482dee4226ab300489007f614ddeeba1268))
+* every service shows a placeholder picture, picked from its name or by the owner (ZIF-133) ([#276](https://github.com/fjcloudaiconsulting/ziftbook/issues/276)) ([327b465](https://github.com/fjcloudaiconsulting/ziftbook/commit/327b465965040ce7512490f8036186a27477bfc7))
+* **frontend:** a mistyped address shows a "page not found" in the visitor's language (ZIF-148) ([#273](https://github.com/fjcloudaiconsulting/ziftbook/issues/273)) ([9ea5558](https://github.com/fjcloudaiconsulting/ziftbook/commit/9ea55584165982ae099c6f5a5ab6d58528c08411))
+* **frontend:** clients can read ziftbook's Terms and Privacy pages (ZIF-147) ([#275](https://github.com/fjcloudaiconsulting/ziftbook/issues/275)) ([c796d3c](https://github.com/fjcloudaiconsulting/ziftbook/commit/c796d3c2ef7f4fed30d42d40739a246e0a62e60e))
+* **frontend:** owners add, replace and remove a service photo, and every list shows it (ZIF-133) ([#281](https://github.com/fjcloudaiconsulting/ziftbook/issues/281)) ([8a88674](https://github.com/fjcloudaiconsulting/ziftbook/commit/8a88674589a664a2c91ceb6f604a4ba196fcf971))
+* **frontend:** the guest reschedule page uses the booking page's day and time picker (ZIF-149) ([#277](https://github.com/fjcloudaiconsulting/ziftbook/issues/277)) ([a452e7e](https://github.com/fjcloudaiconsulting/ziftbook/commit/a452e7ea1e8fb19ecd81f6019ad1a9fe00071394))
+* online bookings need a phone, checked and stored in one international format (ZIF-152) ([#272](https://github.com/fjcloudaiconsulting/ziftbook/issues/272)) ([3f0ae29](https://github.com/fjcloudaiconsulting/ziftbook/commit/3f0ae29eb93787f819963c710c0504d967afc480))
+
+
+### Bug Fixes
+
+* **backend:** a failing healthcheck ping never stops the worker (ZIF-21) ([#271](https://github.com/fjcloudaiconsulting/ziftbook/issues/271)) ([53a5a12](https://github.com/fjcloudaiconsulting/ziftbook/commit/53a5a12d3e3b03de38c3c35c072c8a60d19c075b))
+* **frontend:** keyboard focus scrolls clear of the console's sticky bars (ZIF-144) ([#278](https://github.com/fjcloudaiconsulting/ziftbook/issues/278)) ([46be628](https://github.com/fjcloudaiconsulting/ziftbook/commit/46be628696ac9ebd1460ae478bf7f685c6b7eaf9))
+* **frontend:** the dev and build logs drop Edge-runtime and extension noise (ZIF-141) ([#268](https://github.com/fjcloudaiconsulting/ziftbook/issues/268)) ([f596766](https://github.com/fjcloudaiconsulting/ziftbook/commit/f5967660cf876d68e2753fd03d11975f5b735287))
+* **frontend:** the privacy notice names server logs at Grafana Labs and service photos at Cloudflare (ZIF-89) ([#283](https://github.com/fjcloudaiconsulting/ziftbook/issues/283)) ([d5bb154](https://github.com/fjcloudaiconsulting/ziftbook/commit/d5bb15462684fb04fd49fb53435460e112d58c91))
+* **frontend:** the Terms and Privacy pages name FJ Cloud & AI Consulting and its details (ZIF-147) ([#285](https://github.com/fjcloudaiconsulting/ziftbook/issues/285)) ([9ebc315](https://github.com/fjcloudaiconsulting/ziftbook/commit/9ebc315d9220621ea96c1a44cc30380ea0237936))
+
 ## [0.25.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.24.1...v0.25.0) (2026-10-15)
 
 
