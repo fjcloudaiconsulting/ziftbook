@@ -4,8 +4,9 @@ from pathlib import Path
 
 # Top-level modules only the dev group installs: the prod image has none of them (uv sync --no-dev),
 # so a runtime import of one crashes there and nowhere else (v0.26.0: mypy_boto3_s3).
-# shortcut: a hand-kept list, update it with [dependency-groups] dev in pyproject.toml.
-DEV_ONLY = ("mypy_boto3_", "moto", "mypy", "pytest", "xdist", "ruff")
+# shortcut: a hand-kept list of the direct dev group (not its transitive deps, e.g. yaml via moto);
+# update it with [dependency-groups] dev in pyproject.toml, or derive it from uv.lock if it drifts.
+DEV_ONLY = ("mypy_boto3_", "moto", "mypy", "pytest", "_pytest", "xdist", "ruff")
 
 HIDE = f"""
 import importlib.abc, sys
