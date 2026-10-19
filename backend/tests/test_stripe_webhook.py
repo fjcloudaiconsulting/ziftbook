@@ -18,6 +18,10 @@ from app.worker import KINDS
 from tests.conftest import People, closed, new_client, points
 from tests.stripe_fake import WEBHOOK_SECRET, FakeGateway, connect, event_body, signed
 
+WRONG_TYPES = (
+    b'{"id": "evt_1", "type": ["account.updated"], "account": {"id": "acct_1"},'
+    b' "data": {"object": {"id": "acct_1"}}}'
+)
 JSON = {"content-type": "application/json"}
 Lines = Callable[[], list[dict[str, Any]]]
 
@@ -58,6 +62,7 @@ def run_jobs() -> None:
         "not json",
         "signed not json",
         "signed not an event",
+        "signed wrong types",
     ],
 )
 def test_an_unsigned_or_badly_signed_event_is_refused(
@@ -78,12 +83,14 @@ def test_an_unsigned_or_badly_signed_event_is_refused(
         "not json": signed(b"not json", secret="whsec_somebody_else"),
         "signed not json": signed(b"not json"),
         "signed not an event": signed(b'{"hello": 1}'),
+        "signed wrong types": signed(WRONG_TYPES),
     }[case]
     sent = {
         "changed body": body + b" ",
         "not json": b"not json",
         "signed not json": b"not json",
         "signed not an event": b'{"hello": 1}',
+        "signed wrong types": WRONG_TYPES,
     }.get(case, body)
     before = stripe_jobs(migrate_engine)
 

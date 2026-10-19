@@ -29,6 +29,7 @@ class FakeGateway(Gateway):
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self.failures: dict[str, Kind] = {}
         self._by_key: dict[str, str] = {}
+        self._params: dict[str, dict[str, Any]] = {}
 
     def fail_next(self, op: str, kind: Kind = "unavailable") -> None:
         self.failures[op] = kind
@@ -37,6 +38,12 @@ class FakeGateway(Gateway):
         return sum(1 for name, _ in self.calls if name == op)
 
     def _enter(self, op: str, **params: Any) -> None:
+        # No transaction (so no pool connection) is held across a Stripe call.
+        from tests.test_service_photos_api import (
+            idle_in_transaction,  # conftest imports this module
+        )
+
+        assert idle_in_transaction() == 0, f"a transaction is open across stripe {op}"
         self.calls.append((op, params))
         if kind := self.failures.pop(op, None):
             raise Failed(kind, "req_fake")
@@ -45,21 +52,21 @@ class FakeGateway(Gateway):
         self,
         *,
         key: str,
+        tenant_id: str,
         country: str,
         currency: str,
-        name: str,
-        email: str,
         fees_collector: FeesCollector,
     ) -> Account:
-        self._enter(
-            "create_account",
-            key=key,
-            country=country,
-            currency=currency,
-            name=name,
-            email=email,
-            fees_collector=fees_collector,
-        )
+        params = {
+            "tenant_id": tenant_id,
+            "country": country,
+            "currency": currency,
+            "fees_collector": fees_collector,
+        }
+        self._enter("create_account", key=key, **params)
+        # Stripe rejects a reused idempotency key whose params differ.
+        if self._params.setdefault(key, params) != params:
+            raise Failed("invalid", "req_fake")
         if key not in self._by_key:
             account_id = "acct_" + uuid.uuid4().hex[:16]
             self._by_key[key] = account_id

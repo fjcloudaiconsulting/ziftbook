@@ -61,8 +61,7 @@ def create(gateway: Gateway, fees_collector: FeesCollector = "stripe") -> Any:
         key="account:t",
         country="NL",
         currency="EUR",
-        name="Salon",
-        email="owner@example.com",
+        tenant_id="t",
         fees_collector=fees_collector,
     )
 

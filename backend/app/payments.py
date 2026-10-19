@@ -5,19 +5,20 @@ across a Stripe call: a route reads first, calls Stripe, then writes in a short 
 
 import asyncio
 import logging
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from sqlalchemy import text
+from sqlalchemy import Row, text
 from sqlalchemy.orm import Session
 
-from app import auth, jobs, limits, stripe_gateway, tracing
+from app import auth, jobs, limits, logs, stripe_gateway, tracing
 from app.business_settings import BusinessSettings, Locale
 from app.config import MailSettings, StripeSettings
 from app.db import SessionLocal, tenant_context
@@ -115,14 +116,16 @@ class Seen:
     user_id: UUID
     country: str
     currency: str
-    name: str
-    email: str
     account: str | None
     enabled: bool
 
 
-def _see(request: Request, owner_only: bool) -> Seen:
-    row = auth.resolve(request)
+# The session is a dependency (auth.resolve), not a call in a body, so the name-gate walk in
+# tests/test_names.py sees these routes.
+Resolved = Annotated[Row[Any], Depends(auth.resolve)]
+
+
+def _see(row: Resolved, owner_only: bool) -> Iterator[Seen]:
     with tenant_context(row.tenant_id) as db:
         current = auth.SignedIn(row.user_id, row.tenant_id, row.role, db)
         auth.named(current)
@@ -130,38 +133,39 @@ def _see(request: Request, owner_only: bool) -> Seen:
             auth.owner(current)
         business = db.execute(
             text(
-                "SELECT t.country, t.currency, t.name, u.email FROM tenants t, users u "
-                "WHERE t.id = current_setting('app.tenant_id')::uuid AND u.id = :u"
-            ),
-            {"u": row.user_id},
+                "SELECT country, currency FROM tenants "
+                "WHERE id = current_setting('app.tenant_id')::uuid"
+            )
         ).one()
         account = db.execute(ACCOUNT).first()
-    return Seen(
+    seen = Seen(
         row.tenant_id,
         row.user_id,
         business.country,
         business.currency,
-        business.name,
-        business.email,
         account.stripe_account_id if account else None,
         bool(account and account.charges_enabled),
     )
+    # The transaction above is over; the gateway's log lines still name the business.
+    with logs.bound(tenant_id=str(seen.tenant_id)):
+        yield seen
 
 
-def _member(request: Request) -> Seen:
-    return _see(request, False)
+def _member(row: Resolved) -> Iterator[Seen]:
+    yield from _see(row, False)
 
 
-def _owner(request: Request) -> Seen:
-    return _see(request, True)
+def _owner(row: Resolved) -> Iterator[Seen]:
+    yield from _see(row, True)
 
 
 AnyMember = Annotated[Seen, Depends(_member)]
 Owner = Annotated[Seen, Depends(_owner)]
 
 
-def _limited(seen: Seen) -> bool:
-    return limits.hit({f"payments:tenant:{seen.tenant_id}": STRIPE_LIMIT}, STRIPE_WINDOW)
+def _limited(seen: Seen, kind: Literal["read", "write"]) -> bool:
+    # Separate budgets: a member polling the read cannot push the owner's POSTs into 429.
+    return limits.hit({f"payments:{kind}:{seen.tenant_id}": STRIPE_LIMIT}, STRIPE_WINDOW)
 
 
 @router.get(
@@ -178,7 +182,7 @@ def read_account(seen: AnyMember, response: Response) -> PaymentAccountOut:
     else:
         enabled = seen.enabled
         # A read: limited or failed, it answers from the row (the gateway logged the WARNING).
-        if not enabled and not _limited(seen):
+        if not enabled and not _limited(seen, "read"):
             try:
                 enabled = stripe_gateway.gateway.retrieve_account(seen.account).charges_enabled
             except stripe_gateway.Failed:
@@ -213,7 +217,7 @@ def connect(body: ConnectIn, seen: Owner, request: Request, response: Response) 
         raise _unavailable()
     if seen.country in UNSUPPORTED_COUNTRIES:
         raise ApiError(409, "payments_unavailable_country")
-    if _limited(seen):
+    if _limited(seen, "write"):
         raise ApiError(429, "rate_limited")
     gateway = stripe_gateway.gateway
     account = seen.account
@@ -221,10 +225,9 @@ def connect(body: ConnectIn, seen: Owner, request: Request, response: Response) 
         if account is None:
             made = gateway.create_account(
                 key=f"account:{seen.tenant_id}",
+                tenant_id=str(seen.tenant_id),
                 country=seen.country,
                 currency=seen.currency,
-                name=seen.name,
-                email=seen.email,
                 fees_collector="application"
                 if NEW_ACCOUNT_FEE_MODE == "platform_pays"
                 else "stripe",
@@ -281,7 +284,7 @@ def dashboard(seen: Owner, response: Response) -> UrlOut:
         raise _unavailable()
     if seen.account is None:
         raise ApiError(409, "payments_not_connected")
-    if _limited(seen):
+    if _limited(seen, "write"):
         raise ApiError(429, "rate_limited")
     try:
         return UrlOut(url=stripe_gateway.gateway.login_link(seen.account))

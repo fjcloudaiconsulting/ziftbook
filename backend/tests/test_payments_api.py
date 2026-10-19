@@ -11,8 +11,17 @@ from sqlalchemy import Engine, text
 
 from app import payments
 from app.main import create_app
-from tests.conftest import People, email_of, events, new_client, put_settings, signed_in
+from tests.conftest import (
+    People,
+    add_membership,
+    add_user,
+    events,
+    new_client,
+    put_settings,
+    signed_in,
+)
 from tests.stripe_fake import FakeGateway, connect
+from tests.test_names import set_user_name
 from tests.test_payments_db import refused
 
 Lines = Callable[[], list[dict[str, Any]]]
@@ -80,10 +89,10 @@ def test_the_links_and_the_audit_event(
         ("payment_account_created", f"payment_account:{acct}")
     ]
     sent = [p for op, p in fake_stripe.calls if op == "create_account"][0]
-    assert (sent["country"], sent["currency"], sent["email"], sent["fees_collector"]) == (
+    assert (sent["tenant_id"], sent["country"], sent["currency"], sent["fees_collector"]) == (
+        str(people.a),
         "NL",
         "EUR",
-        email_of(people.both),
         "stripe",
     )
 
@@ -330,3 +339,78 @@ def test_the_stripe_posts_answer_429_past_the_limit(
     assert [r.status_code for r in (first, second, third, fourth)] == [200, 200, 429, 429]
     assert fourth.json() == {"code": "rate_limited"}
     assert fake_stripe.count("onboarding_link") == 1 and fake_stripe.count("login_link") == 1
+
+
+# ZIF-158 review 2. fence. Kills: the read sharing the POSTs' budget, so a member polling GET
+# pushes the owner's connect and dashboard into 429.
+def test_exhausted_reads_leave_the_posts_their_budget(
+    people: People, owner: TestClient, fake_stripe: FakeGateway
+) -> None:
+    connect(fake_stripe, people.a)
+    for _ in range(payments.STRIPE_LIMIT + 1):
+        owner.get("/api/payments/account")
+    before = fake_stripe.count("retrieve_account")
+    owner.get("/api/payments/account")
+    assert fake_stripe.count("retrieve_account") == before  # the read budget is spent
+
+    response = owner.post("/api/payments/dashboard", headers=JSON)
+
+    assert response.status_code == 200
+
+
+# ZIF-158 review 2. fence. Kills: a reused idempotency key carrying per-caller params (real Stripe
+# rejects it): two owners connecting the same business make one account and no error.
+def test_two_owners_connecting_the_same_business_make_one_account(
+    people: People,
+    app: FastAPI,
+    fake_stripe: FakeGateway,
+    migrate_engine: Engine,
+    app_engine: Engine,
+) -> None:
+    co_owner = add_user(app_engine, name="Co Owner")
+    add_membership(people.a, co_owner, "owner")
+
+    first_response = signed_in(app, people.a, people.both).post(
+        "/api/payments/account", json={"locale": "en"}
+    )
+    other_response = signed_in(app, people.a, co_owner).post(
+        "/api/payments/account", json={"locale": "en"}
+    )
+
+    assert (first_response.status_code, other_response.status_code) == (200, 200)
+    assert len(fake_stripe.accounts) == 1 and len(rows(migrate_engine, people.a)) == 1
+
+
+ROUTES = [
+    ("GET", "/api/payments/account"),
+    ("POST", "/api/payments/account"),
+    ("POST", "/api/payments/dashboard"),
+]
+
+
+# ZIF-158 review 2. The three routes read their own session: signed out is 401, nameless is
+# name_required (the F9 walk in test_names covers them too).
+@pytest.mark.parametrize(("method", "path"), ROUTES)
+def test_signed_out_is_401(app: FastAPI, fake_stripe: FakeGateway, method: str, path: str) -> None:
+    response = new_client(app).request(method, path, json=None if method == "GET" else {})
+
+    assert (response.status_code, response.json()) == (401, {"code": "unauthenticated"})
+
+
+@pytest.mark.parametrize(("method", "path"), ROUTES)
+def test_a_nameless_person_is_told_to_give_a_name(
+    people: People,
+    app: FastAPI,
+    fake_stripe: FakeGateway,
+    migrate_engine: Engine,
+    method: str,
+    path: str,
+) -> None:
+    set_user_name(migrate_engine, people.both, None)
+
+    response = signed_in(app, people.a, people.both).request(
+        method, path, json=None if method == "GET" else {}
+    )
+
+    assert (response.status_code, response.json()) == (403, {"code": "name_required"})
+    assert fake_stripe.calls == []

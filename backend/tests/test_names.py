@@ -244,7 +244,11 @@ def test_the_app_role_cannot_name_anyone_outside_its_business(
 
 def routes_behind_signed_in(app: FastAPI) -> list[tuple[str, str]]:
     def uses(dependant: Any) -> bool:
-        return any(d.call is app_auth.signed_in or uses(d) for d in dependant.dependencies)
+        # resolve: the payments routes read their session without holding a transaction.
+        return any(
+            d.call in (app_auth.signed_in, app_auth.resolve) or uses(d)
+            for d in dependant.dependencies
+        )
 
     found = []
     # include_router keeps the included router's routes behind an _IncludedRouter; none is included

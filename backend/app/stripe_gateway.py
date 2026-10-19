@@ -116,12 +116,13 @@ class Gateway:
         self,
         *,
         key: str,
+        tenant_id: str,
         country: str,
         currency: str,
-        name: str,
-        email: str,
         fees_collector: FeesCollector,
     ) -> Account:
+        # Stable tenant data only: Stripe rejects a reused idempotency key with other params, and
+        # onboarding collects the name and email itself.
         def call(client: stripe.StripeClient) -> Account:
             params: AccountCreateParams = {
                 "dashboard": "express",
@@ -133,8 +134,7 @@ class Gateway:
                     },
                     "currency": currency.lower(),
                 },
-                "display_name": name,
-                "contact_email": email,
+                "metadata": {"tenant_id": tenant_id},
                 "configuration": {
                     "merchant": {
                         "capabilities": {
@@ -206,7 +206,7 @@ class Gateway:
         try:
             stripe.WebhookSignature.verify_header(body, header, secret, TOLERANCE_SECONDS)
             event = json.loads(body)
-            return Event(
+            made = Event(
                 id=event["id"],
                 type=event["type"],
                 account=event.get("account"),
@@ -214,6 +214,15 @@ class Gateway:
             )
         except stripe.SignatureVerificationError, ValueError, KeyError, TypeError, AttributeError:
             raise BadSignature from None
+        # Signed, but the fields must still be what the handlers assume.
+        if not (
+            isinstance(made.id, str)
+            and isinstance(made.type, str)
+            and isinstance(made.account, str | None)
+            and isinstance(made.object_id, str | None)
+        ):
+            raise BadSignature
+        return made
 
 
 def _account(made: stripe.v2.core.Account) -> Account:
