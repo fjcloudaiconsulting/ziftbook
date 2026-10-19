@@ -57,7 +57,8 @@ export function flagOf(region: string): string {
 const fold = (s: string) => s.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase().trim();
 
 /** Whether an option answers the picker's search: a part of the country name (accents and case
- * ignored), the ISO code, or the dialling code typed as "44", "+44" or "0044". */
+ * ignored), the ISO code, or the dialling code typed as "44", "+44" or "0044". Dialling codes match
+ * as a PREFIX of the digits ("21" finds +213, "+3" finds +31..+39x), never inside one ("13" is not +213). */
 export function matchDial(o: DialOption, query: string): boolean {
   const q = fold(query);
   if (!q) return true;

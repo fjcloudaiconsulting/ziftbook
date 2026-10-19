@@ -20,6 +20,7 @@ export function DialPicker({ options, value, onChange }: { options: DialOption[]
   const trigger = useRef<HTMLButtonElement>(null);
   const panel = useRef<HTMLDivElement>(null);
   const search = useRef<HTMLInputElement>(null);
+  const hovered = useRef(false); // a pointer move must not scroll the list under the cursor
 
   const current = options.find((o) => o.region === value) ?? options[0];
   const shown = options.filter((o) => matchDial(o, query));
@@ -43,15 +44,16 @@ export function DialPicker({ options, value, onChange }: { options: DialOption[]
   useEffect(() => {
     if (!open) return;
     search.current?.focus();
-    const away = (e: MouseEvent) => {
+    const away = (e: PointerEvent) => {
       if (!panel.current?.contains(e.target as Node) && !trigger.current?.contains(e.target as Node)) setOpen(false);
     };
-    document.addEventListener("mousedown", away);
-    return () => document.removeEventListener("mousedown", away);
+    document.addEventListener("pointerdown", away); // iOS Safari sends no mousedown from non-clickable areas
+    return () => document.removeEventListener("pointerdown", away);
   }, [open]);
 
   useEffect(() => {
-    if (open && shown[act]) document.getElementById(optId(shown[act].region))?.scrollIntoView({ block: "nearest" });
+    if (open && !hovered.current && shown[act]) document.getElementById(optId(shown[act].region))?.scrollIntoView({ block: "nearest" });
+    hovered.current = false;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, act, query]);
 
@@ -70,7 +72,7 @@ export function DialPicker({ options, value, onChange }: { options: DialOption[]
     } else if (e.key === "Escape") {
       e.preventDefault();
       close();
-    } else if (e.key === "Tab") setOpen(false);
+    }
   };
 
   return (
@@ -81,7 +83,7 @@ export function DialPicker({ options, value, onChange }: { options: DialOption[]
           id="bp-dial"
           type="button"
           className={styles.dialTrigger}
-          aria-label={`${t("dialCode")}: ${current.name}`}
+          aria-label={`${t("dialCode")}: ${current.name} +${current.dial}`}
           aria-expanded={open}
           aria-controls={`${id}-panel`}
           onClick={() => (open ? setOpen(false) : show())}
@@ -93,7 +95,16 @@ export function DialPicker({ options, value, onChange }: { options: DialOption[]
         </button>
       </div>
       {open && (
-        <div ref={panel} id={`${id}-panel`} className={styles.dialPanel}>
+        <div
+          ref={panel}
+          id={`${id}-panel`}
+          className={styles.dialPanel}
+          // Tab moves focus on its own first; close once it has landed outside (a null target is a window blur).
+          onBlur={(e) => {
+            const to = e.relatedTarget as Node | null;
+            if (to && !panel.current?.contains(to) && !trigger.current?.contains(to)) setOpen(false);
+          }}
+        >
           <input
             ref={search}
             type="text"
@@ -113,12 +124,10 @@ export function DialPicker({ options, value, onChange }: { options: DialOption[]
             }}
             onKeyDown={onKey}
           />
-          {shown.length === 0 ? (
-            <p className={styles.dialEmpty} role="status">
-              {t("noCountry")}
-            </p>
-          ) : (
-            <ul id={`${id}-list`} role="listbox" aria-label={t("dialCode")} className={styles.dialList}>
+          <p className={styles.dialEmpty} role="status">
+            {shown.length === 0 ? t("noCountry") : ""}
+          </p>
+          <ul id={`${id}-list`} role="listbox" aria-label={t("dialCode")} className={styles.dialList}>
               {shown.map((o, i) => (
                 // Keyboard use is on the search box (aria-activedescendant); rows only take pointer picks.
                 <li
@@ -128,7 +137,11 @@ export function DialPicker({ options, value, onChange }: { options: DialOption[]
                   aria-selected={o.region === value}
                   className={`${styles.dialRow} ${i === act ? styles.dialRowActive : ""}`}
                   onMouseDown={(e) => e.preventDefault()}
-                  onMouseMove={() => setActive(i)}
+                  onMouseMove={() => {
+                    if (i === act) return;
+                    hovered.current = true;
+                    setActive(i);
+                  }}
                   onClick={() => pick(o.region)}
                 >
                   <span aria-hidden="true">{flagOf(o.region)}</span>
@@ -136,8 +149,7 @@ export function DialPicker({ options, value, onChange }: { options: DialOption[]
                   <span className={styles.dialCode}>{`+${o.dial}`}</span>
                 </li>
               ))}
-            </ul>
-          )}
+          </ul>
         </div>
       )}
     </>
