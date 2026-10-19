@@ -35,7 +35,7 @@ import { Banner, Chevron, FieldError, send, Submit } from "../_ui/parts";
 import { CheckIcon } from "../_ui/picker";
 import styles from "../_ui/ui.module.css";
 import { type Done, DoneScreen, Picker, WhoAt } from "./checkout";
-import { BookingFooter } from "./footer";
+import { BookingFooter, NewTab } from "./footer";
 import { PinIcon } from "./icons";
 import { type CacheEntry, type Flow, type Service, type Step2Plus, type TimesWindow } from "./shared";
 import { Summary } from "./summary";
@@ -54,16 +54,6 @@ const INITIAL: Omit<Flow, "name" | "email" | "phone" | "service" | "worker" | "w
   banner: null,
   busy: false,
 };
-
-function NewTab({ href, children }: { href: string; children: React.ReactNode }) {
-  const t = useTranslations("BookingPage");
-  return (
-    <Link href={href} target="_blank">
-      {children}
-      <span className={styles.srOnly}> {t("newTab")}</span>
-    </Link>
-  );
-}
 
 /** `/[slug]/book`: the day and time, then the details, then a direct booking (ZIF-157). The service,
  * the person and the time live in the URL (checkoutUrl) so a refresh restores them; nothing the
@@ -122,6 +112,10 @@ export function BookingPage({
   // change, so the effect below wouldn't re-fire.
   const [focusField, setFocusField] = useState<{ field: "name" | "email" | "phone" | "message"; gen: number } | null>(null);
   const focusFieldGen = useRef(0);
+  const focusOn = (field: "name" | "email" | "phone" | "message") => {
+    focusFieldGen.current += 1;
+    setFocusField({ field, gen: focusFieldGen.current });
+  };
   const [verifying, setVerifying] = useState(false);
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
   const turnstileWidget = useRef<string | null>(null);
@@ -183,10 +177,7 @@ export function BookingPage({
   // Runs after the details have (re)rendered with their inputs mounted, so a field targeted before
   // they were open still gets focused once they are.
   useEffect(() => {
-    if (focusField?.field === "name") nameRef.current?.focus();
-    else if (focusField?.field === "email") emailRef.current?.focus();
-    else if (focusField?.field === "phone") phoneRef.current?.focus();
-    else if (focusField?.field === "message") messageRef.current?.focus();
+    if (focusField) ({ name: nameRef, email: emailRef, phone: phoneRef, message: messageRef })[focusField.field].current?.focus();
   }, [focusField, flow.step]);
 
   // One window for everyone (ZIF-100): a person's times are filtered out of it locally (slotsFor).
@@ -412,8 +403,7 @@ export function BookingPage({
       setFlow((f) => ({ ...f, errors, banner: missingTime ? { where: 2, tone: "error", text: t("errMissingTime") } : f.banner }));
       const first = errors.name ? "name" : errors.email ? "email" : errors.phone ? "phone" : null;
       if (first) {
-        focusFieldGen.current += 1;
-        setFocusField({ field: first, gen: focusFieldGen.current });
+        focusOn(first);
       } else headingRefs.current[2]?.focus();
       return;
     }
@@ -459,7 +449,7 @@ export function BookingPage({
       setDone({
         status: answer.data.status,
         service: f.service,
-        worker: f.worker === "any" ? (f.service.workers.find((w) => w.id === answer.data!.worker_id) ?? null) : (f.service.workers.find((w) => w.id === f.worker) ?? null),
+        worker: f.service.workers.find((w) => w.id === (f.worker === "any" ? answer.data!.worker_id : f.worker)) ?? null,
         starts_at: answer.data.starts_at,
         price: answer.data.price,
         email: f.email,
@@ -535,16 +525,14 @@ export function BookingPage({
     if (outcome.kind === "phoneInvalid") {
       // ZIF-152: under the field, never the banner.
       setFlow({ ...f, busy: false, banner: null, errors: { ...f.errors, phone: t("errPhoneInvalid") } });
-      focusFieldGen.current += 1;
-      setFocusField({ field: "phone", gen: focusFieldGen.current });
+      focusOn("phone");
       return;
     }
     if (outcome.kind === "messageInvalid") {
       // B1: under the message, which opens if it was folded; never the generic banner.
       setFlow({ ...f, busy: false, banner: null, errors: { ...f.errors, message: t("errMessage") } });
       setMessageOpen(true);
-      focusFieldGen.current += 1;
-      setFocusField({ field: "message", gen: focusFieldGen.current });
+      focusOn("message");
       return;
     }
     setFlow({ ...f, busy: false, banner: { where: "c", tone: "error", text: failureText(outcome.kind) } });

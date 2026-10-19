@@ -914,7 +914,6 @@
   },
   "BookingPage": {
     "timesIn": "Times in {city} time",
-    "step1": "Choose a service",
     "step2": "Choose a day and time",
     "step3": "Your details",
     "change": "Change",

@@ -16,8 +16,8 @@ import { ServiceTile } from "../_ui/service-tile";
 import styles from "../_ui/ui.module.css";
 import { BookingFooter } from "./footer";
 import { CloseIcon, ClockIcon, PinIcon } from "./icons";
-import { ServiceList } from "./service-list";
-import { localized, type Service } from "./shared";
+import { ServiceRow } from "./service-list";
+import { localized, localizedDesc, type Service } from "./shared";
 
 /** One service's dialog: a native modal <dialog> (the console More sheet's mechanics: Esc, backdrop
  * click, focus return). Open means `service` is set, i.e. the URL's ?service= names a listed one. */
@@ -52,7 +52,7 @@ function ServiceDialog({
   }, [service]);
 
   const name = svc ? localized(svc.name, loc, page.language as Locale) : null;
-  const desc = svc && (svc.description[loc] || svc.description[page.language]) ? localized(svc.description, loc, page.language as Locale) : null;
+  const desc = svc && localizedDesc(svc.description, loc, page.language as Locale);
   return (
     <dialog
       ref={ref}
@@ -147,7 +147,11 @@ export function ServicesPage({ page, locale }: { page: BookingPageOut; locale: s
               <h2 id="services-h" className={styles.checkoutHead}>
                 {t("servicesTitle")}
               </h2>
-              <ServiceList page={page} loc={loc} businessLanguage={page.language as Locale} locale={locale} t={t} onOpen={(svc) => window.history.pushState(null, "", `/${locale}${base}?service=${svc.id}`)} />
+              <ul className={styles.services} aria-labelledby="services-h">
+                {page.services.map((svc) => (
+                  <ServiceRow key={svc.id} svc={svc} loc={loc} businessLanguage={page.language as Locale} locale={locale} t={t} onOpen={(s) => window.history.pushState(null, "", `/${locale}${base}?service=${s.id}`)} />
+                ))}
+              </ul>
             </>
           )}
         </div>

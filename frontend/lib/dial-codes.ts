@@ -37,9 +37,9 @@ export function defaultDial(country: string): string {
 /** The country-code select's options: the business country first, then the rest by their name in
  * the page language. Text reads "Netherlands (NL +31)"; the value is the ISO code (several regions
  * share "+1"). */
-export function dialOptions(country: string, locale: string): { region: string; dial: string; text: string }[] {
+export function dialOptions(country: string, locale: string): { region: string; text: string }[] {
   const names = new Intl.DisplayNames(locale, { type: "region" });
-  const all = Object.entries(DIAL).map(([region, dial]) => ({ region, dial, text: `${names.of(region) ?? region} (${region} +${dial})` }));
+  const all = Object.entries(DIAL).map(([region, dial]) => ({ region, text: `${names.of(region) ?? region} (${region} +${dial})` }));
   const rest = all.filter((o) => o.region !== country).sort((a, b) => a.text.localeCompare(b.text, locale));
   return [...all.filter((o) => o.region === country), ...rest];
 }

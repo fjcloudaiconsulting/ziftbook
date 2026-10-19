@@ -1,7 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 import { getTranslations } from "next-intl/server";
 
-import { checkoutUrl, parseCheckout } from "@/lib/booking-page";
+import { parseCheckout } from "@/lib/booking-page";
 
 import { LanguageSwitcher } from "../../_ui/header";
 import { Outcome } from "../../_ui/parts";
@@ -9,15 +9,7 @@ import styles from "../../_ui/ui.module.css";
 import { BookingPage } from "../booking-page";
 import { load } from "../load";
 
-// A fixed, generic title when the load failed, as the services page has.
-const FALLBACK_TITLE = "ziftbook";
-
-export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }) {
-  const { slug } = await params;
-  const loaded = await load(slug);
-  if (loaded.status === 404) notFound();
-  return { title: loaded.status === 200 ? loaded.data.name : FALLBACK_TITLE };
-}
+export { generateMetadata } from "../page";
 
 /** `/[slug]/book?service=<id>&with=<memberId>&at=<UTC ISO>`: the checkout. An unknown or missing
  * service goes back to the list; `with` and `at` that do not hold up are dropped (parseCheckout). */
@@ -34,15 +26,15 @@ export default async function CheckoutPage({
 
   if (loaded.status === 404) notFound();
 
+  // Only service/with/at, so nothing else leaks through a retry.
+  const pick = new URLSearchParams();
+  for (const key of ["service", "with", "at"]) {
+    const value = query[key];
+    if (typeof value === "string") pick.set(key, value);
+  }
+
   if (loaded.status === "error") {
-    // Keep the pick across a retry: only service/with/at, rebuilt so nothing else leaks through.
-    const retry = typeof query.service === "string"
-      ? checkoutUrl(slug, {
-          serviceId: query.service,
-          memberId: typeof query.with === "string" ? query.with : null,
-          at: typeof query.at === "string" ? query.at : null,
-        })
-      : `/${slug}/book`;
+    const retry = pick.has("service") ? `/${slug}/book?${pick}` : `/${slug}/book`;
     const t = await getTranslations("BookingPage");
     return (
       <>
@@ -60,11 +52,6 @@ export default async function CheckoutPage({
     );
   }
 
-  const pick = new URLSearchParams();
-  for (const key of ["service", "with", "at"]) {
-    const value = query[key];
-    if (typeof value === "string") pick.set(key, value);
-  }
   const service = loaded.data.services.find((svc) => svc.id === pick.get("service"));
   if (!service) redirect(`/${locale}/${slug}`);
   const { memberId, at } = parseCheckout(pick, service);

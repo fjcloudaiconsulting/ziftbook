@@ -3,16 +3,16 @@
 import type { useTranslations } from "next-intl";
 import { useState } from "react";
 
-import type { BookingPageOut } from "@/api-client";
 import { formatMoney } from "@/lib/money";
 import type { Locale } from "@/lib/services";
 
 import { ServiceTile } from "../_ui/service-tile";
 import styles from "../_ui/ui.module.css";
 import { ClockIcon, PlusIcon } from "./icons";
-import { localized, type Service } from "./shared";
+import { localized, localizedDesc, type Service } from "./shared";
 
-function ServiceRow({
+/** One row of the open list of services: it opens that service's dialog (no radios). */
+export function ServiceRow({
   svc,
   loc,
   businessLanguage,
@@ -28,7 +28,7 @@ function ServiceRow({
   onOpen(service: Service): void;
 }) {
   const name = localized(svc.name, loc, businessLanguage);
-  const desc = svc.description[loc] || svc.description[businessLanguage] ? localized(svc.description, loc, businessLanguage) : null;
+  const desc = localizedDesc(svc.description, loc, businessLanguage);
   const [expanded, setExpanded] = useState(false);
   // Sticky once seen clamped: expanded text no longer overflows, but "Show less" must stay.
   const [clamped, setClamped] = useState(false);
@@ -84,30 +84,5 @@ function ServiceRow({
         </button>
       </div>
     </li>
-  );
-}
-
-/** The open list of services: a row opens that service's dialog (no radios). */
-export function ServiceList({
-  page,
-  loc,
-  businessLanguage,
-  locale,
-  t,
-  onOpen,
-}: {
-  page: BookingPageOut;
-  loc: Locale;
-  businessLanguage: Locale;
-  locale: string;
-  t: ReturnType<typeof useTranslations>;
-  onOpen(service: Service): void;
-}) {
-  return (
-    <ul className={styles.services} aria-labelledby="services-h">
-      {page.services.map((svc) => (
-        <ServiceRow key={svc.id} svc={svc} loc={loc} businessLanguage={businessLanguage} locale={locale} t={t} onOpen={onOpen} />
-      ))}
-    </ul>
   );
 }

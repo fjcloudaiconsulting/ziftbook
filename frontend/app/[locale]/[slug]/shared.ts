@@ -11,6 +11,11 @@ export function localized(map: Record<string, string>, locale: Locale, businessL
   return { text, lang: map[locale] ? null : businessLanguage };
 }
 
+/** The description when either language has one, else null. */
+export function localizedDesc(map: Record<string, string>, locale: Locale, businessLanguage: Locale) {
+  return map[locale] || map[businessLanguage] ? localized(map, locale, businessLanguage) : null;
+}
+
 // One flat shape for the whole flow (not a discriminated union): `service` is the only field that
 // really gates the steps, and every call site already checks it (or `flow.step`) at runtime, so a
 // union bought type-narrowing this file never used, at the cost of casts on every update.

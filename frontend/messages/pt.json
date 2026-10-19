@@ -914,7 +914,6 @@
   },
   "BookingPage": {
     "timesIn": "Horários no fuso de {city}",
-    "step1": "Escolha um serviço",
     "step2": "Escolha o dia e o horário",
     "step3": "Seus dados",
     "change": "Alterar",
