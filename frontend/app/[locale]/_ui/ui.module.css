@@ -376,7 +376,7 @@ a.textButton { display: inline-flex; align-items: center; }
 
 .bizHeader { display: flex; flex-direction: column; gap: 0.35rem; padding-block: 0.5rem 1.5rem; }
 .bizHeader h1 { margin: 0; font: 400 1.75rem/1.2 var(--font-display), Georgia, serif; }
-.bizMeta { margin: 0.35rem 0 0; display: flex; align-items: center; gap: 0.4rem; color: var(--muted); font-size: 0.9375rem; }
+.bizMeta { margin: 0.35rem 0 0; display: flex; flex-wrap: wrap; align-items: center; gap: 0.15rem 0.4rem; color: var(--muted); font-size: 0.9375rem; }
 .bizMeta svg { flex: none; }
 
 .bookingLayout { display: grid; gap: 0; container-type: inline-size; }
