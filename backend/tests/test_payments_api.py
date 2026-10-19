@@ -101,6 +101,20 @@ def test_the_links_and_the_audit_event(
     assert login.headers["Cache-Control"] == "no-store"
 
 
+def test_every_stripe_call_from_a_route_names_the_business(
+    people: People, owner: TestClient, fake_stripe: FakeGateway
+) -> None:
+    # ZIF-158 F24. fence. Kills: binding tenant_id in the dependency, whose context never
+    # reaches the handler, so the "stripe call" log lines carry no business.
+    owner.post("/api/payments/account", json={"locale": "en"})
+    owner.get("/api/payments/account")  # onboarding: reads Stripe
+    owner.post("/api/payments/dashboard", headers=JSON)
+
+    ops = [op for op, _ in fake_stripe.calls]
+    assert {"create_account", "retrieve_account", "login_link"} <= set(ops)
+    assert fake_stripe.tenants == [str(people.a)] * len(ops)
+
+
 def test_the_dashboard_needs_a_connected_account(
     owner: TestClient, fake_stripe: FakeGateway
 ) -> None:

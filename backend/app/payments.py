@@ -5,7 +5,6 @@ across a Stripe call: a route reads first, calls Stripe, then writes in a short 
 
 import asyncio
 import logging
-from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Annotated, Any, Literal
@@ -125,7 +124,7 @@ class Seen:
 Resolved = Annotated[Row[Any], Depends(auth.resolve)]
 
 
-def _see(row: Resolved, owner_only: bool) -> Iterator[Seen]:
+def _see(row: Resolved, owner_only: bool) -> Seen:
     with tenant_context(row.tenant_id) as db:
         current = auth.SignedIn(row.user_id, row.tenant_id, row.role, db)
         auth.named(current)
@@ -146,17 +145,15 @@ def _see(row: Resolved, owner_only: bool) -> Iterator[Seen]:
         account.stripe_account_id if account else None,
         bool(account and account.charges_enabled),
     )
-    # The transaction above is over; the gateway's log lines still name the business.
-    with logs.bound(tenant_id=str(seen.tenant_id)):
-        yield seen
+    return seen
 
 
-def _member(row: Resolved) -> Iterator[Seen]:
-    yield from _see(row, False)
+def _member(row: Resolved) -> Seen:
+    return _see(row, False)
 
 
-def _owner(row: Resolved) -> Iterator[Seen]:
-    yield from _see(row, True)
+def _owner(row: Resolved) -> Seen:
+    return _see(row, True)
 
 
 AnyMember = Annotated[Seen, Depends(_member)]
@@ -174,36 +171,38 @@ def _limited(seen: Seen, kind: Literal["read", "write"]) -> bool:
     responses={s: {"model": Error} for s in (401, 403)},
 )
 def read_account(seen: AnyMember, response: Response) -> PaymentAccountOut:
-    response.headers["Cache-Control"] = "no-store"
-    if not StripeSettings().configured():
-        state: Literal["off", "none", "onboarding", "ready"] = "off"
-    elif seen.account is None:
-        state = "none"
-    else:
-        enabled = seen.enabled
-        # A read: limited or failed, it answers from the row (the gateway logged the WARNING).
-        if not enabled and not _limited(seen, "read"):
-            try:
-                enabled = stripe_gateway.gateway.retrieve_account(seen.account).charges_enabled
-            except stripe_gateway.Failed:
-                pass
-            else:
-                if enabled:
-                    with tenant_context(seen.tenant_id) as db:
-                        db.execute(
-                            text(
-                                "UPDATE payment_accounts SET charges_enabled = true "
-                                "WHERE stripe_account_id = :account"
-                            ),
-                            {"account": seen.account},
-                        )
-        state = "ready" if enabled else "onboarding"
-    return PaymentAccountOut(
-        state=state,
-        country_supported=seen.country not in UNSUPPORTED_COUNTRIES,
-        min_amount_minor=MIN_CHARGE.get(seen.currency),
-        currency=seen.currency,
-    )
+    # Bound in the handler: a value a dependency sets never reaches the handler's context.
+    with logs.bound(tenant_id=str(seen.tenant_id)):
+        response.headers["Cache-Control"] = "no-store"
+        if not StripeSettings().configured():
+            state: Literal["off", "none", "onboarding", "ready"] = "off"
+        elif seen.account is None:
+            state = "none"
+        else:
+            enabled = seen.enabled
+            # A read: limited or failed, it answers from the row (the gateway logged the WARNING).
+            if not enabled and not _limited(seen, "read"):
+                try:
+                    enabled = stripe_gateway.gateway.retrieve_account(seen.account).charges_enabled
+                except stripe_gateway.Failed:
+                    pass
+                else:
+                    if enabled:
+                        with tenant_context(seen.tenant_id) as db:
+                            db.execute(
+                                text(
+                                    "UPDATE payment_accounts SET charges_enabled = true "
+                                    "WHERE stripe_account_id = :account"
+                                ),
+                                {"account": seen.account},
+                            )
+            state = "ready" if enabled else "onboarding"
+        return PaymentAccountOut(
+            state=state,
+            country_supported=seen.country not in UNSUPPORTED_COUNTRIES,
+            min_amount_minor=MIN_CHARGE.get(seen.currency),
+            currency=seen.currency,
+        )
 
 
 @router.post(
@@ -212,65 +211,67 @@ def read_account(seen: AnyMember, response: Response) -> PaymentAccountOut:
     responses={s: {"model": Error} for s in (401, 403, 409, 415, 422, 429, 503)},
 )
 def connect(body: ConnectIn, seen: Owner, request: Request, response: Response) -> UrlOut:
-    response.headers["Cache-Control"] = "no-store"
-    if not StripeSettings().configured():
-        raise _unavailable()
-    if seen.country in UNSUPPORTED_COUNTRIES:
-        raise ApiError(409, "payments_unavailable_country")
-    if _limited(seen, "write"):
-        raise ApiError(429, "rate_limited")
-    gateway = stripe_gateway.gateway
-    account = seen.account
-    try:
-        if account is None:
-            made = gateway.create_account(
-                key=f"account:{seen.tenant_id}",
-                tenant_id=str(seen.tenant_id),
-                country=seen.country,
-                currency=seen.currency,
-                fees_collector="application"
-                if NEW_ACCOUNT_FEE_MODE == "platform_pays"
-                else "stripe",
-            )
-            account = made.id
-            # The row is written before anything else can fail, so Stripe's events for the account
-            # always find their business. A double click returns the same account through the
-            # idempotency key, so a conflict here is the same account arriving twice.
-            with tenant_context(seen.tenant_id) as db:
-                created = (
-                    db.execute(
-                        text(
-                            "INSERT INTO payment_accounts (tenant_id, stripe_account_id, fee_mode) "
-                            "VALUES (current_setting('app.tenant_id')::uuid, :account, :mode) "
-                            "ON CONFLICT (tenant_id) DO NOTHING RETURNING 1"
-                        ),
-                        {"account": account, "mode": NEW_ACCOUNT_FEE_MODE},
-                    ).first()
-                    is not None
-                )
-                if created:
-                    auth.record(
-                        db,
-                        request,
-                        "payment_account_created",
-                        actor_user_id=seen.user_id,
-                        target=f"payment_account:{account}",
-                    )
-            if created:
-                logger.info("payment account created", extra={"account": account})
-        app_url = MailSettings().app_url.rstrip("/")
+    with logs.bound(tenant_id=str(seen.tenant_id)):
+        response.headers["Cache-Control"] = "no-store"
+        if not StripeSettings().configured():
+            raise _unavailable()
+        if seen.country in UNSUPPORTED_COUNTRIES:
+            raise ApiError(409, "payments_unavailable_country")
+        if _limited(seen, "write"):
+            raise ApiError(429, "rate_limited")
+        gateway = stripe_gateway.gateway
+        account = seen.account
         try:
-            gateway.register_domain(account, urlsplit(app_url).hostname or "")
+            if account is None:
+                made = gateway.create_account(
+                    key=f"account:{seen.tenant_id}",
+                    tenant_id=str(seen.tenant_id),
+                    country=seen.country,
+                    currency=seen.currency,
+                    fees_collector="application"
+                    if NEW_ACCOUNT_FEE_MODE == "platform_pays"
+                    else "stripe",
+                )
+                account = made.id
+                # The row is written before anything else can fail, so Stripe's events for the
+                # account always find their business. A double click returns the same account
+                # through the idempotency key, so a conflict here is the same account twice.
+                with tenant_context(seen.tenant_id) as db:
+                    created = (
+                        db.execute(
+                            text(
+                                "INSERT INTO payment_accounts "
+                                "(tenant_id, stripe_account_id, fee_mode) "
+                                "VALUES (current_setting('app.tenant_id')::uuid, :account, :mode) "
+                                "ON CONFLICT (tenant_id) DO NOTHING RETURNING 1"
+                            ),
+                            {"account": account, "mode": NEW_ACCOUNT_FEE_MODE},
+                        ).first()
+                        is not None
+                    )
+                    if created:
+                        auth.record(
+                            db,
+                            request,
+                            "payment_account_created",
+                            actor_user_id=seen.user_id,
+                            target=f"payment_account:{account}",
+                        )
+                if created:
+                    logger.info("payment account created", extra={"account": account})
+            app_url = MailSettings().app_url.rstrip("/")
+            try:
+                gateway.register_domain(account, urlsplit(app_url).hostname or "")
+            except stripe_gateway.Failed:
+                logger.warning("apple pay domain not registered", extra={"account": account})
+            url = gateway.onboarding_link(
+                account,
+                f"{app_url}/{body.locale}/settings?stripe=return",
+                f"{app_url}/{body.locale}/settings?stripe=refresh",
+            )
         except stripe_gateway.Failed:
-            logger.warning("apple pay domain not registered", extra={"account": account})
-        url = gateway.onboarding_link(
-            account,
-            f"{app_url}/{body.locale}/settings?stripe=return",
-            f"{app_url}/{body.locale}/settings?stripe=refresh",
-        )
-    except stripe_gateway.Failed:
-        raise _unavailable() from None
-    return UrlOut(url=url)
+            raise _unavailable() from None
+        return UrlOut(url=url)
 
 
 @router.post(
@@ -279,17 +280,18 @@ def connect(body: ConnectIn, seen: Owner, request: Request, response: Response) 
     responses={s: {"model": Error} for s in (401, 403, 409, 429, 503)},
 )
 def dashboard(seen: Owner, response: Response) -> UrlOut:
-    response.headers["Cache-Control"] = "no-store"
-    if not StripeSettings().configured():
-        raise _unavailable()
-    if seen.account is None:
-        raise ApiError(409, "payments_not_connected")
-    if _limited(seen, "write"):
-        raise ApiError(429, "rate_limited")
-    try:
-        return UrlOut(url=stripe_gateway.gateway.login_link(seen.account))
-    except stripe_gateway.Failed:
-        raise _unavailable() from None
+    with logs.bound(tenant_id=str(seen.tenant_id)):
+        response.headers["Cache-Control"] = "no-store"
+        if not StripeSettings().configured():
+            raise _unavailable()
+        if seen.account is None:
+            raise ApiError(409, "payments_not_connected")
+        if _limited(seen, "write"):
+            raise ApiError(429, "rate_limited")
+        try:
+            return UrlOut(url=stripe_gateway.gateway.login_link(seen.account))
+        except stripe_gateway.Failed:
+            raise _unavailable() from None
 
 
 def _count(event: str, result: str) -> None:

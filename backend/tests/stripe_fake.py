@@ -16,6 +16,7 @@ from uuid import UUID
 
 from sqlalchemy import text
 
+from app import logs
 from app.db import tenant_context
 from app.stripe_gateway import Account, Failed, FeesCollector, Gateway, Kind
 
@@ -27,6 +28,7 @@ class FakeGateway(Gateway):
         super().__init__()
         self.accounts: dict[str, dict[str, Any]] = {}
         self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.tenants: list[str | None] = []
         self.failures: dict[str, Kind] = {}
         self._by_key: dict[str, str] = {}
         self._params: dict[str, dict[str, Any]] = {}
@@ -45,6 +47,8 @@ class FakeGateway(Gateway):
 
         assert idle_in_transaction() == 0, f"a transaction is open across stripe {op}"
         self.calls.append((op, params))
+        # The tenant the gateway's own log line would carry (logs.bound in the calling context).
+        self.tenants.append(logs.CONTEXT.get({}).get("tenant_id"))
         if kind := self.failures.pop(op, None):
             raise Failed(kind, "req_fake")
 
