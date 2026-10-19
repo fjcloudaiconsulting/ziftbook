@@ -1031,6 +1031,22 @@
     "takenLede": "Someone else booked {when} after the hold ended. Nothing was booked for you.",
     "deadTitle": "This link no longer works",
     "deadLede": "A link works once, for 24 hours, and only the newest one if you asked for the email again.",
-    "deadHint": "Already booked? Your confirmation email has the link to your booking. To book again, use the booking page link in the email you got from us."
+    "deadHint": "Already booked? Your confirmation email has the link to your booking. To book again, use the booking page link in the email you got from us.",
+    "servicesTitle": "Services",
+    "showMore": "Show more",
+    "showLess": "Show less",
+    "openService": "Book {service}",
+    "close": "Close",
+    "bookNow": "Book now",
+    "checkoutTitle": "Book your appointment",
+    "backToServices": "Back to services",
+    "continue": "Continue",
+    "total": "Total",
+    "message": "Message for {biz}",
+    "messageHint": "Optional. Anything {biz} should know before your visit.",
+    "errMessage": "Use plain text, up to 1000 characters.",
+    "dialCode": "Country code",
+    "phoneUse": "Only for {biz} to reach you about this booking.",
+    "legal": "By sending, you accept the ziftbook <terms>Terms</terms> and <privacy>Privacy Notice</privacy> and {biz}'s <rules>cancellation rules</rules>."
   }
 }

@@ -1031,6 +1031,22 @@
     "takenLede": "Iemand anders heeft {when} geboekt nadat de reservering afliep. Er is niets voor je geboekt.",
     "deadTitle": "Deze link werkt niet meer",
     "deadLede": "Een link werkt één keer, 24 uur lang, en alleen de nieuwste als je de e-mail opnieuw hebt aangevraagd.",
-    "deadHint": "Al geboekt? In je bevestigingsmail staat de link naar je afspraak. Wil je opnieuw boeken, gebruik dan de link naar de boekingspagina in onze e-mail."
+    "deadHint": "Al geboekt? In je bevestigingsmail staat de link naar je afspraak. Wil je opnieuw boeken, gebruik dan de link naar de boekingspagina in onze e-mail.",
+    "servicesTitle": "Diensten",
+    "showMore": "Meer tonen",
+    "showLess": "Minder tonen",
+    "openService": "Boek {service}",
+    "close": "Sluiten",
+    "bookNow": "Nu boeken",
+    "checkoutTitle": "Boek je afspraak",
+    "backToServices": "Terug naar diensten",
+    "continue": "Doorgaan",
+    "total": "Totaal",
+    "message": "Bericht voor {biz}",
+    "messageHint": "Optioneel. Alles wat {biz} vooraf moet weten.",
+    "errMessage": "Gebruik gewone tekst, maximaal 1000 tekens.",
+    "dialCode": "Landcode",
+    "phoneUse": "Alleen zodat {biz} je over deze boeking kan bereiken.",
+    "legal": "Door te versturen ga je akkoord met de <terms>Voorwaarden</terms> en de <privacy>Privacyverklaring</privacy> van ziftbook en de <rules>annuleringsregels</rules> van {biz}."
   }
 }

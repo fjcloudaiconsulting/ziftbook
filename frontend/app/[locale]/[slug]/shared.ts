@@ -12,10 +12,11 @@ export function localized(map: Record<string, string>, locale: Locale, businessL
 }
 
 // One flat shape for the whole flow (not a discriminated union): `service` is the only field that
-// really gates step 2/3, and every call site already checks it (or `flow.step`) at runtime, so a
+// really gates the steps, and every call site already checks it (or `flow.step`) at runtime, so a
 // union bought type-narrowing this file never used, at the cost of casts on every update.
+// The checkout has two steps, shown as 1 and 2: `step` 2 is the day and time, 3 the details.
 export type Flow = {
-  step: 1 | 2 | 3;
+  step: 2 | 3;
   service: Service | null;
   worker: string;
   weekStart: string;
@@ -29,14 +30,12 @@ export type Flow = {
   name: string;
   email: string;
   phone: string;
-  errors: { name?: string; email?: string; phone?: string };
+  errors: { name?: string; email?: string; phone?: string; message?: string };
   suggest: string | null;
-  banner: { where: 1 | 2 | 3 | "c"; tone: "note" | "error"; text: string } | null;
+  banner: { where: 2 | 3 | "c"; tone: "note" | "error"; text: string } | null;
   busy: boolean;
-  // ZIF-117: the secret of the hold the next "Email me a link" takes over (after "Wrong address?").
-  replaces: string | null;
 };
-// Once `service` is set (steps 2 and 3), these fields are meaningful; this alias just documents
+// Once `service` is set, these fields are meaningful; this alias just documents
 // that at call sites instead of re-asserting it.
 export type Step2Plus = Flow & { service: Service };
 
