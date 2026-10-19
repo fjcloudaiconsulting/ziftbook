@@ -83,6 +83,8 @@ export type BookingForm = {
   locale: string;
   policyVersion: string;
   turnstileToken: string | null;
+  consent: boolean;
+  message: string | null;
 };
 
 export type BookingBody = {
@@ -93,8 +95,9 @@ export type BookingBody = {
   phone: string;
   locale: string;
   policy_version: string;
-  consents: Record<string, never>;
+  consents: { marketing_email?: true };
   turnstile_token: string | null;
+  message: string | null;
 };
 
 /** The POST /api/public/bookings body, exactly the allowed key set. `starts_at` is passed through
@@ -110,19 +113,21 @@ export function bookingBody(form: BookingForm): BookingBody {
     phone: form.phone.trim(),
     locale: form.locale,
     policy_version: form.policyVersion,
-    consents: {},
+    // Unticked is {} (never false): a false would withdraw a signed-in booker's earlier consent.
+    consents: form.consent ? { marketing_email: true } : {},
     turnstile_token: form.turnstileToken,
+    message: form.message,
   };
 }
 
 export type AnswerOutcome =
   | { kind: "done" }
-  | { kind: "verifyEmail" }
   | { kind: "slotTaken" }
   | { kind: "serviceGone" }
   | { kind: "policyChanged" }
   | { kind: "fieldErrors" }
   | { kind: "phoneInvalid" }
+  | { kind: "messageInvalid" }
   | { kind: "verifyFailed" }
   | { kind: "unavailable" }
   | { kind: "tooMany" }
@@ -132,17 +137,15 @@ export type AnswerOutcome =
 const SLOT_TAKEN_CODES = new Set(["slot_taken", "slot_unavailable"]);
 const POLICY_CHANGED_CODES = new Set(["unknown_policy_version", "purpose_not_in_policy_version"]);
 
-/** What the POST answer means for the page (spec's "POST answer mapping" table). ZIF-117: the
- * hold POST's 202 is its "done" (the email is on its way), and today's POST answers 403
- * verify_email to anyone not signed in with the address typed. `widget`: the page shows Turnstile;
+/** What the POST answer means for the page (spec's "POST answer mapping" table). `widget`: the page shows Turnstile;
  * without one a Turnstile refusal is the deployment's, and trying again cannot help (ZIF-116). */
 export function answerState(answer: { status: number; code?: string }, widget: boolean): AnswerOutcome {
   if (answer.status === 201 || answer.status === 202) return { kind: "done" };
-  if (answer.status === 403 && answer.code === "verify_email") return { kind: "verifyEmail" };
   if (answer.status === 409 && answer.code && SLOT_TAKEN_CODES.has(answer.code)) return { kind: "slotTaken" };
   if (answer.status === 404) return { kind: "serviceGone" };
   if (answer.status === 422 && answer.code && POLICY_CHANGED_CODES.has(answer.code)) return { kind: "policyChanged" };
   if (answer.status === 422 && answer.code === "phone_invalid") return { kind: "phoneInvalid" };
+  if (answer.status === 422 && answer.code === "message_invalid") return { kind: "messageInvalid" };
   if (answer.status === 422) return { kind: "fieldErrors" };
   if (answer.status === 403 && answer.code === "turnstile_failed") return { kind: widget ? "verifyFailed" : "unavailable" };
   if (answer.status === 429) return { kind: "tooMany" };
@@ -246,36 +249,6 @@ export function afterPickTaken(free: string[] | null, pick: string): string[] | 
   return rest.length > 0 ? rest : null;
 }
 
-/** ZIF-117: whether step 3 books straight away (today's form) or emails a link first. Only a person
- * signed in with exactly the address typed books straight away; the backend compares the same way
- * (its stored form is trimmed and lower-cased). */
-export function signedInAs(sessionEmail: string | null, typed: string): boolean {
-  return sessionEmail !== null && typed.trim().toLowerCase() === sessionEmail.trim().toLowerCase();
-}
-
-export type HoldBody = {
-  starts_at: string;
-  member_id: string | null;
-  email: string;
-  locale: string;
-  turnstile_token: string | null;
-  replaces?: string;
-};
-
-/** The hold POST body (ZIF-117): the time and the address, nothing else about the person.
- * `replaces` (the secret of the hold this one takes over: send again, wrong address) is omitted,
- * never sent as null, when there is none. `starts_at` passes through unchanged, as bookingBody's. */
-export function holdBody(form: { startsAt: string; memberId: string | null; email: string; locale: string; turnstileToken: string | null; replaces: string | null }): HoldBody {
-  return {
-    starts_at: form.startsAt,
-    member_id: form.memberId,
-    email: form.email.trim(),
-    locale: form.locale,
-    turnstile_token: form.turnstileToken,
-    ...(form.replaces ? { replaces: form.replaces } : {}),
-  };
-}
-
 export type ConfirmScreen = "done" | "dead" | "taken" | "tooMany" | "policyChanged" | "fieldErrors" | "phoneInvalid" | "unknown";
 
 /** What the confirm click's answer means (ZIF-117). Every 404 is the dead-link screen, whatever the
@@ -295,4 +268,65 @@ export function confirmScreen(answer: { status: number; code?: string }): Confir
 /** Whether the confirm page opens after the 15-minute hold ended (the late-click line). */
 export function holdEnded(heldUntil: string, now: Date): boolean {
   return Date.parse(heldUntil) <= now.getTime();
+}
+
+// --- ZIF-157: the checkout page's own state ---
+
+/** The checkout page's path (no locale: the i18n router adds it). Only the service, the person and
+ * the time go in the URL, so a refresh restores the pick; whatever else `state` holds (name, email,
+ * phone, message) never does. */
+export function checkoutUrl(slug: string, state: { serviceId: string; memberId: string | null; at: string | null }): string {
+  const q = new URLSearchParams({ service: state.serviceId });
+  if (state.memberId) q.set("with", state.memberId);
+  if (state.at) q.set("at", state.at);
+  return `/${slug}/book?${q}`;
+}
+
+/** What the checkout URL says: `with` only if it is one of the service's named people (else
+ * anyone, so no stale member_id is posted), `at` only if it parses as an instant. */
+export function parseCheckout(
+  params: URLSearchParams,
+  service: { workers: { id: string; display_name: string | null }[] } | undefined,
+): { serviceId: string | null; memberId: string | null; at: string | null } {
+  const member = params.get("with");
+  const at = params.get("at");
+  return {
+    serviceId: params.get("service"),
+    memberId: member && service?.workers.some((w) => w.id === member && w.display_name) ? member : null,
+    at: at && Number.isFinite(Date.parse(at)) ? at : null,
+  };
+}
+
+/** The first week to show for a picked day: that week's Monday, but never before today (jumpTo's
+ * rule), so a pick weeks out comes back with its week on screen. Business-local YYYY-MM-DD. */
+export function weekFor(day: string, today: string): string {
+  const monday = addDays(day, -((new Date(`${day}T12:00:00Z`).getUTCDay() + 6) % 7));
+  return monday < today ? today : monday;
+}
+
+/** The time from the URL, only if the window still offers it (a stale one would 409 on Send). */
+export function pickFromUrl(at: string | null, slots: string[]): string | null {
+  return at !== null && slots.includes(at) ? at : null;
+}
+
+/** The message as posted: CRLF and CR become LF first (CR is a control character), then tabs become
+ * spaces, then every other control/format character (except LF) and U+2028/2029 goes; blank is
+ * null. The backend refuses what this removes (422 message_invalid). */
+export function cleanMessage(text: string): string | null {
+  const cleaned = text
+    .replace(/\r\n?/g, "\n")
+    .replace(/\t/g, " ")
+    .replace(/[\p{C}\u2028\u2029]/gu, (c) => (c === "\n" ? c : ""))
+    .trim();
+  return cleaned === "" ? null : cleaned;
+}
+
+/** The phone as posted (the backend reads it in the business country): a leading "+" is kept as
+ * typed, "00" becomes "+", the business's own code leaves the number as typed, else the chosen
+ * code is put in front. */
+export function phoneValue(dial: string, businessDial: string, local: string): string {
+  const typed = local.trim();
+  if (typed.startsWith("+")) return typed;
+  if (typed.startsWith("00")) return `+${typed.slice(2)}`;
+  return dial === businessDial ? typed : `+${dial}${typed}`;
 }
