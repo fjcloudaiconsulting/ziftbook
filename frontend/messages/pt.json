@@ -966,7 +966,7 @@
     "freeHours": "Cancele sem custo até {n} horas antes.",
     "afterFree": "Depois disso, o cancelamento não é reembolsado.",
     "lateWindow": "Faltam menos de {n} horas para este horário, então o cancelamento não é reembolsado.",
-    "moveTerms": "Altere o horário on-line até {n} horas antes, no máximo {m} vezes.",
+    "moveTerms": "Altere o horário on-line até {n, plural, one {# hora} other {# horas}} antes, no máximo {m, plural, one {uma vez} other {# vezes}}.",
     "moveOff": "Para mudar o horário, cancele e reserve de novo.",
     "ownWords": "Nas palavras de {biz}",
     "approvalNote": "{biz} confirma cada reserva manualmente. Você receberá um e-mail quando confirmarem.",

@@ -966,7 +966,7 @@
     "freeHours": "Cancel for free up to {n} hours before.",
     "afterFree": "After that, cancelling is not refunded.",
     "lateWindow": "This time is less than {n} hours away, so cancelling is not refunded.",
-    "moveTerms": "Change the time online up to {n} hours before, {m} times at most.",
+    "moveTerms": "Change the time online up to {n, plural, one {# hour} other {# hours}} before, at most {m, plural, one {once} other {# times}}.",
     "moveOff": "To change the time, cancel and book again.",
     "ownWords": "In {biz}'s own words",
     "approvalNote": "{biz} confirms each booking by hand. You will get an email when they do.",

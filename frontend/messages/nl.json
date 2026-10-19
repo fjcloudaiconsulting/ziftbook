@@ -966,7 +966,7 @@
     "freeHours": "Tot {n} uur van tevoren gratis annuleren.",
     "afterFree": "Daarna wordt bij annuleren niet terugbetaald.",
     "lateWindow": "Dit tijdstip is minder dan {n} uur weg, dus annuleren wordt niet terugbetaald.",
-    "moveTerms": "Wijzig de tijd online tot {n} uur van tevoren, maximaal {m} keer.",
+    "moveTerms": "Wijzig de tijd online tot {n} uur van tevoren, {m, plural, one {maximaal één keer} other {maximaal # keer}}.",
     "moveOff": "Om de tijd te wijzigen: annuleer en boek opnieuw.",
     "ownWords": "In de eigen woorden van {biz}",
     "approvalNote": "{biz} bevestigt elke afspraak persoonlijk. Je krijgt een e-mail zodra dat gebeurt.",
