@@ -146,7 +146,7 @@ describe("one picker for booking and rescheduling (ZIF-149)", () => {
 
   test("fence: both pages use the shared picker and neither draws its own day strip or times", () => {
     // Wrong implementation killed: the reschedule page (or the booking page) keeping its own inline picker.
-    for (const page of ["../app/[locale]/booking/manage-booking.tsx", "../app/[locale]/[slug]/booking-page.tsx"]) {
+    for (const page of ["../app/[locale]/booking/manage-booking.tsx", "../app/[locale]/[slug]/checkout.tsx"]) {
       const src = read(page);
       assert.match(src, /import \{[^}]*\bPicker\b[^}]*\} from "\.\.\/_ui\/picker"/, page);
       assert.doesNotMatch(src, /styles\.(days|slots|parts)\b/, page);

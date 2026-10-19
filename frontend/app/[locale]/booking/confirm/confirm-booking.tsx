@@ -12,7 +12,7 @@ import { linkStore, type OpenedLink } from "@/lib/link";
 import { type Locale } from "@/lib/services";
 import { zoneCity } from "@/lib/week";
 
-import { Checkout, type Done, DoneScreen, Held } from "../../[slug]/booking-page";
+import { Checkout, type Done, DoneScreen, Held } from "../../[slug]/checkout";
 import { FieldError, NoScript, Outcome, send } from "../../_ui/parts";
 import styles from "../../_ui/ui.module.css";
 
