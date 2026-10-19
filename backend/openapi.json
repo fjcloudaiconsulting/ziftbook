@@ -6508,7 +6508,7 @@
           },
           "consent": {
             "additionalProperties": {
-              "$ref": "#/components/schemas/app__booking_page__ConsentOut"
+              "$ref": "#/components/schemas/PageConsentOut"
             },
             "propertyNames": {
               "enum": [
@@ -7009,7 +7009,7 @@
           },
           "consents": {
             "additionalProperties": {
-              "$ref": "#/components/schemas/app__clients__ConsentOut"
+              "$ref": "#/components/schemas/ConsentOut"
             },
             "propertyNames": {
               "enum": [
@@ -7196,6 +7196,29 @@
         ],
         "title": "ConsentIn",
         "description": "What a member recorded on the client's behalf: the policy version their screen showed, and\ntrue (granted) or false (withdrawn) per purpose. No text_shown field: the server owns the\nwording, so the evidence cannot be written by whoever sends the request."
+      },
+      "ConsentOut": {
+        "properties": {
+          "granted": {
+            "type": "boolean",
+            "title": "Granted"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "mailable": {
+            "type": "boolean",
+            "title": "Mailable"
+          }
+        },
+        "type": "object",
+        "required": [
+          "granted",
+          "source",
+          "mailable"
+        ],
+        "title": "ConsentOut"
       },
       "ConsentsIn": {
         "properties": {
@@ -8056,6 +8079,24 @@
         "type": "object",
         "title": "NoteChange",
         "description": "Only the fields sent change; null clears a note. Nothing else about a client is editable\nhere: name, email, phone and locale are the merchant's copy of what the client typed, refreshed\nby the next booking."
+      },
+      "PageConsentOut": {
+        "properties": {
+          "policy_version": {
+            "type": "string",
+            "title": "Policy Version"
+          },
+          "marketing_email": {
+            "type": "string",
+            "title": "Marketing Email"
+          }
+        },
+        "type": "object",
+        "required": [
+          "policy_version",
+          "marketing_email"
+        ],
+        "title": "PageConsentOut"
       },
       "PendingOut": {
         "properties": {
@@ -9450,24 +9491,6 @@
         ],
         "title": "RescheduleIn"
       },
-      "app__booking_page__ConsentOut": {
-        "properties": {
-          "policy_version": {
-            "type": "string",
-            "title": "Policy Version"
-          },
-          "marketing_email": {
-            "type": "string",
-            "title": "Marketing Email"
-          }
-        },
-        "type": "object",
-        "required": [
-          "policy_version",
-          "marketing_email"
-        ],
-        "title": "ConsentOut"
-      },
       "app__bookings__BookingOut": {
         "properties": {
           "id": {
@@ -9577,29 +9600,6 @@
           "starts_at"
         ],
         "title": "RescheduleIn"
-      },
-      "app__clients__ConsentOut": {
-        "properties": {
-          "granted": {
-            "type": "boolean",
-            "title": "Granted"
-          },
-          "source": {
-            "type": "string",
-            "title": "Source"
-          },
-          "mailable": {
-            "type": "boolean",
-            "title": "Mailable"
-          }
-        },
-        "type": "object",
-        "required": [
-          "granted",
-          "source",
-          "mailable"
-        ],
-        "title": "ConsentOut"
       }
     }
   }

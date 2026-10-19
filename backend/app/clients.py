@@ -61,20 +61,22 @@ CONSENT_TEXTS: dict[str, dict[Purpose, str]] = {
 # still posted by old tabs and the hold confirm page until the hold code is removed.
 POLICY_VERSION = "2026-10-20"
 LEGACY_POLICY_VERSION = "2026-09-01"
+# The booking page offers email marketing only, so sms/whatsapp stay on the legacy version.
 CONSENT_TEXTS[f"{POLICY_VERSION}/en"] = {
     "marketing_email": "Email me offers and news from this business. I can unsubscribe at any time."
 }
 CONSENT_TEXTS[f"{POLICY_VERSION}/nl"] = {
-    "marketing_email": "Mail mij aanbiedingen en nieuws van dit bedrijf. "
+    "marketing_email": "Stuur me aanbiedingen en nieuws van dit bedrijf per e-mail. "
     "Ik kan me op elk moment afmelden."
 }
 CONSENT_TEXTS[f"{POLICY_VERSION}/pt"] = {
-    "marketing_email": "Enviem-me ofertas e novidades desta empresa por email. "
-    "Posso cancelar a subscrição a qualquer momento."
+    "marketing_email": "Quero receber ofertas e novidades deste negócio por e-mail. "
+    "Posso cancelar a inscrição quando quiser."
 }
 
 
 def policy_version_for(locale: str) -> str:
+    """The per-locale consent version a booking page offers."""
     return f"{POLICY_VERSION}/{locale}"
 
 

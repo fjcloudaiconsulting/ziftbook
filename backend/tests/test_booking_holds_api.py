@@ -229,6 +229,7 @@ def test_reading_the_link_writes_nothing(
     }
     assert body["email"] == email
     assert body["service_id"] == ready
+    assert body["policy_version"] == "2026-09-01"
     assert response.headers["Cache-Control"] == "no-store"
 
 
