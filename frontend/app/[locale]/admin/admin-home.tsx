@@ -8,15 +8,17 @@ import { useRouter } from "@/i18n/navigation";
 import { adminRead, adminSignOut, type AdminSession } from "@/api-client";
 import { stepFor } from "@/lib/admin";
 
-import { Heading, Mark, Screen, send } from "../_ui/parts";
+import { Banner, Heading, JSON_WRITE, Mark, problem, Screen, send } from "../_ui/parts";
 import styles from "../_ui/ui.module.css";
 import admin from "./admin.module.css";
 
 /** Until ZIF-72's console: who is signed in, and the way out. */
 export function AdminHome() {
   const t = useTranslations("Admin");
+  const form = useTranslations("Form");
   const router = useRouter();
   const [who, setWho] = useState<AdminSession | null>(null);
+  const [signOutFailure, setSignOutFailure] = useState<string | null>(null);
 
   useEffect(() => {
     send(adminRead()).then((outcome) => {
@@ -27,8 +29,10 @@ export function AdminHome() {
   }, [router]);
 
   async function leave() {
-    await send(adminSignOut());
-    router.replace("/admin/sign-in");
+    const outcome = await send(adminSignOut(JSON_WRITE));
+    // 401: the session had already ended, which is where signing out leads anyway.
+    if (outcome.status === 204 || outcome.status === 401) router.replace("/admin/sign-in");
+    else setSignOutFailure(form(problem(outcome)));
   }
 
   return (
@@ -45,6 +49,7 @@ export function AdminHome() {
               <span>{who.email}</span>
             </div>
           </div>
+          {signOutFailure && <Banner tone="error">{signOutFailure}</Banner>}
           <button className={`${styles.button} ${styles.secondary}`} type="button" onClick={leave}>
             {t("signOut")}
           </button>
