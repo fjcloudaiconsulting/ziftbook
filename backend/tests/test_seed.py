@@ -238,3 +238,34 @@ def test_bucket_checks_in_order() -> None:  # F6
     night = local(zone, 2026, 6, 15, 23, 0)
     assert seed.bucket(local(zone, 2026, 6, 16, 1, 0), night, zone) == "within_24h"
     assert seed.bucket(night + timedelta(hours=30), night, zone) == "further"
+
+
+class BookingStub:
+    """A guest connection that offers one slot and records the booking body it is sent."""
+
+    def __init__(self) -> None:
+        self.body: Any = None
+
+    def ok(self, method: str, path: str, body: object = None) -> Any:
+        return {"slots": ["2026-06-15T09:00:00+00:00"]}
+
+    def call(self, method: str, path: str, body: object = None) -> tuple[int, Any]:
+        self.body = body
+        return 201, {}
+
+
+def test_guest_booking_body_is_one_the_api_accepts() -> None:  # F7
+    from app.bookings import BookingIn
+
+    biz = seed.Business("Biz", "NL", AMSTERDAM, "en", {}, owner=None, policy_version="v1")  # type: ignore[arg-type]
+    guest = BookingStub()
+    seed.Seed("http://127.0.0.1:1", "http://127.0.0.1:1").book_public(
+        biz,
+        "svc",
+        date(2026, 6, 15),
+        date(2026, 6, 15),
+        "ana",
+        "en",
+        guest,  # type: ignore[arg-type]
+    )
+    BookingIn.model_validate(guest.body)
