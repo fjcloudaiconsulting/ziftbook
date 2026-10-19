@@ -198,17 +198,17 @@ class StatusChange(BaseModel):
         description="Only with status `declined`: sent to the client in the decline email.",
     )
 
-    @model_validator(mode="after")
-    def only_a_decline_has_a_message(self) -> Self:
-        if self.message is not None and self.status != "declined":
-            raise ValueError("a message goes with a decline only")
-        return self
-
     starts_at: time_off_module.Instant | None = Field(
         default=None,
         description="Only with status `confirmed`: the start the merchant was shown. Accepting a "
         "pending request that has moved since is 409 `changed`.",
     )
+
+    @model_validator(mode="after")
+    def only_a_decline_has_a_message(self) -> Self:
+        if self.message is not None and self.status != "declined":
+            raise ValueError("a message goes with a decline only")
+        return self
 
     @model_validator(mode="after")
     def only_an_accept_has_a_start(self) -> Self:

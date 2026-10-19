@@ -20,7 +20,7 @@ depends_on = None
 
 def upgrade() -> None:
     op.execute("""
-    CREATE FUNCTION refuse_anchor_move() RETURNS trigger
+    CREATE FUNCTION original_starts_at_while_pending() RETURNS trigger
     LANGUAGE plpgsql SECURITY INVOKER SET search_path = pg_catalog, public, pg_temp AS $$
     BEGIN
       RAISE EXCEPTION 'the refund anchor moves only while a booking is pending'
@@ -28,9 +28,9 @@ def upgrade() -> None:
     END $$""")
     op.execute("""
     CREATE TRIGGER original_starts_at_while_pending BEFORE UPDATE OF original_starts_at ON bookings
-      FOR EACH ROW WHEN (OLD.status <> 'pending'
+      FOR EACH ROW WHEN ((OLD.status <> 'pending' OR NEW.status <> 'pending')
                          AND NEW.original_starts_at IS DISTINCT FROM OLD.original_starts_at)
-      EXECUTE FUNCTION refuse_anchor_move()""")
+      EXECUTE FUNCTION original_starts_at_while_pending()""")
     op.execute("GRANT UPDATE (original_starts_at) ON bookings TO ziftbook_app")
 
 
@@ -38,4 +38,4 @@ def downgrade() -> None:
     # A column grant, so the REVOKE removes exactly what the upgrade added.
     op.execute("REVOKE UPDATE (original_starts_at) ON bookings FROM ziftbook_app")
     op.execute("DROP TRIGGER original_starts_at_while_pending ON bookings")
-    op.execute("DROP FUNCTION refuse_anchor_move()")
+    op.execute("DROP FUNCTION original_starts_at_while_pending()")

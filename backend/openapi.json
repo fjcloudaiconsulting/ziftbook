@@ -9504,7 +9504,8 @@
                 "type": "null"
               }
             ],
-            "title": "Seen Starts At"
+            "title": "Seen Starts At",
+            "description": "Only for a pending booking: the start the client was shown. Moving one that has moved since (or without this) is 409 `changed`."
           }
         },
         "additionalProperties": false,

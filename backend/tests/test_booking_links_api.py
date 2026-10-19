@@ -498,7 +498,7 @@ def pending_move(booking_id: object, starts_at: str, seen: str) -> dict[str, Any
 FAR = TODAY + timedelta(days=20)
 
 
-# B3 test 2. fence. A pending move resets the refund anchor: move LATER, accept, and the free
+# B3 test 1. fence. A pending move resets the refund anchor: move LATER, accept, and the free
 # window runs from the new start; original = earliest = starts.
 # Kills a LEAST-only anchor / no grant.
 def test_a_pending_move_resets_the_refund_anchor(
@@ -527,7 +527,7 @@ def test_a_pending_move_resets_the_refund_anchor(
     assert datetime.fromisoformat(free_hours) == datetime.fromisoformat(later) - timedelta(hours=48)
 
 
-# B3 test 3. fence. Moving never extends the request's life. Kills a TTL reset (endless squatting).
+# B3 test 2. fence. Moving never extends the request's life. Kills a TTL reset (endless squatting).
 def test_a_pending_move_keeps_expires_at(people: People, app: FastAPI, ready: str) -> None:
     first = at("10:00", FAR)
     booking_id = confirmed_booking(app, people.a, ready, starts_at=first)
@@ -548,7 +548,7 @@ def test_a_pending_move_keeps_expires_at(people: People, app: FastAPI, ready: st
     assert after == before
 
 
-# B3 test 4. fence. Three moves are allowed, the fourth is not_allowed. Kills no cap (mail flood).
+# B3 test 3. fence. Three moves are allowed, the fourth is not_allowed. Kills no cap (mail flood).
 def test_a_fourth_pending_move_is_refused(people: People, app: FastAPI, ready: str) -> None:
     seen = at("10:00", FAR)
     booking_id = confirmed_booking(app, people.a, ready, starts_at=seen)
@@ -564,7 +564,7 @@ def test_a_fourth_pending_move_is_refused(people: People, app: FastAPI, ready: s
     assert (fourth.status_code, fourth.json()["code"]) == (409, "not_allowed")
 
 
-# B3 test 5. fence. Each pending move mails the client (booking_received) and every merchant
+# B3 test 4. fence. Each pending move mails the client (booking_received) and every merchant
 # (booking_client_rescheduled) once, under a per-move key; no reminder is queued.
 # Kills: a confirmed-only STATUS_FOR (merchant mail skipped); a constant suffix
 # (move 2 deduped away).
@@ -789,7 +789,7 @@ def put_settings_max(owner: TestClient, value: int) -> int:
     return response
 
 
-# B3 test 6 (replaces 22). fence/DB. original_starts_at (granted to the app by 0042) is refused a
+# B3 test 5. fence/DB. original_starts_at (granted to the app by 0042) is refused a
 # change by a trigger unless the booking is pending: SQLSTATE 23514, constraint name asserted, never
 # the message. A LATER value keeps ck_bookings_earliest_starts_at satisfied, so only the trigger
 # can refuse. Kills: a grant without the trigger; a RESCHEDULE widened to write original_starts_at.
@@ -830,7 +830,7 @@ def test_the_database_refuses_moving_a_confirmed_anchor(
     assert original.strftime("%Y-%m-%dT%H:%M:%SZ") == at("10:00")
 
 
-# B3 test 9. fence. Tab A reads 14:00, tab B moves it, tab A's move (seen_starts_at = the old
+# B3 test 6. fence. Tab A reads 14:00, tab B moves it, tab A's move (seen_starts_at = the old
 # start) is 409 changed: reschedule_count is always 0 for a pending, so only the echo can tell.
 def test_a_stale_tab_cannot_move_a_pending_request(
     people: People, app: FastAPI, ready: str, app_engine: Engine
@@ -855,6 +855,39 @@ def test_a_stale_tab_cannot_move_a_pending_request(
             {"id": booking_id},
         )
     assert starts == datetime.fromisoformat(theirs) and events == 1
+
+
+# B3 test 7. fence/DB. One UPDATE that confirms a pending row AND moves its anchor is refused too
+# (23514): the guard looks at the status after the update, not only before it. Kills a trigger
+# WHEN that tests OLD.status alone.
+def test_the_database_refuses_confirming_and_moving_the_anchor_at_once(
+    people: People, app: FastAPI, ready: str
+) -> None:
+    booking_id = confirmed_booking(app, people.a, ready, starts_at=at("12:00"))
+    with tenant_context(people.a) as session:
+        with pytest.raises(IntegrityError) as raised:
+            session.execute(
+                text(
+                    "UPDATE bookings SET status = 'confirmed', "
+                    "original_starts_at = original_starts_at + interval '1 hour' WHERE id = :id"
+                ),
+                {"id": booking_id},
+            )
+    assert isinstance(raised.value.orig, CheckViolation)
+    assert raised.value.orig.diag.constraint_name == "original_starts_at_while_pending"
+
+
+# B3 test 8. fence. A pending move without seen_starts_at is 409 changed: reschedule_count is 0
+# for a pending, so a missing echo must not pass as "nothing moved". Kills `seen is None or ...`.
+def test_a_pending_move_without_the_shown_start_is_409(
+    people: People, app: FastAPI, ready: str
+) -> None:
+    booking_id = confirmed_booking(app, people.a, ready, starts_at=at("10:00", FAR))
+    client = linked(app, people.a, booking_id)
+
+    response = post(client, "/reschedule", reschedule_body(booking_id, at("11:00", FAR), 0))
+
+    assert (response.status_code, response.json()["code"]) == (409, "changed")
 
 
 def booking_jobs(app_engine: Engine, tenant_id: uuid.UUID, booking_id: str) -> list[Job]:

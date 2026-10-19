@@ -1293,7 +1293,7 @@ def test_each_booking_shows_what_its_booker_typed(
     assert (detail["client_name"], detail["client_phone"]) == ("First Name", "+31611111111")
 
 
-# B3 test 7. fence. The merchant sees 14:00, the client moves it to 15:00, the merchant's accept
+# B3 test 9. fence. The merchant sees 14:00, the client moves it to 15:00, the merchant's accept
 # (starts_at 14:00) is 409 changed and the row stays pending at 15:00. Kills ignoring `starts_at`.
 def test_accepting_a_request_that_moved_since_it_was_shown_is_409(
     people: People, app: FastAPI, owner: TestClient, ready: str
@@ -1317,7 +1317,7 @@ def test_accepting_a_request_that_moved_since_it_was_shown_is_409(
     assert (status, starts) == ("pending", datetime.fromisoformat(moved_to))
 
 
-# B3 test 11. guard. An old console sends no starts_at and still accepts.
+# B3 test 10. guard. An old console sends no starts_at and still accepts.
 def test_accepting_without_a_shown_time_still_works(
     people: People, app: FastAPI, owner: TestClient, ready: str
 ) -> None:

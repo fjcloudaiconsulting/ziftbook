@@ -9,7 +9,7 @@ process.env.TZ = "America/Sao_Paulo";
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { acceptBody, agendaPhase, applyAnswers, badgeText, blockLabel, declineBody, leaveQueue, todayEmpty, expiryLabel, mergeAgenda, nowLineAt, relativeAgo, sortQueue } from "../lib/today.ts";
+import { acceptBody, agendaPhase, answerAfter409, applyAnswers, badgeText, blockLabel, declineBody, leaveQueue, todayEmpty, expiryLabel, mergeAgenda, nowLineAt, relativeAgo, sortQueue } from "../lib/today.ts";
 import { listWindow } from "../lib/time-off.ts";
 
 const AMS = "Europe/Amsterdam";
@@ -235,5 +235,22 @@ describe("multi-day day block and blockLabel", () => {
     assert.deepEqual(blockLabel(at("2026-09-30T10:00:00Z", "2026-09-30T11:00:00Z"), win, NOW, AMS), { kind: "timed", time: "12:00", minutes: 60 });
     assert.deepEqual(blockLabel(at("2026-09-30T20:00:00Z", "2026-10-01T07:00:00Z"), win, NOW, AMS), { kind: "from", time: "22:00", endsOn: "tomorrow", endInstant: "2026-10-01T07:00:00.000Z", endTime: "09:00" });
     assert.equal(blockLabel(at("2026-09-30T20:00:00Z", "2026-10-03T07:00:00Z"), win, NOW, AMS).endsOn, "later");
+  });
+});
+
+// ZIF-157 B3 fence. Wrong impl: recording "stale" for a `changed` 409, which filters the moved
+// request out of the reloaded queue so the owner never sees its new time.
+describe("answerAfter409", () => {
+  test("a moved request stays answerable and shows in the reloaded queue", () => {
+    const answers = new Map();
+    const recorded = answerAfter409("changed");
+    if (recorded) answers.set("m", recorded);
+    assert.deepEqual(applyAnswers([{ id: "m" }, { id: "x" }], answers, "queue").map((r) => r.id), ["m", "x"]);
+  });
+  test("an answered-elsewhere or expired one is gone for good", () => {
+    const answers = new Map();
+    const recorded = answerAfter409("already_answered");
+    if (recorded) answers.set("m", recorded);
+    assert.deepEqual(applyAnswers([{ id: "m" }], answers, "queue"), []);
   });
 });

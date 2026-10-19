@@ -442,7 +442,11 @@ class RescheduleIn(BaseModel):
     booking_id: Annotated[UUID, Field(strict=False)]
     starts_at: Instant
     reschedule_count: int
-    seen_starts_at: Instant | None = None  # a pending booking's stale-tab echo; see reschedule()
+    seen_starts_at: Instant | None = Field(
+        default=None,
+        description="Only for a pending booking: the start the client was shown. Moving one "
+        "that has moved since (or without this) is 409 `changed`.",
+    )
 
 
 @router.post(

@@ -17,7 +17,7 @@ import { canAnswerRequests, dateLocale, type Role, showPublishStep, todayLabel }
 import { formatMoney } from "@/lib/money";
 import { type NameMap, type Locale, serviceName } from "@/lib/services";
 import { listWindow, localTime } from "@/lib/time-off";
-import { type Answer, acceptBody, agendaPhase, applyAnswers, blockLabel, dayRelation, declineBody, expiryLabel, leaveQueue, mergeAgenda, nowLineAt, relativeAgo, sortQueue, todayEmpty } from "@/lib/today";
+import { type Answer, acceptBody, agendaPhase, answerAfter409, applyAnswers, blockLabel, dayRelation, declineBody, expiryLabel, leaveQueue, mergeAgenda, nowLineAt, relativeAgo, sortQueue, todayEmpty } from "@/lib/today";
 
 import { SignedOutBanner, useConsole } from "../_ui/console";
 import styles from "../_ui/console.module.css";
@@ -231,16 +231,16 @@ export function Today() {
 
   /** The row leaves the queue. Focus goes to the next visible row's Accept, else the previous one's,
    * else the heading: worked out from the page itself, since which rows show depends on the screen's width. */
-  function leave(booking: PendingOut, answer: Answer) {
+  function leave(booking: PendingOut, answer: Answer | null) {
     const rowEls = [...(queueList.current?.querySelectorAll<HTMLElement>("[data-booking]") ?? [])];
     const at = rowEls.findIndex((el) => el.dataset.booking === booking.id);
     const usable = (el: HTMLElement) => el.offsetParent !== null && el.querySelector("[data-accept]") !== null;
     const neighbour = [...rowEls.slice(at + 1), ...rowEls.slice(0, at).reverse()].find(usable);
     focusTarget.current = neighbour ? `accept-${neighbour.dataset.booking}` : "heading";
-    answers.current.set(booking.id, answer);
-    setQueue((current) => leaveQueue(current, answers.current));
+    if (answer) answers.current.set(booking.id, answer);
+    setQueue((current) => leaveQueue(current, answers.current).filter((row) => row.id !== booking.id));
     // The agenda follows the answer: an accepted booking is confirmed there now, a declined one is gone.
-    if (answer !== "stale") setAgenda((current) => applyAnswers(current ?? [], answers.current, "agenda"));
+    if (answer && answer !== "stale") setAgenda((current) => applyAnswers(current ?? [], answers.current, "agenda"));
   }
 
   async function answer(booking: PendingOut, to: "confirmed" | "declined") {
@@ -259,8 +259,9 @@ export function Today() {
         setSignedOut(true);
       } else if (outcome.status === 409) {
         // Answered elsewhere, it expired, or the client moved it meanwhile: say so, drop the row (a
-        // moved one comes back with its new time on the reload), and read the truth again.
-        leave(booking, "stale");
+        // moved one is not recorded as answered, so it comes back with its new time on the reload),
+        // and read the truth again.
+        leave(booking, answerAfter409(outcome.code));
         setStatus(t(outcome.code === "changed" ? "moved" : "stale"));
         loadQueue();
         loadAgenda();

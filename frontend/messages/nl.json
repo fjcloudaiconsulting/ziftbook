@@ -907,7 +907,7 @@
     "cancelledLede": "We hebben je een bevestiging gemaild.",
     "movedTitle": "Je afspraak is verplaatst naar {when}",
     "movedLede": "We hebben je een nieuwe bevestiging gemaild, met een agendabestand.",
-    "movedPendingLede": "We hebben je de nieuwe tijd gemaild. {business} moet die nog accepteren.",
+    "movedPendingLede": "We hebben je de nieuwe tijd gemaild. {business} moet nog akkoord geven.",
     "backToBooking": "Terug naar je afspraak",
     "anotherTitle": "Je hebt in deze browser een andere afspraak geopend",
     "anotherLede": "Open de link in de e-mail van deze afspraak opnieuw om hem te beheren."

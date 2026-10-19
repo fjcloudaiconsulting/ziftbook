@@ -1168,8 +1168,8 @@ SELECT has_column_privilege('ziftbook_app', 'bookings', 'original_starts_at', 'U
 """)
 
 
-# ZIF-157 B3 (test 10). guard. 0042 grants UPDATE on original_starts_at and adds the trigger that
-# guards it; the downgrade removes both.
+# ZIF-157 B3 GUARD. Wrong impl: a 0042 downgrade that leaves the UPDATE grant or the trigger
+# behind, or an upgrade that adds neither.
 def test_0042_round_trips(migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch) -> None:
     cfg = lock_timeout_config(monkeypatch)
     try:

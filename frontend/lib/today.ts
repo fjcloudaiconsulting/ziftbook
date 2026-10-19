@@ -56,6 +56,13 @@ export function acceptBody(startsAt: string): { status: "confirmed"; starts_at: 
 
 export type Answer = "confirmed" | "declined" | "stale";
 
+/** What to remember of a 409 on accept/decline. A `changed` one is NOT recorded: the client moved the
+ * request, so it is still open and the reload must show it again with its new time. Anything else
+ * (answered elsewhere, expired) is gone for good. */
+export function answerAfter409(code: string | undefined): Answer | null {
+  return code === "changed" ? null : "stale";
+}
+
 /** Filters a (re)fetched list through what this session has already answered, so a read that was
  * in flight before an answer can never bring the row back. The queue drops every answered row; the
  * agenda confirms an accepted booking and drops a declined one (a stale one is left as the server says). */
