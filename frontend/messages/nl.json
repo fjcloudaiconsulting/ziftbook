@@ -914,7 +914,6 @@
   },
   "BookingPage": {
     "timesIn": "Tijden in {city}",
-    "stepDoneSuffix": ", klaar",
     "step1": "Kies een dienst",
     "step2": "Kies een dag en tijd",
     "step3": "Jouw gegevens",
@@ -977,7 +976,6 @@
     "fine": "{biz} gebruikt je gegevens alleen om deze afspraak te beheren.",
     "errName": "Vul je naam in.",
     "errEmail": "Vul een e-mailadres in, zoals naam@voorbeeld.nl.",
-    "errMissing": "Kies eerst een dienst en een tijd.",
     "errMissingTime": "Kies eerst een tijd.",
     "slotTaken": "Iemand anders heeft {time} net geboekt. Je gegevens zijn bewaard; kies een andere tijd.",
     "whoAt": "Bij wie wil je om {time}?",

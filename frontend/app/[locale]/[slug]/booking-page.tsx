@@ -636,6 +636,7 @@ export function BookingPage({
                     <WhoAt s2={s2} banner={flow.banner?.where === 3 ? flow.banner : null} zone={zone} dLocale={dLocale} t={t} onPick={(pick) => setFlow((f) => ({ ...f, pick }))} />
                     <form
                       className={styles.form}
+                      method="post"
                       noValidate
                       onSubmit={(event) => {
                         event.preventDefault();

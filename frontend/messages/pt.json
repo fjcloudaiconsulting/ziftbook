@@ -914,7 +914,6 @@
   },
   "BookingPage": {
     "timesIn": "Horários no fuso de {city}",
-    "stepDoneSuffix": ", concluído",
     "step1": "Escolha um serviço",
     "step2": "Escolha o dia e o horário",
     "step3": "Seus dados",
@@ -977,7 +976,6 @@
     "fine": "{biz} usa seus dados somente para gerenciar esta reserva.",
     "errName": "Digite seu nome.",
     "errEmail": "Digite um endereço de e-mail, como nome@exemplo.com.",
-    "errMissing": "Escolha primeiro um serviço e um horário.",
     "errMissingTime": "Escolha primeiro um horário.",
     "slotTaken": "Outra pessoa acabou de reservar às {time}. Seus dados foram mantidos; escolha outro horário.",
     "whoAt": "Com quem você prefere às {time}?",

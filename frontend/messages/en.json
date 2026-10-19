@@ -914,7 +914,6 @@
   },
   "BookingPage": {
     "timesIn": "Times in {city} time",
-    "stepDoneSuffix": ", done",
     "step1": "Choose a service",
     "step2": "Choose a day and time",
     "step3": "Your details",
@@ -977,7 +976,6 @@
     "fine": "{biz} uses your details only to manage this booking.",
     "errName": "Enter your name.",
     "errEmail": "Enter an email address, like name@example.com.",
-    "errMissing": "Choose a service and a time first.",
     "errMissingTime": "Choose a time first.",
     "slotTaken": "Someone else just booked {time}. Your details are kept; choose another time.",
     "whoAt": "Who would you like at {time}?",
