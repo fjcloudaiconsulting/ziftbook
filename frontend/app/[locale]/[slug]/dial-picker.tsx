@@ -100,6 +100,7 @@ export function DialPicker({ options, value, onChange }: { options: DialOption[]
             role="combobox"
             className={styles.dialSearch}
             aria-label={t("dialCode")}
+            placeholder={t("dialSearch")}
             aria-expanded="true"
             aria-controls={`${id}-list`}
             aria-activedescendant={shown[act] ? optId(shown[act].region) : undefined}
