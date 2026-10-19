@@ -787,3 +787,23 @@ def test_send_booking_member_changed_body_names_the_member_or_falls_back(
         assert "(Europe/Amsterdam).\n" in body
     else:
         assert f"{name}.\n" in body and "(Europe/Amsterdam).\n" not in body
+
+
+# ZIF-157 B1 FENCE. Wrong impl: `b.client_name` without the coalesce (the snapshot is NULL for a
+# merchant booking, and BookingRow.client_name is a str: a NULL is a 500).
+def test_a_walk_in_shows_the_client_row(people: People, owner: TestClient, ready: str) -> None:
+    created = book(
+        owner,
+        ready,
+        member_id=boss(people),
+        new_client={"name": "Walk Inn", "phone": "+31633333333"},
+    )
+    assert created.status_code == 201, created.json()
+
+    detail = owner.get(f"/api/bookings/{created.json()['id']}")
+
+    assert detail.status_code == 200, detail.json()
+    assert (detail.json()["client_name"], detail.json()["client_phone"]) == (
+        "Walk Inn",
+        "+31633333333",
+    )

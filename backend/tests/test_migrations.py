@@ -326,6 +326,10 @@ SNAPSHOT = (
     "reschedule_cutoff_hours",
     "original_starts_at",
     "max_reschedules",
+    # ZIF-157 (0041): write-once, so no UPDATE grant.
+    "client_name",
+    "client_phone",
+    "client_message",
 )
 
 
@@ -1088,3 +1092,72 @@ def test_0039_round_trips_second_factors(
 def test_0039_restores_0037s_resolve_admin_session() -> None:
     old = migration("0037_admin_sessions.py").FUNCTIONS["resolve_admin_session(bytea)"]
     assert migration("0039_admin_second_factor.py").RESOLVE_0037 == old
+
+
+# ZIF-157 B1 FENCE. Wrong impl: an upgrade missing a CHECK, or a client_phone that takes any text
+# (not E.164); a downgrade that leaves a column behind.
+SNAPSHOT_COLUMNS = text("""
+SELECT column_name, is_nullable FROM information_schema.columns
+WHERE table_name = 'bookings'
+  AND column_name IN ('client_name', 'client_phone', 'client_message')
+""")
+
+
+def test_0041_round_trips_the_booking_snapshot(
+    people: People, migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = lock_timeout_config(monkeypatch)
+    try:
+        command.downgrade(cfg, "0040")
+        with migrate_engine.connect() as conn:
+            assert conn.execute(SNAPSHOT_COLUMNS).all() == []
+    finally:
+        command.upgrade(cfg, "head")
+    with migrate_engine.connect() as conn:
+        assert dict(conn.execute(SNAPSHOT_COLUMNS).all()) == {
+            "client_name": "YES",
+            "client_phone": "YES",
+            "client_message": "YES",
+        }
+
+    service_id = seed_service(people.a)
+    starts_at = datetime.now(UTC) + timedelta(days=1)
+    with tenant_context(people.a) as session:
+        client_id = session.scalar(
+            text(
+                "INSERT INTO clients (tenant_id, name) "
+                "VALUES (current_setting('app.tenant_id')::uuid, 'Z') RETURNING id"
+            )
+        )
+        booking_id = insert_booking(
+            session,
+            client_id=client_id,
+            worker_id=member_id(people.a, people.both),
+            service_id=service_id,
+            starts_at=starts_at,
+            ends_at=starts_at + timedelta(minutes=30),
+        )
+    # The app role cannot UPDATE these columns (write-once), so the migrate role proves the CHECKs.
+    with migrate_engine.begin() as conn:
+        conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(people.a)})
+        for column, bad in (
+            ("client_name", "x" * 101),
+            ("client_name", ""),
+            ("client_phone", "0612345678"),
+            ("client_message", ""),
+            ("client_message", "x" * 1001),
+        ):
+            with pytest.raises(IntegrityError) as bites, conn.begin_nested():
+                conn.execute(
+                    text(f"UPDATE bookings SET {column} = :v WHERE id = :id"),
+                    {"v": bad, "id": booking_id},
+                )
+            assert isinstance(bites.value.orig, CheckViolation)
+            assert bites.value.orig.diag.constraint_name == f"ck_bookings_{column}"
+        conn.execute(
+            text(
+                "UPDATE bookings SET client_name = :n, client_phone = '+31612345678', "
+                "client_message = :m WHERE id = :id"
+            ),
+            {"n": "x" * 100, "m": "y" * 1000, "id": booking_id},
+        )

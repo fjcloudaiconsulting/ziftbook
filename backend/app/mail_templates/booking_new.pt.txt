@@ -3,7 +3,7 @@ Olá,
 
 Você tem um novo agendamento:
 
-Cliente: $client
+Cliente: $client$message
 
 $service
 $date às $time ($zone)

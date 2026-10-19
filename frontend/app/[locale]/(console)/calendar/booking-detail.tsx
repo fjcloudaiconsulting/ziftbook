@@ -365,6 +365,14 @@ export function BookingDetail({
                 </dd>
               </>
             )}
+            {ready.client_message && (
+              <>
+                <dt>{t("factMessage")}</dt>
+                <dd className={css.message}>
+                  <q>{ready.client_message}</q>
+                </dd>
+              </>
+            )}
           </dl>
           {actions(ready)}
           {error && <FieldError id="detail-error">{error}</FieldError>}

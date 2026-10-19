@@ -1404,10 +1404,11 @@ WITH c AS (
   INSERT INTO clients (tenant_id, name)
   VALUES (current_setting('app.tenant_id')::uuid, :client) RETURNING id)
 INSERT INTO bookings (tenant_id, client_id, worker_id, service_id, starts_at, ends_at, status,
-    expires_at, source, service_name, price_amount_minor, price_currency, duration_minutes,
+    expires_at, source, client_name, service_name, price_amount_minor, price_currency,
+    duration_minutes,
     auto_confirm_at_booking, free_cancellation_hours, reschedule_cutoff_hours)
 SELECT current_setting('app.tenant_id')::uuid, c.id, :worker_id, s.id, :starts_at, :ends_at,
-       :status, :expires_at, 'merchant', s.name, s.price_amount_minor, s.price_currency,
+       :status, :expires_at, 'merchant', :snapshot, s.name, s.price_amount_minor, s.price_currency,
        s.duration_minutes, true, 48, 24
 FROM services s, c WHERE s.id = :service_id
 RETURNING id
@@ -1424,6 +1425,7 @@ def seed_booking(
     status: str = "confirmed",
     expires_at: datetime | None = None,
     client: str = "Sofia Almeida",
+    snapshot: str | None = None,
 ) -> str:
     """A booking row inserted directly, under the booking lock (as the console's override would
     land one inside a block)."""
@@ -1435,6 +1437,7 @@ def seed_booking(
             SEED_BOOKING,
             {
                 "client": client,
+                "snapshot": snapshot,
                 "worker_id": worker_id,
                 "service_id": service_id,
                 "starts_at": starts_at,
@@ -1619,6 +1622,29 @@ def test_another_members_appointment_does_not_count(people: People, app: FastAPI
     assert created.status_code == 201
 
 
+# Z5b. fence: the conflict names the client as the booking kept them (ZIF-157), not as the client
+# row reads now. Kills: IN_THE_WAY reading c.name instead of coalesce(b.client_name, c.name).
+def test_the_conflict_names_the_client_as_the_booking_kept_them(
+    people: People, app: FastAPI
+) -> None:
+    owner = signed_in(app, people.a, people.both)
+    only_a = member_id(people.a, people.only_a)
+    seed_booking(
+        people.a,
+        new_service(owner),
+        only_a,
+        soon(1),
+        soon(1.5),
+        client="Row Name",
+        snapshot="Typed Name",
+    )
+
+    refused = block(owner, only_a, starts_at=iso(soon()), ends_at=iso(soon(2)))
+
+    assert refused.status_code == 409
+    assert [b["client_name"] for b in refused.json()["bookings"]] == ["Typed Name"]
+
+
 # Z6. fence: an edit is refused only for an appointment it newly covers. Growing over one is a 409
 # with the row unchanged; a reason-only edit or a shrink of a block already over an appointment
 # (an override booking, or one made before this check) still saves. Kills: checking the resulting
@@ -1693,6 +1719,7 @@ def test_a_block_waits_for_a_booking_in_flight_and_then_sees_it(
                 SEED_BOOKING,
                 {
                     "client": "Mark de Vries",
+                    "snapshot": None,
                     "worker_id": only_a,
                     "service_id": service_id,
                     "starts_at": soon(1),

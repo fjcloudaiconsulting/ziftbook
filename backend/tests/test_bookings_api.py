@@ -1366,7 +1366,9 @@ def test_the_cancellation_policy_text_is_snapshotted_and_never_rewritten(
     assert after == agreed
 
 
-# 35: FENCE. Wrong impl: add client_name/client_email columns to 0026 and write them.
+# 35: FENCE. Wrong impl: add a client_email column (or the client row's own name/phone/locale
+# columns) to bookings. ZIF-157 (0041) deliberately snapshots client_name, client_phone and
+# client_message on the booking, so those three are the only client-typed columns allowed.
 def test_no_client_personal_data_reaches_the_booking_row(migrate_engine: Engine) -> None:
     with migrate_engine.connect() as conn:
         columns = set(
@@ -1377,7 +1379,13 @@ def test_no_client_personal_data_reaches_the_booking_row(migrate_engine: Engine)
                 )
             )
         )
-    assert columns.isdisjoint({"name", "email", "phone", "locale", "client_name", "client_email"})
+    assert columns.isdisjoint({"name", "email", "phone", "locale", "client_email"})
+    assert {c for c in columns if c.startswith("client_")} == {
+        "client_id",
+        "client_name",
+        "client_phone",
+        "client_message",
+    }
 
 
 # 36: FENCE. Wrong impl: echo Found.phone into BookingOut.
@@ -1829,3 +1837,37 @@ def test_create_reads_booked_exactly_once(
 
     assert post_booking(new_client(app), people.a, ready).status_code == 201
     assert calls == [None]
+
+
+# ZIF-157 B1 FENCE. Wrong impl: the message written to clients.client_note (per client, shown on
+# every future booking), or a model-level length check (a bare invalid_request: the page cannot
+# mark the field).
+def test_the_message_is_the_booking_s_not_the_client_s(
+    people: People, app: FastAPI, owner: TestClient, ready: str
+) -> None:
+    email = fresh_email()
+    client = new_client(app)
+
+    booked = post_booking(
+        client, people.a, ready, email=email, message="  Please\nbe quiet  ", starts_at=at("09:00")
+    )
+    assert booked.status_code == 201, booked.json()
+    detail = owner.get(f"/api/bookings/{booked.json()['id']}").json()
+    assert detail["client_message"] == "Please\nbe quiet"
+    with tenant_context(people.a) as session:
+        note = session.scalar(
+            text("SELECT client_note FROM clients WHERE email = :e"), {"e": email}
+        )
+    assert note is None
+
+    for bad in ("x" * 1001, "a​b"):
+        refused = post_booking(
+            client, people.a, ready, email=email, message=bad, starts_at=at("11:00")
+        )
+        assert (refused.status_code, refused.json()) == (422, {"code": "message_invalid"})
+    with tenant_context(people.a) as session:
+        assert session.scalar(text("SELECT count(*) FROM bookings")) == 1
+
+    blank = post_booking(client, people.a, ready, email=email, message="   ", starts_at=at("11:00"))
+    assert blank.status_code == 201, blank.json()
+    assert owner.get(f"/api/bookings/{blank.json()['id']}").json()["client_message"] is None

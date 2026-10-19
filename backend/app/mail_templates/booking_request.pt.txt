@@ -3,7 +3,7 @@ Olá,
 
 Um cliente pediu um agendamento:
 
-Cliente: $client
+Cliente: $client$message
 
 $service
 $date às $time ($zone)

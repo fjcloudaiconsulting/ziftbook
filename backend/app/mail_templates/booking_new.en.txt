@@ -3,7 +3,7 @@ Hello,
 
 You have a new booking:
 
-Client: $client
+Client: $client$message
 
 $service
 $date at $time ($zone)

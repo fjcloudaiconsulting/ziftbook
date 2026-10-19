@@ -280,6 +280,11 @@ def test_no_personal_data_ever_reaches_a_log(
     secret(booker_email)
     secret(booker_phone)
     secret("+31611223344")  # as stored (ZIF-152)
+    # ZIF-157: the client's message for the merchant, through the merchant email and a 422.
+    booker_message = "Message Qx-7 for the salon"
+    bad_message = "Message Qx-8\twith a tab"
+    secret(booker_message)
+    secret("Message Qx-8")
     # ZIF-117: the public POST books only for the signed-in address itself.
     booker = client_for(app)
     sign_in_as(booker, people.a, booker_email)
@@ -287,6 +292,20 @@ def test_no_personal_data_ever_reaches_a_log(
     # 6f (ZIF-53): a pending booking sends booking_received (client) and booking_request (merchant);
     # the owner's confirm then sends booking_confirmed with its .ics. The reminder's due_at is a day
     # away, so run_once leaves it queued.
+    refused = booker.post(
+        f"/api/public/businesses/{people.a}/services/{created.json()['id']}/bookings",
+        json={
+            "starts_at": slots[0],
+            "name": booker_name,
+            "email": booker_email,
+            "phone": booker_phone,
+            "message": bad_message,
+            "policy_version": "2026-09-01",
+            "consents": {},
+        },
+    )
+    assert refused.status_code == 422, refused.text
+    assert refused.json()["code"] == "message_invalid"
     booked = booker.post(
         f"/api/public/businesses/{people.a}/services/{created.json()['id']}/bookings",
         json={
@@ -294,6 +313,7 @@ def test_no_personal_data_ever_reaches_a_log(
             "name": booker_name,
             "email": booker_email,
             "phone": booker_phone,
+            "message": booker_message,
             "policy_version": "2026-09-01",
             "consents": {},
         },
