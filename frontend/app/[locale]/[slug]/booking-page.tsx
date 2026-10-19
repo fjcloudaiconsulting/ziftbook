@@ -161,7 +161,12 @@ export function BookingPage({
             const free = flow.worker === "any" ? (win.who[win.slots.indexOf(slot)] ?? []) : [];
             // Only while the client has not changed worker or picked a time meanwhile.
             setFlow((f) => (f.worker === flow.worker && !f.slot ? { ...f, slot, free, day: localDay(slot, zone), step: 3 } : f));
-          } else if (win && at) syncUrl(flow.worker, null);
+          } else if (win && at) {
+            // Drop only `at` from the address as it is now: a worker picked meanwhile already wrote `with`.
+            const url = new URL(window.location.href);
+            url.searchParams.delete("at");
+            window.history.replaceState(null, "", url);
+          }
         })(),
     );
     return () => clearTimeout(timer);
