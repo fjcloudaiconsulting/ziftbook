@@ -13,7 +13,7 @@ from sqlalchemy import Engine, text
 
 from app import payments
 from app.jobs import run_once
-from app.main import MAX_BODY, WEBHOOK_MAX_BODY, create_app
+from app.main import WEBHOOK_MAX_BODY, create_app
 from app.worker import KINDS
 from tests.conftest import People, closed, new_client, points
 from tests.stripe_fake import WEBHOOK_SECRET, FakeGateway, connect, event_body, signed
@@ -137,7 +137,7 @@ def test_the_webhook_takes_256_kib_and_nothing_else_does(
     assert "content-length" not in chunked.request.headers
     assert (chunked.status_code, chunked.json()) == (413, {"code": "content_too_large"})
 
-    padded = b"{}" + b" " * (MAX_BODY + 1 - 2)
+    padded = b"{}" + b" " * (65 * 1024 + 1 - 2)  # literal: a raised MAX_BODY must not move it
     for content in (padded, chunks(padded)):
         response = client.post("/api/sign-up", content=content, headers=JSON)
         assert (response.status_code, response.json()) == (413, {"code": "content_too_large"})
