@@ -124,6 +124,7 @@ def test_the_page_answers_exactly_the_documented_fields(
         "language",
         "booking_horizon_days",
         "policy_version",
+        "consent",
         "cancellation",
         "services",
         "auto_confirm",
@@ -445,13 +446,25 @@ def test_the_policy_version_is_one_a_booking_accepts(
     assert response.status_code == 201, response.content
 
 
-# 23b. fence — review nit: the offered version is the newest one, max(CONSENT_TEXTS). Kills min().
-def test_the_policy_version_is_the_newest_one(
+# 23b. fence (ZIF-157 B2; replaces "the offered version is the newest one, max()"). Wrong impl:
+# keeping max() for the legacy field, which answers 9999-12-31 (or `.../pt`) to old tabs and the
+# hold confirm page.
+def test_the_legacy_version_stays_pinned_and_each_locale_has_its_text(
     app: FastAPI, slug: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     patched = dict(clients.CONSENT_TEXTS) | {"9999-12-31": clients.CONSENT_TEXTS["2026-09-01"]}
     monkeypatch.setattr(clients, "CONSENT_TEXTS", patched)
-    assert page(new_client(app), slug).json()["policy_version"] == "9999-12-31"
+
+    body = page(new_client(app), slug).json()
+
+    assert body["policy_version"] == "2026-09-01"
+    assert set(body["consent"]) == {"en", "nl", "pt"}
+    for locale, offered in body["consent"].items():
+        version = f"2026-10-20/{locale}"
+        assert offered == {
+            "policy_version": version,
+            "marketing_email": clients.CONSENT_TEXTS[version]["marketing_email"],
+        }
 
 
 # 24. guard

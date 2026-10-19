@@ -24,7 +24,7 @@ from psycopg.errors import CheckViolation, InsufficientPrivilege
 from sqlalchemy import Engine, text
 from sqlalchemy.exc import IntegrityError, ProgrammingError
 
-from app import booking_links, mail
+from app import booking_links, clients, mail
 from app.booking_links import COOKIE
 from app.bookings import RESCHEDULE
 from app.db import tenant_context
@@ -50,7 +50,7 @@ from tests.test_booking_email import (
     texts_to,
 )
 from tests.test_booking_page_api import page, slug_of
-from tests.test_bookings_api import DAY, TODAY, ZONE, at, post_booking
+from tests.test_bookings_api import DAY, TODAY, ZONE, at, post_booking, post_guest
 from tests.test_bookings_approval_api import ago, expire, make_pending, patch, shift
 from tests.test_working_hours import seed
 
@@ -1151,6 +1151,46 @@ def test_confirm_skips_a_purpose_withdrawn_after_booking(
             .all()
         )
     assert list(recorded) == ["marketing_email"]
+
+
+# ZIF-157 B2 FENCE 5. Wrong impl: writing the grant at booking, or English-only evidence.
+def test_a_guest_tick_becomes_consent_only_through_the_link(
+    people: People, app: FastAPI, ready: str
+) -> None:
+    email = fresh_email()
+    version = f"{clients.POLICY_VERSION}/nl"
+    response = post_guest(
+        new_client(app),
+        people.a,
+        ready,
+        email=email,
+        policy_version=version,
+        consents={"marketing_email": True},
+    )
+    assert response.status_code == 201, response.json()
+    booking_id = response.json()["id"]
+    with tenant_context(people.a) as session:
+        assert session.scalar(text("SELECT count(*) FROM consents")) == 0
+        event = session.execute(
+            text(
+                "SELECT consent_purposes FROM booking_events "
+                "WHERE booking_id = :id AND event = 'created'"
+            ),
+            {"id": booking_id},
+        ).one()
+    assert event.consent_purposes == {"marketing_email": True}
+
+    assert (
+        post(linked(app, people.a, booking_id), "/consents", {"booking_id": booking_id}).status_code
+        == 200
+    )
+
+    with tenant_context(people.a) as session:
+        (row,) = session.execute(text("SELECT text_shown, policy_version FROM consents")).all()
+    dutch = clients.CONSENT_TEXTS[version]["marketing_email"]
+    assert row.text_shown == dutch
+    assert dutch != clients.CONSENT_TEXTS[f"{clients.POLICY_VERSION}/en"]["marketing_email"]
+    assert row.policy_version == version
 
 
 # fence (D11). A withdrawal made BEFORE the booking's grant does not override it: the grant is

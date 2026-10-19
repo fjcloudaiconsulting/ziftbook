@@ -48,7 +48,10 @@ from app.services import STRICT, DescriptionText, Price, multiline
 
 logger = logging.getLogger(__name__)
 
-IP_LIMIT, EMAIL_LIMIT, LIMIT_WINDOW = 30, 5, timedelta(hours=1)
+IP_LIMIT, BUSINESS_IP_LIMIT, EMAIL_LIMIT, LIMIT_WINDOW = 30, 10, 5, timedelta(hours=1)
+# Against mail bombing and address farming: one address, every business together (key
+# `booking_verify`, shared with the hold path while it drains).
+ADDRESS_LIMIT = 10
 # ZIF-51's own key in app/schedule.py's ticket-number advisory lock convention (OPENING_LOCK = 105):
 # disjoint first arguments, so the two locks can never collide.
 LOCK_KEY = 51
@@ -595,6 +598,7 @@ def place(
     client_name: str | None = None,
     client_phone: str | None = None,
     client_message: str | None = None,
+    metric: dict[str, str] | None = None,
 ) -> tuple[Row[Any], UUID]:
     """The one insert path for a new booking (ZIF-57): the public create() and the merchant's both
     land here, so the snapshot columns and the `created` event can never drift between them.
@@ -683,7 +687,7 @@ def place(
     # `python -O`, which is why nothing below may depend on this running.
     assert booking is not None and candidate is not None
     # Waits for the caller's root commit; `source` is always a caller's literal, so it stays closed.
-    count_after_commit(db, tracing.BOOKINGS_CREATED, {"booking.source": source})
+    count_after_commit(db, tracing.BOOKINGS_CREATED, {"booking.source": source, **(metric or {})})
     return booking, candidate
 
 
@@ -729,6 +733,7 @@ def book_online(
     phone: str,
     locale: str | None,
     user_id: UUID | None,
+    proven: bool,
     policy_version: str,
     consents: dict[Purpose, bool],
     origin_ip: str | None,
@@ -743,7 +748,7 @@ def book_online(
     and catches OperationalError as 503 busy.
 
     address: the client's email, already normalised (never `email`: that names this module's
-    enqueue helper). user_id follows app.clients.find_or_create's CALLER'S DUTY.
+    enqueue helper). proven: see app.clients.find_or_create; user_id is passed only when proven.
     exclude: a hold id that re-derivation must not see as a conflict with itself
     (availability.booked). prefer: a worker to try first when eligible - the one the hold blocked.
     """
@@ -767,12 +772,24 @@ def book_online(
     clients.texts_for(policy_version, consents)
     phone = clients.e164(db, phone)  # ZIF-152: also a 422 before any write, after the 404s
     message = message_text(message)  # ZIF-157: likewise
-    # Consent WITHDRAWALS only; grants ride the booking_events row instead (ruling 18, §10).
-    withdrawals: dict[Purpose, bool] = {p: g for p, g in consents.items() if not g}
+    # Consent WITHDRAWALS only; grants ride the booking_events row instead (ruling 18, §10). A guest
+    # cannot withdraw anything: an unproven address says nothing about its owner, and the event
+    # keeps only what was ticked.
+    withdrawals: dict[Purpose, bool] = (
+        {p: g for p, g in consents.items() if not g} if proven else {}
+    )
+    if not proven:
+        consents = {p: g for p, g in consents.items() if g}
     # 7. Once, before the savepoint: the row lock this takes is what the pending cap needs,
     #    and ROLLBACK TO SAVEPOINT would release a lock taken inside one.
     found = clients.find_or_create(
-        db, name=name, email=address, phone=phone, locale=locale, user_id=user_id
+        db,
+        name=name,
+        email=address,
+        phone=phone,
+        locale=locale,
+        user_id=user_id if proven else None,
+        proven=proven,
     )
     if withdrawals:  # 8: record_consents calls texts_for again - its own trust boundary
         clients.record_consents(
@@ -854,6 +871,7 @@ def book_online(
         client_name=name,
         client_phone=phone,
         client_message=message,
+        metric={"booking.proven": "true" if proven else "false"},
         event={
             "ip": origin_ip,
             "user_agent": user_agent,
@@ -905,26 +923,33 @@ router = APIRouter(prefix="/api/public", tags=["bookings"])
 def create(  # sync def: turnstile.verify's urlopen blocks, and runs in FastAPI's threadpool
     tenant_id: UUID, service_id: UUID, new: BookingIn, request: Request, response: Response
 ) -> BookingOut:
-    """Book a free slot straight away, signed in with the posted address. Anyone else answers 403
-    `verify_email` and books through an emailed link instead (app.holds, ZIF-117)."""
+    """Book a free slot straight away, as a guest or signed in. The address is `proven` only for
+    its own signed-in account; a guest's booking never changes an existing client (ZIF-157)."""
     signed_in_as = account(request)  # step 0: its own transaction, opened and closed here
-    # ZIF-117. Before the limits and Turnstile, so the page can spend its unspent token on the hold
-    # POST instead. Keyed on the caller's own session alone: it says nothing about the address.
-    if signed_in_as is None or signed_in_as.email != new.email:
-        raise ApiError(403, "verify_email")
+    proven = signed_in_as is not None and signed_in_as.email == new.email
     ip = request.client.host if request.client else None
     # 1. Per IP first, before any outbound call: Turnstile ahead of a limit would give an anonymous
-    #    caller a free outbound HTTPS POST per request.
-    if limits.hit({limits.ip_key("booking", ip): IP_LIMIT}, LIMIT_WINDOW):
+    #    caller a free outbound HTTPS POST per request. Overall, and per business.
+    if limits.hit(
+        {
+            limits.ip_key("booking", ip): IP_LIMIT,
+            limits.ip_key(f"booking:{tenant_id}", ip): BUSINESS_IP_LIMIT,
+        },
+        LIMIT_WINDOW,
+    ):
         raise ApiError(429, "rate_limited")
     # 2. Turnstile, between the two limits.
     if not turnstile.verify(new.turnstile_token, ip):
         raise ApiError(403, "turnstile_failed")
-    # 3. Per email LAST, and in its own hit() call: app/limits.py increments every key
+    # 3. Per address LAST, and in its own hit() call: app/limits.py increments every key
     #    unconditionally and only then evaluates which one tripped, so a combined call before
     #    Turnstile would let a Turnstile-less script lock an address out cheaply.
     if limits.hit(
-        {limits.email_key("booking", f"{tenant_id}:{new.email}"): EMAIL_LIMIT}, LIMIT_WINDOW
+        {
+            limits.email_key("booking", f"{tenant_id}:{new.email}"): EMAIL_LIMIT,
+            limits.email_key("booking_verify", new.email): ADDRESS_LIMIT,
+        },
+        LIMIT_WINDOW,
     ):
         raise ApiError(429, "rate_limited")
     request.state.tenant_id = tenant_id
@@ -944,7 +969,8 @@ def create(  # sync def: turnstile.verify's urlopen blocks, and runs in FastAPI'
                 address=new.email,
                 phone=new.phone,
                 locale=new.locale,
-                user_id=signed_in_as.user_id,
+                user_id=signed_in_as.user_id if signed_in_as is not None else None,
+                proven=proven,
                 policy_version=new.policy_version,
                 consents=new.consents,
                 origin_ip=origin_ip,

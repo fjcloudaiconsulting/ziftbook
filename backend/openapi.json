@@ -3711,7 +3711,7 @@
           "bookings"
         ],
         "summary": "Create",
-        "description": "Book a free slot straight away, signed in with the posted address. Anyone else answers 403\n`verify_email` and books through an emailed link instead (app.holds, ZIF-117).",
+        "description": "Book a free slot straight away, as a guest or signed in. The address is `proven` only for\nits own signed-in account; a guest's booking never changes an existing client (ZIF-157).",
         "operationId": "bookings-create",
         "parameters": [
           {
@@ -6506,6 +6506,20 @@
             "type": "string",
             "title": "Policy Version"
           },
+          "consent": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/PageConsentOut"
+            },
+            "propertyNames": {
+              "enum": [
+                "en",
+                "nl",
+                "pt"
+              ]
+            },
+            "type": "object",
+            "title": "Consent"
+          },
           "cancellation": {
             "$ref": "#/components/schemas/CancellationOut"
           },
@@ -6531,6 +6545,7 @@
           "language",
           "booking_horizon_days",
           "policy_version",
+          "consent",
           "cancellation",
           "services",
           "auto_confirm"
@@ -8064,6 +8079,24 @@
         "type": "object",
         "title": "NoteChange",
         "description": "Only the fields sent change; null clears a note. Nothing else about a client is editable\nhere: name, email, phone and locale are the merchant's copy of what the client typed, refreshed\nby the next booking."
+      },
+      "PageConsentOut": {
+        "properties": {
+          "policy_version": {
+            "type": "string",
+            "title": "Policy Version"
+          },
+          "marketing_email": {
+            "type": "string",
+            "title": "Marketing Email"
+          }
+        },
+        "type": "object",
+        "required": [
+          "policy_version",
+          "marketing_email"
+        ],
+        "title": "PageConsentOut"
       },
       "PendingOut": {
         "properties": {

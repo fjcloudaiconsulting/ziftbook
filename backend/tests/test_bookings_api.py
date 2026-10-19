@@ -29,7 +29,7 @@ from psycopg.errors import QueryCanceled
 from sqlalchemy import Engine, event, text
 from sqlalchemy.exc import OperationalError
 
-from app import auth, availability, bookings, members, schedule, turnstile
+from app import auth, availability, bookings, limits, members, schedule, turnstile
 from app.db import SessionLocal, tenant_context
 from app.main import create_app
 from app.schedule import to_utc
@@ -702,9 +702,12 @@ def test_a_cancelled_booking_frees_its_slot_through_the_route(
     assert second.status_code == 201, second.json()
 
 
-# 22: GUARD, demoted honestly (see spec SS14.3 for the invariant this leaves unfenced).
+# 22: GUARD, demoted honestly (see spec SS14.3 for the invariant this leaves unfenced). ZIF-157 B2:
+# also for a guest (the tenant advisory lock serialises create() first, so an unlocked upsert cannot
+# be shown red here).
+@pytest.mark.parametrize("who", ["proven", "guest"])
 def test_the_pending_cap_holds_under_two_concurrent_bookings_of_one_address(
-    people: People, app: FastAPI, owner: TestClient
+    people: People, app: FastAPI, owner: TestClient, who: str
 ) -> None:
     put_settings(owner, {"max_pending_per_email": 1})
     service_a = new_service(owner)
@@ -719,7 +722,8 @@ def test_the_pending_cap_holds_under_two_concurrent_bookings_of_one_address(
 
     def book_one(service_id: str, clock_time: str) -> None:
         barrier.wait(timeout=10)
-        response = post_booking(
+        post = post_booking if who == "proven" else post_guest
+        response = post(
             new_client(app), people.a, service_id, email=email, starts_at=at(clock_time)
         )
         with lock:
@@ -862,70 +866,207 @@ def test_an_accepted_booking_does_not_count_toward_the_cap(
     assert second.status_code == 201, second.json()
 
 
-# 24/25: FENCE, rewritten for ZIF-117 (owner ruling 2026-10-08; replaces ruling 8's FILL). Wrong
-# impl: the old create() that books anyone and fills a blank phone, or a 403 after Turnstile (the
-# page's single-use token would be spent before the hold POST could use it).
-@pytest.mark.parametrize("who", ["anonymous", "signed-in stranger"])
-def test_only_the_signed_in_address_itself_books_here_and_nothing_is_written_before(
-    people: People, app: FastAPI, ready: str, monkeypatch: pytest.MonkeyPatch, who: str
+def guest_body(**overrides: Any) -> dict[str, Any]:
+    return {
+        "starts_at": at("09:00"),
+        "name": "Guest",
+        "email": fresh_email(),
+        "phone": "+31612345678",
+        "policy_version": "2026-09-01",
+        "consents": {},
+        **overrides,
+    }
+
+
+def post_guest(
+    client: TestClient, tenant_id: object, service_id: object, **overrides: Any
+) -> Response:
+    """The public booking POST exactly as the client holds it: no session is added (post_booking
+    signs in as the posted address, which is the PROVEN path)."""
+    return client.post(booking_url(tenant_id, service_id), json=guest_body(**overrides))
+
+
+def seed_client_row(tenant_id: uuid.UUID, email: str, **columns: Any) -> None:
+    with tenant_context(tenant_id) as session:
+        session.execute(
+            text(
+                "INSERT INTO clients (tenant_id, email, "
+                + ", ".join(["name", *columns])
+                + ") VALUES (current_setting('app.tenant_id')::uuid, :email, 'Victim'"
+                + "".join(f", :{name}" for name in columns)
+                + ")"
+            ),
+            {"email": email, **columns},
+        )
+
+
+def client_row(tenant_id: uuid.UUID, email: str) -> dict[str, Any]:
+    with tenant_context(tenant_id) as session:
+        return dict(
+            session.execute(text("SELECT * FROM clients WHERE email = :e"), {"e": email})
+            .mappings()
+            .one()
+        )
+
+
+# ZIF-157 B2 FENCE 1 (replaces 24/25 "anonymous"). Wrong impl: REFRESH for an unproven booker, or a
+# KEEP that fills (`phone = coalesce(clients.phone, excluded.phone)`, same for locale): red on the
+# row whose phone and locale are NULL.
+@pytest.mark.parametrize("filled", [True, False])
+def test_a_guest_books_directly_and_leaves_an_existing_client_untouched(
+    people: People, app: FastAPI, ready: str, filled: bool
 ) -> None:
     email = fresh_email()
+    if filled:
+        seed_client_row(
+            people.a,
+            email,
+            phone="+31600000001",
+            locale="nl",
+            client_note="Client note",
+            internal_note="Internal note",
+            user_id=people.both,
+        )
+    else:
+        seed_client_row(people.a, email)
+    before = client_row(people.a, email)
+
+    response = post_guest(
+        new_client(app),
+        people.a,
+        ready,
+        email=email,
+        name="Typed Guest",
+        phone="06 1234 5678",
+        locale="pt",
+    )
+
+    assert response.status_code == 201, response.json()
+    assert client_row(people.a, email) == before
+    with tenant_context(people.a) as session:
+        snapshot = session.execute(
+            text("SELECT client_name, client_phone FROM bookings WHERE id = :id"),
+            {"id": response.json()["id"]},
+        ).one()
+    assert (snapshot.client_name, snapshot.client_phone) == ("Typed Guest", "+31612345678")
+
+
+# ZIF-157 B2 FENCE 2 (replaces 24/25 "signed-in stranger"). Wrong impl: `proven = signed_in_as is
+# not None`, or user_id taken from any session.
+def test_signed_in_with_another_address_books_as_a_guest(
+    people: People, app: FastAPI, ready: str
+) -> None:
+    signed = signed_in(app, people.a, people.both)
+    fresh = fresh_email()
+    known = fresh_email()
+    seed_client_row(people.a, known, phone="+31600000001")
+    known_before = client_row(people.a, known)
+
+    created = post_guest(signed, people.a, ready, email=fresh, name="Stranger")
+    existing = post_guest(
+        signed, people.a, ready, email=known, name="Stranger", starts_at=at("10:00")
+    )
+
+    assert (created.status_code, existing.status_code) == (201, 201)
+    row = client_row(people.a, fresh)
+    assert (row["name"], row["user_id"]) == ("Stranger", None)
+    assert client_row(people.a, known) == known_before
+
+
+def consent_rows(tenant_id: uuid.UUID, email: str) -> int:
+    with tenant_context(tenant_id) as session:
+        return int(
+            session.scalar(
+                text(
+                    "SELECT count(*) FROM consents WHERE client_id = "
+                    "(SELECT id FROM clients WHERE email = :e)"
+                ),
+                {"e": email},
+            )
+            or 0
+        )
+
+
+def created_event(tenant_id: uuid.UUID, booking_id: str) -> Any:
+    with tenant_context(tenant_id) as session:
+        return session.execute(
+            text(
+                "SELECT policy_version, consent_purposes FROM booking_events "
+                "WHERE booking_id = :id AND event = 'created'"
+            ),
+            {"id": booking_id},
+        ).one()
+
+
+# ZIF-157 B2 FENCE 4. Wrong impl: recording an unproven withdrawal (the unconditional
+# record_consents call), or storing the false entry in the event.
+def test_a_guest_cannot_withdraw_a_clients_consent(
+    people: People, app: FastAPI, ready: str
+) -> None:
+    email = fresh_email()
+    seed_client_row(people.a, email)
     with tenant_context(people.a) as session:
         session.execute(
             text("""
-            INSERT INTO clients (tenant_id, name, email)
-            VALUES (current_setting('app.tenant_id')::uuid, 'Victim', :email)
+            INSERT INTO consents (tenant_id, client_id, purpose, granted, text_shown,
+                                  policy_version, source)
+            SELECT current_setting('app.tenant_id')::uuid, id, 'marketing_email', true, 'shown',
+                   '2026-09-01', 'booking_page' FROM clients WHERE email = :e
             """),
-            {"email": email},
+            {"e": email},
         )
-    verified: list[object] = []
 
-    def verify(*args: object) -> bool:
-        verified.append(args)
-        return True
+    response = post_guest(
+        new_client(app), people.a, ready, email=email, consents={"marketing_email": False}
+    )
 
-    monkeypatch.setattr(turnstile, "verify", verify)
-    client = new_client(app) if who == "anonymous" else signed_in(app, people.a, people.both)
-    body = {
-        "starts_at": at("09:00"),
-        "name": "Attacker",
-        "email": email,
-        "phone": "+31611111111",
-        "policy_version": "2026-09-01",
-        "consents": {},
+    assert response.status_code == 201, response.json()
+    assert consent_rows(people.a, email) == 1
+    assert created_event(people.a, response.json()["id"]).consent_purposes == {}
+
+
+# ZIF-157 B2 FENCE 6. Wrong impl: the cross-business key left on the hold path only. Pattern of
+# holds F10.
+def test_one_address_is_capped_across_businesses(people: People, app: FastAPI, ready: str) -> None:
+    email = fresh_email()
+    for _ in range(9):  # nine bookings and holds at other businesses this hour
+        assert not limits.hit({limits.email_key("booking_verify", email): 10}, timedelta(hours=1))
+
+    tenth = post_guest(new_client(app), people.a, ready, email=email)
+    eleventh = post_guest(new_client(app), people.a, ready, email=email, starts_at=at("10:00"))
+
+    assert tenth.status_code == 201, tenth.json()
+    assert (eleventh.status_code, eleventh.json()) == (429, {"code": "rate_limited"})
+
+
+# ZIF-157 B2 FENCE 9 (replaces "a refused anonymous post spends no limit": its 403-before-limits
+# premise is gone). Wrong impl: booking_verify hit before Turnstile (the 11th would answer 429).
+def test_a_turnstile_refused_post_spends_no_address_budget(
+    people: People, app: FastAPI, ready: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    email = fresh_email()
+    monkeypatch.setattr(turnstile, "verify", lambda *args: False)
+    for _ in range(10):
+        refused = post_guest(new_client(app), people.a, ready, email=email)
+        assert (refused.status_code, refused.json()) == (403, {"code": "turnstile_failed"})
+    monkeypatch.setattr(turnstile, "verify", lambda *args: True)
+
+    assert post_guest(new_client(app), people.a, ready, email=email).status_code == 201
+
+
+# ZIF-157 B2 FENCE 10. Wrong impl: a constant or a missing attribute.
+def test_the_created_counter_says_whether_the_booker_was_proven(
+    people: People, app: FastAPI, ready: str, metric_reader: InMemoryMetricReader
+) -> None:
+    assert post_guest(new_client(app), people.a, ready).status_code == 201
+    assert post_booking(new_client(app), people.a, ready, starts_at=at("10:00")).status_code == 201
+
+    counted = {
+        p.attributes["booking.proven"]: p.value
+        for p in points(metric_reader, "ziftbook.booking.created")
     }
-
-    response = client.post(booking_url(people.a, ready), json=body)
-
-    assert (response.status_code, response.json()) == (403, {"code": "verify_email"})
-    assert verified == []
-    with tenant_context(people.a) as session:
-        row = session.execute(
-            text("SELECT name, phone, user_id FROM clients WHERE email = :e"), {"e": email}
-        ).one()
-        booked = session.scalar(text("SELECT count(*) FROM bookings"))
-    assert (row.name, row.phone, row.user_id, booked) == ("Victim", None, None, 0)
-
-
-# ZIF-117 FENCE. Wrong impl: the 403 below the per-IP limit, so refused anonymous posts spend the
-# IP's budget and lock the next signed-in booker on that network out.
-def test_a_refused_anonymous_post_spends_no_limit(people: People, app: FastAPI, ready: str) -> None:
-    address = fresh_address()
-    for _ in range(bookings.IP_LIMIT + 1):
-        anonymous = new_client(app, address).post(
-            booking_url(people.a, ready),
-            json={
-                "starts_at": at("09:00"),
-                "name": "Guest",
-                "email": fresh_email(),
-                "phone": "+31612345678",
-                "policy_version": "2026-09-01",
-                "consents": {},
-            },
-        )
-        assert anonymous.status_code == 403
-
-    assert post_booking(new_client(app, address), people.a, ready).status_code == 201
+    assert counted == {"false": 1, "true": 1}
+    closed(metric_reader)
 
 
 # 26a: GUARD + FENCE.
@@ -1080,8 +1221,9 @@ def test_the_posted_turnstile_token_reaches_cloudflare(
     }
 
 
-# 29: GUARD.
-def test_thirty_bookings_an_hour_per_address_and_five_per_address_and_business(
+# ZIF-157 B2 FENCE 7 (replaces 29: 30 posts per IP to one business). Wrong impl: a global-only IP
+# limit. Keeps the per-(business, address) 5/h half.
+def test_one_ip_books_one_business_ten_times_an_hour(
     people: People, app: FastAPI, owner: TestClient, ready: str
 ) -> None:
     set_role(people.b, people.only_b, "owner")  # F-j: `b` has no owner otherwise
@@ -1091,52 +1233,33 @@ def test_thirty_bookings_an_hour_per_address_and_five_per_address_and_business(
     assign(people.b, b_service, member_id(people.b, people.only_b))
     save_setting(people.b, "published", True)
 
-    address = fresh_address()
-    per_address_client = new_client(app, address)
-    for _ in range(30):
-        response = post_booking(
-            per_address_client, people.a, ready, email=fresh_email(), starts_at=at("09:00")
-        )
-        assert response.status_code != 429
-    over = post_booking(
-        per_address_client, people.a, ready, email=fresh_email(), starts_at=at("09:00")
-    )
+    client = new_client(app, fresh_address())
+    for _ in range(10):
+        assert post_guest(client, people.a, ready).status_code != 429
+    over = post_guest(client, people.a, ready)
     assert (over.status_code, over.json()) == (429, {"code": "rate_limited"})
-    assert (
-        post_booking(
-            new_client(app), people.a, ready, email=fresh_email(), starts_at=at("09:00")
-        ).status_code
-        != 429
-    )
+    assert post_guest(client, people.b, b_service).status_code != 429
 
     email = fresh_email()
-    per_email_client = new_client(app)
     for _ in range(5):
-        response = post_booking(
-            per_email_client, people.a, ready, email=email, starts_at=at("09:00")
-        )
-        assert response.status_code != 429
-    sixth = post_booking(per_email_client, people.a, ready, email=email, starts_at=at("09:00"))
+        assert post_guest(new_client(app), people.a, ready, email=email).status_code != 429
+    sixth = post_guest(new_client(app), people.a, ready, email=email)
     assert (sixth.status_code, sixth.json()) == (429, {"code": "rate_limited"})
-    same_email_business_b = post_booking(
-        new_client(app), people.b, b_service, email=email, starts_at=at("09:00")
-    )
-    assert same_email_business_b.status_code == 201
+    other = post_guest(new_client(app), people.b, b_service, email=email, starts_at=at("10:00"))
+    assert other.status_code == 201
 
 
-# 29b: GUARD, adopted from the reviewer's deviation.
-def test_the_per_ip_limit_trips_on_its_own(people: People, app: FastAPI, ready: str) -> None:
-    address = fresh_address()
-    client = new_client(app, address)
+# ZIF-157 B2 FENCE 8 (replaces 29b). Wrong impl: dropping the 30/h global key.
+def test_the_per_ip_limit_spans_businesses(
+    people: People, app: FastAPI, ready: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(bookings, "BUSINESS_IP_LIMIT", 100)
+    client = new_client(app, fresh_address())
     for _ in range(30):
-        response = post_booking(client, people.a, ready, email=fresh_email(), starts_at=at("09:00"))
-        assert response.status_code != 429
-    over = post_booking(client, people.a, ready, email=fresh_email(), starts_at=at("09:00"))
+        assert post_guest(client, people.a, ready).status_code != 429
+    over = post_guest(client, people.a, ready)
     assert (over.status_code, over.json()) == (429, {"code": "rate_limited"})
-    fresh = post_booking(
-        new_client(app), people.a, ready, email=fresh_email(), starts_at=at("09:00")
-    )
-    assert fresh.status_code != 429
+    assert post_guest(new_client(app), people.a, ready).status_code != 429
 
 
 # 30: FENCE.

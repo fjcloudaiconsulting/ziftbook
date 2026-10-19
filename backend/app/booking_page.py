@@ -3,6 +3,7 @@ Public: no session, no cookie."""
 
 import re
 from datetime import timedelta
+from typing import get_args
 from uuid import UUID
 
 from fastapi import APIRouter, Request
@@ -57,6 +58,11 @@ class PublicServiceOut(BaseModel):
     photo: photos.Photo | None
 
 
+class PageConsentOut(BaseModel):
+    policy_version: str
+    marketing_email: str
+
+
 class BookingPageOut(BaseModel):
     id: UUID
     slug: str
@@ -65,7 +71,8 @@ class BookingPageOut(BaseModel):
     timezone: str
     language: Locale
     booking_horizon_days: int
-    policy_version: str
+    policy_version: str  # the legacy version, pinned until the hold code is removed
+    consent: dict[Locale, PageConsentOut]
     cancellation: CancellationOut
     services: list[PublicServiceOut]
     auto_confirm: bool
@@ -127,7 +134,15 @@ def read(slug: str, request: Request) -> BookingPageOut:
         timezone=settings.timezone,
         language=settings.language,
         booking_horizon_days=settings.booking_horizon_days,
-        policy_version=clients.current_policy_version(),
+        policy_version=clients.LEGACY_POLICY_VERSION,
+        consent={
+            locale: PageConsentOut(
+                policy_version=version,
+                marketing_email=clients.CONSENT_TEXTS[version]["marketing_email"],
+            )
+            for locale in get_args(Locale)
+            if (version := clients.policy_version_for(locale))
+        },
         cancellation=CancellationOut(
             text=settings.cancellation_policy_text or None,
             free_cancellation_hours=settings.free_cancellation_hours,

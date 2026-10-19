@@ -51,9 +51,9 @@ logger = logging.getLogger(__name__)
 
 READ_LIMIT, READ_WINDOW = 60, timedelta(minutes=1)
 WRITE_LIMIT, WRITE_WINDOW = 20, timedelta(hours=1)
-# Against mail bombing: one address, every business together. The per-business 5/h is create()'s
-# own key, so a hold and the booking page's POST share it.
-VERIFY_LIMIT = 10
+# Against mail bombing: one address, every business together. Both keys are create()'s own, so a
+# hold and the booking page's POST share them.
+VERIFY_LIMIT = bookings.ADDRESS_LIMIT
 
 INSERT_HOLD = text("""
 INSERT INTO booking_holds (tenant_id, service_id, worker_id, anyone, starts_at, ends_at, email,
@@ -324,7 +324,7 @@ def read(body: TokenIn, request: Request, response: Response) -> HoldView:
             max_reschedules=settings.max_reschedules,
         ),
         auto_confirm=settings.auto_confirm,
-        policy_version=clients.current_policy_version(),
+        policy_version=clients.LEGACY_POLICY_VERSION,
         held_until=hold.expires_at,
         email=hold.email,
     )
@@ -366,6 +366,7 @@ def confirm(body: ConfirmIn, request: Request, response: Response) -> bookings.B
                 # Opening the emailed link proves the address as a verified account email does:
                 # what they type now is what they own (app.clients.find_or_create).
                 user_id=None,
+                proven=True,
                 policy_version=body.policy_version,
                 consents=body.consents,
                 origin_ip=origin_ip,

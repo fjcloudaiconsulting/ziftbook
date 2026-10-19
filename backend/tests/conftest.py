@@ -353,6 +353,7 @@ METRIC_KEYS = {
     "email.template",
     "email.outcome",
     "booking.source",
+    "booking.proven",
     "db.client.connection.state",
     "db.client.connection.pool.name",
 }
