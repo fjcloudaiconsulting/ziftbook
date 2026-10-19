@@ -717,7 +717,7 @@ def test_g1_old_routes_still_route_and_the_audit_trail_is_written(
 def test_the_team_template_set_is_complete() -> None:
     from app.mail import LOCALES, STATUS_FOR, render
 
-    assert STATUS_FOR["booking_moved_team"] == "confirmed"
+    assert STATUS_FOR["booking_moved_team"] == {"confirmed"}
     values = {
         "business": "Biz",
         "service": "SVC-MARKER",

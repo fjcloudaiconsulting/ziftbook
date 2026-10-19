@@ -1291,3 +1291,35 @@ def test_each_booking_shows_what_its_booker_typed(
     assert queue[first.json()["id"]]["client_name"] == "First Name"
     assert queue[second.json()["id"]]["client_name"] == "Second Name"
     assert (detail["client_name"], detail["client_phone"]) == ("First Name", "+31611111111")
+
+
+# B3 test 9. fence. The merchant sees 14:00, the client moves it to 15:00, the merchant's accept
+# (starts_at 14:00) is 409 changed and the row stays pending at 15:00. Kills ignoring `starts_at`.
+def test_accepting_a_request_that_moved_since_it_was_shown_is_409(
+    people: People, app: FastAPI, owner: TestClient, ready: str
+) -> None:
+    from tests.test_booking_links_api import linked, post, reschedule_body
+
+    shown, moved_to = at("14:00"), at("15:00")
+    booking_id = make_pending(app, people.a, ready, starts_at=shown)
+    body = {**reschedule_body(booking_id, moved_to, 0), "seen_starts_at": shown}
+    assert post(linked(app, people.a, booking_id), "/reschedule", body).status_code == 200
+
+    response = owner.patch(
+        transition_url(booking_id), json={"status": "confirmed", "starts_at": shown}
+    )
+
+    assert (response.status_code, response.json()["code"]) == (409, "changed")
+    with tenant_context(people.a) as session:
+        status, starts = session.execute(
+            text("SELECT status, starts_at FROM bookings WHERE id = :id"), {"id": booking_id}
+        ).one()
+    assert (status, starts) == ("pending", datetime.fromisoformat(moved_to))
+
+
+# B3 test 10. guard. An old console sends no starts_at and still accepts.
+def test_accepting_without_a_shown_time_still_works(
+    people: People, app: FastAPI, owner: TestClient, ready: str
+) -> None:
+    booking_id = make_pending(app, people.a, ready)
+    assert patch(owner, booking_id, "confirmed").status_code == 200

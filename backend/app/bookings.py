@@ -198,10 +198,22 @@ class StatusChange(BaseModel):
         description="Only with status `declined`: sent to the client in the decline email.",
     )
 
+    starts_at: time_off_module.Instant | None = Field(
+        default=None,
+        description="Only with status `confirmed`: the start the merchant was shown. Accepting a "
+        "pending request that has moved since is 409 `changed`.",
+    )
+
     @model_validator(mode="after")
     def only_a_decline_has_a_message(self) -> Self:
         if self.message is not None and self.status != "declined":
             raise ValueError("a message goes with a decline only")
+        return self
+
+    @model_validator(mode="after")
+    def only_an_accept_has_a_start(self) -> Self:
+        if self.starts_at is not None and self.status != "confirmed":
+            raise ValueError("a start goes with an accept only")
         return self
 
 
@@ -533,6 +545,7 @@ WHERE id = :id
   AND status = ANY(CAST(:allowed_from AS text[]))
   AND (status <> ALL (ARRAY['awaiting_payment', 'pending']) OR expires_at > now())
   AND (NOT :past_only OR starts_at <= now())
+  AND (CAST(:seen AS timestamptz) IS NULL OR starts_at = :seen)
 RETURNING id, status
 """)
 
@@ -561,6 +574,18 @@ UPDATE bookings SET starts_at = :new, ends_at = :new + (ends_at - starts_at),
                     earliest_starts_at = LEAST(earliest_starts_at, :new),
                     reschedule_count = reschedule_count + 1
 WHERE id = :id AND status = 'confirmed' AND reschedule_count = :seen
+RETURNING id, starts_at, ends_at, reschedule_count
+""")
+
+# ZIF-157: a client moves a request nobody has answered. Nothing is refundable on a pending, so the
+# new time is the anchor (original and earliest too; 0042's trigger allows it only while pending).
+# expires_at and reschedule_count stay: a move never extends the request's life or counts against
+# the confirmed allowance (ck_bookings_reschedule_count). The cap: PENDING_MOVES events.
+PENDING_MOVES = 3
+PENDING_MOVE = text("""
+UPDATE bookings SET starts_at = :new, ends_at = :new + (ends_at - starts_at),
+                    original_starts_at = :new, earliest_starts_at = :new
+WHERE id = :id AND status = 'pending' AND expires_at > now() AND starts_at > now()
 RETURNING id, starts_at, ends_at, reschedule_count
 """)
 
@@ -1140,9 +1165,12 @@ def transition(
             "message": change.message,
             "allowed_from": list(rule.sources),
             "past_only": rule.past_only,
+            "seen": change.starts_at,
         },
     ).first()  # 4
     if changed is None:
+        if row.status == "pending" and change.starts_at not in (None, row.starts_at):
+            raise ApiError(409, "changed")
         raise ApiError(409, "invalid_transition")
     origin_ip, user_agent = auth.origin(request)
     current.db.execute(  # 5

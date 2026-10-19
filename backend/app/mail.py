@@ -368,18 +368,18 @@ def send(job: Job) -> None:
 
 # The status a template announces; the email goes only if the booking still has it.
 STATUS_FOR = {
-    "booking_received": "pending",
-    "booking_request": "pending",
-    "booking_confirmed": "confirmed",
-    "booking_new": "confirmed",
-    "booking_reminder": "confirmed",
-    "booking_declined": "declined",
-    "booking_cancelled": "cancelled_by_merchant",
-    "booking_cancelled_by_client": "cancelled_by_client",
-    "booking_client_cancelled": "cancelled_by_client",
-    "booking_client_rescheduled": "confirmed",
+    "booking_received": {"pending"},
+    "booking_request": {"pending"},
+    "booking_confirmed": {"confirmed"},
+    "booking_new": {"confirmed"},
+    "booking_reminder": {"confirmed"},
+    "booking_declined": {"declined"},
+    "booking_cancelled": {"cancelled_by_merchant"},
+    "booking_cancelled_by_client": {"cancelled_by_client"},
+    "booking_client_cancelled": {"cancelled_by_client"},
+    "booking_client_rescheduled": {"confirmed", "pending"},
     # ZIF-57: the team is told when a colleague moves a booking of theirs.
-    "booking_moved_team": "confirmed",
+    "booking_moved_team": {"confirmed"},
 }
 
 # ZIF-54 D1: the client templates whose $link is the guest booking link, minted here at send time.
@@ -511,7 +511,7 @@ def send_booking(job: Job) -> None:
         row = session.execute(BOOKING, {"id": payload["booking_id"]}).first()
         if row is None:
             return
-        if row.status != STATUS_FOR[template]:
+        if row.status not in STATUS_FOR[template]:
             return
         if template in ("booking_received", "booking_request") and (
             row.expires_at is None or row.expires_at <= row.now

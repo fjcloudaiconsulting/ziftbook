@@ -157,7 +157,7 @@ function Manage({ token }: { token: string | null }) {
         const { linked, chosen } = pick;
         const answer = await send(
           bookingLinkReschedule({
-            body: { booking_id: linked.booking.id, starts_at: chosen!, reschedule_count: linked.engine.reschedule_count },
+            body: { booking_id: linked.booking.id, starts_at: chosen!, reschedule_count: linked.engine.reschedule_count, seen_starts_at: linked.booking.starts_at },
           }),
         );
         if (answer.status === 200 && answer.data) setView({ is: "moved", linked: answer.data });
@@ -238,7 +238,7 @@ function Manage({ token }: { token: string | null }) {
 
   if (view.is === "moved") {
     return (
-      <Outcome icon="done" title={t("movedTitle", { when: when(booking.starts_at) })} lede={t("movedLede")}>
+      <Outcome icon="done" title={t("movedTitle", { when: when(booking.starts_at) })} lede={booking.status === "pending" ? t("movedPendingLede", { business: booking.business }) : t("movedLede")}>
         <button className={`${styles.button} ${styles.secondary}`} type="button" onClick={() => setView({ is: "booking", linked })}>
           {t("backToBooking")}
         </button>

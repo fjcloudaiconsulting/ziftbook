@@ -10,7 +10,7 @@ import { canAnswerRequests, dateLocale } from "@/lib/console";
 import { formatMoney } from "@/lib/money";
 import { type Locale, type NameMap, serviceName } from "@/lib/services";
 import { localTime } from "@/lib/time-off";
-import { declineBody, expiryLabel } from "@/lib/today";
+import { acceptBody, declineBody, expiryLabel } from "@/lib/today";
 
 import { SignedOutBanner, useConsole } from "../../_ui/console";
 import styles from "../../_ui/console.module.css";
@@ -114,7 +114,9 @@ export function BookingDetail({
     setBusy(true);
     const source = detail.status;
     try {
-      const body = action === "decline" ? declineBody(message) : ({ status: TARGET[action as keyof typeof TARGET] } as const);
+      const target = TARGET[action as keyof typeof TARGET];
+      // Accepting (and restoring) names the start on screen: a request the client moved meanwhile is a 409 `changed`.
+      const body = action === "decline" ? declineBody(message) : target === "confirmed" ? acceptBody(detail.starts_at) : ({ status: target } as const);
       const outcome = await call(() => bookingApprovalsUpdate({ path: { booking_id: id }, body }), { write: true });
       if (outcome.status === 200) {
         if (source === "pending") setPendingCount((count) => (count === null ? count : Math.max(0, count - 1)));
