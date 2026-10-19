@@ -12,6 +12,7 @@ import urllib.parse
 import urllib.request
 import uuid
 from collections.abc import Callable, Iterable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from email import message_from_bytes
 from email.policy import default as email_policy
@@ -37,9 +38,10 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from PIL import Image
 from sqlalchemy import Connection, Engine, create_engine, text
 from sqlalchemy.engine import make_url
+from sqlalchemy.orm import Session
 from sqlalchemy.pool import NullPool
 
-from app import auth, logs, mail, passwords, stripe_gateway, tracing
+from app import auth, logs, mail, passwords, payments, stripe_gateway, tracing
 from app.db import SessionLocal, tenant_context
 from app.jobs import run_once
 from app.worker import KINDS
@@ -853,4 +855,17 @@ def fake_stripe(monkeypatch: pytest.MonkeyPatch) -> FakeGateway:
     monkeypatch.setenv("ZIF_STRIPE_PUBLISHABLE_KEY", "pk_test_not_a_real_key")
     fake = FakeGateway()
     monkeypatch.setattr(stripe_gateway, "gateway", fake)
+
+    @contextmanager
+    def counted(tenant_id: uuid.UUID) -> Iterator[Session]:
+        fake.open_sessions += 1
+        try:
+            with tenant_context(tenant_id) as db:
+                yield db
+        finally:
+            fake.open_sessions -= 1
+
+    # The routes' dependencies (auth) and the payments code: where a session could be held open.
+    for module in (auth, payments):
+        monkeypatch.setattr(module, "tenant_context", counted)
     return fake
