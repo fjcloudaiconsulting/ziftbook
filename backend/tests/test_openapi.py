@@ -104,7 +104,10 @@ PUBLIC_ON_PURPOSE = {("InTheWay", "client_name")}
 def test_the_contract_has_no_booking_hold() -> None:
     text = CONTRACT.read_text()
     assert "HoldView" not in text and "held_until" not in text
-    assert not [p for p in json.loads(text)["paths"] if "hold" in p]
+    # By path segment (the old routes were .../holds, .../holds/release, /booking-hold/...), so an
+    # unrelated word that merely contains "hold" never trips it.
+    segments = {s for p in json.loads(text)["paths"] for s in p.split("/")}
+    assert not segments & {"holds", "booking-hold"}
 
 
 def test_no_public_response_exposes_a_clients_private_field() -> None:
