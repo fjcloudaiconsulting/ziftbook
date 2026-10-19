@@ -1043,6 +1043,7 @@
     "messageHint": "Opcional. Qualquer coisa que {biz} deva saber antes da sua visita.",
     "errMessage": "Use texto simples, até 1000 caracteres.",
     "dialCode": "Código do país",
+    "noCountry": "Nenhum país encontrado",
     "phoneUse": "Só para {biz} falar com você sobre esta reserva.",
     "legal": "Ao enviar, você aceita os <terms>Termos</terms> e o <privacy>Aviso de Privacidade</privacy> do ziftbook e as <rules>regras de cancelamento</rules> de {biz}."
   }

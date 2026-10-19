@@ -1043,6 +1043,7 @@
     "messageHint": "Optioneel. Alles wat {biz} vooraf moet weten.",
     "errMessage": "Gebruik gewone tekst, maximaal 1000 tekens.",
     "dialCode": "Landcode",
+    "noCountry": "Geen land gevonden",
     "phoneUse": "Alleen zodat {biz} je over deze boeking kan bereiken.",
     "legal": "Door te versturen ga je akkoord met de <terms>Voorwaarden</terms> en de <privacy>Privacyverklaring</privacy> van ziftbook en de <rules>annuleringsregels</rules> van {biz}."
   }

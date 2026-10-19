@@ -33,7 +33,7 @@ import {
   weekFor,
   withName,
 } from "../lib/booking-page.ts";
-import { defaultDial, dialOptions } from "../lib/dial-codes.ts";
+import { defaultDial, dialOptions, flagOf, matchDial } from "../lib/dial-codes.ts";
 
 describe("F1 cancellation terms", () => {
   test("free-until is the slot start minus the free-cancellation hours, not now plus hours", () => {
@@ -398,6 +398,25 @@ describe("ZIF-157 direct booking checkout", () => {
     for (const [country, dial] of [["NL", "31"], ["PT", "351"], ["BR", "55"], ["GB", "44"], ["US", "1"]]) assert.equal(defaultDial(country), dial);
     assert.match(dialOptions("PT", "en")[0].text, /\(PT \+351\)$/);
     assert.ok(!dialOptions("PT", "en").some((o) => o.region === "001"));
+  });
+
+  test("fence: the picker search finds a country by dialling code, accent-free name and ISO code", () => {
+    // Wrong implementations killed: matching only the name, no accent folding, no ISO match.
+    const opts = dialOptions("NL", "en");
+    const find = (q) => opts.filter((o) => matchDial(o, q)).map((o) => o.region);
+    for (const q of ["44", "+44", "0044"]) assert.ok(find(q).includes("GB"), q);
+    assert.ok(find("sao").includes("ST"));
+    assert.ok(find("gb").includes("GB"));
+    assert.ok(find("+1").includes("US") && find("+1").includes("CA"));
+    assert.deepEqual(find("zzzz"), []);
+  });
+
+  test("fence: an empty search lists every country with the business country first; flags come from the ISO code", () => {
+    // Wrong implementations killed: a filter that drops or reorders on "", a wrong regional-indicator offset.
+    const opts = dialOptions("PT", "en");
+    assert.equal(opts.filter((o) => matchDial(o, "  ")).length, opts.length);
+    assert.equal(opts.filter((o) => matchDial(o, ""))[0].region, "PT");
+    assert.equal(flagOf("NL"), "\u{1F1F3}\u{1F1F1}");
   });
 
   test("fence: a picked time from the URL survives only if the window still offers it", () => {
