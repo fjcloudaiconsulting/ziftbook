@@ -26,3 +26,5 @@ export const LOCALE_MATCHER = "/((?!api(?:/|$)|_next|_vercel|.*\\..*).*)";
 // equal by tests/proxy.test.mjs. Read here as well, because Next hands the proxy a body it cut at
 // proxyClientMaxBodySize (next.config.ts) as if it were complete.
 export const MAX_BODY_BYTES = 64 * 1024;
+// Stripe's webhook alone may be larger (ZIF-158): the API's WEBHOOK_MAX_BODY, kept equal by the same test.
+export const WEBHOOK_MAX_BODY_BYTES = 256 * 1024;

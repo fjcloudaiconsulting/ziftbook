@@ -57,6 +57,7 @@ SIGN_UPS = _meter.create_counter("ziftbook.sign_up.completed", unit="{sign_up}")
 INVITES_SENT = _meter.create_counter("ziftbook.invite.sent", unit="{invite}")
 INVITES_ACCEPTED = _meter.create_counter("ziftbook.invite.accepted", unit="{invite}")
 BOOKINGS_CREATED = _meter.create_counter("ziftbook.booking.created", unit="{booking}")
+STRIPE_WEBHOOKS = _meter.create_counter("ziftbook.stripe.webhooks", unit="{event}")
 
 _configured = False
 

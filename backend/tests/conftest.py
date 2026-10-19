@@ -39,10 +39,11 @@ from sqlalchemy import Connection, Engine, create_engine, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.pool import NullPool
 
-from app import auth, logs, mail, passwords, tracing
+from app import auth, logs, mail, passwords, stripe_gateway, tracing
 from app.db import SessionLocal, tenant_context
 from app.jobs import run_once
 from app.worker import KINDS
+from tests.stripe_fake import WEBHOOK_SECRET, FakeGateway
 
 # A developer's own collector must never receive test spans holding test emails, and a ratio
 # sampler would make span-count assertions flaky: strip every OTel env var before anything
@@ -354,6 +355,8 @@ METRIC_KEYS = {
     "email.outcome",
     "booking.source",
     "booking.proven",
+    "stripe.event",
+    "stripe.result",
     "db.client.connection.state",
     "db.client.connection.pool.name",
 }
@@ -643,6 +646,14 @@ def delete_clients(conn: Connection, tenant_ids: Iterable[object]) -> None:
         conn.execute(text("DELETE FROM clients"))
 
 
+def delete_payment_accounts(conn: Connection, tenant_ids: Iterable[object]) -> None:
+    """The app role has no DELETE on payment_accounts (ZIF-158); fixtures remove them as the migrate
+    role, one business at a time (forced row-level security)."""
+    for tenant_id in tenant_ids:
+        conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(tenant_id)})
+        conn.execute(text("DELETE FROM payment_accounts"))
+
+
 def delete_bookings(conn: Connection, tenant_ids: Iterable[object]) -> None:
     """The app role can delete neither booking_events, booking_links nor bookings; fixtures remove
     them as the migrate role, one business at a time (forced row-level security), booking_links and
@@ -789,6 +800,7 @@ def people(app_engine: Engine, migrate_engine: Engine, bound: None) -> Iterator[
         )
         delete_clients(conn, (a, b))
         delete_services(conn, (a, b))
+        delete_payment_accounts(conn, (a, b))
         conn.execute(text("DELETE FROM tenants WHERE id IN (:a, :b)"), {"a": a, "b": b})
 
 
@@ -831,3 +843,14 @@ def upload(
         Bucket="ziftbook-uploads", Key=f"{tenant}/{upload_id}", Body=data, ContentType=content_type
     )
     return upload_id
+
+
+@pytest.fixture
+def fake_stripe(monkeypatch: pytest.MonkeyPatch) -> FakeGateway:
+    """Payments on (ZIF-158): the three keys set and the gateway swapped for the in-memory one."""
+    monkeypatch.setenv("ZIF_STRIPE_SECRET_KEY", "sk_test_not_a_real_key")
+    monkeypatch.setenv("ZIF_STRIPE_WEBHOOK_SECRET", WEBHOOK_SECRET)
+    monkeypatch.setenv("ZIF_STRIPE_PUBLISHABLE_KEY", "pk_test_not_a_real_key")
+    fake = FakeGateway()
+    monkeypatch.setattr(stripe_gateway, "gateway", fake)
+    return fake

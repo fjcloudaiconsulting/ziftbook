@@ -35,6 +35,7 @@ DEFAULTS = {
     "reschedule_cutoff_hours": 24,
     "max_reschedules": 2,
     "published": False,
+    "payment_check": False,
 }
 
 
@@ -243,6 +244,7 @@ def test_the_contract_requires_every_setting_back_and_none_sent() -> None:
         "reschedule_cutoff_hours",
         "max_reschedules",
         "published",
+        "payment_check",
     ]
     assert "required" not in schemas["BusinessSettings-Input"]
 

@@ -5,7 +5,7 @@ import { routing } from "./i18n/routing";
 import { errorFields, logger, requestId } from "./lib/log";
 import { readNeedsSetup, setupGate, setupRedirect } from "./lib/setup-gate";
 import { endProxySpan, startProxySpan, traceparent } from "./lib/trace";
-import { apiUrl, clientIp, MAX_BODY_BYTES } from "./lib/upstream";
+import { apiUrl, clientIp, MAX_BODY_BYTES, WEBHOOK_MAX_BODY_BYTES } from "./lib/upstream";
 
 const localize = createMiddleware(routing);
 const log = logger("web.proxy");
@@ -30,12 +30,12 @@ function unavailable(id: string): NextResponse {
   return NextResponse.json({ code: "api_unavailable" }, { status: 502, headers: { "X-Request-ID": id } });
 }
 
-// The whole request body, or null once it passes MAX_BODY_BYTES (ZIF-136). Read here, not streamed
+// The whole request body, or null once it passes `limit` (ZIF-136). Read here, not streamed
 // to the API: Next ends a body it cut at proxyClientMaxBodySize as if it were complete, and only
 // counting the bytes tells the two apart. A client hanging up mid-upload aborts request.signal,
 // which cancels the read (Next's copy of the body never ends on its own then); the fetch below
 // then never starts, as the same signal is already aborted.
-async function readBody(request: NextRequest): Promise<Uint8Array<ArrayBuffer> | null> {
+async function readBody(request: NextRequest, limit: number): Promise<Uint8Array<ArrayBuffer> | null> {
   const reader = request.body?.getReader();
   if (!reader) return new Uint8Array();
   const cancel = () => void reader.cancel();
@@ -50,7 +50,7 @@ async function readBody(request: NextRequest): Promise<Uint8Array<ArrayBuffer> |
       // Copied into a plain ArrayBuffer: fetch's BodyInit type refuses Buffer's ArrayBufferLike.
       if (done) return new Uint8Array(Buffer.concat(chunks));
       size += value.byteLength;
-      if (size > MAX_BODY_BYTES) return null;
+      if (size > limit) return null;
       chunks.push(value);
     }
   } finally {
@@ -87,7 +87,8 @@ async function forwardApi(request: NextRequest): Promise<Response> {
   if (tp) headers.set("traceparent", tp);
 
   try {
-    const body = request.method === "GET" || request.method === "HEAD" ? undefined : await readBody(request);
+    const limit = pathname === "/api/stripe/webhook" ? WEBHOOK_MAX_BODY_BYTES : MAX_BODY_BYTES;
+    const body = request.method === "GET" || request.method === "HEAD" ? undefined : await readBody(request, limit);
     if (body === null) {
       log.info("body too large", { request_id: id, method: request.method, ...spanIds });
       endProxySpan(span, 413);

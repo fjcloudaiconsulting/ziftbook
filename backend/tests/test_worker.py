@@ -16,9 +16,11 @@ from sqlalchemy.pool import NullPool
 
 from app import bookings, jobs, logs, worker
 from app.config import WorkerSettings
-from app.db import SessionLocal
-from app.jobs import Job, JobKind, enqueue
+from app.db import SessionLocal, tenant_context
+from app.jobs import Job, JobKind, enqueue, run_once
 from app.worker import work
+from tests.conftest import People
+from tests.stripe_fake import FakeGateway, connect
 
 Lines = Callable[[], list[dict[str, Any]]]
 
@@ -143,8 +145,10 @@ def test_the_worker_logs_its_settings_once_at_startup(
             "mail": "mailgun",
             "mailgun_domain": "m.example.test",
             "mailgun_region": "us",
+            "payments": "off",
         }
     ]
+    assert "stripe.event" in worker.KINDS
     dumped = json.dumps(log_lines())
     assert secret not in dumped
     assert "postgresql" not in dumped
@@ -318,3 +322,43 @@ def test_a_failing_prune_withholds_the_ping_and_retries(
     asyncio.run(scenario())
     assert pings_at_retry[0] == []  # no ping after the failed iteration
     assert any(line["msg"] == "worker iteration failed" for line in log_lines())
+
+
+# B1 fence 21. Wrong impl: gating worker jobs on configured() (all three keys), so every production
+# worker, which has no use for the webhook or publishable key, is "off" and nothing is released.
+def test_the_worker_needs_only_the_secret_key(
+    people: People,
+    fake_stripe: FakeGateway,
+    log_lines: Lines,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("ZIF_STRIPE_WEBHOOK_SECRET")
+    monkeypatch.delenv("ZIF_STRIPE_PUBLISHABLE_KEY")
+    account = connect(fake_stripe, people.a)
+    fake_stripe.accounts[account]["charges_enabled"] = True
+
+    async def idle(*args: object) -> None:
+        return None
+
+    monkeypatch.setattr(worker, "work", idle)
+    asyncio.run(worker.serve(WorkerSettings()))
+    with tenant_context(people.a) as db:
+        enqueue(
+            db,
+            "stripe.event",
+            f"stripe.event:{uuid.uuid4()}",
+            {"event_id": "evt_1", "type": "account.updated", "object_id": account},
+            tenant_id=people.a,
+        )
+
+    async def drain() -> None:
+        while await run_once(worker.KINDS):
+            pass
+
+    asyncio.run(drain())
+
+    lines = log_lines()
+    assert [line["payments"] for line in lines if line["msg"] == "worker started"] == ["on"]
+    assert not [line for line in lines if line["level"] == "WARNING" and "stripe" in line["msg"]]
+    with tenant_context(people.a) as db:
+        assert db.scalar(text("SELECT charges_enabled FROM payment_accounts")) is True

@@ -1180,3 +1180,51 @@ def test_0042_round_trips(migrate_engine: Engine, monkeypatch: pytest.MonkeyPatc
         command.upgrade(cfg, "head")
     with migrate_engine.connect() as conn:
         assert conn.execute(ANCHOR_GUARD).one() == (True, True)
+
+
+PAYMENT_ACCOUNTS = text("""
+SELECT to_regclass('payment_accounts') IS NOT NULL,
+       (SELECT count(*) FROM pg_policy WHERE polrelid = to_regclass('payment_accounts')),
+       (SELECT count(*) FROM pg_trigger
+         WHERE tgrelid = to_regclass('payment_accounts') AND NOT tgisinternal),
+       to_regprocedure('stripe_account_tenant(text)') IS NOT NULL,
+       to_regprocedure('payment_account_write_once()') IS NOT NULL,
+       to_regprocedure('payment_account_fee_payer_fixed()') IS NOT NULL
+""")
+PAYMENT_PRIVILEGES = text("""
+SELECT has_table_privilege('ziftbook_app', 'payment_accounts', 'DELETE'),
+       has_column_privilege('ziftbook_app', 'payment_accounts', 'charges_enabled', 'UPDATE'),
+       has_column_privilege('ziftbook_app', 'payment_accounts', 'stripe_account_id', 'UPDATE'),
+       has_column_privilege('ziftbook_app', 'payment_accounts', 'tenant_id', 'UPDATE'),
+       has_column_privilege('ziftbook_app', 'payment_accounts', 'fee_mode', 'UPDATE'),
+       has_column_privilege('ziftbook_app', 'payment_accounts', 'fee_mode', 'INSERT'),
+       has_column_privilege('ziftbook_app', 'payment_accounts', 'charges_enabled', 'INSERT'),
+       has_function_privilege('ziftbook_app', 'stripe_account_tenant(text)', 'EXECUTE'),
+       has_function_privilege('public', 'stripe_account_tenant(text)', 'EXECUTE')
+""")
+
+
+# B1 guard 19. Up, down, up again: the second up fails on any function left behind.
+def test_0043_round_trips_payment_accounts(
+    migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = lock_timeout_config(monkeypatch)
+    try:
+        command.downgrade(cfg, "0042")
+        with migrate_engine.connect() as conn:
+            assert tuple(conn.execute(PAYMENT_ACCOUNTS).one()) == (False, 0, 0, False, False, False)
+    finally:
+        command.upgrade(cfg, "head")
+    with migrate_engine.connect() as conn:
+        assert tuple(conn.execute(PAYMENT_ACCOUNTS).one()) == (True, 2, 2, True, True, True)
+        assert tuple(conn.execute(PAYMENT_PRIVILEGES).one()) == (
+            False,
+            True,
+            False,
+            False,
+            True,
+            True,
+            False,
+            True,
+            False,
+        )

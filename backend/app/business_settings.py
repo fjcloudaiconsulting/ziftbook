@@ -109,6 +109,10 @@ class BusinessSettings(BaseModel):
     # accident, new or old. The three public routes gate on this themselves (never here, never in
     # tenant_context): see app/booking_page.py, app/availability.py and app/bookings.py.
     published: bool = False
+    # ZIF-158. Checkout asks for a card check, with paying in advance offered beside it. Effective
+    # only while Stripe is configured, the account can take charges and the price meets Stripe's
+    # minimum (app/payments.py offer()). No PUT cross-check: the effective mode fails open.
+    payment_check: bool = False
 
 
 def read(db: Session) -> BusinessSettings:
