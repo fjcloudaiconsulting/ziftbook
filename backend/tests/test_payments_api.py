@@ -373,11 +373,17 @@ def test_two_owners_connecting_the_same_business_make_one_account(
     first_response = signed_in(app, people.a, people.both).post(
         "/api/payments/account", json={"locale": "en"}
     )
+    # The first request's row write was lost after Stripe created the account (a crash): the
+    # second owner's request creates again under the same key.
+    with migrate_engine.begin() as conn:
+        conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(people.a)})
+        conn.execute(text("DELETE FROM payment_accounts"))
     other_response = signed_in(app, people.a, co_owner).post(
         "/api/payments/account", json={"locale": "en"}
     )
 
     assert (first_response.status_code, other_response.status_code) == (200, 200)
+    assert fake_stripe.count("create_account") == 2
     assert len(fake_stripe.accounts) == 1 and len(rows(migrate_engine, people.a)) == 1
 
 
