@@ -71,7 +71,6 @@ class BookingPageOut(BaseModel):
     timezone: str
     language: Locale
     booking_horizon_days: int
-    policy_version: str  # the legacy version, pinned until the hold code is removed
     consent: dict[Locale, PageConsentOut]
     cancellation: CancellationOut
     services: list[PublicServiceOut]
@@ -134,7 +133,6 @@ def read(slug: str, request: Request) -> BookingPageOut:
         timezone=settings.timezone,
         language=settings.language,
         booking_horizon_days=settings.booking_horizon_days,
-        policy_version=clients.LEGACY_POLICY_VERSION,
         consent={
             locale: PageConsentOut(
                 policy_version=version,

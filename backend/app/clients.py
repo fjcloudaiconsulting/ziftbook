@@ -58,9 +58,8 @@ CONSENT_TEXTS: dict[str, dict[Purpose, str]] = {
 }
 # The version a booking page offers, one text per locale: the stored evidence is the wording the
 # person read, so the key is "<version>/<locale>". "2026-09-01" is the legacy English-only version,
-# still posted by old tabs and the hold confirm page until the hold code is removed.
+# kept for old tabs.
 POLICY_VERSION = "2026-10-20"
-LEGACY_POLICY_VERSION = "2026-09-01"
 # The booking page offers email marketing only, so sms/whatsapp stay on the legacy version.
 CONSENT_TEXTS[f"{POLICY_VERSION}/en"] = {
     "marketing_email": "Email me offers and news from this business. I can unsubscribe at any time."
@@ -134,7 +133,7 @@ ON CONFLICT (tenant_id, email) DO UPDATE SET
 """
 _RETURNING = "\nRETURNING id, phone, locale\n"
 
-# The address is proven (its account is signed in, or its emailed link was confirmed, ZIF-117):
+# The address is proven (its account is signed in):
 # what they type is what they own.
 REFRESH = text(
     _INSERT
@@ -173,12 +172,11 @@ def find_or_create(
     points here rather than restating them.
 
     `proven` has no default. True when the request carries a live session whose verified account
-    email equals the posted one (app.bookings.create), or when the booker confirmed a booking-hold
-    link mailed to that address (app.holds.confirm): then what they type is what they own. The name
-    is replaced, the phone too (online bookings require one, ZIF-152), and locale is coalesced from
-    what was typed. False (a guest): a new address INSERTs what was typed, an existing row is
-    returned untouched (KEEP), so nobody can rewrite or fill someone else's record, nor point that
-    client's reminders at a phone they own.
+    email equals the posted one (app.bookings.create): then what they type is what they own.
+    The name is replaced, the phone too (online bookings require one, ZIF-152), and locale is
+    coalesced from what was typed. False (a guest): a new address INSERTs what was typed, an
+    existing row is returned untouched (KEEP), so nobody can rewrite or fill someone else's
+    record, nor point that client's reminders at a phone they own.
 
     Reading. phone and locale come back as *stored*, because coalesce keeps the old value when
     nothing was typed. Use them to write the booking, never to fill a public answer;

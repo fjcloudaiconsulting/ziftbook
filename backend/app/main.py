@@ -31,7 +31,6 @@ from app import (
     bookings,
     business_settings,
     clients,
-    holds,
     invites,
     logs,
     members,
@@ -239,8 +238,6 @@ def create_app() -> FastAPI:
         bookings.router,
         bookings.merchant_router,
         booking_links.router,
-        holds.router,
-        holds.link_router,
         admin_auth.admin_sign_in_router,
         admin_auth.admin_half_router,
         admin_auth.admin_router,
@@ -360,7 +357,6 @@ def create_app() -> FastAPI:
             weekday=error.weekday,
             bookings=error.bookings,
             total=error.total,
-            held_until=error.held_until,
         ).model_dump(mode="json", exclude_none=True)
         return JSONResponse(body, status_code=error.status_code)
 

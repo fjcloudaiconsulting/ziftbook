@@ -1,6 +1,6 @@
 """ZIF-152: online bookings need a phone, read in the business's country and stored as E.164.
 
-Both public paths (the signed-in POST .../bookings and the emailed link's confirm) share
+Both public paths (the signed-in and the guest POST .../bookings) share
 bookings.book_online, and both console paths (POST /api/clients and the calendar's new client)
 share clients.insert; a fence per path proves each one parses.
 """
@@ -15,11 +15,18 @@ from sqlalchemy import Engine, text
 
 from app.db import tenant_context
 from app.main import create_app
-from tests.conftest import People, member_id, new_client, put_settings, save_setting, signed_in
+from tests.conftest import (
+    People,
+    fresh_email,
+    member_id,
+    new_client,
+    put_settings,
+    save_setting,
+    signed_in,
+)
 from tests.test_availability_api import assign, new_service, weekdays
-from tests.test_booking_holds_api import POLICY, as_operator, confirm, held, read
 from tests.test_booking_page_api import slug_of
-from tests.test_bookings_api import post_booking
+from tests.test_bookings_api import post_booking, post_guest
 from tests.test_merchant_booking_api import book
 from tests.test_working_hours import seed
 
@@ -67,17 +74,14 @@ def counts(tenant_id: uuid.UUID) -> tuple[int, int]:
         )
 
 
-# F1: FENCE. Wrong impl: the confirm's phone left optional.
-def test_the_click_without_a_phone_books_nothing(
-    people: People, app: FastAPI, ready: str, migrate_engine: Engine
+# F1: FENCE. Wrong impl: the guest booking's phone left optional.
+def test_a_guest_booking_without_a_phone_books_nothing(
+    people: People, app: FastAPI, ready: str
 ) -> None:
-    body = {"token": held(app, people.a, ready)[1], "name": "Ana", "policy_version": POLICY}
-
-    answer = new_client(app).post("/api/public/booking-hold/confirm", json=body)
+    answer = post_guest(new_client(app), people.a, ready, phone=None)
 
     assert (answer.status_code, answer.json()) == (422, {"code": "invalid_request"})
     assert counts(people.a) == (0, 0)
-    assert as_operator(migrate_engine, people.a, "SELECT 1 FROM booking_holds") == [(1,)]
 
 
 # F2: FENCE. Wrong impl: the signed-in booking's phone left optional.
@@ -96,12 +100,12 @@ def test_a_signed_in_booking_without_a_phone_books_nothing(
     ("typed", "stored"),
     [("06 1234 5678", "+31612345678"), ("+44 7911 123456", "+447911123456")],
 )
-def test_the_click_stores_the_phone_in_one_international_format(
+def test_a_guest_booking_stores_the_phone_in_one_international_format(
     people: People, app: FastAPI, ready: str, typed: str, stored: str
 ) -> None:
-    email, token = held(app, people.a, ready)
+    email = fresh_email()
 
-    assert confirm(new_client(app), token, phone=typed).status_code == 201
+    assert post_guest(new_client(app), people.a, ready, email=email, phone=typed).status_code == 201
     assert phone_of(people.a, email) == stored
 
 
@@ -113,7 +117,8 @@ def test_a_local_number_is_read_in_the_business_s_country(
     answer = post_booking(new_client(app), people.a, ready, phone="912 345 678")
 
     assert answer.status_code == 201
-    (email,) = as_operator(migrate_engine, people.a, "SELECT email FROM clients")[0]
+    with tenant_context(people.a) as session:
+        email = session.scalar(text("SELECT email FROM clients"))
     assert phone_of(people.a, email) == "+351912345678"
 
 
@@ -124,12 +129,10 @@ def test_a_local_number_is_read_in_the_business_s_country(
 def test_an_unreadable_phone_is_refused_by_code_on_both_public_paths(
     people: People, app: FastAPI, ready: str, typed: str
 ) -> None:
-    _, token = held(app, people.a, ready)
-
-    clicked = confirm(new_client(app), token, phone=typed)
+    guest = post_guest(new_client(app), people.a, ready, phone=typed)
     posted = post_booking(new_client(app), people.a, ready, phone=typed)
 
-    for answer in (clicked, posted):
+    for answer in (guest, posted):
         assert (answer.status_code, answer.json()) == (422, {"code": "phone_invalid"})
     assert counts(people.a) == (0, 0)
 
@@ -169,14 +172,12 @@ def test_the_calendar_s_new_client_phone_is_checked(
     assert counts(people.a) == (0, 0)
 
 
-# F11: FENCE. Wrong impl: a hardcoded country in the public answers the hint reads.
-def test_the_public_answers_carry_the_business_s_country(
+# F11: FENCE. Wrong impl: a hardcoded country in the public answer the hint reads.
+def test_the_public_page_carries_the_business_s_country(
     people: People, app: FastAPI, ready: str, migrate_engine: Engine
 ) -> None:
     set_country(migrate_engine, people.a, "PT")
-    _, token = held(app, people.a, ready)
 
     page = new_client(app).get(f"/api/public/booking-pages/{slug_of(migrate_engine, people.a)}")
-    hold = read(new_client(app), token)
 
-    assert (page.json()["country"], hold.json()["country"]) == ("PT", "PT")
+    assert page.json()["country"] == "PT"

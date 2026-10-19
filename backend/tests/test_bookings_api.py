@@ -116,8 +116,8 @@ HELPER_LOCK = threading.Lock()
 
 
 def sign_in_as(client: TestClient, tenant_id: object, email: str) -> None:
-    """ZIF-117: the public POST books only for the signed-in address itself (anyone else confirms
-    an emailed link, tests/test_booking_holds_api.py). A member of the business with exactly this
+    """ZIF-117: the public POST books only for the signed-in address itself (anyone else books as a
+    guest, post_guest). A member of the business with exactly this
     address, and its session on this client. No hours and no service: never a candidate. A session
     proves the address whatever its business, so an unknown business borrows the newest real one
     (its POST must still answer 404, not 403)."""
@@ -1025,11 +1025,10 @@ def test_a_guest_cannot_withdraw_a_clients_consent(
     assert created_event(people.a, response.json()["id"]).consent_purposes == {}
 
 
-# ZIF-157 B2 FENCE 6. Wrong impl: the cross-business key left on the hold path only. Pattern of
-# holds F10.
+# ZIF-157 B2 FENCE 6. Wrong impl: the cross-business key not spent by the booking path.
 def test_one_address_is_capped_across_businesses(people: People, app: FastAPI, ready: str) -> None:
     email = fresh_email()
-    for _ in range(9):  # nine bookings and holds at other businesses this hour
+    for _ in range(9):  # nine bookings at other businesses this hour
         assert not limits.hit({limits.email_key("booking_verify", email): 10}, timedelta(hours=1))
 
     tenth = post_guest(new_client(app), people.a, ready, email=email)

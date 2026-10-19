@@ -496,7 +496,7 @@ class Seed:
             session = biz.owner.ok("GET", "/api/session")
             biz.slug = session["slug"]
             page = Api(self.base).ok("GET", f"/api/public/booking-pages/{biz.slug}")
-            biz.policy_version = page["policy_version"]
+            biz.policy_version = page["consent"]["en"]["policy_version"]
         self.bookings(a, b, team_a, team_b)
         self.read_back()
         sentinel = self.invite(both, "owner")
