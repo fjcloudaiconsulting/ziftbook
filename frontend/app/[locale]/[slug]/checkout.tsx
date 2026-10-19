@@ -1,17 +1,15 @@
 "use client";
 
-import Script from "next/script";
 import { useTranslations } from "next-intl";
 
 import type { BookingPageOut } from "@/api-client";
-import { Link } from "@/i18n/navigation";
 import { addDays, localDay, localWhen } from "@/lib/booking-link";
-import { cancellationState, freeNamed, nextWeekDisabled, ownPolicyText, slotsFor, withName } from "@/lib/booking-page";
+import { cancellationState, freeNamed, nextWeekDisabled, ownPolicyText, slotsFor } from "@/lib/booking-page";
 import { formatMoney } from "@/lib/money";
 import { type Locale } from "@/lib/services";
 import { zoneCity } from "@/lib/week";
 
-import { AlertIcon, Banner, Chevron, Outcome, Submit } from "../_ui/parts";
+import { AlertIcon, Banner, Chevron, Outcome } from "../_ui/parts";
 import { CheckIcon, Picker as SharedPicker } from "../_ui/picker";
 import styles from "../_ui/ui.module.css";
 import { MoveIcon } from "./icons";
@@ -195,7 +193,7 @@ export function Picker({
 }
 
 /** The cancellation terms box: free until a time once one is picked, else the plain hours; the
- * business's own words when it wrote some in the page language. Shared by both asides. */
+ * business's own words when it wrote some in the page language. Used by the summary aside. */
 export function Terms({
   page,
   slot,
@@ -282,7 +280,7 @@ export function DoneScreen({
   dLocale: string;
   zone: string;
   t: ReturnType<typeof useTranslations>;
-  onAgain?(): void;
+  onAgain(): void;
 }) {
   const pending = done.status === "pending";
   const start = new Date(done.starts_at);
@@ -307,11 +305,9 @@ export function DoneScreen({
           </li>
         </ul>
         <p className={styles.hint}>{t("spam")}</p>
-        {onAgain && (
-          <button className={`${styles.button} ${styles.secondary}`} type="button" onClick={onAgain}>
-            {t("another")}
-          </button>
-        )}
+        <button className={`${styles.button} ${styles.secondary}`} type="button" onClick={onAgain}>
+          {t("another")}
+        </button>
       </Outcome>
     </div>
   );

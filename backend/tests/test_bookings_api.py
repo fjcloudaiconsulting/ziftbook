@@ -116,11 +116,10 @@ HELPER_LOCK = threading.Lock()
 
 
 def sign_in_as(client: TestClient, tenant_id: object, email: str) -> None:
-    """ZIF-117: the public POST books only for the signed-in address itself (anyone else books as a
-    guest, post_guest). A member of the business with exactly this
-    address, and its session on this client. No hours and no service: never a candidate. A session
-    proves the address whatever its business, so an unknown business borrows the newest real one
-    (its POST must still answer 404, not 403)."""
+    """The public POST books as the signed-in address, or as a guest when nobody is signed in. This
+    signs in a member of the business with exactly this address, and its session on this client. No
+    hours and no service: never a candidate. A session proves the address whatever its business, so
+    an unknown business borrows the newest real one (its POST must still answer 404, not 403)."""
     with HELPER_LOCK:
         if email not in HELPER_USERS:
             user_id = uuid.uuid7()

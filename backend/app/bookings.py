@@ -49,8 +49,8 @@ from app.services import STRICT, DescriptionText, Price, multiline
 logger = logging.getLogger(__name__)
 
 IP_LIMIT, BUSINESS_IP_LIMIT, EMAIL_LIMIT, LIMIT_WINDOW = 30, 10, 5, timedelta(hours=1)
-# Against mail bombing and address farming: one address, every business together (key
-# `booking_verify`).
+# Against mail bombing and address farming: one address, every business together. The key name
+# `booking_verify` is kept from ZIF-117 so live counters carry over.
 ADDRESS_LIMIT = 10
 # ZIF-51's own key in app/schedule.py's ticket-number advisory lock convention (OPENING_LOCK = 105):
 # disjoint first arguments, so the two locks can never collide.
@@ -275,6 +275,9 @@ FROM services
 WHERE id = :service_id AND archived_at IS NULL
 FOR SHARE
 """)
+
+# Leftover booking_holds rows: dead once their 24h link would have expired.
+SWEEP_HOLDS = text("DELETE FROM booking_holds WHERE created_at <= now() - interval '24 hours'")
 
 # ZIF-122. Shared by create() and the worker's sweep(): the event rides the same statement, so no
 # path can expire a booking without recording it. now() is the transaction's clock, as :now was.
@@ -1596,5 +1599,7 @@ def sweep() -> int:
                 if count:
                     logger.info("bookings expired", extra={"count": count})
                 expired += count
+                # until the booking_holds drop: unproven addresses are kept at most ~24h
+                db.execute(SWEEP_HOLDS)
         span.set_attribute("expired", expired)
     return expired

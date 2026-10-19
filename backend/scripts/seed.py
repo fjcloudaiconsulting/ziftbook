@@ -210,7 +210,7 @@ class Business:
     owner: Api
     tenant_id: str = ""
     slug: str = ""
-    policy_version: str = ""
+    consent: dict[str, Any] | None = None  # the booking page's consent text per locale
     services: list[str] | None = None  # service ids: 60 minutes, then 30
 
 
@@ -350,7 +350,7 @@ class Seed:
                     "email": email,
                     "phone": GUEST_PHONE,
                     "locale": locale,
-                    "policy_version": biz.policy_version,
+                    "policy_version": (biz.consent or {})[locale]["policy_version"],
                 },
             )
             if status == 201:
@@ -496,7 +496,7 @@ class Seed:
             session = biz.owner.ok("GET", "/api/session")
             biz.slug = session["slug"]
             page = Api(self.base).ok("GET", f"/api/public/booking-pages/{biz.slug}")
-            biz.policy_version = page["consent"]["en"]["policy_version"]
+            biz.consent = page["consent"]
         self.bookings(a, b, team_a, team_b)
         self.read_back()
         sentinel = self.invite(both, "owner")

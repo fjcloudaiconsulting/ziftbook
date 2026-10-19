@@ -257,7 +257,15 @@ class BookingStub:
 def test_guest_booking_body_is_one_the_api_accepts() -> None:  # F7
     from app.bookings import BookingIn
 
-    biz = seed.Business("Biz", "NL", AMSTERDAM, "en", {}, owner=None, policy_version="v1")  # type: ignore[arg-type]
+    biz = seed.Business(
+        "Biz",
+        "NL",
+        AMSTERDAM,
+        "en",
+        {},
+        owner=None,  # type: ignore[arg-type]
+        consent={"en": {"policy_version": "v1"}},
+    )
     guest = BookingStub()
     seed.Seed("http://127.0.0.1:1", "http://127.0.0.1:1").book_public(
         biz,
