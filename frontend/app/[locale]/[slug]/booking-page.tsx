@@ -32,8 +32,8 @@ import { Banner, FieldError, Outcome, send } from "../_ui/parts";
 import { CheckIcon } from "../_ui/picker";
 import { ServiceTile } from "../_ui/service-tile";
 import styles from "../_ui/ui.module.css";
+import { Checkout, type Done, DoneScreen, Picker, WhoAt } from "./checkout";
 import { CheckEmail, type Sent } from "./email-first";
-import { type Done, DoneScreen, Checkout, Picker, WhoAt } from "./checkout";
 import { PinIcon } from "./icons";
 import { ServiceList } from "./service-list";
 import { type CacheEntry, type Flow, localized, type Service, type Step2Plus, type TimesWindow } from "./shared";
@@ -56,7 +56,6 @@ const INITIAL: Omit<Flow, "name" | "email" | "phone"> = {
   busy: false,
   replaces: null,
 };
-
 
 export function BookingPage({ page, locale, turnstileSiteKey, initialService = null }: { page: BookingPageOut; locale: string; turnstileSiteKey: string | null; initialService?: string | null }) {
   const t = useTranslations("BookingPage");

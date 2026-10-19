@@ -151,6 +151,8 @@ describe("one picker for booking and rescheduling (ZIF-149)", () => {
       assert.match(src, /import \{[^}]*\bPicker\b[^}]*\} from "\.\.\/_ui\/picker"/, page);
       assert.doesNotMatch(src, /styles\.(days|slots|parts)\b/, page);
     }
+    // The controller only routes the steps; it must not grow its own strip either.
+    assert.doesNotMatch(read("../app/[locale]/[slug]/booking-page.tsx"), /styles\.(days|slots|parts)\b/);
   });
 
   test("fence: the marks are drawn only inside the picker, never on the console's day strips", () => {
