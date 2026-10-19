@@ -622,6 +622,45 @@ def test_every_booking_template_renders_service_and_when() -> None:
             assert "TIME-MARKER" in body, (template, locale)
 
 
+# fence. Kills: the client's typed message dropped from a template that should carry it (ZIF-157),
+# or $message added to one that should not.
+def test_exactly_the_message_templates_carry_the_clients_message() -> None:
+    values = {
+        "business": "Biz",
+        "service": "SVC",
+        "date": "DATE",
+        "time": "TIME",
+        "zone": "Europe/Amsterdam",
+        "client": "Client Name",
+        "message": "\nMESSAGE-MARKER",
+        "link": "https://example.com/en",
+        "expires": "EXPIRES",
+        "old_date": "OLD-DATE",
+        "old_time": "OLD-TIME",
+        "member": "Member",
+        "held_until": "HELD",
+        "link_until": "LINK-UNTIL",
+        "page": "https://example.com/p",
+    }
+    carrying = set()
+    for path in sorted(mail.TEMPLATES.glob("booking_*.txt")):
+        template, locale, _ = path.name.rsplit(".", 2)
+        _, body = mail.render(template, locale, values)
+        if "MESSAGE-MARKER" in body:
+            carrying.add(path.name)
+
+    assert carrying == {
+        f"{template}.{locale}.txt"
+        for template in (
+            "booking_new",
+            "booking_request",
+            "booking_request_team_member",
+            "booking_declined_message",
+        )
+        for locale in mail.LOCALES
+    }
+
+
 # 19. guard. email.booking is registered.
 def test_email_booking_is_a_registered_kind() -> None:
     assert "email.booking" in KINDS

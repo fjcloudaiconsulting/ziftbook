@@ -1380,7 +1380,12 @@ def test_no_client_personal_data_reaches_the_booking_row(migrate_engine: Engine)
             )
         )
     assert columns.isdisjoint({"name", "email", "phone", "locale", "client_email"})
-    assert {"client_name", "client_phone", "client_message"} <= columns
+    assert {c for c in columns if c.startswith("client_")} == {
+        "client_id",
+        "client_name",
+        "client_phone",
+        "client_message",
+    }
 
 
 # 36: FENCE. Wrong impl: echo Found.phone into BookingOut.
