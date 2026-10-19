@@ -9,18 +9,41 @@ the real verification runs.
 import hashlib
 import hmac
 import json
+import os
 import time
 import uuid
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import text
+from sqlalchemy import create_engine, text
+from sqlalchemy.engine import make_url
+from sqlalchemy.pool import NullPool
 
 from app import logs
 from app.db import tenant_context
 from app.stripe_gateway import Account, Failed, FeesCollector, Gateway, Kind
 
 WEBHOOK_SECRET = "whsec_test_secret_not_a_real_one"
+
+
+def idle_pids() -> set[int]:
+    """Backend pids of app-role sessions of this database idle in a transaction (as the superuser:
+    another role's session state is masked from the migrate role)."""
+    from tests.conftest import ADMIN_DATABASE_URL  # conftest imports this module
+
+    admin = create_engine(ADMIN_DATABASE_URL, poolclass=NullPool)
+    with admin.connect() as conn:
+        pids = conn.scalars(
+            text("""
+            SELECT pid FROM pg_stat_activity
+            WHERE datname = :database AND usename = 'ziftbook_app'
+              AND state = 'idle in transaction'
+            """),
+            {"database": make_url(os.environ["ZIF_DATABASE_URL"]).database},
+        )
+        found = set(pids)
+    admin.dispose()
+    return found
 
 
 class FakeGateway(Gateway):
@@ -32,6 +55,9 @@ class FakeGateway(Gateway):
         self.failures: dict[str, Kind] = {}
         self._by_key: dict[str, str] = {}
         self._params: dict[str, dict[str, Any]] = {}
+        # Sessions an earlier test left idle in a transaction are not this test's: only a new
+        # one, opened by the code under test, counts against a Stripe call.
+        self._idle_before = idle_pids()
 
     def fail_next(self, op: str, kind: Kind = "unavailable") -> None:
         self.failures[op] = kind
@@ -41,11 +67,8 @@ class FakeGateway(Gateway):
 
     def _enter(self, op: str, **params: Any) -> None:
         # No transaction (so no pool connection) is held across a Stripe call.
-        from tests.test_service_photos_api import (
-            idle_in_transaction,  # conftest imports this module
-        )
-
-        assert idle_in_transaction() == 0, f"a transaction is open across stripe {op}"
+        held = idle_pids() - self._idle_before
+        assert not held, f"a transaction is open across stripe {op}"
         self.calls.append((op, params))
         # The tenant the gateway's own log line would carry (logs.bound in the calling context).
         self.tenants.append(logs.CONTEXT.get({}).get("tenant_id"))
