@@ -156,6 +156,8 @@ FURTHER = frozenset({"further"})
 NEAR = frozenset({"today", "within_24h"})
 PAST = frozenset({"past"})
 TODAY = frozenset({"today"})
+# Every guest booking needs a phone (ZIF-152); one valid Dutch mobile serves them all.
+GUEST_PHONE = "+31612345678"
 # slot_unavailable retries per run: each attempt counts against the booking IP limit.
 MAX_RETRIES = 5
 
@@ -346,6 +348,7 @@ class Seed:
                     "starts_at": starts.isoformat(),
                     "name": who.title(),
                     "email": email,
+                    "phone": GUEST_PHONE,
                     "locale": locale,
                     "policy_version": biz.policy_version,
                 },
