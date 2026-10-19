@@ -1,50 +1,49 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import Script from "next/script";
 import { useTranslations } from "next-intl";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
-import { availabilityRead, bookingHoldsCreate, bookingHoldsRelease, bookingsCreate, type BookingPageOut, sessionRead } from "@/api-client";
-import { Link } from "@/i18n/navigation";
+import { availabilityRead, bookingsCreate, type BookingPageOut, sessionRead } from "@/api-client";
+import { Link, useRouter } from "@/i18n/navigation";
 import { addDays, localDay, localWhen, slotsByDay, weekDays } from "@/lib/booking-link";
 import {
   afterPickTaken,
   type AnswerOutcome,
   answerState,
   bookingBody,
+  checkoutUrl,
+  cleanMessage,
   emailSuggestion,
   firstFreeDayFrom,
-  holdBody,
   keepPick,
   nextWeekDisabled,
+  phoneValue,
+  pickFromUrl,
   scanWindow,
-  signedInAs,
   slotsFor,
   slotWho,
+  weekFor,
   withName,
 } from "@/lib/booking-page";
 import { dateLocale } from "@/lib/console";
-import { formatMoney } from "@/lib/money";
+import { defaultDial, dialOptions } from "@/lib/dial-codes";
 import { type Locale } from "@/lib/services";
 import { zoneCity } from "@/lib/week";
 
-import { Banner, FieldError, Outcome, send } from "../_ui/parts";
+import { Banner, Chevron, FieldError, send, Submit } from "../_ui/parts";
 import { CheckIcon } from "../_ui/picker";
-import { ServiceTile } from "../_ui/service-tile";
 import styles from "../_ui/ui.module.css";
-import { Checkout, type Done, DoneScreen, Picker, WhoAt } from "./checkout";
-import { CheckEmail, type Sent } from "./email-first";
+import { type Done, DoneScreen, Picker, WhoAt } from "./checkout";
+import { BookingFooter, NewTab } from "./footer";
 import { PinIcon } from "./icons";
-import { ServiceList } from "./service-list";
-import { type CacheEntry, type Flow, localized, type Service, type Step2Plus, type TimesWindow } from "./shared";
+import { type CacheEntry, type Flow, type Service, type Step2Plus, type TimesWindow } from "./shared";
+import { Summary } from "./summary";
 
 const TURNSTILE_LANG: Record<string, string> = { pt: "pt-br" };
 
-const INITIAL: Omit<Flow, "name" | "email" | "phone"> = {
-  step: 1,
-  service: null,
-  worker: "any",
-  weekStart: "",
+const INITIAL: Omit<Flow, "name" | "email" | "phone" | "service" | "worker" | "weekStart"> = {
+  step: 2,
   day: null,
   slot: null,
   pick: null,
@@ -54,29 +53,46 @@ const INITIAL: Omit<Flow, "name" | "email" | "phone"> = {
   suggest: null,
   banner: null,
   busy: false,
-  replaces: null,
 };
 
-export function BookingPage({ page, locale, turnstileSiteKey, initialService = null }: { page: BookingPageOut; locale: string; turnstileSiteKey: string | null; initialService?: string | null }) {
+/** `/[slug]/book`: the day and time, then the details, then a direct booking (ZIF-157). The service,
+ * the person and the time live in the URL (checkoutUrl) so a refresh restores them; nothing the
+ * booker types does. */
+export function BookingPage({
+  page,
+  locale,
+  turnstileSiteKey,
+  serviceId,
+  memberId,
+  at,
+}: {
+  page: BookingPageOut;
+  locale: string;
+  turnstileSiteKey: string | null;
+  serviceId: string;
+  memberId: string | null;
+  at: string | null;
+}) {
   const t = useTranslations("BookingPage");
   const router = useRouter();
   const loc = locale as Locale;
   const zone = page.timezone;
-  const businessLanguage = page.language as Locale;
   const dLocale = dateLocale(locale);
 
-  // ZIF-117: the confirm page's "Choose another time" lands here with ?service=: its times open.
   const [flow, setFlow] = useState<Flow>(() => {
-    const service = page.services.find((svc) => svc.id === initialService) ?? null;
-    if (!service) return { ...INITIAL, name: "", email: "", phone: "" };
-    const worker = service.workers.length === 1 ? service.workers[0].id : "any";
-    return { ...INITIAL, name: "", email: "", phone: "", step: 2, service, worker, weekStart: localDay(new Date(), page.timezone) };
+    const service = page.services.find((svc) => svc.id === serviceId) ?? null;
+    const today = localDay(new Date(), zone);
+    const worker = memberId ?? (service?.workers.length === 1 ? service.workers[0].id : "any");
+    // The week of the picked time (jumpTo's rule), so a pick weeks out comes back on screen.
+    const weekStart = at ? weekFor(localDay(at, zone), today) : today;
+    return { ...INITIAL, name: "", email: "", phone: "", service, worker, weekStart };
   });
+  const dials = useMemo(() => dialOptions(page.country, locale), [page.country, locale]);
   const [done, setDone] = useState<Done | null>(null);
-  const [sent, setSent] = useState<Sent | null>(null);
-  // ZIF-117: the signed-in account's own address. Only that address books straight away; any other
-  // gets a link by email first (signedInAs).
-  const [sessionEmail, setSessionEmail] = useState<string | null>(null);
+  const [region, setRegion] = useState<string>(page.country);
+  const [marketing, setMarketing] = useState(false);
+  const [message, setMessage] = useState("");
+  const [messageOpen, setMessageOpen] = useState(false);
   // State, not a ref: read during render (the picker), so it must trigger a re-render on change.
   const [cache, setCache] = useState(new Map<string, CacheEntry>());
   const scanned = useRef(new Set<string>()); // service|worker keys already auto-scanned once
@@ -88,25 +104,26 @@ export function BookingPage({ page, locale, turnstileSiteKey, initialService = n
   const nameRef = useRef<HTMLInputElement>(null);
   const emailRef = useRef<HTMLInputElement>(null);
   const phoneRef = useRef<HTMLInputElement>(null);
+  const messageRef = useRef<HTMLTextAreaElement>(null);
   const headingRefs = useRef<Record<number, HTMLHeadingElement | null>>({});
   const [focusStep, setFocusStep] = useState<number | null>(null);
-  // Paired with a generation counter, not just the field name: pressing Book twice with the SAME
-  // field still missing both times must still re-focus it — a plain "name"/"name" value wouldn't
+  // Paired with a generation counter, not just the field name: pressing Send twice with the SAME
+  // field still invalid both times must still re-focus it — a plain "name"/"name" value wouldn't
   // change, so the effect below wouldn't re-fire.
-  const [focusField, setFocusField] = useState<{ field: "name" | "email" | "phone"; gen: number } | null>(null);
+  const [focusField, setFocusField] = useState<{ field: "name" | "email" | "phone" | "message"; gen: number } | null>(null);
   const focusFieldGen = useRef(0);
+  const focusOn = (field: "name" | "email" | "phone" | "message") => {
+    focusFieldGen.current += 1;
+    setFocusField({ field, gen: focusFieldGen.current });
+  };
   const [verifying, setVerifying] = useState(false);
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
   const turnstileWidget = useRef<string | null>(null);
   const turnstileTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingSubmit = useRef(false);
   const [firstFreeByEntry, setFirstFreeByEntry] = useState(new Map<string, string>());
-  // What autofill actually filled (if anything): "Book another appointment" restores exactly this,
-  // never whatever the visitor went on to type over it.
-  const sessionFill = useRef({ name: "", email: "" });
   // Always current, read from the Turnstile widget's own callback: that callback is created once
-  // by onTurnstileLoad and would otherwise close over the render's doBook from that moment (stale
-  // — in particular, one from before any service was ever chosen).
+  // by onTurnstileLoad and would otherwise close over the render's doBook from that moment (stale).
   const doBookRef = useRef<(token: string | null) => Promise<void>>(async () => {});
 
   // Autofill: GET /api/session once (the person's own name, not their name in some business); fill
@@ -117,25 +134,37 @@ export function BookingPage({ page, locale, turnstileSiteKey, initialService = n
     void (async () => {
       const answer = await send(sessionRead());
       if (cancelled || answer.status !== 200 || !answer.data) return;
-      setSessionEmail(answer.data.email);
-      setFlow((f) => {
-        const name = f.name || answer.data!.name || f.name;
-        const email = f.email || answer.data!.email || f.email;
-        sessionFill.current = { name: f.name ? sessionFill.current.name : name, email: f.email ? sessionFill.current.email : email };
-        return { ...f, name, email };
-      });
+      setFlow((f) => ({ ...f, name: f.name || answer.data!.name || f.name, email: f.email || answer.data!.email || f.email }));
     })();
     return () => {
       cancelled = true;
     };
   }, []);
 
-  // ZIF-117: with ?service=, that service's times load once mounted, a tick later (never a state
-  // update in the effect's own body).
+  // Once mounted, a tick later (never a state update in the effect's own body): the week's times
+  // load, and a time from the URL is kept only if that window still offers it (else `at` is dropped).
   useEffect(() => {
     if (!flow.service) return;
     const service = flow.service;
-    const timer = setTimeout(() => void ensureWeek(service, flow.worker, flow.weekStart));
+    const timer = setTimeout(
+      () =>
+        void (async () => {
+          const win = await ensureWeek(service, flow.worker, flow.weekStart);
+          const slot = win ? pickFromUrl(at, slotsFor(win, flow.worker)) : null;
+          if (win && slot) {
+            const free = flow.worker === "any" ? (win.who[win.slots.indexOf(slot)] ?? []) : [];
+            // Only while the client has not changed worker or picked a time meanwhile.
+            setFlow((f) => (f.worker === flow.worker && !f.slot ? { ...f, slot, free, day: localDay(slot, zone), step: 3 } : f));
+          } else if (win && at) {
+            // Drop only this stale `at`: a worker or time picked meanwhile already wrote the address.
+            const url = new URL(window.location.href);
+            if (url.searchParams.get("at") === at) {
+              url.searchParams.delete("at");
+              window.history.replaceState(null, "", url);
+            }
+          }
+        })(),
+    );
     return () => clearTimeout(timer);
     // Mount only.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -145,12 +174,10 @@ export function BookingPage({ page, locale, turnstileSiteKey, initialService = n
     if (focusStep !== null) headingRefs.current[focusStep]?.focus();
   }, [focusStep]);
 
-  // Runs after step 3 has (re)rendered with its inputs mounted, so a field targeted while step 3
-  // wasn't the open step still gets focused once it is.
+  // Runs after the details have (re)rendered with their inputs mounted, so a field targeted before
+  // they were open still gets focused once they are.
   useEffect(() => {
-    if (focusField?.field === "name") nameRef.current?.focus();
-    else if (focusField?.field === "email") emailRef.current?.focus();
-    else if (focusField?.field === "phone") phoneRef.current?.focus();
+    if (focusField) ({ name: nameRef, email: emailRef, phone: phoneRef, message: messageRef })[focusField.field].current?.focus();
   }, [focusField, flow.step]);
 
   // One window for everyone (ZIF-100): a person's times are filtered out of it locally (slotsFor).
@@ -158,13 +185,15 @@ export function BookingPage({ page, locale, turnstileSiteKey, initialService = n
     return `${service}|${from}`;
   }
 
-  /** Sends the client back to step 1 with a note, and re-fetches the page's own data (a service
-   * that just 404'd may be gone from `page` itself too). Used for both a 404 on POST /bookings
-   * and a 404 on the week GET — the spec gives both the same path. */
-  function backToStep1(noteText: string) {
-    router.refresh();
-    setFlow((f) => ({ ...INITIAL, name: f.name, email: f.email, phone: f.phone, replaces: f.replaces, banner: { where: 1, tone: "note", text: noteText } }));
-    setFocusStep(1);
+  /** The service is gone (a 404 on the times or on Send): back to the list, which says so. */
+  function goneToList() {
+    router.replace(`/${page.slug}?gone=1`);
+  }
+
+  /** The address keeps the service, the person and the time (checkoutUrl); Back still returns to the list. */
+  function syncUrl(worker: string, slot: string | null) {
+    // Native History, not the router: same route, so no scroll to top and no server round trip (Next syncs useSearchParams).
+    window.history.replaceState(null, "", `/${locale}${checkoutUrl(page.slug, { serviceId, memberId: worker === "any" ? null : worker, at: slot })}`);
   }
 
   /** The 14-day window starting at `from`, cached so paging within it needs no new fetch. Never
@@ -187,8 +216,8 @@ export function BookingPage({ page, locale, turnstileSiteKey, initialService = n
       return entry;
     }
     if (answer.status === 404) {
-      // The service (or every worker on it) is gone: same path as a 404 on Book (spec's mapping).
-      backToStep1(t("serviceGone"));
+      // The service (or every worker on it) is gone: same path as a 404 on Send.
+      goneToList();
       return "gone";
     }
     setCache((m) => new Map(m).set(key, "error"));
@@ -203,7 +232,8 @@ export function BookingPage({ page, locale, turnstileSiteKey, initialService = n
     return from;
   }
 
-  async function ensureWeek(service: Service, worker: string, weekStart: string, bypass = false) {
+  /** Loads the week's window (and scans on when the week is empty); resolves to that first window. */
+  async function ensureWeek(service: Service, worker: string, weekStart: string, bypass = false): Promise<TimesWindow | null> {
     const entryKey = `${service.id}|${worker}`;
     const myToken = (ensureWeekToken.current.get(entryKey) ?? 0) + 1;
     ensureWeekToken.current.set(entryKey, myToken);
@@ -211,11 +241,12 @@ export function BookingPage({ page, locale, turnstileSiteKey, initialService = n
 
     const windowFrom = windowFromFor(weekStart, weekStart);
     const entry = await loadWindow(service, windowFrom, bypass);
-    if (typeof entry === "string" || !isCurrent()) return;
+    if (typeof entry === "string") return null;
+    if (!isCurrent()) return entry;
     const mine = slotsFor(entry, worker);
 
     const visibleWeekEmpty = weekDays(weekStart).every((d) => !(slotsByDay(mine, zone).get(d) ?? []).length);
-    if (!visibleWeekEmpty) return;
+    if (!visibleWeekEmpty) return entry;
 
     // B8: what's already in hand (this SAME 14-day fetch covers the following week too) is
     // checked before any further request — a free day may already be sitting in this window.
@@ -229,7 +260,7 @@ export function BookingPage({ page, locale, turnstileSiteKey, initialService = n
         const next = await loadWindow(service, from);
         // A stale scan (superseded while awaiting) never marks the key scanned: an incomplete
         // scan isn't a real "nothing found" result, and a later call must be free to redo it.
-        if (typeof next === "string" || !isCurrent()) return;
+        if (typeof next === "string" || !isCurrent()) return entry;
         first = firstFreeDayFrom(slotsFor(next, worker), from, zone);
         if (first !== null) break;
       }
@@ -237,57 +268,49 @@ export function BookingPage({ page, locale, turnstileSiteKey, initialService = n
       // never by bailing out early — so it's now safe to skip a repeat for this service/worker.
       scanned.current.add(entryKey);
     }
-    if (!isCurrent()) return; // superseded by a newer call for this service/worker while awaiting
+    if (!isCurrent()) return entry; // superseded by a newer call for this service/worker while awaiting
     setFirstFreeByEntry((m) => new Map(m).set(entryKey, first ?? ""));
-  }
-
-  /** A genuinely different service resets worker/day/slot; re-confirming the one already picked
-   * (clicking it again after "Change") just moves on without losing what was already chosen. */
-  function selectService(service: Service) {
-    if (flow.service?.id === service.id) {
-      const step = flow.slot ? 3 : 2;
-      setFlow((f) => ({ ...f, step }));
-      setFocusStep(step);
-      return;
-    }
-    const worker = service.workers.length === 1 ? service.workers[0].id : "any";
-    const weekStart = localDay(new Date(), zone);
-    setFlow((f) => ({ ...f, step: 2, service, worker, weekStart, day: null, slot: null, pick: null, taken: new Set(), banner: null }));
-    setFocusStep(2);
-    void ensureWeek(service, worker, weekStart);
+    return entry;
   }
 
   /** Keeps the day (PickerWeek falls back to the first day with times when this person has none
    * that day); clears the time, which this person may not be free at. */
   function chooseWorker(worker: string) {
-    setFlow((f) => (f.step >= 2 ? { ...f, worker, slot: null, pick: null, banner: f.banner?.where === 3 ? null : f.banner } : f));
+    setFlow((f) => ({ ...f, worker, slot: null, pick: null, banner: f.banner?.where === 3 ? null : f.banner }));
     const f = flow as Step2Plus;
     void ensureWeek(f.service, worker, f.weekStart);
+    syncUrl(worker, null);
   }
 
   function changeWeek(delta: number) {
-    setFlow((f) => (f.step >= 2 ? { ...f, weekStart: addDays(f.weekStart, delta), day: null } : f));
+    setFlow((f) => ({ ...f, weekStart: addDays(f.weekStart, delta), day: null }));
     const f = flow as Step2Plus;
     void ensureWeek(f.service, f.worker, addDays(f.weekStart, delta));
   }
 
   function jumpTo(day: string) {
-    const back = (new Date(`${day}T12:00:00Z`).getUTCDay() + 6) % 7;
-    const today = localDay(new Date(), zone);
-    const weekStart = addDays(day, -back) < today ? today : addDays(day, -back);
-    setFlow((f) => (f.step >= 2 ? { ...f, weekStart, day } : f));
+    const weekStart = weekFor(day, localDay(new Date(), zone));
+    setFlow((f) => ({ ...f, weekStart, day }));
     const f = flow as Step2Plus;
     void ensureWeek(f.service, f.worker, weekStart);
   }
 
   function pickSlot(slot: string, free: string[]) {
-    setFlow((f) => (f.step >= 2 ? { ...f, slot, free, pick: keepPick(f.pick, f.service!.workers, free), step: 3, banner: f.banner?.where === 3 ? null : f.banner } : f));
-    setFocusStep(3);
+    setFlow((f) => ({ ...f, slot, free, pick: keepPick(f.pick, f.service!.workers, free), banner: f.banner?.where === 2 || f.banner?.where === 3 ? null : f.banner }));
+    syncUrl(flow.worker, slot);
   }
 
-  function goTo(step: 1 | 2 | 3) {
-    setFlow((f) => ({ ...f, step }));
-    setFocusStep(step);
+  /** Continue: the details open below, or the missing time is named at the picker. */
+  function next() {
+    if (!flow.slot) {
+      setFlow((f) => ({ ...f, banner: { where: 2, tone: "error", text: t("errMissingTime") } }));
+      return;
+    }
+    if (flow.step === 3) headingRefs.current[3]?.focus();
+    else {
+      setFlow((f) => ({ ...f, step: 3 }));
+      setFocusStep(3);
+    }
   }
 
   function fieldChange(field: "name" | "email" | "phone", value: string) {
@@ -353,15 +376,14 @@ export function BookingPage({ page, locale, turnstileSiteKey, initialService = n
     });
   }
 
-  // Belt-and-suspenders for StrictMode's mount/unmount/remount: onReady is the path for the very
-  // first script load, but if `window.turnstile` is already there (the script executed during an
-  // earlier mount in the same cycle) and this mount has no widget of its own yet, render one
-  // directly instead of waiting on a callback that may not fire again.
+  // The widget's box only exists once the details are open (and stays for the page's life), so it
+  // renders then if the script is already there; otherwise the script's onReady does. It also covers
+  // StrictMode's mount/unmount/remount, whose second mount has no widget of its own yet.
   useEffect(() => {
     const w = (window as unknown as { turnstile?: unknown }).turnstile;
-    if (turnstileSiteKey && w && !turnstileWidget.current) onTurnstileLoad();
+    if (flow.step === 3 && turnstileSiteKey && w && !turnstileWidget.current) onTurnstileLoad();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [flow.step]);
 
   function resetTurnstile() {
     setTurnstileToken(null);
@@ -369,26 +391,20 @@ export function BookingPage({ page, locale, turnstileSiteKey, initialService = n
     if (w && turnstileWidget.current) w.reset(turnstileWidget.current);
   }
 
+  /** Send: every invalid field is marked and the first focused; a missing time is named at the picker. */
   async function book() {
     if (working.current) return;
-    // Not gated by flow.step: a complete selection (service + slot) is still complete even while
-    // step 1 or 2 happens to be reopened via "Change" — the summary already shows it.
-    if (!flow.service || !flow.slot) {
-      setFlow((f) => ({ ...f, banner: { where: "c", tone: "error", text: f.service ? t("errMissingTime") : t("errMissing") } }));
-      goTo(flow.service ? 2 : 1);
-      return;
-    }
     const errors: Flow["errors"] = {};
-    if (!linkFirst && !flow.name.trim()) errors.name = t("errName");
-    if (!linkFirst && !flow.phone.trim()) errors.phone = t("errPhone");
+    if (!flow.name.trim()) errors.name = t("errName");
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(flow.email.trim())) errors.email = t("errEmail");
-    if (Object.keys(errors).length > 0) {
-      // Step 3's inputs only exist in the DOM while it's the open step: open it first (if it
-      // wasn't already) so the ref below actually points at a mounted field, then focus once it
-      // has — a step 2 "Change" reopen must not leave the error unfocusable.
-      setFlow((f) => ({ ...f, errors, step: 3 }));
-      focusFieldGen.current += 1;
-      setFocusField({ field: errors.name ? "name" : errors.phone ? "phone" : "email", gen: focusFieldGen.current });
+    if (!flow.phone.trim()) errors.phone = t("errPhone");
+    const missingTime = !flow.slot;
+    if (missingTime || Object.keys(errors).length > 0) {
+      setFlow((f) => ({ ...f, errors, banner: missingTime ? { where: 2, tone: "error", text: t("errMissingTime") } : f.banner }));
+      const first = errors.name ? "name" : errors.email ? "email" : errors.phone ? "phone" : null;
+      if (first) {
+        focusOn(first);
+      } else headingRefs.current[2]?.focus();
       return;
     }
     if (turnstileSiteKey && !turnstileToken) {
@@ -410,90 +426,38 @@ export function BookingPage({ page, locale, turnstileSiteKey, initialService = n
     working.current = true;
     setFlow((f) => ({ ...f, busy: true, banner: null }));
     const f = flow as Step2Plus;
-    const memberId = f.pick ?? (f.worker === "any" ? null : f.worker);
-    // ZIF-117: anyone but the signed-in address itself gets a link by email first ("Send the email
-    // again" comes back here too, replacing the hold on screen).
-    if (sent || linkFirst) return doHold(f, memberId, token);
-    if (f.replaces) {
-      // Back to the signed-in address after a link went elsewhere: that hold would block its own time.
-      const released = await send(bookingHoldsRelease({ path: { tenant_id: page.id }, body: { secret: f.replaces } }));
-      if (released.status === 204) setFlow((cur) => ({ ...cur, replaces: null }));
-    }
+    const member = f.pick ?? (f.worker === "any" ? null : f.worker);
     const body = bookingBody({
       startsAt: f.slot!,
-      memberId,
+      memberId: member,
       name: f.name,
       email: f.email,
-      phone: f.phone,
+      phone: phoneValue(defaultDial(region), defaultDial(page.country), f.phone),
       locale,
-      policyVersion: page.policy_version,
+      policyVersion: page.consent[loc].policy_version,
       turnstileToken: token,
+      consent: marketing,
+      message: cleanMessage(message),
     });
     const answer = await send(bookingsCreate({ path: { tenant_id: page.id, service_id: f.service.id }, body: { ...body, locale: loc } }));
     working.current = false;
     const outcome = answerState(answer, Boolean(turnstileSiteKey));
-    // Reset after EVERY answer, 201 included: a fresh "Book another" must never reuse this token.
-    if (turnstileSiteKey && outcome.kind !== "verifyEmail") resetTurnstile();
+    // Reset after EVERY answer, 201 included: a token is never reused.
+    if (turnstileSiteKey) resetTurnstile();
 
-    if (outcome.kind === "verifyEmail") {
-      // The session ended, or isn't this address's: refused before Turnstile, so the same token
-      // goes to the hold instead, and the form becomes the email-only one.
-      setSessionEmail(null);
-      return doHold(f, memberId, token);
-    }
     if (outcome.kind === "done" && answer.data) {
       setDone({
         status: answer.data.status,
         service: f.service,
-        worker: f.worker === "any" ? (f.service.workers.find((w) => w.id === answer.data!.worker_id) ?? null) : (f.service.workers.find((w) => w.id === f.worker) ?? null),
+        worker: f.service.workers.find((w) => w.id === (f.worker === "any" ? answer.data!.worker_id : f.worker)) ?? null,
         starts_at: answer.data.starts_at,
         price: answer.data.price,
         email: f.email,
       });
+      syncUrl(f.worker, null);
       return;
     }
     await afterRefusal(f, outcome);
-  }
-
-  /** ZIF-117: the hold POST, a first link or "Send the email again" (which replaces the hold on
-   * screen; "Wrong address" leaves its secret in flow.replaces). */
-  async function doHold(f: Step2Plus, memberId: string | null, token: string | null) {
-    const again = sent;
-    const replaces = again?.secret ?? f.replaces;
-    working.current = true;
-    const held = await send(
-      bookingHoldsCreate({
-        path: { tenant_id: page.id, service_id: f.service.id },
-        body: { ...holdBody({ startsAt: f.slot!, memberId, email: f.email, locale: loc, turnstileToken: token, replaces }), locale: loc },
-      }),
-    );
-    working.current = false;
-    if (turnstileSiteKey) resetTurnstile();
-    const outcome = answerState(held, Boolean(turnstileSiteKey));
-    if (outcome.kind === "done" && held.data) {
-      const email = f.email.trim();
-      setSent({
-        secret: held.data.secret,
-        email,
-        startsAt: held.data.starts_at,
-        heldUntil: held.data.expires_at,
-        service: f.service,
-        who: withName(f.service.workers, f.worker, f.pick, t("anyone")),
-        notice: again ? { tone: "note", text: t("sentAgain", { email }) } : null,
-      });
-      setFlow((cur) => ({ ...cur, busy: false, replaces: null }));
-      return;
-    }
-    if (again && outcome.kind !== "slotTaken" && outcome.kind !== "serviceGone") {
-      // Stays on "Check your email": the hold and its link are as they were.
-      setSent({ ...again, notice: { tone: "error", text: failureText(outcome.kind) } });
-      setFlow((cur) => ({ ...cur, busy: false }));
-      return;
-    }
-    // Refused: whatever the booker does next, its hold still replaces the one it had.
-    setSent(null);
-    setFlow((cur) => ({ ...cur, replaces }));
-    return afterRefusal({ ...f, replaces }, outcome);
   }
 
   function failureText(kind: AnswerOutcome["kind"]): string {
@@ -510,8 +474,7 @@ export function BookingPage({ page, locale, turnstileSiteKey, initialService = n
               : t("unknownOutcome");
   }
 
-  /** Every refused POST, today's or the hold's: the time taken, the service gone, the terms
-   * changed, or a banner by the button. */
+  /** Every refused POST: the time taken, the service gone, the terms changed, or a banner by the button. */
   async function afterRefusal(f: Step2Plus, outcome: AnswerOutcome) {
     if (outcome.kind === "slotTaken") {
       const time = localWhen(f.slot!, zone, dateLocale(locale)).time;
@@ -542,7 +505,7 @@ export function BookingPage({ page, locale, turnstileSiteKey, initialService = n
         ...cur,
         taken: new Set([...cur.taken, f.slot!]),
         busy: false,
-        ...(cur.slot === f.slot ? { slot: null, pick: null, step: 2 as const, banner: { where: 2 as const, tone: "note" as const, text: t("slotTaken", { time }) } } : {}),
+        ...(cur.slot === f.slot ? { slot: null, pick: null, banner: { where: 2 as const, tone: "note" as const, text: t("slotTaken", { time }) } } : {}),
       }));
       setFocusStep(2);
       // The cached window is stale (it still offers the just-taken slot): bypass it, unless the
@@ -551,7 +514,7 @@ export function BookingPage({ page, locale, turnstileSiteKey, initialService = n
       return;
     }
     if (outcome.kind === "serviceGone") {
-      backToStep1(t("serviceGone"));
+      goneToList();
       return;
     }
     if (outcome.kind === "policyChanged") {
@@ -560,206 +523,124 @@ export function BookingPage({ page, locale, turnstileSiteKey, initialService = n
       return;
     }
     if (outcome.kind === "phoneInvalid") {
-      // ZIF-152: under the field, never the banner; step 3 reopens if "Change" left it.
-      setFlow({ ...f, busy: false, banner: null, step: 3, errors: { ...f.errors, phone: t("errPhoneInvalid") } });
-      focusFieldGen.current += 1;
-      setFocusField({ field: "phone", gen: focusFieldGen.current });
+      // ZIF-152: under the field, never the banner.
+      setFlow({ ...f, busy: false, banner: null, errors: { ...f.errors, phone: t("errPhoneInvalid") } });
+      focusOn("phone");
+      return;
+    }
+    if (outcome.kind === "messageInvalid") {
+      // B1: under the message, which opens if it was folded; never the generic banner.
+      setFlow({ ...f, busy: false, banner: null, errors: { ...f.errors, message: t("errMessage") } });
+      setMessageOpen(true);
+      focusOn("message");
       return;
     }
     setFlow({ ...f, busy: false, banner: { where: "c", tone: "error", text: failureText(outcome.kind) } });
   }
 
-  /** "Choose another time": the hold goes (its link with it) and the times show it free again. */
-  async function otherTime() {
-    if (!sent || working.current) return;
-    working.current = true;
-    await send(bookingHoldsRelease({ path: { tenant_id: page.id }, body: { secret: sent.secret } }));
-    working.current = false;
-    setSent(null);
-    const f = flow as Step2Plus;
-    // Kept for the next hold anyway: if the release didn't land, that hold replaces this one.
-    setFlow((cur) => ({ ...cur, step: 2, slot: null, pick: null, banner: null, replaces: sent.secret }));
-    setFocusStep(2);
-    void ensureWeek(f.service, f.worker, f.weekStart, true);
-  }
-
-  /** "Wrong address? Change it": back to the address; the next link replaces this hold. */
-  function wrongAddress() {
-    if (!sent) return;
-    setFlow((cur) => ({ ...cur, step: 3, replaces: sent.secret }));
-    setSent(null);
-    focusFieldGen.current += 1;
-    setFocusField({ field: "email", gen: focusFieldGen.current });
-  }
   useEffect(() => {
     doBookRef.current = doBook;
   });
 
-  const linkFirst = !signedInAs(sessionEmail, flow.email);
-  const service1Done = flow.service;
-  // flow.service is checked, not just flow.step: TS doesn't propagate that narrowing through the
-  // ternary's inferred type, so the cast documents what the runtime check already guarantees.
-  // Not gated by flow.step: the checkout summary (and step 2/3's own folded rows) must keep
-  // showing what's already chosen even while step 1 is reopened via "Change".
   const s2 = flow.service ? (flow as Step2Plus) : null;
-  const s2With = s2 ? withName(s2.service.workers, s2.worker, s2.pick, t("anyone")) : null;
-
-  if (page.services.length === 0) {
+  if (!s2) return null;
+  const s2With = withName(s2.service.workers, s2.worker, s2.pick, t("anyone"));
+  const detailsOpen = flow.step === 3;
+  const auto = page.auto_confirm;
+  const sendLabel = flow.busy ? (auto ? t("booking") : t("sending")) : auto ? t("book") : t("request");
+  if (done) {
     return (
-      <main className={styles.screen}>
-        <div className={styles.col}>
-          <Outcome icon="calendar" title={t("noSvcTitle")} lede={t("noSvcBody", { biz: page.name })}>
-            {null}
-          </Outcome>
-        </div>
-      </main>
+      <>
+        <main className={styles.screen}>
+          <div className={`${styles.col} ${styles.bookingWide}`}>
+            <DoneScreen page={page} done={done} locale={loc} dLocale={dLocale} zone={zone} t={t} onAgain={() => router.push(`/${page.slug}`)} />
+          </div>
+        </main>
+        <BookingFooter />
+      </>
     );
   }
 
   return (
     <>
-    <main className={styles.screen}>
-      <div className={`${styles.col} ${styles.bookingWide}`}>
-        <div className={styles.bizHeader}>
-          <h1>{page.name}</h1>
-          <p className={styles.bizMeta}>
-            <PinIcon />
-            <span>{zoneCity(zone)}</span>
-            <span aria-hidden="true">·</span>
-            <span>{t("timesIn", { city: zoneCity(zone) })}</span>
-          </p>
-        </div>
+      <main className={styles.screen}>
+        <div className={`${styles.col} ${styles.bookingWide}`}>
+          <Link className={styles.back} href={`/${page.slug}`}>
+            <svg aria-hidden="true" viewBox="0 0 12 12" width="12" height="12">
+              <path d="M7.5 2.5l-3 3.5 3 3.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            {t("backToServices")}
+          </Link>
+          <div className={styles.bizHeader}>
+            <h1>{t("checkoutTitle")}</h1>
+            <p className={styles.bizMeta}>
+              <PinIcon />
+              <span>{page.name}</span>
+              <span aria-hidden="true">·</span>
+              <span>{t("timesIn", { city: zoneCity(zone) })}</span>
+            </p>
+          </div>
 
-        <div className={styles.bookingLayout}>
-          <div className={styles.flowCol}>
-            {done ? (
-              <DoneScreen page={page} done={done} locale={loc} dLocale={dLocale} zone={zone} t={t} onAgain={() => { setDone(null); setFlow({ ...INITIAL, name: sessionFill.current.name, email: sessionFill.current.email, phone: "" }); }} />
-            ) : sent ? (
-              <CheckEmail
-                page={page}
-                sent={sent}
-                locale={loc}
-                dLocale={dLocale}
-                zone={zone}
-                t={t}
-                busy={flow.busy}
-                verifying={verifying}
-                banner={flow.banner?.where === "c" ? flow.banner : null}
-                onAgain={() => void book()}
-                onOtherTime={() => void otherTime()}
-                onWrongAddress={wrongAddress}
-              />
-            ) : (
-              <>
-              {/* Step 1: service */}
-              <section className={`${styles.step} ${flow.step !== 1 && !(flow.step > 1 && service1Done) ? styles.stepLater : ""}`} aria-labelledby="step1-h">
+          <div className={styles.bookingLayout}>
+            <div className={styles.flowCol}>
+              {/* Step 1: person and time. */}
+              <section className={styles.step} aria-labelledby="step2-h">
                 <div className={styles.stepHead}>
-                  <span className={`${styles.stepNum} ${flow.step === 1 ? styles.stepNumOpen : flow.step > 1 && service1Done ? styles.stepNumDone : ""}`} aria-hidden="true">
-                    {flow.step > 1 && service1Done ? <CheckIcon /> : 1}
-                  </span>
-                  <h2 id="step1-h" ref={(el) => { headingRefs.current[1] = el; }} tabIndex={-1}>
-                    {t("step1")}
-                    {flow.step > 1 && service1Done && <span className={styles.srOnly}>{t("stepDoneSuffix")}</span>}
-                  </h2>
-                </div>
-                <div className={styles.stepBody}>
-                  {flow.banner?.where === 1 && <Banner tone={flow.banner.tone}>{flow.banner.text}</Banner>}
-                  {flow.step === 1 ? (
-                    <ServiceList page={page} selected={flow.service?.id} loc={loc} businessLanguage={businessLanguage} locale={locale} t={t} onSelect={selectService} />
-                  ) : (
-                    service1Done && (
-                      <div className={styles.stepDone}>
-                        <ServiceTile placeholder={service1Done.placeholder} photo={service1Done.photo?.thumb_url} className={styles.tile40} />
-                        <span className={styles.stepDoneWhat}>
-                          <b lang={localized(service1Done.name, loc, businessLanguage).lang ?? undefined}>{localized(service1Done.name, loc, businessLanguage).text}</b>
-                          <span>
-                            {t("min", { n: service1Done.duration_minutes })} · {formatMoney(service1Done.price.amount_minor, service1Done.price.currency, locale)}
-                          </span>
-                        </span>
-                        <button className={styles.textButton} type="button" onClick={() => goTo(1)}>
-                          {t("change")}
-                          <span className={styles.srOnly}>
-                            {": "}
-                            {t("step1")}
-                          </span>
-                        </button>
-                      </div>
-                    )
-                  )}
-                </div>
-              </section>
-
-              {/* Step 2: day/time — the shell always renders (muted) even before step 1 is done. */}
-              <section className={`${styles.step} ${flow.step !== 2 && !(flow.step > 2 && s2?.slot) ? styles.stepLater : ""}`} aria-labelledby="step2-h">
-                <div className={styles.stepHead}>
-                  <span className={`${styles.stepNum} ${flow.step === 2 ? styles.stepNumOpen : flow.step > 2 && s2?.slot ? styles.stepNumDone : ""}`} aria-hidden="true">
-                    {flow.step > 2 && s2?.slot ? <CheckIcon /> : 2}
+                  <span className={`${styles.stepNum} ${detailsOpen ? styles.stepNumDone : styles.stepNumOpen}`} aria-hidden="true">
+                    {detailsOpen && s2.slot ? <CheckIcon /> : 1}
                   </span>
                   <h2 id="step2-h" ref={(el) => { headingRefs.current[2] = el; }} tabIndex={-1}>
                     {t("step2")}
-                    {flow.step > 2 && <span className={styles.srOnly}>{t("stepDoneSuffix")}</span>}
                   </h2>
                 </div>
                 <div className={styles.stepBody}>
-                  {s2 && flow.step === 2 && (
-                    <Picker
-                      page={page}
-                      s2={s2}
-                      cache={cache}
-                      firstFree={firstFreeByEntry.get(`${s2.service.id}|${s2.worker}`) || null}
-                      banner={flow.banner?.where === 2 ? flow.banner : null}
-                      dLocale={dLocale}
-                      zone={zone}
-                      t={t}
-                      onWorker={chooseWorker}
-                      onWeek={changeWeek}
-                      onDay={(d) => setFlow((f) => (f.step >= 2 ? { ...f, day: d } : f))}
-                      onSlot={pickSlot}
-                      onJump={jumpTo}
-                      onAnyone={() => chooseWorker("any")}
-                      onRetry={() => void ensureWeek(s2.service, s2.worker, s2.weekStart, true)}
-                    />
-                  )}
-                  {s2 && flow.step > 2 && s2.slot && (
-                    <div className={styles.stepDone}>
-                      <span className={styles.stepDoneWhat}>
-                        <b>
-                          {localWhen(s2.slot, zone, dLocale).date}
-                          {", "}
-                          {localWhen(s2.slot, zone, dLocale).time}
-                        </b>
-                        {s2With !== null && <span>{t("with", { name: s2With })}</span>}
-                      </span>
-                      <button className={styles.textButton} type="button" onClick={() => goTo(2)}>
-                        {t("change")}
-                        <span className={styles.srOnly}>
-                          {": "}
-                          {t("step2")}
-                        </span>
-                      </button>
-                    </div>
-                  )}
+                  <Picker
+                    page={page}
+                    s2={s2}
+                    cache={cache}
+                    firstFree={firstFreeByEntry.get(`${s2.service.id}|${s2.worker}`) || null}
+                    banner={flow.banner?.where === 2 ? flow.banner : null}
+                    dLocale={dLocale}
+                    zone={zone}
+                    t={t}
+                    onWorker={chooseWorker}
+                    onWeek={changeWeek}
+                    onDay={(d) => setFlow((f) => ({ ...f, day: d }))}
+                    onSlot={pickSlot}
+                    onJump={jumpTo}
+                    onAnyone={() => chooseWorker("any")}
+                    onRetry={() => void ensureWeek(s2.service, s2.worker, s2.weekStart, true)}
+                  />
+                  <div className={styles.actions}>
+                    <button className={`${styles.button} ${styles.primary}`} type="button" onClick={next}>
+                      {t("continue")}
+                    </button>
+                  </div>
                 </div>
               </section>
 
-              {/* Step 3: details — same always-visible shell. */}
-              <section className={`${styles.step} ${flow.step !== 3 ? styles.stepLater : ""}`} aria-labelledby="step3-h">
+              {/* Step 2: details, opened by Continue. */}
+              <section className={`${styles.step} ${detailsOpen ? "" : styles.stepLater}`} aria-labelledby="step3-h">
                 <div className={styles.stepHead}>
-                  <span className={`${styles.stepNum} ${flow.step === 3 ? styles.stepNumOpen : ""}`} aria-hidden="true">
-                    {3}
+                  <span className={`${styles.stepNum} ${detailsOpen ? styles.stepNumOpen : ""}`} aria-hidden="true">
+                    {2}
                   </span>
                   <h2 id="step3-h" ref={(el) => { headingRefs.current[3] = el; }} tabIndex={-1}>
-                    {linkFirst ? t("step3Email") : t("step3")}
+                    {t("step3")}
                   </h2>
                 </div>
-                <div className={styles.stepBody}>
-                {s2 && flow.step === 3 && <WhoAt s2={s2} banner={flow.banner?.where === 3 ? flow.banner : null} zone={zone} dLocale={dLocale} t={t} onPick={(pick) => setFlow((f) => ({ ...f, pick }))} />}
-                {s2 && flow.step === 3 && (
-                  <div className={styles.form}>
-                    {/* ZIF-117: name and phone only for the signed-in address itself; anyone else
-                     * gives them on the confirm page, after the emailed link. */}
-                    {!linkFirst && (
-                    <div className={styles.row2}>
+                {detailsOpen && (
+                  <div className={styles.stepBody}>
+                    <WhoAt s2={s2} banner={flow.banner?.where === 3 ? flow.banner : null} zone={zone} dLocale={dLocale} t={t} onPick={(pick) => setFlow((f) => ({ ...f, pick }))} />
+                    <form
+                      className={styles.form}
+                      method="post"
+                      noValidate
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        void book();
+                      }}
+                    >
                       <div className={styles.field}>
                         <label className={styles.label} htmlFor="bp-name">
                           {t("name")}
@@ -779,107 +660,122 @@ export function BookingPage({ page, locale, turnstileSiteKey, initialService = n
                         {flow.errors.name && <FieldError id="bp-name-err">{flow.errors.name}</FieldError>}
                       </div>
                       <div className={styles.field}>
-                        <label className={styles.label} htmlFor="bp-phone">
-                          {t("phone")}
+                        <label className={styles.label} htmlFor="bp-email">
+                          {t("email")}
                         </label>
                         <div className={styles.input}>
                           <input
-                            ref={phoneRef}
-                            id="bp-phone"
-                            name="phone"
-                            type="tel"
-                            autoComplete="tel"
-                            maxLength={40}
-                            value={flow.phone}
-                            onChange={(e) => fieldChange("phone", e.target.value)}
-                            aria-invalid={flow.errors.phone ? true : undefined}
-                            aria-describedby={flow.errors.phone ? "bp-phone-hint bp-phone-err" : "bp-phone-hint"}
+                            ref={emailRef}
+                            id="bp-email"
+                            name="email"
+                            type="email"
+                            autoComplete="email"
+                            value={flow.email}
+                            onChange={(e) => fieldChange("email", e.target.value)}
+                            onBlur={emailBlur}
+                            aria-invalid={flow.errors.email ? true : undefined}
+                            aria-describedby={`bp-email-hint${flow.errors.email ? " bp-email-err" : ""}`}
                           />
                         </div>
+                        <p className={styles.hint} id="bp-email-hint">
+                          {t("emailHint")}
+                        </p>
+                        {flow.errors.email && <FieldError id="bp-email-err">{flow.errors.email}</FieldError>}
+                        <div aria-live="polite">
+                          {flow.suggest && (
+                            <p className={styles.hint}>
+                              {t("didYouMean", { email: flow.suggest })}{" "}
+                              <button className={styles.textButton} type="button" onClick={useSuggestion}>
+                                {t("useSuggestion")}
+                              </button>
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                      <div className={styles.field}>
+                        <label className={styles.label} htmlFor="bp-phone">
+                          {t("phone")}
+                        </label>
+                        <div className={styles.phonePair}>
+                          <div className={styles.input}>
+                            <select id="bp-dial" name="dial" aria-label={t("dialCode")} value={region} onChange={(e) => setRegion(e.target.value)}>
+                              {dials.map((o) => (
+                                <option key={o.region} value={o.region}>
+                                  {o.text}
+                                </option>
+                              ))}
+                            </select>
+                            <Chevron select />
+                          </div>
+                          <div className={styles.input}>
+                            <input
+                              ref={phoneRef}
+                              id="bp-phone"
+                              name="phone"
+                              type="tel"
+                              autoComplete="tel-national"
+                              maxLength={36}
+                              value={flow.phone}
+                              onChange={(e) => fieldChange("phone", e.target.value)}
+                              aria-invalid={flow.errors.phone ? true : undefined}
+                              aria-describedby={flow.errors.phone ? "bp-phone-hint bp-phone-err" : "bp-phone-hint"}
+                            />
+                          </div>
+                        </div>
                         <p className={styles.hint} id="bp-phone-hint">
-                          {t("phoneHint", { biz: page.name, country: t(`phoneCountry.${page.country}`) })}
+                          {t("phoneUse", { biz: page.name })}
                         </p>
                         {flow.errors.phone && <FieldError id="bp-phone-err">{flow.errors.phone}</FieldError>}
                       </div>
-                    </div>
-                    )}
-                    <div className={styles.field}>
-                      <label className={styles.label} htmlFor="bp-email">
-                        {t("email")}
-                      </label>
-                      <div className={styles.input}>
-                        <input
-                          ref={emailRef}
-                          id="bp-email"
-                          name="email"
-                          type="email"
-                          autoComplete="email"
-                          required
-                          value={flow.email}
-                          onChange={(e) => fieldChange("email", e.target.value)}
-                          onBlur={emailBlur}
-                          aria-invalid={flow.errors.email ? true : undefined}
-                          aria-describedby={`bp-email-hint${flow.errors.email ? " bp-email-err" : ""}`}
-                        />
-                      </div>
-                      <p className={styles.hint} id="bp-email-hint">
-                        {linkFirst ? t("emailLinkHint") : t("emailHint")}
+                      <p className={styles.fine}>
+                        {t.rich("legal", { biz: page.name, terms: (chunks) => <NewTab href="/terms">{chunks}</NewTab>, privacy: (chunks) => <NewTab href="/privacy">{chunks}</NewTab>, rules: (chunks) => <a href="#cancel-terms">{chunks}</a> })}
                       </p>
-                      {flow.errors.email && <FieldError id="bp-email-err">{flow.errors.email}</FieldError>}
-                      <div aria-live="polite">
-                        {flow.suggest && (
-                          <p className={styles.hint}>
-                            {t("didYouMean", { email: flow.suggest })}{" "}
-                            <button className={styles.textButton} type="button" onClick={useSuggestion}>
-                              {t("useSuggestion")}
-                            </button>
-                          </p>
-                        )}
-                      </div>
-                    </div>
+                      <label className={styles.consentRow}>
+                        <input type="checkbox" checked={marketing} onChange={(e) => setMarketing(e.target.checked)} />
+                        <span>{page.consent[loc].marketing_email}</span>
+                      </label>
+                      {/* Rendered visibly (never display:none) and kept mounted once the details are
+                       * open: an interaction-only challenge must be able to actually appear here. */}
+                      {turnstileSiteKey && <div id="turnstile-container" className={styles.turnstileBox} />}
+                      {verifying && <Banner tone="note">{t("verifying")}</Banner>}
+                      {flow.banner?.where === "c" && <Banner tone={flow.banner.tone}>{flow.banner.text}</Banner>}
+                      <Submit busy={flow.busy} busyLabel={sendLabel}>
+                        {sendLabel}
+                      </Submit>
+                    </form>
                   </div>
                 )}
-                </div>
               </section>
-              </>
-            )}
-          </div>
+            </div>
 
-          <Checkout
-            page={page}
-            s2={s2}
-            locale={locale}
-            dLocale={dLocale}
-            zone={zone}
-            businessLanguage={businessLanguage}
-            t={t}
-            banner={flow.banner?.where === "c" ? flow.banner : null}
-            busy={flow.busy}
-            verifying={verifying}
-            turnstileSiteKey={turnstileSiteKey}
-            onTurnstileLoad={onTurnstileLoad}
-            onBook={() => void book()}
-            hidden={done !== null}
-            bare={sent !== null}
-            linkFirst={linkFirst}
-          />
+            <Summary
+              page={page}
+              service={s2.service}
+              slot={s2.slot}
+              workerName={s2With}
+              locale={locale}
+              dLocale={dLocale}
+              zone={zone}
+              t={t}
+              message={message}
+              messageOpen={messageOpen}
+              messageError={flow.errors.message}
+              messageRef={messageRef}
+              onMessage={(text) => {
+                setMessage(text);
+                if (flow.errors.message) setFlow((f) => ({ ...f, errors: { ...f.errors, message: undefined } }));
+              }}
+              onMessageOpen={setMessageOpen}
+            />
+          </div>
         </div>
-      </div>
-    </main>
-    <footer className={styles.minimalFooter}>
-      <span>
-        {t("footerBy")} <b>ziftbook</b>
-      </span>
-      {/* ZIF-147. A new tab: leaving would lose a booking half filled in. */}
-      <Link href="/terms" target="_blank">
-        {t("footerTerms")}
-        <span className={styles.srOnly}> {t("newTab")}</span>
-      </Link>
-      <Link href="/privacy" target="_blank">
-        {t("footerPrivacy")}
-        <span className={styles.srOnly}> {t("newTab")}</span>
-      </Link>
-    </footer>
+      </main>
+      <BookingFooter />
+      {/* onReady, not onLoad: next/script's LoadCache means onLoad only fires the very first time this
+       * script URL is ever loaded on the page — a client-side locale switch or soft nav remounts this
+       * page without the browser reloading the script, so onLoad would never fire again and no
+       * widget would ever get rendered. onReady fires on every mount, script-cached or not. */}
+      {turnstileSiteKey && <Script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" strategy="afterInteractive" onReady={onTurnstileLoad} />}
     </>
   );
 }

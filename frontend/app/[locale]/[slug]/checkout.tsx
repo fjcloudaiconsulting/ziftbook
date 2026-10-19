@@ -11,7 +11,7 @@ import { formatMoney } from "@/lib/money";
 import { type Locale } from "@/lib/services";
 import { zoneCity } from "@/lib/week";
 
-import { AlertIcon, Banner, Outcome, Submit } from "../_ui/parts";
+import { AlertIcon, Banner, Chevron, Outcome, Submit } from "../_ui/parts";
 import { CheckIcon, Picker as SharedPicker } from "../_ui/picker";
 import styles from "../_ui/ui.module.css";
 import { MoveIcon } from "./icons";
@@ -130,23 +130,22 @@ export function Picker({
     <>
       {banner && <Banner tone={banner.tone}>{banner.text}</Banner>}
       {service.workers.length > 1 && named.length > 0 && (
-        <fieldset className={styles.pillSet}>
-          <legend className={styles.hint}>{t("withWho")}</legend>
-          <div className={styles.pills}>
-            <label className={styles.pill2}>
-              <input type="radio" name="worker" checked={worker === "any"} onChange={() => onWorker("any")} />
-              {worker === "any" && "✓ "}
-              {t("anyone")}
-            </label>
-            {named.map((w) => (
-              <label className={styles.pill2} key={w.id}>
-                <input type="radio" name="worker" checked={worker === w.id} onChange={() => onWorker(w.id)} />
-                {worker === w.id && "✓ "}
-                {w.display_name}
-              </label>
-            ))}
+        <div className={styles.field}>
+          <label className={styles.label} htmlFor="bp-worker">
+            {t("withWho")}
+          </label>
+          <div className={styles.input}>
+            <select id="bp-worker" value={worker} onChange={(e) => onWorker(e.target.value)}>
+              <option value="any">{t("anyone")}</option>
+              {named.map((w) => (
+                <option key={w.id} value={w.id}>
+                  {w.display_name}
+                </option>
+              ))}
+            </select>
+            <Chevron select />
           </div>
-        </fieldset>
+        </div>
       )}
       {service.workers.length === 1 && service.workers[0].display_name && <p className={styles.hint}>{t("with", { name: service.workers[0].display_name })}</p>}
 
@@ -204,6 +203,78 @@ export type Chosen = {
   pick: string | null;
 };
 
+/** The cancellation terms box: free until a time once one is picked, else the plain hours; the
+ * business's own words when it wrote some in the page language. Shared by both asides. */
+export function Terms({
+  page,
+  slot,
+  locale,
+  dLocale,
+  zone,
+  businessLanguage,
+  t,
+}: {
+  page: Pick<BookingPageOut, "name" | "cancellation">;
+  slot: string | null;
+  locale: string;
+  dLocale: string;
+  zone: string;
+  businessLanguage: Locale;
+  t: ReturnType<typeof useTranslations>;
+}) {
+  const c = page.cancellation;
+  const ownText = ownPolicyText(c.text, locale, businessLanguage);
+  let termLine: React.ReactNode;
+  if (slot) {
+    const state = cancellationState(new Date(), new Date(slot), c.free_cancellation_hours);
+    if (state.kind === "before") {
+      const freeW = localWhen(state.freeUntil.toISOString(), zone, dLocale);
+      termLine = (
+        <li className={styles.termsFree}>
+          <CheckIcon />
+          <span>
+            {t("freeUntil", { when: `${freeW.date}, ${freeW.time}` })} {t("afterFree")}
+          </span>
+        </li>
+      );
+    } else {
+      termLine = (
+        <li>
+          <AlertIcon />
+          <span>{t("lateWindow", { n: c.free_cancellation_hours })}</span>
+        </li>
+      );
+    }
+  } else {
+    termLine = (
+      <li className={styles.termsFree}>
+        <CheckIcon />
+        <span>
+          {t("freeHours", { n: c.free_cancellation_hours })} {t("afterFree")}
+        </span>
+      </li>
+    );
+  }
+  return (
+    <section className={styles.terms} id="cancel-terms" aria-labelledby="terms-h">
+      <h3 id="terms-h">{t("termsTitle")}</h3>
+      <ul className={styles.termsList}>
+        {termLine}
+        <li>
+          <MoveIcon />
+          <span>{c.max_reschedules > 0 ? t("moveTerms", { n: c.reschedule_cutoff_hours, m: c.max_reschedules }) : t("moveOff")}</span>
+        </li>
+      </ul>
+      {ownText && (
+        <blockquote className={styles.quote} lang={businessLanguage}>
+          <p>{ownText}</p>
+          <footer lang={locale}>{t("ownWords", { biz: page.name })}</footer>
+        </blockquote>
+      )}
+    </section>
+  );
+}
+
 export function Checkout({
   page,
   s2,
@@ -244,50 +315,18 @@ export function Checkout({
   onTurnstileLoad(): void;
   onBook(): void;
 }) {
-  const c = page.cancellation;
   const service = s2?.service ?? null;
   const slot = s2?.slot ?? null;
   // undefined: nothing chosen yet; null: a person with no name, so no "With" row at all.
   const workerName = s2 ? withName(s2.service.workers, s2.worker, s2.pick, t("anyone")) : undefined;
   const name = service ? localized(service.name, locale as Locale, businessLanguage) : null;
-  const ownText = ownPolicyText(c.text, locale, businessLanguage);
 
   let whenText = <dd className={styles.unset}>{t("notChosen")}</dd>;
-  let termLine: React.ReactNode;
   if (slot && service) {
-    const start = new Date(slot);
-    const end = new Date(start.getTime() + service.duration_minutes * 60_000);
+    const end = new Date(new Date(slot).getTime() + service.duration_minutes * 60_000);
     const w = localWhen(slot, zone, dLocale);
     const endTime = new Intl.DateTimeFormat(dLocale, { hour: "2-digit", minute: "2-digit", timeZone: zone }).format(end);
     whenText = <dd>{t("whenFormat", { day: w.date, from: w.time, to: endTime })}</dd>;
-    const state = cancellationState(new Date(), start, c.free_cancellation_hours);
-    if (state.kind === "before") {
-      const freeW = localWhen(state.freeUntil.toISOString(), zone, dLocale);
-      termLine = (
-        <li className={styles.termsFree}>
-          <CheckIcon />
-          <span>
-            {t("freeUntil", { when: `${freeW.date}, ${freeW.time}` })} {t("afterFree")}
-          </span>
-        </li>
-      );
-    } else {
-      termLine = (
-        <li>
-          <AlertIcon />
-          <span>{t("lateWindow", { n: c.free_cancellation_hours })}</span>
-        </li>
-      );
-    }
-  } else {
-    termLine = (
-      <li className={styles.termsFree}>
-        <CheckIcon />
-        <span>
-          {t("freeHours", { n: c.free_cancellation_hours })} {t("afterFree")}
-        </span>
-      </li>
-    );
   }
 
   const label = linkFirst ? (busy ? t("sending") : t("emailLink")) : busy ? (page.auto_confirm ? t("booking") : t("sending")) : page.auto_confirm ? t("book") : t("request");
@@ -319,22 +358,7 @@ export function Checkout({
           {service ? <dd>{formatMoney(service.price.amount_minor, service.price.currency, locale)}</dd> : <dd className={styles.unset}>{t("notChosen")}</dd>}
         </div>
       </dl>
-      <section className={styles.terms} aria-labelledby="terms-h">
-        <h3 id="terms-h">{t("termsTitle")}</h3>
-        <ul className={styles.termsList}>
-          {termLine}
-          <li>
-            <MoveIcon />
-            <span>{c.max_reschedules > 0 ? t("moveTerms", { n: c.reschedule_cutoff_hours, m: c.max_reschedules }) : t("moveOff")}</span>
-          </li>
-        </ul>
-        {ownText && (
-          <blockquote className={styles.quote} lang={businessLanguage}>
-            <p>{ownText}</p>
-            <footer lang={locale}>{t("ownWords", { biz: page.name })}</footer>
-          </blockquote>
-        )}
-      </section>
+      <Terms page={page} slot={slot} locale={locale} dLocale={dLocale} zone={zone} businessLanguage={businessLanguage} t={t} />
       {!page.auto_confirm && <Banner tone="note">{t("approvalNote", { biz: page.name })}</Banner>}
       {verifying && <Banner tone="note">{t("verifying")}</Banner>}
       {banner && <Banner tone={banner.tone}>{banner.text}</Banner>}

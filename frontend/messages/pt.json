@@ -914,8 +914,6 @@
   },
   "BookingPage": {
     "timesIn": "Horários no fuso de {city}",
-    "stepDoneSuffix": ", concluído",
-    "step1": "Escolha um serviço",
     "step2": "Escolha o dia e o horário",
     "step3": "Seus dados",
     "change": "Alterar",
@@ -977,7 +975,6 @@
     "fine": "{biz} usa seus dados somente para gerenciar esta reserva.",
     "errName": "Digite seu nome.",
     "errEmail": "Digite um endereço de e-mail, como nome@exemplo.com.",
-    "errMissing": "Escolha primeiro um serviço e um horário.",
     "errMissingTime": "Escolha primeiro um horário.",
     "slotTaken": "Outra pessoa acabou de reservar às {time}. Seus dados foram mantidos; escolha outro horário.",
     "whoAt": "Com quem você prefere às {time}?",
@@ -1031,6 +1028,22 @@
     "takenLede": "Outra pessoa agendou {when} depois que a reserva terminou. Nada foi agendado para você.",
     "deadTitle": "Este link não funciona mais",
     "deadLede": "Cada link funciona uma vez, por 24 horas, e só o mais recente se você pediu o e-mail de novo.",
-    "deadHint": "Já agendou? O e-mail de confirmação tem o link do seu agendamento. Para agendar de novo, use o link da página de agendamento no e-mail que enviamos."
+    "deadHint": "Já agendou? O e-mail de confirmação tem o link do seu agendamento. Para agendar de novo, use o link da página de agendamento no e-mail que enviamos.",
+    "servicesTitle": "Serviços",
+    "showMore": "Mostrar mais",
+    "showLess": "Mostrar menos",
+    "openService": "Reservar {service}",
+    "close": "Fechar",
+    "bookNow": "Reservar agora",
+    "checkoutTitle": "Reserve seu horário",
+    "backToServices": "Voltar aos serviços",
+    "continue": "Continuar",
+    "total": "Total",
+    "message": "Mensagem para {biz}",
+    "messageHint": "Opcional. Qualquer coisa que {biz} deva saber antes da sua visita.",
+    "errMessage": "Use texto simples, até 1000 caracteres.",
+    "dialCode": "Código do país",
+    "phoneUse": "Só para {biz} falar com você sobre esta reserva.",
+    "legal": "Ao enviar, você aceita os <terms>Termos</terms> e o <privacy>Aviso de Privacidade</privacy> do ziftbook e as <rules>regras de cancelamento</rules> de {biz}."
   }
 }

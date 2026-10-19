@@ -11,24 +11,29 @@ import {
   answerState,
   bookingBody,
   cancellationState,
+  checkoutUrl,
+  cleanMessage,
   confirmScreen,
   dayPart,
   emailSuggestion,
   firstFreeDayFrom,
   freeNamed,
   groupByDayPart,
-  holdBody,
   holdEnded,
   keepPick,
   nextWeekDisabled,
   ownPolicyText,
+  parseCheckout,
+  phoneValue,
+  pickFromUrl,
   scanWindow,
-  signedInAs,
   slotsFor,
   slotWho,
   slugLooksValid,
+  weekFor,
   withName,
 } from "../lib/booking-page.ts";
+import { defaultDial, dialOptions } from "../lib/dial-codes.ts";
 
 describe("F1 cancellation terms", () => {
   test("free-until is the slot start minus the free-cancellation hours, not now plus hours", () => {
@@ -100,6 +105,8 @@ describe("F4 booking POST body", () => {
     locale: "nl",
     policyVersion: "2026-01-01",
     turnstileToken: "tok",
+    consent: false,
+    message: null,
   };
 
   test("ZIF-152 fence: the phone is always sent, trimmed (the server reads its format)", () => {
@@ -115,17 +122,24 @@ describe("F4 booking POST body", () => {
     assert.equal(body.starts_at, "2026-10-20T15:00:00+00:00");
   });
 
-  test("consents is always {}, locale is present, member_id null means anyone", () => {
-    const body = bookingBody(base);
-    assert.deepEqual(body.consents, {});
-    assert.equal(body.locale, "nl");
-    assert.equal(body.member_id, null);
+  test("fence: unticked sends consents {}, ticked {marketing_email: true}, never a false", () => {
+    // Wrong implementation killed: posting {marketing_email: false}, which withdraws a signed-in
+    // booker's earlier consent.
+    assert.deepEqual(bookingBody(base).consents, {});
+    assert.deepEqual(bookingBody({ ...base, consent: true }).consents, { marketing_email: true });
+    assert.equal(bookingBody(base).locale, "nl");
+    assert.equal(bookingBody(base).member_id, null);
+  });
+
+  test("guard: a blank message is sent as null", () => {
+    assert.equal(bookingBody({ ...base, message: cleanMessage("  \n ") }).message, null);
+    assert.equal(bookingBody({ ...base, message: cleanMessage(" hi ") }).message, "hi");
   });
 
   test("fence: the key set is exactly the allowed list, nothing else", () => {
     assert.deepEqual(
       Object.keys(bookingBody(base)).sort(),
-      ["consents", "email", "locale", "member_id", "name", "phone", "policy_version", "starts_at", "turnstile_token"].sort(),
+      ["consents", "email", "locale", "member_id", "message", "name", "phone", "policy_version", "starts_at", "turnstile_token"].sort(),
     );
   });
 });
@@ -142,7 +156,6 @@ describe("F5 answer -> outcome mapping", () => {
 
   test("fence (ZIF-116): with no widget, 403 turnstile_failed is 'unavailable', never 'try again'", () => {
     assert.equal(answerState({ status: 403, code: "turnstile_failed" }, false).kind, "unavailable");
-    assert.equal(answerState({ status: 403, code: "verify_email" }, false).kind, "verifyEmail");
   });
 
   test("fence: 0, 502 and 500 are the unknown outcome, never 'nothing was booked'", () => {
@@ -321,23 +334,10 @@ describe("ZIF-100 who is free at a time", () => {
 });
 
 describe("ZIF-117 confirm by email", () => {
-  test("fence: only the signed-in address itself books straight away", () => {
-    assert.equal(signedInAs(null, "ana@example.com"), false);
-    assert.equal(signedInAs("ana@example.com", " Ana@Example.com "), true);
-    assert.equal(signedInAs("ana@example.com", "ana@example.org"), false);
-    assert.equal(signedInAs("ana@example.com", ""), false);
-  });
-
-  test("fence: the hold body carries the address and the time only, replaces only when set", () => {
-    const form = { startsAt: "2026-10-15T08:30:00+00:00", memberId: null, email: " ana@example.com ", locale: "pt", turnstileToken: "tok", replaces: null };
-    assert.deepEqual(holdBody(form), { starts_at: "2026-10-15T08:30:00+00:00", member_id: null, email: "ana@example.com", locale: "pt", turnstile_token: "tok" });
-    assert.equal(holdBody({ ...form, replaces: "s3cret" }).replaces, "s3cret");
-  });
-
-  test("fence: 202 is the hold's done and 403 verify_email is its own outcome, never 'verify failed'", () => {
-    assert.equal(answerState({ status: 202 }).kind, "done");
-    assert.equal(answerState({ status: 403, code: "verify_email" }).kind, "verifyEmail");
-    assert.equal(answerState({ status: 403, code: "turnstile_failed" }, true).kind, "verifyFailed");
+  test("fence: 422 message_invalid is its own outcome, never the generic field errors banner", () => {
+    // Wrong implementation killed: the generic fieldErrors banner (the message field is never marked).
+    assert.equal(answerState({ status: 422, code: "message_invalid" }).kind, "messageInvalid");
+    assert.equal(answerState({ status: 422, code: "invalid_request" }).kind, "fieldErrors");
   });
 
   test("fence: every 404 on the click is the dead link, every 409 the taken time", () => {
@@ -355,5 +355,61 @@ describe("ZIF-117 confirm by email", () => {
     const until = "2026-10-15T08:47:00Z";
     assert.equal(holdEnded(until, new Date("2026-10-15T08:46:59Z")), false);
     assert.equal(holdEnded(until, new Date("2026-10-15T08:47:00Z")), true);
+  });
+});
+
+describe("ZIF-157 direct booking checkout", () => {
+  const svc = { id: "svc-1", workers: [{ id: "w1", display_name: "Ana" }, { id: "w2", display_name: null }] };
+
+  test("fence: the checkout URL carries service, with and at, and never the booker's details", () => {
+    // Wrong implementations killed: PII in the URL (logs, Referer, history); losing with/at on
+    // refresh; posting a stale member_id; a throw (or an Invalid Date pick) on a garbage `at`.
+    const state = { serviceId: "svc-1", memberId: "w1", at: "2026-10-22T08:30:00+00:00", name: "Ana Silva", email: "ana@example.com", phone: "+31 6 1234 5678", message: "hello there" };
+    const url = checkoutUrl("salon", state);
+    for (const secret of ["Ana", "Silva", "example.com", "1234", "hello"]) assert.ok(!url.includes(secret), secret);
+    const parsed = parseCheckout(new URL(url, "https://x.test").searchParams, svc);
+    assert.deepEqual(parsed, { serviceId: "svc-1", memberId: "w1", at: "2026-10-22T08:30:00+00:00" });
+    assert.equal(parseCheckout(new URLSearchParams("service=svc-1&with=gone"), svc).memberId, null);
+    assert.equal(parseCheckout(new URLSearchParams("service=svc-1&with=w2"), svc).memberId, null); // unnamed: never offered
+    const bad = parseCheckout(new URLSearchParams("service=svc-1&at=foo"), svc);
+    assert.equal(bad.at, null);
+    assert.equal(bad.serviceId, "svc-1");
+    assert.equal(parseCheckout(new URL(checkoutUrl("salon", { serviceId: "svc-1", memberId: null, at: null }), "https://x.test").searchParams, svc).memberId, null);
+  });
+
+  test("fence: phoneValue joins the chosen dial code unless the number already says its country", () => {
+    // Wrong implementations killed: "+31+44...", "+310044..." for a 00 number, dropping the chosen code.
+    assert.equal(phoneValue("31", "31", " 06 1234 5678 "), "06 1234 5678");
+    assert.equal(phoneValue("44", "31", "07911 123456"), "+4407911 123456");
+    assert.equal(phoneValue("31", "31", "+44 7911 123456"), "+44 7911 123456");
+    assert.equal(phoneValue("44", "31", "+44 7911 123456"), "+44 7911 123456");
+    assert.equal(phoneValue("31", "31", "0044 7911 123456"), "+44 7911 123456");
+  });
+
+  test("fence: cleanMessage turns line breaks into LF before dropping control characters", () => {
+    // Wrong implementation killed: posting what the backend refuses (tab, CR, zero-width), or dropping
+    // control chars first (CR is one, so the line break would vanish).
+    assert.equal(cleanMessage("a\tb\u200bc\r\nd\re\u2028f"), "a bc\nd\nef");
+    assert.equal(cleanMessage("  "), null);
+  });
+
+  test("fence: the dial default follows the business country, which leads the options", () => {
+    // Wrong implementation killed: one fixed default, the business country not first, a non-geographic entry.
+    for (const [country, dial] of [["NL", "31"], ["PT", "351"], ["BR", "55"], ["GB", "44"], ["US", "1"]]) assert.equal(defaultDial(country), dial);
+    assert.match(dialOptions("PT", "en")[0].text, /\(PT \+351\)$/);
+    assert.ok(!dialOptions("PT", "en").some((o) => o.region === "001"));
+  });
+
+  test("fence: a picked time from the URL survives only if the window still offers it", () => {
+    // Wrong implementation killed: trusting a stale `at` (a 409 on Send).
+    assert.equal(pickFromUrl("2026-10-22T08:30:00+00:00", ["2026-10-22T08:30:00+00:00"]), "2026-10-22T08:30:00+00:00");
+    assert.equal(pickFromUrl("2026-10-22T08:30:00+00:00", ["2026-10-22T09:00:00+00:00"]), null);
+    assert.equal(pickFromUrl(null, ["2026-10-22T09:00:00+00:00"]), null);
+  });
+
+  test("fence: the first week shown is the Monday of the picked day, never before today", () => {
+    // Wrong implementation killed: restoring a pick weeks out into the current week.
+    assert.equal(weekFor("2026-11-12", "2026-10-19"), "2026-11-09");
+    assert.equal(weekFor("2026-10-22", "2026-10-20"), "2026-10-20");
   });
 });

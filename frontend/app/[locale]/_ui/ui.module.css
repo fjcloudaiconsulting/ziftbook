@@ -376,7 +376,7 @@ a.textButton { display: inline-flex; align-items: center; }
 
 .bizHeader { display: flex; flex-direction: column; gap: 0.35rem; padding-block: 0.5rem 1.5rem; }
 .bizHeader h1 { margin: 0; font: 400 1.75rem/1.2 var(--font-display), Georgia, serif; }
-.bizMeta { margin: 0.35rem 0 0; display: flex; align-items: center; gap: 0.4rem; color: var(--muted); font-size: 0.9375rem; }
+.bizMeta { margin: 0.35rem 0 0; display: flex; flex-wrap: wrap; align-items: center; gap: 0.15rem 0.4rem; color: var(--muted); font-size: 0.9375rem; }
 .bizMeta svg { flex: none; }
 
 .bookingLayout { display: grid; gap: 0; container-type: inline-size; }
@@ -418,14 +418,41 @@ a.textButton { display: inline-flex; align-items: center; }
 .services > li + li { border-top: 1px solid var(--line); }
 .svcChoice { display: flex; align-items: flex-start; gap: 0.85rem; min-height: 4rem; padding: 0.95rem 1rem; cursor: pointer; }
 .svcChoice:hover { background: var(--nav); }
-.svcChoice input { width: 1.25rem; height: 1.25rem; margin: 0.2rem 0 0; accent-color: var(--primary); flex: none; }
 .svcMain { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.2rem; }
-.svcTop { display: flex; align-items: baseline; justify-content: space-between; gap: 0.75rem; }
 .svcName { font-weight: 600; overflow-wrap: anywhere; }
 .svcDesc { color: var(--muted); font-size: 0.9375rem; max-width: 60ch; }
 .svcMeta { display: flex; align-items: center; gap: 0.3rem; color: var(--muted); font-size: 0.875rem; }
 .svcMeta svg { flex: none; }
-.svcPrice { flex: none; font-weight: 600; text-align: end; white-space: nowrap; }
+/* ZIF-157: the list row's "+" (a square .button.secondary.small), the 2-line description clamp, and
+ * the service dialog (a native modal <dialog>, like the console's More sheet). */
+.svcAdd { flex: none; align-self: center; width: 2.75rem; padding: 0; }
+.svcClamp { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+:global(html):has(.svcDialog[open]) { overflow: hidden; }
+.svcDialog {
+  position: fixed; margin: auto; padding: 0; border: 0; border-radius: 1rem; width: min(32rem, calc(100vw - 2rem));
+  max-height: calc(100dvh - 2rem); overflow-y: auto; color: var(--ink); background: var(--bg); box-shadow: var(--lift);
+}
+.svcDialog[open] { display: flex; flex-direction: column; }
+.svcDialog::backdrop { background: oklch(0.23 0.025 28 / 0.35); }
+/* The dialog renders outside .col, so it repeats that focus ring (never the browser's blue). */
+.svcDialog :focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
+.svcDialogClose { position: absolute; top: 0.75rem; right: 0.75rem; z-index: 1; }
+.svcPhoto { display: block; width: 100%; height: auto; }
+.svcPhotoTile { display: grid; place-items: center; padding: 2.5rem; background: var(--primary-soft); }
+.svcDialogBody { flex: 1; padding: 1.25rem 1.25rem 0; display: flex; flex-direction: column; gap: 0.75rem; }
+.svcDialogBody p { margin: 0; overflow-wrap: anywhere; }
+.svcDialogBook { padding: 1rem 1.25rem 1.25rem; }
+@media (max-width: 40rem) {
+  .svcDialog { inset: 0; width: 100%; max-width: none; height: 100dvh; max-height: none; border-radius: 0; }
+  .svcDialogBook { position: sticky; bottom: 0; background: var(--bg); border-top: 1px solid var(--line); padding-bottom: calc(1rem + env(safe-area-inset-bottom)); }
+}
+/* The checkout: country code beside the number, the marketing tick, the summary's head and Total. */
+.phonePair { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: 0.5rem; }
+.consentRow { display: flex; align-items: flex-start; gap: 0.6rem; font-size: 0.9375rem; line-height: 1.4; }
+.consentRow input { flex: none; width: 1.25rem; height: 1.25rem; margin: 0.1rem 0 0; accent-color: var(--primary); }
+.sumHead { display: flex; align-items: center; gap: 0.75rem; }
+.summaryTotal { padding-top: 0.75rem; border-top: 1px solid var(--line); font-size: 1.0625rem; }
+.summaryTotal dt { color: var(--ink); font-weight: 600; }
 
 .pills { display: flex; flex-wrap: wrap; gap: 0.5rem; }
 .pillSet { border: 0; margin: 0; padding: 0; min-width: 0; display: flex; flex-direction: column; gap: 0.5rem; }

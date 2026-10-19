@@ -1,65 +1,88 @@
 "use client";
 
 import type { useTranslations } from "next-intl";
+import { useState } from "react";
 
-import type { BookingPageOut } from "@/api-client";
 import { formatMoney } from "@/lib/money";
 import type { Locale } from "@/lib/services";
 
 import { ServiceTile } from "../_ui/service-tile";
 import styles from "../_ui/ui.module.css";
-import { ClockIcon } from "./icons";
-import { localized, type Service } from "./shared";
+import { ClockIcon, PlusIcon } from "./icons";
+import { localized, localizedDesc, type Service } from "./shared";
 
-/** Step 1's open list of services. */
-export function ServiceList({
-  page,
-  selected,
+/** One row of the open list of services: it opens that service's dialog (no radios). */
+export function ServiceRow({
+  svc,
   loc,
   businessLanguage,
   locale,
   t,
-  onSelect,
+  onOpen,
 }: {
-  page: BookingPageOut;
-  selected: string | undefined;
+  svc: Service;
   loc: Locale;
   businessLanguage: Locale;
   locale: string;
   t: ReturnType<typeof useTranslations>;
-  onSelect(service: Service): void;
+  onOpen(service: Service): void;
 }) {
+  const name = localized(svc.name, loc, businessLanguage);
+  const desc = localizedDesc(svc.description, loc, businessLanguage);
+  const [expanded, setExpanded] = useState(false);
+  // Sticky once seen clamped: expanded text no longer overflows, but "Show less" must stay.
+  const [clamped, setClamped] = useState(false);
   return (
-    <ul className={styles.services} role="radiogroup" aria-labelledby="step1-h">
-      {page.services.map((svc) => {
-        const name = localized(svc.name, loc, businessLanguage);
-        const desc = svc.description[loc] || svc.description[businessLanguage] ? localized(svc.description, loc, businessLanguage) : null;
-        return (
-          <li key={svc.id}>
-            <label className={styles.svcChoice}>
-              <input type="radio" name="service" checked={selected === svc.id} readOnly onClick={() => onSelect(svc)} />
-              <ServiceTile placeholder={svc.placeholder} photo={svc.photo?.thumb_url} />
-              <span className={styles.svcMain}>
-                <span className={styles.svcTop}>
-                  <span className={styles.svcName} lang={name.lang ?? undefined}>
-                    {name.text}
-                  </span>
-                  <span className={styles.svcPrice}>{formatMoney(svc.price.amount_minor, svc.price.currency, locale)}</span>
-                </span>
-                {desc && (
-                  <span className={styles.svcDesc} lang={desc.lang ?? undefined}>
-                    {desc.text}
-                  </span>
-                )}
-                <span className={styles.svcMeta}>
-                  <ClockIcon />
-                  {t("min", { n: svc.duration_minutes })}
-                </span>
+    <li>
+      <div className={styles.svcChoice} onClick={() => onOpen(svc)}>
+        <ServiceTile placeholder={svc.placeholder} photo={svc.photo?.thumb_url} />
+        <span className={styles.svcMain}>
+          <span className={styles.svcName} lang={name.lang ?? undefined}>
+            {name.text}
+          </span>
+          {desc && (
+            <>
+              <span
+                className={`${styles.svcDesc} ${expanded ? "" : styles.svcClamp}`}
+                lang={desc.lang ?? undefined}
+                ref={(el) => {
+                  if (el && el.scrollHeight > el.clientHeight + 1) setClamped(true);
+                }}
+              >
+                {desc.text}
               </span>
-            </label>
-          </li>
-        );
-      })}
-    </ul>
+              {(clamped || expanded) && (
+                <button
+                  className={styles.textButton}
+                  type="button"
+                  aria-expanded={expanded}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setExpanded(!expanded);
+                  }}
+                >
+                  {expanded ? t("showLess") : t("showMore")}
+                </button>
+              )}
+            </>
+          )}
+          <span className={styles.svcMeta}>
+            <ClockIcon />
+            {t("min", { n: svc.duration_minutes })} · {formatMoney(svc.price.amount_minor, svc.price.currency, locale)}
+          </span>
+        </span>
+        <button
+          className={`${styles.button} ${styles.secondary} ${styles.small} ${styles.svcAdd}`}
+          type="button"
+          aria-label={t("openService", { service: name.text })}
+          onClick={(event) => {
+            event.stopPropagation();
+            onOpen(svc);
+          }}
+        >
+          <PlusIcon />
+        </button>
+      </div>
+    </li>
   );
 }

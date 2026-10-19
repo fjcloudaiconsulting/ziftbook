@@ -4,8 +4,8 @@ import { getTranslations } from "next-intl/server";
 import { LanguageSwitcher } from "../_ui/header";
 import { Outcome } from "../_ui/parts";
 import styles from "../_ui/ui.module.css";
-import { BookingPage } from "./booking-page";
 import { load } from "./load";
+import { ServicesPage } from "./services-page";
 
 // A fixed, generic title when the load failed: never the upstream error body, and never presented
 // as if the page were real (search engines / link previews should not treat a failed load as a
@@ -22,14 +22,10 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
 
 export default async function PublicBookingPage({
   params,
-  searchParams,
 }: {
   params: Promise<{ slug: string; locale: string }>;
-  searchParams: Promise<{ service?: string | string[] }>;
 }) {
   const { slug, locale } = await params;
-  // ZIF-117: "Choose another time" from the confirm page opens this service's times.
-  const { service } = await searchParams;
   const loaded = await load(slug);
 
   if (loaded.status === 404) notFound();
@@ -55,12 +51,7 @@ export default async function PublicBookingPage({
   return (
     <>
       <header className={styles.minimalHeader}><LanguageSwitcher /></header>
-      <BookingPage
-        page={loaded.data}
-        locale={locale}
-        turnstileSiteKey={process.env.ZIF_TURNSTILE_SITE_KEY ?? null}
-        initialService={typeof service === "string" ? service : null}
-      />
+      <ServicesPage page={loaded.data} locale={locale} />
     </>
   );
 }
