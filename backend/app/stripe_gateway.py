@@ -94,6 +94,7 @@ class Gateway:
                     extra={
                         "op": op,
                         "account": account,
+                        "object_id": None,
                         "outcome": kind,
                         "stripe_request_id": request_id,
                     },
@@ -101,7 +102,13 @@ class Gateway:
                 raise Failed(kind, request_id) from None
             logger.info(
                 "stripe call",
-                extra={"op": op, "account": account, "outcome": "ok", "stripe_request_id": None},
+                extra={
+                    "op": op,
+                    "account": account,
+                    "object_id": getattr(result, "id", None),
+                    "outcome": "ok",
+                    "stripe_request_id": None,
+                },
             )
             return result
 
@@ -124,7 +131,7 @@ class Gateway:
                         "fees_collector": fees_collector,
                         "losses_collector": "stripe",
                     },
-                    "currency": currency,
+                    "currency": currency.lower(),
                 },
                 "display_name": name,
                 "contact_email": email,

@@ -1204,7 +1204,7 @@ SELECT has_table_privilege('ziftbook_app', 'payment_accounts', 'DELETE'),
 """)
 
 
-# B1 guard 19. Up, down, up again: the second up fails on any function left behind.
+# ZIF-158 G19. guard. Up, down, up again: the second up fails on any function left behind.
 def test_0043_round_trips_payment_accounts(
     migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1222,7 +1222,7 @@ def test_0043_round_trips_payment_accounts(
             True,
             False,
             False,
-            True,
+            False,
             True,
             False,
             True,

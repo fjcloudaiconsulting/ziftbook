@@ -47,7 +47,7 @@ def unique_account() -> str:
     return "acct_" + uuid.uuid4().hex[:16]
 
 
-# B1 fence 7. Wrong impl: a tenants column (no RLS: a bad WHERE repoints payouts); a table-level
+# ZIF-158 F7. fence. Kills: a tenants column (no RLS: a bad WHERE repoints payouts); a table-level
 # UPDATE grant; the write-once trigger missing (owner-role scripts could rewrite the account).
 def test_a_business_cannot_touch_another_business_s_account(
     people: People, app_engine: Engine, migrate_engine: Engine
@@ -94,7 +94,7 @@ def test_a_business_cannot_touch_another_business_s_account(
     assert refused(app_engine, people.a, "DELETE FROM payment_accounts")[0] == "42501"
 
 
-# B1 fence 8. Wrong impl: a plain SQL SECURITY DEFINER function (NULL under FORCE RLS, every event
+# ZIF-158 F8. fence. Kills: a plain SQL SECURITY DEFINER function (NULL under FORCE RLS, every event
 # dropped); not restoring the flag (it would open every account to later statements).
 def test_the_webhook_lookup_sees_one_account_and_leaves_no_trace(
     people: People, app_engine: Engine, migrate_engine: Engine
@@ -118,18 +118,20 @@ def test_the_webhook_lookup_sees_one_account_and_leaves_no_trace(
         assert conn.scalar(text("SELECT count(*) FROM payment_accounts")) == 0
 
 
-# B1 fence 15. Wrong impl: a config that "switches" an existing account to platform-pays while
+# ZIF-158 F15. fence. Kills: a config that "switches" an existing account to platform-pays while
 # Stripe keeps billing the business.
-def test_the_fee_payer_is_fixed_with_the_account(people: People, app_engine: Engine) -> None:
+def test_the_fee_payer_is_fixed_with_the_account(
+    people: People, app_engine: Engine, migrate_engine: Engine
+) -> None:
     insert(app_engine, people.a, unique_account())
     fixed = ("23514", "payment_account_fee_payer_fixed")
 
     assert (
-        refused(app_engine, people.a, "UPDATE payment_accounts SET fee_mode = 'platform_pays'")
+        refused(migrate_engine, people.a, "UPDATE payment_accounts SET fee_mode = 'platform_pays'")
         == fixed
     )
 
-    with app_engine.begin() as conn:
+    with migrate_engine.begin() as conn:
         scoped(conn, people.a)
         conn.execute(
             text(
@@ -139,10 +141,10 @@ def test_the_fee_payer_is_fixed_with_the_account(people: People, app_engine: Eng
         )
     # Mode 2 carries the fee; mode 1 with a fee is refused.
     assert refused(
-        app_engine, people.a, "UPDATE payment_accounts SET fee_mode = 'business_pays'"
+        migrate_engine, people.a, "UPDATE payment_accounts SET fee_mode = 'business_pays'"
     ) == ("23514", "ck_payment_accounts_fee_only_in_mode_2")
     # Modes 1 and 2 switch freely.
-    with app_engine.begin() as conn:
+    with migrate_engine.begin() as conn:
         scoped(conn, people.a)
         conn.execute(
             text("UPDATE payment_accounts SET fee_mode = 'business_pays', application_fee_bp = 0")
@@ -150,6 +152,6 @@ def test_the_fee_payer_is_fixed_with_the_account(people: People, app_engine: Eng
 
     insert(app_engine, people.b, unique_account(), fee_mode="platform_pays")
     assert (
-        refused(app_engine, people.b, "UPDATE payment_accounts SET fee_mode = 'business_pays'")
+        refused(migrate_engine, people.b, "UPDATE payment_accounts SET fee_mode = 'business_pays'")
         == fixed
     )

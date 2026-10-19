@@ -9,9 +9,11 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine, text
 
+from app import payments
 from app.main import create_app
 from tests.conftest import People, email_of, events, new_client, put_settings, signed_in
 from tests.stripe_fake import FakeGateway, connect
+from tests.test_payments_db import refused
 
 Lines = Callable[[], list[dict[str, Any]]]
 UNAVAILABLE = {"code": "payments_unavailable"}
@@ -65,6 +67,7 @@ def test_the_links_and_the_audit_event(
     first = owner.post("/api/payments/account", json={"locale": "nl"})
     owner.post("/api/payments/account", json={"locale": "nl"})
 
+    assert first.headers["Cache-Control"] == "no-store"
     assert first.status_code == 200 and first.json()["url"].startswith(
         "https://connect.stripe.test/"
     )
@@ -84,9 +87,9 @@ def test_the_links_and_the_audit_event(
         "stripe",
     )
 
-    assert owner.post("/api/payments/dashboard", headers=JSON).json() == {
-        "url": f"https://connect.stripe.test/express/{acct}"
-    }
+    login = owner.post("/api/payments/dashboard", headers=JSON)
+    assert login.json() == {"url": f"https://connect.stripe.test/express/{acct}"}
+    assert login.headers["Cache-Control"] == "no-store"
 
 
 def test_the_dashboard_needs_a_connected_account(
@@ -105,7 +108,7 @@ def test_a_stripe_error_on_connect_is_a_503(owner: TestClient, fake_stripe: Fake
     assert (response.status_code, response.json()) == (503, UNAVAILABLE)
 
 
-# B1 fence 10. Wrong impl: ZIF-59's "not in Brazil" ignored.
+# ZIF-158 F10. fence. Kills: ZIF-59's "not in Brazil" ignored.
 def test_brazil_cannot_start_onboarding(
     people: People, owner: TestClient, fake_stripe: FakeGateway, migrate_engine: Engine
 ) -> None:
@@ -126,7 +129,7 @@ def test_brazil_cannot_start_onboarding(
     assert (state["country_supported"], state["min_amount_minor"]) == (False, None)
 
 
-# B1 fence 11. Wrong impl: a second Stripe account per click (payouts split); the Apple Pay domain
+# ZIF-158 F11. fence. Kills: a second Stripe account per click (payouts split); the Apple Pay domain
 # on the platform instead of the connected account (it never shows with direct charges).
 def test_connecting_twice_keeps_one_account(
     people: People, owner: TestClient, fake_stripe: FakeGateway, migrate_engine: Engine
@@ -149,7 +152,7 @@ def test_connecting_twice_keeps_one_account(
 KEYS = ["ZIF_STRIPE_SECRET_KEY", "ZIF_STRIPE_WEBHOOK_SECRET", "ZIF_STRIPE_PUBLISHABLE_KEY"]
 
 
-# B1 fence 12 (routes). Wrong impl: treating a missing publishable key as on (D1).
+# ZIF-158 F12 (routes). fence. Kills: treating a missing publishable key as on (D1).
 @pytest.mark.parametrize("name", KEYS)
 def test_payments_routes_are_off_without_keys(
     name: str,
@@ -171,7 +174,7 @@ def test_payments_routes_are_off_without_keys(
     assert fake_stripe.calls == []
 
 
-# B1 fence 12 (startup). Wrong impl: no WARNING while any key is unset.
+# ZIF-158 F12 (startup). fence. Kills: no WARNING while any key is unset.
 @pytest.mark.parametrize("name", KEYS)
 def test_startup_warns_while_any_key_is_unset(
     name: str,
@@ -202,7 +205,8 @@ def test_startup_with_all_three_keys_logs_no_warning(
     assert not [line for line in lines if line["msg"] == "stripe unset: payments off"]
 
 
-# B1 fence 13. Wrong impl: trusting the row until a webhook arrives (the return_url page is wrong).
+# ZIF-158 F13. fence. Kills: trusting the row until a webhook arrives (the
+# return_url page is wrong).
 def test_the_account_page_reads_stripe_until_ready(
     people: People, owner: TestClient, fake_stripe: FakeGateway, migrate_engine: Engine
 ) -> None:
@@ -228,13 +232,101 @@ def test_a_stripe_error_on_the_account_page_answers_from_the_row(
     assert (response.status_code, response.json()["state"]) == (200, "onboarding")
 
 
-# B1 fence 17. Wrong impl: an owner setting the platform's fee on their own business.
+# ZIF-158 F17. fence. Kills: an owner setting the platform's fee on their own business.
 def test_no_business_route_writes_the_fee_policy(
-    people: People, owner: TestClient, fake_stripe: FakeGateway, migrate_engine: Engine
+    people: People,
+    owner: TestClient,
+    fake_stripe: FakeGateway,
+    migrate_engine: Engine,
+    app_engine: Engine,
 ) -> None:
+    for column in ("fee_mode", "application_fee_bp", "application_fee_fixed_minor"):
+        sql = f"UPDATE payment_accounts SET {column} = {column}"
+        assert refused(app_engine, people.a, sql)[0] == "42501"
     for body in ({"fee_mode": "platform_pays"}, {"application_fee_bp": 500}):
         assert put_settings(owner, body).status_code == 422
     owner.post("/api/payments/account", json={"locale": "en"})
 
     ((_, _, mode, bp, fixed),) = rows(migrate_engine, people.a)
     assert (mode, bp, fixed) == ("business_pays", 0, 0)
+
+
+# ZIF-158 F16 (route). fence. Kills: connect() hard-coding the fee payer, or mapping
+# platform_pays to "stripe": the mode picked at creation must reach Stripe and the row.
+@pytest.mark.parametrize(
+    ("mode", "collector"),
+    [
+        ("business_pays", "stripe"),
+        ("business_pays_plus_fee", "stripe"),
+        ("platform_pays", "application"),
+    ],
+)
+def test_the_fee_mode_reaches_stripe_and_the_row(
+    mode: str,
+    collector: str,
+    people: People,
+    owner: TestClient,
+    fake_stripe: FakeGateway,
+    migrate_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(payments, "NEW_ACCOUNT_FEE_MODE", mode)
+
+    assert owner.post("/api/payments/account", json={"locale": "en"}).status_code == 200
+
+    sent = [p for op, p in fake_stripe.calls if op == "create_account"]
+    assert [p["fees_collector"] for p in sent] == [collector]
+    assert [r.fee_mode for r in rows(migrate_engine, people.a)] == [mode]
+
+
+# ZIF-158 F22. fence. Kills: the account row written after the calls that can fail, or in a
+# transaction they roll back (Stripe's events for the account would find no business).
+@pytest.mark.parametrize("op", ["register_domain", "onboarding_link"])
+def test_a_failure_after_the_account_is_made_keeps_its_row(
+    op: str,
+    people: People,
+    owner: TestClient,
+    fake_stripe: FakeGateway,
+    migrate_engine: Engine,
+) -> None:
+    fake_stripe.fail_next(op)
+
+    response = owner.post("/api/payments/account", json={"locale": "en"})
+
+    assert response.status_code == (200 if op == "register_domain" else 503)
+    assert [r.stripe_account_id for r in rows(migrate_engine, people.a)] == list(
+        fake_stripe.accounts
+    )
+
+
+# ZIF-158 F23. fence. Kills: a Stripe call per request however many come (Stripe's own limit hit by
+# one business polling), or a 429 on the read.
+def test_reads_stop_calling_stripe_past_the_limit(
+    people: People, owner: TestClient, fake_stripe: FakeGateway
+) -> None:
+    connect(fake_stripe, people.a)
+
+    states = [owner.get("/api/payments/account") for _ in range(payments.STRIPE_LIMIT + 1)]
+
+    assert {(r.status_code, r.json()["state"]) for r in states} == {(200, "onboarding")}
+    assert fake_stripe.count("retrieve_account") == payments.STRIPE_LIMIT
+
+
+# ZIF-158 F23. fence. Kills: unlimited Stripe-calling POSTs.
+def test_the_stripe_posts_answer_429_past_the_limit(
+    people: People,
+    owner: TestClient,
+    fake_stripe: FakeGateway,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connect(fake_stripe, people.a)
+    monkeypatch.setattr(payments, "STRIPE_LIMIT", 2)
+
+    first = owner.post("/api/payments/account", json={"locale": "en"})
+    second = owner.post("/api/payments/dashboard", headers=JSON)
+    third = owner.post("/api/payments/account", json={"locale": "en"})
+    fourth = owner.post("/api/payments/dashboard", headers=JSON)
+
+    assert [r.status_code for r in (first, second, third, fourth)] == [200, 200, 429, 429]
+    assert fourth.json() == {"code": "rate_limited"}
+    assert fake_stripe.count("onboarding_link") == 1 and fake_stripe.count("login_link") == 1

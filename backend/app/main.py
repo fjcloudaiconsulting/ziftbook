@@ -84,7 +84,7 @@ class PathBodyLimit:
         self.webhook = RequestBodyLimitMiddleware(app, max_body_size=WEBHOOK_MAX_BODY)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        webhook = scope["type"] == "http" and body_cap(scope["path"]) == WEBHOOK_MAX_BODY
+        webhook = scope["type"] == "http" and scope["path"] == payments.WEBHOOK_PATH
         await (self.webhook if webhook else self.default)(scope, receive, send)
 
 

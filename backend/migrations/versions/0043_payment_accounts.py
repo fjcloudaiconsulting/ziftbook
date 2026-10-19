@@ -53,12 +53,10 @@ def upgrade() -> None:
         "GRANT INSERT (tenant_id, stripe_account_id, fee_mode) ON payment_accounts TO ziftbook_app"
     )
     op.execute("GRANT UPDATE (charges_enabled) ON payment_accounts TO ziftbook_app")
-    # The future platform-admin route writes the fee policy; granted now so it needs no migration.
-    # No owner or public route writes it.
-    op.execute(
-        "GRANT UPDATE (fee_mode, application_fee_bp, application_fee_fixed_minor) "
-        "ON payment_accounts TO ziftbook_app"
-    )
+    # No UPDATE on the fee policy columns: the platform-admin route that writes them does not exist
+    # yet, and its migration grants UPDATE on fee_mode, application_fee_bp and
+    # application_fee_fixed_minor.
+    # The fee-payer trigger below stays, for that role and every other.
 
     op.execute(f"""
     CREATE FUNCTION payment_account_write_once() RETURNS trigger

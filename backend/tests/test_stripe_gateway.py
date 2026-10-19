@@ -67,7 +67,7 @@ def create(gateway: Gateway, fees_collector: FeesCollector = "stripe") -> Any:
     )
 
 
-# B1 fence 6. Wrong impl: a retrieve (or create) without include: v2 returns a null merchant
+# ZIF-158 F6. fence. Kills: a retrieve (or create) without include: v2 returns a null merchant
 # configuration, so the account looks "not ready" forever.
 def test_account_calls_ask_for_the_merchant_configuration_and_read_card_payments() -> None:
     http = Recorder()
@@ -84,7 +84,7 @@ def test_account_calls_ask_for_the_merchant_configuration_and_read_card_payments
     assert pending.retrieve_account("acct_1RecordedAccount").charges_enabled is False
 
 
-# B1 fence 16. Wrong impl: a hard-coded fee payer, so mode 3 silently never applies.
+# ZIF-158 F16. fence. Kills: a hard-coded fee payer, so mode 3 silently never applies.
 @pytest.mark.parametrize("collector", ["stripe", "application"])
 def test_the_fee_payer_sent_is_the_one_asked_for(collector: FeesCollector) -> None:
     http = Recorder()

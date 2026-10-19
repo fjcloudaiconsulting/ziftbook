@@ -10,7 +10,7 @@ from tests.conftest import People
 from tests.stripe_fake import FakeGateway, connect
 
 
-# B1 fence 14. Wrong impl: an offer() that returns an account for a price Stripe refuses, or for a
+# ZIF-158 F14. fence. Kills: an offer() that returns an account for a price Stripe refuses, or for a
 # currency it has no minimum for.
 def test_offer_is_the_account_only_when_everything_allows_it(
     people: People, fake_stripe: FakeGateway, monkeypatch: pytest.MonkeyPatch

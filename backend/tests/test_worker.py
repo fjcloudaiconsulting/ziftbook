@@ -324,8 +324,9 @@ def test_a_failing_prune_withholds_the_ping_and_retries(
     assert any(line["msg"] == "worker iteration failed" for line in log_lines())
 
 
-# B1 fence 21. Wrong impl: gating worker jobs on configured() (all three keys), so every production
-# worker, which has no use for the webhook or publishable key, is "off" and nothing is released.
+# ZIF-158 F21. fence. Kills: gating worker jobs on configured() (all three keys), so every
+# production worker, which has no use for the webhook or publishable key, is "off" and nothing is
+# released.
 def test_the_worker_needs_only_the_secret_key(
     people: People,
     fake_stripe: FakeGateway,
