@@ -118,7 +118,8 @@ export function ServicesPage({ page, locale }: { page: BookingPageOut; locale: s
   // ?gone=1 (a checkout whose service vanished): shown once, then dropped from the address.
   const [gone] = useState(() => params.get("gone") === "1");
   useEffect(() => {
-    if (params.has("gone")) window.history.replaceState(null, "", `/${locale}${base}`);
+    // The router, not native History: on a hard load this runs before the App Router patches History.
+    if (params.has("gone")) router.replace(base, { scroll: false });
     // Mount only.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
