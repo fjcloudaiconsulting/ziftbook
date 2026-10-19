@@ -56,16 +56,26 @@ CONSENT_TEXTS: dict[str, dict[Purpose, str]] = {
         "I can opt out at any time.",
     }
 }
-# ponytail: one wording per purpose, English. The stored evidence must be the text the person
-# actually read, so when the booking page ships translated (ZIF-56) the key becomes
-# (version, locale), the caller sends the locale it rendered, and an unknown locale is a 422 -
-# exactly as an unknown version is today. Do not add a locale parameter before the page has one.
+# The version a booking page offers, one text per locale: the stored evidence is the wording the
+# person read, so the key is "<version>/<locale>". "2026-09-01" is the legacy English-only version,
+# still posted by old tabs and the hold confirm page until the hold code is removed.
+POLICY_VERSION = "2026-10-20"
+LEGACY_POLICY_VERSION = "2026-09-01"
+CONSENT_TEXTS[f"{POLICY_VERSION}/en"] = {
+    "marketing_email": "Email me offers and news from this business. I can unsubscribe at any time."
+}
+CONSENT_TEXTS[f"{POLICY_VERSION}/nl"] = {
+    "marketing_email": "Mail mij aanbiedingen en nieuws van dit bedrijf. "
+    "Ik kan me op elk moment afmelden."
+}
+CONSENT_TEXTS[f"{POLICY_VERSION}/pt"] = {
+    "marketing_email": "Enviem-me ofertas e novidades desta empresa por email. "
+    "Posso cancelar a subscrição a qualquer momento."
+}
 
 
-def current_policy_version() -> str:
-    """The version a booking page offers: the newest one, ISO dates sort. A function, not a
-    constant frozen at import, so a test can monkeypatch CONSENT_TEXTS and see it move."""
-    return max(CONSENT_TEXTS)
+def policy_version_for(locale: str) -> str:
+    return f"{POLICY_VERSION}/{locale}"
 
 
 def texts_for(policy_version: str, purposes: Iterable[Purpose]) -> dict[Purpose, str]:
@@ -134,6 +144,10 @@ REFRESH = text(
     + _RETURNING
 )
 
+# The address is NOT proven: an existing row comes back untouched. Never DO NOTHING: that returns no
+# row and takes no row lock, and the pending cap needs the lock. The no-op SET still locks it.
+KEEP = text(_INSERT + "\n  email = clients.email\n" + _RETURNING)
+
 
 def find_or_create(
     db: Session,
@@ -143,9 +157,11 @@ def find_or_create(
     phone: str | None,
     locale: str | None,
     user_id: UUID | None = None,
+    proven: bool,
 ) -> Found:
-    """The business's own record for this client, created or refreshed. `email` must already be
-    normalised (app.passwords.normalise_email); ZIF-51's request model does that.
+    """The business's own record for this client: created, and refreshed only when `proven`.
+    `email` must already be normalised (app.passwords.normalise_email); ZIF-51's request model
+    does that.
 
     One statement, never SELECT-then-INSERT: two bookings for the same address at the same moment
     would race, and the loser would get a unique violation instead of the client. That statement
@@ -154,16 +170,13 @@ def find_or_create(
     CALLER'S DUTY (ZIF-51). This docstring is the one home for the rules below; CONTRIBUTING
     points here rather than restating them.
 
-    The address must be PROVEN (ZIF-117, owner ruling 2026-10-08). Call it only when the request
-    carries a live session whose verified account email equals the posted one
-    (app.bookings.create, which answers 403 verify_email otherwise), or when the booker confirmed a
-    booking-hold link mailed to that address (app.holds.confirm): opening the mailed link is the
-    same proof of the mailbox as a verified account email. Then what they type is what they own:
-    the name is replaced, the phone too (online bookings require one, ZIF-152), and locale is
-    coalesced from what was typed. Nothing an
-    unproven person types ever reaches this statement. That replaces ZIF-51's FILL, which let an
-    unauthenticated booker fill a blank phone on someone else's record and point that client's
-    reminders at a phone the booker owns.
+    `proven` has no default. True when the request carries a live session whose verified account
+    email equals the posted one (app.bookings.create), or when the booker confirmed a booking-hold
+    link mailed to that address (app.holds.confirm): then what they type is what they own. The name
+    is replaced, the phone too (online bookings require one, ZIF-152), and locale is coalesced from
+    what was typed. False (a guest): a new address INSERTs what was typed, an existing row is
+    returned untouched (KEEP), so nobody can rewrite or fill someone else's record, nor point that
+    client's reminders at a phone they own.
 
     Reading. phone and locale come back as *stored*, because coalesce keeps the old value when
     nothing was typed. Use them to write the booking, never to fill a public answer;
@@ -183,7 +196,7 @@ def find_or_create(
     and both pass the cap.
     """
     row = db.execute(
-        REFRESH,
+        REFRESH if proven else KEEP,
         {"name": name, "email": email, "phone": phone, "locale": locale, "user_id": user_id},
     ).one()
     return Found(id=row.id, phone=row.phone, locale=row.locale)

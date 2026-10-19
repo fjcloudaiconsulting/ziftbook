@@ -3711,7 +3711,7 @@
           "bookings"
         ],
         "summary": "Create",
-        "description": "Book a free slot straight away, signed in with the posted address. Anyone else answers 403\n`verify_email` and books through an emailed link instead (app.holds, ZIF-117).",
+        "description": "Book a free slot straight away, as a guest or signed in. The address is `proven` only for\nits own signed-in account; a guest's booking never changes an existing client (ZIF-157).",
         "operationId": "bookings-create",
         "parameters": [
           {
@@ -6506,6 +6506,20 @@
             "type": "string",
             "title": "Policy Version"
           },
+          "consent": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/app__booking_page__ConsentOut"
+            },
+            "propertyNames": {
+              "enum": [
+                "en",
+                "nl",
+                "pt"
+              ]
+            },
+            "type": "object",
+            "title": "Consent"
+          },
           "cancellation": {
             "$ref": "#/components/schemas/CancellationOut"
           },
@@ -6531,6 +6545,7 @@
           "language",
           "booking_horizon_days",
           "policy_version",
+          "consent",
           "cancellation",
           "services",
           "auto_confirm"
@@ -6994,7 +7009,7 @@
           },
           "consents": {
             "additionalProperties": {
-              "$ref": "#/components/schemas/ConsentOut"
+              "$ref": "#/components/schemas/app__clients__ConsentOut"
             },
             "propertyNames": {
               "enum": [
@@ -7181,29 +7196,6 @@
         ],
         "title": "ConsentIn",
         "description": "What a member recorded on the client's behalf: the policy version their screen showed, and\ntrue (granted) or false (withdrawn) per purpose. No text_shown field: the server owns the\nwording, so the evidence cannot be written by whoever sends the request."
-      },
-      "ConsentOut": {
-        "properties": {
-          "granted": {
-            "type": "boolean",
-            "title": "Granted"
-          },
-          "source": {
-            "type": "string",
-            "title": "Source"
-          },
-          "mailable": {
-            "type": "boolean",
-            "title": "Mailable"
-          }
-        },
-        "type": "object",
-        "required": [
-          "granted",
-          "source",
-          "mailable"
-        ],
-        "title": "ConsentOut"
       },
       "ConsentsIn": {
         "properties": {
@@ -9458,6 +9450,24 @@
         ],
         "title": "RescheduleIn"
       },
+      "app__booking_page__ConsentOut": {
+        "properties": {
+          "policy_version": {
+            "type": "string",
+            "title": "Policy Version"
+          },
+          "marketing_email": {
+            "type": "string",
+            "title": "Marketing Email"
+          }
+        },
+        "type": "object",
+        "required": [
+          "policy_version",
+          "marketing_email"
+        ],
+        "title": "ConsentOut"
+      },
       "app__bookings__BookingOut": {
         "properties": {
           "id": {
@@ -9567,6 +9577,29 @@
           "starts_at"
         ],
         "title": "RescheduleIn"
+      },
+      "app__clients__ConsentOut": {
+        "properties": {
+          "granted": {
+            "type": "boolean",
+            "title": "Granted"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "mailable": {
+            "type": "boolean",
+            "title": "Mailable"
+          }
+        },
+        "type": "object",
+        "required": [
+          "granted",
+          "source",
+          "mailable"
+        ],
+        "title": "ConsentOut"
       }
     }
   }
