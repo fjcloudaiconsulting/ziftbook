@@ -324,7 +324,6 @@ WHERE table_name = 'bookings'
 SNAPSHOT = (
     "free_cancellation_hours",
     "reschedule_cutoff_hours",
-    "original_starts_at",
     "max_reschedules",
     # ZIF-157 (0041): write-once, so no UPDATE grant.
     "client_name",
@@ -624,7 +623,7 @@ def test_downgrading_and_upgrading_0029_restores_booking_links_and_the_snapshots
             "reschedule_count",
         ]
         for column, expected in (
-            ("original_starts_at", False),
+            ("original_starts_at", True),
             ("earliest_starts_at", True),
             ("max_reschedules", False),
             ("reschedule_count", True),
@@ -1161,3 +1160,23 @@ def test_0041_round_trips_the_booking_snapshot(
             ),
             {"n": "x" * 100, "m": "y" * 1000, "id": booking_id},
         )
+
+
+ANCHOR_GUARD = text("""
+SELECT has_column_privilege('ziftbook_app', 'bookings', 'original_starts_at', 'UPDATE'),
+       EXISTS (SELECT FROM pg_trigger WHERE tgname = 'original_starts_at_while_pending')
+""")
+
+
+# ZIF-157 B3 (test 10). guard. 0042 grants UPDATE on original_starts_at and adds the trigger that
+# guards it; the downgrade removes both.
+def test_0042_round_trips(migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = lock_timeout_config(monkeypatch)
+    try:
+        command.downgrade(cfg, "0041")
+        with migrate_engine.connect() as conn:
+            assert conn.execute(ANCHOR_GUARD).one() == (False, False)
+    finally:
+        command.upgrade(cfg, "head")
+    with migrate_engine.connect() as conn:
+        assert conn.execute(ANCHOR_GUARD).one() == (True, True)

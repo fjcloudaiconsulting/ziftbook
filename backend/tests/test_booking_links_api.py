@@ -20,9 +20,9 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from httpx2 import Response
 from opentelemetry.sdk.trace import ReadableSpan
-from psycopg.errors import CheckViolation, InsufficientPrivilege
+from psycopg.errors import CheckViolation
 from sqlalchemy import Engine, text
-from sqlalchemy.exc import IntegrityError, ProgrammingError
+from sqlalchemy.exc import IntegrityError
 
 from app import booking_links, clients, mail
 from app.booking_links import COOKIE
@@ -451,34 +451,153 @@ def test_a_stale_refund_echo_is_terms_changed(people: People, app: FastAPI, read
     assert status == "confirmed"
 
 
-# 27. fence. A pending booking: reschedule -> 409 not_allowed, cancel -> 200; copy_key pending.
-def test_a_pending_booking_can_be_cancelled_but_not_rescheduled(
-    people: People, app: FastAPI, ready: str
+# 27 (ZIF-157 B3, test 1). fence. A pending booking can be cancelled and moved, whatever the
+# confirmed allowance (max_reschedules 0) and cutoff (720h) say: they do not apply while pending.
+# Kills: reusing RESCHEDULE (status qualifier 409 / count+1 CHECK 500); applying max_reschedules or
+# the cutoff to a pending; the availability 404; the hard-coded "confirmed" in the answer.
+def test_a_pending_booking_can_be_cancelled_and_moved(
+    people: People, app: FastAPI, ready: str, owner: TestClient
 ) -> None:
-    # Still pending, not yet accepted, and 20 days out: the engine alone would refund 100, so the
-    # refund 0 below is the pending rule's at any hour. Kills a pending keeping the engine's pct.
+    assert (
+        put_settings(owner, {"max_reschedules": 0, "reschedule_cutoff_hours": 720}).status_code
+        == 200
+    )
     far = at("10:00", day=TODAY + timedelta(days=20))
     booking_id = confirmed_booking(app, people.a, ready, starts_at=far)
     client = linked(app, people.a, booking_id)
 
     view = get(client).json()
     assert view["engine"]["copy_key"] == "pending"
-    assert view["engine"]["can_reschedule"] is False
+    assert view["engine"]["can_reschedule"] is True
     assert view["engine"]["refund_pct"] == 0
+    slots = get(client, "/availability", **{"from": far[:10], "to": far[:10]})
+    assert slots.status_code == 200 and slots.json()["slots"]
 
-    reschedule_response = post(
+    moved = post(
         client,
         "/reschedule",
-        {"booking_id": booking_id, "starts_at": at("10:00"), "reschedule_count": 0},
+        pending_move(booking_id, at("11:00", TODAY + timedelta(days=20)), far),
     )
-    assert (reschedule_response.status_code, reschedule_response.json()["code"]) == (
-        409,
-        "not_allowed",
-    )
+    assert moved.status_code == 200, moved.json()
+    assert moved.json()["booking"]["status"] == "pending"
+    with tenant_context(people.a) as session:
+        count = session.scalar(
+            text("SELECT reschedule_count FROM bookings WHERE id = :id"), {"id": booking_id}
+        )
+    assert count == 0
 
     cancel_response = post(client, "/cancel", cancel_body(booking_id, 0))
     assert cancel_response.status_code == 200
     assert cancel_response.json()["engine"]["refund_pct"] == 0
+
+
+def pending_move(booking_id: object, starts_at: str, seen: str) -> dict[str, Any]:
+    return {**reschedule_body(booking_id, starts_at, 0), "seen_starts_at": seen}
+
+
+FAR = TODAY + timedelta(days=20)
+
+
+# B3 test 2. fence. A pending move resets the refund anchor: move LATER, accept, and the free
+# window runs from the new start; original = earliest = starts.
+# Kills a LEAST-only anchor / no grant.
+def test_a_pending_move_resets_the_refund_anchor(
+    people: People, app: FastAPI, ready: str, owner: TestClient
+) -> None:
+    first, later = at("10:00", FAR), at("10:00", FAR + timedelta(days=10))
+    booking_id = confirmed_booking(app, people.a, ready, starts_at=first)
+    client = linked(app, people.a, booking_id)
+    assert post(client, "/reschedule", pending_move(booking_id, later, first)).status_code == 200
+    accepted = owner.patch(
+        f"/api/bookings/{booking_id}", json={"status": "confirmed", "starts_at": later}
+    )
+    assert accepted.status_code == 200, accepted.json()
+
+    with tenant_context(people.a) as session:
+        row = session.execute(
+            text(
+                "SELECT starts_at, original_starts_at, earliest_starts_at FROM bookings "
+                "WHERE id = :id"
+            ),
+            {"id": booking_id},
+        ).one()
+    assert row.original_starts_at == row.earliest_starts_at == row.starts_at
+    assert row.starts_at == datetime.fromisoformat(later)
+    free_hours = get(client).json()["engine"]["free_until"]
+    assert datetime.fromisoformat(free_hours) == datetime.fromisoformat(later) - timedelta(hours=48)
+
+
+# B3 test 3. fence. Moving never extends the request's life. Kills a TTL reset (endless squatting).
+def test_a_pending_move_keeps_expires_at(people: People, app: FastAPI, ready: str) -> None:
+    first = at("10:00", FAR)
+    booking_id = confirmed_booking(app, people.a, ready, starts_at=first)
+    with tenant_context(people.a) as session:
+        before = session.scalar(
+            text("SELECT expires_at FROM bookings WHERE id = :id"), {"id": booking_id}
+        )
+    moved = post(
+        linked(app, people.a, booking_id),
+        "/reschedule",
+        pending_move(booking_id, at("11:00", FAR), first),
+    )
+    assert moved.status_code == 200, moved.json()
+    with tenant_context(people.a) as session:
+        after = session.scalar(
+            text("SELECT expires_at FROM bookings WHERE id = :id"), {"id": booking_id}
+        )
+    assert after == before
+
+
+# B3 test 4. fence. Three moves are allowed, the fourth is not_allowed. Kills no cap (mail flood).
+def test_a_fourth_pending_move_is_refused(people: People, app: FastAPI, ready: str) -> None:
+    seen = at("10:00", FAR)
+    booking_id = confirmed_booking(app, people.a, ready, starts_at=seen)
+    client = linked(app, people.a, booking_id)
+    for clock in ("10:30", "11:00", "11:30"):
+        new = at(clock, FAR)
+        assert post(client, "/reschedule", pending_move(booking_id, new, seen)).status_code == 200
+        seen = new
+    assert get(client).json()["engine"]["can_reschedule"] is False
+
+    fourth = post(client, "/reschedule", pending_move(booking_id, at("12:00", FAR), seen))
+
+    assert (fourth.status_code, fourth.json()["code"]) == (409, "not_allowed")
+
+
+# B3 test 5. fence. Each pending move mails the client (booking_received) and every merchant
+# (booking_client_rescheduled) once, under a per-move key; no reminder is queued.
+# Kills: a confirmed-only STATUS_FOR (merchant mail skipped); a constant suffix
+# (move 2 deduped away).
+def test_a_pending_move_mails_the_new_time_once_each(
+    people: People, app: FastAPI, ready: str, app_engine: Engine
+) -> None:
+    first = at("10:00", FAR)
+    booking_id = confirmed_booking(app, people.a, ready, starts_at=first)
+    for job in booking_jobs(app_engine, people.a, booking_id):
+        mail.send_booking(job)  # the initial received / request go out first
+    client = linked(app, people.a, booking_id)
+    second, third = at("10:30", FAR), at("11:00", FAR)
+    assert post(client, "/reschedule", pending_move(booking_id, second, first)).status_code == 200
+    assert post(client, "/reschedule", pending_move(booking_id, third, second)).status_code == 200
+
+    jobs = jobs_for_booking(app_engine, people.a, booking_id)
+
+    def keyed(template: str, marker: str) -> list[dict[str, Any]]:
+        return [j for j in jobs if template_of(j) == template and marker in j["dedupe_key"]]
+
+    assert len(keyed("booking_received", ":m2")) == 1
+    merchants = merchant_recipients(app_engine, people.a, booking_id, "booking_client_rescheduled")
+    assert len(keyed("booking_client_rescheduled", ":m2")) == len(set(merchants))
+    assert not [j for j in jobs if template_of(j) == "booking_reminder"]
+    owner_email = email_of_user(people.a, people.both)
+    (m2,) = [
+        j
+        for j in keyed("booking_client_rescheduled", ":m2")
+        if j["payload"]["user_id"] == str(people.both)
+    ]
+    already = len(_search(owner_email))  # the initial booking_request
+    mail.send_booking(Job(uuid.uuid4(), "email.booking", people.a, m2["payload"]))
+    assert len(_search(owner_email)) == already + 1
 
 
 # 23. fence. A client cancel enqueues booking_cancelled_by_client once, booking_client_cancelled
@@ -670,21 +789,27 @@ def put_settings_max(owner: TestClient, value: int) -> int:
     return response
 
 
-# 22. fence/DB. The app role's UPDATE ... SET original_starts_at raises 42501, and after two
-# reschedules the column still holds the first start.
-def test_original_starts_at_is_write_once_by_privilege(
+# B3 test 6 (replaces 22). fence/DB. original_starts_at (granted to the app by 0042) is refused a
+# change by a trigger unless the booking is pending: SQLSTATE 23514, constraint name asserted, never
+# the message. A LATER value keeps ck_bookings_earliest_starts_at satisfied, so only the trigger
+# can refuse. Kills: a grant without the trigger; a RESCHEDULE widened to write original_starts_at.
+def test_the_database_refuses_moving_a_confirmed_anchor(
     people: People, app: FastAPI, ready: str, owner: TestClient
 ) -> None:
+    anchor = (
+        "UPDATE bookings SET original_starts_at = original_starts_at + interval '1 hour' "
+        "WHERE id = :id"
+    )
     booking_id = confirmed_booking(app, people.a, ready, starts_at=at("10:00"))
+    still_pending = confirmed_booking(app, people.a, ready, starts_at=at("12:00"))
     assert patch(owner, booking_id, "confirmed").status_code == 200
     with tenant_context(people.a) as session:
-        with pytest.raises(ProgrammingError) as raised:
-            session.execute(
-                # Its own value: only the missing privilege can refuse this, never a CHECK.
-                text("UPDATE bookings SET original_starts_at = original_starts_at WHERE id = :id"),
-                {"id": booking_id},
-            )
-    assert isinstance(raised.value.orig, InsufficientPrivilege)
+        with pytest.raises(IntegrityError) as raised:
+            session.execute(text(anchor), {"id": booking_id})
+    assert isinstance(raised.value.orig, CheckViolation)
+    assert raised.value.orig.diag.constraint_name == "original_starts_at_while_pending"
+    with tenant_context(people.a) as session:
+        session.execute(text(anchor), {"id": still_pending})  # a pending row may move it
 
     client = linked(app, people.a, booking_id)
     assert (
@@ -703,6 +828,33 @@ def test_original_starts_at_is_write_once_by_privilege(
             text("SELECT original_starts_at FROM bookings WHERE id = :id"), {"id": booking_id}
         )
     assert original.strftime("%Y-%m-%dT%H:%M:%SZ") == at("10:00")
+
+
+# B3 test 9. fence. Tab A reads 14:00, tab B moves it, tab A's move (seen_starts_at = the old
+# start) is 409 changed: reschedule_count is always 0 for a pending, so only the echo can tell.
+def test_a_stale_tab_cannot_move_a_pending_request(
+    people: People, app: FastAPI, ready: str, app_engine: Engine
+) -> None:
+    first, theirs = at("10:00", FAR), at("11:00", FAR)
+    booking_id = confirmed_booking(app, people.a, ready, starts_at=first)
+    tab_a, tab_b = linked(app, people.a, booking_id), linked(app, people.a, booking_id)
+    assert post(tab_b, "/reschedule", pending_move(booking_id, theirs, first)).status_code == 200
+
+    stale = post(tab_a, "/reschedule", pending_move(booking_id, at("12:00", FAR), first))
+
+    assert (stale.status_code, stale.json()["code"]) == (409, "changed")
+    with tenant_context(people.a) as session:
+        starts = session.scalar(
+            text("SELECT starts_at FROM bookings WHERE id = :id"), {"id": booking_id}
+        )
+        events = session.scalar(
+            text(
+                "SELECT count(*) FROM booking_events "
+                "WHERE booking_id = :id AND event = 'rescheduled'"
+            ),
+            {"id": booking_id},
+        )
+    assert starts == datetime.fromisoformat(theirs) and events == 1
 
 
 def booking_jobs(app_engine: Engine, tenant_id: uuid.UUID, booking_id: str) -> list[Job]:

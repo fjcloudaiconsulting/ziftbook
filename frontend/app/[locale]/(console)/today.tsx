@@ -17,7 +17,7 @@ import { canAnswerRequests, dateLocale, type Role, showPublishStep, todayLabel }
 import { formatMoney } from "@/lib/money";
 import { type NameMap, type Locale, serviceName } from "@/lib/services";
 import { listWindow, localTime } from "@/lib/time-off";
-import { type Answer, agendaPhase, applyAnswers, blockLabel, dayRelation, declineBody, expiryLabel, leaveQueue, mergeAgenda, nowLineAt, relativeAgo, sortQueue, todayEmpty } from "@/lib/today";
+import { type Answer, acceptBody, agendaPhase, applyAnswers, blockLabel, dayRelation, declineBody, expiryLabel, leaveQueue, mergeAgenda, nowLineAt, relativeAgo, sortQueue, todayEmpty } from "@/lib/today";
 
 import { SignedOutBanner, useConsole } from "../_ui/console";
 import styles from "../_ui/console.module.css";
@@ -250,7 +250,7 @@ export function Today() {
     setStatus("");
     patchRow(booking.id, { busy: true, error: null });
     try {
-      const body = to === "confirmed" ? ({ status: "confirmed" } as const) : declineBody(rows[booking.id]?.message ?? "");
+      const body = to === "confirmed" ? acceptBody(booking.starts_at) : declineBody(rows[booking.id]?.message ?? "");
       const outcome = await call(() => bookingApprovalsUpdate({ path: { booking_id: booking.id }, body }), { write: true });
       if (outcome.status === 200) {
         leave(booking, to);
@@ -258,9 +258,10 @@ export function Today() {
       } else if (outcome.status === 401) {
         setSignedOut(true);
       } else if (outcome.status === 409) {
-        // Answered elsewhere, or it expired meanwhile: say so, drop the row, and read the truth again.
+        // Answered elsewhere, it expired, or the client moved it meanwhile: say so, drop the row (a
+        // moved one comes back with its new time on the reload), and read the truth again.
         leave(booking, "stale");
-        setStatus(t("stale"));
+        setStatus(t(outcome.code === "changed" ? "moved" : "stale"));
         loadQueue();
         loadAgenda();
       } else if (outcome.status === 403 && outcome.code === "owner_only") {

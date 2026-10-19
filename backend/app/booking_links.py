@@ -90,7 +90,9 @@ SELECT b.id AS booking_id, b.status, b.starts_at, b.ends_at, b.original_starts_a
        b.earliest_starts_at, b.reschedule_count, b.max_reschedules, b.free_cancellation_hours,
        b.reschedule_cutoff_hours, b.service_id, b.worker_id, b.worker_display_name,
        b.service_name, b.price_amount_minor, b.price_currency, b.cancellation_policy_text,
-       b.client_id, t.name AS business, now() AS now
+       b.client_id, t.name AS business, now() AS now,
+       (SELECT count(*) FROM booking_events e
+        WHERE e.booking_id = b.id AND e.event = 'rescheduled') AS moves
 FROM booking_links l
 JOIN bookings b ON b.tenant_id = l.tenant_id AND b.id = l.booking_id
 JOIN tenants t ON t.id = b.tenant_id
@@ -198,9 +200,10 @@ def _decide(row: Any, policy: cancellation.Policy) -> Decision:
         earliest_starts_at=row.earliest_starts_at,
     )
     if row.status == "pending":
-        # D7/route rule: nothing has been paid on a pending booking, so there is nothing to
-        # refund, and it is never reschedulable (D7: a pending booking is never rescheduled).
-        decision = Decision(decision.can_cancel, False, 0, 0, "pending", 0)
+        # Nothing has been paid on a pending booking, so there is nothing to refund. It can be
+        # moved PENDING_MOVES times: the confirmed allowance and the lead-time cutoff do not apply.
+        left = bookings.PENDING_MOVES - row.moves if decision.can_cancel else 0
+        decision = Decision(decision.can_cancel, left > 0, 0, 0, "pending", max(left, 0))
     return decision
 
 
@@ -381,9 +384,6 @@ def read_availability(
     )
     with tenant_context(tenant_id) as db:
         row = resolve(db, token_hash)
-        if row.status != "confirmed":
-            # A pending booking has no slot to move into yet (D7): the picker has nothing to show.
-            raise ApiError(404, "link_expired")
         settings = business_settings.read(db)
         # Nothing the reschedule would refuse (409 not_allowed / slot_unavailable): the page shows
         # "no times" rather than slots that can't be taken.
@@ -442,6 +442,7 @@ class RescheduleIn(BaseModel):
     booking_id: Annotated[UUID, Field(strict=False)]
     starts_at: Instant
     reschedule_count: int
+    seen_starts_at: Instant | None = None  # a pending booking's stale-tab echo; see reschedule()
 
 
 @router.post(
@@ -459,9 +460,16 @@ def reschedule(body: RescheduleIn, request: Request) -> LinkedBooking:
             if body.booking_id != row.booking_id:
                 raise ApiError(409, "link_changed")
             decision = _decide(row, _policy(row))
-            if row.status != "confirmed" or not decision.can_reschedule:
+            if not decision.can_reschedule:
                 raise ApiError(409, "not_allowed")
-            if body.reschedule_count != row.reschedule_count:
+            pending = row.status == "pending"
+            # A pending's reschedule_count is always 0: only the shown start can tell a stale tab.
+            echo_ok = (
+                body.seen_starts_at == row.starts_at
+                if pending
+                else body.reschedule_count == row.reschedule_count
+            )
+            if not echo_ok:
                 raise ApiError(409, "changed")
             settings = business_settings.read(db)
             zone = settings.timezone
@@ -474,8 +482,9 @@ def reschedule(body: RescheduleIn, request: Request) -> LinkedBooking:
             db.execute(bookings.EXPIRE, {"expiring": list(availability.EXPIRING)})
             try:
                 changed = db.execute(
-                    RESCHEDULE,
-                    {"id": row.booking_id, "new": body.starts_at, "seen": body.reschedule_count},
+                    bookings.PENDING_MOVE if pending else RESCHEDULE,
+                    {"id": row.booking_id, "new": body.starts_at}
+                    | ({} if pending else {"seen": body.reschedule_count}),
                 ).first()
             except IntegrityError as error:
                 if (
@@ -498,13 +507,13 @@ def reschedule(body: RescheduleIn, request: Request) -> LinkedBooking:
                     "to": changed.starts_at.astimezone(UTC).isoformat(),
                 },
             )
-            suffix = f":r{changed.reschedule_count}"
+            suffix = f":m{row.moves + 1}" if pending else f":r{changed.reschedule_count}"
             new_iso = changed.starts_at.isoformat()
             bookings.email(
                 db,
                 tenant_id,
                 row.booking_id,
-                "booking_confirmed",
+                "booking_received" if pending else "booking_confirmed",
                 key_suffix=suffix,
                 extra={"starts_at": new_iso},
             )
@@ -517,30 +526,28 @@ def reschedule(body: RescheduleIn, request: Request) -> LinkedBooking:
                 key_suffix=suffix,
                 extra={"starts_at": new_iso, "previous_starts_at": row.starts_at.isoformat()},
             )
-            bookings.remind(db, tenant_id, row.booking_id, changed.starts_at, row.now)
-            new_earliest = min(row.earliest_starts_at or row.starts_at, changed.starts_at)
-            new_decision = cancellation.decide(
-                _policy(row),
-                changed.starts_at,
-                row.now,
-                reschedule_count=changed.reschedule_count,
-                original_starts_at=row.original_starts_at,
-                earliest_starts_at=new_earliest,
+            if pending:
+                new_earliest = original = changed.starts_at
+            else:
+                bookings.remind(db, tenant_id, row.booking_id, changed.starts_at, row.now)
+                new_earliest = min(row.earliest_starts_at or row.starts_at, changed.starts_at)
+                original = row.original_starts_at
+            new_row = SimpleNamespace(
+                **{
+                    **dict(row._mapping),
+                    "starts_at": changed.starts_at,
+                    "ends_at": changed.ends_at,
+                    "reschedule_count": changed.reschedule_count,
+                    "original_starts_at": original,
+                    "earliest_starts_at": new_earliest,
+                    "moves": row.moves + 1,
+                }
             )
+            new_decision = _decide(new_row, _policy(row))
             consents = pending_consents(db, row.booking_id, row.client_id)
     except OperationalError:
         raise ApiError(503, "busy") from None
     logger.info("booking rescheduled", extra={"booking_id": str(row.booking_id)})
-    new_row = SimpleNamespace(
-        **{
-            **dict(row._mapping),
-            "status": "confirmed",
-            "starts_at": changed.starts_at,
-            "ends_at": changed.ends_at,
-            "reschedule_count": changed.reschedule_count,
-            "earliest_starts_at": new_earliest,
-        }
-    )
     return _view(new_row, new_decision, zone, consents)
 
 

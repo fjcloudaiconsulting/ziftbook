@@ -48,6 +48,12 @@ export function sortQueue<T extends { id: string; expires_at: string }>(rows: T[
   return [...rows].sort((a, b) => Date.parse(a.expires_at) - Date.parse(b.expires_at) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 }
 
+/** The accept request: carries the start the merchant was shown, so the API can refuse (409
+ * `changed`) a request the client moved in the meantime instead of accepting a time nobody saw. */
+export function acceptBody(startsAt: string): { status: "confirmed"; starts_at: string } {
+  return { status: "confirmed", starts_at: startsAt };
+}
+
 export type Answer = "confirmed" | "declined" | "stale";
 
 /** Filters a (re)fetched list through what this session has already answered, so a read that was

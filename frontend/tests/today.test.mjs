@@ -9,7 +9,7 @@ process.env.TZ = "America/Sao_Paulo";
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { agendaPhase, applyAnswers, badgeText, blockLabel, declineBody, leaveQueue, todayEmpty, expiryLabel, mergeAgenda, nowLineAt, relativeAgo, sortQueue } from "../lib/today.ts";
+import { acceptBody, agendaPhase, applyAnswers, badgeText, blockLabel, declineBody, leaveQueue, todayEmpty, expiryLabel, mergeAgenda, nowLineAt, relativeAgo, sortQueue } from "../lib/today.ts";
 import { listWindow } from "../lib/time-off.ts";
 
 const AMS = "Europe/Amsterdam";
@@ -67,6 +67,12 @@ describe("declineBody (F19)", () => {
 
   test("the message is trimmed, tabs become spaces and carriage returns go", () => {
     assert.deepEqual(declineBody("  Sorry,\tfully booked.\r\nTry Friday?  "), { status: "declined", message: "Sorry, fully booked.\nTry Friday?" });
+  });
+});
+
+describe("acceptBody (ZIF-157)", () => {
+  test("carries the start the merchant was shown, so a request the client moved meanwhile is refused", () => {
+    assert.deepEqual(acceptBody("2026-10-20T14:00:00Z"), { status: "confirmed", starts_at: "2026-10-20T14:00:00Z" });
   });
 });
 
