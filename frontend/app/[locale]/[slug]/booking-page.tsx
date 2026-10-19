@@ -2,7 +2,7 @@
 
 import Script from "next/script";
 import { useTranslations } from "next-intl";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { availabilityRead, bookingsCreate, type BookingPageOut, sessionRead } from "@/api-client";
 import { Link, useRouter } from "@/i18n/navigation";
@@ -97,6 +97,7 @@ export function BookingPage({
     const weekStart = at ? weekFor(localDay(at, zone), today) : today;
     return { ...INITIAL, name: "", email: "", phone: "", service, worker, weekStart };
   });
+  const dials = useMemo(() => dialOptions(page.country, locale), [page.country, locale]);
   const [done, setDone] = useState<Done | null>(null);
   const [region, setRegion] = useState<string>(page.country);
   const [marketing, setMarketing] = useState(false);
@@ -158,7 +159,8 @@ export function BookingPage({
           const slot = win ? pickFromUrl(at, slotsFor(win, flow.worker)) : null;
           if (win && slot) {
             const free = flow.worker === "any" ? (win.who[win.slots.indexOf(slot)] ?? []) : [];
-            setFlow((f) => ({ ...f, slot, free, day: localDay(slot, zone), step: 3 }));
+            // Only while the client has not changed worker or picked a time meanwhile.
+            setFlow((f) => (f.worker === flow.worker && !f.slot ? { ...f, slot, free, day: localDay(slot, zone), step: 3 } : f));
           } else if (win && at) syncUrl(flow.worker, null);
         })(),
     );
@@ -192,7 +194,8 @@ export function BookingPage({
 
   /** The address keeps the service, the person and the time (checkoutUrl); Back still returns to the list. */
   function syncUrl(worker: string, slot: string | null) {
-    router.replace(checkoutUrl(page.slug, { serviceId, memberId: worker === "any" ? null : worker, at: slot }));
+    // Native History, not the router: same route, so no scroll to top and no server round trip (Next syncs useSearchParams).
+    window.history.replaceState(null, "", `/${locale}${checkoutUrl(page.slug, { serviceId, memberId: worker === "any" ? null : worker, at: slot })}`);
   }
 
   /** The 14-day window starting at `from`, cached so paging within it needs no new fetch. Never
@@ -701,7 +704,7 @@ export function BookingPage({
                         <div className={styles.phonePair}>
                           <div className={styles.input}>
                             <select id="bp-dial" name="dial" aria-label={t("dialCode")} value={region} onChange={(e) => setRegion(e.target.value)}>
-                              {dialOptions(page.country, locale).map((o) => (
+                              {dials.map((o) => (
                                 <option key={o.region} value={o.region}>
                                   {o.text}
                                 </option>

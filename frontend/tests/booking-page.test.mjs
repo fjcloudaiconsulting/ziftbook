@@ -382,13 +382,14 @@ describe("ZIF-157 direct booking checkout", () => {
     assert.equal(phoneValue("31", "31", " 06 1234 5678 "), "06 1234 5678");
     assert.equal(phoneValue("44", "31", "07911 123456"), "+4407911 123456");
     assert.equal(phoneValue("31", "31", "+44 7911 123456"), "+44 7911 123456");
+    assert.equal(phoneValue("44", "31", "+44 7911 123456"), "+44 7911 123456");
     assert.equal(phoneValue("31", "31", "0044 7911 123456"), "+44 7911 123456");
   });
 
   test("fence: cleanMessage turns line breaks into LF before dropping control characters", () => {
     // Wrong implementation killed: posting what the backend refuses (tab, CR, zero-width), or dropping
     // control chars first (CR is one, so the line break would vanish).
-    assert.equal(cleanMessage("a\tb\u200bc\r\nd\re\u2028"), "a bc\nd\ne");
+    assert.equal(cleanMessage("a\tb\u200bc\r\nd\re\u2028f"), "a bc\nd\nef");
     assert.equal(cleanMessage("  "), null);
   });
 

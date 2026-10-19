@@ -118,7 +118,7 @@ export function ServicesPage({ page, locale }: { page: BookingPageOut; locale: s
   // ?gone=1 (a checkout whose service vanished): shown once, then dropped from the address.
   const [gone] = useState(() => params.get("gone") === "1");
   useEffect(() => {
-    if (params.has("gone")) router.replace(base);
+    if (params.has("gone")) window.history.replaceState(null, "", `/${locale}${base}`);
     // Mount only.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -146,7 +146,7 @@ export function ServicesPage({ page, locale }: { page: BookingPageOut; locale: s
               <h2 id="services-h" className={styles.checkoutHead}>
                 {t("servicesTitle")}
               </h2>
-              <ServiceList page={page} loc={loc} businessLanguage={page.language as Locale} locale={locale} t={t} onOpen={(svc) => router.push(`${base}?service=${svc.id}`)} />
+              <ServiceList page={page} loc={loc} businessLanguage={page.language as Locale} locale={locale} t={t} onOpen={(svc) => window.history.pushState(null, "", `/${locale}${base}?service=${svc.id}`)} />
             </>
           )}
         </div>
@@ -156,7 +156,7 @@ export function ServicesPage({ page, locale }: { page: BookingPageOut; locale: s
           loc={loc}
           locale={locale}
           t={t}
-          onClose={() => router.replace(base)}
+          onClose={() => window.history.replaceState(null, "", `/${locale}${base}`)}
           onBook={(svc) => router.replace(checkoutUrl(page.slug, { serviceId: svc.id, memberId: null, at: null }))}
         />
       </main>

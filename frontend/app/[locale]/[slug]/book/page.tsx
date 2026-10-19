@@ -1,7 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 import { getTranslations } from "next-intl/server";
 
-import { parseCheckout } from "@/lib/booking-page";
+import { checkoutUrl, parseCheckout } from "@/lib/booking-page";
 
 import { LanguageSwitcher } from "../../_ui/header";
 import { Outcome } from "../../_ui/parts";
@@ -35,6 +35,14 @@ export default async function CheckoutPage({
   if (loaded.status === 404) notFound();
 
   if (loaded.status === "error") {
+    // Keep the pick across a retry: only service/with/at, rebuilt so nothing else leaks through.
+    const retry = typeof query.service === "string"
+      ? checkoutUrl(slug, {
+          serviceId: query.service,
+          memberId: typeof query.with === "string" ? query.with : null,
+          at: typeof query.at === "string" ? query.at : null,
+        })
+      : `/${slug}/book`;
     const t = await getTranslations("BookingPage");
     return (
       <>
@@ -42,7 +50,7 @@ export default async function CheckoutPage({
         <main className={styles.screen}>
           <div className={styles.col}>
             <Outcome icon="calendar" title={t("loadErrorTitle")} lede={t("loadErrorLede")}>
-              <a className={`${styles.button} ${styles.primary}`} href={`/${locale}/${slug}/book`}>
+              <a className={`${styles.button} ${styles.primary}`} href={`/${locale}${retry}`}>
                 {t("tryAgain")}
               </a>
             </Outcome>
