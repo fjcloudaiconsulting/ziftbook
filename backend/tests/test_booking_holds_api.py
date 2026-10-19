@@ -546,6 +546,25 @@ def test_the_click_replaces_the_name_and_the_phone(
     assert (client.name, client.phone, client.user_id) == ("New Name", "+31655443322", None)
 
 
+# ZIF-157 B1 GUARD. A hold-confirmed booking keeps the name and phone typed at the click, through
+# place()'s snapshot, and no message.
+def test_a_confirmed_hold_snapshots_the_name_and_phone_typed_at_the_click(
+    people: People, app: FastAPI, ready: str, migrate_engine: Engine
+) -> None:
+    _, token = held(app, people.a, ready)
+
+    booked = confirm(new_client(app), token, name="Click Name", phone="06 5544 3322")
+
+    assert booked.status_code == 201, booked.json()
+    (row,) = as_operator(
+        migrate_engine,
+        people.a,
+        "SELECT client_name, client_phone, client_message FROM bookings WHERE id = :id",
+        id=booked.json()["id"],
+    )
+    assert tuple(row) == ("Click Name", "+31655443322", None)
+
+
 def first_after_tenant(executed: list[tuple[str, Any]]) -> tuple[str, Any]:
     tenant_set = next(
         i for i, (s, _) in enumerate(executed) if s.startswith("SELECT set_config('app.tenant_id'")

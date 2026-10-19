@@ -370,6 +370,7 @@ def confirm(body: ConfirmIn, request: Request, response: Response) -> bookings.B
                 consents=body.consents,
                 origin_ip=origin_ip,
                 user_agent=user_agent,
+                message=None,
                 exclude=hold.id,
                 prefer=hold.worker_id,
             )

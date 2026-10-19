@@ -44,7 +44,7 @@ from app.business_settings import Locale
 from app.clients import ClientName, Phone, PolicyVersion, Purpose
 from app.db import SessionLocal, count_after_commit, join_tenant, tenant_context
 from app.errors import ApiError, Error
-from app.services import STRICT, DescriptionText, Price
+from app.services import STRICT, DescriptionText, Price, multiline
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +81,8 @@ class BookingIn(BaseModel):
     policy_version: PolicyVersion  # the CONSENT wording version; validated by texts_for()
     consents: dict[Purpose, bool] = Field(default_factory=dict)
     turnstile_token: Annotated[str, StringConstraints(max_length=2048)] | None = None
+    # A body bound only: the real check is message_text(), so the 422 names the field.
+    message: Annotated[str, StringConstraints(max_length=4000)] | None = None
 
 
 class BookingOut(BaseModel):
@@ -243,6 +245,7 @@ class EventOut(BaseModel):
 class BookingDetailOut(AgendaOut):
     client_email: str | None
     client_phone: str | None
+    client_message: str | None
     client_note: str | None
     decline_message: str | None
     cancellation_policy_text: str | None
@@ -306,7 +309,8 @@ INSERT INTO bookings (
   tenant_id, client_id, worker_id, service_id, starts_at, ends_at, status, expires_at, source,
   service_name, price_amount_minor, price_currency, duration_minutes, cancellation_policy_text,
   auto_confirm_at_booking, worker_display_name, free_cancellation_hours, reschedule_cutoff_hours,
-  original_starts_at, earliest_starts_at, max_reschedules)
+  original_starts_at, earliest_starts_at, max_reschedules,
+  client_name, client_phone, client_message)
 VALUES (
   current_setting('app.tenant_id')::uuid, :client_id, :worker_id, :service_id,
   :starts_at, :starts_at + make_interval(mins => :duration_minutes), :status, :expires_at,
@@ -314,7 +318,8 @@ VALUES (
   :cancellation_policy_text, :auto_confirm_at_booking, :worker_display_name,
   :free_cancellation_hours, :reschedule_cutoff_hours,
   -- ZIF-54 (D8). Both snapshotted = the insert's own starts_at, never re-read afterwards.
-  :starts_at, :starts_at, :max_reschedules)
+  :starts_at, :starts_at, :max_reschedules,
+  :client_name, :client_phone, :client_message)
 RETURNING id, status, starts_at, ends_at
 """)
 
@@ -330,7 +335,8 @@ VALUES (current_setting('app.tenant_id')::uuid, :booking_id, :event, CAST(:ip AS
 LIST_COLUMNS = """
 b.id, b.starts_at, b.ends_at, b.service_id, b.service_name,
 jsonb_build_object('amount_minor', b.price_amount_minor, 'currency', b.price_currency) AS price,
-b.worker_id, b.worker_display_name, b.client_id, c.name AS client_name, b.created_at
+b.worker_id, b.worker_display_name, b.client_id, coalesce(b.client_name, c.name) AS client_name,
+b.created_at
 """
 
 # ponytail: limit=50 (100 max) with no cursor, so a business holding more live pendings than that
@@ -380,7 +386,8 @@ ORDER BY b.starts_at, b.id
 # personal data below.
 DETAIL = text(f"""
 SELECT {LIST_COLUMNS}, b.expires_at, b.status, b.source, wm.user_id AS worker_user_id,
-       c.email AS client_email, c.phone AS client_phone, c.client_note, b.decline_message,
+       c.email AS client_email, coalesce(b.client_phone, c.phone) AS client_phone,
+       b.client_message, c.client_note, b.decline_message,
        b.cancellation_policy_text, b.reschedule_count, b.max_reschedules,
        coalesce(b.status = ANY(CAST(:expiring AS text[])) AND b.expires_at <= now(), false)
          AS expired
@@ -585,6 +592,9 @@ def place(
     expires_at: datetime | None,
     source: str,
     event: dict[str, Any],
+    client_name: str | None = None,
+    client_phone: str | None = None,
+    client_message: str | None = None,
 ) -> tuple[Row[Any], UUID]:
     """The one insert path for a new booking (ZIF-57): the public create() and the merchant's both
     land here, so the snapshot columns and the `created` event can never drift between them.
@@ -635,6 +645,9 @@ def place(
                         "max_reschedules": settings.max_reschedules,
                         "auto_confirm_at_booking": settings.auto_confirm,
                         "worker_display_name": names[candidate],
+                        "client_name": client_name,
+                        "client_phone": client_phone,
+                        "client_message": client_message,
                     },
                 ).one()
                 # Inside the winning savepoint, immediately after the booking insert.
@@ -690,6 +703,20 @@ RETURNING id, starts_at, ends_at, worker_id
 WORKER_USER = text("SELECT user_id FROM memberships WHERE id = :id")
 
 
+def message_text(value: str | None) -> str | None:
+    """The booker's optional message: trimmed, blank is none, else 1000 printable characters (a
+    newline is fine) or 422 message_invalid. In code, not on the model: the 422 names the field."""
+    text_ = (value or "").strip()
+    if not text_:
+        return None
+    try:
+        if len(text_) > 1000:
+            raise ValueError("too long")
+        return multiline(text_)
+    except ValueError:
+        raise ApiError(422, "message_invalid") from None
+
+
 def book_online(
     db: Session,
     *,
@@ -706,6 +733,7 @@ def book_online(
     consents: dict[Purpose, bool],
     origin_ip: str | None,
     user_agent: str | None,
+    message: str | None,
     exclude: UUID | None = None,
     prefer: UUID | None = None,
 ) -> BookingOut:
@@ -738,6 +766,7 @@ def book_online(
     #    422 with nothing written - regardless of whether anything was withdrawn.
     clients.texts_for(policy_version, consents)
     phone = clients.e164(db, phone)  # ZIF-152: also a 422 before any write, after the 404s
+    message = message_text(message)  # ZIF-157: likewise
     # Consent WITHDRAWALS only; grants ride the booking_events row instead (ruling 18, §10).
     withdrawals: dict[Purpose, bool] = {p: g for p, g in consents.items() if not g}
     # 7. Once, before the savepoint: the row lock this takes is what the pending cap needs,
@@ -822,6 +851,9 @@ def book_online(
         status=status,
         expires_at=expires_at,
         source="booking_page",
+        client_name=name,
+        client_phone=phone,
+        client_message=message,
         event={
             "ip": origin_ip,
             "user_agent": user_agent,
@@ -917,6 +949,7 @@ def create(  # sync def: turnstile.verify's urlopen blocks, and runs in FastAPI'
                 consents=new.consents,
                 origin_ip=origin_ip,
                 user_agent=user_agent,
+                message=new.message,
             )
     except OperationalError:
         # DeadlockDetected (40P01) and serialization failures arrive here, NOT as IntegrityError,

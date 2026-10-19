@@ -25,6 +25,7 @@ from tests.conftest import (
     People,
     add_membership,
     add_user,
+    fresh_email,
     member_id,
     new_client,
     put_settings,
@@ -607,6 +608,7 @@ def test_every_booking_template_renders_service_and_when() -> None:
         "time": "TIME-MARKER",
         "zone": "Europe/Amsterdam",
         "client": "Client Name",
+        "message": "",
         "link": "https://example.com/en",
         "expires": "EXPIRES-MARKER",  # never the date/time markers: booking_request prints it too
         "old_date": "OLD-DATE-MARKER",
@@ -1068,3 +1070,32 @@ def test_a_worker_who_cannot_answer_gets_the_owner_answers_variant(
 
     worker_texts = texts_to(email_of(worker))
     assert sorted("Accept or decline" in text for text in worker_texts) == [False, True]
+
+
+# ZIF-157 B1 FENCE. Wrong impl: `c.name` in mail.BOOKING (the second booking's name), a dropped
+# $message, or a stray quote line for a booking without a message.
+def test_the_merchant_email_names_this_booker_and_quotes_their_message(
+    people: People, app: FastAPI, ready: str
+) -> None:
+    owner_email = email_of(people.both)
+    address = fresh_email()
+    first = make_pending(
+        app,
+        people.a,
+        ready,
+        email=address,
+        name="First Name",
+        message="line one\nline two",
+        starts_at=at("09:00"),
+    )
+    make_pending(app, people.a, ready, email=address, name="Second Name", starts_at=at("11:00"))
+    silent = make_pending(app, people.a, ready, name="Silent Name", starts_at=at("13:00"))
+
+    run_send_booking(people.a, first, "booking_request", user_id=str(people.both))
+    run_send_booking(people.a, silent, "booking_request", user_id=str(people.both))
+
+    quoted, plain = (m["Text"] for m in reversed(sent_to(owner_email)))  # oldest first
+    assert "First Name" in quoted and "Second Name" not in quoted
+    assert "> line one" in quoted and "> line two" in quoted
+    assert "Silent Name" in plain
+    assert not any(line.startswith(">") for line in plain.splitlines())

@@ -84,10 +84,22 @@ def test_healthz_response_is_a_named_schema_with_required_fields() -> None:
 # answer carrying either hands an unauthenticated stranger a third party's contact details. A
 # public route that genuinely needs one of these names it in its own schema and edits this list,
 # deliberately, in that ticket.
-PRIVATE_TO_THE_CONSOLE = ("internal_note", "phone", "email", "locale")
+#
+# ZIF-157: the booking's snapshot (what its booker typed and said) is the console's too.
+PRIVATE_TO_THE_CONSOLE = (
+    "internal_note",
+    "phone",
+    "email",
+    "locale",
+    "client_name",
+    "client_phone",
+    "client_message",
+)
 # ZIF-117: the confirm page says "Booking as {email}". It is the hold's own address, never a stored
 # client field, and the link's bearer received the email at it. Nothing else is allowed.
-PUBLIC_ON_PURPOSE = {("HoldView", "email")}
+# ZIF-157: InTheWay is reachable from the public routes only through Error.bookings, which only a
+# console route fills (errors.py).
+PUBLIC_ON_PURPOSE = {("HoldView", "email"), ("InTheWay", "client_name")}
 
 
 def test_no_public_response_exposes_a_clients_private_field() -> None:

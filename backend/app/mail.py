@@ -386,7 +386,8 @@ STATUS_FOR = {
 LINKED = frozenset({"booking_received", "booking_confirmed", "booking_reminder"})
 
 BOOKING = text("""
-SELECT c.email AS client_email, c.locale AS client_locale, c.name AS client_name,
+SELECT c.email AS client_email, c.locale AS client_locale,
+       coalesce(b.client_name, c.name) AS client_name, b.client_message,
        t.name AS business, b.client_id, b.status, b.starts_at, b.ends_at, b.expires_at,
        b.service_name, b.reschedule_count, b.decline_message, b.worker_display_name, now() AS now
 FROM bookings b
@@ -555,6 +556,9 @@ def send_booking(job: Job) -> None:
             # Merchant emails keep the console link, never the manage link (D10): a manage link
             # reaching staff is a threat the console link cannot be.
             values["client"] = row.client_name
+            values["message"] = (
+                "" if row.client_message is None else "\n\n" + _quoted(row.client_message)
+            )
             values["link"] = f"{app_url}/{locale}"
             if "previous_starts_at" in payload:
                 previous_local = datetime.fromisoformat(payload["previous_starts_at"]).astimezone(

@@ -171,8 +171,8 @@ def lock_bookings(current: SignedIn) -> None:
 # no buffer. The look-back is RANGE's (app/bookings.py), from ck_bookings_at_most_12_hours.
 # `completed` never counts, even when marked before it ends.
 IN_THE_WAY = text("""
-SELECT b.id, b.starts_at, b.ends_at, c.name AS client_name, b.service_name, b.status,
-       count(*) OVER () AS total
+SELECT b.id, b.starts_at, b.ends_at, coalesce(b.client_name, c.name) AS client_name,
+       b.service_name, b.status, count(*) OVER () AS total
 FROM bookings b
 JOIN clients c ON c.tenant_id = b.tenant_id AND c.id = b.client_id
 WHERE b.worker_id = :member_id

@@ -6259,6 +6259,17 @@
             ],
             "title": "Client Phone"
           },
+          "client_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Message"
+          },
           "client_note": {
             "anyOf": [
               {
@@ -6330,6 +6341,7 @@
           "source",
           "client_email",
           "client_phone",
+          "client_message",
           "client_note",
           "decline_message",
           "cancellation_policy_text",
@@ -6422,6 +6434,18 @@
               }
             ],
             "title": "Turnstile Token"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 4000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
           }
         },
         "additionalProperties": false,

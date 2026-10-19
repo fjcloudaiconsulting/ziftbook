@@ -1256,3 +1256,38 @@ def test_with_the_setting_on_a_worker_answers_their_own_request(
 
     assert patch(worker, booking_id, target).status_code == 200
     assert status_of(people.a, booking_id) == target
+
+
+# ZIF-157 B1 FENCE. Wrong impl: the console reading `c.name` / `c.phone`; a signed-in address
+# REFRESHes the client row on every booking, so booking 1 would show booking 2's name and phone.
+def test_each_booking_shows_what_its_booker_typed(
+    people: People, app: FastAPI, owner: TestClient, ready: str
+) -> None:
+    email = fresh_email()
+    client = new_client(app)
+    first = post_booking(
+        client,
+        people.a,
+        ready,
+        email=email,
+        name="First Name",
+        phone="+31611111111",
+        starts_at=at("09:00"),
+    )
+    second = post_booking(
+        client,
+        people.a,
+        ready,
+        email=email,
+        name="Second Name",
+        phone="+31622222222",
+        starts_at=at("11:00"),
+    )
+    assert (first.status_code, second.status_code) == (201, 201)
+
+    queue = {row["id"]: row for row in owner.get("/api/bookings/pending").json()}
+    detail = owner.get(f"/api/bookings/{first.json()['id']}").json()
+
+    assert queue[first.json()["id"]]["client_name"] == "First Name"
+    assert queue[second.json()["id"]]["client_name"] == "Second Name"
+    assert (detail["client_name"], detail["client_phone"]) == ("First Name", "+31611111111")

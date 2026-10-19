@@ -390,6 +390,7 @@
       "factPhone": "Telefone",
       "factEmail": "E-mail",
       "factNote": "Observação",
+      "factMessage": "Mensagem",
       "whenToday": "Hoje, {start} a {end}",
       "whenTodayLater": "Hoje, {start} a {endDate}, {end}",
       "whenDate": "{date}, {start} a {end}",

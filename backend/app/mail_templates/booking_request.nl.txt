@@ -3,7 +3,7 @@ Hallo,
 
 Een klant wil boeken:
 
-Klant: $client
+Klant: $client$message
 
 $service
 $date om $time ($zone)

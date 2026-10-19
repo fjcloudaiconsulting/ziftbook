@@ -85,6 +85,7 @@
 .historyList li::before { content: ""; position: absolute; left: calc(-1rem - 6px); top: 0.35rem; width: 10px; height: 10px; border-radius: 50%; background: var(--bg); border: 2px solid var(--field-line); }
 .historyList li[aria-current="true"]::before { background: var(--ok); border-color: var(--ok); }
 .historyList small { display: block; color: var(--muted); font-size: 0.875rem; }
+.message { white-space: pre-line; }
 .confirm { display: flex; flex-direction: column; gap: 0.6rem; }
 .confirm h3 { margin: 0; font: 600 0.9375rem/1.3 var(--font-body), system-ui, sans-serif; }
 .confirm h3:focus { outline: none; }
