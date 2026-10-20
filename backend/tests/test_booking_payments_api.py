@@ -1238,3 +1238,42 @@ def test_a_check_that_lands_at_the_deadline_is_settled_in_the_same_run(
     (row,) = pay_rows(people, booking_id)
     assert (row["status"], row["settled_at"] is not None) == ("checked", True)
     assert status_of(people, booking_id) == "awaiting_payment"  # the hold ended: nothing is booked
+
+
+# R2-2. fence. Kills: a resume that answers 404 once the check is already recorded (the webhook ran
+# first) while it answers 409 before: both orders say payment_settled.
+def test_a_resume_after_the_check_was_recorded_is_settled(
+    people: People, app: FastAPI, ready: str, fake_stripe: FakeGateway
+) -> None:
+    client, booking_id, _ = checked_booking(app, people, fake_stripe, ready)
+
+    answer = resume(client, people, booking_id)
+
+    assert (answer.status_code, answer.json()) == (409, {"code": "payment_settled"})
+    assert resume(client, people, str(uuid.uuid7())).status_code == 404  # unknown stays 404
+    gone = place(app, people, ready, starts_at=at("10:00"), client=client).json()["id"]
+    assert abandon(client, people, gone).status_code == 204
+    assert resume(client, people, gone).status_code == 404  # abandoned, nothing settled
+
+
+# R2-1. guard. A resume that finds the hold gone cancels its orphan intent; if Stripe will not, the
+# intent id is logged (the 30-minute window and the deadline sweep still end it).
+def test_an_orphan_intent_that_cannot_be_cancelled_is_logged(
+    people: People, app: FastAPI, ready: str, fake_stripe: FakeGateway, log_lines: Lines
+) -> None:
+    client = new_client(app)
+    booking_id = place(app, people, ready, client=client).json()["id"]
+    fake_stripe.intents[fake_stripe.latest(booking_id)]["status"] = "canceled"
+
+    def abandoned(op: str) -> None:
+        if op == "create_check":
+            fake_stripe.on_call = None
+            assert abandon(new_client(app), people, booking_id).status_code == 204
+            fake_stripe.fail_next("cancel_intent")
+
+    fake_stripe.on_call = abandoned
+    assert resume(client, people, booking_id).status_code == 404
+
+    (line,) = [x for x in log_lines() if x["msg"] == "orphan intent not cancelled"]
+    assert line["intent"] == fake_stripe.latest(booking_id) and line["level"] == "WARNING"
+    assert line["tenant_id"] == str(people.a)

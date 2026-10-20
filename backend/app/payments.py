@@ -811,7 +811,11 @@ def resume(
     _enter(tenant_id, booking_id, request, response)
     with logs.bound(tenant_id=str(tenant_id)):
         booking, payment = _checkout(tenant_id, booking_id)
-        if booking is None or payment is None or not booking.live:
+        if booking is None or payment is None:
+            raise ApiError(404, "not_found")
+        if payment.status in ("checked", "paid"):  # the webhook got there first
+            raise ApiError(409, "payment_settled")
+        if not booking.live:
             raise ApiError(404, "not_found")
         if body.kind != payment.kind:  # B3 opens the switch to paying in advance
             raise ApiError(422, "payment_not_offered")
@@ -862,9 +866,11 @@ def resume(
             raise ApiError(503, "busy") from None
         if gone:
             try:  # nobody can see this intent: do not leave it open
-                gateway.cancel_intent(payment.account, made.id)
+                left = gateway.cancel_intent(payment.account, made.id)
             except stripe_gateway.Failed:
-                pass
+                left = "unreachable"
+            if left != "canceled":
+                logger.warning("orphan intent not cancelled", extra={"intent": made.id})
             raise ApiError(404, "not_found")
         logger.info(
             "payment started",
