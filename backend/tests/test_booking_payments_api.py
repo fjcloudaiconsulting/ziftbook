@@ -467,8 +467,9 @@ def test_payments_fail_open(
         assert page.json()["payment"] is None
     assert [s["payment"] for s in page.json()["services"]] == [False]
 
-    refused = place(app, people, service_id, payment="check")
-    assert (refused.status_code, refused.json()["code"]) == (422, "payment_not_offered")
+    for kind in ("check", "pay"):
+        refused = place(app, people, service_id, payment=kind)
+        assert (refused.status_code, refused.json()["code"]) == (422, "payment_not_offered")
     made = place(app, people, service_id, payment=None)
     assert made.status_code == 201
     assert made.json()["status"] == "pending"
@@ -494,8 +495,6 @@ def test_a_payment_step_cannot_be_skipped(
     with tenant_context(people.a) as session:
         assert session.scalar(text("SELECT count(*) FROM bookings")) == 0
     assert fake_stripe.count("create_check") == 0
-    pay = place(app, people, ready, payment="pay")
-    assert (pay.status_code, pay.json()["code"]) == (422, "payment_not_offered")
 
 
 # 8: FENCE. Kills: amounts from the request; a stale service price; a reconcile that advances a
@@ -1277,3 +1276,255 @@ def test_an_orphan_intent_that_cannot_be_cancelled_is_logged(
     (line,) = [x for x in log_lines() if x["msg"] == "orphan intent not cancelled"]
     assert line["intent"] == fake_stripe.latest(booking_id) and line["level"] == "WARNING"
     assert line["tenant_id"] == str(people.a)
+
+
+# B3 6: FENCE. Kills: re-POSTing the booking (the slot can be lost between the two); two live
+# intents (double charge).
+def test_switching_keeps_the_time_and_one_live_intent(
+    people: People, app: FastAPI, ready: str, fake_stripe: FakeGateway
+) -> None:
+    client = new_client(app)
+    booking_id = place(app, people, ready, client=client).json()["id"]
+    first = fake_stripe.latest(booking_id)
+    fake_stripe.decline(first)
+
+    switched = resume(client, people, booking_id, "pay")
+
+    assert switched.status_code == 200, switched.text
+    second = fake_stripe.latest(booking_id)
+    assert (
+        second != first
+        and switched.json()["client_secret"] == (fake_stripe.intents[second]["client_secret"])
+    )
+    assert (fake_stripe.intents[first]["status"], status_of(people, booking_id)) == (
+        "canceled",
+        "awaiting_payment",
+    )
+    assert [(r["kind"], r["status"]) for r in pay_rows(people, booking_id)] == [
+        ("check", "canceled"),
+        ("pay", "open"),
+    ]
+
+    # Two switches back at once: one wins, the other is told it is settled.
+    barrier = threading.Barrier(2)
+
+    def meet(op: str) -> None:
+        if op == "create_check":
+            barrier.wait(10)
+
+    fake_stripe.on_call = meet
+    answers: list[Response] = []
+    threads = [
+        threading.Thread(target=lambda: answers.append(resume(new_client(app), people, booking_id)))
+        for _ in range(2)
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    fake_stripe.on_call = None
+
+    assert sorted(a.status_code for a in answers) == [200, 409]
+    assert [a.json() for a in answers if a.status_code == 409] == [{"code": "payment_settled"}]
+    assert [r["status"] for r in pay_rows(people, booking_id)].count("open") == 1
+    assert [r["status"] != "canceled" for r in pay_rows(people, booking_id)].count(True) == 1
+
+    live = fake_stripe.latest(booking_id)
+    fake_stripe.confirm(live)  # it landed at Stripe, the webhook not yet taken
+    assert resume(client, people, booking_id, "pay").status_code == 409
+    assert pay_rows(people, booking_id)[-1]["status"] == "checked"
+
+
+# B3 6: FENCE. Kills: a switch that works after the business turned the step off.
+def test_a_switch_is_refused_once_the_step_is_off(
+    people: People, app: FastAPI, owner: TestClient, ready: str, fake_stripe: FakeGateway
+) -> None:
+    client = new_client(app)
+    booking_id = place(app, people, ready, client=client).json()["id"]
+    assert put_settings(owner, {"payment_check": False}).status_code == 200
+
+    refused = resume(client, people, booking_id, "pay")
+
+    assert (refused.status_code, refused.json()["code"]) == (422, "payment_not_offered")
+    assert fake_stripe.count("create_payment") == 0
+
+
+# B3 9: FENCE. Kills: matching on refund_id (NULL after an overlapping settle); swallowing a failed
+# refund; a console that keeps reading "refunded".
+@pytest.mark.parametrize("forget_id", [False, True])
+def test_a_failed_refund_is_shown_to_the_business(
+    forget_id: bool,
+    people: People,
+    app: FastAPI,
+    owner: TestClient,
+    ready: str,
+    fake_stripe: FakeGateway,
+    migrate_engine: Engine,
+    log_lines: Lines,
+) -> None:
+    client = new_client(app)
+    booking_id = place(app, people, ready, payment="pay", client=client).json()["id"]
+    intent = fake_stripe.latest(booking_id)
+    fake_stripe.confirm(intent)
+    assert sync(client, people, booking_id).json()["status"] == "pending"
+    assert (
+        owner.patch(f"/api/bookings/{booking_id}", json={"status": "declined"}).status_code == 200
+    )
+    bookings.sweep()
+    run("payment.settle")
+    (refund_id,) = fake_stripe.refunds
+    fake_stripe.refunds[refund_id]["status"] = "failed"
+    if forget_id:
+        with migrate_engine.begin() as conn:
+            conn.execute(text("UPDATE booking_payments SET refund_id = NULL"))
+    account = account_of(people)
+
+    for type_ in ("charge.refund.updated", "refund.failed", "refund.failed"):
+        assert webhook(client, type_, account, refund_id).status_code == 200
+    run("stripe.event")
+
+    errors = [x for x in log_lines() if x["msg"] == "refund failed" and x["level"] == "ERROR"]
+    assert len(errors) == 1 and errors[0]["intent"] == intent and errors[0]["refund"] == refund_id
+    assert history(people, booking_id).count("refund_failed") == 1
+    detail = owner.get(f"/api/bookings/{booking_id}").json()
+    assert detail["payment"]["refund_failed"] is True
+    (failed,) = [e for e in detail["history"] if e["event"] == "refund_failed"]
+    assert failed["actor"] == "system" and failed["details"] == {"amount_minor": 2500}
+    with tenant_context(people.a) as session:
+        assert session.scalar(
+            text("SELECT refund_failed_at IS NOT NULL FROM booking_payments WHERE intent_id = :i"),
+            {"i": intent},
+        )
+
+
+# B3 9d: FENCE. Kills: reading the live account policy at refund or report time; a fee in mode 1.
+def test_the_fee_policy_applied_is_the_payment_s(
+    people: People,
+    app: FastAPI,
+    owner: TestClient,
+    fake_stripe: FakeGateway,
+    migrate_engine: Engine,
+) -> None:
+    service_id = make_shop(people, owner, fake_stripe, price=4000)
+
+    def policy(mode: str, bp: int, fixed: int) -> None:
+        with migrate_engine.begin() as conn:
+            conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(people.a)})
+            conn.execute(
+                text(
+                    "UPDATE payment_accounts SET fee_mode = :m, application_fee_bp = :b, "
+                    "application_fee_fixed_minor = :f"
+                ),
+                {"m": mode, "b": bp, "f": fixed},
+            )
+
+    def fees() -> list[Any]:
+        return [p["application_fee"] for op, p in fake_stripe.calls if op == "create_payment"]
+
+    policy("business_pays_plus_fee", 150, 25)
+    first = place(app, people, service_id, payment="pay").json()["id"]
+    second = place(app, people, service_id, payment="pay", starts_at=at("10:00")).json()["id"]
+    assert fees() == [85, 85]
+    assert (
+        pay_rows(people, first)[0]["fee_mode"],
+        pay_rows(people, first)[0]["application_fee_minor"],
+    ) == (
+        "business_pays_plus_fee",
+        85,
+    )
+    for booking_id in (first, second):
+        fake_stripe.confirm(fake_stripe.latest(booking_id))
+        assert sync(new_client(app), people, booking_id).json()["status"] == "pending"
+    assert owner.patch(f"/api/bookings/{first}", json={"status": "declined"}).status_code == 200
+    bookings.sweep()
+    run("payment.settle")
+    from tests.test_booking_links_api import cancel_body, linked, post
+
+    assert (
+        post(linked(app, people.a, second), "/cancel", cancel_body(second, 100)).status_code == 200
+    )
+    bookings.sweep()
+    run("payment.settle")
+    flags = [p["refund_application_fee"] for op, p in fake_stripe.calls if op == "refund"]
+    assert flags == [True, False]  # the business ended the first, the client the second
+
+    policy("business_pays", 0, 0)
+    third = place(app, people, service_id, payment="pay", starts_at=at("11:00")).json()["id"]
+
+    assert fees() == [85, 85, 0]
+    assert pay_rows(people, third)[0]["fee_mode"] == "business_pays"
+    assert (
+        pay_rows(people, first)[0]["fee_mode"],
+        pay_rows(people, first)[0]["application_fee_minor"],
+    ) == (
+        "business_pays_plus_fee",
+        85,
+    )
+    fake_stripe.confirm(fake_stripe.latest(third))
+    assert sync(new_client(app), people, third).status_code == 200
+    assert owner.patch(f"/api/bookings/{third}", json={"status": "declined"}).status_code == 200
+    bookings.sweep()
+    run("payment.settle")
+    assert [p["refund_application_fee"] for op, p in fake_stripe.calls if op == "refund"][
+        -1
+    ] is None
+
+
+@pytest.mark.parametrize(
+    ("mode", "bp", "fixed", "amount", "fee"),
+    [
+        ("business_pays", 0, 0, 4000, 0),
+        ("platform_pays", 0, 0, 4000, 0),
+        ("business_pays_plus_fee", 150, 25, 4000, 85),
+        ("business_pays_plus_fee", 0, 10, 4000, 10),
+        ("business_pays_plus_fee", 10000, 25, 4000, 4000),
+    ],
+)
+def test_application_fee_is_pure_and_capped(
+    mode: str, bp: int, fixed: int, amount: int, fee: int
+) -> None:
+    assert payments.application_fee(mode, bp, fixed, amount) == fee
+
+
+# B3 10: GUARD. CHECK_WITH only picks how a check is made: paying is always a PaymentIntent.
+def test_pay_with_setup_mode_still_pays(
+    people: People,
+    app: FastAPI,
+    ready: str,
+    fake_stripe: FakeGateway,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(payments, "CHECK_WITH", "setup")
+
+    made = place(app, people, ready, payment="pay")
+
+    assert made.status_code == 201 and made.json()["payment"]["type"] == "payment"
+    assert fake_stripe.latest(made.json()["id"]).startswith("pi_")
+    assert (fake_stripe.count("create_payment"), fake_stripe.count("create_check")) == (1, 0)
+    assert pay_rows(people, made.json()["id"])[0]["kind"] == "pay"
+
+
+# B3 11: GUARD. The console reads the refunded amount off the payment.
+def test_the_console_shows_the_refunded_amount(
+    people: People, app: FastAPI, owner: TestClient, ready: str, fake_stripe: FakeGateway
+) -> None:
+    client = new_client(app)
+    booking_id = place(app, people, ready, payment="pay", client=client).json()["id"]
+    fake_stripe.confirm(fake_stripe.latest(booking_id))
+    assert sync(client, people, booking_id).json()["payment"]["state"] == "paid"
+    paid = owner.get(f"/api/bookings/{booking_id}").json()["payment"]
+    assert (paid["kind"], paid["status"], paid["refunded_minor"], paid["refund_failed"]) == (
+        "pay",
+        "paid",
+        0,
+        False,
+    )
+    assert (
+        owner.patch(f"/api/bookings/{booking_id}", json={"status": "declined"}).status_code == 200
+    )
+    bookings.sweep()
+    run("payment.settle")
+
+    refunded = owner.get(f"/api/bookings/{booking_id}").json()
+    assert refunded["payment"]["refunded_minor"] == 2500
+    assert "refunded" in [e["event"] for e in refunded["history"]]

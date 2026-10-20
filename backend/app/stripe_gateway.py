@@ -71,6 +71,17 @@ class IntentState:
     amount_refunded: int
     failed: bool  # the last attempt was declined or abandoned at the bank
     client_secret: str = field(repr=False)  # Stripe hands it back to the secret key
+    # Stripe's processing fee on the charge (not the application fee), None until its balance
+    # transaction exists (an authorisation has none).
+    stripe_fee: int | None = None
+
+
+@dataclass(frozen=True)
+class RefundState:
+    id: str
+    status: str  # succeeded, pending, failed, canceled, requires_action
+    payment_intent: str | None
+    amount: int
 
 
 @dataclass(frozen=True)
