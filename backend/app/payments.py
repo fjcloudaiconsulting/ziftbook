@@ -872,7 +872,7 @@ def _settle_pass(tenant_id: UUID, booking_id: UUID, *, final: bool) -> bool:
 
 def _refund(tenant_id: UUID, row: Row[Any]) -> None:
     """Refund what the ending owes (D7), once: Stripe's own amount_refunded says what already went,
-    so a re-run (a new key once the amount left changes) sends nothing more. A refund Stripe refuses
+    so a re-run after the idempotency key's 24 hours sends nothing more. A refund Stripe refuses
     ("invalid": the same request gets the same answer) is flagged for the business and settled,
     not retried by the hourly sweep for ever."""
     gateway = stripe_gateway.gateway
@@ -897,9 +897,10 @@ def _refund(tenant_id: UUID, row: Row[Any]) -> None:
                 refund_application_fee=(
                     row.ending != "cancelled_by_client" if row.application_fee_minor > 0 else None
                 ),
-                # The amount is in the key: a refund made by hand changes what is left, and Stripe
-                # refuses a key reused with another amount (even one it answered with a 500).
-                idempotency_key=f"refund:{row.id}:{due - state.amount_refunded}",
+                # One key per payment, never per amount: two overlapping runs that read different
+                # amounts would both be paid. The cost: a hand refund after an attempt Stripe kept
+                # under the key makes the retry an idempotency error, flagged for the business.
+                idempotency_key=f"refund:{row.id}",
             )
         except stripe_gateway.Failed as failure:
             if failure.kind != "invalid":

@@ -311,8 +311,9 @@ class FakeGateway(Gateway):
         idempotency_key: str,
     ) -> str:
         with self._keyed(idempotency_key):
-            # Stripe keeps a request's result under its key, a 500 included, and refuses the key
-            # reused with another amount (an idempotency error: "invalid").
+            # Stripe refuses a key reused with another amount (an idempotency error: "invalid").
+            # shortcut: a failed attempt is not replayed for 24 hours as Stripe does; no test needs
+            # it.
             if self.refund_params.setdefault(idempotency_key, amount) != amount:
                 raise Failed("invalid", "req_fake")
             self._enter(
