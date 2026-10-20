@@ -218,7 +218,9 @@ def test_a_placement_job_does_not_swallow_the_refund(
 
 # 3: FENCE. Kills: a key per job or per attempt; trusting only the idempotency key (24 h window);
 # recording the event before the qualified UPDATE.
-@pytest.mark.parametrize("how", ["sequential", "concurrent", "record fails once"])
+@pytest.mark.parametrize(
+    "how", ["sequential", "in flight", "made, not yet recorded", "record fails once"]
+)
 def test_settling_twice_refunds_once(
     how: str,
     people: People,
@@ -235,9 +237,9 @@ def test_settling_twice_refunds_once(
     if how == "sequential":
         payments.settle(job)
         payments.settle(job)
-    elif how == "concurrent":
-        # A second job runs while the first is at Stripe: Stripe refuses the same key in flight, so
-        # the second fails (and is retried later) instead of refunding twice.
+    elif how == "in flight":
+        # A second job runs while the first is at Stripe: the key is in use, so it fails (and is
+        # retried later) instead of refunding twice.
         refused: list[BaseException] = []
 
         def meanwhile(op: str) -> None:
@@ -251,6 +253,15 @@ def test_settling_twice_refunds_once(
         payments.settle(job)
         assert len(refused) == 1
         payments.settle(job)  # its retry finds the refund made and the row recorded
+    elif how == "made, not yet recorded":
+        # Stripe has refunded and the first job has not recorded it; a second job reads the
+        # charge, sees nothing left to send and records first. The first must then record nothing.
+        def second() -> None:
+            fake_stripe.after_refund = None
+            payments.settle(job)
+
+        fake_stripe.after_refund = second
+        payments.settle(job)
     else:
         with monkeypatch.context() as patched:
             patched.setattr(payments, "REFUNDED", text("SELECT 1 / 0"))

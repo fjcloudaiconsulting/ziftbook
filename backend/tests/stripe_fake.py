@@ -69,12 +69,16 @@ class FakeGateway(Gateway):
         self._serving_lock = threading.Lock()
         # Runs at the top of every call, with the op's name (tests look at the world from there).
         self.on_call: Callable[[str], None] | None = None
+        # Runs once a refund is made, before the caller has its answer.
+        self.after_refund: Callable[[], None] | None = None
 
     @contextmanager
     def _keyed(self, key: str) -> Iterator[None]:
         with self._serving_lock:
             if key in self._serving:
-                raise Failed("invalid", "req_fake")  # what the real gateway makes of the 409
+                # stripe 16.0.0 builds IdempotencyError only for 400/404: a 409 is an APIError,
+                # which the gateway reports as "unavailable"
+                raise Failed("unavailable", "req_fake")
             self._serving.add(key)
         try:
             yield
@@ -323,17 +327,16 @@ class FakeGateway(Gateway):
                 "amount": amount,
                 "status": "succeeded",
                 "account": account,
-                "created": time.time(),
             }
             self.refund_keys[idempotency_key] = refund_id
+            if self.after_refund is not None:  # the refund is made, our answer not yet recorded
+                self.after_refund()
             return refund_id
 
     def retrieve_refund(self, account: str, refund_id: str) -> RefundState:
         self._enter("retrieve_refund", account=account, refund_id=refund_id)
         got = self.refunds[refund_id]
-        return RefundState(
-            refund_id, got["status"], got["intent_id"], got["amount"], int(got["created"])
-        )
+        return RefundState(refund_id, got["status"], got["intent_id"], got["amount"])
 
     def add_refund(self, intent_id: str, amount: int, status: str) -> str:
         """A refund made outside the platform (the business, in its Stripe dashboard)."""
@@ -343,9 +346,17 @@ class FakeGateway(Gateway):
             "amount": amount,
             "status": status,
             "account": self.intents[intent_id]["account"],
-            "created": time.time() + 2,  # later than the event the test just ran (whole seconds)
         }
+        if status == "succeeded":
+            self.intents[intent_id]["amount_refunded"] += amount
         return refund_id
+
+    def fail_refund(self, refund_id: str) -> None:
+        """The refund fails after Stripe took it: what it refunded comes off the charge."""
+        got = self.refunds[refund_id]
+        if got["status"] == "succeeded":
+            self.intents[got["intent_id"]]["amount_refunded"] -= got["amount"]
+        got["status"] = "failed"
 
     def refunded(self, intent_id: str | None = None) -> list[int]:
         """The amounts refunded, in order (of one intent, else of all)."""

@@ -83,7 +83,6 @@ class RefundState:
     status: str  # succeeded, pending, failed, canceled, requires_action
     payment_intent: str | None
     amount: int
-    created: int  # epoch seconds
 
 
 @dataclass(frozen=True)
@@ -346,7 +345,6 @@ class Gateway:
                 got.status or "",
                 made if isinstance(made, str) or made is None else made.id,
                 got.amount,
-                got.created,
             )
 
         return self._call("retrieve_refund", call, account)

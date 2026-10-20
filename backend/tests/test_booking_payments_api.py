@@ -1377,7 +1377,7 @@ def test_a_failed_refund_is_shown_to_the_business(
     bookings.sweep()
     run("payment.settle")
     (refund_id,) = fake_stripe.refunds
-    fake_stripe.refunds[refund_id]["status"] = "failed"
+    fake_stripe.fail_refund(refund_id)
     if forget_id:
         with migrate_engine.begin() as conn:
             conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(people.a)})
@@ -1627,10 +1627,12 @@ def test_the_fee_and_the_mode_on_the_row_are_read_once(
     assert (row["fee_mode"], row["application_fee_minor"]) == ("business_pays_plus_fee", 85)
 
 
-# B3 review 6: FENCE. Kills: a failure flag nothing clears (a refund the business made good still
-# reads "failed"); a second failure that is swallowed because the first one was already flagged; a
-# replay that re-flags a settled problem.
-def test_a_made_good_refund_clears_the_flag_and_a_new_failure_sets_it_again(
+# B3 review 6: FENCE. Kills: a failure flag set by event order or the clock (a good refund in the
+# same second never clears it; a failure processed after the good refund leaves "failed" for good);
+# a manual refund smaller than what is owed clearing it.
+@pytest.mark.parametrize("order", ["failure first", "good refund first", "partial refund"])
+def test_the_failure_flag_follows_the_amounts_refunded(
+    order: str,
     people: People,
     app: FastAPI,
     owner: TestClient,
@@ -1649,7 +1651,7 @@ def test_a_made_good_refund_clears_the_flag_and_a_new_failure_sets_it_again(
     bookings.sweep()
     run("payment.settle")
     (first,) = fake_stripe.refunds
-    fake_stripe.refunds[first]["status"] = "failed"
+    fake_stripe.fail_refund(first)
     account = account_of(people)
 
     def told(refund_id: str, type_: str = "refund.failed") -> None:
@@ -1659,19 +1661,56 @@ def test_a_made_good_refund_clears_the_flag_and_a_new_failure_sets_it_again(
     def flagged() -> bool:
         return bool(owner.get(f"/api/bookings/{booking_id}").json()["payment"]["refund_failed"])
 
-    told(first)
-    told(first, "charge.refund.updated")  # a replay of the same failure
-    assert (flagged(), history(people, booking_id).count("refund_failed")) == (True, 1)
+    def failures() -> int:
+        return history(people, booking_id).count("refund_failed")
 
-    good = fake_stripe.add_refund(intent, 2500, "succeeded")  # the business sent it by hand
-    told(good, "charge.refund.updated")
-    assert flagged() is False
-
-    told(first)  # the old failure comes round again: already told, not a new problem
-    assert (flagged(), history(people, booking_id).count("refund_failed")) == (False, 1)
-
-    second = fake_stripe.add_refund(intent, 100, "failed")
-    told(second)
-    assert (flagged(), history(people, booking_id).count("refund_failed")) == (True, 2)
+    if order == "failure first":
+        told(first)
+        told(first, "charge.refund.updated")  # a replay of the same failure
+        assert (flagged(), failures()) == (True, 1)
+        good = fake_stripe.add_refund(intent, 2500, "succeeded")  # the business sent it by hand
+        told(good, "charge.refund.updated")
+        assert flagged() is False
+        told(first)  # the old failure comes round again: told once, and nothing is owed
+        assert (flagged(), failures()) == (False, 1)
+    elif order == "good refund first":
+        good = fake_stripe.add_refund(intent, 2500, "succeeded")
+        told(good, "charge.refund.updated")
+        told(first)  # the failure is processed after the money was made good
+        assert (flagged(), failures()) == (False, 1)
+    else:
+        told(first)
+        small = fake_stripe.add_refund(intent, 1, "succeeded")  # one cent is not the refund
+        told(small, "charge.refund.updated")
+        assert (flagged(), failures()) == (True, 1)
+        rest = fake_stripe.add_refund(intent, 2499, "succeeded")
+        told(rest, "charge.refund.updated")
+        assert flagged() is False
     errors = [x for x in log_lines() if x["msg"] == "refund failed" and x["level"] == "ERROR"]
-    assert [x["refund"] for x in errors] == [first, second]
+    assert [x["refund"] for x in errors] == [first]
+
+
+# B3 review 4: FENCE. Kills: the loser of a same-intent race handing out the secret of a payment
+# that has landed since (recorded, or not yet).
+@pytest.mark.parametrize("recorded", [True, False])
+def test_a_same_intent_loser_never_hands_out_a_landed_payment(
+    recorded: bool, people: People, app: FastAPI, ready: str, fake_stripe: FakeGateway
+) -> None:
+    client = new_client(app)
+    booking_id = place(app, people, ready, payment="pay", client=client).json()["id"]
+    fake_stripe.decline(fake_stripe.latest(booking_id))
+    other = new_client(app)
+
+    def beaten(op: str) -> None:
+        if op == "retrieve_intent":
+            fake_stripe.on_call = None
+            assert resume(other, people, booking_id, "check").status_code == 200  # A switches
+            fake_stripe.confirm(fake_stripe.latest(booking_id))  # and the card goes through
+            if recorded:
+                assert sync(other, people, booking_id).json()["payment"]["state"] == "checked"
+
+    fake_stripe.on_call = beaten
+    lost = resume(client, people, booking_id, "check")  # B, with the row it read before A
+
+    assert (lost.status_code, lost.json()) == (409, {"code": "payment_settled"})
+    assert pay_rows(people, booking_id)[-1]["status"] == "checked"

@@ -486,15 +486,17 @@ WHERE NOT EXISTS (SELECT 1 FROM booking_events
                     AND details ->> 'refund' = :refund_id)
 RETURNING 1
 """)
-MARK_REFUND_FAILED = text("""
-UPDATE booking_payments
-SET refund_failed_at = now(), refund_id = coalesce(refund_id, :refund_id)
-WHERE intent_id = :intent
+SET_REFUND_ID = text("""
+UPDATE booking_payments SET refund_id = coalesce(refund_id, :refund_id) WHERE intent_id = :intent
 """)
-# A refund made after the failure (the business sent it by hand) makes the payment good again.
-CLEAR_REFUND_FAILED = text("""
-UPDATE booking_payments SET refund_failed_at = NULL
-WHERE intent_id = :intent AND refund_failed_at < to_timestamp(:created)
+# The flag says money is still owed: what Stripe has refunded on the charge falls short of what the
+# refund settled on. Amounts only, so event order and the clock do not matter, and a smaller
+# refund the business made by hand does not clear it.
+SET_REFUND_FLAG = text("""
+UPDATE booking_payments
+SET refund_failed_at = CASE WHEN :refunded < refunded_minor
+                            THEN coalesce(refund_failed_at, now()) END
+WHERE intent_id = :intent
 """)
 
 
@@ -924,38 +926,39 @@ def _refund(tenant_id: UUID, row: Row[Any]) -> None:
 
 
 def refund_changed(tenant_id: UUID, refund_id: str) -> None:
-    """A refund event: read the refund again. A failed one is told to the business (ERROR for ops,
-    one history event, and the payment's flag the console reads); a later successful one clears the
-    flag. Money cannot be retried from here: the business does it in its Stripe dashboard."""
+    """A refund event: read the refund and the charge again. A failed refund is told to the
+    business once (ERROR for ops, one history event). Whether the payment is flagged for the
+    console depends on the amounts alone: it is while less has been refunded than was owed. Money
+    cannot be retried from here: the business does it in its Stripe dashboard."""
     with tenant_context(tenant_id) as db:
         account = db.execute(ACCOUNT).first()
     if account is None:
         return
-    refund = stripe_gateway.gateway.retrieve_refund(account.stripe_account_id, refund_id)
-    if refund.payment_intent is None or refund.status not in ("failed", "succeeded"):
+    gateway = stripe_gateway.gateway
+    refund = gateway.retrieve_refund(account.stripe_account_id, refund_id)
+    if refund.payment_intent is None:
         return
+    refunded = gateway.retrieve_intent(account.stripe_account_id, refund.payment_intent)
     params = {"intent": refund.payment_intent, "refund_id": refund_id}
     with tenant_context(tenant_id) as db:
         db.execute(bookings.LOCK, {"key": bookings.LOCK_KEY})
-        if refund.status == "succeeded":
-            db.execute(CLEAR_REFUND_FAILED, {**params, "created": refund.created})
-            return
         payment = db.execute(PAYMENT_OF, params).first()
         if payment is None:  # not ours
             return
-        details = {"amount_minor": refund.amount, "refund": refund_id}
-        told = db.execute(
-            TELL_REFUND_FAILED,
-            {
-                "booking_id": payment.booking_id,
-                "refund_id": refund_id,
-                "details": json.dumps(details),
-            },
-        ).first()
-        if told is None:  # a replay
-            return
-        db.execute(MARK_REFUND_FAILED, params)
-    logger.error("refund failed", extra={"intent": refund.payment_intent, "refund": refund_id})
+        told = None
+        if refund.status == "failed":
+            told = db.execute(
+                TELL_REFUND_FAILED,
+                {
+                    "booking_id": payment.booking_id,
+                    "refund_id": refund_id,
+                    "details": json.dumps({"amount_minor": refund.amount, "refund": refund_id}),
+                },
+            ).first()
+            db.execute(SET_REFUND_ID, params)
+        db.execute(SET_REFUND_FLAG, {**params, "refunded": refunded.amount_refunded})
+    if told is not None:
+        logger.error("refund failed", extra={"intent": refund.payment_intent, "refund": refund_id})
 
 
 def _write(tenant_id: UUID, statement: Any, row: Row[Any], action: str) -> None:
@@ -1169,7 +1172,15 @@ def resume(
         except IntegrityError:  # a concurrent resume or switch got its row in first
             _, live = _checkout(tenant_id, booking_id)
             if live is not None and live.intent_id == made.id:
-                # The same request, twice (the key made it one intent): the winner's answer.
+                # The same request, twice (the key made it one intent): the winner's answer, unless
+                # the payment has landed since.
+                try:
+                    landed = _landed(gateway.retrieve_intent(payment.account, made.id), body.kind)
+                except stripe_gateway.Failed:
+                    raise _unavailable() from None
+                if live.status != "open" or landed:
+                    reconcile(tenant_id, made.id)
+                    raise ApiError(409, "payment_settled") from None
                 return bookings.PaymentStart(
                     client_secret=made.client_secret, type=made.type, expires_at=booking.expires_at
                 )
