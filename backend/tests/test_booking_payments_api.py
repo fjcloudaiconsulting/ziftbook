@@ -1104,3 +1104,70 @@ def test_any_failure_of_the_second_transaction_gives_the_time_back(
     with tenant_context(people.a) as session:
         booking_id = session.scalar(text("SELECT id FROM bookings"))
     assert status_of(people, booking_id) == "expired"
+
+
+# R-S2/C4. fence. Kills: a resume that hands back the client_secret of an intent that has already
+# landed (the webhook has not been processed yet): the browser would be offered a finished payment.
+def test_a_resume_after_the_check_landed_is_settled_not_resumed(
+    people: People, app: FastAPI, ready: str, fake_stripe: FakeGateway, both: str
+) -> None:
+    client = new_client(app)
+    booking_id = place(app, people, ready, client=client).json()["id"]
+    fake_stripe.confirm(fake_stripe.latest(booking_id))  # Stripe knows; our row still says open
+    assert pay_rows(people, booking_id)[0]["status"] == "open"
+
+    answer = resume(client, people, booking_id)
+
+    assert (answer.status_code, answer.json()) == (409, {"code": "payment_settled"})
+    assert "client_secret" not in answer.text
+    assert status_of(people, booking_id) == "pending"  # reconciled on the way
+    assert pay_rows(people, booking_id)[0]["status"] == "checked"
+
+
+# R-S1. guard (main.py maps 55P03 to 503 busy for every route, nothing per-route is needed):
+# a lock timeout inside reconcile's or abandon's transaction stays a 503 busy.
+@pytest.mark.parametrize("route", ["sync", "abandon"])
+def test_a_lock_timeout_is_a_503_busy(
+    route: str,
+    people: People,
+    app: FastAPI,
+    ready: str,
+    fake_stripe: FakeGateway,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = new_client(app)
+    booking_id = place(app, people, ready, client=client).json()["id"]
+    monkeypatch.setattr(
+        bookings,
+        "LOCK",
+        text("DO $$ BEGIN RAISE EXCEPTION 'busy' USING ERRCODE = '55P03'; END $$"),
+    )
+
+    answer = (sync if route == "sync" else abandon)(client, people, booking_id)
+
+    assert (answer.status_code, answer.json()["code"]) == (503, "busy")
+
+
+# R-S3. fence. Kills: a resume that commits a new intent's row over a booking an abandon has just
+# given back (a live authorisation nobody can see, on an expired booking).
+def test_a_resume_racing_an_abandon_makes_no_new_intent_row(
+    people: People, app: FastAPI, ready: str, fake_stripe: FakeGateway
+) -> None:
+    client = new_client(app)
+    booking_id = place(app, people, ready, client=client).json()["id"]
+    first = fake_stripe.latest(booking_id)
+    fake_stripe.intents[first]["status"] = "canceled"  # so the resume makes the next intent
+
+    def abandoned(op: str) -> None:
+        if op == "create_check":  # the client's other tab abandons while the resume is at Stripe
+            fake_stripe.on_call = None
+            assert abandon(new_client(app), people, booking_id).status_code == 204
+
+    fake_stripe.on_call = abandoned
+    answer = resume(client, people, booking_id)
+
+    assert (answer.status_code, answer.json()["code"]) == (404, "not_found")
+    assert status_of(people, booking_id) == "expired"
+    assert [row["status"] for row in pay_rows(people, booking_id)] == ["canceled"]
+    second = fake_stripe.latest(booking_id)
+    assert second != first and fake_stripe.intents[second]["status"] == "canceled"

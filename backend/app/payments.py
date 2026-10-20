@@ -705,6 +705,9 @@ SELECT b.id,
        (b.status = 'awaiting_payment' AND b.expires_at > now()) AS live
 FROM bookings b WHERE b.id = :id AND b.source = 'booking_page'
 """)
+LIVE_BOOKING = text("""
+SELECT 1 FROM bookings WHERE id = :id AND status = 'awaiting_payment' AND expires_at > now()
+""")
 LIVE_PAYMENT = text("""
 SELECT p.id, p.kind, p.status, p.intent_id,
        (SELECT count(*) FROM booking_payments WHERE booking_id = :id) AS n,
@@ -807,14 +810,17 @@ def resume(
         booking, payment = _checkout(tenant_id, booking_id)
         if booking is None or payment is None or not booking.live:
             raise ApiError(404, "not_found")
-        if payment.status in ("checked", "paid"):
-            raise ApiError(409, "payment_settled")
         if body.kind != payment.kind:  # B3 opens the switch to paying in advance
             raise ApiError(422, "payment_not_offered")
         gateway = stripe_gateway.gateway
         try:
             if payment.status == "open":
                 state = gateway.retrieve_intent(payment.account, payment.intent_id)
+                if state.status == ("requires_capture" if state.type == "payment" else "succeeded"):
+                    # Landed at Stripe, the webhook not yet taken: settle it, never hand the
+                    # browser the secret of a finished payment.
+                    reconcile(tenant_id, payment.intent_id)
+                    raise ApiError(409, "payment_settled")
                 if state.status != "canceled":
                     return bookings.PaymentStart(
                         client_secret=state.client_secret,
@@ -835,18 +841,28 @@ def resume(
         try:
             with tenant_context(tenant_id) as db:
                 db.execute(bookings.LOCK, {"key": bookings.LOCK_KEY})
-                db.execute(MARK_CANCELED, {"id": payment.id})
-                db.execute(
-                    INSERT_PAYMENT,
-                    {
-                        "booking_id": booking_id,
-                        "intent_id": made.id,
-                        "amount_minor": booking.price_amount_minor,
-                        "currency": booking.price_currency,
-                    },
-                )
+                # Under the lock: an abandon or the sweep may have ended the hold while Stripe
+                # made the intent.
+                gone = db.execute(LIVE_BOOKING, {"id": booking_id}).first() is None
+                if not gone:
+                    db.execute(MARK_CANCELED, {"id": payment.id})
+                    db.execute(
+                        INSERT_PAYMENT,
+                        {
+                            "booking_id": booking_id,
+                            "intent_id": made.id,
+                            "amount_minor": booking.price_amount_minor,
+                            "currency": booking.price_currency,
+                        },
+                    )
         except OperationalError, IntegrityError:
             raise ApiError(503, "busy") from None
+        if gone:
+            try:  # nobody can see this intent: do not leave it open
+                gateway.cancel_intent(payment.account, made.id)
+            except stripe_gateway.Failed:
+                pass
+            raise ApiError(404, "not_found")
         logger.info(
             "payment started",
             extra={
