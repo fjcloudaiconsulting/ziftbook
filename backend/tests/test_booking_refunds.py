@@ -11,13 +11,14 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine, text
+from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 from sqlalchemy.exc import DBAPIError
 
 from app import bookings, payments, stripe_gateway
 from app.db import tenant_context
 from app.jobs import Job
 from app.main import create_app
-from tests.conftest import People, new_client, put_settings, save_setting, signed_in
+from tests.conftest import People, new_client, points, put_settings, save_setting, signed_in
 from tests.stripe_fake import FakeGateway
 from tests.test_booking_email import (
     clean_outbox,  # noqa: F401 -- autouse: these tests send mail, so they leave outbox rows
@@ -541,3 +542,130 @@ def test_a_refund_that_failed_before_it_was_recorded_is_flagged_when_it_is(
     assert fake_stripe.refunded() == [PRICE]
     assert paid_row(people, booking_id)["refund_failed_at"] is not None
     assert count_events(people, booking_id, "refund_failed") == 1
+
+
+def refund_failed_count(reader: InMemoryMetricReader, kind: str = "pay") -> int:
+    return sum(
+        int(p.value)
+        for p in points(reader, "ziftbook.payment.outcomes")
+        if p.attributes["payment.outcome"] == "refund_failed"
+        and p.attributes["payment.kind"] == kind
+    )
+
+
+def refund_failed_details(people: People, booking_id: str) -> list[dict[str, Any]]:
+    with tenant_context(people.a) as session:
+        return [
+            r[0]
+            for r in session.execute(
+                text(
+                    "SELECT details FROM booking_events "
+                    "WHERE booking_id = :b AND event = 'refund_failed'"
+                ),
+                {"b": booking_id},
+            )
+        ]
+
+
+# Refused refund: FENCE. Kills: a settle that raises on a refund Stripe refuses (5 retries, then an
+# hourly "gave up" for ever, the business never told); one that settles but leaves the business
+# unflagged; one that says "refunded" or mails "refunded in full" for money that did not move.
+def test_a_refund_stripe_refuses_is_flagged_once_and_not_retried(
+    people: People,
+    app: FastAPI,
+    owner: TestClient,
+    ready: str,
+    fake_stripe: FakeGateway,
+    app_engine: Engine,
+    migrate_engine: Engine,
+    metric_reader: InMemoryMetricReader,
+) -> None:
+    client = new_client(app)
+    late = place(app, people, ready, payment="pay", client=client).json()["id"]
+    fake_stripe.confirm(fake_stripe.latest(late))  # paid, but the hold has ended
+    expire(people.a, late)
+    due_now(migrate_engine, late)
+    fake_stripe.fail_next("refund", "invalid")
+
+    run("payment.settle")  # does not raise: the job completes
+
+    row = paid_row(people, late)
+    assert (row["refunded_minor"], row["settled_at"] is not None) == (PRICE, True)
+    assert row["refund_failed_at"] is not None
+    assert fake_stripe.refunded() == []
+    assert history(people, late).count("refund_failed") == 1
+    assert refund_failed_details(people, late) == [{"amount_minor": PRICE, "refund": None}]
+    assert count_events(people, late, "refunded") == 0
+    assert emails(app_engine, people, late) == {}
+    assert refund_failed_count(metric_reader) == 1
+
+    payments.settle(settle_job(people, late))  # a second run, and the sweep's backstop
+    settle_all()
+    assert fake_stripe.count("refund") == 1
+    assert history(people, late).count("refund_failed") == 1
+    assert refund_failed_count(metric_reader) == 1
+
+
+# Refused refund: FENCE. Kills: catching every Failed (a temporary failure must retry).
+def test_a_temporary_refund_failure_still_retries(
+    people: People,
+    app: FastAPI,
+    owner: TestClient,
+    ready: str,
+    fake_stripe: FakeGateway,
+) -> None:
+    _, booking_id, _ = booked(app, people, fake_stripe, ready)
+    assert patch(owner, booking_id, "declined").status_code == 200
+    fake_stripe.fail_next("refund", "unavailable")
+
+    with pytest.raises(stripe_gateway.Failed):
+        payments.settle(settle_job(people, booking_id))
+
+    row = paid_row(people, booking_id)
+    assert (row["settled_at"], row["refund_failed_at"]) == (None, None)
+    payments.settle(settle_job(people, booking_id))
+    assert fake_stripe.refunded() == [PRICE]
+
+
+# Refused refund: FENCE. Kills: not counting the outcome, and counting a replayed refund.failed.
+def test_an_async_refund_failure_is_counted_once(
+    people: People,
+    app: FastAPI,
+    owner: TestClient,
+    ready: str,
+    fake_stripe: FakeGateway,
+    metric_reader: InMemoryMetricReader,
+) -> None:
+    client, booking_id, _ = booked(app, people, fake_stripe, ready)
+    assert patch(owner, booking_id, "declined").status_code == 200
+    payments.settle(settle_job(people, booking_id))
+    (refund_id,) = fake_stripe.refunds
+    fake_stripe.fail_refund(refund_id)
+
+    for _ in range(2):
+        assert webhook(client, "refund.failed", account_of(people), refund_id).status_code == 200
+        run("stripe.event")
+
+    assert history(people, booking_id).count("refund_failed") == 1
+    assert refund_failed_count(metric_reader) == 1
+
+
+# Refused refund: GUARD. The flag follows the amounts: a smaller refund made by hand stays counted.
+def test_a_refused_refund_after_a_partial_one_is_flagged_for_the_rest(
+    people: People,
+    app: FastAPI,
+    owner: TestClient,
+    ready: str,
+    fake_stripe: FakeGateway,
+) -> None:
+    _, booking_id, intent = booked(app, people, fake_stripe, ready)
+    fake_stripe.add_refund(intent, 1000, "succeeded")  # the business, in its dashboard
+    assert patch(owner, booking_id, "declined").status_code == 200
+    fake_stripe.fail_next("refund", "invalid")
+
+    payments.settle(settle_job(people, booking_id))
+
+    assert paid_row(people, booking_id)["refund_failed_at"] is not None
+    assert refund_failed_details(people, booking_id) == [
+        {"amount_minor": PRICE - 1000, "refund": None}
+    ]
