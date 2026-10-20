@@ -249,27 +249,6 @@ export function afterPickTaken(free: string[] | null, pick: string): string[] | 
   return rest.length > 0 ? rest : null;
 }
 
-export type ConfirmScreen = "done" | "dead" | "taken" | "tooMany" | "policyChanged" | "fieldErrors" | "phoneInvalid" | "unknown";
-
-/** What the confirm click's answer means (ZIF-117). Every 404 is the dead-link screen, whatever the
- * cause; a 409 is "that time was just taken"; a 503 or a network failure may or may not have
- * booked, so it says to check the email before trying again. */
-export function confirmScreen(answer: { status: number; code?: string }): ConfirmScreen {
-  if (answer.status === 201) return "done";
-  if (answer.status === 404) return "dead";
-  if (answer.status === 409) return "taken";
-  if (answer.status === 429) return "tooMany";
-  if (answer.status === 422 && answer.code && POLICY_CHANGED_CODES.has(answer.code)) return "policyChanged";
-  if (answer.status === 422 && answer.code === "phone_invalid") return "phoneInvalid";
-  if (answer.status === 422) return "fieldErrors";
-  return "unknown";
-}
-
-/** Whether the confirm page opens after the 15-minute hold ended (the late-click line). */
-export function holdEnded(heldUntil: string, now: Date): boolean {
-  return Date.parse(heldUntil) <= now.getTime();
-}
-
 // --- ZIF-157: the checkout page's own state ---
 
 /** The checkout page's path (no locale: the i18n router adds it). Only the service, the person and

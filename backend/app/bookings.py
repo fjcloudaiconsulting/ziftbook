@@ -49,19 +49,14 @@ from app.services import STRICT, DescriptionText, Price, multiline
 logger = logging.getLogger(__name__)
 
 IP_LIMIT, BUSINESS_IP_LIMIT, EMAIL_LIMIT, LIMIT_WINDOW = 30, 10, 5, timedelta(hours=1)
-# Against mail bombing and address farming: one address, every business together (key
-# `booking_verify`, shared with the hold path while it drains).
+# Against mail bombing and address farming: one address, every business together. The key name
+# `booking_verify` is kept from ZIF-117 so live counters carry over.
 ADDRESS_LIMIT = 10
 # ZIF-51's own key in app/schedule.py's ticket-number advisory lock convention (OPENING_LOCK = 105):
 # disjoint first arguments, so the two locks can never collide.
 LOCK_KEY = 51
 OVERLAP = "ex_bookings_worker_overlap"  # migration 0026; answered with 409 slot_taken
 MAX_AGENDA_WINDOW = timedelta(days=8)  # a 7-day local week across a clock change is 7d +- 1h
-# ZIF-117 (migration 0034). A guest's chosen time is held this long while they open the emailed
-# link, and the link itself lives LINK_TTL from the hold's created_at. Code constants, never
-# settings: the first is what the booking page promises, the second what the email does.
-HOLD_TTL = timedelta(minutes=15)
-LINK_TTL = timedelta(hours=24)
 
 
 class BookingIn(BaseModel):
@@ -281,6 +276,9 @@ WHERE id = :service_id AND archived_at IS NULL
 FOR SHARE
 """)
 
+# Leftover booking_holds rows: dead once their 24h link would have expired.
+SWEEP_HOLDS = text("DELETE FROM booking_holds WHERE created_at <= now() - interval '24 hours'")
+
 # ZIF-122. Shared by create() and the worker's sweep(): the event rides the same statement, so no
 # path can expire a booking without recording it. now() is the transaction's clock, as :now was.
 EXPIRE = text("""
@@ -291,20 +289,6 @@ WITH gone AS (
 INSERT INTO booking_events (tenant_id, booking_id, event)
 SELECT tenant_id, id, 'expired' FROM gone
 RETURNING 1
-""")
-
-# ZIF-117. The sweep's half for holds: a hold goes once its LINK is dead, not when its 15 minutes
-# end, because a late click still books a time that is free. Under the sweep's tenant lock.
-SWEEP_HOLDS = text("""
-DELETE FROM booking_holds WHERE created_at <= now() - CAST(:link_ttl AS interval) RETURNING 1
-""")
-
-# ZIF-117. The console's non-override create names a live hold instead of a bare slot_unavailable:
-# the latest live hold on these workers that overlaps the asked-for time, or NULL.
-HELD = text("""
-SELECT max(expires_at) FROM booking_holds
-WHERE worker_id = ANY(CAST(:members AS uuid[])) AND expires_at > now()
-  AND starts_at < :end AND ends_at > :start
 """)
 
 # What max_pending_per_email caps: live pendings, plus (ZIF-115, owner ruling 2026-10-08) upcoming
@@ -764,18 +748,12 @@ def book_online(
     origin_ip: str | None,
     user_agent: str | None,
     message: str | None,
-    exclude: UUID | None = None,
-    prefer: UUID | None = None,
 ) -> BookingOut:
-    """A client's own booking, from the booking page (create()) or from a confirmed booking-hold
-    link (app.holds, ZIF-117): ONE body for both, so the gates, the cap, the snapshot and the emails
-    can never drift apart. The caller holds the tenant lock (its transaction's first statement)
-    and catches OperationalError as 503 busy.
+    """A client's own booking from the booking page (create()). The caller holds the tenant lock
+    (its transaction's first statement) and catches OperationalError as 503 busy.
 
     address: the client's email, already normalised (never `email`: that names this module's
     enqueue helper). proven: see app.clients.find_or_create; user_id is passed only when proven.
-    exclude: a hold id that re-derivation must not see as a conflict with itself
-    (availability.booked). prefer: a worker to try first when eligible - the one the hold blocked.
     """
     # 2. FOR SHARE is mandatory: archiving takes FOR NO KEY UPDATE and the booking's foreign
     #    key check only KEY SHARE, so without this a booking can land on a service archived
@@ -852,7 +830,6 @@ def book_online(
         earliest=earliest,
         duration=row.duration_minutes,
         buffer=buffer,
-        exclude=exclude,
     )
     booked_rows = result.booked
     offered = result.slots
@@ -878,9 +855,6 @@ def book_online(
         None if status == "confirmed" else row.now + timedelta(hours=settings.pending_ttl_hours)
     )
     queue = by_load(eligible, booked_rows, day, zone)
-    if prefer in queue:  # ZIF-117: the worker the hold blocked, first
-        queue.remove(prefer)
-        queue.insert(0, prefer)
     booking, candidate = place(
         db,
         settings=settings,
@@ -1383,18 +1357,6 @@ def book(
             buffer_minutes=row.buffer_minutes,
         )
         if not eligible:
-            # ZIF-117: a time an online booker is holding reads as held, with when it frees up,
-            # so the member knows override books it anyway (the guest's click then 409s).
-            held_until = db.scalar(
-                HELD,
-                {
-                    "members": sorted(hours),
-                    "start": new.starts_at,
-                    "end": new.starts_at + timedelta(minutes=row.duration_minutes),
-                },
-            )
-            if held_until is not None:
-                raise ApiError(409, "slot_held", held_until=held_until)
             raise ApiError(409, "slot_unavailable")
         day = new.starts_at.astimezone(ZoneInfo(settings.timezone)).date()
         queue = by_load(eligible, booked_rows, day, settings.timezone)
@@ -1619,9 +1581,8 @@ def reschedule(
 
 
 def sweep() -> int:
-    """Expire every tenant's due pendings and delete its dead booking holds (ZIF-117); the worker's
-    housekeeping, never correctness (create() and availability.booked() already treat both as
-    gone). Returns how many bookings it settled."""
+    """Expire every tenant's due pendings; the worker's housekeeping, never correctness (create()
+    and availability.booked() already treat them as gone). Returns how many bookings it settled."""
     # The ids in their own short session, closed before the loop: the worker's pool is exactly 21.
     with SessionLocal() as session:
         tenant_ids = session.scalars(text("SELECT id FROM tenants")).all()
@@ -1638,9 +1599,7 @@ def sweep() -> int:
                 if count:
                     logger.info("bookings expired", extra={"count": count})
                 expired += count
-                # ZIF-117: an unproven address is kept at most LINK_TTL (plus one sweep interval).
-                gone = len(db.execute(SWEEP_HOLDS, {"link_ttl": LINK_TTL}).all())
-                if gone:
-                    logger.info("booking holds deleted", extra={"count": gone})
+                # until the booking_holds drop: unproven addresses are kept at most ~24h
+                db.execute(SWEEP_HOLDS)
         span.set_attribute("expired", expired)
     return expired

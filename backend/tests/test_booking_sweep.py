@@ -136,3 +136,41 @@ def test_the_sweep_waits_for_the_tenant_lock(people: People, app_engine: Engine)
 
     assert not sweeper.is_alive()
     assert status_of(people.a, booking_id) == "expired"
+
+
+# Guard: leftover booking_holds rows go until the table is dropped. Wrong impl: the sweep stops
+# deleting them (or deletes live ones).
+def test_the_sweep_deletes_expired_leftover_holds(people: People, migrate_engine: Engine) -> None:
+    ids = {}
+    for name, age in (("old", timedelta(hours=25)), ("new", HOUR)):
+        with migrate_engine.begin() as conn:
+            conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(people.a)})
+            ids[name] = conn.scalar(
+                text(
+                    "INSERT INTO booking_holds (tenant_id, service_id, worker_id, anyone,"
+                    " starts_at, ends_at, email, secret_hash, expires_at, created_at)"
+                    " VALUES (:t, :s, :w, false, :a, :b, :e, :h, now(), now() - :age) RETURNING id"
+                ),
+                {
+                    "t": people.a,
+                    "s": seed_service(people.a),
+                    "w": member_id(people.a, people.both),
+                    "a": T1[0],
+                    "b": T1[1],
+                    "e": fresh_email(),
+                    "h": uuid.uuid4().bytes * 2,
+                    "age": age,
+                },
+            )
+
+    bookings.sweep()
+
+    with migrate_engine.begin() as conn:
+        conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(people.a)})
+        left = set(
+            conn.scalars(
+                text("SELECT id FROM booking_holds WHERE id = ANY(:ids)"),
+                {"ids": list(ids.values())},
+            )
+        )
+    assert left == {ids["new"]}

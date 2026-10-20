@@ -177,12 +177,8 @@ migration 0026), not any code path. A race in a route somebody forgets to guard 
   for database work, never across an outbound call, so a queue of bookers clears well inside that. The engine's
   `connect_args` replaces any `options` in `ZIF_DATABASE_URL`. The worker has no `lock_timeout`; its
   `statement_timeout` (30s) bounds its waits.
-- **`booking_holds` (ZIF-117, migration 0034) follows the same rule.** A guest's chosen time is held there for 15
-  minutes while they open the emailed link (which lives 24 hours); `app.availability.BOOKED` reads live holds beside
-  bookings, so every `offered()` caller respects them. There is no `EXCLUDE` on it ("live" needs `now()`), so the
-  tenant lock plus re-derivation is all that keeps two holds apart: its writers (`app.holds` hold POST, release and
-  confirm, `mail.send_booking_verify`'s token mint, `bookings.sweep`) each take lock 51 first. The mint commits
-  before the send, never holding the lock across Mailgun.
+- `booking_holds` (migration 0034) is unused since ZIF-158: nothing reads or writes it, and a later owner-gated
+  migration drops it.
 - The constraint's predicate is the four **occupying** statuses. That set lives in three places — the predicate,
   `app.availability.OCCUPYING`, and `ck_bookings_status` — and `tests/test_bookings_db.py` fences all three against
   each other. Changing it later takes `ACCESS EXCLUSIVE` and a full gist rebuild: there is no
@@ -578,7 +574,7 @@ ZIF-38). An empty variable means the default: `env_ignore_empty=True` on the bas
 | `ZIF_MEDIA_URL` | api | `""` | for photos | no | Where the media bucket is served from (a custom domain origin, no trailing slash needed); photo URLs start with it. Unset: services list no photo. |
 | `ZIF_S3_PUBLIC_ENDPOINT` | api | `""` | no (development only) | no | The host the browser reaches the store on, when `ZIF_S3_ENDPOINT` is a compose service name; presigned upload URLs use it. Never set in a deployment. |
 | **Security** | | | | | |
-| `ZIF_TURNSTILE_SECRET` | api | `""` | yes, or `ZIF_TURNSTILE_DISABLED` | yes | Cloudflare Turnstile secret. Unset: every public booking and hold is refused (403 `turnstile_failed`) and the API logs an ERROR at startup, unless `ZIF_TURNSTILE_DISABLED=true`. |
+| `ZIF_TURNSTILE_SECRET` | api | `""` | yes, or `ZIF_TURNSTILE_DISABLED` | yes | Cloudflare Turnstile secret. Unset: every public booking is refused (403 `turnstile_failed`) and the API logs an ERROR at startup, unless `ZIF_TURNSTILE_DISABLED=true`. |
 | `ZIF_TURNSTILE_DISABLED` | api | `false` | no | no | `true` serves public bookings with no Turnstile check when no secret is set (development, CI, tests). Ignored when a secret is set. Never on a public deployment. |
 | `ZIF_TURNSTILE_SITE_KEY` | frontend | none | no | no | Cloudflare Turnstile site key, rendered on the public booking page. Set both the site key and the secret, or neither: a site key with no secret shows a widget while the API refuses every booking; a secret with no site key never gets a token to check. Never `NEXT_PUBLIC_*`: read server-side at request time (`process.env`, ZIF-56's page loader), not baked into the client bundle at build time. |
 | `ZIF_SETUP_TOKEN` | api | `""` | until setup is done | yes | First-run setup token (ZIF-70): whoever sends it to `/setup` on an install with no account yet becomes the platform admin. At least 32 characters (`openssl rand -base64 32`); unset or shorter refuses setup (503 `setup_not_configured`), and the API logs an ERROR at startup while setup is still to be done. Once anyone has an account setup answers 409 whatever the token, so it can be removed afterwards. |

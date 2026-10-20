@@ -95,11 +95,19 @@ PRIVATE_TO_THE_CONSOLE = (
     "client_phone",
     "client_message",
 )
-# ZIF-117: the confirm page says "Booking as {email}". It is the hold's own address, never a stored
-# client field, and the link's bearer received the email at it. Nothing else is allowed.
 # ZIF-157: InTheWay is reachable from the public routes only through Error.bookings, which only a
 # console route fills (errors.py).
-PUBLIC_ON_PURPOSE = {("HoldView", "email"), ("InTheWay", "client_name")}
+PUBLIC_ON_PURPOSE = {("InTheWay", "client_name")}
+
+
+# ZIF-158 P0 guard: the booking-hold flow is gone from the contract.
+def test_the_contract_has_no_booking_hold() -> None:
+    text = CONTRACT.read_text()
+    assert "HoldView" not in text and "held_until" not in text
+    # By path segment (the old routes were .../holds, .../holds/release, /booking-hold/...), so an
+    # unrelated word that merely contains "hold" never trips it.
+    segments = {s for p in json.loads(text)["paths"] for s in p.split("/")}
+    assert not segments & {"holds", "booking-hold"}
 
 
 def test_no_public_response_exposes_a_clients_private_field() -> None:
@@ -128,9 +136,7 @@ def test_no_public_response_exposes_a_clients_private_field() -> None:
 
 # 41: FENCE, new in ZIF-51. Wrong impl: (a) publish ClientIn from a public route and run
 # `make openapi`; (b) remove all three of email, phone and locale from BookingIn.
-# ZIF-117 adds the hold (the address only) and the confirm click (name and phone, after the address
-# is proven).
-BOOKING_REQUEST = {"BookingIn", "HoldIn", "ConfirmIn"}
+BOOKING_REQUEST = {"BookingIn"}
 
 
 def test_the_only_public_request_schema_with_contact_details_is_the_booking() -> None:

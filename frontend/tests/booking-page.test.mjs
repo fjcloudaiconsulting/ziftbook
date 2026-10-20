@@ -14,13 +14,11 @@ import {
   cancellationState,
   checkoutUrl,
   cleanMessage,
-  confirmScreen,
   dayPart,
   emailSuggestion,
   firstFreeDayFrom,
   freeNamed,
   groupByDayPart,
-  holdEnded,
   keepPick,
   nextWeekDisabled,
   ownPolicyText,
@@ -334,28 +332,11 @@ describe("ZIF-100 who is free at a time", () => {
   });
 });
 
-describe("ZIF-117 confirm by email", () => {
+describe("message_invalid", () => {
   test("fence: 422 message_invalid is its own outcome, never the generic field errors banner", () => {
     // Wrong implementation killed: the generic fieldErrors banner (the message field is never marked).
     assert.equal(answerState({ status: 422, code: "message_invalid" }).kind, "messageInvalid");
     assert.equal(answerState({ status: 422, code: "invalid_request" }).kind, "fieldErrors");
-  });
-
-  test("fence: every 404 on the click is the dead link, every 409 the taken time", () => {
-    assert.equal(confirmScreen({ status: 201 }), "done");
-    for (const code of ["link_expired", "not_found"]) assert.equal(confirmScreen({ status: 404, code }), "dead");
-    for (const code of ["slot_unavailable", "slot_taken"]) assert.equal(confirmScreen({ status: 409, code }), "taken");
-    assert.equal(confirmScreen({ status: 429, code: "rate_limited" }), "tooMany");
-    assert.equal(confirmScreen({ status: 422, code: "unknown_policy_version" }), "policyChanged");
-    assert.equal(confirmScreen({ status: 422, code: "invalid_request" }), "fieldErrors");
-    assert.equal(confirmScreen({ status: 422, code: "phone_invalid" }), "phoneInvalid"); // ZIF-152 fence
-    for (const status of [0, 500, 503]) assert.equal(confirmScreen({ status }), "unknown");
-  });
-
-  test("fence: the hold has ended AT its until, not a minute later", () => {
-    const until = "2026-10-15T08:47:00Z";
-    assert.equal(holdEnded(until, new Date("2026-10-15T08:46:59Z")), false);
-    assert.equal(holdEnded(until, new Date("2026-10-15T08:47:00Z")), true);
   });
 });
 

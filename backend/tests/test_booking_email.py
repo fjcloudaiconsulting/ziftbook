@@ -638,8 +638,6 @@ def test_exactly_the_message_templates_carry_the_clients_message() -> None:
         "old_date": "OLD-DATE",
         "old_time": "OLD-TIME",
         "member": "Member",
-        "held_until": "HELD",
-        "link_until": "LINK-UNTIL",
         "page": "https://example.com/p",
     }
     carrying = set()
