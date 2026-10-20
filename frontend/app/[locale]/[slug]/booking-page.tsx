@@ -39,7 +39,7 @@ import { formatMoney } from "@/lib/money";
 import { type Locale } from "@/lib/services";
 import { zoneCity } from "@/lib/week";
 
-import { Banner, FieldError, send, Submit } from "../_ui/parts";
+import { Banner, FieldError, JSON_WRITE, send, Submit } from "../_ui/parts";
 import { CheckIcon } from "../_ui/picker";
 import styles from "../_ui/ui.module.css";
 import { type Done, DoneScreen, PayEnd, Picker, Processing, ResumeView, WhoAt } from "./checkout";
@@ -483,7 +483,7 @@ export function BookingPage({
     setBookingParam(null, dropAt);
   }
 
-  const checkBooking = (id: string) => send(bookingsSync({ path: { tenant_id: page.id, booking_id: id } }));
+  const checkBooking = (id: string) => send(bookingsSync({ ...JSON_WRITE, path: { tenant_id: page.id, booking_id: id } }));
 
   /** The one place that decides what a booking's payment state shows (doneState). */
   function apply(s: SyncOut, email: string | null) {
@@ -550,7 +550,7 @@ export function BookingPage({
 
   /** Release the held time. true: gone (or never there); false: the payment landed first (shown instead) or it failed. */
   async function release(id: string, email: string | null): Promise<boolean> {
-    const answer = await send(bookingsAbandon({ path: { tenant_id: page.id, booking_id: id } }));
+    const answer = await send(bookingsAbandon({ ...JSON_WRITE, path: { tenant_id: page.id, booking_id: id } }));
     if (answer.status === 204 || answer.status === 404) return true;
     if (answer.status === 409) {
       const again = await checkBooking(id);
