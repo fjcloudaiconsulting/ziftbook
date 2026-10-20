@@ -3,7 +3,7 @@
 import { useLocale, useTranslations } from "next-intl";
 import { type MouseEvent, type ReactNode, useEffect, useRef, useState } from "react";
 
-import { type BookingDetailOut, bookingApprovalsRead, bookingApprovalsUpdate, paymentsDashboard } from "@/api-client";
+import { type BookingDetailOut, bookingApprovalsRead, bookingApprovalsUpdate } from "@/api-client";
 import { Link } from "@/i18n/navigation";
 import { type Action, actionsFor, historyLabel, isWaiting, paymentFact, telHref, whenParts } from "@/lib/calendar";
 import { canAnswerRequests, dateLocale } from "@/lib/console";
@@ -12,8 +12,9 @@ import { type Locale, type NameMap, serviceName } from "@/lib/services";
 import { localTime } from "@/lib/time-off";
 import { acceptBody, declineBody, expiryLabel } from "@/lib/today";
 
-import { JSON_WRITE, SignedOutBanner, useConsole } from "../../_ui/console";
+import { SignedOutBanner, useConsole } from "../../_ui/console";
 import styles from "../../_ui/console.module.css";
+import { openStripeDashboard } from "../../_ui/stripe-dashboard";
 import { Banner, FieldError, problem } from "../../_ui/parts";
 import uiStyles from "../../_ui/ui.module.css";
 import { CHIPS, chipOf, LoadFailure, Skeleton } from "../today";
@@ -60,6 +61,7 @@ export function BookingDetail({
   const person = useTranslations("Console.person");
   const errorsT = useTranslations("Console.errors");
   const form = useTranslations("Form");
+  const settingsT = useTranslations("Console.settings");
   const locale = useLocale();
   const tz = settings.timezone;
   const role = session.role === "owner" ? "owner" : "worker";
@@ -77,6 +79,7 @@ export function BookingDetail({
   // One sequence for the first read and every refetch after a change: a slow older answer never wins.
   const seq = useRef(0);
   const submitting = useRef(false);
+  const dashboardBusy = useRef(false);
   const focusTarget = useRef<string | null>(null);
   const heading = useRef<HTMLHeadingElement>(null);
 
@@ -187,7 +190,7 @@ export function BookingDetail({
       to: moved ? (params.sameDay ? `${params.toTime}` : `${dayOf(params.to)} ${params.toTime}`) : "",
     });
     // Green marks the current state, never a failure.
-    const latest = i === d.history.length - 1 && key !== "historyRefundFailed";
+    const latest = i === d.history.length - 1 && !d.payment?.refund_failed;
     const waiting = isWaiting(d, i);
     const small = waiting
       ? t(canAnswer ? "historyWaiting" : "historyWaitingOwner", { when: stamp(at) })
@@ -202,18 +205,11 @@ export function BookingDetail({
     );
   }
 
-  // The Stripe dashboard opens in a tab made before the (slow) link request, so a popup blocker allows it.
-  async function openDashboard() {
-    const tab = window.open("", "_blank");
-    const outcome = await call(() => paymentsDashboard(JSON_WRITE), { write: true });
-    if (outcome.status === 200 && outcome.data && tab) {
-      tab.opener = null;
-      tab.location.href = outcome.data.url;
-    } else {
-      tab?.close();
-      if (outcome.status === 401) setSignedOut(true);
-      else setError(form(problem(outcome)));
-    }
+  async function dashboard() {
+    setError(null);
+    const result = await openStripeDashboard(call, dashboardBusy, () => {});
+    if (result === "signedOut") setSignedOut(true);
+    else if (result === "failed") setError(settingsT("paymentsFailed"));
   }
 
   function paymentLine(d: BookingDetailOut) {
@@ -226,13 +222,18 @@ export function BookingDetail({
         <dd>
           {fact.failed ? (
             <>
-              <FieldError id="payment-error">{text}</FieldError>
-              {role === "owner" && (
-                <button type="button" className={uiStyles.textButton} onClick={openDashboard}>
-                  {t("paymentDashboard")}
-                  <span className={uiStyles.srOnly}>{t("opensInNewTab")}</span>
-                </button>
-              )}
+              <div className={css.factFailed}>
+                <FieldError id="payment-error">{text}</FieldError>
+                {role === "owner" && (
+                  <button type="button" className={uiStyles.textButton} onClick={dashboard}>
+                    {settingsT("paymentsDashboard")}
+                    <svg aria-hidden="true" viewBox="0 0 16 16" width="14" height="14">
+                      <path d="M4 12l8-8M7 4h5v5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                    <span className={uiStyles.srOnly}>{t("opensInNewTab")}</span>
+                  </button>
+                )}
+              </div>
             </>
           ) : (
             text

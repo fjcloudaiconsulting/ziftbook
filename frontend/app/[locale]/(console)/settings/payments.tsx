@@ -3,13 +3,14 @@
 import { useLocale, useTranslations } from "next-intl";
 import { useEffect, useRef, useState } from "react";
 
-import { type PaymentAccountOut, paymentsAccount, paymentsConnect, paymentsDashboard } from "@/api-client";
+import { type PaymentAccountOut, paymentsAccount, paymentsConnect } from "@/api-client";
 import { useRouter } from "@/i18n/navigation";
 import { paymentsAction } from "@/lib/settings";
 
-import { JSON_WRITE, SignedOutBanner, useConsole } from "../../_ui/console";
+import { SignedOutBanner, useConsole } from "../../_ui/console";
 import styles from "../../_ui/console.module.css";
 import { Banner } from "../../_ui/parts";
+import { openStripeDashboard } from "../../_ui/stripe-dashboard";
 import uiStyles from "../../_ui/ui.module.css";
 
 /** Online payments: the Stripe connection's state, and the one action it allows (owners only). */
@@ -45,25 +46,28 @@ export function Payments({ disabled }: { disabled: boolean }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once on load
   }, []);
 
-  async function go(kind: "connect" | "dashboard") {
+  async function dashboard() {
+    setFailed(false);
+    setSignedOut(false);
+    const result = await openStripeDashboard(call, busyRef, setBusy);
+    if (result === "signedOut") setSignedOut(true);
+    else if (result === "failed") setFailed(true);
+  }
+
+  async function go(kind: "connect") {
     if (busyRef.current) return;
     busyRef.current = true;
     setBusy(true);
     setFailed(false);
     setSignedOut(false);
-    // Opened inside the click, before the await, or the browser blocks it as a popup.
-    const tab = kind === "dashboard" ? window.open("", "_blank") : null;
-    if (tab) tab.opener = null;
-    const outcome = await call(() => (kind === "connect" ? paymentsConnect({ body: { locale } }) : paymentsDashboard({ ...JSON_WRITE })), { write: true });
+    const outcome = await call(() => paymentsConnect({ body: { locale } }), { write: true });
     // Reset even before leaving for Stripe: Back may restore this page from the bfcache as it was.
     busyRef.current = false;
     setBusy(false);
     if (outcome.status === 200 && outcome.data) {
-      if (tab) tab.location.href = outcome.data.url;
-      else window.location.assign(outcome.data.url);
+      window.location.assign(outcome.data.url);
       return;
     }
-    tab?.close();
     if (outcome.status === 401) setSignedOut(true);
     else setFailed(true);
   }
@@ -93,7 +97,7 @@ export function Payments({ disabled }: { disabled: boolean }) {
       )}
       {action === "dashboard" && (
         <p className={styles.row}>
-          <button className={uiStyles.textButton} type="button" aria-disabled={busy || undefined} onClick={() => go("dashboard")}>
+          <button className={uiStyles.textButton} type="button" aria-disabled={busy || undefined} onClick={dashboard}>
             {t("paymentsDashboard")}
             <svg aria-hidden="true" viewBox="0 0 16 16" width="14" height="14">
               <path d="M4 12l8-8M7 4h5v5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />

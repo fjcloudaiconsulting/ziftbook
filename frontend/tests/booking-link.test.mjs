@@ -104,8 +104,9 @@ describe("the engine's sentence", () => {
     assert.deepEqual(refundMessage({ refund_pct: 100, refund_minor: 4000, copy_key: "pending" }, { paid: eur(4000), card_fee: null }), { key: "refundAmount", amount: 4000, fee: null });
     assert.deepEqual(refundMessage({ refund_pct: 0, refund_minor: 0, copy_key: "no_refund_reschedule" }, { paid: eur(4000), card_fee: null }), { key: "refundNone" });
     assert.deepEqual(refundMessage({ refund_pct: 0, refund_minor: null, copy_key: "pending" }, unpaid), { key: "pending" });
-    assert.deepEqual(refundMessage({ refund_pct: 100, refund_minor: null, copy_key: "full_refund_reschedule" }, unpaid), { key: "refundFull" });
-    assert.deepEqual(refundMessage({ refund_pct: 0, refund_minor: null, copy_key: "no_refund_reschedule" }, unpaid), { key: "refundNone" });
+    // F3-g: "full refund" and "not refunded" are only true for money actually paid.
+    assert.deepEqual(refundMessage({ refund_pct: 100, refund_minor: null, copy_key: "full_refund_reschedule" }, unpaid), { key: "pending" });
+    assert.deepEqual(refundMessage({ refund_pct: 0, refund_minor: null, copy_key: "no_refund_reschedule" }, unpaid), { key: "pending" });
   });
 
   test("fence: the amount is the server's refund_minor, and the kept fee shows only when the server sends one", () => {
