@@ -96,12 +96,15 @@ def available(db: Session, settings: BusinessSettings) -> str | None:
     return row.stripe_account_id if row is not None and row.charges_enabled else None
 
 
+def meets_minimum(amount_minor: int, currency: str) -> bool:
+    """Stripe's smallest charge: the one rule, for offer() and for the booking page's services."""
+    minimum = MIN_CHARGE.get(currency)
+    return minimum is not None and amount_minor >= minimum
+
+
 def offer(db: Session, settings: BusinessSettings, amount_minor: int, currency: str) -> str | None:
     """The Stripe account id when the payment step is on for this price, else None (fail open)."""
-    minimum = MIN_CHARGE.get(currency)
-    if minimum is None or amount_minor < minimum:
-        return None
-    return available(db, settings)
+    return available(db, settings) if meets_minimum(amount_minor, currency) else None
 
 
 def refresh_account(tenant_id: object) -> None:

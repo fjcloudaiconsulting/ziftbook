@@ -121,6 +121,7 @@ def read(slug: str, request: Request) -> BookingPageOut:
         # same way for a slug nobody owns).
         if not settings.published:
             raise ApiError(404, "not_found")
+        account = payments.available(db, settings)  # once for the page, not per service
         services: dict[UUID, PublicServiceOut] = {}
         for row in db.execute(SERVICES):
             if row.id not in services:
@@ -133,13 +134,12 @@ def read(slug: str, request: Request) -> BookingPageOut:
                     workers=[],
                     placeholder=row.photo_placeholder,
                     photo=photos.urls(row.photo_key, row.photo_width, row.photo_height),
-                    payment=payments.offer(db, settings, row.price_amount_minor, row.price_currency)
-                    is not None,
+                    payment=account is not None
+                    and payments.meets_minimum(row.price_amount_minor, row.price_currency),
                 )
             services[row.id].workers.append(
                 WorkerOut(id=row.member_id, display_name=row.display_name)
             )
-        account = payments.available(db, settings)
     minimum = payments.MIN_CHARGE.get(tenant.currency)
     return BookingPageOut(
         id=tenant.id,

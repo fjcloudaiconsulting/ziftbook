@@ -17,11 +17,11 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from httpx2 import Response
 from opentelemetry.sdk.metrics.export import InMemoryMetricReader
-from sqlalchemy import Engine, text
+from sqlalchemy import Engine, event, text
 from sqlalchemy.exc import InterfaceError
 
 from app import bookings, payments, stripe_gateway
-from app.db import tenant_context
+from app.db import SessionLocal, tenant_context
 from app.jobs import Job, run_once
 from app.main import create_app
 from app.worker import KINDS
@@ -1171,3 +1171,28 @@ def test_a_resume_racing_an_abandon_makes_no_new_intent_row(
     assert [row["status"] for row in pay_rows(people, booking_id)] == ["canceled"]
     second = fake_stripe.latest(booking_id)
     assert second != first and fake_stripe.intents[second]["status"] == "canceled"
+
+
+# R-S4. fence. Kills: a payment_accounts query (and a StripeSettings read) per service on a public,
+# unauthenticated page: the page asks the account once.
+def test_the_page_reads_the_payment_account_once(
+    people: People, app: FastAPI, owner: TestClient, ready: str, fake_stripe: FakeGateway
+) -> None:
+    for name in ("Colour", "Perm"):
+        service_id = new_service(owner, name={"en": name})
+        assign(people.a, service_id, member_id(people.a, people.both))
+    seen: list[str] = []
+    bind = SessionLocal.kw["bind"]
+
+    def count(conn: Any, cursor: Any, statement: str, *args: Any) -> None:
+        if "payment_accounts" in statement:
+            seen.append(statement)
+
+    event.listen(bind, "before_cursor_execute", count)
+    try:
+        page = new_client(app).get(f"/api/public/booking-pages/{_slug(people)}").json()
+    finally:
+        event.remove(bind, "before_cursor_execute", count)
+
+    assert [s["payment"] for s in page["services"]] == [True, True, True]
+    assert len(seen) == 1
