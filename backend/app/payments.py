@@ -446,6 +446,43 @@ def _outcome(kind: str, outcome: str) -> None:
     tracing.PAYMENT_OUTCOMES.add(1, {"payment.kind": kind, "payment.outcome": outcome})
 
 
+def _landed(state: stripe_gateway.IntentState) -> bool:
+    """The check went through at Stripe: an authorisation held, or a SetupIntent done."""
+    return state.status == ("requires_capture" if state.type == "payment" else "succeeded")
+
+
+def _create(
+    account: str, tenant_id: UUID, booking_id: UUID, amount: int, currency: str, n: int
+) -> stripe_gateway.Intent:
+    return stripe_gateway.gateway.create_check(
+        account,
+        mode=CHECK_WITH,
+        tenant_id=str(tenant_id),
+        booking_id=str(booking_id),
+        amount=amount,
+        currency=currency,
+        idempotency_key=f"pi:{booking_id}:{n}",
+    )
+
+
+def _started(
+    booking_id: UUID, made: stripe_gateway.Intent, expires_at: datetime
+) -> bookings.PaymentStart:
+    logger.info(
+        "payment started",
+        extra={
+            "booking_id": str(booking_id),
+            "intent": made.id,
+            "kind": "check",
+            "check_with": CHECK_WITH,
+        },
+    )
+    _outcome("check", "started")
+    return bookings.PaymentStart(
+        client_secret=made.client_secret, type=made.type, expires_at=expires_at
+    )
+
+
 def start(
     tenant_id: UUID, account: str, booking: bookings.BookingOut, expires_at: datetime
 ) -> bookings.PaymentStart:
@@ -453,14 +490,13 @@ def start(
     no transaction), then its row. If either fails the checkout hold is given back at once."""
     with logs.bound(tenant_id=str(tenant_id)):
         try:
-            made = stripe_gateway.gateway.create_check(
+            made = _create(
                 account,
-                mode=CHECK_WITH,
-                tenant_id=str(tenant_id),
-                booking_id=str(booking.id),
-                amount=booking.price.amount_minor,
-                currency=booking.price.currency,
-                idempotency_key=f"pi:{booking.id}:1",
+                tenant_id,
+                booking.id,
+                booking.price.amount_minor,
+                booking.price.currency,
+                1,
             )
         except stripe_gateway.Failed as failure:
             logger.warning(
@@ -480,19 +516,7 @@ def start(
             # The intent never reached a browser: nobody can confirm it, and no row names it.
             _give_back(tenant_id, booking.id)
             raise ApiError(503, "busy") from None
-        logger.info(
-            "payment started",
-            extra={
-                "booking_id": str(booking.id),
-                "intent": made.id,
-                "kind": "check",
-                "check_with": CHECK_WITH,
-            },
-        )
-        _outcome("check", "started")
-        return bookings.PaymentStart(
-            client_secret=made.client_secret, type=made.type, expires_at=expires_at
-        )
+        return _started(booking.id, made, expires_at)
 
 
 def _insert(tenant_id: UUID, booking: bookings.BookingOut, intent_id: str) -> None:
@@ -543,8 +567,7 @@ def reconcile(tenant_id: UUID, intent_id: str) -> stripe_gateway.IntentState | N
             ):
                 logger.error("intent does not match its payment", extra={"intent": intent_id})
                 return state
-            held = "requires_capture" if state.type == "payment" else "succeeded"
-            if row.kind == "check" and state.status == held:
+            if row.kind == "check" and _landed(state):
                 _checked(db, tenant_id, row, state)
             elif state.status == "canceled" and db.execute(MARK_CANCELED, {"id": row.id}).first():
                 count_after_commit(
@@ -567,7 +590,13 @@ def _checked(
     setup = state.type == "setup"
     db.execute(MARK_CHECKED, {"id": row.id, "setup": setup})
     if not setup:
-        _release_job(db, tenant_id, row.booking_id)
+        jobs.enqueue(
+            db,
+            "payment.settle",
+            f"payment.settle:{tenant_id}:{row.booking_id}:checked",
+            {"booking_id": str(row.booking_id)},
+            tenant_id=tenant_id,
+        )
     paid = db.execute(
         bookings.PAID,
         {
@@ -604,16 +633,6 @@ def _checked(
             "to": "checked",
             "booking_status": paid.status if paid is not None else None,
         },
-    )
-
-
-def _release_job(db: Session, tenant_id: UUID, booking_id: UUID) -> None:
-    jobs.enqueue(
-        db,
-        "payment.settle",
-        f"payment.settle:{tenant_id}:{booking_id}:checked",
-        {"booking_id": str(booking_id)},
-        tenant_id=tenant_id,
     )
 
 
@@ -823,7 +842,7 @@ def resume(
         try:
             if payment.status == "open":
                 state = gateway.retrieve_intent(payment.account, payment.intent_id)
-                if state.status == ("requires_capture" if state.type == "payment" else "succeeded"):
+                if _landed(state):
                     # Landed at Stripe, the webhook not yet taken: settle it, never hand the
                     # browser the secret of a finished payment.
                     reconcile(tenant_id, payment.intent_id)
@@ -834,14 +853,13 @@ def resume(
                         type=state.type,
                         expires_at=booking.expires_at,
                     )
-            made = gateway.create_check(
+            made = _create(
                 payment.account,
-                mode=CHECK_WITH,
-                tenant_id=str(tenant_id),
-                booking_id=str(booking_id),
-                amount=booking.price_amount_minor,
-                currency=booking.price_currency,
-                idempotency_key=f"pi:{booking_id}:{payment.n + 1}",
+                tenant_id,
+                booking_id,
+                booking.price_amount_minor,
+                booking.price_currency,
+                payment.n + 1,
             )
         except stripe_gateway.Failed:
             raise _unavailable() from None
@@ -872,19 +890,7 @@ def resume(
             if left != "canceled":
                 logger.warning("orphan intent not cancelled", extra={"intent": made.id})
             raise ApiError(404, "not_found")
-        logger.info(
-            "payment started",
-            extra={
-                "booking_id": str(booking_id),
-                "intent": made.id,
-                "kind": "check",
-                "check_with": CHECK_WITH,
-            },
-        )
-        _outcome("check", "started")
-        return bookings.PaymentStart(
-            client_secret=made.client_secret, type=made.type, expires_at=booking.expires_at
-        )
+        return _started(booking_id, made, booking.expires_at)
 
 
 @public_router.post(
@@ -918,4 +924,3 @@ def abandon(tenant_id: UUID, booking_id: UUID, request: Request, response: Respo
                 raise ApiError(409, "payment_settled")
             if payment is not None:
                 db.execute(MARK_CANCELED, {"id": payment.id})
-        response.status_code = 204
