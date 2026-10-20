@@ -699,6 +699,7 @@ def test_the_api_logs_its_settings_once_at_startup(
             "setup_token": "unset",
             "totp_key": "set",
             "storage": "off",
+            "payments": "off",
         }
     ]
     assert "postgresql" not in json.dumps(log_lines())

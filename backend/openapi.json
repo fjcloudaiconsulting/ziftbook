@@ -4860,6 +4860,237 @@
         }
       }
     },
+    "/api/payments/account": {
+      "get": {
+        "tags": [
+          "payments"
+        ],
+        "summary": "Account",
+        "operationId": "payments-account",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentAccountOut"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "payments"
+        ],
+        "summary": "Connect",
+        "operationId": "payments-connect",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConnectIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UrlOut"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Content",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Content Too Large",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/payments/dashboard": {
+      "post": {
+        "tags": [
+          "payments"
+        ],
+        "summary": "Dashboard",
+        "operationId": "payments-dashboard",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UrlOut"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Content Too Large",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/admin/session": {
       "get": {
         "tags": [
@@ -6269,6 +6500,11 @@
             "type": "boolean",
             "title": "Published",
             "default": false
+          },
+          "payment_check": {
+            "type": "boolean",
+            "title": "Payment Check",
+            "default": false
           }
         },
         "additionalProperties": false,
@@ -6386,6 +6622,11 @@
             "type": "boolean",
             "title": "Published",
             "default": false
+          },
+          "payment_check": {
+            "type": "boolean",
+            "title": "Payment Check",
+            "default": false
           }
         },
         "additionalProperties": false,
@@ -6406,7 +6647,8 @@
           "free_cancellation_hours",
           "reschedule_cutoff_hours",
           "max_reschedules",
-          "published"
+          "published",
+          "payment_check"
         ],
         "title": "BusinessSettings"
       },
@@ -6694,6 +6936,25 @@
           "country"
         ],
         "title": "CompleteSignUp"
+      },
+      "ConnectIn": {
+        "properties": {
+          "locale": {
+            "type": "string",
+            "enum": [
+              "en",
+              "nl",
+              "pt"
+            ],
+            "title": "Locale"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "locale"
+        ],
+        "title": "ConnectIn"
       },
       "ConsentIn": {
         "properties": {
@@ -7406,6 +7667,47 @@
           "marketing_email"
         ],
         "title": "PageConsentOut"
+      },
+      "PaymentAccountOut": {
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": [
+              "off",
+              "none",
+              "onboarding",
+              "ready"
+            ],
+            "title": "State"
+          },
+          "country_supported": {
+            "type": "boolean",
+            "title": "Country Supported"
+          },
+          "min_amount_minor": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Amount Minor"
+          },
+          "currency": {
+            "type": "string",
+            "title": "Currency"
+          }
+        },
+        "type": "object",
+        "required": [
+          "state",
+          "country_supported",
+          "min_amount_minor",
+          "currency"
+        ],
+        "title": "PaymentAccountOut"
       },
       "PendingOut": {
         "properties": {
@@ -8587,6 +8889,19 @@
           "token"
         ],
         "title": "TokenIn"
+      },
+      "UrlOut": {
+        "properties": {
+          "url": {
+            "type": "string",
+            "title": "Url"
+          }
+        },
+        "type": "object",
+        "required": [
+          "url"
+        ],
+        "title": "UrlOut"
       },
       "WorkerOut": {
         "properties": {

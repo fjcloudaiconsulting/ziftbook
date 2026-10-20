@@ -573,6 +573,10 @@ ZIF-38). An empty variable means the default: `env_ignore_empty=True` on the bas
 | `ZIF_S3_SECRET_ACCESS_KEY` | api, worker | `""` | for photos | yes | Its secret. |
 | `ZIF_MEDIA_URL` | api | `""` | for photos | no | Where the media bucket is served from (a custom domain origin, no trailing slash needed); photo URLs start with it. Unset: services list no photo. |
 | `ZIF_S3_PUBLIC_ENDPOINT` | api | `""` | no (development only) | no | The host the browser reaches the store on, when `ZIF_S3_ENDPOINT` is a compose service name; presigned upload URLs use it. Never set in a deployment. |
+| **Payments** | | | | | |
+| `ZIF_STRIPE_SECRET_KEY` | api, worker | `""` | for payments | yes | Stripe secret key (`sk_...`), for the platform account that owns the Connect accounts. The worker needs only this one (events, and later releases and refunds). Unset (any of the three): payments off, booking pages book without a payment step, WARNING at startup (`payments: "off"`). |
+| `ZIF_STRIPE_WEBHOOK_SECRET` | api | `""` | for payments | yes | Signing secret (`whsec_...`) of the Connect webhook endpoint `/api/stripe/webhook`. Unset (any of the three): payments off, booking pages book without a payment step, WARNING at startup (`payments: "off"`). |
+| `ZIF_STRIPE_PUBLISHABLE_KEY` | api | `""` | for payments | no | Stripe publishable key (`pk_...`), public by design: the booking page needs it to render the card form. Unset (any of the three): payments off, booking pages book without a payment step, WARNING at startup (`payments: "off"`). |
 | **Security** | | | | | |
 | `ZIF_TURNSTILE_SECRET` | api | `""` | yes, or `ZIF_TURNSTILE_DISABLED` | yes | Cloudflare Turnstile secret. Unset: every public booking is refused (403 `turnstile_failed`) and the API logs an ERROR at startup, unless `ZIF_TURNSTILE_DISABLED=true`. |
 | `ZIF_TURNSTILE_DISABLED` | api | `false` | no | no | `true` serves public bookings with no Turnstile check when no secret is set (development, CI, tests). Ignored when a secret is set. Never on a public deployment. |

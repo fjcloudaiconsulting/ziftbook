@@ -1,0 +1,234 @@
+"""The only module that imports `stripe` (ZIF-158). Everything else asks the module-level `gateway`
+and gets small frozen dataclasses back, never Stripe objects; tests swap `gateway` for
+tests/stripe_fake.py. Nothing here logs a body, a link, a secret or a client_secret."""
+
+import json
+import logging
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Literal, TypeVar
+
+import stripe
+from opentelemetry.trace import SpanKind
+from stripe.params.v2.core import AccountCreateParams
+
+from app import tracing
+from app.config import StripeSettings
+
+# The account API with `responsibilities` (fee payer) on v2 Accounts: the one this SDK release
+# (stripe 16.0.0) is generated for.
+PINNED = "2026-09-30.endive"
+TIMEOUT_SECONDS = 10
+TOLERANCE_SECONDS = 300
+logger = logging.getLogger(__name__)
+T = TypeVar("T")
+Kind = Literal["card", "invalid", "unavailable"]
+FeesCollector = Literal["stripe", "application"]
+
+
+class Failed(Exception):
+    """A Stripe call that did not work. `kind` tells the caller what to do about it; the message is
+    only ever the kind and Stripe's request id."""
+
+    def __init__(self, kind: Kind, request_id: str | None) -> None:
+        super().__init__(f"{kind} {request_id}")
+        self.kind = kind
+        self.request_id = request_id
+
+
+class BadSignature(Exception):
+    """The webhook body is not what Stripe signed (or is not an event at all)."""
+
+
+@dataclass(frozen=True)
+class Account:
+    id: str
+    charges_enabled: bool
+
+
+@dataclass(frozen=True)
+class Event:
+    id: str
+    type: str
+    account: str | None
+    object_id: str | None
+
+
+class Gateway:
+    def __init__(self, http_client: stripe.HTTPClient | None = None) -> None:
+        self._http_client = http_client
+        self._stripe: stripe.StripeClient | None = None
+
+    def _client(self) -> stripe.StripeClient:
+        if self._stripe is None:
+            key = StripeSettings().stripe_secret_key.get_secret_value()
+            if not key:
+                raise Failed("unavailable", None)
+            self._stripe = stripe.StripeClient(
+                key,
+                stripe_version=PINNED,
+                max_network_retries=1,
+                http_client=self._http_client or stripe.RequestsClient(timeout=TIMEOUT_SECONDS),
+            )
+        return self._stripe
+
+    def _call(
+        self, op: str, call: Callable[[stripe.StripeClient], T], account: str | None = None
+    ) -> T:
+        with tracing.span(f"stripe.{op}", SpanKind.CLIENT, {"stripe.op": op}):
+            try:
+                result = call(self._client())
+            except Failed:
+                raise
+            except stripe.StripeError as error:
+                request_id = getattr(error, "request_id", None)
+                kind: Kind
+                if isinstance(error, stripe.CardError):
+                    kind = "card"
+                elif isinstance(error, stripe.InvalidRequestError | stripe.IdempotencyError):
+                    kind = "invalid"
+                else:
+                    kind = "unavailable"
+                logger.warning(
+                    "stripe call",
+                    extra={
+                        "op": op,
+                        "account": account,
+                        "object_id": None,
+                        "outcome": kind,
+                        "stripe_request_id": request_id,
+                    },
+                )
+                raise Failed(kind, request_id) from None
+            logger.info(
+                "stripe call",
+                extra={
+                    "op": op,
+                    "account": account,
+                    "object_id": getattr(result, "id", None),
+                    "outcome": "ok",
+                    "stripe_request_id": None,
+                },
+            )
+            return result
+
+    def create_account(
+        self,
+        *,
+        key: str,
+        tenant_id: str,
+        country: str,
+        currency: str,
+        fees_collector: FeesCollector,
+    ) -> Account:
+        # Stable tenant data only: Stripe rejects a reused idempotency key with other params, and
+        # onboarding collects the name and email itself.
+        def call(client: stripe.StripeClient) -> Account:
+            params: AccountCreateParams = {
+                "dashboard": "express",
+                "identity": {"country": country},
+                "defaults": {
+                    "responsibilities": {
+                        "fees_collector": fees_collector,
+                        "losses_collector": "stripe",
+                    },
+                    "currency": currency.lower(),
+                },
+                "metadata": {"tenant_id": tenant_id},
+                "configuration": {
+                    "merchant": {
+                        "capabilities": {
+                            "card_payments": {"requested": True},
+                            "ideal_payments": {"requested": True},
+                            "bancontact_payments": {"requested": True},
+                        }
+                    }
+                },
+                "include": ["configuration.merchant"],
+            }
+            return _account(client.v2.core.accounts.create(params, {"idempotency_key": key}))
+
+        return self._call("create_account", call)
+
+    def retrieve_account(self, account: str) -> Account:
+        return self._call(
+            "retrieve_account",
+            lambda client: _account(
+                client.v2.core.accounts.retrieve(account, {"include": ["configuration.merchant"]})
+            ),
+            account,
+        )
+
+    def onboarding_link(self, account: str, return_url: str, refresh_url: str) -> str:
+        return self._call(
+            "onboarding_link",
+            lambda client: (
+                client.v2.core.account_links.create(
+                    {
+                        "account": account,
+                        "use_case": {
+                            "type": "account_onboarding",
+                            "account_onboarding": {
+                                "return_url": return_url,
+                                "refresh_url": refresh_url,
+                            },
+                        },
+                    }
+                ).url
+            ),
+            account,
+        )
+
+    def login_link(self, account: str) -> str:
+        return self._call(
+            "login_link",
+            lambda client: client.v1.accounts.login_links.create(account).url,
+            account,
+        )
+
+    def register_domain(self, account: str, host: str) -> None:
+        """The Apple Pay domain, on the connected account (direct charges show it nowhere else)."""
+
+        def call(client: stripe.StripeClient) -> None:
+            try:
+                client.v1.payment_method_domains.create(
+                    {"domain_name": host}, {"stripe_account": account}
+                )
+            except stripe.InvalidRequestError as error:
+                if getattr(error, "code", None) != "resource_already_exists":
+                    raise
+
+        self._call("register_domain", call, account)
+
+    def construct_event(self, body: bytes, header: str | None) -> Event:
+        """The event, once Stripe's signature over these exact bytes checks out."""
+        secret = StripeSettings().stripe_webhook_secret.get_secret_value()
+        try:
+            stripe.WebhookSignature.verify_header(body, header, secret, TOLERANCE_SECONDS)
+            event = json.loads(body)
+            made = Event(
+                id=event["id"],
+                type=event["type"],
+                account=event.get("account"),
+                object_id=event["data"]["object"].get("id"),
+            )
+        except stripe.SignatureVerificationError, ValueError, KeyError, TypeError, AttributeError:
+            raise BadSignature from None
+        # Signed, but the fields must still be what the handlers assume.
+        if not (
+            isinstance(made.id, str)
+            and isinstance(made.type, str)
+            and isinstance(made.account, str | None)
+            and isinstance(made.object_id, str | None)
+        ):
+            raise BadSignature
+        return made
+
+
+def _account(made: stripe.v2.core.Account) -> Account:
+    merchant = made.configuration.merchant if made.configuration else None
+    card = merchant.capabilities.card_payments if merchant and merchant.capabilities else None
+    return Account(made.id, card is not None and card.status == "active")
+
+
+gateway = Gateway()

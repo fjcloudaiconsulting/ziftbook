@@ -16,7 +16,14 @@ from sqlalchemy.exc import ProgrammingError
 
 from app import auth
 from app.db import tenant_context
-from tests.conftest import EXPIRE, People, add_user, delete_services, wait_until_blocked
+from tests.conftest import (
+    EXPIRE,
+    People,
+    add_user,
+    delete_payment_accounts,
+    delete_services,
+    wait_until_blocked,
+)
 
 
 @dataclass(frozen=True)
@@ -72,6 +79,7 @@ def created(migrate_engine: Engine, bound: None) -> Iterator[list[Created]]:
         conn.execute(text("DELETE FROM password_credentials WHERE user_id = ANY(:users)"), ids)
         conn.execute(text("DELETE FROM users WHERE id = ANY(:users)"), ids)
         delete_services(conn, ids["tenants"])
+        delete_payment_accounts(conn, ids["tenants"])
         conn.execute(text("DELETE FROM tenants WHERE id = ANY(:tenants)"), ids)
 
 

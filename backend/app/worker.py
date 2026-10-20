@@ -13,8 +13,8 @@ from opentelemetry import metrics
 from opentelemetry.metrics import CallbackOptions, Observation
 from sqlalchemy import create_engine
 
-from app import bookings, jobs, logs, mail, photos, tracing
-from app.config import MailSettings, WorkerSettings
+from app import bookings, jobs, logs, mail, payments, photos, tracing
+from app.config import MailSettings, StripeSettings, WorkerSettings
 from app.db import SessionLocal
 from app.jobs import JobKind, run_once
 
@@ -32,6 +32,8 @@ KINDS: dict[str, JobKind] = {
     # ZIF-133. A replaced or removed photo's objects; the grace is long because nothing is lost by
     # waiting, and the handler re-checks that no service still uses the prefix.
     "media.delete": JobKind(photos.media_delete, timeout=30, grace=timedelta(days=7)),
+    # ZIF-158. Stripe retries a webhook for days; 50 stays under the 60 s lease.
+    "stripe.event": JobKind(payments.handle_event, timeout=50, grace=timedelta(days=3)),
 }
 
 
@@ -113,6 +115,8 @@ async def serve(settings: WorkerSettings) -> None:
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, stop.set)
     mail_settings = MailSettings()
+    # The secret key alone: release, refund and event jobs need nothing else (ZIF-158).
+    payments_on = StripeSettings().secret_ready()
     # Never the Mailgun key or the healthcheck URL. "off": email jobs fail until the key is set.
     logger.info(
         "worker started",
@@ -122,8 +126,11 @@ async def serve(settings: WorkerSettings) -> None:
             "mail": mail.transport(mail_settings),
             "mailgun_domain": mail_settings.mailgun_domain,
             "mailgun_region": mail_settings.mailgun_region,
+            "payments": "on" if payments_on else "off",
         },
     )
+    if not payments_on:
+        logger.warning("stripe unset: payments off")
     await work(KINDS, settings.healthcheck_url, stop)
     logger.info("worker stopped")
 

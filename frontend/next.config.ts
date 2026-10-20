@@ -5,8 +5,9 @@ const nextConfig: NextConfig = {
   output: "standalone",
   experimental: {
     // Next keeps a copy of every proxied request body up to this size and ends it there as if
-    // complete. Down from 10MB: the proxy forwards at most MAX_BODY_BYTES (lib/upstream.ts), so this
-    // only has to stay a socket read (64 KiB) above that for a cut body to be refused, never forwarded.
+    // complete. Down from 10MB: the proxy forwards at most MAX_BODY_BYTES, or WEBHOOK_MAX_BODY_BYTES for
+    // Stripe's webhook (lib/upstream.ts), so this only has to stay a socket read (64 KiB) above the
+    // larger for a cut body to be refused, never forwarded.
     proxyClientMaxBodySize: 1024 * 1024,
   },
   async headers() {

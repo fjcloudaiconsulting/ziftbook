@@ -22,6 +22,7 @@ from tests.conftest import (
     People,
     add_password,
     closed,
+    delete_payment_accounts,
     delete_services,
     email_of,
     events,
@@ -80,6 +81,7 @@ def businesses(migrate_engine: Engine, bound: None) -> Iterator[list[uuid.UUID]]
             )
             conn.execute(text("DELETE FROM users WHERE id = ANY(:u)"), {"u": owners})
             delete_services(conn, [tenant_id])
+            delete_payment_accounts(conn, [tenant_id])
             conn.execute(text("DELETE FROM tenants WHERE id = :t"), {"t": tenant_id})
 
 

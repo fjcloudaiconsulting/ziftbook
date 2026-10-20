@@ -103,6 +103,8 @@ Action = Literal[
     # ZIF-57: a member books or moves on the calendar.
     "booking_created",
     "booking_rescheduled",
+    # ZIF-158: an owner connects the business to Stripe, first time only.
+    "payment_account_created",
 ]
 
 

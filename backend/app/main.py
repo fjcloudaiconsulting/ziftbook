@@ -18,6 +18,7 @@ from pydantic import BaseModel
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import OperationalError
 from starlette.middleware.body_limit import RequestBodyLimitMiddleware
+from starlette.types import ASGIApp, Receive, Scope, Send
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from app import (
@@ -34,6 +35,7 @@ from app import (
     invites,
     logs,
     members,
+    payments,
     photos,
     schedule,
     services,
@@ -43,7 +45,13 @@ from app import (
     tracing,
     turnstile,
 )
-from app.config import DatabaseSettings, Settings, StorageSettings, TurnstileSettings
+from app.config import (
+    DatabaseSettings,
+    Settings,
+    StorageSettings,
+    StripeSettings,
+    TurnstileSettings,
+)
 from app.db import SessionLocal
 from app.errors import ApiError, Error
 
@@ -57,8 +65,27 @@ WRITE = {"POST", "PUT", "PATCH", "DELETE"}
 # The largest legitimate bodies are NoteChange (clients.py, ~48.0 KB worst case, astral characters
 # escaped by json.dumps) and ServiceIn (~47.6 KB); a browser sends raw UTF-8 (~21 KB worst).
 MAX_BODY = 64 * 1024
+# ZIF-158: Stripe's events dwarf anything a browser sends. The webhook alone gets this cap.
+WEBHOOK_MAX_BODY = 256 * 1024
 logger = logging.getLogger(__name__)
 access_logger = logging.getLogger("app.access")
+
+
+def body_cap(path: str) -> int:
+    return WEBHOOK_MAX_BODY if path == payments.WEBHOOK_PATH else MAX_BODY
+
+
+class PathBodyLimit:
+    """RequestBodyLimitMiddleware with the cap chosen by path (Starlette's per-route size is not
+    exposed by FastAPI's routes)."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.default = RequestBodyLimitMiddleware(app, max_body_size=MAX_BODY)
+        self.webhook = RequestBodyLimitMiddleware(app, max_body_size=WEBHOOK_MAX_BODY)
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        webhook = scope["type"] == "http" and scope["path"] == payments.WEBHOOK_PATH
+        await (self.webhook if webhook else self.default)(scope, receive, send)
 
 
 class Health(BaseModel):
@@ -121,6 +148,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     setup_token = setup.token_state()
     totp_key = totp.key_state()
     storage_on = StorageSettings().configured()
+    payments_on = StripeSettings().configured()
     # Here, not at import: `python -m app.main` prints the OpenAPI document to stdout.
     logger.info(
         "api started",
@@ -135,6 +163,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             "totp_key": totp_key,
             # "off": photo uploads answer 503 photos_unavailable (ZIF-133).
             "storage": "on" if storage_on else "off",
+            # "off": owner payment routes answer 503 and booking pages book with no payment step.
+            "payments": "on" if payments_on else "off",
         },
     )
     # ZIF-116: logged, never a refusal to start. The deployments run one replica with Recreate, so a
@@ -152,6 +182,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # A legitimate state until the object store exists: logged, never a refusal to start.
     if not storage_on:
         logger.warning("storage unset: photo uploads refused")
+    if not payments_on:
+        logger.warning("stripe unset: payments off")
     try:
         yield
     finally:
@@ -238,6 +270,8 @@ def create_app() -> FastAPI:
         bookings.router,
         bookings.merchant_router,
         booking_links.router,
+        payments.router,
+        payments.webhook_router,
         admin_auth.admin_sign_in_router,
         admin_auth.admin_half_router,
         admin_auth.admin_router,
@@ -252,7 +286,7 @@ def create_app() -> FastAPI:
     # Registered before json_only, so innermost: the byte counter for a chunked body (the proxy
     # strips content-length and streams). Only json_only's fast path stops a body that was declared
     # too large before the handler runs; here Starlette would swap the response after the fact.
-    app.add_middleware(RequestBodyLimitMiddleware, max_body_size=MAX_BODY)
+    app.add_middleware(PathBodyLimit)
 
     @app.middleware("http")
     async def json_only(
@@ -266,8 +300,9 @@ def create_app() -> FastAPI:
         # stopped only here, not by the byte counter. A non-numeric length counts as absent.
         # Compared by length first (leading zeros dropped): int() of a huge digit string is slow.
         digits = declared.lstrip("0")
+        cap = body_cap(request.url.path)
         if CONTENT_LENGTH.fullmatch(declared) and (
-            len(digits) > len(str(MAX_BODY)) or int(digits or "0") > MAX_BODY
+            len(digits) > len(str(cap)) or int(digits or "0") > cap
         ):
             response: Response = JSONResponse({"code": "content_too_large"}, status_code=413)
         elif request.method not in ("GET", "HEAD", "OPTIONS") and media_type != "application/json":

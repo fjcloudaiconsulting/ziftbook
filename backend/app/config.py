@@ -121,3 +121,28 @@ class StorageSettings(Settings):
                 self.media_url,
             )
         )
+
+
+class StripeSettings(Settings):
+    """Stripe Connect (ZIF-158). While any of the three is unset the API and worker log a WARNING at
+    startup, owner routes answer 503 payments_unavailable, and every booking page books with no
+    payment step (fail open); startup never fails over it."""
+
+    # Resolved at runtime from a secret, never committed (as turnstile_secret). API and worker.
+    stripe_secret_key: SecretStr = SecretStr("")
+    # The Connect webhook endpoint's signing secret (whsec_...). API only.
+    stripe_webhook_secret: SecretStr = SecretStr("")
+    # Public by design (pk_...): served to the booking page in BookingPageOut.payment. API only.
+    stripe_publishable_key: str = ""
+
+    def configured(self) -> bool:
+        """The API's on/off, which offer() reads: all three."""
+        return bool(
+            self.stripe_secret_key.get_secret_value()
+            and self.stripe_webhook_secret.get_secret_value()
+            and self.stripe_publishable_key
+        )
+
+    def secret_ready(self) -> bool:
+        """The worker's on/off: release, refund and event jobs need nothing but the secret key."""
+        return bool(self.stripe_secret_key.get_secret_value())
