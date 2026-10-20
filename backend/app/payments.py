@@ -892,7 +892,7 @@ def _refund(tenant_id: UUID, row: Row[Any]) -> None:
                 row.account,
                 row.intent_id,
                 due - state.amount_refunded,
-                # D6 mode 2: ziftbook's fee goes back to the business when it (or we) ended the booking.
+                # D6 mode 2: ziftbook's fee goes back to the business when it (or we) ended it.
                 refund_application_fee=(
                     row.ending != "cancelled_by_client" if row.application_fee_minor > 0 else None
                 ),

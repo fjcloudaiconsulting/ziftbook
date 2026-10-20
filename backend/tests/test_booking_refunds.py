@@ -10,8 +10,8 @@ from typing import Any
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import Engine, text
 from opentelemetry.sdk.metrics.export import InMemoryMetricReader
+from sqlalchemy import Engine, text
 from sqlalchemy.exc import DBAPIError
 
 from app import bookings, payments, stripe_gateway
