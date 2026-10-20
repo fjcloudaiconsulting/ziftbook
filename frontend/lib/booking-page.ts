@@ -344,17 +344,13 @@ export function elementsOptions(
   return { mode: "payment", amount: price.amount_minor, currency, captureMethod: "manual", paymentMethodTypes: ["card"] };
 }
 
-const KEPT = ["service", "with", "at", "booking"];
+const STRIPE = /^(payment_intent|setup_intent|redirect_status)/;
 
-/** The checkout's own query, minus whatever Stripe appended on the way back (the client secret must
- * never stay in history or logs). */
+/** The address minus whatever Stripe appended on the way back (the client secret must never stay in
+ * history or logs); the booking, the pick and the visitor's own params stay. */
 export function returnParams(search: string): URLSearchParams {
-  const from = new URLSearchParams(search);
-  const kept = new URLSearchParams();
-  for (const key of KEPT) {
-    const value = from.get(key);
-    if (value !== null) kept.set(key, value);
-  }
+  const kept = new URLSearchParams(search);
+  for (const key of [...kept.keys()]) if (STRIPE.test(key)) kept.delete(key);
   return kept;
 }
 
