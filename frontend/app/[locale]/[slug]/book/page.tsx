@@ -26,9 +26,9 @@ export default async function CheckoutPage({
 
   if (loaded.status === 404) notFound();
 
-  // Only service/with/at, so nothing else leaks through a retry.
+  // Only service/with/at/booking, so nothing else (Stripe's return params) leaks through a retry.
   const pick = new URLSearchParams();
-  for (const key of ["service", "with", "at"]) {
+  for (const key of ["service", "with", "at", "booking"]) {
     const value = query[key];
     if (typeof value === "string") pick.set(key, value);
   }
@@ -66,6 +66,7 @@ export default async function CheckoutPage({
         serviceId={service.id}
         memberId={memberId}
         at={at}
+        booking={pick.get("booking")}
       />
     </>
   );

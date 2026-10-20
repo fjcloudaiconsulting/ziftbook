@@ -1,10 +1,11 @@
 "use client";
 
 import { useLocale, useTranslations } from "next-intl";
-import { useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 
 import { type PaymentAccountOut, paymentsAccount, paymentsConnect } from "@/api-client";
 import { useRouter } from "@/i18n/navigation";
+import { formatMoney } from "@/lib/money";
 import { paymentsAction } from "@/lib/settings";
 
 import { SignedOutBanner, useConsole } from "../../_ui/console";
@@ -13,8 +14,9 @@ import { Banner } from "../../_ui/parts";
 import { openStripeDashboard } from "../../_ui/stripe-dashboard";
 import uiStyles from "../../_ui/ui.module.css";
 
-/** Online payments: the Stripe connection's state, and the one action it allows (owners only). */
-export function Payments({ disabled }: { disabled: boolean }) {
+/** Online payments: the Stripe connection's state, and the one action it allows (owners only). `switchRow`
+ * is the settings form's own checkbox that turns the checkout's payment step on (it saves with the page). */
+export function Payments({ disabled, switchRow }: { disabled: boolean; switchRow(min: string, ready: boolean): ReactNode }) {
   const { session, call } = useConsole();
   const t = useTranslations("Console.settings");
   const locale = useLocale() as "en" | "nl" | "pt";
@@ -89,6 +91,7 @@ export function Payments({ disabled }: { disabled: boolean }) {
       </legend>
       {signedOut && <SignedOutBanner />}
       {body && <p className={styles.body}>{body}</p>}
+      {account && owner && account.state !== "off" && account.country_supported && account.min_amount_minor !== null && switchRow(formatMoney(account.min_amount_minor, account.currency, locale), account.state === "ready")}
       {(action === "connect" || action === "continue") && (
         <button className={`${uiStyles.button} ${uiStyles.primary}`} type="button" aria-disabled={busy || undefined} onClick={() => go("connect")}>
           {busy && <span className={uiStyles.spinner} aria-hidden="true" />}

@@ -360,7 +360,7 @@ export function returnParams(search: string): URLSearchParams {
 
 /** Extra lines for the summary's terms block: the kept card fee, only while Pay now is chosen and
  * the platform really keeps it (R6: false at launch). Message keys of BookingPage. */
-export function termsLines(choice: PaymentChoice | null, keepsCardFee: boolean): string[] {
+export function termsLines(choice: PaymentChoice | null, keepsCardFee: boolean): "termsPaymentFee"[] {
   return choice === "pay" && keepsCardFee ? ["termsPaymentFee"] : [];
 }
 

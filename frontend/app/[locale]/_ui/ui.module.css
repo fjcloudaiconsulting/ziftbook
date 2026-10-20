@@ -519,6 +519,14 @@ a.textButton, .textButton:has(> svg) { display: inline-flex; align-items: center
 .photoProgress::-moz-progress-bar { background: var(--primary); border-radius: 999px; }
 .spinDark { flex: none; width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--line); border-top-color: var(--primary); animation: spin 800ms linear infinite; }
 @media (prefers-reduced-motion: reduce) { .spinDark { animation: none; border-right-color: var(--primary); } }
+.held { display: flex; gap: 0.55rem; align-items: flex-start; padding: 0.75rem 0.9rem; border-radius: 0.75rem; border: 1px solid var(--note-line); background: var(--note-soft); font-size: 0.9375rem; }
+.held .spinDark { margin-top: 0.2rem; }
+/* The payment choice's legend, as .pillSet's legend. */
+.payLegend { padding: 0; margin-bottom: 0.5rem; }
+/* The request after Send: the same fields, read-only, never hidden. */
+.lockSet { border: 0; margin: 0; padding: 0; min-width: 0; display: flex; flex-direction: column; gap: 1.1rem; }
+.lockSet:disabled .input :is(input, select) { background: var(--surface); border-color: var(--line); color: var(--ink); opacity: 1; -webkit-text-fill-color: var(--ink); }
+.lockSet:disabled .consentRow { color: var(--muted); }
 .pill2 .tile { --s: 32px; }
 .pill2 .tile svg { width: 58%; height: 58%; }
 .svcChoice .tile { --s: 64px; }

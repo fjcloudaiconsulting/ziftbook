@@ -1,18 +1,20 @@
 "use client";
 
 import { useTranslations } from "next-intl";
+import type { ReactNode, Ref } from "react";
 
 import type { BookingPageOut } from "@/api-client";
 import { addDays, localDay, localWhen } from "@/lib/booking-link";
-import { cancellationState, freeNamed, nextWeekDisabled, ownPolicyText, slotsFor } from "@/lib/booking-page";
+import { cancellationState, freeNamed, nextWeekDisabled, ownPolicyText, type PaymentChoice, slotsFor } from "@/lib/booking-page";
 import { formatMoney } from "@/lib/money";
 import { type Locale } from "@/lib/services";
 import { zoneCity } from "@/lib/week";
 
-import { AlertIcon, Banner, Chevron, Outcome } from "../_ui/parts";
+import { AlertIcon, Banner, Chevron, Outcome, Submit } from "../_ui/parts";
 import { CheckIcon, Picker as SharedPicker } from "../_ui/picker";
 import styles from "../_ui/ui.module.css";
 import { MoveIcon } from "./icons";
+import { type PayHandle, PaymentStep } from "./payment-step";
 import { type CacheEntry, localized, type Service, type Step2Plus, type Worker } from "./shared";
 
 export type Done = {
@@ -21,7 +23,10 @@ export type Done = {
   worker: Pick<Worker, "display_name"> | null;
   starts_at: string;
   price: { amount_minor: number; currency: string };
-  email: string;
+  /** null: not known here (a return from the bank in a fresh tab), so the lede names no address. */
+  email: string | null;
+  /** What was done with the card: checked, nothing charged, or paid. null: the business takes no payment online. */
+  payment: "checked" | "paid" | null;
 };
 
 /** Step 3's "who" choice (ZIF-100): only when the time was picked under "Anyone available" on a
@@ -29,6 +34,7 @@ export type Done = {
  * preselected; exactly one: a plain line. The 409 note (decision 5) sits above it. */
 export function WhoAt({
   s2,
+  locked,
   banner,
   zone,
   dLocale,
@@ -36,6 +42,8 @@ export function WhoAt({
   onPick,
 }: {
   s2: Step2Plus;
+  /** The request is sent and awaits payment: the choice can no longer change. */
+  locked: boolean;
   banner: { tone: "note" | "error"; text: string } | null;
   zone: string;
   dLocale: string;
@@ -48,7 +56,7 @@ export function WhoAt({
     <>
       {banner && <Banner tone={banner.tone}>{banner.text}</Banner>}
       {named.length > 1 && (
-        <fieldset className={styles.pillSet} aria-describedby="bp-who-hint">
+        <fieldset className={styles.pillSet} aria-describedby="bp-who-hint" disabled={locked}>
           <legend className={styles.label}>{t("whoAt", { time })}</legend>
           <p className={styles.hint} id="bp-who-hint">
             {t("whoHint")}
@@ -201,6 +209,7 @@ export function Terms({
   dLocale,
   zone,
   businessLanguage,
+  extra,
   t,
 }: {
   page: Pick<BookingPageOut, "name" | "cancellation">;
@@ -209,6 +218,8 @@ export function Terms({
   dLocale: string;
   zone: string;
   businessLanguage: Locale;
+  /** Further lines (termsLines), each with {biz}. */
+  extra: "termsPaymentFee"[];
   t: ReturnType<typeof useTranslations>;
 }) {
   const c = page.cancellation;
@@ -253,6 +264,12 @@ export function Terms({
           <MoveIcon />
           <span>{c.max_reschedules > 0 ? t("moveTerms", { n: c.reschedule_cutoff_hours, m: c.max_reschedules }) : t("moveOff")}</span>
         </li>
+        {extra.map((key) => (
+          <li key={key}>
+            <AlertIcon />
+            <span>{t(key, { biz: page.name })}</span>
+          </li>
+        ))}
       </ul>
       {ownText && (
         <blockquote className={styles.quote} lang={businessLanguage}>
@@ -274,7 +291,7 @@ export function DoneScreen({
   t,
   onAgain,
 }: {
-  page: Pick<BookingPageOut, "name" | "language">;
+  page: Pick<BookingPageOut, "name" | "language" | "payment">;
   done: Done;
   locale: Locale;
   dLocale: string;
@@ -282,13 +299,22 @@ export function DoneScreen({
   t: ReturnType<typeof useTranslations>;
   onAgain(): void;
 }) {
+  // Only these two are a booking; the caller (doneState) never sends another.
   const pending = done.status === "pending";
+  if (!pending && done.status !== "confirmed") return null;
   const start = new Date(done.starts_at);
   const end = new Date(start.getTime() + done.service.duration_minutes * 60_000);
   const w = localWhen(done.starts_at, zone, dLocale);
   const endTime = new Intl.DateTimeFormat(dLocale, { hour: "2-digit", minute: "2-digit", timeZone: zone }).format(end);
   const name = localized(done.service.name, locale, page.language as Locale);
-  const lede = pending ? t("pendLede", { biz: page.name, email: done.email }) : t("okLede", { email: done.email });
+  const lede = pending
+    ? done.email
+      ? t("pendLede", { biz: page.name, email: done.email })
+      : t("pendLedeNoEmail", { biz: page.name })
+    : done.email
+      ? t("okLede", { email: done.email })
+      : t("okLedeNoEmail");
+  const price = formatMoney(done.price.amount_minor, done.price.currency, locale);
   return (
     <div className={styles.outcomeGrid}>
       <Outcome icon={pending ? "mail" : "done"} title={pending ? t("pendTitle") : t("okTitle")} lede={lede}>
@@ -301,14 +327,132 @@ export function DoneScreen({
           </li>
           <li>
             {done.worker?.display_name && `${done.worker.display_name} · `}
-            {formatMoney(done.price.amount_minor, done.price.currency, locale)}
+            {price}
           </li>
+          {done.payment && <li>{t(done.payment === "paid" ? "donePaid" : page.payment?.check_with === "setup" ? "doneCheckedSetup" : "doneChecked", { price })}</li>}
         </ul>
         <p className={styles.hint}>{t("spam")}</p>
         <button className={`${styles.button} ${styles.secondary}`} type="button" onClick={onAgain}>
           {t("another")}
         </button>
       </Outcome>
+    </div>
+  );
+}
+
+/** The page for a booking that still waits for its payment (a refresh, Back from a bank page, Stripe's
+ * return), built from the booking alone: no details form, the intent already exists. `payment` null:
+ * the step went away meanwhile, so only the way out is offered. */
+export function ResumeView({
+  page,
+  price,
+  payment,
+  choice,
+  busy,
+  label,
+  banner,
+  aside,
+  stepRef,
+  locale,
+  t,
+  onChoice,
+  onSend,
+  onChange,
+  onUnavailable,
+}: {
+  page: Pick<BookingPageOut, "name" | "payment">;
+  price: { amount_minor: number; currency: string };
+  payment: BookingPageOut["payment"];
+  choice: PaymentChoice;
+  busy: boolean;
+  label: string;
+  banner: { tone: "note" | "error"; text: string } | null;
+  aside: ReactNode;
+  stepRef: Ref<PayHandle>;
+  locale: string;
+  t: ReturnType<typeof useTranslations>;
+  onChoice(choice: PaymentChoice): void;
+  onSend(): void;
+  onChange(): void;
+  onUnavailable(): void;
+}) {
+  return (
+    <div className={styles.bookingLayout}>
+      <div className={styles.flowCol}>
+        <section className={styles.step} aria-labelledby="pay-h">
+          <div className={styles.stepHead}>
+            <h2 id="pay-h">{t("payTitle")}</h2>
+          </div>
+          <div className={styles.stepBody}>
+            {payment ? (
+              <form
+                className={styles.form}
+                method="post"
+                noValidate
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  onSend();
+                }}
+              >
+                {banner && <Banner tone={banner.tone}>{banner.text}</Banner>}
+                <PaymentStep ref={stepRef} payment={payment} price={price} locale={locale} biz={page.name} choice={choice} busy={busy} legend={false} t={t} onChoice={onChoice} onUnavailable={onUnavailable} />
+                <Submit busy={busy} busyLabel={label}>
+                  {label}
+                </Submit>
+                <button className={`${styles.button} ${styles.secondary}`} type="button" onClick={onChange}>
+                  {t("changeRequest")}
+                </button>
+              </form>
+            ) : (
+              <>
+                <Banner tone="note">{t("paymentChanged")}</Banner>
+                <button className={`${styles.button} ${styles.secondary}`} type="button" onClick={onChange}>
+                  {t("changeRequest")}
+                </button>
+              </>
+            )}
+          </div>
+        </section>
+      </div>
+      {aside}
+    </div>
+  );
+}
+
+/** The payment is still being processed: a polite live region whose text changes only when the state
+ * does, so a poll that finds nothing new announces nothing. */
+export function Processing({ aside, t }: { aside: ReactNode; t: ReturnType<typeof useTranslations> }) {
+  return (
+    <div className={styles.bookingLayout}>
+      <div className={styles.flowCol}>
+        <section className={styles.step} aria-labelledby="pay-h">
+          <div className={styles.stepHead}>
+            <h2 id="pay-h">{t("payTitle")}</h2>
+          </div>
+          <div className={styles.stepBody}>
+            <div className={styles.held} aria-live="polite">
+              <span className={styles.spinDark} aria-hidden="true" />
+              <span>{t("payProcessing")}</span>
+            </div>
+          </div>
+        </section>
+      </div>
+      {aside}
+    </div>
+  );
+}
+
+/** A booking that can no longer be paid (the time ran out, or an old link): what happened and the way
+ * back to the picker. */
+export function PayEnd({ text, t, onAgain }: { text: string; t: ReturnType<typeof useTranslations>; onAgain(): void }) {
+  return (
+    <div className={styles.stepBody}>
+      <Banner tone="note">{text}</Banner>
+      <div className={styles.actions}>
+        <button className={`${styles.button} ${styles.primary}`} type="button" onClick={onAgain}>
+          {t("step2")}
+        </button>
+      </div>
     </div>
   );
 }

@@ -29,6 +29,8 @@ export function Summary({
   messageOpen,
   messageError,
   messageRef,
+  extraTerms,
+  locked,
   onMessage,
   onMessageOpen,
 }: {
@@ -45,7 +47,12 @@ export function Summary({
   messageOpen: boolean;
   messageError: string | undefined;
   messageRef: RefObject<HTMLTextAreaElement | null>;
-  onMessage(text: string): void;
+  /** termsLines: further lines for the terms block. */
+  extraTerms: "termsPaymentFee"[];
+  /** The request is sent and awaits payment: the message can no longer change. */
+  locked: boolean;
+  /** null: no message box at all (the resume view only reads the booking). */
+  onMessage: ((text: string) => void) | null;
   onMessageOpen(open: boolean): void;
 }) {
   const businessLanguage = page.language as Locale;
@@ -85,34 +92,37 @@ export function Summary({
           )}
         </dl>
       )}
-      <details open={messageOpen} onToggle={(event) => onMessageOpen(event.currentTarget.open)}>
-        <summary className={styles.textButton}>{t("message", { biz: page.name })}</summary>
-        <div className={styles.field}>
-          <div className={styles.input}>
-            <textarea
-              ref={messageRef}
-              name="message"
-              maxLength={1000}
-              aria-label={t("message", { biz: page.name })}
-              value={message}
-              onChange={(e) => onMessage(e.target.value)}
-              aria-invalid={messageError ? true : undefined}
-              aria-describedby={messageError ? "bp-message-hint bp-message-err" : "bp-message-hint"}
-            />
+      {onMessage && (
+        <details open={messageOpen} onToggle={(event) => onMessageOpen(event.currentTarget.open)}>
+          <summary className={styles.textButton}>{t("message", { biz: page.name })}</summary>
+          <div className={styles.field}>
+            <div className={styles.input}>
+              <textarea
+                ref={messageRef}
+                name="message"
+                maxLength={1000}
+                aria-label={t("message", { biz: page.name })}
+                value={message}
+                readOnly={locked}
+                onChange={(e) => onMessage(e.target.value)}
+                aria-invalid={messageError ? true : undefined}
+                aria-describedby={messageError ? "bp-message-hint bp-message-err" : "bp-message-hint"}
+              />
+            </div>
+            <p className={styles.hint} id="bp-message-hint">
+              {t("messageHint", { biz: page.name })}
+            </p>
+            {messageError && <FieldError id="bp-message-err">{messageError}</FieldError>}
           </div>
-          <p className={styles.hint} id="bp-message-hint">
-            {t("messageHint", { biz: page.name })}
-          </p>
-          {messageError && <FieldError id="bp-message-err">{messageError}</FieldError>}
-        </div>
-      </details>
+        </details>
+      )}
       <dl className={styles.summary}>
         <div className={`${styles.summaryRow} ${styles.summaryTotal}`}>
           <dt>{t("total")}</dt>
           <dd>{price}</dd>
         </div>
       </dl>
-      <Terms page={page} slot={slot} locale={locale} dLocale={dLocale} zone={zone} businessLanguage={businessLanguage} t={t} />
+      <Terms page={page} slot={slot} locale={locale} dLocale={dLocale} zone={zone} businessLanguage={businessLanguage} extra={extraTerms} t={t} />
       {!page.auto_confirm && <Banner tone="note">{t("approvalNote", { biz: page.name })}</Banner>}
     </aside>
   );

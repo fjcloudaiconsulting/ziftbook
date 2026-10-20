@@ -265,12 +265,13 @@ export function Settings() {
     </>
   );
   const fid = (key: Key) => `${formId}-${key}`;
-  const check = (key: Key, label: string, hint: string) => (
+  const check = (key: Key, label: string, hint: string, off = false) => (
     <div className={styles.checkRow}>
       <input
         id={fid(key)}
         type="checkbox"
         checked={draft[key] as boolean}
+        disabled={off}
         onChange={(e) => set(key, e.target.checked)}
         aria-describedby={`${fid(key)}-hint`}
       />
@@ -428,7 +429,7 @@ export function Settings() {
           </Field>
         </fieldset>
 
-        <Payments disabled={saving} />
+        <Payments disabled={saving} switchRow={(min, ready) => check("payment_check", t("paymentCheckLabel"), t("paymentCheckHint", { min }), !ready)} />
 
         <fieldset className={`${styles.section} ${styles.settingsSection}`} disabled={saving}>
           <legend>
