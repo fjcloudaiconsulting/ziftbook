@@ -44,6 +44,10 @@ CANCELABLE = {
 }
 
 
+# Stripe counts a pending refund in the charge's amount_refunded, and takes it off if it fails.
+COUNTED = {"succeeded", "pending"}
+
+
 class FakeGateway(Gateway):
     def __init__(self) -> None:
         super().__init__()
@@ -347,14 +351,14 @@ class FakeGateway(Gateway):
             "status": status,
             "account": self.intents[intent_id]["account"],
         }
-        if status == "succeeded":
+        if status in COUNTED:
             self.intents[intent_id]["amount_refunded"] += amount
         return refund_id
 
     def fail_refund(self, refund_id: str) -> None:
         """The refund fails after Stripe took it: what it refunded comes off the charge."""
         got = self.refunds[refund_id]
-        if got["status"] == "succeeded":
+        if got["status"] in COUNTED:
             self.intents[got["intent_id"]]["amount_refunded"] -= got["amount"]
         got["status"] = "failed"
 

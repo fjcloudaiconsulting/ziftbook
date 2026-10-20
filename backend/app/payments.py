@@ -61,8 +61,9 @@ INTENT_EVENTS = {
     "setup_intent.succeeded",
     "setup_intent.setup_failed",
 }
-# Both say a refund changed; refund.failed is sent for every failure since API 2024-10-28.
-REFUND_EVENTS = {"charge.refund.updated", "refund.failed"}
+# All say a refund changed (the handler reads the amounts, so any of them is safe);
+# charge.refund.updated is deprecated, refund.failed is sent for every failure since API 2024-10-28.
+REFUND_EVENTS = {"charge.refund.updated", "refund.updated", "refund.created", "refund.failed"}
 # The event types with a handler. Others are accepted (200) and dropped until theirs exists.
 HANDLED = {"account.updated"} | INTENT_EVENTS | REFUND_EVENTS
 # The endings that send a paid booking's money back (everything else keeps it: O7).
@@ -918,6 +919,9 @@ def _refund(tenant_id: UUID, row: Row[Any]) -> None:
                 tracing.PAYMENT_OUTCOMES,
                 {"payment.kind": row.kind, "payment.outcome": "refunded"},
             )
+    if refund_id is not None:
+        # It may have failed while the record step was failing: that event saw nothing owed.
+        refund_changed(tenant_id, refund_id)
     if due > 0:
         logger.info(
             "payment refunded",

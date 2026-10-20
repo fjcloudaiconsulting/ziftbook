@@ -511,3 +511,33 @@ def test_an_unknown_fee_is_never_guessed(
     cancelled_by_client(app, people, other, owner, False)
     payments.settle(settle_job(people, other))  # the flag is off again
     assert fake_stripe.refunded() == [PRICE - 162, PRICE]
+
+
+# Review round 3: FENCE. Kills: a settle that records a refund Stripe has already failed and never
+# looks again (the failure event ran while the record step was failing, so it saw nothing owed).
+def test_a_refund_that_failed_before_it_was_recorded_is_flagged_when_it_is(
+    people: People,
+    app: FastAPI,
+    owner: TestClient,
+    ready: str,
+    fake_stripe: FakeGateway,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, booking_id, _ = booked(app, people, fake_stripe, ready)
+    assert patch(owner, booking_id, "declined").status_code == 200
+    job = settle_job(people, booking_id)
+    with monkeypatch.context() as patched:
+        patched.setattr(payments, "REFUNDED", text("SELECT 1 / 0"))
+        with pytest.raises(DBAPIError):
+            payments.settle(job)
+    (refund_id,) = fake_stripe.refunds
+    fake_stripe.fail_refund(refund_id)
+    assert webhook(client, "refund.failed", account_of(people), refund_id).status_code == 200
+    run("stripe.event")
+    assert paid_row(people, booking_id)["refund_failed_at"] is None  # nothing recorded as owed yet
+
+    payments.settle(job)  # the retry replays the same refund and records it
+
+    assert fake_stripe.refunded() == [PRICE]
+    assert paid_row(people, booking_id)["refund_failed_at"] is not None
+    assert count_events(people, booking_id, "refund_failed") == 1

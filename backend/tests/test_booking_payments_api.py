@@ -1712,3 +1712,39 @@ def test_a_same_intent_loser_never_hands_out_a_landed_payment(
 
     assert (lost.status_code, lost.json()) == (409, {"code": "payment_settled"})
     assert pay_rows(people, booking_id)[-1]["status"] == "checked"
+
+
+# Review round 3: FENCE. Kills: handling only charge.refund.updated, which Stripe deprecated (a
+# refund made good in the dashboard may arrive as refund.updated or refund.created alone).
+@pytest.mark.parametrize("type_", ["refund.updated", "refund.created"])
+def test_the_newer_refund_events_clear_the_flag(
+    type_: str,
+    people: People,
+    app: FastAPI,
+    owner: TestClient,
+    ready: str,
+    fake_stripe: FakeGateway,
+) -> None:
+    client = new_client(app)
+    booking_id = place(app, people, ready, payment="pay", client=client).json()["id"]
+    intent = fake_stripe.latest(booking_id)
+    fake_stripe.confirm(intent)
+    assert sync(client, people, booking_id).json()["status"] == "pending"
+    assert (
+        owner.patch(f"/api/bookings/{booking_id}", json={"status": "declined"}).status_code == 200
+    )
+    bookings.sweep()
+    run("payment.settle")
+    (first,) = fake_stripe.refunds
+    fake_stripe.fail_refund(first)
+    account = account_of(people)
+    assert webhook(client, "refund.failed", account, first).status_code == 200
+    run("stripe.event")
+    detail = owner.get(f"/api/bookings/{booking_id}").json()
+    assert detail["payment"]["refund_failed"] is True
+
+    good = fake_stripe.add_refund(intent, 2500, "pending")  # counts as refunded, as at Stripe
+    assert webhook(client, type_, account, good).status_code == 200
+    run("stripe.event")
+
+    assert owner.get(f"/api/bookings/{booking_id}").json()["payment"]["refund_failed"] is False
