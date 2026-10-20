@@ -7,7 +7,8 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { actionsFor, bookingHref, closedDay, closedDetail, isWaiting, spanTimes, telHref, daySlices, dayWindow, historyLabel, hourRange, hrefFor, lanes, monToSun, nowTop, parseView, switchDate, visibleDays, weekStart, weekdayOf, whenParts } from "../lib/calendar.ts";
+import { actionsFor, bookingHref, closedDay, closedDetail, isWaiting, spanTimes, telHref, daySlices, dayWindow, historyLabel, paymentFact, hourRange, hrefFor, lanes, monToSun, nowTop, parseView, switchDate, visibleDays, weekStart, weekdayOf, whenParts } from "../lib/calendar.ts";
+import { formatMoney } from "../lib/money.ts";
 
 const AMS = "Europe/Amsterdam";
 const at = (iso) => new Date(iso).getTime();
@@ -217,6 +218,33 @@ describe("historyLabel (F8)", () => {
   test("an unknown event, or a move without details, is a plain update and never throws", () => {
     assert.equal(label([ev("teleported")], 0).key, "historyUpdated");
     assert.equal(label([ev("rescheduled")], 0).key, "historyUpdated");
+  });
+});
+
+describe("payment events and the payment fact (ZIF-158)", () => {
+  const ev = (event) => ({ event, at: "2026-10-19T10:13:00Z", actor: "system", actor_name: null, details: null });
+  const pay = (extra = {}) => ({ kind: "pay", status: "paid", amount_minor: 3500, currency: "EUR", refunded_minor: 0, refund_failed: false, ...extra });
+
+  test("fence: the three payment events and the failed refund have their own lines, never the generic 'Updated'", () => {
+    // Wrong implementation killed: the default branch, which words money events as "Updated".
+    const keys = ["payment_checked", "paid", "refunded", "refund_failed"].map((e) => historyLabel([ev(e)], 0, "booking_page", 2, AMS).key);
+    assert.deepEqual(keys, ["historyPaymentChecked", "historyPaid", "historyRefunded", "historyRefundFailed"]);
+  });
+
+  test("fence: a refund that failed reads as failed, never as refunded", () => {
+    // Wrong implementation killed: reading refunded_minor alone, which tells the merchant a refund went out that the client never got.
+    const f = paymentFact(pay({ refund_failed: true, refunded_minor: 1000 }), "en");
+    assert.equal(f.key, "paymentRefundFailed");
+    assert.equal(f.failed, true);
+    assert.equal(paymentFact(pay({ refunded_minor: 3500 }), "en").key, "paymentRefunded");
+    assert.equal(paymentFact(pay(), "en").key, "paymentPaid");
+    assert.equal(paymentFact(pay({ kind: "check", status: "checked", amount_minor: 0 }), "en").key, "paymentChecked");
+    assert.equal(paymentFact(null, "en"), null);
+    assert.equal(paymentFact(pay({ status: "open" }), "en"), null);
+  });
+
+  test("guard: amounts are formatted by formatMoney in the page's locale", () => {
+    assert.deepEqual(paymentFact(pay({ refunded_minor: 1000 }), "nl").params, { amount: formatMoney(3500, "EUR", "nl"), refunded: formatMoney(1000, "EUR", "nl") });
   });
 });
 

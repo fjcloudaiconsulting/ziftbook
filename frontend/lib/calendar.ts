@@ -3,6 +3,7 @@
 // visible hour range, which actions a booking offers, its history lines and the URL state. Free of
 // React so node --test can run it in any runner zone.
 import { canAnswerRequests } from "./console.ts";
+import { formatMoney } from "./money.ts";
 import { addDaysISO, localDateISO, localTime, localToInstant } from "./time-off.ts";
 
 export type Role = "owner" | "worker";
@@ -210,6 +211,10 @@ export type HistoryKey =
   | "historyExpired"
   | "historyMoved"
   | "historyMovedTeam"
+  | "historyPaymentChecked"
+  | "historyPaid"
+  | "historyRefunded"
+  | "historyRefundFailed"
   | "historyUpdated";
 
 const BY_TEAM: Record<string, HistoryKey> = {
@@ -217,6 +222,12 @@ const BY_TEAM: Record<string, HistoryKey> = {
   cancelled_by_merchant: "historyCancelled",
   completed: "historyCompleted",
   no_show: "historyNoShow",
+};
+const SYSTEM: Record<string, HistoryKey> = {
+  payment_checked: "historyPaymentChecked",
+  paid: "historyPaid",
+  refunded: "historyRefunded",
+  refund_failed: "historyRefundFailed",
 };
 // Events that change the status: the one before a `confirmed` tells an accept from an undo.
 const STATUS_EVENTS = ["created", "confirmed", "declined", "cancelled_by_merchant", "cancelled_by_client", "completed", "no_show", "expired"];
@@ -259,9 +270,31 @@ export function historyLabel(
       const k = events.slice(0, i + 1).filter((x) => x.event === "rescheduled" && x.actor !== "team").length;
       return { key: "historyMoved", params: { ...parts, k, max: maxReschedules } };
     }
+    case "payment_checked":
+    case "paid":
+    case "refunded":
+    case "refund_failed":
+      return { key: SYSTEM[e.event], params: {} };
     default:
       return { key: BY_TEAM[e.event] ?? "historyUpdated", params: BY_TEAM[e.event] ? { actor } : {} };
   }
+}
+
+/** The booking's payment as one catalog key plus its amounts, or null when there is nothing to show
+ * (no payment, or one still open or canceled). A failed refund is never worded as refunded. */
+export function paymentFact(
+  payment: { status: string; amount_minor: number; currency: string; refunded_minor: number; refund_failed: boolean } | null,
+  locale: string,
+): { key: "paymentChecked" | "paymentPaid" | "paymentRefunded" | "paymentRefundFailed"; params: Record<string, string>; failed: boolean } | null {
+  if (!payment) return null;
+  const amount = formatMoney(payment.amount_minor, payment.currency, locale);
+  if (payment.status === "checked") return { key: "paymentChecked", params: {}, failed: false };
+  if (payment.status !== "paid") return null;
+  if (payment.refund_failed) return { key: "paymentRefundFailed", params: { amount }, failed: true };
+  if (payment.refunded_minor > 0) {
+    return { key: "paymentRefunded", params: { amount, refunded: formatMoney(payment.refunded_minor, payment.currency, locale) }, failed: false };
+  }
+  return { key: "paymentPaid", params: { amount }, failed: false };
 }
 
 /** Whether a booking's line reads "waiting for your answer since then": the `created` line of a booking

@@ -3,16 +3,16 @@
 import { useLocale, useTranslations } from "next-intl";
 import { type MouseEvent, type ReactNode, useEffect, useRef, useState } from "react";
 
-import { type BookingDetailOut, bookingApprovalsRead, bookingApprovalsUpdate } from "@/api-client";
+import { type BookingDetailOut, bookingApprovalsRead, bookingApprovalsUpdate, paymentsDashboard } from "@/api-client";
 import { Link } from "@/i18n/navigation";
-import { type Action, actionsFor, historyLabel, isWaiting, telHref, whenParts } from "@/lib/calendar";
+import { type Action, actionsFor, historyLabel, isWaiting, paymentFact, telHref, whenParts } from "@/lib/calendar";
 import { canAnswerRequests, dateLocale } from "@/lib/console";
 import { formatMoney } from "@/lib/money";
 import { type Locale, type NameMap, serviceName } from "@/lib/services";
 import { localTime } from "@/lib/time-off";
 import { acceptBody, declineBody, expiryLabel } from "@/lib/today";
 
-import { SignedOutBanner, useConsole } from "../../_ui/console";
+import { JSON_WRITE, SignedOutBanner, useConsole } from "../../_ui/console";
 import styles from "../../_ui/console.module.css";
 import { Banner, FieldError, problem } from "../../_ui/parts";
 import uiStyles from "../../_ui/ui.module.css";
@@ -186,7 +186,8 @@ export function BookingDetail({
       from: moved ? (params.sameDay ? `${params.fromTime}` : `${dayOf(params.from)} ${params.fromTime}`) : "",
       to: moved ? (params.sameDay ? `${params.toTime}` : `${dayOf(params.to)} ${params.toTime}`) : "",
     });
-    const latest = i === d.history.length - 1;
+    // Green marks the current state, never a failure.
+    const latest = i === d.history.length - 1 && key !== "historyRefundFailed";
     const waiting = isWaiting(d, i);
     const small = waiting
       ? t(canAnswer ? "historyWaiting" : "historyWaitingOwner", { when: stamp(at) })
@@ -198,6 +199,46 @@ export function BookingDetail({
         {text}
         <small>{small}</small>
       </li>
+    );
+  }
+
+  // The Stripe dashboard opens in a tab made before the (slow) link request, so a popup blocker allows it.
+  async function openDashboard() {
+    const tab = window.open("", "_blank");
+    const outcome = await call(() => paymentsDashboard(JSON_WRITE), { write: true });
+    if (outcome.status === 200 && outcome.data && tab) {
+      tab.opener = null;
+      tab.location.href = outcome.data.url;
+    } else {
+      tab?.close();
+      if (outcome.status === 401) setSignedOut(true);
+      else setError(form(problem(outcome)));
+    }
+  }
+
+  function paymentLine(d: BookingDetailOut) {
+    const fact = paymentFact(d.payment, locale);
+    if (!fact) return null;
+    const text = t(fact.key, fact.params);
+    return (
+      <>
+        <dt>{t("factPayment")}</dt>
+        <dd>
+          {fact.failed ? (
+            <>
+              <FieldError id="payment-error">{text}</FieldError>
+              {role === "owner" && (
+                <button type="button" className={uiStyles.textButton} onClick={openDashboard}>
+                  {t("paymentDashboard")}
+                  <span className={uiStyles.srOnly}>{t("opensInNewTab")}</span>
+                </button>
+              )}
+            </>
+          ) : (
+            text
+          )}
+        </dd>
+      </>
     );
   }
 
@@ -375,6 +416,7 @@ export function BookingDetail({
                 </dd>
               </>
             )}
+            {paymentLine(ready)}
           </dl>
           {actions(ready)}
           {error && <FieldError id="detail-error">{error}</FieldError>}
