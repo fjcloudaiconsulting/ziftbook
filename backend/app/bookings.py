@@ -97,7 +97,9 @@ class PaymentStart(BaseModel):
 
 class BookingCore(BaseModel):
     id: UUID
-    status: str  # "pending", "confirmed" or, while the card is being checked, "awaiting_payment"
+    # "pending", "confirmed" or, while the card is being checked, "awaiting_payment"; the payment
+    # sync also answers "expired" for a checkout hold that ran out before the sweep got to it
+    status: str
     starts_at: datetime
     ends_at: datetime
     duration_minutes: int
