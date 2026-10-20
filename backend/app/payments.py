@@ -430,6 +430,7 @@ ORDER BY p.created_at
 """)
 RELEASED = text("""
 UPDATE booking_payments SET settled_at = now() WHERE id = :id AND settled_at IS NULL
+RETURNING 1
 """)
 
 
@@ -668,7 +669,8 @@ def _settle_pass(tenant_id: UUID, booking_id: UUID, *, final: bool) -> bool:
 
 def _write(tenant_id: UUID, statement: Any, row: Row[Any], action: str) -> None:
     with tenant_context(tenant_id) as db:
-        db.execute(statement, {"id": row.id})
+        if db.execute(statement, {"id": row.id}).first() is None:
+            return  # another run got there first: it counted and logged
         count_after_commit(
             db, tracing.PAYMENT_OUTCOMES, {"payment.kind": row.kind, "payment.outcome": action}
         )

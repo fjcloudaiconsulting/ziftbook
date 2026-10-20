@@ -21,7 +21,7 @@ from sqlalchemy import Engine, text
 
 from app import bookings, payments, stripe_gateway
 from app.db import tenant_context
-from app.jobs import run_once
+from app.jobs import Job, run_once
 from app.main import create_app
 from app.worker import KINDS
 from tests.conftest import (
@@ -1036,3 +1036,33 @@ def test_sync_reports_a_lapsed_hold_as_expired(
 
     assert answer.json()["status"] == "expired"
     assert status_of(people, booking_id) == "awaiting_payment"  # the sweep has not run
+
+
+# R-C2. fence. Kills: counting and logging a settle that wrote nothing (two settles of one row, a
+# retry after the first committed, would report two releases).
+def test_two_settles_of_one_row_count_once(
+    people: People,
+    app: FastAPI,
+    ready: str,
+    fake_stripe: FakeGateway,
+    metric_reader: InMemoryMetricReader,
+    log_lines: Lines,
+) -> None:
+    _, booking_id, _ = checked_booking(app, people, fake_stripe, ready)
+    nested = Job(uuid.uuid4(), "payment.settle", people.a, {"booking_id": booking_id})
+
+    def other_settle(op: str) -> None:
+        if op == "cancel_intent":  # a second job gets there first and releases the row
+            fake_stripe.on_call = None
+            payments.settle(nested)
+
+    fake_stripe.on_call = other_settle
+    run("payment.settle")
+
+    released = [
+        p.value
+        for p in points(metric_reader, "ziftbook.payment.outcomes")
+        if p.attributes["payment.outcome"] == "released"
+    ]
+    assert released == [1]
+    assert len([line for line in log_lines() if line["msg"] == "payment settled"]) == 1
