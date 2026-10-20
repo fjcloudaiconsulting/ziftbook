@@ -1,0 +1,108 @@
+"use client";
+
+import { useLocale, useTranslations } from "next-intl";
+import { useEffect, useRef, useState } from "react";
+
+import { type PaymentAccountOut, paymentsAccount, paymentsConnect, paymentsDashboard } from "@/api-client";
+import { useRouter } from "@/i18n/navigation";
+import { paymentsAction } from "@/lib/settings";
+
+import { JSON_WRITE, SignedOutBanner, useConsole } from "../../_ui/console";
+import styles from "../../_ui/console.module.css";
+import { Banner } from "../../_ui/parts";
+import uiStyles from "../../_ui/ui.module.css";
+
+/** Online payments: the Stripe connection's state, and the one action it allows (owners only). */
+export function Payments({ disabled }: { disabled: boolean }) {
+  const { session, call } = useConsole();
+  const t = useTranslations("Console.settings");
+  const locale = useLocale() as "en" | "nl" | "pt";
+  const router = useRouter();
+  const [account, setAccount] = useState<PaymentAccountOut | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const [signedOut, setSignedOut] = useState(false);
+  const busyRef = useRef(false);
+  const owner = session.role === "owner";
+
+  // Stripe sends the owner back with ?stripe=return (read the state again) or ?stripe=refresh (the
+  // link expired: fetch a fresh one); either way the param goes once handled.
+  useEffect(() => {
+    const back = new URLSearchParams(window.location.search).get("stripe");
+    if (back) router.replace("/settings");
+    let cancelled = false;
+    (async () => {
+      const outcome = await call(() => paymentsAccount());
+      if (cancelled) return;
+      if (outcome.status === 200 && outcome.data) {
+        setAccount(outcome.data);
+        if (back === "refresh" && owner && paymentsAction(outcome.data.state, outcome.data.country_supported) === "continue") void go("connect");
+      } else setFailed(true);
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once on load
+  }, []);
+
+  async function go(kind: "connect" | "dashboard") {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setBusy(true);
+    setFailed(false);
+    setSignedOut(false);
+    // Opened inside the click, before the await, or the browser blocks it as a popup.
+    const tab = kind === "dashboard" ? window.open("", "_blank") : null;
+    if (tab) tab.opener = null;
+    const outcome = await call(() => (kind === "connect" ? paymentsConnect({ body: { locale } }) : paymentsDashboard({ ...JSON_WRITE })), { write: true });
+    // Reset even before leaving for Stripe: Back may restore this page from the bfcache as it was.
+    busyRef.current = false;
+    setBusy(false);
+    if (outcome.status === 200 && outcome.data) {
+      if (tab) tab.location.href = outcome.data.url;
+      else window.location.assign(outcome.data.url);
+      return;
+    }
+    tab?.close();
+    if (outcome.status === 401) setSignedOut(true);
+    else setFailed(true);
+  }
+
+  if (!account && !failed) return null;
+  const action = account && owner ? paymentsAction(account.state, account.country_supported) : null;
+  const body = !account
+    ? null
+    : account.state === "off"
+      ? t("paymentsOff")
+      : !account.country_supported
+        ? t("paymentsCountry")
+        : t(account.state === "none" ? "paymentsNone" : account.state === "onboarding" ? "paymentsOnboarding" : "paymentsReady");
+
+  return (
+    <fieldset className={`${styles.section} ${styles.settingsSection}`} disabled={disabled}>
+      <legend>
+        <h2>{t("paymentsHeading")}</h2>
+      </legend>
+      {signedOut && <SignedOutBanner />}
+      {body && <p className={styles.body}>{body}</p>}
+      {(action === "connect" || action === "continue") && (
+        <button className={`${uiStyles.button} ${uiStyles.primary}`} type="button" aria-disabled={busy || undefined} onClick={() => go("connect")}>
+          {busy && <span className={uiStyles.spinner} aria-hidden="true" />}
+          {t(action === "connect" ? "paymentsConnect" : "paymentsContinue")}
+        </button>
+      )}
+      {action === "dashboard" && (
+        <p className={styles.row}>
+          <button className={uiStyles.textButton} type="button" aria-disabled={busy || undefined} onClick={() => go("dashboard")}>
+            {t("paymentsDashboard")}
+            <svg aria-hidden="true" viewBox="0 0 16 16" width="14" height="14">
+              <path d="M4 12l8-8M7 4h5v5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            <span className={uiStyles.srOnly}>{t("opensInNewTab")}</span>
+          </button>
+        </p>
+      )}
+      {failed && <Banner tone="error">{t("paymentsFailed")}</Banner>}
+    </fieldset>
+  );
+}

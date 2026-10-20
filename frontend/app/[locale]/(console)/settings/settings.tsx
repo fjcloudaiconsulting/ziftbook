@@ -30,6 +30,7 @@ import { NAMES } from "../../_ui/header";
 import { Banner, Chevron, FieldError, Heading, problem, Submit } from "../../_ui/parts";
 import { SaveBar } from "../../_ui/save-bar";
 import uiStyles from "../../_ui/ui.module.css";
+import { Payments } from "./payments";
 
 /** Label, control, then unit, error and hint, all tied to the control with aria-describedby. */
 function Field({
@@ -426,6 +427,8 @@ export function Settings() {
             {(p) => int("max_pending_per_email", p.id, p.describedBy, p.invalid)}
           </Field>
         </fieldset>
+
+        <Payments disabled={saving} />
 
         <fieldset className={`${styles.section} ${styles.settingsSection}`} disabled={saving}>
           <legend>

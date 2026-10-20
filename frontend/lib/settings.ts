@@ -146,3 +146,12 @@ export function effective(saved: Settings, draft: Draft, key: IntKey): number {
   const value = parse(FIELDS.find((f) => f.key === key)!, draft[key]);
   return typeof value === "number" ? value : saved[key];
 }
+
+export type PaymentsState = "off" | "none" | "onboarding" | "ready";
+
+/** The one button the payments panel shows, or none. `off` (the platform's Stripe keys are unset) and an
+ * unsupported country would both answer a click with an error, so they get text only. */
+export function paymentsAction(state: PaymentsState, countrySupported: boolean): "connect" | "continue" | "dashboard" | null {
+  if (state === "off" || !countrySupported) return null;
+  return state === "none" ? "connect" : state === "onboarding" ? "continue" : "dashboard";
+}
