@@ -454,14 +454,15 @@ describe("F2 the payment step (ZIF-158)", () => {
     }
   });
 
-  test("fence: the return URL keeps the booking and the pick, never a Stripe secret", () => {
-    // Wrong implementation killed: keeping the whole query (client_secret into history and logs), or
-    // dropping `booking` (the return could not find its booking).
+  test("fence: the return URL drops only Stripe's params, never the booking, the pick or the visitor's own", () => {
+    // Wrong implementation killed: keeping the whole query (client_secret into history and logs),
+    // dropping `booking` (the return could not find its booking), or an allowlist that strips utm_*/gclid.
     const kept = returnParams(
-      "?service=s1&with=m1&at=2026-10-22T15%3A00%3A00%2B00%3A00&booking=b1&payment_intent=pi_1&payment_intent_client_secret=pi_1_secret_x&setup_intent=seti_1&setup_intent_client_secret=seti_1_secret_y&redirect_status=succeeded",
+      "?service=s1&with=m1&at=2026-10-22T15%3A00%3A00%2B00%3A00&booking=b1&payment_intent=pi_1&payment_intent_client_secret=pi_1_secret_x&setup_intent=seti_1&setup_intent_client_secret=seti_1_secret_y&redirect_status=succeeded&utm_source=ad",
     );
-    assert.equal(kept.toString(), new URLSearchParams({ service: "s1", with: "m1", at: "2026-10-22T15:00:00+00:00", booking: "b1" }).toString());
+    assert.equal(kept.toString(), new URLSearchParams({ service: "s1", with: "m1", at: "2026-10-22T15:00:00+00:00", booking: "b1", utm_source: "ad" }).toString());
     assert.equal(returnParams("").toString(), "");
+    assert.equal(returnParams("?utm_source=ad&gclid=x").toString(), "utm_source=ad&gclid=x");
   });
 
   test("fence: payment_required / payment_not_offered reload the options; payments_unavailable is its own outcome", () => {
