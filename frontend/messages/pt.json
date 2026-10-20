@@ -685,7 +685,8 @@
         "reschedule_cutoff_hours": "remarcar um agendamento",
         "cancellation_policy_text": "política de cancelamento",
         "workers_edit_own_hours": "horário próprio dos membros da equipe",
-        "workers_answer_requests": "respostas a pedidos pela equipe"
+        "workers_answer_requests": "respostas a pedidos pela equipe",
+        "payment_check": "pagamento online ao reservar"
       },
       "savingHint": "Salvando suas alterações.",
       "freeCancellationLabel": "Cancelamento grátis até",
@@ -697,7 +698,9 @@
       "workersEditLabel": "Membros da equipe podem alterar o próprio horário de trabalho",
       "workersEditHint": "Desativado: só você define os horários deles.",
       "workersAnswerLabel": "Membros da equipe podem aceitar e recusar os próprios pedidos de agendamento",
-      "workersAnswerHint": "Desativado: você responde a todos os pedidos. Os membros da equipe veem os deles, mas não podem aceitá-los nem recusá-los."
+      "workersAnswerHint": "Desativado: você responde a todos os pedidos. Os membros da equipe veem os deles, mas não podem aceitá-los nem recusá-los.",
+      "paymentCheckLabel": "Pedir dados de pagamento ao reservar",
+      "paymentCheckHint": "Os clientes adicionam um cartão que verificamos sem cobrar, ou pagam antecipadamente. Serviços abaixo de {min} são reservados sem essa etapa."
     },
     "errors": {
       "ownerOnly": "Só um proprietário pode fazer isso.",
@@ -1042,6 +1045,34 @@
     "noCountry": "Nenhum país encontrado",
     "dialSearch": "País ou código",
     "phoneUse": "Só para {biz} falar com você sobre esta reserva.",
-    "legal": "Ao enviar, você aceita os <terms>Termos</terms> e o <privacy>Aviso de Privacidade</privacy> do ziftbook e as <rules>regras de cancelamento</rules> de {biz}."
+    "legal": "Ao enviar, você aceita os <terms>Termos</terms> e o <privacy>Aviso de Privacidade</privacy> do ziftbook e as <rules>regras de cancelamento</rules> de {biz}.",
+    "payTitle": "Pagamento",
+    "payCheck": "Verificar meu cartão",
+    "payCheckHint": "Verificamos seu cartão por {price} e liberamos o valor logo em seguida. Nada é cobrado; você paga no atendimento. Seu banco pode mostrar {price} pendente por alguns dias.",
+    "payCheckSetupHint": "Verificamos se seu cartão é válido. Nada é cobrado; você paga no atendimento.",
+    "payNow": "Pagar {price} agora",
+    "payNowHint": "Se {biz} recusar, cancelar ou não responder a tempo, você recebe tudo de volta. Se você cancelar, recebe de volta o que as regras de cancelamento de {biz} permitem.",
+    "payNowHintFee": "Se {biz} recusar, cancelar ou não responder a tempo, você recebe tudo de volta. Se você cancelar, recebe de volta o que as regras de cancelamento de {biz} permitem, menos a taxa de processamento do pagamento.",
+    "termsPaymentFee": "As taxas de processamento do pagamento não são reembolsadas se você cancelar. Tudo é reembolsado se {biz} recusar, cancelar ou não responder a tempo.",
+    "payButtonBook": "Pagar {price} e reservar",
+    "payButtonRequest": "Pagar {price} e enviar pedido",
+    "changeRequest": "Alterar horário ou dados",
+    "payFailed": "Seu pagamento não foi concluído. Tente de novo ou use outra forma de pagamento.",
+    "payProcessing": "Seu pagamento está sendo processado. Esta página se atualiza sozinha. Se ele for concluído, enviaremos uma confirmação por e-mail; se não, nada será cobrado e o horário será liberado.",
+    "payExpiredProcessing": "Seu pagamento ainda está sendo processado, mas paramos de reservar seu horário. Se o pagamento for concluído, ele será reembolsado integralmente. Você pode escolher um horário de novo.",
+    "payStale": "Esta reserva não pode mais ser paga. Escolha um horário para reservar de novo.",
+    "payCheckEmail": "Não conseguimos verificar seu pagamento agora. Procure nosso e-mail ou tente de novo em alguns minutos.",
+    "payInProgress": "Você tem um pagamento em andamento para {service} em {when}.",
+    "payResume": "Continuar",
+    "payStartOver": "Recomeçar",
+    "payExpired": "Reservamos seu horário por 30 minutos e ele foi liberado. Escolha um horário de novo.",
+    "payExpiredPaid": "Reservamos seu horário por 30 minutos e ele foi liberado. Seu pagamento de {price} será reembolsado integralmente; seu banco pode levar alguns dias para mostrar isso. Escolha um horário de novo.",
+    "payUnavailable": "Os pagamentos não estão disponíveis agora. Tente de novo em alguns minutos.",
+    "paymentChanged": "As opções de pagamento desta página mudaram. Confira-as e envie de novo.",
+    "doneChecked": "Verificamos seu cartão por {price}. Nada foi cobrado.",
+    "doneCheckedSetup": "Verificamos seu cartão. Nada foi cobrado.",
+    "donePaid": "Você pagou {price}.",
+    "okLedeNoEmail": "Enviamos por e-mail uma confirmação com um link para alterar ou cancelar.",
+    "pendLedeNoEmail": "{biz} vai confirmar seu pedido. Enviamos por e-mail um link para você ver ou cancelar, e enviaremos outro e-mail quando {biz} responder."
   }
 }
