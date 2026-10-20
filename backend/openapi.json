@@ -3989,7 +3989,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/app__bookings__BookingOut"
+                  "$ref": "#/components/schemas/BookingCore"
                 }
               }
             }
@@ -5091,6 +5091,321 @@
         }
       }
     },
+    "/api/public/businesses/{tenant_id}/bookings/{booking_id}/payment/sync": {
+      "post": {
+        "tags": [
+          "bookings"
+        ],
+        "summary": "Sync",
+        "description": "Where the booking's payment stands, after looking at Stripe. Takes nothing from the caller:\nthe page decides from `status` and `payment.state` alone.",
+        "operationId": "bookings-sync",
+        "parameters": [
+          {
+            "name": "tenant_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Tenant Id"
+            }
+          },
+          {
+            "name": "booking_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Booking Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SyncOut"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          }
+        }
+      }
+    },
+    "/api/public/businesses/{tenant_id}/bookings/{booking_id}/payment": {
+      "put": {
+        "tags": [
+          "bookings"
+        ],
+        "summary": "Resume",
+        "description": "Pick the payment up again (a refresh, Back from a bank page, a retry after a decline): the\nopen intent's secret, or a new intent when Stripe canceled the old one.",
+        "operationId": "bookings-resume",
+        "parameters": [
+          {
+            "name": "tenant_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Tenant Id"
+            }
+          },
+          {
+            "name": "booking_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Booking Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResumeIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentStart"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          }
+        }
+      }
+    },
+    "/api/public/businesses/{tenant_id}/bookings/{booking_id}/payment/abandon": {
+      "post": {
+        "tags": [
+          "bookings"
+        ],
+        "summary": "Abandon",
+        "description": "The client changes the time or the details, or starts over: give the slot and the pending\nplace back at once. Never undoes a check that landed (409: show the sync state instead).",
+        "operationId": "bookings-abandon",
+        "parameters": [
+          {
+            "name": "tenant_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Tenant Id"
+            }
+          },
+          {
+            "name": "booking_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Booking Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          }
+        }
+      }
+    },
     "/api/admin/session": {
       "get": {
         "tags": [
@@ -5971,6 +6286,84 @@
         ],
         "title": "AuditEventOut"
       },
+      "BookingCore": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "starts_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Starts At"
+          },
+          "ends_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Ends At"
+          },
+          "duration_minutes": {
+            "type": "integer",
+            "title": "Duration Minutes"
+          },
+          "service_name": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Service Name"
+          },
+          "price": {
+            "$ref": "#/components/schemas/Price"
+          },
+          "worker_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Worker Id"
+          },
+          "worker_display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Worker Display Name"
+          },
+          "cancellation_policy_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cancellation Policy Text"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "status",
+          "starts_at",
+          "ends_at",
+          "duration_minutes",
+          "service_name",
+          "price",
+          "worker_id",
+          "worker_display_name",
+          "cancellation_policy_text"
+        ],
+        "title": "BookingCore"
+      },
       "BookingDetailOut": {
         "properties": {
           "id": {
@@ -6131,6 +6524,16 @@
             "type": "boolean",
             "title": "Expired"
           },
+          "payment": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PaymentFact"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "history": {
             "items": {
               "$ref": "#/components/schemas/EventOut"
@@ -6164,6 +6567,7 @@
           "reschedule_count",
           "max_reschedules",
           "expired",
+          "payment",
           "history"
         ],
         "title": "BookingDetailOut"
@@ -6262,6 +6666,21 @@
               }
             ],
             "title": "Message"
+          },
+          "payment": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "check",
+                  "pay"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payment"
           }
         },
         "additionalProperties": false,
@@ -6345,6 +6764,16 @@
           "auto_confirm": {
             "type": "boolean",
             "title": "Auto Confirm"
+          },
+          "payment": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PagePaymentOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",
@@ -6359,7 +6788,8 @@
           "consent",
           "cancellation",
           "services",
-          "auto_confirm"
+          "auto_confirm",
+          "payment"
         ],
         "title": "BookingPageOut"
       },
@@ -7668,6 +8098,43 @@
         ],
         "title": "PageConsentOut"
       },
+      "PagePaymentOut": {
+        "properties": {
+          "publishable_key": {
+            "type": "string",
+            "title": "Publishable Key"
+          },
+          "stripe_account": {
+            "type": "string",
+            "title": "Stripe Account"
+          },
+          "check_with": {
+            "type": "string",
+            "enum": [
+              "authorisation",
+              "setup"
+            ],
+            "title": "Check With"
+          },
+          "min_amount_minor": {
+            "type": "integer",
+            "title": "Min Amount Minor"
+          },
+          "keeps_card_fee": {
+            "type": "boolean",
+            "title": "Keeps Card Fee"
+          }
+        },
+        "type": "object",
+        "required": [
+          "publishable_key",
+          "stripe_account",
+          "check_with",
+          "min_amount_minor",
+          "keeps_card_fee"
+        ],
+        "title": "PagePaymentOut"
+      },
       "PaymentAccountOut": {
         "properties": {
           "state": {
@@ -7708,6 +8175,78 @@
           "currency"
         ],
         "title": "PaymentAccountOut"
+      },
+      "PaymentFact": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "check",
+              "pay"
+            ],
+            "title": "Kind"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "open",
+              "checked",
+              "paid",
+              "canceled"
+            ],
+            "title": "Status"
+          },
+          "amount_minor": {
+            "type": "integer",
+            "title": "Amount Minor"
+          },
+          "currency": {
+            "type": "string",
+            "title": "Currency"
+          },
+          "refunded_minor": {
+            "type": "integer",
+            "title": "Refunded Minor"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "status",
+          "amount_minor",
+          "currency",
+          "refunded_minor"
+        ],
+        "title": "PaymentFact"
+      },
+      "PaymentStart": {
+        "properties": {
+          "client_secret": {
+            "type": "string",
+            "title": "Client Secret"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "payment",
+              "setup"
+            ],
+            "title": "Type"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Expires At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "client_secret",
+          "type",
+          "expires_at"
+        ],
+        "title": "PaymentStart",
+        "description": "What the browser needs to finish a payment step. The client_secret is Stripe's, handed on\nand never stored, logged or put in a job; this and the resume answer are the only places it\nappears (tests/test_openapi.py)."
       },
       "PendingOut": {
         "properties": {
@@ -7990,6 +8529,10 @@
                 "type": "null"
               }
             ]
+          },
+          "payment": {
+            "type": "boolean",
+            "title": "Payment"
           }
         },
         "type": "object",
@@ -8001,7 +8544,8 @@
           "price",
           "workers",
           "placeholder",
-          "photo"
+          "photo",
+          "payment"
         ],
         "title": "PublicServiceOut"
       },
@@ -8052,6 +8596,24 @@
           "worker_id"
         ],
         "title": "RescheduledOut"
+      },
+      "ResumeIn": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "check",
+              "pay"
+            ],
+            "title": "Kind"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "kind"
+        ],
+        "title": "ResumeIn"
       },
       "RoleChange": {
         "properties": {
@@ -8581,6 +9143,122 @@
           "status"
         ],
         "title": "StatusChange"
+      },
+      "SyncOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "starts_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Starts At"
+          },
+          "ends_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Ends At"
+          },
+          "duration_minutes": {
+            "type": "integer",
+            "title": "Duration Minutes"
+          },
+          "service_name": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Service Name"
+          },
+          "price": {
+            "$ref": "#/components/schemas/Price"
+          },
+          "worker_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Worker Id"
+          },
+          "worker_display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Worker Display Name"
+          },
+          "cancellation_policy_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cancellation Policy Text"
+          },
+          "payment": {
+            "$ref": "#/components/schemas/SyncPayment"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "status",
+          "starts_at",
+          "ends_at",
+          "duration_minutes",
+          "service_name",
+          "price",
+          "worker_id",
+          "worker_display_name",
+          "cancellation_policy_text",
+          "payment"
+        ],
+        "title": "SyncOut"
+      },
+      "SyncPayment": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "check",
+              "pay"
+            ],
+            "title": "Kind"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "open",
+              "processing",
+              "checked",
+              "paid",
+              "canceled"
+            ],
+            "title": "State"
+          },
+          "failed": {
+            "type": "boolean",
+            "title": "Failed"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "state",
+          "failed"
+        ],
+        "title": "SyncPayment"
       },
       "TicketIn": {
         "properties": {
@@ -9187,6 +9865,16 @@
               }
             ],
             "title": "Cancellation Policy Text"
+          },
+          "payment": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PaymentStart"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",

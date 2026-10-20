@@ -81,11 +81,25 @@ class BookingIn(BaseModel):
     turnstile_token: Annotated[str, StringConstraints(max_length=2048)] | None = None
     # A body bound only: the real check is message_text(), so the 422 names the field.
     message: Annotated[str, StringConstraints(max_length=4000)] | None = None
+    # ZIF-158. Required while the business's payment step is on (offer()), refused while it is not.
+    payment: Literal["check", "pay"] | None = None
 
 
-class BookingOut(BaseModel):
+class PaymentStart(BaseModel):
+    """What the browser needs to finish a payment step. The client_secret is Stripe's, handed on
+    and never stored, logged or put in a job; this and the resume answer are the only places it
+    appears (tests/test_openapi.py)."""
+
+    client_secret: str
+    type: Literal["payment", "setup"]
+    expires_at: datetime  # the checkout hold ends then
+
+
+class BookingCore(BaseModel):
     id: UUID
-    status: str  # "pending" or "confirmed"
+    # "pending", "confirmed" or, while the card is being checked, "awaiting_payment"; the payment
+    # sync also answers "expired" for a checkout hold that ran out before the sweep got to it
+    status: str
     starts_at: datetime
     ends_at: datetime
     duration_minutes: int
@@ -94,6 +108,10 @@ class BookingOut(BaseModel):
     worker_id: UUID  # memberships.id, as the public GET already publishes
     worker_display_name: str | None
     cancellation_policy_text: str | None
+
+
+class BookingOut(BookingCore):
+    payment: PaymentStart | None = None
 
 
 @dataclass(frozen=True)
@@ -252,6 +270,14 @@ class EventOut(BaseModel):
     details: dict[str, Any] | None
 
 
+class PaymentFact(BaseModel):
+    kind: Literal["check", "pay"]
+    status: Literal["open", "checked", "paid", "canceled"]
+    amount_minor: int
+    currency: str
+    refunded_minor: int
+
+
 class BookingDetailOut(AgendaOut):
     client_email: str | None
     client_phone: str | None
@@ -264,6 +290,7 @@ class BookingDetailOut(AgendaOut):
     # A lapsed hold nobody has swept yet still reads status `pending`; this says it is over, so the
     # panel never offers Accept on it (PATCH would 409).
     expired: bool
+    payment: PaymentFact | None  # the live payment, else the newest
     history: list[EventOut]
 
 
@@ -289,6 +316,33 @@ WITH gone AS (
 INSERT INTO booking_events (tenant_id, booking_id, event)
 SELECT tenant_id, id, 'expired' FROM gone
 RETURNING 1
+""")
+
+# ZIF-158. One booking's checkout hold given back at once: a failed Stripe call, a client who
+# changes the time. Qualified, so a check that landed in between (status no longer
+# awaiting_payment) is left alone: the caller reads "no row" as "settled".
+EXPIRE_ONE = text("""
+WITH gone AS (
+  UPDATE bookings SET status = 'expired'
+  WHERE id = :id AND status = 'awaiting_payment'
+  RETURNING tenant_id, id)
+INSERT INTO booking_events (tenant_id, booking_id, event)
+SELECT tenant_id, id, 'expired' FROM gone
+RETURNING 1
+""")
+
+# ZIF-158. A card check lands: the booking becomes what the business's settings make a new request.
+# `expires_at > now()` is the checkout hold's own deadline; a check that lands after it books
+# nothing (the caller releases it). auto_confirm_at_booking is the snapshot taken at placement
+# (O5); the pending TTL is read now, since the pending is born here. status and expires_at are
+# UPDATE-granted since 0027.
+PAID = text("""
+UPDATE bookings
+SET status = CASE WHEN auto_confirm_at_booking THEN 'confirmed' ELSE 'pending' END,
+    expires_at = CASE WHEN auto_confirm_at_booking THEN NULL
+                      ELSE now() + make_interval(hours => :pending_ttl_hours) END
+WHERE id = :id AND status = 'awaiting_payment' AND expires_at > now()
+RETURNING id, status, starts_at, worker_id, now() AS now
 """)
 
 # What max_pending_per_email caps: live pendings, plus (ZIF-115, owner ruling 2026-10-08) upcoming
@@ -389,10 +443,16 @@ SELECT {LIST_COLUMNS}, b.expires_at, b.status, b.source, wm.user_id AS worker_us
        b.client_message, c.client_note, b.decline_message,
        b.cancellation_policy_text, b.reschedule_count, b.max_reschedules,
        coalesce(b.status = ANY(CAST(:expiring AS text[])) AND b.expires_at <= now(), false)
-         AS expired
+         AS expired,
+       p.kind AS payment_kind, p.status AS payment_status, p.amount_minor AS payment_amount_minor,
+       p.currency AS payment_currency, p.refunded_minor AS payment_refunded_minor
 FROM bookings b
 JOIN clients c ON c.tenant_id = b.tenant_id AND c.id = b.client_id
 JOIN memberships wm ON wm.tenant_id = b.tenant_id AND wm.id = b.worker_id
+LEFT JOIN LATERAL (
+  SELECT kind, status, amount_minor, currency, refunded_minor FROM booking_payments
+  WHERE tenant_id = b.tenant_id AND booking_id = b.id
+  ORDER BY (status <> 'canceled') DESC, created_at DESC LIMIT 1) p ON true
 WHERE b.id = :id
 """)
 
@@ -566,6 +626,8 @@ RETURNING id, starts_at, ends_at, reschedule_count
 # expires_at and reschedule_count stay: a move never extends the request's life or counts against
 # the confirmed allowance (ck_bookings_reschedule_count). The cap: PENDING_MOVES events.
 PENDING_MOVES = 3
+# ZIF-158: how long a checkout holds the slot while the client's card is checked.
+AWAITING_PAYMENT_TTL = timedelta(minutes=30)
 PENDING_MOVE = text("""
 UPDATE bookings SET starts_at = :new, ends_at = :new + (ends_at - starts_at),
                     original_starts_at = :new, earliest_starts_at = :new
@@ -730,6 +792,34 @@ def message_text(value: str | None) -> str | None:
         raise ApiError(422, "message_invalid") from None
 
 
+def announce(
+    db: Session,
+    tenant_id: UUID,
+    booking_id: UUID,
+    worker_id: UUID,
+    status: str,
+    starts_at: datetime,
+    now: datetime,
+) -> None:
+    """Tell the client and the team about a booking that now stands (ZIF-53): placed, or, with a
+    payment step, once the card is checked. Same session as the status write, outside any
+    savepoint: a rollback of the savepoint (a lost race) drops nothing here."""
+    if status == "confirmed":
+        # starts_at (ZIF-54 D10): a reschedule before this runs makes it skip itself.
+        email(
+            db,
+            tenant_id,
+            booking_id,
+            "booking_confirmed",
+            extra={"starts_at": starts_at.isoformat()},
+        )
+        remind(db, tenant_id, booking_id, starts_at, now)
+        email_merchants(db, tenant_id, booking_id, worker_id, "booking_new")
+    else:
+        email(db, tenant_id, booking_id, "booking_received")
+        email_merchants(db, tenant_id, booking_id, worker_id, "booking_request")
+
+
 def book_online(
     db: Session,
     *,
@@ -748,12 +838,17 @@ def book_online(
     origin_ip: str | None,
     user_agent: str | None,
     message: str | None,
-) -> BookingOut:
+    payment: Literal["check", "pay"] | None,
+) -> tuple[BookingOut, str | None, datetime | None]:
     """A client's own booking from the booking page (create()). The caller holds the tenant lock
     (its transaction's first statement) and catches OperationalError as 503 busy.
 
     address: the client's email, already normalised (never `email`: that names this module's
     enqueue helper). proven: see app.clients.find_or_create; user_id is passed only when proven.
+
+    Returns the booking, and while the business's payment step is on, the Stripe account to check
+    the card on and the hold's deadline: the booking is then `awaiting_payment` and nobody is told
+    yet (payments.reconcile announces it once the card is checked).
     """
     # 2. FOR SHARE is mandatory: archiving takes FOR NO KEY UPDATE and the booking's foreign
     #    key check only KEY SHARE, so without this a booking can land on a service archived
@@ -775,6 +870,15 @@ def book_online(
     clients.texts_for(policy_version, consents)
     phone = clients.e164(db, phone)  # ZIF-152: also a 422 before any write, after the 404s
     message = message_text(message)  # ZIF-157: likewise
+    # ZIF-158. Before any write. The step is the business's (offer() fails open), never the
+    # client's to skip or to ask for; "pay" waits for ZIF-158 B3.
+    from app import payments  # here: payments imports this module
+
+    stripe_account = payments.offer(db, settings, row.price_amount_minor, row.price_currency)
+    if stripe_account is not None and payment is None:
+        raise ApiError(422, "payment_required")
+    if (stripe_account is None and payment is not None) or payment == "pay":
+        raise ApiError(422, "payment_not_offered")
     # Consent WITHDRAWALS only; grants ride the booking_events row instead (ruling 18, §10). A guest
     # cannot withdraw anything: an unproven address says nothing about its owner, and the event
     # keeps only what was ticked.
@@ -854,6 +958,8 @@ def book_online(
     expires_at = (
         None if status == "confirmed" else row.now + timedelta(hours=settings.pending_ttl_hours)
     )
+    if stripe_account is not None:
+        status, expires_at = "awaiting_payment", row.now + AWAITING_PAYMENT_TTL
     queue = by_load(eligible, booked_rows, day, zone)
     booking, candidate = place(
         db,
@@ -880,23 +986,20 @@ def book_online(
             "details": None,
         },
     )
-    # ZIF-53. Same session as the status write, outside the savepoint: a rollback of the
-    # savepoint (a lost race) drops nothing here, since this only runs after `break`.
-    if status == "confirmed":
-        # starts_at (ZIF-54 D10): a reschedule before this runs makes it skip itself.
-        email(
+    if stripe_account is not None:
+        assert expires_at is not None
+        # The deadline job: whatever the client does or does not, an open intent is cancelled then.
+        jobs.enqueue(
             db,
-            tenant_id,
-            booking.id,
-            "booking_confirmed",
-            extra={"starts_at": booking.starts_at.isoformat()},
+            "payment.settle",
+            f"payment.settle:{tenant_id}:{booking.id}:awaiting_payment",
+            {"booking_id": str(booking.id)},
+            tenant_id=tenant_id,
+            due_at=expires_at,
         )
-        remind(db, tenant_id, booking.id, booking.starts_at, row.now)
-        email_merchants(db, tenant_id, booking.id, candidate, "booking_new")
     else:
-        email(db, tenant_id, booking.id, "booking_received")
-        email_merchants(db, tenant_id, booking.id, candidate, "booking_request")
-    return BookingOut(
+        announce(db, tenant_id, booking.id, candidate, status, booking.starts_at, row.now)
+    out = BookingOut(
         id=booking.id,
         status=booking.status,
         starts_at=booking.starts_at,
@@ -908,6 +1011,7 @@ def book_online(
         worker_display_name=names[candidate],
         cancellation_policy_text=settings.cancellation_policy_text or None,
     )
+    return out, stripe_account, expires_at
 
 
 router = APIRouter(prefix="/api/public", tags=["bookings"])
@@ -954,11 +1058,15 @@ def create(  # sync def: turnstile.verify's urlopen blocks, and runs in FastAPI'
     request.state.tenant_id = tenant_id
     response.headers["Cache-Control"] = "no-store"
     origin_ip, user_agent = auth.origin(request)
+    # Placement and Stripe never share a transaction (ZIF-158): tx1 places the booking, awaiting
+    # payment if the business asks for a card check, and commits; the intent is made at Stripe
+    # with no lock and no transaction open; tx2 (payments.start) records it. Stripe's seconds
+    # would otherwise be held against the whole business's bookings.
     try:
         with tenant_context(tenant_id) as db:
             # 1. The first statement of the transaction, always, nothing above it.
             db.execute(LOCK, {"key": LOCK_KEY})
-            return book_online(
+            out, stripe_account, expires_at = book_online(
                 db,
                 tenant_id=tenant_id,
                 service_id=service_id,
@@ -975,6 +1083,7 @@ def create(  # sync def: turnstile.verify's urlopen blocks, and runs in FastAPI'
                 origin_ip=origin_ip,
                 user_agent=user_agent,
                 message=new.message,
+                payment=new.payment,
             )
     except OperationalError:
         # DeadlockDetected (40P01) and serialization failures arrive here, NOT as IntegrityError,
@@ -984,6 +1093,12 @@ def create(  # sync def: turnstile.verify's urlopen blocks, and runs in FastAPI'
         # not know) and not 500. app/passwords.py:84 established the code. No retry behind it: a
         # retry would need the Turnstile token again, which is single-use (C9).
         raise ApiError(503, "busy") from None
+    if stripe_account is not None:
+        assert expires_at is not None
+        from app import payments  # here: payments imports this module
+
+        out.payment = payments.start(tenant_id, stripe_account, out, expires_at)
+    return out
 
 
 merchant_router = APIRouter(prefix="/api", tags=["booking-approvals"])
@@ -1026,7 +1141,9 @@ def agenda(
         {
             "from": from_,
             "to": to,
-            "statuses": [*availability.OCCUPYING, "no_show"],
+            # A 30-minute checkout hold is not an agenda entry (ZIF-158).
+            "statuses": [s for s in availability.OCCUPYING if s != "awaiting_payment"]
+            + ["no_show"],
             "expiring": list(availability.EXPIRING),
             "everyone": members.is_owner(current),
             "me": current.user_id,
@@ -1036,19 +1153,24 @@ def agenda(
     return [AgendaOut.model_validate(row, from_attributes=True) for row in rows]
 
 
+# Events nobody acts on: the clock and Stripe (ZIF-158) write them.
+SYSTEM_EVENTS = {"expired", "payment_checked", "paid", "refunded"}
+
+
 def actor_of(
     event: str, actor_user_id: UUID | None, source: str
 ) -> Literal["client", "team", "system"]:
     """Who an event was by. A recorded actor is the team. Without one (every row before 0033, and
     the client's own actions) it is read from the event: a merchant transition is the team's
     whichever way it was written, `created` is the team's only for a walk-in the merchant recorded
-    (a booking_page or marketplace booking is the client's), `expired` is the system's, and the
-    rest (cancelled_by_client, rescheduled, consent_confirmed) are the client's."""
+    (a booking_page or marketplace booking is the client's), `expired` and the payment events
+    (checked, paid, refunded) are the system's, and the rest (cancelled_by_client, rescheduled,
+    consent_confirmed) are the client's."""
     if actor_user_id is not None or event in TRANSITIONS:
         return "team"
     if event == "created":
         return "team" if source == "merchant" else "client"
-    return "system" if event == "expired" else "client"
+    return "system" if event in SYSTEM_EVENTS else "client"
 
 
 @merchant_router.get(
@@ -1078,8 +1200,19 @@ def detail(booking_id: UUID, current: auth.CurrentSession, response: Response) -
         for e in current.db.execute(HISTORY, {"id": booking_id})
     ]
     response.headers["Cache-Control"] = "no-store"
+    payment = (
+        PaymentFact(
+            kind=row.payment_kind,
+            status=row.payment_status,
+            amount_minor=row.payment_amount_minor,
+            currency=row.payment_currency,
+            refunded_minor=row.payment_refunded_minor,
+        )
+        if row.payment_kind is not None
+        else None
+    )
     return BookingDetailOut.model_validate(
-        {**row._mapping, "history": history}, from_attributes=True
+        {**row._mapping, "payment": payment, "history": history}, from_attributes=True
     )
 
 
@@ -1301,7 +1434,7 @@ def tell_team(
 )
 def book(
     new: MerchantBookingIn, current: auth.CurrentSession, request: Request, response: Response
-) -> BookingOut:
+) -> BookingCore:
     """A member books a client in. Confirmed straight away, source `merchant`. The public route's
     gates do not apply: no Turnstile or rate limit (the caller is signed in), no publish gate (a
     business books by hand before it opens its page), no pending cap (nothing is pending).
@@ -1412,7 +1545,7 @@ def book(
     )
     response.headers["Cache-Control"] = "no-store"
     logger.info("booking created", extra={"booking_id": str(booking.id)})
-    return BookingOut(
+    return BookingCore(
         id=booking.id,
         status=booking.status,
         starts_at=booking.starts_at,
@@ -1583,6 +1716,8 @@ def reschedule(
 def sweep() -> int:
     """Expire every tenant's due pendings; the worker's housekeeping, never correctness (create()
     and availability.booked() already treat them as gone). Returns how many bookings it settled."""
+    from app import payments  # here: payments imports this module
+
     # The ids in their own short session, closed before the loop: the worker's pool is exactly 21.
     with SessionLocal() as session:
         tenant_ids = session.scalars(text("SELECT id FROM tenants")).all()
@@ -1599,6 +1734,8 @@ def sweep() -> int:
                 if count:
                     logger.info("bookings expired", extra={"count": count})
                 expired += count
+                # After EXPIRE, so a hold that just lapsed is seen as lapsed (ZIF-158).
+                payments.enqueue_unsettled(db, tenant_id)
                 # until the booking_holds drop: unproven addresses are kept at most ~24h
                 db.execute(SWEEP_HOLDS)
         span.set_attribute("expired", expired)

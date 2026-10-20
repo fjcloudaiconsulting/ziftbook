@@ -58,6 +58,7 @@ INVITES_SENT = _meter.create_counter("ziftbook.invite.sent", unit="{invite}")
 INVITES_ACCEPTED = _meter.create_counter("ziftbook.invite.accepted", unit="{invite}")
 BOOKINGS_CREATED = _meter.create_counter("ziftbook.booking.created", unit="{booking}")
 STRIPE_WEBHOOKS = _meter.create_counter("ziftbook.stripe.webhooks", unit="{event}")
+PAYMENT_OUTCOMES = _meter.create_counter("ziftbook.payment.outcomes", unit="{payment}")
 
 _configured = False
 

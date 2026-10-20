@@ -359,6 +359,8 @@ METRIC_KEYS = {
     "booking.proven",
     "stripe.event",
     "stripe.result",
+    "payment.kind",
+    "payment.outcome",
     "db.client.connection.state",
     "db.client.connection.pool.name",
 }
@@ -658,15 +660,18 @@ def delete_payment_accounts(conn: Connection, tenant_ids: Iterable[object]) -> N
 
 def delete_bookings(conn: Connection, tenant_ids: Iterable[object]) -> None:
     """The app role can delete neither booking_events, booking_links nor bookings; fixtures remove
-    them as the migrate role, one business at a time (forced row-level security), booking_links and
-    events first for the foreign key.
+    them as the migrate role, one business at a time (forced row-level security), payments, links
+    and events first for the foreign key.
 
-    booking_links may not exist: some test_migrations.py tests call this while temporarily
-    downgraded below 0029, where the table is gone.
+    booking_links and booking_payments may not exist: some test_migrations.py tests call this while
+    temporarily downgraded below 0029 or 0044, where the table is gone.
     """
     has_links = conn.scalar(text("SELECT to_regclass('booking_links')")) is not None
+    has_payments = conn.scalar(text("SELECT to_regclass('booking_payments')")) is not None
     for tenant_id in tenant_ids:
         conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(tenant_id)})
+        if has_payments:
+            conn.execute(text("DELETE FROM booking_payments"))
         if has_links:
             conn.execute(text("DELETE FROM booking_links"))
         conn.execute(text("DELETE FROM booking_events"))

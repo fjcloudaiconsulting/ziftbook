@@ -5,11 +5,12 @@ tests/stripe_fake.py. Nothing here logs a body, a link, a secret or a client_sec
 import json
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal, TypeVar
 
 import stripe
 from opentelemetry.trace import SpanKind
+from stripe import RequestOptions
 from stripe.params.v2.core import AccountCreateParams
 
 from app import tracing
@@ -24,6 +25,9 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T")
 Kind = Literal["card", "invalid", "unavailable"]
 FeesCollector = Literal["stripe", "application"]
+Mode = Literal["authorisation", "setup"]
+# What Stripe answers to cancelling an intent that is already canceled or past cancelling.
+UNEXPECTED_STATE = {"payment_intent_unexpected_state", "setup_intent_unexpected_state"}
 
 
 class Failed(Exception):
@@ -44,6 +48,29 @@ class BadSignature(Exception):
 class Account:
     id: str
     charges_enabled: bool
+
+
+@dataclass(frozen=True)
+class Intent:
+    """A payment check just created. The client_secret goes to the browser and nowhere else."""
+
+    id: str
+    client_secret: str = field(repr=False)
+    type: Literal["payment", "setup"]
+
+
+@dataclass(frozen=True)
+class IntentState:
+    """What Stripe says about an intent now. A SetupIntent has no amount or currency."""
+
+    id: str
+    type: Literal["payment", "setup"]
+    status: str
+    amount: int | None
+    currency: str | None
+    amount_refunded: int
+    failed: bool  # the last attempt was declined or abandoned at the bank
+    client_secret: str = field(repr=False)  # Stripe hands it back to the secret key
 
 
 @dataclass(frozen=True)
@@ -199,6 +226,105 @@ class Gateway:
                     raise
 
         self._call("register_domain", call, account)
+
+    def create_check(
+        self,
+        account: str,
+        *,
+        mode: Mode,
+        tenant_id: str,
+        booking_id: str,
+        amount: int,
+        currency: str,
+        idempotency_key: str,
+    ) -> Intent:
+        """The funds check on the business's own account (a direct charge), the only place that
+        picks how: a manual-capture authorisation for the price, or a SetupIntent that validates
+        the card. Neither takes an application fee (nothing is captured) or keeps a card."""
+        metadata = {"booking_id": booking_id, "tenant_id": tenant_id}
+        options: RequestOptions = {"stripe_account": account, "idempotency_key": idempotency_key}
+
+        def call(client: stripe.StripeClient) -> Intent:
+            if mode == "setup":
+                setup = client.v1.setup_intents.create(
+                    {
+                        "allowed_payment_method_types": ["card"],
+                        "usage": "on_session",
+                        "metadata": metadata,
+                    },
+                    options,
+                )
+                return Intent(setup.id, setup.client_secret or "", "setup")
+            payment = client.v1.payment_intents.create(
+                {
+                    "amount": amount,
+                    "currency": currency.lower(),
+                    "capture_method": "manual",
+                    "allowed_payment_method_types": ["card"],
+                    "metadata": metadata,
+                },
+                options,
+            )
+            return Intent(payment.id, payment.client_secret or "", "payment")
+
+        return self._call("create_check", call, account)
+
+    def retrieve_intent(self, account: str, intent_id: str) -> IntentState:
+        options: RequestOptions = {"stripe_account": account}
+
+        def call(client: stripe.StripeClient) -> IntentState:
+            if intent_id.startswith("seti_"):
+                setup = client.v1.setup_intents.retrieve(intent_id, {}, options)
+                return IntentState(
+                    setup.id,
+                    "setup",
+                    setup.status,
+                    None,
+                    None,
+                    0,
+                    setup.last_setup_error is not None,
+                    setup.client_secret or "",
+                )
+            payment = client.v1.payment_intents.retrieve(
+                intent_id, {"expand": ["latest_charge"]}, options
+            )
+            charge = payment.latest_charge
+            return IntentState(
+                payment.id,
+                "payment",
+                payment.status,
+                payment.amount,
+                payment.currency,
+                0 if charge is None or isinstance(charge, str) else charge.amount_refunded,
+                payment.last_payment_error is not None,
+                payment.client_secret or "",
+            )
+
+        return self._call("retrieve_intent", call, account)
+
+    def cancel_intent(self, account: str, intent_id: str) -> str:
+        """Cancel the intent; the status it has afterwards. "canceled" also when it already was.
+        Anything else is Stripe refusing: the intent is past cancelling (processing, succeeded)."""
+        options: RequestOptions = {"stripe_account": account}
+
+        def call(client: stripe.StripeClient) -> str:
+            setup = intent_id.startswith("seti_")
+            try:
+                if setup:
+                    return client.v1.setup_intents.cancel(
+                        intent_id, {"cancellation_reason": "abandoned"}, options
+                    ).status
+                return client.v1.payment_intents.cancel(
+                    intent_id, {"cancellation_reason": "abandoned"}, options
+                ).status
+            except stripe.InvalidRequestError as error:
+                if getattr(error, "code", None) not in UNEXPECTED_STATE:
+                    raise
+            if setup:
+                return client.v1.setup_intents.retrieve(intent_id, {}, options).status
+            return client.v1.payment_intents.retrieve(intent_id, {}, options).status
+
+        return self._call("cancel_intent", call, account)
 
     def construct_event(self, body: bytes, header: str | None) -> Event:
         """The event, once Stripe's signature over these exact bytes checks out."""

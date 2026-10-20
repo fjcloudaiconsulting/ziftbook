@@ -3,16 +3,17 @@ Public: no session, no cookie."""
 
 import re
 from datetime import timedelta
-from typing import get_args
+from typing import Literal, get_args
 from uuid import UUID
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
 from sqlalchemy import text
 
-from app import business_settings, clients, limits, photos
+from app import business_settings, clients, limits, payments, photos
 from app.availability import WorkerOut
 from app.business_settings import Locale
+from app.config import StripeSettings
 from app.countries import Country
 from app.db import SessionLocal, join_tenant
 from app.errors import ApiError, Error
@@ -56,11 +57,20 @@ class PublicServiceOut(BaseModel):
     workers: list[WorkerOut]  # display_name (nulls last), then id; never empty
     placeholder: Placeholder
     photo: photos.Photo | None
+    payment: bool  # a card check at checkout (payments.offer, the one source of the minimum rule)
 
 
 class PageConsentOut(BaseModel):
     policy_version: str
     marketing_email: str
+
+
+class PagePaymentOut(BaseModel):
+    publishable_key: str
+    stripe_account: str  # direct charges: the browser's Stripe.js acts on this account
+    check_with: Literal["authorisation", "setup"]
+    min_amount_minor: int
+    keeps_card_fee: bool  # R6's flag; false at launch, so no copy mentions a kept fee
 
 
 class BookingPageOut(BaseModel):
@@ -75,6 +85,7 @@ class BookingPageOut(BaseModel):
     cancellation: CancellationOut
     services: list[PublicServiceOut]
     auto_confirm: bool
+    payment: PagePaymentOut | None  # null while the business takes no card check
 
 
 @router.get(
@@ -97,7 +108,8 @@ def read(slug: str, request: Request) -> BookingPageOut:
         raise ApiError(404, "not_found")
     with SessionLocal.begin() as db:
         tenant = db.execute(
-            text("SELECT id, slug, name, country FROM tenants WHERE slug = :slug"), {"slug": slug}
+            text("SELECT id, slug, name, country, currency FROM tenants WHERE slug = :slug"),
+            {"slug": slug},
         ).first()
         if tenant is None:
             raise ApiError(404, "not_found")
@@ -109,6 +121,7 @@ def read(slug: str, request: Request) -> BookingPageOut:
         # same way for a slug nobody owns).
         if not settings.published:
             raise ApiError(404, "not_found")
+        account = payments.available(db, settings)  # once for the page, not per service
         services: dict[UUID, PublicServiceOut] = {}
         for row in db.execute(SERVICES):
             if row.id not in services:
@@ -121,10 +134,13 @@ def read(slug: str, request: Request) -> BookingPageOut:
                     workers=[],
                     placeholder=row.photo_placeholder,
                     photo=photos.urls(row.photo_key, row.photo_width, row.photo_height),
+                    payment=account is not None
+                    and payments.meets_minimum(row.price_amount_minor, row.price_currency),
                 )
             services[row.id].workers.append(
                 WorkerOut(id=row.member_id, display_name=row.display_name)
             )
+    minimum = payments.MIN_CHARGE.get(tenant.currency)
     return BookingPageOut(
         id=tenant.id,
         slug=tenant.slug,
@@ -149,4 +165,13 @@ def read(slug: str, request: Request) -> BookingPageOut:
         ),
         services=list(services.values()),
         auto_confirm=settings.auto_confirm,
+        payment=PagePaymentOut(
+            publishable_key=StripeSettings().stripe_publishable_key,
+            stripe_account=account,
+            check_with=payments.CHECK_WITH,
+            min_amount_minor=minimum,
+            keeps_card_fee=payments.KEEP_CARD_FEE_ON_CLIENT_CANCEL,
+        )
+        if account is not None and minimum is not None
+        else None,
     )

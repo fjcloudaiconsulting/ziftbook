@@ -18,7 +18,7 @@ from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 from opentelemetry.sdk.trace import ReadableSpan
 from sqlalchemy import Engine, text
 
-from app import auth, bookings
+from app import auth, bookings, payments
 from app.db import tenant_context
 from app.jobs import run_once
 from app.mail import render
@@ -33,10 +33,13 @@ from tests.conftest import (
     member_id,
     new_client,
     put_settings,
+    save_setting,
     signed_in,
     token_in,
 )
-from tests.test_bookings_api import sign_in_as
+from tests.stripe_fake import FakeGateway
+from tests.test_booking_payments_api import make_shop, resume, run, sync
+from tests.test_bookings_api import post_booking, sign_in_as
 from tests.test_working_hours import seed
 
 UA = {"User-Agent": "zif-never-log-agent/7"}
@@ -505,3 +508,43 @@ def test_no_personal_data_ever_reaches_a_log(
     assert [(line["template"], line["error"]) for line in email_failed] == [
         ("sign_up", "HTTPError")
     ]
+
+
+# ZIF-158 B2 14. fence. Kills: logging the PaymentStart (a client_secret finishes a payment for
+# whoever reads it).
+def test_a_client_secret_never_reaches_a_log_a_span_or_a_job(
+    people: People,
+    app: FastAPI,
+    migrate_engine: Engine,
+    fake_stripe: FakeGateway,
+    log_lines: Callable[[], list[dict[str, Any]]],
+    spans: Callable[[], list[ReadableSpan]],
+) -> None:
+    save_setting(people.a, "published", True)
+    owner = signed_in(app, people.a, people.both)
+    service_id = make_shop(people, owner, fake_stripe)
+    client = new_client(app)
+    made = post_booking(client, people.a, service_id, payment="check")
+    booking_id = made.json()["id"]
+    resume(client, people, booking_id)
+    fake_stripe.confirm(fake_stripe.latest(booking_id))
+    sync(client, people, booking_id)
+    run("payment.settle", "stripe.event")
+    payments.reconcile(people.a, fake_stripe.latest(booking_id))
+    secrets = [got["client_secret"] for got in fake_stripe.intents.values()]
+    assert secrets and made.json()["payment"]["client_secret"] in secrets
+
+    with migrate_engine.begin() as conn:
+        conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(people.a)})
+        stored = " ".join(
+            str(value)
+            for value in [
+                *conn.scalars(text("SELECT payload::text FROM jobs")),
+                *conn.scalars(text("SELECT details::text FROM booking_events")),
+            ]
+        )
+    everything = json.dumps(log_lines()) + json.dumps(
+        [dict(span.attributes or {}) | {"name": span.name} for span in spans()]
+    )
+    for secret in secrets:
+        assert secret not in everything + stored
