@@ -462,12 +462,13 @@ export function BookingPage({
 
   /** The stored checkout is still waiting: pick it up again (the resume view). */
   function resumeOffer() {
-    if (!offer) return;
+    if (!offer || working.current) return; // a Send waiting on Turnstile owns the page
     setBookingParam(offer.id);
     apply(offer, storedEmail());
   }
 
   async function startOver() {
+    if (working.current) return;
     if (offer && (await release(offer.id, storedEmail(), 2))) {
       writeStored(null);
       setOffer(null);
@@ -542,7 +543,6 @@ export function BookingPage({
       working.current = false;
       setFlow((f) => ({ ...f, busy: false }));
     } else if (answer.status === 409) {
-      working.current = false;
       const again = await checkBooking(id);
       if (again.status === 200 && again.data) apply(again.data, email);
       else fail(t("payCheckEmail"), "note");
@@ -887,7 +887,7 @@ export function BookingPage({
   // A resumed booking without its secret yet shows the kind it was made with.
   const shown = start === null && sync ? sync.payment.kind : choice;
   const sendText = flow.busy ? (auto ? t("booking") : t("sending")) : t(sendLabel(stepOn ? shown : null, auto), { price });
-  const extraTerms = termsLines(stepOn ? choice : null, Boolean(page.payment?.keeps_card_fee));
+  const extraTerms = termsLines(stepOn ? shown : null, Boolean(page.payment?.keeps_card_fee));
 
   // The page's frame: heading and business line, and (unless the booking is no longer open) the way back.
   const frame = (body: ReactNode, back = true) => (
