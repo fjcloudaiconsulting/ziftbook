@@ -1319,7 +1319,8 @@ def test_switching_keeps_the_time_and_one_live_intent(
 
     assert [a.status_code for a in answers] == [200, 200], [a.text for a in answers]
     assert answers[0].json()["client_secret"] == answers[1].json()["client_secret"]
-    assert [r["status"] != "canceled" for r in pay_rows(people, booking_id)].count(True) == 1
+    (shared,) = [r["intent_id"] for r in pay_rows(people, booking_id) if r["status"] != "canceled"]
+    assert fake_stripe.intents[shared]["status"] != "canceled"  # the loser left it alone
 
     # B is at Stripe creating with the key A is still using: Stripe refuses the second request.
     def in_use(op: str) -> None:
