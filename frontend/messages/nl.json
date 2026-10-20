@@ -1047,7 +1047,7 @@
     "phoneUse": "Alleen zodat {biz} je over deze boeking kan bereiken.",
     "legal": "Door te versturen ga je akkoord met de <terms>Voorwaarden</terms> en de <privacy>Privacyverklaring</privacy> van ziftbook en de <rules>annuleringsregels</rules> van {biz}.",
     "payTitle": "Betaling",
-    "payCheck": "Controleer mijn kaart",
+    "payCheck": "Mijn kaart controleren",
     "payCheckHint": "We controleren je kaart voor {price} en geven het bedrag meteen weer vrij. Er wordt niets afgeschreven; je betaalt bij je afspraak. Je bank kan een paar dagen een reservering van {price} tonen.",
     "payCheckSetupHint": "We controleren of je kaart geldig is. Er wordt niets afgeschreven; je betaalt bij je afspraak.",
     "payNow": "Nu {price} betalen",
@@ -1065,14 +1065,14 @@
     "payInProgress": "Je hebt een betaling lopen voor {service} op {when}.",
     "payResume": "Hervatten",
     "payStartOver": "Opnieuw beginnen",
-    "payExpired": "We hielden je tijd 30 minuten vast en hebben hem vrijgegeven. Kies opnieuw een tijd.",
-    "payExpiredPaid": "We hielden je tijd 30 minuten vast en hebben hem vrijgegeven. Je betaling van {price} wordt volledig terugbetaald; je bank kan er een paar dagen over doen om dat te tonen. Kies opnieuw een tijd.",
+    "payExpired": "We hebben je tijd 30 minuten vastgehouden; die is nu vrijgegeven. Kies opnieuw een tijd.",
+    "payExpiredPaid": "We hebben je tijd 30 minuten vastgehouden; die is nu vrijgegeven. Je betaling van {price} wordt volledig terugbetaald; je bank kan er een paar dagen over doen om dat te tonen. Kies opnieuw een tijd.",
     "payUnavailable": "Betalen is nu niet beschikbaar. Probeer het over een paar minuten opnieuw.",
     "paymentChanged": "De betaalopties op deze pagina zijn veranderd. Controleer ze en verstuur opnieuw.",
     "doneChecked": "We hebben je kaart gecontroleerd voor {price}. Er is niets afgeschreven.",
     "doneCheckedSetup": "We hebben je kaart gecontroleerd. Er is niets afgeschreven.",
     "donePaid": "Je hebt {price} betaald.",
-    "okLedeNoEmail": "We hebben je een bevestiging gemaild met een link om te wijzigen of te annuleren.",
-    "pendLedeNoEmail": "{biz} bevestigt je aanvraag. We hebben je een link gemaild om hem te bekijken of te annuleren, en we mailen opnieuw zodra ze antwoorden."
+    "okLedeNoEmail": "We hebben je een bevestiging gemaild met een link om te wijzigen of annuleren.",
+    "pendLedeNoEmail": "{biz} bevestigt je verzoek. We hebben je een link gemaild om het te bekijken of te annuleren, en mailen opnieuw zodra ze reageren."
   }
 }

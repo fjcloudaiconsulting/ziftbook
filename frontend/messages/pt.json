@@ -1068,11 +1068,11 @@
     "payExpired": "Reservamos seu horário por 30 minutos e ele foi liberado. Escolha um horário de novo.",
     "payExpiredPaid": "Reservamos seu horário por 30 minutos e ele foi liberado. Seu pagamento de {price} será reembolsado integralmente; seu banco pode levar alguns dias para mostrar isso. Escolha um horário de novo.",
     "payUnavailable": "Os pagamentos não estão disponíveis agora. Tente de novo em alguns minutos.",
-    "paymentChanged": "As opções de pagamento desta página mudaram. Confira-as e envie de novo.",
+    "paymentChanged": "As opções de pagamento desta página mudaram. Confira e envie de novo.",
     "doneChecked": "Verificamos seu cartão por {price}. Nada foi cobrado.",
     "doneCheckedSetup": "Verificamos seu cartão. Nada foi cobrado.",
     "donePaid": "Você pagou {price}.",
-    "okLedeNoEmail": "Enviamos por e-mail uma confirmação com um link para alterar ou cancelar.",
-    "pendLedeNoEmail": "{biz} vai confirmar seu pedido. Enviamos por e-mail um link para você ver ou cancelar, e enviaremos outro e-mail quando {biz} responder."
+    "okLedeNoEmail": "Enviamos uma confirmação com um link para alterar ou cancelar.",
+    "pendLedeNoEmail": "{biz} vai confirmar o seu pedido. Enviamos um link para consultá-lo ou cancelá-lo, e escreveremos de novo quando responderem."
   }
 }
