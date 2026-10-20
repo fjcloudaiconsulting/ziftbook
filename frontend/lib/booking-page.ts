@@ -408,3 +408,10 @@ export function storedNext(sync: { status: string }): "offerResume" | "done" | "
   if (sync.status === "awaiting_payment") return "offerResume";
   return sync.status === "pending" || sync.status === "confirmed" ? "done" : "checkout";
 }
+
+/** Whether leaving an end state may forget the booking (its id and the address). A check that failed
+ * (checkEmail) or a payment still processing must keep it: money may land, and a plain checkout would
+ * invite a second payment. */
+export function mayForget(end: "processing" | "expired" | "expiredPaid" | "expiredProcessing" | "stale" | "checkEmail"): boolean {
+  return end !== "checkEmail" && end !== "processing";
+}
