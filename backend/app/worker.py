@@ -34,6 +34,9 @@ KINDS: dict[str, JobKind] = {
     "media.delete": JobKind(photos.media_delete, timeout=30, grace=timedelta(days=7)),
     # ZIF-158. Stripe retries a webhook for days; 50 stays under the 60 s lease.
     "stripe.event": JobKind(payments.handle_event, timeout=50, grace=timedelta(days=3)),
+    # ZIF-158. Cancels an intent nobody will finish and releases a checked card. Stripe is called,
+    # so 50 stays under the 60 s lease; the grace is long because the hourly sweep re-arms it.
+    "payment.settle": JobKind(payments.settle, timeout=50, grace=timedelta(days=7)),
 }
 
 

@@ -159,9 +159,9 @@ def test_an_authorisation_holds_the_card_on_the_connected_account() -> None:
         "payment",
         "pi_1Recorded_secret_x",
     )
-    assert wire.startswith("POST https://api.stripe.com/v1/payment_intents ")
+    assert wire.startswith("post https://api.stripe.com/v1/payment_intents ")
     assert "capture_method=manual" in wire
-    assert "payment_method_types[0]=card" in wire
+    assert "allowed_payment_method_types[0]=card" in wire
     assert "amount=2500" in wire and "currency=eur" in wire
     assert "customer" not in wire and "application_fee" not in wire
     assert http.headers[0]["Stripe-Account"] == "acct_1RecordedAccount"
@@ -175,8 +175,8 @@ def test_a_setup_check_saves_nothing() -> None:
 
     wire = http.wire(0)
     assert (made.id, made.type) == ("seti_1Recorded", "setup")
-    assert wire.startswith("POST https://api.stripe.com/v1/setup_intents ")
-    assert "usage=on_session" in wire and "payment_method_types[0]=card" in wire
+    assert wire.startswith("post https://api.stripe.com/v1/setup_intents ")
+    assert "usage=on_session" in wire and "allowed_payment_method_types[0]=card" in wire
     assert "customer" not in wire
     assert http.headers[0]["Stripe-Account"] == "acct_1RecordedAccount"
     assert http.headers[0]["Idempotency-Key"].startswith("pi:")
@@ -190,6 +190,7 @@ def test_retrieving_and_cancelling_an_intent_name_the_connected_account() -> Non
             "amount": 2500,
             "currency": "eur",
             "last_payment_error": None,
+            "latest_charge": None,
         }
     )
     gateway = Gateway(http_client=http)

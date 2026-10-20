@@ -127,7 +127,9 @@ def test_the_page_answers_exactly_the_documented_fields(
         "cancellation",
         "services",
         "auto_confirm",
+        "payment",
     }
+    assert body["payment"] is None  # the default business takes no card check
     assert (body["id"], body["slug"], body["name"]) == (str(people.a), slug, "a")
     assert set(body["cancellation"]) == {
         "text",
@@ -146,7 +148,9 @@ def test_the_page_answers_exactly_the_documented_fields(
             "workers",
             "placeholder",
             "photo",
+            "payment",
         }
+        assert service["payment"] is False
         assert set(service["price"]) == {"amount_minor", "currency"}
         for worker in service["workers"]:
             assert set(worker) == {"id", "display_name"}

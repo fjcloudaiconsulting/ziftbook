@@ -534,10 +534,14 @@ def test_a_client_secret_never_reaches_a_log_a_span_or_a_job(
     secrets = [got["client_secret"] for got in fake_stripe.intents.values()]
     assert secrets and made.json()["payment"]["client_secret"] in secrets
 
-    with migrate_engine.connect() as conn:
+    with migrate_engine.begin() as conn:
+        conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(people.a)})
         stored = " ".join(
-            conn.scalars(text("SELECT payload::text FROM jobs")).all()
-            + conn.scalars(text("SELECT details::text FROM booking_events")).all()
+            str(value)
+            for value in [
+                *conn.scalars(text("SELECT payload::text FROM jobs")),
+                *conn.scalars(text("SELECT details::text FROM booking_events")),
+            ]
         )
     everything = json.dumps(log_lines()) + json.dumps(
         [dict(span.attributes or {}) | {"name": span.name} for span in spans()]

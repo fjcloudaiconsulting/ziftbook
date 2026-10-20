@@ -5,6 +5,7 @@ import os
 import uuid
 from datetime import UTC, datetime, timedelta
 from types import ModuleType
+from typing import Any
 from urllib.parse import urlencode
 
 import pytest
@@ -1239,7 +1240,7 @@ PAYMENT_COLUMNS = text("""
 SELECT column_name FROM information_schema.columns WHERE table_name = 'booking_payments'
 """)
 PAYMENT_GRANT = "SELECT has_column_privilege('ziftbook_app', 'booking_payments', :c, :p)"
-GOOD_PAYMENT: dict[str, object] = {
+GOOD_PAYMENT: dict[str, Any] = {
     "kind": "check",
     "intent_id": "pi_abc123",
     "amount_minor": 2500,
@@ -1252,7 +1253,7 @@ GOOD_PAYMENT: dict[str, object] = {
     "refund_id": None,
 }
 # Each CHECK refused once, by name: the row is good except for the one field that breaks it.
-PAYMENT_CHECKS = [
+PAYMENT_CHECKS: list[tuple[str, dict[str, Any]]] = [
     ("ck_booking_payments_kind", {"kind": "x"}),
     ("ck_booking_payments_intent_id", {"intent_id": "nope"}),
     ("ck_booking_payments_amount_minor", {"amount_minor": 0}),
@@ -1355,7 +1356,7 @@ def _seed_booking(people: People) -> uuid.UUID:
 
 
 def _insert_payment(
-    engine: Engine, people: People, booking_id: uuid.UUID, row: dict[str, object]
+    engine: Engine, people: People, booking_id: uuid.UUID, row: dict[str, Any]
 ) -> None:
     with engine.begin() as conn:
         conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(people.a)})

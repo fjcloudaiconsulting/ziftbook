@@ -187,15 +187,17 @@ def run(*kinds: str) -> None:
     asyncio.run(drain())
 
 
-def due_now(migrate_engine: Engine, booking_id: str) -> None:
-    """Make the booking's waiting settle jobs claimable (the clock cannot be moved, the row can)."""
+def due_now(migrate_engine: Engine, booking_id: str, placement: bool = True) -> None:
+    """Make the booking's waiting settle jobs claimable (the clock cannot be moved, the row can);
+    placement=False leaves the deadline job alone."""
     with migrate_engine.begin() as conn:
         conn.execute(
             text(
                 "UPDATE jobs SET next_attempt_at = now() WHERE kind = 'payment.settle' "
-                "AND completed_at IS NULL AND attempts < 5 AND payload->>'booking_id' = :b"
+                "AND completed_at IS NULL AND attempts < 5 AND payload->>'booking_id' = :b "
+                "AND (:placement OR right(dedupe_key, 16) <> 'awaiting_payment')"
             ),
-            {"b": booking_id},
+            {"b": booking_id, "placement": placement},
         )
 
 
@@ -600,7 +602,12 @@ def test_one_event_reconciles_once(
 # 10: FENCE. Kills: PAID without `expires_at > now()` (a late success books a slot the checkout no
 # longer holds).
 def test_a_late_check_on_an_expired_booking_is_released_not_booked(
-    people: People, app: FastAPI, ready: str, fake_stripe: FakeGateway, app_engine: Engine
+    people: People,
+    app: FastAPI,
+    ready: str,
+    fake_stripe: FakeGateway,
+    app_engine: Engine,
+    migrate_engine: Engine,
 ) -> None:
     client = new_client(app)
     booking_id = place(app, people, ready, client=client).json()["id"]
@@ -616,7 +623,7 @@ def test_a_late_check_on_an_expired_booking_is_released_not_booked(
     assert pay_rows(people, booking_id)[0]["status"] == "checked"
     bookings.sweep()
     assert status_of(people, booking_id) == "expired"
-    due_now(app_engine, booking_id)
+    due_now(migrate_engine, booking_id)
     run("payment.settle")
     assert fake_stripe.intents[intent]["status"] == "canceled"
     assert pay_rows(people, booking_id)[0]["settled_at"] is not None
@@ -741,7 +748,7 @@ def test_a_given_up_settle_is_re_armed_by_the_next_hour(
 
     def exhaust() -> None:
         for _ in range(5):
-            due_now(migrate_engine, booking_id)
+            due_now(migrate_engine, booking_id, placement=False)
             run("payment.settle")
 
     def hourly() -> list[str]:
@@ -762,7 +769,7 @@ def test_a_given_up_settle_is_re_armed_by_the_next_hour(
     monkeypatch.setattr(payments, "hour", lambda: str(int(real()) + 1))
     bookings.sweep()
     assert len(hourly()) == 2
-    due_now(migrate_engine, booking_id)
+    due_now(migrate_engine, booking_id, placement=False)
     run("payment.settle")
 
     assert fake_stripe.intents[intent]["status"] == "canceled"

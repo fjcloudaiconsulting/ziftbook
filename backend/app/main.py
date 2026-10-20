@@ -271,6 +271,7 @@ def create_app() -> FastAPI:
         bookings.merchant_router,
         booking_links.router,
         payments.router,
+        payments.public_router,
         payments.webhook_router,
         admin_auth.admin_sign_in_router,
         admin_auth.admin_half_router,

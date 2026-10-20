@@ -151,7 +151,7 @@ class FakeGateway(Gateway):
             tenant_id=tenant_id,
             booking_id=booking_id,
             amount=amount,
-            currency=currency,
+            currency=currency.lower(),  # as the real gateway sends it
             key=idempotency_key,
         )
         if idempotency_key not in self._intent_by_key:
@@ -162,7 +162,7 @@ class FakeGateway(Gateway):
                 "type": "payment" if payment else "setup",
                 "status": "requires_payment_method",
                 "amount": amount if payment else None,
-                "currency": currency if payment else None,
+                "currency": currency.lower() if payment else None,
                 "client_secret": f"{intent_id}_secret_{uuid.uuid4().hex}",
                 "account": account,
                 "booking_id": booking_id,
