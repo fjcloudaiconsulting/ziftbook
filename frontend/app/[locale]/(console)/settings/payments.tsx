@@ -91,13 +91,13 @@ export function Payments({ disabled, switchRow }: { disabled: boolean; switchRow
       </legend>
       {signedOut && <SignedOutBanner />}
       {body && <p className={styles.body}>{body}</p>}
-      {account && owner && account.state !== "off" && account.country_supported && account.min_amount_minor !== null && switchRow(formatMoney(account.min_amount_minor, account.currency, locale), account.state === "ready")}
       {(action === "connect" || action === "continue") && (
         <button className={`${uiStyles.button} ${uiStyles.primary}`} type="button" aria-disabled={busy || undefined} onClick={() => go("connect")}>
           {busy && <span className={uiStyles.spinner} aria-hidden="true" />}
           {t(action === "connect" ? "paymentsConnect" : "paymentsContinue")}
         </button>
       )}
+      {account && owner && account.state !== "off" && account.country_supported && account.min_amount_minor !== null && switchRow(formatMoney(account.min_amount_minor, account.currency, locale), account.state === "ready")}
       {action === "dashboard" && (
         <p className={styles.row}>
           <button className={uiStyles.textButton} type="button" aria-disabled={busy || undefined} onClick={dashboard}>
