@@ -669,3 +669,34 @@ def test_a_refused_refund_after_a_partial_one_is_flagged_for_the_rest(
     assert refund_failed_details(people, booking_id) == [
         {"amount_minor": PRICE - 1000, "refund": None}
     ]
+
+
+# Refused refund: FENCE. Kills: flagging on the amounts read before the refund call, when Stripe
+# refused because the business refunded it all in its dashboard meanwhile (flagged for ever: no
+# refund event follows to clear it).
+def test_a_refund_refused_because_it_was_refunded_meanwhile_is_not_flagged(
+    people: People,
+    app: FastAPI,
+    owner: TestClient,
+    ready: str,
+    fake_stripe: FakeGateway,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, booking_id, intent = booked(app, people, fake_stripe, ready)
+    assert patch(owner, booking_id, "declined").status_code == 200
+    read = fake_stripe.retrieve_intent
+
+    def then_refunded_by_hand(account: str, intent_id: str) -> Any:
+        state = read(account, intent_id)
+        if not fake_stripe.refunds:
+            fake_stripe.add_refund(intent, PRICE, "succeeded")  # the business, in its dashboard
+        return state
+
+    monkeypatch.setattr(fake_stripe, "retrieve_intent", then_refunded_by_hand)
+
+    payments.settle(settle_job(people, booking_id))
+
+    row = paid_row(people, booking_id)
+    assert (row["refunded_minor"], row["refund_failed_at"]) == (PRICE, None)
+    assert history(people, booking_id).count("refund_failed") == 0
+    assert count_events(people, booking_id, "refunded") == 1
