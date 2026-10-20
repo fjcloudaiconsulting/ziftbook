@@ -500,13 +500,16 @@ def test_a_payment_step_cannot_be_skipped(
 
 # 8: FENCE. Kills: amounts from the request; a stale service price; a reconcile that advances a
 # booking on any successful intent.
+@pytest.mark.parametrize("drift", ["amount", "currency"])
 def test_the_amount_is_the_snapshot_price(
+    drift: str,
     people: People,
     app: FastAPI,
     owner: TestClient,
     ready: str,
     fake_stripe: FakeGateway,
     app_engine: Engine,
+    migrate_engine: Engine,
     log_lines: Lines,
 ) -> None:
     client = new_client(app)
@@ -546,12 +549,26 @@ def test_the_amount_is_the_snapshot_price(
     assert refused(2500, "USD") == ("23503", "fk_booking_payments_booking_price")
     assert refused(0, "EUR") == ("23514", "ck_booking_payments_amount_minor")
 
-    fake_stripe.intents[fake_stripe.latest(booking_id)]["amount"] = 2501
+    # The business changes its price after the booking was placed: the snapshot still decides.
+    with migrate_engine.begin() as conn:
+        conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(people.a)})
+        conn.execute(text("UPDATE services SET price_amount_minor = 3000"))
     fake_stripe.confirm(fake_stripe.latest(booking_id))
-    answer = sync(client, people, booking_id)
+    assert sync(client, people, booking_id).json()["status"] == "pending"
+
+    # A second booking, at the new price: an intent that drifts from its snapshot advances nothing.
+    other = place(app, people, ready, starts_at=at("10:00"), client=client).json()["id"]
+    assert [p["amount"] for op, p in fake_stripe.calls if op == "create_check"] == [2500, 3000]
+    drifting = fake_stripe.intents[fake_stripe.latest(other)]
+    if drift == "amount":
+        drifting["amount"] = 3001
+    else:
+        drifting["currency"] = "usd"
+    fake_stripe.confirm(fake_stripe.latest(other))
+    answer = sync(client, people, other)
 
     assert answer.json()["status"] == "awaiting_payment"
-    assert pay_rows(people, booking_id)[0]["status"] == "open"
+    assert pay_rows(people, other)[0]["status"] == "open"
     assert [line["level"] for line in log_lines() if "does not match" in line["msg"]] == ["ERROR"]
 
 
