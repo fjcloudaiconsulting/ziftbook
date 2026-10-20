@@ -693,7 +693,10 @@ class ResumeIn(BaseModel):
 
 # The booking and its live payment (else its newest), read together; `n` numbers the next intent.
 CHECKOUT = text("""
-SELECT b.id, b.status, b.starts_at, b.ends_at, b.duration_minutes, b.service_name,
+SELECT b.id,
+       CASE WHEN b.status = 'awaiting_payment' AND b.expires_at <= now() THEN 'expired'
+            ELSE b.status END AS status,
+       b.starts_at, b.ends_at, b.duration_minutes, b.service_name,
        b.price_amount_minor, b.price_currency, b.worker_id, b.worker_display_name,
        b.cancellation_policy_text, b.expires_at,
        (b.status = 'awaiting_payment' AND b.expires_at > now()) AS live

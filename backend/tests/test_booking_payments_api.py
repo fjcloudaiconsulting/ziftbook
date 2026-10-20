@@ -1021,3 +1021,18 @@ def test_a_payment_under_way_at_the_deadline_is_not_cancelled(
     (row,) = pay_rows(people, booking_id)
     assert (row["status"], row["settled_at"] is not None) == ("canceled", True)
     assert fake_stripe.intents[intent]["status"] == "canceled"
+
+
+# R-C1. fence. Kills: a sync that reports `awaiting_payment` for a hold whose time has passed but
+# which the sweep has not expired yet (the page would keep waiting for a checkout that is over).
+def test_sync_reports_a_lapsed_hold_as_expired(
+    people: People, app: FastAPI, ready: str, fake_stripe: FakeGateway
+) -> None:
+    client = new_client(app)
+    booking_id = place(app, people, ready, client=client).json()["id"]
+    expire(people.a, booking_id)  # past its deadline, not yet swept
+
+    answer = sync(client, people, booking_id)
+
+    assert answer.json()["status"] == "expired"
+    assert status_of(people, booking_id) == "awaiting_payment"  # the sweep has not run
