@@ -1394,7 +1394,10 @@ def test_a_failed_refund_is_shown_to_the_business(
     detail = owner.get(f"/api/bookings/{booking_id}").json()
     assert detail["payment"]["refund_failed"] is True
     (failed,) = [e for e in detail["history"] if e["event"] == "refund_failed"]
-    assert failed["actor"] == "system" and failed["details"] == {"amount_minor": 2500}
+    assert failed["actor"] == "system" and failed["details"] == {
+        "amount_minor": 2500,
+        "refund": refund_id,
+    }
     with tenant_context(people.a) as session:
         assert session.scalar(
             text("SELECT refund_failed_at IS NOT NULL FROM booking_payments WHERE intent_id = :i"),
@@ -1622,3 +1625,53 @@ def test_the_fee_and_the_mode_on_the_row_are_read_once(
     assert made.status_code == 201, made.text
     (row,) = pay_rows(people, made.json()["id"])
     assert (row["fee_mode"], row["application_fee_minor"]) == ("business_pays_plus_fee", 85)
+
+
+# B3 review 6: FENCE. Kills: a failure flag nothing clears (a refund the business made good still
+# reads "failed"); a second failure that is swallowed because the first one was already flagged; a
+# replay that re-flags a settled problem.
+def test_a_made_good_refund_clears_the_flag_and_a_new_failure_sets_it_again(
+    people: People,
+    app: FastAPI,
+    owner: TestClient,
+    ready: str,
+    fake_stripe: FakeGateway,
+    log_lines: Lines,
+) -> None:
+    client = new_client(app)
+    booking_id = place(app, people, ready, payment="pay", client=client).json()["id"]
+    intent = fake_stripe.latest(booking_id)
+    fake_stripe.confirm(intent)
+    assert sync(client, people, booking_id).json()["status"] == "pending"
+    assert (
+        owner.patch(f"/api/bookings/{booking_id}", json={"status": "declined"}).status_code == 200
+    )
+    bookings.sweep()
+    run("payment.settle")
+    (first,) = fake_stripe.refunds
+    fake_stripe.refunds[first]["status"] = "failed"
+    account = account_of(people)
+
+    def told(refund_id: str, type_: str = "refund.failed") -> None:
+        assert webhook(client, type_, account, refund_id).status_code == 200
+        run("stripe.event")
+
+    def flagged() -> bool:
+        return bool(owner.get(f"/api/bookings/{booking_id}").json()["payment"]["refund_failed"])
+
+    told(first)
+    told(first, "charge.refund.updated")  # a replay of the same failure
+    assert (flagged(), history(people, booking_id).count("refund_failed")) == (True, 1)
+
+    good = fake_stripe.add_refund(intent, 2500, "succeeded")  # the business sent it by hand
+    told(good, "charge.refund.updated")
+    assert flagged() is False
+
+    told(first)  # the old failure comes round again: already told, not a new problem
+    assert (flagged(), history(people, booking_id).count("refund_failed")) == (False, 1)
+
+    second = fake_stripe.add_refund(intent, 100, "failed")
+    told(second)
+    assert (flagged(), history(people, booking_id).count("refund_failed")) == (True, 2)
+    errors = [x for x in log_lines() if x["msg"] == "refund failed" and x["level"] == "ERROR"]
+    assert [x["refund"] for x in errors] == [first, second]

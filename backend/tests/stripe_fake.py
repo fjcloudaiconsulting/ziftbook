@@ -323,6 +323,7 @@ class FakeGateway(Gateway):
                 "amount": amount,
                 "status": "succeeded",
                 "account": account,
+                "created": time.time(),
             }
             self.refund_keys[idempotency_key] = refund_id
             return refund_id
@@ -330,7 +331,21 @@ class FakeGateway(Gateway):
     def retrieve_refund(self, account: str, refund_id: str) -> RefundState:
         self._enter("retrieve_refund", account=account, refund_id=refund_id)
         got = self.refunds[refund_id]
-        return RefundState(refund_id, got["status"], got["intent_id"], got["amount"])
+        return RefundState(
+            refund_id, got["status"], got["intent_id"], got["amount"], int(got["created"])
+        )
+
+    def add_refund(self, intent_id: str, amount: int, status: str) -> str:
+        """A refund made outside the platform (the business, in its Stripe dashboard)."""
+        refund_id = "re_" + uuid.uuid4().hex[:20]
+        self.refunds[refund_id] = {
+            "intent_id": intent_id,
+            "amount": amount,
+            "status": status,
+            "account": self.intents[intent_id]["account"],
+            "created": time.time() + 2,  # later than the event the test just ran (whole seconds)
+        }
+        return refund_id
 
     def refunded(self, intent_id: str | None = None) -> list[int]:
         """The amounts refunded, in order (of one intent, else of all)."""

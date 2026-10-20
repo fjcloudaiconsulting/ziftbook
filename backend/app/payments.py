@@ -144,7 +144,7 @@ def handle_event(job: Job) -> None:
     elif event_type in INTENT_EVENTS and isinstance(object_id, str):
         reconcile(job.tenant_id, object_id)
     elif event_type in REFUND_EVENTS and isinstance(object_id, str):
-        refund_failed(job.tenant_id, object_id)
+        refund_changed(job.tenant_id, object_id)
 
 
 def _unavailable() -> ApiError:
@@ -473,13 +473,28 @@ SET refunded_minor = :due, refund_id = coalesce(refund_id, :refund_id), settled_
 WHERE id = :id AND settled_at IS NULL
 RETURNING 1
 """)
-# Matched on the refund's intent, never on our refund_id (NULL when an earlier or overlapping settle
-# issued the refund).
+# Refund events are matched on the refund's intent, never on our refund_id (NULL when an earlier or
+# overlapping settle issued the refund).
+PAYMENT_OF = text("SELECT booking_id FROM booking_payments WHERE intent_id = :intent")
+# One `refund_failed` event per failed refund: the event is what a replay finds already told.
+TELL_REFUND_FAILED = text("""
+INSERT INTO booking_events (tenant_id, booking_id, event, details)
+SELECT current_setting('app.tenant_id')::uuid, :booking_id, 'refund_failed',
+       CAST(:details AS jsonb)
+WHERE NOT EXISTS (SELECT 1 FROM booking_events
+                  WHERE booking_id = :booking_id AND event = 'refund_failed'
+                    AND details ->> 'refund' = :refund_id)
+RETURNING 1
+""")
 MARK_REFUND_FAILED = text("""
 UPDATE booking_payments
 SET refund_failed_at = now(), refund_id = coalesce(refund_id, :refund_id)
-WHERE intent_id = :intent AND refund_failed_at IS NULL
-RETURNING booking_id
+WHERE intent_id = :intent
+""")
+# A refund made after the failure (the business sent it by hand) makes the payment good again.
+CLEAR_REFUND_FAILED = text("""
+UPDATE booking_payments SET refund_failed_at = NULL
+WHERE intent_id = :intent AND refund_failed_at < to_timestamp(:created)
 """)
 
 
@@ -908,25 +923,38 @@ def _refund(tenant_id: UUID, row: Row[Any]) -> None:
         )
 
 
-def refund_failed(tenant_id: UUID, refund_id: str) -> None:
-    """A refund event: read the refund again, and if it failed tell the business (ERROR for ops, and
-    the payment's flag the console reads). Money cannot be retried from here: the business does it
-    in its Stripe dashboard."""
+def refund_changed(tenant_id: UUID, refund_id: str) -> None:
+    """A refund event: read the refund again. A failed one is told to the business (ERROR for ops,
+    one history event, and the payment's flag the console reads); a later successful one clears the
+    flag. Money cannot be retried from here: the business does it in its Stripe dashboard."""
     with tenant_context(tenant_id) as db:
         account = db.execute(ACCOUNT).first()
     if account is None:
         return
     refund = stripe_gateway.gateway.retrieve_refund(account.stripe_account_id, refund_id)
-    if refund.status != "failed" or refund.payment_intent is None:
+    if refund.payment_intent is None or refund.status not in ("failed", "succeeded"):
         return
+    params = {"intent": refund.payment_intent, "refund_id": refund_id}
     with tenant_context(tenant_id) as db:
         db.execute(bookings.LOCK, {"key": bookings.LOCK_KEY})
-        failed = db.execute(
-            MARK_REFUND_FAILED, {"intent": refund.payment_intent, "refund_id": refund_id}
-        ).first()
-        if failed is None:  # not ours, or already told
+        if refund.status == "succeeded":
+            db.execute(CLEAR_REFUND_FAILED, {**params, "created": refund.created})
             return
-        _record(db, failed.booking_id, "refund_failed", {"amount_minor": refund.amount})
+        payment = db.execute(PAYMENT_OF, params).first()
+        if payment is None:  # not ours
+            return
+        details = {"amount_minor": refund.amount, "refund": refund_id}
+        told = db.execute(
+            TELL_REFUND_FAILED,
+            {
+                "booking_id": payment.booking_id,
+                "refund_id": refund_id,
+                "details": json.dumps(details),
+            },
+        ).first()
+        if told is None:  # a replay
+            return
+        db.execute(MARK_REFUND_FAILED, params)
     logger.error("refund failed", extra={"intent": refund.payment_intent, "refund": refund_id})
 
 
