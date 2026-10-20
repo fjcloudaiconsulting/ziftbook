@@ -31,10 +31,11 @@ import { defaultDial, dialOptions } from "@/lib/dial-codes";
 import { type Locale } from "@/lib/services";
 import { zoneCity } from "@/lib/week";
 
-import { Banner, Chevron, FieldError, send, Submit } from "../_ui/parts";
+import { Banner, FieldError, send, Submit } from "../_ui/parts";
 import { CheckIcon } from "../_ui/picker";
 import styles from "../_ui/ui.module.css";
 import { type Done, DoneScreen, Picker, WhoAt } from "./checkout";
+import { DialPicker } from "./dial-picker";
 import { BookingFooter, NewTab } from "./footer";
 import { PinIcon } from "./icons";
 import { type CacheEntry, type Flow, type Service, type Step2Plus, type TimesWindow } from "./shared";
@@ -697,16 +698,7 @@ export function BookingPage({
                           {t("phone")}
                         </label>
                         <div className={styles.phonePair}>
-                          <div className={styles.input}>
-                            <select id="bp-dial" name="dial" aria-label={t("dialCode")} value={region} onChange={(e) => setRegion(e.target.value)}>
-                              {dials.map((o) => (
-                                <option key={o.region} value={o.region}>
-                                  {o.text}
-                                </option>
-                              ))}
-                            </select>
-                            <Chevron select />
-                          </div>
+                          <DialPicker options={dials} value={region} onChange={setRegion} />
                           <div className={styles.input}>
                             <input
                               ref={phoneRef}

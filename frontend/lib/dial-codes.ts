@@ -34,12 +34,35 @@ export function defaultDial(country: string): string {
   return DIAL[country] ?? "";
 }
 
-/** The country-code select's options: the business country first, then the rest by their name in
+export type DialOption = { region: string; name: string; dial: string; text: string };
+
+/** The country-code picker's options: the business country first, then the rest by their name in
  * the page language. Text reads "Netherlands (NL +31)"; the value is the ISO code (several regions
  * share "+1"). */
-export function dialOptions(country: string, locale: string): { region: string; text: string }[] {
+export function dialOptions(country: string, locale: string): DialOption[] {
   const names = new Intl.DisplayNames(locale, { type: "region" });
-  const all = Object.entries(DIAL).map(([region, dial]) => ({ region, text: `${names.of(region) ?? region} (${region} +${dial})` }));
+  const all = Object.entries(DIAL).map(([region, dial]) => {
+    const name = names.of(region) ?? region;
+    return { region, name, dial, text: `${name} (${region} +${dial})` };
+  });
   const rest = all.filter((o) => o.region !== country).sort((a, b) => a.text.localeCompare(b.text, locale));
   return [...all.filter((o) => o.region === country), ...rest];
+}
+
+/** The emoji flag of an ISO region: its two letters as regional-indicator code points. */
+export function flagOf(region: string): string {
+  return [...region.toUpperCase()].map((c) => String.fromCodePoint(0x1f1e6 + c.charCodeAt(0) - 65)).join("");
+}
+
+const fold = (s: string) => s.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase().trim();
+
+/** Whether an option answers the picker's search: a part of the country name (accents and case
+ * ignored), the ISO code, or the dialling code typed as "44", "+44" or "0044". Dialling codes match
+ * as a PREFIX of the digits ("21" finds +213, "+3" finds +31..+39x), never inside one ("13" is not +213). */
+export function matchDial(o: DialOption, query: string): boolean {
+  const q = fold(query);
+  if (!q) return true;
+  if (fold(o.name).includes(q) || o.region.toLowerCase().includes(q)) return true;
+  const digits = q.replace(/^(\+|00)/, "");
+  return /^\d+$/.test(digits) && o.dial.startsWith(digits);
 }

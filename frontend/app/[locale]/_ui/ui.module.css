@@ -114,7 +114,7 @@
 .label { font: 600 0.9375rem/1.3 var(--font-body), system-ui, sans-serif; }
 .labelRow a { font-size: 0.875rem; }
 .input { position: relative; }
-.input input, .input select, .input textarea {
+.input input, .input select, .input textarea, .input .dialTrigger {
   width: 100%;
   min-height: 48px;
   padding: 0 0.9rem;
@@ -130,7 +130,7 @@
 .input select:invalid { color: var(--muted); }
 .input option { color: var(--ink); }
 .selectChevron { position: absolute; right: 1rem; top: 50%; translate: 0 -50%; color: var(--muted); pointer-events: none; }
-.input input:focus-visible, .input select:focus-visible, .input textarea:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; border-color: var(--primary); }
+.input input:focus-visible, .input select:focus-visible, .input textarea:focus-visible, .input .dialTrigger:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; border-color: var(--primary); }
 .input :is(input, select, textarea)[aria-invalid="true"] { border-color: var(--error); border-width: 2px; padding-left: calc(0.9rem - 1px); }
 .input input:read-only { background: var(--surface); border-color: var(--line); }
 .input .withToggle { padding-right: 5.5rem; }
@@ -447,7 +447,22 @@ a.textButton { display: inline-flex; align-items: center; }
   .svcDialogBook { position: sticky; bottom: 0; background: var(--bg); border-top: 1px solid var(--line); padding-bottom: calc(1rem + env(safe-area-inset-bottom)); }
 }
 /* The checkout: country code beside the number, the marketing tick, the summary's head and Total. */
-.phonePair { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: 0.5rem; }
+.phonePair { position: relative; display: grid; grid-template-columns: minmax(6.5rem, 1fr) minmax(0, 3fr); gap: 0.5rem; }
+.input .dialTrigger { display: flex; align-items: center; padding-right: 2rem; text-align: start; cursor: pointer; white-space: nowrap; }
+.dialPanel {
+  position: absolute; top: calc(100% + 0.25rem); left: 0; right: 0; z-index: 10; display: flex; flex-direction: column;
+  max-height: 50vh; border: 1px solid var(--field-line); border-radius: 0.75rem; background: var(--bg); box-shadow: var(--lift); overflow: hidden;
+}
+.dialPanel :focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+.dialSearch { flex: none; min-height: 48px; padding: 0 0.9rem; border: 0; border-bottom: 1px solid var(--line); background: var(--bg); color: var(--ink); font: 400 1rem/1 var(--font-body), system-ui, sans-serif; }
+.dialList { list-style: none; margin: 0; padding: 0; overflow-y: auto; }
+.dialRow { display: flex; align-items: center; gap: 0.75rem; min-height: 2.75rem; padding: 0 0.9rem; cursor: pointer; }
+.dialRowActive { background: var(--primary-soft); }
+.dialRow[aria-selected="true"] .dialName { font-weight: 600; }
+.dialName { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.dialCode { color: var(--muted); }
+.dialEmpty { margin: 0; padding: 0.9rem; color: var(--muted); }
+.dialEmpty:empty { padding: 0; } /* stays mounted, empty, so a screen reader announces the text swapped in */
 .consentRow { display: flex; align-items: flex-start; gap: 0.6rem; font-size: 0.9375rem; line-height: 1.4; }
 .consentRow input { flex: none; width: 1.25rem; height: 1.25rem; margin: 0.1rem 0 0; accent-color: var(--primary); }
 .sumHead { display: flex; align-items: center; gap: 0.75rem; }
