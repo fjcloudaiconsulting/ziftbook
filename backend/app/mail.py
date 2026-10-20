@@ -355,8 +355,13 @@ ENDED = {"booking_declined", "booking_cancelled", "booking_cancelled_by_client"}
 PAYMENT_LINES = {
     "team_checked": {
         "en": "Card checked for $amount. Nothing was charged.",
-        "nl": "Kaart gecontroleerd voor $amount. Er is niets afgeschreven.",
-        "pt": "Cartão verificado para $amount. Nada foi cobrado.",
+        "nl": "Kaart gecontroleerd voor een bedrag van $amount. Er is niets afgeschreven.",
+        "pt": "Cartão verificado no valor de $amount. Nada foi cobrado.",
+    },
+    "team_checked_setup": {
+        "en": "Card checked. Nothing was charged.",
+        "nl": "Kaart gecontroleerd. Er is niets afgeschreven.",
+        "pt": "Cartão verificado. Nada foi cobrado.",
     },
     "team_paid": {
         "en": "Paid online: $amount.",
@@ -365,8 +370,9 @@ PAYMENT_LINES = {
     },
     "checked": {
         "en": "We checked your card for $amount. Nothing was charged.",
-        "nl": "We hebben je kaart gecontroleerd voor $amount. Er is niets afgeschreven.",
-        "pt": "Verificamos seu cartão para $amount. Nada foi cobrado.",
+        "nl": "We hebben je kaart gecontroleerd voor een bedrag van $amount. "
+        "Er is niets afgeschreven.",
+        "pt": "Verificamos seu cartão no valor de $amount. Nada foi cobrado.",
     },
     "checked_setup": {
         "en": "We checked your card. Nothing was charged.",
@@ -381,7 +387,7 @@ PAYMENT_LINES = {
     "refund": {
         "en": "$amount will be refunded to your payment method. "
         "Your bank may take a few days to show it.",
-        "nl": "$amount wordt terugbetaald op je betaalmethode. "
+        "nl": "$amount wordt teruggestort op je betaalmethode. "
         "Het kan een paar dagen duren voordat je bank dit laat zien.",
         "pt": "$amount será reembolsado na sua forma de pagamento. "
         "Seu banco pode levar alguns dias para mostrar o valor.",
@@ -389,20 +395,23 @@ PAYMENT_LINES = {
     "fee_kept": {
         "en": "Payment processing fees of $amount are not refunded.",
         "nl": "Betalingskosten van $amount worden niet terugbetaald.",
-        "pt": "As taxas de processamento do pagamento, de $amount, não são reembolsadas.",
+        "pt": "A taxa de processamento do pagamento ($amount) não é reembolsada.",
     },
 }
 SYMBOLS = {"EUR": "€", "GBP": "£", "USD": "$"}
 
 
 def _money(amount_minor: int, currency: str, locale: str) -> str:
-    """shortcut: four currencies, two decimals; use Babel if a zero-decimal currency comes."""
-    digits = f"{amount_minor // 100}.{amount_minor % 100:02d}"
+    """The frontend's Intl.NumberFormat currency format (frontend/lib/money.ts) for the three
+    currencies in SYMBOLS, two decimals. shortcut: use Babel if a zero-decimal currency comes."""
     symbol = SYMBOLS.get(currency)
+    whole, cents = f"{amount_minor // 100:,}", f"{amount_minor % 100:02d}"
     if locale == "en":
-        return f"{symbol}{digits}" if symbol else f"{digits} {currency}"
-    digits = digits.replace(".", ",")
-    return f"{symbol} {digits}" if symbol else f"{digits} {currency}"
+        return f"{symbol}{whole}.{cents}" if symbol else f"{whole}.{cents} {currency}"
+    digits = f"{whole.replace(',', '.')},{cents}"
+    if symbol == "$":
+        symbol = "US$"  # Intl tells the dollars apart outside en
+    return f"{symbol}\u00a0{digits}" if symbol else f"{digits} {currency}"
 
 
 def _line(key: str, locale: str, amount_minor: int, currency: str) -> str:
@@ -423,11 +432,9 @@ def payment_line(
     if paid is None:
         return ""
     if template in ARRIVAL:
-        key = paid.status
+        key = "checked_setup" if paid.setup else paid.status
         if team:
             key = "team_" + key
-        elif paid.setup:
-            key = "checked_setup"
         return _line(key, locale, paid.amount_minor, paid.currency)
     if paid.status != "paid":
         return ""

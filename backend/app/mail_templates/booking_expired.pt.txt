@@ -6,6 +6,6 @@ $business não confirmou seu pedido de agendamento a tempo, então ele foi encer
 $service
 $date às $time ($zone)
 
-Seu pagamento de $amount é reembolsado integralmente na sua forma de pagamento. Seu banco pode levar alguns dias para mostrar o valor.
+Seu pagamento de $amount será reembolsado integralmente na sua forma de pagamento. Seu banco pode levar alguns dias para mostrar o valor.
 
 ziftbook

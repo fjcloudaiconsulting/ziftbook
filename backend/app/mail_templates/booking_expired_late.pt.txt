@@ -6,6 +6,6 @@ Seu pagamento para este horário chegou depois de pararmos de reservá-lo, entã
 $service
 $date às $time ($zone)
 
-Seu pagamento de $amount é reembolsado integralmente na sua forma de pagamento. Seu banco pode levar alguns dias para mostrar o valor. Você pode escolher outro horário.
+Seu pagamento de $amount será reembolsado integralmente na sua forma de pagamento. Seu banco pode levar alguns dias para mostrar o valor. Você pode escolher outro horário.
 
 ziftbook

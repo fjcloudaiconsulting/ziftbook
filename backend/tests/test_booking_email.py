@@ -1237,3 +1237,55 @@ def test_the_payment_lines_say_checked_or_paid(
     assert "Card checked for €40.00. Nothing was charged." in sent["check team"]
     assert "You paid €40.00." in sent["pay client"]
     assert "Paid online: €40.00." in sent["pay team"]
+
+
+# ZIF-158 B3 review 9. fence. The expected strings are Node's Intl.NumberFormat(locale, {style:
+# "currency", currency}).format(minor / 100), the frontend's formatMoney (frontend/lib/money.ts),
+# run in node:24-alpine. Kills: no digit grouping; a plain space or a "$" where Intl has "US$".
+NB = " "
+INTL = {
+    ("en", "EUR"): ("€40.00", "€1,234.56"),
+    ("en", "GBP"): ("£40.00", "£1,234.56"),
+    ("en", "USD"): ("$40.00", "$1,234.56"),
+    ("nl", "EUR"): (f"€{NB}40,00", f"€{NB}1.234,56"),
+    ("nl", "GBP"): (f"£{NB}40,00", f"£{NB}1.234,56"),
+    ("nl", "USD"): (f"US${NB}40,00", f"US${NB}1.234,56"),
+    ("pt", "EUR"): (f"€{NB}40,00", f"€{NB}1.234,56"),
+    ("pt", "GBP"): (f"£{NB}40,00", f"£{NB}1.234,56"),
+    ("pt", "USD"): (f"US${NB}40,00", f"US${NB}1.234,56"),
+}
+
+
+@pytest.mark.parametrize(("locale", "currency"), list(INTL))
+def test_money_reads_as_the_frontend_formats_it(locale: str, currency: str) -> None:
+    small, grouped = INTL[(locale, currency)]
+
+    assert mail._money(4000, currency, locale) == small
+    assert mail._money(123456, currency, locale) == grouped
+
+
+# ZIF-158 B3 review 10. fence. Kills: the team being told a SetupIntent check was "for" an amount.
+def test_the_team_line_for_a_setup_check_names_no_amount(
+    people: People,
+    app: FastAPI,
+    owner: TestClient,
+    fake_stripe: Any,
+    migrate_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app import payments
+    from tests.test_booking_payments_api import make_shop, place, sync
+
+    monkeypatch.setattr(payments, "CHECK_WITH", "setup")
+    with migrate_engine.begin() as conn:
+        conn.execute(text("UPDATE users SET locale = 'en' WHERE id = :u"), {"u": people.both})
+    service_id = make_shop(people, owner, fake_stripe, price=4000)
+    client = new_client(app)
+    booking_id = place(app, people, service_id, payment="check", client=client).json()["id"]
+    fake_stripe.confirm(fake_stripe.latest(booking_id))
+    assert sync(client, people, booking_id).json()["status"] == "pending"
+
+    run_send_booking(people.a, booking_id, "booking_request", user_id=str(people.both))
+
+    said = str(sent_to(email_of(people.both))[0]["Text"])
+    assert "Card checked. Nothing was charged." in said and "€" not in said

@@ -6,6 +6,6 @@ $business heeft je boekingsaanvraag niet op tijd bevestigd, dus de aanvraag is b
 $service
 $date om $time ($zone)
 
-Je betaling van $amount wordt volledig terugbetaald op je betaalmethode. Het kan een paar dagen duren voordat je bank dit laat zien.
+Je betaling van $amount wordt volledig teruggestort op je betaalmethode. Het kan een paar dagen duren voordat je bank dit laat zien.
 
 ziftbook
