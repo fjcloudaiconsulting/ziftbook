@@ -555,8 +555,9 @@ def test_the_amount_is_the_snapshot_price(
     assert [line["level"] for line in log_lines() if "does not match" in line["msg"]] == ["ERROR"]
 
 
-# 9: FENCE. Kills: dedupe missing; a reconcile that writes a transition twice when the sync route
-# and the job race.
+# 9: FENCE for the dedupe half (kills: dedupe missing). The race half is a GUARD, not a fence: every
+# write is qualified on the status it expects, so a reconcile without FOR UPDATE or the lock still
+# writes once; only removing the whole trio of qualifiers turns it red (b2-fences.md).
 def test_one_event_reconciles_once(
     people: People,
     app: FastAPI,
@@ -1196,3 +1197,27 @@ def test_the_page_reads_the_payment_account_once(
 
     assert [s["payment"] for s in page["services"]] == [True, True, True]
     assert len(seen) == 1
+
+
+# R-V1. fence. Kills: a settle that gives up on a check which landed at the deadline instead of
+# reconciling it (a SetupIntent Stripe will not cancel because it already succeeded).
+def test_a_check_that_lands_at_the_deadline_is_settled_in_the_same_run(
+    people: People,
+    app: FastAPI,
+    ready: str,
+    fake_stripe: FakeGateway,
+    monkeypatch: pytest.MonkeyPatch,
+    migrate_engine: Engine,
+) -> None:
+    monkeypatch.setattr(payments, "CHECK_WITH", "setup")
+    booking_id = place(app, people, ready).json()["id"]
+    intent = fake_stripe.latest(booking_id)
+    expire(people.a, booking_id)
+    due_now(migrate_engine, booking_id)
+    fake_stripe.confirm(intent)  # succeeded, and no webhook processed yet
+
+    run("payment.settle")
+
+    (row,) = pay_rows(people, booking_id)
+    assert (row["status"], row["settled_at"] is not None) == ("checked", True)
+    assert status_of(people, booking_id) == "awaiting_payment"  # the hold ended: nothing is booked
