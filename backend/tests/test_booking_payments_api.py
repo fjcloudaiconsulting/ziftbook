@@ -16,6 +16,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from httpx2 import Response
+from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 from sqlalchemy import Engine, text
 
 from app import bookings, payments, stripe_gateway
@@ -25,9 +26,11 @@ from app.main import create_app
 from app.worker import KINDS
 from tests.conftest import (
     People,
+    closed,
     fresh_email,
     member_id,
     new_client,
+    points,
     put_settings,
     save_setting,
     signed_in,
@@ -235,6 +238,7 @@ def test_a_check_books_awaiting_then_pending(
     fake_stripe: FakeGateway,
     both: str,
     app_engine: Engine,
+    metric_reader: InMemoryMetricReader,
 ) -> None:
     client = new_client(app)
 
@@ -279,6 +283,14 @@ def test_a_check_books_awaiting_then_pending(
         assert settle_keys(app_engine, people, booking_id) == [
             f"payment.settle:{people.a}:{booking_id}:awaiting_payment"
         ]
+    outcomes = {
+        (p.attributes["payment.kind"], p.attributes["payment.outcome"])
+        for p in points(metric_reader, "ziftbook.payment.outcomes")
+    }
+    assert outcomes == {("check", "started"), ("check", "checked")} | (
+        {("check", "released")} if both == "authorisation" else set()
+    )
+    closed(metric_reader)
 
 
 # 2: FENCE. Kills: trusting the browser's "succeeded".
