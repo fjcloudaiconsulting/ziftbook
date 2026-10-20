@@ -263,7 +263,7 @@ jobs:
       checks: read
       pull-requests: read
       packages: write
-      id-token: write # the nested promote verifies each image's provenance before retagging it
+      attestations: read # the nested promote verifies each image's provenance before retagging it
     uses: fjcloudaiconsulting/.github/.github/workflows/release.yml@v1
     with:
       images: backend frontend migrations
