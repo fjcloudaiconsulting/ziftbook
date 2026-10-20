@@ -170,6 +170,10 @@ def test_each_ending_moves_the_right_money(
         client = linked(app, people.a, booking_id)
         pct = get(client).json()["engine"]["refund_pct"]
         assert post(client, "/cancel", cancel_body(booking_id, pct)).status_code == 200
+        # What the client was shown is what is refunded: neither the business's terms changing
+        # afterwards nor the appointment drawing closer moves it.
+        assert put_settings(owner, {"free_cancellation_hours": 720 - hours}).status_code == 200
+        shift(people.a, booking_id, PAST)
     elif case == "client move":
         moved = post(
             linked(app, people.a, booking_id),
