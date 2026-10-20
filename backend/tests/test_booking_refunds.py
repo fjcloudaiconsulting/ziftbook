@@ -356,6 +356,14 @@ def test_a_payment_processing_at_the_deadline_is_refunded_once_it_lands(
     )
     assert fake_stripe.refunded() == []
     if variant == "webhook":
+        with migrate_engine.begin() as conn:  # the earlier jobs are spent: only the event is left
+            conn.execute(
+                text(
+                    "UPDATE jobs SET attempts = 5 WHERE kind = 'payment.settle' "
+                    "AND payload->>'booking_id' = :b"
+                ),
+                {"b": booking_id},
+            )
         fake_stripe.confirm(intent)  # the bank came through
         hook = webhook(client, "payment_intent.succeeded", account_of(people), intent)
         assert hook.status_code == 200
