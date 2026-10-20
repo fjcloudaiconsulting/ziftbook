@@ -1691,10 +1691,10 @@ def test_the_failure_flag_follows_the_amounts_refunded(
 
 
 # B3 review 4: FENCE. Kills: the loser of a same-intent race handing out the secret of a payment
-# that has landed since (recorded, or not yet).
-@pytest.mark.parametrize("recorded", [True, False])
+# that has landed at Stripe but is not recorded yet. (Recorded, the hold is over and the loser is
+# told 404, as any resume that finds the booking no longer awaiting.)
 def test_a_same_intent_loser_never_hands_out_a_landed_payment(
-    recorded: bool, people: People, app: FastAPI, ready: str, fake_stripe: FakeGateway
+    people: People, app: FastAPI, ready: str, fake_stripe: FakeGateway
 ) -> None:
     client = new_client(app)
     booking_id = place(app, people, ready, payment="pay", client=client).json()["id"]
@@ -1706,8 +1706,6 @@ def test_a_same_intent_loser_never_hands_out_a_landed_payment(
             fake_stripe.on_call = None
             assert resume(other, people, booking_id, "check").status_code == 200  # A switches
             fake_stripe.confirm(fake_stripe.latest(booking_id))  # and the card goes through
-            if recorded:
-                assert sync(other, people, booking_id).json()["payment"]["state"] == "checked"
 
     fake_stripe.on_call = beaten
     lost = resume(client, people, booking_id, "check")  # B, with the row it read before A
