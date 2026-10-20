@@ -31,6 +31,7 @@ import {
   pickFromUrl,
   returnParams,
   scanWindow,
+  sendAction,
   sendLabel,
   slotsFor,
   slotWho,
@@ -560,5 +561,16 @@ describe("F2 the payment step (ZIF-158)", () => {
     for (const kind of ["expired", "expiredPaid", "expiredProcessing", "stale"]) assert.equal(mayForget(kind), true, kind);
     assert.equal(mayForget("checkEmail"), false);
     assert.equal(mayForget("processing"), false);
+  });
+
+  test("fence: what Send does, from whether it is already working, sent, and holds a secret", () => {
+    // Wrong implementation killed: a second press while a send, a kind switch or a verification is in
+    // flight (two POSTs, or a confirm of the old intent); a sent request posting again; a retry with no
+    // secret doing nothing.
+    assert.equal(sendAction({ working: true, sent: false, hasSecret: false }), "ignore");
+    assert.equal(sendAction({ working: true, sent: true, hasSecret: true }), "ignore");
+    assert.equal(sendAction({ working: false, sent: false, hasSecret: false }), "post");
+    assert.equal(sendAction({ working: false, sent: true, hasSecret: true }), "pay");
+    assert.equal(sendAction({ working: false, sent: true, hasSecret: false }), "reopen");
   });
 });
