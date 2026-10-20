@@ -23,6 +23,7 @@ import {
   freeNamed,
   groupByDayPart,
   keepPick,
+  mayForget,
   nextWeekDisabled,
   ownPolicyText,
   parseCheckout,
@@ -492,6 +493,8 @@ describe("F2 the payment step (ZIF-158)", () => {
     assert.ok(!/fee|kost|taxa|tarifa/i.test(catalogs.en.payNowHint));
     for (const l of ["nl", "pt"]) assert.notEqual(catalogs[l].payNowHint, catalogs[l].payNowHintFee);
     assert.match(catalogs.en.payNowHintFee, /fee/);
+    assert.ok(!/kosten/i.test(catalogs.nl.payNowHint) && /kosten/i.test(catalogs.nl.payNowHintFee));
+    assert.ok(!/taxa/i.test(catalogs.pt.payNowHint) && /taxa/i.test(catalogs.pt.payNowHintFee));
   });
 
   test("fence: what the page shows for each booking and payment state", () => {
@@ -506,6 +509,10 @@ describe("F2 the payment step (ZIF-158)", () => {
     assert.deepEqual(doneState(sync("expired", "paid")), { kind: "expiredPaid" });
     assert.deepEqual(doneState(sync("expired", "open")), { kind: "expired" });
     assert.deepEqual(doneState(sync("expired", "canceled")), { kind: "expired" });
+    // The server's resume starts a new intent after a cancelled one; paid/checked wait for the webhook.
+    assert.deepEqual(doneState(sync("awaiting_payment", "canceled")), { kind: "resume", failed: false });
+    assert.deepEqual(doneState(sync("awaiting_payment", "paid")), { kind: "processing" });
+    assert.deepEqual(doneState(sync("awaiting_payment", "checked")), { kind: "processing" });
     for (const status of ["declined", "cancelled_by_client", "cancelled_by_business", "completed", "no_show", "something_new"]) {
       assert.deepEqual(doneState(sync(status, "paid")), { kind: "stale" }, status);
     }
@@ -544,5 +551,13 @@ describe("F2 the payment step (ZIF-158)", () => {
     assert.equal(storedNext({ status: "pending" }), "done");
     assert.equal(storedNext({ status: "confirmed" }), "done");
     for (const status of ["expired", "declined", "cancelled_by_client", "completed"]) assert.equal(storedNext({ status }), "checkout", status);
+  });
+
+  test("fence: only a settled end state forgets the booking; a failed check keeps it", () => {
+    // Wrong implementation killed: checkEmail forgetting the id and the address (the client then books
+    // and pays again for another time while the first payment may be landing).
+    for (const kind of ["expired", "expiredPaid", "expiredProcessing", "stale"]) assert.equal(mayForget(kind), true, kind);
+    assert.equal(mayForget("checkEmail"), false);
+    assert.equal(mayForget("processing"), false);
   });
 });

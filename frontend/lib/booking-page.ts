@@ -387,7 +387,7 @@ export function doneState(sync: { status: string; payment: { state: string; fail
   if (status === "awaiting_payment") {
     if (payment.state === "open") return { kind: "resume", failed: payment.failed };
     // checked or paid while the booking has not moved yet: the webhook is about to.
-    return payment.state === "canceled" ? { kind: "stale" } : { kind: "processing" };
+    return payment.state === "canceled" ? { kind: "resume", failed: false } : { kind: "processing" };
   }
   if (status === "expired") {
     return payment.state === "processing" ? { kind: "expiredProcessing" } : payment.state === "paid" ? { kind: "expiredPaid" } : { kind: "expired" };
