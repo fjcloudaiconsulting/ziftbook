@@ -893,7 +893,7 @@ def test_a_resume_after_a_cancelled_intent_makes_the_next_one(
     assert [row["status"] for row in pay_rows(people, booking_id)] == ["canceled", "open"]
     fake_stripe.confirm(second)
     assert sync(client, people, booking_id).json()["status"] == "pending"
-    assert resume(client, people, booking_id).status_code == 404  # no longer awaiting payment
+    assert resume(client, people, booking_id).status_code == 409  # recorded: settled
 
 
 # 21: FENCE. Kills: a sync answer the page reads as "booked" while nothing is paid.
