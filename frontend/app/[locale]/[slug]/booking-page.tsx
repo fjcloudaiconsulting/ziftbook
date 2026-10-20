@@ -433,8 +433,9 @@ export function BookingPage({
       },
       "error-callback": () => {
         setVerifying(false);
+        // Only a send waiting on the verification owns the lock; a re-challenge during a confirm does not.
+        if (pendingSubmit.current) working.current = false;
         pendingSubmit.current = false;
-        working.current = false;
         if (turnstileTimer.current) {
           clearTimeout(turnstileTimer.current);
           turnstileTimer.current = null;
@@ -508,6 +509,11 @@ export function BookingPage({
         payment: s.payment.kind === "pay" ? "paid" : "checked",
       });
       return;
+    }
+    if (view.kind !== "resume") {
+      // Whatever was in flight (a switch, a release) ends here; a resume's reopen takes it over.
+      working.current = false;
+      setFlow((f) => ({ ...f, busy: false }));
     }
     if (view.kind === "resume") {
       setEnd(null);
@@ -607,11 +613,8 @@ export function BookingPage({
     if (!bookingId || working.current) return;
     working.current = true;
     setFlow((f) => ({ ...f, busy: true, banner: null }));
+    // Not released: fail() or apply() already cleared the lock (or handed it to a reopen).
     if (await release(bookingId, storedEmail())) reset();
-    else {
-      working.current = false;
-      setFlow((f) => ({ ...f, busy: false }));
-    }
   }
 
   /** The radio: a sent request swaps its intent for the other kind. */
@@ -881,7 +884,9 @@ export function BookingPage({
   const auto = page.auto_confirm;
   const offerWhen = offer ? (({ date, time }) => `${date}, ${time}`)(localWhen(offer.starts_at, zone, dLocale)) : "";
   const price = formatMoney((sync?.price ?? s2.service.price).amount_minor, (sync?.price ?? s2.service.price).currency, locale);
-  const sendText = flow.busy ? (auto ? t("booking") : t("sending")) : t(sendLabel(stepOn ? choice : null, auto), { price });
+  // A resumed booking without its secret yet shows the kind it was made with.
+  const shown = start === null && sync ? sync.payment.kind : choice;
+  const sendText = flow.busy ? (auto ? t("booking") : t("sending")) : t(sendLabel(stepOn ? shown : null, auto), { price });
   const extraTerms = termsLines(stepOn ? choice : null, Boolean(page.payment?.keeps_card_fee));
 
   // The page's frame: heading and business line, and (unless the booking is no longer open) the way back.
@@ -960,7 +965,7 @@ export function BookingPage({
         page={page}
         price={sync.price}
         payment={stepOn && !payGone ? page.payment : null}
-        choice={choice}
+        choice={shown}
         busy={flow.busy}
         label={sendText}
         banner={flow.banner?.where === "c" ? flow.banner : null}
@@ -993,11 +998,11 @@ export function BookingPage({
       <div className={styles.bookingLayout}>
         <div className={styles.flowCol}>
           {offer && !locked && (
-            <div className={styles.stepBody} style={{ paddingBottom: "1.25rem" }}>
+            <div className={`${styles.stepBody} ${styles.payNote}`}>
               <Banner tone="note">
-                <span style={{ display: "grid", gap: "0.6rem" }}>
+                <span className={styles.payNoteBody}>
                   {t("payInProgress", { service: localized(offer.service_name, loc, page.language as Locale).text, when: offerWhen })}
-                  <span className={styles.emptyActs} style={{ margin: 0 }}>
+                  <span className={styles.emptyActs}>
                     <button className={`${styles.button} ${styles.primary} ${styles.small}`} type="button" onClick={resumeOffer}>
                       {t("payResume")}
                     </button>

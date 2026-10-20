@@ -243,6 +243,10 @@ a.textButton, .textButton:has(> svg) { display: inline-flex; align-items: center
 /* Two empty-state actions side by side (working hours: set the week, or use the opening hours). */
 .emptyActs { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.3rem; }
 .emptyActs .button { margin-top: 0; }
+/* The "payment in progress" note: the text, then its two buttons. */
+.payNote { padding-bottom: 1.25rem; }
+.payNoteBody { display: grid; gap: 0.6rem; }
+.payNoteBody .emptyActs { margin: 0; }
 
 /* Screen head: heading plus a header-level action (services' "Add a service"). */
 .screenHead { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 0.75rem 1rem; }
