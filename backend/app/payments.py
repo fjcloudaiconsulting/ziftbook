@@ -901,7 +901,9 @@ def _refund(tenant_id: UUID, row: Row[Any]) -> None:
         except stripe_gateway.Failed as failure:
             if failure.kind != "invalid":
                 raise
-            refused = failure
+            # Read again: a refund the business made meanwhile is refused too, and is no failure.
+            state = gateway.retrieve_intent(row.account, row.intent_id)
+            refused = failure if due > state.amount_refunded else None
     with tenant_context(tenant_id) as db:
         db.execute(bookings.LOCK, {"key": bookings.LOCK_KEY})
         done = db.execute(
