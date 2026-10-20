@@ -13,6 +13,7 @@ import {
   noticeOptions,
   noticeUnit,
   parseWhole,
+  paymentsAction,
   settingsBody,
   slotExamples,
   SLOT_STEPS,
@@ -210,5 +211,15 @@ describe("guards", () => {
     assert.equal(breakMinutes(15), 9);
     assert.equal(breakMinutes(1), 1);
     assert.equal(breakMinutes(2), 2);
+  });
+});
+
+describe("F1 the payments panel offers only actions the API can serve", () => {
+  test("none and onboarding connect, ready opens the dashboard, off or an unsupported country offers nothing", () => {
+    assert.equal(paymentsAction("none", true), "connect");
+    assert.equal(paymentsAction("onboarding", true), "continue");
+    assert.equal(paymentsAction("ready", true), "dashboard");
+    assert.equal(paymentsAction("off", true), null);
+    for (const state of ["none", "onboarding", "ready", "off"]) assert.equal(paymentsAction(state, false), null);
   });
 });
