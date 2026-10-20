@@ -4,7 +4,6 @@ Fake Stripe throughout. The sweep and the settle jobs are run by hand (settle_al
 only place money moves back. Amounts are read from the fake's ledger, never from a Refund object.
 """
 
-import threading
 import uuid
 from typing import Any
 
@@ -14,7 +13,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Engine, text
 from sqlalchemy.exc import DBAPIError
 
-from app import bookings, payments
+from app import bookings, payments, stripe_gateway
 from app.db import tenant_context
 from app.jobs import Job
 from app.main import create_app
@@ -215,7 +214,7 @@ def test_a_placement_job_does_not_swallow_the_refund(
 
 # 3: FENCE. Kills: a key per job or per attempt; trusting only the idempotency key (24 h window);
 # recording the event before the qualified UPDATE.
-@pytest.mark.parametrize("how", ["sequential", "threads", "record fails once"])
+@pytest.mark.parametrize("how", ["sequential", "concurrent", "record fails once"])
 def test_settling_twice_refunds_once(
     how: str,
     people: People,
@@ -232,28 +231,22 @@ def test_settling_twice_refunds_once(
     if how == "sequential":
         payments.settle(job)
         payments.settle(job)
-    elif how == "threads":
-        barrier = threading.Barrier(2)
+    elif how == "concurrent":
+        # A second job runs while the first is at Stripe: Stripe refuses the same key in flight, so
+        # the second fails (and is retried later) instead of refunding twice.
+        refused: list[BaseException] = []
 
-        def meet(op: str) -> None:
-            if op == "refund":  # both have read amount_refunded 0 before either refunds
-                barrier.wait(10)
+        def meanwhile(op: str) -> None:
+            if op == "refund":
+                fake_stripe.on_call = None
+                with pytest.raises(stripe_gateway.Failed) as raised:
+                    payments.settle(job)
+                refused.append(raised.value)
 
-        fake_stripe.on_call = meet
-        errors: list[BaseException] = []
-
-        def go() -> None:
-            try:
-                payments.settle(job)
-            except BaseException as error:
-                errors.append(error)
-
-        threads = [threading.Thread(target=go) for _ in range(2)]
-        for thread in threads:
-            thread.start()
-        for thread in threads:
-            thread.join()
-        assert errors == []
+        fake_stripe.on_call = meanwhile
+        payments.settle(job)
+        assert len(refused) == 1
+        payments.settle(job)  # its retry finds the refund made and the row recorded
     else:
         with monkeypatch.context() as patched:
             patched.setattr(payments, "REFUNDED", text("SELECT 1 / 0"))

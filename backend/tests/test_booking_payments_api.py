@@ -1304,34 +1304,38 @@ def test_switching_keeps_the_time_and_one_live_intent(
         ("pay", "open"),
     ]
 
-    # Two switches back at once: one wins, the other is told it is settled.
-    barrier = threading.Barrier(2)
-
-    def meet(op: str) -> None:
-        if op == "create_check":
-            barrier.wait(10)
-
-    fake_stripe.on_call = meet
+    # Two switches back at once. B read the row first; A's whole switch runs before B reaches
+    # Stripe, so B finds the intent A made (same key) and loses the row to it: both are told the
+    # same secret, and the intent stays open.
     answers: list[Response] = []
-    threads = [
-        threading.Thread(target=lambda: answers.append(resume(new_client(app), people, booking_id)))
-        for _ in range(2)
-    ]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join()
-    fake_stripe.on_call = None
 
-    assert sorted(a.status_code for a in answers) == [200, 409]
-    assert [a.json() for a in answers if a.status_code == 409] == [{"code": "payment_settled"}]
-    assert [r["status"] for r in pay_rows(people, booking_id)].count("open") == 1
+    def beaten(op: str) -> None:
+        if op == "retrieve_intent":
+            fake_stripe.on_call = None
+            answers.append(resume(new_client(app), people, booking_id))
+
+    fake_stripe.on_call = beaten
+    answers.append(resume(client, people, booking_id))
+
+    assert [a.status_code for a in answers] == [200, 200], [a.text for a in answers]
+    assert answers[0].json()["client_secret"] == answers[1].json()["client_secret"]
+    assert [r["status"] != "canceled" for r in pay_rows(people, booking_id)].count(True) == 1
+
+    # B is at Stripe creating with the key A is still using: Stripe refuses the second request.
+    def in_use(op: str) -> None:
+        if op == "create_payment":
+            fake_stripe.on_call = None
+            answers.append(resume(new_client(app), people, booking_id, "pay"))
+
+    fake_stripe.on_call = in_use
+    assert resume(client, people, booking_id, "pay").status_code == 200
+    assert (answers[-1].status_code, answers[-1].json()["code"]) == (503, "payments_unavailable")
     assert [r["status"] != "canceled" for r in pay_rows(people, booking_id)].count(True) == 1
 
     live = fake_stripe.latest(booking_id)
     fake_stripe.confirm(live)  # it landed at Stripe, the webhook not yet taken
     assert resume(client, people, booking_id, "pay").status_code == 409
-    assert pay_rows(people, booking_id)[-1]["status"] == "checked"
+    assert pay_rows(people, booking_id)[-1]["status"] == "paid"
 
 
 # B3 6: FENCE. Kills: a switch that works after the business turned the step off.
@@ -1520,3 +1524,100 @@ def test_the_console_shows_the_refunded_amount(
     refunded = owner.get(f"/api/bookings/{booking_id}").json()
     assert refunded["payment"]["refunded_minor"] == 2500
     assert "refunded" in [e["event"] for e in refunded["history"]]
+
+
+# B3 review 1: FENCE. Kills: one idempotency key for both kinds (a switch whose create timed out
+# at Stripe leaves its key bound to pay parameters, so going back to check is refused until the
+# hold ends).
+def test_going_back_after_a_switch_that_timed_out_makes_the_check(
+    people: People,
+    app: FastAPI,
+    ready: str,
+    fake_stripe: FakeGateway,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = new_client(app)
+    booking_id = place(app, people, ready, client=client).json()["id"]
+    fake_stripe.decline(fake_stripe.latest(booking_id))
+    made = fake_stripe.create_payment
+
+    def timed_out(*args: Any, **kwargs: Any) -> Any:
+        made(*args, **kwargs)  # Stripe made the intent, the answer never came back
+        raise stripe_gateway.Failed("unavailable", "req_fake")
+
+    with monkeypatch.context() as patched:
+        patched.setattr(fake_stripe, "create_payment", timed_out)
+        assert resume(client, people, booking_id, "pay").status_code == 503
+
+    back = resume(client, people, booking_id, "check")
+
+    assert back.status_code == 200, back.text
+    assert [(r["kind"], r["status"]) for r in pay_rows(people, booking_id)][-1] == ("check", "open")
+    # The same kind retried is the same intent.
+    again = resume(client, people, booking_id, "check")
+    assert again.json()["client_secret"] == back.json()["client_secret"]
+
+
+# B3 review 2: FENCE. Kills: a plain resume beaten by a switch answering "settled" (nothing settled:
+# the page would stop offering the payment); the winner's intent cancelled by the loser.
+def test_a_plain_resume_beaten_by_a_switch_is_busy_not_settled(
+    people: People, app: FastAPI, ready: str, fake_stripe: FakeGateway
+) -> None:
+    client = new_client(app)
+    booking_id = place(app, people, ready, client=client).json()["id"]
+    fake_stripe.intents[fake_stripe.latest(booking_id)]["status"] = (
+        "canceled"  # so a resume remakes
+    )
+    won: list[Response] = []
+
+    def switched(op: str) -> None:
+        if op == "create_check":  # the other tab switches to pay while this one is at Stripe
+            fake_stripe.on_call = None
+            won.append(resume(new_client(app), people, booking_id, "pay"))
+
+    fake_stripe.on_call = switched
+    lost = resume(client, people, booking_id, "check")
+
+    assert won[0].status_code == 200
+    assert (lost.status_code, lost.json()["code"]) == (503, "busy")
+    live = [r for r in pay_rows(people, booking_id) if r["status"] != "canceled"]
+    assert [r["kind"] for r in live] == ["pay"]
+    assert fake_stripe.intents[fake_stripe.latest(booking_id)]["status"] == "canceled"  # the orphan
+    assert fake_stripe.intents[live[0]["intent_id"]]["status"] != "canceled"
+
+
+# B3 review 5: FENCE. Kills: reading the fee mode twice (the fee sent at Stripe under one mode, the
+# row stamped with another read a moment later).
+def test_the_fee_and_the_mode_on_the_row_are_read_once(
+    people: People,
+    app: FastAPI,
+    owner: TestClient,
+    fake_stripe: FakeGateway,
+    migrate_engine: Engine,
+) -> None:
+    service_id = make_shop(people, owner, fake_stripe, price=4000)
+
+    def policy(mode: str, bp: int, fixed: int) -> None:
+        with migrate_engine.begin() as conn:
+            conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(people.a)})
+            conn.execute(
+                text(
+                    "UPDATE payment_accounts SET fee_mode = :m, application_fee_bp = :b, "
+                    "application_fee_fixed_minor = :f"
+                ),
+                {"m": mode, "b": bp, "f": fixed},
+            )
+
+    policy("business_pays_plus_fee", 150, 25)
+
+    def moves_on(op: str) -> None:
+        if op == "create_payment":  # the account changes while the intent is being made
+            fake_stripe.on_call = None
+            policy("business_pays", 0, 0)
+
+    fake_stripe.on_call = moves_on
+    made = place(app, people, service_id, payment="pay")
+
+    assert made.status_code == 201, made.text
+    (row,) = pay_rows(people, made.json()["id"])
+    assert (row["fee_mode"], row["application_fee_minor"]) == ("business_pays_plus_fee", 85)

@@ -418,13 +418,14 @@ UPDATE booking_payments SET status = 'canceled', settled_at = now()
 WHERE id = :id AND status = 'open'
 RETURNING 1
 """)
-# The row keeps the fee policy that applied (D6): the account's mode as it is now, and the
-# application fee the intent was made with (a check never has one: nothing is captured).
+# The row keeps the fee policy that applied (D6): the mode and the application fee the intent was
+# made with, read once before the Stripe call (a check never has a fee: nothing is captured). The
+# FROM only says the account still exists.
 INSERT_PAYMENT = text("""
 INSERT INTO booking_payments
   (tenant_id, booking_id, kind, intent_id, amount_minor, currency, fee_mode, application_fee_minor)
 SELECT current_setting('app.tenant_id')::uuid, :booking_id, :kind, :intent_id, :amount_minor,
-       :currency, fee_mode, :fee
+       :currency, :fee_mode, :fee
 FROM payment_accounts
 RETURNING 1
 """)
@@ -517,10 +518,16 @@ def refund_due(amount_minor: int, pct: int, ending: str, fee: int | None) -> int
 
 def _create(
     kind: str, account: str, tenant_id: UUID, booking_id: UUID, amount: int, currency: str, n: int
-) -> tuple[stripe_gateway.Intent, int]:
-    """The intent for a check or a payment, and the application fee it was made with."""
+) -> tuple[stripe_gateway.Intent, int, str]:
+    """The intent for a check or a payment, with the fee policy it was made under: the application
+    fee and the account's fee mode, read once for both the intent and its row."""
     gateway = stripe_gateway.gateway
-    key = f"pi:{booking_id}:{n}"
+    # The kind is part of the key: Stripe refuses a key reused with other parameters, so a retry
+    # after the other kind's create timed out must not meet it.
+    key = f"pi:{booking_id}:{n}:{kind}"
+    with tenant_context(tenant_id) as db:  # closed before Stripe is called
+        policy = db.execute(POLICY).first()
+    mode = "business_pays" if policy is None else policy.fee_mode  # no account: the insert refuses
     if kind == "check":
         made = gateway.create_check(
             account,
@@ -531,13 +538,11 @@ def _create(
             currency=currency,
             idempotency_key=key,
         )
-        return made, 0
-    with tenant_context(tenant_id) as db:  # closed before Stripe is called
-        policy = db.execute(POLICY).first()
+        return made, 0, mode
     fee = 0
     if policy is not None:
         fee = application_fee(
-            policy.fee_mode, policy.application_fee_bp, policy.application_fee_fixed_minor, amount
+            mode, policy.application_fee_bp, policy.application_fee_fixed_minor, amount
         )
     made = gateway.create_payment(
         account,
@@ -548,7 +553,7 @@ def _create(
         application_fee=fee,
         idempotency_key=key,
     )
-    return made, fee
+    return made, fee, mode
 
 
 def _started(
@@ -580,7 +585,7 @@ def start(
     no transaction), then its row. If either fails the checkout hold is given back at once."""
     with logs.bound(tenant_id=str(tenant_id)):
         try:
-            made, fee = _create(
+            made, fee, mode = _create(
                 kind,
                 account,
                 tenant_id,
@@ -602,7 +607,7 @@ def start(
             _give_back(tenant_id, booking.id)
             raise _unavailable() from None
         try:
-            _insert(tenant_id, booking, made.id, kind, fee)
+            _insert(tenant_id, booking, made.id, kind, fee, mode)
         except DBAPIError, LookupError:  # a lock timeout, a lost connection, a missing account
             # The intent never reached a browser: nobody can confirm it, and no row names it.
             _give_back(tenant_id, booking.id)
@@ -611,7 +616,7 @@ def start(
 
 
 def _insert(
-    tenant_id: UUID, booking: bookings.BookingOut, intent_id: str, kind: str, fee: int
+    tenant_id: UUID, booking: bookings.BookingOut, intent_id: str, kind: str, fee: int, mode: str
 ) -> None:
     with tenant_context(tenant_id) as db:
         db.execute(bookings.LOCK, {"key": bookings.LOCK_KEY})
@@ -624,6 +629,7 @@ def _insert(
                 "amount_minor": booking.price.amount_minor,
                 "currency": booking.price.currency,
                 "fee": fee,
+                "fee_mode": mode,
             },
         ).first()
         if stored is None:  # offer() named an account row a moment ago; it is gone
@@ -1099,7 +1105,7 @@ def resume(
                         type=state.type,
                         expires_at=booking.expires_at,
                     )
-            made, fee = _create(
+            made, fee, mode = _create(
                 body.kind,
                 payment.account,
                 tenant_id,
@@ -1127,15 +1133,24 @@ def resume(
                             "amount_minor": booking.price_amount_minor,
                             "currency": booking.price_currency,
                             "fee": fee,
+                            "fee_mode": mode,
                         },
                     )
         except OperationalError:
             raise ApiError(503, "busy") from None
         except IntegrityError:  # a concurrent resume or switch got its row in first
             _, live = _checkout(tenant_id, booking_id)
-            if live is None or live.intent_id != made.id:
-                _orphan(payment.account, made.id)
-            raise ApiError(409, "payment_settled") from None
+            if live is not None and live.intent_id == made.id:
+                # The same request, twice (the key made it one intent): the winner's answer.
+                return bookings.PaymentStart(
+                    client_secret=made.client_secret, type=made.type, expires_at=booking.expires_at
+                )
+            _orphan(payment.account, made.id)
+            # Settled, or beaten by a switch: the page reads the sync state. Anything else lost a
+            # plain resume to a writer that settled nothing: try again.
+            if switching or live is None or live.status in ("checked", "paid"):
+                raise ApiError(409, "payment_settled") from None
+            raise ApiError(503, "busy") from None
         if gone:
             _orphan(payment.account, made.id)
             raise ApiError(404, "not_found")
