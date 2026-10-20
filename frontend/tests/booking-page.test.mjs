@@ -15,7 +15,10 @@ import {
   checkoutUrl,
   cleanMessage,
   dayPart,
+  doneState,
+  elementsOptions,
   emailSuggestion,
+  entryMode,
   firstFreeDayFrom,
   freeNamed,
   groupByDayPart,
@@ -25,10 +28,15 @@ import {
   parseCheckout,
   phoneValue,
   pickFromUrl,
+  returnParams,
   scanWindow,
+  sendLabel,
   slotsFor,
   slotWho,
   slugLooksValid,
+  STRIPE_LOCALE,
+  storedNext,
+  termsLines,
   weekFor,
   withName,
 } from "../lib/booking-page.ts";
@@ -106,6 +114,7 @@ describe("F4 booking POST body", () => {
     turnstileToken: "tok",
     consent: false,
     message: null,
+    payment: null,
   };
 
   test("ZIF-152 fence: the phone is always sent, trimmed (the server reads its format)", () => {
@@ -138,7 +147,7 @@ describe("F4 booking POST body", () => {
   test("fence: the key set is exactly the allowed list, nothing else", () => {
     assert.deepEqual(
       Object.keys(bookingBody(base)).sort(),
-      ["consents", "email", "locale", "member_id", "message", "name", "phone", "policy_version", "starts_at", "turnstile_token"].sort(),
+      ["consents", "email", "locale", "member_id", "message", "name", "phone", "payment", "policy_version", "starts_at", "turnstile_token"].sort(),
     );
   });
 });
@@ -424,5 +433,116 @@ describe("ZIF-157 direct booking checkout", () => {
     // Wrong implementation killed: restoring a pick weeks out into the current week.
     assert.equal(weekFor("2026-11-12", "2026-10-19"), "2026-11-09");
     assert.equal(weekFor("2026-10-22", "2026-10-20"), "2026-10-20");
+  });
+});
+
+describe("F2 the payment step (ZIF-158)", () => {
+  const price = { amount_minor: 3500, currency: "EUR" };
+
+  test("fence: the Element's options equal the server intent's (kills a refused confirm, iDEAL on a check)", () => {
+    // Wrong implementation killed: automatic capture or no method list for a check (Stripe refuses the
+    // confirm when the Element and the intent differ), a card-only list for a payment.
+    assert.deepEqual(elementsOptions("check", "authorisation", price), {
+      mode: "payment", amount: 3500, currency: "eur", captureMethod: "manual", paymentMethodTypes: ["card"],
+    });
+    assert.deepEqual(elementsOptions("check", "setup", price), { mode: "setup", currency: "eur", paymentMethodTypes: ["card"] });
+    for (const checkWith of ["authorisation", "setup"]) {
+      const pay = elementsOptions("pay", checkWith, price);
+      assert.deepEqual(pay, { mode: "payment", amount: 3500, currency: "eur", captureMethod: "automatic" });
+      assert.ok(!("paymentMethodTypes" in pay));
+    }
+  });
+
+  test("fence: the return URL keeps the booking and the pick, never a Stripe secret", () => {
+    // Wrong implementation killed: keeping the whole query (client_secret into history and logs), or
+    // dropping `booking` (the return could not find its booking).
+    const kept = returnParams(
+      "?service=s1&with=m1&at=2026-10-22T15%3A00%3A00%2B00%3A00&booking=b1&payment_intent=pi_1&payment_intent_client_secret=pi_1_secret_x&setup_intent=seti_1&setup_intent_client_secret=seti_1_secret_y&redirect_status=succeeded",
+    );
+    assert.equal(kept.toString(), new URLSearchParams({ service: "s1", with: "m1", at: "2026-10-22T15:00:00+00:00", booking: "b1" }).toString());
+    assert.equal(returnParams("").toString(), "");
+  });
+
+  test("fence: payment_required / payment_not_offered reload the options; payments_unavailable is its own outcome", () => {
+    // Wrong implementation killed: the generic field banner (the page never reloads its options).
+    assert.equal(answerState({ status: 422, code: "payment_required" }).kind, "paymentChanged");
+    assert.equal(answerState({ status: 422, code: "payment_not_offered" }).kind, "paymentChanged");
+    assert.equal(answerState({ status: 422, code: "invalid_request" }).kind, "fieldErrors");
+    assert.equal(answerState({ status: 503, code: "payments_unavailable" }).kind, "paymentsUnavailable");
+    assert.equal(answerState({ status: 503, code: "busy" }).kind, "nothingBooked");
+  });
+
+  test("fence: payment is sent as given, null when the service has no step", () => {
+    // Wrong implementation killed: defaulting to "check" (a 422 on every booking of a page whose step is off).
+    const form = { startsAt: "2026-10-20T15:00:00Z", memberId: null, name: "Ana", email: "a@b.nl", phone: "1", locale: "nl", policyVersion: "v", turnstileToken: null, consent: false, message: null };
+    assert.equal(bookingBody({ ...form, payment: null }).payment, null);
+    assert.equal(bookingBody({ ...form, payment: "check" }).payment, "check");
+    assert.equal(bookingBody({ ...form, payment: "pay" }).payment, "pay");
+  });
+
+  test("fence: the kept-fee line shows only for Pay now with the flag on; the launch hint says nothing about a fee", () => {
+    // Wrong implementation killed: a deduction the client was never told about (flag on), or a kept
+    // fee mentioned while nothing is kept (flag off, R6).
+    assert.deepEqual(termsLines("pay", true), ["termsPaymentFee"]);
+    assert.deepEqual(termsLines("pay", false), []);
+    assert.deepEqual(termsLines("check", true), []);
+    assert.deepEqual(termsLines(null, true), []);
+    const catalogs = Object.fromEntries(["en", "nl", "pt"].map((l) => [l, JSON.parse(readFileSync(new URL(`../messages/${l}.json`, import.meta.url), "utf8")).BookingPage]));
+    for (const l of ["en", "nl", "pt"]) for (const key of ["termsPaymentFee", "payNowHint", "payNowHintFee"]) assert.ok(catalogs[l][key], `${l}.${key}`);
+    assert.ok(!/fee|kost|taxa|tarifa/i.test(catalogs.en.payNowHint));
+    for (const l of ["nl", "pt"]) assert.notEqual(catalogs[l].payNowHint, catalogs[l].payNowHintFee);
+    assert.match(catalogs.en.payNowHintFee, /fee/);
+  });
+
+  test("fence: what the page shows for each booking and payment state", () => {
+    // Wrong implementation killed: "You're booked" after a cancelled iDEAL or while processing.
+    const sync = (status, state = "open", failed = false) => ({ status, payment: { kind: "pay", state, failed } });
+    assert.deepEqual(doneState(sync("pending", "checked")), { kind: "done" });
+    assert.deepEqual(doneState(sync("confirmed", "paid")), { kind: "done" });
+    assert.deepEqual(doneState(sync("awaiting_payment", "open")), { kind: "resume", failed: false });
+    assert.deepEqual(doneState(sync("awaiting_payment", "open", true)), { kind: "resume", failed: true });
+    assert.deepEqual(doneState(sync("awaiting_payment", "processing")), { kind: "processing" });
+    assert.deepEqual(doneState(sync("expired", "processing")), { kind: "expiredProcessing" });
+    assert.deepEqual(doneState(sync("expired", "paid")), { kind: "expiredPaid" });
+    assert.deepEqual(doneState(sync("expired", "open")), { kind: "expired" });
+    assert.deepEqual(doneState(sync("expired", "canceled")), { kind: "expired" });
+    for (const status of ["declined", "cancelled_by_client", "cancelled_by_business", "completed", "no_show", "something_new"]) {
+      assert.deepEqual(doneState(sync(status, "paid")), { kind: "stale" }, status);
+    }
+  });
+
+  test("fence: the button says it charges the card when Pay now is chosen (CRD 8(2))", () => {
+    // Wrong implementation killed: a button that charges the card without saying so.
+    assert.equal(sendLabel("pay", true), "payButtonBook");
+    assert.equal(sendLabel("pay", false), "payButtonRequest");
+    assert.equal(sendLabel("check", true), "book");
+    assert.equal(sendLabel("check", false), "request");
+    assert.equal(sendLabel(null, true), "book");
+    const catalogs = ["en", "nl", "pt"].map((l) => JSON.parse(readFileSync(new URL(`../messages/${l}.json`, import.meta.url), "utf8")).BookingPage);
+    assert.deepEqual(catalogs.map((c) => c.payButtonBook), ["Pay {price} and book", "Betaal {price} en boek", "Pagar {price} e reservar"]);
+    assert.deepEqual(catalogs.map((c) => c.payButtonRequest), ["Pay {price} and send request", "Betaal {price} en verstuur aanvraag", "Pagar {price} e enviar pedido"]);
+  });
+
+  test("fence: the Brazilian page asks Stripe for Brazilian Portuguese", () => {
+    // Wrong implementation killed: European Portuguese decline messages on a Brazilian page.
+    assert.equal(STRIPE_LOCALE.pt, "pt-BR");
+    assert.equal(STRIPE_LOCALE.en, "en");
+    assert.equal(STRIPE_LOCALE.nl, "nl");
+  });
+
+  test("fence: a booking in the URL resumes whatever else it says; a stored id counts only for its own service", () => {
+    // Wrong implementation killed: a refresh or Back that re-runs the pick-from-URL path and drops the
+    // client's own time; another service's stored id resumed by mistake; a plain checkout over a
+    // booking already paid while away (a second payment).
+    const stored = { bookingId: "b1", serviceId: "s1" };
+    assert.equal(entryMode(new URLSearchParams("service=s1&booking=b1&at=2026-10-22T15:00:00Z"), null), "resume");
+    assert.equal(entryMode(new URLSearchParams("service=s1&booking=b9"), stored), "resume");
+    assert.equal(entryMode(new URLSearchParams("service=s1&at=2026-10-22T15:00:00Z"), stored), "stored");
+    assert.equal(entryMode(new URLSearchParams("service=s2"), stored), "checkout");
+    assert.equal(entryMode(new URLSearchParams("service=s1"), null), "checkout");
+    assert.equal(storedNext({ status: "awaiting_payment" }), "offerResume");
+    assert.equal(storedNext({ status: "pending" }), "done");
+    assert.equal(storedNext({ status: "confirmed" }), "done");
+    for (const status of ["expired", "declined", "cancelled_by_client", "completed"]) assert.equal(storedNext({ status }), "checkout", status);
   });
 });
