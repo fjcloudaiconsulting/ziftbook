@@ -1,0 +1,11 @@
+Your booking request has ended
+Hello,
+
+$business didn't confirm your booking request in time, so it has ended:
+
+$service
+$date at $time ($zone)
+
+Your payment of $amount is refunded in full to your payment method. Your bank may take a few days to show it.
+
+ziftbook

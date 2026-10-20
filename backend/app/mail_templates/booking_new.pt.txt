@@ -6,7 +6,7 @@ Você tem um novo agendamento:
 Cliente: $client$message
 
 $service
-$date às $time ($zone)
+$date às $time ($zone)$payment
 
 O agendamento está confirmado.
 

@@ -1,0 +1,11 @@
+Je boekingsaanvraag is beëindigd
+Hallo,
+
+$business heeft je boekingsaanvraag niet op tijd bevestigd, dus de aanvraag is beëindigd:
+
+$service
+$date om $time ($zone)
+
+Je betaling van $amount wordt volledig teruggestort op je betaalmethode. Het kan een paar dagen duren voordat je bank dit laat zien.
+
+ziftbook

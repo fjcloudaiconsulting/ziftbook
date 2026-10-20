@@ -1,0 +1,11 @@
+Je betaling kwam te laat om te boeken
+Hallo,
+
+Je betaling kwam binnen nadat we dit tijdstip niet meer voor je vasthielden, dus er is niets geboekt:
+
+$service
+$date om $time ($zone)
+
+Je betaling van $amount wordt volledig teruggestort op je betaalmethode. Het kan een paar dagen duren voordat je bank dit laat zien. Je kunt gerust een ander moment kiezen.
+
+ziftbook

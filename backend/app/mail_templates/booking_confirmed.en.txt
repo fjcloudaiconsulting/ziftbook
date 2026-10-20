@@ -4,7 +4,7 @@ Hello,
 Your booking at $business is confirmed:
 
 $service
-$date at $time ($zone)
+$date at $time ($zone)$payment
 
 The attached calendar file adds it to your calendar.
 

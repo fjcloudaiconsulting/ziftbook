@@ -613,6 +613,8 @@ def test_every_booking_template_renders_service_and_when() -> None:
         "expires": "EXPIRES-MARKER",  # never the date/time markers: booking_request prints it too
         "old_date": "OLD-DATE-MARKER",
         "old_time": "OLD-TIME-MARKER",
+        "payment": "",
+        "amount": "AMOUNT-MARKER",
     }
     for template in [*STATUS_FOR, "booking_request_team_member"]:  # ZIF-143's file variant
         for locale in LOCALES:
@@ -639,6 +641,8 @@ def test_exactly_the_message_templates_carry_the_clients_message() -> None:
         "old_time": "OLD-TIME",
         "member": "Member",
         "page": "https://example.com/p",
+        "payment": "",
+        "amount": "AMOUNT",
     }
     carrying = set()
     for path in sorted(mail.TEMPLATES.glob("booking_*.txt")):
@@ -1136,3 +1140,152 @@ def test_the_merchant_email_names_this_booker_and_quotes_their_message(
     assert "> line one" in quoted and "> line two" in quoted
     assert "Silent Name" in plain
     assert not any(line.startswith(">") for line in plain.splitlines())
+
+
+# ZIF-158 B3 8. fence, both R6 states. Kills: a refund line on a check (promising money nobody
+# paid); a line on a 0% refund; a decline-with-message file without the line.
+@pytest.mark.parametrize("keep_fee", [False, True])
+def test_the_refund_line_names_the_amount_refunded(
+    keep_fee: bool,
+    people: People,
+    app: FastAPI,
+    owner: TestClient,
+    fake_stripe: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app import payments
+    from tests.test_booking_links_api import cancel_body, linked, post
+    from tests.test_booking_payments_api import make_shop, place, sync
+
+    monkeypatch.setattr(payments, "KEEP_CARD_FEE_ON_CLIENT_CANCEL", keep_fee)
+    service_id = make_shop(people, owner, fake_stripe, price=4000)
+
+    def paid(kind: str, start: str, hours: int = 0) -> str:
+        assert put_settings(owner, {"free_cancellation_hours": hours}).status_code == 200
+        client = new_client(app)
+        made = place(app, people, service_id, payment=kind, starts_at=at(start), client=client)
+        booking_id: str = made.json()["id"]
+        intent = fake_stripe.latest(booking_id)
+        fake_stripe.confirm(intent)
+        fake_stripe.intents[intent]["fee"] = 162
+        assert sync(client, people, booking_id).json()["status"] == "pending"
+        return booking_id
+
+    def client_cancels(booking_id: str, pct: int) -> None:
+        link = linked(app, people.a, booking_id)
+        assert post(link, "/cancel", cancel_body(booking_id, pct)).status_code == 200
+
+    def text_of(booking_id: str, template: str, **extra: Any) -> str:
+        run_send_booking(people.a, booking_id, template, **extra)
+        return str(mail_for(_client_email(people.a, booking_id))["Text"])
+
+    # Engine 0: nothing is refunded, so nothing is promised.
+    zero = paid("pay", "09:00", hours=720)
+    assert patch(owner, zero, "confirmed").status_code == 200
+    client_cancels(zero, 0)
+    assert "refunded" not in text_of(zero, "booking_cancelled_by_client")
+
+    # Engine 100: what settle will send back, and the kept fee only with the flag on.
+    full = paid("pay", "10:00")
+    assert patch(owner, full, "confirmed").status_code == 200
+    client_cancels(full, 100)
+    said = text_of(full, "booking_cancelled_by_client")
+    assert ("€38.38" if keep_fee else "€40.00") in said and "refunded" in said
+    assert ("€1.62" in said) is keep_fee
+
+    # The business ended it: full, whatever the flag, in the message file too.
+    declined = paid("pay", "11:00")
+    assert (
+        owner.patch(
+            f"/api/bookings/{declined}", json={"status": "declined", "message": "Sorry"}
+        ).status_code
+        == 200
+    )
+    said = text_of(declined, "booking_declined")
+    assert "Sorry" in said and "€40.00" in said and "refunded" in said
+
+    # A check promised no money.
+    checked = paid("check", "12:00")
+    assert owner.patch(f"/api/bookings/{checked}", json={"status": "declined"}).status_code == 200
+    said = text_of(checked, "booking_declined")
+    assert "refunded" not in said and "€" not in said
+
+
+# ZIF-158 B3 8. guard. What each side is told about the money when a request or booking arrives.
+def test_the_payment_lines_say_checked_or_paid(
+    people: People, app: FastAPI, owner: TestClient, fake_stripe: Any, migrate_engine: Engine
+) -> None:
+    from tests.test_booking_payments_api import make_shop, place, sync
+
+    with migrate_engine.begin() as conn:  # the team's mail goes out in the owner's own language
+        conn.execute(text("UPDATE users SET locale = 'en' WHERE id = :u"), {"u": people.both})
+    service_id = make_shop(people, owner, fake_stripe, price=4000)
+    sent: dict[str, str] = {}
+    for kind, start in (("check", "09:00"), ("pay", "10:00")):
+        client = new_client(app)
+        booking_id = place(
+            app, people, service_id, payment=kind, starts_at=at(start), client=client
+        ).json()["id"]
+        fake_stripe.confirm(fake_stripe.latest(booking_id))
+        assert sync(client, people, booking_id).json()["status"] == "pending"
+        run_send_booking(people.a, booking_id, "booking_received")
+        run_send_booking(people.a, booking_id, "booking_request", user_id=str(people.both))
+        sent[f"{kind} client"] = str(sent_to(_client_email(people.a, booking_id))[0]["Text"])
+        sent[f"{kind} team"] = str(sent_to(email_of(people.both))[0]["Text"])
+
+    assert "We checked your card for €40.00. Nothing was charged." in sent["check client"]
+    assert "Card checked for €40.00. Nothing was charged." in sent["check team"]
+    assert "You paid €40.00." in sent["pay client"]
+    assert "Paid online: €40.00." in sent["pay team"]
+
+
+# ZIF-158 B3 review 9. fence. The expected strings are Node's Intl.NumberFormat(locale, {style:
+# "currency", currency}).format(minor / 100), the frontend's formatMoney (frontend/lib/money.ts),
+# run in node:24-alpine. Kills: no digit grouping; a plain space or a "$" where Intl has "US$".
+NB = " "
+INTL = {
+    ("en", "EUR"): ("€40.00", "€1,234.56"),
+    ("en", "GBP"): ("£40.00", "£1,234.56"),
+    ("en", "USD"): ("$40.00", "$1,234.56"),
+    ("nl", "EUR"): (f"€{NB}40,00", f"€{NB}1.234,56"),
+    ("nl", "GBP"): (f"£{NB}40,00", f"£{NB}1.234,56"),
+    ("nl", "USD"): (f"US${NB}40,00", f"US${NB}1.234,56"),
+    ("pt", "EUR"): (f"€{NB}40,00", f"€{NB}1.234,56"),
+    ("pt", "GBP"): (f"£{NB}40,00", f"£{NB}1.234,56"),
+    ("pt", "USD"): (f"US${NB}40,00", f"US${NB}1.234,56"),
+}
+
+
+@pytest.mark.parametrize(("locale", "currency"), list(INTL))
+def test_money_reads_as_the_frontend_formats_it(locale: str, currency: str) -> None:
+    small, grouped = INTL[(locale, currency)]
+
+    assert mail._money(4000, currency, locale) == small
+    assert mail._money(123456, currency, locale) == grouped
+
+
+# ZIF-158 B3 review 10. fence. Kills: the team being told a SetupIntent check was "for" an amount.
+def test_the_team_line_for_a_setup_check_names_no_amount(
+    people: People,
+    app: FastAPI,
+    owner: TestClient,
+    fake_stripe: Any,
+    migrate_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app import payments
+    from tests.test_booking_payments_api import make_shop, place, sync
+
+    monkeypatch.setattr(payments, "CHECK_WITH", "setup")
+    with migrate_engine.begin() as conn:
+        conn.execute(text("UPDATE users SET locale = 'en' WHERE id = :u"), {"u": people.both})
+    service_id = make_shop(people, owner, fake_stripe, price=4000)
+    client = new_client(app)
+    booking_id = place(app, people, service_id, payment="check", client=client).json()["id"]
+    fake_stripe.confirm(fake_stripe.latest(booking_id))
+    assert sync(client, people, booking_id).json()["status"] == "pending"
+
+    run_send_booking(people.a, booking_id, "booking_request", user_id=str(people.both))
+
+    said = str(sent_to(email_of(people.both))[0]["Text"])
+    assert "Card checked. Nothing was charged." in said and "€" not in said

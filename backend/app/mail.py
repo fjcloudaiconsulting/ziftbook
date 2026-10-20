@@ -315,6 +315,9 @@ STATUS_FOR = {
     "booking_cancelled": {"cancelled_by_merchant"},
     "booking_cancelled_by_client": {"cancelled_by_client"},
     "booking_client_cancelled": {"cancelled_by_client"},
+    # ZIF-158: a paid booking that ended without being held (the business never answered, or the
+    # payment landed after the checkout hold): the client is told the money is going back.
+    "booking_expired": {"expired"},
     "booking_client_rescheduled": {"confirmed", "pending"},
     # ZIF-57: the team is told when a colleague moves a booking of theirs.
     "booking_moved_team": {"confirmed"},
@@ -333,6 +336,118 @@ JOIN clients c ON c.tenant_id = b.tenant_id AND c.id = b.client_id
 JOIN tenants t ON t.id = b.tenant_id
 WHERE b.id = :id
 """)
+
+# ZIF-158. The booking's checked or paid payment, with the refund percentage its cancel was shown
+# (a client's own cancel stores it on the event).
+PAYMENT_LINE = text("""
+SELECT p.status, p.amount_minor, p.currency, p.stripe_fee_minor,
+       left(p.intent_id, 5) = 'seti_' AS setup,
+       (SELECT (e.details ->> 'refund_pct')::int FROM booking_events e
+        WHERE e.booking_id = p.booking_id AND e.event = 'cancelled_by_client'
+        ORDER BY e.id DESC LIMIT 1) AS client_pct
+FROM booking_payments p
+WHERE p.booking_id = :id AND p.status IN ('checked', 'paid')
+""")
+
+# What a booking's email says about the money, per recipient (the team or the client).
+ARRIVAL = {"booking_request", "booking_new", "booking_received", "booking_confirmed"}
+ENDED = {"booking_declined", "booking_cancelled", "booking_cancelled_by_client"}
+PAYMENT_LINES = {
+    "team_checked": {
+        "en": "Card checked for $amount. Nothing was charged.",
+        "nl": "Kaart gecontroleerd voor een bedrag van $amount. Er is niets afgeschreven.",
+        "pt": "Cartão verificado no valor de $amount. Nada foi cobrado.",
+    },
+    "team_checked_setup": {
+        "en": "Card checked. Nothing was charged.",
+        "nl": "Kaart gecontroleerd. Er is niets afgeschreven.",
+        "pt": "Cartão verificado. Nada foi cobrado.",
+    },
+    "team_paid": {
+        "en": "Paid online: $amount.",
+        "nl": "Online betaald: $amount.",
+        "pt": "Pago online: $amount.",
+    },
+    "checked": {
+        "en": "We checked your card for $amount. Nothing was charged.",
+        "nl": "We hebben je kaart gecontroleerd voor een bedrag van $amount. "
+        "Er is niets afgeschreven.",
+        "pt": "Verificamos seu cartão no valor de $amount. Nada foi cobrado.",
+    },
+    "checked_setup": {
+        "en": "We checked your card. Nothing was charged.",
+        "nl": "We hebben je kaart gecontroleerd. Er is niets afgeschreven.",
+        "pt": "Verificamos seu cartão. Nada foi cobrado.",
+    },
+    "paid": {
+        "en": "You paid $amount.",
+        "nl": "Je hebt $amount betaald.",
+        "pt": "Você pagou $amount.",
+    },
+    "refund": {
+        "en": "$amount will be refunded to your payment method. "
+        "Your bank may take a few days to show it.",
+        "nl": "$amount wordt teruggestort op je betaalmethode. "
+        "Het kan een paar dagen duren voordat je bank dit laat zien.",
+        "pt": "$amount será reembolsado na sua forma de pagamento. "
+        "Seu banco pode levar alguns dias para mostrar o valor.",
+    },
+    "fee_kept": {
+        "en": "Payment processing fees of $amount are not refunded.",
+        "nl": "Betalingskosten van $amount worden niet terugbetaald.",
+        "pt": "A taxa de processamento do pagamento ($amount) não é reembolsada.",
+    },
+}
+SYMBOLS = {"EUR": "€", "GBP": "£", "USD": "$"}
+
+
+def _money(amount_minor: int, currency: str, locale: str) -> str:
+    """The frontend's Intl.NumberFormat currency format (frontend/lib/money.ts) for the three
+    currencies in SYMBOLS, two decimals. shortcut: use Babel if a zero-decimal currency comes."""
+    symbol = SYMBOLS.get(currency)
+    whole, cents = f"{amount_minor // 100:,}", f"{amount_minor % 100:02d}"
+    if locale == "en":
+        return f"{symbol}{whole}.{cents}" if symbol else f"{whole}.{cents} {currency}"
+    digits = f"{whole.replace(',', '.')},{cents}"
+    if symbol == "$":
+        symbol = "US$"  # Intl tells the dollars apart outside en
+    return f"{symbol}\u00a0{digits}" if symbol else f"{digits} {currency}"
+
+
+def _line(key: str, locale: str, amount_minor: int, currency: str) -> str:
+    return "\n\n" + Template(PAYMENT_LINES[key][locale]).substitute(
+        amount=_money(amount_minor, currency, locale)
+    )
+
+
+def payment_line(
+    session: Session, template: str, booking_id: str, status: str, locale: str, team: bool
+) -> str:
+    """The sentence about the money that `$payment` fills in, with its blank line, else ""."""
+    from app import payments  # here: payments pulls in far more than a mail job needs
+
+    if template not in ARRIVAL | ENDED:
+        return ""
+    paid = session.execute(PAYMENT_LINE, {"id": booking_id}).first()
+    if paid is None:
+        return ""
+    if template in ARRIVAL:
+        key = "checked_setup" if paid.setup else paid.status
+        if team:
+            key = "team_" + key
+        return _line(key, locale, paid.amount_minor, paid.currency)
+    if paid.status != "paid":
+        return ""
+    pct = (paid.client_pct or 0) if status == "cancelled_by_client" else 100
+    due = payments.refund_due(paid.amount_minor, pct, status, paid.stripe_fee_minor)
+    if not due:
+        return ""
+    said = _line("refund", locale, due, paid.currency)
+    kept = paid.amount_minor * pct // 100 - due
+    if kept > 0:  # only with R6's flag on: refund_due deducts nothing otherwise
+        said += " " + _line("fee_kept", locale, kept, paid.currency).strip()
+    return said
+
 
 INSERT_LINK = text("""
 INSERT INTO booking_links (token_hash, tenant_id, booking_id)
@@ -489,6 +604,9 @@ def send_booking(job: Job) -> None:
             "time": starts_local.strftime("%H:%M"),
             "zone": zone,
         }
+        values["payment"] = payment_line(
+            session, template, payload["booking_id"], row.status, locale, user_id is not None
+        )
         token: str | None = None
         if user_id is not None:
             # Merchant emails keep the console link, never the manage link (D10): a manage link
@@ -539,6 +657,15 @@ def send_booking(job: Job) -> None:
             # quoted so a merchant cannot pass their words off as the platform's own footer.
             file = "booking_declined_message"
             values["message"] = _quoted(row.decline_message)
+        if template == "booking_expired":
+            # Only the file differs: a payment that landed after the checkout hold never was a
+            # booking for the business, so its text must not blame it.
+            paid = session.execute(PAYMENT_LINE, {"id": payload["booking_id"]}).first()
+            if paid is None:  # the refund that queued this is recorded with its payment
+                return
+            values["amount"] = _money(paid.amount_minor, paid.currency, locale)
+            if payload.get("late"):
+                file = "booking_expired_late"
         subject, body = render(file, locale, values)
         status = _outbox(session, job, recipient_id, template, subject)
         if status == "pending" and token is not None:

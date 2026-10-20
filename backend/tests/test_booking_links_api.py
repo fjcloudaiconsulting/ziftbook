@@ -397,6 +397,7 @@ def test_linked_booking_carries_no_client_identity(
         "can_cancel",
         "can_reschedule",
         "refund_pct",
+        "refund_minor",
         "copy_key",
         "reschedule_count",
         "reschedules_left",
@@ -414,6 +415,8 @@ def test_linked_booking_carries_no_client_identity(
         "price",
         "worker_display_name",
         "cancellation_policy_text",
+        "paid",
+        "card_fee",
     }
     assert "Guest" not in blob  # post_booking's default client name
     assert email not in blob
@@ -1554,3 +1557,58 @@ def test_no_log_line_or_span_carries_the_token_or_its_hash(
     for spelling in (token, digest.hex(), repr(digest), base64.b64encode(digest).decode()):
         assert spelling not in logged
         assert spelling not in traced
+
+
+# ZIF-158 B3 5. fence, both R6 states. Kills: the hard-coded pending 0 (cancel 409s forever for a
+# paid client, or refunds 0).
+@pytest.mark.parametrize("keep_fee", [False, True])
+def test_a_paid_pending_request_shows_and_refunds_everything(
+    keep_fee: bool,
+    people: People,
+    app: FastAPI,
+    owner: TestClient,
+    fake_stripe: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app import bookings, payments
+    from tests.test_booking_payments_api import make_shop, place, run, sync
+
+    monkeypatch.setattr(payments, "KEEP_CARD_FEE_ON_CLIENT_CANCEL", keep_fee)
+    service_id = make_shop(people, owner, fake_stripe, price=4000)
+    client = new_client(app)
+    booking_id = place(app, people, service_id, payment="pay", client=client).json()["id"]
+    intent = fake_stripe.latest(booking_id)
+    fake_stripe.confirm(intent)
+    fake_stripe.intents[intent]["fee"] = 162
+    assert sync(client, people, booking_id).json()["status"] == "pending"
+    unpaid = place(app, people, service_id, payment="check", starts_at=at("10:00"))
+    fake_stripe.confirm(fake_stripe.latest(unpaid.json()["id"]))
+    assert sync(new_client(app), people, unpaid.json()["id"]).status_code == 200
+    link = linked(app, people.a, booking_id)
+
+    view = get(link).json()
+
+    price = {"amount_minor": 4000, "currency": "EUR"}
+    assert view["engine"]["refund_pct"] == 100
+    assert view["booking"]["paid"] == price
+    assert view["booking"]["card_fee"] == (
+        {"amount_minor": 162, "currency": "EUR"} if keep_fee else None
+    )
+    assert view["engine"]["refund_minor"] == (4000 - 162 if keep_fee else 4000)
+    assert post(link, "/cancel", cancel_body(booking_id, 0)).json()["code"] == "terms_changed"
+    assert post(link, "/cancel", cancel_body(booking_id, 100)).status_code == 200
+    bookings.sweep()
+    run("payment.settle")
+    assert fake_stripe.refunded(intent) == [view["engine"]["refund_minor"]]
+
+    other = linked(app, people.a, unpaid.json()["id"])  # a pending nobody paid
+    seen = get(other).json()
+    assert (
+        seen["engine"]["refund_pct"],
+        seen["booking"]["paid"],
+        seen["engine"]["refund_minor"],
+    ) == (
+        0,
+        None,
+        None,
+    )

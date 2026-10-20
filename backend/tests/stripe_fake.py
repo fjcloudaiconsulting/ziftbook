@@ -12,7 +12,8 @@ import json
 import threading
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from typing import Any
 from uuid import UUID
 
@@ -29,6 +30,7 @@ from app.stripe_gateway import (
     IntentState,
     Kind,
     Mode,
+    RefundState,
 )
 
 WEBHOOK_SECRET = "whsec_test_secret_not_a_real_one"
@@ -40,6 +42,10 @@ CANCELABLE = {
     "requires_capture",
     "canceled",
 }
+
+
+# Stripe counts a pending refund in the charge's amount_refunded, and takes it off if it fails.
+COUNTED = {"succeeded", "pending"}
 
 
 class FakeGateway(Gateway):
@@ -57,8 +63,32 @@ class FakeGateway(Gateway):
         self._sessions = threading.local()
         self.intents: dict[str, dict[str, Any]] = {}
         self._intent_by_key: dict[str, str] = {}
+        self._intent_params: dict[str, tuple[Any, ...]] = {}
+        # Refunds by id, and Stripe's 24 h idempotency memory (tests clear it to see past it).
+        self.refunds: dict[str, dict[str, Any]] = {}
+        self.refund_keys: dict[str, str] = {}
+        # Keys of the requests being served now: Stripe answers a second request with the same
+        # key while the first is in flight with 409 idempotency_key_in_use.
+        self._serving: set[str] = set()
+        self._serving_lock = threading.Lock()
         # Runs at the top of every call, with the op's name (tests look at the world from there).
         self.on_call: Callable[[str], None] | None = None
+        # Runs once a refund is made, before the caller has its answer.
+        self.after_refund: Callable[[], None] | None = None
+
+    @contextmanager
+    def _keyed(self, key: str) -> Iterator[None]:
+        with self._serving_lock:
+            if key in self._serving:
+                # stripe 16.0.0 builds IdempotencyError only for 400/404: a 409 is an APIError,
+                # which the gateway reports as "unavailable"
+                raise Failed("unavailable", "req_fake")
+            self._serving.add(key)
+        try:
+            yield
+        finally:
+            with self._serving_lock:
+                self._serving.discard(key)
 
     @property
     def open_sessions(self) -> int:
@@ -144,32 +174,99 @@ class FakeGateway(Gateway):
         currency: str,
         idempotency_key: str,
     ) -> Intent:
-        self._enter(
-            "create_check",
-            account=account,
-            mode=mode,
-            tenant_id=tenant_id,
-            booking_id=booking_id,
-            amount=amount,
-            currency=currency.lower(),  # as the real gateway sends it
-            key=idempotency_key,
-        )
-        if idempotency_key not in self._intent_by_key:
-            payment = mode == "authorisation"
-            intent_id = ("pi_" if payment else "seti_") + uuid.uuid4().hex[:20]
-            self._intent_by_key[idempotency_key] = intent_id
+        with self._keyed(idempotency_key):
+            self._enter(
+                "create_check",
+                account=account,
+                mode=mode,
+                tenant_id=tenant_id,
+                booking_id=booking_id,
+                amount=amount,
+                currency=currency.lower(),  # as the real gateway sends it
+                key=idempotency_key,
+            )
+            return self._intent(
+                account,
+                "payment" if mode == "authorisation" else "setup",
+                "manual",
+                booking_id,
+                amount,
+                currency,
+                0,
+                idempotency_key,
+            )
+
+    def create_payment(
+        self,
+        account: str,
+        *,
+        tenant_id: str,
+        booking_id: str,
+        amount: int,
+        currency: str,
+        application_fee: int,
+        idempotency_key: str,
+    ) -> Intent:
+        with self._keyed(idempotency_key):
+            self._enter(
+                "create_payment",
+                account=account,
+                tenant_id=tenant_id,
+                booking_id=booking_id,
+                amount=amount,
+                currency=currency.lower(),
+                application_fee=application_fee,
+                key=idempotency_key,
+            )
+            return self._intent(
+                account,
+                "payment",
+                "automatic",
+                booking_id,
+                amount,
+                currency,
+                application_fee,
+                idempotency_key,
+            )
+
+    def _intent(
+        self,
+        account: str,
+        type_: str,
+        capture: str,
+        booking_id: str,
+        amount: int,
+        currency: str,
+        application_fee: int,
+        key: str,
+    ) -> Intent:
+        # Stripe refuses a key reused with other parameters.
+        if self._intent_params.setdefault(key, (type_, capture, amount, currency)) != (
+            type_,
+            capture,
+            amount,
+            currency,
+        ):
+            raise Failed("invalid", "req_fake")
+        if key not in self._intent_by_key:
+            intent_id = ("pi_" if type_ == "payment" else "seti_") + uuid.uuid4().hex[:20]
+            self._intent_by_key[key] = intent_id
             self.intents[intent_id] = {
-                "type": "payment" if payment else "setup",
+                "type": type_,
+                "capture": capture,
                 "status": "requires_payment_method",
-                "amount": amount if payment else None,
-                "currency": currency.lower() if payment else None,
+                "amount": amount if type_ == "payment" else None,
+                "currency": currency.lower() if type_ == "payment" else None,
                 "client_secret": f"{intent_id}_secret_{uuid.uuid4().hex}",
                 "account": account,
                 "booking_id": booking_id,
                 "failed": False,
                 "amount_refunded": 0,
+                "application_fee": application_fee,
+                # Stripe's fee on the charge; None until its balance transaction exists.
+                "fee": None,
             }
-        intent_id = self._intent_by_key[idempotency_key]
+        intent_id = self._intent_by_key[key]
         made = self.intents[intent_id]
         return Intent(intent_id, made["client_secret"], made["type"])
 
@@ -185,6 +282,7 @@ class FakeGateway(Gateway):
             got["amount_refunded"],
             got["failed"],
             got["client_secret"],
+            got["fee"],
         )
 
     def cancel_intent(self, account: str, intent_id: str) -> str:
@@ -197,8 +295,76 @@ class FakeGateway(Gateway):
     # What the browser and the bank do, for tests.
     def confirm(self, intent_id: str) -> None:
         got = self.intents[intent_id]
-        got["status"] = "requires_capture" if got["type"] == "payment" else "succeeded"
+        assert got["status"] != "canceled", "Stripe refuses to confirm a canceled intent"
+        held = got["type"] == "payment" and got["capture"] == "manual"
+        got["status"] = "requires_capture" if held else "succeeded"
         got["failed"] = False
+
+    def refund(
+        self,
+        account: str,
+        intent_id: str,
+        amount: int,
+        *,
+        refund_application_fee: bool | None,
+        idempotency_key: str,
+    ) -> str:
+        with self._keyed(idempotency_key):
+            self._enter(
+                "refund",
+                account=account,
+                intent_id=intent_id,
+                amount=amount,
+                refund_application_fee=refund_application_fee,
+                key=idempotency_key,
+            )
+            got = self.intents[intent_id]
+            if idempotency_key in self.refund_keys:
+                return self.refund_keys[idempotency_key]
+            # Only a succeeded charge, and never more than was charged.
+            if got["status"] != "succeeded" or got["amount_refunded"] + amount > got["amount"]:
+                raise Failed("invalid", "req_fake")
+            refund_id = "re_" + uuid.uuid4().hex[:20]
+            got["amount_refunded"] += amount
+            self.refunds[refund_id] = {
+                "intent_id": intent_id,
+                "amount": amount,
+                "status": "succeeded",
+                "account": account,
+            }
+            self.refund_keys[idempotency_key] = refund_id
+            if self.after_refund is not None:  # the refund is made, our answer not yet recorded
+                self.after_refund()
+            return refund_id
+
+    def retrieve_refund(self, account: str, refund_id: str) -> RefundState:
+        self._enter("retrieve_refund", account=account, refund_id=refund_id)
+        got = self.refunds[refund_id]
+        return RefundState(refund_id, got["status"], got["intent_id"], got["amount"])
+
+    def add_refund(self, intent_id: str, amount: int, status: str) -> str:
+        """A refund made outside the platform (the business, in its Stripe dashboard)."""
+        refund_id = "re_" + uuid.uuid4().hex[:20]
+        self.refunds[refund_id] = {
+            "intent_id": intent_id,
+            "amount": amount,
+            "status": status,
+            "account": self.intents[intent_id]["account"],
+        }
+        if status in COUNTED:
+            self.intents[intent_id]["amount_refunded"] += amount
+        return refund_id
+
+    def fail_refund(self, refund_id: str) -> None:
+        """The refund fails after Stripe took it: what it refunded comes off the charge."""
+        got = self.refunds[refund_id]
+        if got["status"] in COUNTED:
+            self.intents[got["intent_id"]]["amount_refunded"] -= got["amount"]
+        got["status"] = "failed"
+
+    def refunded(self, intent_id: str | None = None) -> list[int]:
+        """The amounts refunded, in order (of one intent, else of all)."""
+        return [r["amount"] for r in self.refunds.values() if intent_id in (None, r["intent_id"])]
 
     def decline(self, intent_id: str) -> None:
         self.intents[intent_id].update(status="requires_payment_method", failed=True)

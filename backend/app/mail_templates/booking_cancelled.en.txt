@@ -4,7 +4,7 @@ Hello,
 $business has cancelled your booking:
 
 $service
-$date at $time ($zone)
+$date at $time ($zone)$payment
 
 If you have questions, please contact the business.
 

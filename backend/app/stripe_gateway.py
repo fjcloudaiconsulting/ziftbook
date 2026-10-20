@@ -11,6 +11,7 @@ from typing import Literal, TypeVar
 import stripe
 from opentelemetry.trace import SpanKind
 from stripe import RequestOptions
+from stripe.params import PaymentIntentCreateParams, RefundCreateParams
 from stripe.params.v2.core import AccountCreateParams
 
 from app import tracing
@@ -71,6 +72,17 @@ class IntentState:
     amount_refunded: int
     failed: bool  # the last attempt was declined or abandoned at the bank
     client_secret: str = field(repr=False)  # Stripe hands it back to the secret key
+    # Stripe's processing fee on the charge (not the application fee), None until its balance
+    # transaction exists (an authorisation has none).
+    stripe_fee: int | None = None
+
+
+@dataclass(frozen=True)
+class RefundState:
+    id: str
+    status: str  # succeeded, pending, failed, canceled, requires_action
+    payment_intent: str | None
+    amount: int
 
 
 @dataclass(frozen=True)
@@ -269,6 +281,74 @@ class Gateway:
 
         return self._call("create_check", call, account)
 
+    def create_payment(
+        self,
+        account: str,
+        *,
+        tenant_id: str,
+        booking_id: str,
+        amount: int,
+        currency: str,
+        application_fee: int,
+        idempotency_key: str,
+    ) -> Intent:
+        """The client's payment in advance, a direct charge on the business's own account. The
+        methods offered are the account's payment method configuration's, not a list here. The
+        application fee (D6, mode 2 only) is sent when there is one."""
+        metadata = {"booking_id": booking_id, "tenant_id": tenant_id}
+        options: RequestOptions = {"stripe_account": account, "idempotency_key": idempotency_key}
+
+        def call(client: stripe.StripeClient) -> Intent:
+            params: PaymentIntentCreateParams = {
+                "amount": amount,
+                "currency": currency.lower(),
+                "capture_method": "automatic",
+                "automatic_payment_methods": {"enabled": True},
+                "metadata": metadata,
+            }
+            if application_fee > 0:
+                params["application_fee_amount"] = application_fee
+            payment = client.v1.payment_intents.create(params, options)
+            return Intent(payment.id, payment.client_secret or "", "payment")
+
+        return self._call("create_payment", call, account)
+
+    def refund(
+        self,
+        account: str,
+        intent_id: str,
+        amount: int,
+        *,
+        refund_application_fee: bool | None,
+        idempotency_key: str,
+    ) -> str:
+        """Send `amount` of the payment back; the refund's id. refund_application_fee is sent only
+        when there is an application fee to decide about (None: nothing is sent)."""
+        options: RequestOptions = {"stripe_account": account, "idempotency_key": idempotency_key}
+
+        def call(client: stripe.StripeClient) -> str:
+            params: RefundCreateParams = {"payment_intent": intent_id, "amount": amount}
+            if refund_application_fee is not None:
+                params["refund_application_fee"] = refund_application_fee
+            return client.v1.refunds.create(params, options).id
+
+        return self._call("refund", call, account)
+
+    def retrieve_refund(self, account: str, refund_id: str) -> RefundState:
+        options: RequestOptions = {"stripe_account": account}
+
+        def call(client: stripe.StripeClient) -> RefundState:
+            got = client.v1.refunds.retrieve(refund_id, {}, options)
+            made = got.payment_intent
+            return RefundState(
+                got.id,
+                got.status or "",
+                made if isinstance(made, str) or made is None else made.id,
+                got.amount,
+            )
+
+        return self._call("retrieve_refund", call, account)
+
     def retrieve_intent(self, account: str, intent_id: str) -> IntentState:
         options: RequestOptions = {"stripe_account": account}
 
@@ -286,18 +366,23 @@ class Gateway:
                     setup.client_secret or "",
                 )
             payment = client.v1.payment_intents.retrieve(
-                intent_id, {"expand": ["latest_charge"]}, options
+                intent_id, {"expand": ["latest_charge.balance_transaction"]}, options
             )
             charge = payment.latest_charge
+            if charge is None or isinstance(charge, str):
+                refunded, fee = 0, None
+            else:
+                refunded, fee = charge.amount_refunded, _processing_fee(charge)
             return IntentState(
                 payment.id,
                 "payment",
                 payment.status,
                 payment.amount,
                 payment.currency,
-                0 if charge is None or isinstance(charge, str) else charge.amount_refunded,
+                refunded,
                 payment.last_payment_error is not None,
                 payment.client_secret or "",
+                fee,
             )
 
         return self._call("retrieve_intent", call, account)
@@ -349,6 +434,15 @@ class Gateway:
         ):
             raise BadSignature
         return made
+
+
+def _processing_fee(charge: stripe.Charge) -> int | None:
+    """Stripe's own fee on the charge (never the application fee), None until it has a balance
+    transaction."""
+    transaction = charge.balance_transaction
+    if transaction is None or isinstance(transaction, str):
+        return None
+    return sum(d.amount for d in transaction.fee_details if d.type == "stripe_fee")
 
 
 def _account(made: stripe.v2.core.Account) -> Account:

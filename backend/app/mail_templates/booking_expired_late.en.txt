@@ -1,0 +1,11 @@
+Your payment arrived too late to book
+Hello,
+
+Your payment for this time arrived after we had stopped holding it, so nothing was booked:
+
+$service
+$date at $time ($zone)
+
+Your payment of $amount is refunded in full to your payment method. Your bank may take a few days to show it. You're welcome to choose another time.
+
+ziftbook

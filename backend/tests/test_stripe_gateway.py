@@ -210,3 +210,124 @@ def test_retrieving_and_cancelling_an_intent_name_the_connected_account() -> Non
     assert after == "requires_capture"  # the recorder answers whatever status it was given
     assert [h["Stripe-Account"] for h in http.headers] == ["acct_1RecordedAccount"] * 2
     assert "cancel" in http.sent[1][1]
+
+
+def pay(gateway: Gateway, application_fee: int = 0) -> Any:
+    return gateway.create_payment(
+        "acct_1RecordedAccount",
+        tenant_id="t",
+        booking_id="b",
+        amount=4000,
+        currency="EUR",
+        application_fee=application_fee,
+        idempotency_key="pi:b:1",
+    )
+
+
+REFUND = {
+    "id": "re_1Recorded",
+    "object": "refund",
+    "status": "succeeded",
+    "amount": 4000,
+    "payment_intent": "pi_1Recorded",
+}
+
+
+def refund(gateway: Gateway, application_fee: bool | None = None) -> str:
+    return gateway.refund(
+        "acct_1RecordedAccount",
+        "pi_1Recorded",
+        4000,
+        refund_application_fee=application_fee,
+        idempotency_key="refund:p1",
+    )
+
+
+# ZIF-158 B3 7. fence. Kills: a hard-coded method list (iDEAL never offered); an authorisation for
+# a payment; a platform-account intent.
+def test_a_payment_is_captured_and_offers_the_accounts_methods() -> None:
+    http = Recorder(body=PAYMENT_INTENT)
+
+    made = pay(Gateway(http_client=http))
+
+    wire = http.wire(0)
+    assert (made.id, made.type) == ("pi_1Recorded", "payment")
+    assert wire.startswith("post https://api.stripe.com/v1/payment_intents ")
+    assert "capture_method=automatic" in wire
+    assert "automatic_payment_methods[enabled]=true" in wire
+    assert "payment_method_types" not in wire
+    assert "amount=4000" in wire and "currency=eur" in wire
+    assert "application_fee" not in wire and "customer" not in wire
+    assert http.headers[0]["Stripe-Account"] == "acct_1RecordedAccount"
+    assert http.headers[0]["Idempotency-Key"] == "pi:b:1"
+
+
+def test_an_application_fee_is_sent_only_when_there_is_one() -> None:
+    http = Recorder(body=PAYMENT_INTENT)
+
+    pay(Gateway(http_client=http), 85)
+
+    assert "application_fee_amount=85" in http.wire(0)
+
+
+# ZIF-158 B3 7. fence. Kills: a refund on the platform account; ziftbook keeping its fee when the
+# business declined (D6).
+@pytest.mark.parametrize(
+    ("flag", "sent"),
+    [(None, None), (True, "true"), (False, "false")],
+    ids=["mode 1", "decline", "cancel"],
+)
+def test_a_refund_names_the_account_the_key_and_the_application_fee_only_when_asked(
+    flag: bool | None, sent: str | None
+) -> None:
+    http = Recorder(body=REFUND)
+
+    made = refund(Gateway(http_client=http), flag)
+
+    wire = http.wire(0)
+    assert made == "re_1Recorded"
+    assert wire.startswith("post https://api.stripe.com/v1/refunds ")
+    assert "payment_intent=pi_1Recorded" in wire and "amount=4000" in wire
+    assert http.headers[0]["Idempotency-Key"] == "refund:p1"
+    assert http.headers[0]["Stripe-Account"] == "acct_1RecordedAccount"
+    if sent is None:
+        assert "refund_application_fee" not in wire
+    else:
+        assert f"refund_application_fee={sent}" in wire
+
+
+def test_a_refund_is_read_back_and_the_processing_fee_is_the_stripe_one() -> None:
+    http = Recorder(body={**REFUND, "status": "failed"})
+    gateway = Gateway(http_client=http)
+
+    state = gateway.retrieve_refund("acct_1RecordedAccount", "re_1Recorded")
+
+    assert (state.status, state.payment_intent, state.amount) == ("failed", "pi_1Recorded", 4000)
+    assert http.headers[0]["Stripe-Account"] == "acct_1RecordedAccount"
+    charged = Recorder(
+        body={
+            **PAYMENT_INTENT,
+            "status": "succeeded",
+            "amount": 4000,
+            "currency": "eur",
+            "last_payment_error": None,
+            "latest_charge": {
+                "id": "ch_1",
+                "object": "charge",
+                "amount_refunded": 0,
+                "balance_transaction": {
+                    "id": "txn_1",
+                    "object": "balance_transaction",
+                    "fee_details": [
+                        {"type": "stripe_fee", "amount": 162, "currency": "eur"},
+                        {"type": "application_fee", "amount": 85, "currency": "eur"},
+                    ],
+                },
+            },
+        }
+    )
+
+    got = Gateway(http_client=charged).retrieve_intent("acct_1RecordedAccount", "pi_1Recorded")
+
+    assert got.stripe_fee == 162
+    assert "latest_charge.balance_transaction" in charged.wire(0)
