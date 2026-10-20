@@ -428,7 +428,7 @@ export function Settings() {
           </Field>
         </fieldset>
 
-        <Payments />
+        <Payments disabled={saving} />
 
         <fieldset className={`${styles.section} ${styles.settingsSection}`} disabled={saving}>
           <legend>

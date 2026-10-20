@@ -13,7 +13,7 @@ import { Banner } from "../../_ui/parts";
 import uiStyles from "../../_ui/ui.module.css";
 
 /** Online payments: the Stripe connection's state, and the one action it allows (owners only). */
-export function Payments() {
+export function Payments({ disabled }: { disabled: boolean }) {
   const { session, call } = useConsole();
   const t = useTranslations("Console.settings");
   const locale = useLocale() as "en" | "nl" | "pt";
@@ -55,11 +55,12 @@ export function Payments() {
     const tab = kind === "dashboard" ? window.open("", "_blank") : null;
     if (tab) tab.opener = null;
     const outcome = await call(() => (kind === "connect" ? paymentsConnect({ body: { locale } }) : paymentsDashboard({ ...JSON_WRITE })), { write: true });
+    const url = outcome.status === 200 ? outcome.data?.url : undefined;
+    if (url && !tab) return window.location.assign(url); // stays busy while the page unloads
     busyRef.current = false;
     setBusy(false);
-    if (outcome.status === 200 && outcome.data) {
-      if (tab) tab.location.href = outcome.data.url;
-      else window.location.assign(outcome.data.url);
+    if (url && tab) {
+      tab.location.href = url;
       return;
     }
     tab?.close();
@@ -78,8 +79,10 @@ export function Payments() {
         : t(account.state === "none" ? "paymentsNone" : account.state === "onboarding" ? "paymentsOnboarding" : "paymentsReady");
 
   return (
-    <div className={`${styles.section} ${styles.settingsSection}`}>
-      <h2>{t("paymentsHeading")}</h2>
+    <fieldset className={`${styles.section} ${styles.settingsSection}`} disabled={disabled}>
+      <legend>
+        <h2>{t("paymentsHeading")}</h2>
+      </legend>
       {signedOut && <SignedOutBanner />}
       {body && <p className={styles.body}>{body}</p>}
       {(action === "connect" || action === "continue") && (
@@ -100,6 +103,6 @@ export function Payments() {
         </p>
       )}
       {failed && <Banner tone="error">{t("paymentsFailed")}</Banner>}
-    </div>
+    </fieldset>
   );
 }
