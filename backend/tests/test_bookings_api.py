@@ -199,6 +199,7 @@ def test_a_guest_books_a_slot_the_public_page_offered(
         "worker_id",
         "worker_display_name",
         "cancellation_policy_text",
+        "payment",
     }
     assert body["status"] == "pending"
     assert response.headers["cache-control"] == "no-store"

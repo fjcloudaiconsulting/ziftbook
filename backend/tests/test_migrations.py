@@ -1228,3 +1228,144 @@ def test_0043_round_trips_payment_accounts(
             True,
             False,
         )
+
+
+BOOKING_PAYMENTS = text("""
+SELECT to_regclass('booking_payments') IS NOT NULL,
+       (SELECT count(*) FROM pg_constraint
+         WHERE conname = 'uq_bookings_tenant_id_id_price' AND conrelid = 'bookings'::regclass)
+""")
+PAYMENT_COLUMNS = text("""
+SELECT column_name FROM information_schema.columns WHERE table_name = 'booking_payments'
+""")
+PAYMENT_GRANT = "SELECT has_column_privilege('ziftbook_app', 'booking_payments', :c, :p)"
+GOOD_PAYMENT: dict[str, object] = {
+    "kind": "check",
+    "intent_id": "pi_abc123",
+    "amount_minor": 2500,
+    "currency": "EUR",
+    "fee_mode": "business_pays",
+    "application_fee_minor": 0,
+    "stripe_fee_minor": None,
+    "status": "open",
+    "refunded_minor": 0,
+    "refund_id": None,
+}
+# Each CHECK refused once, by name: the row is good except for the one field that breaks it.
+PAYMENT_CHECKS = [
+    ("ck_booking_payments_kind", {"kind": "x"}),
+    ("ck_booking_payments_intent_id", {"intent_id": "nope"}),
+    ("ck_booking_payments_amount_minor", {"amount_minor": 0}),
+    ("ck_booking_payments_fee_mode", {"fee_mode": "x"}),
+    ("ck_booking_payments_application_fee_minor", {"application_fee_minor": -1}),
+    ("ck_booking_payments_stripe_fee_minor", {"stripe_fee_minor": 2501}),
+    ("ck_booking_payments_fee_needs_mode_2", {"application_fee_minor": 5}),
+    ("ck_booking_payments_status", {"status": "x"}),
+    (
+        "ck_booking_payments_refunded_minor",
+        {"kind": "pay", "status": "paid", "refunded_minor": 2501},
+    ),
+    ("ck_booking_payments_refund_id", {"refund_id": "x"}),
+    ("ck_booking_payments_kind_status", {"status": "paid"}),
+    ("ck_booking_payments_setup_is_a_check", {"kind": "pay", "intent_id": "seti_abc"}),
+    ("ck_booking_payments_refund_needs_paid", {"refunded_minor": 5}),
+]
+
+
+# ZIF-158 B2 17. guard: 0044's downgrade drops the table and the bookings key it needed; the
+# upgrade restores the grants as listed (no DELETE, the fee policy write-once), and every CHECK
+# refuses its own bad row.
+def test_0044_round_trips_booking_payments(
+    people: People, migrate_engine: Engine, app_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = lock_timeout_config(monkeypatch)
+    try:
+        command.downgrade(cfg, "0043")
+        with migrate_engine.connect() as conn:
+            assert tuple(conn.execute(BOOKING_PAYMENTS).one()) == (False, 0)
+    finally:
+        command.upgrade(cfg, "head")
+    with migrate_engine.connect() as conn:
+        assert tuple(conn.execute(BOOKING_PAYMENTS).one()) == (True, 1)
+        assert (
+            conn.scalar(
+                text("SELECT has_table_privilege('ziftbook_app', 'booking_payments', 'DELETE')")
+            )
+            is False
+        )
+        assert (
+            conn.scalar(
+                text("SELECT has_table_privilege('ziftbook_app', 'booking_payments', 'SELECT')")
+            )
+            is True
+        )
+        columns = set(conn.scalars(PAYMENT_COLUMNS))
+        for column in sorted(columns):
+            insert = column in {
+                "tenant_id",
+                "booking_id",
+                "kind",
+                "intent_id",
+                "amount_minor",
+                "currency",
+                "fee_mode",
+                "application_fee_minor",
+            }
+            update = column in {
+                "status",
+                "refunded_minor",
+                "refund_id",
+                "settled_at",
+                "stripe_fee_minor",
+                "refund_failed_at",
+            }
+            for privilege, expected in (("INSERT", insert), ("UPDATE", update)):
+                got = conn.scalar(text(PAYMENT_GRANT), {"c": column, "p": privilege})
+                assert got is expected, (column, privilege)
+
+    booking_id = _seed_booking(people)
+    for constraint, change in PAYMENT_CHECKS:
+        row = {**GOOD_PAYMENT, **change}
+        with pytest.raises(IntegrityError) as raised:
+            _insert_payment(migrate_engine, people, booking_id, row)
+        assert raised.value.orig.diag.constraint_name == constraint, constraint  # type: ignore[union-attr]
+    _insert_payment(migrate_engine, people, booking_id, GOOD_PAYMENT)
+    with pytest.raises(IntegrityError) as raised:
+        _insert_payment(migrate_engine, people, booking_id, {**GOOD_PAYMENT, "intent_id": "pi_two"})
+    assert raised.value.orig.diag.constraint_name == "uq_booking_payments_live"  # type: ignore[union-attr]
+    with migrate_engine.begin() as conn:
+        conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(people.a)})
+        conn.execute(text("UPDATE booking_payments SET status = 'canceled'"))
+    _insert_payment(migrate_engine, people, booking_id, {**GOOD_PAYMENT, "intent_id": "pi_two"})
+
+
+def _seed_booking(people: People) -> uuid.UUID:
+    from tests.test_bookings_db import book
+    from tests.test_clients_db import seed_client
+
+    start = datetime.now(UTC) + timedelta(days=3)
+    return book(
+        people.a,
+        client_id=seed_client(people.a, email=f"{uuid.uuid4().hex}@example.com"),
+        worker_id=member_id(people.a, people.both),
+        service_id=seed_service(people.a),
+        starts_at=start,
+        ends_at=start + timedelta(minutes=30),
+    )
+
+
+def _insert_payment(
+    engine: Engine, people: People, booking_id: uuid.UUID, row: dict[str, object]
+) -> None:
+    with engine.begin() as conn:
+        conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(people.a)})
+        conn.execute(
+            text(
+                "INSERT INTO booking_payments (tenant_id, booking_id, kind, intent_id, "
+                "amount_minor, currency, fee_mode, application_fee_minor, stripe_fee_minor, "
+                "status, refunded_minor, refund_id) VALUES (:t, :b, :kind, :intent_id, "
+                ":amount_minor, :currency, :fee_mode, :application_fee_minor, :stripe_fee_minor, "
+                ":status, :refunded_minor, :refund_id)"
+            ),
+            {"t": people.a, "b": booking_id, **row},
+        )

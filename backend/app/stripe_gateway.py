@@ -5,7 +5,7 @@ tests/stripe_fake.py. Nothing here logs a body, a link, a secret or a client_sec
 import json
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal, TypeVar
 
 import stripe
@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T")
 Kind = Literal["card", "invalid", "unavailable"]
 FeesCollector = Literal["stripe", "application"]
+Mode = Literal["authorisation", "setup"]
 
 
 class Failed(Exception):
@@ -44,6 +45,29 @@ class BadSignature(Exception):
 class Account:
     id: str
     charges_enabled: bool
+
+
+@dataclass(frozen=True)
+class Intent:
+    """A payment check just created. The client_secret goes to the browser and nowhere else."""
+
+    id: str
+    client_secret: str = field(repr=False)
+    type: Literal["payment", "setup"]
+
+
+@dataclass(frozen=True)
+class IntentState:
+    """What Stripe says about an intent now. A SetupIntent has no amount or currency."""
+
+    id: str
+    type: Literal["payment", "setup"]
+    status: str
+    amount: int | None
+    currency: str | None
+    amount_refunded: int
+    failed: bool  # the last attempt was declined or abandoned at the bank
+    client_secret: str = field(repr=False)  # Stripe hands it back to the secret key
 
 
 @dataclass(frozen=True)

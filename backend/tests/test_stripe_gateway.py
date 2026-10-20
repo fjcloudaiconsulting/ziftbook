@@ -8,7 +8,20 @@ from urllib.parse import unquote
 import pytest
 import stripe
 
-from app.stripe_gateway import Failed, FeesCollector, Gateway
+from app.stripe_gateway import Failed, FeesCollector, Gateway, Mode
+
+PAYMENT_INTENT = {
+    "id": "pi_1Recorded",
+    "object": "payment_intent",
+    "client_secret": "pi_1Recorded_secret_x",
+    "status": "requires_payment_method",
+}
+SETUP_INTENT = {
+    "id": "seti_1Recorded",
+    "object": "setup_intent",
+    "client_secret": "seti_1Recorded_secret_x",
+    "status": "requires_payment_method",
+}
 
 
 class Recorder(stripe.HTTPClient):
@@ -16,8 +29,11 @@ class Recorder(stripe.HTTPClient):
 
     name = "recorder"
 
-    def __init__(self, status: int = 200, active: str = "active") -> None:
+    def __init__(
+        self, status: int = 200, active: str = "active", body: dict[str, Any] | None = None
+    ) -> None:
         super().__init__()
+        self.body = body
         self.sent: list[tuple[str, str, Any]] = []
         self.headers: list[Mapping[str, str]] = []
         self.status = status
@@ -36,6 +52,8 @@ class Recorder(stripe.HTTPClient):
         self.headers.append(dict(headers or {}))
         if self.status != 200:
             body: dict[str, Any] = {"error": {"type": "invalid_request_error", "message": "no"}}
+        elif self.body is not None:
+            body = self.body
         else:
             body = {
                 "id": "acct_1RecordedAccount",
@@ -114,3 +132,80 @@ def test_a_stripe_error_is_one_failure_with_a_request_id() -> None:
         gateway.retrieve_account("acct_1RecordedAccount")
 
     assert (raised.value.kind, raised.value.request_id) == ("invalid", "req_recorded")
+
+
+def check(gateway: Gateway, mode: Mode) -> Any:
+    return gateway.create_check(
+        "acct_1RecordedAccount",
+        mode=mode,
+        tenant_id="t",
+        booking_id="b",
+        amount=2500,
+        currency="EUR",
+        idempotency_key="pi:b:1",
+    )
+
+
+# ZIF-158 B2 16. fence. Kills: an automatic-capture "check" (charges the client); a platform-account
+# intent (direct charges broken); a saved card.
+def test_an_authorisation_holds_the_card_on_the_connected_account() -> None:
+    http = Recorder(body=PAYMENT_INTENT)
+
+    made = check(Gateway(http_client=http), "authorisation")
+
+    wire = http.wire(0)
+    assert (made.id, made.type, made.client_secret) == (
+        "pi_1Recorded",
+        "payment",
+        "pi_1Recorded_secret_x",
+    )
+    assert wire.startswith("POST https://api.stripe.com/v1/payment_intents ")
+    assert "capture_method=manual" in wire
+    assert "payment_method_types[0]=card" in wire
+    assert "amount=2500" in wire and "currency=eur" in wire
+    assert "customer" not in wire and "application_fee" not in wire
+    assert http.headers[0]["Stripe-Account"] == "acct_1RecordedAccount"
+    assert http.headers[0]["Idempotency-Key"].startswith("pi:")
+
+
+def test_a_setup_check_saves_nothing() -> None:
+    http = Recorder(body=SETUP_INTENT)
+
+    made = check(Gateway(http_client=http), "setup")
+
+    wire = http.wire(0)
+    assert (made.id, made.type) == ("seti_1Recorded", "setup")
+    assert wire.startswith("POST https://api.stripe.com/v1/setup_intents ")
+    assert "usage=on_session" in wire and "payment_method_types[0]=card" in wire
+    assert "customer" not in wire
+    assert http.headers[0]["Stripe-Account"] == "acct_1RecordedAccount"
+    assert http.headers[0]["Idempotency-Key"].startswith("pi:")
+
+
+def test_retrieving_and_cancelling_an_intent_name_the_connected_account() -> None:
+    http = Recorder(
+        body={
+            **PAYMENT_INTENT,
+            "status": "requires_capture",
+            "amount": 2500,
+            "currency": "eur",
+            "last_payment_error": None,
+        }
+    )
+    gateway = Gateway(http_client=http)
+
+    state = gateway.retrieve_intent("acct_1RecordedAccount", "pi_1Recorded")
+    after = gateway.cancel_intent("acct_1RecordedAccount", "pi_1Recorded")
+
+    assert (state.type, state.status, state.amount, state.currency, state.failed) == (
+        "payment",
+        "requires_capture",
+        2500,
+        "eur",
+        False,
+    )
+    assert state.amount_refunded == 0
+    assert "client_secret" not in repr(state)
+    assert after == "requires_capture"  # the recorder answers whatever status it was given
+    assert [h["Stripe-Account"] for h in http.headers] == ["acct_1RecordedAccount"] * 2
+    assert "cancel" in http.sent[1][1]

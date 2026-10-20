@@ -182,3 +182,25 @@ def test_no_request_schema_accepts_a_user_id() -> None:
         if "user_id" in spec["components"]["schemas"][name].get("properties", {})
     ]
     assert offending == []
+
+
+# ZIF-158 B2 13. fence. Kills: leaking a client_secret through sync, the link view or the console.
+def test_a_client_secret_is_only_in_the_payment_start() -> None:
+    spec = json.loads(CONTRACT.read_text())
+    schemas = spec["components"]["schemas"]
+
+    carrying = {
+        name for name, schema in schemas.items() if "client_secret" in schema.get("properties", {})
+    }
+    assert carrying == {"PaymentStart"}
+    reaching = {
+        f"{method.upper()} {path}"
+        for path, operations in spec["paths"].items()
+        for method, operation in operations.items()
+        if "PaymentStart" in schemas_reachable_from(spec, operation["responses"])
+    }
+    assert reaching == {
+        "POST /api/public/businesses/{tenant_id}/services/{service_id}/bookings",
+        "PUT /api/public/businesses/{tenant_id}/bookings/{booking_id}/payment",
+    }
+    assert "client_secret" not in json.dumps(schemas["SyncOut"])
