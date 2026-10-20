@@ -55,12 +55,12 @@ export function Payments({ disabled }: { disabled: boolean }) {
     const tab = kind === "dashboard" ? window.open("", "_blank") : null;
     if (tab) tab.opener = null;
     const outcome = await call(() => (kind === "connect" ? paymentsConnect({ body: { locale } }) : paymentsDashboard({ ...JSON_WRITE })), { write: true });
-    const url = outcome.status === 200 ? outcome.data?.url : undefined;
-    if (url && !tab) return window.location.assign(url); // stays busy while the page unloads
+    // Reset even before leaving for Stripe: Back may restore this page from the bfcache as it was.
     busyRef.current = false;
     setBusy(false);
-    if (url && tab) {
-      tab.location.href = url;
+    if (outcome.status === 200 && outcome.data) {
+      if (tab) tab.location.href = outcome.data.url;
+      else window.location.assign(outcome.data.url);
       return;
     }
     tab?.close();
