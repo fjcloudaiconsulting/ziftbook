@@ -20,7 +20,7 @@ from fastapi.responses import JSONResponse
 from opentelemetry.trace import SpanKind
 from pydantic import BaseModel
 from sqlalchemy import Row, text
-from sqlalchemy.exc import IntegrityError, OperationalError
+from sqlalchemy.exc import DBAPIError, IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
 from app import auth, bookings, business_settings, jobs, limits, logs, stripe_gateway, tracing
@@ -473,7 +473,7 @@ def start(
             raise _unavailable() from None
         try:
             _insert(tenant_id, booking, made.id)
-        except OperationalError:
+        except DBAPIError, LookupError:  # a lock timeout, a lost connection, a missing account
             # The intent never reached a browser: nobody can confirm it, and no row names it.
             _give_back(tenant_id, booking.id)
             raise ApiError(503, "busy") from None
@@ -504,7 +504,8 @@ def _insert(tenant_id: UUID, booking: bookings.BookingOut, intent_id: str) -> No
                 "currency": booking.price.currency,
             },
         ).first()
-        assert stored is not None  # an account row exists once offer() named it
+        if stored is None:  # offer() named an account row a moment ago; it is gone
+            raise LookupError("no payment account")
 
 
 def _give_back(tenant_id: UUID, booking_id: UUID) -> None:

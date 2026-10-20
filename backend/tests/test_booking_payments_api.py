@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 from httpx2 import Response
 from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 from sqlalchemy import Engine, text
+from sqlalchemy.exc import InterfaceError
 
 from app import bookings, payments, stripe_gateway
 from app.db import tenant_context
@@ -1066,3 +1067,40 @@ def test_two_settles_of_one_row_count_once(
     ]
     assert released == [1]
     assert len([line for line in log_lines() if line["msg"] == "payment settled"]) == 1
+
+
+# R-C3. fence. Kills: a tx2 that dies on anything but a lock timeout (a dropped connection, a
+# missing account row) answering 500 and stranding the hold for 30 minutes.
+@pytest.mark.parametrize("failure", ["lost connection", "no account row"])
+def test_any_failure_of_the_second_transaction_gives_the_time_back(
+    failure: str,
+    people: People,
+    app: FastAPI,
+    ready: str,
+    fake_stripe: FakeGateway,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if failure == "lost connection":
+
+        def lost(*args: Any, **kwargs: Any) -> None:
+            raise InterfaceError("connection already closed", None, Exception("closed"))
+
+        monkeypatch.setattr(payments, "_insert", lost)
+    else:
+        monkeypatch.setattr(
+            payments,
+            "INSERT_PAYMENT",
+            text(
+                "INSERT INTO booking_payments (tenant_id, booking_id, kind, intent_id, "
+                "amount_minor, currency, fee_mode) SELECT current_setting('app.tenant_id')::uuid, "
+                ":booking_id, 'check', :intent_id, :amount_minor, :currency, fee_mode "
+                "FROM payment_accounts WHERE false RETURNING 1"
+            ),
+        )
+
+    refused = place(app, people, ready)
+
+    assert (refused.status_code, refused.json()["code"]) == (503, "busy")
+    with tenant_context(people.a) as session:
+        booking_id = session.scalar(text("SELECT id FROM bookings"))
+    assert status_of(people, booking_id) == "expired"
