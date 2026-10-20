@@ -26,6 +26,7 @@ import {
   pickFromUrl,
   returnParams,
   scanWindow,
+  sendAction,
   sendLabel,
   slotsFor,
   slotWho,
@@ -185,6 +186,7 @@ export function BookingPage({
   const [end, setEnd] = useState<End | null>(null);
   const [offer, setOffer] = useState<SyncOut | null>(null);
   const [payGone, setPayGone] = useState(false);
+  const [recheckFailed, setRecheckFailed] = useState(false);
   const stepRef = useRef<PayHandle>(null);
   // The request is sent and waits for payment: its fields stay as they were (a retry must never confirm
   // the old intent for a changed time or address).
@@ -432,6 +434,7 @@ export function BookingPage({
       "error-callback": () => {
         setVerifying(false);
         pendingSubmit.current = false;
+        working.current = false;
         if (turnstileTimer.current) {
           clearTimeout(turnstileTimer.current);
           turnstileTimer.current = null;
@@ -508,7 +511,6 @@ export function BookingPage({
     }
     if (view.kind === "resume") {
       setEnd(null);
-      setChoice(s.payment.kind);
       if (view.failed) fail(t("payFailed"));
       void reopen(s.id, s.payment.kind, email);
       return;
@@ -519,17 +521,22 @@ export function BookingPage({
 
   /** PUT resume: the open intent's secret for this kind (a new intent when the kind changed). */
   async function reopen(id: string, kind: PaymentChoice, email: string | null) {
+    // Working until the answer: Send must not confirm the old intent while the kind is switching.
+    working.current = true;
     setFlow((f) => ({ ...f, busy: true }));
     const answer = await send(bookingsResume({ path: { tenant_id: page.id, booking_id: id }, body: { kind } }));
     if (answer.status === 200 && answer.data) {
       // The choice follows the intent it belongs to, never ahead of it.
       setChoice(kind);
       setStart(answer.data);
+      working.current = false;
       setFlow((f) => ({ ...f, busy: false }));
     } else if (answer.status === 422 && answer.code === "payment_not_offered") {
       setPayGone(true);
+      working.current = false;
       setFlow((f) => ({ ...f, busy: false }));
     } else if (answer.status === 409) {
+      working.current = false;
       const again = await checkBooking(id);
       if (again.status === 200 && again.data) apply(again.data, email);
       else fail(t("payCheckEmail"), "note");
@@ -579,6 +586,22 @@ export function BookingPage({
     if (flow.service) void ensureWeek(flow.service, flow.worker, flow.weekStart);
   }
 
+  async function recheck() {
+    if (!bookingId || working.current) return;
+    working.current = true;
+    setRecheckFailed(false);
+    setFlow((f) => ({ ...f, busy: true }));
+    const answer = await checkBooking(bookingId);
+    working.current = false;
+    setFlow((f) => ({ ...f, busy: false }));
+    if (answer.status === 200 && answer.data) apply(answer.data, storedEmail());
+    else if (answer.status === 404 || answer.status === 422) {
+      // The booking is gone: nothing left to check.
+      forget(false);
+      setEnd("stale");
+    } else setRecheckFailed(true);
+  }
+
   /** "Change time or details". */
   async function changeRequest() {
     if (!bookingId || working.current) return;
@@ -593,17 +616,22 @@ export function BookingPage({
 
   /** The radio: a sent request swaps its intent for the other kind. */
   function chooseKind(kind: PaymentChoice) {
+    if (working.current) return;
     if (bookingId) void reopen(bookingId, kind, storedEmail());
     else setChoice(kind);
   }
 
   /** Send: every invalid field is marked and the first focused; a missing time is named at the picker. */
+  /** Send on a request that exists: confirm with the secret held, or fetch one first (a resume that failed). */
+  async function resend(id: string, email: string | null) {
+    const action = sendAction({ working: working.current, sent: true, hasSecret: start !== null });
+    if (action === "pay") await pay(id, start!, true, email);
+    else if (action === "reopen") await reopen(id, sync?.payment.kind ?? choice, email);
+  }
+
   async function book() {
-    if (working.current) return;
-    if (locked) {
-      if (start) await pay(bookingId!, start, true, flow.email);
-      return;
-    }
+    if (sendAction({ working: working.current, sent: locked, hasSecret: start !== null }) === "ignore") return;
+    if (locked) return resend(bookingId!, flow.email);
     const errors: Flow["errors"] = {};
     if (!flow.name.trim()) errors.name = t("errName");
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(flow.email.trim())) errors.email = t("errEmail");
@@ -617,6 +645,8 @@ export function BookingPage({
       } else headingRefs.current[2]?.focus();
       return;
     }
+    // Working from here to the answer: a second press, or the token of an earlier verification, must not post again.
+    working.current = true;
     if (stepOn) {
       // Inside the click: wallet sheets (Apple Pay, Google Pay) only open from a user gesture, which the
       // Turnstile callback is not.
@@ -629,6 +659,7 @@ export function BookingPage({
       turnstileTimer.current = setTimeout(() => {
         if (pendingSubmit.current) {
           pendingSubmit.current = false;
+          working.current = false;
           setVerifying(false);
           setFlow((f) => ({ ...f, banner: { where: "c", tone: "error", text: t("verifyTimeout") } }));
         }
@@ -639,6 +670,11 @@ export function BookingPage({
   }
 
   async function doBook(token: string | null) {
+    // The request is already sent (the form is locked): a late verification token must not post it again.
+    if (locked) {
+      working.current = false;
+      return;
+    }
     working.current = true;
     setFlow((f) => ({ ...f, busy: true, banner: null }));
     const f = flow as Step2Plus;
@@ -782,9 +818,13 @@ export function BookingPage({
   // secrets in the address: they go first.
   useEffect(() => {
     const clean = returnParams(window.location.search);
-    if (clean.size !== new URLSearchParams(window.location.search).size) window.history.replaceState(null, "", `${window.location.pathname}${clean.size ? `?${clean}` : ""}`);
+    if (clean.toString() !== new URLSearchParams(window.location.search).toString()) window.history.replaceState(null, "", `${window.location.pathname}${clean.toString() ? `?${clean}` : ""}`);
     const stored = readStored();
-    const mode = entryMode(new URLSearchParams(window.location.search), stored);
+    // The validated prop, not the raw address: ?booking=junk is no booking.
+    const search = new URLSearchParams(window.location.search);
+    if (booking) search.set("booking", booking);
+    else search.delete("booking");
+    const mode = entryMode(search, stored);
     if (mode === "checkout") return;
     const id = mode === "resume" ? booking! : stored!.bookingId;
     let cancelled = false;
@@ -902,11 +942,18 @@ export function BookingPage({
   if (checking) return frame(null, false);
   if (end === "processing" && sync) return frame(<Processing aside={bookingAside(sync)} t={t} />, false);
   // A check that failed keeps the booking: its button asks again, never resets (mayForget).
-  const recheck = async () => {
-    const answer = bookingId ? await checkBooking(bookingId) : null;
-    if (answer?.status === 200 && answer.data) apply(answer.data, storedEmail());
-  };
-  if (end) return frame(<PayEnd text={endText(end)} label={t(mayForget(end) ? "step2" : "tryAgain")} onAgain={mayForget(end) ? reset : () => void recheck()} />, false);
+  if (end) {
+    return frame(
+      <PayEnd
+        text={endText(end)}
+        label={t(mayForget(end) ? "step2" : "tryAgain")}
+        busy={flow.busy}
+        failed={recheckFailed ? t("payCheckEmail") : null}
+        onAgain={mayForget(end) ? reset : () => void recheck()}
+      />,
+      false,
+    );
+  }
   if (sync && !done) {
     return frame(
       <ResumeView
@@ -922,7 +969,7 @@ export function BookingPage({
         locale={locale}
         t={t}
         onChoice={chooseKind}
-        onSend={() => start && !working.current && void pay(sync.id, start, true, storedEmail())}
+        onSend={() => void resend(sync.id, storedEmail())}
         onChange={() => void changeRequest()}
         onUnavailable={() => fail(t("payUnavailable"))}
       />,
@@ -946,17 +993,21 @@ export function BookingPage({
       <div className={styles.bookingLayout}>
         <div className={styles.flowCol}>
           {offer && !locked && (
-            <Banner tone="note">
-              {t("payInProgress", { service: localized(offer.service_name, loc, page.language as Locale).text, when: offerWhen })}
-              <span className={styles.emptyActs}>
-                <button className={`${styles.button} ${styles.primary} ${styles.small}`} type="button" onClick={resumeOffer}>
-                  {t("payResume")}
-                </button>
-                <button className={`${styles.button} ${styles.secondary} ${styles.small}`} type="button" onClick={() => void startOver()}>
-                  {t("payStartOver")}
-                </button>
-              </span>
-            </Banner>
+            <div className={styles.stepBody} style={{ paddingBottom: "1.25rem" }}>
+              <Banner tone="note">
+                <span style={{ display: "grid", gap: "0.6rem" }}>
+                  {t("payInProgress", { service: localized(offer.service_name, loc, page.language as Locale).text, when: offerWhen })}
+                  <span className={styles.emptyActs} style={{ margin: 0 }}>
+                    <button className={`${styles.button} ${styles.primary} ${styles.small}`} type="button" onClick={resumeOffer}>
+                      {t("payResume")}
+                    </button>
+                    <button className={`${styles.button} ${styles.secondary} ${styles.small}`} type="button" onClick={() => void startOver()}>
+                      {t("payStartOver")}
+                    </button>
+                  </span>
+                </span>
+              </Banner>
+            </div>
           )}
           {/* Step 1: person and time. */}
           <section className={styles.step} aria-labelledby="step2-h">
@@ -1129,29 +1180,27 @@ export function BookingPage({
           </section>
         </div>
 
-        {!offer && (
-          <Summary
-            page={page}
-            service={s2.service}
-            slot={s2.slot}
-            workerName={s2With}
-            locale={locale}
-            dLocale={dLocale}
-            zone={zone}
-            t={t}
-            message={message}
-            messageOpen={messageOpen}
-            messageError={flow.errors.message}
-            messageRef={messageRef}
-            extraTerms={extraTerms}
-            locked={locked}
-            onMessage={(text) => {
-              setMessage(text);
-              if (flow.errors.message) setFlow((f) => ({ ...f, errors: { ...f.errors, message: undefined } }));
-            }}
-            onMessageOpen={setMessageOpen}
-          />
-        )}
+        <Summary
+          page={page}
+          service={s2.service}
+          slot={s2.slot}
+          workerName={s2With}
+          locale={locale}
+          dLocale={dLocale}
+          zone={zone}
+          t={t}
+          message={message}
+          messageOpen={messageOpen}
+          messageError={flow.errors.message}
+          messageRef={messageRef}
+          extraTerms={extraTerms}
+          locked={locked}
+          onMessage={(text) => {
+            setMessage(text);
+            if (flow.errors.message) setFlow((f) => ({ ...f, errors: { ...f.errors, message: undefined } }));
+          }}
+          onMessageOpen={setMessageOpen}
+        />
       </div>
   );
 }

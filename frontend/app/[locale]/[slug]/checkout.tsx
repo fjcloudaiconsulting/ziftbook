@@ -444,14 +444,16 @@ export function Processing({ aside, t }: { aside: ReactNode; t: ReturnType<typeo
 
 /** A booking that can no longer be paid (the time ran out, or an old link): what happened and the way
  * back to the picker. */
-export function PayEnd({ text, label, onAgain }: { text: string; label: string; onAgain(): void }) {
+export function PayEnd({ text, label, busy, failed, onAgain }: { text: string; label: string; busy: boolean; failed: string | null; onAgain(): void }) {
   return (
     <div className={styles.bookingLayout}>
       <div className={styles.flowCol}>
         <div className={styles.stepBody}>
           <Banner tone="note">{text}</Banner>
+          {failed && <Banner tone="note">{failed}</Banner>}
           <div className={styles.actions}>
-            <button className={`${styles.button} ${styles.primary}`} type="button" onClick={onAgain}>
+            <button className={`${styles.button} ${styles.primary}`} type="button" aria-disabled={busy || undefined} onClick={busy ? undefined : onAgain}>
+              {busy && <span className={styles.spinner} aria-hidden="true" />}
               {label}
             </button>
           </div>
