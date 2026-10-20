@@ -97,16 +97,16 @@ describe("the engine's sentence", () => {
     assert.equal(copyMessage(""), null);
   });
 
-  test("fence: the refund sentence follows what was paid: an amount for money paid, nothing promised for an unpaid pending booking", () => {
+  test("fence: the refund sentence follows what was paid: paid money reads as an amount or none, an unpaid pending booking as pending, other unpaid ones keep the terms' sentence", () => {
     // Wrong implementation killed: promising a refund nobody paid (or hiding one that is due) by reading copy_key or refund_pct alone.
     const eur = (amount_minor) => ({ amount_minor, currency: "EUR" });
     const unpaid = { paid: null, card_fee: null };
     assert.deepEqual(refundMessage({ refund_pct: 100, refund_minor: 4000, copy_key: "pending" }, { paid: eur(4000), card_fee: null }), { key: "refundAmount", amount: 4000, fee: null });
     assert.deepEqual(refundMessage({ refund_pct: 0, refund_minor: 0, copy_key: "no_refund_reschedule" }, { paid: eur(4000), card_fee: null }), { key: "refundNone" });
     assert.deepEqual(refundMessage({ refund_pct: 0, refund_minor: null, copy_key: "pending" }, unpaid), { key: "pending" });
-    // F3-g: "full refund" and "not refunded" are only true for money actually paid.
-    assert.deepEqual(refundMessage({ refund_pct: 100, refund_minor: null, copy_key: "full_refund_reschedule" }, unpaid), { key: "pending" });
-    assert.deepEqual(refundMessage({ refund_pct: 0, refund_minor: null, copy_key: "no_refund_reschedule" }, unpaid), { key: "pending" });
+    // Unpaid but not pending (no online payment): the cancellation terms' own sentence, as before F3.
+    assert.deepEqual(refundMessage({ refund_pct: 100, refund_minor: null, copy_key: "full_refund_reschedule" }, unpaid), { key: "refundFull" });
+    assert.deepEqual(refundMessage({ refund_pct: 0, refund_minor: null, copy_key: "no_refund_reschedule" }, unpaid), { key: "refundNone" });
   });
 
   test("fence: the amount is the server's refund_minor, and the kept fee shows only when the server sends one", () => {

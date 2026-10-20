@@ -61,13 +61,13 @@ type Price = { amount_minor: number; currency: string };
 
 /** The refund sentence restated on the cancel screens. Money actually paid reads as the amount the
  * server will send back (`refund_minor`, never recomputed here) plus the fee it keeps, if it sends
- * one (null while R6's flag is off); an unpaid booking (card only checked, or no online payment) has nothing to refund. */
+ * one (null while R6's flag is off); an unpaid pending booking was never paid; any other unpaid one keeps the cancellation terms' sentence. */
 export function refundMessage(
   engine: { refund_pct: number; refund_minor: number | null; copy_key: string },
   booking: { paid: Price | null; card_fee: Price | null },
 ): { key: "pending" | "refundFull" | "refundNone" } | { key: "refundAmount"; amount: number; fee: number | null } {
-  if (!booking.paid) return { key: "pending" };
-  if (engine.refund_minor !== null && engine.refund_pct > 0) {
+  if (!booking.paid && engine.copy_key === "pending") return { key: "pending" };
+  if (booking.paid && engine.refund_minor !== null && engine.refund_pct > 0) {
     return { key: "refundAmount", amount: engine.refund_minor, fee: booking.card_fee?.amount_minor ?? null };
   }
   return { key: engine.refund_pct === 100 ? "refundFull" : "refundNone" };
