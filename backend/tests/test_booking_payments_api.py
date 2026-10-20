@@ -393,8 +393,9 @@ def test_a_failed_create_gives_the_time_back(
 ) -> None:
     fake_stripe.fail_next("create_check", "unavailable")
     client = new_client(app)
+    address = fresh_email()
 
-    refused = place(app, people, ready, client=client, email="gives-back@example.com")
+    refused = place(app, people, ready, client=client, email=address)
 
     assert (refused.status_code, refused.json()["code"]) == (503, "payments_unavailable")
     with tenant_context(people.a) as session:
@@ -402,7 +403,7 @@ def test_a_failed_create_gives_the_time_back(
         assert session.scalar(text("SELECT count(*) FROM booking_payments")) == 0
     assert status_of(people, booking_id) == "expired"
     assert history(people, booking_id) == ["created", "expired"]
-    again = place(app, people, ready, client=client, email="gives-back@example.com")
+    again = place(app, people, ready, client=client, email=address)
     assert again.status_code == 201
 
 
@@ -786,20 +787,21 @@ def test_a_failed_second_transaction_gives_the_time_back(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client = new_client(app)
+    address = fresh_email()
     with monkeypatch.context() as patched:
         patched.setattr(
             payments,
             "INSERT_PAYMENT",
             text("DO $$ BEGIN RAISE EXCEPTION 'busy' USING ERRCODE = '55P03'; END $$"),
         )
-        refused = place(app, people, ready, client=client, email="stranded@example.com")
+        refused = place(app, people, ready, client=client, email=address)
 
     assert (refused.status_code, refused.json()["code"]) == (503, "busy")
     with tenant_context(people.a) as session:
         booking_id = session.scalar(text("SELECT id FROM bookings"))
         assert session.scalar(text("SELECT count(*) FROM booking_payments")) == 0
     assert status_of(people, booking_id) == "expired"
-    assert place(app, people, ready, client=client, email="stranded@example.com").status_code == 201
+    assert place(app, people, ready, client=client, email=address).status_code == 201
 
 
 # 20: FENCE. Kills: a refresh or Back that strands the slot and the pending place for 30 minutes; a
