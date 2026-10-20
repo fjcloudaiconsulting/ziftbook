@@ -411,3 +411,11 @@ export function storedNext(sync: { status: string }): "offerResume" | "done" | "
 export function mayForget(end: "processing" | "expired" | "expiredPaid" | "expiredProcessing" | "stale" | "checkEmail"): boolean {
   return end !== "checkEmail" && end !== "processing";
 }
+
+/** What pressing Send does. `working`: a send, a verification, a kind switch or a confirm is in flight.
+ * `sent`: the request exists (locked form or resume view), so it never posts again. */
+export function sendAction(s: { working: boolean; sent: boolean; hasSecret: boolean }): "ignore" | "post" | "pay" | "reopen" {
+  if (s.working) return "ignore";
+  if (!s.sent) return "post";
+  return s.hasSecret ? "pay" : "reopen";
+}
