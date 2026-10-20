@@ -430,8 +430,8 @@ export function Processing({ aside, t }: { aside: ReactNode; t: ReturnType<typeo
             <h2 id="pay-h">{t("payTitle")}</h2>
           </div>
           <div className={styles.stepBody}>
-            <div className={styles.held} aria-live="polite">
-              <span className={styles.spinDark} aria-hidden="true" />
+            <div className={`${styles.banner} ${styles.note}`} aria-live="polite">
+              <span className={styles.spinDark} style={{ marginTop: "0.2rem" }} aria-hidden="true" />
               <span>{t("payProcessing")}</span>
             </div>
           </div>
@@ -444,14 +444,18 @@ export function Processing({ aside, t }: { aside: ReactNode; t: ReturnType<typeo
 
 /** A booking that can no longer be paid (the time ran out, or an old link): what happened and the way
  * back to the picker. */
-export function PayEnd({ text, t, onAgain }: { text: string; t: ReturnType<typeof useTranslations>; onAgain(): void }) {
+export function PayEnd({ text, label, onAgain }: { text: string; label: string; onAgain(): void }) {
   return (
-    <div className={styles.stepBody}>
-      <Banner tone="note">{text}</Banner>
-      <div className={styles.actions}>
-        <button className={`${styles.button} ${styles.primary}`} type="button" onClick={onAgain}>
-          {t("step2")}
-        </button>
+    <div className={styles.bookingLayout}>
+      <div className={styles.flowCol}>
+        <div className={styles.stepBody}>
+          <Banner tone="note">{text}</Banner>
+          <div className={styles.actions}>
+            <button className={`${styles.button} ${styles.primary}`} type="button" onClick={onAgain}>
+              {label}
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );

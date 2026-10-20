@@ -41,7 +41,9 @@ function appearance(): Appearance {
       colorDanger: token("--error"),
       colorBackground: token("--bg"),
       borderRadius: "0.75rem",
-      fontFamily: getComputedStyle(document.body).fontFamily,
+      // next/font's hashed family does not exist inside Stripe's iframe, and a web font from another
+      // origin would tell it who visits: a system stack, the nearest grotesque the device has.
+      fontFamily: 'system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
     },
     rules: { ".Input:focus": { borderColor: primary, boxShadow: `0 0 0 2px ${primary}`, outline: "none" } },
   };

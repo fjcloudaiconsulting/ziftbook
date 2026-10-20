@@ -74,7 +74,7 @@ export function AlertIcon() {
 }
 
 /** An error (role alert) or a neutral note (role status): colour, icon and words change together. */
-export function Banner({ tone, children, actions }: { tone: "error" | "note" | "info"; children: ReactNode; actions?: ReactNode }) {
+export function Banner({ tone, children }: { tone: "error" | "note" | "info"; children: ReactNode }) {
   const icon = tone === "error" ? "alert" : tone === "note" ? "clock" : "info";
   return (
     <div className={tone === "error" ? styles.banner : `${styles.banner} ${styles.note}`} role={tone === "error" ? "alert" : "status"}>
@@ -82,14 +82,7 @@ export function Banner({ tone, children, actions }: { tone: "error" | "note" | "
         <circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" strokeWidth="1.6" />
         {ICONS[icon]}
       </svg>
-      {actions ? (
-        <span>
-          {children}
-          <span className={styles.emptyActs}>{actions}</span>
-        </span>
-      ) : (
-        <span>{children}</span>
-      )}
+      <span>{children}</span>
     </div>
   );
 }

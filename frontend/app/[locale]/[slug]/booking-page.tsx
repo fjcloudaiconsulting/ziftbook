@@ -19,6 +19,7 @@ import {
   entryMode,
   firstFreeDayFrom,
   keepPick,
+  mayForget,
   nextWeekDisabled,
   type PaymentChoice,
   phoneValue,
@@ -463,7 +464,7 @@ export function BookingPage({
   }
 
   async function startOver() {
-    if (offer && (await release(offer.id, storedEmail()))) {
+    if (offer && (await release(offer.id, storedEmail(), 2))) {
       writeStored(null);
       setOffer(null);
     }
@@ -473,9 +474,9 @@ export function BookingPage({
   const storedEmail = () => readStored()?.email ?? null;
 
   /** An error by the button; the request stays as it is. */
-  function fail(text: string) {
+  function fail(text: string, tone: "error" | "note" = "error", where: 2 | "c" = "c") {
     working.current = false;
-    setFlow((f) => ({ ...f, busy: false, banner: { where: "c", tone: "error", text } }));
+    setFlow((f) => ({ ...f, busy: false, banner: { where, tone, text } }));
   }
 
   function forget(dropAt: boolean) {
@@ -521,6 +522,8 @@ export function BookingPage({
     setFlow((f) => ({ ...f, busy: true }));
     const answer = await send(bookingsResume({ path: { tenant_id: page.id, booking_id: id }, body: { kind } }));
     if (answer.status === 200 && answer.data) {
+      // The choice follows the intent it belongs to, never ahead of it.
+      setChoice(kind);
       setStart(answer.data);
       setFlow((f) => ({ ...f, busy: false }));
     } else if (answer.status === 422 && answer.code === "payment_not_offered") {
@@ -529,8 +532,9 @@ export function BookingPage({
     } else if (answer.status === 409) {
       const again = await checkBooking(id);
       if (again.status === 200 && again.data) apply(again.data, email);
-      else fail(t("payCheckEmail"));
-    } else fail(t(answer.status === 429 ? "payCheckEmail" : "payUnavailable"));
+      else fail(t("payCheckEmail"), "note");
+    } else if (answer.status === 429) fail(t("payCheckEmail"), "note");
+    else fail(t("payUnavailable"));
   }
 
   /** Confirm the intent with the Element, then ask where the payment stands. `submitFirst`: the Element's
@@ -549,14 +553,14 @@ export function BookingPage({
   }
 
   /** Release the held time. true: gone (or never there); false: the payment landed first (shown instead) or it failed. */
-  async function release(id: string, email: string | null): Promise<boolean> {
+  async function release(id: string, email: string | null, where: 2 | "c" = "c"): Promise<boolean> {
     const answer = await send(bookingsAbandon({ ...JSON_WRITE, path: { tenant_id: page.id, booking_id: id } }));
     if (answer.status === 204 || answer.status === 404) return true;
     if (answer.status === 409) {
       const again = await checkBooking(id);
       if (again.status === 200 && again.data) apply(again.data, email);
-      else fail(t("payCheckEmail"));
-    } else fail(t("unknownOutcome"));
+      else fail(t("payCheckEmail"), "note", where);
+    } else fail(t("unknownOutcome"), "error", where);
     return false;
   }
 
@@ -589,8 +593,8 @@ export function BookingPage({
 
   /** The radio: a sent request swaps its intent for the other kind. */
   function chooseKind(kind: PaymentChoice) {
-    setChoice(kind);
     if (bookingId) void reopen(bookingId, kind, storedEmail());
+    else setChoice(kind);
   }
 
   /** Send: every invalid field is marked and the first focused; a missing time is named at the picker. */
@@ -613,6 +617,12 @@ export function BookingPage({
       } else headingRefs.current[2]?.focus();
       return;
     }
+    if (stepOn) {
+      // Inside the click: wallet sheets (Apple Pay, Google Pay) only open from a user gesture, which the
+      // Turnstile callback is not.
+      const problem = (await stepRef.current?.submit()) ?? (stepRef.current ? null : t("payUnavailable"));
+      if (problem) return fail(problem);
+    }
     if (turnstileSiteKey && !turnstileToken) {
       setVerifying(true);
       pendingSubmit.current = true;
@@ -632,10 +642,6 @@ export function BookingPage({
     working.current = true;
     setFlow((f) => ({ ...f, busy: true, banner: null }));
     const f = flow as Step2Plus;
-    if (stepOn) {
-      const problem = (await stepRef.current?.submit()) ?? (stepRef.current ? null : t("payUnavailable"));
-      if (problem) return fail(problem);
-    }
     const member = f.pick ?? (f.worker === "any" ? null : f.worker);
     const body = bookingBody({
       startsAt: f.slot!,
@@ -748,7 +754,7 @@ export function BookingPage({
     if (outcome.kind === "paymentChanged") {
       // The options changed under the page: load them again, and say so by the button.
       router.refresh();
-      setFlow({ ...f, busy: false, banner: { where: "c", tone: "error", text: t("paymentChanged") } });
+      setFlow({ ...f, busy: false, banner: { where: "c", tone: "note", text: t("paymentChanged") } });
       return;
     }
     if (outcome.kind === "phoneInvalid") {
@@ -775,8 +781,8 @@ export function BookingPage({
   // stored for this service by an earlier visit is looked at once. Stripe's return also leaves its
   // secrets in the address: they go first.
   useEffect(() => {
-    const clean = returnParams(window.location.search).toString();
-    if (clean !== window.location.search.slice(1)) window.history.replaceState(null, "", `${window.location.pathname}${clean ? `?${clean}` : ""}`);
+    const clean = returnParams(window.location.search);
+    if (clean.size !== new URLSearchParams(window.location.search).size) window.history.replaceState(null, "", `${window.location.pathname}${clean.size ? `?${clean}` : ""}`);
     const stored = readStored();
     const mode = entryMode(new URLSearchParams(window.location.search), stored);
     if (mode === "checkout") return;
@@ -895,7 +901,12 @@ export function BookingPage({
   const endText = (kind: End) => t(({ processing: "payProcessing", expired: "payExpired", expiredPaid: "payExpiredPaid", expiredProcessing: "payExpiredProcessing", stale: "payStale", checkEmail: "payCheckEmail" } as const)[kind], { price });
   if (checking) return frame(null, false);
   if (end === "processing" && sync) return frame(<Processing aside={bookingAside(sync)} t={t} />, false);
-  if (end) return frame(<PayEnd text={endText(end)} t={t} onAgain={reset} />, false);
+  // A check that failed keeps the booking: its button asks again, never resets (mayForget).
+  const recheck = async () => {
+    const answer = bookingId ? await checkBooking(bookingId) : null;
+    if (answer?.status === 200 && answer.data) apply(answer.data, storedEmail());
+  };
+  if (end) return frame(<PayEnd text={endText(end)} label={t(mayForget(end) ? "step2" : "tryAgain")} onAgain={mayForget(end) ? reset : () => void recheck()} />, false);
   if (sync && !done) {
     return frame(
       <ResumeView
@@ -935,20 +946,16 @@ export function BookingPage({
       <div className={styles.bookingLayout}>
         <div className={styles.flowCol}>
           {offer && !locked && (
-            <Banner
-              tone="note"
-              actions={
-                <>
-                  <button className={`${styles.button} ${styles.primary} ${styles.small}`} type="button" onClick={resumeOffer}>
-                    {t("payResume")}
-                  </button>
-                  <button className={`${styles.button} ${styles.secondary} ${styles.small}`} type="button" onClick={() => void startOver()}>
-                    {t("payStartOver")}
-                  </button>
-                </>
-              }
-            >
+            <Banner tone="note">
               {t("payInProgress", { service: localized(offer.service_name, loc, page.language as Locale).text, when: offerWhen })}
+              <span className={styles.emptyActs}>
+                <button className={`${styles.button} ${styles.primary} ${styles.small}`} type="button" onClick={resumeOffer}>
+                  {t("payResume")}
+                </button>
+                <button className={`${styles.button} ${styles.secondary} ${styles.small}`} type="button" onClick={() => void startOver()}>
+                  {t("payStartOver")}
+                </button>
+              </span>
             </Banner>
           )}
           {/* Step 1: person and time. */}
@@ -1097,7 +1104,8 @@ export function BookingPage({
                       <span>{page.consent[loc].marketing_email}</span>
                     </label>
                   </fieldset>
-                  {stepOn && liveService && page.payment && (
+                  {payGone && locked && <Banner tone="note">{t("paymentChanged")}</Banner>}
+                  {stepOn && !payGone && liveService && page.payment && (
                     <PaymentStep ref={stepRef} payment={page.payment} price={liveService.price} locale={locale} biz={page.name} choice={choice} busy={flow.busy} legend t={t} onChoice={chooseKind} onUnavailable={() => fail(t("payUnavailable"))} />
                   )}
                   {/* Rendered visibly (never display:none) and kept mounted once the details are
@@ -1105,9 +1113,11 @@ export function BookingPage({
                   {turnstileSiteKey && <div id="turnstile-container" className={styles.turnstileBox} />}
                   {verifying && <Banner tone="note">{t("verifying")}</Banner>}
                   {flow.banner?.where === "c" && <Banner tone={flow.banner.tone}>{flow.banner.text}</Banner>}
-                  <Submit busy={flow.busy} busyLabel={sendText}>
-                    {sendText}
-                  </Submit>
+                  {!(payGone && locked) && (
+                    <Submit busy={flow.busy} busyLabel={sendText}>
+                      {sendText}
+                    </Submit>
+                  )}
                   {locked && (
                     <button className={`${styles.button} ${styles.secondary}`} type="button" onClick={() => void changeRequest()}>
                       {t("changeRequest")}
@@ -1119,27 +1129,29 @@ export function BookingPage({
           </section>
         </div>
 
-        <Summary
-          page={page}
-          service={s2.service}
-          slot={s2.slot}
-          workerName={s2With}
-          locale={locale}
-          dLocale={dLocale}
-          zone={zone}
-          t={t}
-          message={message}
-          messageOpen={messageOpen}
-          messageError={flow.errors.message}
-          messageRef={messageRef}
-          extraTerms={extraTerms}
-          locked={locked}
-          onMessage={(text) => {
-            setMessage(text);
-            if (flow.errors.message) setFlow((f) => ({ ...f, errors: { ...f.errors, message: undefined } }));
-          }}
-          onMessageOpen={setMessageOpen}
-        />
+        {!offer && (
+          <Summary
+            page={page}
+            service={s2.service}
+            slot={s2.slot}
+            workerName={s2With}
+            locale={locale}
+            dLocale={dLocale}
+            zone={zone}
+            t={t}
+            message={message}
+            messageOpen={messageOpen}
+            messageError={flow.errors.message}
+            messageRef={messageRef}
+            extraTerms={extraTerms}
+            locked={locked}
+            onMessage={(text) => {
+              setMessage(text);
+              if (flow.errors.message) setFlow((f) => ({ ...f, errors: { ...f.errors, message: undefined } }));
+            }}
+            onMessageOpen={setMessageOpen}
+          />
+        )}
       </div>
   );
 }

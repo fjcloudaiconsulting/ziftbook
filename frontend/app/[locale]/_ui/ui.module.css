@@ -519,8 +519,6 @@ a.textButton, .textButton:has(> svg) { display: inline-flex; align-items: center
 .photoProgress::-moz-progress-bar { background: var(--primary); border-radius: 999px; }
 .spinDark { flex: none; width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--line); border-top-color: var(--primary); animation: spin 800ms linear infinite; }
 @media (prefers-reduced-motion: reduce) { .spinDark { animation: none; border-right-color: var(--primary); } }
-.held { display: flex; gap: 0.55rem; align-items: flex-start; padding: 0.75rem 0.9rem; border-radius: 0.75rem; border: 1px solid var(--note-line); background: var(--note-soft); font-size: 0.9375rem; }
-.held .spinDark { margin-top: 0.2rem; }
 /* The payment choice's legend, as .pillSet's legend. */
 .payLegend { padding: 0; margin-bottom: 0.5rem; }
 /* The request after Send: the same fields, read-only, never hidden. */
