@@ -598,6 +598,11 @@ def test_a_refund_stripe_refuses_is_flagged_once_and_not_retried(
     assert count_events(people, late, "refunded") == 0
     assert emails(app_engine, people, late) == {}
     assert refund_failed_count(metric_reader) == 1
+    assert not [
+        p
+        for p in points(metric_reader, "ziftbook.payment.outcomes")
+        if p.attributes["payment.outcome"] == "refunded"
+    ]
 
     payments.settle(settle_job(people, late))  # a second run, and the sweep's backstop
     settle_all()
@@ -700,3 +705,26 @@ def test_a_refund_refused_because_it_was_refunded_meanwhile_is_not_flagged(
     assert (row["refunded_minor"], row["refund_failed_at"]) == (PRICE, None)
     assert history(people, booking_id).count("refund_failed") == 0
     assert count_events(people, booking_id, "refunded") == 1
+
+
+# Refused refund: FENCE. Kills: a key without the amount. An earlier attempt Stripe kept under it
+# (a 500) turns the retry after a dashboard refund into an idempotency error, flagged for good.
+def test_a_refund_retried_after_a_dashboard_refund_is_a_new_request(
+    people: People,
+    app: FastAPI,
+    owner: TestClient,
+    ready: str,
+    fake_stripe: FakeGateway,
+) -> None:
+    _, booking_id, intent = booked(app, people, fake_stripe, ready)
+    assert patch(owner, booking_id, "declined").status_code == 200
+    fake_stripe.fail_next("refund")  # Stripe kept the 500 under the key
+    with pytest.raises(stripe_gateway.Failed):
+        payments.settle(settle_job(people, booking_id))
+    fake_stripe.add_refund(intent, 1000, "succeeded")  # the business, in its dashboard
+
+    payments.settle(settle_job(people, booking_id))
+
+    assert fake_stripe.refunded(intent) == [1000, PRICE - 1000]
+    row = paid_row(people, booking_id)
+    assert (row["refunded_minor"], row["refund_failed_at"]) == (PRICE, None)

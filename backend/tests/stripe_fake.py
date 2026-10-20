@@ -75,6 +75,7 @@ class FakeGateway(Gateway):
         self.on_call: Callable[[str], None] | None = None
         # Runs once a refund is made, before the caller has its answer.
         self.after_refund: Callable[[], None] | None = None
+        self.refund_params: dict[str, int] = {}
 
     @contextmanager
     def _keyed(self, key: str) -> Iterator[None]:
@@ -310,6 +311,10 @@ class FakeGateway(Gateway):
         idempotency_key: str,
     ) -> str:
         with self._keyed(idempotency_key):
+            # Stripe keeps a request's result under its key, a 500 included, and refuses the key
+            # reused with another amount (an idempotency error: "invalid").
+            if self.refund_params.setdefault(idempotency_key, amount) != amount:
+                raise Failed("invalid", "req_fake")
             self._enter(
                 "refund",
                 account=account,
