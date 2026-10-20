@@ -225,13 +225,17 @@ function Manage({ token }: { token: string | null }) {
   const { booking, engine } = linked;
   const zone = booking.timezone;
   const when = (instant: string) => t("when", { ...localWhen(instant, zone, dateLocale(locale)), zone: zoneCity(zone) });
-  const refund = refundMessage(engine);
-  const refundText = refund === "pending" ? t("copy.pending") : t(refund);
+  const refund = refundMessage(engine, booking);
+  const money = (minor: number) => formatMoney(minor, booking.price.currency, locale);
+  const refundText = refund.key === "pending" ? t("copy.pending") : refund.key === "refundAmount" ? t("refundAmount", { amount: money(refund.amount) }) : t(refund.key);
+  // Only while R6's flag is on: the server sends the fee a cancel keeps.
+  const feeText = refund.key === "refundAmount" && refund.fee !== null ? t("cardFeeKept", { fee: money(refund.fee) }) : null;
 
   if (view.is === "cancelled") {
     return (
       <Outcome icon="done" title={t("cancelledTitle")} lede={t("cancelledLede")}>
         <p className={styles.hint}>{refundText}</p>
+        {feeText && <p className={styles.hint}>{feeText}</p>}
       </Outcome>
     );
   }
@@ -256,6 +260,7 @@ function Manage({ token }: { token: string | null }) {
         </Heading>
         {summary}
         <p className={styles.lede}>{refundText}</p>
+        {feeText && <p className={styles.hint}>{feeText}</p>}
         {problem}
         <div className={styles.stack}>
           <button

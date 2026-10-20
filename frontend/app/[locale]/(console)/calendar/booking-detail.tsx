@@ -5,7 +5,7 @@ import { type MouseEvent, type ReactNode, useEffect, useRef, useState } from "re
 
 import { type BookingDetailOut, bookingApprovalsRead, bookingApprovalsUpdate } from "@/api-client";
 import { Link } from "@/i18n/navigation";
-import { type Action, actionsFor, historyLabel, isWaiting, telHref, whenParts } from "@/lib/calendar";
+import { type Action, actionsFor, historyLabel, isWaiting, paymentFact, telHref, whenParts } from "@/lib/calendar";
 import { canAnswerRequests, dateLocale } from "@/lib/console";
 import { formatMoney } from "@/lib/money";
 import { type Locale, type NameMap, serviceName } from "@/lib/services";
@@ -14,6 +14,7 @@ import { acceptBody, declineBody, expiryLabel } from "@/lib/today";
 
 import { SignedOutBanner, useConsole } from "../../_ui/console";
 import styles from "../../_ui/console.module.css";
+import { openStripeDashboard } from "../../_ui/stripe-dashboard";
 import { Banner, FieldError, problem } from "../../_ui/parts";
 import uiStyles from "../../_ui/ui.module.css";
 import { CHIPS, chipOf, LoadFailure, Skeleton } from "../today";
@@ -60,6 +61,7 @@ export function BookingDetail({
   const person = useTranslations("Console.person");
   const errorsT = useTranslations("Console.errors");
   const form = useTranslations("Form");
+  const settingsT = useTranslations("Console.settings");
   const locale = useLocale();
   const tz = settings.timezone;
   const role = session.role === "owner" ? "owner" : "worker";
@@ -77,6 +79,7 @@ export function BookingDetail({
   // One sequence for the first read and every refetch after a change: a slow older answer never wins.
   const seq = useRef(0);
   const submitting = useRef(false);
+  const dashboardBusy = useRef(false);
   const focusTarget = useRef<string | null>(null);
   const heading = useRef<HTMLHeadingElement>(null);
 
@@ -186,7 +189,8 @@ export function BookingDetail({
       from: moved ? (params.sameDay ? `${params.fromTime}` : `${dayOf(params.from)} ${params.fromTime}`) : "",
       to: moved ? (params.sameDay ? `${params.toTime}` : `${dayOf(params.to)} ${params.toTime}`) : "",
     });
-    const latest = i === d.history.length - 1;
+    // Green marks the current state, never a failure.
+    const latest = i === d.history.length - 1 && !d.payment?.refund_failed;
     const waiting = isWaiting(d, i);
     const small = waiting
       ? t(canAnswer ? "historyWaiting" : "historyWaitingOwner", { when: stamp(at) })
@@ -198,6 +202,44 @@ export function BookingDetail({
         {text}
         <small>{small}</small>
       </li>
+    );
+  }
+
+  async function dashboard() {
+    setError(null);
+    const result = await openStripeDashboard(call, dashboardBusy, () => {});
+    if (result === "signedOut") setSignedOut(true);
+    else if (result === "failed") setError(settingsT("paymentsFailed"));
+  }
+
+  function paymentLine(d: BookingDetailOut) {
+    const fact = paymentFact(d.payment, locale);
+    if (!fact) return null;
+    const text = t(fact.failed && role !== "owner" ? "paymentRefundFailedWorker" : fact.key, fact.params);
+    return (
+      <>
+        <dt>{t("factPayment")}</dt>
+        <dd>
+          {fact.failed ? (
+            <>
+              <div className={css.factFailed}>
+                <FieldError id="payment-error">{text}</FieldError>
+                {role === "owner" && (
+                  <button type="button" className={uiStyles.textButton} onClick={dashboard}>
+                    {settingsT("paymentsDashboard")}
+                    <svg aria-hidden="true" viewBox="0 0 16 16" width="14" height="14">
+                      <path d="M4 12l8-8M7 4h5v5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                    <span className={uiStyles.srOnly}>{t("opensInNewTab")}</span>
+                  </button>
+                )}
+              </div>
+            </>
+          ) : (
+            text
+          )}
+        </dd>
+      </>
     );
   }
 
@@ -375,6 +417,7 @@ export function BookingDetail({
                 </dd>
               </>
             )}
+            {paymentLine(ready)}
           </dl>
           {actions(ready)}
           {error && <FieldError id="detail-error">{error}</FieldError>}

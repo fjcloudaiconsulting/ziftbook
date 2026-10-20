@@ -97,11 +97,23 @@ describe("the engine's sentence", () => {
     assert.equal(copyMessage(""), null);
   });
 
-  test("fence: the refund sentence restated on cancel follows the refund, and a pending booking has nothing to refund", () => {
-    // Wrong implementation killed: reading refund_pct alone, which calls an unpaid booking "not refunded".
-    assert.equal(refundMessage({ refund_pct: 100, copy_key: "full_refund_reschedule" }), "refundFull");
-    assert.equal(refundMessage({ refund_pct: 0, copy_key: "no_refund_reschedule" }), "refundNone");
-    assert.equal(refundMessage({ refund_pct: 0, copy_key: "pending" }), "pending");
+  test("fence: the refund sentence follows what was paid: paid money reads as an amount or none, an unpaid pending booking as pending, other unpaid ones keep the terms' sentence", () => {
+    // Wrong implementation killed: promising a refund nobody paid (or hiding one that is due) by reading copy_key or refund_pct alone.
+    const eur = (amount_minor) => ({ amount_minor, currency: "EUR" });
+    const unpaid = { paid: null, card_fee: null };
+    assert.deepEqual(refundMessage({ refund_pct: 100, refund_minor: 4000, copy_key: "pending" }, { paid: eur(4000), card_fee: null }), { key: "refundAmount", amount: 4000, fee: null });
+    assert.deepEqual(refundMessage({ refund_pct: 0, refund_minor: 0, copy_key: "no_refund_reschedule" }, { paid: eur(4000), card_fee: null }), { key: "refundNone" });
+    assert.deepEqual(refundMessage({ refund_pct: 0, refund_minor: null, copy_key: "pending" }, unpaid), { key: "pending" });
+    // Unpaid but not pending (no online payment): the cancellation terms' own sentence, as before F3.
+    assert.deepEqual(refundMessage({ refund_pct: 100, refund_minor: null, copy_key: "full_refund_reschedule" }, unpaid), { key: "refundFull" });
+    assert.deepEqual(refundMessage({ refund_pct: 0, refund_minor: null, copy_key: "no_refund_reschedule" }, unpaid), { key: "refundNone" });
+  });
+
+  test("fence: the amount is the server's refund_minor, and the kept fee shows only when the server sends one", () => {
+    // Wrong implementation killed: paid * pct (the gross amount when the server refunds less), or a kept-fee line while card_fee is null (R6 flag off).
+    const eur = (amount_minor) => ({ amount_minor, currency: "EUR" });
+    assert.deepEqual(refundMessage({ refund_pct: 100, refund_minor: 3838, copy_key: "full_refund_reschedule" }, { paid: eur(4000), card_fee: eur(162) }), { key: "refundAmount", amount: 3838, fee: 162 });
+    assert.deepEqual(refundMessage({ refund_pct: 100, refund_minor: 4000, copy_key: "full_refund_reschedule" }, { paid: eur(4000), card_fee: null }), { key: "refundAmount", amount: 4000, fee: null });
   });
 });
 
