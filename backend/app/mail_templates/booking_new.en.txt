@@ -6,7 +6,7 @@ You have a new booking:
 Client: $client$message
 
 $service
-$date at $time ($zone)
+$date at $time ($zone)$payment
 
 It's confirmed.
 

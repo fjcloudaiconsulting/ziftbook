@@ -27,6 +27,7 @@ from app import (
     clients,
     invites,
     limits,
+    payments,
     schedule,
 )
 from app.bookings import CLIENT_CANCEL, INSERT_EVENT, RESCHEDULE
@@ -91,11 +92,14 @@ SELECT b.id AS booking_id, b.status, b.starts_at, b.ends_at, b.original_starts_a
        b.reschedule_cutoff_hours, b.service_id, b.worker_id, b.worker_display_name,
        b.service_name, b.price_amount_minor, b.price_currency, b.cancellation_policy_text,
        b.client_id, t.name AS business, now() AS now,
+       p.amount_minor AS paid_minor, p.stripe_fee_minor,
        (SELECT count(*) FROM booking_events e
         WHERE e.booking_id = b.id AND e.event = 'rescheduled') AS moves
 FROM booking_links l
 JOIN bookings b ON b.tenant_id = l.tenant_id AND b.id = l.booking_id
 JOIN tenants t ON t.id = b.tenant_id
+LEFT JOIN booking_payments p
+  ON p.tenant_id = b.tenant_id AND p.booking_id = b.id AND p.status = 'paid'
 WHERE l.token_hash = :hash
   -- D2, verbatim: live only while the appointment hasn't started and the booking is still
   -- confirmed, or still a pending that hasn't expired. Merchant cancel/decline, client cancel,
@@ -127,12 +131,19 @@ class BookingOut(BaseModel):
     price: Price
     worker_display_name: str | None
     cancellation_policy_text: str | None
+    paid: Price | None  # what the client paid in advance, if they did
+    # Stripe's fee on it, once known, and only while a client's cancel keeps it (R6's flag): the
+    # page never mentions a kept fee otherwise.
+    card_fee: Price | None
 
 
 class EngineOut(BaseModel):
     can_cancel: bool
     can_reschedule: bool
     refund_pct: int
+    # What cancelling now sends back (payments.refund_due, the one function settle and the email
+    # use); None when nothing was paid, or the fee a deduction needs is not known yet.
+    refund_minor: int | None
     copy_key: str
     reschedule_count: int
     reschedules_left: int
@@ -200,10 +211,13 @@ def _decide(row: Any, policy: cancellation.Policy) -> Decision:
         earliest_starts_at=row.earliest_starts_at,
     )
     if row.status == "pending":
-        # Nothing has been paid on a pending booking, so there is nothing to refund. It can be
-        # moved PENDING_MOVES times: the confirmed allowance and the lead-time cutoff do not apply.
+        # A pending is cancelled in full: a client who paid in advance gets all of it back, one who
+        # did not has nothing to get back. It can be moved PENDING_MOVES times: the confirmed
+        # allowance and the lead-time cutoff do not apply.
         left = bookings.PENDING_MOVES - row.moves if decision.can_cancel else 0
-        decision = Decision(decision.can_cancel, left > 0, 0, 0, "pending", max(left, 0))
+        decision = Decision(
+            decision.can_cancel, left > 0, 100 if row.paid_minor else 0, 0, "pending", max(left, 0)
+        )
     return decision
 
 
@@ -221,7 +235,7 @@ def _event(
     event: str,
     ip: str | None,
     user_agent: str | None,
-    details: dict[str, str] | None = None,
+    details: dict[str, Any] | None = None,
 ) -> None:
     db.execute(
         INSERT_EVENT,
@@ -239,6 +253,7 @@ def _event(
 
 
 def _view(row: Any, decision: Decision, zone: str, consents: list[Purpose]) -> LinkedBooking:
+    paid = row.paid_minor
     return LinkedBooking(
         booking=BookingOut(
             id=row.booking_id,
@@ -252,18 +267,31 @@ def _view(row: Any, decision: Decision, zone: str, consents: list[Purpose]) -> L
             price=Price(amount_minor=row.price_amount_minor, currency=row.price_currency),
             worker_display_name=row.worker_display_name,
             cancellation_policy_text=row.cancellation_policy_text,
+            paid=None if paid is None else Price(amount_minor=paid, currency=row.price_currency),
+            card_fee=(
+                Price(amount_minor=row.stripe_fee_minor, currency=row.price_currency)
+                if payments.KEEP_CARD_FEE_ON_CLIENT_CANCEL and row.stripe_fee_minor is not None
+                else None
+            ),
         ),
         engine=EngineOut(
             can_cancel=decision.can_cancel,
             can_reschedule=decision.can_reschedule,
             refund_pct=decision.refund_pct,
+            refund_minor=(
+                None
+                if paid is None
+                else payments.refund_due(
+                    paid, decision.refund_pct, "cancelled_by_client", row.stripe_fee_minor
+                )
+            ),
             copy_key=decision.copy_key,
             reschedule_count=row.reschedule_count,
             reschedules_left=decision.reschedules_left,
             free_until=(
                 (row.earliest_starts_at or row.starts_at)
                 - timedelta(hours=row.free_cancellation_hours)
-                if decision.can_cancel and decision.refund_pct
+                if decision.can_cancel and decision.refund_pct and row.status != "pending"
                 else None
             ),
         ),
@@ -421,7 +449,14 @@ def cancel(body: CancelIn, request: Request) -> LinkedBooking:
             changed = db.execute(CLIENT_CANCEL, {"id": row.booking_id}).first()
             if changed is None:  # lost a race under the same lock: belt and suspenders on D2
                 raise ApiError(404, "link_expired")
-            _event(db, row.booking_id, "cancelled_by_client", origin_ip, user_agent)
+            _event(
+                db,
+                row.booking_id,
+                "cancelled_by_client",
+                origin_ip,
+                user_agent,
+                {"refund_pct": decision.refund_pct},  # settle refunds what the client was shown
+            )
             bookings.email(db, tenant_id, row.booking_id, "booking_cancelled_by_client")
             bookings.email_merchants(
                 db, tenant_id, row.booking_id, row.worker_id, "booking_client_cancelled"

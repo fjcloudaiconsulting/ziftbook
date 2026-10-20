@@ -4,7 +4,7 @@ Hallo,
 Je boeking bij $business is bevestigd:
 
 $service
-$date om $time ($zone)
+$date om $time ($zone)$payment
 
 Met het bijgevoegde agendabestand zet je de afspraak in je agenda.
 

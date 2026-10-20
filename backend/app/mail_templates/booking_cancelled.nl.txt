@@ -4,7 +4,7 @@ Hallo,
 $business heeft je boeking geannuleerd:
 
 $service
-$date om $time ($zone)
+$date om $time ($zone)$payment
 
 Heb je vragen? Neem dan contact op met het bedrijf.
 

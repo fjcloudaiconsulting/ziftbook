@@ -6,7 +6,7 @@ Een klant wil boeken:
 Klant: $client$message
 
 $service
-$date om $time ($zone)
+$date om $time ($zone)$payment
 
 Accepteer of wijs de aanvraag af vóór $expires. Antwoord je niet op tijd, dan vervalt de aanvraag.
 

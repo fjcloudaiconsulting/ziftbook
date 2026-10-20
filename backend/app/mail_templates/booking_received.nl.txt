@@ -4,7 +4,7 @@ Hallo,
 $business heeft je boekingsaanvraag ontvangen:
 
 $service
-$date om $time ($zone)
+$date om $time ($zone)$payment
 
 Het bedrijf moet de aanvraag nog accepteren. We mailen je zodra ze antwoorden.
 

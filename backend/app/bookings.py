@@ -276,6 +276,7 @@ class PaymentFact(BaseModel):
     amount_minor: int
     currency: str
     refunded_minor: int
+    refund_failed: bool  # Stripe could not send the refund: the business resolves it in Stripe
 
 
 class BookingDetailOut(AgendaOut):
@@ -445,12 +446,14 @@ SELECT {LIST_COLUMNS}, b.expires_at, b.status, b.source, wm.user_id AS worker_us
        coalesce(b.status = ANY(CAST(:expiring AS text[])) AND b.expires_at <= now(), false)
          AS expired,
        p.kind AS payment_kind, p.status AS payment_status, p.amount_minor AS payment_amount_minor,
-       p.currency AS payment_currency, p.refunded_minor AS payment_refunded_minor
+       p.currency AS payment_currency, p.refunded_minor AS payment_refunded_minor,
+       p.refund_failed_at IS NOT NULL AS payment_refund_failed
 FROM bookings b
 JOIN clients c ON c.tenant_id = b.tenant_id AND c.id = b.client_id
 JOIN memberships wm ON wm.tenant_id = b.tenant_id AND wm.id = b.worker_id
 LEFT JOIN LATERAL (
-  SELECT kind, status, amount_minor, currency, refunded_minor FROM booking_payments
+  SELECT kind, status, amount_minor, currency, refunded_minor, refund_failed_at
+  FROM booking_payments
   WHERE tenant_id = b.tenant_id AND booking_id = b.id
   ORDER BY (status <> 'canceled') DESC, created_at DESC LIMIT 1) p ON true
 WHERE b.id = :id
@@ -871,13 +874,13 @@ def book_online(
     phone = clients.e164(db, phone)  # ZIF-152: also a 422 before any write, after the 404s
     message = message_text(message)  # ZIF-157: likewise
     # ZIF-158. Before any write. The step is the business's (offer() fails open), never the
-    # client's to skip or to ask for; "pay" waits for ZIF-158 B3.
+    # client's to skip or to ask for.
     from app import payments  # here: payments imports this module
 
     stripe_account = payments.offer(db, settings, row.price_amount_minor, row.price_currency)
     if stripe_account is not None and payment is None:
         raise ApiError(422, "payment_required")
-    if (stripe_account is None and payment is not None) or payment == "pay":
+    if stripe_account is None and payment is not None:
         raise ApiError(422, "payment_not_offered")
     # Consent WITHDRAWALS only; grants ride the booking_events row instead (ruling 18, §10). A guest
     # cannot withdraw anything: an unproven address says nothing about its owner, and the event
@@ -1097,7 +1100,8 @@ def create(  # sync def: turnstile.verify's urlopen blocks, and runs in FastAPI'
         assert expires_at is not None
         from app import payments  # here: payments imports this module
 
-        out.payment = payments.start(tenant_id, stripe_account, out, expires_at)
+        assert new.payment is not None  # book_online refuses a payment step without it
+        out.payment = payments.start(tenant_id, stripe_account, out, expires_at, new.payment)
     return out
 
 
@@ -1154,7 +1158,7 @@ def agenda(
 
 
 # Events nobody acts on: the clock and Stripe (ZIF-158) write them.
-SYSTEM_EVENTS = {"expired", "payment_checked", "paid", "refunded"}
+SYSTEM_EVENTS = {"expired", "payment_checked", "paid", "refunded", "refund_failed"}
 
 
 def actor_of(
@@ -1207,6 +1211,7 @@ def detail(booking_id: UUID, current: auth.CurrentSession, response: Response) -
             amount_minor=row.payment_amount_minor,
             currency=row.payment_currency,
             refunded_minor=row.payment_refunded_minor,
+            refund_failed=row.payment_refund_failed,
         )
         if row.payment_kind is not None
         else None

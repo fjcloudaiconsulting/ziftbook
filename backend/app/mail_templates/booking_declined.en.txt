@@ -4,7 +4,7 @@ Hello,
 $business can't take your booking request:
 
 $service
-$date at $time ($zone)
+$date at $time ($zone)$payment
 
 Nothing was booked. You're welcome to choose another time.
 

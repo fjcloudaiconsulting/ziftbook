@@ -6,7 +6,7 @@ Je hebt een nieuwe boeking:
 Klant: $client$message
 
 $service
-$date om $time ($zone)
+$date om $time ($zone)$payment
 
 De boeking is bevestigd.
 

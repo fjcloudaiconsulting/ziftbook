@@ -4,7 +4,7 @@ Olá,
 $business não pode aceitar seu pedido de agendamento:
 
 $service
-$date às $time ($zone)
+$date às $time ($zone)$payment
 
 $business escreveu:
 

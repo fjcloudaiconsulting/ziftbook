@@ -4,7 +4,7 @@ Hallo,
 $business kan je boekingsaanvraag niet aannemen:
 
 $service
-$date om $time ($zone)
+$date om $time ($zone)$payment
 
 Er is niets geboekt. Je kunt gerust een ander moment kiezen.
 

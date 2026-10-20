@@ -1213,10 +1213,12 @@ def test_the_refund_line_names_the_amount_refunded(
 
 # ZIF-158 B3 8. guard. What each side is told about the money when a request or booking arrives.
 def test_the_payment_lines_say_checked_or_paid(
-    people: People, app: FastAPI, owner: TestClient, fake_stripe: Any
+    people: People, app: FastAPI, owner: TestClient, fake_stripe: Any, migrate_engine: Engine
 ) -> None:
     from tests.test_booking_payments_api import make_shop, place, sync
 
+    with migrate_engine.begin() as conn:  # the team's mail goes out in the owner's own language
+        conn.execute(text("UPDATE users SET locale = 'en' WHERE id = :u"), {"u": people.both})
     service_id = make_shop(people, owner, fake_stripe, price=4000)
     sent: dict[str, str] = {}
     for kind, start in (("check", "09:00"), ("pay", "10:00")):

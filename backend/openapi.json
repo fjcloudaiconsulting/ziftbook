@@ -5191,7 +5191,7 @@
           "bookings"
         ],
         "summary": "Resume",
-        "description": "Pick the payment up again (a refresh, Back from a bank page, a retry after a decline): the\nopen intent's secret, or a new intent when Stripe canceled the old one.",
+        "description": "Pick the payment up again (a refresh, Back from a bank page, a retry after a decline): the\nopen intent's secret, or a new intent when Stripe canceled the old one. The other kind is the\nswitch between checking the card and paying: the old intent ends, a new one starts, and the\nbooking keeps its time.",
         "operationId": "bookings-resume",
         "parameters": [
           {
@@ -7552,6 +7552,17 @@
             "type": "integer",
             "title": "Refund Pct"
           },
+          "refund_minor": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refund Minor"
+          },
           "copy_key": {
             "type": "string",
             "title": "Copy Key"
@@ -7582,6 +7593,7 @@
           "can_cancel",
           "can_reschedule",
           "refund_pct",
+          "refund_minor",
           "copy_key",
           "reschedule_count",
           "reschedules_left",
@@ -8207,6 +8219,10 @@
           "refunded_minor": {
             "type": "integer",
             "title": "Refunded Minor"
+          },
+          "refund_failed": {
+            "type": "boolean",
+            "title": "Refund Failed"
           }
         },
         "type": "object",
@@ -8215,7 +8231,8 @@
           "status",
           "amount_minor",
           "currency",
-          "refunded_minor"
+          "refunded_minor",
+          "refund_failed"
         ],
         "title": "PaymentFact"
       },
@@ -9747,6 +9764,26 @@
               }
             ],
             "title": "Cancellation Policy Text"
+          },
+          "paid": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Price"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "card_fee": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Price"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",
@@ -9761,7 +9798,9 @@
           "service_name",
           "price",
           "worker_display_name",
-          "cancellation_policy_text"
+          "cancellation_policy_text",
+          "paid",
+          "card_fee"
         ],
         "title": "BookingOut"
       },

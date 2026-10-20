@@ -6,7 +6,7 @@ Um cliente pediu um agendamento:
 Cliente: $client$message
 
 $service
-$date às $time ($zone)
+$date às $time ($zone)$payment
 
 Aceite ou recuse o pedido até $expires. Sem resposta a tempo, o pedido expira.
 

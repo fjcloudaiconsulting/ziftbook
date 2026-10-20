@@ -6,7 +6,7 @@ A client has asked to book:
 Client: $client$message
 
 $service
-$date at $time ($zone)
+$date at $time ($zone)$payment
 
 Accept or decline it before $expires. If you don't answer in time, the request expires.
 

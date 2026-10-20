@@ -721,6 +721,7 @@ def test_payment_events_are_the_system_s(
         "amount_minor": 2500,
         "currency": "EUR",
         "refunded_minor": 0,
+        "refund_failed": False,
     }
 
 
@@ -862,8 +863,6 @@ def test_a_client_can_come_back_or_start_over(
     assert len(fake_stripe.intents) == 1
     declined = sync(client, people, booking_id).json()
     assert declined["payment"] == {"kind": "check", "state": "open", "failed": True}
-    other = resume(client, people, booking_id, "pay")
-    assert (other.status_code, other.json()["code"]) == (422, "payment_not_offered")
 
     gone = abandon(client, people, booking_id)
 
@@ -1376,6 +1375,7 @@ def test_a_failed_refund_is_shown_to_the_business(
     fake_stripe.refunds[refund_id]["status"] = "failed"
     if forget_id:
         with migrate_engine.begin() as conn:
+            conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(people.a)})
             conn.execute(text("UPDATE booking_payments SET refund_id = NULL"))
     account = account_of(people)
 
@@ -1425,49 +1425,41 @@ def test_the_fee_policy_applied_is_the_payment_s(
     first = place(app, people, service_id, payment="pay").json()["id"]
     second = place(app, people, service_id, payment="pay", starts_at=at("10:00")).json()["id"]
     assert fees() == [85, 85]
-    assert (
-        pay_rows(people, first)[0]["fee_mode"],
-        pay_rows(people, first)[0]["application_fee_minor"],
-    ) == (
-        "business_pays_plus_fee",
-        85,
-    )
     for booking_id in (first, second):
         fake_stripe.confirm(fake_stripe.latest(booking_id))
         assert sync(new_client(app), people, booking_id).json()["status"] == "pending"
-    assert owner.patch(f"/api/bookings/{first}", json={"status": "declined"}).status_code == 200
-    bookings.sweep()
-    run("payment.settle")
-    from tests.test_booking_links_api import cancel_body, linked, post
 
-    assert (
-        post(linked(app, people.a, second), "/cancel", cancel_body(second, 100)).status_code == 200
-    )
-    bookings.sweep()
-    run("payment.settle")
-    flags = [p["refund_application_fee"] for op, p in fake_stripe.calls if op == "refund"]
-    assert flags == [True, False]  # the business ended the first, the client the second
-
-    policy("business_pays", 0, 0)
+    policy("business_pays", 0, 0)  # the account moves on; these payments keep what applied
     third = place(app, people, service_id, payment="pay", starts_at=at("11:00")).json()["id"]
 
     assert fees() == [85, 85, 0]
-    assert pay_rows(people, third)[0]["fee_mode"] == "business_pays"
-    assert (
-        pay_rows(people, first)[0]["fee_mode"],
-        pay_rows(people, first)[0]["application_fee_minor"],
-    ) == (
-        "business_pays_plus_fee",
-        85,
-    )
+    fee_rows = {
+        b: (pay_rows(people, b)[0]["fee_mode"], pay_rows(people, b)[0]["application_fee_minor"])
+        for b in (first, second, third)
+    }  # noqa: E501
+    assert fee_rows == {
+        first: ("business_pays_plus_fee", 85),
+        second: ("business_pays_plus_fee", 85),
+        third: ("business_pays", 0),
+    }
     fake_stripe.confirm(fake_stripe.latest(third))
     assert sync(new_client(app), people, third).status_code == 200
+    from tests.test_booking_links_api import cancel_body, linked, post
+
+    assert owner.patch(f"/api/bookings/{first}", json={"status": "declined"}).status_code == 200
+    assert (
+        post(linked(app, people.a, second), "/cancel", cancel_body(second, 100)).status_code == 200
+    )
     assert owner.patch(f"/api/bookings/{third}", json={"status": "declined"}).status_code == 200
     bookings.sweep()
     run("payment.settle")
-    assert [p["refund_application_fee"] for op, p in fake_stripe.calls if op == "refund"][
-        -1
-    ] is None
+    by_intent = {
+        p["intent_id"]: p["refund_application_fee"] for op, p in fake_stripe.calls if op == "refund"
+    }
+    # The business ended the first (its fee goes back), the client the second (ziftbook keeps it).
+    assert by_intent[fake_stripe.latest(first)] is True
+    assert by_intent[fake_stripe.latest(second)] is False
+    assert by_intent[fake_stripe.latest(third)] is None
 
 
 @pytest.mark.parametrize(

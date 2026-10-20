@@ -20,7 +20,12 @@ from app.jobs import Job
 from app.main import create_app
 from tests.conftest import People, new_client, put_settings, save_setting, signed_in
 from tests.stripe_fake import FakeGateway
-from tests.test_booking_email import jobs_for_booking, mail_for, run_send_booking
+from tests.test_booking_email import (
+    clean_outbox,  # noqa: F401 -- autouse: these tests send mail, so they leave outbox rows
+    jobs_for_booking,
+    mail_for,
+    run_send_booking,
+)
 from tests.test_booking_links_api import cancel_body, get, linked, post, reschedule_body
 from tests.test_booking_payments_api import (
     account_of,

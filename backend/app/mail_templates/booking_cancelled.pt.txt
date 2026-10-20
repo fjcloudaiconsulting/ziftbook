@@ -4,7 +4,7 @@ Olá,
 $business cancelou seu agendamento:
 
 $service
-$date às $time ($zone)
+$date às $time ($zone)$payment
 
 Em caso de dúvidas, entre em contato com o negócio.
 

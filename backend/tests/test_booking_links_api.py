@@ -397,6 +397,7 @@ def test_linked_booking_carries_no_client_identity(
         "can_cancel",
         "can_reschedule",
         "refund_pct",
+        "refund_minor",
         "copy_key",
         "reschedule_count",
         "reschedules_left",
@@ -414,6 +415,8 @@ def test_linked_booking_carries_no_client_identity(
         "price",
         "worker_display_name",
         "cancellation_policy_text",
+        "paid",
+        "card_fee",
     }
     assert "Guest" not in blob  # post_booking's default client name
     assert email not in blob
