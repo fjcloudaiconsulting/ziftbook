@@ -476,8 +476,9 @@ RETURNING 1
 """)
 # Refund events are matched on the refund's intent, never on our refund_id (NULL when an earlier or
 # overlapping settle issued the refund).
-PAYMENT_OF = text("SELECT booking_id FROM booking_payments WHERE intent_id = :intent")
-# One `refund_failed` event per failed refund: the event is what a replay finds already told.
+PAYMENT_OF = text("SELECT booking_id, kind FROM booking_payments WHERE intent_id = :intent")
+# One `refund_failed` event per failed refund: the event is what a replay finds already told. A
+# refused create has no refund id (NULL never matches): REFUNDED's settled_at write keeps it once.
 TELL_REFUND_FAILED = text("""
 INSERT INTO booking_events (tenant_id, booking_id, event, details)
 SELECT current_setting('app.tenant_id')::uuid, :booking_id, 'refund_failed',
@@ -871,7 +872,9 @@ def _settle_pass(tenant_id: UUID, booking_id: UUID, *, final: bool) -> bool:
 
 def _refund(tenant_id: UUID, row: Row[Any]) -> None:
     """Refund what the ending owes (D7), once: Stripe's own amount_refunded says what already went,
-    so a re-run after the idempotency key's 24 hours sends nothing more."""
+    so a re-run after the idempotency key's 24 hours sends nothing more. A refund Stripe refuses
+    ("invalid": the same request gets the same answer) is flagged for the business and settled,
+    not retried by the hourly sweep for ever."""
     gateway = stripe_gateway.gateway
     state = gateway.retrieve_intent(row.account, row.intent_id)
     pct = 100
@@ -883,17 +886,28 @@ def _refund(tenant_id: UUID, row: Row[Any]) -> None:
     if due is None:
         raise RuntimeError("the card fee is not reported yet")
     refund_id = None
+    refused: stripe_gateway.Failed | None = None
     if due > state.amount_refunded:
-        refund_id = gateway.refund(
-            row.account,
-            row.intent_id,
-            due - state.amount_refunded,
-            # D6 mode 2: ziftbook's fee goes back to the business when it (or we) ended the booking.
-            refund_application_fee=(
-                row.ending != "cancelled_by_client" if row.application_fee_minor > 0 else None
-            ),
-            idempotency_key=f"refund:{row.id}",
-        )
+        try:
+            refund_id = gateway.refund(
+                row.account,
+                row.intent_id,
+                due - state.amount_refunded,
+                # D6 mode 2: ziftbook's fee goes back to the business when it (or we) ended it.
+                refund_application_fee=(
+                    row.ending != "cancelled_by_client" if row.application_fee_minor > 0 else None
+                ),
+                # One key per payment, never per amount: two overlapping runs that read different
+                # amounts would both be paid. The cost: a hand refund after an attempt Stripe kept
+                # under the key makes the retry an idempotency error, flagged for the business.
+                idempotency_key=f"refund:{row.id}",
+            )
+        except stripe_gateway.Failed as failure:
+            if failure.kind != "invalid":
+                raise
+            # Read again: a refund the business made meanwhile is refused too, and is no failure.
+            state = gateway.retrieve_intent(row.account, row.intent_id)
+            refused = failure if due > state.amount_refunded else None
     with tenant_context(tenant_id) as db:
         db.execute(bookings.LOCK, {"key": bookings.LOCK_KEY})
         done = db.execute(
@@ -904,7 +918,26 @@ def _refund(tenant_id: UUID, row: Row[Any]) -> None:
             return
         if row.booking_status == "awaiting_payment":  # a hold that ran out, not yet swept
             db.execute(bookings.EXPIRE_ONE, {"id": row.booking_id})
-        if due > 0:
+        if refused is not None:  # nothing went back: no "refunded" event, no "in full" mail
+            owed = due - state.amount_refunded
+            db.execute(
+                SET_REFUND_FLAG,
+                {"intent": row.intent_id, "refunded": state.amount_refunded},
+            )
+            db.execute(
+                TELL_REFUND_FAILED,
+                {
+                    "booking_id": row.booking_id,
+                    "refund_id": None,
+                    "details": json.dumps({"amount_minor": owed, "refund": None}),
+                },
+            )
+            count_after_commit(
+                db,
+                tracing.PAYMENT_OUTCOMES,
+                {"payment.kind": row.kind, "payment.outcome": "refund_failed"},
+            )
+        elif due > 0:
             _record(db, row.booking_id, "refunded", {"amount_minor": due, "currency": row.currency})
             if row.ending == "expired":
                 bookings.email(
@@ -919,6 +952,16 @@ def _refund(tenant_id: UUID, row: Row[Any]) -> None:
                 tracing.PAYMENT_OUTCOMES,
                 {"payment.kind": row.kind, "payment.outcome": "refunded"},
             )
+    if refused is not None:
+        logger.error(
+            "refund refused",
+            extra={
+                "intent": row.intent_id,
+                "stripe_request_id": refused.request_id,
+                "amount_minor": due - state.amount_refunded,
+            },
+        )
+        return
     if refund_id is not None:
         # It may have failed while the record step was failing: that event saw nothing owed.
         refund_changed(tenant_id, refund_id)
@@ -933,7 +976,8 @@ def refund_changed(tenant_id: UUID, refund_id: str) -> None:
     """A refund event: read the refund and the charge again. A failed refund is told to the
     business once (ERROR for ops, one history event). Whether the payment is flagged for the
     console depends on the amounts alone: it is while less has been refunded than was owed. Money
-    cannot be retried from here: the business does it in its Stripe dashboard."""
+    cannot be retried from here: the business does it in its Stripe dashboard. The first told
+    failure is also counted (outcome refund_failed), the one series ops alerts on."""
     with tenant_context(tenant_id) as db:
         account = db.execute(ACCOUNT).first()
     if account is None:
@@ -960,6 +1004,12 @@ def refund_changed(tenant_id: UUID, refund_id: str) -> None:
                 },
             ).first()
             db.execute(SET_REFUND_ID, params)
+            if told is not None:
+                count_after_commit(
+                    db,
+                    tracing.PAYMENT_OUTCOMES,
+                    {"payment.kind": payment.kind, "payment.outcome": "refund_failed"},
+                )
         db.execute(SET_REFUND_FLAG, {**params, "refunded": refunded.amount_refunded})
     if told is not None:
         logger.error("refund failed", extra={"intent": refund.payment_intent, "refund": refund_id})
