@@ -364,7 +364,7 @@ function NameStep({
   );
 }
 
-export function Shell({ children, version }: { children: ReactNode; version: AppVersion | null }) {
+export function Shell({ children }: { children: ReactNode }) {
   const form = useTranslations("Form");
   const navT = useTranslations("Console.nav");
   const accountT = useTranslations("Console.account");
@@ -377,6 +377,15 @@ export function Shell({ children, version }: { children: ReactNode; version: App
   const [moreOpen, setMoreOpen] = useState(false);
   const [footerSlot, setFooterSlot] = useState<HTMLDivElement | null>(null);
   const [pendingCount, setPendingCount] = useState<number | null>(null);
+  const [version, setVersion] = useState<AppVersion | null>(null);
+
+  // Dev-only version line: 404 unless the deployment turns it on; any failure just leaves it out.
+  useEffect(() => {
+    fetch("/version.json")
+      .then((res) => (res.ok ? res.json() : null))
+      .then(setVersion)
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
