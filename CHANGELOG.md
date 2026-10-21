@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.28.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.27.0...v0.28.0) (2026-10-21)
+
+
+### Features
+
+* **frontend:** show the app version on dev (ZIF-158) ([#312](https://github.com/fjcloudaiconsulting/ziftbook/issues/312)) ([b3a99d3](https://github.com/fjcloudaiconsulting/ziftbook/commit/b3a99d31dcb20138e43e344fb3d561d920a46834))
+
+
+### Bug Fixes
+
+* **backend:** create Stripe accounts on the preview API version (ZIF-158) ([#309](https://github.com/fjcloudaiconsulting/ziftbook/issues/309)) ([315a9c5](https://github.com/fjcloudaiconsulting/ziftbook/commit/315a9c59fe1dc64ea2eaeaca28bc65320f4d2730))
+
 ## [0.27.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.26.1...v0.27.0) (2026-10-21)
 
 
