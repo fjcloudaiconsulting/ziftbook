@@ -590,8 +590,9 @@ ZIF-38). An empty variable means the default: `env_ignore_empty=True` on the bas
 | `ZIF_LOG_FORMAT` | api, worker, migrations, frontend | `json` | no | no | `json` or `text`. |
 | `ZIF_LOG_SQL` | api, worker, migrations | `false` | no | no | Logs SQL statements (never values) when the level is `DEBUG`. |
 | **Runtime** | | | | | |
-| `ZIF_APP_VERSION` | api | `dev` | no | no | Baked into the backend image at build time. |
-| `ZIF_APP_REVISION` | api | `dev` | no | no | Git sha of the build, baked into the backend image. |
+| `ZIF_APP_VERSION` | api, frontend | `dev` | no | no | Baked into the backend and frontend images at build time. |
+| `ZIF_APP_REVISION` | api, frontend | `dev` | no | no | Git sha of the build, baked into the backend and frontend images. |
+| `ZIF_SHOW_VERSION` | frontend | none | no | no | `true` shows the version line (`v0.27.1 · 315a9c5`) at the bottom of the console sidebar and More sheet and in the booking pages' footer. Only staging sets it. Read server-side per request, never `NEXT_PUBLIC_*`. |
 | `ZIF_HEALTHCHECK_URL` | worker | none | no | no | Pinged after every successful loop. |
 | `ZIF_IMAGE_TAG` | compose | none | yes | no | Release tag (`vX.Y.Z`) for the three GHCR images. |
 | `ZIF_API_URL` | frontend | none | yes | no | Backend base URL the web app proxies `/api` to. |

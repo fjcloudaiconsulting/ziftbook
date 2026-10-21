@@ -5,6 +5,8 @@ import { LanguageSwitcher } from "../_ui/header";
 import { Outcome } from "../_ui/parts";
 import styles from "../_ui/ui.module.css";
 import { load } from "./load";
+import { appVersion } from "@/lib/version";
+
 import { ServicesPage } from "./services-page";
 
 // A fixed, generic title when the load failed: never the upstream error body, and never presented
@@ -51,7 +53,7 @@ export default async function PublicBookingPage({
   return (
     <>
       <header className={styles.minimalHeader}><LanguageSwitcher /></header>
-      <ServicesPage page={loaded.data} locale={locale} />
+      <ServicesPage page={loaded.data} locale={locale} version={appVersion()} />
     </>
   );
 }

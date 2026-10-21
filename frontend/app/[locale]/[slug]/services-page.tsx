@@ -14,6 +14,8 @@ import { zoneCity } from "@/lib/week";
 import { Banner, Outcome } from "../_ui/parts";
 import { ServiceTile } from "../_ui/service-tile";
 import styles from "../_ui/ui.module.css";
+import type { AppVersion } from "@/lib/version";
+
 import { BookingFooter } from "./footer";
 import { CloseIcon, ClockIcon, PinIcon } from "./icons";
 import { ServiceRow } from "./service-list";
@@ -108,7 +110,7 @@ function ServiceDialog({
 }
 
 /** `/[slug]`: the business and its services. The dialog's one source of truth is ?service=. */
-export function ServicesPage({ page, locale }: { page: BookingPageOut; locale: string }) {
+export function ServicesPage({ page, locale, version }: { page: BookingPageOut; locale: string; version: AppVersion | null }) {
   const t = useTranslations("BookingPage");
   const router = useRouter();
   const params = useSearchParams();
@@ -165,7 +167,7 @@ export function ServicesPage({ page, locale }: { page: BookingPageOut; locale: s
           onBook={(svc) => router.replace(checkoutUrl(page.slug, { serviceId: svc.id, memberId: null, at: null }))}
         />
       </main>
-      <BookingFooter />
+      <BookingFooter version={version} />
     </>
   );
 }

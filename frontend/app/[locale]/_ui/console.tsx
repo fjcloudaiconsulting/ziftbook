@@ -18,6 +18,7 @@ import { Link, usePathname, useRouter } from "@/i18n/navigation";
 import { trimmedName } from "@/lib/account";
 import { allowed, canAnswerRequests, guardedWrite, navFor, needsName, type Role, sectionOf, type Section, stickyHeight, writeOutcome } from "@/lib/console";
 import { badgeText } from "@/lib/today";
+import type { AppVersion } from "@/lib/version";
 
 import { LanguageSwitcher } from "./header";
 import { Banner, FieldError, Heading, JSON_WRITE, NoScript, type Outcome, problem, send, Submit } from "./parts";
@@ -232,7 +233,11 @@ export function SignedOutBanner() {
   );
 }
 
-function MoreSheet({ more, current, open, onClose }: { more: Section[]; current: Section | null; open: boolean; onClose(): void }) {
+function VersionLine({ version }: { version: AppVersion | null }) {
+  return version && <p className={styles.versionLine}>{`v${version.version} · ${version.revision}`}</p>;
+}
+
+function MoreSheet({ more, current, open, onClose, version }: { more: Section[]; current: Section | null; open: boolean; onClose(): void; version: AppVersion | null }) {
   const nav = useTranslations("Console.nav");
   const ref = useRef<HTMLDialogElement>(null);
 
@@ -266,6 +271,7 @@ function MoreSheet({ more, current, open, onClose }: { more: Section[]; current:
           </svg>
           <span>{nav("close")}</span>
         </button>
+        <VersionLine version={version} />
       </div>
     </dialog>
   );
@@ -358,7 +364,7 @@ function NameStep({
   );
 }
 
-export function Shell({ children }: { children: ReactNode }) {
+export function Shell({ children, version }: { children: ReactNode; version: AppVersion | null }) {
   const form = useTranslations("Form");
   const navT = useTranslations("Console.nav");
   const accountT = useTranslations("Console.account");
@@ -518,6 +524,7 @@ export function Shell({ children }: { children: ReactNode }) {
             {nav.sidebar.map((section) => (
               <NavLink key={section} section={section} current={current} className={styles.navItem} badge={section === "today" ? badge : null} />
             ))}
+            <VersionLine version={version} />
           </nav>
 
           <main id="content" className={styles.content}>
@@ -556,7 +563,7 @@ export function Shell({ children }: { children: ReactNode }) {
           </nav>
         </div>
 
-        <MoreSheet more={nav.more} current={current} open={moreOpen} onClose={() => setMoreOpen(false)} />
+        <MoreSheet more={nav.more} current={current} open={moreOpen} onClose={() => setMoreOpen(false)} version={version} />
       </div>
     </ConsoleContext.Provider>
   );

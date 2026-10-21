@@ -99,6 +99,9 @@
   background: var(--nav);
   border-right: 1px solid var(--line);
 }
+/* margin-top:auto pins it to the sidebar's bottom; in the More sheet it just closes the list. */
+.versionLine { margin: auto 0 0; padding: 0.5rem 0.75rem 0; color: var(--muted); font-size: 0.75rem; }
+.sheetInner .versionLine { margin-top: 0.25rem; text-align: center; }
 .navItem {
   display: flex;
   align-items: center;

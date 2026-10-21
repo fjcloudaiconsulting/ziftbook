@@ -47,6 +47,7 @@ import styles from "../_ui/ui.module.css";
 import { type Done, DoneScreen, PayEnd, Picker, Processing, ResumeView, WhoAt } from "./checkout";
 import { DialPicker } from "./dial-picker";
 import { BookingFooter, NewTab } from "./footer";
+import type { AppVersion } from "@/lib/version";
 import { PinIcon } from "./icons";
 import { type PayHandle, PaymentStep } from "./payment-step";
 import { type CacheEntry, type Flow, localized, type Service, type Step2Plus, type TimesWindow } from "./shared";
@@ -108,6 +109,7 @@ export function BookingPage({
   page,
   locale,
   turnstileSiteKey,
+  version,
   serviceId,
   memberId,
   at,
@@ -116,6 +118,7 @@ export function BookingPage({
   page: BookingPageOut;
   locale: string;
   turnstileSiteKey: string | null;
+  version: AppVersion | null;
   serviceId: string;
   memberId: string | null;
   at: string | null;
@@ -914,7 +917,7 @@ export function BookingPage({
           {body}
         </div>
       </main>
-      <BookingFooter />
+      <BookingFooter version={version} />
       {/* onReady, not onLoad: next/script's LoadCache means onLoad only fires the very first time this
        * script URL is ever loaded on the page — a client-side locale switch or soft nav remounts this
        * page without the browser reloading the script, so onLoad would never fire again and no
@@ -989,7 +992,7 @@ export function BookingPage({
             <DoneScreen page={page} done={done} locale={loc} dLocale={dLocale} zone={zone} t={t} onAgain={() => router.push(`/${page.slug}`)} />
           </div>
         </main>
-        <BookingFooter />
+        <BookingFooter version={version} />
       </>
     );
   }
