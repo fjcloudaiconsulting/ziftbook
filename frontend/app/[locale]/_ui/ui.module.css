@@ -243,6 +243,10 @@ a.textButton, .textButton:has(> svg) { display: inline-flex; align-items: center
 /* Two empty-state actions side by side (working hours: set the week, or use the opening hours). */
 .emptyActs { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.3rem; }
 .emptyActs .button { margin-top: 0; }
+/* The "payment in progress" note: the text, then its two buttons. */
+.payNote { padding-bottom: 1.25rem; }
+.payNoteBody { display: grid; gap: 0.6rem; }
+.payNoteBody .emptyActs { margin: 0; }
 
 /* Screen head: heading plus a header-level action (services' "Add a service"). */
 .screenHead { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 0.75rem 1rem; }
@@ -519,6 +523,12 @@ a.textButton, .textButton:has(> svg) { display: inline-flex; align-items: center
 .photoProgress::-moz-progress-bar { background: var(--primary); border-radius: 999px; }
 .spinDark { flex: none; width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--line); border-top-color: var(--primary); animation: spin 800ms linear infinite; }
 @media (prefers-reduced-motion: reduce) { .spinDark { animation: none; border-right-color: var(--primary); } }
+/* The payment choice's legend, as .pillSet's legend. */
+.payLegend { padding: 0; margin-bottom: 0.5rem; }
+/* The request after Send: the same fields, read-only, never hidden. */
+.lockSet { border: 0; margin: 0; padding: 0; min-width: 0; display: flex; flex-direction: column; gap: 1.1rem; }
+.lockSet:disabled .input :is(input, select) { background: var(--surface); border-color: var(--line); color: var(--ink); opacity: 1; -webkit-text-fill-color: var(--ink); }
+.lockSet:disabled .consentRow { color: var(--muted); }
 .pill2 .tile { --s: 32px; }
 .pill2 .tile svg { width: 58%; height: 58%; }
 .svcChoice .tile { --s: 64px; }

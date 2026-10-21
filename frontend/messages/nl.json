@@ -685,7 +685,8 @@
         "reschedule_cutoff_hours": "een afspraak verzetten",
         "cancellation_policy_text": "annuleringsbeleid",
         "workers_edit_own_hours": "eigen werktijden van teamleden",
-        "workers_answer_requests": "aanvragen beantwoorden door teamleden"
+        "workers_answer_requests": "aanvragen beantwoorden door teamleden",
+        "payment_check": "online betalen bij het boeken"
       },
       "savingHint": "Je wijzigingen worden opgeslagen.",
       "freeCancellationLabel": "Gratis annuleren tot",
@@ -697,7 +698,9 @@
       "workersEditLabel": "Teamleden kunnen hun eigen werktijden wijzigen",
       "workersEditHint": "Uit: alleen jij stelt hun tijden in.",
       "workersAnswerLabel": "Teamleden kunnen hun eigen boekingsaanvragen accepteren en afwijzen",
-      "workersAnswerHint": "Uit: jij beantwoordt elke aanvraag. Teamleden zien die van hen, maar kunnen ze niet accepteren of afwijzen."
+      "workersAnswerHint": "Uit: jij beantwoordt elke aanvraag. Teamleden zien die van hen, maar kunnen ze niet accepteren of afwijzen.",
+      "paymentCheckLabel": "Om betaalgegevens vragen bij het boeken",
+      "paymentCheckHint": "Klanten voegen een kaart toe die we controleren zonder af te schrijven, of betalen vooraf. Diensten onder {min} worden geboekt zonder deze stap."
     },
     "errors": {
       "ownerOnly": "Alleen een eigenaar kan dit doen.",
@@ -1042,6 +1045,34 @@
     "noCountry": "Geen land gevonden",
     "dialSearch": "Land of landcode",
     "phoneUse": "Alleen zodat {biz} je over deze boeking kan bereiken.",
-    "legal": "Door te versturen ga je akkoord met de <terms>Voorwaarden</terms> en de <privacy>Privacyverklaring</privacy> van ziftbook en de <rules>annuleringsregels</rules> van {biz}."
+    "legal": "Door te versturen ga je akkoord met de <terms>Voorwaarden</terms> en de <privacy>Privacyverklaring</privacy> van ziftbook en de <rules>annuleringsregels</rules> van {biz}.",
+    "payTitle": "Betaling",
+    "payCheck": "Mijn kaart controleren",
+    "payCheckHint": "We controleren je kaart voor {price} en geven het bedrag meteen weer vrij. Er wordt niets afgeschreven; je betaalt bij je afspraak. Je bank kan een paar dagen een reservering van {price} tonen.",
+    "payCheckSetupHint": "We controleren of je kaart geldig is. Er wordt niets afgeschreven; je betaalt bij je afspraak.",
+    "payNow": "Nu {price} betalen",
+    "payNowHint": "Als {biz} je afspraak weigert, annuleert of niet op tijd antwoordt, krijg je alles terug. Annuleer je zelf, dan krijg je terug wat de annuleringsregels van {biz} toestaan.",
+    "payNowHintFee": "Als {biz} je afspraak weigert, annuleert of niet op tijd antwoordt, krijg je alles terug. Annuleer je zelf, dan krijg je terug wat de annuleringsregels van {biz} toestaan, min de betalingskosten.",
+    "termsPaymentFee": "Betalingskosten worden niet terugbetaald als je annuleert. Alles wordt terugbetaald als {biz} je afspraak weigert, annuleert of niet op tijd antwoordt.",
+    "payButtonBook": "Betaal {price} en boek",
+    "payButtonRequest": "Betaal {price} en verstuur aanvraag",
+    "changeRequest": "Tijd of gegevens wijzigen",
+    "payFailed": "Je betaling is niet gelukt. Probeer het opnieuw of kies een andere betaalmethode.",
+    "payProcessing": "Je betaling wordt verwerkt. Deze pagina werkt zichzelf bij. Lukt de betaling, dan mailen we je een bevestiging; lukt hij niet, dan wordt er niets afgeschreven en komt de tijd weer vrij.",
+    "payExpiredProcessing": "Je betaling wordt nog verwerkt, maar we houden je tijd niet meer vast. Lukt de betaling alsnog, dan krijg je alles terug. Je kunt opnieuw een tijd kiezen.",
+    "payStale": "Deze afspraak kan niet meer worden betaald. Kies een tijd om opnieuw te boeken.",
+    "payCheckEmail": "We kunnen je betaling nu niet controleren. Kijk of je een e-mail van ons hebt, of probeer het over een paar minuten opnieuw.",
+    "payInProgress": "Je hebt een betaling lopen voor {service} op {when}.",
+    "payResume": "Hervatten",
+    "payStartOver": "Opnieuw beginnen",
+    "payExpired": "We hebben je tijd 30 minuten vastgehouden; die is nu vrijgegeven. Kies opnieuw een tijd.",
+    "payExpiredPaid": "We hebben je tijd 30 minuten vastgehouden; die is nu vrijgegeven. Je betaling van {price} wordt volledig terugbetaald; je bank kan er een paar dagen over doen om dat te tonen. Kies opnieuw een tijd.",
+    "payUnavailable": "Betalen is nu niet beschikbaar. Probeer het over een paar minuten opnieuw.",
+    "paymentChanged": "De betaalopties op deze pagina zijn veranderd. Controleer ze en verstuur opnieuw.",
+    "doneChecked": "We hebben je kaart gecontroleerd voor {price}. Er is niets afgeschreven.",
+    "doneCheckedSetup": "We hebben je kaart gecontroleerd. Er is niets afgeschreven.",
+    "donePaid": "Je hebt {price} betaald.",
+    "okLedeNoEmail": "We hebben je een bevestiging gemaild met een link om te wijzigen of annuleren.",
+    "pendLedeNoEmail": "{biz} bevestigt je verzoek. We hebben je een link gemaild om het te bekijken of te annuleren, en mailen opnieuw zodra ze reageren."
   }
 }

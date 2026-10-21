@@ -18,6 +18,7 @@ export type Settings = {
   cancellation_policy_text: string;
   workers_edit_own_hours: boolean;
   workers_answer_requests: boolean;
+  payment_check: boolean;
 };
 export type Key = keyof Settings;
 export type Draft = Record<Key, string | boolean>;
@@ -43,6 +44,7 @@ export const FIELDS: Field[] = [
   { key: "cancellation_policy_text", kind: "text" },
   { key: "workers_edit_own_hours", kind: "bool" },
   { key: "workers_answer_requests", kind: "bool" },
+  { key: "payment_check", kind: "bool" },
 ];
 
 export const SLOT_STEPS = [5, 10, 15, 20, 30, 60];

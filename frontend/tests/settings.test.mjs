@@ -223,3 +223,11 @@ describe("F1 the payments panel offers only actions the API can serve", () => {
     for (const state of ["none", "onboarding", "ready", "off"]) assert.equal(paymentsAction(state, false), null);
   });
 });
+
+describe("F2 the payment switch", () => {
+  test("guard: toggling payment_check is a change and is posted", () => {
+    const withCheck = { ...saved, payment_check: false };
+    assert.deepEqual(changedKeys(withCheck, { ...draftFrom(withCheck), payment_check: true }), ["payment_check"]);
+    assert.deepEqual(settingsBody(withCheck, { ...draftFrom(withCheck), payment_check: true }).body, { payment_check: true });
+  });
+});

@@ -74,6 +74,9 @@ export function emailSuggestion(email: string): string | null {
   return best !== null && bestDistance <= 2 ? local + best : null;
 }
 
+/** What the client chose in the checkout: have the card checked, or pay now. */
+export type PaymentChoice = "check" | "pay";
+
 export type BookingForm = {
   startsAt: string;
   memberId: string | null;
@@ -85,6 +88,8 @@ export type BookingForm = {
   turnstileToken: string | null;
   consent: boolean;
   message: string | null;
+  /** null: the service has no payment step. */
+  payment: PaymentChoice | null;
 };
 
 export type BookingBody = {
@@ -98,6 +103,7 @@ export type BookingBody = {
   consents: { marketing_email?: true };
   turnstile_token: string | null;
   message: string | null;
+  payment: PaymentChoice | null;
 };
 
 /** The POST /api/public/bookings body, exactly the allowed key set. `starts_at` is passed through
@@ -117,6 +123,7 @@ export function bookingBody(form: BookingForm): BookingBody {
     consents: form.consent ? { marketing_email: true } : {},
     turnstile_token: form.turnstileToken,
     message: form.message,
+    payment: form.payment,
   };
 }
 
@@ -131,6 +138,8 @@ export type AnswerOutcome =
   | { kind: "verifyFailed" }
   | { kind: "unavailable" }
   | { kind: "tooMany" }
+  | { kind: "paymentChanged" }
+  | { kind: "paymentsUnavailable" }
   | { kind: "nothingBooked" }
   | { kind: "unknown" };
 
@@ -144,11 +153,13 @@ export function answerState(answer: { status: number; code?: string }, widget: b
   if (answer.status === 409 && answer.code && SLOT_TAKEN_CODES.has(answer.code)) return { kind: "slotTaken" };
   if (answer.status === 404) return { kind: "serviceGone" };
   if (answer.status === 422 && answer.code && POLICY_CHANGED_CODES.has(answer.code)) return { kind: "policyChanged" };
+  if (answer.status === 422 && (answer.code === "payment_required" || answer.code === "payment_not_offered")) return { kind: "paymentChanged" };
   if (answer.status === 422 && answer.code === "phone_invalid") return { kind: "phoneInvalid" };
   if (answer.status === 422 && answer.code === "message_invalid") return { kind: "messageInvalid" };
   if (answer.status === 422) return { kind: "fieldErrors" };
   if (answer.status === 403 && answer.code === "turnstile_failed") return { kind: widget ? "verifyFailed" : "unavailable" };
   if (answer.status === 429) return { kind: "tooMany" };
+  if (answer.status === 503 && answer.code === "payments_unavailable") return { kind: "paymentsUnavailable" };
   if (answer.status === 503 && answer.code === "busy") return { kind: "nothingBooked" };
   return { kind: "unknown" };
 }
@@ -308,4 +319,103 @@ export function phoneValue(dial: string, businessDial: string, local: string): s
   if (typed.startsWith("+")) return typed;
   if (typed.startsWith("00")) return `+${typed.slice(2)}`;
   return dial === businessDial ? typed : `+${dial}${typed}`;
+}
+
+// --- ZIF-158: the payment step ---
+
+/** Stripe's locale for each page language (the app's pt is Brazilian, as TURNSTILE_LANG). */
+export const STRIPE_LOCALE: Record<string, string> = { en: "en", nl: "nl", pt: "pt-BR" };
+
+export type ElementsOptions =
+  | { mode: "payment"; amount: number; currency: string; captureMethod: "manual" | "automatic"; paymentMethodTypes?: string[] }
+  | { mode: "setup"; currency: string; paymentMethodTypes: string[] };
+
+/** The deferred Payment Element's options, which must equal the server's intent (Stripe refuses the
+ * confirm otherwise): a check is card only (held, or a setup where the card network allows no hold);
+ * paying in advance offers every method the account has. */
+export function elementsOptions(
+  choice: PaymentChoice,
+  checkWith: "authorisation" | "setup",
+  price: { amount_minor: number; currency: string },
+): ElementsOptions {
+  const currency = price.currency.toLowerCase();
+  if (choice === "pay") return { mode: "payment", amount: price.amount_minor, currency, captureMethod: "automatic" };
+  if (checkWith === "setup") return { mode: "setup", currency, paymentMethodTypes: ["card"] };
+  return { mode: "payment", amount: price.amount_minor, currency, captureMethod: "manual", paymentMethodTypes: ["card"] };
+}
+
+const STRIPE = /^(payment_intent|setup_intent|redirect_status)/;
+
+/** The address minus whatever Stripe appended on the way back (the client secret must never stay in
+ * history or logs); the booking, the pick and the visitor's own params stay. */
+export function returnParams(search: string): URLSearchParams {
+  const kept = new URLSearchParams(search);
+  for (const key of [...kept.keys()]) if (STRIPE.test(key)) kept.delete(key);
+  return kept;
+}
+
+/** Extra lines for the summary's terms block: the kept card fee, only while Pay now is chosen and
+ * the platform really keeps it (R6: false at launch). Message keys of BookingPage. */
+export function termsLines(choice: PaymentChoice | null, keepsCardFee: boolean): "termsPaymentFee"[] {
+  return choice === "pay" && keepsCardFee ? ["termsPaymentFee"] : [];
+}
+
+/** The Send button's message key: it states the obligation to pay when paying now (EU CRD art. 8(2)). */
+export function sendLabel(choice: PaymentChoice | null, autoConfirm: boolean): "payButtonBook" | "payButtonRequest" | "book" | "request" {
+  if (choice === "pay") return autoConfirm ? "payButtonBook" : "payButtonRequest";
+  return autoConfirm ? "book" : "request";
+}
+
+export type PayView =
+  | { kind: "done" }
+  | { kind: "resume"; failed: boolean }
+  | { kind: "processing" }
+  | { kind: "expired" }
+  | { kind: "expiredPaid" }
+  | { kind: "expiredProcessing" }
+  | { kind: "stale" };
+
+/** What the page shows for a booking and its payment (SyncOut): never "booked" for anything but
+ * pending or confirmed, and never "choose a time again" while money may still land. */
+export function doneState(sync: { status: string; payment: { state: string; failed: boolean } }): PayView {
+  const { status, payment } = sync;
+  if (status === "pending" || status === "confirmed") return { kind: "done" };
+  if (status === "awaiting_payment") {
+    if (payment.state === "open") return { kind: "resume", failed: payment.failed };
+    // checked or paid while the booking has not moved yet: the webhook is about to.
+    return payment.state === "canceled" ? { kind: "resume", failed: false } : { kind: "processing" };
+  }
+  if (status === "expired") {
+    return payment.state === "processing" ? { kind: "expiredProcessing" } : payment.state === "paid" ? { kind: "expiredPaid" } : { kind: "expired" };
+  }
+  return { kind: "stale" };
+}
+
+/** A refresh, a Back from a bank page or Stripe's return carries `booking`: that always resumes,
+ * whatever `at` says. Without it, an id stored for THIS service is checked once; else a plain checkout. */
+export function entryMode(search: URLSearchParams, stored: { bookingId: string; serviceId: string } | null): "resume" | "stored" | "checkout" {
+  if (search.get("booking")) return "resume";
+  return stored !== null && stored.serviceId === search.get("service") ? "stored" : "checkout";
+}
+
+/** What an id stored by an earlier visit turns out to be: still waiting for payment (offer to resume),
+ * already pending or confirmed (show it), or nothing to act on. */
+export function storedNext(sync: { status: string }): "offerResume" | "done" | "checkout" {
+  if (sync.status === "awaiting_payment") return "offerResume";
+  return sync.status === "pending" || sync.status === "confirmed" ? "done" : "checkout";
+}
+
+/** Whether leaving an end state may forget the booking (its id and the address). A check that failed
+ * (checkEmail) or a payment still processing must keep it: money may land, and a plain checkout would
+ * invite a second payment. */
+export function mayForget(end: "processing" | "expired" | "expiredPaid" | "expiredProcessing" | "stale" | "checkEmail"): boolean {
+  return end !== "checkEmail" && end !== "processing";
+}
+
+/** What pressing Send does. `working`: a send, a verification, a kind switch or a confirm is in flight.
+ * `sent`: the request exists (locked form or resume view), so it never posts again. */
+export function sendAction(s: { working: boolean; sent: boolean; hasSecret: boolean }): "ignore" | "post" | "pay" | "reopen" {
+  if (s.working) return "ignore";
+  if (!s.sent) return "post";
+  return s.hasSecret ? "pay" : "reopen";
 }

@@ -685,7 +685,8 @@
         "reschedule_cutoff_hours": "moving a booking",
         "cancellation_policy_text": "cancellation policy",
         "workers_edit_own_hours": "team members' own hours",
-        "workers_answer_requests": "team members answering requests"
+        "workers_answer_requests": "team members answering requests",
+        "payment_check": "online payments at checkout"
       },
       "savingHint": "Saving your changes.",
       "freeCancellationLabel": "Free cancellation up to",
@@ -697,7 +698,9 @@
       "workersEditLabel": "Team members can change their own working hours",
       "workersEditHint": "Off: only you set their hours.",
       "workersAnswerLabel": "Team members can accept and decline their own booking requests",
-      "workersAnswerHint": "Off: you answer every request. Team members see theirs but can't accept or decline them."
+      "workersAnswerHint": "Off: you answer every request. Team members see theirs but can't accept or decline them.",
+      "paymentCheckLabel": "Ask for payment details at checkout",
+      "paymentCheckHint": "Clients add a card we check without charging it, or pay in advance. Services under {min} book without this step."
     },
     "errors": {
       "ownerOnly": "Only an owner can do this.",
@@ -1042,6 +1045,34 @@
     "noCountry": "No country matches",
     "dialSearch": "Country or code",
     "phoneUse": "Only for {biz} to reach you about this booking.",
-    "legal": "By sending, you accept the ziftbook <terms>Terms</terms> and <privacy>Privacy Notice</privacy> and {biz}'s <rules>cancellation rules</rules>."
+    "legal": "By sending, you accept the ziftbook <terms>Terms</terms> and <privacy>Privacy Notice</privacy> and {biz}'s <rules>cancellation rules</rules>.",
+    "payTitle": "Payment",
+    "payCheck": "Check my card",
+    "payCheckHint": "We check your card for {price} and release it right away. Nothing is charged; you pay at your appointment. Your bank may show a pending {price} for a few days.",
+    "payCheckSetupHint": "We check that your card is valid. Nothing is charged; you pay at your appointment.",
+    "payNow": "Pay {price} now",
+    "payNowHint": "If {biz} declines, cancels or doesn't answer in time, you get everything back. If you cancel, you get back what {biz}'s cancellation rules allow.",
+    "payNowHintFee": "If {biz} declines, cancels or doesn't answer in time, you get everything back. If you cancel, you get back what {biz}'s cancellation rules allow, minus the payment processing fee.",
+    "termsPaymentFee": "Payment processing fees are not refunded when you cancel. Everything is refunded if {biz} declines, cancels or doesn't answer in time.",
+    "payButtonBook": "Pay {price} and book",
+    "payButtonRequest": "Pay {price} and send request",
+    "changeRequest": "Change time or details",
+    "payFailed": "Your payment didn't go through. Try again or use another method.",
+    "payProcessing": "Your payment is being processed. This page updates by itself. If it goes through, we'll email you a confirmation; if it doesn't, nothing is charged and the time is released.",
+    "payExpiredProcessing": "Your payment is still being processed, but we've stopped holding your time. If the payment goes through, it is refunded in full. You can choose a time again.",
+    "payStale": "This booking can't be paid any more. Choose a time to book again.",
+    "payCheckEmail": "We can't check your payment right now. Look for our email, or try again in a few minutes.",
+    "payInProgress": "You have a payment in progress for {service} on {when}.",
+    "payResume": "Resume",
+    "payStartOver": "Start over",
+    "payExpired": "We held your time for 30 minutes and it has been released. Choose a time again.",
+    "payExpiredPaid": "We held your time for 30 minutes and it has been released. Your payment of {price} is refunded in full; your bank may take a few days to show it. Choose a time again.",
+    "payUnavailable": "Payments aren't available right now. Try again in a few minutes.",
+    "paymentChanged": "The payment options on this page changed. Check them and send again.",
+    "doneChecked": "We checked your card for {price}. Nothing was charged.",
+    "doneCheckedSetup": "We checked your card. Nothing was charged.",
+    "donePaid": "You paid {price}.",
+    "okLedeNoEmail": "We've emailed you a confirmation with a link to change or cancel.",
+    "pendLedeNoEmail": "{biz} will confirm your request. We've emailed you a link to see it or cancel it, and we'll email again once they reply."
   }
 }
