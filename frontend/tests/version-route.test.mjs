@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, test } from "node:test";
 
-import { GET } from "../app/version.json/route.ts";
+import { dynamic, GET } from "../app/version.json/route.ts";
 
 const saved = { ...process.env };
 afterEach(() => {
@@ -13,6 +13,10 @@ afterEach(() => {
 });
 
 describe("GET /version.json", () => {
+  // Without it Next may prerender the route at build time, where the switch is unset.
+  test("is rendered per request", () => {
+    assert.equal(dynamic, "force-dynamic");
+  });
   test("404 when the switch is off", async () => {
     delete process.env.ZIF_SHOW_VERSION;
     assert.equal(GET().status, 404);

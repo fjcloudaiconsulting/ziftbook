@@ -9,13 +9,12 @@ import { useRouter } from "@/i18n/navigation";
 import { checkoutUrl } from "@/lib/booking-page";
 import { formatMoney } from "@/lib/money";
 import { type Locale } from "@/lib/services";
+import type { AppVersion } from "@/lib/version";
 import { zoneCity } from "@/lib/week";
 
 import { Banner, Outcome } from "../_ui/parts";
 import { ServiceTile } from "../_ui/service-tile";
 import styles from "../_ui/ui.module.css";
-import type { AppVersion } from "@/lib/version";
-
 import { BookingFooter } from "./footer";
 import { CloseIcon, ClockIcon, PinIcon } from "./icons";
 import { ServiceRow } from "./service-list";

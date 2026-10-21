@@ -1,12 +1,12 @@
 import { notFound } from "next/navigation";
 import { getTranslations } from "next-intl/server";
 
+import { appVersion } from "@/lib/version";
+
 import { LanguageSwitcher } from "../_ui/header";
 import { Outcome } from "../_ui/parts";
 import styles from "../_ui/ui.module.css";
 import { load } from "./load";
-import { appVersion } from "@/lib/version";
-
 import { ServicesPage } from "./services-page";
 
 // A fixed, generic title when the load failed: never the upstream error body, and never presented

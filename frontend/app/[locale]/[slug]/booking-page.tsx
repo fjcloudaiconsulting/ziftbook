@@ -39,6 +39,7 @@ import { dateLocale } from "@/lib/console";
 import { defaultDial, dialOptions } from "@/lib/dial-codes";
 import { formatMoney } from "@/lib/money";
 import { type Locale } from "@/lib/services";
+import type { AppVersion } from "@/lib/version";
 import { zoneCity } from "@/lib/week";
 
 import { Banner, FieldError, JSON_WRITE, send, Submit } from "../_ui/parts";
@@ -47,7 +48,6 @@ import styles from "../_ui/ui.module.css";
 import { type Done, DoneScreen, PayEnd, Picker, Processing, ResumeView, WhoAt } from "./checkout";
 import { DialPicker } from "./dial-picker";
 import { BookingFooter, NewTab } from "./footer";
-import type { AppVersion } from "@/lib/version";
 import { PinIcon } from "./icons";
 import { type PayHandle, PaymentStep } from "./payment-step";
 import { type CacheEntry, type Flow, localized, type Service, type Step2Plus, type TimesWindow } from "./shared";
