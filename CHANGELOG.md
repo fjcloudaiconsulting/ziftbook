@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.27.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.26.1...v0.27.0) (2026-10-21)
+
+
+### Features
+
+* **backend:** checkout checks the client's card (ZIF-158) ([#302](https://github.com/fjcloudaiconsulting/ziftbook/issues/302)) ([5b88860](https://github.com/fjcloudaiconsulting/ziftbook/commit/5b888601d2356878beb358fb6ab607b0242d6afe))
+* **backend:** clients pay in advance, refunds follow the terms (ZIF-158) ([#304](https://github.com/fjcloudaiconsulting/ziftbook/issues/304)) ([3abf303](https://github.com/fjcloudaiconsulting/ziftbook/commit/3abf303661719e99990e285c26fbae470740c830))
+* **backend:** every booking keeps the name, phone and message the client typed (ZIF-157) ([#292](https://github.com/fjcloudaiconsulting/ziftbook/issues/292)) ([e221ea4](https://github.com/fjcloudaiconsulting/ziftbook/commit/e221ea4e67b24063f5ba13443cf19bef8482e1e6))
+* **backend:** guests book straight from the booking page, without an emailed link (ZIF-157) ([#293](https://github.com/fjcloudaiconsulting/ziftbook/issues/293)) ([2b98195](https://github.com/fjcloudaiconsulting/ziftbook/commit/2b9819579decc8034ff9bdcc1470567b07425035))
+* **backend:** owners connect their business to Stripe (ZIF-158) ([#300](https://github.com/fjcloudaiconsulting/ziftbook/issues/300)) ([d201eef](https://github.com/fjcloudaiconsulting/ziftbook/commit/d201eefe259c513432b525aa41d7b2545caac866))
+* clients move a booking request until it is confirmed (ZIF-157) ([#294](https://github.com/fjcloudaiconsulting/ziftbook/issues/294)) ([3d20809](https://github.com/fjcloudaiconsulting/ziftbook/commit/3d20809264f80c9dd171ac97fa56e361e6f59437))
+* **frontend:** bookings show what was paid and refunded (ZIF-158) ([#306](https://github.com/fjcloudaiconsulting/ziftbook/issues/306)) ([d0815ee](https://github.com/fjcloudaiconsulting/ziftbook/commit/d0815ee274d0e1c7c38ba13e24bcd07ed4c85351))
+* **frontend:** clients book from a service dialog and a checkout page (ZIF-157) ([#297](https://github.com/fjcloudaiconsulting/ziftbook/issues/297)) ([62bbf7d](https://github.com/fjcloudaiconsulting/ziftbook/commit/62bbf7d41a008b1e037a955d5890797ae7a0fa06))
+* **frontend:** owners connect to Stripe from settings (ZIF-158) ([#303](https://github.com/fjcloudaiconsulting/ziftbook/issues/303)) ([679be82](https://github.com/fjcloudaiconsulting/ziftbook/commit/679be824778c078f915ffd0d7273db79803ddb15))
+* **frontend:** the phone country picker shows flags and searches by country or code (ZIF-157) ([#298](https://github.com/fjcloudaiconsulting/ziftbook/issues/298)) ([0a14ce4](https://github.com/fjcloudaiconsulting/ziftbook/commit/0a14ce4c2118fbf35d4b1e6c885fd0f00ee199ce))
+
+
+### Bug Fixes
+
+* **backend:** a refund Stripe refuses is flagged for the business once, not retried every hour (ZIF-158) ([#307](https://github.com/fjcloudaiconsulting/ziftbook/issues/307)) ([0f72630](https://github.com/fjcloudaiconsulting/ziftbook/commit/0f726302d8c7ac84bf14df9b60adb68054712e4e))
+* **backend:** the seed sends a phone with every guest booking again ([#295](https://github.com/fjcloudaiconsulting/ziftbook/issues/295)) ([1be5c1a](https://github.com/fjcloudaiconsulting/ziftbook/commit/1be5c1a67846fe88fe4a64279de04f0bf908ce8b))
+* **frontend:** admins can sign out again on prod ([#289](https://github.com/fjcloudaiconsulting/ziftbook/issues/289)) ([abddc01](https://github.com/fjcloudaiconsulting/ziftbook/commit/abddc01902dfee6901d82215e1488d9710504f22))
+* **frontend:** counts of one read right in every language ([#296](https://github.com/fjcloudaiconsulting/ziftbook/issues/296)) ([9dee7c9](https://github.com/fjcloudaiconsulting/ziftbook/commit/9dee7c935cf6bb5e325737ce74584b1594c2f7ed))
+
 ## [0.26.1](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.26.0...v0.26.1) (2026-10-18)
 
 
