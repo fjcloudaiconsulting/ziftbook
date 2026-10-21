@@ -22,6 +22,7 @@ from app.config import StripeSettings
 PINNED = "2026-09-30.endive"
 # Account create only: an Express account with Stripe-owned fees and losses is still preview-only
 # (endive answers account_controller_unsupported_configuration). The other calls stay on PINNED.
+# Drop it once a GA version's changelog lists Express accounts with Stripe-owned fees and losses.
 ACCOUNT_CREATE_VERSION = "2026-09-30.preview"
 TIMEOUT_SECONDS = 10
 TOLERANCE_SECONDS = 300
