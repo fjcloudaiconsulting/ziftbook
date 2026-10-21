@@ -23,6 +23,10 @@ ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
     PORT=3000 \
     HOSTNAME=0.0.0.0
+ARG APP_VERSION=dev
+ARG APP_REVISION=dev
+ENV ZIF_APP_VERSION=$APP_VERSION \
+    ZIF_APP_REVISION=$APP_REVISION
 WORKDIR /app
 COPY --from=build --chown=node:node /src/frontend/.next/standalone ./
 COPY --from=build --chown=node:node /src/frontend/.next/static ./.next/static

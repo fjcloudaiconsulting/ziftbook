@@ -3,6 +3,7 @@
 import { useTranslations } from "next-intl";
 
 import { Link } from "@/i18n/navigation";
+import type { AppVersion } from "@/lib/version";
 
 import styles from "../_ui/ui.module.css";
 
@@ -19,7 +20,7 @@ export function NewTab({ href, children }: { href: string; children: React.React
 
 /** The booking pages' minimal footer (ZIF-147). Links open a new tab: leaving would lose a booking
  * half filled in. */
-export function BookingFooter() {
+export function BookingFooter({ version }: { version: AppVersion | null }) {
   const t = useTranslations("BookingPage");
   return (
     <footer className={styles.minimalFooter}>
@@ -28,6 +29,7 @@ export function BookingFooter() {
       </span>
       <NewTab href="/terms">{t("footerTerms")}</NewTab>
       <NewTab href="/privacy">{t("footerPrivacy")}</NewTab>
+      {version && <span>{`v${version.version} (${version.revision})`}</span>}
     </footer>
   );
 }

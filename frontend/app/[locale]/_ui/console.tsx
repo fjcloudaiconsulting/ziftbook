@@ -18,6 +18,7 @@ import { Link, usePathname, useRouter } from "@/i18n/navigation";
 import { trimmedName } from "@/lib/account";
 import { allowed, canAnswerRequests, guardedWrite, navFor, needsName, type Role, sectionOf, type Section, stickyHeight, writeOutcome } from "@/lib/console";
 import { badgeText } from "@/lib/today";
+import type { AppVersion } from "@/lib/version";
 
 import { LanguageSwitcher } from "./header";
 import { Banner, FieldError, Heading, JSON_WRITE, NoScript, type Outcome, problem, send, Submit } from "./parts";
@@ -232,7 +233,11 @@ export function SignedOutBanner() {
   );
 }
 
-function MoreSheet({ more, current, open, onClose }: { more: Section[]; current: Section | null; open: boolean; onClose(): void }) {
+function VersionLine({ version }: { version: AppVersion | null }) {
+  return version && <p className={styles.versionLine}>{`v${version.version} · ${version.revision}`}</p>;
+}
+
+function MoreSheet({ more, current, open, onClose, version }: { more: Section[]; current: Section | null; open: boolean; onClose(): void; version: AppVersion | null }) {
   const nav = useTranslations("Console.nav");
   const ref = useRef<HTMLDialogElement>(null);
 
@@ -266,6 +271,7 @@ function MoreSheet({ more, current, open, onClose }: { more: Section[]; current:
           </svg>
           <span>{nav("close")}</span>
         </button>
+        <VersionLine version={version} />
       </div>
     </dialog>
   );
@@ -371,6 +377,15 @@ export function Shell({ children }: { children: ReactNode }) {
   const [moreOpen, setMoreOpen] = useState(false);
   const [footerSlot, setFooterSlot] = useState<HTMLDivElement | null>(null);
   const [pendingCount, setPendingCount] = useState<number | null>(null);
+  const [version, setVersion] = useState<AppVersion | null>(null);
+
+  // Dev-only version line: 404 unless the deployment turns it on; any failure just leaves it out.
+  useEffect(() => {
+    fetch("/version.json")
+      .then((res) => (res.ok ? res.json() : null))
+      .then(setVersion)
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -518,6 +533,7 @@ export function Shell({ children }: { children: ReactNode }) {
             {nav.sidebar.map((section) => (
               <NavLink key={section} section={section} current={current} className={styles.navItem} badge={section === "today" ? badge : null} />
             ))}
+            <VersionLine version={version} />
           </nav>
 
           <main id="content" className={styles.content}>
@@ -556,7 +572,7 @@ export function Shell({ children }: { children: ReactNode }) {
           </nav>
         </div>
 
-        <MoreSheet more={nav.more} current={current} open={moreOpen} onClose={() => setMoreOpen(false)} />
+        <MoreSheet more={nav.more} current={current} open={moreOpen} onClose={() => setMoreOpen(false)} version={version} />
       </div>
     </ConsoleContext.Provider>
   );

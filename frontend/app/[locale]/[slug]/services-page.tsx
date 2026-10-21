@@ -9,6 +9,7 @@ import { useRouter } from "@/i18n/navigation";
 import { checkoutUrl } from "@/lib/booking-page";
 import { formatMoney } from "@/lib/money";
 import { type Locale } from "@/lib/services";
+import type { AppVersion } from "@/lib/version";
 import { zoneCity } from "@/lib/week";
 
 import { Banner, Outcome } from "../_ui/parts";
@@ -108,7 +109,7 @@ function ServiceDialog({
 }
 
 /** `/[slug]`: the business and its services. The dialog's one source of truth is ?service=. */
-export function ServicesPage({ page, locale }: { page: BookingPageOut; locale: string }) {
+export function ServicesPage({ page, locale, version }: { page: BookingPageOut; locale: string; version: AppVersion | null }) {
   const t = useTranslations("BookingPage");
   const router = useRouter();
   const params = useSearchParams();
@@ -165,7 +166,7 @@ export function ServicesPage({ page, locale }: { page: BookingPageOut; locale: s
           onBook={(svc) => router.replace(checkoutUrl(page.slug, { serviceId: svc.id, memberId: null, at: null }))}
         />
       </main>
-      <BookingFooter />
+      <BookingFooter version={version} />
     </>
   );
 }

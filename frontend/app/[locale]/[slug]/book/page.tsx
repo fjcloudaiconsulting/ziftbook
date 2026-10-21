@@ -2,6 +2,7 @@ import { notFound, redirect } from "next/navigation";
 import { getTranslations } from "next-intl/server";
 
 import { parseCheckout } from "@/lib/booking-page";
+import { appVersion } from "@/lib/version";
 
 import { LanguageSwitcher } from "../../_ui/header";
 import { Outcome } from "../../_ui/parts";
@@ -65,6 +66,7 @@ export default async function CheckoutPage({
         page={loaded.data}
         locale={locale}
         turnstileSiteKey={process.env.ZIF_TURNSTILE_SITE_KEY ?? null}
+        version={appVersion()}
         serviceId={service.id}
         memberId={memberId}
         at={at}

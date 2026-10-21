@@ -39,6 +39,7 @@ import { dateLocale } from "@/lib/console";
 import { defaultDial, dialOptions } from "@/lib/dial-codes";
 import { formatMoney } from "@/lib/money";
 import { type Locale } from "@/lib/services";
+import type { AppVersion } from "@/lib/version";
 import { zoneCity } from "@/lib/week";
 
 import { Banner, FieldError, JSON_WRITE, send, Submit } from "../_ui/parts";
@@ -108,6 +109,7 @@ export function BookingPage({
   page,
   locale,
   turnstileSiteKey,
+  version,
   serviceId,
   memberId,
   at,
@@ -116,6 +118,7 @@ export function BookingPage({
   page: BookingPageOut;
   locale: string;
   turnstileSiteKey: string | null;
+  version: AppVersion | null;
   serviceId: string;
   memberId: string | null;
   at: string | null;
@@ -914,7 +917,7 @@ export function BookingPage({
           {body}
         </div>
       </main>
-      <BookingFooter />
+      <BookingFooter version={version} />
       {/* onReady, not onLoad: next/script's LoadCache means onLoad only fires the very first time this
        * script URL is ever loaded on the page — a client-side locale switch or soft nav remounts this
        * page without the browser reloading the script, so onLoad would never fire again and no
@@ -989,7 +992,7 @@ export function BookingPage({
             <DoneScreen page={page} done={done} locale={loc} dLocale={dLocale} zone={zone} t={t} onAgain={() => router.push(`/${page.slug}`)} />
           </div>
         </main>
-        <BookingFooter />
+        <BookingFooter version={version} />
       </>
     );
   }
