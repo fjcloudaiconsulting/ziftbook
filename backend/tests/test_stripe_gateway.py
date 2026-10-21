@@ -101,6 +101,20 @@ def test_account_calls_ask_for_the_merchant_configuration_and_read_card_payments
     assert pending.retrieve_account("acct_1RecordedAccount").charges_enabled is False
 
 
+# ZIF-158 fence. Kills: account create on the GA version, which Stripe refuses for an Express
+# account with Stripe-owned fees and losses (account_controller_unsupported_configuration), or
+# the preview version leaking into the other calls.
+def test_only_account_create_uses_the_preview_version() -> None:
+    http = Recorder()
+    gateway = Gateway(http_client=http)
+
+    create(gateway)
+    gateway.retrieve_account("acct_1RecordedAccount")
+
+    assert http.headers[0]["Stripe-Version"] == "2026-09-30.preview"
+    assert http.headers[1]["Stripe-Version"] == "2026-09-30.endive"
+
+
 # ZIF-158 F16. fence. Kills: a hard-coded fee payer, so mode 3 silently never applies.
 @pytest.mark.parametrize("collector", ["stripe", "application"])
 def test_the_fee_payer_sent_is_the_one_asked_for(collector: FeesCollector) -> None:

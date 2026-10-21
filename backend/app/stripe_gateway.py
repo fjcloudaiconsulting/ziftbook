@@ -20,6 +20,9 @@ from app.config import StripeSettings
 # The account API with `responsibilities` (fee payer) on v2 Accounts: the one this SDK release
 # (stripe 16.0.0) is generated for.
 PINNED = "2026-09-30.endive"
+# Account create only: an Express account with Stripe-owned fees and losses is still preview-only
+# (endive answers account_controller_unsupported_configuration). The other calls stay on PINNED.
+ACCOUNT_CREATE_VERSION = "2026-09-30.preview"
 TIMEOUT_SECONDS = 10
 TOLERANCE_SECONDS = 300
 logger = logging.getLogger(__name__)
@@ -185,7 +188,11 @@ class Gateway:
                 },
                 "include": ["configuration.merchant"],
             }
-            return _account(client.v2.core.accounts.create(params, {"idempotency_key": key}))
+            return _account(
+                client.v2.core.accounts.create(
+                    params, {"idempotency_key": key, "stripe_version": ACCOUNT_CREATE_VERSION}
+                )
+            )
 
         return self._call("create_account", call)
 
