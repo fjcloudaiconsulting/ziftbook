@@ -98,7 +98,11 @@ export function PaymentStep({
         live.current = { stripe, elements };
       })
       // Stripe.js failing to load, or throwing on options it refuses (the step stayed silently empty).
-      .catch(() => !off && onUnavailable());
+      // Logged: the console is where Stripe names the refused option.
+      .catch((error: unknown) => {
+        console.error(error);
+        if (!off) onUnavailable();
+      });
     return () => {
       off = true;
       element?.destroy();
