@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { appVersion } from "../lib/version.ts";
+import { appVersion, versionLabel } from "../lib/version.ts";
 
 const build = { ZIF_APP_VERSION: "0.27.1", ZIF_APP_REVISION: "315a9c5f0e1d2c3b4a5968778695a4b3c2d1e0f9" };
 
@@ -21,5 +21,14 @@ describe("appVersion", () => {
   });
   test("falls back to dev when the image carries no build args", () => {
     assert.deepEqual(appVersion({ ZIF_SHOW_VERSION: "true" }), { version: "dev", revision: "dev" });
+  });
+});
+
+describe("versionLabel", () => {
+  test("marks a release as dev, so dev never reads like a stable release", () => {
+    assert.equal(versionLabel({ version: "0.28.0", revision: "b82e21e" }), "v0.28.0-dev");
+  });
+  test("an image without build args reads dev, never vdev-dev", () => {
+    assert.equal(versionLabel({ version: "dev", revision: "dev" }), "dev");
   });
 });

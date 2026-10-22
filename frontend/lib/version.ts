@@ -9,3 +9,9 @@ export function appVersion(env: Record<string, string | undefined> = process.env
     revision: (env.ZIF_APP_REVISION ?? "dev").slice(0, 7),
   };
 }
+
+/** The version as the line shows it: marked -dev, since only non-production deployments show it.
+ * version.json and /api/healthz keep the plain version, which matches the release tag. */
+export function versionLabel({ version }: AppVersion): string {
+  return version === "dev" ? "dev" : `v${version}-dev`;
+}
