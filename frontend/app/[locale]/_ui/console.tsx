@@ -18,7 +18,7 @@ import { Link, usePathname, useRouter } from "@/i18n/navigation";
 import { trimmedName } from "@/lib/account";
 import { allowed, canAnswerRequests, guardedWrite, navFor, needsName, type Role, sectionOf, type Section, stickyHeight, writeOutcome } from "@/lib/console";
 import { badgeText } from "@/lib/today";
-import type { AppVersion } from "@/lib/version";
+import { type AppVersion, versionLabel } from "@/lib/version";
 
 import { LanguageSwitcher } from "./header";
 import { Banner, FieldError, Heading, JSON_WRITE, NoScript, type Outcome, problem, send, Submit } from "./parts";
@@ -234,7 +234,7 @@ export function SignedOutBanner() {
 }
 
 function VersionLine({ version }: { version: AppVersion | null }) {
-  return version && <p className={styles.versionLine}>{`v${version.version} · ${version.revision}`}</p>;
+  return version && <p className={styles.versionLine}>{`${versionLabel(version)} · ${version.revision}`}</p>;
 }
 
 function MoreSheet({ more, current, open, onClose, version }: { more: Section[]; current: Section | null; open: boolean; onClose(): void; version: AppVersion | null }) {

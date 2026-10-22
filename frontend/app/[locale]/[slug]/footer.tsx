@@ -3,7 +3,7 @@
 import { useTranslations } from "next-intl";
 
 import { Link } from "@/i18n/navigation";
-import type { AppVersion } from "@/lib/version";
+import { type AppVersion, versionLabel } from "@/lib/version";
 
 import styles from "../_ui/ui.module.css";
 
@@ -29,7 +29,7 @@ export function BookingFooter({ version }: { version: AppVersion | null }) {
       </span>
       <NewTab href="/terms">{t("footerTerms")}</NewTab>
       <NewTab href="/privacy">{t("footerPrivacy")}</NewTab>
-      {version && <span>{`v${version.version} (${version.revision})`}</span>}
+      {version && <span>{`${versionLabel(version)} (${version.revision})`}</span>}
     </footer>
   );
 }
