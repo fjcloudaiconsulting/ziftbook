@@ -299,8 +299,10 @@ export function Settings() {
           <Banner tone={message.tone}>{message.text}</Banner>
         </div>
       )}
-      <div className={styles.section}>
+      <div className={`${styles.section} ${styles.sectionRow}`}>
         <h2>{t("bookingPageHeading")}</h2>
+        <p className={styles.sectionDesc}>{t("bookingPageDesc")}</p>
+        <div className={styles.sectionBody}>
         <span className={`${styles.statusPill} ${settings.published ? styles.statusLive : ""}`}>
           {settings.published ? (
             <svg aria-hidden="true" viewBox="0 0 16 16">
@@ -355,25 +357,31 @@ export function Settings() {
           </Submit>
         </form>
         {settings.published && <p className={uiStyles.hint}>{t("unpublishHint")}</p>}
+        </div>
       </div>
 
       <form id={formId} noValidate onSubmit={onSubmit}>
-        <fieldset className={`${styles.section} ${styles.settingsSection}`} disabled={saving}>
+        <fieldset className={`${styles.section} ${styles.sectionRow} ${styles.settingsSection}`} disabled={saving}>
           <legend>
             <h2>{t("yourBusinessHeading")}</h2>
           </legend>
+          <p className={styles.sectionDesc}>{t("yourBusinessDesc")}</p>
+          <div className={styles.sectionBody}>
           <Field id={fid("timezone")} label={t("timezoneLabel")} hint={t("timezoneHint")}>
             {(p) => pick("timezone", p.id, p.describedBy, zones.map((z) => ({ value: z, label: z })))}
           </Field>
           <Field id={fid("language")} label={t("languageLabel")} hint={t("languageHint")} short>
             {(p) => pick("language", p.id, p.describedBy, Object.entries(NAMES).map(([value, label]) => ({ value, label })))}
           </Field>
+          </div>
         </fieldset>
 
-        <fieldset className={`${styles.section} ${styles.settingsSection}`} disabled={saving}>
+        <fieldset className={`${styles.section} ${styles.sectionRow} ${styles.settingsSection}`} disabled={saving}>
           <legend>
             <h2>{t("bookingsHeading")}</h2>
           </legend>
+          <p className={styles.sectionDesc}>{t("bookingsDesc")}</p>
+          <div className={styles.sectionBody}>
           {check("auto_confirm", t("autoConfirmLabel"), t("autoConfirmHint"))}
           <Field
             id={fid("slot_step_minutes")}
@@ -427,14 +435,17 @@ export function Settings() {
           >
             {(p) => int("max_pending_per_email", p.id, p.describedBy, p.invalid)}
           </Field>
+          </div>
         </fieldset>
 
         <Payments disabled={saving} switchRow={(min, ready) => check("payment_check", t("paymentCheckLabel"), t("paymentCheckHint", { min }), !ready && !draft.payment_check)} />
 
-        <fieldset className={`${styles.section} ${styles.settingsSection}`} disabled={saving}>
+        <fieldset className={`${styles.section} ${styles.sectionRow} ${styles.settingsSection}`} disabled={saving}>
           <legend>
             <h2>{t("cancellingHeading")}</h2>
           </legend>
+          <p className={styles.sectionDesc}>{t("cancellingDesc")}</p>
+          <div className={styles.sectionBody}>
           <Field
             id={fid("free_cancellation_hours")}
             label={t("freeCancellationLabel")}
@@ -471,14 +482,18 @@ export function Settings() {
               />
             )}
           </Field>
+          </div>
         </fieldset>
 
-        <fieldset className={`${styles.section} ${styles.settingsSection}`} disabled={saving}>
+        <fieldset className={`${styles.section} ${styles.sectionRow} ${styles.settingsSection}`} disabled={saving}>
           <legend>
             <h2>{t("teamHeading")}</h2>
           </legend>
+          <p className={styles.sectionDesc}>{t("teamDesc")}</p>
+          <div className={styles.sectionBody}>
           {check("workers_edit_own_hours", t("workersEditLabel"), t("workersEditHint"))}
           {check("workers_answer_requests", t("workersAnswerLabel"), t("workersAnswerHint"))}
+          </div>
         </fieldset>
 
         {showBar && (
