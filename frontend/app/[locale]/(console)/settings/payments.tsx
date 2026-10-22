@@ -85,10 +85,12 @@ export function Payments({ disabled, switchRow }: { disabled: boolean; switchRow
         : t(account.state === "none" ? "paymentsNone" : account.state === "onboarding" ? "paymentsOnboarding" : "paymentsReady");
 
   return (
-    <fieldset className={`${styles.section} ${styles.settingsSection}`} disabled={disabled}>
+    <fieldset className={`${styles.section} ${styles.sectionRow} ${styles.settingsSection}`} disabled={disabled}>
       <legend>
         <h2>{t("paymentsHeading")}</h2>
+        <p className={styles.sectionDesc}>{t("paymentsDesc")}</p>
       </legend>
+      <div className={styles.sectionBody}>
       {signedOut && <SignedOutBanner />}
       {body && <p className={styles.body}>{body}</p>}
       {(action === "connect" || action === "continue") && (
@@ -110,6 +112,7 @@ export function Payments({ disabled, switchRow }: { disabled: boolean; switchRow
         </p>
       )}
       {failed && <Banner tone="error">{t("paymentsFailed")}</Banner>}
+      </div>
     </fieldset>
   );
 }
