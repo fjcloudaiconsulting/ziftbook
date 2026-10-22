@@ -88,8 +88,8 @@ export function Payments({ disabled, switchRow }: { disabled: boolean; switchRow
     <fieldset className={`${styles.section} ${styles.sectionRow} ${styles.settingsSection}`} disabled={disabled}>
       <legend>
         <h2>{t("paymentsHeading")}</h2>
-        <p className={styles.sectionDesc}>{t("paymentsDesc")}</p>
       </legend>
+      <p className={styles.sectionDesc}>{t("paymentsDesc")}</p>
       <div className={styles.sectionBody}>
       {signedOut && <SignedOutBanner />}
       {body && <p className={styles.body}>{body}</p>}

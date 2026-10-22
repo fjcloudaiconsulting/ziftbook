@@ -435,11 +435,13 @@
     display: grid; grid-template-columns: 15rem minmax(0, 30rem); grid-template-rows: auto 1fr;
     column-gap: 3rem; row-gap: 0.4rem; align-items: start; max-width: none; padding: 1.75rem 0;
   }
-  .sectionRow.sectionRow, .settingsSection + .settingsSection.sectionRow { margin-top: 0; }
+  .sectionRow.sectionRow { margin-top: 0; }
+  /* Booking page, the only row that isn't a fieldset, sits right under the page heading. */
+  div.sectionRow { padding-top: 0.5rem; }
   .sectionRow > h2 { grid-area: 1 / 1; }
   .sectionRow > .sectionBody { grid-area: 1 / 2 / span 2; }
   /* A floated legend is an ordinary grid item, so it can take the left cell. */
-  .sectionRow > legend { float: left; grid-area: 1 / 1 / span 2; }
+  .sectionRow > legend { float: left; grid-area: 1 / 1; margin: 0; }
   .sectionDesc { display: block; grid-area: 2 / 1; margin: 0.4rem 0 0; font-size: 0.9375rem; color: var(--muted); text-wrap: pretty; }
   .sectionBody > button, .sectionBody > form > button { width: auto; min-width: 10rem; align-self: flex-start; }
 }

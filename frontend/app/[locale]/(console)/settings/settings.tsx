@@ -364,8 +364,8 @@ export function Settings() {
         <fieldset className={`${styles.section} ${styles.sectionRow} ${styles.settingsSection}`} disabled={saving}>
           <legend>
             <h2>{t("yourBusinessHeading")}</h2>
-            <p className={styles.sectionDesc}>{t("yourBusinessDesc")}</p>
           </legend>
+          <p className={styles.sectionDesc}>{t("yourBusinessDesc")}</p>
           <div className={styles.sectionBody}>
           <Field id={fid("timezone")} label={t("timezoneLabel")} hint={t("timezoneHint")}>
             {(p) => pick("timezone", p.id, p.describedBy, zones.map((z) => ({ value: z, label: z })))}
@@ -379,8 +379,8 @@ export function Settings() {
         <fieldset className={`${styles.section} ${styles.sectionRow} ${styles.settingsSection}`} disabled={saving}>
           <legend>
             <h2>{t("bookingsHeading")}</h2>
-            <p className={styles.sectionDesc}>{t("bookingsDesc")}</p>
           </legend>
+          <p className={styles.sectionDesc}>{t("bookingsDesc")}</p>
           <div className={styles.sectionBody}>
           {check("auto_confirm", t("autoConfirmLabel"), t("autoConfirmHint"))}
           <Field
@@ -443,8 +443,8 @@ export function Settings() {
         <fieldset className={`${styles.section} ${styles.sectionRow} ${styles.settingsSection}`} disabled={saving}>
           <legend>
             <h2>{t("cancellingHeading")}</h2>
-            <p className={styles.sectionDesc}>{t("cancellingDesc")}</p>
           </legend>
+          <p className={styles.sectionDesc}>{t("cancellingDesc")}</p>
           <div className={styles.sectionBody}>
           <Field
             id={fid("free_cancellation_hours")}
@@ -488,8 +488,8 @@ export function Settings() {
         <fieldset className={`${styles.section} ${styles.sectionRow} ${styles.settingsSection}`} disabled={saving}>
           <legend>
             <h2>{t("teamHeading")}</h2>
-            <p className={styles.sectionDesc}>{t("teamDesc")}</p>
           </legend>
+          <p className={styles.sectionDesc}>{t("teamDesc")}</p>
           <div className={styles.sectionBody}>
           {check("workers_edit_own_hours", t("workersEditLabel"), t("workersEditHint"))}
           {check("workers_answer_requests", t("workersAnswerLabel"), t("workersAnswerHint"))}

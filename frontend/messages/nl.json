@@ -700,7 +700,7 @@
       "policyLabel": "Annuleringsbeleid",
       "policyHint": "Klanten zien dit als ze boeken en als ze hun afspraak beheren. Schrijf het in de taal van je e-mails. Nieuwe boekingen krijgen de nieuwe regels; bestaande boekingen houden hun eigen regels.",
       "teamHeading": "Team",
-      "teamDesc": "Wat teamleden kunnen doen zonder jou.",
+      "teamDesc": "Wat teamleden zonder jou kunnen doen.",
       "workersEditLabel": "Teamleden kunnen hun eigen werktijden wijzigen",
       "workersEditHint": "Uit: alleen jij stelt hun tijden in.",
       "workersAnswerLabel": "Teamleden kunnen hun eigen boekingsaanvragen accepteren en afwijzen",
