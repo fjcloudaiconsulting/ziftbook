@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.29.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.28.0...v0.29.0) (2026-10-22)
+
+
+### Features
+
+* **frontend:** the dev version line reads v0.28.0-dev, so dev never looks like a stable release (ZIF-158) ([#318](https://github.com/fjcloudaiconsulting/ziftbook/issues/318)) ([499438d](https://github.com/fjcloudaiconsulting/ziftbook/commit/499438d15794a48b5d947b279af60fa5e7cae2e5))
+
+
+### Bug Fixes
+
+* **deps:** update python non-major ([#269](https://github.com/fjcloudaiconsulting/ziftbook/issues/269)) ([1aa103b](https://github.com/fjcloudaiconsulting/ziftbook/commit/1aa103bba02c2d6fb1ec24f7790a59edd0ff06ca))
+* **frontend:** the card check loads its payment fields again on Stripe.js 10 (ZIF-158) ([#317](https://github.com/fjcloudaiconsulting/ziftbook/issues/317)) ([f364d89](https://github.com/fjcloudaiconsulting/ziftbook/commit/f364d89f36b88a44d48a951f1f5dfeac3fd96ad3))
+* the API gets ZIF_APP_URL too, so Stripe's onboarding returns to the web app (ZIF-158) ([#316](https://github.com/fjcloudaiconsulting/ziftbook/issues/316)) ([6e15218](https://github.com/fjcloudaiconsulting/ziftbook/commit/6e152188906fb571e2f28034509583fd12ed7191))
+
 ## [0.28.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.27.0...v0.28.0) (2026-10-21)
 
 
