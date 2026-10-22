@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.30.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.29.0...v0.30.0) (2026-10-22)
+
+
+### Features
+
+* **frontend:** settings use the desktop width, a section's name and purpose beside its fields (ZIF-163) ([#319](https://github.com/fjcloudaiconsulting/ziftbook/issues/319)) ([5fc89f3](https://github.com/fjcloudaiconsulting/ziftbook/commit/5fc89f30eb5e9e6792d183eccea6d9fccd2ca6fc))
+
 ## [0.29.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.28.0...v0.29.0) (2026-10-22)
 
 
