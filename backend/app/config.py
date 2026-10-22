@@ -69,7 +69,8 @@ class MailSettings(Settings):
     mailgun_region: Literal["eu", "us"] = "eu"
     # Development only (compose): Mailpit's base URL. Ignored once mailgun_api_key is set.
     mailpit_url: str | None = None
-    # Where links in emails point: the web app, as people reach it.
+    # The web app, as people reach it: where links in emails point, and where Stripe's onboarding
+    # returns (payments.py), so the API needs it as well as the worker.
     app_url: str = "http://localhost:3000"
 
 
