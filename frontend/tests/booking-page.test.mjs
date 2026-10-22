@@ -443,15 +443,16 @@ describe("F2 the payment step (ZIF-158)", () => {
 
   test("fence: the Element's options equal the server intent's (kills a refused confirm, iDEAL on a check)", () => {
     // Wrong implementation killed: automatic capture or no method list for a check (Stripe refuses the
-    // confirm when the Element and the intent differ), a card-only list for a payment.
+    // confirm when the Element and the intent differ), a card-only list for a payment, and the
+    // paymentMethodTypes name Stripe.js 10 throws on (the step never mounted on dev, 2026-10-22).
     assert.deepEqual(elementsOptions("check", "authorisation", price), {
-      mode: "payment", amount: 3500, currency: "eur", captureMethod: "manual", paymentMethodTypes: ["card"],
+      mode: "payment", amount: 3500, currency: "eur", captureMethod: "manual", allowedPaymentMethodTypes: ["card"],
     });
-    assert.deepEqual(elementsOptions("check", "setup", price), { mode: "setup", currency: "eur", paymentMethodTypes: ["card"] });
+    assert.deepEqual(elementsOptions("check", "setup", price), { mode: "setup", currency: "eur", allowedPaymentMethodTypes: ["card"] });
     for (const checkWith of ["authorisation", "setup"]) {
       const pay = elementsOptions("pay", checkWith, price);
       assert.deepEqual(pay, { mode: "payment", amount: 3500, currency: "eur", captureMethod: "automatic" });
-      assert.ok(!("paymentMethodTypes" in pay));
+      assert.ok(!("allowedPaymentMethodTypes" in pay));
     }
   });
 

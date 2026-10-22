@@ -88,17 +88,17 @@ export function PaymentStep({
   useEffect(() => {
     let off = false;
     let element: StripePaymentElement | null = null;
-    void stripePromise.then(
-      (stripe) => {
+    void stripePromise
+      .then((stripe) => {
         if (off) return;
         if (!stripe || !box.current) return onUnavailable();
         const elements = stripe.elements({ ...elementsOptions(choice, payment.check_with, price), appearance: appearance() });
         element = elements.create("payment");
         element.mount(box.current);
         live.current = { stripe, elements };
-      },
-      () => !off && onUnavailable(),
-    );
+      })
+      // Stripe.js failing to load, or throwing on options it refuses (the step stayed silently empty).
+      .catch(() => !off && onUnavailable());
     return () => {
       off = true;
       element?.destroy();

@@ -2,6 +2,8 @@
 // import besides lib/booking-link.ts's addDays) so node --test can run it directly: cancellation
 // terms, the business's own policy text, email typo suggestions, the POST body, the answer-to-
 // outcome mapping, day-part grouping and the availability window.
+import type { StripeElementsOptionsMode } from "@stripe/stripe-js";
+
 import { addDays, slotsByDay } from "./booking-link.ts";
 
 /** Cancellation terms once a slot is picked: free up to `freeUntil`, or already inside that
@@ -326,10 +328,6 @@ export function phoneValue(dial: string, businessDial: string, local: string): s
 /** Stripe's locale for each page language (the app's pt is Brazilian, as TURNSTILE_LANG). */
 export const STRIPE_LOCALE: Record<string, string> = { en: "en", nl: "nl", pt: "pt-BR" };
 
-export type ElementsOptions =
-  | { mode: "payment"; amount: number; currency: string; captureMethod: "manual" | "automatic"; paymentMethodTypes?: string[] }
-  | { mode: "setup"; currency: string; paymentMethodTypes: string[] };
-
 /** The deferred Payment Element's options, which must equal the server's intent (Stripe refuses the
  * confirm otherwise): a check is card only (held, or a setup where the card network allows no hold);
  * paying in advance offers every method the account has. */
@@ -337,11 +335,12 @@ export function elementsOptions(
   choice: PaymentChoice,
   checkWith: "authorisation" | "setup",
   price: { amount_minor: number; currency: string },
-): ElementsOptions {
+  // Stripe.js's own type, so an option it drops fails the typecheck (10.0.0 dropped paymentMethodTypes).
+): StripeElementsOptionsMode {
   const currency = price.currency.toLowerCase();
   if (choice === "pay") return { mode: "payment", amount: price.amount_minor, currency, captureMethod: "automatic" };
-  if (checkWith === "setup") return { mode: "setup", currency, paymentMethodTypes: ["card"] };
-  return { mode: "payment", amount: price.amount_minor, currency, captureMethod: "manual", paymentMethodTypes: ["card"] };
+  if (checkWith === "setup") return { mode: "setup", currency, allowedPaymentMethodTypes: ["card"] };
+  return { mode: "payment", amount: price.amount_minor, currency, captureMethod: "manual", allowedPaymentMethodTypes: ["card"] };
 }
 
 const STRIPE = /^(payment_intent|setup_intent|redirect_status)/;
