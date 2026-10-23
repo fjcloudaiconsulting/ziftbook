@@ -141,3 +141,38 @@ def test_startup_totp_key_field(
     assert [line["level"] for line in unavailable] == ["ERROR"] * errors
     if value:
         assert value not in json.dumps(lines, ensure_ascii=False)  # the raw text, unescaped
+
+
+# ZB-25: the rate-limit key is logged as a state, never its value, and never refuses a start.
+@pytest.mark.parametrize(
+    ("value", "state", "warnings"),
+    [
+        (None, "unset", 1),
+        ("short", "weak", 1),
+        ("dev-only-rate-limit-key-not-a-secret-0000", "dev", 1),
+        ("k" * 40, "set", 0),
+    ],
+    ids=["unset", "weak", "dev", "set"],
+)
+def test_startup_rate_limit_key_field(
+    app_engine: Engine,
+    log_lines: Callable[[], list[dict[str, Any]]],
+    monkeypatch: pytest.MonkeyPatch,
+    value: str | None,
+    state: str,
+    warnings: int,
+) -> None:
+    if value is None:
+        monkeypatch.delenv("ZIF_RATE_LIMIT_KEY", raising=False)
+    else:
+        monkeypatch.setenv("ZIF_RATE_LIMIT_KEY", value)
+    # A public URL: the development key counts as unset there; any other key keeps its state.
+    monkeypatch.setenv("ZIF_APP_URL", "https://app.example.com")
+    with new_client(create_app()) as client:
+        assert client.get("/api/healthz").status_code == 200
+    lines = log_lines()
+    assert [line["rate_limit_key"] for line in lines if line["msg"] == "api started"] == [state]
+    unpeppered = [line for line in lines if line["msg"].startswith("rate limit key unset")]
+    assert [line["level"] for line in unpeppered] == ["WARNING"] * warnings
+    if value:
+        assert value not in json.dumps(lines)

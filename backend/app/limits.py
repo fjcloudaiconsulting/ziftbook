@@ -1,13 +1,20 @@
 """Rate limits counted in Postgres: a fixed window per key, no Redis."""
 
 import hashlib
+import hmac
 import ipaddress
 from datetime import timedelta
+from typing import Literal
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.config import RateLimitSettings, is_dev_value_on_public_url
 from app.db import SessionLocal
+
+MIN_KEY = 32  # characters; a shorter key counts as unset
+# SHA-256 of docker-compose.yaml's development ZIF_RATE_LIMIT_KEY.
+DEV_KEY_SHA256 = "1a77674c6e51c52ee4710b01c38678b88ab6c007d4e874a962b0caf258430ca5"
 
 # One statement for every key: the row lock serialises concurrent attempts on a key, so the count is
 # exact. A window older than :window starts again at 1.
@@ -100,11 +107,47 @@ def count(key: str, window: timedelta) -> int:
     return hits or 0
 
 
+def _pepper() -> bytes | None:
+    """ZIF_RATE_LIMIT_KEY, read at call time; None while it is unset, shorter than MIN_KEY, or the
+    development key on a public ZIF_APP_URL."""
+    key = RateLimitSettings().rate_limit_key.get_secret_value()
+    if len(key) < MIN_KEY or is_dev_value_on_public_url(key, DEV_KEY_SHA256):
+        return None
+    return key.encode()
+
+
+def key_state() -> Literal["set", "unset", "weak", "dev"]:
+    """Never the key itself. "dev": the development key on a public ZIF_APP_URL, ignored as if
+    unset."""
+    key = RateLimitSettings().rate_limit_key.get_secret_value()
+    if not key:
+        return "unset"
+    if is_dev_value_on_public_url(key, DEV_KEY_SHA256):
+        return "dev"
+    return "set" if len(key) >= MIN_KEY else "weak"
+
+
+def _key(action: str, kind: str, value: str) -> str:
+    """Every key that embeds an address goes through here. With the pepper set the value is its
+    HMAC-SHA256, so the table holds neither addresses nor hashes anyone can check a guess against;
+    unset, the value stays as the key's callers built it (the current form)."""
+    pepper = _pepper()
+    if pepper is None:
+        return f"{action}:{kind}:{value}"
+    # surrogatepass: a lone surrogate from a JSON body must not turn into a 500 here.
+    digest = hmac.new(pepper, value.encode("utf-8", "surrogatepass"), hashlib.sha256).hexdigest()
+    return f"{action}:{kind}:{digest}"
+
+
 def email_key(action: str, email: str) -> str:
     """The caller normalises the email first. Hashed, so the table holds no addresses."""
-    # surrogatepass: a lone surrogate from a JSON body must not turn into a 500 here.
-    digest = hashlib.sha256(email.encode("utf-8", "surrogatepass")).hexdigest()
-    return f"{action}:email:{digest}"
+    pepper = _pepper()
+    if pepper is None:
+        # surrogatepass: a lone surrogate from a JSON body must not turn into a 500 here.
+        return (
+            f"{action}:email:{hashlib.sha256(email.encode('utf-8', 'surrogatepass')).hexdigest()}"
+        )
+    return _key(action, "email", email)
 
 
 GMAIL_DOMAINS = frozenset({"gmail.com", "googlemail.com"})
@@ -133,9 +176,11 @@ def ip_key(action: str, host: str | None, *, v6_prefix: int = 64) -> str:
     try:
         address = ipaddress.ip_address(host or "")
     except ValueError:
-        return f"{action}:ip:unknown"
+        return _key(action, "ip", "unknown")
     if isinstance(address, ipaddress.IPv6Address):
         if address.ipv4_mapped is None:
-            return f"{action}:ip:{ipaddress.IPv6Network((int(address), v6_prefix), strict=False)}"
+            return _key(
+                action, "ip", str(ipaddress.IPv6Network((int(address), v6_prefix), strict=False))
+            )
         address = address.ipv4_mapped
-    return f"{action}:ip:{address}"
+    return _key(action, "ip", str(address))

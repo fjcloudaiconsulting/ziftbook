@@ -1,3 +1,5 @@
+import hashlib
+import hmac
 import threading
 import uuid
 from collections.abc import Iterator
@@ -179,6 +181,103 @@ def test_an_email_key_does_not_hold_the_address() -> None:
 
     assert "ana" not in key and key == limits.email_key("sign_in", "ana@studioana.nl")
     assert key != limits.email_key("sign_up", "ana@studioana.nl")
+
+
+PEPPER = "test-only-rate-limit-key-not-a-secret-0123456789"
+
+
+@pytest.fixture
+def peppered(monkeypatch: pytest.MonkeyPatch) -> str:
+    monkeypatch.setenv("ZIF_RATE_LIMIT_KEY", PEPPER)
+    return PEPPER
+
+
+def test_a_peppered_email_key_holds_neither_the_address_nor_its_plain_hash(peppered: str) -> None:
+    key = limits.email_key("a", "x@example.com")
+
+    assert "x@example.com" not in key
+    assert hashlib.sha256(b"x@example.com").hexdigest() not in key
+    expected = hmac.new(peppered.encode(), b"x@example.com", hashlib.sha256).hexdigest()
+    assert key == f"a:email:{expected}"
+    assert key == limits.email_key("a", "x@example.com")  # deterministic
+    assert key != limits.email_key("a", "y@example.com")
+    limits.email_key("a", "a\ud800@example.com")  # a lone surrogate doesn't raise
+
+
+@pytest.mark.parametrize(
+    ("host", "raw"),
+    [
+        ("192.0.2.1", "192.0.2.1"),
+        ("2001:db8:1:2::1", "2001:db8"),
+        ("::ffff:192.0.2.1", "192.0.2.1"),
+        ("not-an-ip", "unknown"),
+    ],
+)
+def test_a_peppered_ip_key_holds_no_address(peppered: str, host: str, raw: str) -> None:
+    key = limits.ip_key("a", host)
+
+    assert raw not in key
+    assert key == limits.ip_key("a", host)
+    assert key.startswith("a:ip:") and len(key) == len("a:ip:") + 64
+
+
+def test_peppered_ip_keys_keep_the_buckets(peppered: str) -> None:
+    assert limits.ip_key("a", "2001:db8:1:2::1") == limits.ip_key("a", "2001:db8:1:2:ffff::9")
+    assert limits.ip_key("a", "192.0.2.1") != limits.ip_key("a", "192.0.2.2")
+    assert limits.ip_key("a", "::ffff:192.0.2.1") == limits.ip_key("a", "192.0.2.1")
+    assert limits.ip_key("a", "x", v6_prefix=48) == limits.ip_key("a", None)
+    assert limits.ip_key("a", "2001:db8:1:2::1", v6_prefix=48) == limits.ip_key(
+        "a", "2001:db8:1:ffff::9", v6_prefix=48
+    )
+
+
+def test_a_different_pepper_gives_different_keys(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ZIF_RATE_LIMIT_KEY", "a" * 32)
+    first = limits.email_key("a", "x@example.com"), limits.ip_key("a", "192.0.2.1")
+    monkeypatch.setenv("ZIF_RATE_LIMIT_KEY", "b" * 32)
+
+    assert first != (limits.email_key("a", "x@example.com"), limits.ip_key("a", "192.0.2.1"))
+
+
+def test_without_the_key_the_current_form_stays(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("ZIF_RATE_LIMIT_KEY", raising=False)
+
+    assert limits.key_state() == "unset"
+    assert limits.email_key("a", "x@example.com") == (
+        f"a:email:{hashlib.sha256(b'x@example.com').hexdigest()}"
+    )
+    assert limits.ip_key("a", "192.0.2.1") == "a:ip:192.0.2.1"
+    assert limits.ip_key("a", "nope") == "a:ip:unknown"
+
+
+def test_a_key_shorter_than_32_characters_counts_as_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ZIF_RATE_LIMIT_KEY", "x" * 31)
+
+    assert limits.key_state() == "weak"
+    assert limits.ip_key("a", "192.0.2.1") == "a:ip:192.0.2.1"
+    monkeypatch.setenv("ZIF_RATE_LIMIT_KEY", "x" * 32)
+    assert limits.key_state() == "set"
+
+
+DEV_PEPPER = "dev-only-rate-limit-key-not-a-secret-0000"  # docker-compose.yaml's development value
+
+
+# fence: the development key counts as unset on a public URL, and peppers on localhost.
+def test_the_development_key_on_a_public_url_counts_as_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ZIF_RATE_LIMIT_KEY", DEV_PEPPER)
+    monkeypatch.setenv("ZIF_APP_URL", "https://app.example.com")
+
+    assert limits.key_state() == "dev"
+    assert limits.ip_key("a", "192.0.2.1") == "a:ip:192.0.2.1"
+    assert limits.email_key("a", "x@example.com") == (
+        f"a:email:{hashlib.sha256(b'x@example.com').hexdigest()}"
+    )
+    for local in ["http://localhost:3000", "http://127.0.0.1:3000", "http://[::1]:3000"]:
+        monkeypatch.setenv("ZIF_APP_URL", local)
+        assert limits.key_state() == "set", local
+        assert limits.ip_key("a", "192.0.2.1") != "a:ip:192.0.2.1", local
 
 
 @pytest.mark.parametrize(

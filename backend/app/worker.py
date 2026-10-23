@@ -13,7 +13,7 @@ from opentelemetry import metrics
 from opentelemetry.metrics import CallbackOptions, Observation
 from sqlalchemy import create_engine
 
-from app import bookings, jobs, logs, mail, payments, photos, tracing
+from app import bookings, jobs, limits, logs, mail, payments, photos, tracing
 from app.config import MailSettings, StripeSettings, WorkerSettings
 from app.db import SessionLocal
 from app.jobs import JobKind, run_once
@@ -123,6 +123,7 @@ async def serve(settings: WorkerSettings) -> None:
     mail_settings = MailSettings()
     # The secret key alone: release, refund and event jobs need nothing else (ZIF-158).
     payments_on = StripeSettings().secret_ready()
+    rate_limit_key = limits.key_state()
     # Never the Mailgun key or the healthcheck URL. "off": email jobs fail until the key is set.
     logger.info(
         "worker started",
@@ -133,10 +134,15 @@ async def serve(settings: WorkerSettings) -> None:
             "mailgun_domain": mail_settings.mailgun_domain,
             "mailgun_region": mail_settings.mailgun_region,
             "payments": "on" if payments_on else "off",
+            # Never the key. "unset"/"weak"/"dev": the recipient limits' keys are not peppered
+            # (ZB-25), as the API's.
+            "rate_limit_key": rate_limit_key,
         },
     )
     if not payments_on:
         logger.warning("stripe unset: payments off")
+    if rate_limit_key != "set":
+        logger.warning("rate limit key unset: rate-limit keys are not peppered")
     await work(KINDS, settings.healthcheck_url, stop)
     logger.info("worker stopped")
 

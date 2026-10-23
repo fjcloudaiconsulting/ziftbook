@@ -35,6 +35,7 @@ from app import (
     business_settings,
     clients,
     invites,
+    limits,
     logs,
     members,
     payments,
@@ -174,6 +175,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         raise RuntimeError("startup failed") from None
     setup_token = setup.token_state()
     totp_key = totp.key_state()
+    rate_limit_key = limits.key_state()
     storage_on = StorageSettings().configured()
     payments_on = StripeSettings().configured()
     # Here, not at import: `python -m app.main` prints the OpenAPI document to stdout.
@@ -189,6 +191,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             "setup_token": setup_token,
             # Never the key. "unset"/"invalid"/"dev": admin TOTP answers 503 (ZIF-71).
             "totp_key": totp_key,
+            # Never the key. "unset"/"weak"/"dev": rate-limit keys are not peppered (ZB-25).
+            "rate_limit_key": rate_limit_key,
             # "off": photo uploads answer 503 photos_unavailable (ZIF-133).
             "storage": "on" if storage_on else "off",
             # "off": owner payment routes answer 503 and booking pages book with no payment step.
@@ -213,6 +217,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Never a refusal to start (one replica, Recreate): recovery codes still let admins in.
     if totp_key != "set":
         logger.error("totp key unset, invalid or dev value: admin second factor unavailable")
+    if rate_limit_key != "set":
+        logger.warning("rate limit key unset: rate-limit keys are not peppered")
     # A legitimate state until the object store exists: logged, never a refusal to start.
     if not storage_on:
         logger.warning("storage unset: photo uploads refused")

@@ -698,6 +698,7 @@ def test_the_api_logs_its_settings_once_at_startup(
             "turnstile": "off",
             "setup_token": "unset",
             "totp_key": "set",
+            "rate_limit_key": "unset",
             "storage": "off",
             "payments": "off",
         }

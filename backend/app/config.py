@@ -96,6 +96,17 @@ class SecondFactorSettings(Settings):
     totp_key: SecretStr = SecretStr("")
 
 
+class RateLimitSettings(Settings):
+    """Rate-limit keys (ZB-25): the pepper that makes the email and IP in a key an HMAC. Shorter
+    than 32 characters counts as unset, as does the development key on a public ZIF_APP_URL, and
+    unset keeps the unpeppered form; the API and the worker log a WARNING at startup, never a
+    refusal to start."""
+
+    # Resolved at runtime from a secret, never committed (as turnstile_secret). API and worker.
+    # Setting or changing it changes every key, so counters start again once.
+    rate_limit_key: SecretStr = SecretStr("")
+
+
 class StorageSettings(Settings):
     """Photo storage (ZIF-133): an S3-compatible service with an uploads bucket (browser PUTs, a
     lifecycle rule expires them) and a media bucket (the resized variants, served from media_url).
