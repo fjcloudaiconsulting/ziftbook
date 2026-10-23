@@ -1397,8 +1397,8 @@ def test_emails_with_a_manage_link_never_get_a_reply_to(
 
 
 # ZIF-99 F2 fence: the client emails with no manage link reply to the business, in the normalised
-# form. The body check is a guard on future template edits. Kills no Reply-To at all, and the
-# LINKED test inverted.
+# form, and the From stays the sending domain. The body check is a guard on future template edits.
+# Kills no Reply-To at all, the LINKED test inverted, and a From set to the contact (fails DMARC).
 def test_emails_without_a_manage_link_reply_to_the_contact_email(
     people: People, app: FastAPI, ready: str
 ) -> None:
@@ -1419,6 +1419,7 @@ def test_emails_without_a_manage_link_reply_to_the_contact_email(
     ):
         sent = sent_newest(people.a, booking_id, template)
         assert sent["Headers"]["Reply-To"] == [REPLY_TO], template
+        assert sent["Headers"]["From"] == ["ziftbook <no-reply@test.ziftbook.invalid>"], template
         assert "/booking#" not in sent["Text"] and f"#{people.a}." not in sent["Text"], template
 
 
@@ -1458,18 +1459,3 @@ def test_without_a_contact_email_there_is_no_reply_to(
     sent = sent_newest(people.a, booking_id, "booking_cancelled")
 
     assert not has_reply_to(sent)
-
-
-# ZIF-99 F5 fence: the From stays the sending domain. Kills a From set to the contact (fails DMARC).
-def test_a_reply_to_leaves_the_from_on_the_sending_domain(
-    people: People, app: FastAPI, ready: str
-) -> None:
-    owner = signed_in(app, people.a, people.both)
-    set_contact(owner)
-    booking_id = confirmed_booking(app, people, ready)
-    assert patch(owner, booking_id, "cancelled_by_merchant").status_code == 200
-
-    sent = sent_newest(people.a, booking_id, "booking_cancelled")
-
-    assert sent["Headers"]["Reply-To"] == [REPLY_TO]
-    assert sent["Headers"]["From"] == ["ziftbook <no-reply@test.ziftbook.invalid>"]
