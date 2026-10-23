@@ -198,7 +198,8 @@ def test_a_removed_oldest_membership_lands_in_the_oldest_active_one(
     insert_membership(people.a, stranger, "worker", id=newer)
     try:
         response = sign_in(client, email_of(stranger))
-        assert (response.status_code, response.json()["tenant_id"]) == (200, str(people.a))
+        assert response.status_code == 200
+        assert response.json()["tenant_id"] == str(people.a)
     finally:
         drop_memberships(people, stranger)
 

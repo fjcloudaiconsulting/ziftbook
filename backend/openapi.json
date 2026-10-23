@@ -2024,7 +2024,7 @@
           "members"
         ],
         "summary": "Delete",
-        "description": "Remove a member from this business. Their sessions here end with the membership.",
+        "description": "End a member's membership in this business. The row stays, so their bookings and history\nstill resolve; their sessions, service assignments, working hours and time off here go.\nRefused while they hold an upcoming appointment.",
         "operationId": "members-delete",
         "parameters": [
           {

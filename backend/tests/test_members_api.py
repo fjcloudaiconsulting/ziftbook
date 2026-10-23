@@ -1002,7 +1002,8 @@ def test_a_member_with_a_live_appointment_cannot_be_removed(
     response = delete(owner, only_a_member)
 
     if blocked:
-        assert (response.status_code, response.json()) == (409, {"code": "has_upcoming_bookings"})
+        assert response.status_code == 409
+        assert response.json() == {"code": "has_upcoming_bookings"}
         assert removed_row(people.a, only_a_member).role == "worker"
         assert only_a_client.get("/api/session").status_code == 200
     else:
