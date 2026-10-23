@@ -289,7 +289,10 @@ def test_downgrading_and_upgrading_0026_restores_the_tables_and_their_grants(
             text("SELECT has_table_privilege('ziftbook_app', 'booking_events', 'SELECT')")
         )
         assert conn.scalar(text("SELECT has_table_privilege('ziftbook_app', 'bookings', 'SELECT')"))
-        assert conn.scalar(text("SELECT has_table_privilege('ziftbook_app', 'bookings', 'INSERT')"))
+        # INSERT is a column list since 0047 (ZB-09), so has_table_privilege reports it False.
+        assert conn.scalar(
+            text("SELECT has_column_privilege('ziftbook_app', 'bookings', 'status', 'INSERT')")
+        )
         # Column-level since 0027, which revokes table-level UPDATE and grants it back on every
         # column but the two cancellation snapshots. `status` is the only one the app updates.
         assert conn.scalar(
@@ -332,6 +335,22 @@ SNAPSHOT = (
     "client_message",
     # ZB-15 (0046): the checkout secret's hash, written once at placement.
     "checkout_hash",
+)
+# ZB-09 (0047): the rest of the evidence, and the row's identity, which place() / INSERT_BOOKING
+# writes once and no route updates. id and created_at are not INSERT-able either.
+EVIDENCE = (
+    "id",
+    "tenant_id",
+    "client_id",
+    "service_id",
+    "source",
+    "service_name",
+    "price_amount_minor",
+    "price_currency",
+    "duration_minutes",
+    "cancellation_policy_text",
+    "auto_confirm_at_booking",
+    "created_at",
 )
 
 
@@ -376,8 +395,8 @@ def test_downgrading_and_upgrading_0027_restores_both_thresholds(
                     {"c": column, "p": privilege},
                 ), (column, privilege)
         # The snapshot is written once and never updated: immutability as a privilege, the way
-        # booking_events' append-only shape is. Exactly these two columns, no others.
-        assert sorted(conn.scalars(NO_UPDATE)) == sorted(SNAPSHOT)
+        # booking_events' append-only shape is. Exactly these columns, no others.
+        assert sorted(conn.scalars(NO_UPDATE)) == sorted(SNAPSHOT + EVIDENCE)
 
 
 # F20 (T8) - 0027 REFUSES on a non-empty bookings table. That refusal is the feature: ZIF-55 is
@@ -1478,3 +1497,120 @@ def test_0046_round_trips_the_checkout_hash(
         command.upgrade(cfg, "head")
     with migrate_engine.connect() as conn:
         assert tuple(conn.execute(CHECKOUT_HASH).one()) == ("bytea", "YES", True, True, False)
+
+
+EVIDENCE_GRANTS = text("""
+SELECT column_name,
+       has_column_privilege('ziftbook_app', 'bookings', column_name, 'INSERT'),
+       has_column_privilege('ziftbook_app', 'bookings', column_name, 'UPDATE')
+FROM information_schema.columns WHERE table_name = 'bookings'
+""")
+EVIDENCE_GUARD = text("""
+SELECT has_table_privilege('ziftbook_app', 'bookings', 'INSERT'),
+       has_table_privilege('ziftbook_app', 'bookings', 'UPDATE'),
+       (SELECT count(*) FROM pg_attribute a, aclexplode(a.attacl) x
+         WHERE a.attrelid = 'bookings'::regclass AND x.privilege_type = 'INSERT'
+           AND x.grantee = 'ziftbook_app'::regrole),
+       EXISTS (SELECT FROM pg_trigger WHERE tgname = 'bookings_status_to_pending'),
+       to_regprocedure('bookings_status_to_pending()') IS NOT NULL
+""")
+STATUS_GUARD_FUNCTION = text("""
+SELECT p.prosecdef, p.proconfig, has_function_privilege('public', p.oid, 'EXECUTE')
+FROM pg_proc p WHERE p.oid = to_regprocedure('bookings_status_to_pending()')
+""")
+# Explicit literals, never 0047's constants: a shrunk grant would shrink its expectation with it.
+# Before 0047: 0027's list plus 0029's, 0031's and 0042's column grants.
+UPDATABLE_AT_0046 = {
+    "id",
+    "tenant_id",
+    "client_id",
+    "worker_id",
+    "service_id",
+    "starts_at",
+    "ends_at",
+    "status",
+    "expires_at",
+    "source",
+    "service_name",
+    "price_amount_minor",
+    "price_currency",
+    "duration_minutes",
+    "cancellation_policy_text",
+    "auto_confirm_at_booking",
+    "worker_display_name",
+    "created_at",
+    "reschedule_count",
+    "earliest_starts_at",
+    "decline_message",
+    "original_starts_at",
+}
+# What app/bookings.py's UPDATEs set, and nothing else.
+UPDATABLE = {
+    "status",
+    "expires_at",
+    "decline_message",
+    "starts_at",
+    "ends_at",
+    "earliest_starts_at",
+    "reschedule_count",
+    "original_starts_at",
+    "worker_id",
+    "worker_display_name",
+}
+# What app/bookings.py's INSERT_BOOKING names, and nothing else.
+INSERTABLE = {
+    "tenant_id",
+    "client_id",
+    "worker_id",
+    "service_id",
+    "starts_at",
+    "ends_at",
+    "status",
+    "expires_at",
+    "source",
+    "service_name",
+    "price_amount_minor",
+    "price_currency",
+    "duration_minutes",
+    "cancellation_policy_text",
+    "auto_confirm_at_booking",
+    "worker_display_name",
+    "free_cancellation_hours",
+    "reschedule_cutoff_hours",
+    "original_starts_at",
+    "earliest_starts_at",
+    "max_reschedules",
+    "client_name",
+    "client_phone",
+    "client_message",
+    "checkout_hash",
+}
+
+
+# ZB-09 FENCE. Wrong impl: an upgrade that leaves table-level INSERT, grants UPDATE or INSERT on a
+# column no app statement writes, or skips the trigger; a downgrade that leaves the column lists,
+# the trigger or its function behind, or does not put back exactly the UPDATE columns and the
+# table-level INSERT that 0027-0046 left.
+def test_0047_round_trips_the_booking_evidence_grants(
+    migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = lock_timeout_config(monkeypatch)
+    try:
+        command.downgrade(cfg, "0046")
+        with migrate_engine.connect() as conn:
+            grants = conn.execute(EVIDENCE_GRANTS).all()
+            assert {column for column, _, update in grants if update} == UPDATABLE_AT_0046
+            assert all(insert for _, insert, _ in grants)
+            assert tuple(conn.execute(EVIDENCE_GUARD).one()) == (True, False, 0, False, False)
+    finally:
+        command.upgrade(cfg, "head")
+    with migrate_engine.connect() as conn:
+        grants = conn.execute(EVIDENCE_GRANTS).all()
+        assert {column for column, _, update in grants if update} == UPDATABLE
+        assert {column for column, insert, _ in grants if insert} == INSERTABLE
+        assert tuple(conn.execute(EVIDENCE_GUARD).one()) == (False, False, 25, True, True)
+        assert tuple(conn.execute(STATUS_GUARD_FUNCTION).one()) == (
+            False,
+            ["search_path=pg_catalog, public, pg_temp"],
+            False,
+        )

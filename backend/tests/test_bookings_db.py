@@ -64,19 +64,23 @@ def seed_service(
     return service_id
 
 
+# No reschedule_count: the app role inserts only the columns app/bookings.py's place() /
+# INSERT_BOOKING names (0047), and a new booking's count is its default 0. A count is the UPDATE
+# below, as RESCHEDULE spends one.
 INSERT_BOOKING = text("""
 INSERT INTO bookings (tenant_id, client_id, worker_id, service_id, starts_at, ends_at, status,
                        expires_at, source, service_name, price_amount_minor, price_currency,
                        duration_minutes, auto_confirm_at_booking, worker_display_name,
                        free_cancellation_hours, reschedule_cutoff_hours, original_starts_at,
-                       earliest_starts_at, max_reschedules, reschedule_count)
+                       earliest_starts_at, max_reschedules)
 VALUES (current_setting('app.tenant_id')::uuid, :client_id, :worker_id, :service_id, :starts_at,
         :ends_at, :status, :expires_at, :source, CAST(:service_name AS jsonb),
         :price_amount_minor, :price_currency, :duration_minutes, :auto_confirm_at_booking,
         :display_name, :free_hours, :cutoff_hours, :original_starts_at, :earliest_starts_at,
-        :max_reschedules, :reschedule_count)
+        :max_reschedules)
 RETURNING id
 """)
+SET_RESCHEDULE_COUNT = text("UPDATE bookings SET reschedule_count = :n WHERE id = :id")
 
 
 def insert_booking(
@@ -124,9 +128,10 @@ def insert_booking(
             "original_starts_at": original_starts_at,
             "earliest_starts_at": earliest_starts_at,
             "max_reschedules": max_reschedules,
-            "reschedule_count": reschedule_count,
         },
     )
+    if reschedule_count:
+        session.execute(SET_RESCHEDULE_COUNT, {"n": reschedule_count, "id": booking_id})
     return booking_id
 
 
@@ -722,3 +727,201 @@ def test_the_threshold_columns_accept_0_to_720_and_nothing_else(
         if column == "free_hours"
         else "ck_bookings_reschedule_cutoff_hours"
     )
+
+
+# 15: FENCE - ZB-09. The evidence snapshot (price, service, source, who and when) is written once
+# by place() / INSERT_BOOKING and never updated: the app role may UPDATE only the columns a route
+# updates.
+# Wrong impl: 0047 without its REVOKE UPDATE, or a column list that still names the snapshot.
+def test_the_app_role_cannot_rewrite_booking_evidence(people: People) -> None:
+    booking_id = book(
+        people.a,
+        client_id=seed_client(people.a, email=fresh_email()),
+        worker_id=member_id(people.a, people.both),
+        service_id=seed_service(people.a),
+        starts_at=T6[0],
+        ends_at=T6[1],
+    )
+
+    with pytest.raises(DBAPIError) as error, tenant_context(people.a) as session:
+        session.execute(
+            text("UPDATE bookings SET price_amount_minor = 1 WHERE id = :id"), {"id": booking_id}
+        )
+
+    assert isinstance(error.value.orig, InsufficientPrivilege)
+
+
+TO_PENDING = text(
+    "UPDATE bookings SET status = 'pending', expires_at = now() + interval '1 hour' WHERE id = :id"
+)
+
+
+# 16: FENCE - ZB-09. A booking enters `pending` only from `awaiting_payment` (its card check
+# landed) or from `pending`: a settled booking never goes back, so 0042's rule (the refund anchor
+# moves only while pending) holds for it. Wrong impl: no bookings_status_to_pending trigger, or one
+# that lets a settled status back in.
+@pytest.mark.parametrize(
+    "status",
+    [
+        "confirmed",
+        "completed",
+        "no_show",
+        "declined",
+        "expired",
+        "cancelled_by_client",
+        "cancelled_by_merchant",
+    ],
+)
+def test_booking_evidence_a_settled_booking_never_returns_to_pending(
+    people: People, status: str
+) -> None:
+    booking_id = book(
+        people.a,
+        client_id=seed_client(people.a, email=fresh_email()),
+        worker_id=member_id(people.a, people.both),
+        service_id=seed_service(people.a),
+        starts_at=T6[0],
+        ends_at=T6[1],
+        status=status,
+    )
+
+    with pytest.raises(IntegrityError) as error, tenant_context(people.a) as session:
+        session.execute(TO_PENDING, {"id": booking_id})
+
+    assert isinstance(error.value.orig, CheckViolation)
+    assert error.value.orig.diag.constraint_name == "bookings_status_to_pending"
+
+
+TO_AWAITING_PAYMENT = text(
+    "UPDATE bookings SET status = 'awaiting_payment', expires_at = now() + interval '30 minutes' "
+    "WHERE id = :id"
+)
+
+
+# 16b: FENCE - ZB-09. `awaiting_payment` is where a checkout is born (INSERT) and nothing returns
+# to it, so test 16's rule has no detour: from awaiting_payment a booking could become pending
+# again. Wrong impl: a trigger guarding `pending` alone, or one that lets anything but
+# awaiting_payment itself into awaiting_payment.
+@pytest.mark.parametrize(
+    "status",
+    [
+        "pending",
+        "confirmed",
+        "completed",
+        "no_show",
+        "declined",
+        "expired",
+        "cancelled_by_client",
+        "cancelled_by_merchant",
+    ],
+)
+def test_booking_evidence_no_booking_returns_to_awaiting_payment(
+    people: People, status: str
+) -> None:
+    booking_id = book(
+        people.a,
+        client_id=seed_client(people.a, email=fresh_email()),
+        worker_id=member_id(people.a, people.both),
+        service_id=seed_service(people.a),
+        starts_at=T6[0],
+        ends_at=T6[1],
+        status=status,
+        expires_at=datetime.now(UTC) + timedelta(hours=1) if status == "pending" else None,
+    )
+
+    with pytest.raises(IntegrityError) as error, tenant_context(people.a) as session:
+        session.execute(TO_AWAITING_PAYMENT, {"id": booking_id})
+
+    assert isinstance(error.value.orig, CheckViolation)
+    assert error.value.orig.diag.constraint_name == "bookings_status_to_pending"
+
+
+# 16c: FENCE - ZB-09. The two-step way back to pending, through awaiting_payment, stops at its first
+# step, and the booking is still confirmed. Wrong impl: test 16b's.
+def test_booking_evidence_a_confirmed_booking_cannot_reach_pending_through_awaiting_payment(
+    people: People,
+) -> None:
+    booking_id = book(
+        people.a,
+        client_id=seed_client(people.a, email=fresh_email()),
+        worker_id=member_id(people.a, people.both),
+        service_id=seed_service(people.a),
+        starts_at=T6[0],
+        ends_at=T6[1],
+    )
+
+    with pytest.raises(IntegrityError) as error, tenant_context(people.a) as session:
+        session.execute(TO_AWAITING_PAYMENT, {"id": booking_id})
+        session.execute(TO_PENDING, {"id": booking_id})
+
+    assert isinstance(error.value.orig, CheckViolation)
+    assert error.value.orig.diag.constraint_name == "bookings_status_to_pending"
+    assert "SET status = 'awaiting_payment'" in str(error.value.statement)
+    with tenant_context(people.a) as session:
+        status = session.scalar(
+            text("SELECT status FROM bookings WHERE id = :id"), {"id": booking_id}
+        )
+    assert status == "confirmed"
+
+
+# 17: GUARD - ZB-09, the two ways into `pending` that stay open: a checkout whose card check landed
+# (app/bookings.py's PAID) and a pending that stays pending. Kills a trigger that refuses every
+# write of `pending`, which would strand every paid booking page booking in awaiting_payment.
+def test_booking_evidence_a_checkout_still_becomes_a_pending(people: People) -> None:
+    booking_id = book(
+        people.a,
+        client_id=seed_client(people.a, email=fresh_email()),
+        worker_id=member_id(people.a, people.both),
+        service_id=seed_service(people.a),
+        starts_at=T6[0],
+        ends_at=T6[1],
+        status="awaiting_payment",
+        expires_at=datetime.now(UTC) + timedelta(minutes=30),
+    )
+
+    with tenant_context(people.a) as session:
+        session.execute(TO_PENDING, {"id": booking_id})
+        session.execute(TO_PENDING, {"id": booking_id})
+        status = session.scalar(
+            text("SELECT status FROM bookings WHERE id = :id"), {"id": booking_id}
+        )
+
+    assert status == "pending"
+
+
+BOOKING_WITH = """
+INSERT INTO bookings (tenant_id, client_id, worker_id, service_id, starts_at, ends_at, status,
+                      source, service_name, price_amount_minor, price_currency, duration_minutes,
+                      auto_confirm_at_booking, free_cancellation_hours, reschedule_cutoff_hours{0})
+SELECT current_setting('app.tenant_id')::uuid, :client_id, :worker_id, id, :starts_at, :ends_at,
+       'confirmed', 'merchant', name, price_amount_minor, price_currency, duration_minutes, true,
+       48, 24{1}
+FROM services WHERE id = :service_id
+"""
+
+
+# 18: FENCE - ZB-09. INSERT is a column list too, exactly booking_events' shape (test 8): the app
+# role can neither backdate a booking nor choose its id. Wrong impl: 0047 without its REVOKE
+# INSERT, since table-level INSERT covers every column.
+@pytest.mark.parametrize(
+    "column,value",
+    [("created_at", "now() - interval '1 year'"), ("id", "uuidv7()")],
+    ids=["created_at", "id"],
+)
+def test_the_app_role_cannot_backdate_or_reid_booking_evidence(
+    people: People, column: str, value: str
+) -> None:
+    row = {
+        "client_id": seed_client(people.a, email=fresh_email()),
+        "worker_id": member_id(people.a, people.both),
+        "service_id": seed_service(people.a),
+        "starts_at": T7[0],
+        "ends_at": T7[1],
+    }
+
+    with pytest.raises(DBAPIError) as error, tenant_context(people.a) as session:
+        session.execute(text(BOOKING_WITH.format(f", {column}", f", {value}")), row)
+    assert isinstance(error.value.orig, InsufficientPrivilege)
+
+    with tenant_context(people.a) as session:  # positive control: the same insert, minus the column
+        session.execute(text(BOOKING_WITH.format("", "")), row)

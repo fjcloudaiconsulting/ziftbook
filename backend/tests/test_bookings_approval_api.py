@@ -32,6 +32,7 @@ from tests.conftest import (
 )
 from tests.test_availability_api import assign, new_service, seed_booking, weekdays
 from tests.test_bookings_api import at, post_booking
+from tests.test_bookings_db import insert_booking
 from tests.test_working_hours import seed
 
 
@@ -359,11 +360,25 @@ def test_the_queue_lists_only_live_pendings_soonest_first(
     assert patch(owner, confirmed, "confirmed").status_code == 200
     declined = make_pending(app, people.a, ready, starts_at=at("13:00"))
     assert patch(owner, declined, "declined").status_code == 200
-    awaiting = make_pending(app, people.a, ready, starts_at=at("14:00"))
+    # Placed awaiting_payment, a live checkout hold: no UPDATE moves a booking into that status
+    # (0047's bookings_status_to_pending, for every role), so it is inserted in it.
+    starts_at = datetime.fromisoformat(at("14:00"))
     with tenant_context(people.a) as session:
-        session.execute(
-            text("UPDATE bookings SET status = 'awaiting_payment' WHERE id = :id"),
-            {"id": awaiting},
+        insert_booking(
+            session,
+            client_id=session.scalar(
+                text(
+                    "INSERT INTO clients (tenant_id, name) "
+                    "VALUES (current_setting('app.tenant_id')::uuid, 'Paying') RETURNING id"
+                )
+            ),
+            worker_id=member_id(people.a, people.both),
+            service_id=uuid.UUID(ready),
+            starts_at=starts_at,
+            ends_at=starts_at + timedelta(minutes=30),
+            status="awaiting_payment",
+            expires_at=datetime.now(UTC) + timedelta(minutes=30),
+            source="booking_page",
         )
     # Created and expired LAST: any post_booking call after this would flip it to 'expired' via
     # the create path's own EXPIRE step (app/bookings.py:264), masking the queue's own TTL filter.

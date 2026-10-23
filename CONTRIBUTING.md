@@ -231,6 +231,13 @@ migration 0026), not any code path. A race in a route somebody forgets to guard 
 - `booking_events` is append-only by privilege, like `audit_events` and `consents`: a column added later needs its
   own `GRANT INSERT (column) ON booking_events TO ziftbook_app`, or **every** event write fails, not only writes of
   the new column.
+- `bookings` grants `INSERT` and `UPDATE` by column (migration 0047): the app role inserts only what `place()` /
+  `INSERT_BOOKING` names (the one insert, for public and merchant bookings alike) and updates only what a route
+  sets, so the evidence, `id` and `created_at` are write-once. A column added later needs its own
+  `GRANT INSERT (column)` if `place()` / `INSERT_BOOKING` writes it, or **every** booking insert fails, and
+  `GRANT UPDATE (column)` only if a route changes it. A settled booking never becomes `pending` again, and an
+  `UPDATE` never moves a booking into `awaiting_payment`, which only placement (the `INSERT`) sets (the
+  `bookings_status_to_pending` trigger).
 - The public booking POST writes **no** `audit_events` row: the requester is the data subject, and `auth.record`
   stamps their address into a table with no foreign keys that outlives erased people.
 

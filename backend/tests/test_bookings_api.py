@@ -796,10 +796,16 @@ def test_the_pending_cap_is_the_setting_and_not_a_constant(
 
 
 def book_twice_under_auto_confirm(
-    people: People, app: FastAPI, owner: TestClient, ready: str, change: str | None = None
+    people: People,
+    app: FastAPI,
+    owner: TestClient,
+    ready: str,
+    change: str | None = None,
+    migrate_engine: Engine | None = None,
 ) -> Response:
     """Cap 1 with auto_confirm on: one confirmed booking, `change` applied to it, then the same
-    address books again."""
+    address books again. The change runs as the migrate role: `source` is evidence, which the app
+    role cannot UPDATE (0047)."""
     settings = {"auto_confirm": True, "max_pending_per_email": 1}
     assert put_settings(owner, settings).status_code == 200
     client = new_client(app)
@@ -807,8 +813,10 @@ def book_twice_under_auto_confirm(
     first = post_booking(client, people.a, ready, email=email, starts_at=at("09:00"))
     assert (first.status_code, first.json()["status"]) == (201, "confirmed")
     if change is not None:
-        with tenant_context(people.a) as session:
-            session.execute(
+        assert migrate_engine is not None
+        with migrate_engine.begin() as conn:
+            conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(people.a)})
+            conn.execute(
                 text(f"UPDATE bookings SET {change} WHERE id = :id"), {"id": first.json()["id"]}
             )
     return post_booking(client, people.a, ready, email=email, starts_at=at("11:00"))
@@ -842,9 +850,14 @@ def test_auto_confirmed_bookings_count_toward_the_cap(
     ids=["cancelled", "past", "merchant"],
 )
 def test_only_upcoming_self_booked_confirmations_count(
-    people: People, app: FastAPI, owner: TestClient, ready: str, change: str
+    people: People,
+    app: FastAPI,
+    owner: TestClient,
+    ready: str,
+    change: str,
+    migrate_engine: Engine,
 ) -> None:
-    second = book_twice_under_auto_confirm(people, app, owner, ready, change)
+    second = book_twice_under_auto_confirm(people, app, owner, ready, change, migrate_engine)
 
     assert second.status_code == 201, second.json()
 
