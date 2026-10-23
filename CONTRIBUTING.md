@@ -166,6 +166,11 @@ that person's platform account (ZIF-99).
 - `app.clients.find_or_create` refreshes the copy from what a booker typed **only when the booker is authenticated as
   that address's own account (`refresh=True`); every other caller fills blanks only**, and its docstring is the one
   home for what that costs and for the duties it puts on the route that calls it. Read it before writing that route.
+- A business never finds a platform user it has no relationship with: no route, search or SECURITY DEFINER function
+  answers by email or name across tenants. `tests/test_directory_ban.py` pins the `users` policies and the definer
+  surface, so widening either is a deliberate test change.
+- The business's responsible person is derived, not stored: its oldest live owner (`ORDER BY memberships.id`). It is
+  the creator until they leave or stop being an owner.
 
 ## Bookings
 

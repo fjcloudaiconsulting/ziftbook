@@ -184,6 +184,20 @@ def test_no_request_schema_accepts_a_user_id() -> None:
     assert offending == []
 
 
+# ZIF-99 11: FENCE. Wrong impl: ZIF-146 copying a profile address into ClientOut or BookingIn.
+# The allowlist is empty: a client is name and contact only (CONTRIBUTING.md, "Client records").
+def test_no_schema_has_an_address_field() -> None:
+    spec = json.loads(CONTRACT.read_text())
+    address = {"address", "street", "postal_code", "postcode", "city", "house_number"}
+    offending = [
+        f"{name}.{field}"
+        for name, schema in spec["components"]["schemas"].items()
+        for field in schema.get("properties", {})
+        if field in address
+    ]
+    assert offending == []
+
+
 # ZIF-158 B2 13. fence. Kills: leaking a client_secret through sync, the link view or the console.
 def test_a_client_secret_is_only_in_the_payment_start() -> None:
     spec = json.loads(CONTRACT.read_text())
