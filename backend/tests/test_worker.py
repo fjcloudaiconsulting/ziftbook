@@ -408,3 +408,39 @@ def test_the_worker_needs_only_the_secret_key(
     assert not [line for line in lines if line["level"] == "WARNING" and "stripe" in line["msg"]]
     with tenant_context(people.a) as db:
         assert db.scalar(text("SELECT charges_enabled FROM payment_accounts")) is True
+
+
+# ZB-31 FENCE. Wrong impl: the worker's pool hands a connection to its next job with the session
+# settings the last one left on it (rollback alone keeps a committed SET). The engine's own
+# timeouts are what the reset returns to.
+def test_the_worker_hands_out_a_pooled_connection_without_the_last_jobs_settings(
+    migrated: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: list[tuple[Any, ...]] = []
+
+    async def serve(settings: WorkerSettings) -> None:
+        with SessionLocal() as session:
+            used = session.scalar(text("SELECT pg_backend_pid()"))
+            session.execute(text("SET app.audit_review = 'on'"))
+            session.commit()
+        with SessionLocal() as session:
+            reused = session.execute(
+                text("""
+                SELECT pg_backend_pid(), current_setting('app.audit_review', true),
+                       current_setting('statement_timeout'),
+                       current_setting('idle_in_transaction_session_timeout')
+                """)
+            ).one()
+        seen.append((used, *reused))
+
+    monkeypatch.setattr(logs, "configure", lambda: None)
+    monkeypatch.setattr(worker, "serve", serve)
+    try:
+        worker.main()  # binds SessionLocal to the worker's own pooled engine, then serves
+    finally:
+        engine = SessionLocal.kw.get("bind")
+        SessionLocal.configure(bind=None)
+        if isinstance(engine, Engine):
+            engine.dispose()
+    [(used, pid, review, statement_timeout, idle_timeout)] = seen
+    assert (pid, review, statement_timeout, idle_timeout) == (used, "", "30s", "1min")

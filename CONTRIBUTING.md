@@ -69,6 +69,13 @@ Specifics:
   nothing: never grant it ownership, `BYPASSRLS` or DDL rights.
 - The worker connects as `ziftbook_worker` (ZB-08): a member of `ziftbook_app`, so it has every privilege the app
   role has, plus what only background jobs may do (`mint_email_token`). The same never-list applies to it.
+- Neither runtime role can create temporary tables, and both search `public` before `pg_temp` (ZB-31;
+  `bootstrap.sql`, plus 0050 where `ziftbook_migrate` owns the database; elsewhere 0050 changes nothing and logs
+  `temporary tables left to bootstrap.sql` at WARNING). A pooled engine resets each connection
+  on check-in with `app.db.reset_session` (`RESET ALL; DISCARD TEMP`, then open cursors, `LISTEN`s, session-level
+  advisory locks and `SET ROLE`), so no session state reaches the next request; a new pooled engine adds the same
+  listener. A setting meant for every connection goes in the engine's `connect_args` `options` (`-c lock_timeout=5s`),
+  which the reset keeps, never in a `SET` after connecting.
 - A function `ziftbook_migrate` creates is executable by no other role (0048's default privileges): the migration
   that creates one the app calls also runs `GRANT EXECUTE ON FUNCTION ... TO ziftbook_app`, or `TO ziftbook_worker`
   when only a job calls it. Calls the app makes indirectly count too: a function in a `CHECK` constraint, a column

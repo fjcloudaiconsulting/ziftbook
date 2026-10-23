@@ -2,7 +2,9 @@
 
 import importlib.util
 import os
+import re
 import uuid
+from collections.abc import Callable, Iterator
 from datetime import UTC, datetime, timedelta
 from types import ModuleType
 from typing import Any
@@ -11,13 +13,23 @@ from urllib.parse import urlencode
 import pytest
 from alembic import command
 from alembic.config import Config
+from alembic.migration import MigrationContext
+from alembic.operations import Operations
 from psycopg.errors import CheckViolation, NotNullViolation
-from sqlalchemy import Connection, Engine, text
+from sqlalchemy import Connection, Engine, create_engine, make_url, text
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.orm import Session
+from sqlalchemy.pool import NullPool
 
 from app.db import tenant_context
-from tests.conftest import API_DIR, People, delete_bookings, end_membership, member_id
+from tests.conftest import (
+    ADMIN_DATABASE_URL,
+    API_DIR,
+    People,
+    delete_bookings,
+    end_membership,
+    member_id,
+)
 from tests.test_bookings_db import insert_booking, seed_service
 
 COLUMNS = text("SELECT column_name FROM information_schema.columns WHERE table_name = 'tenants'")
@@ -1703,3 +1715,104 @@ def test_0049_round_trips_the_workers_mint_grant(
             "ziftbook_migrate",
             "ziftbook_worker",
         ]
+
+
+# ZB-31 (0050): which of these may create temporary tables in this database. The owner,
+# ziftbook_migrate in the test databases, always may.
+TEMPORARY_HOLDERS = text("""
+SELECT r FROM unnest(ARRAY['public', 'ziftbook_app', 'ziftbook_migrate', 'ziftbook_worker']) r
+WHERE has_database_privilege(r, current_database(), 'TEMPORARY')
+ORDER BY 1
+""")
+PUBLIC_TEMPORARY = text("SELECT has_database_privilege('public', current_database(), 'TEMPORARY')")
+
+
+# ZB-31 FENCE. Wrong impl: an upgrade that leaves TEMPORARY to PUBLIC, or a downgrade that does not
+# give it back.
+def test_0050_round_trips_temporary_tables(
+    migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = lock_timeout_config(monkeypatch)
+    try:
+        command.downgrade(cfg, "0049")
+        with migrate_engine.connect() as conn:
+            assert list(conn.scalars(TEMPORARY_HOLDERS)) == [
+                "public",
+                "ziftbook_app",
+                "ziftbook_migrate",
+                "ziftbook_worker",
+            ]
+    finally:
+        command.upgrade(cfg, "head")
+    with migrate_engine.connect() as conn:
+        assert list(conn.scalars(TEMPORARY_HOLDERS)) == ["ziftbook_migrate"]
+
+
+@pytest.fixture
+def admins_database() -> Iterator[Engine]:
+    """A database of this xdist worker's own that the admin role owns, as docker-compose's and
+    production's do, and an engine on it as ziftbook_migrate. Dropped after."""
+    base = make_url(os.environ["ZIF_MIGRATE_DATABASE_URL"])
+    name = f"{base.database}_admins"
+    # It renders into DROP DATABASE as the superuser: a plain identifier within 63 bytes only.
+    if not re.fullmatch(r"[a-z_][a-z0-9_]{0,62}", name):
+        raise RuntimeError(f"database name {name!r} is not a plain identifier of 63 bytes or less")
+    admin = create_engine(ADMIN_DATABASE_URL, isolation_level="AUTOCOMMIT", poolclass=NullPool)
+    with admin.connect() as conn:
+        conn.execute(text(f"DROP DATABASE IF EXISTS {name}"))
+        conn.execute(text(f"CREATE DATABASE {name}"))
+    engine = create_engine(base.set(database=name), poolclass=NullPool)
+    try:
+        yield engine
+    finally:
+        engine.dispose()
+        with admin.connect() as conn:
+            # FORCE: a test that failed mid-way must not keep it. The name is this worker's alone.
+            conn.execute(text(f"DROP DATABASE IF EXISTS {name} WITH (FORCE)"))
+        admin.dispose()
+
+
+def run_0050(conn: Connection, step: str) -> bool:
+    """0050's upgrade() or downgrade() on conn, as Alembic runs it; then whether PUBLIC may create
+    temporary tables."""
+    module = migration("0050_no_temporary_tables.py")
+    with Operations.context(MigrationContext.configure(conn)):
+        getattr(module, step)()
+    return bool(conn.scalar(PUBLIC_TEMPORARY))
+
+
+def skips_0050(lines: list[dict[str, Any]]) -> list[tuple[str, str, str, str]]:
+    return [
+        (line["logger"], line["level"], line["step"], line["role"])
+        for line in lines
+        if line["msg"] == "temporary tables left to bootstrap.sql"
+    ]
+
+
+# ZB-31 GUARD. Where ziftbook_migrate does not own the database, 0050 neither fails nor changes
+# anything: only the owner can take TEMPORARY from PUBLIC, and bootstrap.sql, run as the admin
+# before the migrations, does it there. Wrong impl: a skip the migrate job does not show, as a
+# NOTICE is not (app.logs keeps the sqlalchemy loggers at WARNING).
+def test_0050_leaves_a_database_it_does_not_own_to_bootstrap_and_says_so(
+    admins_database: Engine, log_lines: Callable[[], list[dict[str, Any]]]
+) -> None:
+    with admins_database.begin() as conn:
+        assert conn.scalar(text("SELECT current_user")) == "ziftbook_migrate"
+        after = [run_0050(conn, "upgrade"), run_0050(conn, "downgrade")]
+    assert after == [True, True]
+    assert skips_0050(log_lines()) == [
+        ("app.migrations", "WARNING", "upgrade", "ziftbook_migrate"),
+        ("app.migrations", "WARNING", "downgrade", "ziftbook_migrate"),
+    ]
+
+
+# ZB-31 FENCE. Wrong impl: the warning where ziftbook_migrate owns the database and 0050 does its
+# work. Rolled back: this worker's database keeps its state.
+def test_0050_says_nothing_where_it_owns_the_database(
+    migrate_engine: Engine, log_lines: Callable[[], list[dict[str, Any]]]
+) -> None:
+    with migrate_engine.connect() as conn, conn.begin() as tx:
+        after = [run_0050(conn, "downgrade"), run_0050(conn, "upgrade")]
+        tx.rollback()
+    assert after == [True, False]
+    assert skips_0050(log_lines()) == []

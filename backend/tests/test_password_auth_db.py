@@ -589,26 +589,10 @@ def test_completing_a_reset_for_a_vanished_account_writes_nothing(
         )
 
 
-def test_a_reset_link_can_not_be_forged_through_a_temporary_table(
-    people: People, app_engine: Engine, migrate_engine: Engine
-) -> None:
-    # With pg_temp first on the search path, this temp table would stand in for the real one.
-    token = secrets.token_bytes(32)
-    with app_engine.begin() as conn:
-        conn.execute(
-            text("""
-            CREATE TEMP TABLE email_tokens (purpose text, email text, locale text,
-              token_hash bytea, expires_at timestamptz)
-            """)
-        )
-        conn.execute(
-            text("""
-            INSERT INTO pg_temp.email_tokens
-            VALUES ('password_reset', :e, 'en', :h, now() + interval '1 hour')
-            """),
-            {"e": email_of(people.only_a), "h": digest(token)},
-        )
-        forged = conn.scalar(
-            text("SELECT complete_password_reset(:h, :p)"), {"h": digest(token), "p": NEW_HASH}
-        )
-    assert forged is False
+# ZB-31 FENCE. Wrong impl: PUBLIC keeps TEMPORARY on the database. A temporary table would stand in
+# for a real one of the same name and outlive its request on a pooled connection. The definer
+# functions pin pg_temp last either way (test_definer_functions_pin_their_search_path...).
+def test_the_app_role_cannot_create_a_temporary_table(app_engine: Engine) -> None:
+    with app_engine.connect() as conn, pytest.raises(ProgrammingError) as error:
+        conn.execute(text("CREATE TEMP TABLE x (y int)"))
+    assert isinstance(error.value.orig, InsufficientPrivilege)

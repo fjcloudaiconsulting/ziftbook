@@ -4,11 +4,11 @@ from collections.abc import Iterator
 
 import pytest
 from psycopg.errors import InsufficientPrivilege
-from sqlalchemy import Engine, text
+from sqlalchemy import Engine, create_engine, event, text
 from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.orm import Session
 
-from app.db import SessionLocal
+from app.db import SessionLocal, reset_session
 from app.jobs import enqueue
 from tests.conftest import fresh_email, mailed, token_in
 
@@ -192,6 +192,54 @@ def test_worker_role_holds_only_mint_email_token_in_its_own_right(migrate_engine
             """)
         ).all()
     assert list(held) == ["mint_email_token(p_id uuid, p_token_hash bytea) EXECUTE"]
+
+
+# ZB-31 FENCE. Wrong impl: PUBLIC, or either role in its own right, keeps TEMPORARY on the
+# database (0050 here, bootstrap.sql where the admin owns the database).
+@pytest.mark.parametrize("role", ["ziftbook_app", "ziftbook_worker"])
+def test_neither_runtime_role_can_create_temporary_tables(
+    migrate_engine: Engine, role: str
+) -> None:
+    with migrate_engine.connect() as conn:
+        held = conn.scalar(
+            text("SELECT has_database_privilege(:role, current_database(), 'TEMPORARY')"),
+            {"role": role},
+        )
+    assert held is False
+
+
+# ZB-31 FENCE (bootstrap.sql). Wrong impl: a role left on the default search path, which looks in
+# pg_temp first; or only ziftbook_app's set, which ziftbook_worker does not inherit.
+def test_both_runtime_roles_search_pg_temp_last(migrate_engine: Engine) -> None:
+    with migrate_engine.connect() as conn:
+        settings = conn.execute(
+            text("""
+            SELECT rolname, rolconfig FROM pg_roles
+            WHERE rolname IN ('ziftbook_app', 'ziftbook_worker') ORDER BY 1
+            """)
+        ).all()
+    assert [tuple(row) for row in settings] == [
+        ("ziftbook_app", ["search_path=public, pg_temp"]),
+        ("ziftbook_worker", ["search_path=public, pg_temp"]),
+    ]
+
+
+# ZB-31 FENCE. Wrong impl: a pool reset without RESET ROLE (RESET ALL keeps a SET ROLE), so a job
+# that switched ziftbook_worker to ziftbook_app hands its next user a connection running as that.
+def test_a_pooled_worker_connection_is_handed_out_as_the_worker_role(
+    worker_engine: Engine,
+) -> None:
+    engine = create_engine(worker_engine.url, pool_size=1, max_overflow=0)
+    event.listen(engine, "reset", reset_session)
+    try:
+        with engine.begin() as conn:
+            used = conn.scalar(text("SELECT pg_backend_pid()"))
+            conn.execute(text("SET ROLE ziftbook_app"))
+        with engine.connect() as conn:
+            reused = conn.execute(text("SELECT pg_backend_pid(), current_user")).one()
+    finally:
+        engine.dispose()
+    assert tuple(reused) == (used, "ziftbook_worker")
 
 
 def test_the_email_token_job_runs_as_the_worker_role(

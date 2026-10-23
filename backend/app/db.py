@@ -6,8 +6,9 @@ from alembic import op
 from opentelemetry import metrics
 from opentelemetry.metrics import CallbackOptions, Counter, Observation
 from sqlalchemy import Connection, MetaData, event, text
+from sqlalchemy.engine.interfaces import DBAPIConnection
 from sqlalchemy.orm import Session, SessionTransaction, sessionmaker
-from sqlalchemy.pool import QueuePool
+from sqlalchemy.pool import ConnectionPoolEntry, PoolResetState, QueuePool
 
 from app import logs
 
@@ -38,6 +39,37 @@ def _set_tenant(session: Session, transaction: SessionTransaction, connection: C
             text("SELECT set_config('app.tenant_id', :tenant_id, true)"),
             {"tenant_id": str(tenant_id)},
         )
+
+
+def reset_session(
+    dbapi_connection: DBAPIConnection,
+    connection_record: ConnectionPoolEntry,
+    reset_state: PoolResetState,
+) -> None:
+    """Pool `reset` listener for every pooled engine (ZB-31): the next user of a connection gets
+    none of the session settings, temporary tables, open cursors, LISTENs, session-level advisory
+    locks or SET ROLE the last one left. Rollback alone keeps all of them once committed.
+
+    RESET ALL returns each setting to the role's default or the engine's connect options (its
+    lock_timeout, say), so those belong in `options`, never in a SET after connecting; it leaves
+    the role, hence RESET ROLE. Not DISCARD ALL: it would deallocate psycopg's prepared statements
+    behind its back. psycopg never prepares this string itself: it runs several statements, which
+    psycopg does not cache. A failure here invalidates the connection instead of returning it to
+    the pool.
+    """
+    if reset_state.terminate_only:  # being discarded, not returned
+        return
+    # Out of any transaction first: a RESET inside one would be undone with it.
+    dbapi_connection.rollback()
+    autocommit = dbapi_connection.autocommit
+    dbapi_connection.autocommit = True  # one round trip, no BEGIN and COMMIT around it
+    cursor = dbapi_connection.cursor()
+    cursor.execute(
+        "RESET ALL; DISCARD TEMP; CLOSE ALL; UNLISTEN *; SELECT pg_advisory_unlock_all();"
+        " RESET ROLE"
+    )
+    cursor.close()
+    dbapi_connection.autocommit = autocommit
 
 
 def count_after_commit(

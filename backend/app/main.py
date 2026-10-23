@@ -17,7 +17,7 @@ from fastapi.routing import APIRoute
 from opentelemetry import trace
 from opentelemetry.trace import SpanKind
 from pydantic import BaseModel
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.exc import OperationalError
 from starlette.middleware.body_limit import RequestBodyLimitMiddleware
 from starlette.types import ASGIApp, Receive, Scope, Send
@@ -56,7 +56,7 @@ from app.config import (
     StripeSettings,
     TurnstileSettings,
 )
-from app.db import SessionLocal
+from app.db import SessionLocal, reset_session
 from app.errors import ApiError, Error
 
 HEALTH_PATH = "/api/healthz"
@@ -169,6 +169,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             # ZB-13. connect_timeout bounds a connection attempt to an unreachable database.
             connect_args={"options": "-c lock_timeout=5s", "connect_timeout": 5},
         )
+        event.listen(engine, "reset", reset_session)  # ZB-31
         SessionLocal.configure(bind=engine)
     except Exception:
         logger.critical("startup failed", exc_info=True)

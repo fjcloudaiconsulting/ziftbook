@@ -1,4 +1,5 @@
--- Creates the three database roles and their database-level grants. Idempotent: safe to run on every deploy.
+-- Creates the three database roles, their database-level grants and their settings. Idempotent: safe to run on
+-- every deploy.
 -- Run as an admin role (a superuser locally, the provider's admin role when hosted):
 --   psql -v ON_ERROR_STOP=1 -f backend/migrations/bootstrap.sql
 -- Requires ZIF_MIGRATE_PASSWORD and ZIF_APP_PASSWORD in the environment. If either is unset, the
@@ -42,3 +43,13 @@ GRANT CONNECT, CREATE ON DATABASE :"DBNAME" TO ziftbook_migrate;
 GRANT CONNECT ON DATABASE :"DBNAME" TO ziftbook_app;
 GRANT CREATE ON SCHEMA public TO ziftbook_migrate;
 GRANT ziftbook_app TO ziftbook_worker;
+
+-- ZB-31: neither runtime role creates temporary tables, and both search public before pg_temp. Only
+-- the database owner can take TEMPORARY from PUBLIC, so it is done here, as the admin; migration 0050
+-- does it where ziftbook_migrate owns the database (the test databases). ziftbook_migrate keeps it,
+-- as it does where it owns the database. Role settings need a superuser or CREATEROLE, so they live
+-- here too, one per role: ziftbook_worker inherits ziftbook_app's privileges, not its settings.
+REVOKE TEMPORARY ON DATABASE :"DBNAME" FROM PUBLIC;
+GRANT TEMPORARY ON DATABASE :"DBNAME" TO ziftbook_migrate;
+ALTER ROLE ziftbook_app SET search_path = public, pg_temp;
+ALTER ROLE ziftbook_worker SET search_path = public, pg_temp;

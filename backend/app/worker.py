@@ -11,11 +11,11 @@ from datetime import timedelta
 
 from opentelemetry import metrics
 from opentelemetry.metrics import CallbackOptions, Observation
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 
 from app import bookings, jobs, limits, logs, mail, payments, photos, tracing
 from app.config import MailSettings, StripeSettings, WorkerSettings
-from app.db import SessionLocal
+from app.db import SessionLocal, reset_session
 from app.jobs import JobKind, run_once
 
 # Registered job kinds. A new kind ships one release before anything enqueues it.
@@ -163,6 +163,7 @@ def main() -> None:
             "options": "-c statement_timeout=30s -c idle_in_transaction_session_timeout=60s"
         },
     )
+    event.listen(engine, "reset", reset_session)  # ZB-31
     SessionLocal.configure(bind=engine)
     asyncio.run(serve(settings))
 
