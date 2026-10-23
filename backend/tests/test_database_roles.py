@@ -1,3 +1,4 @@
+import hashlib
 import uuid
 from collections.abc import Iterator
 
@@ -5,6 +6,11 @@ import pytest
 from psycopg.errors import InsufficientPrivilege
 from sqlalchemy import Engine, text
 from sqlalchemy.exc import ProgrammingError
+from sqlalchemy.orm import Session
+
+from app.db import SessionLocal
+from app.jobs import enqueue
+from tests.conftest import fresh_email, mailed, token_in
 
 
 def test_btree_gist_is_installed(app_engine: Engine) -> None:
@@ -139,3 +145,79 @@ def test_app_role_cannot_call_a_new_function_until_granted(
         conn.execute(text(f"GRANT EXECUTE ON FUNCTION {probe_function}() TO ziftbook_app"))
     with app_engine.connect() as conn:
         assert conn.scalar(text(f"SELECT {probe_function}()")) == 1
+
+
+# ZB-08: the worker connects as ziftbook_worker, the app role plus what only background jobs may do.
+def test_worker_role_has_no_elevated_attributes_and_owns_nothing(migrate_engine: Engine) -> None:
+    with migrate_engine.connect() as conn:
+        row = conn.execute(
+            text("""
+            SELECT rolcanlogin, rolsuper, rolbypassrls, rolcreaterole, rolcreatedb,
+                   (SELECT count(*) FROM pg_class WHERE relowner = r.oid)
+                   + (SELECT count(*) FROM pg_proc WHERE proowner = r.oid)
+            FROM pg_roles r WHERE rolname = 'ziftbook_worker'
+            """)
+        ).one()
+    assert tuple(row) == (True, False, False, False, False, 0)
+
+
+def test_worker_role_has_every_privilege_of_the_app_role(migrate_engine: Engine) -> None:
+    with migrate_engine.connect() as conn:
+        inherits = conn.scalar(
+            text("SELECT pg_has_role('ziftbook_worker', 'ziftbook_app', 'USAGE')")
+        )
+    assert inherits is True
+
+
+# ZB-08 FENCE. Wrong impl: the worker reaches mint_email_token only through ziftbook_app, so taking
+# it from the app role in the next release (the contract migration) would leave no role that can
+# mint; or the worker gets grants of its own beyond it.
+def test_worker_role_holds_only_mint_email_token_in_its_own_right(migrate_engine: Engine) -> None:
+    with migrate_engine.connect() as conn:
+        held = conn.scalars(
+            text("""
+            SELECT format('%s(%s) %s', p.proname, pg_get_function_identity_arguments(p.oid),
+                          x.privilege_type)
+            FROM pg_proc p, aclexplode(p.proacl) x
+            WHERE x.grantee = 'ziftbook_worker'::regrole
+            UNION ALL
+            SELECT format('%s %s', c.relname, x.privilege_type)
+            FROM pg_class c, aclexplode(c.relacl) x
+            WHERE x.grantee = 'ziftbook_worker'::regrole
+            UNION ALL
+            SELECT format('%s.%s %s', c.relname, a.attname, x.privilege_type)
+            FROM pg_class c JOIN pg_attribute a ON a.attrelid = c.oid, aclexplode(a.attacl) x
+            WHERE x.grantee = 'ziftbook_worker'::regrole
+            ORDER BY 1
+            """)
+        ).all()
+    assert list(held) == ["mint_email_token(p_id uuid, p_token_hash bytea) EXECUTE"]
+
+
+def test_the_email_token_job_runs_as_the_worker_role(
+    app_engine: Engine, worker_engine: Engine, migrate_engine: Engine
+) -> None:
+    email = fresh_email()
+    # What the sign-up endpoint does, as the app role: a pending request and its job.
+    with Session(app_engine) as session, session.begin():
+        token_id = str(
+            session.scalar(text("SELECT start_email_token('sign_up', :e, 'en')"), {"e": email})
+        )
+        enqueue(session, "email.token", f"email.token:{token_id}", {"token_id": token_id})
+    with worker_engine.connect() as conn:
+        assert conn.scalar(text("SELECT current_user")) == "ziftbook_worker"
+    SessionLocal.configure(bind=worker_engine)
+    try:
+        token = token_in(mailed(email))
+    finally:
+        SessionLocal.configure(bind=None)
+    with migrate_engine.connect() as conn:
+        stored = conn.scalar(
+            text("SELECT token_hash FROM email_tokens WHERE id = :id"), {"id": token_id}
+        )
+        job = conn.execute(
+            text("SELECT completed_at IS NOT NULL, last_error FROM jobs WHERE dedupe_key = :k"),
+            {"k": f"email.token:{token_id}"},
+        ).one()
+    assert stored == hashlib.sha256(token.encode()).digest()
+    assert tuple(job) == (True, None)

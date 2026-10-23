@@ -1674,3 +1674,32 @@ def test_0048_round_trips_the_app_roles_write_privileges(
         assert [tuple(r) for r in conn.execute(FUNCTION_DEFAULTS)] == [
             (0, "{ziftbook_migrate=X/ziftbook_migrate}")
         ]
+
+
+# ZB-08 (0049): the roles holding EXECUTE on mint_email_token in their own right.
+MINT_HOLDERS = text("""
+SELECT x.grantee::regrole::text FROM pg_proc p, aclexplode(p.proacl) x
+WHERE p.oid = 'mint_email_token(uuid,bytea)'::regprocedure AND x.privilege_type = 'EXECUTE'
+ORDER BY 1
+""")
+
+
+# ZB-08 FENCE. Wrong impl: a downgrade that leaves the worker's grant behind; an upgrade that also
+# takes it from the app role, which is the contract migration's, a release later: until the
+# worker's own URL is deployed it still connects as ziftbook_app.
+def test_0049_round_trips_the_workers_mint_grant(
+    migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = lock_timeout_config(monkeypatch)
+    try:
+        command.downgrade(cfg, "0048")
+        with migrate_engine.connect() as conn:
+            assert list(conn.scalars(MINT_HOLDERS)) == ["ziftbook_app", "ziftbook_migrate"]
+    finally:
+        command.upgrade(cfg, "head")
+    with migrate_engine.connect() as conn:
+        assert list(conn.scalars(MINT_HOLDERS)) == [
+            "ziftbook_app",
+            "ziftbook_migrate",
+            "ziftbook_worker",
+        ]

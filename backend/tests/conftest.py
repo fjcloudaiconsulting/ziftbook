@@ -526,6 +526,22 @@ def app_engine(migrated: None) -> Iterator[Engine]:
     engine.dispose()
 
 
+@pytest.fixture
+def worker_engine(migrated: None) -> Iterator[Engine]:
+    """ziftbook_worker, what the worker process connects as (ZB-08), on the app role's database.
+
+    With ZIF_WORKER_PASSWORD, the password bootstrap.sql gave the role, or when it is unset or
+    empty the local dev and CI one (docker-compose.yaml and ci.yml). Derived from
+    ZIF_DATABASE_URL, which already names this xdist worker's database, so it lands on no other."""
+    password = os.environ.get("ZIF_WORKER_PASSWORD") or "ziftbook_worker"
+    url = make_url(os.environ["ZIF_DATABASE_URL"]).set(
+        username="ziftbook_worker", password=password
+    )
+    engine = create_engine(url, poolclass=NullPool)
+    yield engine
+    engine.dispose()
+
+
 PASSWORD = "lavender-harbour-19"
 EXPIRE = "UPDATE email_tokens SET expires_at = now() - interval '1 second' WHERE token_hash = :h"
 

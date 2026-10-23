@@ -27,6 +27,7 @@ services:
       PGDATABASE: ziftbook
       ZIF_MIGRATE_PASSWORD: smoke_migrate
       ZIF_APP_PASSWORD: smoke_app
+      ZIF_WORKER_PASSWORD: smoke_worker
     volumes:
       - ./backend/migrations/bootstrap.sql:/bootstrap.sql:ro
     command: ["psql", "-v", "ON_ERROR_STOP=1", "-f", "/bootstrap.sql"]
