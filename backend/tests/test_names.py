@@ -24,12 +24,14 @@ from tests.conftest import (
     People,
     add_password,
     email_of,
+    end_membership,
     events,
     fresh_email,
     issue_link,
     live,
     member_id,
     new_client,
+    set_role,
     signed_in,
 )
 from tests.test_invites_db import NewAccount, minted, new_accounts  # noqa: F401
@@ -373,6 +375,28 @@ def test_presetting_sign_in_does_not_let_set_own_name_reach_another_business(
         named = session.scalar(text("SELECT set_own_name(:u, 'x')"), {"u": people.only_b})
     assert named is False
     assert user_name(migrate_engine, people.only_b) is None
+
+
+# ZIF-112 fence: a business the person was removed from keeps its row, but their name is not copied
+# there. Kills: set_own_name's tenant list without the live-membership filter.
+def test_naming_yourself_skips_a_business_you_were_removed_from(
+    people: People, migrate_engine: Engine
+) -> None:
+    set_user_name(migrate_engine, people.both, None)
+    for tenant_id in (people.a, people.b):
+        with tenant_context(tenant_id) as session:
+            session.execute(
+                text("UPDATE memberships SET display_name = NULL WHERE user_id = :u"),
+                {"u": people.both},
+            )
+    set_role(people.a, people.only_a, "owner")  # a business keeps an owner
+    end_membership(people.a, people.both)
+
+    with tenant_context(people.b) as session:
+        assert session.scalar(text("SELECT set_own_name(:u, 'x')"), {"u": people.both}) is True
+
+    assert display_name(people.a, people.both) is None
+    assert display_name(people.b, people.both) == "x"
 
 
 # F10: leaving is never gated.

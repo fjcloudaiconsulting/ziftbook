@@ -4,6 +4,7 @@ display name."""
 import json
 import threading
 import uuid
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -16,8 +17,10 @@ from app import auth
 from app.db import tenant_context
 from app.main import create_app
 from tests.conftest import (
+    PASSWORD,
     People,
     add_membership,
+    add_password,
     email_of,
     events,
     failing,
@@ -27,7 +30,9 @@ from tests.conftest import (
     signed_in,
     wait_until_blocked,
 )
-from tests.test_services import service as create_service
+from tests.test_availability_api import new_service
+from tests.test_bookings_db import book, seed_service
+from tests.test_clients_db import seed_client
 
 
 @pytest.fixture
@@ -231,7 +236,9 @@ def test_two_owners_acting_on_each_other_serialize_through_the_member_locks(
     responses = [r for r in results if isinstance(r, Response)]
     statuses = sorted(r.status_code for r in responses)
     with tenant_context(people.a) as session:
-        remaining = session.execute(text("SELECT user_id, role FROM memberships")).all()
+        remaining = session.execute(
+            text("SELECT user_id, role FROM memberships WHERE role <> 'removed'")
+        ).all()
 
     if method == "DELETE":
         assert statuses == [204, 401]
@@ -248,7 +255,7 @@ def test_two_owners_acting_on_each_other_serialize_through_the_member_locks(
 
 
 # Deterministic race: a stale owner is rechecked after the lock, not before.
-@pytest.mark.parametrize("holder_action", ["demoted", "removed"])
+@pytest.mark.parametrize("holder_action", ["demoted", "ended"])
 def test_a_stale_owner_is_rechecked_after_the_lock(
     people: People, app: FastAPI, app_engine: Engine, migrate_engine: Engine, holder_action: str
 ) -> None:
@@ -286,7 +293,10 @@ def test_a_stale_owner_is_rechecked_after_the_lock(
                 text("UPDATE memberships SET role = 'worker' WHERE id = :id"), {"id": both_member}
             )
         else:
-            holder.execute(text("DELETE FROM memberships WHERE id = :id"), {"id": both_member})
+            holder.execute(
+                text("UPDATE memberships SET role = 'removed', removed_at = now() WHERE id = :id"),
+                {"id": both_member},
+            )
         # holder commits here.
     thread.join(timeout=10)
     assert not thread.is_alive()
@@ -344,8 +354,8 @@ def test_setting_the_same_role_is_a_no_op(
     assert events(migrate_engine, tenant_id=people.a, action="member_role_changed") == []
 
 
-# Removal is a hard delete of the membership only, and it ends the member's sessions.
-def test_removing_a_member_deletes_the_membership_not_the_account(
+# Removal ends the membership, keeps the row, and ends the member's sessions.
+def test_removing_a_member_ends_the_membership_not_the_account(
     people: People, app: FastAPI, migrate_engine: Engine
 ) -> None:
     only_a_client = signed_in(app, people.a, people.only_a)
@@ -357,11 +367,225 @@ def test_removing_a_member_deletes_the_membership_not_the_account(
     assert response.status_code == 204
     assert response.content == b""
     assert unauthenticated(only_a_client.get("/api/session"))
-    listed = {m["user_id"] for m in owner.get("/api/members").json()}
-    assert str(people.only_a) not in listed
+    listing = owner.get("/api/members")
+    assert listing.status_code == 200
+    assert str(people.only_a) not in {m["user_id"] for m in listing.json()}
     with migrate_engine.connect() as conn:
         alive = conn.scalar(text("SELECT count(*) FROM users WHERE id = :u"), {"u": people.only_a})
     assert alive == 1
+    assert removed_row(people.a, only_a_member).role == "removed"
+
+
+def removed_row(tenant_id: uuid.UUID, member: uuid.UUID) -> Any:
+    with tenant_context(tenant_id) as session:
+        return session.execute(
+            text("SELECT role, removed_at FROM memberships WHERE id = :id"), {"id": member}
+        ).one()
+
+
+def delete(client: TestClient, member: uuid.UUID) -> Response:
+    return client.request("DELETE", f"/api/members/{member}", json={})
+
+
+# 4: a removed member cannot be changed or removed again.
+def test_a_removed_member_cannot_be_changed_or_removed_again(
+    people: People, app: FastAPI, migrate_engine: Engine
+) -> None:
+    owner = signed_in(app, people.a, people.both)
+    only_a_member = member_id(people.a, people.only_a)
+    assert delete(owner, only_a_member).status_code == 204
+
+    patched = owner.patch(f"/api/members/{only_a_member}", json={"role": "worker"})
+    again = delete(owner, only_a_member)
+
+    assert (patched.status_code, patched.json()) == (404, {"code": "not_found"})
+    assert (again.status_code, again.json()) == (404, {"code": "not_found"})
+    assert removed_row(people.a, only_a_member).role == "removed"
+    assert len(events(migrate_engine, tenant_id=people.a, action="member_removed")) == 1
+
+
+# 5: a removed member gets no hours, time off, name or services.
+def test_a_removed_member_gets_no_hours_time_off_name_or_services(
+    people: People, app: FastAPI
+) -> None:
+    owner = signed_in(app, people.a, people.both)
+    only_a_member = member_id(people.a, people.only_a)
+    service_id = new_service(owner)
+    assert delete(owner, only_a_member).status_code == 204
+    hours = f"/api/members/{only_a_member}/working-hours"
+
+    answers = [
+        owner.get(hours),
+        owner.put(hours, json=[{"weekday": 1, "starts_at": "09:00", "ends_at": "12:00"}]),
+        owner.post(
+            f"/api/members/{only_a_member}/time-off",
+            json={"starts_at": "2026-10-01T08:00:00Z", "ends_at": "2026-10-03T08:00:00Z"},
+        ),
+        owner.put(f"/api/members/{only_a_member}/display-name", json={"display_name": "Ada"}),
+    ]
+
+    for answer in answers:
+        assert (answer.status_code, answer.json()) == (404, {"code": "not_found"})
+    assigned = owner.put(f"/api/services/{service_id}/workers", json=[str(only_a_member)])
+    assert (assigned.status_code, assigned.json()) == (422, {"code": "unknown_member"})
+
+
+# 6: removal touches nothing outside this membership.
+def test_removal_touches_nothing_outside_this_membership(
+    people: People, app: FastAPI, migrate_engine: Engine
+) -> None:
+    set_role(people.a, people.only_a, "owner")
+    seed_client(people.a, user_id=people.both)
+    seed_client(people.b, user_id=people.both)
+    both_in_b = signed_in(app, people.b, people.both)
+    owner = signed_in(app, people.a, people.only_a)
+
+    def snapshot() -> list[Any]:
+        out: list[Any] = []
+        with migrate_engine.begin() as conn:
+            out.append(
+                conn.execute(text("SELECT * FROM users WHERE id = :u"), {"u": people.both}).all()
+            )
+            for tenant_id in (people.a, people.b):
+                conn.execute(
+                    text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(tenant_id)}
+                )
+                out.append(conn.execute(text("SELECT * FROM clients ORDER BY id")).all())
+            out.append(
+                conn.execute(
+                    text("SELECT * FROM memberships WHERE tenant_id = :t ORDER BY id"),
+                    {"t": people.b},
+                ).all()
+            )
+        return out
+
+    before = snapshot()
+    assert delete(owner, member_id(people.a, people.both)).status_code == 204
+
+    assert snapshot() == before
+    assert both_in_b.get("/api/session").status_code == 200
+
+
+# ZIF-112 30. fence: removal drops the worker's booking holds (0034), and only theirs. Kills: the
+# DELETE FROM booking_holds going missing. Positive control: the other worker's hold stays.
+def test_removing_a_member_deletes_their_booking_holds(
+    people: People, app: FastAPI, migrate_engine: Engine
+) -> None:
+    set_role(people.a, people.only_a, "owner")
+    service = seed_service(people.a)
+    start = datetime.now(UTC) + timedelta(days=3)
+    held: dict[str, uuid.UUID] = {}
+    with migrate_engine.begin() as conn:
+        conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(people.a)})
+        for who in (people.both, people.only_a):
+            held[str(who)] = conn.scalar(
+                text(
+                    "INSERT INTO booking_holds (tenant_id, service_id, worker_id, anyone,"
+                    " starts_at, ends_at, email, secret_hash, expires_at)"
+                    " VALUES (:t, :s, :w, false, :a, :b, :e, :h, now() + interval '1 hour')"
+                    " RETURNING id"
+                ),
+                {
+                    "t": people.a,
+                    "s": service,
+                    "w": member_id(people.a, who),
+                    "a": start,
+                    "b": start + timedelta(hours=1),
+                    "e": f"{uuid.uuid4()}@example.com",
+                    "h": uuid.uuid4().bytes * 2,
+                },
+            )
+
+    def holds() -> set[uuid.UUID]:
+        with migrate_engine.begin() as conn:
+            conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(people.a)})
+            return set(conn.scalars(text("SELECT id FROM booking_holds")))
+
+    assert holds() == set(held.values())
+    owner = signed_in(app, people.a, people.only_a)
+    assert delete(owner, member_id(people.a, people.both)).status_code == 204
+
+    assert holds() == {held[str(people.only_a)]}
+
+
+# ZIF-112 31. guard: signing in again with a same-business cookie while that person is being removed
+# must not deadlock. The holder does what remove() does (member row FOR UPDATE, then delete their
+# sessions, then end the row) once the sign-in is waiting on the member row. Kills: start() deleting
+# the old cookie's session BEFORE create(): the sign-in then holds that row while it waits, the
+# removal waits on it, and Postgres aborts one of them (40P01).
+def test_signing_in_with_an_old_cookie_does_not_deadlock_with_a_removal(
+    people: People, app: FastAPI, app_engine: Engine, migrate_engine: Engine
+) -> None:
+    set_role(people.a, people.both, "owner")
+    add_password(migrate_engine, people.only_a, PASSWORD)
+    client = signed_in(app, people.a, people.only_a)
+    results: list[object] = []
+
+    def sign_in() -> None:
+        try:
+            results.append(
+                client.post(
+                    "/api/session", json={"email": email_of(people.only_a), "password": PASSWORD}
+                )
+            )
+        except Exception as error:
+            results.append(error)
+
+    thread = threading.Thread(target=sign_in)
+    with app_engine.begin() as holder:
+        holder.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(people.a)})
+        holder.execute(
+            text("SELECT 1 FROM memberships WHERE user_id = :u FOR UPDATE"), {"u": people.only_a}
+        )
+        thread.start()
+        wait_until_blocked(app_engine, 1)
+        holder.execute(
+            text("DELETE FROM sessions WHERE tenant_id = :t AND user_id = :u"),
+            {"t": people.a, "u": people.only_a},
+        )
+        holder.execute(
+            text("UPDATE memberships SET role = 'removed', removed_at = now() WHERE user_id = :u"),
+            {"u": people.only_a},
+        )
+    thread.join(timeout=10)
+    assert not thread.is_alive()
+
+    # The sign-in lost the race cleanly: its membership was gone when it got the row.
+    assert [r.status_code if isinstance(r, Response) else r for r in results] == [403]
+
+
+# 8: a removal takes the booking lock before any member row.
+def test_a_removal_takes_the_booking_lock_before_any_member_row(
+    people: People, app: FastAPI, app_engine: Engine
+) -> None:
+    owner = signed_in(app, people.a, people.both)
+    ids = [member_id(people.a, people.both), member_id(people.a, people.only_a)]
+    results: list[object] = []
+
+    def remove() -> None:
+        try:
+            results.append(delete(owner, ids[1]))
+        except Exception as error:  # would be a bug, not the expected outcome
+            results.append(error)
+
+    with app_engine.begin() as holder:
+        holder.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(people.a)})
+        holder.execute(
+            text("SELECT pg_advisory_xact_lock(51, hashtext(current_setting('app.tenant_id')))")
+        )
+        thread = threading.Thread(target=remove)
+        thread.start()
+        wait_until_blocked(app_engine, 1)
+        # Blocked on lock 51 and holding no member row yet: NOWAIT must get both.
+        holder.execute(
+            text("SELECT FROM memberships WHERE id = ANY(:ids) FOR UPDATE NOWAIT"), {"ids": ids}
+        )
+    thread.join(timeout=10)
+    assert not thread.is_alive()
+
+    assert len(results) == 1
+    assert isinstance(results[0], Response)
+    assert results[0].status_code == 204
 
 
 # A member id outside the business, or a random one, is 404, never a leak.
@@ -525,7 +749,7 @@ def test_the_409_mapping_only_matches_last_owner(
               RAISE EXCEPTION 'refused for testing'
                 USING ERRCODE = '23514', CONSTRAINT = '{constraint}';
             END $$;
-            CREATE TRIGGER zz_refuse BEFORE DELETE ON memberships
+            CREATE TRIGGER zz_refuse BEFORE UPDATE ON memberships
             FOR EACH ROW EXECUTE FUNCTION zz_refuse()
             """)
         )
@@ -536,7 +760,8 @@ def test_the_409_mapping_only_matches_last_owner(
         assert (response.status_code, response.json()) == (expected, expected_body)
         with tenant_context(people.a) as session:
             still_there = session.scalar(
-                text("SELECT count(*) FROM memberships WHERE user_id = :u"), {"u": people.only_a}
+                text("SELECT count(*) FROM memberships WHERE user_id = :u AND role = 'worker'"),
+                {"u": people.only_a},
             )
         assert still_there == 1
     finally:
@@ -769,61 +994,125 @@ def test_a_worker_probing_another_business_is_not_found_not_forbidden(
     assert stored_name(people.b, other_business_member) is None
 
 
-# ZIF-51: bookings reference memberships with no ON DELETE, so removing a member who holds one is
-# a 409, not the 500 a bare ForeignKeyViolation re-raise would give (F2).
-
-
-def seed_booking_for(tenant_id: uuid.UUID, worker_id: uuid.UUID, service_id: str) -> None:
-    """A real booking row, inserted directly as the console path would (source='merchant')."""
-    with tenant_context(tenant_id) as session:
-        session.execute(
-            text("SELECT pg_advisory_xact_lock(51, hashtext(current_setting('app.tenant_id')))")
-        )
-        client_id = session.scalar(
-            text(
-                "INSERT INTO clients (tenant_id, name) "
-                "VALUES (current_setting('app.tenant_id')::uuid, 'Client') RETURNING id"
-            )
-        )
-        session.execute(
-            text("""
-            INSERT INTO bookings (tenant_id, client_id, worker_id, service_id, starts_at, ends_at,
-                status, source, service_name, price_amount_minor, price_currency,
-                duration_minutes, auto_confirm_at_booking, free_cancellation_hours,
-                reschedule_cutoff_hours)
-            SELECT current_setting('app.tenant_id')::uuid, :client_id, :worker_id, :service_id,
-                   now() + interval '1 day', now() + interval '1 day 30 minutes', 'confirmed',
-                   'merchant', name, price_amount_minor, price_currency, duration_minutes, true,
-                   48, 24
-            FROM services WHERE id = :service_id
-            """),
-            {"client_id": client_id, "worker_id": worker_id, "service_id": service_id},
-        )
-
-
-def test_removing_a_member_who_holds_a_booking_is_a_409(people: People, app: FastAPI) -> None:
+# 1: the row stays, so booking history still resolves (ZIF-112).
+def test_removing_a_member_with_past_bookings_keeps_the_row_and_the_history(
+    people: People, app: FastAPI
+) -> None:
     owner = signed_in(app, people.a, people.both)
     only_a_member = member_id(people.a, people.only_a)
-    created = create_service(owner)
-    assert created.status_code == 201
-    service_id = created.json()["id"]
-    seed_booking_for(people.a, only_a_member, service_id)
+    booking_id = book(
+        people.a,
+        client_id=seed_client(people.a),
+        worker_id=only_a_member,
+        service_id=seed_service(people.a),
+        starts_at=datetime.now(UTC) - timedelta(days=2),
+        ends_at=datetime.now(UTC) - timedelta(days=2, minutes=-30),
+        display_name="Old Name",
+    )
+    with tenant_context(people.a) as session:
+        session.execute(
+            text("""
+            INSERT INTO booking_events (tenant_id, booking_id, event, actor_user_id)
+            VALUES (current_setting('app.tenant_id')::uuid, :b, 'completed', :u)
+            """),
+            {"b": booking_id, "u": people.only_a},
+        )
 
-    # F-h: json_only refuses a bare `.request("DELETE", ...)` with no body before routing unless
-    # the content-type is application/json - this is the repo's first DELETE test.
-    response = owner.request(
-        "DELETE",
-        f"/api/members/{only_a_member}",
-        headers={"content-type": "application/json"},
-        json={},
+    assert delete(owner, only_a_member).status_code == 204
+
+    row = removed_row(people.a, only_a_member)
+    assert row.role == "removed" and row.removed_at is not None
+    detail = owner.get(f"/api/bookings/{booking_id}")
+    assert detail.status_code == 200
+    body = detail.json()
+    assert body["worker_id"] == str(only_a_member)
+    assert body["worker_display_name"] == "Old Name"
+    assert body["history"][0]["actor_name"] == "Test Person"
+
+
+# 2: a live appointment blocks the removal; a lapsed hold, a past or a completed one does not.
+LIVE = timedelta(hours=1)
+
+
+@pytest.mark.parametrize(
+    ("status", "starts", "ends", "expires", "blocked"),
+    [
+        ("confirmed", timedelta(days=1), timedelta(days=1, minutes=30), None, True),
+        ("confirmed", timedelta(minutes=-10), timedelta(minutes=20), None, True),
+        ("pending", timedelta(days=1), timedelta(days=1, minutes=30), LIVE, True),
+        (
+            "awaiting_payment",
+            timedelta(days=1),
+            timedelta(days=1, minutes=30),
+            timedelta(minutes=10),
+            True,
+        ),
+        (
+            "pending",
+            timedelta(days=1),
+            timedelta(days=1, minutes=30),
+            timedelta(minutes=-1),
+            False,
+        ),
+        (
+            "awaiting_payment",
+            timedelta(days=1),
+            timedelta(days=1, minutes=30),
+            timedelta(minutes=-1),
+            False,
+        ),
+        ("confirmed", timedelta(days=-2), timedelta(days=-2, minutes=30), None, False),
+        ("completed", timedelta(days=1), timedelta(days=1, minutes=30), None, False),
+    ],
+)
+def test_a_member_with_a_live_appointment_cannot_be_removed(
+    people: People,
+    app: FastAPI,
+    status: str,
+    starts: timedelta,
+    ends: timedelta,
+    expires: timedelta | None,
+    blocked: bool,
+) -> None:
+    only_a_client = signed_in(app, people.a, people.only_a)
+    owner = signed_in(app, people.a, people.both)
+    only_a_member = member_id(people.a, people.only_a)
+    now = datetime.now(UTC)
+    book(
+        people.a,
+        client_id=seed_client(people.a),
+        worker_id=only_a_member,
+        service_id=seed_service(people.a),
+        starts_at=now + starts,
+        ends_at=now + ends,
+        status=status,
+        expires_at=None if expires is None else now + expires,
     )
 
-    assert (response.status_code, response.json()) == (409, {"code": "has_bookings"})
-    with tenant_context(people.a) as session:
-        still_there = session.scalar(
-            text("SELECT count(*) FROM memberships WHERE id = :id"), {"id": only_a_member}
-        )
-    assert still_there == 1
+    response = delete(owner, only_a_member)
+
+    if blocked:
+        assert response.status_code == 409
+        assert response.json() == {"code": "has_upcoming_bookings"}
+        assert removed_row(people.a, only_a_member).role == "worker"
+        assert only_a_client.get("/api/session").status_code == 200
+    else:
+        assert response.status_code == 204
+
+
+def test_another_members_appointment_does_not_block_a_removal(people: People, app: FastAPI) -> None:
+    owner = signed_in(app, people.a, people.both)
+    now = datetime.now(UTC)
+    book(
+        people.a,
+        client_id=seed_client(people.a),
+        worker_id=member_id(people.a, people.both),
+        service_id=seed_service(people.a),
+        starts_at=now + timedelta(days=1),
+        ends_at=now + timedelta(days=1, minutes=30),
+    )
+
+    assert delete(owner, member_id(people.a, people.only_a)).status_code == 204
 
 
 def test_the_accepted_ceiling_of_the_display_name_validator(people: People, app: FastAPI) -> None:

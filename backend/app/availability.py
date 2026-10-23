@@ -345,7 +345,7 @@ SELECT w.member_id, m.display_name, w.weekday, w.starts_at, w.ends_at
 FROM working_hours w JOIN service_workers s
   ON s.tenant_id = w.tenant_id AND s.member_id = w.member_id
 JOIN memberships m ON m.tenant_id = w.tenant_id AND m.id = w.member_id
-WHERE s.service_id = :service_id
+WHERE s.service_id = :service_id AND m.role <> 'removed'
   AND (CAST(:member_id AS uuid) IS NULL OR w.member_id = :member_id)
 """)
 

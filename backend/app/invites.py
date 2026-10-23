@@ -75,7 +75,10 @@ def create(
         raise ApiError(429, "rate_limited")
     # users' policy shows only this business's members: this finds no account anywhere else.
     if current.db.scalar(
-        text("SELECT true FROM memberships m JOIN users u ON u.id = m.user_id WHERE u.email = :e"),
+        text(
+            "SELECT true FROM memberships m JOIN users u ON u.id = m.user_id "
+            "WHERE u.email = :e AND m.role <> 'removed'"
+        ),
         {"e": invite.email},
     ):
         raise ApiError(409, "already_member")

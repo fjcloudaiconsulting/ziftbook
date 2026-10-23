@@ -22,6 +22,7 @@ from tests.conftest import (
     email_of,
     member_id,
     new_client,
+    wait_until_blocked,
 )
 
 
@@ -168,6 +169,96 @@ def test_a_member_of_several_businesses_lands_in_the_oldest_membership(
                 session.execute(text("DELETE FROM memberships WHERE user_id = :u"), {"u": stranger})
 
 
+def insert_membership(
+    tenant_id: uuid.UUID, user_id: uuid.UUID, role: str, **ids: uuid.UUID
+) -> None:
+    removed_at = "now()" if role == "removed" else "NULL"
+    with tenant_context(tenant_id) as session:
+        session.execute(
+            text(
+                "INSERT INTO memberships (id, tenant_id, user_id, role, removed_at) "
+                f"VALUES (:i, :t, :u, :r, {removed_at})"
+            ),
+            {"i": ids.get("id", uuid.uuid7()), "t": tenant_id, "u": user_id, "r": role},
+        )
+
+
+def drop_memberships(people: People, user_id: uuid.UUID) -> None:
+    for tenant_id in (people.a, people.b):
+        with tenant_context(tenant_id) as session:
+            session.execute(text("DELETE FROM memberships WHERE user_id = :u"), {"u": user_id})
+
+
+# 16: the oldest ACTIVE membership, not the oldest.
+def test_a_removed_oldest_membership_lands_in_the_oldest_active_one(
+    people: People, stranger: uuid.UUID, client: TestClient
+) -> None:
+    older, newer = uuid.uuid7(), uuid.uuid7()
+    insert_membership(people.b, stranger, "removed", id=older)
+    insert_membership(people.a, stranger, "worker", id=newer)
+    try:
+        response = sign_in(client, email_of(stranger))
+        assert response.status_code == 200
+        assert response.json()["tenant_id"] == str(people.a)
+    finally:
+        drop_memberships(people, stranger)
+
+
+# 17
+def test_only_removed_memberships_is_no_tenant(
+    people: People, stranger: uuid.UUID, client: TestClient
+) -> None:
+    insert_membership(people.a, stranger, "removed")
+    try:
+        response = sign_in(client, email_of(stranger))
+        assert (response.status_code, response.json()) == (403, {"code": "no_tenant"})
+    finally:
+        drop_memberships(people, stranger)
+
+
+# 18: the sign-in waits for the removal, then finds no live membership.
+def test_a_sign_in_racing_a_removal_is_no_tenant_and_starts_no_session(
+    people: People, app: FastAPI, app_engine: Engine
+) -> None:
+    results: list[object] = []
+
+    def sign() -> None:
+        try:
+            results.append(sign_in(new_client(app), email_of(people.only_a)))
+        except Exception as error:  # would be a bug, not the expected outcome
+            results.append(error)
+
+    with app_engine.begin() as holder:
+        holder.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(people.a)})
+        holder.execute(
+            text("SELECT FROM memberships WHERE user_id = :u FOR UPDATE"), {"u": people.only_a}
+        )
+        thread = threading.Thread(target=sign)
+        thread.start()
+        wait_until_blocked(app_engine, 1)
+        holder.execute(
+            text("DELETE FROM sessions WHERE tenant_id = :t AND user_id = :u"),
+            {"t": people.a, "u": people.only_a},
+        )
+        holder.execute(
+            text("UPDATE memberships SET role = 'removed', removed_at = now() WHERE user_id = :u"),
+            {"u": people.only_a},
+        )
+    thread.join(timeout=10)
+    assert not thread.is_alive()
+
+    assert len(results) == 1
+    response = results[0]
+    assert isinstance(response, Response)
+    assert (response.status_code, response.json()) == (403, {"code": "no_tenant"})
+    with app_engine.connect() as conn:
+        count = conn.scalar(
+            text("SELECT count(*) FROM sessions WHERE tenant_id = :t AND user_id = :u"),
+            {"t": people.a, "u": people.only_a},
+        )
+    assert count == 0
+
+
 def test_without_a_business_a_correct_password_is_the_only_way_to_learn_it(
     stranger: uuid.UUID, client: TestClient
 ) -> None:
@@ -275,12 +366,20 @@ def test_every_answer_keeps_the_page_address_to_itself(client: TestClient) -> No
     assert all(r.headers.get("referrer-policy") == "no-referrer" for r in responses)
 
 
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "DELETE FROM memberships WHERE user_id = :u",
+        "UPDATE memberships SET role = 'removed', removed_at = now() WHERE user_id = :u",
+    ],
+    ids=["deleted", "ended"],
+)
 def test_a_session_whose_membership_just_went_is_refused_not_an_error(
-    people: People, app_engine: Engine
+    people: People, app_engine: Engine, statement: str
 ) -> None:
     # The membership is removed after the cookie was checked but before the answer is built.
     with tenant_context(people.a) as session:
-        session.execute(text("DELETE FROM memberships WHERE user_id = :u"), {"u": people.only_a})
+        session.execute(text(statement), {"u": people.only_a})
         with pytest.raises(ApiError) as error:
             auth.describe(session, people.only_a)
     assert (error.value.status_code, error.value.code) == (401, "unauthenticated")

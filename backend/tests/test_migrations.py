@@ -17,7 +17,7 @@ from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.orm import Session
 
 from app.db import tenant_context
-from tests.conftest import API_DIR, People, delete_bookings, member_id
+from tests.conftest import API_DIR, People, delete_bookings, end_membership, member_id
 from tests.test_bookings_db import insert_booking, seed_service
 
 COLUMNS = text("SELECT column_name FROM information_schema.columns WHERE table_name = 'tenants'")
@@ -1370,3 +1370,83 @@ def _insert_payment(
             ),
             {"t": people.a, "b": booking_id, **row},
         )
+
+
+FUNCTION_SOURCE = text("SELECT prosrc FROM pg_proc WHERE proname = :n")
+MEMBERSHIP_SHAPE = text("""
+SELECT
+  (SELECT count(*) FROM information_schema.columns
+   WHERE table_name = 'memberships' AND column_name = 'removed_at'),
+  (SELECT count(*) FROM pg_constraint WHERE conname = 'ck_sessions_role'),
+  (SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'ck_memberships_role')
+""")
+
+
+# ZIF-112 27. fence: 0045's downgrade restores the old role CHECK and the three old function
+# bodies exactly, its upgrade brings everything back, and the removed_at pairing bites both ways.
+def test_downgrading_and_upgrading_0045_restores_the_role_check_and_the_three_functions(
+    people: People, migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = lock_timeout_config(monkeypatch)
+
+    def body_of(source: str) -> str:
+        return " ".join(source.split())
+
+    def body(create: str) -> str:
+        return body_of(create.split("$$")[1])
+
+    # The bodies the earlier migrations installed. Whitespace is collapsed on both sides: 0045
+    # wraps account_by_email's one long line around the filter placeholder; every token is compared.
+    old_sources = [
+        body(migration("0007_password_auth.py").FUNCTIONS["account_by_email(text)"]),
+        body(migration("0032_user_name.py").NEW_ACCEPT_INVITE),
+        body(migration("0032_user_name.py").SET_OWN_NAME_FUNCTION),
+    ]
+    functions = ("account_by_email", "accept_invite", "set_own_name")
+
+    def sources() -> list[str]:
+        with migrate_engine.connect() as conn:
+            return [body_of(conn.scalar(FUNCTION_SOURCE, {"n": n})) for n in functions]
+
+    def shape() -> tuple[Any, ...]:
+        with migrate_engine.connect() as conn:
+            columns, sessions_check, role_check = conn.execute(MEMBERSHIP_SHAPE).one()
+        return columns, sessions_check, "removed" in role_check
+
+    try:
+        command.downgrade(cfg, "0044")
+        assert shape() == (0, 0, False)
+        assert sources() == old_sources
+    finally:
+        command.upgrade(cfg, "head")
+    assert shape() == (1, 1, True)
+    assert all("removed" in source for source in sources())
+    for change in ("SET role = 'removed'", "SET removed_at = now()"):
+        with pytest.raises(IntegrityError) as raised, tenant_context(people.a) as session:
+            session.execute(
+                text(f"UPDATE memberships {change} WHERE user_id = :u"), {"u": people.only_a}
+            )
+        assert raised.value.orig.diag.constraint_name == "ck_memberships_removed_at"  # type: ignore[union-attr]
+
+
+# ZIF-112 28. fence: the downgrade refuses while a membership is removed (the old role CHECK), and
+# changes nothing: version still 0045, the row intact.
+def test_0045_downgrade_refuses_while_a_membership_is_removed(
+    people: People, migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = lock_timeout_config(monkeypatch)
+    end_membership(people.a, people.only_a)
+    try:
+        with pytest.raises(IntegrityError) as raised:
+            command.downgrade(cfg, "0044")
+        assert isinstance(raised.value.orig, CheckViolation)
+        assert raised.value.orig.diag.constraint_name == "ck_memberships_role"
+        with migrate_engine.connect() as conn:
+            assert conn.scalar(text("SELECT version_num FROM alembic_version")) == "0045"
+            conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(people.a)})
+            role = conn.scalar(
+                text("SELECT role FROM memberships WHERE user_id = :u"), {"u": people.only_a}
+            )
+        assert role == "removed"
+    finally:
+        command.upgrade(cfg, "head")

@@ -372,7 +372,8 @@ def lock_members(current: SignedIn, member_ids: list[UUID]) -> dict[UUID, UUID]:
         current.db.execute(
             text("""
             SELECT id, user_id FROM memberships
-            WHERE id = ANY(CAST(:ids AS uuid[])) ORDER BY id FOR NO KEY UPDATE
+            WHERE id = ANY(CAST(:ids AS uuid[])) AND role <> 'removed'
+            ORDER BY id FOR NO KEY UPDATE
             """),
             {"ids": member_ids},
         ).all()

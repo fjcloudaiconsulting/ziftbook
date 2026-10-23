@@ -16,15 +16,17 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Engine, text
 
 from app import auth, mail
-from app.bookings import CLIENT_CANCEL
+from app.bookings import CLIENT_CANCEL, email_merchants
 from app.db import tenant_context
 from app.jobs import Job, run_once
 from app.mail import STATUS_FOR
 from app.worker import KINDS
 from tests.conftest import (
+    MAILGUN_CALLS,
     People,
     add_membership,
     add_user,
+    end_membership,
     fresh_email,
     member_id,
     new_client,
@@ -524,6 +526,50 @@ def test_merchant_job_for_a_user_outside_the_business_sends_nothing(
 
     assert outbox_for(people.a, job.id) is None
     assert subjects_sent_to(email_of(people.only_b)) == []
+
+
+# 22. fence (ZIF-112). Kills: an unfiltered MERCHANT read, which mails a removed member for a job
+# queued before the removal. The control first: the same job for a live worker does send.
+def test_merchant_job_for_a_removed_member_sends_nothing(
+    people: People, app: FastAPI, ready: str, app_engine: Engine
+) -> None:
+    worker = add_worker(app_engine, people.a)
+    booking_id = make_pending(app, people.a, ready)
+    assert patch(signed_in(app, people.a, people.both), booking_id, "confirmed").status_code == 200
+
+    control = run_send_booking(people.a, booking_id, "booking_new", user_id=str(worker))
+    assert outbox_for(people.a, control.id) is not None
+    assert subjects_sent_to(email_of(worker)) != []
+    sent = len(MAILGUN_CALLS)
+
+    end_membership(people.a, worker)
+    job = run_send_booking(people.a, booking_id, "booking_new", user_id=str(worker))
+
+    assert outbox_for(people.a, job.id) is None
+    assert len(MAILGUN_CALLS) == sent
+
+
+# 23. fence (ZIF-112). Kills: an unfiltered MERCHANTS arm for the assigned worker.
+def test_merchants_of_a_booking_whose_worker_was_removed_are_the_owners(
+    people: People, app: FastAPI, ready: str, app_engine: Engine
+) -> None:
+    worker = add_worker(app_engine, people.a)
+    seed(people.a, worker, weekdays("09:00", "17:00"))
+    assign(people.a, ready, member_id(people.a, worker))
+    removed = member_id(people.a, worker)
+    booking_id = make_pending(app, people.a, ready, member_id=str(removed))
+    end_membership(people.a, worker)
+    clear_jobs(app_engine, people.a)
+
+    with tenant_context(people.a) as db:
+        email_merchants(db, people.a, uuid.UUID(booking_id), removed, "booking_new")
+
+    jobs = jobs_for_booking(app_engine, people.a, booking_id)
+    assert jobs
+    payloads = [
+        j["payload"] if isinstance(j["payload"], dict) else json.loads(j["payload"]) for j in jobs
+    ]
+    assert {payload["user_id"] for payload in payloads} == {str(people.both)}
 
 
 # 14. fence. Kills: KeyError/raise leading to 5 retries and last_error.

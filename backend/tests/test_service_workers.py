@@ -284,8 +284,9 @@ def test_a_failed_recording_leaves_assignments_unchanged(
 
 
 # 11. fence: a removal in flight makes the assignment a 422, never a foreign key 500.
+@pytest.mark.parametrize("holder_action", ["deleted", "ended"])
 def test_an_assignment_waits_on_a_removal_in_flight(
-    people: People, owner: TestClient, app_engine: Engine
+    people: People, owner: TestClient, app_engine: Engine, holder_action: str
 ) -> None:
     only_a = member_id(people.a, people.only_a)
     service_id = svc(owner)
@@ -299,7 +300,14 @@ def test_an_assignment_waits_on_a_removal_in_flight(
             holder.execute(
                 text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(people.a)}
             )
-            holder.execute(text("DELETE FROM memberships WHERE id = :m"), {"m": only_a})
+            holder.execute(
+                text(
+                    "DELETE FROM memberships WHERE id = :m"
+                    if holder_action == "deleted"
+                    else "UPDATE memberships SET role = 'removed', removed_at = now() WHERE id = :m"
+                ),
+                {"m": only_a},
+            )
             thread = threading.Thread(target=request)
             thread.start()
             wait_until_blocked(app_engine, 1)

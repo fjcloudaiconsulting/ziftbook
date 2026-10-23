@@ -36,11 +36,15 @@ def create(session: Session, user_id: UUID, *, ip: str | None, user_agent: str |
     `session` is a tenant_context: the membership (and so the tenant and role) comes from it.
     """
     token = secrets.token_urlsafe(32)
+    # FOR SHARE: a sign-in racing a removal (target() holds the row FOR UPDATE) waits, then
+    # re-reads the row; an ended one yields no row, so the caller's ValueError answers 403
+    # no_tenant instead of a foreign key 500. The filter alone is not enough: an unlocked read sees
+    # the old row.
     inserted = session.scalar(
         text("""
         INSERT INTO sessions (id_hash, tenant_id, user_id, role, expires_at, ip, user_agent)
         SELECT :id_hash, tenant_id, user_id, role, now() + :lifetime, :ip, :user_agent
-        FROM memberships WHERE user_id = :user_id
+        FROM memberships WHERE user_id = :user_id AND role <> 'removed' FOR SHARE
         RETURNING true
         """),
         {
@@ -282,7 +286,7 @@ def describe(db: Session, user_id: UUID) -> SessionOut:
         SELECT m.user_id, m.tenant_id, m.id AS member_id, m.role, m.display_name, u.email, u.name,
                t.name AS business_name, t.currency, t.slug
         FROM memberships m JOIN users u ON u.id = m.user_id JOIN tenants t ON t.id = m.tenant_id
-        WHERE m.user_id = :user_id
+        WHERE m.user_id = :user_id AND m.role <> 'removed'
         """),
         {"user_id": user_id},
     ).first()
@@ -303,16 +307,18 @@ def start(session: Session, request: Request, user_id: UUID) -> str:
 
     session is a tenant_context for the business; returns the new cookie's token.
     """
-    if old := request.cookies.get(COOKIE):
-        session.execute(
-            text("DELETE FROM sessions WHERE id_hash = :id_hash"), {"id_hash": hash_token(old)}
-        )
+    # create() first: it may wait on the membership (a removal in flight), and must do so holding
+    # no session row, or it deadlocks against members.remove deleting that row.
     token = create(
         session,
         user_id,
         ip=request.client.host if request.client else None,
         user_agent=request.headers.get("user-agent"),
     )
+    if old := request.cookies.get(COOKIE):
+        session.execute(
+            text("DELETE FROM sessions WHERE id_hash = :id_hash"), {"id_hash": hash_token(old)}
+        )
     record(session, request, "sign_in_succeeded", actor_user_id=user_id)
     return token
 

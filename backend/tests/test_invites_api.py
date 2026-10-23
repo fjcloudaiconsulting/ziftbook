@@ -26,6 +26,7 @@ from tests.conftest import (
     failing,
     fresh_address,
     fresh_email,
+    member_id,
     new_client,
     points,
     set_role,
@@ -621,6 +622,37 @@ def test_accepting_with_an_existing_account_and_correct_password(
         str(people.a),
         "worker",
     )
+
+
+# 20: a removed member is re-invited onto the same membership, as a worker.
+def test_a_removed_member_is_re_invited_onto_the_same_membership(
+    people: People, app: FastAPI, migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    add_password(migrate_engine, people.only_a, PASSWORD)
+    old_id = member_id(people.a, people.only_a)
+    owner = signed_in(app, people.a, people.both)
+    assert owner.request("DELETE", f"/api/members/{old_id}", json={}).status_code == 204
+    created = owner.post("/api/invites", json={"email": email_of(people.only_a)})
+    assert created.status_code == 201
+    token = mint(monkeypatch, people.a, uuid.UUID(created.json()["id"]))
+    client = new_client(app)
+
+    response = client.post(
+        "/api/invites/accept", json={"token": token, "password": PASSWORD, "name": "New Person"}
+    )
+
+    assert response.status_code == 201
+    session_check = client.get("/api/session")
+    assert (session_check.json()["tenant_id"], session_check.json()["role"]) == (
+        str(people.a),
+        "worker",
+    )
+    assert member_id(people.a, people.only_a) == old_id
+    with tenant_context(people.a) as session:
+        removed_at = session.scalar(
+            text("SELECT removed_at FROM memberships WHERE id = :i"), {"i": old_id}
+        )
+    assert removed_at is None
 
 
 # C3: an existing account, wrong password, is refused and changes nothing.

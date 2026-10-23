@@ -147,8 +147,8 @@ def manual_block(current: SignedIn, time_off_id: UUID) -> tuple[UUID, UUID]:
     )
     if member_id is None:
         raise ApiError(404, "not_found")
-    # The member, then their blocks: the same order as removing a member (membership row, then the
-    # cascade to time_off), so the two never deadlock. The booking lock comes before both (it takes
+    # The member, then their blocks: the same order as removing a member (membership row, then its
+    # DELETE of time_off), so the two never deadlock. The booking lock comes before both (it takes
     # no row lock, and nothing that holds a membership row takes it). Never lock tenants:
     # keep_an_owner locks memberships and then tenants (migration 0014).
     user_id = members.member_user(current, member_id, lock=True)

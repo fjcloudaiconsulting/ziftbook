@@ -766,6 +766,16 @@ def set_role(tenant_id: uuid.UUID, user_id: uuid.UUID, role: str) -> None:
         )
 
 
+def end_membership(tenant_id: uuid.UUID, user_id: uuid.UUID) -> None:
+    """End a membership as members.remove leaves it (ZIF-112), without the API. The person must
+    hold no session in that business (the sessions foreign key) and not be its only owner."""
+    with tenant_context(tenant_id) as session:
+        session.execute(
+            text("UPDATE memberships SET role = 'removed', removed_at = now() WHERE user_id = :u"),
+            {"u": user_id},
+        )
+
+
 @pytest.fixture
 def people(app_engine: Engine, migrate_engine: Engine, bound: None) -> Iterator[People]:
     with app_engine.begin() as conn:

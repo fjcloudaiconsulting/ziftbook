@@ -616,9 +616,10 @@ def test_removing_a_member_cascades_their_time_off(people: People, app: FastAPI)
 
 # 17. fence (lock order): a removal in flight for the block's member never lets a write through
 # with a stale member row, and never deadlocks against it.
+@pytest.mark.parametrize("holder_action", ["deleted", "ended"])
 @pytest.mark.parametrize("op", ["POST", "PATCH"])
 def test_a_write_waits_on_a_membership_removal_in_flight(
-    people: People, app: FastAPI, app_engine: Engine, op: str
+    people: People, app: FastAPI, app_engine: Engine, op: str, holder_action: str
 ) -> None:
     only_a_member = member_id(people.a, people.only_a)
     existing_id = None
@@ -640,7 +641,14 @@ def test_a_write_waits_on_a_membership_removal_in_flight(
             holder.execute(
                 text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(people.a)}
             )
-            holder.execute(text("DELETE FROM memberships WHERE id = :m"), {"m": only_a_member})
+            holder.execute(
+                text(
+                    "DELETE FROM memberships WHERE id = :m"
+                    if holder_action == "deleted"
+                    else "UPDATE memberships SET role = 'removed', removed_at = now() WHERE id = :m"
+                ),
+                {"m": only_a_member},
+            )
             thread = threading.Thread(target=request)
             thread.start()
             wait_until_blocked(app_engine, 1)
