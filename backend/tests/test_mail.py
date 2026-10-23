@@ -19,7 +19,15 @@ from app.db import SessionLocal, tenant_context
 from app.jobs import JobKind, enqueue, run_once
 from app.mail import LOCALES, TEMPLATES, render
 from app.worker import KINDS
-from tests.conftest import MAILGUN_CALLS, People, closed, points, save_setting, sent_to
+from tests.conftest import (
+    MAILGUN_CALLS,
+    People,
+    closed,
+    end_membership,
+    points,
+    save_setting,
+    sent_to,
+)
 
 
 @pytest.fixture
@@ -105,6 +113,24 @@ def test_no_email_goes_to_someone_outside_the_tenant(people: People, clean_outbo
             text("SELECT completed_at FROM jobs WHERE id = :id"), {"id": job_id}
         )
     assert completed is not None
+
+
+# ZIF-112 fence: a removed member's row is kept, so users alone no longer says "in this tenant".
+# Kills: the lookup without the live-membership join (a removed member is emailed). Positive
+# control: a live member of the same business is.
+def test_no_email_goes_to_a_removed_member(people: People, clean_outbox: None) -> None:
+    end_membership(people.a, people.only_a)
+    calls = len(MAILGUN_CALLS)
+
+    send_hello(people.a, people.only_a)
+    assert len(MAILGUN_CALLS) == calls
+    assert subjects_sent_to(people.only_a) == []
+    with tenant_context(people.a) as session:
+        assert session.scalar(text("SELECT count(*) FROM email_outbox")) == 0
+
+    send_hello(people.a, people.both)
+    assert len(MAILGUN_CALLS) == calls + 1
+    assert len(subjects_sent_to(people.both)) == 1
 
 
 def test_a_recipient_with_no_language_gets_the_business_languages_mail(

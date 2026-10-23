@@ -8,7 +8,8 @@ makes "a session exists, so its membership is live" a schema fact. keep_an_owner
 change: owner -> removed is an owner losing the role.
 
 account_by_email picks the oldest ACTIVE membership; accept_invite revives a removed row as a
-worker (same id, so old bookings stay on it). Both are replaced in place.
+worker (same id, so old bookings stay on it); set_own_name fills display names only in live
+memberships. All three are replaced in place.
 
 The downgrade refuses while any membership is removed (the old role CHECK fails on it): such rows
 can be neither deleted (bookings reference them) nor silently re-admitted.
@@ -116,6 +117,39 @@ BEGIN
 END $$"""
 
 
+def set_own_name(active: str) -> str:
+    """0032's SET_OWN_NAME_FUNCTION, as CREATE OR REPLACE, with the tenant-list filter given."""
+    return f"""
+CREATE OR REPLACE FUNCTION set_own_name(p_user uuid, p_name text)
+RETURNS boolean
+LANGUAGE plpgsql SECURITY DEFINER {SEARCH_PATH} AS $$
+-- Gives a nameless person their name; false when they already have one or are not in this business.
+DECLARE
+  v_sign_in text := current_setting('app.sign_in', true);
+  v_tenant text := current_setting('app.tenant_id', true);
+  v_tenants uuid[];
+  t uuid;
+BEGIN
+  PERFORM set_config('app.sign_in', '', true);
+  UPDATE users u SET name = p_name
+  WHERE u.id = p_user AND u.name IS NULL
+    AND EXISTS (SELECT 1 FROM memberships m WHERE m.user_id = p_user);
+  IF NOT FOUND THEN
+    PERFORM set_config('app.sign_in', coalesce(v_sign_in, ''), true);
+    RETURN false;
+  END IF;
+  PERFORM set_config('app.sign_in', 'on', true);
+  SELECT array_agg(m.tenant_id) INTO v_tenants FROM memberships m WHERE m.user_id = p_user{active};
+  PERFORM set_config('app.sign_in', coalesce(v_sign_in, ''), true);
+  FOREACH t IN ARRAY v_tenants LOOP
+    PERFORM set_config('app.tenant_id', t::text, true);
+    UPDATE memberships SET display_name = p_name WHERE user_id = p_user AND display_name IS NULL;
+  END LOOP;
+  PERFORM set_config('app.tenant_id', coalesce(v_tenant, ''), true);
+  RETURN true;
+END $$"""
+
+
 def upgrade() -> None:
     op.execute("""
     ALTER TABLE memberships
@@ -131,6 +165,7 @@ def upgrade() -> None:
     )
     op.execute(account_by_email(ACTIVE))
     op.execute(accept_invite(REVIVE))
+    op.execute(set_own_name(ACTIVE))
 
 
 def downgrade() -> None:
@@ -146,3 +181,4 @@ def downgrade() -> None:
     op.execute("ALTER TABLE sessions DROP CONSTRAINT ck_sessions_role")
     op.execute(accept_invite(DO_NOTHING))
     op.execute(account_by_email(""))
+    op.execute(set_own_name(""))

@@ -689,8 +689,9 @@ def place(
     """
     # The candidate loop: not "one retry" (§1.1). Under the tenant lock a loser acquires the lock
     # only after the winner commits, re-derives, and 409s before it gets here; the loop survives as
-    # the backstop for a writer that forgot the lock (23P01) or a member removed concurrently
-    # (23503, B5).
+    # the backstop for a writer that forgot the lock (23P01) or a membership row hard-deleted
+    # meanwhile (23503, B5; members.remove only ends the row now, so only a delete that bypasses
+    # it, such as the migrate role, can raise it).
     booking: Row[Any] | None = None
     candidate: UUID | None = None
     while queue:

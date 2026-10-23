@@ -17,8 +17,10 @@ from app import auth
 from app.db import tenant_context
 from app.main import create_app
 from tests.conftest import (
+    PASSWORD,
     People,
     add_membership,
+    add_password,
     email_of,
     events,
     failing,
@@ -462,6 +464,94 @@ def test_removal_touches_nothing_outside_this_membership(
 
     assert snapshot() == before
     assert both_in_b.get("/api/session").status_code == 200
+
+
+# ZIF-112 30. fence: removal drops the worker's booking holds (0034), and only theirs. Kills: the
+# DELETE FROM booking_holds going missing. Positive control: the other worker's hold stays.
+def test_removing_a_member_deletes_their_booking_holds(
+    people: People, app: FastAPI, migrate_engine: Engine
+) -> None:
+    set_role(people.a, people.only_a, "owner")
+    service = seed_service(people.a)
+    start = datetime.now(UTC) + timedelta(days=3)
+    held: dict[str, uuid.UUID] = {}
+    with migrate_engine.begin() as conn:
+        conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(people.a)})
+        for who in (people.both, people.only_a):
+            held[str(who)] = conn.scalar(
+                text(
+                    "INSERT INTO booking_holds (tenant_id, service_id, worker_id, anyone,"
+                    " starts_at, ends_at, email, secret_hash, expires_at)"
+                    " VALUES (:t, :s, :w, false, :a, :b, :e, :h, now() + interval '1 hour')"
+                    " RETURNING id"
+                ),
+                {
+                    "t": people.a,
+                    "s": service,
+                    "w": member_id(people.a, who),
+                    "a": start,
+                    "b": start + timedelta(hours=1),
+                    "e": f"{uuid.uuid4()}@example.com",
+                    "h": uuid.uuid4().bytes * 2,
+                },
+            )
+
+    def holds() -> set[uuid.UUID]:
+        with migrate_engine.begin() as conn:
+            conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(people.a)})
+            return set(conn.scalars(text("SELECT id FROM booking_holds")))
+
+    assert holds() == set(held.values())
+    owner = signed_in(app, people.a, people.only_a)
+    assert delete(owner, member_id(people.a, people.both)).status_code == 204
+
+    assert holds() == {held[str(people.only_a)]}
+
+
+# ZIF-112 31. guard: signing in again with a same-business cookie while that person is being removed
+# must not deadlock. The holder does what remove() does (member row FOR UPDATE, then delete their
+# sessions, then end the row) once the sign-in is waiting on the member row. Kills: start() deleting
+# the old cookie's session BEFORE create(): the sign-in then holds that row while it waits, the
+# removal waits on it, and Postgres aborts one of them (40P01).
+def test_signing_in_with_an_old_cookie_does_not_deadlock_with_a_removal(
+    people: People, app: FastAPI, app_engine: Engine, migrate_engine: Engine
+) -> None:
+    set_role(people.a, people.both, "owner")
+    add_password(migrate_engine, people.only_a, PASSWORD)
+    client = signed_in(app, people.a, people.only_a)
+    results: list[object] = []
+
+    def sign_in() -> None:
+        try:
+            results.append(
+                client.post(
+                    "/api/session", json={"email": email_of(people.only_a), "password": PASSWORD}
+                )
+            )
+        except Exception as error:
+            results.append(error)
+
+    thread = threading.Thread(target=sign_in)
+    with app_engine.begin() as holder:
+        holder.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(people.a)})
+        holder.execute(
+            text("SELECT 1 FROM memberships WHERE user_id = :u FOR UPDATE"), {"u": people.only_a}
+        )
+        thread.start()
+        wait_until_blocked(app_engine, 1)
+        holder.execute(
+            text("DELETE FROM sessions WHERE tenant_id = :t AND user_id = :u"),
+            {"t": people.a, "u": people.only_a},
+        )
+        holder.execute(
+            text("UPDATE memberships SET role = 'removed', removed_at = now() WHERE user_id = :u"),
+            {"u": people.only_a},
+        )
+    thread.join(timeout=10)
+    assert not thread.is_alive()
+
+    # The sign-in lost the race cleanly: its membership was gone when it got the row.
+    assert [r.status_code if isinstance(r, Response) else r for r in results] == [403]
 
 
 # 8: a removal takes the booking lock before any member row.

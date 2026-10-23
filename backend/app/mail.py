@@ -287,7 +287,11 @@ def send(job: Job) -> None:
     # The outbox keeps who, which template and the subject; never the rendered body.
     with tenant_context(job.tenant_id) as session:
         recipient = session.execute(
-            text("SELECT email, locale FROM users WHERE id = :id"), {"id": payload["recipient_id"]}
+            text(
+                "SELECT u.email, u.locale FROM users u JOIN memberships m ON m.user_id = u.id"
+                " WHERE u.id = :id AND m.role <> 'removed'"
+            ),
+            {"id": payload["recipient_id"]},
         ).first()
         if recipient is None:
             # Not (or no longer) a member of this tenant. If a crash left a 'pending' row after the
