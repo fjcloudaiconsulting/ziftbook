@@ -56,8 +56,9 @@ import { Summary } from "./summary";
 const TURNSTILE_LANG: Record<string, string> = { pt: "pt-br" };
 
 // An open checkout survives leaving the page: the booking waiting for payment, for this tab only.
+// Never the booker's email (ZB-15): that stays in the page's memory (`placed`).
 const STORE = "zif-checkout";
-type Stored = { bookingId: string; serviceId: string; email: string | null };
+type Stored = { bookingId: string; serviceId: string };
 
 function readStored(): Stored | null {
   try {
@@ -153,6 +154,8 @@ export function BookingPage({
   // (computed for the week IT was called with) must not overwrite what a newer call already wrote.
   const ensureWeekToken = useRef(new Map<string, number>());
   const working = useRef(false);
+  // The address this page load placed its checkout with: shown when it ends, never stored.
+  const placed = useRef<{ bookingId: string; email: string } | null>(null);
   const nameRef = useRef<HTMLInputElement>(null);
   const emailRef = useRef<HTMLInputElement>(null);
   const phoneRef = useRef<HTMLInputElement>(null);
@@ -468,19 +471,23 @@ export function BookingPage({
   function resumeOffer() {
     if (!offer || working.current) return; // a Send waiting on Turnstile owns the page
     setBookingParam(offer.id);
-    apply(offer, storedEmail());
+    apply(offer, placedEmail());
   }
 
   async function startOver() {
     if (working.current) return;
-    if (offer && (await release(offer.id, storedEmail(), 2))) {
+    if (offer && (await release(offer.id, placedEmail(), 2))) {
       writeStored(null);
       setOffer(null);
     }
   }
 
   const returnUrl = (id: string) => `${window.location.origin}/${locale}/${page.slug}/book?${new URLSearchParams({ service: serviceId, booking: id })}`;
-  const storedEmail = () => readStored()?.email ?? null;
+  /** The address the remembered checkout was placed with, if this page load placed it. */
+  const placedEmail = () => {
+    const stored = readStored();
+    return stored && placed.current?.bookingId === stored.bookingId ? placed.current.email : null;
+  };
 
   /** An error by the button; the request stays as it is. */
   function fail(text: string, tone: "error" | "note" = "error", where: 2 | "c" = "c") {
@@ -604,7 +611,7 @@ export function BookingPage({
     const answer = await checkBooking(bookingId);
     working.current = false;
     setFlow((f) => ({ ...f, busy: false }));
-    if (answer.status === 200 && answer.data) apply(answer.data, storedEmail());
+    if (answer.status === 200 && answer.data) apply(answer.data, placedEmail());
     else if (answer.status === 404 || answer.status === 422) {
       // The booking is gone: nothing left to check.
       forget(false);
@@ -618,13 +625,13 @@ export function BookingPage({
     working.current = true;
     setFlow((f) => ({ ...f, busy: true, banner: null }));
     // Not released: fail() or apply() already cleared the lock (or handed it to a reopen).
-    if (await release(bookingId, storedEmail())) reset();
+    if (await release(bookingId, placedEmail())) reset();
   }
 
   /** The radio: a sent request swaps its intent for the other kind. */
   function chooseKind(kind: PaymentChoice) {
     if (working.current) return;
-    if (bookingId) void reopen(bookingId, kind, storedEmail());
+    if (bookingId) void reopen(bookingId, kind, placedEmail());
     else setChoice(kind);
   }
 
@@ -707,7 +714,8 @@ export function BookingPage({
 
     if (outcome.kind === "done" && answer.data?.status === "awaiting_payment" && answer.data.payment) {
       const { id, payment } = answer.data;
-      writeStored({ bookingId: id, serviceId: f.service.id, email: f.email });
+      placed.current = { bookingId: id, email: f.email };
+      writeStored({ bookingId: id, serviceId: f.service.id });
       setBookingParam(id);
       setBookingId(id);
       setStart(payment);
@@ -842,7 +850,7 @@ export function BookingPage({
       const gone = answer.status === 404 || answer.status === 422;
       if (mode === "resume") {
         setChecking(false);
-        if (known) apply(answer.data!, stored?.bookingId === id ? stored.email : null);
+        if (known) apply(answer.data!, null);
         else if (gone) {
           forget(false);
           setBookingId(null);
@@ -851,7 +859,7 @@ export function BookingPage({
       } else if (known) {
         const next = storedNext(answer.data!);
         if (next === "offerResume") setOffer(answer.data!);
-        else if (next === "done") apply(answer.data!, stored!.email);
+        else if (next === "done") apply(answer.data!, null);
         else writeStored(null);
       } else if (gone) writeStored(null);
     })();
@@ -869,7 +877,7 @@ export function BookingPage({
     const began = Date.now();
     const again = async () => {
       const answer = await checkBooking(bookingId);
-      if (answer.status === 200 && answer.data) apply(answer.data, storedEmail());
+      if (answer.status === 200 && answer.data) apply(answer.data, placedEmail());
     };
     const timer = setInterval(() => (Date.now() - began > 120_000 ? clearInterval(timer) : void again()), 10_000);
     window.addEventListener("focus", again);
@@ -978,7 +986,7 @@ export function BookingPage({
         locale={locale}
         t={t}
         onChoice={chooseKind}
-        onSend={() => void resend(sync.id, storedEmail())}
+        onSend={() => void resend(sync.id, placedEmail())}
         onChange={() => void changeRequest()}
         onUnavailable={() => fail(t("payUnavailable"))}
       />,

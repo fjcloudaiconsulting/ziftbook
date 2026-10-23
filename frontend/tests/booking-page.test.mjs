@@ -556,6 +556,17 @@ describe("F2 the payment step (ZIF-158)", () => {
     for (const status of ["expired", "declined", "cancelled_by_client", "completed"]) assert.equal(storedNext({ status }), "checkout", status);
   });
 
+  test("fence: the checkout the tab remembers keeps no email (ZB-15)", () => {
+    // Wrong implementation killed: the booker's address in sessionStorage beside the booking id.
+    const src = readFileSync(new URL("../app/[locale]/[slug]/booking-page.tsx", import.meta.url), "utf8");
+    const stored = src.match(/type Stored = \{([^}]*)\}/);
+    assert.ok(stored, "the Stored type");
+    assert.doesNotMatch(stored[1], /email/);
+    const writes = [...src.matchAll(/writeStored\(([^;]*)\);/g)].map((m) => m[1]);
+    assert.ok(writes.some((w) => w.includes("bookingId")), "the write that remembers a checkout");
+    for (const w of writes) assert.doesNotMatch(w, /email/);
+  });
+
   test("fence: only a settled end state forgets the booking; a failed check keeps it", () => {
     // Wrong implementation killed: checkEmail forgetting the id and the address (the client then books
     // and pays again for another time while the first payment may be landing).

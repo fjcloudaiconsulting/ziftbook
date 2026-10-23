@@ -39,6 +39,7 @@ ALLOWED = [
     "booking_holds.secret_hash",
     "booking_holds.token_hash",
     "booking_links.token_hash",
+    "bookings.checkout_hash",
     "email_tokens.token_hash",
     "invites.token_hash",
     "second_factors.proof_hash",

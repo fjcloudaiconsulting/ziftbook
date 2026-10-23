@@ -9,8 +9,10 @@ each other (about 9% of losers, measured). See CONTRIBUTING.md "Bookings" and mi
 comment on the constraint.
 """
 
+import hashlib
 import json
 import logging
+import secrets
 from collections import Counter
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
@@ -376,7 +378,7 @@ INSERT INTO bookings (
   service_name, price_amount_minor, price_currency, duration_minutes, cancellation_policy_text,
   auto_confirm_at_booking, worker_display_name, free_cancellation_hours, reschedule_cutoff_hours,
   original_starts_at, earliest_starts_at, max_reschedules,
-  client_name, client_phone, client_message)
+  client_name, client_phone, client_message, checkout_hash)
 VALUES (
   current_setting('app.tenant_id')::uuid, :client_id, :worker_id, :service_id,
   :starts_at, :starts_at + make_interval(mins => :duration_minutes), :status, :expires_at,
@@ -385,7 +387,7 @@ VALUES (
   :free_cancellation_hours, :reschedule_cutoff_hours,
   -- ZIF-54 (D8). Both snapshotted = the insert's own starts_at, never re-read afterwards.
   :starts_at, :starts_at, :max_reschedules,
-  :client_name, :client_phone, :client_message)
+  :client_name, :client_phone, :client_message, :checkout_hash)
 RETURNING id, status, starts_at, ends_at
 """)
 
@@ -689,6 +691,20 @@ RETURNING id, starts_at, ends_at, reschedule_count
 """)
 
 
+# ZB-15: the browser that places a checkout gets a random secret in a cookie named for the booking
+# (a second checkout in the same browser keeps the first's), and the booking keeps its hash. The
+# payment routes need it, not just the id (app.payments._checkout).
+CHECKOUT_MAX_AGE = 3600
+
+
+def checkout_cookie(booking_id: UUID) -> str:
+    return f"__Host-checkout-{booking_id}"
+
+
+def checkout_digest(secret: str) -> bytes:
+    return hashlib.sha256(secret.encode()).digest()
+
+
 def by_load(
     eligible: list[UUID],
     booked_rows: list[tuple[UUID, datetime, datetime, int | None]],
@@ -722,6 +738,7 @@ def place(
     client_name: str | None = None,
     client_phone: str | None = None,
     client_message: str | None = None,
+    checkout_hash: bytes | None = None,
     metric: dict[str, str] | None = None,
 ) -> tuple[Row[Any], UUID]:
     """The one insert path for a new booking (ZIF-57): the public create() and the merchant's both
@@ -777,6 +794,7 @@ def place(
                         "client_name": client_name,
                         "client_phone": client_phone,
                         "client_message": client_message,
+                        "checkout_hash": checkout_hash,
                     },
                 ).one()
                 # Inside the winning savepoint, immediately after the booking insert.
@@ -893,6 +911,7 @@ def book_online(
     user_agent: str | None,
     message: str | None,
     payment: Literal["check", "pay"] | None,
+    checkout_hash: bytes,
 ) -> tuple[BookingOut, str | None, datetime | None]:
     """A client's own booking from the booking page (create()). The caller holds the tenant lock
     (its transaction's first statement) and catches OperationalError as 503 busy.
@@ -901,8 +920,9 @@ def book_online(
     enqueue helper). proven: see app.clients.find_or_create; user_id is passed only when proven.
 
     Returns the booking, and while the business's payment step is on, the Stripe account to check
-    the card on and the hold's deadline: the booking is then `awaiting_payment` and nobody is told
-    yet (payments.reconcile announces it once the card is checked).
+    the card on and the hold's deadline: the booking is then `awaiting_payment`, keeps
+    checkout_hash (ZB-15), and nobody is told yet (payments.reconcile announces it once the card
+    is checked).
     """
     # 2. FOR SHARE is mandatory: archiving takes FOR NO KEY UPDATE and the booking's foreign
     #    key check only KEY SHARE, so without this a booking can land on a service archived
@@ -1041,6 +1061,7 @@ def book_online(
         client_name=name,
         client_phone=phone,
         client_message=message,
+        checkout_hash=checkout_hash if stripe_account is not None else None,
         metric={"booking.proven": "true" if proven else "false"},
         event={
             "ip": origin_ip,
@@ -1190,6 +1211,8 @@ def create(  # sync def: turnstile.verify's urlopen blocks, and runs in FastAPI'
         request.state.tenant_id = tenant_id
         response.headers["Cache-Control"] = "no-store"
         origin_ip, user_agent = auth.origin(request)
+        # ZB-15: kept (as its hash) only if the booking waits for a payment step.
+        secret = secrets.token_urlsafe(32)
         # Placement and Stripe never share a transaction (ZIF-158): tx1 places the booking,
         # awaiting payment if the business asks for a card check, and commits; the intent is made
         # at Stripe with no lock and no transaction open; tx2 (payments.start) records it. Stripe's
@@ -1215,6 +1238,7 @@ def create(  # sync def: turnstile.verify's urlopen blocks, and runs in FastAPI'
                 user_agent=user_agent,
                 message=new.message,
                 payment=new.payment,
+                checkout_hash=checkout_digest(secret),
             )
         placed = True  # committed: the reservation stands
     except OperationalError:
@@ -1236,6 +1260,15 @@ def create(  # sync def: turnstile.verify's urlopen blocks, and runs in FastAPI'
 
         assert new.payment is not None  # book_online refuses a payment step without it
         out.payment = payments.start(tenant_id, stripe_account, out, expires_at, new.payment)
+        response.set_cookie(
+            checkout_cookie(out.id),
+            secret,
+            max_age=CHECKOUT_MAX_AGE,
+            path="/",
+            secure=True,
+            httponly=True,
+            samesite="strict",
+        )
     return out
 
 

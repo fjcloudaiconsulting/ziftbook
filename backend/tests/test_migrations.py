@@ -330,6 +330,8 @@ SNAPSHOT = (
     "client_name",
     "client_phone",
     "client_message",
+    # ZB-15 (0046): the checkout secret's hash, written once at placement.
+    "checkout_hash",
 )
 
 
@@ -1450,3 +1452,29 @@ def test_0045_downgrade_refuses_while_a_membership_is_removed(
         assert role == "removed"
     finally:
         command.upgrade(cfg, "head")
+
+
+CHECKOUT_HASH = text("""
+SELECT data_type, is_nullable,
+       has_column_privilege('ziftbook_app', 'bookings', column_name, 'INSERT'),
+       has_column_privilege('ziftbook_app', 'bookings', column_name, 'SELECT'),
+       has_column_privilege('ziftbook_app', 'bookings', column_name, 'UPDATE')
+FROM information_schema.columns WHERE table_name = 'bookings' AND column_name = 'checkout_hash'
+""")
+
+
+# ZB-15 FENCE. Wrong impl: a downgrade that leaves the column behind; an upgrade that makes it
+# NOT NULL (the release still running inserts without it, and its bookings have none), or that
+# lets the app role UPDATE it (the hash is written once, when the booking is placed).
+def test_0046_round_trips_the_checkout_hash(
+    migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = lock_timeout_config(monkeypatch)
+    try:
+        command.downgrade(cfg, "0045")
+        with migrate_engine.connect() as conn:
+            assert conn.execute(CHECKOUT_HASH).all() == []
+    finally:
+        command.upgrade(cfg, "head")
+    with migrate_engine.connect() as conn:
+        assert tuple(conn.execute(CHECKOUT_HASH).one()) == ("bytea", "YES", True, True, False)

@@ -5,11 +5,13 @@ queue: the xdist database keeps other tests' jobs, and `jobs` is not tenant-scop
 """
 
 import asyncio
+import hashlib
 import json
 import threading
 import uuid
 from collections import Counter
 from collections.abc import Callable
+from http.cookies import SimpleCookie
 from typing import Any
 
 import pytest
@@ -121,6 +123,14 @@ def resume(client: TestClient, people: People, booking_id: str, kind: str = "che
 
 def abandon(client: TestClient, people: People, booking_id: str) -> Response:
     return client.post(path(people, booking_id, "/abandon"), headers=JSON)
+
+
+def same_browser(app: FastAPI, client: TestClient) -> TestClient:
+    """Another request from the browser that placed the booking (a second tab, a racing call): its
+    own address, the same cookies, so the same checkout secret (ZB-15)."""
+    other = new_client(app)
+    other.cookies = client.cookies
+    return other
 
 
 def status_of(people: People, booking_id: str) -> str:
@@ -614,7 +624,9 @@ def test_one_event_reconciles_once(
     fake_stripe.on_call = at_stripe
     answers: list[Any] = []
     racer = threading.Thread(
-        target=lambda: answers.append(sync(new_client(app), people, booking_id).status_code)
+        target=lambda: answers.append(
+            sync(same_browser(app, client), people, booking_id).status_code
+        )
     )
     racer.start()
     payments.reconcile(people.a, intent)
@@ -943,8 +955,8 @@ def test_the_payment_limit_is_per_booking(
     people: People, app: FastAPI, ready: str, fake_stripe: FakeGateway
 ) -> None:
     client = new_client(app)
-    a = place(app, people, ready).json()["id"]
-    b = place(app, people, ready, starts_at=at("10:00")).json()["id"]
+    a = place(app, people, ready, client=client).json()["id"]
+    b = place(app, people, ready, starts_at=at("10:00"), client=client).json()["id"]
 
     assert [sync(client, people, a).status_code for _ in range(60)] == [200] * 60
     over = sync(client, people, a)
@@ -976,6 +988,125 @@ def test_the_payment_routes_answer_404_for_a_booking_without_a_payment(
     assert client.put(elsewhere, json={"kind": "check"}).status_code == 404
     assert client.post(elsewhere + "/abandon", headers=JSON).status_code == 404
     assert resume(client, people, str(uuid.uuid7())).status_code == 404
+
+
+def checkout_hash(people: People, booking_id: str) -> bytes | None:
+    with tenant_context(people.a) as session:
+        found: bytes | None = session.scalar(
+            text("SELECT checkout_hash FROM bookings WHERE id = :id"), {"id": booking_id}
+        )
+    return found
+
+
+def unknown(client: TestClient, people: People) -> dict[str, Response]:
+    """What the three routes answer for a booking id nobody placed."""
+    nobody = str(uuid.uuid7())
+    return {
+        "sync": sync(client, people, nobody),
+        "resume": resume(client, people, nobody),
+        "abandon": abandon(client, people, nobody),
+    }
+
+
+# ZB-15: FENCE. Kills: abandon that takes the booking id alone as proof.
+def test_another_browser_cannot_abandon_a_checkout(
+    app: FastAPI, people: People, fake_stripe: FakeGateway, ready: str
+) -> None:
+    made = place(app, people, ready, payment="pay", client=new_client(app))
+    stranger = new_client(app)
+    url = f"/api/public/businesses/{people.a}/bookings/{made.json()['id']}/payment/abandon"
+    assert stranger.post(url, json={}).status_code == 404
+    assert status_of(people, made.json()["id"]) == "awaiting_payment"
+
+
+# ZB-15: FENCE. Kills: sync or resume (and its switch) that take the booking id alone as proof; a
+# refusal that answers differently from an unknown booking; a wrong secret that passes.
+def test_another_browser_cannot_sync_switch_or_resume_a_checkout(
+    app: FastAPI, people: People, fake_stripe: FakeGateway, ready: str
+) -> None:
+    client = new_client(app)
+    booking_id = place(app, people, ready, payment="pay", client=client).json()["id"]
+    stranger = new_client(app)
+    wrong_secret = new_client(app)
+    wrong_secret.cookies.set(f"__Host-checkout-{booking_id}", "x" * 43)
+    nobody = {
+        route: (r.status_code, r.text) for route, r in unknown(new_client(app), people).items()
+    }
+    assert list(nobody.values()) == [(404, '{"code":"not_found"}')] * 3
+
+    for other in (stranger, wrong_secret):
+        answers = {
+            "sync": sync(other, people, booking_id),
+            "resume": resume(other, people, booking_id, "check"),
+            "abandon": abandon(other, people, booking_id),
+        }
+        assert {route: (r.status_code, r.text) for route, r in answers.items()} == nobody
+    assert resume(stranger, people, booking_id, "pay").status_code == 404
+    assert status_of(people, booking_id) == "awaiting_payment"
+    assert [row["kind"] for row in pay_rows(people, booking_id)] == ["pay"]  # no switch happened
+
+
+# ZB-15: FENCE. Kills: a secret the browser cannot keep or send back (not __Host-, not HttpOnly,
+# not Strict), the secret itself stored instead of its hash, or a cookie for a booking with no
+# payment step.
+def test_the_checkout_cookie_holds_the_secret_and_the_booking_its_hash(
+    app: FastAPI, people: People, fake_stripe: FakeGateway, ready: str
+) -> None:
+    made = place(app, people, ready, payment="pay", client=new_client(app))
+    booking_id = made.json()["id"]
+    set_cookie = made.headers.get_list("set-cookie")
+
+    assert len(set_cookie) == 1
+    morsel = SimpleCookie(set_cookie[0])[f"__Host-checkout-{booking_id}"]
+    assert (morsel["path"], morsel["max-age"], morsel["samesite"].lower()) == (
+        "/",
+        "3600",
+        "strict",
+    )
+    assert morsel["secure"] and morsel["httponly"] and not morsel["domain"]
+    assert len(morsel.value) == 43  # secrets.token_urlsafe(32)
+    assert checkout_hash(people, booking_id) == hashlib.sha256(morsel.value.encode()).digest()
+
+
+def test_a_booking_without_a_payment_step_gets_no_checkout_secret(
+    app: FastAPI, people: People, owner: TestClient, fake_stripe: FakeGateway, ready: str
+) -> None:
+    assert put_settings(owner, {"payment_check": False}).status_code == 200
+
+    made = place(app, people, ready, payment=None, client=new_client(app))
+
+    assert made.status_code == 201, made.text
+    assert "set-cookie" not in made.headers
+    assert checkout_hash(people, made.json()["id"]) is None
+
+
+def test_the_booking_browser_can_sync(
+    app: FastAPI, people: People, fake_stripe: FakeGateway, ready: str
+) -> None:
+    client = new_client(app)
+    made = place(app, people, ready, payment="pay", client=client)
+    assert sync(client, people, made.json()["id"]).status_code == 200
+
+
+# ZB-15, review focus 2: FENCE. A checkout placed by the release before the secret has none; during
+# the deploy overlap it must still sync, resume and abandon from any browser, as before. Kills a
+# comparison that refuses a NULL hash.
+def test_a_booking_without_a_secret_still_syncs(
+    app: FastAPI, people: People, fake_stripe: FakeGateway, ready: str, migrate_engine: Engine
+) -> None:
+    first = place(app, people, ready, payment="pay", client=new_client(app)).json()["id"]
+    second = place(app, people, ready, starts_at=at("10:00"), client=new_client(app)).json()["id"]
+    with migrate_engine.begin() as conn:
+        conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(people.a)})
+        conn.execute(
+            text("UPDATE bookings SET checkout_hash = NULL WHERE id = ANY(:ids)"),
+            {"ids": [uuid.UUID(first), uuid.UUID(second)]},
+        )
+
+    assert sync(new_client(app), people, first).status_code == 200
+    assert resume(new_client(app), people, first, "check").status_code == 200
+    assert abandon(new_client(app), people, second).status_code == 204
+    assert status_of(people, second) == "expired"
 
 
 def test_stripe_down_at_sync_is_a_503(
@@ -1177,7 +1308,7 @@ def test_a_resume_racing_an_abandon_makes_no_new_intent_row(
     def abandoned(op: str) -> None:
         if op == "create_check":  # the client's other tab abandons while the resume is at Stripe
             fake_stripe.on_call = None
-            assert abandon(new_client(app), people, booking_id).status_code == 204
+            assert abandon(same_browser(app, client), people, booking_id).status_code == 204
 
     fake_stripe.on_call = abandoned
     answer = resume(client, people, booking_id)
@@ -1266,7 +1397,7 @@ def test_an_orphan_intent_that_cannot_be_cancelled_is_logged(
     def abandoned(op: str) -> None:
         if op == "create_check":
             fake_stripe.on_call = None
-            assert abandon(new_client(app), people, booking_id).status_code == 204
+            assert abandon(same_browser(app, client), people, booking_id).status_code == 204
             fake_stripe.fail_next("cancel_intent")
 
     fake_stripe.on_call = abandoned
@@ -1312,7 +1443,7 @@ def test_switching_keeps_the_time_and_one_live_intent(
     def beaten(op: str) -> None:
         if op == "retrieve_intent":
             fake_stripe.on_call = None
-            answers.append(resume(new_client(app), people, booking_id))
+            answers.append(resume(same_browser(app, client), people, booking_id))
 
     fake_stripe.on_call = beaten
     answers.append(resume(client, people, booking_id))
@@ -1326,7 +1457,7 @@ def test_switching_keeps_the_time_and_one_live_intent(
     def in_use(op: str) -> None:
         if op == "create_payment":
             fake_stripe.on_call = None
-            answers.append(resume(new_client(app), people, booking_id, "pay"))
+            answers.append(resume(same_browser(app, client), people, booking_id, "pay"))
 
     fake_stripe.on_call = in_use
     assert resume(client, people, booking_id, "pay").status_code == 200
@@ -1430,15 +1561,20 @@ def test_the_fee_policy_applied_is_the_payment_s(
         return [p["application_fee"] for op, p in fake_stripe.calls if op == "create_payment"]
 
     policy("business_pays_plus_fee", 150, 25)
-    first = place(app, people, service_id, payment="pay").json()["id"]
-    second = place(app, people, service_id, payment="pay", starts_at=at("10:00")).json()["id"]
+    client = new_client(app)
+    first = place(app, people, service_id, payment="pay", client=client).json()["id"]
+    second = place(
+        app, people, service_id, payment="pay", starts_at=at("10:00"), client=client
+    ).json()["id"]
     assert fees() == [85, 85]
     for booking_id in (first, second):
         fake_stripe.confirm(fake_stripe.latest(booking_id))
-        assert sync(new_client(app), people, booking_id).json()["status"] == "pending"
+        assert sync(client, people, booking_id).json()["status"] == "pending"
 
     policy("business_pays", 0, 0)  # the account moves on; these payments keep what applied
-    third = place(app, people, service_id, payment="pay", starts_at=at("11:00")).json()["id"]
+    third = place(
+        app, people, service_id, payment="pay", starts_at=at("11:00"), client=client
+    ).json()["id"]
 
     assert fees() == [85, 85, 0]
     fee_rows = {
@@ -1451,7 +1587,7 @@ def test_the_fee_policy_applied_is_the_payment_s(
         third: ("business_pays", 0),
     }
     fake_stripe.confirm(fake_stripe.latest(third))
-    assert sync(new_client(app), people, third).status_code == 200
+    assert sync(client, people, third).status_code == 200
     from tests.test_booking_links_api import cancel_body, linked, post
 
     assert owner.patch(f"/api/bookings/{first}", json={"status": "declined"}).status_code == 200
@@ -1577,7 +1713,7 @@ def test_a_plain_resume_beaten_by_a_switch_is_busy_not_settled(
     def switched(op: str) -> None:
         if op == "create_check":  # the other tab switches to pay while this one is at Stripe
             fake_stripe.on_call = None
-            won.append(resume(new_client(app), people, booking_id, "pay"))
+            won.append(resume(same_browser(app, client), people, booking_id, "pay"))
 
     fake_stripe.on_call = switched
     lost = resume(client, people, booking_id, "check")
@@ -1699,7 +1835,7 @@ def test_a_same_intent_loser_never_hands_out_a_landed_payment(
     client = new_client(app)
     booking_id = place(app, people, ready, payment="pay", client=client).json()["id"]
     fake_stripe.decline(fake_stripe.latest(booking_id))
-    other = new_client(app)
+    other = same_browser(app, client)
 
     def beaten(op: str) -> None:
         if op == "retrieve_intent":
