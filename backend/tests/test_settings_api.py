@@ -7,6 +7,7 @@ import pytest
 from fastapi import FastAPI
 from sqlalchemy import Engine
 
+from app.business_settings import header_address
 from app.main import create_app
 from app.passwords import normalise_email
 from tests.conftest import (
@@ -377,3 +378,10 @@ def test_an_encoded_word_is_not_a_contact_email(people: People, app: FastAPI, va
     assert saved_settings(people.a) == {}
     with pytest.raises(ValueError, match="not an email address"):
         normalise_email(value)
+
+
+@pytest.mark.parametrize("value", ["info@café.nl", "shöp@x.com"])
+def test_header_address_refuses_non_ascii_with_a_value_error(value: str) -> None:
+    # Python 3.15 raises HeaderWriteError, not ValueError, when it writes a non-ASCII address.
+    with pytest.raises(ValueError, match="reply can reach"):
+        header_address(value)
