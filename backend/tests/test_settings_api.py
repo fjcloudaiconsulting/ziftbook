@@ -319,12 +319,24 @@ def test_max_reschedules_default_and_bound(people: People, app: FastAPI) -> None
     assert put_settings(owner, {"max_reschedules": -1}).status_code == 422
 
 
-# ZIF-99 F6 fence: contact_email is one address. Kills `str | None` (no validation), which lets a
-# list, a display name or a CR/LF header injection into Reply-To.
+# ZIF-99 F6 fence: contact_email is one ASCII address. Kills `str | None` (no validation), which
+# lets a list, a display name or a CR/LF header injection into Reply-To, and passwords.Email alone,
+# whose non-ASCII or non-dot-atom address does not parse back as itself in Reply-To, so no
+# reply reaches it.
 @pytest.mark.parametrize(
     "value",
-    ["a@x.com, b@y.com", "a@x.com\r\nBcc: z@q.com", "Shop <a@x.com>", ""],
-    ids=["list", "header injection", "display name", "empty"],
+    [
+        pytest.param("a@x.com, b@y.com", id="list"),
+        pytest.param("a@x.com\r\nBcc: z@q.com", id="header injection"),
+        pytest.param("Shop <a@x.com>", id="display name"),
+        pytest.param("", id="empty"),
+        pytest.param("info@café.nl", id="idn domain"),
+        pytest.param("shöp@x.com", id="non-ascii local part"),
+        pytest.param("shop[1]@x.com", id="brackets"),
+        pytest.param(".a@x.com", id="leading dot"),
+        pytest.param("a..b@x.com", id="double dot"),
+        pytest.param("a@x.com.", id="trailing dot"),
+    ],
 )
 def test_a_contact_email_must_be_one_address(people: People, app: FastAPI, value: str) -> None:
     response = put_settings(signed_in(app, people.a, people.both), {"contact_email": value})
