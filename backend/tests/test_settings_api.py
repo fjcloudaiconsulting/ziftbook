@@ -336,6 +336,8 @@ def test_max_reschedules_default_and_bound(people: People, app: FastAPI) -> None
         pytest.param(".a@x.com", id="leading dot"),
         pytest.param("a..b@x.com", id="double dot"),
         pytest.param("a@x.com.", id="trailing dot"),
+        pytest.param("a@café.ß", id="non-ascii with no header defect"),
+        pytest.param("a@[x.com", id="reads back as another address"),
     ],
 )
 def test_a_contact_email_must_be_one_address(people: People, app: FastAPI, value: str) -> None:
