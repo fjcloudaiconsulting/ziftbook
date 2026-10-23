@@ -484,6 +484,11 @@ JOIN memberships m ON m.tenant_id = b.tenant_id AND m.id = b.worker_id
 WHERE b.id = :id
 """)
 
+# ZB-02: whether the booking holds a payment that was taken, which a cancellation would refund.
+PAID_PAYMENT = text(
+    "SELECT EXISTS (SELECT 1 FROM booking_payments WHERE booking_id = :id AND status = 'paid')"
+)
+
 # ZIF-53. Every owner plus the assigned worker, while still a member (a removed worker's past
 # booking mails only the owners): the people who see the request, the same set members.may_manage
 # and the pending queue use. Whether the worker may also answer it is workers_answer_requests
@@ -1244,7 +1249,8 @@ def transition(
     is the owner's alone, and so is any transition out of `pending` unless the business setting
     `workers_answer_requests` is on (403 `owner_only`). A transition the booking's current status
     does not allow, or an outcome recorded before the appointment starts, is 409
-    `invalid_transition`.
+    `invalid_transition`. A worker may cancel only a future booking with no paid payment; any other
+    cancellation is the owner's (403 `owner_only`).
     """
     # Internals, deliberately not in the public schema: the UPDATE's own qualifier is the only
     # authority on whether a transition is legal - the SELECT above it exists for the 404/403 pair
@@ -1270,6 +1276,15 @@ def transition(
         row.status == "pending"
         and not members.is_owner(current)
         and not business_settings.read(current.db).workers_answer_requests
+    ):
+        raise ApiError(403, "owner_only")
+    # 3d, ZB-02 (D5): cancelling a booking that has started or carries a paid payment is the
+    # owner's, because it ends in a refund from the business's own account. A worker still cancels
+    # a future, unpaid one.
+    if (
+        change.status == "cancelled_by_merchant"
+        and not members.is_owner(current)
+        and (row.starts_at <= row.now or current.db.scalar(PAID_PAYMENT, {"id": booking_id}))
     ):
         raise ApiError(403, "owner_only")
     rule = TRANSITIONS[change.status]
