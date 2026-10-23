@@ -5,7 +5,7 @@ from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Request, Response
-from psycopg.errors import CheckViolation, ForeignKeyViolation
+from psycopg.errors import CheckViolation
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
@@ -17,7 +17,8 @@ from app.errors import ApiError, Error
 
 Role = Literal["owner", "worker"]
 
-BOOKINGS_WORKER = "fk_bookings_tenant_id_worker_id_memberships"  # migration 0026
+# migration 0026; bookings.py's B5 branches match it
+BOOKINGS_WORKER = "fk_bookings_tenant_id_worker_id_memberships"
 
 router = APIRouter(prefix="/api", tags=["members"])
 
@@ -50,6 +51,7 @@ class DisplayNameOut(BaseModel):
 MEMBERS = """
 SELECT m.id AS member_id, m.user_id, u.email, m.role, m.display_name
 FROM memberships m JOIN users u ON u.id = m.user_id
+WHERE m.role <> 'removed'
 """
 
 
@@ -72,14 +74,15 @@ def target(current: SignedIn, member_id: UUID) -> MemberOut:
     # in the same order (two statements, or an unordered one, deadlock). The second request waits,
     # then sees the first one's result: without the caller's lock, two owners removing each other
     # would both pass (the trigger's no-member-left exemption) and leave the business empty.
-    # FOR UPDATE, not NO KEY UPDATE: a sign-in's session insert (its foreign key check takes KEY
-    # SHARE) waits instead of slipping in between deleting sessions and changing the role.
+    # FOR UPDATE, not NO KEY UPDATE: a sign-in's FOR SHARE read (auth.create) waits instead of
+    # slipping in between deleting sessions and changing the role. The filter is inside the locking
+    # statement: after a wait, READ COMMITTED re-checks it on the new row version.
     # OF m: users has no UPDATE policy, so locking it would return no row.
     rows = current.db.execute(
         text(
             MEMBERS
             + """
-        WHERE m.id = :id OR m.user_id = :me
+        AND (m.id = :id OR m.user_id = :me)
         ORDER BY m.id FOR UPDATE OF m
         """
         ),
@@ -104,11 +107,12 @@ def member_user(current: SignedIn, member_id: UUID, *, lock: bool) -> UUID:
     Shared with the working hours (ZIF-46), time off (ZIF-47) and display name (ZIF-97)
     endpoints, which reuse this lookup instead of writing their own.
     """
-    # NO KEY UPDATE: a sign-in's session insert (a foreign key check, KEY SHARE) isn't blocked, and
-    # target()'s FOR UPDATE on the same row waits for us, or we for it.
+    # NO KEY UPDATE: target()'s FOR UPDATE on the same row waits for us, or we for it. A sign-in
+    # (FOR SHARE) for this person waits for us too; it is one short save.
     locking = " FOR NO KEY UPDATE" if lock else ""
     user_id: UUID | None = current.db.scalar(
-        text("SELECT user_id FROM memberships WHERE id = :id" + locking), {"id": member_id}
+        text("SELECT user_id FROM memberships WHERE id = :id AND role <> 'removed'" + locking),
+        {"id": member_id},
     )
     if user_id is None:
         raise ApiError(404, "not_found")
@@ -129,23 +133,16 @@ def may_manage(current: SignedIn, user_id: UUID) -> bool:
 
 
 def guarded(current: SignedIn, statement: str, member_id: UUID, **values: object) -> None:
-    """Run a change the keep_an_owner trigger or a booking may refuse; either refusal is a 409."""
+    """Run a change the keep_an_owner trigger may refuse; its refusal is a 409."""
     try:
         current.db.execute(text(statement), {"id": member_id, **values})
     except IntegrityError as error:
-        # Only these two refusals; any other integrity error stays a 500.
+        # Only that refusal; any other integrity error stays a 500.
         if (
             isinstance(error.orig, CheckViolation)
             and error.orig.diag.constraint_name == "last_owner"
         ):
             raise ApiError(409, "last_owner") from None
-        # bookings (ZIF-51) reference memberships with no ON DELETE, on purpose: a booking is a
-        # business record and must never be cascaded away with the person who took it.
-        if (
-            isinstance(error.orig, ForeignKeyViolation)
-            and error.orig.diag.constraint_name == BOOKINGS_WORKER
-        ):
-            raise ApiError(409, "has_bookings") from None
         raise
 
 
@@ -183,6 +180,17 @@ def change_role(
     return member.model_copy(update={"role": change.role})
 
 
+# A live appointment: confirmed, or a hold (pending, or a card check in flight) that hasn't lapsed,
+# and not over yet. time_off.IN_THE_WAY's carve-out plus awaiting_payment, with no window.
+UPCOMING = text("""
+SELECT EXISTS (
+  SELECT FROM bookings
+  WHERE worker_id = :id AND ends_at > now()
+    AND (status = 'confirmed'
+         OR (status IN ('pending', 'awaiting_payment') AND expires_at > now())))
+""")
+
+
 @router.delete(
     "/members/{member_id}",
     name="delete",
@@ -190,9 +198,34 @@ def change_role(
     responses={s: {"model": Error} for s in (401, 403, 404, 409, 415, 422)},
 )
 def remove(member_id: UUID, current: CurrentOwner, request: Request) -> None:
-    """Remove a member from this business. Their sessions here end with the membership."""
+    """End a member's membership in this business. The row stays, so their bookings and history
+    still resolve; their sessions, service assignments, working hours and time off here go.
+    Refused while they hold an upcoming appointment."""
+    from app import time_off  # here, not at the top: app.time_off imports this module
+
+    # First statement (CONTRIBUTING.md "Bookings"): with the row kept, the bookings foreign key no
+    # longer stops a booking racing the removal; the lock does. Order: lock 51, memberships, (the
+    # trigger) tenants, as time off writes take them.
+    time_off.lock_bookings(current)
     member = target(current, member_id)
-    guarded(current, "DELETE FROM memberships WHERE id = :id", member_id)
+    if current.db.scalar(UPCOMING, {"id": member_id}):
+        raise ApiError(409, "has_upcoming_bookings")
+    # What deleting the row cascaded (0006, 0017, 0019, 0021, 0034). Sessions first: the role change
+    # below fails on the sessions foreign key while one survives. sessions has no row-level
+    # security, so tenant_id is mandatory.
+    current.db.execute(
+        text("DELETE FROM sessions WHERE tenant_id = :tenant_id AND user_id = :user_id"),
+        {"tenant_id": current.tenant_id, "user_id": member.user_id},
+    )
+    for table in ("service_workers", "working_hours", "time_off"):
+        current.db.execute(text(f"DELETE FROM {table} WHERE member_id = :id"), {"id": member_id})
+    # 0034's comment: "removing a member drops their holds" (worker_id, not member_id).
+    current.db.execute(text("DELETE FROM booking_holds WHERE worker_id = :id"), {"id": member_id})
+    guarded(
+        current,
+        "UPDATE memberships SET role = 'removed', removed_at = now() WHERE id = :id",
+        member_id,
+    )
     auth.record(
         current.db,
         request,

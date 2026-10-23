@@ -462,7 +462,7 @@ WHERE b.id = :id
 # Named columns, never SELECT *: ip, user_agent, policy_version and consent_purposes are the
 # employee's and the guest's personal data (0026:219-223) and stay out of this response. The actor
 # is joined to memberships by user_id and to users only through that membership, so a removed
-# member reads as a null name rather than vanishing the event.
+# member (the row stays, ZIF-112) keeps their name.
 HISTORY = text("""
 SELECT e.event, e.created_at AS at, e.actor_user_id, e.details,
        coalesce(m.display_name, u.name) AS actor_name
@@ -484,10 +484,14 @@ JOIN memberships m ON m.tenant_id = b.tenant_id AND m.id = b.worker_id
 WHERE b.id = :id
 """)
 
-# ZIF-53. Every active owner (memberships never soft-delete today; members.remove deletes) plus the
-# assigned worker: the people who see the request, the same set members.may_manage and the pending
-# queue use. Whether the worker may also answer it is workers_answer_requests (ZIF-143).
-MERCHANTS = text("SELECT DISTINCT user_id FROM memberships WHERE role = 'owner' OR id = :worker_id")
+# ZIF-53. Every owner plus the assigned worker, while still a member (a removed worker's past
+# booking mails only the owners): the people who see the request, the same set members.may_manage
+# and the pending queue use. Whether the worker may also answer it is workers_answer_requests
+# (ZIF-143).
+MERCHANTS = text(
+    "SELECT DISTINCT user_id FROM memberships "
+    "WHERE role <> 'removed' AND (role = 'owner' OR id = :worker_id)"
+)
 
 
 def email(
@@ -743,11 +747,10 @@ def place(
                 and error.orig.diag.constraint_name == OVERLAP
             ):
                 continue  # a writer that bypassed the lock took this worker
-            # B5: the member was REMOVED while this request was under way. members.remove
-            # takes FOR UPDATE on the membership and NO advisory lock, so it races us
-            # freely: our insert blocks on the foreign key's FOR KEY SHARE, the owner
-            # commits, and our re-check finds the membership gone. Treat it as "this
-            # candidate went away" - the same situation as losing the slot - not as a 500.
+            # B5: the member's row was hard-deleted while this request was under way (a fixture,
+            # the migrate role). members.remove takes lock 51 first now (ZIF-112), so a booking
+            # never races it; this branch stays for a delete that bypasses it. The candidate went
+            # away - the same situation as losing the slot - not a 500.
             if (
                 isinstance(error.orig, ForeignKeyViolation)
                 and error.orig.diag.constraint_name == members.BOOKINGS_WORKER
@@ -1632,7 +1635,7 @@ def reschedule(
             and error.orig.diag.constraint_name == OVERLAP
         ):
             raise ApiError(409, "slot_taken") from None
-        # The worker was REMOVED meanwhile (B5): this candidate went away, not a 500.
+        # The worker's row was hard-deleted meanwhile (B5; members.remove takes lock 51 now).
         if (
             isinstance(error.orig, ForeignKeyViolation)
             and error.orig.diag.constraint_name == members.BOOKINGS_WORKER

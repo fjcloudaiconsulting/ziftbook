@@ -456,7 +456,7 @@ VALUES (:hash, current_setting('app.tenant_id')::uuid, :booking_id)
 
 MERCHANT = text("""
 SELECT u.email, u.locale, m.role FROM users u JOIN memberships m ON m.user_id = u.id
-WHERE u.id = :id
+WHERE u.id = :id AND m.role <> 'removed'
 """)
 
 
@@ -588,7 +588,7 @@ def send_booking(job: Job) -> None:
             recipient_email, recipient_locale = row.client_email, row.client_locale
         else:
             merchant = session.execute(MERCHANT, {"id": user_id}).first()
-            if merchant is None:  # RLS: a member only through a membership in THIS tenant
+            if merchant is None:  # RLS and the filter: a live member of THIS tenant only
                 return
             recipient_id = user_id
             recipient_email, recipient_locale, role = merchant.email, merchant.locale, merchant.role
