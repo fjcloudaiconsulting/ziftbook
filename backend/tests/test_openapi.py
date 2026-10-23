@@ -195,7 +195,12 @@ def test_no_schema_has_an_address_field() -> None:
         for field in schema.get("properties", {})
         if field in address
     ]
-    assert offending == []
+    assert offending == [], (
+        "A schema gained an address field. Only a person's address is banned: a client is name and"
+        " contact only, and widening that breaks the ZIF-99 directory ban, see CONTRIBUTING"
+        ' "Client records". A business\'s own address (a future public business location) is'
+        " legitimate: add it to the allowlist on purpose."
+    )
 
 
 # ZIF-158 B2 13. fence. Kills: leaking a client_secret through sync, the link view or the console.

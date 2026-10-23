@@ -3,7 +3,10 @@
 Business A (owner O, signed in) probes for two people it has no relationship with: `bm`, a member of
 business B, and `bc`, a platform account that is B's client and a member of nothing. `nobody` is an
 address with no account. Every probe asks what A can learn: A may learn nothing that tells the three
-apart. Docs: CONTRIBUTING.md, "Client records"."""
+apart. Docs: CONTRIBUTING.md, "Client records".
+
+Accepted: the per-address booking_verify rate limit (bookings.py) counts across businesses, so a 429
+can reveal recent activity elsewhere. It is not an account-exists signal (architect review)."""
 
 import json
 import uuid
@@ -88,7 +91,9 @@ def test_searching_clients_never_finds_a_platform_user(people: People, world: Wo
             assert (response.status_code, response.json()) == (200, []), q
 
 
-# 2: FENCE. Wrong impl: a widened users policy or a members query missing its tenant join.
+# 2: FENCE. Wrong impl: a widened memberships policy or a members query missing its tenant join. (A
+# widened users policy alone does not turn this red: members reads FROM memberships, which is
+# tenant-scoped. Probe 8 covers the users policy.)
 def test_the_member_list_holds_neither(world: World) -> None:
     listed = world.owner.get("/api/members").json()
     assert {m["email"] for m in listed}.isdisjoint({world.bm, world.bc})
@@ -109,6 +114,20 @@ def test_an_invite_answers_the_same_for_a_member_a_client_and_nobody(
         seen.append((response.status_code, sorted(response.json()), kind))
     assert seen[0] == seen[1] == seen[2]
     assert seen[0][0] == 201
+    # If InviteOut returned the token or link, the owner could call POST /api/invites/lookup with it
+    # and read has_account for any address.
+    assert set(
+        json.loads(CONTRACT.read_text())["components"]["schemas"]["InviteOut"]["properties"]
+    ) == {
+        "id",
+        "email",
+        "expires_at",
+        "expired",
+    }, (
+        "InviteOut gained a field. A token or link in it lets the owner read has_account via"
+        " /api/invites/lookup. Widening it breaks the ZIF-99 directory ban, see CONTRIBUTING"
+        ' "Client records".'
+    )
 
 
 # 4: FENCE. Wrong impl: auto-link, or refuse/merge, on a platform match.
@@ -126,33 +145,38 @@ def test_creating_a_client_with_a_platform_address_links_nothing(
 
 
 # 5: FENCE. Wrong impl: a merchant-created booking claiming the account.
+@pytest.mark.parametrize("who", ["bm", "bc"])
 def test_a_console_booking_with_a_platform_address_links_nothing(
-    people: People, world: World, migrate_engine: Engine
+    people: People, world: World, migrate_engine: Engine, who: str
 ) -> None:
+    address = getattr(world, who)
     response = world.owner.post(
         "/api/bookings",
         json={
             "service_id": world.service,
-            "new_client": {"name": NAME, "email": world.bc},
+            "new_client": {"name": NAME, "email": address},
             "starts_at": at("09:00"),
         },
     )
     assert response.status_code == 201, response.json()
-    assert a_row(migrate_engine, people.a, world.bc)["user_id"] is None
+    row = a_row(migrate_engine, people.a, address)
+    assert (row["name"], row["user_id"]) == (NAME, None)
 
 
 # 6: FENCE. Wrong impl: link-by-email, or "account exists, sign in" (the 09-29 ruling).
+@pytest.mark.parametrize("who", ["bm", "bc"])
 def test_a_guest_booking_with_a_platform_address_answers_as_for_nobody(
-    people: People, world: World, app: FastAPI, migrate_engine: Engine
+    people: People, world: World, app: FastAPI, migrate_engine: Engine, who: str
 ) -> None:
     url = booking_url(people.a, world.service)
     seen = []
-    for clock, address in (("10:00", world.nobody), ("11:00", world.bc)):
+    for clock, address in (("10:00", world.nobody), ("11:00", getattr(world, who))):
         response = new_client(app).post(
             url, json=guest_body(starts_at=at(clock), email=address, name=NAME)
         )
         seen.append((response.status_code, sorted(response.json())))
-        assert a_row(migrate_engine, people.a, address)["user_id"] is None, address
+        row = a_row(migrate_engine, people.a, address)
+        assert (row["name"], row["user_id"]) == (NAME, None), address
     assert seen[0] == seen[1]
     assert seen[0][0] == 201
 
@@ -181,19 +205,32 @@ USERS_POLICIES = [
         None,
     ],
 ]
-# Every SECURITY DEFINER function ziftbook_app may EXECUTE whose body names `users`: the sign-in,
-# sign-up, invite, reset and setup surfaces, none reachable from a business's console route.
+# Every SECURITY DEFINER function ziftbook_app may EXECUTE, in any schema but the system ones, by
+# name and identity arguments. Read from the migrated database.
 DEFINERS = [
-    "accept_invite(bytea,text,text)",
-    "account_by_email(text)",
-    "complete_setup(text,text,text,text)",
-    "complete_sign_up(bytea,text,text,text,text,text)",
-    "mint_email_token(uuid,bytea)",
-    "needs_setup()",
-    "reset_password(bytea,text)",
-    "resolve_admin_session(bytea)",
-    "set_own_name(uuid,text)",
+    "public.accept_invite(p_token_hash bytea, p_password_hash text, p_name text)",
+    "public.account_by_email(p_email text)",
+    "public.begin_totp_enrolment(p_id_hash bytea, p_ticket_proof bytea, p_secret_ct bytea, p_proof bytea)",  # noqa: E501
+    "public.complete_password_reset(p_token_hash bytea, p_password_hash text)",
+    "public.complete_setup(p_email text, p_password_hash text, p_name text, p_locale text)",
+    "public.complete_sign_up(p_token_hash bytea, p_password_hash text, p_business_name text, p_country text, p_currency text, p_name text)",  # noqa: E501
+    "public.confirm_totp_enrolment(p_id_hash bytea, p_proof bytea, p_step bigint, p_code_proofs bytea[])",  # noqa: E501
+    "public.email_token_live(p_token_hash bytea, p_purpose text)",
+    "public.end_admin_session(p_id_hash bytea)",
+    "public.mint_email_token(p_id uuid, p_token_hash bytea)",
+    "public.needs_setup()",
+    "public.pass_second_factor(p_id_hash bytea, p_proof bytea, p_step bigint)",
+    "public.password_unchanged(p_user_id uuid, p_hash text)",
+    "public.reset_password(p_token_hash bytea, p_password_hash text)",
+    "public.resolve_admin_session(p_id_hash bytea)",
+    "public.set_own_name(p_user uuid, p_name text)",
+    "public.start_admin_session(p_user uuid, p_password_hash text, p_id_hash bytea, p_ip inet, p_user_agent text)",  # noqa: E501
+    "public.start_email_token(p_purpose text, p_email text, p_locale text)",
+    "public.stripe_account_tenant(p_account text)",
+    "public.totp_ciphertext(p_id_hash bytea)",
+    "public.use_recovery_code(p_id_hash bytea, p_code_proof bytea)",
 ]
+WIDENING = ' Widening it breaks the ZIF-99 directory ban, see CONTRIBUTING "Client records".'
 
 
 # 8: FENCE. Wrong impl: any migration that adds to or widens a users policy.
@@ -205,28 +242,63 @@ def test_the_users_policies_are_pinned(migrate_engine: Engine) -> None:
             WHERE schemaname = 'public' AND tablename = 'users' ORDER BY policyname
             """)
         ).all()
-    assert [list(r) for r in rows] == USERS_POLICIES
+    assert [list(r) for r in rows] == USERS_POLICIES, (
+        "The users policies changed." + WIDENING + " The qual text is Postgres's own deparse and"
+        " can change on a major upgrade."
+    )
 
 
-# 9: FENCE. Wrong impl: a new user_exists(email) / find_user(q) definer function.
-def test_the_definer_functions_that_read_users_are_pinned(migrate_engine: Engine) -> None:
+# 9: FENCE. Wrong impl: a new user_exists(email) / find_user(q) definer function, even a wrapper
+# over account_by_email, a SQL-standard body, or a cross-tenant clients definer.
+def test_the_definer_functions_the_app_can_execute_are_pinned(migrate_engine: Engine) -> None:
     with migrate_engine.connect() as conn:
         names = conn.scalars(
             text("""
-            SELECT p.oid::regprocedure::text FROM pg_proc p
-            WHERE p.prosecdef AND p.pronamespace = 'public'::regnamespace
+            SELECT format('%s.%s(%s)', n.nspname, p.proname,
+                          pg_get_function_identity_arguments(p.oid))
+            FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+            WHERE p.prosecdef AND n.nspname NOT IN ('pg_catalog', 'information_schema')
               AND has_function_privilege('ziftbook_app', p.oid, 'EXECUTE')
-              AND p.prosrc ~* '\\musers\\M'
             ORDER BY 1
             """)
         ).all()
-    assert list(names) == DEFINERS
+    assert list(names) == DEFINERS, (
+        "Adding a SECURITY DEFINER function the app can call is a deliberate change. Check it"
+        ' against the ZIF-99 directory ban (CONTRIBUTING "Client records"), then update this pin.'
+    )
+
+
+# 9b: FENCE. Wrong impl: a migrate-owned view over users. users has no FORCE RLS, so the owner's
+# view bypasses its policy.
+def test_no_view_the_app_can_read_reads_users(migrate_engine: Engine) -> None:
+    with migrate_engine.connect() as conn:
+        views = conn.scalars(
+            text("""
+            WITH RECURSIVE reads(oid) AS (
+                SELECT 'public.users'::regclass::oid
+                UNION
+                SELECT r.ev_class FROM reads
+                JOIN pg_depend d ON d.refobjid = reads.oid AND d.classid = 'pg_rewrite'::regclass
+                JOIN pg_rewrite r ON r.oid = d.objid
+                WHERE r.ev_class <> reads.oid
+            )
+            SELECT c.oid::regclass::text FROM reads JOIN pg_class c ON c.oid = reads.oid
+            WHERE c.relkind IN ('v', 'm') AND has_table_privilege('ziftbook_app', c.oid, 'SELECT')
+            ORDER BY 1
+            """)
+        ).all()
+    assert list(views) == [], (
+        "A view or materialized view over users is readable by the app. users has no FORCE RLS, so"
+        " the view bypasses its policy." + WIDENING
+    )
 
 
 # 10: FENCE. Wrong impl: /api/users?q=, or a has_account badge on ClientOut.
 def test_no_route_lists_users_and_a_client_has_no_account_field() -> None:
     spec = json.loads(CONTRACT.read_text())
-    assert [p for p in spec["paths"] if "users" in p and not p.startswith("/api/admin")] == []
+    assert [p for p in spec["paths"] if "users" in p and not p.startswith("/api/admin")] == [], (
+        "A route mentions users." + WIDENING
+    )
     assert set(spec["components"]["schemas"]["ClientOut"]["properties"]) == {
         "id",
         "name",
@@ -236,4 +308,4 @@ def test_no_route_lists_users_and_a_client_has_no_account_field() -> None:
         "client_note",
         "internal_note",
         "consents",
-    }
+    }, "ClientOut changed." + WIDENING
