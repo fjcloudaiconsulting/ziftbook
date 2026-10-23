@@ -53,6 +53,19 @@ def hit(limits: dict[str, int], window: timedelta, *, db: Session | None = None)
     return any(hits > limits[key] for key, hits in rows)
 
 
+COUNT = text("""
+SELECT hits FROM rate_limits WHERE key = :key AND window_start > now() - CAST(:window AS interval)
+""")
+
+
+def count(key: str, window: timedelta) -> int:
+    """The attempts counted against key in its live window: the window hit() would add to, so a
+    window hit() would start again counts 0. Reads only, so it charges nothing."""
+    with SessionLocal.begin() as session:
+        hits: int | None = session.scalar(COUNT, {"key": key, "window": window})
+    return hits or 0
+
+
 def email_key(action: str, email: str) -> str:
     """The caller normalises the email first. Hashed, so the table holds no addresses."""
     # surrogatepass: a lone surrogate from a JSON body must not turn into a 500 here.

@@ -78,6 +78,25 @@ def test_concurrent_attempts_are_counted_exactly(action: str) -> None:
     assert refused.count(False) == 10
 
 
+def test_limits_count_reads_without_writing(action: str) -> None:
+    assert limits.count(f"{action}:k", timedelta(minutes=15)) == 0
+    limits.hit({f"{action}:k": 5}, timedelta(minutes=15))
+    assert limits.count(f"{action}:k", timedelta(minutes=15)) == 1
+    assert limits.count(f"{action}:k", timedelta(minutes=15)) == 1
+
+
+def test_count_ignores_a_window_hit_would_start_again(action: str, app_engine: Engine) -> None:
+    key = f"{action}:k"
+    limits.hit({key: 5}, WINDOW)
+    with app_engine.begin() as conn:
+        conn.execute(
+            text("UPDATE rate_limits SET window_start = now() - :w WHERE key = :k"),
+            {"w": WINDOW + timedelta(seconds=1), "k": key},
+        )
+
+    assert limits.count(key, WINDOW) == 0
+
+
 def test_callers_listing_the_same_keys_in_any_order_do_not_deadlock(action: str) -> None:
     first, second = f"{action}:a", f"{action}:b"
     start = threading.Barrier(16)
