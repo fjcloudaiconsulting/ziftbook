@@ -5,11 +5,12 @@ import { type FormEvent, useCallback, useEffect, useId, useRef, useState, useSyn
 
 import { type InviteDetails, invitesAccept, invitesLookup } from "@/api-client";
 import { Link, useRouter } from "@/i18n/navigation";
-import { takeToken, trimmedName } from "@/lib/account";
+import { signInOutcome, takeToken, trimmedName } from "@/lib/account";
 import { acceptOutcome, firstStage, inviteScreen } from "@/lib/invite";
 import { linkStore, type OpenedLink } from "@/lib/link";
 
 import { Banner, FieldError, Heading, NoScript, Outcome, PasswordField, problem, send, Submit } from "../_ui/parts";
+import { Turnstile } from "../_ui/turnstile";
 import styles from "../_ui/ui.module.css";
 
 const store = linkStore(() => takeToken(window), globalThis);
@@ -28,7 +29,7 @@ type Stage =
   | { is: "expired" }
   | { is: "member"; business: string };
 
-export function AcceptInvite() {
+export function AcceptInvite({ turnstileSiteKey }: { turnstileSiteKey: string | null }) {
   const link = useInviteLink();
   const t = useTranslations("Invite");
   const form = useTranslations("Form");
@@ -43,10 +44,10 @@ export function AcceptInvite() {
     );
   }
   // Keyed: every link opened in this tab starts over.
-  return <Invite key={link?.opened ?? -1} link={link} />;
+  return <Invite key={link?.opened ?? -1} link={link} turnstileSiteKey={turnstileSiteKey} />;
 }
 
-function Invite({ link }: { link: OpenedLink | null }) {
+function Invite({ link, turnstileSiteKey }: { link: OpenedLink | null; turnstileSiteKey: string | null }) {
   const token = link?.token ?? null;
   const t = useTranslations("Invite");
   const form = useTranslations("Form");
@@ -62,6 +63,10 @@ function Invite({ link }: { link: OpenedLink | null }) {
   const [personNameError, setPersonNameError] = useState<string>();
   const [passwordError, setPasswordError] = useState<string>();
   const [message, setMessage] = useState<Message | null>(null);
+  // Set once the server asks for a challenge; each attempt with a token uses it up and brings a fresh widget.
+  const [challenged, setChallenged] = useState(false);
+  const [challengeToken, setChallengeToken] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
 
   const problemText = useCallback(
     (outcome: { status: number }): Message =>
@@ -102,8 +107,12 @@ function Invite({ link }: { link: OpenedLink | null }) {
     }
     setPersonNameError(undefined);
     setBusy(true);
-    const outcome = await send(invitesAccept({ body: { token, password, name } }));
+    const outcome = await send(invitesAccept({ body: { token, password, name, turnstile_token: challengeToken } }));
     setBusy(false);
+    if (challengeToken) {
+      setChallengeToken(null);
+      setAttempt((n) => n + 1);
+    }
     setPasswordError(undefined);
     setMessage(null);
 
@@ -129,6 +138,11 @@ function Invite({ link }: { link: OpenedLink | null }) {
       setPersonNameError(t("personNameRequired"));
     } else if (meaning.startsWith("password_")) {
       setPasswordError(form(meaning as "password_too_short" | "password_too_long" | "password_too_common"));
+    } else if (meaning === "tooMany" && signInOutcome(outcome.status, outcome.code, Boolean(turnstileSiteKey)) === "challenge") {
+      setChallenged(true);
+      setMessage({ tone: "note", text: signIn("challenge") });
+    } else if (meaning === "tooMany" && outcome.code === "challenge_required") {
+      setMessage({ tone: "note", text: signIn("tryLater") });
     } else {
       setMessage(problemText(outcome));
     }
@@ -243,6 +257,7 @@ function Invite({ link }: { link: OpenedLink | null }) {
           inputRef={passwordInput}
           labelAside={existing ? <Link href="/forgot-password">{signIn("forgot")}</Link> : undefined}
         />
+        {challenged && turnstileSiteKey && <Turnstile key={attempt} siteKey={turnstileSiteKey} action="sign_in" onToken={setChallengeToken} />}
         <Submit busy={busy} busyLabel={t("joining")}>
           {existing ? t("signInSubmit") : t("newSubmit")}
         </Submit>

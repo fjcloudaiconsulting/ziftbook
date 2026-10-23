@@ -116,6 +116,8 @@
     "signingIn": "Bezig met inloggen…",
     "invalid": "Dit e-mailadres en wachtwoord horen niet bij elkaar. Controleer ze allebei, of stel je wachtwoord opnieuw in.",
     "tooMany": "Te veel pogingen. Wacht 15 minuten en probeer het opnieuw, of stel je wachtwoord opnieuw in.",
+    "challenge": "Bevestig hieronder dat je geen robot bent en log daarna opnieuw in.",
+    "tryLater": "Te veel pogingen. Probeer het later opnieuw, of stel je wachtwoord opnieuw in.",
     "noBusiness": "Dit account hoort niet meer bij een bedrijf. Vraag de eigenaar om je opnieuw toe te voegen.",
     "newHere": "Nieuw bij ziftbook?",
     "createBusiness": "Maak je bedrijf aan"

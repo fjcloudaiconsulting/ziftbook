@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, test } from "node:test";
 
-import { byName, clock, likelyCountry, RESEND_AFTER_MS, secondsLeft, signUpRequest, takeToken, trimmedName } from "../lib/account.ts";
+import { byName, clock, likelyCountry, RESEND_AFTER_MS, secondsLeft, signInOutcome, signUpRequest, siteKeyFrom, takeToken, trimmedName } from "../lib/account.ts";
 
 const countryNames = (locale) => JSON.parse(readFileSync(new URL(`../messages/${locale}.json`, import.meta.url))).CompleteSignUp.countries;
 
@@ -127,5 +127,38 @@ describe("building the sign-up request", () => {
     assert.deepEqual(signUpRequest(" Carol Mendes ", "Acme", "NL"), {
       body: { name: "Carol Mendes", business_name: "Acme", country: "NL" },
     });
+  });
+});
+
+describe("sign-in outcome", () => {
+  test("a challenge with a site key shows the widget", () => {
+    assert.equal(signInOutcome(429, "challenge_required", true), "challenge");
+  });
+
+  test("a challenge with no site key says try later, never a dead end", () => {
+    assert.equal(signInOutcome(429, "challenge_required", false), "try_later");
+  });
+
+  test("a plain rate limit is still try later", () => {
+    assert.equal(signInOutcome(429, "rate_limited", true), "try_later");
+  });
+
+  test("the other answers keep their meaning", () => {
+    assert.equal(signInOutcome(200, undefined, true), "ok");
+    assert.equal(signInOutcome(401, undefined, true), "invalid");
+    assert.equal(signInOutcome(503, undefined, true), "error");
+  });
+});
+
+describe("Turnstile site key", () => {
+  test("an empty variable is no site key, as compose passes an unset one", () => {
+    assert.equal(siteKeyFrom(""), null);
+    assert.equal(siteKeyFrom(undefined), null);
+    assert.equal(siteKeyFrom("0x4AAAAAAA"), "0x4AAAAAAA");
+  });
+
+  test("an empty variable says try later to a challenge, never a widget that is not there", () => {
+    assert.equal(signInOutcome(429, "challenge_required", Boolean(siteKeyFrom(""))), "try_later");
+    assert.equal(signInOutcome(429, "challenge_required", Boolean(siteKeyFrom("0x4AAAAAAA"))), "challenge");
   });
 });

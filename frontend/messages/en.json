@@ -116,6 +116,8 @@
     "signingIn": "Signing in…",
     "invalid": "That email and password don't match. Check both, or reset your password.",
     "tooMany": "Too many attempts for now. Wait 15 minutes and try again, or reset your password.",
+    "challenge": "Confirm you're not a robot below, then sign in again.",
+    "tryLater": "Too many attempts for now. Try again later, or reset your password.",
     "noBusiness": "This account isn't part of a business any more. Ask the owner to add you again.",
     "newHere": "New to ziftbook?",
     "createBusiness": "Create your business"

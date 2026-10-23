@@ -116,6 +116,8 @@
     "signingIn": "Entrando…",
     "invalid": "O e-mail e a senha não conferem. Confira os dois ou redefina sua senha.",
     "tooMany": "Tentativas demais por agora. Espere 15 minutos e tente de novo, ou redefina sua senha.",
+    "challenge": "Confirme abaixo que você não é um robô e entre de novo.",
+    "tryLater": "Tentativas demais por agora. Tente de novo mais tarde, ou redefina sua senha.",
     "noBusiness": "Esta conta não faz mais parte de um negócio. Peça ao responsável para adicionar você de novo.",
     "newHere": "Novo no ziftbook?",
     "createBusiness": "Cadastre seu negócio"

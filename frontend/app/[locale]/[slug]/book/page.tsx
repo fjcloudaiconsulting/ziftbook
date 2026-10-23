@@ -1,6 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 import { getTranslations } from "next-intl/server";
 
+import { siteKeyFrom } from "@/lib/account";
 import { parseCheckout } from "@/lib/booking-page";
 import { appVersion } from "@/lib/version";
 
@@ -65,7 +66,7 @@ export default async function CheckoutPage({
       <BookingPage
         page={loaded.data}
         locale={locale}
-        turnstileSiteKey={process.env.ZIF_TURNSTILE_SITE_KEY ?? null}
+        turnstileSiteKey={siteKeyFrom(process.env.ZIF_TURNSTILE_SITE_KEY)}
         version={appVersion()}
         serviceId={service.id}
         memberId={memberId}
