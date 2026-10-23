@@ -15,7 +15,7 @@ import styles from "../../_ui/ui.module.css";
 const TOKEN_KEY = "sign-up-link";
 const PASSWORD_CODES = ["password_too_short", "password_too_long", "password_too_common"] as const;
 
-export function CompleteSignUp() {
+export function CompleteSignUp({ turnstileSiteKey }: { turnstileSiteKey: string | null }) {
   const link = useLink(TOKEN_KEY);
   const t = useTranslations("CompleteSignUp");
   const form = useTranslations("Form");
@@ -31,10 +31,10 @@ export function CompleteSignUp() {
   }
 
   // Every opening of a link starts over: the old link's screen doesn't outlive it.
-  return <SignUpForm key={link?.opened} link={link} />;
+  return <SignUpForm key={link?.opened} link={link} turnstileSiteKey={turnstileSiteKey} />;
 }
 
-function SignUpForm({ link }: { link: OpenedLink | null }) {
+function SignUpForm({ link, turnstileSiteKey }: { link: OpenedLink | null; turnstileSiteKey: string | null }) {
   const token = link?.token ?? null;
   const t = useTranslations("CompleteSignUp");
   const form = useTranslations("Form");
@@ -105,6 +105,7 @@ function SignUpForm({ link }: { link: OpenedLink | null }) {
     return (
       <LinkRequest
         purpose="sign_up"
+        turnstileSiteKey={turnstileSiteKey}
         intro={
           <>
             <Mark icon="expired" />
