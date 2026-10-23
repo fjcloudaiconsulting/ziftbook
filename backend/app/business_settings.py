@@ -6,6 +6,8 @@ has the rules for removing, renaming and tightening one.
 
 import importlib.resources
 import json
+from email import message_from_string, policy
+from email.message import EmailMessage
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Request, Response
@@ -13,7 +15,7 @@ from pydantic import AfterValidator, BaseModel, BeforeValidator, ConfigDict, Fie
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app import auth
+from app import auth, passwords
 from app.auth import CurrentOwner, CurrentSession
 from app.errors import Error
 
@@ -36,6 +38,20 @@ def known_zone(name: str) -> str:
     if name not in ZONES:
         raise ValueError("unknown timezone")
     return name
+
+
+def header_address(email: str) -> str:
+    """An address that reads back from a mail header as itself, or ValueError.
+
+    Python sends a non-ASCII address as an encoded word, and parses "shop[1]@x" or a stray dot as
+    something else, so a reply would reach nobody. An IDN domain still works in its xn-- form.
+    """
+    message = EmailMessage()
+    message["Reply-To"] = email
+    header = message_from_string(message.as_string(), policy=policy.default)["Reply-To"]
+    if not email.isascii() or header.defects or [a.addr_spec for a in header.addresses] != [email]:
+        raise ValueError("not an address a reply can reach")
+    return email
 
 
 class BusinessSettings(BaseModel):
@@ -113,6 +129,14 @@ class BusinessSettings(BaseModel):
     # only while Stripe is configured, the account can take charges and the price meets Stripe's
     # minimum (app/payments.py offer()). No PUT cross-check: the effective mode fails open.
     payment_check: bool = False
+    # ZIF-99. Where a client's reply to an email with no manage link goes (Reply-To); none when
+    # unset. The client-facing contact, not the responsible person, and never defaulted to an
+    # owner's login.
+    # Public by design (every member reads it, and the booking page will show it), so a private
+    # address does not belong here; it is kept in the settings audit log.
+    # shortcut: the address is not confirmed, so an owner can point client replies at any inbox; add
+    # a confirm link if one is ever abused.
+    contact_email: Annotated[passwords.Email, AfterValidator(header_address)] | None = None
 
 
 def read(db: Session) -> BusinessSettings:

@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from sqlalchemy import Engine
 
 from app.main import create_app
+from app.passwords import normalise_email
 from tests.conftest import (
     People,
     events,
@@ -36,6 +37,7 @@ DEFAULTS = {
     "max_reschedules": 2,
     "published": False,
     "payment_check": False,
+    "contact_email": None,
 }
 
 
@@ -245,6 +247,7 @@ def test_the_contract_requires_every_setting_back_and_none_sent() -> None:
         "max_reschedules",
         "published",
         "payment_check",
+        "contact_email",
     ]
     assert "required" not in schemas["BusinessSettings-Input"]
 
@@ -314,3 +317,63 @@ def test_max_reschedules_default_and_bound(people: People, app: FastAPI) -> None
     assert put_settings(owner, {"max_reschedules": 10}).status_code == 200
     assert put_settings(owner, {"max_reschedules": 11}).status_code == 422
     assert put_settings(owner, {"max_reschedules": -1}).status_code == 422
+
+
+# ZIF-99 F6 fence: contact_email is one ASCII address. Kills `str | None` (no validation), which
+# lets a list, a display name or a CR/LF header injection into Reply-To, and passwords.Email alone,
+# whose non-ASCII or non-dot-atom address does not parse back as itself in Reply-To, so no
+# reply reaches it.
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param("a@x.com, b@y.com", id="list"),
+        pytest.param("a@x.com\r\nBcc: z@q.com", id="header injection"),
+        pytest.param("Shop <a@x.com>", id="display name"),
+        pytest.param("", id="empty"),
+        pytest.param("info@café.nl", id="idn domain"),
+        pytest.param("shöp@x.com", id="non-ascii local part"),
+        pytest.param("shop[1]@x.com", id="brackets"),
+        pytest.param(".a@x.com", id="leading dot"),
+        pytest.param("a..b@x.com", id="double dot"),
+        pytest.param("a@x.com.", id="trailing dot"),
+        pytest.param("a@café.ß", id="non-ascii with no header defect"),
+        pytest.param("a@[x.com", id="reads back as another address"),
+    ],
+)
+def test_a_contact_email_must_be_one_address(people: People, app: FastAPI, value: str) -> None:
+    response = put_settings(signed_in(app, people.a, people.both), {"contact_email": value})
+
+    assert (response.status_code, response.json()) == (422, {"code": "invalid_request"})
+    assert saved_settings(people.a) == {}
+
+
+def test_the_contact_email_is_returned_normalised_and_null_unsets_it(
+    people: People, app: FastAPI
+) -> None:
+    owner = signed_in(app, people.a, people.both)
+
+    response = put_settings(owner, {"contact_email": " Shop@Example.COM "})
+    assert (response.status_code, response.json()["contact_email"]) == (200, "shop@example.com")
+    assert owner.get("/api/settings").json()["contact_email"] == "shop@example.com"
+
+    assert put_settings(owner, {"contact_email": None}).status_code == 200
+    assert owner.get("/api/settings").json()["contact_email"] is None
+
+
+# ZIF-99 F6b fence: RFC 2047 encoded words are decoded in address headers, so these render as two
+# addresses or a display name in Reply-To. Kills the regex alone.
+ENCODED_WORDS = [
+    "=?utf-8?q?a=40evil.com=2c_b=40c.com?=@x.com",
+    "=?utf-8?q?shop_=3cphish=40evil.com=3e?=@x.com",
+    "=?utf-8?q?a=0d=0abcc=3a_z=40q.com?=@x.com",
+]
+
+
+@pytest.mark.parametrize("value", ENCODED_WORDS)
+def test_an_encoded_word_is_not_a_contact_email(people: People, app: FastAPI, value: str) -> None:
+    response = put_settings(signed_in(app, people.a, people.both), {"contact_email": value})
+
+    assert (response.status_code, response.json()) == (422, {"code": "invalid_request"})
+    assert saved_settings(people.a) == {}
+    with pytest.raises(ValueError, match="not an email address"):
+        normalise_email(value)

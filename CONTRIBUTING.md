@@ -371,6 +371,8 @@ Deferred and scheduled work goes through the `jobs` table (`app/jobs.py`); there
   re-reads the booking and skips silently if its status no longer matches the template (ZIF-53).
 - Enqueue a booking email in the same transaction as the status change it announces, so a rollback drops the job with
   it (ZIF-53).
+- Client booking emails carrying no manage link reply to the business's `contact_email` (Reply-To); never a token
+  email, and never staff, invite, sign-up or reset mail (ZIF-99).
 
 ## Logging
 

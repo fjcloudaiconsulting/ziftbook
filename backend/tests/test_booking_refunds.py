@@ -289,6 +289,8 @@ def test_a_payment_after_the_time_ran_out_is_refunded_in_full(
     app_engine: Engine,
     migrate_engine: Engine,
 ) -> None:
+    # ZIF-99 F2: neither expired email carries a manage link, so both reply to the business.
+    assert put_settings(owner, {"contact_email": " Shop@Example.COM "}).status_code == 200
     client = new_client(app)
     late = place(app, people, ready, payment="pay", client=client).json()["id"]
     fake_stripe.confirm(fake_stripe.latest(late))  # paid, but the hold has ended
@@ -306,6 +308,7 @@ def test_a_payment_after_the_time_ran_out_is_refunded_in_full(
     ]
     assert job["payload"]["late"] == "1"
     run_send_booking(people.a, late, "booking_expired", late="1")
+    assert mail_for(_address(people, late))["Headers"]["Reply-To"] == ["shop@example.com"]
     text_late = mail_for(_address(people, late))["Text"]
     assert "didn't confirm" not in text_late and "40.00" in text_late
 
@@ -322,6 +325,7 @@ def test_a_payment_after_the_time_ran_out_is_refunded_in_full(
     ]
     assert "late" not in job["payload"]
     run_send_booking(people.a, unanswered, "booking_expired")
+    assert mail_for(_address(people, unanswered))["Headers"]["Reply-To"] == ["shop@example.com"]
     assert "didn't confirm" in mail_for(_address(people, unanswered))["Text"]
 
 

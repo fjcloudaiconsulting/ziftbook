@@ -6935,6 +6935,17 @@
             "type": "boolean",
             "title": "Payment Check",
             "default": false
+          },
+          "contact_email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contact Email"
           }
         },
         "additionalProperties": false,
@@ -7057,6 +7068,17 @@
             "type": "boolean",
             "title": "Payment Check",
             "default": false
+          },
+          "contact_email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contact Email"
           }
         },
         "additionalProperties": false,
@@ -7078,7 +7100,8 @@
           "reschedule_cutoff_hours",
           "max_reschedules",
           "published",
-          "payment_check"
+          "payment_check",
+          "contact_email"
         ],
         "title": "BusinessSettings"
       },

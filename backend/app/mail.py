@@ -79,6 +79,7 @@ def deliver(
     body: str,
     *,
     ics: bytes | None = None,
+    reply_to: str | None = None,
 ) -> None:
     """Hand one message for one address to Mailgun (Mailpit in development), and log it by template.
 
@@ -89,9 +90,11 @@ def deliver(
     The job's id comes from its bound context. Never the address, subject or body, and on failure
     the error's class only, plus the HTTP status when there was one (a 401 is a bad key, a 400 a bad
     message); the error still propagates, so the job is retried.
+
+    reply_to is where the recipient's reply goes instead of the sending address.
     """
     try:
-        _send(to, subject, body, ics)
+        _send(to, subject, body, ics, reply_to)
     except Exception as error:
         status = getattr(getattr(error, "response", None), "status_code", None)
         logger.warning(
@@ -106,7 +109,7 @@ def deliver(
     tracing.EMAIL_DELIVERIES.add(1, {"email.template": template, "email.outcome": "sent"})
 
 
-def _send(to: str, subject: str, body: str, ics: bytes | None) -> None:
+def _send(to: str, subject: str, body: str, ics: bytes | None, reply_to: str | None) -> None:
     settings = MailSettings()
     way = transport(settings)
     if way == "off":
@@ -119,6 +122,10 @@ def _send(to: str, subject: str, body: str, ics: bytes | None) -> None:
     message["From"] = f"ziftbook <{sender}>"
     message["To"] = to
     message["Subject"] = subject
+    if reply_to is not None:
+        # As `to`: a stored value written around the API must not become a list.
+        reply_to = passwords.normalise_email(reply_to)
+        message["Reply-To"] = reply_to
     message.set_content(body)
     if ics is not None:
         message.add_attachment(
@@ -166,6 +173,8 @@ def _send(to: str, subject: str, body: str, ics: bytes | None) -> None:
                 "Subject": subject,
                 "Text": body,
             }
+            if reply_to is not None:
+                payload["ReplyTo"] = [{"Email": reply_to}]
             if ics is not None:
                 payload["Attachments"] = [
                     {
@@ -632,6 +641,9 @@ def send_booking(job: Job) -> None:
             # dropped unused, never stored.
             token = secrets.token_urlsafe(32)
             values["link"] = f"{app_url}/{locale}/booking#{job.tenant_id}.{token}"
+        # ZIF-54 D10: a reply quotes the body, so never on an email carrying a manage token. Keyed
+        # on the token, not a template list, so a template joining LINKED loses it by itself.
+        reply_to = settings.contact_email if user_id is None and token is None else None
         file = template
         if (
             template == "booking_moved_team"
@@ -694,5 +706,5 @@ def send_booking(job: Job) -> None:
             datetime.now(UTC),
             sequence=row.reschedule_count,
         )
-    deliver(template, recipient_email, subject, body, ics=booking_ics)
+    deliver(template, recipient_email, subject, body, ics=booking_ics, reply_to=reply_to)
     _mark_sent(job)
