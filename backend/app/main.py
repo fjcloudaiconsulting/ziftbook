@@ -405,6 +405,7 @@ def create_app() -> FastAPI:
             response = await call_next(request)
         # No API response is a page to link from.
         response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["X-Content-Type-Options"] = "nosniff"
         # ZIF-54 spec S4: every guest-link answer, errors included, is private to its bearer. So is
         # every admin answer (ZIF-71): some carry a TOTP secret or recovery codes.
         if request.url.path.startswith(
@@ -529,11 +530,11 @@ def create_app() -> FastAPI:
         return JSONResponse({"code": "busy"}, status_code=503)
 
     # Anything unexpected, including a commit that fails after the endpoint returned. This runs
-    # outside the middleware above, so it sets Referrer-Policy itself.
+    # outside the middleware above, so it sets Referrer-Policy and nosniff itself.
     @app.exception_handler(Exception)
     async def internal_error(request: Request, error: Exception) -> JSONResponse:
         logger.error("unhandled error", exc_info=error)
-        headers = {"Referrer-Policy": "no-referrer"}
+        headers = {"Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff"}
         if request_id := getattr(request.state, "request_id", None):
             headers["X-Request-ID"] = request_id
         return JSONResponse({"code": "internal"}, status_code=500, headers=headers)

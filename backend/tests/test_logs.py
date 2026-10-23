@@ -380,6 +380,14 @@ def test_the_500_response_and_its_log_line_share_the_request_id(log_lines: Lines
     assert "exc" in error_lines[0]
 
 
+def test_the_500_response_is_marked_nosniff() -> None:
+    client = new_client(_with_boom_route(create_app()))
+
+    response = client.get("/api/boom")
+
+    assert response.status_code == 500
+    assert response.headers["x-content-type-options"] == "nosniff"
+
 
 # B6: the access line has method, status and duration_ms.
 def test_access_line_has_method_status_and_duration_in_ms(log_lines: Lines) -> None:

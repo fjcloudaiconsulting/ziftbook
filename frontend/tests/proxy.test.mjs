@@ -506,6 +506,7 @@ describe("dead upstream (E2)", () => {
       assert.equal(response.status, 502);
       assert.deepEqual(await response.json(), { code: "api_unavailable" });
       assert.equal(response.headers.get("x-middleware-rewrite"), null);
+      assert.equal(response.headers.get("x-content-type-options"), "nosniff");
 
       const requestIdHeader = response.headers.get("x-request-id");
       const lines = await waitForLog(web.logs.stdout, "api unavailable");
@@ -599,6 +600,7 @@ describe("request body cap (ZIF-136)", () => {
     assert.equal(status, 413);
     assert.deepEqual(JSON.parse(body), { code: "content_too_large" });
     assert.match(headers["x-request-id"], /.+/);
+    assert.equal(headers["x-content-type-options"], "nosniff");
     assert.equal(api.requests.length, 0);
   });
 
@@ -705,6 +707,7 @@ describe("unset ZIF_API_URL (E7)", () => {
       const response = await fetch(`http://127.0.0.1:${port}/api/x`, { redirect: "manual" });
       assert.equal(response.status, 502);
       assert.deepEqual(await response.json(), { code: "api_unavailable" });
+      assert.equal(response.headers.get("x-content-type-options"), "nosniff");
 
       const lines = await waitForLog(web.logs.stdout, "api url unset");
       assert.equal(lines.length, 1);

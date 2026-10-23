@@ -62,3 +62,11 @@ def test_cross_origin_requests_are_never_allowed(client: TestClient) -> None:
     )
 
     assert "access-control-allow-origin" not in response.headers
+
+
+@pytest.mark.parametrize("method", ["GET", "POST"])
+def test_every_api_answer_forbids_content_sniffing(client: TestClient, method: str) -> None:
+    # POST without a JSON type is the 415 path: errors carry it too.
+    response = client.request(method, "/api/probe")
+
+    assert response.headers["x-content-type-options"] == "nosniff"

@@ -27,7 +27,10 @@ const REQUEST_ONLY_STRIP = ["host", "expect", "content-length", "proxy-authoriza
 const TRACE_HEADERS = ["traceparent", "tracestate", "baggage"];
 
 function unavailable(id: string): NextResponse {
-  return NextResponse.json({ code: "api_unavailable" }, { status: 502, headers: { "X-Request-ID": id } });
+  return NextResponse.json(
+    { code: "api_unavailable" },
+    { status: 502, headers: { "X-Request-ID": id, "X-Content-Type-Options": "nosniff" } },
+  );
 }
 
 // The whole request body, or null once it passes `limit` (ZIF-136). Read here, not streamed
@@ -100,7 +103,10 @@ async function forwardApi(request: NextRequest): Promise<Response> {
     if (body === null) {
       log.info("body too large", { request_id: id, method: request.method, ...spanIds });
       endProxySpan(span, 413);
-      return NextResponse.json({ code: "content_too_large" }, { status: 413, headers: { "X-Request-ID": id } });
+      return NextResponse.json(
+        { code: "content_too_large" },
+        { status: 413, headers: { "X-Request-ID": id, "X-Content-Type-Options": "nosniff" } },
+      );
     }
     const upstreamResponse = await fetch(new URL(pathname + search, upstream), {
       method: request.method,
@@ -131,7 +137,7 @@ async function forwardApi(request: NextRequest): Promise<Response> {
     if (request.signal.aborted) {
       log.debug("client closed", { request_id: id, method: request.method, ...spanIds });
       endProxySpan(span, 499);
-      return new Response(null, { status: 499 });
+      return new Response(null, { status: 499, headers: { "X-Content-Type-Options": "nosniff" } });
     }
     log.error("api unavailable", { request_id: id, method: request.method, ...spanIds, ...errorFields(err) });
     endProxySpan(span, 502, err);
