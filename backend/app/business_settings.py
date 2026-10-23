@@ -113,8 +113,9 @@ class BusinessSettings(BaseModel):
     # only while Stripe is configured, the account can take charges and the price meets Stripe's
     # minimum (app/payments.py offer()). No PUT cross-check: the effective mode fails open.
     payment_check: bool = False
-    # ZIF-99. Where a client's reply to an email with no manage link goes (Reply-To); none when unset.
-    # The client-facing contact, not the responsible person, and never defaulted to an owner's login.
+    # ZIF-99. Where a client's reply to an email with no manage link goes (Reply-To); none when
+    # unset. The client-facing contact, not the responsible person, and never defaulted to an
+    # owner's login.
     # Public by design (every member reads it, and the booking page will show it), so a private
     # address does not belong here; it is kept in the settings audit log.
     # shortcut: the address is not confirmed, so an owner can point client replies at any inbox; add

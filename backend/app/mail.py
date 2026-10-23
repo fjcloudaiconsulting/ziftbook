@@ -641,8 +641,8 @@ def send_booking(job: Job) -> None:
             # dropped unused, never stored.
             token = secrets.token_urlsafe(32)
             values["link"] = f"{app_url}/{locale}/booking#{job.tenant_id}.{token}"
-        # ZIF-54 D10: a reply quotes the body, so never on an email carrying a manage token. Keyed on
-        # the token, not a template list, so a template joining LINKED loses it by itself.
+        # ZIF-54 D10: a reply quotes the body, so never on an email carrying a manage token. Keyed
+        # on the token, not a template list, so a template joining LINKED loses it by itself.
         reply_to = settings.contact_email if user_id is None and token is None else None
         file = template
         if (
