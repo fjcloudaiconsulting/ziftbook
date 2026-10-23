@@ -41,7 +41,8 @@ _EMAIL = re.compile(
 def normalise_email(email: str) -> str:
     """The stored form of an email, or ValueError."""
     email = unicodedata.normalize("NFC", email.strip().lower())
-    if len(email) > 254 or not _EMAIL.fullmatch(email):
+    # "=?" opens an RFC 2047 encoded word, which address headers decode into a list or a display name.
+    if len(email) > 254 or "=?" in email or not _EMAIL.fullmatch(email):
         raise ValueError("not an email address")
     try:
         email.encode()

@@ -13,7 +13,7 @@ from pydantic import AfterValidator, BaseModel, BeforeValidator, ConfigDict, Fie
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app import auth
+from app import auth, passwords
 from app.auth import CurrentOwner, CurrentSession
 from app.errors import Error
 
@@ -113,6 +113,13 @@ class BusinessSettings(BaseModel):
     # only while Stripe is configured, the account can take charges and the price meets Stripe's
     # minimum (app/payments.py offer()). No PUT cross-check: the effective mode fails open.
     payment_check: bool = False
+    # ZIF-99. Where a client's reply to an email with no manage link goes (Reply-To); none when unset.
+    # The client-facing contact, not the responsible person, and never defaulted to an owner's login.
+    # Public by design (every member reads it, and the booking page will show it), so a private
+    # address does not belong here; it is kept in the settings audit log.
+    # shortcut: the address is not confirmed, so an owner can point client replies at any inbox; add
+    # a confirm link if one is ever abused.
+    contact_email: passwords.Email | None = None
 
 
 def read(db: Session) -> BusinessSettings:
