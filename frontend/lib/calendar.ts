@@ -180,15 +180,16 @@ export type Action = "accept" | "decline" | "completed" | "no_show" | "restore" 
 /** What a booking's panel offers, mirroring the API's TRANSITIONS and OWNER_ONLY_SOURCES (the API
  * decides; this only keeps buttons that would 409 off the screen). Completed and no-show wait for the
  * start; leaving `completed` is the owner's alone, and a pending is answered only by who
- * `canAnswerRequests` allows. */
-export function actionsFor(detail: { status: string; expired: boolean; starts_at: string }, role: Role, now: Date, workersAnswerRequests: boolean): Action[] {
+ * `canAnswerRequests` allows. A cancellation that has started or holds a paid payment ends in a refund, so it is the owner's too. */
+export function actionsFor(detail: { status: string; expired: boolean; starts_at: string; payment?: { status: string } | null }, role: Role, now: Date, workersAnswerRequests: boolean): Action[] {
   const started = new Date(detail.starts_at).getTime() <= now.getTime();
   switch (detail.status) {
     case "pending":
       return detail.expired || !canAnswerRequests(role, workersAnswerRequests) ? [] : ["accept", "decline"];
     case "confirmed":
       // Only a confirmed booking moves: a pending one is accepted first (the client's request was for that time).
-      return started ? ["completed", "no_show", "reschedule", "cancel"] : ["reschedule", "cancel"];
+      const cancel: Action[] = role === "owner" || (!started && detail.payment?.status !== "paid") ? ["cancel"] : [];
+      return started ? ["completed", "no_show", "reschedule", ...cancel] : ["reschedule", ...cancel];
     case "completed":
       return role === "owner" ? ["restore", "no_show", "cancel"] : [];
     default:
