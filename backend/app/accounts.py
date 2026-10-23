@@ -8,7 +8,7 @@ from fastapi import APIRouter, Request, Response
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints
 from sqlalchemy import text
 
-from app import auth, business_settings, limits, passwords, tracing
+from app import auth, business_settings, limits, passwords, tracing, turnstile
 from app.business_settings import BusinessSettings, Locale
 from app.countries import COUNTRIES, Country
 from app.db import SessionLocal, count_after_commit, join_tenant, tenant_context
@@ -23,19 +23,20 @@ router = APIRouter(prefix="/api", tags=["account"])
 class LinkRequest(BaseModel):
     email: passwords.Email
     locale: Locale  # the page the person asked on; the email's language if the account has none
+    turnstile_token: Annotated[str, StringConstraints(max_length=turnstile.MAX_TOKEN)] | None = None
 
 
 def send_link(purpose: str, details: LinkRequest, request: Request) -> None:
     """Queue the email for a link. The same answer and the same work whether or not the email has an
     account: the email job decides what the inbox gets."""
     ip = request.client.host if request.client else None
-    if limits.hit(
-        {
-            limits.email_key(purpose, details.email): 3,
-            limits.ip_key(purpose, ip, v6_prefix=limits.AUTH_V6_PREFIX): 10,
-        },
-        LINK_WINDOW,
-    ):
+    # Per IP first, before any outbound call; then Turnstile; the address last and in its own hit(),
+    # as the public booking route orders them: a token-less script must not lock an address out.
+    if limits.hit({limits.ip_key(purpose, ip, v6_prefix=limits.AUTH_V6_PREFIX): 10}, LINK_WINDOW):
+        raise ApiError(429, "rate_limited")
+    if not turnstile.verify(details.turnstile_token, ip, action=purpose):
+        raise ApiError(403, "turnstile_failed")
+    if limits.hit({limits.email_key(purpose, details.email): 3}, LINK_WINDOW):
         raise ApiError(429, "rate_limited")
     with SessionLocal.begin() as session:
         token_id = session.scalar(
@@ -45,7 +46,9 @@ def send_link(purpose: str, details: LinkRequest, request: Request) -> None:
         enqueue(session, "email.token", f"email.token:{token_id}", {"token_id": str(token_id)})
 
 
-@router.post("/sign-up", status_code=202, responses={s: {"model": Error} for s in (415, 422, 429)})
+@router.post(
+    "/sign-up", status_code=202, responses={s: {"model": Error} for s in (403, 415, 422, 429)}
+)
 def sign_up(details: LinkRequest, request: Request) -> None:
     """Send a link that sets up a business, or, if the email has an account, a note to sign in."""
     send_link("sign_up", details, request)
@@ -213,7 +216,9 @@ def give_name(
 
 
 @router.post(
-    "/password-reset", status_code=202, responses={s: {"model": Error} for s in (415, 422, 429)}
+    "/password-reset",
+    status_code=202,
+    responses={s: {"model": Error} for s in (403, 415, 422, 429)},
 )
 def request_password_reset(details: LinkRequest, request: Request) -> None:
     """Send a reset link; for an unknown email the email job sends nothing, after this answer."""

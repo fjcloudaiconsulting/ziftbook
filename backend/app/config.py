@@ -46,10 +46,11 @@ class LogSettings(Settings):
 
 
 class TurnstileSettings(Settings):
-    """Cloudflare Turnstile. With no secret every public booking is refused (ZIF-116), unless
-    turnstile_disabled opts out, as development and the test suite do so they need no network. The
-    API logs an ERROR at startup while it refuses, so a deployment that forgot the secret fails
-    closed and says so rather than staying silently open."""
+    """Cloudflare Turnstile. With no secret every public booking, sign-up and password-reset request
+    is refused and no sign-in challenge can be passed (ZIF-116), unless turnstile_disabled opts out,
+    as development and the test suite do so they need no network. The API logs an ERROR at startup
+    while it refuses, so a deployment that forgot the secret fails closed and says so rather than
+    staying silently open."""
 
     # Resolved at runtime from the environment and never committed. In a deployment it comes from
     # Secrets Manager as {{resolve:secretsmanager:...:SecretString:json-key}} so the value never
