@@ -7,7 +7,7 @@ import logging
 import re
 import secrets
 import urllib.request
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from email.message import EmailMessage
 from pathlib import Path
 from string import Template
@@ -23,7 +23,7 @@ from opentelemetry.trace import SpanKind
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app import business_settings, passwords, tracing
+from app import business_settings, limits, passwords, tracing
 from app.business_settings import Locale
 from app.config import MailSettings
 from app.db import SessionLocal, tenant_context
@@ -39,6 +39,11 @@ DATE_FORMAT = {"en": "%d/%m/%Y", "nl": "%d-%m-%Y", "pt": "%d/%m/%Y"}
 _ICS_CONTROL_CHARS = re.compile(
     "[\x00-\x09\x0b\x0c\x0e-\x1f\x7f\x80-\x9f\N{LINE SEPARATOR}\N{PARAGRAPH SEPARATOR}]"
 )
+
+# ZB-03: client-facing booking emails per address per hour; over it the send is skipped.
+CLIENT_MAIL_PER_RECIPIENT_HOUR = 10
+# The same address across every business, so several businesses cannot add up to a flood.
+CLIENT_MAIL_PER_RECIPIENT_ANY_HOUR = 30
 
 logger = logging.getLogger(__name__)
 
@@ -693,6 +698,19 @@ def send_booking(job: Job) -> None:
                 },
             )
     if status == "sent":
+        return
+    if user_id is None and limits.hit(
+        {
+            limits.email_key(
+                "mail_rcpt", f"{job.tenant_id}|{recipient_email.lower()}"
+            ): CLIENT_MAIL_PER_RECIPIENT_HOUR,
+            limits.email_key(
+                "mail_rcpt_any", recipient_email.lower()
+            ): CLIENT_MAIL_PER_RECIPIENT_ANY_HOUR,
+        },
+        timedelta(hours=1),
+    ):
+        logger.info("email skipped", extra={"template": template, "reason": "recipient_quota"})
         return
 
     booking_ics = None

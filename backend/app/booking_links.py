@@ -457,7 +457,9 @@ def cancel(body: CancelIn, request: Request) -> LinkedBooking:
                 user_agent,
                 {"refund_pct": decision.refund_pct},  # settle refunds what the client was shown
             )
-            bookings.email(db, tenant_id, row.booking_id, "booking_cancelled_by_client")
+            bookings.email(
+                db, tenant_id, row.booking_id, "booking_cancelled_by_client", merchant=False
+            )
             bookings.email_merchants(
                 db, tenant_id, row.booking_id, row.worker_id, "booking_client_cancelled"
             )
@@ -548,13 +550,14 @@ def reschedule(body: RescheduleIn, request: Request) -> LinkedBooking:
             )
             suffix = f":m{row.moves + 1}" if pending else f":r{changed.reschedule_count}"
             new_iso = changed.starts_at.isoformat()
-            bookings.email(
+            queued = bookings.email(
                 db,
                 tenant_id,
                 row.booking_id,
                 "booking_received" if pending else "booking_confirmed",
                 key_suffix=suffix,
                 extra={"starts_at": new_iso},
+                merchant=False,
             )
             bookings.email_merchants(
                 db,
@@ -568,7 +571,8 @@ def reschedule(body: RescheduleIn, request: Request) -> LinkedBooking:
             if pending:
                 new_earliest = original = changed.starts_at
             else:
-                bookings.remind(db, tenant_id, row.booking_id, changed.starts_at, row.now)
+                if queued:  # over the quota, the reminder is not queued either
+                    bookings.remind(db, tenant_id, row.booking_id, changed.starts_at, row.now)
                 new_earliest = min(row.earliest_starts_at or row.starts_at, changed.starts_at)
                 original = row.original_starts_at
             new_row = SimpleNamespace(

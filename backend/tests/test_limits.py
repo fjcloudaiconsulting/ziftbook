@@ -114,6 +114,21 @@ def test_an_attempt_counts_even_when_the_request_fails(
         assert conn.scalar(text("SELECT hits FROM rate_limits WHERE key = :k"), {"k": key}) == 1
 
 
+def test_an_attempt_counted_in_the_callers_transaction_commits_or_rolls_back_with_it(
+    action: str, people: People, app_engine: Engine
+) -> None:
+    key = f"{action}:k"
+
+    with tenant_context(people.a) as db:
+        assert limits.hit({key: 1}, WINDOW, db=db) is False
+    with pytest.raises(RuntimeError), tenant_context(people.a) as db:
+        assert limits.hit({key: 1}, WINDOW, db=db) is True
+        raise RuntimeError("the endpoint failed after counting")
+
+    with app_engine.connect() as conn:
+        assert conn.scalar(text("SELECT hits FROM rate_limits WHERE key = :k"), {"k": key}) == 1
+
+
 def test_old_rows_are_purged_and_recent_ones_kept(action: str, app_engine: Engine) -> None:
     old, recent = f"{action}:old", f"{action}:recent"
     limits.hit({old: 3, recent: 3}, WINDOW)
