@@ -3,9 +3,7 @@
 Calls run as the app role unless noted. "As migrate" reads stand for a dump or an operator.
 """
 
-import contextlib
 import hashlib
-import io
 import re
 import secrets
 import threading
@@ -20,7 +18,14 @@ from sqlalchemy.exc import ProgrammingError
 
 from app import admin, totp
 from app.main import create_app
-from tests.conftest import add_user, email_of, issue_link, new_client, wait_until_blocked
+from tests.conftest import (
+    SHOWN_TICKETS,
+    add_user,
+    email_of,
+    issue_link,
+    new_client,
+    wait_until_blocked,
+)
 
 # A fixed argon2 string: start_admin_session only compares it with the stored one.
 HASH = "$argon2id$v=19$m=19456,t=2,p=1$c2FsdHNhbHQ$aGFzaGhhc2hoYXNoaGFzaA"
@@ -59,12 +64,11 @@ def half_session(app_engine: Engine, migrate_engine: Engine, user_id: uuid.UUID)
 
 def issue_ticket(user_id: uuid.UUID) -> str:
     """python -m app.admin enrol, as an operator runs it: the ticket it prints."""
-    out = io.StringIO()
-    with contextlib.redirect_stdout(out):
-        assert admin.main(["enrol", email_of(user_id), "--reason", "new authenticator"]) == 0
-    found = TICKET.search(out.getvalue())
-    assert found is not None
-    return found.group()
+    SHOWN_TICKETS.clear()
+    assert admin.main(["enrol", email_of(user_id), "--reason", "new authenticator"]) == 0
+    (ticket,) = SHOWN_TICKETS
+    assert TICKET.fullmatch(ticket)
+    return ticket
 
 
 def ticket_proof(ticket: str) -> bytes:

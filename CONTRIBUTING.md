@@ -272,10 +272,13 @@ A platform admin runs the platform across businesses (ZIF-70). `platform_admins`
   `--reason` is required. Exit code 0 means done or nothing to do, 1 no account has that email (or another error,
   logged CRITICAL), 2 a usage error.
 - Admins sign in with a second factor (TOTP, ZIF-71). An admin enrols with a one-hour ticket from
-  `docker compose run --rm migrate python -m app.admin enrol <email> --reason "..."`, which wipes their current
-  factor and recovery codes and ends their admin sessions. It prints the ticket to the terminal, never to a log;
-  exit 1 means no admin has that email. Run it after `grant`, and again when an admin loses their authenticator and
-  their recovery codes.
+  `kubectl exec -it <api pod> -- python -m app.admin enrol <email> --reason "..."`, which wipes their current
+  factor and recovery codes and ends their admin sessions. It writes the ticket to `/dev/tty`, never to stdout or
+  a log, so it needs `-it`: with no terminal it issues nothing and exits 2; exit 1 means no admin has that email.
+  Prefer `kubectl exec` in a deployment: with `kubectl run -it` (or `docker compose run -it`) the container's
+  main process owns the terminal, and the container log records what is written to it. For local development
+  `docker compose run --rm -it migrate python -m app.admin enrol <email> --reason "..."` is fine, with that
+  caveat. Run it after `grant`, and again when an admin loses their authenticator and their recovery codes.
 - Never enable statement or parameter logging (`log_statement`, `log_min_duration_statement` with parameters,
   `auto_explain` with parameters) on the app database. Bind values include bearer proofs: a logged TOTP proof,
   recovery-code proof or ticket proof lets anyone who can read the log and run SQL pass an admin's second factor.
