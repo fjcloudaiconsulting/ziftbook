@@ -294,6 +294,34 @@ def test_a_dropped_connection_is_not_a_sent_email(
     assert sent_to(address) == []
 
 
+# ZIF-99 F7 fence: Reply-To is normalised like `to`, so a stored value written around the API cannot
+# become a list. Kills no normalise in _send, and the Mailpit path ignoring reply_to.
+def test_a_reply_to_is_normalised_and_a_list_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    address = f"{uuid.uuid4()}@example.com"
+
+    with pytest.raises(ValueError, match="not an email address"):
+        mail.deliver("hello", address, "Subject", "Body\n", reply_to="a@x.com, victim@y.com")
+    assert sent_to(address) == []
+
+    mail.deliver("hello", address, "Subject", "Body\n", reply_to=" Shop@X.com ")
+    (sent,) = sent_to(address)
+    assert sent["Headers"]["Reply-To"] == ["shop@x.com"]
+
+    requests: list[urllib.request.Request] = []
+
+    def capture(request: urllib.request.Request, timeout: float) -> io.BytesIO:
+        requests.append(request)
+        return io.BytesIO(b'{"ID": "x"}')
+
+    monkeypatch.setattr(urllib.request, "urlopen", capture)
+    monkeypatch.setenv("ZIF_MAILPIT_URL", "http://mailpit.test:8025/")
+    monkeypatch.delenv("ZIF_MAILGUN_API_KEY")
+    mail.deliver("hello", address, "Subject", "Body\n", reply_to=" Shop@X.com ")
+    (request,) = requests
+    assert isinstance(request.data, bytes)
+    assert json.loads(request.data)["ReplyTo"] == [{"Email": "shop@x.com"}]
+
+
 # ZIF-151 fence: development sends through Mailpit's HTTP API (never SMTP), and only when there is
 # no Mailgun key. Kills a wrong payload, and Mailpit winning over a deployment's key.
 def test_development_mail_goes_to_mailpits_http_api(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -8,6 +8,7 @@ import json
 import uuid
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta, timezone
+from email import message_from_string
 from typing import Any
 
 import pytest
@@ -1335,3 +1336,140 @@ def test_the_team_line_for_a_setup_check_names_no_amount(
 
     said = str(sent_to(email_of(people.both))[0]["Text"])
     assert "Card checked. Nothing was charged." in said and "€" not in said
+
+
+# ---------------------------------------------------------------------------
+# ZIF-99: client emails with no manage link reply to the business's contact email
+# ---------------------------------------------------------------------------
+
+CONTACT = " Shop@Example.COM "  # as typed: the header must carry the normalised form
+REPLY_TO = "shop@example.com"
+
+
+def set_contact(owner: TestClient) -> None:
+    assert put_settings(owner, {"contact_email": CONTACT}).status_code == 200
+
+
+def sent_newest(
+    tenant_id: uuid.UUID, booking_id: str, template: str, **extra: Any
+) -> dict[str, Any]:
+    """Run one booking email to the client and return what was sent."""
+    run_send_booking(tenant_id, booking_id, template, **extra)
+    return _search(_client_email(tenant_id, booking_id))[0]
+
+
+def has_reply_to(sent: dict[str, Any]) -> bool:
+    # Parsed, so a header written in any case counts: Headers keeps the name as written.
+    return message_from_string(sent["Raw"]).get("reply-to") is not None
+
+
+def confirmed_booking(app: FastAPI, people: People, ready: str) -> str:
+    booking_id = make_pending(app, people.a, ready)
+    assert patch(signed_in(app, people.a, people.both), booking_id, "confirmed").status_code == 200
+    return booking_id
+
+
+# ZIF-99 F1 fence: an email that carries the manage link never gets Reply-To (a reply quotes the
+# body, so staff would get the token). The positive is the same business's cancelled email, so a
+# PUT that silently failed cannot pass this. Kills Reply-To on every client email (user_id alone).
+def test_emails_with_a_manage_link_never_get_a_reply_to(
+    people: People, app: FastAPI, ready: str
+) -> None:
+    owner = signed_in(app, people.a, people.both)
+    set_contact(owner)
+    booking_id = make_pending(app, people.a, ready)
+    received = sent_newest(people.a, booking_id, "booking_received")
+    assert patch(owner, booking_id, "confirmed").status_code == 200
+    confirmed = sent_newest(people.a, booking_id, "booking_confirmed")
+    reminder = sent_newest(
+        people.a,
+        booking_id,
+        "booking_reminder",
+        starts_at=starts_at_of(people.a, booking_id),
+    )
+    assert patch(owner, booking_id, "cancelled_by_merchant").status_code == 200
+
+    cancelled = sent_newest(people.a, booking_id, "booking_cancelled")
+
+    assert "/booking#" in received["Text"] and "/booking#" in confirmed["Text"]
+    assert not any(has_reply_to(sent) for sent in (received, confirmed, reminder))
+    assert cancelled["Headers"]["Reply-To"] == [REPLY_TO]
+
+
+# ZIF-99 F2 fence: the client emails with no manage link reply to the business, in the normalised
+# form. The body check is a guard on future template edits. Kills no Reply-To at all, and the
+# LINKED test inverted.
+def test_emails_without_a_manage_link_reply_to_the_contact_email(
+    people: People, app: FastAPI, ready: str
+) -> None:
+    owner = signed_in(app, people.a, people.both)
+    set_contact(owner)
+    declined_id = make_pending(app, people.a, ready)
+    assert patch(owner, declined_id, "declined").status_code == 200
+    cancelled_id = confirmed_booking(app, people, ready)
+    assert patch(owner, cancelled_id, "cancelled_by_merchant").status_code == 200
+    by_client_id = confirmed_booking(app, people, ready)
+    with tenant_context(people.a) as session:
+        assert session.execute(CLIENT_CANCEL, {"id": by_client_id}).first() is not None
+
+    for booking_id, template in (
+        (declined_id, "booking_declined"),
+        (cancelled_id, "booking_cancelled"),
+        (by_client_id, "booking_cancelled_by_client"),
+    ):
+        sent = sent_newest(people.a, booking_id, template)
+        assert sent["Headers"]["Reply-To"] == [REPLY_TO], template
+        assert "/booking#" not in sent["Text"] and f"#{people.a}." not in sent["Text"], template
+
+
+# ZIF-99 F3 fence: staff never get it, with the key set (the positive is the client's cancelled
+# email). Kills keying on token is None alone: staff emails mint no token either.
+def test_staff_emails_never_get_a_reply_to(people: People, app: FastAPI, ready: str) -> None:
+    owner = signed_in(app, people.a, people.both)
+    set_contact(owner)
+    pending_id = make_pending(app, people.a, ready)
+    confirmed_id = confirmed_booking(app, people, ready)
+    assert patch(owner, confirmed_id, "cancelled_by_merchant").status_code == 200
+    with tenant_context(people.a) as session:
+        owner_email = session.scalar(
+            text("SELECT email FROM users WHERE id = :id"), {"id": people.both}
+        )
+    assert owner_email is not None
+    user_id = str(people.both)
+
+    run_send_booking(people.a, pending_id, "booking_request", user_id=user_id)
+    run_send_booking(people.a, confirmed_id, "booking_new", user_id=user_id)
+    cancelled = sent_newest(people.a, confirmed_id, "booking_cancelled")
+
+    staff = _search(owner_email)
+    assert len(staff) == 2
+    assert not any(has_reply_to(sent) for sent in staff)
+    assert cancelled["Headers"]["Reply-To"] == [REPLY_TO]
+
+
+# ZIF-99 F4 fence: with no contact email there is no Reply-To header at all. Kills a fallback to an
+# owner's login address, and an empty or "None" header.
+def test_without_a_contact_email_there_is_no_reply_to(
+    people: People, app: FastAPI, ready: str
+) -> None:
+    booking_id = confirmed_booking(app, people, ready)
+    owner = signed_in(app, people.a, people.both)
+    assert patch(owner, booking_id, "cancelled_by_merchant").status_code == 200
+    sent = sent_newest(people.a, booking_id, "booking_cancelled")
+
+    assert not has_reply_to(sent)
+
+
+# ZIF-99 F5 fence: the From stays the sending domain. Kills a From set to the contact (fails DMARC).
+def test_a_reply_to_leaves_the_from_on_the_sending_domain(
+    people: People, app: FastAPI, ready: str
+) -> None:
+    owner = signed_in(app, people.a, people.both)
+    set_contact(owner)
+    booking_id = confirmed_booking(app, people, ready)
+    assert patch(owner, booking_id, "cancelled_by_merchant").status_code == 200
+
+    sent = sent_newest(people.a, booking_id, "booking_cancelled")
+
+    assert sent["Headers"]["Reply-To"] == [REPLY_TO]
+    assert sent["Headers"]["From"] == ["ziftbook <no-reply@test.ziftbook.invalid>"]
