@@ -5,8 +5,10 @@ metadata and links them to a service when the owner saves it (services.py)."""
 import io
 import logging
 import re
+import struct
 import threading
 import uuid
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Annotated
@@ -207,39 +209,83 @@ def _srgb(im: Image.Image, icc: bytes | None) -> Image.Image:
         return im
 
 
+def _markers(data: bytes) -> Iterator[tuple[int, int]]:
+    """A JPEG's markers after SOI with their offsets, up to its first scan (SOS) or EOI. Segments
+    are skipped by length, so an EXIF thumbnail inside APP1 is never seen. The walk stops where a
+    marker should start and none does, or at the end of the data."""
+    i = 2
+    while i + 1 < len(data) and data[i] == 0xFF:
+        marker = data[i + 1]
+        if marker == 0xFF:  # fill byte
+            i += 1
+            continue
+        yield i, marker
+        if marker in (0xD9, 0xDA):  # EOI, SOS
+            return
+        if marker == 0x01 or 0xD0 <= marker <= 0xD8:  # no length
+            i += 2
+        else:
+            i += 2 + int.from_bytes(data[i + 2 : i + 4])
+
+
 def multi_scan(data: bytes) -> bool:
-    """Whether a JPEG codes its image in more than one scan, read from the markers (segments are
-    skipped by length, so an EXIF thumbnail inside APP1 is never seen). libjpeg buffers the whole
-    image's coefficients for such a file, interleaved or not. Anything unreadable counts as yes."""
+    """Whether a JPEG codes its image in more than one scan, read from the markers (_markers).
+    libjpeg buffers the whole image's coefficients for such a file, interleaved or not. Anything
+    unreadable counts as yes."""
+    frame = None
     try:
-        i, frame = 2, None
-        while True:
-            if data[i] != 0xFF:
-                return True
-            marker = data[i + 1]
-            if marker == 0xFF:  # fill byte
-                i += 1
-            elif marker == 0x01 or 0xD0 <= marker <= 0xD8:  # no length
-                i += 2
-            elif marker == 0xDA:  # SOS: Ns components in this first scan
+        for i, marker in _markers(data):
+            if marker == 0xDA:  # SOS: Ns components in this first scan
                 return frame is None or data[i + 4] < frame
-            elif marker == 0xD9:
-                return True
-            else:
-                if (
-                    marker in range(0xC0, 0xD0)
-                    and marker not in (0xC4, 0xC8, 0xCC)
-                    and frame is None
-                ):
-                    frame = data[i + 9]  # Nf
-                i += 2 + int.from_bytes(data[i + 2 : i + 4])
+            if marker in range(0xC0, 0xD0) and marker not in (0xC4, 0xC8, 0xCC) and frame is None:
+                frame = data[i + 9]  # Nf
     except IndexError:
-        return True
+        pass
+    return True
+
+
+# SOF3, SOF7, SOF11, SOF15 (Huffman or arithmetic coded): libjpeg decodes a lossless frame at full
+# width whatever draft() asked for.
+LOSSLESS_FRAMES = frozenset((0xC3, 0xC7, 0xCB, 0xCF))
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+EXIF_CAP = 65_536  # bytes of EXIF: parsing it costs more than linear time
+
+
+def unsafe_container(data: bytes) -> bool:
+    """Whether an upload must not reach the decoder (ZB-33): a lossless JPEG, an animated PNG, or
+    EXIF over 64 KiB in a JPEG's APP1 segments or a PNG's eXIf chunk. Read from the structure
+    before Image.open (which already parses a JPEG's EXIF, for its dpi); never raises. A JPEG is
+    also unsafe when its markers do not walk to the first scan, or pass an FF00 (no marker) on the
+    way: a decoder skips such bytes and reads on, so the walk cannot vouch for the frame. A PNG is
+    read up to IEND, as Pillow reads it (an eXIf after the image data is parsed too). Anything else
+    is False: Image.open refuses junk. variants() checks EXIF again once the image is loaded."""
+    if data[:2] == b"\xff\xd8":
+        last, exif = None, 0
+        for i, marker in _markers(data):
+            if marker == 0x00 or marker in LOSSLESS_FRAMES:
+                return True
+            # Pillow joins every APP1 EXIF segment before the scan into one.
+            if marker == 0xE1 and data[i + 4 : i + 10] == b"Exif\x00\x00":
+                exif += max(int.from_bytes(data[i + 2 : i + 4]) - 2, 0)
+            last = marker
+        return last != 0xDA or exif > EXIF_CAP
+    if data[:8] == PNG_SIGNATURE:
+        i = 8
+        while i + 8 <= len(data):
+            length, kind = int.from_bytes(data[i : i + 4]), data[i + 4 : i + 8]
+            if kind == b"acTL" or (kind == b"eXIf" and length > EXIF_CAP):
+                return True
+            if kind == b"IEND":
+                break
+            i += 12 + length
+    return False
 
 
 def variants(data: bytes) -> Variants:
     """Decode with the lock held (process). Memory is the point: the caps run on the header, a JPEG
     is decoded at a reduced size, and the image is shrunk to 1200px before any conversion."""
+    if unsafe_container(data):  # before Image.open: an animated PNG allocates its canvas there
+        raise ApiError(422, "photo_unreadable")
     try:
         opened = Image.open(io.BytesIO(data), formats=["JPEG", "PNG", "WEBP"])
     except UnidentifiedImageError:
@@ -271,7 +317,18 @@ def variants(data: bytes) -> Variants:
         elif im.mode not in ("L", "RGB", "RGBA"):  # palette, bilevel, LA, CMYK...
             im = im.convert("RGBA" if "A" in im.getbands() or "transparency" in im.info else "RGB")
         im.thumbnail((1200, 1200))
-        ImageOps.exif_transpose(im, in_place=True)
+        im.load()  # a PNG's chunks after the image data reach im.info only here
+        # The EXIF exif_transpose parses: info["exif"] (any format) or, from PNG text, the hex
+        # "Raw profile type exif".
+        exif, raw = im.info.get("exif") or b"", im.info.get("Raw profile type exif") or ""
+        if len(exif) > EXIF_CAP or len(raw) > 2 * EXIF_CAP:
+            raise ApiError(422, "photo_unreadable")
+        # Pillow 13 raises these reading or rewriting malformed EXIF: text where it wants bytes, a
+        # value that does not fit its tag, no TIFF header, a raw profile that is no hex.
+        try:
+            ImageOps.exif_transpose(im, in_place=True)
+        except TypeError, AttributeError, struct.error, SyntaxError, ValueError:
+            raise ApiError(422, "photo_unreadable") from None
         rgb = _srgb(im.convert("RGBA" if im.mode == "RGBA" else "RGB"), icc)
         return Variants(_webp(ImageOps.fit(rgb, (320, 320))), _webp(rgb), rgb.width, rgb.height)
     except OSError, ValueError, SyntaxError, Image.DecompressionBombError:

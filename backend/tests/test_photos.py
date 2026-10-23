@@ -7,6 +7,7 @@ import struct
 import subprocess
 import sys
 import uuid
+import zlib
 from collections.abc import Callable
 from datetime import timedelta
 from pathlib import Path
@@ -17,7 +18,7 @@ import PIL
 import pytest
 from botocore.exceptions import EndpointConnectionError
 from mypy_boto3_s3 import S3Client
-from PIL import Image, ImageCms, ImageFile
+from PIL import Image, ImageCms, ImageFile, ImageOps
 from sqlalchemy import text
 
 from app import photos, storage, worker
@@ -481,8 +482,9 @@ def test_media_delete_fails_when_the_store_reports_errors(
         storage.delete_prefix("p/")
 
 
-def jpeg_header(width: int, height: int, components: int, scan: int) -> bytes:
-    """SOI, an APP1 whose payload imitates a scan start, SOF0 and the first SOS: no image data."""
+def jpeg_header(width: int, height: int, components: int, scan: int, sof: int = 0xC0) -> bytes:
+    """SOI, an APP1 whose payload imitates a scan start, a frame header (SOF0 unless sof says
+    otherwise) and the first SOS: no image data."""
     app1 = b"\xff\xda\x00\x08\x01\x01\x00\x00\x3f\x00"
     frame = (
         struct.pack(">BHHB", 8, height, width, components) + b"\x01\x11\x00\x02\x11\x01\x03\x11\x01"
@@ -493,7 +495,7 @@ def jpeg_header(width: int, height: int, components: int, scan: int) -> bytes:
         + b"\xff\xe1"
         + struct.pack(">H", len(app1) + 2)
         + app1
-        + b"\xff\xc0"
+        + bytes([0xFF, sof])
         + struct.pack(">H", len(frame) + 2)
         + frame
         + b"\xff\xda"
@@ -545,3 +547,251 @@ def test_pillow_carries_the_decoder_fixes() -> None:
     # ZB-33: 12.3.0 has a reachable JPEG heap overflow (CVE-2026-112403); 13.0.0 fixes it.
     major = int(PIL.__version__.split(".")[0])
     assert major >= 13
+
+
+def png_chunk(kind: bytes, payload: bytes) -> bytes:
+    """One PNG chunk: length, type, payload and the CRC32 of type and payload."""
+    crc = zlib.crc32(kind + payload)
+    return struct.pack(">I", len(payload)) + kind + payload + struct.pack(">I", crc)
+
+
+def png_with_chunk(kind: bytes, payload: bytes, size: tuple[int, int] = (4, 4)) -> bytes:
+    """A PNG with one chunk inserted after IHDR (the signature and IHDR are 33 bytes)."""
+    png = image_of("PNG", "RGB", size)
+    return png[:33] + png_chunk(kind, payload) + png[33:]
+
+
+# ZB-33 fence. Kills: a lossless or arithmetic-coded lossless JPEG handed to the decoder (libjpeg
+# decodes it at full width whatever draft() asked for).
+@pytest.mark.parametrize("sof", [0xC3, 0xC7, 0xCB, 0xCF])
+def test_a_lossless_or_arithmetic_jpeg_is_unsafe(sof: int) -> None:
+    assert photos.unsafe_container(jpeg_header(9600, 16, 1, 1, sof=sof))
+
+
+def test_a_baseline_jpeg_is_safe() -> None:
+    assert not photos.unsafe_container(image_of("JPEG", "RGB", (40, 30)))
+
+
+# ZB-33 fence. Kills: an animated PNG reaching Image.open, which allocates its whole canvas.
+def test_an_animated_png_is_unsafe() -> None:
+    # An acTL chunk before IDAT marks an APNG (CVE-2026-112399 allocates on open).
+    assert photos.unsafe_container(png_with_chunk(b"acTL", b"\x00\x00\x00\x02\x00\x00\x00\x00"))
+
+
+# ZB-33 fence. Kills: a large eXIf chunk reaching exif_transpose (its cost grows with the chunk).
+def test_a_png_with_a_big_exif_chunk_is_unsafe() -> None:
+    assert photos.unsafe_container(png_with_chunk(b"eXIf", b"Exif\x00\x00" * 11_000))
+
+
+def test_a_png_with_a_small_exif_chunk_is_safe() -> None:
+    assert not photos.unsafe_container(png_with_chunk(b"eXIf", b"Exif\x00\x00II*\x00"))
+
+
+# ZB-33 fence. Kills: the chunk walk stopping at IDAT. Pillow reads an eXIf chunk that follows the
+# image data when it loads, and exif_transpose parses it like one before IDAT.
+def test_a_big_exif_chunk_after_the_image_data_is_unsafe() -> None:
+    png = image_of("PNG", "RGB", (4, 4))  # its last 12 bytes are IEND
+    late = png[:-12] + png_chunk(b"eXIf", b"Exif\x00\x00" * 11_000) + png[-12:]
+    assert photos.unsafe_container(late)
+
+
+# ZB-33 fence. Kills: a refused container still opened (the check must come first in variants).
+def test_variants_refuses_an_unsafe_container_before_opening(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def never(*args: object, **kw: object) -> Image.Image:
+        raise AssertionError("opened")
+
+    monkeypatch.setattr(Image, "open", never)
+    with pytest.raises(ApiError) as refused:
+        photos.variants(jpeg_header(9600, 16, 1, 1, sof=0xC3))
+    assert (refused.value.status_code, refused.value.code) == (422, "photo_unreadable")
+
+
+LOSSLESS = jpeg_header(10, 10, 1, 1, sof=0xC3)
+BASELINE = jpeg_header(10, 10, 3, 3)
+PNG_IHDR = image_of("PNG", "RGB", (4, 4))[:33]
+
+
+# ZB-33 guard: the walk runs on untrusted bytes, so a malformed structure is an answer, never an
+# exception or an endless loop. A JPEG walk that cannot reach the first scan counts as unsafe
+# (decoders skip bytes between markers that the walk stops at), as does FF00 before it (decoders
+# skip it; the walk would read a length). A PNG is judged on the chunks before IEND.
+@pytest.mark.parametrize(
+    ("data", "unsafe"),
+    [
+        (b"", False),
+        (b"hello, not an image", False),
+        (image_of("WEBP", "RGB", (4, 4)), False),
+        (b"\xff\xd8", True),
+        (b"\xff\xd8\x00", True),
+        (b"\xff\xd8\xff", True),
+        (b"\xff\xd8\xff\xd9", True),
+        (b"\xff\xd8\xff\xe1\xff\xff" + b"\0" * 10, True),
+        (b"\xff\xd8\xff\xe1\x00\x00" + BASELINE[2:], True),
+        (LOSSLESS[:20], True),
+        (b"\xff\xd8\xff\xff\xff" + BASELINE[2:], False),
+        (b"\xff\xd8\xff\xff\xff" + LOSSLESS[2:], True),
+        (b"\xff\xd8\xff\x01\xff\xd0\xff\xd8" + BASELINE[2:], False),
+        (b"\xff\xd8\xff\x01\xff\xd0\xff\xd8" + LOSSLESS[2:], True),
+        (LOSSLESS[:16] + b"\x00" + LOSSLESS[16:], True),
+        (b"\xff\xd8\xff\x00\x00\x02" + BASELINE[2:], True),
+        (b"\x89PNG\r\n\x1a\n", False),
+        (PNG_IHDR[:12], False),
+        (PNG_IHDR + struct.pack(">I", 0x7FFFFFFF) + b"tEXt" + b"\0" * 20, False),
+        (PNG_IHDR + struct.pack(">I", 0xFFFFFFFF) + b"eXIf", True),
+        (PNG_IHDR + png_chunk(b"tEXt", b"") * 1000 + png_chunk(b"IEND", b""), False),
+        (PNG_IHDR + png_chunk(b"tEXt", b"") * 1000 + png_chunk(b"acTL", b""), True),
+        (png_with_chunk(b"eXIf", b"\0" * 65_536), False),
+        (png_with_chunk(b"eXIf", b"\0" * 65_537), True),
+        (image_of("PNG", "RGB", (4, 4)) + png_chunk(b"eXIf", b"\0" * 65_537), False),
+    ],
+    ids=[
+        "empty",
+        "junk",
+        "webp",
+        "jpeg-bare-soi",
+        "jpeg-no-marker",
+        "jpeg-cut-in-marker",
+        "jpeg-eoi-before-scan",
+        "jpeg-length-past-end",
+        "jpeg-zero-length-segment",
+        "jpeg-cut-in-frame",
+        "jpeg-fill-bytes-baseline",
+        "jpeg-fill-bytes-lossless",
+        "jpeg-no-length-markers-baseline",
+        "jpeg-no-length-markers-lossless",
+        "jpeg-junk-before-frame",
+        "jpeg-ff00-before-scan",
+        "png-signature-only",
+        "png-cut-in-chunk-header",
+        "png-chunk-longer-than-data",
+        "png-huge-exif-length",
+        "png-empty-chunks",
+        "png-actl-after-empty-chunks",
+        "png-exif-at-64k",
+        "png-exif-over-64k",
+        "png-exif-after-iend",
+    ],
+)
+def test_unsafe_container_answers_malformed_input(data: bytes, unsafe: bool) -> None:
+    assert photos.unsafe_container(data) is unsafe
+
+
+def exif_of(orientation: int, pad: int = 0) -> bytes:
+    """EXIF (with its Exif\\0\\0 header) holding an orientation, padded after its IFD."""
+    exif = Image.Exif()
+    exif[0x0112] = orientation
+    return exif.tobytes() + b"\0" * pad
+
+
+def raw_profile(exif: bytes) -> bytes:
+    """EXIF as PNG text "Raw profile type exif" holds it: hex lines after a name and a length."""
+    hexed = exif.hex()
+    lines = [hexed[i : i + 72] for i in range(0, len(hexed), 72)]
+    return f"\nexif\n{len(exif):8d}\n".encode() + "\n".join(lines).encode() + b"\n"
+
+
+def exif_carriers(exif: bytes) -> list[bytes]:
+    """A 40x20 photo carrying exif in each place, other than a PNG eXIf chunk or a JPEG, that
+    Pillow reads it from."""
+    late = image_of("PNG", "RGB", (40, 20))  # its last 12 bytes are IEND
+    return [
+        png_with_chunk(b"tEXt", b"exif\0" + exif, (40, 20)),
+        late[:-12] + png_chunk(b"tEXt", b"exif\0" + exif) + late[-12:],
+        png_with_chunk(
+            b"zTXt", b"Raw profile type exif\0\0" + zlib.compress(raw_profile(exif)), (40, 20)
+        ),
+        png_with_chunk(b"iTXt", b"Raw profile type exif\0\0\0\0\0" + raw_profile(exif), (40, 20)),
+        image("WEBP", (40, 20), exif=exif),
+    ]
+
+
+CARRIERS = [
+    "png-text",
+    "png-text-after-idat",
+    "png-ztxt-raw-profile",
+    "png-itxt-raw-profile",
+    "webp",
+]
+
+
+# ZB-33 fence. Kills: EXIF over the cap reaching exif_transpose from PNG text, a WebP EXIF chunk,
+# or a chunk after the image data (it reaches im.info only on load).
+@pytest.mark.parametrize("data", exif_carriers(exif_of(1, pad=70_000)), ids=CARRIERS)
+def test_exif_over_the_cap_is_refused_before_it_is_parsed(
+    data: bytes, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def never(*args: object, **kw: object) -> None:
+        raise AssertionError("parsed")
+
+    monkeypatch.setattr(ImageOps, "exif_transpose", never)
+    with pytest.raises(ApiError) as refused:
+        photos.variants(data)
+    assert (refused.value.status_code, refused.value.code) == (422, "photo_unreadable")
+
+
+# ZB-33 guard: EXIF under the cap still turns the photo, wherever Pillow read it from.
+@pytest.mark.parametrize("data", exif_carriers(exif_of(6)), ids=CARRIERS)
+def test_small_exif_still_turns_the_photo(data: bytes) -> None:
+    v = photos.variants(data)
+    assert (v.width, v.height) == (20, 40)
+
+
+def jpeg_with_exif(*sizes: int) -> bytes:
+    """A JPEG with one APP1 EXIF segment per size (its payload, Exif header included)."""
+    jpeg = image_of("JPEG", "RGB", (40, 30))
+    app1 = b"".join(
+        b"\xff\xe1" + struct.pack(">H", n + 2) + b"Exif\0\0" + b"\0" * (n - 6) for n in sizes
+    )
+    return jpeg[:2] + app1 + jpeg[2:]
+
+
+# ZB-33 fence. Kills: a JPEG's EXIF left uncapped. Pillow joins its APP1 EXIF segments and parses
+# them inside Image.open (for the dpi), so the cap must come before it.
+def test_a_jpeg_whose_exif_segments_add_up_over_the_cap_is_unsafe() -> None:
+    assert not photos.unsafe_container(jpeg_with_exif(65_533))  # the most one segment holds
+    assert photos.unsafe_container(jpeg_with_exif(40_000, 40_000))
+
+
+def malformed_exif(tag: int, value: object, typ: int, count: int | None = None) -> bytes:
+    """EXIF holding orientation 6 and one more tag, with that tag's stored type (and count)
+    rewritten. Image.Exif writes big-endian entries of 12 bytes from byte 16."""
+    exif = Image.Exif()
+    exif[0x0112] = 6
+    exif[tag] = value
+    data = bytearray(exif.tobytes())
+    at = next(i for i in range(16, len(data), 12) if data[i : i + 2] == tag.to_bytes(2))
+    data[at + 2 : at + 4] = typ.to_bytes(2)
+    if count is not None:
+        data[at + 4 : at + 8] = count.to_bytes(4)
+    return bytes(data)
+
+
+# ZB-33 fence. Kills: EXIF that Pillow cannot read or re-encode answering 500. exif_transpose
+# rewrites the EXIF after turning the photo, and Pillow 13 raises on a value that does not fit its
+# tag (struct.error, AttributeError, TypeError), on a header that is no TIFF (SyntaxError) and on
+# a raw profile that is no hex (ValueError).
+@pytest.mark.parametrize(
+    "data",
+    [
+        png_with_chunk(b"tEXt", b"exif\0" + malformed_exif(0x0128, 2, typ=2), (40, 20)),
+        png_with_chunk(
+            b"tEXt", b"exif\0" + malformed_exif(0x010F, "Camera", typ=5, count=1), (40, 20)
+        ),
+        png_with_chunk(b"tEXt", b"exif\0" + malformed_exif(0x011A, 72.0, typ=2), (40, 20)),
+        png_with_chunk(b"tEXt", b"exif\0Exif\0\0" + b"\0" * 16, (40, 20)),
+        png_with_chunk(b"tEXt", b"Raw profile type exif\0\nexif\n       4\nzzzzzzzz\n", (40, 20)),
+    ],
+    ids=[
+        "short-stored-as-text",
+        "text-stored-as-a-rational",
+        "rational-stored-as-text",
+        "not-tiff",
+        "raw-profile-not-hex",
+    ],
+)
+def test_exif_pillow_cannot_read_is_unreadable(data: bytes) -> None:
+    with pytest.raises(ApiError) as refused:
+        photos.variants(data)
+    assert (refused.value.status_code, refused.value.code) == (422, "photo_unreadable")
