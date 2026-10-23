@@ -1260,6 +1260,85 @@ def test_the_pending_cap_has_a_ceiling_across_ips(
     assert placements(people.a, email) == (3, 3)
 
 
+def unproven(tenant_id: uuid.UUID) -> int:
+    """The unproven bookings counted at a business this hour (ZB-05)."""
+    return limits.count(f"booking_unproven:{tenant_id}", timedelta(hours=1))
+
+
+def flood_alerts(tenant_id: uuid.UUID) -> list[str]:
+    """The owners an `email.booking_flood` job was queued for at a business (ZB-05)."""
+    with SessionLocal.begin() as session:
+        return list(
+            session.scalars(
+                text(
+                    "SELECT payload->>'user_id' FROM jobs "
+                    "WHERE kind = 'email.booking_flood' AND tenant_id = :t"
+                ),
+                {"t": tenant_id},
+            )
+        )
+
+
+# ZB-05. Wrong impls: no cap across addresses and IPs; the owners alerted on every refusal rather
+# than once an hour (the fourth); the refused booking keeping its address's placements.
+def test_unproven_bookings_are_capped_per_business_and_the_owner_is_alerted_once(
+    people: People, app: FastAPI, ready: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(bookings, "UNPROVEN_PER_BUSINESS_HOUR", 2)
+    first = post_guest(new_client(app), people.a, ready, starts_at=at("09:00"))
+    second = post_guest(new_client(app), people.a, ready, starts_at=at("10:00"))
+    email = fresh_email()
+
+    third = post_guest(new_client(app), people.a, ready, email=email, starts_at=at("11:00"))
+
+    assert (first.status_code, second.status_code) == (201, 201)
+    assert (third.status_code, third.json()) == (429, {"code": "rate_limited"})
+    assert placements(people.a, email) == (0, 0)
+    assert flood_alerts(people.a) == [str(people.both)]
+
+    fourth = post_guest(new_client(app), people.a, ready, starts_at=at("12:00"))
+
+    assert (fourth.status_code, fourth.json()) == (429, {"code": "rate_limited"})
+    assert flood_alerts(people.a) == [str(people.both)]
+    assert unproven(people.a) == 2
+
+
+# ZB-05. Wrong impl: the booker's own signed-in address counted as unproven, so it spends the
+# guests' budget or is refused while guest bookings are paused.
+def test_a_proven_booking_is_not_counted_against_the_unproven_cap(
+    people: People, app: FastAPI, ready: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(bookings, "UNPROVEN_PER_BUSINESS_HOUR", 1)
+    proven = post_booking(new_client(app), people.a, ready, starts_at=at("09:00"))
+    guest = post_guest(new_client(app), people.a, ready, starts_at=at("10:00"))
+    paused = post_guest(new_client(app), people.a, ready, starts_at=at("11:00"))
+
+    still_proven = post_booking(new_client(app), people.a, ready, starts_at=at("12:00"))
+
+    assert (proven.status_code, guest.status_code) == (201, 201)
+    assert (paused.status_code, paused.json()) == (429, {"code": "rate_limited"})
+    assert still_proven.status_code == 201, still_proven.json()
+    assert unproven(people.a) == 1
+
+
+# ZB-05. Wrong impl: the business's key charged on every attempt, or never given back, so refused
+# attempts pause a business's guest bookings.
+def test_a_refused_attempt_does_not_consume_the_unproven_cap(
+    people: People, app: FastAPI, ready: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(bookings, "UNPROVEN_PER_BUSINESS_HOUR", 1)
+    for _ in range(3):
+        refused = post_guest(new_client(app), people.a, ready, starts_at=at("09:07"))
+        assert (refused.status_code, refused.json()) == (409, {"code": "slot_unavailable"})
+    assert unproven(people.a) == 0
+
+    placed = post_guest(new_client(app), people.a, ready)
+
+    assert placed.status_code == 201, placed.json()
+    assert unproven(people.a) == 1
+    assert flood_alerts(people.a) == []
+
+
 # ZIF-157 B2 FENCE 9 (replaces "a refused anonymous post spends no limit": its 403-before-limits
 # premise is gone). Wrong impl: booking_verify hit before Turnstile (the 11th would answer 429).
 def test_a_turnstile_refused_post_spends_no_address_budget(

@@ -72,6 +72,7 @@ def test_no_personal_data_ever_reaches_a_log(
     mailgun_replies: dict[str, int | Exception],
     spans: Callable[[], list[ReadableSpan]],
     metric_reader: InMemoryMetricReader,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     never: list[str] = ["2001:db8:", "@example.com", UA["User-Agent"]]
     # The audit table persists across runs: only this run's rows are scanned for names.
@@ -386,6 +387,22 @@ def test_no_personal_data_ever_reaches_a_log(
     assert refused.status_code == 409
     assert refused.json()["bookings"][0]["client_name"] == booker_name
 
+    # 6j (ZB-05): a guest over the business's unproven cap is refused and the owners' alert goes.
+    monkeypatch.setattr(bookings, "UNPROVEN_PER_BUSINESS_HOUR", 0)
+    paused = client_for(app).post(
+        f"/api/public/businesses/{people.a}/services/{created.json()['id']}/bookings",
+        json={
+            "starts_at": slots[1],
+            "name": booker_name,
+            "email": booker_email,
+            "phone": booker_phone,
+            "policy_version": clients.policy_version_for("en"),
+            "consents": {},
+        },
+    )
+    assert paused.status_code == 429
+    asyncio.run(run_once(KINDS))
+
     # 7: invite flow — send, list, a wrong token, then accept with a brand-new account.
     invite_email = fresh_email()
     invite_password = "Invite-Pw7-55"
@@ -504,6 +521,9 @@ def test_no_personal_data_ever_reaches_a_log(
     sent = {line["template"] for line in lines if line["msg"] == "email sent"}
     assert {"sign_up", "sign_up_registered", "password_reset", "invite"} <= sent
     assert {"booking_received", "booking_request", "booking_confirmed", "booking_declined"} <= sent
+    assert "booking_flood" in sent
+    flood = [line for line in lines if line["msg"] == "booking flood"]
+    assert [(line["level"], line["tenant_id"]) for line in flood] == [("WARNING", str(people.a))]
     email_failed = [line for line in lines if line["msg"] == "email failed"]
     assert [(line["template"], line["error"]) for line in email_failed] == [
         ("sign_up", "HTTPError")

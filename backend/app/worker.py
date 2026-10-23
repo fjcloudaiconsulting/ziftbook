@@ -29,6 +29,9 @@ KINDS: dict[str, JobKind] = {
     # time (re-checked on every run, never withdrawn on enqueue) is what keeps a stale booking
     # email from going out.
     "email.booking": JobKind(mail.send_booking, timeout=30, grace=timedelta(hours=24)),
+    # ZB-05. An owner's alert that guest bookings are paused for the rest of the hour: later than
+    # that it no longer holds, so the grace is the hour.
+    "email.booking_flood": JobKind(mail.send_booking_flood, timeout=30, grace=timedelta(hours=1)),
     # ZIF-133. A replaced or removed photo's objects; the grace is long because nothing is lost by
     # waiting, and the handler re-checks that no service still uses the prefix.
     "media.delete": JobKind(photos.media_delete, timeout=30, grace=timedelta(days=7)),

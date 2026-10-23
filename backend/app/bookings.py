@@ -52,6 +52,10 @@ IP_LIMIT, BUSINESS_IP_LIMIT, EMAIL_LIMIT, LIMIT_WINDOW = 30, 10, 5, timedelta(ho
 # Against mail bombing and address farming: one address, every business together. The key name
 # `booking_verify` is kept from ZIF-117 so live counters carry over.
 ADDRESS_LIMIT = 10
+# ZB-05: bookings placed at one business in LIMIT_WINDOW by bookers whose address no session
+# proves, whatever their address or IP. Over it, guest bookings there pause for the rest of the
+# window and the owners are told once (flood()).
+UNPROVEN_PER_BUSINESS_HOUR = 20
 # ZIF-51's own key in app/schedule.py's ticket-number advisory lock convention (OPENING_LOCK = 105):
 # disjoint first arguments, so the two locks can never collide.
 LOCK_KEY = 51
@@ -1088,6 +1092,37 @@ def give_back(placements: list[str]) -> None:
         logger.warning("booking placement refund failed", exc_info=True)
 
 
+OWNERS = text("SELECT user_id FROM memberships WHERE role = 'owner'")
+
+
+def flood(tenant_id: UUID) -> None:
+    """Tell every owner that guest bookings at their business are paused (ZB-05), once per
+    LIMIT_WINDOW: only the refusal whose charge on the business's alert key counts 1, exact under
+    the row lock, so concurrent refusals cannot both send. The unproven count cannot decide it:
+    every refusal gives its reservation back, so that count reads the cap plus one again and again.
+
+    Its own connections, like give_back: never inside the booking transaction. A failure is logged
+    and never replaces the 429.
+    """
+    try:
+        if limits.charge(f"booking_flood:{tenant_id}", LIMIT_WINDOW) != 1:
+            return
+        logger.warning("booking flood", extra={"tenant_id": str(tenant_id)})
+        # At least LIMIT_WINDOW between two alerts, so never two in one clock hour.
+        hour = datetime.now(UTC).strftime("%Y-%m-%dT%H")
+        with tenant_context(tenant_id) as db:
+            for (user_id,) in db.execute(OWNERS).all():
+                jobs.enqueue(
+                    db,
+                    "email.booking_flood",
+                    f"email.booking_flood:{tenant_id}:{hour}:{user_id}",
+                    {"user_id": str(user_id)},
+                    tenant_id=tenant_id,
+                )
+    except Exception:
+        logger.warning("booking flood alert failed", exc_info=True)
+
+
 router = APIRouter(prefix="/api/public", tags=["bookings"])
 
 
@@ -1139,8 +1174,19 @@ def create(  # sync def: turnstile.verify's urlopen blocks, and runs in FastAPI'
     if limits.hit(placements, LIMIT_WINDOW):
         give_back(list(placements))
         raise ApiError(429, "rate_limited")
+    reserved = list(placements)
     placed = False
     try:
+        # 5. Unproven bookings at this business, every address and IP together (ZB-05): reserved
+        #    after the placements, so an attempt they refuse never holds one, and given back with
+        #    them below, so only placed bookings spend it. Over it, the owners are told (flood()).
+        if not proven:
+            unproven = f"booking_unproven:{tenant_id}"
+            hits = limits.charge(unproven, LIMIT_WINDOW)
+            reserved.append(unproven)
+            if hits > UNPROVEN_PER_BUSINESS_HOUR:
+                flood(tenant_id)
+                raise ApiError(429, "rate_limited")
         request.state.tenant_id = tenant_id
         response.headers["Cache-Control"] = "no-store"
         origin_ip, user_agent = auth.origin(request)
@@ -1183,7 +1229,7 @@ def create(  # sync def: turnstile.verify's urlopen blocks, and runs in FastAPI'
         # A refusal, busy, or any error before the commit: once, whichever, and after the booking
         # transaction has closed (the with block above has exited by the time this runs).
         if not placed:
-            give_back(list(placements))
+            give_back(reserved)
     if stripe_account is not None:
         assert expires_at is not None
         from app import payments  # here: payments imports this module
