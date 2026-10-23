@@ -1584,9 +1584,19 @@ def test_a_booking_racing_a_member_removal_is_a_409_never_a_500(
     booker_thread.join(timeout=10)
     assert not remover_thread.is_alive() and not booker_thread.is_alive()
 
+    # The booker blocks on the booking lock (51) the removal holds, not on a foreign key: once the
+    # removal commits it finds no assignment left (CANDIDATES), so the slot is unavailable.
     assert remove_results["response"].status_code == 204
     booking_response = booking_results["response"]
-    assert (booking_response.status_code, booking_response.json()) == (409, {"code": "slot_taken"})
+    assert (booking_response.status_code, booking_response.json()) == (
+        409,
+        {"code": "slot_unavailable"},
+    )
+    with tenant_context(people.a) as session:
+        booked = session.scalar(
+            text("SELECT count(*) FROM bookings WHERE worker_id = :w"), {"w": worker}
+        )
+    assert booked == 0
 
 
 # 42c: FENCE - B6.

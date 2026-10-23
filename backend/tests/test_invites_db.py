@@ -15,7 +15,15 @@ from sqlalchemy import Connection, Engine, text
 from sqlalchemy.exc import DBAPIError, IntegrityError
 
 from app.db import SessionLocal, tenant_context
-from tests.conftest import People, add_password, email_of, fresh_email, wait_until_blocked
+from tests.conftest import (
+    People,
+    add_password,
+    email_of,
+    end_membership,
+    fresh_email,
+    member_id,
+    wait_until_blocked,
+)
 from tests.test_password_auth_db import HASH
 
 
@@ -329,6 +337,32 @@ def test_accept_for_an_existing_account_only_adds_a_membership(
     assert role_b == "worker"
     assert gone == 0
     assert unchanged == original
+
+
+# 21: accepting for a removed member revives the same row as a worker, keeping its display name.
+def test_accept_revives_a_removed_membership(people: People) -> None:
+    old_id = member_id(people.a, people.only_a)
+    with tenant_context(people.a) as session:
+        session.execute(
+            text("UPDATE memberships SET display_name = 'Old Name' WHERE id = :i"), {"i": old_id}
+        )
+    end_membership(people.a, people.only_a)
+    _, secret = minted(people.a, email_of(people.only_a))
+
+    outcome = call(people.a, digest(secret), None)
+
+    assert (outcome.outcome, outcome.account_id) == ("accepted", people.only_a)
+    with tenant_context(people.a) as session:
+        row = session.execute(
+            text("SELECT id, role, removed_at, display_name FROM memberships WHERE user_id = :u"),
+            {"u": people.only_a},
+        ).one()
+    assert (row.id, row.role, row.removed_at, row.display_name) == (
+        old_id,
+        "worker",
+        None,
+        "Old Name",
+    )
 
 
 # Accepting for someone already a member is a no-op on their role, and uses up the link.

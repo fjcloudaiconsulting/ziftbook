@@ -19,6 +19,7 @@ from app.schedule import to_utc
 from tests.conftest import (
     People,
     email_of,
+    end_membership,
     fresh_address,
     member_id,
     new_client,
@@ -976,3 +977,33 @@ def test_the_public_response_carries_no_time_off_fields_for_a_whole_day_block(
         "slots",
         "slot_workers",
     }
+
+
+# 24 (ZIF-112). Rows a writer bypassing members.remove leaves behind never make a removed member
+# bookable or listed. The positive control first, so an empty answer cannot be vacuous.
+def test_a_removed_member_with_leftover_rows_is_never_a_candidate(
+    people: People, app: FastAPI, owner: TestClient
+) -> None:
+    service_id = new_service(owner)
+    seed(people.a, people.only_a, weekdays("09:00", "12:00"))
+    assign(people.a, service_id, member_id(people.a, people.only_a))
+    only_a = member_id(people.a, people.only_a)
+    with tenant_context(people.a) as session:
+        slug = session.scalar(text("SELECT slug FROM tenants WHERE id = :t"), {"t": people.a})
+    client = new_client(app)
+
+    def listed() -> set[str]:
+        page = client.get(f"/api/public/booking-pages/{slug}").json()
+        return {w["id"] for s in page["services"] for w in s["workers"]}
+
+    before = get(client, people.a, service_id).json()
+    assert [w["id"] for w in before["workers"]] == [str(only_a)]
+    assert before["slots"]
+    assert listed() == {str(only_a)}
+
+    end_membership(people.a, people.only_a)
+
+    after = get(client, people.a, service_id).json()
+    assert (after["workers"], after["slots"]) == ([], [])
+    assert get(client, people.a, service_id, member_id=only_a).json()["slots"] == []
+    assert listed() == set()

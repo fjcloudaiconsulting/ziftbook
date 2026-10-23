@@ -5,13 +5,13 @@ from http.cookies import SimpleCookie
 
 import pytest
 from fastapi import Response
-from psycopg.errors import ForeignKeyViolation
+from psycopg.errors import CheckViolation, ForeignKeyViolation
 from sqlalchemy import Engine, text
 from sqlalchemy.exc import IntegrityError
 
 from app import auth
 from app.db import tenant_context
-from tests.conftest import People, set_role
+from tests.conftest import People, end_membership, set_role
 
 
 def start(tenant_id: uuid.UUID, user_id: uuid.UUID, **request: str | None) -> str:
@@ -88,7 +88,10 @@ def test_removing_a_membership_ends_only_its_sessions(people: People, app_engine
     assert stored(app_engine, in_b) is not None
 
 
-def test_a_role_change_requires_ending_the_sessions_first(people: People) -> None:
+@pytest.mark.parametrize(
+    "change", ["SET role = 'worker'", "SET role = 'removed', removed_at = now()"]
+)
+def test_a_role_change_requires_ending_the_sessions_first(people: People, change: str) -> None:
     # With another owner present, only the sessions foreign key can refuse the change: without
     # this, the test would pass either way (RI_ConstraintTrigger_* fires before keep_an_owner in
     # name order), making it depend on trigger names rather than the foreign key itself.
@@ -96,10 +99,37 @@ def test_a_role_change_requires_ending_the_sessions_first(people: People) -> Non
     start(people.a, people.both)
 
     with pytest.raises(IntegrityError) as error, tenant_context(people.a) as session:
-        session.execute(
-            text("UPDATE memberships SET role = 'worker' WHERE user_id = :u"), {"u": people.both}
-        )
+        session.execute(text(f"UPDATE memberships {change} WHERE user_id = :u"), {"u": people.both})
     assert isinstance(error.value.orig, ForeignKeyViolation)
+
+
+def test_a_session_cannot_carry_the_removed_role(people: People, app_engine: Engine) -> None:
+    end_membership(people.a, people.only_a)
+
+    with pytest.raises(IntegrityError) as error, app_engine.begin() as conn:
+        conn.execute(
+            text("""
+            INSERT INTO sessions (id_hash, tenant_id, user_id, role, expires_at)
+            VALUES (:h, :t, :u, 'removed', now() + interval '1 day')
+            """),
+            {"h": uuid.uuid4().bytes * 2, "t": people.a, "u": people.only_a},
+        )
+    assert isinstance(error.value.orig, CheckViolation)
+    assert error.value.orig.diag.constraint_name == "ck_sessions_role"
+
+
+def test_a_removed_membership_starts_no_session(people: People, app_engine: Engine) -> None:
+    end_membership(people.a, people.only_a)
+
+    with pytest.raises(ValueError):
+        start(people.a, people.only_a)
+
+    with app_engine.connect() as conn:
+        count = conn.scalar(
+            text("SELECT count(*) FROM sessions WHERE tenant_id = :t AND user_id = :u"),
+            {"t": people.a, "u": people.only_a},
+        )
+    assert count == 0
 
 
 def test_starting_a_session_purges_expired_ones(people: People, app_engine: Engine) -> None:

@@ -18,6 +18,7 @@ from tests.conftest import People, add_membership, add_user, set_role, wait_unti
     [
         "UPDATE memberships SET role = 'worker' WHERE user_id = :u",
         "DELETE FROM memberships WHERE user_id = :u",
+        "UPDATE memberships SET role = 'removed', removed_at = now() WHERE user_id = :u",
     ],
 )
 def test_changing_the_only_owner_is_refused(people: People, statement: str) -> None:
