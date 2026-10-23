@@ -17,12 +17,14 @@ from sqlalchemy.pool import NullPool
 
 from app import accounts, admin, admin_auth, auth, limits, passwords
 from app.business_settings import Locale
-from app.config import SetupSettings
+from app.config import SetupSettings, is_dev_value_on_public_url
 from app.db import SessionLocal
 from app.errors import ApiError, Error
 
 MIN_TOKEN = 32  # characters; a shorter token counts as unset
 SETUP_WINDOW = timedelta(hours=1)
+# SHA-256 of docker-compose.yaml's development ZIF_SETUP_TOKEN.
+DEV_TOKEN_SHA256 = "8a989bbd61e8988bf193512a267d193a584fca4101f09d449e4cdacd8d2cfe69"
 
 logger = logging.getLogger(__name__)
 
@@ -47,11 +49,14 @@ def needed() -> bool:
         return bool(session.scalar(text("SELECT needs_setup()")))
 
 
-def token_state() -> Literal["set", "unset", "weak"]:
-    """Read at call time, as turnstile.enabled(). Never the value itself."""
+def token_state() -> Literal["set", "unset", "weak", "dev"]:
+    """Read at call time, as turnstile.enabled(). Never the value itself. "dev": the development
+    token on a public ZIF_APP_URL, refused like "unset"."""
     token = SetupSettings().setup_token.get_secret_value()
     if not token:
         return "unset"
+    if is_dev_value_on_public_url(token, DEV_TOKEN_SHA256):
+        return "dev"
     return "set" if len(token) >= MIN_TOKEN else "weak"
 
 

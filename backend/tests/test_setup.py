@@ -18,7 +18,7 @@ from httpx2 import Response
 from sqlalchemy import Engine, text
 from sqlalchemy.exc import DBAPIError
 
-from app import passwords
+from app import passwords, setup
 from app.admin_auth import ADMIN_COOKIE
 from app.main import create_app
 from tests.conftest import (
@@ -194,6 +194,24 @@ def test_installed_answers_409_before_the_token(
     assert (removed.status_code, removed.json()) == (409, {"code": "already_set_up"})
 
 
+DEV_TOKEN = "dev-only-setup-token-not-a-secret-0000"  # docker-compose.yaml's development value
+
+
+# fence: the development token is refused on a public URL and accepted on localhost.
+def test_dev_token_refused_on_a_public_url(
+    app: FastAPI, empty_install: EmptyInstall, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ZIF_SETUP_TOKEN", DEV_TOKEN)
+    monkeypatch.setenv("ZIF_APP_URL", "https://app.example.com")
+    assert setup.token_state() == "dev"
+    refused = post_setup(new_client(app), body(token=DEV_TOKEN))
+    assert (refused.status_code, refused.json()) == (503, {"code": "setup_not_configured"})
+    assert count(empty_install.migrate, "users") == 0
+    for local in ["http://localhost:3000", "http://127.0.0.1:3000", "http://[::1]:3000"]:
+        monkeypatch.setenv("ZIF_APP_URL", local)
+        assert setup.token_state() == "set", local
+
+
 # FENCE. Wrong impls: compare_digest(b"", b"") accepting an empty token, or no minimum length.
 def test_no_or_weak_token_refuses(
     app: FastAPI, empty_install: EmptyInstall, monkeypatch: pytest.MonkeyPatch
@@ -353,7 +371,9 @@ def test_startup_setup_token_log(
     lines = log_lines()
     assert [line["setup_token"] for line in lines if line["msg"] == "api started"] == [state]
     refused = [
-        line for line in lines if line["msg"] == "setup token unset: first-run setup refused"
+        line
+        for line in lines
+        if line["msg"] == "setup token unset, weak or dev value: first-run setup refused"
     ]
     assert [line["level"] for line in refused] == ["ERROR"] * errors
     if token:

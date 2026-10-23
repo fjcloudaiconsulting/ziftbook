@@ -4,7 +4,7 @@
 # Every variable this file reads, its default and whether it's required or a secret: .env.example at
 # the repo root (copy it to a .env next to this file) and the "Environment variables" table in
 # CONTRIBUTING.md.
-# ZIF_CLIENT_IP_HEADER is not passed through here on purpose. Port 3000 is published directly, so any
+# ZIF_CLIENT_IP_HEADER is not passed through here on purpose. Port 3000 is published directly (on 127.0.0.1 only), so any
 # header can be forged, and every visitor shares the web app's address and its per-IP rate limits. Fine
 # for trying a release; production runs on k3s behind Cloudflare (CONTRIBUTING.md, "Client IP").
 name: ziftbook
@@ -88,7 +88,6 @@ services:
       ZIF_LOG_SQL: ${ZIF_LOG_SQL:-false}
       ZIF_TRUSTED_PROXIES: 172.28.0.10
       ZIF_TURNSTILE_SECRET: ${ZIF_TURNSTILE_SECRET:-}
-      ZIF_TURNSTILE_DISABLED: ${ZIF_TURNSTILE_DISABLED:-}
       ZIF_SETUP_TOKEN: ${ZIF_SETUP_TOKEN:-}
       ZIF_TOTP_KEY: ${ZIF_TOTP_KEY:-}
       ZIF_STRIPE_SECRET_KEY: ${ZIF_STRIPE_SECRET_KEY:-}
@@ -159,7 +158,7 @@ services:
       OTEL_TRACES_SAMPLER: ${ZIF_OTEL_TRACES_SAMPLER:-parentbased_traceidratio}
       OTEL_TRACES_SAMPLER_ARG: ${ZIF_OTEL_TRACES_SAMPLER_ARG:-0.1}
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     networks:
       default:
         ipv4_address: 172.28.0.10

@@ -85,6 +85,18 @@ def test_key_states(monkeypatch: pytest.MonkeyPatch) -> None:
         totp.encrypt(secret, user)
 
 
+# fence: the development key is refused on a public URL and works on localhost.
+def test_dev_key_refused_on_a_public_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ZIF_TOTP_KEY", "ZGV2LW9ubHktdG90cC1rZXktbm90LWEtc2VjcmV0ISE=")
+    monkeypatch.setenv("ZIF_APP_URL", "https://app.example.com")
+    assert totp.key_state() == "dev"
+    assert totp.key() is None
+    for local in ["http://localhost:3000", "http://127.0.0.1:3000", "http://[::1]:3000"]:
+        monkeypatch.setenv("ZIF_APP_URL", local)
+        assert totp.key_state() == "set", local
+        assert totp.key() is not None
+
+
 # guard
 def test_codes_and_normalise() -> None:
     ticket = totp.new_code()
@@ -122,7 +134,9 @@ def test_startup_totp_key_field(
     lines = log_lines()
     assert [line["totp_key"] for line in lines if line["msg"] == "api started"] == [state]
     unavailable = [
-        line for line in lines if line["msg"] == "totp key unset: admin second factor unavailable"
+        line
+        for line in lines
+        if line["msg"] == "totp key unset, invalid or dev value: admin second factor unavailable"
     ]
     assert [line["level"] for line in unavailable] == ["ERROR"] * errors
     if value:

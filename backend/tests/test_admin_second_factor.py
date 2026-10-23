@@ -201,6 +201,22 @@ def test_no_key_still_lets_recovery_codes_in(
     assert half.get("/api/admin/session").json()["second_factor"] == "passed"
 
 
+# fence: the development key on a public URL is as good as no key: enrolment answers 503.
+def test_dev_key_on_a_public_url_is_unavailable(
+    app: FastAPI, an_admin: uuid.UUID, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ticket = issue_ticket(an_admin)
+    client = sign_in(app, an_admin)
+    monkeypatch.setenv("ZIF_TOTP_KEY", "ZGV2LW9ubHktdG90cC1rZXktbm90LWEtc2VjcmV0ISE=")
+    monkeypatch.setenv("ZIF_APP_URL", "https://app.example.com")
+
+    refused = client.post(BEGIN, json={"ticket": ticket})
+
+    assert answer(refused) == (503, {"code": "second_factor_unavailable"})
+    monkeypatch.setenv("ZIF_APP_URL", "http://localhost:3000")
+    assert client.post(BEGIN, json={"ticket": ticket}).status_code == 200
+
+
 # fence: a key that can't open the secret is an operator mistake, never a wrong code. Kills
 # InvalidTag treated as a failure (one wrong key would lock every admin). Injected by catching
 # InvalidTag as a wrong secret.

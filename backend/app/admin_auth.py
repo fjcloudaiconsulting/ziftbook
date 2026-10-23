@@ -248,7 +248,7 @@ def _limited(request: Request, action: str, limit: int) -> None:
 
 def _key_needed() -> None:
     if totp.key() is None:
-        logger.error("totp key unset: admin second factor unavailable")
+        logger.error("totp key unset, invalid or dev value: admin second factor unavailable")
         raise ApiError(503, "second_factor_unavailable")
 
 
