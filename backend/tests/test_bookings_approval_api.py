@@ -299,13 +299,13 @@ def test_a_settled_booking_cannot_be_transitioned_again(
 # Kills: CurrentOwner instead of CurrentSession + may_manage (worker A gets 403); drops the
 # may_manage call (worker B gets 200).
 def test_only_the_assigned_worker_or_an_owner_may_transition(
-    people: People, app: FastAPI, owner: TestClient, ready: str, app_engine: Engine
+    people: People, app: FastAPI, owner: TestClient, ready: str, migrate_engine: Engine
 ) -> None:
     # people.both is an OWNER in tenant a (conftest.people), so it cannot stand in for a plain
     # assigned worker here: only_a is a genuine non-owner worker.
     worker_a_user = people.only_a
     worker_a = member_id(people.a, worker_a_user)
-    worker_b_user = add_user(app_engine)
+    worker_b_user = add_user(migrate_engine)
     add_membership(people.a, worker_b_user, "worker")
     service_id = new_service(owner)
     seed(people.a, worker_a_user, weekdays("09:00", "17:00"))
@@ -395,13 +395,13 @@ def test_the_queue_lists_only_live_pendings_soonest_first(
 # F8 - a worker's queue is only their own; an owner's is the whole business's.
 # Kills: drops the `(:everyone OR b.worker_id = ...)` clause; scopes the owner the same way.
 def test_a_workers_queue_is_only_their_own(
-    people: People, app: FastAPI, owner: TestClient, ready: str, app_engine: Engine
+    people: People, app: FastAPI, owner: TestClient, ready: str, migrate_engine: Engine
 ) -> None:
     # people.both is an OWNER in tenant a (conftest.people): its GET already sees everything,
     # which would make "worker" and "owner" indistinguishable here. only_a is a genuine worker.
     worker_a_user = people.only_a
     worker_a = member_id(people.a, worker_a_user)
-    worker_b_user = add_user(app_engine)
+    worker_b_user = add_user(migrate_engine)
     add_membership(people.a, worker_b_user, "worker")
     worker_b = member_id(people.a, worker_b_user)
     service_id = new_service(owner)

@@ -38,9 +38,9 @@ SESSIONS_OF = text("SELECT count(*) FROM admin_sessions WHERE user_id = :u")
 
 
 @pytest.fixture
-def an_admin(app_engine: Engine, migrate_engine: Engine, bound: None) -> Iterator[uuid.UUID]:
+def an_admin(migrate_engine: Engine, bound: None) -> Iterator[uuid.UUID]:
     """A platform admin with a password and no business."""
-    user_id = add_user(app_engine)
+    user_id = add_user(migrate_engine)
     add_password(migrate_engine, user_id, PASSWORD)
     with migrate_engine.begin() as conn:
         conn.execute(text("INSERT INTO platform_admins (user_id) VALUES (:u)"), {"u": user_id})

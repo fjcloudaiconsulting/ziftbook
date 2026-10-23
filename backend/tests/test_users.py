@@ -1,9 +1,9 @@
 import uuid
 
 import pytest
-from psycopg.errors import CheckViolation, UniqueViolation
+from psycopg.errors import CheckViolation, InsufficientPrivilege, UniqueViolation
 from sqlalchemy import Engine, text
-from sqlalchemy.exc import DBAPIError, IntegrityError
+from sqlalchemy.exc import DBAPIError, IntegrityError, ProgrammingError
 
 from app.db import tenant_context
 from tests.conftest import People, add_membership, add_user
@@ -13,16 +13,16 @@ from tests.conftest import People, add_membership, add_user
     ("email", "locale"), [("Someone@example.com", None), ("someone@example.com", "de")]
 )
 def test_users_hold_a_lowercase_email_and_a_supported_locale(
-    app_engine: Engine, email: str, locale: str | None
+    migrate_engine: Engine, email: str, locale: str | None
 ) -> None:
     with pytest.raises(IntegrityError) as error:
-        add_user(app_engine, f"{uuid.uuid4()}{email}", locale)
+        add_user(migrate_engine, f"{uuid.uuid4()}{email}", locale)
     assert isinstance(error.value.orig, CheckViolation)
 
 
-def test_an_email_belongs_to_one_user(people: People, app_engine: Engine) -> None:
+def test_an_email_belongs_to_one_user(people: People, migrate_engine: Engine) -> None:
     with pytest.raises(IntegrityError) as error:
-        add_user(app_engine, f"{people.only_a}@example.com")
+        add_user(migrate_engine, f"{people.only_a}@example.com")
     assert isinstance(error.value.orig, UniqueViolation)
 
 
@@ -47,14 +47,19 @@ def test_a_tenant_sees_only_its_own_members(people: People) -> None:
     assert visible == {people.only_a, people.both}
 
 
-def test_a_tenant_cannot_change_or_delete_a_user_it_shares(people: People) -> None:
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "UPDATE users SET email = 'attacker@example.com' WHERE id = :id",
+        "DELETE FROM users WHERE id = :id",
+    ],
+)
+def test_a_tenant_cannot_change_or_delete_a_user_it_shares(people: People, statement: str) -> None:
     # A user's email is their identity in every tenant: tenant a must not be able to redirect it.
-    with tenant_context(people.a) as session:
-        params = {"id": people.both}
-        session.execute(
-            text("UPDATE users SET email = 'attacker@example.com' WHERE id = :id"), params
-        )
-        session.execute(text("DELETE FROM users WHERE id = :id"), params)
+    # The app role holds neither UPDATE nor DELETE on users (ZB-10).
+    with pytest.raises(ProgrammingError) as error, tenant_context(people.a) as session:
+        session.execute(text(statement), {"id": people.both})
+    assert isinstance(error.value.orig, InsufficientPrivilege)
 
     with tenant_context(people.b) as session:
         row = session.execute(

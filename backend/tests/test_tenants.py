@@ -16,14 +16,15 @@ from tests.test_sign_up import businesses as _businesses  # noqa: F401
 from tests.test_sign_up import complete, created
 
 
-def test_app_role_creates_tenants_with_uuidv7_ids(app_engine: Engine) -> None:
-    with app_engine.connect() as conn:  # rolled back on close
+# As the migrate role, as complete_sign_up creates a business: the app role creates none (ZB-10).
+def test_a_new_business_gets_a_uuidv7_id(migrate_engine: Engine) -> None:
+    with migrate_engine.connect() as conn:  # rolled back on close
         tenant_id = conn.scalar(text("INSERT INTO tenants (name) VALUES ('Nail bar') RETURNING id"))
     assert tenant_id.version == 7
 
 
-def test_a_new_business_defaults_to_the_netherlands(app_engine: Engine) -> None:
-    with app_engine.connect() as conn:  # rolled back on close
+def test_a_new_business_defaults_to_the_netherlands(migrate_engine: Engine) -> None:
+    with migrate_engine.connect() as conn:  # rolled back on close
         business = conn.execute(
             text("INSERT INTO tenants (name) VALUES ('Nail bar') RETURNING country, currency")
         ).one()
@@ -61,8 +62,10 @@ def test_the_app_role_can_rename_a_business_and_lock_its_row(
 
 
 @pytest.mark.parametrize("country", ["nl", "N", "NLD", "NL\n"])
-def test_a_business_country_must_be_two_uppercase_letters(app_engine: Engine, country: str) -> None:
-    with pytest.raises(IntegrityError) as error, app_engine.begin() as conn:
+def test_a_business_country_must_be_two_uppercase_letters(
+    migrate_engine: Engine, country: str
+) -> None:
+    with pytest.raises(IntegrityError) as error, migrate_engine.begin() as conn:
         conn.execute(
             text("INSERT INTO tenants (name, country, currency) VALUES ('x', :c, 'EUR')"),
             {"c": country},
@@ -72,9 +75,9 @@ def test_a_business_country_must_be_two_uppercase_letters(app_engine: Engine, co
 
 @pytest.mark.parametrize("currency", ["eur", "EU", "EURO", "EUR\n"])
 def test_a_business_currency_must_be_three_uppercase_letters(
-    app_engine: Engine, currency: str
+    migrate_engine: Engine, currency: str
 ) -> None:
-    with pytest.raises(IntegrityError) as error, app_engine.begin() as conn:
+    with pytest.raises(IntegrityError) as error, migrate_engine.begin() as conn:
         conn.execute(
             text("INSERT INTO tenants (name, country, currency) VALUES ('x', 'NL', :c)"),
             {"c": currency},
@@ -130,19 +133,19 @@ def test_sign_up_derives_an_ascii_slug_from_the_business_name(
 
 
 # 2. fence
-def test_two_businesses_with_one_name_get_x_then_x_2(app_engine: Engine) -> None:
+def test_two_businesses_with_one_name_get_x_then_x_2(migrate_engine: Engine) -> None:
     t = tag()
-    with app_engine.connect() as conn:  # rolled back on close
+    with migrate_engine.connect() as conn:  # rolled back on close
         conn.execute(TIMEOUT)
         outcomes = [slug_of(conn, f"Nail bar {t}") for _ in range(2)]
     assert outcomes == [f"nail-bar-{t}", f"nail-bar-{t}-2"]
 
 
 # 3. fence
-def test_the_derivation_table(app_engine: Engine) -> None:
+def test_the_derivation_table(migrate_engine: Engine) -> None:
     t = tag()
     long = t + "x" * 52
-    with app_engine.connect() as conn:  # rolled back on close
+    with migrate_engine.connect() as conn:  # rolled back on close
         conn.execute(TIMEOUT)
         a, calendar, bang, kanji, letters, aesop, long1, long2 = (
             slug_of(conn, n)
@@ -193,9 +196,9 @@ def test_the_derivation_maps_uppercase_special_letters_under_collate_c(
 
 
 # 4. fence
-def test_the_probe_gives_up_after_a_thousand_candidates(app_engine: Engine) -> None:
+def test_the_probe_gives_up_after_a_thousand_candidates(migrate_engine: Engine) -> None:
     t = tag()
-    with app_engine.connect() as conn:  # rolled back on close
+    with migrate_engine.connect() as conn:  # rolled back on close
         conn.execute(TIMEOUT)
         conn.execute(
             text("""
@@ -209,16 +212,17 @@ def test_the_probe_gives_up_after_a_thousand_candidates(app_engine: Engine) -> N
     assert outcome == "P0001"
 
 
-def concurrent(app_engine: Engine, migrate_engine: Engine, a_name: str, b_name: str) -> str:
-    """A inserts and holds; B inserts and blocks; A commits. B's outcome."""
+def concurrent(migrate_engine: Engine, a_name: str, b_name: str) -> str:
+    """A inserts and holds; B inserts and blocks; A commits. B's outcome. As the migrate role, as
+    complete_sign_up inserts: the app role creates no business (ZB-10)."""
     results: list[str] = []
 
     def b() -> None:
-        with app_engine.begin() as conn:
+        with migrate_engine.begin() as conn:
             conn.execute(TIMEOUT)
             results.append(slug_of(conn, b_name))
 
-    with app_engine.connect() as a:
+    with migrate_engine.connect() as a:
         a.begin()
         a.execute(TIMEOUT)
         slug_of(a, a_name)
@@ -234,11 +238,11 @@ def concurrent(app_engine: Engine, migrate_engine: Engine, a_name: str, b_name: 
 
 # 5. fence
 def test_two_concurrent_sign_ups_with_one_name_both_succeed(
-    app_engine: Engine, migrate_engine: Engine
+    migrate_engine: Engine,
 ) -> None:
     t = tag()
     try:
-        outcome = concurrent(app_engine, migrate_engine, f"Studio Anna {t}", f"Studio Anna {t}")
+        outcome = concurrent(migrate_engine, f"Studio Anna {t}", f"Studio Anna {t}")
         assert outcome == f"studio-anna-{t}-2"
     finally:
         drop_tenants(migrate_engine, [f"studio-anna-{t}", f"studio-anna-{t}-2"])
@@ -246,13 +250,13 @@ def test_two_concurrent_sign_ups_with_one_name_both_succeed(
 
 # 6. fence
 def test_two_concurrent_sign_ups_meeting_on_one_candidate_both_succeed(
-    app_engine: Engine, migrate_engine: Engine
+    migrate_engine: Engine,
 ) -> None:
     t = tag()
     try:
-        with app_engine.begin() as conn:
+        with migrate_engine.begin() as conn:
             assert slug_of(conn, f"Nail bar {t}") == f"nail-bar-{t}"
-        outcome = concurrent(app_engine, migrate_engine, f"Nail bar {t} 2", f"Nail bar {t}")
+        outcome = concurrent(migrate_engine, f"Nail bar {t} 2", f"Nail bar {t}")
         assert outcome == f"nail-bar-{t}-3"
     finally:
         drop_tenants(migrate_engine, [f"nail-bar-{t}", f"nail-bar-{t}-2", f"nail-bar-{t}-3"])
@@ -260,8 +264,8 @@ def test_two_concurrent_sign_ups_meeting_on_one_candidate_both_succeed(
 
 # 7. fence
 @pytest.mark.parametrize("slug", ["Upper", "api", "calendar", "a--b", "-ab", "ab-", "ab", "a" * 41])
-def test_a_malformed_or_reserved_slug_is_refused(app_engine: Engine, slug: str) -> None:
-    with app_engine.connect() as conn:  # rolled back on close
+def test_a_malformed_or_reserved_slug_is_refused(migrate_engine: Engine, slug: str) -> None:
+    with migrate_engine.connect() as conn:  # rolled back on close
         conn.execute(TIMEOUT)
         assert slug_of(conn, "Foo", slug) == "23514"
 
@@ -285,8 +289,8 @@ def test_every_reserved_word_fails_slug_ok(app_engine: Engine, word: str) -> Non
 
 # ZIF-70 PR0 fence: /{locale}/setup is the first-run setup page (0035). Kills a migration that
 # leaves 'setup' out or never replaces slug_ok.
-def test_setup_is_not_a_valid_slug(app_engine: Engine) -> None:
-    with app_engine.connect() as conn:  # rolled back on close
+def test_setup_is_not_a_valid_slug(migrate_engine: Engine) -> None:
+    with migrate_engine.connect() as conn:  # rolled back on close
         conn.execute(TIMEOUT)
         explicit = slug_of(conn, "x", "setup")
         derived = slug_of(conn, "Setup")
@@ -334,8 +338,8 @@ def test_the_app_role_cannot_call_free_slug_directly(app_engine: Engine) -> None
 
 
 # 10. fence
-def test_an_explicit_valid_slug_is_kept(app_engine: Engine) -> None:
+def test_an_explicit_valid_slug_is_kept(migrate_engine: Engine) -> None:
     t = tag()
-    with app_engine.connect() as conn:  # rolled back on close
+    with migrate_engine.connect() as conn:  # rolled back on close
         conn.execute(TIMEOUT)
         assert slug_of(conn, f"Foo {t}", slug=f"bar-{t}") == f"bar-{t}"

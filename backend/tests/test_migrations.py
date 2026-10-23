@@ -1614,3 +1614,63 @@ def test_0047_round_trips_the_booking_evidence_grants(
             ["search_path=pg_catalog, public, pg_temp"],
             False,
         )
+
+
+# ZB-10 (0048): ziftbook_app's table and column privileges on the three tables it lost writes on.
+WRITE_GRANTS = text("""
+SELECT c.relname,
+       (SELECT string_agg(x.privilege_type, ' ' ORDER BY x.privilege_type)
+        FROM aclexplode(c.relacl) x WHERE x.grantee = 'ziftbook_app'::regrole),
+       (SELECT string_agg(a.attname || ' ' || x.privilege_type, ', '
+                          ORDER BY a.attname, x.privilege_type)
+        FROM pg_attribute a, aclexplode(a.attacl) x
+        WHERE a.attrelid = c.oid AND x.grantee = 'ziftbook_app'::regrole)
+FROM pg_class c
+WHERE c.oid IN ('users'::regclass, 'tenants'::regclass, 'email_outbox'::regclass)
+ORDER BY 1
+""")
+USERS_INSERT_POLICY = text("""
+SELECT policyname, cmd, roles::text, with_check FROM pg_policies
+WHERE schemaname = 'public' AND tablename = 'users' AND cmd = 'INSERT'
+""")
+FUNCTION_DEFAULTS = text("""
+SELECT defaclnamespace, defaclacl::text FROM pg_default_acl
+WHERE defaclrole = 'ziftbook_migrate'::regrole AND defaclobjtype = 'f'
+""")
+# Explicit literals, never 0048's constants. Before 0048: 0001's default DML, narrowed only on
+# tenants (0013: UPDATE (name), no table-level UPDATE or DELETE); no default for functions, so
+# Postgres's built-in EXECUTE to PUBLIC.
+WRITE_GRANTS_AT_0047 = [
+    ("email_outbox", "DELETE INSERT SELECT UPDATE", None),
+    ("tenants", "INSERT SELECT", "name UPDATE"),
+    ("users", "DELETE INSERT SELECT UPDATE", None),
+]
+WRITE_GRANTS_AT_0048 = [
+    ("email_outbox", "INSERT SELECT", "sent_at UPDATE, status UPDATE, subject UPDATE"),
+    ("tenants", "SELECT", "name UPDATE"),
+    ("users", "SELECT", None),
+]
+
+
+# ZB-10 FENCE. Wrong impl: a downgrade that leaves the email_outbox column grant beside the
+# table-level UPDATE, forgets create_users, or leaves the function default behind.
+def test_0048_round_trips_the_app_roles_write_privileges(
+    migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = lock_timeout_config(monkeypatch)
+    try:
+        command.downgrade(cfg, "0047")
+        with migrate_engine.connect() as conn:
+            assert [tuple(r) for r in conn.execute(WRITE_GRANTS)] == WRITE_GRANTS_AT_0047
+            assert [tuple(r) for r in conn.execute(USERS_INSERT_POLICY)] == [
+                ("create_users", "INSERT", "{public}", "true")
+            ]
+            assert conn.execute(FUNCTION_DEFAULTS).all() == []
+    finally:
+        command.upgrade(cfg, "head")
+    with migrate_engine.connect() as conn:
+        assert [tuple(r) for r in conn.execute(WRITE_GRANTS)] == WRITE_GRANTS_AT_0048
+        assert conn.execute(USERS_INSERT_POLICY).all() == []
+        assert [tuple(r) for r in conn.execute(FUNCTION_DEFAULTS)] == [
+            (0, "{ziftbook_migrate=X/ziftbook_migrate}")
+        ]

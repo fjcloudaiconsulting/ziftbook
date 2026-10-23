@@ -141,11 +141,12 @@ def test_the_trigger_only_watches_an_owner_losing_the_role(
 
 
 def test_tearing_down_a_whole_business_in_one_statement_is_not_a_last_owner_violation(
-    app_engine: Engine, migrate_engine: Engine, bound: None
+    migrate_engine: Engine, bound: None
 ) -> None:
-    with app_engine.begin() as conn:
+    # As the migrate role: the app role creates no business (ZB-10).
+    with migrate_engine.begin() as conn:
         tenant_id = conn.scalar(text("INSERT INTO tenants (name) VALUES ('teardown') RETURNING id"))
-    owner_id, worker_id = add_user(app_engine), add_user(app_engine)
+    owner_id, worker_id = add_user(migrate_engine), add_user(migrate_engine)
     add_membership(tenant_id, owner_id, "owner")
     add_membership(tenant_id, worker_id, "worker")
 
@@ -181,7 +182,7 @@ def test_the_trigger_lock_lets_a_new_membership_through(
     # FOR NO KEY UPDATE, not FOR UPDATE: a demotion's tenants lock must not block an unrelated new
     # membership in the same business, whose foreign key check only ever needs FOR KEY SHARE.
     set_role(people.a, people.only_a, "owner")  # a second owner, so the demotion below succeeds
-    new_user = add_user(app_engine)
+    new_user = add_user(migrate_engine)
     try:
         with app_engine.connect() as holder:
             tx = holder.begin()

@@ -321,7 +321,7 @@ def test_a_reset_that_changes_no_password_records_nothing(
 ) -> None:
     # A live link whose account was removed before it was used: the reset itself finds no one.
     user_id = uuid.uuid7()
-    with app_engine.begin() as conn:
+    with migrate_engine.begin() as conn:  # the app role creates no user (ZB-10)
         conn.execute(
             text("INSERT INTO users (id, email) VALUES (:id, :e)"),
             {"id": user_id, "e": email_of(user_id)},

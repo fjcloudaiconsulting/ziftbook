@@ -178,7 +178,7 @@ def test_a_link_for_an_account_that_is_gone_says_so(
 ) -> None:
     # The link is live, but the account went away before it was used: nothing was reset.
     user_id = uuid.uuid7()
-    with app_engine.begin() as conn:
+    with migrate_engine.begin() as conn:  # the app role creates no user (ZB-10)
         conn.execute(
             text("INSERT INTO users (id, email) VALUES (:id, :e)"),
             {"id": user_id, "e": email_of(user_id)},

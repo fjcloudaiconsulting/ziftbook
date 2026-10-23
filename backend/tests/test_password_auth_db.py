@@ -122,6 +122,8 @@ def test_the_definer_check_catches_unsafe_functions(migrate_engine: Engine) -> N
             REVOKE EXECUTE ON FUNCTION broken_temp_first() FROM PUBLIC;
             CREATE FUNCTION broken_public() RETURNS int LANGUAGE sql SECURITY DEFINER
               SET search_path = pg_catalog, public, pg_temp AS 'SELECT 1';
+            -- Not executable by PUBLIC by default since 0048 (ZB-10): granted, as a migration can.
+            GRANT EXECUTE ON FUNCTION broken_public() TO PUBLIC;
             """)
         )
         found = list(conn.scalars(VIOLATIONS))
@@ -134,7 +136,7 @@ def test_sign_in_lookup_finds_the_oldest_membership_without_a_tenant(
 ) -> None:
     # The b membership has the older id, but the a row (owner) is written first: neither row order,
     # tenant order nor role order gives b.
-    user_id = add_user(app_engine)
+    user_id = add_user(migrate_engine)
     older, newer = uuid.uuid7(), uuid.uuid7()
     for membership_id, tenant_id, role in ((newer, people.a, "owner"), (older, people.b, "worker")):
         with tenant_context(tenant_id) as session:
@@ -258,7 +260,7 @@ def test_completing_sign_up_for_an_email_registered_since_changes_nothing(
     email = f"{uuid.uuid4()}@example.com"
     token = issue(app_engine, "sign_up", email)
     assert token is not None
-    user_id = add_user(app_engine, email)
+    user_id = add_user(migrate_engine, email)
     with migrate_engine.connect() as conn:
         tenants_before = conn.scalar(text("SELECT count(*) FROM tenants"))
 

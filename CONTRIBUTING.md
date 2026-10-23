@@ -67,6 +67,13 @@ Specifics:
   `SET lock_timeout = 0` before it and `SET lock_timeout = '5s'` after: its wait blocks no app query.
 - Migrations run as `ziftbook_migrate`, never on app startup. The app connects as `ziftbook_app`, which owns
   nothing: never grant it ownership, `BYPASSRLS` or DDL rights.
+- A function `ziftbook_migrate` creates is executable by no other role (0048's default privileges): the migration
+  that creates one the app calls also runs `GRANT EXECUTE ON FUNCTION ... TO ziftbook_app`. Calls the app makes
+  indirectly count too: a function in a `CHECK` constraint, a column default, a row-level security policy, or the
+  body of a `SECURITY INVOKER` trigger function runs as the role whose statement fired it (`slug_ok` in
+  `ck_tenants_slug`, say). Trigger functions themselves need none.
+  Nor do functions a `CREATE EXTENSION` adds: `ziftbook_migrate` can create only trusted extensions, whose objects
+  belong to the bootstrap superuser, so they keep `PUBLIC`'s `EXECUTE`.
 
 ## Tenant-owned tables
 
@@ -101,9 +108,10 @@ every table that holds a tenant's data:
   UPDATE` on the membership), and never locks `tenants` beyond the `KEY SHARE` its foreign keys take: `keep_an_owner`
   locks memberships, then tenants.
 - A membership is never deleted by the app. Removing someone sets `role = 'removed'` and `removed_at`
-  (ZIF-112); the row stays because bookings and their history reference it. A new read of
-  `memberships` decides: active (filter `role <> 'removed'`, inside the locking statement when it
-  locks) or history (no filter). A read reached through a session needs none: `ck_sessions_role` and
+  (ZIF-112); the row stays because bookings and their history reference it. The app role keeps `DELETE` on
+  `memberships` while a deployed release from before ZIF-112 still deletes; a later contract migration revokes it
+  (ZB-10). A new read of `memberships` decides: active (filter `role <> 'removed'`, inside the locking statement
+  when it locks) or history (no filter). A read reached through a session needs none: `ck_sessions_role` and
   the sessions foreign key keep a session's membership live. Never infer owner from `role <> 'worker'`;
   compare to `'owner'`. A new table referencing memberships with `ON DELETE CASCADE` also needs a line
   in `members.remove`, which deletes what the cascades used to.
@@ -121,17 +129,17 @@ names the business a platform admin acted on).
 `tenants` is the root table: it isn't isolated with `enable_tenant_isolation` and has no row-level security of its
 own.
 
-- The app role may only `INSERT` and `UPDATE (name)`; a migration's `REVOKE UPDATE, DELETE` must run before its
-  column `GRANT`, or the revoke wipes the grant too.
+- The app role may only `UPDATE (name)`: a business is created by `complete_sign_up`. A migration's `REVOKE` must
+  run before its column `GRANT`, or the revoke wipes the grant too.
 - With no RLS, any `UPDATE` on `tenants` must filter `WHERE id = current_setting('app.tenant_id')::uuid` itself.
 - `country` and `currency` change only through a `SECURITY DEFINER` function; a business is deleted only as
   `ziftbook_migrate`.
 
 `users` is global, with row-level security that is enabled but not forced: the app role sees a user only through a
-membership in the current tenant, may insert users, and can never change or delete one.
+membership in the current tenant, and can never insert, change or delete one (no `INSERT`, `UPDATE` or `DELETE`).
 
-- Insert users with an id from `uuid.uuid7()` and no `RETURNING`: a new user isn't visible to its own policy yet.
-- Never add an UPDATE or DELETE policy on `users`; changes to a person's account go through functions owned by
+- Accounts are created only by `complete_sign_up`, `complete_setup` and `accept_invite`.
+- Never add an INSERT, UPDATE or DELETE policy on `users`; changes to a person's account go through functions owned by
   `ziftbook_migrate`. `ziftbook_migrate` sees every user, including in data migrations.
 - A view over `users` needs `WITH (security_invoker = true)`, or it shows every user.
 - Create memberships only in trusted flows (sign-up, invites), never from a `user_id` the client sends: the foreign

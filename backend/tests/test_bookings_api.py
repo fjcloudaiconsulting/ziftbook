@@ -9,6 +9,7 @@ seeded on every weekday so the test never cares which weekday it lands on.
 """
 
 import json
+import os
 import threading
 import urllib.parse
 import urllib.request
@@ -26,8 +27,9 @@ from fastapi.testclient import TestClient
 from httpx2 import Response
 from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 from psycopg.errors import QueryCanceled
-from sqlalchemy import Engine, event, text
+from sqlalchemy import Engine, create_engine, event, text
 from sqlalchemy.exc import OperationalError
+from sqlalchemy.pool import NullPool
 
 from app import auth, availability, bookings, clients, limits, members, schedule, turnstile
 from app.db import SessionLocal, tenant_context
@@ -122,13 +124,12 @@ def sign_in_as(client: TestClient, tenant_id: object, email: str) -> None:
     an unknown business borrows the newest real one (its POST must still answer 404, not 403)."""
     with HELPER_LOCK:
         if email not in HELPER_USERS:
-            user_id = uuid.uuid7()
-            with SessionLocal.begin() as session:
-                session.execute(
-                    text("INSERT INTO users (id, email, name) VALUES (:id, :email, 'Guest')"),
-                    {"id": user_id, "email": email},
-                )
-            HELPER_USERS[email] = user_id
+            # As the migrate role: the app role creates no user (ZB-10).
+            migrate = create_engine(os.environ["ZIF_MIGRATE_DATABASE_URL"], poolclass=NullPool)
+            try:
+                HELPER_USERS[email] = add_user(migrate, email, name="Guest")
+            finally:
+                migrate.dispose()
         user_id = HELPER_USERS[email]
         with SessionLocal.begin() as session:
             home = session.scalar(
@@ -419,9 +420,9 @@ def test_a_worker_not_assigned_to_the_service_is_refused_without_probing(
 # is not a test of load spreading (row 21g is): under the tenant lock each loser re-derives and the
 # workers already taken have left `eligible`, so `load` never decides anything here.
 def test_three_concurrent_bookers_and_three_free_workers_all_get_a_booking(
-    people: People, app: FastAPI, owner: TestClient, app_engine: Engine, migrate_engine: Engine
+    people: People, app: FastAPI, owner: TestClient, migrate_engine: Engine
 ) -> None:
-    third_user = add_user(app_engine)
+    third_user = add_user(migrate_engine)
     add_membership(people.a, third_user)
     try:
         service_id = new_service(owner)

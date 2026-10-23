@@ -11,9 +11,9 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from fastapi import FastAPI
-from psycopg.errors import CheckViolation
+from psycopg.errors import CheckViolation, InsufficientPrivilege
 from sqlalchemy import Engine, text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, ProgrammingError
 
 import app.auth as app_auth  # conftest shadows the name `signed_in`
 from app.db import tenant_context
@@ -225,18 +225,19 @@ def test_the_app_role_cannot_name_anyone_outside_its_business(
 ) -> None:
     set_user_name(migrate_engine, people.only_b, None)
     # Inside the person's own business, where users' policy lets the app role see them: the row is
-    # visible and the UPDATE privilege exists, so only the missing UPDATE policy stops it.
+    # visible, so only the missing UPDATE privilege (ZB-10) stops it.
     with tenant_context(people.b) as session:
-        # Positive control: the row is visible here, so 0 changed rows means the policy, not RLS
+        # Positive control: the row is visible here, so the refusal is the privilege, not RLS
         # hiding it.
         assert (
             session.scalar(text("SELECT count(*) FROM users WHERE id = :u"), {"u": people.only_b})
             == 1
         )
-        changed = session.execute(
+    with pytest.raises(ProgrammingError) as error, tenant_context(people.b) as session:
+        session.execute(
             text("UPDATE users SET name = 'x' WHERE id = :u RETURNING id"), {"u": people.only_b}
-        ).all()
-    assert changed == []
+        )
+    assert isinstance(error.value.orig, InsufficientPrivilege)
     assert user_name(migrate_engine, people.only_b) is None
 
     with tenant_context(people.a) as session:

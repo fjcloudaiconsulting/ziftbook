@@ -73,3 +73,69 @@ def test_app_role_cannot_change_the_schema(
     with app_engine.connect() as conn, pytest.raises(ProgrammingError) as error:
         conn.execute(text(statement.format(table=probe_table)))
     assert isinstance(error.value.orig, InsufficientPrivilege)
+
+
+# ZB-10 FENCE. Wrong impl: any of these back on the app role. Sign-up, first-run setup and invites
+# create users and businesses through SECURITY DEFINER functions owned by ziftbook_migrate; the
+# mailer only inserts outbox rows and marks them sent. DELETE on memberships is revoked in a later
+# contract step (see 0048).
+@pytest.mark.parametrize(
+    ("table", "privilege"),
+    [
+        ("users", "INSERT"),
+        ("users", "UPDATE"),
+        ("users", "DELETE"),
+        ("tenants", "INSERT"),
+        ("email_outbox", "UPDATE"),
+        ("email_outbox", "DELETE"),
+    ],
+)
+def test_app_role_lacks_writes_it_never_uses(
+    migrate_engine: Engine, table: str, privilege: str
+) -> None:
+    with migrate_engine.connect() as conn:
+        held = conn.scalar(
+            text("SELECT has_table_privilege('ziftbook_app', :t, :p)"),
+            {"t": table, "p": privilege},
+        )
+    assert held is False
+
+
+# What app/mail.py's _outbox (ON CONFLICT ... SET subject) and _mark_sent set, and nothing else.
+def test_app_role_updates_only_the_outbox_columns_the_mailer_sets(migrate_engine: Engine) -> None:
+    with migrate_engine.connect() as conn:
+        columns = set(
+            conn.scalars(
+                text("""
+                SELECT column_name FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = 'email_outbox'
+                  AND has_column_privilege('ziftbook_app', 'email_outbox', column_name, 'UPDATE')
+                """)
+            )
+        )
+    assert columns == {"status", "sent_at", "subject"}
+
+
+@pytest.fixture
+def probe_function(migrate_engine: Engine) -> Iterator[str]:
+    # Created the way a migration would: as the migrate role.
+    name = f"probe_{uuid.uuid4().hex[:12]}"
+    with migrate_engine.begin() as conn:
+        conn.execute(text(f"CREATE FUNCTION {name}() RETURNS int LANGUAGE sql AS 'SELECT 1'"))
+    yield name
+    with migrate_engine.begin() as conn:
+        conn.execute(text(f"DROP FUNCTION IF EXISTS {name}()"))
+
+
+# ZB-10 FENCE. Wrong impl: a function the migrate role creates is callable by everyone until its
+# migration remembers to REVOKE it from PUBLIC.
+def test_app_role_cannot_call_a_new_function_until_granted(
+    app_engine: Engine, migrate_engine: Engine, probe_function: str
+) -> None:
+    with app_engine.connect() as conn, pytest.raises(ProgrammingError) as error:
+        conn.execute(text(f"SELECT {probe_function}()"))
+    assert isinstance(error.value.orig, InsufficientPrivilege)
+    with migrate_engine.begin() as conn:
+        conn.execute(text(f"GRANT EXECUTE ON FUNCTION {probe_function}() TO ziftbook_app"))
+    with app_engine.connect() as conn:
+        assert conn.scalar(text(f"SELECT {probe_function}()")) == 1

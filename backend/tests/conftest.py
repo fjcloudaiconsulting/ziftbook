@@ -596,15 +596,16 @@ class People:
 
 
 def add_user(
-    engine: Engine,
+    migrate_engine: Engine,
     email: str | None = None,
     locale: str | None = None,
     name: str | None = "Test Person",
 ) -> uuid.UUID:
-    # The id comes from the app: a new user is invisible to its own policy, so RETURNING would fail.
-    # name=None is an account from before ZIF-131: registration not complete.
+    # As the migrate role: the app role creates no user (ZB-10). The id comes from here, as
+    # complete_sign_up's does. name=None is an account from before ZIF-131: registration not
+    # complete.
     user_id = uuid.uuid7()
-    with engine.begin() as conn:
+    with migrate_engine.begin() as conn:
         conn.execute(
             text(
                 "INSERT INTO users (id, email, locale, name) VALUES (:id, :email, :locale, :name)"
@@ -709,6 +710,15 @@ def delete_clients(conn: Connection, tenant_ids: Iterable[object]) -> None:
         conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(tenant_id)})
         conn.execute(text("DELETE FROM consents"))
         conn.execute(text("DELETE FROM clients"))
+
+
+@contextmanager
+def migrate_tenant_context(migrate_engine: Engine, tenant_id: object) -> Iterator[Connection]:
+    """tenant_context as the migrate role, for a write the app role may not make (forced row-level
+    security binds the migrate role too). Commits on exit."""
+    with migrate_engine.begin() as conn:
+        conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(tenant_id)})
+        yield conn
 
 
 def delete_payment_accounts(conn: Connection, tenant_ids: Iterable[object]) -> None:
@@ -838,16 +848,17 @@ def end_membership(tenant_id: uuid.UUID, user_id: uuid.UUID) -> None:
 
 
 @pytest.fixture
-def people(app_engine: Engine, migrate_engine: Engine, bound: None) -> Iterator[People]:
-    with app_engine.begin() as conn:
+def people(migrate_engine: Engine, bound: None) -> Iterator[People]:
+    # As the migrate role: the app role creates neither businesses nor users (ZB-10).
+    with migrate_engine.begin() as conn:
         a = conn.scalar(text("INSERT INTO tenants (name) VALUES ('a') RETURNING id"))
         b = conn.scalar(text("INSERT INTO tenants (name) VALUES ('b') RETURNING id"))
     people = People(
         a=a,
         b=b,
-        only_a=add_user(app_engine),
-        only_b=add_user(app_engine),
-        both=add_user(app_engine, locale="nl"),
+        only_a=add_user(migrate_engine),
+        only_b=add_user(migrate_engine),
+        both=add_user(migrate_engine, locale="nl"),
     )
     add_membership(a, people.only_a)
     add_membership(b, people.only_b)

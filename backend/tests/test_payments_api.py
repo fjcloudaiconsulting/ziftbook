@@ -379,9 +379,8 @@ def test_two_owners_connecting_the_same_business_make_one_account(
     app: FastAPI,
     fake_stripe: FakeGateway,
     migrate_engine: Engine,
-    app_engine: Engine,
 ) -> None:
-    co_owner = add_user(app_engine, name="Co Owner")
+    co_owner = add_user(migrate_engine, name="Co Owner")
     add_membership(people.a, co_owner, "owner")
 
     first_response = signed_in(app, people.a, people.both).post(

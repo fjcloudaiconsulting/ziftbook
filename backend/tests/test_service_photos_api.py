@@ -139,10 +139,10 @@ def test_presign(
 # ZIF-133 F8. fence. Kills: the check looking an upload up by its id alone, so one business can
 # read (and link) another's.
 def test_another_business_s_upload_is_missing(
-    s3: S3Client, app: FastAPI, people: People, owner: TestClient, app_engine: Engine
+    s3: S3Client, app: FastAPI, people: People, owner: TestClient, migrate_engine: Engine
 ) -> None:
     upload_id = upload(s3, people.a, image("PNG", (10, 10)))
-    user_b = add_user(app_engine)
+    user_b = add_user(migrate_engine)
     add_membership(people.b, user_b, "owner")
     owner_b = signed_in(app, people.b, user_b)
 

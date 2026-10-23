@@ -24,6 +24,7 @@ from tests.conftest import (
     add_user,
     closed,
     member_id,
+    migrate_tenant_context,
     new_client,
     points,
     save_setting,
@@ -590,9 +591,9 @@ def test_f20_moving_to_another_member_updates_the_snapshot(
 
 # Sign-off r1. Kills: a member the service does not use (override must not bypass candidates).
 def test_an_override_move_onto_a_member_without_the_service_is_409(
-    people: People, app_engine: Engine, owner: TestClient, ready: str
+    people: People, migrate_engine: Engine, owner: TestClient, ready: str
 ) -> None:
-    stranger = add_user(app_engine)
+    stranger = add_user(migrate_engine)
     add_membership(people.a, stranger)
     booking_id = book(owner, ready, member_id=boss(people)).json()["id"]
     before = row_of(people.a, booking_id)
@@ -630,9 +631,9 @@ def test_f12_owner_moves_anas_booking_to_themselves_only_ana_is_told(
 
 
 def test_f12_owner_moves_between_two_workers_old_hears_moved_new_hears_new_booking(
-    people: People, app_engine: Engine, owner: TestClient, team: str
+    people: People, app_engine: Engine, migrate_engine: Engine, owner: TestClient, team: str
 ) -> None:
-    ben = add_user(app_engine)
+    ben = add_user(migrate_engine)
     add_membership(people.a, ben)
     seed(people.a, ben, weekdays("09:00", "17:00"))
     assign(people.a, team, member_id(people.a, ben))
@@ -745,10 +746,11 @@ def test_the_team_template_set_is_complete() -> None:
 # The moved-to-another-member email: "now with" names the booking's snapshot worker; a NULL
 # snapshot falls back to the plain moved template. Kills: the file switch, a missing fallback.
 @pytest.fixture
-def clean_outbox(people: People) -> Iterator[None]:
+def clean_outbox(people: People, migrate_engine: Engine) -> Iterator[None]:
     yield
-    with tenant_context(people.a) as session:
-        session.execute(text("DELETE FROM email_outbox"))
+    # As the migrate role: the app role has no DELETE on email_outbox (ZB-10).
+    with migrate_tenant_context(migrate_engine, people.a) as conn:
+        conn.execute(text("DELETE FROM email_outbox"))
 
 
 @pytest.mark.usefixtures("clean_outbox")

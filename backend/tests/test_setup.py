@@ -146,8 +146,10 @@ def test_setup_lock_blocks_a_concurrent_user_insert(
 ) -> None:
     inserted = threading.Event()
 
+    # As the migrate role, as complete_sign_up and accept_invite insert: the app role has no INSERT
+    # on users (ZB-10).
     def insert() -> None:
-        with empty_install.app.begin() as conn:
+        with empty_install.migrate.begin() as conn:
             conn.execute(
                 text("INSERT INTO users (id, email) VALUES (:id, 'b@example.com')"),
                 {"id": uuid.uuid7()},

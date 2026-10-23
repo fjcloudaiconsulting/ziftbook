@@ -48,9 +48,9 @@ def client(app: FastAPI) -> TestClient:
 
 
 @pytest.fixture
-def stranger(app_engine: Engine, migrate_engine: Engine) -> Iterator[uuid.UUID]:
+def stranger(migrate_engine: Engine) -> Iterator[uuid.UUID]:
     """A user with a password and no business."""
-    user_id = add_user(app_engine)
+    user_id = add_user(migrate_engine)
     add_password(migrate_engine, user_id, PASSWORD)
     yield user_id
     with migrate_engine.begin() as conn:
