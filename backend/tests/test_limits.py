@@ -183,3 +183,18 @@ def test_addresses_that_do_not_parse_share_one_key() -> None:
     assert limits.ip_key("sign_in", "testclient") == limits.ip_key("sign_in", None)
     assert limits.ip_key("sign_in", "[::1]") == limits.ip_key("sign_in", "testclient")
     assert limits.ip_key("sign_in", "testclient") != limits.ip_key("sign_in", "192.0.2.1")
+
+
+def test_auth_keys_group_ipv6_by_48() -> None:
+    a = limits.ip_key("sign_in", "2001:db8:1:2::1", v6_prefix=48)
+    assert a == limits.ip_key("sign_in", "2001:db8:1:ffff::9", v6_prefix=48)
+    assert a != limits.ip_key("sign_in", "2001:db8:2::1", v6_prefix=48)
+
+
+def test_default_keys_still_group_by_64() -> None:
+    assert limits.ip_key("x", "2001:db8:1:2::1") != limits.ip_key("x", "2001:db8:1:3::1")
+
+
+def test_unparseable_and_mapped_addresses_still_key() -> None:
+    assert limits.ip_key("x", "not-an-ip", v6_prefix=48) == "x:ip:unknown"
+    assert limits.ip_key("x", "::ffff:192.0.2.1", v6_prefix=48) == "x:ip:192.0.2.1"

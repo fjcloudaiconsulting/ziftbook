@@ -30,7 +30,11 @@ def send_link(purpose: str, details: LinkRequest, request: Request) -> None:
     account: the email job decides what the inbox gets."""
     ip = request.client.host if request.client else None
     if limits.hit(
-        {limits.email_key(purpose, details.email): 3, limits.ip_key(purpose, ip): 10}, LINK_WINDOW
+        {
+            limits.email_key(purpose, details.email): 3,
+            limits.ip_key(purpose, ip, v6_prefix=limits.AUTH_V6_PREFIX): 10,
+        },
+        LINK_WINDOW,
     ):
         raise ApiError(429, "rate_limited")
     with SessionLocal.begin() as session:

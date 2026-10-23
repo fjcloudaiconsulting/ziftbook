@@ -1,6 +1,7 @@
 """ZIF-70: platform admin sessions (migration 0037, app/admin_auth.py) and the business() helper."""
 
 import hashlib
+import secrets
 import uuid
 from collections.abc import Iterator
 from datetime import timedelta
@@ -226,6 +227,26 @@ def test_admin_sign_in_rate_limited(
     assert response.json() == {"code": "rate_limited"}
     assert "set-cookie" not in response.headers
     assert len(checked) == 5  # the sixth was never hashed
+
+
+def test_admin_per_account_limit_is_per_64_within_a_48(app: FastAPI, an_admin: uuid.UUID) -> None:
+    # Someone sharing the admin's /48 must not be able to spend the admin's sign-in attempts.
+    email = email_of(an_admin)
+    network = f"2001:db8:{secrets.randbelow(65535) + 1:x}"
+    first = new_client(app, f"{network}:1::1")
+    statuses = [admin_sign_in(first, email, "wrong-password-123").status_code for _ in range(6)]
+    assert statuses[-1] == 429
+    assert admin_sign_in(new_client(app, f"{network}:2::1"), email).status_code == 200
+
+
+def test_admin_address_limit_is_shared_across_a_48(app: FastAPI) -> None:
+    network = f"2001:db8:{secrets.randbelow(65535) + 1:x}"
+    for subnet in (1, 2):
+        client = new_client(app, f"{network}:{subnet}::1")
+        for _ in range(10):
+            admin_sign_in(client, fresh_email(), "wrong-password-123")
+    third = new_client(app, f"{network}:3::1")
+    assert admin_sign_in(third, fresh_email(), "wrong-password-123").status_code == 429
 
 
 # fence: 30 minutes idle ends a session, and use keeps it alive. Kills reusing auth.IDLE (7 days),

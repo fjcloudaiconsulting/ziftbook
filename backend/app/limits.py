@@ -60,8 +60,12 @@ def email_key(action: str, email: str) -> str:
     return f"{action}:email:{digest}"
 
 
-def ip_key(action: str, host: str | None) -> str:
-    """IPv4 per address, IPv6 per /64 (one household or server).
+# Authentication routes key IPv6 by /48: a /48 holder can otherwise rotate 65,536 /64s.
+AUTH_V6_PREFIX = 48
+
+
+def ip_key(action: str, host: str | None, *, v6_prefix: int = 64) -> str:
+    """IPv4 per address, IPv6 per /64 by default (one household or server).
 
     Every address that doesn't parse shares one key, so it is still limited.
     """
@@ -71,10 +75,6 @@ def ip_key(action: str, host: str | None) -> str:
         return f"{action}:ip:unknown"
     if isinstance(address, ipaddress.IPv6Address):
         if address.ipv4_mapped is None:
-            # ponytail: a /48 holder can rotate 65,536 /64s. The per-email limit still caps each
-            # business account; admin sign-in keys email and address together (ZIF-71), so there
-            # only the second factor caps it. Widen to /56 if credential stuffing from IPv6 shows
-            # up.
-            return f"{action}:ip:{ipaddress.IPv6Network((int(address), 64), strict=False)}"
+            return f"{action}:ip:{ipaddress.IPv6Network((int(address), v6_prefix), strict=False)}"
         address = address.ipv4_mapped
     return f"{action}:ip:{address}"

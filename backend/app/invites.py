@@ -200,7 +200,9 @@ def find(token: str) -> Found:
 def lookup(body: InviteToken, request: Request, response: Response) -> InviteDetails:
     """What an invite link is for, so the page can ask for a new password or the existing one."""
     ip = request.client.host if request.client else None
-    if limits.hit({limits.ip_key("invite_lookup", ip): 10}, LINK_WINDOW):
+    if limits.hit(
+        {limits.ip_key("invite_lookup", ip, v6_prefix=limits.AUTH_V6_PREFIX): 10}, LINK_WINDOW
+    ):
         raise ApiError(429, "rate_limited")
     found = find(body.token)
     response.headers["Cache-Control"] = "no-store"
@@ -224,7 +226,9 @@ def accept(body: AcceptInvite, request: Request, response: Response) -> auth.Ses
     own, so its emails use the business's language until it signs in and sets one.
     """
     ip = request.client.host if request.client else None
-    if limits.hit({limits.ip_key("invite_accept", ip): 10}, LINK_WINDOW):
+    if limits.hit(
+        {limits.ip_key("invite_accept", ip, v6_prefix=limits.AUTH_V6_PREFIX): 10}, LINK_WINDOW
+    ):
         raise ApiError(429, "rate_limited")
     found = find(body.token)  # before any hashing: a dead link costs nothing
     password_hash = None

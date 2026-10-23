@@ -342,7 +342,7 @@ def sign_in(credentials: Credentials, request: Request, response: Response) -> S
     if limits.hit(
         {
             limits.email_key("sign_in", credentials.email): 10,
-            limits.ip_key("sign_in", ip): 50,
+            limits.ip_key("sign_in", ip, v6_prefix=limits.AUTH_V6_PREFIX): 50,
         },
         SIGN_IN_WINDOW,
     ):
