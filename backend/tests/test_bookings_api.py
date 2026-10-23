@@ -704,7 +704,7 @@ def test_a_cancelled_booking_frees_its_slot_through_the_route(
 
 # 22: GUARD, demoted honestly (see spec SS14.3 for the invariant this leaves unfenced). ZIF-157 B2:
 # also for a guest (the tenant advisory lock serialises create() first, so an unlocked upsert cannot
-# be shown red here).
+# be shown red here). ZB-19: both from one IP, since the cap counts per address and IP.
 @pytest.mark.parametrize("who", ["proven", "guest"])
 def test_the_pending_cap_holds_under_two_concurrent_bookings_of_one_address(
     people: People, app: FastAPI, owner: TestClient, who: str
@@ -716,6 +716,7 @@ def test_the_pending_cap_holds_under_two_concurrent_bookings_of_one_address(
     assign(people.a, service_a, member_id(people.a, people.both))
     assign(people.a, service_b, member_id(people.a, people.both))
     email = fresh_email()
+    address = fresh_address()
     barrier = threading.Barrier(2)
     results: list[Response] = []
     lock = threading.Lock()
@@ -724,7 +725,7 @@ def test_the_pending_cap_holds_under_two_concurrent_bookings_of_one_address(
         barrier.wait(timeout=10)
         post = post_booking if who == "proven" else post_guest
         response = post(
-            new_client(app), people.a, service_id, email=email, starts_at=at(clock_time)
+            new_client(app, address), people.a, service_id, email=email, starts_at=at(clock_time)
         )
         with lock:
             results.append(response)
@@ -1038,6 +1039,227 @@ def test_one_address_is_capped_across_businesses(people: People, app: FastAPI, r
     assert (eleventh.status_code, eleventh.json()) == (429, {"code": "rate_limited"})
 
 
+# ZB-19. Wrong impl: an address key charged before the placement (ten refusals would lock it),
+# whether the cross-business key or the per-business one.
+def test_refused_bookings_spend_no_address_budget(people: People, app: FastAPI, ready: str) -> None:
+    email = fresh_email()
+    for _ in range(10):
+        refused = post_guest(new_client(app), people.a, ready, email=email, starts_at=at("09:07"))
+        assert (refused.status_code, refused.json()) == (409, {"code": "slot_unavailable"})
+
+    assert post_guest(new_client(app), people.a, ready, email=email).status_code == 201
+
+
+# ZB-19. Wrong impl: the address key built from the address as entered.
+def test_an_alias_of_a_capped_address_is_capped(people: People, app: FastAPI, ready: str) -> None:
+    email = f"someone{uuid.uuid4().hex[:8]}@example.com"
+    for _ in range(10):
+        assert not limits.hit(
+            {limits.email_key("booking_verify", limits.address_for_limits(email)): 10},
+            timedelta(hours=1),
+        )
+
+    response = post_guest(new_client(app), people.a, ready, email=email.replace("@", "+tag@"))
+
+    assert (response.status_code, response.json()) == (429, {"code": "rate_limited"})
+
+
+def placements(tenant_id: uuid.UUID, email: str) -> tuple[int, int]:
+    """The hits on an address's two placement keys this hour: every business, and this one."""
+    folded, hour = limits.address_for_limits(email), timedelta(hours=1)
+    return (
+        limits.count(limits.email_key("booking_verify", folded), hour),
+        limits.count(limits.email_key("booking_placed", f"{tenant_id}:{folded}"), hour),
+    )
+
+
+# ZB-19. Wrong impl: the per-business address key built from the address as entered.
+def test_aliases_share_the_per_business_placement_limit(
+    people: People, app: FastAPI, ready: str
+) -> None:
+    mailbox = f"some.one{uuid.uuid4().hex[:8]}"
+    for n, clock_time in enumerate(("09:00", "10:00", "11:00", "12:00", "13:00")):
+        alias = f"{mailbox}+{n}@gmail.com"
+        placed = post_guest(new_client(app), people.a, ready, email=alias, starts_at=at(clock_time))
+        assert (clock_time, placed.status_code) == (clock_time, 201)
+
+    sixth = post_guest(
+        new_client(app),
+        people.a,
+        ready,
+        email=f"{mailbox.replace('.', '')}@googlemail.com",
+        starts_at=at("14:00"),
+    )
+
+    assert (sixth.status_code, sixth.json()) == (429, {"code": "rate_limited"})
+
+
+# ZB-19. Wrong impl: the per-business attempt key on the address alone, so one requester's
+# refusals lock the address out of the business for everyone.
+def test_refusals_from_one_ip_leave_the_address_bookable_from_another(
+    people: People, app: FastAPI, ready: str
+) -> None:
+    email = fresh_email()
+    elsewhere = new_client(app)
+    for _ in range(5):
+        refused = post_guest(elsewhere, people.a, ready, email=email, starts_at=at("09:07"))
+        assert (refused.status_code, refused.json()) == (409, {"code": "slot_unavailable"})
+    sixth = post_guest(elsewhere, people.a, ready, email=email, starts_at=at("09:07"))
+    assert (sixth.status_code, sixth.json()) == (429, {"code": "rate_limited"})
+
+    response = post_guest(new_client(app), people.a, ready, email=email)
+
+    assert response.status_code == 201, response.json()
+
+
+# ZB-19. Wrong impl: the cross-business key read before the placement and charged after it, so a
+# booking that starts while another holds the address's last placement reads it free too.
+def test_a_booking_racing_for_the_last_placement_is_refused(
+    people: People, app: FastAPI, ready: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    email = fresh_email()
+    for _ in range(bookings.ADDRESS_LIMIT - 1):
+        assert not limits.hit({limits.email_key("booking_verify", email): 10}, timedelta(hours=1))
+    real_booked = availability.booked
+    holding, release = threading.Event(), threading.Event()
+
+    def paused_booked(db: Any, members_: Any, start: Any, end: Any, *, exclude: Any = None) -> Any:
+        result = real_booked(db, members_, start, end, exclude=exclude)
+        if not holding.is_set():
+            holding.set()
+            release.wait(timeout=10)
+        return result
+
+    monkeypatch.setattr(availability, "booked", paused_booked)
+    results: dict[str, Response] = {}
+
+    def first() -> None:
+        results["first"] = post_guest(new_client(app), people.a, ready, email=email)
+
+    thread = threading.Thread(target=first)
+    thread.start()
+    assert holding.wait(timeout=10)
+    try:
+        second = post_guest(new_client(app), people.a, ready, email=email, starts_at=at("11:00"))
+    finally:
+        release.set()
+        thread.join(timeout=10)
+
+    assert (second.status_code, second.json()) == (429, {"code": "rate_limited"})
+    assert results["first"].status_code == 201, results["first"].json()
+    assert placements(people.a, email) == (bookings.ADDRESS_LIMIT, 1)
+
+
+# ZB-19. Wrong impls: the placement keys reserved and not given back when nothing is placed, or
+# given back twice (each key starts at one hit, so a second refund shows), or given back inside the
+# booking transaction (a second pooled connection under the tenant lock, see bookings.account).
+@pytest.mark.parametrize("failure", ["refused", "busy", "error"])
+def test_a_booking_not_placed_gives_its_placement_back(
+    people: People,
+    app: FastAPI,
+    ready: str,
+    migrate_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
+) -> None:
+    def boom(db: object) -> Any:
+        if failure == "busy":
+            raise OperationalError("boom", {}, Exception("boom"))
+        raise RuntimeError("boom")
+
+    if failure != "refused":
+        monkeypatch.setattr(schedule, "envelope", boom)
+    real_refund = limits.refund
+    locked_at_refund: list[int] = []
+
+    def watched_refund(keys: list[str], window: timedelta) -> None:
+        with migrate_engine.connect() as conn:
+            locked_at_refund.append(
+                conn.scalar(
+                    text(
+                        "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' "
+                        "AND classid = 51 AND granted AND database = (SELECT oid FROM "
+                        "pg_database WHERE datname = current_database())"
+                    )
+                )
+            )
+        real_refund(keys, window)
+
+    monkeypatch.setattr(limits, "refund", watched_refund)
+    email = fresh_email()
+    folded = limits.address_for_limits(email)
+    limits.hit(
+        {
+            limits.email_key("booking_verify", folded): 10,
+            limits.email_key("booking_placed", f"{people.a}:{folded}"): 5,
+        },
+        timedelta(hours=1),
+    )
+
+    response = post_guest(
+        new_client(app),
+        people.a,
+        ready,
+        email=email,
+        starts_at=at("09:07" if failure == "refused" else "09:00"),
+    )
+
+    assert response.status_code == {"refused": 409, "busy": 503, "error": 500}[failure]
+    assert placements(people.a, email) == (1, 1)
+    assert locked_at_refund == [0]
+
+
+# ZB-19. Wrong impl: the refund in a path where its own failure replaces the answer.
+def test_a_failed_refund_still_answers_the_refusal(
+    people: People, app: FastAPI, ready: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def broken(keys: list[str], window: timedelta) -> None:
+        raise OperationalError("boom", {}, Exception("boom"))
+
+    monkeypatch.setattr(limits, "refund", broken)
+
+    response = post_guest(new_client(app), people.a, ready, starts_at=at("09:07"))
+
+    assert (response.status_code, response.json()) == (409, {"code": "slot_unavailable"})
+
+
+# ZB-19. Wrong impl: the pending cap on the address alone, so live pendings from one requester
+# lock the address out of the business for everyone. The bucket is the booking IP key's: one
+# IPv6 /64 is one requester.
+def test_pendings_from_one_ip_leave_the_address_bookable_from_another(
+    people: People, app: FastAPI, ready: str
+) -> None:
+    email = fresh_email()
+    network = fresh_address().removesuffix("::1")
+    elsewhere = new_client(app, f"{network}::1")
+    for clock_time in ("09:00", "10:00", "11:00"):  # the default cap, 3
+        placed = post_guest(elsewhere, people.a, ready, email=email, starts_at=at(clock_time))
+        assert (clock_time, placed.status_code) == (clock_time, 201)
+    same_network = new_client(app, f"{network}::2")
+    capped = post_guest(same_network, people.a, ready, email=email, starts_at=at("12:00"))
+    assert (capped.status_code, capped.json()) == (429, {"code": "rate_limited"})
+
+    response = post_guest(new_client(app), people.a, ready, email=email, starts_at=at("13:00"))
+
+    assert response.status_code == 201, response.json()
+
+
+# ZB-19. Wrong impl: the pending cap per IP with no ceiling across them.
+def test_the_pending_cap_has_a_ceiling_across_ips(
+    people: People, app: FastAPI, owner: TestClient, ready: str
+) -> None:
+    assert put_settings(owner, {"max_pending_per_email": 1}).status_code == 200
+    email = fresh_email()
+    for clock_time in ("09:00", "10:00", "11:00"):  # 3 x the cap, each from its own IP
+        placed = post_guest(new_client(app), people.a, ready, email=email, starts_at=at(clock_time))
+        assert (clock_time, placed.status_code) == (clock_time, 201)
+
+    response = post_guest(new_client(app), people.a, ready, email=email, starts_at=at("12:00"))
+
+    assert (response.status_code, response.json()) == (429, {"code": "rate_limited"})
+    assert placements(people.a, email) == (3, 3)
+
+
 # ZIF-157 B2 FENCE 9 (replaces "a refused anonymous post spends no limit": its 403-before-limits
 # premise is gone). Wrong impl: booking_verify hit before Turnstile (the 11th would answer 429).
 def test_a_turnstile_refused_post_spends_no_address_budget(
@@ -1223,7 +1445,7 @@ def test_the_posted_turnstile_token_reaches_cloudflare(
 
 
 # ZIF-157 B2 FENCE 7 (replaces 29: 30 posts per IP to one business). Wrong impl: a global-only IP
-# limit. Keeps the per-(business, address) 5/h half.
+# limit. Keeps the per-(business, address) 5/h half, which since ZB-19 counts placed bookings.
 def test_one_ip_books_one_business_ten_times_an_hour(
     people: People, app: FastAPI, owner: TestClient, ready: str
 ) -> None:
@@ -1242,9 +1464,10 @@ def test_one_ip_books_one_business_ten_times_an_hour(
     assert post_guest(client, people.b, b_service).status_code != 429
 
     email = fresh_email()
-    for _ in range(5):
-        assert post_guest(new_client(app), people.a, ready, email=email).status_code != 429
-    sixth = post_guest(new_client(app), people.a, ready, email=email)
+    for clock_time in ("10:00", "11:00", "12:00", "13:00", "14:00"):  # 09:00 went above
+        placed = post_guest(new_client(app), people.a, ready, email=email, starts_at=at(clock_time))
+        assert (clock_time, placed.status_code) == (clock_time, 201)
+    sixth = post_guest(new_client(app), people.a, ready, email=email, starts_at=at("15:00"))
     assert (sixth.status_code, sixth.json()) == (429, {"code": "rate_limited"})
     other = post_guest(new_client(app), people.b, b_service, email=email, starts_at=at("10:00"))
     assert other.status_code == 201

@@ -413,7 +413,8 @@ loggers (`web.*`); Next's own stderr output (banners, SSR error traces) is not i
 - Abuse events, ids and reasons only: `turnstile mismatch` (WARNING, `reason` `hostname` or `action`:
   a passing token solved on another host or for another form, as when `ZIF_APP_URL` doesn't name the
   site's host); `admin sign-in failures` (WARNING, `target` `user:<id>`, null for an unknown email,
-  when an email's wrong passwords reach the admin sign-in challenge).
+  when an email's wrong passwords reach the admin sign-in challenge); `booking placement refund failed`
+  (WARNING, with `exc`: a booking that was not placed keeps its address limits counted).
 - `ZIF_LOG_SQL=true` logs SQL statements, never their values, when `ZIF_LOG_LEVEL` is `DEBUG`; off by
   default.
 - Ids only: never a password, token or its hash, cookie, email address, name, business or service name,

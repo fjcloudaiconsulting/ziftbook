@@ -217,3 +217,74 @@ def test_default_keys_still_group_by_64() -> None:
 def test_unparseable_and_mapped_addresses_still_key() -> None:
     assert limits.ip_key("x", "not-an-ip", v6_prefix=48) == "x:ip:unknown"
     assert limits.ip_key("x", "::ffff:192.0.2.1", v6_prefix=48) == "x:ip:192.0.2.1"
+
+
+def test_aliases_share_one_limit_key() -> None:
+    assert limits.address_for_limits("a.b+1@gmail.com") == limits.address_for_limits(
+        "ab+2@googlemail.com"
+    )
+    assert limits.address_for_limits("a+x@example.com") == "a@example.com"
+    assert limits.address_for_limits("A.B@Example.com") == "a.b@example.com"  # dots count off Gmail
+
+
+# ZB-19. Wrong impl: folding that indexes into a split it assumes has an '@', or that encodes.
+@pytest.mark.parametrize("email", ["no-at-sign", "ünï.cødé+tag@exämple.com", "a\ud800@x.nl", "@"])
+def test_folding_never_raises(email: str) -> None:
+    assert isinstance(limits.address_for_limits(email), str)
+
+
+# ZB-19. Wrong impls: a refund that takes more than one hit, goes below zero, or touches a key it
+# was not given.
+def test_a_refund_gives_back_one_hit_per_key(action: str) -> None:
+    once, twice, absent, other = (f"{action}:{n}" for n in ("once", "twice", "absent", "other"))
+    limits.hit({once: 5, twice: 5, other: 5}, WINDOW)
+    limits.hit({twice: 5}, WINDOW)
+
+    limits.refund([once, twice, absent], WINDOW)
+    limits.refund([once], WINDOW)  # already at zero
+
+    assert [limits.count(k, WINDOW) for k in (once, twice, absent, other)] == [0, 1, 0, 1]
+
+
+# ZB-19. Wrong impl: a refund that reaches into a window hit() would start again.
+def test_a_refund_leaves_an_expired_window_alone(action: str, app_engine: Engine) -> None:
+    key = f"{action}:k"
+    limits.hit({key: 5}, WINDOW)
+    with app_engine.begin() as conn:
+        conn.execute(
+            text("UPDATE rate_limits SET window_start = now() - :w WHERE key = :k"),
+            {"w": WINDOW + timedelta(seconds=1), "k": key},
+        )
+
+    limits.refund([key], WINDOW)
+
+    with app_engine.connect() as conn:
+        assert conn.scalar(text("SELECT hits FROM rate_limits WHERE key = :k"), {"k": key}) == 1
+
+
+# ZB-19. Wrong impl: a refund that locks its keys in another order than hit() does.
+def test_refunds_and_hits_on_the_same_keys_do_not_deadlock(action: str) -> None:
+    first, second = f"{action}:a", f"{action}:b"
+    limits.hit({second: 1000}, WINDOW)  # stored out of key order, as a scan may meet them
+    limits.hit({first: 1000}, WINDOW)
+    start = threading.Barrier(16)
+    errors: list[Exception] = []
+
+    def attempt(refunding: bool) -> None:
+        start.wait()
+        for _ in range(20):
+            try:
+                if refunding:
+                    limits.refund([second, first], WINDOW)
+                else:
+                    limits.hit({first: 1000, second: 1000}, WINDOW)
+            except Exception as error:
+                errors.append(error)
+
+    threads = [threading.Thread(target=attempt, args=(n % 2 == 0,)) for n in range(16)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert errors == []

@@ -66,6 +66,27 @@ def charge(key: str, window: timedelta) -> int:
     return _charge([key], window)[key]
 
 
+# Locks the keys in sorted order before REFUND writes them, as HIT does: an UPDATE alone locks in
+# scan order, and a refund racing a hit() on the same keys could then deadlock.
+LOCK_KEYS = text("""
+SELECT key FROM rate_limits WHERE key = ANY(CAST(:keys AS text[])) ORDER BY key FOR UPDATE
+""")
+
+REFUND = text("""
+UPDATE rate_limits SET hits = hits - 1
+WHERE key = ANY(CAST(:keys AS text[])) AND hits > 0
+  AND window_start > now() - CAST(:window AS interval)
+""")
+
+
+def refund(keys: list[str], window: timedelta) -> None:
+    """Give back one hit on each key, for an attempt hit() counted that is not to count after all.
+    Only in the live window, never below zero, in its own transaction like hit()."""
+    with SessionLocal.begin() as session:
+        session.execute(LOCK_KEYS, {"keys": sorted(keys)})
+        session.execute(REFUND, {"keys": sorted(keys), "window": window})
+
+
 COUNT = text("""
 SELECT hits FROM rate_limits WHERE key = :key AND window_start > now() - CAST(:window AS interval)
 """)
@@ -84,6 +105,20 @@ def email_key(action: str, email: str) -> str:
     # surrogatepass: a lone surrogate from a JSON body must not turn into a 500 here.
     digest = hashlib.sha256(email.encode("utf-8", "surrogatepass")).hexdigest()
     return f"{action}:email:{digest}"
+
+
+GMAIL_DOMAINS = frozenset({"gmail.com", "googlemail.com"})
+
+
+def address_for_limits(email: str) -> str:
+    """The address as a limit key sees it: lowercase, without a `+tag`, and for Gmail without dots
+    and under one domain, so aliases of one mailbox share a key. Used only to build limit keys;
+    storage and delivery keep the address as entered."""
+    local, _, domain = email.lower().rpartition("@")
+    local = local.split("+", 1)[0]
+    if domain in GMAIL_DOMAINS:
+        local, domain = local.replace(".", ""), "gmail.com"
+    return f"{local}@{domain}"
 
 
 # Authentication routes key IPv6 by /48: a /48 holder can otherwise rotate 65,536 /64s.
