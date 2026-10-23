@@ -22,3 +22,6 @@ __pycache__/
 # Local agent instructions and plugin state (never committed)
 /CLAUDE.md
 /.claude/
+
+# Local graphify output (never committed)
+graphify-out/

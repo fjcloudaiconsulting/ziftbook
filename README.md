@@ -7,7 +7,7 @@ Appointment booking for small service businesses.
 Prerequisites: `git`, `make`, [uv](https://docs.astral.sh/uv/), Node 24 with [pnpm](https://pnpm.io/), Docker.
 
 ```sh
-make setup   # enable git hooks, install api and web dependencies
+make setup   # install the commit-msg hook, install api and web dependencies
 make lint typecheck test
 ```
 

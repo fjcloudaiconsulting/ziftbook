@@ -7,8 +7,10 @@ WEB := $(PNPM) --dir frontend
 # setup with it.
 DEV_SETUP_TOKEN := dev-only-setup-token-not-a-secret-0000
 
-setup: ## One-time: enable the repo git hooks and install api and web dependencies
-	git config core.hooksPath .githooks
+setup: ## One-time: install the commit-msg git hook and the api and web dependencies
+	git config --unset core.hooksPath || true
+	hooks="$$(git rev-parse --git-common-dir)/hooks" && mkdir -p "$$hooks" && install -m 0755 .githooks/commit-msg "$$hooks/commit-msg"
+	@if path="$$(git config --get core.hooksPath)"; then echo "WARNING: core.hooksPath is still set ($$path), globally or system-wide: git will not run this repo's hook until you unset it (git config --global --unset core.hooksPath)."; fi
 	uv sync --directory backend
 	$(WEB) install
 
