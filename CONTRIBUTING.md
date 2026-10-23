@@ -170,8 +170,8 @@ that person's platform account (ZIF-99).
   that address's own account (`refresh=True`); every other caller fills blanks only**, and its docstring is the one
   home for what that costs and for the duties it puts on the route that calls it. Read it before writing that route.
 - A business never finds a platform user it has no relationship with: nothing a business's session can reach
-  answers by email or name across tenants (`account_by_email` does, but only for sign-in and invite acceptance,
-  which need a password or an invite token). `tests/test_directory_ban.py` pins the `users` policies, every SECURITY
+  answers by email or name across tenants (`account_by_email` does, but only for sign-in (app and admin) and invite
+  lookup and acceptance, which need a password or an invite token). `tests/test_directory_ban.py` pins the `users` policies, every SECURITY
   DEFINER function the app role can execute, and the views over `users`, so widening any of them is a deliberate
   test change.
 

@@ -113,7 +113,9 @@ def test_an_invite_answers_the_same_for_a_member_a_client_and_nobody(
             )
         seen.append((response.status_code, sorted(response.json()), kind))
     assert seen[0] == seen[1] == seen[2]
-    assert seen[0][0] == 201
+    # What the route returns, not only the schema: a new response model carrying a link would pass
+    # the InviteOut pin below.
+    assert seen[0][:2] == (201, ["email", "expired", "expires_at", "id"])
     # If InviteOut returned the token or link, the owner could call POST /api/invites/lookup with it
     # and read has_account for any address.
     assert set(
@@ -278,12 +280,15 @@ def test_no_view_the_app_can_read_reads_users(migrate_engine: Engine) -> None:
                 SELECT 'public.users'::regclass::oid
                 UNION
                 SELECT r.ev_class FROM reads
-                JOIN pg_depend d ON d.refobjid = reads.oid AND d.classid = 'pg_rewrite'::regclass
+                JOIN pg_depend d ON d.refobjid = reads.oid AND d.refclassid = 'pg_class'::regclass
+                    AND d.classid = 'pg_rewrite'::regclass
                 JOIN pg_rewrite r ON r.oid = d.objid
                 WHERE r.ev_class <> reads.oid
             )
             SELECT c.oid::regclass::text FROM reads JOIN pg_class c ON c.oid = reads.oid
-            WHERE c.relkind IN ('v', 'm') AND has_table_privilege('ziftbook_app', c.oid, 'SELECT')
+            -- any column: a column-level GRANT reads emails as well as a table-level one
+            WHERE c.relkind IN ('v', 'm')
+              AND has_any_column_privilege('ziftbook_app', c.oid, 'SELECT')
             ORDER BY 1
             """)
         ).all()
