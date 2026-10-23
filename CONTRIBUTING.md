@@ -406,7 +406,13 @@ loggers (`web.*`); Next's own stderr output (banners, SSR error traces) is not i
   `client mail over quota` (WARNING, `template`, `source` `merchant` or `public`, when a business's
   hourly client email quota holds an email back at enqueue); never the
   address, subject or body. Each process logs one startup line (`api started`, `worker started`, `migrations started`) with its
-  non-secret settings.
+  non-secret settings. Among the startup lines that need acting on:
+  `turnstile secret unset: bookings, sign-ups, resets and sign-in challenges refused` (ERROR, API);
+  `turnstile disabled on a public url` (ERROR, API: `ZIF_TURNSTILE_DISABLED` while `ZIF_APP_URL` is
+  not localhost).
+- Abuse events, ids and reasons only: `turnstile mismatch` (WARNING, `reason` `hostname` or `action`:
+  a passing token solved on another host or for another form, as when `ZIF_APP_URL` doesn't name the
+  site's host).
 - `ZIF_LOG_SQL=true` logs SQL statements, never their values, when `ZIF_LOG_LEVEL` is `DEBUG`; off by
   default.
 - Ids only: never a password, token or its hash, cookie, email address, name, business or service name,

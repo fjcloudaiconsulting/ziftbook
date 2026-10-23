@@ -8,6 +8,7 @@ import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from typing import Any
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
@@ -48,6 +49,7 @@ from app import (
 )
 from app.config import (
     DatabaseSettings,
+    MailSettings,
     Settings,
     StorageSettings,
     StripeSettings,
@@ -180,7 +182,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         extra={
             **logs.settings_fields(),
             "trusted_proxies": Settings().trusted_proxies,
-            # Never the secret. "off": public bookings are refused unless ZIF_TURNSTILE_DISABLED.
+            # Never the secret. "off": bookings, sign-ups, password resets and sign-in challenges
+            # are refused unless ZIF_TURNSTILE_DISABLED.
             "turnstile": "on" if turnstile.enabled() else "off",
             # Never the token. "unset"/"weak"/"dev": first-run setup is refused (ZIF-70).
             "setup_token": setup_token,
@@ -193,9 +196,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         },
     )
     # ZIF-116: logged, never a refusal to start. The deployments run one replica with Recreate, so a
-    # failed start would take the whole API down over a control only public booking needs.
+    # failed start would take the whole API down over a control only the guarded requests need.
     if not turnstile.enabled() and not TurnstileSettings().turnstile_disabled:
-        logger.error("turnstile secret unset: public bookings refused")
+        logger.error(
+            "turnstile secret unset: bookings, sign-ups, resets and sign-in challenges refused"
+        )
+    # The opt-out is for development: on a public URL it leaves every Turnstile-guarded form open.
+    if TurnstileSettings().turnstile_disabled:
+        if urlsplit(MailSettings().app_url).hostname not in ("localhost", "127.0.0.1", "::1"):
+            logger.error("turnstile disabled on a public url")
     # Only while setup is still to be done: operators may remove the token afterwards. Never a
     # refusal to start, and a database error skips the line.
     if setup_token != "set" and setup.needed_at_startup(DatabaseSettings().database_url):

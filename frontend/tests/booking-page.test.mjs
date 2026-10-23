@@ -575,3 +575,14 @@ describe("F2 the payment step (ZIF-158)", () => {
     assert.equal(sendAction({ working: false, sent: true, hasSecret: false }), "reopen");
   });
 });
+
+describe("Turnstile widget", () => {
+  test("fence: the booking widget is rendered for the booking action, the one the API checks (ZB-20)", () => {
+    // Wrong implementation killed: dropping or renaming the action, so every passing token is refused.
+    const source = readFileSync(new URL("../app/[locale]/[slug]/booking-page.tsx", import.meta.url), "utf8");
+    const start = source.indexOf("w.render(el, {");
+    assert.notEqual(start, -1);
+    const options = source.slice(start, source.indexOf("callback:", start));
+    assert.match(options, /\baction: "booking",/);
+  });
+});

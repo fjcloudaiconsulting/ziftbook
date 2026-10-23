@@ -32,8 +32,8 @@ def test_verification_is_skipped_when_no_secret_is_configured_and_it_is_disabled
     monkeypatch.setenv("ZIF_TURNSTILE_DISABLED", "true")
     monkeypatch.setattr(urllib.request, "urlopen", never_called)
 
-    assert turnstile.verify(None, None) is True
-    assert turnstile.verify("a-token", "203.0.113.1") is True
+    assert turnstile.verify(None, None, action="booking") is True
+    assert turnstile.verify("a-token", "203.0.113.1", action="booking") is True
 
 
 # ZIF-116 FENCE. Wrong impl: `if not secret: return True` (fail open, the old default), or reading
@@ -48,7 +48,7 @@ def test_no_secret_refuses_unless_turnstile_is_disabled(
         monkeypatch.setenv("ZIF_TURNSTILE_DISABLED", disabled)
     monkeypatch.setattr(urllib.request, "urlopen", never_called)
 
-    assert turnstile.verify("a-token", "203.0.113.1") is False
+    assert turnstile.verify("a-token", "203.0.113.1", action="booking") is False
 
 
 # ZIF-116 FENCE. Wrong impl: the flag compared as a string (`== "true"`), so a typo silently refuses
@@ -59,7 +59,7 @@ def test_a_malformed_disabled_flag_is_an_error_not_a_quiet_refusal(
     monkeypatch.setenv("ZIF_TURNSTILE_DISABLED", "yes-please")
 
     with pytest.raises(ValidationError):
-        turnstile.verify("a-token", "203.0.113.1")
+        turnstile.verify("a-token", "203.0.113.1", action="booking")
 
 
 # ZIF-116 FENCE. Wrong impl: the flag checked before the secret, so a forgotten opt-out turns off a
@@ -77,7 +77,7 @@ def test_a_configured_secret_is_checked_even_when_turnstile_is_disabled(
 
     monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
 
-    assert turnstile.verify("a-token", "203.0.113.1") is False
+    assert turnstile.verify("a-token", "203.0.113.1", action="booking") is False
     assert len(calls) == 1
 
 
@@ -93,6 +93,9 @@ class FakeAnswer:
 
     def read(self) -> bytes:
         return self._body
+
+
+MATCHING = {"success": True, "hostname": "localhost", "action": "booking"}
 
 
 def json_answer(body: dict[str, Any]) -> FakeAnswer:
@@ -134,17 +137,17 @@ def test_verification_fails_closed(monkeypatch: pytest.MonkeyPatch, make_urlopen
 
     monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
 
-    assert turnstile.verify("a-token", "203.0.113.1") is False
+    assert turnstile.verify("a-token", "203.0.113.1", action="booking") is False
 
 
 def test_verification_succeeds_with_a_true_answer(monkeypatch: pytest.MonkeyPatch) -> None:
     # So the fail-closed test above cannot pass by always failing.
     monkeypatch.setenv("ZIF_TURNSTILE_SECRET", "shhh")
     monkeypatch.setattr(
-        urllib.request, "urlopen", lambda request, timeout=None: json_answer({"success": True})
+        urllib.request, "urlopen", lambda request, timeout=None: json_answer(MATCHING)
     )
 
-    assert turnstile.verify("a-token", "203.0.113.1") is True
+    assert turnstile.verify("a-token", "203.0.113.1", action="booking") is True
 
 
 # 46: GUARD.
@@ -154,8 +157,8 @@ def test_a_missing_or_over_long_token_never_reaches_the_network(
     monkeypatch.setenv("ZIF_TURNSTILE_SECRET", "shhh")
     monkeypatch.setattr(urllib.request, "urlopen", never_called)
 
-    assert turnstile.verify(None, None) is False
-    assert turnstile.verify("x" * 2049, None) is False
+    assert turnstile.verify(None, None, action="booking") is False
+    assert turnstile.verify("x" * 2049, None, action="booking") is False
 
 
 # 47: FENCE. Wrong impl: omit the `turnstile` field from main.lifespan's log call.
@@ -182,7 +185,7 @@ def test_the_api_started_line_says_whether_turnstile_is_on(
     [(None, None, 1), (None, "true", 0), ("shhh", None, 0)],
     ids=["unset", "disabled", "configured"],
 )
-def test_startup_logs_an_error_while_public_bookings_are_refused(
+def test_startup_logs_an_error_while_turnstile_guarded_requests_are_refused(
     log_lines: Callable[[], list[dict[str, Any]]],
     monkeypatch: pytest.MonkeyPatch,
     secret: str | None,
@@ -198,7 +201,12 @@ def test_startup_logs_an_error_while_public_bookings_are_refused(
     with new_client(create_app()) as client:
         assert client.get("/api/healthz").status_code == 200
 
-    refused = [line for line in log_lines() if "public bookings refused" in line["msg"]]
+    refused = [
+        line
+        for line in log_lines()
+        if line["msg"]
+        == "turnstile secret unset: bookings, sign-ups, resets and sign-in challenges refused"
+    ]
     assert [line["level"] for line in refused] == ["ERROR"] * errors
 
 
@@ -209,7 +217,7 @@ def test_startup_logs_an_error_while_public_bookings_are_refused(
     [
         (lambda: (_ for _ in ()).throw(OSError("boom")), False),
         (lambda: json_answer({"success": False, "error-codes": ["timeout-or-duplicate"]}), False),
-        (lambda: json_answer({"success": True}), True),
+        (lambda: json_answer(MATCHING), True),
     ],
     ids=["oserror", "timeout-or-duplicate", "success"],
 )
@@ -225,8 +233,68 @@ def test_verification_calls_siteverify_at_most_once(
 
     monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
 
-    assert turnstile.verify("a-single-use-token", "203.0.113.1") is expected
+    assert turnstile.verify("a-single-use-token", "203.0.113.1", action="booking") is expected
     assert len(calls) == 1
+
+
+def secret_set(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ZIF_TURNSTILE_SECRET", "shhh")
+
+
+def answer(monkeypatch: pytest.MonkeyPatch, body: dict[str, Any]) -> None:
+    monkeypatch.setattr(urllib.request, "urlopen", lambda request, timeout=None: json_answer(body))
+
+
+def test_a_token_solved_on_another_hostname_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    secret_set(monkeypatch)
+    answer(monkeypatch, {"success": True, "hostname": "staging.example.com", "action": "booking"})
+    assert turnstile.verify("t", None, action="booking") is False
+
+
+def test_a_token_for_another_action_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    secret_set(monkeypatch)
+    answer(monkeypatch, {"success": True, "hostname": "localhost", "action": "sign_in"})
+    assert turnstile.verify("t", None, action="booking") is False
+
+
+def test_a_matching_answer_passes(monkeypatch: pytest.MonkeyPatch) -> None:
+    secret_set(monkeypatch)
+    answer(monkeypatch, {"success": True, "hostname": "localhost", "action": "booking"})
+    assert turnstile.verify("t", None, action="booking") is True
+
+
+# ZB-20: a passing token refused for its hostname or action is logged by reason only, so a
+# ZIF_APP_URL that doesn't match the site is diagnosable; never the token, hostname or address.
+@pytest.mark.parametrize(
+    ("body", "reason"),
+    [
+        ({"success": True, "hostname": "staging.example.com", "action": "booking"}, "hostname"),
+        ({"success": True, "hostname": "localhost", "action": "sign_in"}, "action"),
+        ({"success": True, "action": "booking"}, "hostname"),
+        (MATCHING, None),
+        ({"success": False, "hostname": "staging.example.com", "action": "sign_in"}, None),
+    ],
+    ids=["hostname", "action", "no-hostname", "matching", "failed"],
+)
+def test_a_mismatch_is_logged_by_reason_only(
+    log_lines: Callable[[], list[dict[str, Any]]],
+    monkeypatch: pytest.MonkeyPatch,
+    body: dict[str, Any],
+    reason: str | None,
+) -> None:
+    secret_set(monkeypatch)
+    answer(monkeypatch, body)
+    token = "a-token-" + "x" * 8
+
+    turnstile.verify(token, "203.0.113.7", action="booking")
+
+    lines = log_lines()
+    mismatches = [line for line in lines if line["msg"] == "turnstile mismatch"]
+    expected = [] if reason is None else [{"level": "WARNING", "reason": reason}]
+    assert [{"level": line["level"], "reason": line["reason"]} for line in mismatches] == expected
+    dumped = json.dumps(lines)
+    for private in (token, "staging.example.com", "203.0.113.7"):
+        assert private not in dumped
 
 
 def test_enabled_reflects_the_secret(monkeypatch: pytest.MonkeyPatch) -> None:

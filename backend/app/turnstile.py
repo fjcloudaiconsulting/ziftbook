@@ -5,8 +5,9 @@ import json
 import logging
 import urllib.parse
 import urllib.request
+from urllib.parse import urlsplit
 
-from app.config import TurnstileSettings
+from app.config import MailSettings, TurnstileSettings
 
 SITEVERIFY = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
 TIMEOUT = 3  # seconds. The endpoint runs in the threadpool (a sync `def`), so this blocks a thread.
@@ -19,13 +20,16 @@ def enabled() -> bool:
     return bool(TurnstileSettings().turnstile_secret)
 
 
-def verify(token: str | None, ip: str | None) -> bool:
+def verify(token: str | None, ip: str | None, *, action: str) -> bool:
     """Whether Cloudflare says this token passed. FAILS CLOSED on any verification failure and on
     any network or parse error: a visitor who cannot be verified is not admitted.
 
     No secret configured means no visitor can be verified, so this returns False, unless
     ZIF_TURNSTILE_DISABLED opts out (development and the test suite, which need no network). The
     API logs an ERROR at startup while it refuses (app/main.py).
+
+    A passing answer must also name this deployment's hostname (the host of the configured app URL)
+    and the `action` the caller asks for: a token solved elsewhere or for another form is refused.
 
     EXACTLY ONE call to urlopen per request, and NEVER a retry - spec C9, and a rule rather than a
     preference. A Turnstile token is single use and lives 300 seconds, and the first call spends it
@@ -63,4 +67,15 @@ def verify(token: str | None, ip: str | None) -> bool:
     # isinstance before .get: siteverify is documented to answer an object, but `[]`, `"ok"`,
     # `null` and `123` are all valid JSON that json.load accepts and .get raises AttributeError
     # on - again a 500 rather than a refusal. Anything that is not an object is not a pass.
-    return isinstance(result, dict) and result.get("success") is True
+    if not isinstance(result, dict) or result.get("success") is not True:
+        return False
+    if result.get("hostname") != urlsplit(MailSettings().app_url).hostname:
+        reason = "hostname"
+    elif result.get("action") != action:
+        reason = "action"
+    else:
+        return True
+    # A pass refused for where or what it was solved for: the reason only, so a ZIF_APP_URL that
+    # doesn't match the site's host is diagnosable. Never the token, the hostname or the address.
+    logger.warning("turnstile mismatch", extra={"reason": reason})
+    return False

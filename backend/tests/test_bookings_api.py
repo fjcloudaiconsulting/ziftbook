@@ -1044,11 +1044,11 @@ def test_a_turnstile_refused_post_spends_no_address_budget(
     people: People, app: FastAPI, ready: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     email = fresh_email()
-    monkeypatch.setattr(turnstile, "verify", lambda *args: False)
+    monkeypatch.setattr(turnstile, "verify", lambda *args, **kwargs: False)
     for _ in range(10):
         refused = post_guest(new_client(app), people.a, ready, email=email)
         assert (refused.status_code, refused.json()) == (403, {"code": "turnstile_failed"})
-    monkeypatch.setattr(turnstile, "verify", lambda *args: True)
+    monkeypatch.setattr(turnstile, "verify", lambda *args, **kwargs: True)
 
     assert post_guest(new_client(app), people.a, ready, email=email).status_code == 201
 
@@ -1168,7 +1168,7 @@ def test_an_archived_service_loses_a_booking_that_read_it_first(
 def test_the_rate_limits_run_in_order_and_as_two_calls(
     people: People, app: FastAPI, ready: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(turnstile, "verify", lambda token, ip: False)
+    monkeypatch.setattr(turnstile, "verify", lambda token, ip, action: False)
     client = new_client(app, fresh_address())
     email = fresh_email()
 
@@ -1176,7 +1176,7 @@ def test_the_rate_limits_run_in_order_and_as_two_calls(
         response = post_booking(client, people.a, ready, email=email, starts_at=at("09:00"))
         assert response.status_code == 403
 
-    monkeypatch.setattr(turnstile, "verify", lambda token, ip: True)
+    monkeypatch.setattr(turnstile, "verify", lambda token, ip, action: True)
     seventh = post_booking(client, people.a, ready, email=email, starts_at=at("09:00"))
 
     assert seventh.status_code == 201
@@ -1195,7 +1195,9 @@ def test_the_posted_turnstile_token_reaches_cloudflare(
 
     def fake_urlopen(outbound: Any, timeout: float | None = None) -> Any:
         calls.append((outbound, timeout))
-        return FakeAnswer(json.dumps({"success": True}).encode())
+        return FakeAnswer(
+            json.dumps({"success": True, "hostname": "localhost", "action": "booking"}).encode()
+        )
 
     monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
     address = fresh_address()
@@ -1411,7 +1413,7 @@ def test_an_unpublished_business_refuses_every_booking_and_writes_nothing(
     bad_version = post_booking(
         new_client(app), people.a, ready, starts_at=at("09:00"), policy_version="unknown"
     )
-    monkeypatch.setattr(turnstile, "verify", lambda token, ip: False)
+    monkeypatch.setattr(turnstile, "verify", lambda token, ip, action: False)
     bad_token = post_booking(new_client(app), people.a, ready, starts_at=at("09:00"))
     unknown_tenant_bad_token = post_booking(
         new_client(app), uuid.uuid4(), ready, starts_at=at("09:00")

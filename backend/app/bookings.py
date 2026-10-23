@@ -1088,7 +1088,7 @@ def create(  # sync def: turnstile.verify's urlopen blocks, and runs in FastAPI'
     ):
         raise ApiError(429, "rate_limited")
     # 2. Turnstile, between the two limits.
-    if not turnstile.verify(new.turnstile_token, ip):
+    if not turnstile.verify(new.turnstile_token, ip, action="booking"):
         raise ApiError(403, "turnstile_failed")
     # 3. Per address LAST, and in its own hit() call: app/limits.py increments every key
     #    unconditionally and only then evaluates which one tripped, so a combined call before
