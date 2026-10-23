@@ -2,6 +2,9 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
+from fastapi.testclient import TestClient
+
 from app.main import create_app, openapi_document
 
 CONTRACT = Path(__file__).parent.parent / "openapi.json"
@@ -223,3 +226,11 @@ def test_a_client_secret_is_only_in_the_payment_start() -> None:
         "PUT /api/public/businesses/{tenant_id}/bookings/{booking_id}/payment",
     }
     assert "client_secret" not in json.dumps(schemas["SyncOut"])
+
+
+@pytest.mark.parametrize("path", ["/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect"])
+def test_no_api_docs_route_is_served(path: str) -> None:
+    # The contract is the committed file and openapi_document(); no deployment serves it or a UI.
+    response = TestClient(create_app()).get(path)
+
+    assert response.status_code == 404

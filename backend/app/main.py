@@ -322,6 +322,11 @@ def create_app() -> FastAPI:
         generate_unique_id_function=operation_id,
         lifespan=lifespan,
         redirect_slashes=False,
+        # No interactive docs or served schema in any deployment (ZB-30): the contract is the
+        # committed backend/openapi.json, produced in-process by openapi_document().
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
         # The telemetry standard (cloud-infra docs/architecture.md, Telemetry). Native metrics only,
         # recorded on the MeterProvider tracing.configure() registered (its View is the attribute
         # allowlist). The app owns the SERVER span and the logs: native tracing would add a second
