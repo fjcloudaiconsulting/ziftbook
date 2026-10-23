@@ -39,6 +39,29 @@
         "major"
       ],
       "enabled": false
+    },
+    {
+      "description": "Wait 5 days after publishing before proposing new releases of Python packages and GitHub-hosted tools (supply-chain cooldown, ZB-06).",
+      "matchDatasources": [
+        "pypi",
+        "github-tags",
+        "github-releases"
+      ],
+      "minimumReleaseAge": "5 days"
+    },
+    {
+      "description": "Wait 3 days after publishing before proposing new npm releases; longer than pnpm's own 1-day minimumReleaseAge, so Renovate never opens a PR pnpm would refuse (ZB-06).",
+      "matchDatasources": [
+        "npm"
+      ],
+      "minimumReleaseAge": "3 days"
     }
-  ]
+  ],
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "minimumReleaseAge": null,
+    "labels": [
+      "security"
+    ]
+  }
 }
