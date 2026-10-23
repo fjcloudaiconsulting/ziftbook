@@ -131,6 +131,8 @@
     "forgot": "Forgot your password?",
     "invalid": "That email and password don't match an admin account. Check both and try again.",
     "tooMany": "Too many attempts for now. Wait 15 minutes and try again.",
+    "challenge": "Confirm you're not a robot below, then sign in again.",
+    "tryLater": "Too many attempts for now. Try again later.",
     "business": "Running a business on ziftbook?",
     "businessLink": "Business sign-in",
     "expired": "Your admin session ended, for example after 30 minutes without activity or because the enrol command ran. Sign in again.",

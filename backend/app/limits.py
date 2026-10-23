@@ -30,6 +30,14 @@ DELETE FROM rate_limits WHERE key IN (
 """)
 
 
+def _charge(keys: list[str], window: timedelta) -> dict[str, int]:
+    """Count one attempt against each key; the hits each key has now, read under its row lock."""
+    with SessionLocal.begin() as session:
+        rows = session.execute(HIT, {"keys": sorted(keys), "window": window}).all()
+        session.execute(PURGE)
+    return {key: hits for key, hits in rows}
+
+
 def hit(limits: dict[str, int], window: timedelta, *, db: Session | None = None) -> bool:
     """Count one attempt against each key; True if any key is now over its limit.
 
@@ -46,11 +54,16 @@ def hit(limits: dict[str, int], window: timedelta, *, db: Session | None = None)
     """
     if db is not None:
         rows = db.execute(HIT, {"keys": sorted(limits), "window": window}).all()
+        counted = {key: hits for key, hits in rows}
     else:
-        with SessionLocal.begin() as session:
-            rows = session.execute(HIT, {"keys": sorted(limits), "window": window}).all()
-            session.execute(PURGE)
-    return any(hits > limits[key] for key, hits in rows)
+        counted = _charge(list(limits), window)
+    return any(hits > limits[key] for key, hits in counted.items())
+
+
+def charge(key: str, window: timedelta) -> int:
+    """Count one attempt against key and return its hits, this one included: exact, so exactly one
+    caller sees each number."""
+    return _charge([key], window)[key]
 
 
 COUNT = text("""

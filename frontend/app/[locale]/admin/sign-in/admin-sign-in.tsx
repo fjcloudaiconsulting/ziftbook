@@ -6,8 +6,10 @@ import { type FormEvent, useEffect, useRef, useState } from "react";
 import { adminPassSecondFactor, type EnrolmentOut, adminRead, adminSignIn, adminSignOut, type AdminSession } from "@/api-client";
 import { Link, useRouter } from "@/i18n/navigation";
 import { appCode, factorState, stepFor } from "@/lib/admin";
+import { signInOutcome } from "@/lib/account";
 
 import { Banner, EmailField, Heading, JSON_WRITE, Mark, NoScript, PasswordField, problem, Screen, send, Submit } from "../../_ui/parts";
+import { Turnstile } from "../../_ui/turnstile";
 import styles from "../../_ui/ui.module.css";
 import admin from "../admin.module.css";
 import { CodeField, EnrolCommand, SignedInAs } from "../parts";
@@ -26,7 +28,7 @@ type Step =
  * The whole admin sign-in: password, then the second factor the session still needs. One route, because
  * the server decides the step (`second_factor`) and recovery codes must never survive a reload.
  */
-export function AdminSignIn() {
+export function AdminSignIn({ turnstileSiteKey }: { turnstileSiteKey: string | null }) {
   const t = useTranslations("Admin");
   const form = useTranslations("Form");
   const router = useRouter();
@@ -75,7 +77,7 @@ export function AdminSignIn() {
 
   return (
     <Screen>
-      {step.kind === "password" && <PasswordStep message={step.message} focus={moved} onSignedIn={route} />}
+      {step.kind === "password" && <PasswordStep message={step.message} focus={moved} onSignedIn={route} turnstileSiteKey={turnstileSiteKey} />}
       {step.kind === "ticket" && (
         <TicketStep
           who={step.who}
@@ -125,7 +127,17 @@ export function AdminSignIn() {
   );
 }
 
-function PasswordStep({ message: initial, focus, onSignedIn }: { message?: Message; focus: boolean; onSignedIn(who: AdminSession): void }) {
+function PasswordStep({
+  message: initial,
+  focus,
+  onSignedIn,
+  turnstileSiteKey,
+}: {
+  message?: Message;
+  focus: boolean;
+  onSignedIn(who: AdminSession): void;
+  turnstileSiteKey: string | null;
+}) {
   const t = useTranslations("Admin");
   const form = useTranslations("Form");
   const [email, setEmail] = useState("");
@@ -133,12 +145,20 @@ function PasswordStep({ message: initial, focus, onSignedIn }: { message?: Messa
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<Message | null>(initial ?? null);
   const passwordInput = useRef<HTMLInputElement>(null);
+  // Set once the server asks for a challenge; each attempt with a token uses it up and brings a fresh widget.
+  const [challenged, setChallenged] = useState(false);
+  const [token, setToken] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
     if (busy) return;
     setBusy(true);
-    const outcome = await send(adminSignIn({ body: { email, password } }));
+    const outcome = await send(adminSignIn({ body: { email, password, turnstile_token: token } }));
+    if (token) {
+      setToken(null);
+      setAttempt((n) => n + 1);
+    }
     setMessage(null);
 
     if (outcome.status === 200 && outcome.data) {
@@ -147,12 +167,16 @@ function PasswordStep({ message: initial, focus, onSignedIn }: { message?: Messa
     }
     setBusy(false);
     // 422 (say, a password over the length limit) gets the same single message: no hint about which part was wrong.
-    if (outcome.status === 401 || outcome.status === 422) {
+    const meaning = signInOutcome(outcome.status, outcome.code, Boolean(turnstileSiteKey));
+    if (meaning === "challenge") {
+      setChallenged(true);
+      setMessage({ tone: "note", text: t("challenge") });
+    } else if (meaning === "invalid" || outcome.status === 422) {
       setMessage({ tone: "error", text: t("invalid") });
       setPassword("");
       passwordInput.current?.focus();
-    } else if (outcome.status === 429) {
-      setMessage({ tone: "note", text: t("tooMany") });
+    } else if (meaning === "try_later") {
+      setMessage({ tone: "note", text: t(outcome.code === "challenge_required" ? "tryLater" : "tooMany") });
     } else {
       setMessage({ tone: outcome.status === 503 ? "note" : "error", text: form(problem(outcome)) });
     }
@@ -175,6 +199,7 @@ function PasswordStep({ message: initial, focus, onSignedIn }: { message?: Messa
           inputRef={passwordInput}
           labelAside={<Link href="/forgot-password">{t("forgot")}</Link>}
         />
+        {challenged && turnstileSiteKey && <Turnstile key={attempt} siteKey={turnstileSiteKey} action="admin_sign_in" onToken={setToken} />}
         <Submit busy={busy} busyLabel={t("signingIn")}>
           {t("submit")}
         </Submit>

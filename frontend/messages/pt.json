@@ -131,6 +131,8 @@
     "forgot": "Esqueceu a senha?",
     "invalid": "O e-mail e a senha não conferem com uma conta de administrador. Confira os dois e tente de novo.",
     "tooMany": "Tentativas demais por agora. Espere 15 minutos e tente de novo.",
+    "challenge": "Confirme abaixo que você não é um robô e entre de novo.",
+    "tryLater": "Tentativas demais por agora. Tente de novo mais tarde.",
     "business": "Tem um negócio no ziftbook?",
     "businessLink": "Entrar no seu negócio",
     "expired": "Sua sessão de administrador foi encerrada, por exemplo após 30 minutos sem atividade ou porque o comando enrol foi executado. Entre de novo.",

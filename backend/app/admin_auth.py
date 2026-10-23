@@ -37,6 +37,8 @@ ADMIN_ABSOLUTE = timedelta(hours=8)
 
 RESOLVE = text("SELECT * FROM resolve_admin_session(:id_hash)")
 CODE_WINDOW = timedelta(minutes=15)  # the per-address limits on codes and tickets
+# ZB-18: an admin's failures from anywhere ask for a Turnstile challenge, never a lock.
+ADMIN_FAILURES_BEFORE_CHALLENGE = 10
 TOTP_CODE = re.compile("[0-9]{6}")  # ASCII only: \d and str.isdigit accept Arabic-Indic digits
 
 logger = logging.getLogger(__name__)
@@ -167,6 +169,13 @@ def sign_in(credentials: auth.Credentials, request: Request, response: Response)
         auth.SIGN_IN_WINDOW,
     ):
         raise ApiError(429, "rate_limited")
+    auth.require_challenge(
+        "admin_sign_in",
+        credentials.email,
+        credentials.turnstile_token,
+        ip,
+        ADMIN_FAILURES_BEFORE_CHALLENGE,
+    )
     with SessionLocal.begin() as session:
         account = session.execute(
             text("SELECT * FROM account_by_email(:email)"), {"email": credentials.email}
@@ -207,6 +216,12 @@ def sign_in(credentials: auth.Credentials, request: Request, response: Response)
                 session.execute(RESOLVE, {"id_hash": id_hash}).one(), from_attributes=True
             )
     if not started:
+        # Unknown emails count too, under the same key: the answers can't tell who is an admin.
+        if auth.count_failure(credentials.email, "admin_sign_in", ADMIN_FAILURES_BEFORE_CHALLENGE):
+            logger.warning(
+                "admin sign-in failures",
+                extra={"target": f"user:{account.user_id}" if account else None},
+            )
         raise ApiError(401, "invalid_credentials")
     set_admin_cookie(response, token)
     response.headers["Cache-Control"] = "no-store"

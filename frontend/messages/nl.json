@@ -131,6 +131,8 @@
     "forgot": "Wachtwoord vergeten?",
     "invalid": "Dit e-mailadres en wachtwoord horen niet bij een beheerdersaccount. Controleer ze allebei en probeer het opnieuw.",
     "tooMany": "Te veel pogingen. Wacht 15 minuten en probeer het opnieuw.",
+    "challenge": "Bevestig hieronder dat je geen robot bent en log daarna opnieuw in.",
+    "tryLater": "Te veel pogingen. Probeer het later opnieuw.",
     "business": "Heb je een bedrijf op ziftbook?",
     "businessLink": "Inloggen voor bedrijven",
     "expired": "Je beheerderssessie is beëindigd, bijvoorbeeld na 30 minuten zonder activiteit of doordat het enrol-commando is uitgevoerd. Log opnieuw in.",

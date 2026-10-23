@@ -3,9 +3,10 @@
 import hashlib
 import secrets
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from datetime import timedelta
 from http.cookies import SimpleCookie
+from typing import Any
 
 import pytest
 from fastapi import FastAPI, Request
@@ -13,7 +14,7 @@ from fastapi.testclient import TestClient
 from httpx2 import Response
 from sqlalchemy import Engine, text
 
-from app import admin, auth, passwords
+from app import admin, admin_auth, auth, passwords, turnstile
 from app.admin_auth import ADMIN_COOKIE, AdminSession, business
 from app.errors import ApiError
 from app.main import create_app
@@ -23,6 +24,7 @@ from tests.conftest import (
     add_password,
     add_user,
     email_of,
+    fresh_address,
     fresh_email,
     issue_link,
     new_client,
@@ -247,6 +249,81 @@ def test_admin_address_limit_is_shared_across_a_48(app: FastAPI) -> None:
             admin_sign_in(client, fresh_email(), "wrong-password-123")
     third = new_client(app, f"{network}:3::1")
     assert admin_sign_in(third, fresh_email(), "wrong-password-123").status_code == 429
+
+
+def test_distributed_admin_failures_ask_for_a_challenge(
+    app: FastAPI, an_admin: uuid.UUID, log_lines: Callable[[], list[dict[str, Any]]]
+) -> None:
+    email = email_of(an_admin)
+    for _ in range(admin_auth.ADMIN_FAILURES_BEFORE_CHALLENGE):
+        assert admin_sign_in(new_client(app), email, "wrong-password-123").status_code == 401
+
+    blocked = admin_sign_in(new_client(app), email)
+    again = admin_sign_in(new_client(app), email)
+
+    assert (blocked.status_code, blocked.json()) == (429, {"code": "challenge_required"})
+    assert again.status_code == 429
+    assert "set-cookie" not in blocked.headers
+    warned = [line for line in log_lines() if line["msg"] == "admin sign-in failures"]
+    assert [(line["level"], line["target"]) for line in warned] == [("WARNING", f"user:{an_admin}")]
+    solved = new_client(app).post(
+        "/api/admin/session",
+        json={"email": email, "password": PASSWORD, "turnstile_token": "t"},
+    )
+    assert solved.status_code == 200  # ZIF_TURNSTILE_DISABLED in tests: verify() passes
+    assert solved.json()["second_factor"] == "enrolment_required"  # the second factor still follows
+    past = new_client(app).post(
+        "/api/admin/session",
+        json={"email": email, "password": "wrong-password-123", "turnstile_token": "t"},
+    )
+    assert past.status_code == 401  # a solved challenge, still a wrong password
+    warned = [line for line in log_lines() if line["msg"] == "admin sign-in failures"]
+    assert len(warned) == 1
+
+
+def test_only_the_failure_reaching_the_threshold_reports_it(app: FastAPI) -> None:
+    email = fresh_email()
+
+    reached = [auth.count_failure(email, "admin_sign_in", 10) for _ in range(11)]
+
+    assert reached == [False] * 9 + [True, False]
+
+
+def test_unknown_admin_email_asks_for_a_challenge_the_same_way(
+    app: FastAPI, log_lines: Callable[[], list[dict[str, Any]]]
+) -> None:
+    email = fresh_email()
+    for _ in range(admin_auth.ADMIN_FAILURES_BEFORE_CHALLENGE):
+        assert admin_sign_in(new_client(app), email).status_code == 401
+
+    blocked = admin_sign_in(new_client(app), email)
+
+    assert (blocked.status_code, blocked.json()) == (429, {"code": "challenge_required"})
+    warned = [line for line in log_lines() if line["msg"] == "admin sign-in failures"]
+    assert [line.get("target") for line in warned] == [None]
+
+
+def test_a_refused_admin_challenge_keeps_out_even_the_right_password(
+    app: FastAPI, an_admin: uuid.UUID, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    email = email_of(an_admin)
+    for _ in range(admin_auth.ADMIN_FAILURES_BEFORE_CHALLENGE):
+        admin_sign_in(new_client(app), email, "wrong-password-123")
+    calls: list[tuple[str | None, str | None, str]] = []
+
+    def refuse(token: str | None, ip: str | None, *, action: str) -> bool:
+        calls.append((token, ip, action))
+        return False
+
+    monkeypatch.setattr(turnstile, "verify", refuse)
+    address = fresh_address()
+
+    refused = new_client(app, address).post(
+        "/api/admin/session", json={"email": email, "password": PASSWORD, "turnstile_token": "t"}
+    )
+
+    assert (refused.status_code, refused.json()) == (429, {"code": "challenge_required"})
+    assert calls == [("t", address, "admin_sign_in")]
 
 
 # fence: 30 minutes idle ends a session, and use keeps it alive. Kills reusing auth.IDLE (7 days),

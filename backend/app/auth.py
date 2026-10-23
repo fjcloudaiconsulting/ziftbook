@@ -349,19 +349,30 @@ def limit_attempt(
         {limits.email_key("sign_in", f"{email}|{address_key}"): PER_ADDRESS_LIMIT}, SIGN_IN_WINDOW
     ):
         raise ApiError(429, "rate_limited")
-    failures = limits.count(limits.email_key("sign_in_failed", email), SIGN_IN_WINDOW)
+    require_challenge("sign_in", email, turnstile_token, ip, FAILURES_BEFORE_CHALLENGE)
+
+
+def require_challenge(
+    action: str, email: str, turnstile_token: str | None, ip: str | None, threshold: int
+) -> None:
+    """429 challenge_required once email has threshold recent failures (count_failure) for action,
+    unless turnstile_token passes for that action. Only reads the failures."""
+    failures = limits.count(limits.email_key(f"{action}_failed", email), SIGN_IN_WINDOW)
     # No token is refused before verify(): with Turnstile switched off, verify() passes anything.
-    if failures >= FAILURES_BEFORE_CHALLENGE and (
-        not turnstile_token or not turnstile.verify(turnstile_token, ip, action="sign_in")
+    if failures >= threshold and (
+        not turnstile_token or not turnstile.verify(turnstile_token, ip, action=action)
     ):
         raise ApiError(429, "challenge_required")
 
 
-def count_failure(email: str) -> None:
-    """A wrong password for email (an unknown email too): one more towards its challenge."""
-    limits.hit(
-        {limits.email_key("sign_in_failed", email): FAILURES_BEFORE_CHALLENGE}, SIGN_IN_WINDOW
-    )
+def count_failure(
+    email: str, action: str = "sign_in", threshold: int = FAILURES_BEFORE_CHALLENGE
+) -> bool:
+    """A wrong password for email (an unknown email too): one more towards its challenge.
+
+    True when this failure is the one that reaches threshold.
+    """
+    return limits.charge(limits.email_key(f"{action}_failed", email), SIGN_IN_WINDOW) == threshold
 
 
 @router.post(
