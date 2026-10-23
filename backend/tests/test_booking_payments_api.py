@@ -21,6 +21,7 @@ from httpx2 import Response
 from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 from sqlalchemy import Engine, event, text
 from sqlalchemy.exc import InterfaceError
+from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 
 from app import bookings, payments, stripe_gateway
 from app.db import SessionLocal, tenant_context
@@ -1217,8 +1218,9 @@ def test_two_settles_of_one_row_count_once(
 
 
 # R-C3. fence. Kills: a tx2 that dies on anything but a lock timeout (a dropped connection, a
-# missing account row) answering 500 and stranding the hold for 30 minutes.
-@pytest.mark.parametrize("failure", ["lost connection", "no account row"])
+# missing account row, no pooled connection free in time) answering 500, or 503 with the hold
+# stranded for 30 minutes (ZB-16: the pool's TimeoutError is no DBAPIError).
+@pytest.mark.parametrize("failure", ["lost connection", "starved pool", "no account row"])
 def test_any_failure_of_the_second_transaction_gives_the_time_back(
     failure: str,
     people: People,
@@ -1233,6 +1235,12 @@ def test_any_failure_of_the_second_transaction_gives_the_time_back(
             raise InterfaceError("connection already closed", None, Exception("closed"))
 
         monkeypatch.setattr(payments, "_insert", lost)
+    elif failure == "starved pool":
+
+        def starved(*args: Any, **kwargs: Any) -> None:
+            raise PoolTimeoutError("QueuePool limit reached, connection timed out")
+
+        monkeypatch.setattr(payments, "_insert", starved)
     else:
         monkeypatch.setattr(
             payments,

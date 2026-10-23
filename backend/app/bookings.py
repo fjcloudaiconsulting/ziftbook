@@ -136,8 +136,8 @@ def account(request: Request) -> Account | None:
     app/auth.py:187-201 closes its own transaction before opening the endpoint's for the same
     reason. Calling it inside the booking transaction holds a SECOND pooled connection for the whole
     life of a transaction that is holding services FOR SHARE; at pool_size 5 with max_overflow 10
-    against a 40-thread pool, about 15 concurrent bookings deadlock on CONNECTION CHECKOUT - a hang
-    with no SQLSTATE to catch and nothing to map to a status code.
+    against a 40-thread pool, about 15 concurrent bookings deadlock on CONNECTION CHECKOUT, each
+    holding its connection until the pool timeout fails it as 503 busy (app/main.py, ZB-16).
     """
     token = request.cookies.get(auth.COOKIE)
     if not token:

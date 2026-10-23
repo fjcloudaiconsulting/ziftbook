@@ -1,17 +1,21 @@
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 from sqlalchemy import create_engine, event, text
+from sqlalchemy.exc import DBAPIError
+from sqlalchemy.pool import NullPool, QueuePool
 
-from app import db
+from app import auth, db, main
 from app.config import WorkerSettings
 from app.db import SessionLocal
 from app.main import create_app
+from tests.conftest import ADMIN_DATABASE_URL, new_client
 
 
 def test_the_contract_builds_without_a_database_url() -> None:
@@ -117,3 +121,63 @@ def test_a_pooled_connection_is_handed_out_without_the_last_users_temporary_tabl
     finally:
         engine.dispose()
     assert tuple(reused) == (used, None)
+
+
+# ZB-16 FENCE. Wrong impl: the API engine on SQLAlchemy's pool defaults, where a request that finds
+# no free connection waits 30s for one, or with no idle-in-transaction timeout. At most 15
+# connections, as the defaults gave: more is a sizing decision (main.py's comment), not a drift.
+def test_the_api_pool_and_its_idle_in_transaction_timeout_are_explicit(migrated: None) -> None:
+    with TestClient(create_app()):
+        pool = SessionLocal.kw["bind"].pool
+        with SessionLocal() as session:
+            idle = session.scalar(text("SHOW idle_in_transaction_session_timeout"))
+            lock = session.scalar(text("SHOW lock_timeout"))
+    assert isinstance(pool, QueuePool)
+    assert (pool.size(), pool._max_overflow, pool.timeout()) == (5, 10, 5)
+    assert (idle, lock) == ("1min", "5s")  # the lock_timeout (ZIF-114) is still there beside it
+
+
+def _backend_alive(pid: int) -> bool:
+    """As the superuser: another role's sessions are masked from the app role."""
+    admin = create_engine(ADMIN_DATABASE_URL, poolclass=NullPool)
+    try:
+        with admin.connect() as conn:
+            alive: bool = conn.scalar(
+                text("SELECT EXISTS (SELECT FROM pg_stat_activity WHERE pid = :pid)"), {"pid": pid}
+            )
+    finally:
+        admin.dispose()
+    return alive
+
+
+# ZB-16 FENCE. Wrong impl: the timeout set where the API's connections never read it (the URL, whose
+# options connect_args replaces; a SET after connecting, which the pool's reset undoes). A tiny
+# timeout instead of a minute's wait: the server, not the app, ends the idle transaction.
+def test_the_server_ends_an_api_transaction_left_idle(
+    migrated: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(main, "IDLE_IN_TRANSACTION_TIMEOUT", "100ms")
+    with TestClient(create_app()), SessionLocal() as session:
+        pid = session.scalar(text("SELECT pg_backend_pid()"))  # the transaction is open from here
+        deadline = time.monotonic() + 10
+        while _backend_alive(pid) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert not _backend_alive(pid)
+        with pytest.raises(DBAPIError) as ended:
+            session.execute(text("SELECT 1"))
+    assert getattr(ended.value.orig, "sqlstate", None) == "25P03"  # idle_in_transaction_timeout
+
+
+# ZB-16 FENCE. Wrong impl: a request that waits out the pool timeout answered 500 (SQLAlchemy's
+# pool TimeoutError is no OperationalError, so the 55P03 handler never sees it).
+def test_a_request_that_gets_no_pooled_connection_is_a_503_busy(
+    migrated: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(main, "POOL_SIZE", 1)
+    monkeypatch.setattr(main, "MAX_OVERFLOW", 0)
+    monkeypatch.setattr(main, "POOL_TIMEOUT", 0.1)
+    with new_client(create_app()) as client, SessionLocal() as holder:
+        holder.connection()  # the pool's one connection, checked out until the end
+        # A session cookie, so the request needs the database to resolve it.
+        response = client.get("/api/session", headers={"Cookie": f"{auth.COOKIE}=any"})
+    assert (response.status_code, response.json()) == (503, {"code": "busy"})

@@ -22,6 +22,7 @@ from opentelemetry.trace import SpanKind
 from pydantic import BaseModel
 from sqlalchemy import Row, text
 from sqlalchemy.exc import DBAPIError, IntegrityError, OperationalError
+from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 from sqlalchemy.orm import Session
 
 from app import auth, bookings, business_settings, jobs, limits, logs, stripe_gateway, tracing
@@ -629,8 +630,10 @@ def start(
             raise _unavailable() from None
         try:
             _insert(tenant_id, booking, made.id, kind, fee, mode)
-        except DBAPIError, LookupError:  # a lock timeout, a lost connection, a missing account
-            # The intent never reached a browser: nobody can confirm it, and no row names it.
+        except DBAPIError, PoolTimeoutError, LookupError:
+            # A lock timeout, a lost connection, no pooled connection free in time (ZB-16: the
+            # pool's TimeoutError is no DBAPIError), a missing account. The intent never reached a
+            # browser: nobody can confirm it, and no row names it.
             _give_back(tenant_id, booking.id)
             raise ApiError(503, "busy") from None
         return _started(kind, booking.id, made, expires_at)

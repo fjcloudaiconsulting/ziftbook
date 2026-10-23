@@ -214,6 +214,12 @@ migration 0026), not any code path. A race in a route somebody forgets to guard 
   for database work, never across an outbound call, so a queue of bookers clears well inside that. The engine's
   `connect_args` replaces any `options` in `ZIF_DATABASE_URL`. The worker has no `lock_timeout`; its
   `statement_timeout` (30s) bounds its waits.
+- **The API has at most 15 database connections for its 40 request threads** (`POOL_SIZE` 5 plus `MAX_OVERFLOW` 10
+  in `app/main.py`, ZB-16). A request that finds none free waits at most 5 seconds (`POOL_TIMEOUT`), then is answered
+  `503 busy`. The server ends an API or worker transaction left idle for a minute
+  (`idle_in_transaction_session_timeout`), so slow work runs outside a transaction: outbound calls, and a service
+  photo's decode and store (`app/services.py`). Keep new slow work there too.
+  Raising the pool means checking it against Postgres' `max_connections` together with the worker's 21.
 - `booking_holds` (migration 0034) is unused since ZIF-158: nothing reads or writes it, and a later owner-gated
   migration drops it.
 - The constraint's predicate is the four **occupying** statuses. That set lives in three places — the predicate,

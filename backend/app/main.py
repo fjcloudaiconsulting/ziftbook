@@ -19,6 +19,7 @@ from opentelemetry.trace import SpanKind
 from pydantic import BaseModel
 from sqlalchemy import create_engine, event, text
 from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 from starlette.middleware.body_limit import RequestBodyLimitMiddleware
 from starlette.types import ASGIApp, Receive, Scope, Send
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
@@ -71,6 +72,23 @@ WRITE = {"POST", "PUT", "PATCH", "DELETE"}
 MAX_BODY = 64 * 1024
 # ZIF-158: Stripe's events dwarf anything a browser sends. The webhook alone gets this cap.
 WEBHOOK_MAX_BODY = 256 * 1024
+# ZB-16. The API's connection pool, sized against what draws on it. Sync routes and dependencies run
+# on anyio's default thread limiter (40 threads; the app configures no other), so up to 40 requests
+# can want a connection at once. They share at most 15, SQLAlchemy's defaults made explicit (5 kept
+# open, 10 more under load): with the worker's 21 (app/worker.py) and a migrations run, far inside
+# Postgres' max_connections (100 by default, which this repository's compose files keep). A request
+# that finds all 15 taken waits for one as long as for a lock (lock_timeout below), then is answered
+# 503 busy (pool_exhausted below), instead of holding its thread for SQLAlchemy's default 30 seconds
+# while every request behind it queues too.
+POOL_SIZE = 5
+MAX_OVERFLOW = 10
+POOL_TIMEOUT = 5  # seconds
+# ZB-16. The server ends an API transaction left idle this long, releasing its locks and its
+# backend; the pool slot is free again once the request holding it ends (its next statement fails).
+# Well above any legitimate idle gap: the slow steps run with no transaction open (Stripe,
+# Turnstile, password hashing, and a service photo's decode and store in services.py). The worker's
+# engine uses the same value.
+IDLE_IN_TRANSACTION_TIMEOUT = "60s"
 logger = logging.getLogger(__name__)
 # ZB-13. The public dependencies probe answers from its last result for this long, "unavailable"
 # included, so a flood costs the database one SELECT per window and the log one line per window.
@@ -81,7 +99,7 @@ PROBE_TTL = 5.0
 _probe: tuple[float, bool] | None = None
 # Single flight: set under the lock by the one caller that probes. Callers arriving meanwhile answer
 # the last result while it is younger than 2 * PROBE_TTL (else unavailable, as with none yet) and
-# neither probe nor log. The one probing thread may wait on a pooled connection (pool_timeout, 30s);
+# neither probe nor log. The one probing thread may wait on a pooled connection (POOL_TIMEOUT, 5s);
 # the others never do, and the pool's behaviour for every other route is left alone.
 _probing = False
 _probe_lock = threading.Lock()
@@ -161,13 +179,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             DatabaseSettings().database_url,
             pool_pre_ping=True,
             hide_parameters=True,
+            pool_size=POOL_SIZE,  # ZB-16
+            max_overflow=MAX_OVERFLOW,
+            pool_timeout=POOL_TIMEOUT,
             # ZIF-114. No request waits longer than this for any lock, the tenant advisory lock
             # included: past it the statement fails with 55P03, which every route answers as 503
             # busy (lock_timed_out below). Without it one stalled holder pins a pooled
             # connection per waiting request until every tenant's requests hang on checkout.
             # Booking writers hold the lock for milliseconds, so 5s is hundreds of queued bookings.
             # ZB-13. connect_timeout bounds a connection attempt to an unreachable database.
-            connect_args={"options": "-c lock_timeout=5s", "connect_timeout": 5},
+            # ZB-16: idle_in_transaction_session_timeout, see IDLE_IN_TRANSACTION_TIMEOUT.
+            connect_args={
+                "options": "-c lock_timeout=5s"
+                f" -c idle_in_transaction_session_timeout={IDLE_IN_TRANSACTION_TIMEOUT}",
+                "connect_timeout": 5,
+            },
         )
         event.listen(engine, "reset", reset_session)  # ZB-31
         SessionLocal.configure(bind=engine)
@@ -475,6 +501,14 @@ def create_app() -> FastAPI:
             raise error
         # Not an error: the request did nothing. Still worth a line, it means a holder stalled.
         logger.warning("lock wait timed out")
+        return JSONResponse({"code": "busy"}, status_code=503)
+
+    # No pooled connection came free within POOL_TIMEOUT (ZB-16), on any route. SQLAlchemy's pool
+    # TimeoutError is no OperationalError, so lock_timed_out never sees it. Answered as a lock wait
+    # is: the pool is full, not broken, and a retry later can succeed.
+    @app.exception_handler(PoolTimeoutError)
+    async def pool_exhausted(request: Request, error: PoolTimeoutError) -> JSONResponse:
+        logger.warning("connection pool exhausted")
         return JSONResponse({"code": "busy"}, status_code=503)
 
     # Anything unexpected, including a commit that fails after the endpoint returned. This runs
