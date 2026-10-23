@@ -13,6 +13,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import boto3
+import PIL
 import pytest
 from botocore.exceptions import EndpointConnectionError
 from mypy_boto3_s3 import S3Client
@@ -538,3 +539,9 @@ def test_webp_has_its_own_cap(s3: S3Client, monkeypatch: pytest.MonkeyPatch) -> 
     assert photos.process(t, ok).width == 1200
     no_load(monkeypatch)
     assert refusal(t, over) == (422, "photo_unreadable")
+
+
+def test_pillow_carries_the_decoder_fixes() -> None:
+    # ZB-33: 12.3.0 has a reachable JPEG heap overflow (CVE-2026-112403); 13.0.0 fixes it.
+    major = int(PIL.__version__.split(".")[0])
+    assert major >= 13
