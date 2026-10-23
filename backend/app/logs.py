@@ -288,6 +288,7 @@ def configure() -> None:
         "sqlalchemy.engine": sql,
         "psycopg": logging.WARNING,
         "httpx2": logging.WARNING,  # the test client; its INFO line has the URL and query
+        "stripe": logging.WARNING,  # its INFO line per request carries the API path and ids
         # Its WARNING quotes a malformed OTEL_EXPORTER_OTLP_HEADERS entry verbatim, token included.
         "opentelemetry.util.re": logging.ERROR,
         # Off: mail.deliver logs every failed send once, by template; the SDK's own lines would
