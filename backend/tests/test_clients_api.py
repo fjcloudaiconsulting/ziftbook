@@ -571,3 +571,48 @@ def test_the_request_constraints_are_enforced(people: People, app: FastAPI) -> N
     assert patch({"client_note": "line one\nline two"})[0] == 200
     address = fresh_email()
     assert add_client(owner, {"name": "Mixed Case", "email": address.upper()})["email"] == address
+
+
+# 61: FENCE. Wrong impl: select internal_note for everyone, or bind the redacted (null) value back
+# in a worker's PATCH of client_note, which would wipe the owner's note.
+def test_an_internal_note_is_the_owners_to_read_and_write(people: People, app: FastAPI) -> None:
+    owner = signed_in(app, people.a, people.both)
+    worker = signed_in(app, people.a, people.only_a)
+    client_id = add_client(owner, {"name": "Private Note Client"})["id"]
+    assert (
+        owner.patch(f"/api/clients/{client_id}", json={"internal_note": "Private Qzv-1"}).json()[
+            "internal_note"
+        ]
+        == "Private Qzv-1"
+    )
+
+    def listed(who: TestClient) -> dict[str, Any]:
+        return next(c for c in who.get("/api/clients").json() if c["id"] == client_id)
+
+    assert listed(owner)["internal_note"] == "Private Qzv-1"
+    assert listed(worker)["internal_note"] is None
+    assert "Qzv-1" not in worker.get("/api/clients", params={"q": "Private"}).text
+
+    for body in (
+        {"internal_note": "x"},
+        {"internal_note": None},
+        {"internal_note": "Private Qzv-1"},
+    ):
+        refused = worker.patch(f"/api/clients/{client_id}", json=body)
+        assert (refused.status_code, refused.json()["code"]) == (403, "owner_only"), body
+    both = worker.patch(
+        f"/api/clients/{client_id}", json={"client_note": "c", "internal_note": "y"}
+    )
+    assert both.status_code == 403
+
+    only_client = worker.patch(f"/api/clients/{client_id}", json={"client_note": "From worker"})
+    assert only_client.status_code == 200
+    assert only_client.json()["client_note"] == "From worker"
+    assert only_client.json()["internal_note"] is None
+    assert listed(owner)["internal_note"] == "Private Qzv-1"  # not wiped by the worker's PATCH
+
+    consented = worker.post(
+        f"/api/clients/{client_id}/consents",
+        json={"policy_version": "2026-09-01", "purposes": {"sms": True}},
+    )
+    assert consented.json()["internal_note"] is None
