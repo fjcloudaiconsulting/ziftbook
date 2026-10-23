@@ -1363,8 +1363,8 @@ def has_reply_to(sent: dict[str, Any]) -> bool:
     return message_from_string(sent["Raw"]).get("reply-to") is not None
 
 
-def confirmed_booking(app: FastAPI, people: People, ready: str) -> str:
-    booking_id = make_pending(app, people.a, ready)
+def confirmed_booking(app: FastAPI, people: People, ready: str, clock: str = "09:00") -> str:
+    booking_id = make_pending(app, people.a, ready, starts_at=at(clock))
     assert patch(signed_in(app, people.a, people.both), booking_id, "confirmed").status_code == 200
     return booking_id
 
@@ -1428,8 +1428,7 @@ def test_staff_emails_never_get_a_reply_to(people: People, app: FastAPI, ready: 
     owner = signed_in(app, people.a, people.both)
     set_contact(owner)
     pending_id = make_pending(app, people.a, ready)
-    confirmed_id = confirmed_booking(app, people, ready)
-    assert patch(owner, confirmed_id, "cancelled_by_merchant").status_code == 200
+    confirmed_id = confirmed_booking(app, people, ready, "11:00")
     with tenant_context(people.a) as session:
         owner_email = session.scalar(
             text("SELECT email FROM users WHERE id = :id"), {"id": people.both}
@@ -1439,6 +1438,7 @@ def test_staff_emails_never_get_a_reply_to(people: People, app: FastAPI, ready: 
 
     run_send_booking(people.a, pending_id, "booking_request", user_id=user_id)
     run_send_booking(people.a, confirmed_id, "booking_new", user_id=user_id)
+    assert patch(owner, confirmed_id, "cancelled_by_merchant").status_code == 200
     cancelled = sent_newest(people.a, confirmed_id, "booking_cancelled")
 
     staff = _search(owner_email)
