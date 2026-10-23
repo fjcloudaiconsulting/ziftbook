@@ -418,7 +418,19 @@ def create_app() -> FastAPI:
         request_id = given if REQUEST_ID.fullmatch(given) else uuid.uuid4().hex
         # A fresh context, set and not reset: the 500 handler and uvicorn's error line run
         # after this returns, in this task, and still need the id.
-        logs.CONTEXT.set({"request_id": request_id})
+        # The web proxy forwards a client's own id apart from the request id (ZB-29): logged as its
+        # own field, only when it passes the same check, never the raw header.
+        client_given = request.headers.get("x-client-request-id", "")
+        logs.CONTEXT.set(
+            {
+                "request_id": request_id,
+                **(
+                    {"client_request_id": client_given}
+                    if REQUEST_ID.fullmatch(client_given)
+                    else {}
+                ),
+            }
+        )
         request.state.request_id = request_id
         started = time.perf_counter()
         status = 500  # if call_next raises, the 500 handler answers

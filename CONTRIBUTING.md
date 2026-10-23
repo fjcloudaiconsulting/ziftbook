@@ -436,8 +436,8 @@ loggers (`web.*`); Next's own stderr output (banners, SSR error traces) is not i
   survive, but the error needs a human just as much).
 - Use `logger = logging.getLogger(__name__)`; never `print` (stdout of `python -m app.main` is the
   OpenAPI document) and never configure logging anywhere else.
-- Standard fields come for free: `ts`, `level`, `logger`, `msg`, `request_id`, `tenant_id`, `job_id`,
-  `job_kind`, `exc`. Add others with `extra={...}`; keep `msg` a constant ("access", "job failed") and put
+- Standard fields come for free: `ts`, `level`, `logger`, `msg`, `request_id`, `client_request_id` (the web proxy's forwarded client id, only when valid), `tenant_id`,
+  `job_id`, `job_kind`, `exc`. Add others with `extra={...}`; keep `msg` a constant ("access", "job failed") and put
   values in fields.
 - Events: `job claimed` (DEBUG), `job done` and `job skipped` (INFO, past its grace), `job failed`
   (WARNING, retried) and `job gave up` (ERROR, last attempt), with `attempts`;

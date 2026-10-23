@@ -470,11 +470,14 @@ describe("request id forwarding (E1)", () => {
     assert.equal(response.headers.get("x-request-id"), body.headers["x-request-id"]);
   });
 
-  test("a valid x-request-id is forwarded unchanged", async () => {
-    const response = await fetch(`http://127.0.0.1:${port}/api/healthz`, { headers: { "x-request-id": "abc-1" } });
+  test("a client's x-request-id is not the request id; it is forwarded as x-client-request-id", async () => {
+    const response = await fetch(`http://127.0.0.1:${port}/api/healthz`, {
+      headers: { "x-request-id": "abc", "x-client-request-id": "spoofed" },
+    });
     const body = await response.json();
-    assert.equal(body.headers["x-request-id"], "abc-1");
-    assert.equal(response.headers.get("x-request-id"), "abc-1");
+    assert.match(body.headers["x-request-id"], HEX32);
+    assert.equal(body.headers["x-client-request-id"], "abc");
+    assert.equal(response.headers.get("x-request-id"), body.headers["x-request-id"]);
   });
 
   test("an invalid x-request-id is replaced with 32 hex, never the raw value", async () => {
@@ -482,6 +485,7 @@ describe("request id forwarding (E1)", () => {
     const body = await response.json();
     assert.match(body.headers["x-request-id"], HEX32);
     assert.notEqual(body.headers["x-request-id"], "a b");
+    assert.equal(body.headers["x-client-request-id"], undefined);
   });
 });
 
@@ -714,7 +718,7 @@ describe("unset ZIF_API_URL (E7)", () => {
 describe("hop-by-hop headers", () => {
   const port = 3214;
 
-  test("Proxy-Authorization and Trailer never reach the upstream; X-Request-ID does", async () => {
+  test("Proxy-Authorization and Trailer never reach the upstream; the client's X-Request-ID arrives as X-Client-Request-ID", async () => {
     const api = await stubApi("H");
     const web = await startWeb(`http://127.0.0.1:${api.address().port}`, port);
     try {
@@ -723,7 +727,8 @@ describe("hop-by-hop headers", () => {
       const { headers } = JSON.parse(body);
       assert.equal(headers["proxy-authorization"], undefined);
       assert.equal(headers["trailer"], undefined);
-      assert.equal(headers["x-request-id"], "r1");
+      assert.notEqual(headers["x-request-id"], "r1");
+      assert.equal(headers["x-client-request-id"], "r1");
     } finally {
       await stop(web);
       api.close();

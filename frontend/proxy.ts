@@ -2,7 +2,7 @@ import createMiddleware from "next-intl/middleware";
 import { type NextRequest, NextResponse } from "next/server";
 
 import { routing } from "./i18n/routing";
-import { errorFields, logger, requestId } from "./lib/log";
+import { clientRequestId, errorFields, logger, requestId } from "./lib/log";
 import { readNeedsSetup, setupGate, setupRedirect } from "./lib/setup-gate";
 import { endProxySpan, startProxySpan, traceparent } from "./lib/trace";
 import { apiUrl, clientIp, MAX_BODY_BYTES, WEBHOOK_MAX_BODY_BYTES } from "./lib/upstream";
@@ -63,9 +63,14 @@ async function readBody(request: NextRequest, limit: number): Promise<Uint8Array
 // x-middleware-rewrite (the internal upstream URL) into the response. Owning the forward is the
 // only way to a clean 502 and to keep secrets out of both logs and the response.
 async function forwardApi(request: NextRequest): Promise<Response> {
-  const id = requestId(request.headers.get("x-request-id"));
+  const id = requestId();
+  const clientId = clientRequestId(request.headers.get("x-request-id"));
   const span = startProxySpan(request.method);
-  const spanIds = { trace_id: span.spanContext().traceId, span_id: span.spanContext().spanId };
+  const spanIds = {
+    ...(clientId ? { client_request_id: clientId } : {}),
+    trace_id: span.spanContext().traceId,
+    span_id: span.spanContext().spanId,
+  };
   const upstream = apiUrl();
   if (!upstream) {
     log.error("api url unset", { request_id: id, method: request.method, ...spanIds });
@@ -83,6 +88,9 @@ async function forwardApi(request: NextRequest): Promise<Response> {
   const ip = clientIp(request.headers);
   if (ip) headers.set("x-forwarded-for", ip);
   headers.set("x-request-id", id);
+  // A client's own id (ZB-29): never the request id, only passed along for correlation.
+  headers.delete("x-client-request-id");
+  if (clientId) headers.set("x-client-request-id", clientId);
   const tp = traceparent(span);
   if (tp) headers.set("traceparent", tp);
 

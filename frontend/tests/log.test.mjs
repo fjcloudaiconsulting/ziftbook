@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, test } from "node:test";
 
-import { errorFields, format, logger, parseFormat, parseLevel, requestErrorFields, requestId } from "../lib/log.ts";
+import { clientRequestId, errorFields, format, logger, parseFormat, parseLevel, requestErrorFields, requestId } from "../lib/log.ts";
 
 describe("parseLevel (L1, L2)", () => {
   test("undefined and empty give INFO; the four values are accepted as-is", () => {
@@ -258,13 +258,15 @@ describe("errorFields (L8)", () => {
 describe("requestId (L9)", () => {
   const HEX32 = /^[0-9a-f]{32}$/;
 
-  test("a valid id is kept as-is", () => {
-    assert.equal(requestId("abc-1"), "abc-1");
+  test("an id is always minted: 32 hex, fresh each time", () => {
+    assert.match(requestId(), HEX32);
+    assert.notEqual(requestId(), requestId());
   });
 
-  test("invalid inputs each fall back to 32 hex chars", () => {
+  test("a client's id is kept only when well formed", () => {
+    assert.equal(clientRequestId("abc-1"), "abc-1");
     for (const bad of ["a".repeat(65), "a b", "x\ny", "r1, r2", "", null]) {
-      assert.match(requestId(bad), HEX32, JSON.stringify(bad));
+      assert.equal(clientRequestId(bad), null, JSON.stringify(bad));
     }
   });
 });
@@ -283,7 +285,8 @@ describe("requestErrorFields (L10)", () => {
     assert.doesNotMatch(serialised, /secret/);
     assert.doesNotMatch(serialised, /a@b\.c/);
     assert.equal("digest" in fields, false, "a non-numeric-hash digest (a navigation digest) is dropped");
-    assert.equal(fields.request_id, "r1");
+    assert.notEqual(fields.request_id, "r1");
+    assert.equal(fields.client_request_id, "r1");
     assert.equal(fields.route, "/[locale]/x");
 
     const err2 = new Error("y");
