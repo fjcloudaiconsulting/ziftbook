@@ -1303,9 +1303,7 @@ def email_of_user(tenant_id: uuid.UUID, user_id: uuid.UUID) -> str:
 def test_confirm_skips_a_purpose_withdrawn_after_booking(
     people: People, app: FastAPI, ready: str, owner: TestClient
 ) -> None:
-    booking_id = confirmed_booking(
-        app, people.a, ready, consents={"marketing_email": True, "sms": True}
-    )
+    booking_id = confirmed_booking(app, people.a, ready, consents={"marketing_email": True})
     assert patch(owner, booking_id, "confirmed").status_code == 200
     with tenant_context(people.a) as session:
         client_id = session.scalar(
@@ -1315,18 +1313,18 @@ def test_confirm_skips_a_purpose_withdrawn_after_booking(
             text("""
             INSERT INTO consents (tenant_id, client_id, purpose, granted, text_shown,
                                   policy_version, source)
-            VALUES (current_setting('app.tenant_id')::uuid, :c, 'sms', false, 'withdrawn',
-                    '2026-09-01', 'merchant')
+            VALUES (current_setting('app.tenant_id')::uuid, :c, 'marketing_email', false,
+                    'withdrawn', '2026-09-01', 'merchant')
             """),
             {"c": client_id},
         )
     client = linked(app, people.a, booking_id)
     before = get(client).json()
-    assert set(before["pending_consents"]) == {"marketing_email"}
+    assert before["pending_consents"] == []
 
     response = post(client, "/consents", {"booking_id": booking_id})
 
-    assert response.status_code == 200
+    assert (response.status_code, response.json()) == (409, {"code": "nothing_to_confirm"})
     with tenant_context(people.a) as session:
         recorded = (
             session.execute(
@@ -1338,7 +1336,7 @@ def test_confirm_skips_a_purpose_withdrawn_after_booking(
             .scalars()
             .all()
         )
-    assert list(recorded) == ["marketing_email"]
+    assert list(recorded) == []
 
 
 # ZIF-157 B2 FENCE 5. Wrong impl: writing the grant at booking, or English-only evidence.
@@ -1386,7 +1384,7 @@ def test_a_guest_tick_becomes_consent_only_through_the_link(
 def test_a_withdrawal_older_than_the_grant_does_not_suppress_it(
     people: People, app: FastAPI, ready: str, owner: TestClient, migrate_engine: Engine
 ) -> None:
-    booking_id = confirmed_booking(app, people.a, ready, consents={"sms": True})
+    booking_id = confirmed_booking(app, people.a, ready, consents={"marketing_email": True})
     assert patch(owner, booking_id, "confirmed").status_code == 200
     # As the migrate role: the app role may not back-date created_at, and no route can.
     with migrate_engine.begin() as conn:
@@ -1395,14 +1393,14 @@ def test_a_withdrawal_older_than_the_grant_does_not_suppress_it(
             text("""
             INSERT INTO consents (tenant_id, client_id, purpose, granted, text_shown,
                                   policy_version, source, created_at)
-            SELECT tenant_id, client_id, 'sms', false, 'withdrawn', '2026-09-01', 'merchant',
-                   now() - interval '1 day'
+            SELECT tenant_id, client_id, 'marketing_email', false, 'withdrawn', '2026-09-01',
+                   'merchant', now() - interval '1 day'
             FROM bookings WHERE id = :id
             """),
             {"id": booking_id},
         )
 
-    assert get(linked(app, people.a, booking_id)).json()["pending_consents"] == ["sms"]
+    assert get(linked(app, people.a, booking_id)).json()["pending_consents"] == ["marketing_email"]
 
 
 # 26. fence. Confirming twice: one set of rows, one event.

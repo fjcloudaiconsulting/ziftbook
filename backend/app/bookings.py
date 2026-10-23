@@ -14,7 +14,7 @@ import logging
 from collections import Counter
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
-from typing import Annotated, Any, Literal, NamedTuple, Self
+from typing import Annotated, Any, Literal, NamedTuple, Self, get_args
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -909,6 +909,10 @@ def book_online(
     candidates = sorted(hours)  # 5
     # 6. Validate the WHOLE posted map here, before any write, so a bad policy version is a
     #    422 with nothing written - regardless of whether anything was withdrawn.
+    # ZB-27: the legacy version still reads back from stored rows, but a NEW booking takes only
+    # the wording the booking page offers.
+    if policy_version not in {clients.policy_version_for(loc) for loc in get_args(Locale)}:
+        raise ApiError(422, "unknown_policy_version")
     clients.texts_for(policy_version, consents)
     phone = clients.e164(db, phone)  # ZIF-152: also a 422 before any write, after the 404s
     message = message_text(message)  # ZIF-157: likewise

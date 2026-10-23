@@ -58,7 +58,7 @@ CONSENT_TEXTS: dict[str, dict[Purpose, str]] = {
 }
 # The version a booking page offers, one text per locale: the stored evidence is the wording the
 # person read, so the key is "<version>/<locale>". "2026-09-01" is the legacy English-only version,
-# kept for old tabs.
+# kept only to read stored rows and for the staff consent route; a new booking refuses it (ZB-27).
 POLICY_VERSION = "2026-10-20"
 # The booking page offers email marketing only, so sms/whatsapp stay on the legacy version.
 CONSENT_TEXTS[f"{POLICY_VERSION}/en"] = {
