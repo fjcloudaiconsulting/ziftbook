@@ -8,6 +8,7 @@
   `make setup` copies the same check into your `.git/hooks` as a local commit hook (re-run it after the hook changes).
   If you set up before ZB-07, re-run `make setup` once after pulling it.
 - `make lint typecheck test` runs locally what CI runs.
+- Landing: run `npm --prefix landing ci` once before `npm --prefix landing run dev`; wrangler comes from the lockfile.
 - CI on a pull request runs only the jobs its changed paths can affect (`scripts/ci-changes.mjs`); a docs-only PR runs
   just the title check and the two aggregate checks, `Backend Checks` and `Frontend Checks`, which pass when every job
   they gate passed or was skipped. A push to `main` runs every job.
