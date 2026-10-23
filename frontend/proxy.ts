@@ -105,9 +105,11 @@ async function forwardApi(request: NextRequest): Promise<Response> {
     // value] pair (measured), so no separate getSetCookie() rebuild is needed to keep them apart.
     // content-encoding/content-length are dropped because undici has already decoded the body;
     // the hop-by-hop set is dropped for the same reason it never reaches the upstream request.
+    // server and x-middleware-* are the upstream's (or the framework's) own, never the client's.
     const responseHeaders = new Headers();
     for (const [name, value] of upstreamResponse.headers) {
       if (name === "content-encoding" || name === "content-length" || HOP_BY_HOP.includes(name)) continue;
+      if (name === "server" || name.startsWith("x-middleware-")) continue;
       responseHeaders.append(name, value);
     }
     // Built before ending the span: a throw from the Response constructor must not end it twice.

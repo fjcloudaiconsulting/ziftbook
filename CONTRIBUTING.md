@@ -341,7 +341,8 @@ Rate limits and audit events key on the visitor's address. Each deployment has e
   address, as `X-Forwarded-For`. Set it only where every request reaches the web app through a proxy that
   overwrites that header; otherwise anyone can pick their address.
 - The API believes `X-Forwarded-For` only from the addresses in `ZIF_TRUSTED_PROXIES`. Empty trusts nobody.
-  The images run uvicorn with `--no-proxy-headers`, and so should you when running it outside Docker.
+  The images run uvicorn with `--no-proxy-headers` and `--no-server-header` (the latter keeps the server's name
+  and version out of every answer), and so should you when running it outside Docker.
 - In app code, read `request.client.host`. Never read `X-Forwarded-For`, `X-Real-IP`, `Forwarded` or
   `CF-Connecting-IP` yourself.
 

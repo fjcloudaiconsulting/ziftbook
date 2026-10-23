@@ -67,6 +67,18 @@ function stubHopByHopResponse(version) {
   });
 }
 
+function stubServerHeaders(version) {
+  return new Promise((resolve) => {
+    const server = createServer((req, res) => {
+      res.setHeader("Content-Type", "application/json");
+      res.setHeader("Server", "uvicorn");
+      res.setHeader("X-Middleware-Rewrite", "https://evil.example");
+      res.setHeader("X-Middleware-Next", "1");
+      res.end(JSON.stringify({ status: "ok", version }));
+    }).listen(0, "127.0.0.1", () => resolve(server));
+  });
+}
+
 function stubRedirect(location) {
   return new Promise((resolve) => {
     const server = createServer((req, res) => {
@@ -742,6 +754,21 @@ describe("hop-by-hop headers", () => {
       assert.equal(response.status, 200);
       assert.equal(response.headers.get("proxy-connection"), null);
       assert.equal(response.headers.get("trailer"), null);
+    } finally {
+      await stop(web);
+      api.close();
+    }
+  });
+
+  test("Server and x-middleware-* from the upstream never reach the client", async () => {
+    const api = await stubServerHeaders("S");
+    const web = await startWeb(`http://127.0.0.1:${api.address().port}`, port + 3);
+    try {
+      const response = await fetch(`http://127.0.0.1:${port + 3}/api/x`, { redirect: "manual" });
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get("server"), null);
+      assert.equal(response.headers.get("x-middleware-rewrite"), null);
+      assert.equal(response.headers.get("x-middleware-next"), null);
     } finally {
       await stop(web);
       api.close();
