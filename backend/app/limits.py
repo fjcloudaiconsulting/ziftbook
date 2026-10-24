@@ -107,6 +107,19 @@ def count(key: str, window: timedelta) -> int:
     return hits or 0
 
 
+COUNT_ALL = text("""
+SELECT coalesce(sum(hits), 0) FROM rate_limits
+WHERE key = ANY(CAST(:keys AS text[])) AND window_start > now() - CAST(:window AS interval)
+""")
+
+
+def count_all(keys: list[str], window: timedelta) -> int:
+    """count() of each key, added up, in one statement."""
+    with SessionLocal.begin() as session:
+        hits: int = session.scalar(COUNT_ALL, {"keys": keys, "window": window})
+    return hits
+
+
 def _pepper() -> bytes | None:
     """ZIF_RATE_LIMIT_KEY, read at call time; None while it is unset, shorter than MIN_KEY, or the
     development key on a public ZIF_APP_URL."""

@@ -87,6 +87,21 @@ def test_limits_count_reads_without_writing(action: str) -> None:
     assert limits.count(f"{action}:k", timedelta(minutes=15)) == 1
 
 
+# ZB-18. Wrong impls: a count of one key only, of keys it was not given, or of an expired window.
+def test_count_all_adds_up_the_live_windows_of_its_keys(action: str, app_engine: Engine) -> None:
+    once, twice, expired, other = (f"{action}:{n}" for n in ("once", "twice", "expired", "other"))
+    limits.hit({once: 5, twice: 5, expired: 5, other: 5}, WINDOW)
+    limits.hit({twice: 5}, WINDOW)
+    with app_engine.begin() as conn:
+        conn.execute(
+            text("UPDATE rate_limits SET window_start = now() - :w WHERE key = :k"),
+            {"w": WINDOW + timedelta(seconds=1), "k": expired},
+        )
+
+    assert limits.count_all([once, twice, expired, f"{action}:absent"], WINDOW) == 3
+    assert limits.count_all([f"{action}:absent"], WINDOW) == 0
+
+
 def test_count_ignores_a_window_hit_would_start_again(action: str, app_engine: Engine) -> None:
     key = f"{action}:k"
     limits.hit({key: 5}, WINDOW)

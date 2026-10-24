@@ -7,7 +7,7 @@ import secrets
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, get_args
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request, Response
@@ -24,9 +24,18 @@ ABSOLUTE = timedelta(days=30)
 TOUCH_EVERY = timedelta(minutes=5)
 SIGN_IN_WINDOW = timedelta(minutes=15)
 # ZB-01: the hard cap on an account is per address (IPv6 /64), so nobody elsewhere can use it up;
-# the account's failures from anywhere ask for a challenge instead of locking it.
+# the account's failures from anywhere ask for a challenge instead of locking it. Admin sign-in
+# spends the same attempts (attempt_key): one address gets this many at an email across both.
 PER_ADDRESS_LIMIT = 10
-FAILURES_BEFORE_CHALLENGE = 20
+# ZB-18: one more than one address gets across both sign-in routes, so one address alone never
+# challenges an account through them. Admin sign-in's too: an admin's password works on both
+# routes, both challenges count both routes' failures, and a threshold of its own for admins would
+# tell who is one.
+FAILURES_BEFORE_CHALLENGE = PER_ADDRESS_LIMIT + 1
+# Every action that counts wrong passwords (count_failure). Each challenge adds them all up, for
+# every email alike: guesses spread over the routes get no further than one route allows.
+PasswordAction = Literal["sign_in", "admin_sign_in"]
+PASSWORD_ACTIONS: tuple[PasswordAction, ...] = get_args(PasswordAction)
 COOKIE = "__Host-session"  # __Host-: Secure, Path=/ and no Domain, so no subdomain can set it
 
 
@@ -339,25 +348,33 @@ def limit_attempt(
 ) -> None:
     """Sign-in's checks on a password attempt for email, after the caller's own address limit.
 
-    At most PER_ADDRESS_LIMIT attempts from address_key, the caller's default ip_key: IPv6 per /64,
-    not the address limit's /48, which is shared too widely to key one person's sign-in on. Once
-    the account has FAILURES_BEFORE_CHALLENGE recent wrong passwords from anywhere (count_failure),
-    a Turnstile challenge, never a lock. The failures are only read here: an attempt refused before
-    its password is checked adds none.
+    At most PER_ADDRESS_LIMIT attempts (attempt_key) from address_key, the caller's default ip_key:
+    IPv6 per /64, not the address limit's /48, which is shared too widely to key one person's
+    sign-in on. Once the account has FAILURES_BEFORE_CHALLENGE recent wrong passwords from
+    anywhere, admin sign-in included (count_failure), a Turnstile challenge, never a lock. The
+    failures are only read here: an attempt refused before its password is checked adds none.
     """
-    if limits.hit(
-        {limits.email_key("sign_in", f"{email}|{address_key}"): PER_ADDRESS_LIMIT}, SIGN_IN_WINDOW
-    ):
+    if limits.hit({attempt_key(email, address_key): PER_ADDRESS_LIMIT}, SIGN_IN_WINDOW):
         raise ApiError(429, "rate_limited")
     require_challenge("sign_in", email, turnstile_token, ip, FAILURES_BEFORE_CHALLENGE)
+
+
+def attempt_key(email: str, address_key: str) -> str:
+    """The key of the PER_ADDRESS_LIMIT password attempts at email from address_key (an ip_key).
+    Admin sign-in charges business sign-in's, address_key ip_key("sign_in", ip), with its own."""
+    return limits.email_key("sign_in", f"{email}|{address_key}")
 
 
 def require_challenge(
     action: str, email: str, turnstile_token: str | None, ip: str | None, threshold: int
 ) -> None:
-    """429 challenge_required once email has threshold recent failures (count_failure) for action,
-    unless turnstile_token passes for that action. Only reads the failures."""
-    failures = limits.count(limits.email_key(f"{action}_failed", email), SIGN_IN_WINDOW)
+    """429 challenge_required once email's recent failures (count_failure), summed over
+    PASSWORD_ACTIONS, reach threshold, unless turnstile_token passes for action. Only reads the
+    failures."""
+    failures = limits.count_all(
+        [limits.email_key(f"{counted}_failed", email) for counted in PASSWORD_ACTIONS],
+        SIGN_IN_WINDOW,
+    )
     # No token is refused before verify(): with Turnstile switched off, verify() passes anything.
     if failures >= threshold and (
         not turnstile_token or not turnstile.verify(turnstile_token, ip, action=action)
@@ -366,9 +383,10 @@ def require_challenge(
 
 
 def count_failure(
-    email: str, action: str = "sign_in", threshold: int = FAILURES_BEFORE_CHALLENGE
+    email: str, action: PasswordAction = "sign_in", threshold: int = FAILURES_BEFORE_CHALLENGE
 ) -> bool:
-    """A wrong password for email (an unknown email too): one more towards its challenge.
+    """A wrong password for email (an unknown email too): one more towards its challenge. Only a
+    PASSWORD_ACTIONS action: any other would count toward no challenge.
 
     True when this failure is the one that reaches threshold.
     """

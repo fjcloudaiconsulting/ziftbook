@@ -910,9 +910,9 @@ def test_accept_rate_limits(
     )
     assert over.status_code == 429
 
-    # Per account: 20 failed sign-ins for only_b, from fresh IPs, ask the invite link for a
-    # challenge too.
-    for _ in range(20):
+    # Per account: the failed sign-ins that ask for a challenge, for only_b from fresh IPs, ask the
+    # invite link for one too.
+    for _ in range(auth.FAILURES_BEFORE_CHALLENGE):
         wrong = new_client(app).post(
             "/api/session", json={"email": email_of(people.only_b), "password": "wrong-pass-xx"}
         )
