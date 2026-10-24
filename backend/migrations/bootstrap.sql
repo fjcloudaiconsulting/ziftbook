@@ -4,13 +4,14 @@
 --   psql -v ON_ERROR_STOP=1 -d <app database> -f backend/migrations/bootstrap.sql
 -- Connect to the application's database (compose: ziftbook): the database grants and the TEMPORARY
 -- revoke below apply to the database psql is connected to.
--- Requires ZIF_MIGRATE_PASSWORD, ZIF_APP_PASSWORD and ZIF_WORKER_PASSWORD in the environment. If any is
--- unset, its password statement fails and the run stops non-zero (a role created without a password cannot
--- log in). An empty ZIF_WORKER_PASSWORD stops it too (a PASSWORD '' would clear the role's password). The
--- worker must connect as ziftbook_worker: only it may mint email tokens (0051) and set invite tokens (0053),
--- so a worker still on ziftbook_app fails every sign-up, reset and invite email (ZB-08).
--- A run stopped by a missing password has created the roles but skipped the grants, the TEMPORARY
--- revoke and the role settings below: set the password and run it again.
+-- Requires ZIF_MIGRATE_PASSWORD, ZIF_APP_PASSWORD and ZIF_WORKER_PASSWORD in the environment.
+-- ZIF_WORKER_PASSWORD is checked before anything is created or changed: unset or empty (a PASSWORD '' would
+-- clear the role's password), the run stops non-zero, even without ON_ERROR_STOP, and changes nothing. An
+-- unset ZIF_MIGRATE_PASSWORD or ZIF_APP_PASSWORD fails its password statement, which stops the run non-zero
+-- under ON_ERROR_STOP (a role created without a password cannot log in): the roles are created, but the
+-- grants, the TEMPORARY revoke and the role settings below are skipped. Either way: set the password and
+-- run it again. The worker must connect as ziftbook_worker: only it may mint email tokens (0051) and set
+-- invite tokens (0053), so a worker still on ziftbook_app fails every sign-up, reset and invite email (ZB-08).
 --
 -- ziftbook_migrate owns the schema and runs Alembic. ziftbook_app owns nothing and gets DML only, through
 -- default privileges set in migration #1. Owners bypass row-level security, so the app must never own tables.
@@ -21,6 +22,17 @@
 \getenv migrate_password ZIF_MIGRATE_PASSWORD
 \getenv app_password ZIF_APP_PASSWORD
 \getenv worker_password ZIF_WORKER_PASSWORD
+
+-- Before any CREATE or ALTER, so a run this stops leaves every role as it was. Empty counts as unset.
+\set worker_password_missing true
+\if :{?worker_password}
+SELECT :'worker_password' = '' AS worker_password_missing \gset
+\endif
+\if :worker_password_missing
+-- Stops non-zero even when the caller did not set ON_ERROR_STOP.
+\set ON_ERROR_STOP on
+DO $$ BEGIN RAISE EXCEPTION 'ZIF_WORKER_PASSWORD is unset or empty: ziftbook_worker needs a password'; END $$;
+\endif
 
 SELECT 'CREATE ROLE ziftbook_migrate LOGIN'
 WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'ziftbook_migrate') \gexec
@@ -33,17 +45,7 @@ WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'ziftbook_worker') \gexec
 
 ALTER ROLE ziftbook_migrate PASSWORD :'migrate_password';
 ALTER ROLE ziftbook_app PASSWORD :'app_password';
-\set worker_password_set false
-\if :{?worker_password}
-SELECT :'worker_password' <> '' AS worker_password_set \gset
-\endif
-\if :worker_password_set
 ALTER ROLE ziftbook_worker PASSWORD :'worker_password';
-\else
--- Stops non-zero even when the caller did not set ON_ERROR_STOP.
-\set ON_ERROR_STOP on
-DO $$ BEGIN RAISE EXCEPTION 'ZIF_WORKER_PASSWORD is unset or empty: ziftbook_worker needs a password'; END $$;
-\endif
 
 GRANT CONNECT, CREATE ON DATABASE :"DBNAME" TO ziftbook_migrate;
 GRANT CONNECT ON DATABASE :"DBNAME" TO ziftbook_app;
