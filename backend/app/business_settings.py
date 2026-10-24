@@ -46,10 +46,12 @@ def header_address(email: str) -> str:
     Python sends a non-ASCII address as an encoded word, and parses "shop[1]@x" or a stray dot as
     something else, so a reply would reach nobody. An IDN domain still works in its xn-- form.
     """
+    if not email.isascii():
+        raise ValueError("not an address a reply can reach")
     message = EmailMessage()
     message["Reply-To"] = email
     header = message_from_string(message.as_string(), policy=policy.default)["Reply-To"]
-    if not email.isascii() or header.defects or [a.addr_spec for a in header.addresses] != [email]:
+    if header.defects or [a.addr_spec for a in header.addresses] != [email]:
         raise ValueError("not an address a reply can reach")
     return email
 
