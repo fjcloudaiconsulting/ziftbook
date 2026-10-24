@@ -1,7 +1,8 @@
 import createMiddleware from "next-intl/middleware";
-import { type NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 import { routing } from "./i18n/routing";
+import { CSP_HEADER, cspFor, newNonce, originOf } from "./lib/csp";
 import { clientRequestId, errorFields, logger, requestId } from "./lib/log";
 import { readNeedsSetup, setupGate, setupRedirect } from "./lib/setup-gate";
 import { endProxySpan, startProxySpan, traceparent } from "./lib/trace";
@@ -155,7 +156,26 @@ export default async function proxy(request: NextRequest) {
   const setup = setupRedirect(pathname, routing.locales);
   if (setup && (await needsSetup())) return NextResponse.redirect(new URL(setup, request.url));
 
-  return localize(request);
+  // ZB-12: a fresh nonce for every page. Next reads it from the policy on the request and puts it on its
+  // own scripts; x-nonce hands it to next/script (app/[locale]/layout.tsx). Whatever the client sent
+  // under these names is dropped, so Next can never take its nonce from the client.
+  const nonce = newNonce();
+  // Read per request, like ZIF_API_URL: one build serves every deployment. The upload origin is the
+  // one the API presigns photo uploads for (backend/app/storage.py: the public endpoint, else the endpoint).
+  const policy = cspFor(
+    nonce,
+    originOf(process.env.ZIF_MEDIA_URL),
+    originOf(process.env.ZIF_S3_PUBLIC_ENDPOINT || process.env.ZIF_S3_ENDPOINT),
+  );
+  const headers = new Headers(request.headers);
+  for (const name of ["x-nonce", "content-security-policy", "content-security-policy-report-only"]) headers.delete(name);
+  headers.set("x-nonce", nonce);
+  headers.set(CSP_HEADER, policy);
+  const response = localize(new NextRequest(request, { headers }));
+  // Enforced, this replaces next.config.ts's frame-ancestors-only header (Next sends the proxy's value);
+  // report-only, that header stays the one enforced policy, as a report-only policy enforces nothing.
+  response.headers.set(CSP_HEADER, policy);
+  return response;
 }
 
 export const config = {

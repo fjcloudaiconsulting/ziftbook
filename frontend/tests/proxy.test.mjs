@@ -835,3 +835,140 @@ describe("proxy log lines carry the span's ids (W4)", () => {
     }
   });
 });
+
+// ZB-12: every page names the scripts it may run by a nonce of its own. Until ZIF_CSP_ENFORCE=true the
+// policy goes out report-only: browsers report what it would block, and block nothing.
+const policyNonce = (policy) => /'nonce-([^']+)'/.exec(policy ?? "")?.[1];
+
+// Every header of that name, as sent: fetch() joins repeats into one value.
+function rawHeaders(port, path, name) {
+  return new Promise((resolve, reject) => {
+    httpRequest({ host: "127.0.0.1", port, path }, (res) => {
+      res.resume();
+      const values = [];
+      for (let i = 0; i < res.rawHeaders.length; i += 2) {
+        if (res.rawHeaders[i].toLowerCase() === name) values.push(res.rawHeaders[i + 1]);
+      }
+      res.on("end", () => resolve(values));
+    })
+      .on("error", reject)
+      .end();
+  });
+}
+
+describe("page Content-Security-Policy, report-only (ZB-12)", () => {
+  let api, web;
+  const port = 3220;
+  const origin = `http://127.0.0.1:${port}`;
+  before(async () => {
+    api = await stubApi("G");
+    web = await startWeb(`http://127.0.0.1:${api.address().port}`, port, {
+      ZIF_CSP_ENFORCE: undefined,
+      ZIF_MEDIA_URL: "https://media.example.test/ziftbook-media",
+      ZIF_S3_ENDPOINT: "https://store.example.test",
+      ZIF_S3_PUBLIC_ENDPOINT: undefined,
+      // Cloudflare's always-passes test site key: the forgot-password page then renders the widget.
+      ZIF_TURNSTILE_SITE_KEY: "1x00000000000000000000AA",
+    });
+  });
+  after(async () => {
+    await stop(web);
+    api.close();
+  });
+
+  test("fence: a page gets a report-only policy whose nonce is new on every request", async () => {
+    // Wrong implementation killed: one nonce for the process, which a page once read gives away.
+    const first = await fetch(`${origin}/en/sign-in`);
+    const second = await fetch(`${origin}/en/sign-in`);
+    const a = policyNonce(first.headers.get("content-security-policy-report-only"));
+    const b = policyNonce(second.headers.get("content-security-policy-report-only"));
+    assert.ok(a && b, "both pages carry a nonce");
+    assert.notEqual(a, b);
+    assert.equal(Buffer.from(a, "base64").length, 16, "128 bits");
+    // A report-only policy enforces nothing, so the framing header stays the one enforced policy.
+    assert.deepEqual(await rawHeaders(port, "/en/sign-in", "content-security-policy"), ["frame-ancestors 'none'"]);
+  });
+
+  test("fence: an /api answer gets no page policy", async () => {
+    const response = await fetch(`${origin}/api/healthz`);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("content-security-policy-report-only"), null);
+    assert.equal(response.headers.get("content-security-policy"), null);
+  });
+
+  test("the media and photo-store origins come from this server's environment at runtime", async () => {
+    const policy = (await fetch(`${origin}/en/services/new`)).headers.get("content-security-policy-report-only");
+    assert.match(policy, /img-src 'self' data: https:\/\/media\.example\.test blob: /);
+    assert.match(policy, /connect-src 'self' [^;]* https:\/\/store\.example\.test;/);
+  });
+
+  test("fence: every script on a page carries that page's nonce, pages once built ahead of time included", async () => {
+    // Wrong implementation killed: a page prerendered at build time, whose scripts have no nonce at all.
+    for (const path of ["/en", "/nl/privacy", "/pt/terms", "/en/sign-in", "/en/forgot-password", "/en/admin", "/nl/admin/sign-in", "/en/calendar", "/pt/services/new", "/en/no-such/page"]) {
+      const response = await fetch(`${origin}${path}`, { redirect: "manual" });
+      const nonce = policyNonce(response.headers.get("content-security-policy-report-only"));
+      assert.ok(nonce, `${path} has a policy`);
+      const html = await response.text();
+      const scripts = html.match(/<script\b[^>]*>/g) ?? [];
+      assert.ok(scripts.length > 0, `${path} has scripts`);
+      for (const tag of scripts) assert.ok(tag.includes(` nonce="${nonce}"`), `${path}: ${tag}`);
+      // The policy has no style-src: styles fall to default-src 'self', which refuses inline ones.
+      assert.doesNotMatch(html, /<style[\s>]/, `${path} has no <style> element`);
+      assert.ok(!html.includes(' style="'), `${path} has no style attribute`);
+    }
+  });
+
+  test("Turnstile's script is fetched under the page's nonce", async () => {
+    const response = await fetch(`${origin}/en/forgot-password`);
+    const nonce = policyNonce(response.headers.get("content-security-policy-report-only"));
+    const preload = (await response.text()).match(/<link[^>]*challenges\.cloudflare\.com\/turnstile[^>]*>/)?.[0];
+    assert.ok(preload, "the page preloads Turnstile");
+    assert.ok(preload.includes(` nonce="${nonce}"`), preload);
+  });
+
+  test("fence: a nonce or policy the client sends never reaches the page", async () => {
+    // Wrong implementation killed: forwarding the client's headers, so Next stamps the client's nonce.
+    const forged = Buffer.from("not this server's").toString("base64");
+    const response = await fetch(`${origin}/en/sign-in`, {
+      headers: { "x-nonce": forged, "content-security-policy": `script-src 'nonce-${forged}'`, "content-security-policy-report-only": `script-src 'nonce-${forged}'` },
+    });
+    const nonce = policyNonce(response.headers.get("content-security-policy-report-only"));
+    assert.notEqual(nonce, forged);
+    const html = await response.text();
+    assert.ok(!html.includes(forged), "the client's nonce appears nowhere on the page");
+    assert.ok(html.includes(` nonce="${nonce}"`));
+  });
+});
+
+describe("page Content-Security-Policy, enforced (ZB-12)", () => {
+  let api, web;
+  const port = 3221;
+  before(async () => {
+    api = await stubApi("H");
+    web = await startWeb(`http://127.0.0.1:${api.address().port}`, port, { ZIF_CSP_ENFORCE: "true", ZIF_MEDIA_URL: undefined, ZIF_S3_ENDPOINT: undefined, ZIF_S3_PUBLIC_ENDPOINT: undefined });
+  });
+  after(async () => {
+    await stop(web);
+    api.close();
+  });
+
+  test("fence: ZIF_CSP_ENFORCE=true sends one enforced policy, the whole one, and nothing report-only", async () => {
+    // Wrong implementation killed: a second Content-Security-Policy header beside the framing one.
+    const policies = await rawHeaders(port, "/en/sign-in", "content-security-policy");
+    assert.equal(policies.length, 1, policies.join(" | "));
+    assert.ok(policyNonce(policies[0]), "it carries the nonce");
+    assert.match(policies[0], /frame-ancestors 'none'/);
+    assert.match(policies[0], /img-src 'self' data: blob: /);
+    assert.deepEqual(await rawHeaders(port, "/en/sign-in", "content-security-policy-report-only"), []);
+
+    const response = await fetch(`http://127.0.0.1:${port}/en/sign-in`);
+    const nonce = policyNonce(response.headers.get("content-security-policy"));
+    const scripts = (await response.text()).match(/<script\b[^>]*>/g) ?? [];
+    assert.ok(scripts.length > 0);
+    for (const tag of scripts) assert.ok(tag.includes(` nonce="${nonce}"`), tag);
+  });
+
+  test("an /api answer still gets no page policy", async () => {
+    assert.deepEqual(await rawHeaders(port, "/api/healthz", "content-security-policy"), []);
+  });
+});

@@ -4,6 +4,8 @@ import Script from "next/script";
 import { useLocale } from "next-intl";
 import { useCallback, useEffect, useRef } from "react";
 
+import { useNonce } from "./nonce";
+
 type Api = {
   render(el: Element, options: Record<string, unknown>): string;
   remove(id: string): void;
@@ -18,6 +20,7 @@ const LANGUAGE: Record<string, string> = { pt: "pt-br" };
  */
 export function Turnstile({ siteKey, action, onToken }: { siteKey: string; action: string; onToken: (token: string | null) => void }) {
   const locale = useLocale();
+  const nonce = useNonce();
   const box = useRef<HTMLDivElement>(null);
   const widget = useRef<string | null>(null);
   const latest = useRef(onToken);
@@ -52,7 +55,7 @@ export function Turnstile({ siteKey, action, onToken }: { siteKey: string; actio
   return (
     <>
       <div ref={box} />
-      <Script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" strategy="afterInteractive" onReady={render} />
+      <Script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" strategy="afterInteractive" nonce={nonce} onReady={render} />
     </>
   );
 }

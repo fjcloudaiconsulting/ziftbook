@@ -176,6 +176,9 @@ services:
         condition: service_healthy
     environment:
       ZIF_API_URL: http://backend:8000
+      # The API's photo store and media addresses, which the pages' Content-Security-Policy allows (ZB-12).
+      ZIF_S3_PUBLIC_ENDPOINT: http://localhost:8333
+      ZIF_MEDIA_URL: http://localhost:8333/ziftbook-media
       ZIF_LOG_LEVEL: DEBUG
       ZIF_LOG_FORMAT: text
       OTEL_EXPORTER_OTLP_ENDPOINT: ${ZIF_OTEL_EXPORTER_OTLP_ENDPOINT:-}
