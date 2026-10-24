@@ -11,7 +11,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app import auth
 from app.db import tenant_context
-from tests.conftest import People, end_membership, set_role
+from tests.conftest import People, end_membership, migrate_tenant_context, set_role
 
 
 def start(tenant_id: uuid.UUID, user_id: uuid.UUID, **request: str | None) -> str:
@@ -75,14 +75,17 @@ def test_a_session_cannot_start_for_someone_outside_the_tenant(people: People) -
         start(people.a, people.only_b)
 
 
-def test_removing_a_membership_ends_only_its_sessions(people: People, app_engine: Engine) -> None:
+def test_removing_a_membership_ends_only_its_sessions(
+    people: People, app_engine: Engine, migrate_engine: Engine
+) -> None:
     # both is a's only owner: promote only_a first, or the keep_an_owner trigger refuses the
     # DELETE below (both stays a's only owner otherwise) and the IntegrityError propagates here.
     set_role(people.a, people.only_a, "owner")
     in_a, in_b = start(people.a, people.both), start(people.b, people.both)
 
-    with tenant_context(people.a) as session:
-        session.execute(text("DELETE FROM memberships WHERE user_id = :u"), {"u": people.both})
+    # As the migrate role: the app role has no DELETE on memberships (ZB-10).
+    with migrate_tenant_context(migrate_engine, people.a) as conn:
+        conn.execute(text("DELETE FROM memberships WHERE user_id = :u"), {"u": people.both})
 
     assert stored(app_engine, in_a) is None
     assert stored(app_engine, in_b) is not None
