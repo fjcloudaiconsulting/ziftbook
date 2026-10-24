@@ -5,6 +5,7 @@ import json
 import uuid
 from collections.abc import Callable
 from datetime import timedelta
+from pathlib import Path
 from typing import Any, get_args
 
 import pytest
@@ -12,7 +13,7 @@ from sqlalchemy import Engine, text
 from sqlalchemy.exc import DBAPIError
 
 from app import admin, totp
-from tests.conftest import add_user, email_of
+from tests.conftest import REAL_SHOW_TICKET, SHOWN_TICKETS, add_user, email_of
 from tests.test_second_factor_db import (
     TICKET,
     begin,
@@ -222,9 +223,10 @@ ISSUED = text(
 )
 
 
-# fence: the ticket goes to the operator's terminal and never to a log (logs ship to Loki). Kills
-# the ticket logged through logger. Injected by adding it to the INFO line's extra.
-def test_enrol_prints_the_ticket_and_never_logs_it(
+# fence: the ticket goes to the operator's terminal and never to a log or stdout (both ship to
+# Loki in a container). Kills the ticket printed or logged. Injected by print(ticket) or by adding
+# it to the INFO line's extra.
+def test_enrol_shows_the_ticket_on_the_terminal_only(
     app_engine: Engine,
     migrate_engine: Engine,
     capsys: pytest.CaptureFixture[str],
@@ -234,14 +236,61 @@ def test_enrol_prints_the_ticket_and_never_logs_it(
 
     assert admin.main(["enrol", email_of(user_id), "--reason", "new phone"]) == 0
 
-    found = TICKET.search(capsys.readouterr().out)
-    assert found is not None
+    (ticket,) = SHOWN_TICKETS
+    assert TICKET.fullmatch(ticket)
+    captured = capsys.readouterr()
+    assert ticket not in captured.out + captured.err
     lines = log_lines()
     assert [
         line["user_id"] for line in lines if line["msg"] == "second factor enrolment issued"
     ] == [str(user_id)]
     logged = json.dumps(lines)
-    assert found.group() not in logged and totp.normalise(found.group()) not in logged
+    assert ticket not in logged and totp.normalise(ticket) not in logged
+
+
+# fence: with no terminal enrol issues nothing: exit 2, the old factor stays, no audit event, no
+# "issued" log line. Kills a commit before the ticket is shown.
+def test_enrol_without_a_terminal_issues_nothing(
+    app_engine: Engine,
+    migrate_engine: Engine,
+    capsys: pytest.CaptureFixture[str],
+    log_lines: Callable[[], list[dict[str, Any]]],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    e = enrolled(app_engine, migrate_engine)
+    monkeypatch.setattr(admin, "show_ticket", REAL_SHOW_TICKET)  # pointed at no terminal
+    monkeypatch.setattr(admin, "TTY", str(tmp_path / "no" / "tty"))
+    before = factor(migrate_engine, e.user_id)
+    audited = audit_rows(migrate_engine, f"user:{e.user_id}")
+    issued = len([line for line in log_lines() if line["msg"] == "second factor enrolment issued"])
+
+    assert admin.main(["enrol", email_of(e.user_id), "--reason", "new phone"]) == 2
+
+    assert capsys.readouterr().err.strip() == "enrolment needs a terminal: run it with -it"
+    assert factor(migrate_engine, e.user_id) == before
+    assert session_factor(migrate_engine, e.session) != "gone"
+    assert audit_rows(migrate_engine, f"user:{e.user_id}") == audited
+    assert issued == len(
+        [line for line in log_lines() if line["msg"] == "second factor enrolment issued"]
+    )
+
+
+# fence: the real show_ticket puts the ticket on the terminal and nowhere else. Kills a print to
+# stdout or stderr (a container's log stream).
+def test_show_ticket_writes_the_terminal_only(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    tty = tmp_path / "tty"
+    tty.touch()
+    monkeypatch.setattr(admin, "TTY", str(tty))
+
+    REAL_SHOW_TICKET("the-ticket")
+
+    assert "the-ticket" in tty.read_text()
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
 
 
 # fence: a ticket lasts one hour. Kills a 24-hour or missing expiry. Injected by '24 hours'.

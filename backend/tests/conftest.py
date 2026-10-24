@@ -41,7 +41,7 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import NullPool
 
-from app import auth, logs, mail, passwords, payments, stripe_gateway, tracing
+from app import admin, auth, logs, mail, passwords, payments, stripe_gateway, tracing
 from app.db import SessionLocal, tenant_context
 from app.jobs import run_once
 from app.worker import KINDS
@@ -278,6 +278,18 @@ def mailgun_replies() -> Iterator[dict[str, int | Exception]]:
 def sent_to(email: str) -> list[dict[str, Any]]:
     """Every message Mailgun accepted for exactly this address, newest first."""
     return [c for c in reversed(MAILGUN_CALLS) if c["To"] == email and c["Status"] == 200]
+
+
+SHOWN_TICKETS: list[str] = []
+REAL_SHOW_TICKET = admin.show_ticket
+
+
+@pytest.fixture(autouse=True)
+def _capture_shown_tickets(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """admin.show_ticket writes to /dev/tty, which a test run has not got: capture it instead."""
+    SHOWN_TICKETS.clear()
+    monkeypatch.setattr(admin, "show_ticket", SHOWN_TICKETS.append)
+    yield
 
 
 @pytest.fixture(autouse=True)

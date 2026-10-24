@@ -5,8 +5,10 @@
 - Keep pull requests small: one change a reviewer can follow in one sitting.
 - PR titles follow [Conventional Commits](https://www.conventionalcommits.org/) (`feat(api): add bookings endpoint`).
   PRs are squash-merged, so the title becomes the commit on `main` and the changelog entry. CI checks it, and
-  `make setup` installs the same check as a local commit hook.
+  `make setup` copies the same check into your `.git/hooks` as a local commit hook (re-run it after the hook changes).
+  If you set up before ZB-07, re-run `make setup` once after pulling it.
 - `make lint typecheck test` runs locally what CI runs.
+- Landing: run `npm --prefix landing ci` once before `npm --prefix landing run dev`; wrangler comes from the lockfile.
 - CI on a pull request runs only the jobs its changed paths can affect (`scripts/ci-changes.mjs`); a docs-only PR runs
   just the title check and the two aggregate checks, `Backend Checks` and `Frontend Checks`, which pass when every job
   they gate passed or was skipped. A push to `main` runs every job.
@@ -270,10 +272,13 @@ A platform admin runs the platform across businesses (ZIF-70). `platform_admins`
   `--reason` is required. Exit code 0 means done or nothing to do, 1 no account has that email (or another error,
   logged CRITICAL), 2 a usage error.
 - Admins sign in with a second factor (TOTP, ZIF-71). An admin enrols with a one-hour ticket from
-  `docker compose run --rm migrate python -m app.admin enrol <email> --reason "..."`, which wipes their current
-  factor and recovery codes and ends their admin sessions. It prints the ticket to the terminal, never to a log;
-  exit 1 means no admin has that email. Run it after `grant`, and again when an admin loses their authenticator and
-  their recovery codes.
+  `kubectl exec -it <api pod> -- python -m app.admin enrol <email> --reason "..."`, which wipes their current
+  factor and recovery codes and ends their admin sessions. It writes the ticket to `/dev/tty`, never to stdout or
+  a log, so it needs `-it`: with no terminal it issues nothing and exits 2; exit 1 means no admin has that email.
+  Prefer `kubectl exec` in a deployment: with `kubectl run -it` (or `docker compose run -it`) the container's
+  main process owns the terminal, and the container log records what is written to it. For local development
+  `docker compose run --rm -it migrate python -m app.admin enrol <email> --reason "..."` is fine, with that
+  caveat. Run it after `grant`, and again when an admin loses their authenticator and their recovery codes.
 - Never enable statement or parameter logging (`log_statement`, `log_min_duration_statement` with parameters,
   `auto_explain` with parameters) on the app database. Bind values include bearer proofs: a logged TOTP proof,
   recovery-code proof or ticket proof lets anyone who can read the log and run SQL pass an admin's second factor.
@@ -307,8 +312,9 @@ Where each deployment gets it:
   the `cloudflared` pods to the web app, so no other path reaches it. The web app sets `ZIF_CLIENT_IP_HEADER=cf-connecting-ip`; the API sets
   `ZIF_TRUSTED_PROXIES=10.42.0.0/16` (the pod network), and NetworkPolicies admit only the web app's pods to
   it. Each visitor gets their own per-IP limits.
-- **`docker-compose-prod.yaml`** publishes the web app's port 3000 directly, so it leaves `ZIF_CLIENT_IP_HEADER`
-  unset (any client could forge the header) and the API trusts only the web app's fixed `172.28.0.10`. Every
+- **`docker-compose-prod.yaml`** publishes the web app's port 3000 directly (bound to 127.0.0.1, with no Turnstile
+  opt-out), so it leaves `ZIF_CLIENT_IP_HEADER` unset (any client could forge the header) and the API trusts only
+  the web app's fixed `172.28.0.10`. Every
   visitor then shares that one address and its per-IP limits: after ZIF-54's 10 booking-link exchanges in 15
   minutes, every further one is refused, for every client of every business. Use it to try a release, never
   for public traffic as it stands.
@@ -601,8 +607,8 @@ ZIF-38). An empty variable means the default: `env_ignore_empty=True` on the bas
 | `ZIF_TURNSTILE_SECRET` | api | `""` | yes, or `ZIF_TURNSTILE_DISABLED` | yes | Cloudflare Turnstile secret. Unset: every public booking is refused (403 `turnstile_failed`) and the API logs an ERROR at startup, unless `ZIF_TURNSTILE_DISABLED=true`. |
 | `ZIF_TURNSTILE_DISABLED` | api | `false` | no | no | `true` serves public bookings with no Turnstile check when no secret is set (development, CI, tests). Ignored when a secret is set. Never on a public deployment. |
 | `ZIF_TURNSTILE_SITE_KEY` | frontend | none | no | no | Cloudflare Turnstile site key, rendered on the public booking page. Set both the site key and the secret, or neither: a site key with no secret shows a widget while the API refuses every booking; a secret with no site key never gets a token to check. Never `NEXT_PUBLIC_*`: read server-side at request time (`process.env`, ZIF-56's page loader), not baked into the client bundle at build time. |
-| `ZIF_SETUP_TOKEN` | api | `""` | until setup is done | yes | First-run setup token (ZIF-70): whoever sends it to `/setup` on an install with no account yet becomes the platform admin. At least 32 characters (`openssl rand -base64 32`); unset or shorter refuses setup (503 `setup_not_configured`), and the API logs an ERROR at startup while setup is still to be done. Once anyone has an account setup answers 409 whatever the token, so it can be removed afterwards. |
-| `ZIF_TOTP_KEY` | api | `""` | yes, once an admin exists | yes | Encrypts every platform admin's TOTP secret (ZIF-71): base64 of exactly 32 bytes (`openssl rand -base64 32`), AES-256-GCM. Unset or invalid: the API logs an ERROR at startup and admin TOTP answers 503 `second_factor_unavailable`, while recovery codes still work. Back it up with the database credentials: losing or changing it makes every stored secret unreadable, and each admin then re-enrols with `python -m app.admin enrol`. |
+| `ZIF_SETUP_TOKEN` | api | `""` | until setup is done | yes | First-run setup token (ZIF-70): whoever sends it to `/setup` on an install with no account yet becomes the platform admin. At least 32 characters (`openssl rand -base64 32`); unset or shorter refuses setup (503 `setup_not_configured`), and the API logs an ERROR at startup while setup is still to be done. Once anyone has an account setup answers 409 whatever the token, so it can be removed afterwards. The development token from `docker-compose.yaml` counts as unset when `ZIF_APP_URL` is not localhost. |
+| `ZIF_TOTP_KEY` | api | `""` | yes, once an admin exists | yes | Encrypts every platform admin's TOTP secret (ZIF-71): base64 of exactly 32 bytes (`openssl rand -base64 32`), AES-256-GCM. Unset or invalid: the API logs an ERROR at startup and admin TOTP answers 503 `second_factor_unavailable`, while recovery codes still work. Back it up with the database credentials: losing or changing it makes every stored secret unreadable, and each admin then re-enrols with `python -m app.admin enrol`. The development key from `docker-compose.yaml` counts as unset when `ZIF_APP_URL` is not localhost. |
 | `ZIF_TRUSTED_PROXIES` | api | `""` | yes | no | Addresses whose `X-Forwarded-For` the API believes (production and staging: the pod network `10.42.0.0/16`; compose: the web app's `172.28.0.10`). Empty trusts nobody. |
 | `ZIF_CLIENT_IP_HEADER` | frontend | none | yes, behind a proxy | no | Header the web app trusts for the visitor's address (production and staging: `cf-connecting-ip`). Set only behind a proxy that overwrites it; unset there, every visitor shares the proxy's address and its per-IP limits. |
 | **Logging** | | | | | |

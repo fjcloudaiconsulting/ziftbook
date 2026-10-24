@@ -4,8 +4,8 @@
 
 The CLI connects as ziftbook_migrate (ZIF_MIGRATE_DATABASE_URL): the app role has no grant on
 platform_admins or second_factors. One transaction per run writes the change and its audit event.
-enrol (ZIF-71) wipes the admin's second factor, ends their admin sessions and prints a one-hour
-enrolment ticket.
+enrol (ZIF-71) wipes the admin's second factor, ends their admin sessions and shows a one-hour
+enrolment ticket on the terminal.
 """
 
 import argparse
@@ -118,10 +118,35 @@ ON CONFLICT (user_id) DO UPDATE SET
 """)
 
 
+TTY = "/dev/tty"
+
+
+class NoTerminal(Exception):
+    """There is no controlling terminal to show the enrolment ticket on."""
+
+
+def show_ticket(ticket: str) -> None:
+    """Write the ticket to the operator's terminal, not stdout: in a container stdout is the log
+    stream, and logs ship off the host."""
+    try:
+        with open(TTY, "w") as tty:
+            tty.write(f"Enrolment ticket, valid for 1 hour: {ticket}\n")
+    except OSError as error:
+        raise NoTerminal from error
+
+
 def enrol(engine: Engine, email: str, reason: str) -> int:
-    """Wipe the admin's second factor, end their admin sessions and print a one-hour enrolment
-    ticket. The ticket goes to stdout only, never to a log (logs ship off the host)."""
+    """Wipe the admin's second factor, end their admin sessions and show a one-hour enrolment
+    ticket on the terminal. With no terminal nothing is issued: exit 2."""
     ticket = totp.new_code()
+    try:
+        return _enrol(engine, email, reason, ticket)
+    except NoTerminal:
+        print("enrolment needs a terminal: run it with -it", file=sys.stderr)
+        return 2
+
+
+def _enrol(engine: Engine, email: str, reason: str, ticket: str) -> int:
     with Session(engine) as session, session.begin():
         user_id = session.scalar(
             text(
@@ -148,14 +173,14 @@ def enrol(engine: Engine, email: str, reason: str) -> int:
             reason=reason,
             details={"via": "cli"},
         )
+        show_ticket(ticket)  # before the commit: no terminal raises and rolls everything back
     logger.info("second factor enrolment issued", extra={"user_id": str(user_id)})
-    print(f"Enrolment ticket, valid for 1 hour: {ticket}")
     return 0
 
 
 def main(argv: list[str] | None = None) -> int:
     """0 done (or nothing to do), 1 no account with that email, or for enrol no admin with it (or
-    any uncaught error, logged CRITICAL), 2 usage error (argparse)."""
+    any uncaught error, logged CRITICAL), 2 usage error (argparse) or, for enrol, no terminal."""
     parser = argparse.ArgumentParser(prog="python -m app.admin", description=__doc__)
     parser.add_argument("command", choices=("grant", "revoke", "enrol"))
     parser.add_argument("email")

@@ -1069,6 +1069,13 @@ def test_a_malformed_otlp_headers_entry_never_reaches_the_log(
         provider.shutdown()
 
 
+# ZB-23: the Stripe SDK logs a line per request at INFO; keep it out of the logs at any level.
+def test_the_stripe_sdk_logs_only_warnings_and_above() -> None:
+    logs.configure()
+
+    assert logging.getLogger("stripe").getEffectiveLevel() == logging.WARNING
+
+
 # B1: a startup failure never leaks the exception message. Starlette sends str(exc) (here a
 # malformed database URL) as the lifespan.startup.failed ASGI message and uvicorn logs it with no
 # exc_info, bypassing our formatter.

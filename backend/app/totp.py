@@ -22,13 +22,15 @@ from uuid import UUID
 import segno
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-from app.config import SecondFactorSettings
+from app.config import SecondFactorSettings, is_dev_value_on_public_url
 
 ISSUER = "ZiftBook"
 STEP = 30  # seconds
 VERSION = b"\x01"  # the key version, the first byte of every stored ciphertext
 NONCE = 12
 KEY_BYTES = 32
+# SHA-256 of docker-compose.yaml's development ZIF_TOTP_KEY.
+DEV_KEY_SHA256 = "2639e8f1f0dd1344f6df32f1aff69563545eddaba22dea39245538b42894e6fb"
 
 
 def new_secret() -> bytes:
@@ -76,7 +78,7 @@ def normalise(typed: str) -> str:
 def key() -> bytes | None:
     """ZIF_TOTP_KEY decoded, read at call time; None when it is unset or not base64 of 32 bytes."""
     value = SecondFactorSettings().totp_key.get_secret_value()
-    if not value:
+    if not value or is_dev_value_on_public_url(value, DEV_KEY_SHA256):
         return None
     try:
         # validate=True: otherwise stray characters are silently dropped.
@@ -86,10 +88,13 @@ def key() -> bytes | None:
     return decoded if len(decoded) == KEY_BYTES else None
 
 
-def key_state() -> Literal["set", "unset", "invalid"]:
-    """Never the key itself."""
-    if not SecondFactorSettings().totp_key.get_secret_value():
+def key_state() -> Literal["set", "unset", "invalid", "dev"]:
+    """Never the key itself. "dev": the development key on a public ZIF_APP_URL, refused."""
+    value = SecondFactorSettings().totp_key.get_secret_value()
+    if not value:
         return "unset"
+    if is_dev_value_on_public_url(value, DEV_KEY_SHA256):
+        return "dev"
     return "set" if key() else "invalid"
 
 

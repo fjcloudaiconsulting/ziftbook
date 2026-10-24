@@ -1,4 +1,6 @@
+import hashlib
 from typing import Literal
+from urllib.parse import urlsplit
 
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -147,3 +149,14 @@ class StripeSettings(Settings):
     def secret_ready(self) -> bool:
         """The worker's on/off: release, refund and event jobs need nothing but the secret key."""
         return bool(self.stripe_secret_key.get_secret_value())
+
+
+LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
+
+
+def is_dev_value_on_public_url(value: str, dev_sha256: str) -> bool:
+    """Whether value is a development value from docker-compose.yaml and ZIF_APP_URL names a public
+    host. Compared by hash so the development value is not repeated in code."""
+    if hashlib.sha256(value.encode("utf-8", "surrogatepass")).hexdigest() != dev_sha256:
+        return False
+    return urlsplit(MailSettings().app_url).hostname not in LOCAL_HOSTS

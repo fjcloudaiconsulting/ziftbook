@@ -182,9 +182,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             "trusted_proxies": Settings().trusted_proxies,
             # Never the secret. "off": public bookings are refused unless ZIF_TURNSTILE_DISABLED.
             "turnstile": "on" if turnstile.enabled() else "off",
-            # Never the token. "unset"/"weak": first-run setup is refused (ZIF-70).
+            # Never the token. "unset"/"weak"/"dev": first-run setup is refused (ZIF-70).
             "setup_token": setup_token,
-            # Never the key. "unset"/"invalid": admin TOTP answers 503 (ZIF-71).
+            # Never the key. "unset"/"invalid"/"dev": admin TOTP answers 503 (ZIF-71).
             "totp_key": totp_key,
             # "off": photo uploads answer 503 photos_unavailable (ZIF-133).
             "storage": "on" if storage_on else "off",
@@ -199,11 +199,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Only while setup is still to be done: operators may remove the token afterwards. Never a
     # refusal to start, and a database error skips the line.
     if setup_token != "set" and setup.needed_at_startup(DatabaseSettings().database_url):
-        logger.error("setup token unset: first-run setup refused")
+        logger.error("setup token unset, weak or dev value: first-run setup refused")
     # Unconditional, unlike the setup token: the key is needed for the deployment's whole life.
     # Never a refusal to start (one replica, Recreate): recovery codes still let admins in.
     if totp_key != "set":
-        logger.error("totp key unset: admin second factor unavailable")
+        logger.error("totp key unset, invalid or dev value: admin second factor unavailable")
     # A legitimate state until the object store exists: logged, never a refusal to start.
     if not storage_on:
         logger.warning("storage unset: photo uploads refused")
