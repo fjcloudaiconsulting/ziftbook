@@ -62,8 +62,10 @@ def is_admin(migrate_engine: Engine, user_id: uuid.UUID) -> bool:
 
 
 # fence: the app role must never make (or see) an admin. Kills 0001's default grants left in place.
-def test_app_role_has_no_access_to_platform_admins(app_engine: Engine) -> None:
-    user_id = add_user(app_engine)
+def test_app_role_has_no_access_to_platform_admins(
+    app_engine: Engine, migrate_engine: Engine
+) -> None:
+    user_id = add_user(migrate_engine)
     params = {"u": user_id}
     for sql in (
         "SELECT * FROM platform_admins",
@@ -113,10 +115,9 @@ def test_write_without_reason_is_refused(app_engine: Engine, reason: str | None)
 # guard: grant and revoke, each with exactly one audit event; a repeated grant changes nothing.
 def test_grant_and_revoke(
     migrate_engine: Engine,
-    app_engine: Engine,
     log_lines: Callable[[], list[dict[str, Any]]],
 ) -> None:
-    user_id = add_user(app_engine)
+    user_id = add_user(migrate_engine)
     email = email_of(user_id)
     target = f"user:{user_id}"
 
@@ -161,10 +162,8 @@ def test_unknown_email_exits_1(
 @pytest.mark.parametrize(
     "reason", [[], ["--reason", ""], ["--reason", " \t"], ["--reason", "x" * 501]]
 )
-def test_grant_needs_a_reason(
-    migrate_engine: Engine, app_engine: Engine, reason: list[str]
-) -> None:
-    user_id = add_user(app_engine)
+def test_grant_needs_a_reason(migrate_engine: Engine, reason: list[str]) -> None:
+    user_id = add_user(migrate_engine)
     with pytest.raises(SystemExit) as exited:
         admin.main(["grant", email_of(user_id), *reason])
     assert exited.value.code == 2
@@ -175,9 +174,9 @@ def test_grant_needs_a_reason(
 # fence: the change and its audit event commit together or not at all. Kills an audit row written
 # in its own transaction after the grant commits (an admin with no record of why).
 def test_grant_and_its_event_are_one_transaction(
-    migrate_engine: Engine, app_engine: Engine, monkeypatch: pytest.MonkeyPatch
+    migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    user_id = add_user(app_engine)
+    user_id = add_user(migrate_engine)
 
     def broken(*args: object, **kwargs: object) -> None:
         raise RuntimeError("audit down")
@@ -209,8 +208,8 @@ def test_every_action_has_a_kind() -> None:
 
 
 # guard: deleting a user ends their admin grant (ON DELETE CASCADE).
-def test_deleting_a_user_ends_the_grant(migrate_engine: Engine, app_engine: Engine) -> None:
-    user_id = add_user(app_engine)
+def test_deleting_a_user_ends_the_grant(migrate_engine: Engine) -> None:
+    user_id = add_user(migrate_engine)
     assert admin.main(["grant", email_of(user_id), "--reason", "on-call"]) == 0
     with migrate_engine.begin() as conn:
         conn.execute(text("DELETE FROM users WHERE id = :u"), {"u": user_id})
@@ -227,12 +226,11 @@ ISSUED = text(
 # Loki in a container). Kills the ticket printed or logged. Injected by print(ticket) or by adding
 # it to the INFO line's extra.
 def test_enrol_shows_the_ticket_on_the_terminal_only(
-    app_engine: Engine,
     migrate_engine: Engine,
     capsys: pytest.CaptureFixture[str],
     log_lines: Callable[[], list[dict[str, Any]]],
 ) -> None:
-    user_id = new_admin(app_engine, migrate_engine)
+    user_id = new_admin(migrate_engine)
 
     assert admin.main(["enrol", email_of(user_id), "--reason", "new phone"]) == 0
 
@@ -294,8 +292,8 @@ def test_show_ticket_writes_the_terminal_only(
 
 
 # fence: a ticket lasts one hour. Kills a 24-hour or missing expiry. Injected by '24 hours'.
-def test_enrol_ticket_lasts_one_hour(app_engine: Engine, migrate_engine: Engine) -> None:
-    user_id = new_admin(app_engine, migrate_engine)
+def test_enrol_ticket_lasts_one_hour(migrate_engine: Engine) -> None:
+    user_id = new_admin(migrate_engine)
     ticket = issue_ticket(user_id)
     with migrate_engine.connect() as conn:
         row = conn.execute(ISSUED, {"u": user_id}).one()
@@ -333,8 +331,8 @@ def test_enrol_wipes_the_factor_and_ends_sessions(
 
 
 # guard: one write event with the reason, from the CLI, about that user.
-def test_enrol_is_audited(app_engine: Engine, migrate_engine: Engine) -> None:
-    user_id = new_admin(app_engine, migrate_engine)
+def test_enrol_is_audited(migrate_engine: Engine) -> None:
+    user_id = new_admin(migrate_engine)
     assert admin.main(["enrol", email_of(user_id), "--reason", "lost phone"]) == 0
     target = f"user:{user_id}"
     assert audit_rows(migrate_engine, target) == [
@@ -351,12 +349,12 @@ def test_enrol_is_audited(app_engine: Engine, migrate_engine: Engine) -> None:
 
 
 # guard: enrol only for an admin; nothing written otherwise. --reason is required.
-def test_enrol_refuses_a_non_admin(app_engine: Engine, migrate_engine: Engine) -> None:
-    user_id = add_user(app_engine)
+def test_enrol_refuses_a_non_admin(migrate_engine: Engine) -> None:
+    user_id = add_user(migrate_engine)
     assert admin.main(["enrol", f"{uuid.uuid4()}@example.com", "--reason", "typo"]) == 1
     assert admin.main(["enrol", email_of(user_id), "--reason", "not an admin"]) == 1
     with pytest.raises(SystemExit) as exited:
-        admin.main(["enrol", email_of(new_admin(app_engine, migrate_engine))])
+        admin.main(["enrol", email_of(new_admin(migrate_engine))])
     assert exited.value.code == 2
     assert factor(migrate_engine, user_id) == {}
     assert audit_rows(migrate_engine, f"user:{user_id}") == []

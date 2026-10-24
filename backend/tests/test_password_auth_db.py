@@ -122,6 +122,8 @@ def test_the_definer_check_catches_unsafe_functions(migrate_engine: Engine) -> N
             REVOKE EXECUTE ON FUNCTION broken_temp_first() FROM PUBLIC;
             CREATE FUNCTION broken_public() RETURNS int LANGUAGE sql SECURITY DEFINER
               SET search_path = pg_catalog, public, pg_temp AS 'SELECT 1';
+            -- Not executable by PUBLIC by default since 0048 (ZB-10): granted, as a migration can.
+            GRANT EXECUTE ON FUNCTION broken_public() TO PUBLIC;
             """)
         )
         found = list(conn.scalars(VIOLATIONS))
@@ -134,7 +136,7 @@ def test_sign_in_lookup_finds_the_oldest_membership_without_a_tenant(
 ) -> None:
     # The b membership has the older id, but the a row (owner) is written first: neither row order,
     # tenant order nor role order gives b.
-    user_id = add_user(app_engine)
+    user_id = add_user(migrate_engine)
     older, newer = uuid.uuid7(), uuid.uuid7()
     for membership_id, tenant_id, role in ((newer, people.a, "owner"), (older, people.b, "worker")):
         with tenant_context(tenant_id) as session:
@@ -258,7 +260,7 @@ def test_completing_sign_up_for_an_email_registered_since_changes_nothing(
     email = f"{uuid.uuid4()}@example.com"
     token = issue(app_engine, "sign_up", email)
     assert token is not None
-    user_id = add_user(app_engine, email)
+    user_id = add_user(migrate_engine, email)
     with migrate_engine.connect() as conn:
         tenants_before = conn.scalar(text("SELECT count(*) FROM tenants"))
 
@@ -587,26 +589,10 @@ def test_completing_a_reset_for_a_vanished_account_writes_nothing(
         )
 
 
-def test_a_reset_link_can_not_be_forged_through_a_temporary_table(
-    people: People, app_engine: Engine, migrate_engine: Engine
-) -> None:
-    # With pg_temp first on the search path, this temp table would stand in for the real one.
-    token = secrets.token_bytes(32)
-    with app_engine.begin() as conn:
-        conn.execute(
-            text("""
-            CREATE TEMP TABLE email_tokens (purpose text, email text, locale text,
-              token_hash bytea, expires_at timestamptz)
-            """)
-        )
-        conn.execute(
-            text("""
-            INSERT INTO pg_temp.email_tokens
-            VALUES ('password_reset', :e, 'en', :h, now() + interval '1 hour')
-            """),
-            {"e": email_of(people.only_a), "h": digest(token)},
-        )
-        forged = conn.scalar(
-            text("SELECT complete_password_reset(:h, :p)"), {"h": digest(token), "p": NEW_HASH}
-        )
-    assert forged is False
+# ZB-31 FENCE. Wrong impl: PUBLIC keeps TEMPORARY on the database. A temporary table would stand in
+# for a real one of the same name and outlive its request on a pooled connection. The definer
+# functions pin pg_temp last either way (test_definer_functions_pin_their_search_path...).
+def test_the_app_role_cannot_create_a_temporary_table(app_engine: Engine) -> None:
+    with app_engine.connect() as conn, pytest.raises(ProgrammingError) as error:
+        conn.execute(text("CREATE TEMP TABLE x (y int)"))
+    assert isinstance(error.value.orig, InsufficientPrivilege)

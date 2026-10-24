@@ -77,7 +77,7 @@ def target(current: SignedIn, member_id: UUID) -> MemberOut:
     # FOR UPDATE, not NO KEY UPDATE: a sign-in's FOR SHARE read (auth.create) waits instead of
     # slipping in between deleting sessions and changing the role. The filter is inside the locking
     # statement: after a wait, READ COMMITTED re-checks it on the new row version.
-    # OF m: users has no UPDATE policy, so locking it would return no row.
+    # OF m: the app role has no UPDATE on users (ZB-10), so locking a users row would fail.
     rows = current.db.execute(
         text(
             MEMBERS

@@ -262,9 +262,9 @@ def test_only_workers_with_hours_are_listed_and_a_service_nobody_can_do_is_not(
 
 # 16. fence
 def test_workers_are_ordered_by_display_name_nulls_last(
-    people: People, app: FastAPI, app_engine: Engine, owner: TestClient, slug: str, ready: str
+    people: People, app: FastAPI, migrate_engine: Engine, owner: TestClient, slug: str, ready: str
 ) -> None:
-    extra = [add_worker(people.a, app_engine) for _ in range(2)]
+    extra = [add_worker(people.a, migrate_engine) for _ in range(2)]
     members = [member_id(people.a, people.both), *extra]
     assign(people.a, ready, *extra)
     # Id order is Bea, null, Ana: neither id order nor nulls first gives Ana, Bea, null.
@@ -278,8 +278,8 @@ def test_workers_are_ordered_by_display_name_nulls_last(
     assert [w["display_name"] for w in workers] == ["Ana", "Bea", None]
 
 
-def add_worker(tenant_id: uuid.UUID, app_engine: Engine) -> uuid.UUID:
-    user = add_user(app_engine)
+def add_worker(tenant_id: uuid.UUID, migrate_engine: Engine) -> uuid.UUID:
+    user = add_user(migrate_engine)
     add_membership(tenant_id, user)
     seed(tenant_id, user, weekdays("09:00", "12:00"))
     return member_id(tenant_id, user)

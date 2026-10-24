@@ -55,13 +55,13 @@ def app(people: People) -> FastAPI:
 
 
 @pytest.fixture
-def world(people: People, app: FastAPI, app_engine: Engine) -> World:
+def world(people: People, app: FastAPI, migrate_engine: Engine) -> World:
     owner = signed_in(app, people.a, people.both)
     save_setting(people.a, "published", True)
     service = new_service(owner)
     seed(people.a, people.both, weekdays("09:00", "17:00"))
     assign(people.a, service, member_id(people.a, people.both))
-    bc_id = add_user(app_engine, name="Cora Platform")
+    bc_id = add_user(migrate_engine, name="Cora Platform")
     seed_client(people.b, name="Cora Platform", email=email_of(bc_id), user_id=bc_id)
     return World(
         owner=owner,
@@ -197,8 +197,8 @@ def test_being_a_proven_client_does_not_widen_what_a_can_read(people: People, wo
 
 
 # Read from the database on main (ZIF-99): a tenant sees the users that hold a membership in it.
+# No INSERT policy since ZB-10 (0048): the app role creates no user itself.
 USERS_POLICIES = [
-    ["create_users", "INSERT", "{public}", None, "true"],
     [
         "tenant_members",
         "SELECT",

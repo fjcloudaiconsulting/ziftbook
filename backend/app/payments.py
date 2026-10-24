@@ -7,6 +7,7 @@ payment's status only moves forward from `open` (reconcile is the one writer of 
 Stripe says is always re-read: an event or the browser only says "look again"."""
 
 import asyncio
+import hmac
 import json
 import logging
 from dataclasses import dataclass
@@ -21,6 +22,7 @@ from opentelemetry.trace import SpanKind
 from pydantic import BaseModel
 from sqlalchemy import Row, text
 from sqlalchemy.exc import DBAPIError, IntegrityError, OperationalError
+from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 from sqlalchemy.orm import Session
 
 from app import auth, bookings, business_settings, jobs, limits, logs, stripe_gateway, tracing
@@ -34,7 +36,8 @@ from app.services import STRICT, Price
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["payments"])
 webhook_router = APIRouter(prefix="/api", tags=["payments"], include_in_schema=False)
-# The booking page's client, no session: the booking id (a uuidv7) is the capability.
+# The booking page's client, no session: the browser that placed the booking, by the checkout
+# secret in its cookie (ZB-15, _checkout).
 public_router = APIRouter(prefix="/api/public", tags=["bookings"])
 WEBHOOK_PATH = "/api/stripe/webhook"
 
@@ -627,8 +630,10 @@ def start(
             raise _unavailable() from None
         try:
             _insert(tenant_id, booking, made.id, kind, fee, mode)
-        except DBAPIError, LookupError:  # a lock timeout, a lost connection, a missing account
-            # The intent never reached a browser: nobody can confirm it, and no row names it.
+        except DBAPIError, PoolTimeoutError, LookupError:
+            # A lock timeout, a lost connection, no pooled connection free in time (ZB-16: the
+            # pool's TimeoutError is no DBAPIError), a missing account. The intent never reached a
+            # browser: nobody can confirm it, and no row names it.
             _give_back(tenant_id, booking.id)
             raise ApiError(503, "busy") from None
         return _started(kind, booking.id, made, expires_at)
@@ -1049,7 +1054,7 @@ SELECT b.id,
             ELSE b.status END AS status,
        b.starts_at, b.ends_at, b.duration_minutes, b.service_name,
        b.price_amount_minor, b.price_currency, b.worker_id, b.worker_display_name,
-       b.cancellation_policy_text, b.expires_at,
+       b.cancellation_policy_text, b.expires_at, b.checkout_hash,
        (b.status = 'awaiting_payment' AND b.expires_at > now()) AS live
 FROM bookings b WHERE b.id = :id AND b.source = 'booking_page'
 """)
@@ -1065,12 +1070,25 @@ ORDER BY (p.status <> 'canceled') DESC, p.created_at DESC LIMIT 1
 """)
 
 
-def _checkout(tenant_id: UUID, booking_id: UUID) -> tuple[Row[Any] | None, Row[Any] | None]:
+def _checkout(
+    tenant_id: UUID, booking_id: UUID, request: Request
+) -> tuple[Row[Any] | None, Row[Any] | None]:
+    """The booking and its payment, for the browser that placed it only (ZB-15): any other caller
+    gets (None, None), the routes' 404 for an unknown id."""
     with tenant_context(tenant_id) as db:
-        return (
-            db.execute(CHECKOUT, {"id": booking_id}).first(),
-            db.execute(LIVE_PAYMENT, {"id": booking_id}).first(),
-        )
+        booking = db.execute(CHECKOUT, {"id": booking_id}).first()
+        if booking is None or not _placed_by(booking, request):
+            return None, None
+        return booking, db.execute(LIVE_PAYMENT, {"id": booking_id}).first()
+
+
+def _placed_by(booking: Row[Any], request: Request) -> bool:
+    """The request carries the secret whose hash the booking keeps. A booking with none was placed
+    by the release before the secret (the deploy overlap) and is answered as it was then."""
+    if booking.checkout_hash is None:
+        return True
+    secret = request.cookies.get(bookings.checkout_cookie(booking.id), "")
+    return hmac.compare_digest(bookings.checkout_digest(secret), booking.checkout_hash)
 
 
 def _over(booking_id: UUID, request: Request) -> bool:
@@ -1119,7 +1137,7 @@ def sync(tenant_id: UUID, booking_id: UUID, request: Request, response: Response
     the page decides from `status` and `payment.state` alone."""
     _enter(tenant_id, booking_id, request, response)
     with logs.bound(tenant_id=str(tenant_id)):
-        booking, payment = _checkout(tenant_id, booking_id)
+        booking, payment = _checkout(tenant_id, booking_id, request)
         if booking is None or payment is None:
             raise ApiError(404, "not_found")
         state = None
@@ -1128,7 +1146,7 @@ def sync(tenant_id: UUID, booking_id: UUID, request: Request, response: Response
                 state = reconcile(tenant_id, payment.intent_id)
             except stripe_gateway.Failed:
                 raise _unavailable() from None
-            booking, payment = _checkout(tenant_id, booking_id)
+            booking, payment = _checkout(tenant_id, booking_id, request)
             assert booking is not None and payment is not None
         shown = payment.status
         if payment.status == "open" and state is not None and state.status == "processing":
@@ -1157,7 +1175,7 @@ def resume(
     booking keeps its time."""
     _enter(tenant_id, booking_id, request, response)
     with logs.bound(tenant_id=str(tenant_id)):
-        booking, payment = _checkout(tenant_id, booking_id)
+        booking, payment = _checkout(tenant_id, booking_id, request)
         if booking is None or payment is None:
             raise ApiError(404, "not_found")
         if payment.status in ("checked", "paid"):  # the webhook got there first
@@ -1225,7 +1243,7 @@ def resume(
         except OperationalError:
             raise ApiError(503, "busy") from None
         except IntegrityError:  # a concurrent resume or switch got its row in first
-            _, live = _checkout(tenant_id, booking_id)
+            _, live = _checkout(tenant_id, booking_id, request)
             if live is not None and live.intent_id == made.id:
                 # The same request, twice (the key made it one intent): the winner's answer, unless
                 # the payment has landed since.
@@ -1284,7 +1302,7 @@ def abandon(tenant_id: UUID, booking_id: UUID, request: Request, response: Respo
     place back at once. Never undoes a check that landed (409: show the sync state instead)."""
     _enter(tenant_id, booking_id, request, response)
     with logs.bound(tenant_id=str(tenant_id)):
-        booking, payment = _checkout(tenant_id, booking_id)
+        booking, payment = _checkout(tenant_id, booking_id, request)
         if booking is None or not booking.live:
             raise ApiError(404, "not_found")
         try:

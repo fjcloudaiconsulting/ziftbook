@@ -276,7 +276,7 @@ def test_an_email_registered_after_the_link_went_out_creates_nothing(
     email = fresh_email()
     token = issue_link(app_engine, "sign_up", email)
     assert token is not None
-    with app_engine.begin() as conn:
+    with migrate_engine.begin() as conn:  # the app role creates no user (ZB-10)
         conn.execute(
             text("INSERT INTO users (id, email) VALUES (:id, :e)"), {"id": uuid.uuid7(), "e": email}
         )

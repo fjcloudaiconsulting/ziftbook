@@ -31,6 +31,7 @@ from tests.conftest import (
     fresh_email,
     mailed,
     member_id,
+    migrate_tenant_context,
     new_client,
     put_settings,
     save_setting,
@@ -51,11 +52,12 @@ def app(people: People) -> FastAPI:
 
 
 @pytest.fixture(autouse=True)
-def clean_outbox(people: People) -> Iterator[None]:
+def clean_outbox(people: People, migrate_engine: Engine) -> Iterator[None]:
     yield
+    # As the migrate role: the app role has no DELETE on email_outbox (ZB-10).
     for tenant_id in (people.a, people.b):
-        with tenant_context(tenant_id) as session:
-            session.execute(text("DELETE FROM email_outbox"))
+        with migrate_tenant_context(migrate_engine, tenant_id) as conn:
+            conn.execute(text("DELETE FROM email_outbox"))
 
 
 def client_for(app: FastAPI) -> Any:

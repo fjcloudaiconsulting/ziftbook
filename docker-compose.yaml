@@ -43,6 +43,7 @@ services:
       PGDATABASE: ziftbook
       ZIF_MIGRATE_PASSWORD: ziftbook_migrate
       ZIF_APP_PASSWORD: ziftbook_app
+      ZIF_WORKER_PASSWORD: ziftbook_worker
     volumes:
       - ./backend/migrations/bootstrap.sql:/bootstrap.sql:ro
     command: ["psql", "-v", "ON_ERROR_STOP=1", "-f", "/bootstrap.sql"]
@@ -131,7 +132,8 @@ services:
       seaweedfs-init:
         condition: service_completed_successfully
     environment:
-      ZIF_DATABASE_URL: postgresql+psycopg://ziftbook_app:ziftbook_app@postgres:5432/ziftbook
+      # Its own role, ziftbook_app plus minting email tokens (ZB-08); the API keeps ziftbook_app.
+      ZIF_DATABASE_URL: postgresql+psycopg://ziftbook_worker:ziftbook_worker@postgres:5432/ziftbook
       # Mailpit's HTTP send API, never SMTP (ZIF-151); a Mailgun key would take precedence.
       ZIF_MAILPIT_URL: http://mailpit:8025
       ZIF_RATE_LIMIT_KEY: dev-only-rate-limit-key-not-a-secret-0000 # development only, not a secret

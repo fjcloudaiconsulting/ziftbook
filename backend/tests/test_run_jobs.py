@@ -16,7 +16,7 @@ from sqlalchemy.pool import NullPool
 from app import jobs
 from app.db import SessionLocal, tenant_context
 from app.jobs import Job, JobKind, enqueue, run_once
-from tests.conftest import People, closed, points
+from tests.conftest import People, closed, migrate_tenant_context, points
 
 
 @pytest.fixture(autouse=True)
@@ -116,12 +116,15 @@ def test_a_failed_mail_job_stores_the_class_never_the_address() -> None:
     assert address not in (last_error or "")
 
 
-def test_a_failed_db_job_stores_sqlstate_and_constraint_never_the_row() -> None:
+def test_a_failed_db_job_stores_sqlstate_and_constraint_never_the_row(
+    migrate_engine: Engine,
+) -> None:
     address = f"{uuid.uuid4()}@example.com"
 
+    # As the migrate role: the app role has no INSERT on users (ZB-10).
     def duplicate(job: Job) -> None:
-        with SessionLocal.begin() as session:
-            session.execute(text("INSERT INTO users (email) VALUES (:e), (:e)"), {"e": address})
+        with migrate_engine.begin() as conn:
+            conn.execute(text("INSERT INTO users (email) VALUES (:e), (:e)"), {"e": address})
 
     add("test.db_fail", "test.db_fail:1")
     run_until_idle({"test.db_fail": JobKind(duplicate, 5, timedelta(hours=1))})
@@ -309,7 +312,7 @@ def test_prune_keeps_recent_and_unfinished_jobs() -> None:
 
 
 # Kills: a cascade / "tidy up the outbox too" implementation, or a future FK ON DELETE CASCADE.
-def test_prune_keeps_the_email_outbox_row(people: People) -> None:
+def test_prune_keeps_the_email_outbox_row(people: People, migrate_engine: Engine) -> None:
     key = seed(f"test.prune:{tag()}:mail", completed_at=OVER)
     with SessionLocal() as session:
         job_id = session.scalar(text("SELECT id FROM jobs WHERE dedupe_key = :key"), {"key": key})
@@ -331,8 +334,9 @@ def test_prune_keeps_the_email_outbox_row(people: People) -> None:
             )
         assert kept == 1
     finally:
-        with tenant_context(people.a) as session:
-            session.execute(text("DELETE FROM email_outbox WHERE job_id = :job"), {"job": job_id})
+        # As the migrate role: the app role has no DELETE on email_outbox (ZB-10).
+        with migrate_tenant_context(migrate_engine, people.a) as conn:
+            conn.execute(text("DELETE FROM email_outbox WHERE job_id = :job"), {"job": job_id})
 
 
 # Pins the documented dedupe caveat: a "keep a tombstone" change has to update the docs too.

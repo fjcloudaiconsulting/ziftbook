@@ -31,6 +31,7 @@ from tests.conftest import (
     end_membership,
     fresh_email,
     member_id,
+    migrate_tenant_context,
     new_client,
     put_settings,
     save_setting,
@@ -45,11 +46,12 @@ from tests.test_working_hours import seed
 
 
 @pytest.fixture(autouse=True)
-def clean_outbox(people: People) -> Iterator[None]:
+def clean_outbox(people: People, migrate_engine: Engine) -> Iterator[None]:
     yield
+    # As the migrate role: the app role has no DELETE on email_outbox (ZB-10).
     for tenant_id in (people.a, people.b):
-        with tenant_context(tenant_id) as session:
-            session.execute(text("DELETE FROM email_outbox"))
+        with migrate_tenant_context(migrate_engine, tenant_id) as conn:
+            conn.execute(text("DELETE FROM email_outbox"))
 
 
 @pytest.fixture
@@ -191,9 +193,9 @@ def clear_jobs(app_engine: Engine, tenant_id: uuid.UUID) -> None:
 
 
 def add_worker(
-    app_engine: Engine, tenant_id: uuid.UUID, role: str = "worker", locale: str | None = None
+    migrate_engine: Engine, tenant_id: uuid.UUID, role: str = "worker", locale: str | None = None
 ) -> uuid.UUID:
-    user_id = add_user(app_engine, locale=locale)
+    user_id = add_user(migrate_engine, locale=locale)
     add_membership(tenant_id, user_id, role)
     return user_id
 
@@ -533,9 +535,9 @@ def test_merchant_job_for_a_user_outside_the_business_sends_nothing(
 # 22. fence (ZIF-112). Kills: an unfiltered MERCHANT read, which mails a removed member for a job
 # queued before the removal. The control first: the same job for a live worker does send.
 def test_merchant_job_for_a_removed_member_sends_nothing(
-    people: People, app: FastAPI, ready: str, app_engine: Engine
+    people: People, app: FastAPI, ready: str, migrate_engine: Engine
 ) -> None:
-    worker = add_worker(app_engine, people.a)
+    worker = add_worker(migrate_engine, people.a)
     booking_id = make_pending(app, people.a, ready)
     assert patch(signed_in(app, people.a, people.both), booking_id, "confirmed").status_code == 200
 
@@ -553,9 +555,9 @@ def test_merchant_job_for_a_removed_member_sends_nothing(
 
 # 23. fence (ZIF-112). Kills: an unfiltered MERCHANTS arm for the assigned worker.
 def test_merchants_of_a_booking_whose_worker_was_removed_are_the_owners(
-    people: People, app: FastAPI, ready: str, app_engine: Engine
+    people: People, app: FastAPI, ready: str, app_engine: Engine, migrate_engine: Engine
 ) -> None:
-    worker = add_worker(app_engine, people.a)
+    worker = add_worker(migrate_engine, people.a)
     seed(people.a, worker, weekdays("09:00", "17:00"))
     assign(people.a, ready, member_id(people.a, worker))
     removed = member_id(people.a, worker)
@@ -854,10 +856,10 @@ def test_reminder_due_at_is_24h_before_start_and_skipped_when_too_close(
 # 26. fence, POSITIVE. Kills: "all members"; owners only; business language instead of the
 # user's; duplicate mail to the solo owner.
 def test_merchant_recipients_are_every_owner_plus_the_assigned_worker(
-    people: People, app: FastAPI, ready: str, app_engine: Engine
+    people: People, app: FastAPI, ready: str, migrate_engine: Engine
 ) -> None:
-    worker1 = add_worker(app_engine, people.a)
-    worker2 = add_worker(app_engine, people.a)
+    worker1 = add_worker(migrate_engine, people.a)
+    worker2 = add_worker(migrate_engine, people.a)
     seed(people.a, worker1, weekdays("09:00", "17:00"))
     assign(people.a, ready, member_id(people.a, worker1))
     owner_email = email_of(people.both)  # people.both owns tenant a, locale nl (People fixture)
@@ -1133,9 +1135,9 @@ def test_a_failed_send_leaves_the_earlier_link_valid_and_the_retry_mints_its_own
 # owner-assigned leg), never (worker leg), regardless of the setting or from the setting at enqueue
 # (last leg).
 def test_a_worker_who_cannot_answer_gets_the_owner_answers_variant(
-    people: People, app: FastAPI, ready: str, app_engine: Engine
+    people: People, app: FastAPI, ready: str, migrate_engine: Engine
 ) -> None:
-    worker = add_worker(app_engine, people.a)
+    worker = add_worker(migrate_engine, people.a)
     seed(people.a, worker, weekdays("09:00", "17:00"))
     assign(people.a, ready, member_id(people.a, worker))
 
@@ -1702,9 +1704,14 @@ def test_the_flood_template_names_the_business_and_links_the_calendar() -> None:
 # ZB-05 fence. Kills: the alert to the booking's worker or every member rather than every owner;
 # in the business's language rather than the owner's; client details, or a Reply-To, in it.
 def test_the_flood_alert_mails_every_owner_in_their_language_and_names_no_client(
-    people: People, app: FastAPI, ready: str, app_engine: Engine, monkeypatch: pytest.MonkeyPatch
+    people: People,
+    app: FastAPI,
+    ready: str,
+    app_engine: Engine,
+    migrate_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    second_owner = add_worker(app_engine, people.a, role="owner", locale="pt")
+    second_owner = add_worker(migrate_engine, people.a, role="owner", locale="pt")
     set_contact(signed_in(app, people.a, people.both))
     monkeypatch.setattr(bookings, "UNPROVEN_PER_BUSINESS_HOUR", 0)
     guest_email = fresh_email()

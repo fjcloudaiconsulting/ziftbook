@@ -13,7 +13,14 @@ from sqlalchemy import Engine, text
 
 from app import mail
 from app.db import tenant_context
-from tests.conftest import People, events, member_id, save_setting, signed_in
+from tests.conftest import (
+    People,
+    events,
+    member_id,
+    migrate_tenant_context,
+    save_setting,
+    signed_in,
+)
 from tests.test_availability_api import assign, new_service, weekdays
 from tests.test_booking_email import (
     _client_email,
@@ -34,11 +41,12 @@ LABELS = {"en": "wrote:", "nl": "schreef:", "pt": "escreveu:"}
 
 
 @pytest.fixture(autouse=True)
-def clean_outbox(people: People) -> Iterator[None]:
+def clean_outbox(people: People, migrate_engine: Engine) -> Iterator[None]:
     yield
+    # As the migrate role: the app role has no DELETE on email_outbox (ZB-10).
     for tenant_id in (people.a, people.b):
-        with tenant_context(tenant_id) as session:
-            session.execute(text("DELETE FROM email_outbox"))
+        with migrate_tenant_context(migrate_engine, tenant_id) as conn:
+            conn.execute(text("DELETE FROM email_outbox"))
 
 
 @pytest.fixture

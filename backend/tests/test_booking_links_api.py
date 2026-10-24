@@ -1579,9 +1579,9 @@ def test_a_paid_pending_request_shows_and_refunds_everything(
     fake_stripe.confirm(intent)
     fake_stripe.intents[intent]["fee"] = 162
     assert sync(client, people, booking_id).json()["status"] == "pending"
-    unpaid = place(app, people, service_id, payment="check", starts_at=at("10:00"))
+    unpaid = place(app, people, service_id, payment="check", starts_at=at("10:00"), client=client)
     fake_stripe.confirm(fake_stripe.latest(unpaid.json()["id"]))
-    assert sync(new_client(app), people, unpaid.json()["id"]).status_code == 200
+    assert sync(client, people, unpaid.json()["id"]).status_code == 200
     link = linked(app, people.a, booking_id)
 
     view = get(link).json()

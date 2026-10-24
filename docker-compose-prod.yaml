@@ -51,6 +51,7 @@ services:
       PGDATABASE: ziftbook
       ZIF_MIGRATE_PASSWORD: ${ZIF_MIGRATE_PASSWORD:?set ZIF_MIGRATE_PASSWORD}
       ZIF_APP_PASSWORD: ${ZIF_APP_PASSWORD:?set ZIF_APP_PASSWORD}
+      ZIF_WORKER_PASSWORD: ${ZIF_WORKER_PASSWORD:?set ZIF_WORKER_PASSWORD}
     volumes:
       - ./backend/migrations/bootstrap.sql:/bootstrap.sql:ro
     command: ["psql", "-v", "ON_ERROR_STOP=1", "-f", "/bootstrap.sql"]
@@ -119,7 +120,8 @@ services:
       migrate:
         condition: service_completed_successfully
     environment:
-      ZIF_DATABASE_URL: postgresql+psycopg://ziftbook_app:${ZIF_APP_PASSWORD:?set ZIF_APP_PASSWORD}@postgres:5432/ziftbook
+      # Its own role, ziftbook_app plus minting email tokens (ZB-08); the API keeps ziftbook_app.
+      ZIF_DATABASE_URL: postgresql+psycopg://ziftbook_worker:${ZIF_WORKER_PASSWORD:?set ZIF_WORKER_PASSWORD}@postgres:5432/ziftbook
       ZIF_LOG_LEVEL: ${ZIF_LOG_LEVEL:-INFO}
       ZIF_LOG_FORMAT: ${ZIF_LOG_FORMAT:-json}
       ZIF_LOG_SQL: ${ZIF_LOG_SQL:-false}

@@ -37,8 +37,8 @@ RECOVER = text("SELECT codes_left, was_locked FROM use_recovery_code(:id, :p)")
 TICKET = re.compile(r"[A-Z2-7]{4}(?:-[A-Z2-7]{4}){3}")
 
 
-def new_admin(app_engine: Engine, migrate_engine: Engine) -> uuid.UUID:
-    user_id = add_user(app_engine)
+def new_admin(migrate_engine: Engine) -> uuid.UUID:
+    user_id = add_user(migrate_engine)
     with migrate_engine.begin() as conn:
         conn.execute(
             text("INSERT INTO password_credentials VALUES (:u, :h)"), {"u": user_id, "h": HASH}
@@ -155,7 +155,7 @@ class Enrolled:
 
 
 def enrolled(app_engine: Engine, migrate_engine: Engine) -> Enrolled:
-    user_id = new_admin(app_engine, migrate_engine)
+    user_id = new_admin(migrate_engine)
     ticket = issue_ticket(user_id)
     session = half_session(app_engine, migrate_engine, user_id)
     s = totp.new_secret()
@@ -181,8 +181,10 @@ def wrong() -> bytes:
         "DELETE FROM second_factors",
     ],
 )
-def test_app_role_has_no_access_to_second_factors(app_engine: Engine, sql: str) -> None:
-    user_id = add_user(app_engine)  # a real user: the INSERT must fail on privilege, not the FK
+def test_app_role_has_no_access_to_second_factors(
+    app_engine: Engine, migrate_engine: Engine, sql: str
+) -> None:
+    user_id = add_user(migrate_engine)  # a real user: the INSERT must fail on privilege, not the FK
     with pytest.raises(ProgrammingError) as error, app_engine.begin() as conn:
         conn.execute(text(sql), {"u": user_id})
     assert isinstance(error.value.orig, InsufficientPrivilege)
@@ -236,7 +238,7 @@ def test_dumped_values_are_not_proofs(app_engine: Engine, migrate_engine: Engine
 
     # begin, on an admin with a pending ticket and no confirmed factor (a confirmed one answers
     # already_enrolled before the ticket is compared).
-    pending = new_admin(app_engine, migrate_engine)
+    pending = new_admin(migrate_engine)
     ticket = issue_ticket(pending)
     pending_session = half_session(app_engine, migrate_engine, pending)
     stored_ticket = factor(migrate_engine, pending)["ticket_hash"]
@@ -371,7 +373,7 @@ def test_a_recovery_code_works_once_and_unlocks(app_engine: Engine, migrate_engi
 # confirmed secret. Injected by deleting the already_enrolled check.
 def test_begin_needs_a_live_ticket(app_engine: Engine, migrate_engine: Engine) -> None:
     s = totp.new_secret()
-    user_id = new_admin(app_engine, migrate_engine)
+    user_id = new_admin(migrate_engine)
     session = half_session(app_engine, migrate_engine, user_id)
     assert begin(app_engine, session, wrong(), user_id, s) == "invalid_ticket"  # no ticket at all
     assert factor(migrate_engine, user_id) == {}
@@ -411,7 +413,7 @@ def test_begin_needs_a_live_ticket(app_engine: Engine, migrate_engine: Engine) -
 def test_confirm_uses_up_the_ticket_and_ends_other_sessions(
     app_engine: Engine, migrate_engine: Engine
 ) -> None:
-    user_id = new_admin(app_engine, migrate_engine)
+    user_id = new_admin(migrate_engine)
     ticket = issue_ticket(user_id)
     session = half_session(app_engine, migrate_engine, user_id)
     other = half_session(app_engine, migrate_engine, user_id)
@@ -434,7 +436,7 @@ def test_confirm_uses_up_the_ticket_and_ends_other_sessions(
 # fence: confirming counts failures too. Kills a password holder guess-confirming the operator's
 # pending secret. Injected by deleting the counter check in confirm.
 def test_confirm_counts_failures(app_engine: Engine, migrate_engine: Engine) -> None:
-    user_id = new_admin(app_engine, migrate_engine)
+    user_id = new_admin(migrate_engine)
     ticket = issue_ticket(user_id)
     session = half_session(app_engine, migrate_engine, user_id)
     s = totp.new_secret()

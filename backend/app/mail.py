@@ -256,6 +256,8 @@ def send_invite(job: Job) -> None:
         deliver("invite", invite.email, subject, body)
 
 
+# The app role may UPDATE only email_outbox's status, sent_at and subject, and never DELETE (0048):
+# a new column these write needs its own GRANT UPDATE in a migration.
 def _outbox(
     session: Session, job: Job, recipient_id: UUID | str, template: str, subject: str
 ) -> str:

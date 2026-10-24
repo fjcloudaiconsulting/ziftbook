@@ -119,6 +119,7 @@ jobs:
       # CI-only credentials for the throwaway service container, matching the local dev defaults.
       ZIF_MIGRATE_PASSWORD: ziftbook_migrate
       ZIF_APP_PASSWORD: ziftbook_app
+      ZIF_WORKER_PASSWORD: ziftbook_worker
       ZIF_MIGRATE_DATABASE_URL: postgresql+psycopg://ziftbook_migrate:ziftbook_migrate@localhost:5432/ziftbook
       ZIF_DATABASE_URL: postgresql+psycopg://ziftbook_app:ziftbook_app@localhost:5432/ziftbook
     steps:
@@ -133,7 +134,7 @@ jobs:
       - name: Bootstrap database roles
         run: >-
           docker exec -i
-          -e ZIF_MIGRATE_PASSWORD -e ZIF_APP_PASSWORD
+          -e ZIF_MIGRATE_PASSWORD -e ZIF_APP_PASSWORD -e ZIF_WORKER_PASSWORD
           ${{ job.services.postgres.id }}
           psql -v ON_ERROR_STOP=1 -U ziftbook -d ziftbook -f -
           < migrations/bootstrap.sql

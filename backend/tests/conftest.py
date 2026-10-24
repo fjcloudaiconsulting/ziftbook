@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import io
+import ipaddress
 import json
 import logging
 import os
@@ -37,7 +38,7 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from PIL import Image
 from sqlalchemy import Connection, Engine, create_engine, text
-from sqlalchemy.engine import make_url
+from sqlalchemy.engine import URL, make_url
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import NullPool
 
@@ -85,11 +86,56 @@ os.environ.setdefault(
     "ZIF_DATABASE_URL",
     "postgresql+psycopg://ziftbook_app:ziftbook_app@localhost:5432/ziftbook",
 )
+LOCAL_DATABASE_HOSTS = ("localhost", "127.0.0.1", "::1", "postgres")
+
+
+def refuse_remote_database(url: str) -> None:
+    """Exit before anything connects when the suite is aimed at a non-local database (ZB-11).
+
+    The suite DROPs and CREATEs databases, so it only runs against the machine's own Postgres (or
+    the CI service container, `postgres`). ZIF_TESTS_ALLOW_DB, set to the exact database name,
+    allows one deliberate exception. Must run at import, before the rewrite and DROP below:
+    pytest_configure fires after conftest is imported, so it would be too late. The URL is never
+    printed: it holds a password.
+    """
+    parsed = make_url(url)
+    if parsed.database and os.environ.get("ZIF_TESTS_ALLOW_DB") == parsed.database:
+        return
+    if not _targets_are_local(parsed):
+        raise SystemExit(
+            f"refusing to run the test suite against database {parsed.database!r} on host "
+            f"{parsed.host!r}: it drops and recreates databases. Use a local Postgres, or set "
+            "ZIF_TESTS_ALLOW_DB to that database name to allow it."
+        )
+
+
+def _targets_are_local(parsed: URL) -> bool:
+    """Every place the driver would connect to is local: libpq lets ?host= override the URL host
+    (comma-separated for several) and ?hostaddr= set the real address, so all of them count."""
+
+    def values(key: str) -> list[str]:
+        raw = parsed.query.get(key, ())
+        return [v for item in ([raw] if isinstance(raw, str) else raw) for v in item.split(",")]
+
+    hosts = values("host") or (parsed.host or "").split(",")
+    if not all(h.startswith("/") or h in LOCAL_DATABASE_HOSTS for h in hosts):
+        return False
+    for addr in values("hostaddr"):
+        try:
+            if not ipaddress.ip_address(addr).is_loopback:
+                return False
+        except ValueError:
+            return False
+    return True
+
+
 # No Turnstile secret here, so opt out explicitly as development does (ZIF-116): without it every
 # public booking is refused. Tests of the refusal itself delete it.
 os.environ.setdefault("ZIF_TURNSTILE_DISABLED", "true")
 # A fixed admin TOTP key (base64 of 32 bytes), test only. Tests of a missing key delete it.
 os.environ.setdefault("ZIF_TOTP_KEY", "dGVzdC1vbmx5LXRvdHAta2V5LW5vdC1hLXNlY3JldCE=")
+for _guarded in ("ZIF_MIGRATE_DATABASE_URL", "ZIF_DATABASE_URL"):
+    refuse_remote_database(os.environ[_guarded])
 # Rate-limit keys unpeppered (ZB-25) whatever the developer's shell exports, so tests of the plain
 # form never depend on it. Forced, like the Mailgun variables below; peppered tests set their own.
 os.environ.pop("ZIF_RATE_LIMIT_KEY", None)
@@ -480,6 +526,22 @@ def app_engine(migrated: None) -> Iterator[Engine]:
     engine.dispose()
 
 
+@pytest.fixture
+def worker_engine(migrated: None) -> Iterator[Engine]:
+    """ziftbook_worker, what the worker process connects as (ZB-08), on the app role's database.
+
+    With ZIF_WORKER_PASSWORD, the password bootstrap.sql gave the role, or when it is unset or
+    empty the local dev and CI one (docker-compose.yaml and ci.yml). Derived from
+    ZIF_DATABASE_URL, which already names this xdist worker's database, so it lands on no other."""
+    password = os.environ.get("ZIF_WORKER_PASSWORD") or "ziftbook_worker"
+    url = make_url(os.environ["ZIF_DATABASE_URL"]).set(
+        username="ziftbook_worker", password=password
+    )
+    engine = create_engine(url, poolclass=NullPool)
+    yield engine
+    engine.dispose()
+
+
 PASSWORD = "lavender-harbour-19"
 EXPIRE = "UPDATE email_tokens SET expires_at = now() - interval '1 second' WHERE token_hash = :h"
 
@@ -550,15 +612,16 @@ class People:
 
 
 def add_user(
-    engine: Engine,
+    migrate_engine: Engine,
     email: str | None = None,
     locale: str | None = None,
     name: str | None = "Test Person",
 ) -> uuid.UUID:
-    # The id comes from the app: a new user is invisible to its own policy, so RETURNING would fail.
-    # name=None is an account from before ZIF-131: registration not complete.
+    # As the migrate role: the app role creates no user (ZB-10). The id comes from here, as
+    # complete_sign_up's does. name=None is an account from before ZIF-131: registration not
+    # complete.
     user_id = uuid.uuid7()
-    with engine.begin() as conn:
+    with migrate_engine.begin() as conn:
         conn.execute(
             text(
                 "INSERT INTO users (id, email, locale, name) VALUES (:id, :email, :locale, :name)"
@@ -663,6 +726,15 @@ def delete_clients(conn: Connection, tenant_ids: Iterable[object]) -> None:
         conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(tenant_id)})
         conn.execute(text("DELETE FROM consents"))
         conn.execute(text("DELETE FROM clients"))
+
+
+@contextmanager
+def migrate_tenant_context(migrate_engine: Engine, tenant_id: object) -> Iterator[Connection]:
+    """tenant_context as the migrate role, for a write the app role may not make (forced row-level
+    security binds the migrate role too). Commits on exit."""
+    with migrate_engine.begin() as conn:
+        conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(tenant_id)})
+        yield conn
 
 
 def delete_payment_accounts(conn: Connection, tenant_ids: Iterable[object]) -> None:
@@ -792,16 +864,17 @@ def end_membership(tenant_id: uuid.UUID, user_id: uuid.UUID) -> None:
 
 
 @pytest.fixture
-def people(app_engine: Engine, migrate_engine: Engine, bound: None) -> Iterator[People]:
-    with app_engine.begin() as conn:
+def people(migrate_engine: Engine, bound: None) -> Iterator[People]:
+    # As the migrate role: the app role creates neither businesses nor users (ZB-10).
+    with migrate_engine.begin() as conn:
         a = conn.scalar(text("INSERT INTO tenants (name) VALUES ('a') RETURNING id"))
         b = conn.scalar(text("INSERT INTO tenants (name) VALUES ('b') RETURNING id"))
     people = People(
         a=a,
         b=b,
-        only_a=add_user(app_engine),
-        only_b=add_user(app_engine),
-        both=add_user(app_engine, locale="nl"),
+        only_a=add_user(migrate_engine),
+        only_b=add_user(migrate_engine),
+        both=add_user(migrate_engine, locale="nl"),
     )
     add_membership(a, people.only_a)
     add_membership(b, people.only_b)

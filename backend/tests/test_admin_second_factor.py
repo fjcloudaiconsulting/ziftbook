@@ -34,9 +34,9 @@ def app(bound: None) -> FastAPI:
 
 
 @pytest.fixture
-def an_admin(app_engine: Engine, migrate_engine: Engine, bound: None) -> uuid.UUID:
+def an_admin(migrate_engine: Engine, bound: None) -> uuid.UUID:
     """A platform admin with a password, not enrolled."""
-    user_id = add_user(app_engine)
+    user_id = add_user(migrate_engine)
     add_password(migrate_engine, user_id, PASSWORD)
     with migrate_engine.begin() as conn:
         conn.execute(text("INSERT INTO platform_admins (user_id) VALUES (:u)"), {"u": user_id})

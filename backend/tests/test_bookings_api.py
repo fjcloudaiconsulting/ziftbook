@@ -9,6 +9,7 @@ seeded on every weekday so the test never cares which weekday it lands on.
 """
 
 import json
+import os
 import threading
 import urllib.parse
 import urllib.request
@@ -26,8 +27,9 @@ from fastapi.testclient import TestClient
 from httpx2 import Response
 from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 from psycopg.errors import QueryCanceled
-from sqlalchemy import Engine, event, text
+from sqlalchemy import Engine, create_engine, event, text
 from sqlalchemy.exc import OperationalError
+from sqlalchemy.pool import NullPool
 
 from app import auth, availability, bookings, clients, limits, members, schedule, turnstile
 from app.db import SessionLocal, tenant_context
@@ -122,13 +124,12 @@ def sign_in_as(client: TestClient, tenant_id: object, email: str) -> None:
     an unknown business borrows the newest real one (its POST must still answer 404, not 403)."""
     with HELPER_LOCK:
         if email not in HELPER_USERS:
-            user_id = uuid.uuid7()
-            with SessionLocal.begin() as session:
-                session.execute(
-                    text("INSERT INTO users (id, email, name) VALUES (:id, :email, 'Guest')"),
-                    {"id": user_id, "email": email},
-                )
-            HELPER_USERS[email] = user_id
+            # As the migrate role: the app role creates no user (ZB-10).
+            migrate = create_engine(os.environ["ZIF_MIGRATE_DATABASE_URL"], poolclass=NullPool)
+            try:
+                HELPER_USERS[email] = add_user(migrate, email, name="Guest")
+            finally:
+                migrate.dispose()
         user_id = HELPER_USERS[email]
         with SessionLocal.begin() as session:
             home = session.scalar(
@@ -419,9 +420,9 @@ def test_a_worker_not_assigned_to_the_service_is_refused_without_probing(
 # is not a test of load spreading (row 21g is): under the tenant lock each loser re-derives and the
 # workers already taken have left `eligible`, so `load` never decides anything here.
 def test_three_concurrent_bookers_and_three_free_workers_all_get_a_booking(
-    people: People, app: FastAPI, owner: TestClient, app_engine: Engine, migrate_engine: Engine
+    people: People, app: FastAPI, owner: TestClient, migrate_engine: Engine
 ) -> None:
-    third_user = add_user(app_engine)
+    third_user = add_user(migrate_engine)
     add_membership(people.a, third_user)
     try:
         service_id = new_service(owner)
@@ -796,10 +797,16 @@ def test_the_pending_cap_is_the_setting_and_not_a_constant(
 
 
 def book_twice_under_auto_confirm(
-    people: People, app: FastAPI, owner: TestClient, ready: str, change: str | None = None
+    people: People,
+    app: FastAPI,
+    owner: TestClient,
+    ready: str,
+    change: str | None = None,
+    migrate_engine: Engine | None = None,
 ) -> Response:
     """Cap 1 with auto_confirm on: one confirmed booking, `change` applied to it, then the same
-    address books again."""
+    address books again. The change runs as the migrate role: `source` is evidence, which the app
+    role cannot UPDATE (0047)."""
     settings = {"auto_confirm": True, "max_pending_per_email": 1}
     assert put_settings(owner, settings).status_code == 200
     client = new_client(app)
@@ -807,8 +814,10 @@ def book_twice_under_auto_confirm(
     first = post_booking(client, people.a, ready, email=email, starts_at=at("09:00"))
     assert (first.status_code, first.json()["status"]) == (201, "confirmed")
     if change is not None:
-        with tenant_context(people.a) as session:
-            session.execute(
+        assert migrate_engine is not None
+        with migrate_engine.begin() as conn:
+            conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(people.a)})
+            conn.execute(
                 text(f"UPDATE bookings SET {change} WHERE id = :id"), {"id": first.json()["id"]}
             )
     return post_booking(client, people.a, ready, email=email, starts_at=at("11:00"))
@@ -842,9 +851,14 @@ def test_auto_confirmed_bookings_count_toward_the_cap(
     ids=["cancelled", "past", "merchant"],
 )
 def test_only_upcoming_self_booked_confirmations_count(
-    people: People, app: FastAPI, owner: TestClient, ready: str, change: str
+    people: People,
+    app: FastAPI,
+    owner: TestClient,
+    ready: str,
+    change: str,
+    migrate_engine: Engine,
 ) -> None:
-    second = book_twice_under_auto_confirm(people, app, owner, ready, change)
+    second = book_twice_under_auto_confirm(people, app, owner, ready, change, migrate_engine)
 
     assert second.status_code == 201, second.json()
 

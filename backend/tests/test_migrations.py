@@ -2,7 +2,9 @@
 
 import importlib.util
 import os
+import re
 import uuid
+from collections.abc import Callable, Iterator
 from datetime import UTC, datetime, timedelta
 from types import ModuleType
 from typing import Any
@@ -11,13 +13,23 @@ from urllib.parse import urlencode
 import pytest
 from alembic import command
 from alembic.config import Config
+from alembic.migration import MigrationContext
+from alembic.operations import Operations
 from psycopg.errors import CheckViolation, NotNullViolation
-from sqlalchemy import Connection, Engine, text
+from sqlalchemy import Connection, Engine, create_engine, make_url, text
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.orm import Session
+from sqlalchemy.pool import NullPool
 
 from app.db import tenant_context
-from tests.conftest import API_DIR, People, delete_bookings, end_membership, member_id
+from tests.conftest import (
+    ADMIN_DATABASE_URL,
+    API_DIR,
+    People,
+    delete_bookings,
+    end_membership,
+    member_id,
+)
 from tests.test_bookings_db import insert_booking, seed_service
 
 COLUMNS = text("SELECT column_name FROM information_schema.columns WHERE table_name = 'tenants'")
@@ -289,7 +301,10 @@ def test_downgrading_and_upgrading_0026_restores_the_tables_and_their_grants(
             text("SELECT has_table_privilege('ziftbook_app', 'booking_events', 'SELECT')")
         )
         assert conn.scalar(text("SELECT has_table_privilege('ziftbook_app', 'bookings', 'SELECT')"))
-        assert conn.scalar(text("SELECT has_table_privilege('ziftbook_app', 'bookings', 'INSERT')"))
+        # INSERT is a column list since 0047 (ZB-09), so has_table_privilege reports it False.
+        assert conn.scalar(
+            text("SELECT has_column_privilege('ziftbook_app', 'bookings', 'status', 'INSERT')")
+        )
         # Column-level since 0027, which revokes table-level UPDATE and grants it back on every
         # column but the two cancellation snapshots. `status` is the only one the app updates.
         assert conn.scalar(
@@ -330,6 +345,24 @@ SNAPSHOT = (
     "client_name",
     "client_phone",
     "client_message",
+    # ZB-15 (0046): the checkout secret's hash, written once at placement.
+    "checkout_hash",
+)
+# ZB-09 (0047): the rest of the evidence, and the row's identity, which place() / INSERT_BOOKING
+# writes once and no route updates. id and created_at are not INSERT-able either.
+EVIDENCE = (
+    "id",
+    "tenant_id",
+    "client_id",
+    "service_id",
+    "source",
+    "service_name",
+    "price_amount_minor",
+    "price_currency",
+    "duration_minutes",
+    "cancellation_policy_text",
+    "auto_confirm_at_booking",
+    "created_at",
 )
 
 
@@ -374,8 +407,8 @@ def test_downgrading_and_upgrading_0027_restores_both_thresholds(
                     {"c": column, "p": privilege},
                 ), (column, privilege)
         # The snapshot is written once and never updated: immutability as a privilege, the way
-        # booking_events' append-only shape is. Exactly these two columns, no others.
-        assert sorted(conn.scalars(NO_UPDATE)) == sorted(SNAPSHOT)
+        # booking_events' append-only shape is. Exactly these columns, no others.
+        assert sorted(conn.scalars(NO_UPDATE)) == sorted(SNAPSHOT + EVIDENCE)
 
 
 # F20 (T8) - 0027 REFUSES on a non-empty bookings table. That refusal is the feature: ZIF-55 is
@@ -1450,3 +1483,336 @@ def test_0045_downgrade_refuses_while_a_membership_is_removed(
         assert role == "removed"
     finally:
         command.upgrade(cfg, "head")
+
+
+CHECKOUT_HASH = text("""
+SELECT data_type, is_nullable,
+       has_column_privilege('ziftbook_app', 'bookings', column_name, 'INSERT'),
+       has_column_privilege('ziftbook_app', 'bookings', column_name, 'SELECT'),
+       has_column_privilege('ziftbook_app', 'bookings', column_name, 'UPDATE')
+FROM information_schema.columns WHERE table_name = 'bookings' AND column_name = 'checkout_hash'
+""")
+
+
+# ZB-15 FENCE. Wrong impl: a downgrade that leaves the column behind; an upgrade that makes it
+# NOT NULL (the release still running inserts without it, and its bookings have none), or that
+# lets the app role UPDATE it (the hash is written once, when the booking is placed).
+def test_0046_round_trips_the_checkout_hash(
+    migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = lock_timeout_config(monkeypatch)
+    try:
+        command.downgrade(cfg, "0045")
+        with migrate_engine.connect() as conn:
+            assert conn.execute(CHECKOUT_HASH).all() == []
+    finally:
+        command.upgrade(cfg, "head")
+    with migrate_engine.connect() as conn:
+        assert tuple(conn.execute(CHECKOUT_HASH).one()) == ("bytea", "YES", True, True, False)
+
+
+EVIDENCE_GRANTS = text("""
+SELECT column_name,
+       has_column_privilege('ziftbook_app', 'bookings', column_name, 'INSERT'),
+       has_column_privilege('ziftbook_app', 'bookings', column_name, 'UPDATE')
+FROM information_schema.columns WHERE table_name = 'bookings'
+""")
+EVIDENCE_GUARD = text("""
+SELECT has_table_privilege('ziftbook_app', 'bookings', 'INSERT'),
+       has_table_privilege('ziftbook_app', 'bookings', 'UPDATE'),
+       (SELECT count(*) FROM pg_attribute a, aclexplode(a.attacl) x
+         WHERE a.attrelid = 'bookings'::regclass AND x.privilege_type = 'INSERT'
+           AND x.grantee = 'ziftbook_app'::regrole),
+       EXISTS (SELECT FROM pg_trigger WHERE tgname = 'bookings_status_to_pending'),
+       to_regprocedure('bookings_status_to_pending()') IS NOT NULL
+""")
+STATUS_GUARD_FUNCTION = text("""
+SELECT p.prosecdef, p.proconfig, has_function_privilege('public', p.oid, 'EXECUTE')
+FROM pg_proc p WHERE p.oid = to_regprocedure('bookings_status_to_pending()')
+""")
+# Explicit literals, never 0047's constants: a shrunk grant would shrink its expectation with it.
+# Before 0047: 0027's list plus 0029's, 0031's and 0042's column grants.
+UPDATABLE_AT_0046 = {
+    "id",
+    "tenant_id",
+    "client_id",
+    "worker_id",
+    "service_id",
+    "starts_at",
+    "ends_at",
+    "status",
+    "expires_at",
+    "source",
+    "service_name",
+    "price_amount_minor",
+    "price_currency",
+    "duration_minutes",
+    "cancellation_policy_text",
+    "auto_confirm_at_booking",
+    "worker_display_name",
+    "created_at",
+    "reschedule_count",
+    "earliest_starts_at",
+    "decline_message",
+    "original_starts_at",
+}
+# What app/bookings.py's UPDATEs set, and nothing else.
+UPDATABLE = {
+    "status",
+    "expires_at",
+    "decline_message",
+    "starts_at",
+    "ends_at",
+    "earliest_starts_at",
+    "reschedule_count",
+    "original_starts_at",
+    "worker_id",
+    "worker_display_name",
+}
+# What app/bookings.py's INSERT_BOOKING names, and nothing else.
+INSERTABLE = {
+    "tenant_id",
+    "client_id",
+    "worker_id",
+    "service_id",
+    "starts_at",
+    "ends_at",
+    "status",
+    "expires_at",
+    "source",
+    "service_name",
+    "price_amount_minor",
+    "price_currency",
+    "duration_minutes",
+    "cancellation_policy_text",
+    "auto_confirm_at_booking",
+    "worker_display_name",
+    "free_cancellation_hours",
+    "reschedule_cutoff_hours",
+    "original_starts_at",
+    "earliest_starts_at",
+    "max_reschedules",
+    "client_name",
+    "client_phone",
+    "client_message",
+    "checkout_hash",
+}
+
+
+# ZB-09 FENCE. Wrong impl: an upgrade that leaves table-level INSERT, grants UPDATE or INSERT on a
+# column no app statement writes, or skips the trigger; a downgrade that leaves the column lists,
+# the trigger or its function behind, or does not put back exactly the UPDATE columns and the
+# table-level INSERT that 0027-0046 left.
+def test_0047_round_trips_the_booking_evidence_grants(
+    migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = lock_timeout_config(monkeypatch)
+    try:
+        command.downgrade(cfg, "0046")
+        with migrate_engine.connect() as conn:
+            grants = conn.execute(EVIDENCE_GRANTS).all()
+            assert {column for column, _, update in grants if update} == UPDATABLE_AT_0046
+            assert all(insert for _, insert, _ in grants)
+            assert tuple(conn.execute(EVIDENCE_GUARD).one()) == (True, False, 0, False, False)
+    finally:
+        command.upgrade(cfg, "head")
+    with migrate_engine.connect() as conn:
+        grants = conn.execute(EVIDENCE_GRANTS).all()
+        assert {column for column, _, update in grants if update} == UPDATABLE
+        assert {column for column, insert, _ in grants if insert} == INSERTABLE
+        assert tuple(conn.execute(EVIDENCE_GUARD).one()) == (False, False, 25, True, True)
+        assert tuple(conn.execute(STATUS_GUARD_FUNCTION).one()) == (
+            False,
+            ["search_path=pg_catalog, public, pg_temp"],
+            False,
+        )
+
+
+# ZB-10 (0048): ziftbook_app's table and column privileges on the three tables it lost writes on.
+WRITE_GRANTS = text("""
+SELECT c.relname,
+       (SELECT string_agg(x.privilege_type, ' ' ORDER BY x.privilege_type)
+        FROM aclexplode(c.relacl) x WHERE x.grantee = 'ziftbook_app'::regrole),
+       (SELECT string_agg(a.attname || ' ' || x.privilege_type, ', '
+                          ORDER BY a.attname, x.privilege_type)
+        FROM pg_attribute a, aclexplode(a.attacl) x
+        WHERE a.attrelid = c.oid AND x.grantee = 'ziftbook_app'::regrole)
+FROM pg_class c
+WHERE c.oid IN ('users'::regclass, 'tenants'::regclass, 'email_outbox'::regclass)
+ORDER BY 1
+""")
+USERS_INSERT_POLICY = text("""
+SELECT policyname, cmd, roles::text, with_check FROM pg_policies
+WHERE schemaname = 'public' AND tablename = 'users' AND cmd = 'INSERT'
+""")
+FUNCTION_DEFAULTS = text("""
+SELECT defaclnamespace, defaclacl::text FROM pg_default_acl
+WHERE defaclrole = 'ziftbook_migrate'::regrole AND defaclobjtype = 'f'
+""")
+# Explicit literals, never 0048's constants. Before 0048: 0001's default DML, narrowed only on
+# tenants (0013: UPDATE (name), no table-level UPDATE or DELETE); no default for functions, so
+# Postgres's built-in EXECUTE to PUBLIC.
+WRITE_GRANTS_AT_0047 = [
+    ("email_outbox", "DELETE INSERT SELECT UPDATE", None),
+    ("tenants", "INSERT SELECT", "name UPDATE"),
+    ("users", "DELETE INSERT SELECT UPDATE", None),
+]
+WRITE_GRANTS_AT_0048 = [
+    ("email_outbox", "INSERT SELECT", "sent_at UPDATE, status UPDATE, subject UPDATE"),
+    ("tenants", "SELECT", "name UPDATE"),
+    ("users", "SELECT", None),
+]
+
+
+# ZB-10 FENCE. Wrong impl: a downgrade that leaves the email_outbox column grant beside the
+# table-level UPDATE, forgets create_users, or leaves the function default behind.
+def test_0048_round_trips_the_app_roles_write_privileges(
+    migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = lock_timeout_config(monkeypatch)
+    try:
+        command.downgrade(cfg, "0047")
+        with migrate_engine.connect() as conn:
+            assert [tuple(r) for r in conn.execute(WRITE_GRANTS)] == WRITE_GRANTS_AT_0047
+            assert [tuple(r) for r in conn.execute(USERS_INSERT_POLICY)] == [
+                ("create_users", "INSERT", "{public}", "true")
+            ]
+            assert conn.execute(FUNCTION_DEFAULTS).all() == []
+    finally:
+        command.upgrade(cfg, "head")
+    with migrate_engine.connect() as conn:
+        assert [tuple(r) for r in conn.execute(WRITE_GRANTS)] == WRITE_GRANTS_AT_0048
+        assert conn.execute(USERS_INSERT_POLICY).all() == []
+        assert [tuple(r) for r in conn.execute(FUNCTION_DEFAULTS)] == [
+            (0, "{ziftbook_migrate=X/ziftbook_migrate}")
+        ]
+
+
+# ZB-08 (0049): the roles holding EXECUTE on mint_email_token in their own right.
+MINT_HOLDERS = text("""
+SELECT x.grantee::regrole::text FROM pg_proc p, aclexplode(p.proacl) x
+WHERE p.oid = 'mint_email_token(uuid,bytea)'::regprocedure AND x.privilege_type = 'EXECUTE'
+ORDER BY 1
+""")
+
+
+# ZB-08 FENCE. Wrong impl: a downgrade that leaves the worker's grant behind; an upgrade that also
+# takes it from the app role, which is the contract migration's, a release later: until the
+# worker's own URL is deployed it still connects as ziftbook_app.
+def test_0049_round_trips_the_workers_mint_grant(
+    migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = lock_timeout_config(monkeypatch)
+    try:
+        command.downgrade(cfg, "0048")
+        with migrate_engine.connect() as conn:
+            assert list(conn.scalars(MINT_HOLDERS)) == ["ziftbook_app", "ziftbook_migrate"]
+    finally:
+        command.upgrade(cfg, "head")
+    with migrate_engine.connect() as conn:
+        assert list(conn.scalars(MINT_HOLDERS)) == [
+            "ziftbook_app",
+            "ziftbook_migrate",
+            "ziftbook_worker",
+        ]
+
+
+# ZB-31 (0050): which of these may create temporary tables in this database. The owner,
+# ziftbook_migrate in the test databases, always may.
+TEMPORARY_HOLDERS = text("""
+SELECT r FROM unnest(ARRAY['public', 'ziftbook_app', 'ziftbook_migrate', 'ziftbook_worker']) r
+WHERE has_database_privilege(r, current_database(), 'TEMPORARY')
+ORDER BY 1
+""")
+PUBLIC_TEMPORARY = text("SELECT has_database_privilege('public', current_database(), 'TEMPORARY')")
+
+
+# ZB-31 FENCE. Wrong impl: an upgrade that leaves TEMPORARY to PUBLIC, or a downgrade that does not
+# give it back.
+def test_0050_round_trips_temporary_tables(
+    migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = lock_timeout_config(monkeypatch)
+    try:
+        command.downgrade(cfg, "0049")
+        with migrate_engine.connect() as conn:
+            assert list(conn.scalars(TEMPORARY_HOLDERS)) == [
+                "public",
+                "ziftbook_app",
+                "ziftbook_migrate",
+                "ziftbook_worker",
+            ]
+    finally:
+        command.upgrade(cfg, "head")
+    with migrate_engine.connect() as conn:
+        assert list(conn.scalars(TEMPORARY_HOLDERS)) == ["ziftbook_migrate"]
+
+
+@pytest.fixture
+def admins_database() -> Iterator[Engine]:
+    """A database of this xdist worker's own that the admin role owns, as docker-compose's and
+    production's do, and an engine on it as ziftbook_migrate. Dropped after."""
+    base = make_url(os.environ["ZIF_MIGRATE_DATABASE_URL"])
+    name = f"{base.database}_admins"
+    # It renders into DROP DATABASE as the superuser: a plain identifier within 63 bytes only.
+    if not re.fullmatch(r"[a-z_][a-z0-9_]{0,62}", name):
+        raise RuntimeError(f"database name {name!r} is not a plain identifier of 63 bytes or less")
+    admin = create_engine(ADMIN_DATABASE_URL, isolation_level="AUTOCOMMIT", poolclass=NullPool)
+    with admin.connect() as conn:
+        conn.execute(text(f"DROP DATABASE IF EXISTS {name}"))
+        conn.execute(text(f"CREATE DATABASE {name}"))
+    engine = create_engine(base.set(database=name), poolclass=NullPool)
+    try:
+        yield engine
+    finally:
+        engine.dispose()
+        with admin.connect() as conn:
+            # FORCE: a test that failed mid-way must not keep it. The name is this worker's alone.
+            conn.execute(text(f"DROP DATABASE IF EXISTS {name} WITH (FORCE)"))
+        admin.dispose()
+
+
+def run_0050(conn: Connection, step: str) -> bool:
+    """0050's upgrade() or downgrade() on conn, as Alembic runs it; then whether PUBLIC may create
+    temporary tables."""
+    module = migration("0050_no_temporary_tables.py")
+    with Operations.context(MigrationContext.configure(conn)):
+        getattr(module, step)()
+    return bool(conn.scalar(PUBLIC_TEMPORARY))
+
+
+def skips_0050(lines: list[dict[str, Any]]) -> list[tuple[str, str, str, str]]:
+    return [
+        (line["logger"], line["level"], line["step"], line["role"])
+        for line in lines
+        if line["msg"] == "temporary tables left to bootstrap.sql"
+    ]
+
+
+# ZB-31 GUARD. Where ziftbook_migrate does not own the database, 0050 neither fails nor changes
+# anything: only the owner can take TEMPORARY from PUBLIC, and bootstrap.sql, run as the admin
+# before the migrations, does it there. Wrong impl: a skip the migrate job does not show, as a
+# NOTICE is not (app.logs keeps the sqlalchemy loggers at WARNING).
+def test_0050_leaves_a_database_it_does_not_own_to_bootstrap_and_says_so(
+    admins_database: Engine, log_lines: Callable[[], list[dict[str, Any]]]
+) -> None:
+    with admins_database.begin() as conn:
+        assert conn.scalar(text("SELECT current_user")) == "ziftbook_migrate"
+        after = [run_0050(conn, "upgrade"), run_0050(conn, "downgrade")]
+    assert after == [True, True]
+    assert skips_0050(log_lines()) == [
+        ("app.migrations", "WARNING", "upgrade", "ziftbook_migrate"),
+        ("app.migrations", "WARNING", "downgrade", "ziftbook_migrate"),
+    ]
+
+
+# ZB-31 FENCE. Wrong impl: the warning where ziftbook_migrate owns the database and 0050 does its
+# work. Rolled back: this worker's database keeps its state.
+def test_0050_says_nothing_where_it_owns_the_database(
+    migrate_engine: Engine, log_lines: Callable[[], list[dict[str, Any]]]
+) -> None:
+    with migrate_engine.connect() as conn, conn.begin() as tx:
+        after = [run_0050(conn, "downgrade"), run_0050(conn, "upgrade")]
+        tx.rollback()
+    assert after == [True, False]
+    assert skips_0050(log_lines()) == []

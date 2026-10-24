@@ -65,8 +65,26 @@ Specifics:
   `autocommit_block()`. It also waits for every older transaction in the database, and on the 5-second timeout it
   leaves an invalid index behind. Inside the block, run `DROP INDEX CONCURRENTLY IF EXISTS` first, then
   `SET lock_timeout = 0` before it and `SET lock_timeout = '5s'` after: its wait blocks no app query.
-- Migrations run as `ziftbook_migrate`, never on app startup. The app connects as `ziftbook_app`, which owns
+- Migrations run as `ziftbook_migrate`, never on app startup. The API connects as `ziftbook_app`, which owns
   nothing: never grant it ownership, `BYPASSRLS` or DDL rights.
+- The worker connects as `ziftbook_worker` (ZB-08): a member of `ziftbook_app`, so it has every privilege the app
+  role has, plus what only background jobs may do (`mint_email_token`). The same never-list applies to it.
+- Neither runtime role can create temporary tables, and both search `public` before `pg_temp` (ZB-31;
+  `bootstrap.sql`, plus 0050 where `ziftbook_migrate` owns the database; elsewhere 0050 changes nothing and logs
+  `temporary tables left to bootstrap.sql` at WARNING). Where the admin role does not own the database either
+  (some hosted providers), the revoke in `bootstrap.sql` only warns: after a deploy, check that
+  `has_database_privilege('ziftbook_app', current_database(), 'TEMPORARY')` is false. A pooled engine resets each connection
+  on check-in with `app.db.reset_session` (`RESET ALL; DISCARD TEMP`, then open cursors, `LISTEN`s, session-level
+  advisory locks and `SET ROLE`), so no session state reaches the next request; a new pooled engine adds the same
+  listener. A setting meant for every connection goes in the engine's `connect_args` `options` (`-c lock_timeout=5s`),
+  which the reset keeps, never in a `SET` after connecting.
+- A function `ziftbook_migrate` creates is executable by no other role (0048's default privileges): the migration
+  that creates one the app calls also runs `GRANT EXECUTE ON FUNCTION ... TO ziftbook_app`, or `TO ziftbook_worker`
+  when only a job calls it. Calls the app makes indirectly count too: a function in a `CHECK` constraint, a column
+  default, a row-level security policy, or the body of a `SECURITY INVOKER` trigger function runs as the role whose
+  statement fired it (`slug_ok` in `ck_tenants_slug`, say). Trigger functions themselves need none.
+  Nor do functions a `CREATE EXTENSION` adds: `ziftbook_migrate` can create only trusted extensions, whose objects
+  belong to the bootstrap superuser, so they keep `PUBLIC`'s `EXECUTE`.
 
 ## Tenant-owned tables
 
@@ -101,9 +119,10 @@ every table that holds a tenant's data:
   UPDATE` on the membership), and never locks `tenants` beyond the `KEY SHARE` its foreign keys take: `keep_an_owner`
   locks memberships, then tenants.
 - A membership is never deleted by the app. Removing someone sets `role = 'removed'` and `removed_at`
-  (ZIF-112); the row stays because bookings and their history reference it. A new read of
-  `memberships` decides: active (filter `role <> 'removed'`, inside the locking statement when it
-  locks) or history (no filter). A read reached through a session needs none: `ck_sessions_role` and
+  (ZIF-112); the row stays because bookings and their history reference it. The app role keeps `DELETE` on
+  `memberships` while a deployed release from before ZIF-112 still deletes; a later contract migration revokes it
+  (ZB-10). A new read of `memberships` decides: active (filter `role <> 'removed'`, inside the locking statement
+  when it locks) or history (no filter). A read reached through a session needs none: `ck_sessions_role` and
   the sessions foreign key keep a session's membership live. Never infer owner from `role <> 'worker'`;
   compare to `'owner'`. A new table referencing memberships with `ON DELETE CASCADE` also needs a line
   in `members.remove`, which deletes what the cascades used to.
@@ -121,17 +140,17 @@ names the business a platform admin acted on).
 `tenants` is the root table: it isn't isolated with `enable_tenant_isolation` and has no row-level security of its
 own.
 
-- The app role may only `INSERT` and `UPDATE (name)`; a migration's `REVOKE UPDATE, DELETE` must run before its
-  column `GRANT`, or the revoke wipes the grant too.
+- The app role may only `UPDATE (name)`: a business is created by `complete_sign_up`. A migration's `REVOKE` must
+  run before its column `GRANT`, or the revoke wipes the grant too.
 - With no RLS, any `UPDATE` on `tenants` must filter `WHERE id = current_setting('app.tenant_id')::uuid` itself.
 - `country` and `currency` change only through a `SECURITY DEFINER` function; a business is deleted only as
   `ziftbook_migrate`.
 
 `users` is global, with row-level security that is enabled but not forced: the app role sees a user only through a
-membership in the current tenant, may insert users, and can never change or delete one.
+membership in the current tenant, and can never insert, change or delete one (no `INSERT`, `UPDATE` or `DELETE`).
 
-- Insert users with an id from `uuid.uuid7()` and no `RETURNING`: a new user isn't visible to its own policy yet.
-- Never add an UPDATE or DELETE policy on `users`; changes to a person's account go through functions owned by
+- Accounts are created only by `complete_sign_up`, `complete_setup` and `accept_invite`.
+- Never add an INSERT, UPDATE or DELETE policy on `users`; changes to a person's account go through functions owned by
   `ziftbook_migrate`. `ziftbook_migrate` sees every user, including in data migrations.
 - A view over `users` needs `WITH (security_invoker = true)`, or it shows every user.
 - Create memberships only in trusted flows (sign-up, invites), never from a `user_id` the client sends: the foreign
@@ -143,6 +162,9 @@ Passwords and sign-in tokens live in tables the app role can't read or write (`p
 - Every such function declares `SET search_path = pg_catalog, public, pg_temp` (pg_temp last, or a caller's temporary
   table can stand in for a real one) and is revoked from PUBLIC. `tests/test_password_auth_db.py` checks both.
 - None changes a password without a token.
+- Minting a token is the worker's: `mint_email_token` (the hash an emailed link carries) is granted to
+  `ziftbook_worker` (0049). `ziftbook_app` keeps it until the contract migration, one release later, so a worker
+  that still connects as `ziftbook_app` keeps sending links meanwhile (ZB-08).
 - The `sign_in` policy lets `ziftbook_migrate` read memberships across tenants only while `app.sign_in` is `on`. A
   function that relies on it sets and restores `app.sign_in` itself; any other definer function that reads memberships
   must clear it, because a caller can set it.
@@ -194,6 +216,12 @@ migration 0026), not any code path. A race in a route somebody forgets to guard 
   for database work, never across an outbound call, so a queue of bookers clears well inside that. The engine's
   `connect_args` replaces any `options` in `ZIF_DATABASE_URL`. The worker has no `lock_timeout`; its
   `statement_timeout` (30s) bounds its waits.
+- **The API has at most 15 database connections for its 40 request threads** (`POOL_SIZE` 5 plus `MAX_OVERFLOW` 10
+  in `app/main.py`, ZB-16). A request that finds none free waits at most 5 seconds (`POOL_TIMEOUT`), then is answered
+  `503 busy`. The server ends an API or worker transaction left idle for a minute
+  (`idle_in_transaction_session_timeout`), so slow work runs outside a transaction: outbound calls, and a service
+  photo's decode and store (`app/services.py`). Keep new slow work there too.
+  Raising the pool means checking it against Postgres' `max_connections` together with the worker's 21.
 - `booking_holds` (migration 0034) is unused since ZIF-158: nothing reads or writes it, and a later owner-gated
   migration drops it.
 - The constraint's predicate is the four **occupying** statuses. That set lives in three places — the predicate,
@@ -231,6 +259,13 @@ migration 0026), not any code path. A race in a route somebody forgets to guard 
 - `booking_events` is append-only by privilege, like `audit_events` and `consents`: a column added later needs its
   own `GRANT INSERT (column) ON booking_events TO ziftbook_app`, or **every** event write fails, not only writes of
   the new column.
+- `bookings` grants `INSERT` and `UPDATE` by column (migration 0047): the app role inserts only what `place()` /
+  `INSERT_BOOKING` names (the one insert, for public and merchant bookings alike) and updates only what a route
+  sets, so the evidence, `id` and `created_at` are write-once. A column added later needs its own
+  `GRANT INSERT (column)` if `place()` / `INSERT_BOOKING` writes it, or **every** booking insert fails, and
+  `GRANT UPDATE (column)` only if a route changes it. A settled booking never becomes `pending` again, and an
+  `UPDATE` never moves a booking into `awaiting_payment`, which only placement (the `INSERT`) sets (the
+  `bookings_status_to_pending` trigger).
 - The public booking POST writes **no** `audit_events` row: the requester is the data subject, and `auth.record`
   stamps their address into a table with no foreign keys that outlives erased people.
 
@@ -271,12 +306,18 @@ A platform admin runs the platform across businesses (ZIF-70). `platform_admins`
   `docker compose run --rm --build migrate python -m app.admin grant <email> --reason "..."` (or `revoke`).
   `--reason` is required. Exit code 0 means done or nothing to do, 1 no account has that email (or another error,
   logged CRITICAL), 2 a usage error.
+- The app role can start an admin session that has not passed the second factor yet: the database cannot check
+  a password (the API verifies it), so `start_admin_session` trusts the API's check. Only the second factor (the
+  next bullet) keeps the app role from admin access (ZB-08).
 - Admins sign in with a second factor (TOTP, ZIF-71). An admin enrols with a one-hour ticket from
-  `kubectl exec -it <api pod> -- python -m app.admin enrol <email> --reason "..."`, which wipes their current
-  factor and recovery codes and ends their admin sessions. It writes the ticket to `/dev/tty`, never to stdout or
-  a log, so it needs `-it`: with no terminal it issues nothing and exits 2; exit 1 means no admin has that email.
-  Prefer `kubectl exec` in a deployment: with `kubectl run -it` (or `docker compose run -it`) the container's
-  main process owns the terminal, and the container log records what is written to it. For local development
+  `python -m app.admin enrol <email> --reason "..."`, which wipes their current factor and recovery codes and ends
+  their admin sessions. Like `grant`, it connects as `ziftbook_migrate` (`ZIF_MIGRATE_DATABASE_URL`), so it runs
+  from the migrations image, never in the API's container: the API must never hold the migrate role's URL. It
+  writes the ticket to `/dev/tty`, never to stdout or a log, so it needs a terminal (`-it`): with none it issues
+  nothing and exits 2; exit 1 means no admin has that email. The container log records what a container's main
+  process writes to its terminal (`kubectl run -it`, `docker compose run -it`), so in a deployment start a
+  short-lived pod from the migrations image with only the migrate role's URL and a command that just sleeps, run
+  the CLI in it with `kubectl exec -it`, and delete the pod. For local development
   `docker compose run --rm -it migrate python -m app.admin enrol <email> --reason "..."` is fine, with that
   caveat. Run it after `grant`, and again when an admin loses their authenticator and their recovery codes.
 - Never enable statement or parameter logging (`log_statement`, `log_min_duration_statement` with parameters,
@@ -591,11 +632,12 @@ ZIF-38). An empty variable means the default: `env_ignore_empty=True` on the bas
 | Name | Read by | Default | Required in production? | Secret? | What it does |
 |---|---|---|---|---|---|
 | **Database** | | | | | |
-| `ZIF_DATABASE_URL` | api, worker | none | yes | yes | `ziftbook_app`'s connection string. |
-| `ZIF_MIGRATE_DATABASE_URL` | migrations | none | yes | yes | `ziftbook_migrate`'s connection string, used to run Alembic. |
+| `ZIF_DATABASE_URL` | api, worker | none | yes | yes | The API's is `ziftbook_app`'s connection string; the worker's is `ziftbook_worker`'s (ZB-08). Keep the two in separate secrets: an API on the worker's URL could mint email tokens itself. A worker still on `ziftbook_app`'s works until the contract migration, then fails every sign-up and reset email. |
+| `ZIF_MIGRATE_DATABASE_URL` | migrations | none | yes | yes | `ziftbook_migrate`'s connection string, used to run Alembic and the admin CLI (`python -m app.admin`). Never give it to the API or the worker: `ziftbook_migrate` owns the schema, so it can change or turn off row-level security. |
 | `ZIF_POSTGRES_PASSWORD` | compose | none | yes | yes | Postgres superuser password. |
 | `ZIF_MIGRATE_PASSWORD` | compose (`bootstrap.sql`) | none | yes | yes | `ziftbook_migrate` role password. |
 | `ZIF_APP_PASSWORD` | compose (`bootstrap.sql`) | none | yes | yes | `ziftbook_app` role password. |
+| `ZIF_WORKER_PASSWORD` | compose (`bootstrap.sql`), tests | none (tests: `ziftbook_worker`) | yes | yes | `ziftbook_worker` role password (ZB-08); `docker-compose-prod.yaml` requires it. Every environment's database init (whatever runs `bootstrap.sql`) needs it too, and must run before the migrations of the release that adds the role. Unset or empty: `bootstrap.sql` warns and leaves the role's password unchanged, so a role that has none cannot log in and the worker must keep `ziftbook_app`'s URL. Required before the contract migration. |
 | **Mail** | | | | | |
 | `ZIF_MAILGUN_API_KEY` | worker | `""` | needed to send mail | yes | Mailgun sending API key. Unset: the worker logs `mail: "off"` and every email job fails (and retries) until it is set. |
 | `ZIF_MAILGUN_DOMAIN` | worker | `""` | needed to send mail | no | Mailgun sending domain; mail goes from `no-reply@` it. |
@@ -621,6 +663,7 @@ ZIF-38). An empty variable means the default: `env_ignore_empty=True` on the bas
 | `ZIF_SETUP_TOKEN` | api | `""` | until setup is done | yes | First-run setup token (ZIF-70): whoever sends it to `/setup` on an install with no account yet becomes the platform admin. At least 32 characters (`openssl rand -base64 32`); unset or shorter refuses setup (503 `setup_not_configured`), and the API logs an ERROR at startup while setup is still to be done. Once anyone has an account setup answers 409 whatever the token, so it can be removed afterwards. The development token from `docker-compose.yaml` counts as unset when `ZIF_APP_URL` is not localhost. |
 | `ZIF_TOTP_KEY` | api | `""` | yes, once an admin exists | yes | Encrypts every platform admin's TOTP secret (ZIF-71): base64 of exactly 32 bytes (`openssl rand -base64 32`), AES-256-GCM. Unset or invalid: the API logs an ERROR at startup and admin TOTP answers 503 `second_factor_unavailable`, while recovery codes still work. Back it up with the database credentials: losing or changing it makes every stored secret unreadable, and each admin then re-enrols with `python -m app.admin enrol`. The development key from `docker-compose.yaml` counts as unset when `ZIF_APP_URL` is not localhost. |
 | `ZIF_RATE_LIMIT_KEY` | api, worker | `""` | recommended | yes | Pepper for rate-limit keys (ZB-25): the email or IP in every key becomes its HMAC-SHA256 under this key, so `rate_limits` holds no addresses and nothing a guess can be checked against (the worker's per-recipient email limits too). At least 32 characters (`openssl rand -base64 32`). Unset or shorter keeps the plain form and the API and worker log a WARNING at startup. Setting or changing it changes every key, so counters start again once. The development key from `docker-compose.yaml` counts as unset when `ZIF_APP_URL` is not localhost. |
+| `ZIF_TESTS_ALLOW_DB` | tests | unset | no | no | Test suite only. The suite refuses a database host other than `localhost`, `127.0.0.1`, `::1` or `postgres`, because it drops and recreates databases; set this to the exact database name to allow one remote database. Never point it at a shared or production database. |
 | `ZIF_TRUSTED_PROXIES` | api | `""` | yes | no | Addresses whose `X-Forwarded-For` the API believes (production and staging: the pod network `10.42.0.0/16`; compose: the web app's `172.28.0.10`). Empty trusts nobody. |
 | `ZIF_CLIENT_IP_HEADER` | frontend | none | yes, behind a proxy | no | Header the web app trusts for the visitor's address (production and staging: `cf-connecting-ip`). Set only behind a proxy that overwrites it; unset there, every visitor shares the proxy's address and its per-IP limits. |
 | **Logging** | | | | | |
