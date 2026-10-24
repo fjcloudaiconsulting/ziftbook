@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.31.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.30.0...v0.31.0) (2026-10-24)
+
+
+### Features
+
+* **backend:** removing a member ends the membership and keeps their bookings (ZIF-112) ([#322](https://github.com/fjcloudaiconsulting/ziftbook/issues/322)) ([b90ef0f](https://github.com/fjcloudaiconsulting/ziftbook/commit/b90ef0f16acee22b423b0a5c0dca030533c4bfca))
+* **backend:** token-free client emails reply to the business's contact email (ZIF-99) ([#324](https://github.com/fjcloudaiconsulting/ziftbook/issues/324)) ([1c6d45e](https://github.com/fjcloudaiconsulting/ziftbook/commit/1c6d45eb38597ea63ebf4f375d10fe08746f9ff8))
+
+
+### Bug Fixes
+
+* authentication and abuse-limit hardening (ZB-20, ZB-04, ZB-01, ZB-17, ZB-18, ZB-19, ZB-05, ZB-25) ([#333](https://github.com/fjcloudaiconsulting/ziftbook/issues/333)) ([c376409](https://github.com/fjcloudaiconsulting/ziftbook/commit/c37640960be93e96c23e25dd84d1910c98885a9f))
+* **backend:** reject non-ASCII contact emails before writing the header (Python 3.15) ([#326](https://github.com/fjcloudaiconsulting/ziftbook/issues/326)) ([c673517](https://github.com/fjcloudaiconsulting/ziftbook/commit/c6735174c44e54c391e457a65fdb1d37cabd2d7b))
+* booking and client-data hardening (ZB-02, ZB-03, ZB-13, ZB-27, ZB-14, ZB-16) ([#331](https://github.com/fjcloudaiconsulting/ziftbook/issues/331)) ([7b883ec](https://github.com/fjcloudaiconsulting/ziftbook/commit/7b883ecf26b199ae44297522d82450513ae89b72))
+* **deps:** patch Pillow, Next.js, certifi and mako, and add a Renovate release-age cooldown (ZB-33, ZB-34, ZB-35, ZB-36, ZB-06) ([#329](https://github.com/fjcloudaiconsulting/ziftbook/issues/329)) ([e9297b0](https://github.com/fjcloudaiconsulting/ziftbook/commit/e9297b0c371d53892c34cfd92de195e4e1d7538c))
+* **deps:** update dependency fastapi to v0.161.1 ([#270](https://github.com/fjcloudaiconsulting/ziftbook/issues/270)) ([6695e24](https://github.com/fjcloudaiconsulting/ziftbook/commit/6695e24bd25bc068949c56a77bf8363e6e848385))
+* **deps:** update frontend OpenTelemetry to v3 and move to sdk-trace ([#327](https://github.com/fjcloudaiconsulting/ziftbook/issues/327)) ([e049225](https://github.com/fjcloudaiconsulting/ziftbook/commit/e0492255623bdfa314f0fc61b4f3ca49d78c27fd))
+* **deps:** update npm non-major ([#274](https://github.com/fjcloudaiconsulting/ziftbook/issues/274)) ([4c75e81](https://github.com/fjcloudaiconsulting/ziftbook/commit/4c75e8149543cf97f88438d85209e8a0ed5892dc))
+* **deps:** update opentelemetry ([#313](https://github.com/fjcloudaiconsulting/ziftbook/issues/313)) ([0942e15](https://github.com/fjcloudaiconsulting/ziftbook/commit/0942e159dea087ae8a81a1c49de8a17d68d1f18c))
+* **deps:** update python non-major ([#315](https://github.com/fjcloudaiconsulting/ziftbook/issues/315)) ([a45bfa5](https://github.com/fjcloudaiconsulting/ziftbook/commit/a45bfa530560b58ac445ad40cb4bf7597c365dfb))
+* supply-chain and configuration hardening (ZB-07, ZB-22, ZB-23, ZB-24, ZB-26) ([#332](https://github.com/fjcloudaiconsulting/ziftbook/issues/332)) ([1db3f2b](https://github.com/fjcloudaiconsulting/ziftbook/commit/1db3f2bd1ccde3217663a198da497d74bba93c2b))
+* **web:** security headers, request ids and a nonce-based CSP (ZB-28, ZB-29, ZB-30, ZB-12) ([#335](https://github.com/fjcloudaiconsulting/ziftbook/issues/335)) ([4b29f61](https://github.com/fjcloudaiconsulting/ziftbook/commit/4b29f61cb00892225d446f95fe60e6ee8aa93e35))
+
 ## [0.30.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.29.0...v0.30.0) (2026-10-22)
 
 
