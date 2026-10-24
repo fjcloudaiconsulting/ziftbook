@@ -68,8 +68,9 @@ Specifics:
 - Migrations run as `ziftbook_migrate`, never on app startup. The API connects as `ziftbook_app`, which owns
   nothing: never grant it ownership, `BYPASSRLS` or DDL rights.
 - The worker connects as `ziftbook_worker` (ZB-08): a member of `ziftbook_app`, so it has every privilege the app
-  role has, plus what only background jobs may do (`mint_email_token`, which the app role does not have). The same
-  never-list applies to it.
+  role has, plus what only background jobs may do: `mint_email_token`, which the app role does not have (0051), and
+  setting an invite's `token_hash` (0053). A worker still on `ziftbook_app` fails every sign-up, reset and invite
+  email. The same never-list applies to it.
 - Neither runtime role can create temporary tables, and both search `public` before `pg_temp` (ZB-31;
   `bootstrap.sql`, plus 0050 where `ziftbook_migrate` owns the database; elsewhere 0050 changes nothing and logs
   `temporary tables left to bootstrap.sql` at WARNING). Where the admin role does not own the database either
@@ -165,7 +166,8 @@ Passwords and sign-in tokens live in tables the app role can't read or write (`p
 - None changes a password without a token.
 - Minting a token is the worker's alone: `mint_email_token` (the hash an emailed link carries) is granted to
   `ziftbook_worker` (0049) and not to `ziftbook_app` (0051), so a worker that connects as `ziftbook_app` sends no
-  sign-up or reset link (ZB-08).
+  sign-up or reset link (ZB-08). Likewise only `ziftbook_worker` may set an invite's `token_hash`; the API may only
+  clear it, on a resend (the `invites_token_hash_by_worker` trigger, 0053).
 - The `sign_in` policy lets `ziftbook_migrate` read memberships across tenants only while `app.sign_in` is `on`. A
   function that relies on it sets and restores `app.sign_in` itself; any other definer function that reads memberships
   must clear it, because a caller can set it.
@@ -642,7 +644,7 @@ ZIF-38). An empty variable means the default: `env_ignore_empty=True` on the bas
 | Name | Read by | Default | Required in production? | Secret? | What it does |
 |---|---|---|---|---|---|
 | **Database** | | | | | |
-| `ZIF_DATABASE_URL` | api, worker | none | yes | yes | The API's is `ziftbook_app`'s connection string; the worker's is `ziftbook_worker`'s (ZB-08). Keep the two in separate secrets: an API on the worker's URL could mint email tokens itself. A worker on `ziftbook_app`'s fails every sign-up and reset email, and logs a WARNING at startup. The API logs an ERROR at startup when its role is not `ziftbook_app`. |
+| `ZIF_DATABASE_URL` | api, worker | none | yes | yes | The API's is `ziftbook_app`'s connection string; the worker's is `ziftbook_worker`'s (ZB-08). Keep the two in separate secrets: an API on the worker's URL could mint email tokens and set invite tokens itself. A worker on `ziftbook_app`'s fails every sign-up, reset and invite email, and logs a WARNING at startup. The API logs an ERROR at startup when its role is not `ziftbook_app`. |
 | `ZIF_MIGRATE_DATABASE_URL` | migrations | none | yes | yes | `ziftbook_migrate`'s connection string, used to run Alembic and the admin CLI (`python -m app.admin`). Never give it to the API or the worker: `ziftbook_migrate` owns the schema, so it can change or turn off row-level security. |
 | `ZIF_POSTGRES_PASSWORD` | compose | none | yes | yes | Postgres superuser password. |
 | `ZIF_MIGRATE_PASSWORD` | compose (`bootstrap.sql`) | none | yes | yes | `ziftbook_migrate` role password. |

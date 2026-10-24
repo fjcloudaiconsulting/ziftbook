@@ -1855,3 +1855,37 @@ def test_0052_round_trips_the_app_roles_membership_delete(
         command.upgrade(cfg, "head")
     with migrate_engine.connect() as conn:
         assert conn.scalar(MEMBERSHIP_GRANTS) == "INSERT SELECT UPDATE"
+
+
+# ZB-08 (0053): the trigger that leaves writing an invite's token hash to the worker, and its
+# function.
+INVITE_TOKEN_GUARD = text("""
+SELECT EXISTS (SELECT FROM pg_trigger WHERE tgname = 'invites_token_hash_by_worker'
+                 AND tgrelid = 'invites'::regclass),
+       to_regprocedure('invites_token_hash_by_worker()') IS NOT NULL
+""")
+INVITE_TOKEN_GUARD_FUNCTION = text("""
+SELECT p.prosecdef, p.proconfig, has_function_privilege('public', p.oid, 'EXECUTE')
+FROM pg_proc p WHERE p.oid = to_regprocedure('invites_token_hash_by_worker()')
+""")
+
+
+# ZB-08 FENCE (0053). Wrong impl: a downgrade that leaves the trigger or its function behind; an
+# upgrade whose function runs as its owner, searches a caller's schema first, or is PUBLIC's.
+def test_0053_round_trips_the_invite_token_guard(
+    migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = lock_timeout_config(monkeypatch)
+    try:
+        command.downgrade(cfg, "0052")
+        with migrate_engine.connect() as conn:
+            assert tuple(conn.execute(INVITE_TOKEN_GUARD).one()) == (False, False)
+    finally:
+        command.upgrade(cfg, "head")
+    with migrate_engine.connect() as conn:
+        assert tuple(conn.execute(INVITE_TOKEN_GUARD).one()) == (True, True)
+        assert tuple(conn.execute(INVITE_TOKEN_GUARD_FUNCTION).one()) == (
+            False,
+            ["search_path=pg_catalog, public, pg_temp"],
+            False,
+        )
