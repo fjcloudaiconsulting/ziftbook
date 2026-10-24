@@ -42,19 +42,22 @@ Rules:
 
 ## Status at a glance
 
-As of 2026-10-24:
-- **Fixes:** 34 of the 36 findings are fixed in PRs #329 and #331–#335. The second half of three of them is in
-  draft #336, which merges one release later.
+As of 2026-10-24, after the first merge run:
+- **Merged to `main`:**
+  - the whole security stack: #329, #331, #332, #333, #334 and #335;
+  - Renovate's #301.
+  34 of the 36 findings are fixed on `main`. Three of them (ZB-08, ZB-10, ZB-15) also need draft #336.
+- **Still open:**
+  - this tracker (#330), and #326 and #327: they need one more run of the owner's merge script;
+  - Renovate's #274 and #284: Renovate must first rebase them onto the new `main`;
+  - draft #336: already rebased onto `main`; it merges one release after #334.
 - **Accepted and deferred:** ZB-21 is accepted with a mitigating control. ZB-32 is deferred until a product
   decision.
 - **Reviews:**
   - Every PR had a task review and a whole-branch review.
-  - Two security reviews of the whole stack found no new vulnerability: one after the fixes, and one
-    four-area review before merging.
-  - The pre-merge review corrected deploy instructions (owner actions 7, 9, 10 and 16).
-- **Merging:** the owner started merging the stack on 2026-10-24. Statuses below say "Fixed in PR" until
-  the next log entry records the merges.
-- **Release:** nothing is released yet. The owner actions decide when.
+  - Two security reviews of the whole stack found no new vulnerability.
+- **Release:** nothing is released yet. The release PR (#321, release-please) now carries the whole stack.
+  Owner actions 3, 4, 5, 7 and 8 come before merging it, and 9, 11 and 16 after deploying.
 
 ## For the agent with Jira access
 
@@ -94,6 +97,22 @@ As of 2026-10-24:
 
 Newest first.
 
+### 2026-10-24: repository agent (Claude Code, ziftbook session), after the first merge run
+- **Done:**
+  - The owner's merge run squash-merged the stack (#329, #331–#335) and #301. `main`'s CI passed on each.
+  - Every merged commit is authored by the owner's GitHub account.
+  - Draft #336 was rebased onto `main`.
+  - Statuses in this file are now Merged, or Merged (part 2 in draft) for ZB-08, ZB-10 and ZB-15.
+- **Not merged in that run:**
+  - #330 (this file), because its branch was checked out in a local worktree;
+  - #326 and #327, which passed their checks but hit a timing bug in the merge script, since fixed;
+  - #274 and #284, which conflict on lockfiles.
+- **Needs:**
+  - **Owner:** run the merge script again for #330, #326 and #327. Then the owner actions before merging release
+    PR #321.
+  - **Jira agent:** create or update the issues. Findings marked Merged can close as Done (see "When to close").
+    ZB-08, ZB-10 and ZB-15 stay open until #336 merges.
+
 ### 2026-10-24: repository agent (Claude Code, ziftbook session)
 - **Done:**
   - fixes for 34 findings in #329 and #331–#335, plus draft #336 for the contract steps;
@@ -115,6 +134,7 @@ Newest first.
 |---|---|
 | Fixed in PR | Implemented, reviewed (task review plus whole-branch review) and open as a PR |
 | Fixed in PR (part 2 in draft) | Part 1 open as a PR; the contract part is a draft PR merged one release later |
+| Merged (part 2 in draft) | Part 1 on `main`; the contract part is a draft PR (#336) merged one release later |
 | In progress | Implemented on a branch, still in review, not yet pushed |
 | Merged | On `main`, not yet in a release |
 | Released | In a deployed release |
@@ -124,19 +144,18 @@ Newest first.
 
 ## PRs and merge order
 
-The security PRs form one stack. Merge them in this order; each is based on the previous one. The repo
-only allows squash merges, so after a parent is merged, rebase its child onto `main` before merging the
-child: `git rebase --onto origin/main <merged-parent-branch> <child-branch>`, then force-push the child.
+The security PRs formed one stack, each based on the previous one, and were squash-merged in this order on
+2026-10-24. Draft #336 is now based on `main`.
 
-| Order | PR | Branch | Findings |
-|---|---|---|---|
-| 1 | [#329](https://github.com/fjcloudaiconsulting/ziftbook/pull/329) | `security/deps` | ZB-33, ZB-34, ZB-35, ZB-36, ZB-06 |
-| 2 | [#331](https://github.com/fjcloudaiconsulting/ziftbook/pull/331) | `security/booking-hardening` | ZB-02, ZB-03, ZB-13, ZB-27, ZB-14, ZB-16 |
-| 3 | [#332](https://github.com/fjcloudaiconsulting/ziftbook/pull/332) | `security/supply-chain` | ZB-07, ZB-22, ZB-23, ZB-24, ZB-26 |
-| 4 | [#333](https://github.com/fjcloudaiconsulting/ziftbook/pull/333) | `security/auth-abuse` | ZB-20, ZB-04, ZB-01, ZB-17, ZB-18, ZB-19, ZB-05, ZB-25 |
-| 5 | [#334](https://github.com/fjcloudaiconsulting/ziftbook/pull/334) | `security/db-privileges` | ZB-15, ZB-11, ZB-09, ZB-10, ZB-08 (part 1), ZB-31, ZB-16 (part 2) |
-| 6 | [#335](https://github.com/fjcloudaiconsulting/ziftbook/pull/335) | `security/web-headers` | ZB-28, ZB-29, ZB-30, ZB-12 |
-| 7 (draft) | [#336](https://github.com/fjcloudaiconsulting/ziftbook/pull/336) | `security/db-privileges-contract` | ZB-08 (part 2), ZB-10 (contract), ZB-15 (contract). Merge one release after #334, when owner action 10 holds. |
+| Order | PR | Branch | Findings | State |
+|---|---|---|---|---|
+| 1 | [#329](https://github.com/fjcloudaiconsulting/ziftbook/pull/329) | `security/deps` | ZB-33, ZB-34, ZB-35, ZB-36, ZB-06 | Merged as e9297b0 |
+| 2 | [#331](https://github.com/fjcloudaiconsulting/ziftbook/pull/331) | `security/booking-hardening` | ZB-02, ZB-03, ZB-13, ZB-27, ZB-14, ZB-16 | Merged as 7b883ec |
+| 3 | [#332](https://github.com/fjcloudaiconsulting/ziftbook/pull/332) | `security/supply-chain` | ZB-07, ZB-22, ZB-23, ZB-24, ZB-26 | Merged as 1db3f2b |
+| 4 | [#333](https://github.com/fjcloudaiconsulting/ziftbook/pull/333) | `security/auth-abuse` | ZB-20, ZB-04, ZB-01, ZB-17, ZB-18, ZB-19, ZB-05, ZB-25 | Merged as c376409 |
+| 5 | [#334](https://github.com/fjcloudaiconsulting/ziftbook/pull/334) | `security/db-privileges` | ZB-15, ZB-11, ZB-09, ZB-10, ZB-08 (part 1), ZB-31, ZB-16 (part 2) | Merged as 515da36 |
+| 6 | [#335](https://github.com/fjcloudaiconsulting/ziftbook/pull/335) | `security/web-headers` | ZB-28, ZB-29, ZB-30, ZB-12 | Merged as 4b29f61 |
+| 7 (draft) | [#336](https://github.com/fjcloudaiconsulting/ziftbook/pull/336) | `security/db-privileges-contract` | ZB-08 (part 2), ZB-10 (contract), ZB-15 (contract). Merge one release after #334, when owner action 10 holds. | Draft, rebased onto `main` |
 
 Related, independent of the stack:
 - [#326](https://github.com/fjcloudaiconsulting/ziftbook/pull/326) Python 3.15 compatibility, which
@@ -148,49 +167,49 @@ Related, independent of the stack:
 
 | ID | Title | Severity | Area | Status | PR | Jira | Notes |
 |---|---|---|---|---|---|---|---|
-| ZB-33 | Image library (Pillow 12.3.0) decoder advisories reachable from photo uploads | Critical | Dependency / backend | Fixed in PR | #329 | | Pillow 13.0.0, plus a version-independent container and EXIF guard. Containment until deployed: see owner actions. |
-| ZB-34 | Next.js 16.4.0 and sharp 0.35.4 advisories (assessed not reachable) | Medium | Dependency / frontend | Fixed in PR | #329 | | next 16.4.2; image optimizer off |
-| ZB-01 | Sign-in rate limits keyed on the email alone allow account lockout | Medium | Backend | Fixed in PR | #333 | | Per-address limits plus a challenge after repeated failures; web form handles the challenge |
-| ZB-02 | Workers could cancel paid or started bookings (refund-bearing) | Medium | Backend / web | Fixed in PR | #331 | | Owner-only for started or paid bookings |
-| ZB-03 | No quotas on client-facing booking email | Medium | Backend | Fixed in PR | #331 | | Per-business caps (business-initiated and public separately) and per-recipient caps |
-| ZB-04 | Password-hashing concurrency and IPv6 rate-limit granularity | Medium | Backend | Fixed in PR | #333 | | IPv6 /48 for IP-only auth buckets; per-account keys stay /64. Edge rate rules: owner action. |
-| ZB-05 | Unverified guest bookings per business are uncapped | Medium | Backend | Fixed in PR | #333 | | Per-business cap on unproven bookings plus an owner alert |
-| ZB-06 | Dependency updates taken within hours of publication | Medium | Supply chain | Fixed in PR | #329 | | Renovate release-age cooldown; security updates skip it |
-| ZB-07 | `make setup` trusted a tracked hooks directory | Low | Supply chain | Fixed in PR | #332 | | Installs only the commit-msg hook |
-| ZB-08 | App database role can mint email tokens | Low | Database | Fixed in PR (part 2 in draft) | #334, #336 | | Part 1 (#334): the worker connects as its own role, which mints email tokens. Part 2 (contract PR #336, one release later): the app role can no longer mint tokens or set an invite token. |
-| ZB-09 | Booking evidence columns writable by the app role | Low | Database | Fixed in PR | #334 | | Column grants plus a status-transition trigger |
-| ZB-10 | App role keeps unused write privileges | Low | Database | Fixed in PR (part 2 in draft) | #334, #336 | | Unused write grants revoked. DELETE on memberships is revoked by the contract PR #336, once no deployed release deletes a membership. |
-| ZB-11 | Test suite could run destructive migrations against a non-local database | Low | Tooling | Fixed in PR | #334 | | |
-| ZB-12 | Missing web security headers (CSP, HSTS, nosniff) | Low | Frontend | Fixed in PR | #335 | | Static headers apply on deploy. The nonce CSP is report-only until `ZIF_CSP_ENFORCE=true`: owner action. |
-| ZB-13 | Public health endpoint probes the database without limits | Low | Backend | Fixed in PR | #331 | | Cached, single-flight, time-bounded. Edge rate rule: owner action. |
-| ZB-14 | Workers could read client internal notes | Low | Backend | Fixed in PR | #331 | | Owner-only read and write |
-| ZB-15 | Public payment routes relied on the booking id alone | Low | Backend / web | Fixed in PR | #334, #336 | | Per-booking checkout secret cookie. The contract PR #336 stops accepting bookings placed before the secret existed. Staging 3-D Secure check: owner action. |
-| ZB-16 | Photo save held a DB transaction while decoding | Low | Backend | Fixed in PR | #331, #334 | | Part 1 (#331): decode outside the transaction. Part 2 (#334): explicit pool sizes, a fast busy answer when the pool is full, and an idle-in-transaction timeout. |
-| ZB-17 | Sign-up and reset requests had no bot check | Low | Backend / web | Fixed in PR | #333 | | |
-| ZB-18 | Admin sign-in had no per-account cap across addresses | Low | Backend / web | Fixed in PR | #333 | | Challenge after repeated failures plus an alert |
-| ZB-19 | Public booking address limits: lockout and alias bypass | Low | Backend | Fixed in PR | #333 | | |
-| ZB-20 | Bot-check result validated only `success`; opt-out logged at INFO | Low | Backend / web | Fixed in PR | #333 | | Hostname and action checked; deploy web and API together |
+| ZB-33 | Image library (Pillow 12.3.0) decoder advisories reachable from photo uploads | Critical | Dependency / backend | Merged | #329 | | Pillow 13.0.0, plus a version-independent container and EXIF guard. Containment until deployed: see owner actions. |
+| ZB-34 | Next.js 16.4.0 and sharp 0.35.4 advisories (assessed not reachable) | Medium | Dependency / frontend | Merged | #329 | | next 16.4.2; image optimizer off |
+| ZB-01 | Sign-in rate limits keyed on the email alone allow account lockout | Medium | Backend | Merged | #333 | | Per-address limits plus a challenge after repeated failures; web form handles the challenge |
+| ZB-02 | Workers could cancel paid or started bookings (refund-bearing) | Medium | Backend / web | Merged | #331 | | Owner-only for started or paid bookings |
+| ZB-03 | No quotas on client-facing booking email | Medium | Backend | Merged | #331 | | Per-business caps (business-initiated and public separately) and per-recipient caps |
+| ZB-04 | Password-hashing concurrency and IPv6 rate-limit granularity | Medium | Backend | Merged | #333 | | IPv6 /48 for IP-only auth buckets; per-account keys stay /64. Edge rate rules: owner action. |
+| ZB-05 | Unverified guest bookings per business are uncapped | Medium | Backend | Merged | #333 | | Per-business cap on unproven bookings plus an owner alert |
+| ZB-06 | Dependency updates taken within hours of publication | Medium | Supply chain | Merged | #329 | | Renovate release-age cooldown; security updates skip it |
+| ZB-07 | `make setup` trusted a tracked hooks directory | Low | Supply chain | Merged | #332 | | Installs only the commit-msg hook |
+| ZB-08 | App database role can mint email tokens | Low | Database | Merged (part 2 in draft) | #334, #336 | | Part 1 (#334): the worker connects as its own role, which mints email tokens. Part 2 (contract PR #336, one release later): the app role can no longer mint tokens or set an invite token. |
+| ZB-09 | Booking evidence columns writable by the app role | Low | Database | Merged | #334 | | Column grants plus a status-transition trigger |
+| ZB-10 | App role keeps unused write privileges | Low | Database | Merged (part 2 in draft) | #334, #336 | | Unused write grants revoked. DELETE on memberships is revoked by the contract PR #336, once no deployed release deletes a membership. |
+| ZB-11 | Test suite could run destructive migrations against a non-local database | Low | Tooling | Merged | #334 | | |
+| ZB-12 | Missing web security headers (CSP, HSTS, nosniff) | Low | Frontend | Merged | #335 | | Static headers apply on deploy. The nonce CSP is report-only until `ZIF_CSP_ENFORCE=true`: owner action. |
+| ZB-13 | Public health endpoint probes the database without limits | Low | Backend | Merged | #331 | | Cached, single-flight, time-bounded. Edge rate rule: owner action. |
+| ZB-14 | Workers could read client internal notes | Low | Backend | Merged | #331 | | Owner-only read and write |
+| ZB-15 | Public payment routes relied on the booking id alone | Low | Backend / web | Merged | #334, #336 | | Per-booking checkout secret cookie. The contract PR #336 stops accepting bookings placed before the secret existed. Staging 3-D Secure check: owner action. |
+| ZB-16 | Photo save held a DB transaction while decoding | Low | Backend | Merged | #331, #334 | | Part 1 (#331): decode outside the transaction. Part 2 (#334): explicit pool sizes, a fast busy answer when the pool is full, and an idle-in-transaction timeout. |
+| ZB-17 | Sign-up and reset requests had no bot check | Low | Backend / web | Merged | #333 | | |
+| ZB-18 | Admin sign-in had no per-account cap across addresses | Low | Backend / web | Merged | #333 | | Challenge after repeated failures plus an alert |
+| ZB-19 | Public booking address limits: lockout and alias bypass | Low | Backend | Merged | #333 | | |
+| ZB-20 | Bot-check result validated only `success`; opt-out logged at INFO | Low | Backend / web | Merged | #333 | | Hostname and action checked; deploy web and API together |
 | ZB-21 | Org workflows referenced by a movable tag with write permissions | Low | CI | Accepted | | | Mitigated by the org's `v*` tag-protection ruleset. Full fix needs the org `.github` repo and deploy verification to accept SHA-pinned signer identities: owner action. |
-| ZB-22 | Landing deploy installed wrangler without a lockfile | Low | CI | Fixed in PR | #332 | | |
-| ZB-23 | Stripe SDK request logs not silenced | Low | Logging | Fixed in PR | #332 | | |
-| ZB-24 | Admin enrolment ticket printed to the log stream | Low | Logging | Fixed in PR | #332 | | |
-| ZB-25 | Rate-limit keys stored unsalted hashes and raw addresses | Low | Database | Fixed in PR | #333 | | |
-| ZB-26 | Production compose and development values lacked safety rails | Low | Config | Fixed in PR | #332 | | |
-| ZB-27 | Legacy consent wording accepted on new bookings | Info | Backend | Fixed in PR | #331 | | |
-| ZB-28 | Proxy passed upstream response headers through unfiltered | Info | Frontend | Fixed in PR | #335 | | |
-| ZB-29 | Client-chosen request ids trusted end to end | Info | Frontend | Fixed in PR | #335 | | The proxy mints the request id; a client-sent id is kept, validated, in its own log field |
-| ZB-30 | Interactive API docs routes enabled | Info | Backend | Fixed in PR | #335 | | |
-| ZB-31 | Pooled DB connections could carry temp tables or settings | Info | Database | Fixed in PR | #334 | | Connections are reset on check-in. TEMPORARY is revoked by bootstrap.sql, and by the migration only where the migrate role owns the database: check production (owner action). |
+| ZB-22 | Landing deploy installed wrangler without a lockfile | Low | CI | Merged | #332 | | |
+| ZB-23 | Stripe SDK request logs not silenced | Low | Logging | Merged | #332 | | |
+| ZB-24 | Admin enrolment ticket printed to the log stream | Low | Logging | Merged | #332 | | |
+| ZB-25 | Rate-limit keys stored unsalted hashes and raw addresses | Low | Database | Merged | #333 | | |
+| ZB-26 | Production compose and development values lacked safety rails | Low | Config | Merged | #332 | | |
+| ZB-27 | Legacy consent wording accepted on new bookings | Info | Backend | Merged | #331 | | |
+| ZB-28 | Proxy passed upstream response headers through unfiltered | Info | Frontend | Merged | #335 | | |
+| ZB-29 | Client-chosen request ids trusted end to end | Info | Frontend | Merged | #335 | | The proxy mints the request id; a client-sent id is kept, validated, in its own log field |
+| ZB-30 | Interactive API docs routes enabled | Info | Backend | Merged | #335 | | |
+| ZB-31 | Pooled DB connections could carry temp tables or settings | Info | Database | Merged | #334 | | Connections are reset on check-in. TEMPORARY is revoked by bootstrap.sql, and by the migration only where the migrate role owns the database: check production (owner action). |
 | ZB-32 | A business keeps read access to a removed member's account row | Info | Database | Deferred | | | Needs a product decision on what history keeps |
-| ZB-35 | CA bundle (certifi) trusted distrusted roots | Low | Dependency | Fixed in PR | #329 | | |
-| ZB-36 | Unreachable or dev-only dependency advisories | Info | Dependency | Fixed in PR | #329 | | mako upgraded; dev-only npm advisories follow Renovate |
+| ZB-35 | CA bundle (certifi) trusted distrusted roots | Low | Dependency | Merged | #329 | | |
+| ZB-36 | Unreachable or dev-only dependency advisories | Info | Dependency | Merged | #329 | | mako upgraded; dev-only npm advisories follow Renovate |
 
 ## Owner actions (need a person; not possible from this repo)
 
 | # | Action | Findings | Urgency | State | Jira |
 |---|---|---|---|---|---|
-| 1 | Merge and release PR #329. Until the API runs Pillow 13, turn photo processing off by unsetting a `ZIF_S3_*` variable on the API (photo routes then answer 503; existing photos still load). | ZB-33 | Today | Open |  |
-| 2 | Review and merge the security PRs in stack order, then cut releases (release-please). | all | This week | Open |  |
+| 1 | Merge and release PR #329. Until the API runs Pillow 13, turn photo processing off by unsetting a `ZIF_S3_*` variable on the API (photo routes then answer 503; existing photos still load). | ZB-33 | Today | Merged; release pending |  |
+| 2 | Review and merge the security PRs in stack order, then cut releases (release-please). | all | This week | Merged; release pending |  |
 | 3 | Before deploying #333: set `ZIF_RATE_LIMIT_KEY` (32+ characters) for both the API and the worker (counters restart once when it is first set); deploy the web app with or before the API; check that the host in `ZIF_APP_URL` is the host the challenge widget runs on. | ZB-25, ZB-20 | With the auth release | Open |  |
 | 4 | Confirm the production and staging settings: Turnstile secret set, opt-out unset; site key set for the web app (sign-in, admin sign-in, sign-up and reset need it); client-IP header and trusted proxies; setup token removed; log level; NetworkPolicies; no NodePort/LoadBalancer. | ZB-20, ZB-01, ZB-17, ZB-18 | This week | Open |  |
 | 5 | With Cloudflare's test site key, check that the challenge widget appears and works on sign-in, admin sign-in and the invite page. | ZB-01, ZB-18 | Before the auth release | Open |  |
@@ -229,9 +248,10 @@ Related, independent of the stack:
 
 | PR | State | Recommendation |
 |---|---|---|
-| #284 Python runtime | Fails on Python 3.15 | Merge #326 first, then let Renovate rebase it |
-| #325 wrangler in the landing workflow | Green | After #332 the landing deploy runs the locked wrangler, so this input is gone; Renovate closes or rebases it, and later wrangler updates come through `landing/package.json` |
-| #274 npm non-major, #301 uv | Green | Merge after the stack; rebase if the frontend or backend lockfiles conflict |
+| #284 Python runtime | Conflicts with the stack's `backend/uv.lock` | Wait for Renovate to rebase it (#326 should merge first), then merge if green |
+| #325 wrangler in the landing workflow | Closed by Renovate | Superseded: since #332 the landing deploy runs the locked wrangler |
+| #301 uv | Merged | |
+| #274 npm non-major | Conflicts with the stack's `frontend/package.json` and lockfile | Wait for Renovate to rebase it, then merge if green |
 | #328 FastAPI 0.162.0 | Green | The release changes only form-field handling, which the API does not use. With the cooldown from #329, merge once it is five days old |
 | #327 frontend OpenTelemetry v3 | Green | Independent of the stack |
 
