@@ -209,9 +209,11 @@ def test_the_trigger_lock_lets_a_new_membership_through(
                 {"u": people.both},
             )
             try:
-                with tenant_context(people.a) as session:
-                    session.execute(text("SET LOCAL lock_timeout = '500ms'"))
-                    session.execute(
+                # As the migrate role, as accept_invite does: the app role inserts no membership
+                # (ZB-10).
+                with migrate_tenant_context(migrate_engine, people.a) as conn:
+                    conn.execute(text("SET LOCAL lock_timeout = '500ms'"))
+                    conn.execute(
                         text(
                             "INSERT INTO memberships (tenant_id, user_id, role) "
                             "VALUES (:t, :u, 'worker')"

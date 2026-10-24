@@ -935,7 +935,8 @@ def test_the_composite_fk_refuses_a_member_from_another_tenant(people: People) -
     assert isinstance(exc_info.value.orig, pg_errors.ForeignKeyViolation)
 
 
-# 21. guard: the index and the grants the lock and the cascade depend on are really there.
+# 21. guard: the index and the grants the lock and the cascade depend on are really there. The
+# membership row lock needs UPDATE of one column at least (0054 grants three, not the table).
 def test_schema_grants_and_index(migrate_engine: Engine) -> None:
     with migrate_engine.connect() as conn:
         index_columns: str | None = conn.execute(
@@ -948,7 +949,7 @@ def test_schema_grants_and_index(migrate_engine: Engine) -> None:
             text("SELECT has_table_privilege('ziftbook_app', 'time_off', 'DELETE')")
         )
         update_priv = conn.scalar(
-            text("SELECT has_table_privilege('ziftbook_app', 'memberships', 'UPDATE')")
+            text("SELECT has_any_column_privilege('ziftbook_app', 'memberships', 'UPDATE')")
         )
     assert index_columns is not None
     assert "tenant_id" in index_columns

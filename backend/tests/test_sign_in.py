@@ -158,8 +158,9 @@ def test_a_member_of_several_businesses_lands_in_the_oldest_membership(
 ) -> None:
     older, newer = uuid.uuid7(), uuid.uuid7()
     for membership_id, tenant_id, role in ((newer, people.a, "owner"), (older, people.b, "worker")):
-        with tenant_context(tenant_id) as session:
-            session.execute(
+        # As the migrate role: the app role inserts no membership (ZB-10).
+        with migrate_tenant_context(migrate_engine, tenant_id) as conn:
+            conn.execute(
                 text(
                     "INSERT INTO memberships (id, tenant_id, user_id, role) VALUES (:i, :t, :u, :r)"
                 ),
@@ -172,11 +173,12 @@ def test_a_member_of_several_businesses_lands_in_the_oldest_membership(
 
 
 def insert_membership(
-    tenant_id: uuid.UUID, user_id: uuid.UUID, role: str, **ids: uuid.UUID
+    migrate_engine: Engine, tenant_id: uuid.UUID, user_id: uuid.UUID, role: str, **ids: uuid.UUID
 ) -> None:
+    """As the migrate role: the app role inserts no membership (ZB-10)."""
     removed_at = "now()" if role == "removed" else "NULL"
-    with tenant_context(tenant_id) as session:
-        session.execute(
+    with migrate_tenant_context(migrate_engine, tenant_id) as conn:
+        conn.execute(
             text(
                 "INSERT INTO memberships (id, tenant_id, user_id, role, removed_at) "
                 f"VALUES (:i, :t, :u, :r, {removed_at})"
@@ -197,8 +199,8 @@ def test_a_removed_oldest_membership_lands_in_the_oldest_active_one(
     people: People, stranger: uuid.UUID, client: TestClient, migrate_engine: Engine
 ) -> None:
     older, newer = uuid.uuid7(), uuid.uuid7()
-    insert_membership(people.b, stranger, "removed", id=older)
-    insert_membership(people.a, stranger, "worker", id=newer)
+    insert_membership(migrate_engine, people.b, stranger, "removed", id=older)
+    insert_membership(migrate_engine, people.a, stranger, "worker", id=newer)
     try:
         response = sign_in(client, email_of(stranger))
         assert response.status_code == 200
@@ -211,7 +213,7 @@ def test_a_removed_oldest_membership_lands_in_the_oldest_active_one(
 def test_only_removed_memberships_is_no_tenant(
     people: People, stranger: uuid.UUID, client: TestClient, migrate_engine: Engine
 ) -> None:
-    insert_membership(people.a, stranger, "removed")
+    insert_membership(migrate_engine, people.a, stranger, "removed")
     try:
         response = sign_in(client, email_of(stranger))
         assert (response.status_code, response.json()) == (403, {"code": "no_tenant"})

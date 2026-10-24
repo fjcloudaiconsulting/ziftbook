@@ -140,15 +140,21 @@ def sign_in_as(client: TestClient, tenant_id: object, email: str) -> None:
                 ),
                 {"t": str(tenant_id)},
             )
+        # As the migrate role: the app role inserts no membership (ZB-10).
+        migrate = create_engine(os.environ["ZIF_MIGRATE_DATABASE_URL"], poolclass=NullPool)
+        try:
+            with migrate_tenant_context(migrate, home) as conn:
+                conn.execute(
+                    text(
+                        "INSERT INTO memberships (tenant_id, user_id, role) "
+                        "VALUES (current_setting('app.tenant_id')::uuid, :u, 'worker') "
+                        "ON CONFLICT DO NOTHING"
+                    ),
+                    {"u": user_id},
+                )
+        finally:
+            migrate.dispose()
         with tenant_context(home) as session:
-            session.execute(
-                text(
-                    "INSERT INTO memberships (tenant_id, user_id, role) "
-                    "VALUES (current_setting('app.tenant_id')::uuid, :u, 'worker') "
-                    "ON CONFLICT DO NOTHING"
-                ),
-                {"u": user_id},
-            )
             token = auth.create(session, user_id, ip=None, user_agent=None)
     client.cookies.set(auth.COOKIE, token)
     HELPER_SESSIONS[client] = email

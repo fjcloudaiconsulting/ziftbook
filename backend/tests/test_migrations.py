@@ -1842,7 +1842,8 @@ WHERE c.oid = 'memberships'::regclass AND x.grantee = 'ziftbook_app'::regrole
 
 
 # ZB-10 FENCE (0052, the contract step). Wrong impl: an upgrade that leaves DELETE on memberships
-# to the app role or takes anything else; a downgrade that does not give it back.
+# to the app role; a downgrade that does not give it back. At head, 0054 has taken INSERT and
+# table-level UPDATE too; test_0054 checks what 0052 leaves.
 def test_0052_round_trips_the_app_roles_membership_delete(
     migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1854,7 +1855,37 @@ def test_0052_round_trips_the_app_roles_membership_delete(
     finally:
         command.upgrade(cfg, "head")
     with migrate_engine.connect() as conn:
-        assert conn.scalar(MEMBERSHIP_GRANTS) == "INSERT SELECT UPDATE"
+        assert conn.scalar(MEMBERSHIP_GRANTS) == "SELECT"
+
+
+# ZB-10 (0054): ziftbook_app's column privileges on memberships.
+MEMBERSHIP_COLUMN_GRANTS = text("""
+SELECT string_agg(a.attname || ' ' || x.privilege_type, ', ' ORDER BY a.attname, x.privilege_type)
+FROM pg_attribute a, aclexplode(a.attacl) x
+WHERE a.attrelid = 'memberships'::regclass AND x.grantee = 'ziftbook_app'::regrole
+""")
+
+
+# ZB-10 FENCE (0054, a contract step). Wrong impl: an upgrade that leaves INSERT on memberships to
+# the app role, or UPDATE of user_id or tenant_id, or takes the UPDATE of the role, removed_at or
+# display_name the app sets; a downgrade that does not give back table-level INSERT and UPDATE
+# exactly, or leaves a column grant behind.
+def test_0054_round_trips_the_app_roles_membership_insert_and_update(
+    migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = lock_timeout_config(monkeypatch)
+    try:
+        command.downgrade(cfg, "0053")
+        with migrate_engine.connect() as conn:
+            assert conn.scalar(MEMBERSHIP_GRANTS) == "INSERT SELECT UPDATE"
+            assert conn.scalar(MEMBERSHIP_COLUMN_GRANTS) is None
+    finally:
+        command.upgrade(cfg, "head")
+    with migrate_engine.connect() as conn:
+        assert conn.scalar(MEMBERSHIP_GRANTS) == "SELECT"
+        assert conn.scalar(MEMBERSHIP_COLUMN_GRANTS) == (
+            "display_name UPDATE, removed_at UPDATE, role UPDATE"
+        )
 
 
 # ZB-08 (0053): the trigger that leaves writing an invite's token hash to the worker, and its

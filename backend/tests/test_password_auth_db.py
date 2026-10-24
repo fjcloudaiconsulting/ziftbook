@@ -142,8 +142,9 @@ def test_sign_in_lookup_finds_the_oldest_membership_without_a_tenant(
     user_id = add_user(migrate_engine)
     older, newer = uuid.uuid7(), uuid.uuid7()
     for membership_id, tenant_id, role in ((newer, people.a, "owner"), (older, people.b, "worker")):
-        with tenant_context(tenant_id) as session:
-            session.execute(
+        # As the migrate role: the app role inserts no membership (ZB-10).
+        with migrate_tenant_context(migrate_engine, tenant_id) as conn:
+            conn.execute(
                 text(
                     "INSERT INTO memberships (id, tenant_id, user_id, role) VALUES (:i, :t, :u, :r)"
                 ),
