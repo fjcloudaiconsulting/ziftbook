@@ -5,7 +5,7 @@ import { type MouseEvent, type ReactNode, useEffect, useRef, useState } from "re
 
 import { type BookingDetailOut, bookingApprovalsRead, bookingApprovalsUpdate } from "@/api-client";
 import { Link } from "@/i18n/navigation";
-import { type Action, actionsFor, historyLabel, isWaiting, paymentFact, telHref, whenParts } from "@/lib/calendar";
+import { type Action, actionsFor, historyLabel, isPaid, isWaiting, mayDecline, paymentFact, telHref, whenParts } from "@/lib/calendar";
 import { canAnswerRequests, dateLocale } from "@/lib/console";
 import { formatMoney } from "@/lib/money";
 import { type Locale, type NameMap, serviceName } from "@/lib/services";
@@ -281,13 +281,21 @@ export function BookingDetail({
     if (list.length === 0) return null;
     const has = (a: Action) => list.includes(a);
     const name = d.client_name;
+    // ZB-02: declining a paid request refunds it in full, so only an owner is offered it, and is told so.
+    const paid = d.payment && isPaid(d.payment) ? formatMoney(d.payment.amount_minor, d.payment.currency, locale) : null;
     return (
       <>
-        {has("accept") && !declining && (
+        {has("accept") && !declining && has("decline") && (
           <div className={css.split}>
             {button("accept", today("accept"), "primary")}
             {button("decline", today("decline"), "secondary", "", openDecline, "detail-decline")}
           </div>
+        )}
+        {has("accept") && !has("decline") && (
+          <>
+            <div>{button("accept", today("accept"), "primary")}</div>
+            {!mayDecline(d.payment, role) && <p className={uiStyles.hint}>{today("declinePaidOwner")}</p>}
+          </>
         )}
         {has("accept") && declining && (
           <div className={css.confirm}>
@@ -302,6 +310,7 @@ export function BookingDetail({
                 {today("declineHint", { client: name })}
               </p>
             </div>
+            {paid && <p className={uiStyles.hint}>{today("declineRefund", { client: name, amount: paid })}</p>}
             <div className={css.split}>
               {button("decline", today("declineConfirm"), "primary")}
               {button("decline", today("keepIt"), "secondary", "", keepDecline)}

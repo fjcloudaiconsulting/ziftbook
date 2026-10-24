@@ -315,6 +315,8 @@
       "keepIt": "Manter",
       "declineLabel": "Mensagem para {client} (opcional)",
       "declineHint": "Enviada para {client} junto com o e-mail sobre o agendamento recusado.",
+      "declineRefund": "{client} pagou {amount} online e recebe tudo de volta.",
+      "declinePaidOwner": "Só um proprietário pode recusar um pedido pago.",
       "withWorker": "Com {name}",
       "walkIn": "sem hora marcada",
       "bookedOnline": "agendado online {relative}",
@@ -709,7 +711,7 @@
       "workersEditLabel": "Membros da equipe podem alterar o próprio horário de trabalho",
       "workersEditHint": "Desativado: só você define os horários deles.",
       "workersAnswerLabel": "Membros da equipe podem aceitar e recusar os próprios pedidos de agendamento",
-      "workersAnswerHint": "Desativado: você responde a todos os pedidos. Os membros da equipe veem os deles, mas não podem aceitá-los nem recusá-los.",
+      "workersAnswerHint": "Ativado: eles respondem aos próprios pedidos, mas recusar um pedido pago antecipadamente reembolsa o cliente integralmente, então isso fica a cargo de um proprietário. Desativado: você responde a todos os pedidos. Os membros da equipe veem os deles, mas não podem aceitá-los nem recusá-los.",
       "paymentCheckLabel": "Pedir dados de pagamento ao reservar",
       "paymentCheckHint": "Os clientes adicionam um cartão que verificamos sem cobrar, ou pagam antecipadamente. Serviços abaixo de {min} são reservados sem essa etapa."
     },

@@ -506,6 +506,8 @@
 .reqChip { position: absolute; top: 0.9rem; right: 0.9rem; }
 .queueHint { margin-top: -0.5rem; }
 .expires { font-size: 0.8125rem; color: oklch(0.42 0.08 70); }
+/* ZB-02: why a worker gets no Decline on a paid request. */
+.reqNote { font-size: 0.8125rem; color: var(--muted); }
 .desktopOnly { display: none; }
 /* Today's "+ New booking": beside the heading on desktop, a full-width button at the bottom on a phone. */
 .todayHead { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
@@ -519,7 +521,7 @@ a.newPhone { display: flex; }
 .showMore { align-self: flex-start; }
 @media (min-width: 56rem) {
   .req { grid-template-columns: 7.5rem 1fr auto; gap: 0.25rem 1.25rem; padding: 1rem 1.1rem; align-items: center; }
-  .expires { grid-column: 2 / -1; }
+  .expires, .reqNote { grid-column: 2 / -1; }
   .desktopOnly { display: inline; }
   a.newDesktop, a.openCalendar { display: inline-flex; }
   a.newPhone { display: none; }

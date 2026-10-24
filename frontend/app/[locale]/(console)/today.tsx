@@ -13,6 +13,7 @@ import {
   type TimeOffRangeOut,
 } from "@/api-client";
 import { Link } from "@/i18n/navigation";
+import { isPaid, mayDecline } from "@/lib/calendar";
 import { canAnswerRequests, dateLocale, type Role, showPublishStep, todayLabel } from "@/lib/console";
 import { formatMoney } from "@/lib/money";
 import { type NameMap, type Locale, serviceName } from "@/lib/services";
@@ -139,6 +140,7 @@ function Steps() {
 export function Today() {
   const { session, settings, call, setPendingCount } = useConsole();
   const t = useTranslations("Console.today");
+  const calendarT = useTranslations("Console.calendar");
   const nav = useTranslations("Console.nav");
   const person = useTranslations("Console.person");
   const errorsT = useTranslations("Console.errors");
@@ -393,9 +395,12 @@ export function Today() {
                 {queue.map((booking, index) => {
                   const row = rows[booking.id] ?? BLANK;
                   const created = relativeAgo(booking.created_at, now);
+                  // ZB-02: a paid request says so in place of the price, and declining it (a full refund) is the owner's.
+                  const paid = booking.payment && isPaid(booking.payment) ? formatMoney(booking.payment.amount_minor, booking.payment.currency, locale) : null;
+                  const canDecline = mayDecline(booking.payment, session.role as Role);
                   const meta = [
                     isOwner ? worker(booking.worker_display_name) : null,
-                    formatMoney(booking.price.amount_minor, booking.price.currency, locale),
+                    paid ? calendarT("paymentPaid", { amount: paid }) : formatMoney(booking.price.amount_minor, booking.price.currency, locale),
                   ].filter(Boolean);
                   return (
                     <li key={booking.id} data-booking={booking.id} className={`${styles.req} ${index >= 2 ? styles.reqExtra : ""}`}>
@@ -428,21 +433,24 @@ export function Today() {
                           >
                             {row.busy ? form("sending") : t("accept")}
                           </button>
-                          <button
-                            id={`decline-${booking.id}`}
-                            className={`${uiStyles.button} ${uiStyles.secondary} ${uiStyles.small}`}
-                            type="button"
-                            aria-disabled={row.busy || undefined}
-                            onClick={() => !row.busy && openDecline(booking.id)}
-                          >
-                            {t("decline")}
-                          </button>
+                          {canDecline && (
+                            <button
+                              id={`decline-${booking.id}`}
+                              className={`${uiStyles.button} ${uiStyles.secondary} ${uiStyles.small}`}
+                              type="button"
+                              aria-disabled={row.busy || undefined}
+                              onClick={() => !row.busy && openDecline(booking.id)}
+                            >
+                              {t("decline")}
+                            </button>
+                          )}
                         </div>
                       )}
                       <div className={styles.expires}>
                         <span aria-hidden="true">{"◷ "}</span>
                         {expiry(booking.expires_at)}
                       </div>
+                      {canAnswer && !canDecline && <div className={styles.reqNote}>{t("declinePaidOwner")}</div>}
                       {row.declining && (
                         <div className={styles.declining}>
                           <div className={uiStyles.field}>
@@ -462,6 +470,7 @@ export function Today() {
                               {t("declineHint", { client: booking.client_name })}
                             </p>
                           </div>
+                          {paid && <p className={uiStyles.hint}>{t("declineRefund", { client: booking.client_name, amount: paid })}</p>}
                           <div className={styles.acts}>
                             <button
                               className={`${uiStyles.button} ${uiStyles.primary} ${uiStyles.small}`}

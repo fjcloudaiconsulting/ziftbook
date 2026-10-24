@@ -177,15 +177,28 @@ export function nowTop(now: Date, days: string[], range: { from: number; to: num
 
 export type Action = "accept" | "decline" | "completed" | "no_show" | "restore" | "cancel" | "reschedule";
 
+/** Whether a request's payment was taken: declining it then refunds it in full. A checked card is not a payment. */
+export function isPaid(payment: { status: string } | null | undefined): boolean {
+  return payment?.status === "paid";
+}
+
+/** ZB-02: declining a paid request refunds it from the business's account, so it is the owner's (the API answers
+ * 403 `owner_only`). A worker who may answer requests still declines an unpaid one, started or not. */
+export function mayDecline(payment: { status: string } | null | undefined, role: Role): boolean {
+  return role === "owner" || !isPaid(payment);
+}
+
 /** What a booking's panel offers, mirroring the API's TRANSITIONS and OWNER_ONLY_SOURCES (the API
  * decides; this only keeps buttons that would 409 off the screen). Completed and no-show wait for the
  * start; leaving `completed` is the owner's alone, and a pending is answered only by who
- * `canAnswerRequests` allows. A cancellation that has started or holds a paid payment ends in a refund, so it is the owner's too. */
+ * `canAnswerRequests` allows. A cancellation that has started or holds a paid payment ends in a refund, so it is the owner's too,
+ * and so is declining a paid request (`mayDecline`). */
 export function actionsFor(detail: { status: string; expired: boolean; starts_at: string; payment?: { status: string } | null }, role: Role, now: Date, workersAnswerRequests: boolean): Action[] {
   const started = new Date(detail.starts_at).getTime() <= now.getTime();
   switch (detail.status) {
     case "pending":
-      return detail.expired || !canAnswerRequests(role, workersAnswerRequests) ? [] : ["accept", "decline"];
+      if (detail.expired || !canAnswerRequests(role, workersAnswerRequests)) return [];
+      return mayDecline(detail.payment, role) ? ["accept", "decline"] : ["accept"];
     case "confirmed":
       // Only a confirmed booking moves: a pending one is accepted first (the client's request was for that time).
       const cancel: Action[] = role === "owner" || (!started && detail.payment?.status !== "paid") ? ["cancel"] : [];

@@ -4175,7 +4175,7 @@
           "booking-approvals"
         ],
         "summary": "Update",
-        "description": "A merchant settles a booking: accept, decline, cancel, or record how it went.\n\nAn owner, or the membership in bookings.worker_id, may transition; anyone else on this business\ngets 403, and another business's booking is 404. Undoing a booking already marked `completed`\nis the owner's alone, and so is any transition out of `pending` unless the business setting\n`workers_answer_requests` is on (403 `owner_only`). A transition the booking's current status\ndoes not allow, or an outcome recorded before the appointment starts, is 409\n`invalid_transition`. A worker may cancel only a future booking with no paid payment; any other\ncancellation is the owner's (403 `owner_only`).",
+        "description": "A merchant settles a booking: accept, decline, cancel, or record how it went.\n\nAn owner, or the membership in bookings.worker_id, may transition; anyone else on this business\ngets 403, and another business's booking is 404. Undoing a booking already marked `completed`\nis the owner's alone, and so is any transition out of `pending` unless the business setting\n`workers_answer_requests` is on (403 `owner_only`). A transition the booking's current status\ndoes not allow, or an outcome recorded before the appointment starts, is 409\n`invalid_transition`. A decline or cancel that would refund a paid payment is the owner's, and\nso is cancelling a booking that has started (403 `owner_only`): a worker may cancel only a\nfuture booking with no paid payment, and decline only a request with no paid payment.",
         "operationId": "booking-approvals-update",
         "parameters": [
           {
@@ -8420,6 +8420,16 @@
             "type": "string",
             "format": "date-time",
             "title": "Expires At"
+          },
+          "payment": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PaymentFact"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",
@@ -8435,7 +8445,8 @@
           "client_id",
           "client_name",
           "created_at",
-          "expires_at"
+          "expires_at",
+          "payment"
         ],
         "title": "PendingOut"
       },
