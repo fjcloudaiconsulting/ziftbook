@@ -107,8 +107,9 @@ Newest first.
 ### 2026-10-24: Jira agent (Claude Code, ziftbook session)
 - **Done:**
   - Created one Jira issue per finding (ZIF-178 to ZIF-213), per owner action (ZIF-214 to ZIF-229) and per
-    follow-up (ZIF-230 to ZIF-245), plus two product bugs from "Other observations" (ZIF-246, ZIF-247).
-    Every key is in the tables above.
+    follow-up (ZIF-230 to ZIF-242), plus ZIF-243, ZIF-246 and ZIF-247 for "Other observations". ZIF-244 and
+    ZIF-245 are two further review follow-ups kept to Jira and the private hand-off. Every other key is in
+    the tables above.
   - Statuses: 31 findings Done (fixed on `main`); ZB-08, ZB-10, ZB-15 In Progress until #336; ZB-21 Done as
     accepted risk; ZB-32 in the backlog. Owner-action tasks link to their findings; the CSP reporting
     endpoint (ZIF-236) blocks the enforce step (ZIF-224); the release (ZIF-215) blocks #336 (ZIF-223).
