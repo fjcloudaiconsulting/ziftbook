@@ -31,6 +31,7 @@ weakness at the level of detail the fix PRs already disclose.
 | Status | Meaning |
 |---|---|
 | Fixed in PR | Implemented, reviewed (task review plus whole-branch review) and open as a PR |
+| Fixed in PR (part 2 in draft) | Part 1 open as a PR; the contract part is a draft PR merged one release later |
 | In progress | Implemented on a branch, still in review, not yet pushed |
 | Merged | On `main`, not yet in a release |
 | Released | In a deployed release |
@@ -52,7 +53,7 @@ child: `git rebase --onto origin/main <merged-parent-branch> <child-branch>`, th
 | 4 | [#333](https://github.com/fjcloudaiconsulting/ziftbook/pull/333) | `security/auth-abuse` | ZB-20, ZB-04, ZB-01, ZB-17, ZB-18, ZB-19, ZB-05, ZB-25 |
 | 5 | [#334](https://github.com/fjcloudaiconsulting/ziftbook/pull/334) | `security/db-privileges` | ZB-15, ZB-11, ZB-09, ZB-10, ZB-08 (part 1), ZB-31, ZB-16 (part 2) |
 | 6 | [#335](https://github.com/fjcloudaiconsulting/ziftbook/pull/335) | `security/web-headers` | ZB-28, ZB-29, ZB-30, ZB-12 |
-| 7 (draft) | pending | `security/db-privileges-contract` | ZB-08 (part 2), ZB-15 (contract) |
+| 7 (draft) | [#336](https://github.com/fjcloudaiconsulting/ziftbook/pull/336) | `security/db-privileges-contract` | ZB-08 (part 2), ZB-10 (contract), ZB-15 (contract). Merge one release after #334, when owner action 10 holds. |
 
 Related, independent of the stack:
 - [#326](https://github.com/fjcloudaiconsulting/ziftbook/pull/326) Python 3.15 compatibility, which
@@ -73,14 +74,14 @@ Related, independent of the stack:
 | ZB-05 | Unverified guest bookings per business are uncapped | Medium | Backend | Fixed in PR | #333 | | Per-business cap on unproven bookings plus an owner alert |
 | ZB-06 | Dependency updates taken within hours of publication | Medium | Supply chain | Fixed in PR | #329 | | Renovate release-age cooldown; security updates skip it |
 | ZB-07 | `make setup` trusted a tracked hooks directory | Low | Supply chain | Fixed in PR | #332 | | Installs only the commit-msg hook |
-| ZB-08 | App database role can mint email tokens | Low | Database | Fixed in PR (part 1) | #334 | | Part 1 (#334): the worker connects as its own role, which mints email tokens. Part 2 (contract PR, one release later): the app role can no longer mint tokens or set an invite token. |
+| ZB-08 | App database role can mint email tokens | Low | Database | Fixed in PR (part 2 in draft) | #334, #336 | | Part 1 (#334): the worker connects as its own role, which mints email tokens. Part 2 (contract PR #336, one release later): the app role can no longer mint tokens or set an invite token. |
 | ZB-09 | Booking evidence columns writable by the app role | Low | Database | Fixed in PR | #334 | | Column grants plus a status-transition trigger |
-| ZB-10 | App role keeps unused write privileges | Low | Database | Fixed in PR (part 1) | #334 | | Unused write grants revoked. DELETE on memberships is revoked by the contract PR, once no deployed release deletes a membership. |
+| ZB-10 | App role keeps unused write privileges | Low | Database | Fixed in PR (part 2 in draft) | #334, #336 | | Unused write grants revoked. DELETE on memberships is revoked by the contract PR #336, once no deployed release deletes a membership. |
 | ZB-11 | Test suite could run destructive migrations against a non-local database | Low | Tooling | Fixed in PR | #334 | | |
 | ZB-12 | Missing web security headers (CSP, HSTS, nosniff) | Low | Frontend | Fixed in PR | #335 | | Static headers apply on deploy. The nonce CSP is report-only until `ZIF_CSP_ENFORCE=true`: owner action. |
 | ZB-13 | Public health endpoint probes the database without limits | Low | Backend | Fixed in PR | #331 | | Cached, single-flight, time-bounded. Edge rate rule: owner action. |
 | ZB-14 | Workers could read client internal notes | Low | Backend | Fixed in PR | #331 | | Owner-only read and write |
-| ZB-15 | Public payment routes relied on the booking id alone | Low | Backend / web | Fixed in PR | #334 | | Per-booking checkout secret cookie. The contract PR stops accepting bookings placed before the secret existed. Staging 3-D Secure check: owner action. |
+| ZB-15 | Public payment routes relied on the booking id alone | Low | Backend / web | Fixed in PR | #334, #336 | | Per-booking checkout secret cookie. The contract PR #336 stops accepting bookings placed before the secret existed. Staging 3-D Secure check: owner action. |
 | ZB-16 | Photo save held a DB transaction while decoding | Low | Backend | Fixed in PR | #331, #334 | | Part 1 (#331): decode outside the transaction. Part 2 (#334): explicit pool sizes, a fast busy answer when the pool is full, and an idle-in-transaction timeout. |
 | ZB-17 | Sign-up and reset requests had no bot check | Low | Backend / web | Fixed in PR | #333 | | |
 | ZB-18 | Admin sign-in had no per-account cap across addresses | Low | Backend / web | Fixed in PR | #333 | | Challenge after repeated failures plus an alert |
@@ -114,7 +115,7 @@ Related, independent of the stack:
 | 7 | Worker database role (#334): the init job must run this release's `bootstrap.sql` before migrations (it creates `ziftbook_worker`; without it the migration stops the rollout); the admin role that runs it needs ADMIN on `ziftbook_app`; set `ZIF_WORKER_PASSWORD`, give the worker deployment its own secret and connection URL, and confirm the worker connects as `ziftbook_worker`. | ZB-08 | With the db-privileges release |
 | 8 | Staging check: a card payment with 3-D Secure (and iDEAL) returns to the page and reaches `confirmed`. | ZB-15 | Before releasing #334 |
 | 9 | After the db-privileges release: check who owns the production database and that PUBLIC no longer has TEMPORARY on it; if the migrate role does not own it, run the revoke as the database admin. | ZB-31 | After the db-privileges release |
-| 10 | Contract PR (draft, merge one release after #334) only when all hold: the worker connects as `ziftbook_worker` in every environment; `ZIF_WORKER_PASSWORD` is set and non-empty everywhere; every deployed release is v0.31.0 or later (none deletes memberships); and 30 minutes have passed since the last API instance of the release before #334 stopped (the PR body has the check query). | ZB-08, ZB-10, ZB-15 | One release after #334 |
+| 10 | Contract PR #336 (draft, merge one release after #334) only when all hold: the worker connects as `ziftbook_worker` in every environment; `ZIF_WORKER_PASSWORD` is set and non-empty everywhere; every deployed release is v0.31.0 or later (none deletes memberships); and 30 minutes have passed since the last API instance of the release before #334 stopped (the PR body has the check query). | ZB-08, ZB-10, ZB-15 | One release after #334 |
 | 11 | Web-headers release (#335): give the web app `ZIF_MEDIA_URL` and `ZIF_S3_ENDPOINT` (same values as the API). On the first staging deploy, with the report-only policy, check bookings with card, Link, Apple Pay or Google Pay and 3-D Secure, the challenge widget, admin sign-in and a photo upload. Add a CSP reporting endpoint, then set `ZIF_CSP_ENFORCE=true` in staging, then in production. | ZB-12 | After the web-headers release |
 | 12 | Confirm no HTTP-only subdomain exists under the app and staging hosts (HSTS `includeSubDomains`). | ZB-12 | Before the web-headers release |
 | 13 | Require a reviewer on the `landing` deployment environment (repository settings). | ZB-22 | This week |
@@ -151,6 +152,10 @@ Related, independent of the stack:
 
 - Photos from phones that store HDR/gain-map JPEGs (MPO) over 8.3 MP are refused as unreadable, on
   `main` as well. Worth a product bug.
+- When an owner lets workers answer booking requests, a worker can decline a request that is already
+  paid, and declining refunds it. This was so before the fixes (ZB-02 covers cancelling, not declining)
+  and the owner opted in; worth a product decision on whether declining a paid request should be the
+  owner's alone.
 - Two backend tests are sensitive to the time of day around local midnight (booking horizon and
   minimum-notice checks); they pass at other times.
 - The Renovate dashboard warning "Failed to look up pypi package boto3-stubs" comes from Renovate's
