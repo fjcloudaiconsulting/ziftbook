@@ -1,7 +1,7 @@
 [project]
 name = "ziftbook-api"
 version = "0.0.0"
-requires-python = "==3.14.*"
+requires-python = "==3.15.*"
 dependencies = [
     "alembic==1.20.1",
     "argon2-cffi==25.1.0",
