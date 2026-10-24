@@ -1,9 +1,12 @@
 import { hasLocale, NextIntlClientProvider } from "next-intl";
 import { getTranslations } from "next-intl/server";
 import localFont from "next/font/local";
+import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 
 import { routing } from "@/i18n/routing";
+
+import { NonceProvider } from "./_ui/nonce";
 
 import "../tokens.css";
 
@@ -34,11 +37,16 @@ export async function generateMetadata() {
 export default async function LocaleLayout({ children, params }: LayoutProps<"/[locale]">) {
   const { locale } = await params;
   if (!hasLocale(routing.locales, locale)) notFound();
+  // The proxy's per-request script nonce (ZB-12). Reading it renders every page per request, as a nonce
+  // needs: a page built ahead of time would carry none, and the policy would refuse its scripts.
+  const nonce = (await headers()).get("x-nonce") ?? undefined;
 
   return (
     <html lang={locale} className={`${display.variable} ${body.variable}`}>
       <body suppressHydrationWarning>
-        <NextIntlClientProvider>{children}</NextIntlClientProvider>
+        <NextIntlClientProvider>
+          <NonceProvider nonce={nonce}>{children}</NonceProvider>
+        </NextIntlClientProvider>
       </body>
     </html>
   );

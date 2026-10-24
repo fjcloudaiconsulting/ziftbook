@@ -341,7 +341,8 @@ Rate limits and audit events key on the visitor's address. Each deployment has e
   address, as `X-Forwarded-For`. Set it only where every request reaches the web app through a proxy that
   overwrites that header; otherwise anyone can pick their address.
 - The API believes `X-Forwarded-For` only from the addresses in `ZIF_TRUSTED_PROXIES`. Empty trusts nobody.
-  The images run uvicorn with `--no-proxy-headers`, and so should you when running it outside Docker.
+  The images run uvicorn with `--no-proxy-headers` and `--no-server-header` (the latter keeps the server's name
+  and version out of every answer), and so should you when running it outside Docker.
 - In app code, read `request.client.host`. Never read `X-Forwarded-For`, `X-Real-IP`, `Forwarded` or
   `CF-Connecting-IP` yourself.
 
@@ -435,8 +436,8 @@ loggers (`web.*`); Next's own stderr output (banners, SSR error traces) is not i
   survive, but the error needs a human just as much).
 - Use `logger = logging.getLogger(__name__)`; never `print` (stdout of `python -m app.main` is the
   OpenAPI document) and never configure logging anywhere else.
-- Standard fields come for free: `ts`, `level`, `logger`, `msg`, `request_id`, `tenant_id`, `job_id`,
-  `job_kind`, `exc`. Add others with `extra={...}`; keep `msg` a constant ("access", "job failed") and put
+- Standard fields come for free: `ts`, `level`, `logger`, `msg`, `request_id`, `client_request_id` (the web proxy's forwarded client id, only when valid), `tenant_id`,
+  `job_id`, `job_kind`, `exc`. Add others with `extra={...}`; keep `msg` a constant ("access", "job failed") and put
   values in fields.
 - Events: `job claimed` (DEBUG), `job done` and `job skipped` (INFO, past its grace), `job failed`
   (WARNING, retried) and `job gave up` (ERROR, last attempt), with `attempts`;
@@ -645,13 +646,13 @@ ZIF-38). An empty variable means the default: `env_ignore_empty=True` on the bas
 | `ZIF_MAILPIT_URL` | worker | none | no (development only) | no | Mailpit's base URL; with no Mailgun key, mail goes to its HTTP send API. Never SMTP. |
 | `ZIF_APP_URL` | api, worker | `http://localhost:3000` | yes | no | The public web URL: where links in emails point (worker) and where Stripe sends an owner back after onboarding, and the Apple Pay domain (api). Must be the public web URL in production, on both. |
 | **Photo storage** | | | | | |
-| `ZIF_S3_ENDPOINT` | api, worker | `""` | for photos | no | The S3-compatible API (production and staging: the R2 account endpoint, `https://<account>.eu.r2.cloudflarestorage.com`; compose: SeaweedFS). No default in code. While any of the first six variables here is unset the API logs a WARNING at startup (`storage: "off"`) and answers 503 `photos_unavailable` to a photo; startup never fails over it. |
+| `ZIF_S3_ENDPOINT` | api, worker, frontend | `""` | for photos | no | The S3-compatible API (production and staging: the R2 account endpoint, `https://<account>.eu.r2.cloudflarestorage.com`; compose: SeaweedFS). No default in code. While any of the first six variables here is unset the API logs a WARNING at startup (`storage: "off"`) and answers 503 `photos_unavailable` to a photo; startup never fails over it. The web app allows uploads to its origin in the pages' Content-Security-Policy (ZB-12) unless `ZIF_S3_PUBLIC_ENDPOINT` is set: give it the API's value. |
 | `ZIF_S3_UPLOADS_BUCKET` | api | `""` | for photos | no | Where the browser PUTs the original (presigned, 5 minutes). Nothing deletes from it: give it a 1-day lifecycle rule and a CORS rule allowing PUT with `content-type` from the web app's origin. |
 | `ZIF_S3_MEDIA_BUCKET` | api, worker | `""` | for photos | no | Where the resized variants are written, served publicly from `ZIF_MEDIA_URL`. |
 | `ZIF_S3_ACCESS_KEY_ID` | api, worker | `""` | for photos | no | Access key id for both buckets. |
 | `ZIF_S3_SECRET_ACCESS_KEY` | api, worker | `""` | for photos | yes | Its secret. |
-| `ZIF_MEDIA_URL` | api | `""` | for photos | no | Where the media bucket is served from (a custom domain origin, no trailing slash needed); photo URLs start with it. Unset: services list no photo. |
-| `ZIF_S3_PUBLIC_ENDPOINT` | api | `""` | no (development only) | no | The host the browser reaches the store on, when `ZIF_S3_ENDPOINT` is a compose service name; presigned upload URLs use it. Never set in a deployment. |
+| `ZIF_MEDIA_URL` | api, frontend | `""` | for photos | no | Where the media bucket is served from (a custom domain origin, no trailing slash needed); photo URLs start with it. Unset: services list no photo. The web app allows images from its origin in the pages' Content-Security-Policy (ZB-12), read per request; give it the API's value. |
+| `ZIF_S3_PUBLIC_ENDPOINT` | api, frontend | `""` | no (development only) | no | The host the browser reaches the store on, when `ZIF_S3_ENDPOINT` is a compose service name; presigned upload URLs use it, and the web app's Content-Security-Policy allows uploads to it. Never set in a deployment. |
 | **Payments** | | | | | |
 | `ZIF_STRIPE_SECRET_KEY` | api, worker | `""` | for payments | yes | Stripe secret key (`sk_...`), for the platform account that owns the Connect accounts. The worker needs only this one (events, and later releases and refunds). Unset (any of the three): payments off, booking pages book without a payment step, WARNING at startup (`payments: "off"`). |
 | `ZIF_STRIPE_WEBHOOK_SECRET` | api | `""` | for payments | yes | Signing secret (`whsec_...`) of the Connect webhook endpoint `/api/stripe/webhook`. Unset (any of the three): payments off, booking pages book without a payment step, WARNING at startup (`payments: "off"`). |
@@ -664,6 +665,7 @@ ZIF-38). An empty variable means the default: `env_ignore_empty=True` on the bas
 | `ZIF_TOTP_KEY` | api | `""` | yes, once an admin exists | yes | Encrypts every platform admin's TOTP secret (ZIF-71): base64 of exactly 32 bytes (`openssl rand -base64 32`), AES-256-GCM. Unset or invalid: the API logs an ERROR at startup and admin TOTP answers 503 `second_factor_unavailable`, while recovery codes still work. Back it up with the database credentials: losing or changing it makes every stored secret unreadable, and each admin then re-enrols with `python -m app.admin enrol`. The development key from `docker-compose.yaml` counts as unset when `ZIF_APP_URL` is not localhost. |
 | `ZIF_RATE_LIMIT_KEY` | api, worker | `""` | recommended | yes | Pepper for rate-limit keys (ZB-25): the email or IP in every key becomes its HMAC-SHA256 under this key, so `rate_limits` holds no addresses and nothing a guess can be checked against (the worker's per-recipient email limits too). At least 32 characters (`openssl rand -base64 32`). Unset or shorter keeps the plain form and the API and worker log a WARNING at startup. Setting or changing it changes every key, so counters start again once. The development key from `docker-compose.yaml` counts as unset when `ZIF_APP_URL` is not localhost. |
 | `ZIF_TESTS_ALLOW_DB` | tests | unset | no | no | Test suite only. The suite refuses a database host other than `localhost`, `127.0.0.1`, `::1` or `postgres`, because it drops and recreates databases; set this to the exact database name to allow one remote database. Never point it at a shared or production database. |
+| `ZIF_CSP_ENFORCE` | frontend | `false` | no | no | `true` enforces the pages' Content-Security-Policy (ZB-12: scripts only with the page's nonce). Anything else sends it as `Content-Security-Policy-Report-Only`: browsers report what it would block and block nothing. Read when the web server starts. Turn it on in staging first, once a booking with a card and Turnstile and an admin sign-in show no violations in the browser console, then in production. |
 | `ZIF_TRUSTED_PROXIES` | api | `""` | yes | no | Addresses whose `X-Forwarded-For` the API believes (production and staging: the pod network `10.42.0.0/16`; compose: the web app's `172.28.0.10`). Empty trusts nobody. |
 | `ZIF_CLIENT_IP_HEADER` | frontend | none | yes, behind a proxy | no | Header the web app trusts for the visitor's address (production and staging: `cf-connecting-ip`). Set only behind a proxy that overwrites it; unset there, every visitor shares the proxy's address and its per-IP limits. |
 | **Logging** | | | | | |

@@ -286,6 +286,35 @@ def test_an_invalid_request_id_is_replaced_with_a_fresh_one(log_lines: Lines, gi
     assert line["request_id"] == request_id
 
 
+def test_a_valid_client_request_id_is_logged_as_its_own_field(log_lines: Lines) -> None:
+    app = create_app()
+
+    status, headers = raw_request(
+        app, "GET", "/api/healthz", [(b"x-client-request-id", b"c-1.X:y")]
+    )
+
+    assert status == 200
+    line = next((rec for rec in reversed(log_lines()) if rec.get("msg") == "access"), None)
+    assert line is not None
+    assert line["client_request_id"] == "c-1.X:y"
+    assert line["request_id"] == headers["x-request-id"] != "c-1.X:y"
+
+
+@pytest.mark.parametrize("given", ["a\nb", "x" * 65, "a b", "é"])
+def test_an_invalid_client_request_id_is_never_logged(log_lines: Lines, given: str) -> None:
+    app = create_app()
+
+    status, _ = raw_request(
+        app, "GET", "/api/healthz", [(b"x-client-request-id", given.encode("latin-1"))]
+    )
+
+    assert status == 200
+    line = next((rec for rec in reversed(log_lines()) if rec.get("msg") == "access"), None)
+    assert line is not None
+    assert "client_request_id" not in line
+    assert given not in json.dumps(log_lines())
+
+
 # 9: the access line carries the route template, never the path or the query string.
 def test_the_access_line_has_the_route_template_never_the_path_or_query(
     people: People, log_lines: Lines
@@ -349,6 +378,15 @@ def test_the_500_response_and_its_log_line_share_the_request_id(log_lines: Lines
     assert len(error_lines) == 1
     assert error_lines[0]["request_id"] == request_id
     assert "exc" in error_lines[0]
+
+
+def test_the_500_response_is_marked_nosniff() -> None:
+    client = new_client(_with_boom_route(create_app()))
+
+    response = client.get("/api/boom")
+
+    assert response.status_code == 500
+    assert response.headers["x-content-type-options"] == "nosniff"
 
 
 # B6: the access line has method, status and duration_ms.

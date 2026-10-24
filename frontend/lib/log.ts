@@ -154,9 +154,14 @@ export function errorFields(err: unknown): { exc: ExcLink[] } {
 
 const REQUEST_ID = /^[A-Za-z0-9._:-]{1,64}$/;
 
-export function requestId(header: string | null): string {
-  if (header !== null && REQUEST_ID.test(header)) return header;
+/** A fresh request id. Always minted here, never taken from the client (ZB-29). */
+export function requestId(): string {
   return randomUUID().replaceAll("-", "");
+}
+
+/** The id a client sent, when it is well formed; kept apart from request_id, only for correlation. */
+export function clientRequestId(header: string | null): string | null {
+  return header !== null && REQUEST_ID.test(header) ? header : null;
 }
 
 export type ErrorRequest = { path: string; method: string; headers: Record<string, string | string[] | undefined> };
@@ -168,7 +173,8 @@ export type ErrorContext = { routePath: string; routeType: string };
 export function requestErrorFields(err: unknown, request: ErrorRequest, context: ErrorContext): Record<string, unknown> {
   const header = request.headers["x-request-id"];
   const fields: Record<string, unknown> = {
-    request_id: requestId(typeof header === "string" ? header : null),
+    request_id: requestId(),
+    client_request_id: clientRequestId(typeof header === "string" ? header : null) ?? undefined,
     method: request.method,
     route: context.routePath,
     route_type: context.routeType,

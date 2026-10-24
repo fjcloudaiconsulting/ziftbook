@@ -42,6 +42,7 @@ import { type Locale } from "@/lib/services";
 import type { AppVersion } from "@/lib/version";
 import { zoneCity } from "@/lib/week";
 
+import { useNonce } from "../_ui/nonce";
 import { Banner, FieldError, JSON_WRITE, send, Submit } from "../_ui/parts";
 import { CheckIcon } from "../_ui/picker";
 import styles from "../_ui/ui.module.css";
@@ -128,6 +129,7 @@ export function BookingPage({
 }) {
   const t = useTranslations("BookingPage");
   const router = useRouter();
+  const nonce = useNonce();
   const loc = locale as Locale;
   const zone = page.timezone;
   const dLocale = dateLocale(locale);
@@ -931,7 +933,7 @@ export function BookingPage({
        * script URL is ever loaded on the page — a client-side locale switch or soft nav remounts this
        * page without the browser reloading the script, so onLoad would never fire again and no
        * widget would ever get rendered. onReady fires on every mount, script-cached or not. */}
-      {turnstileSiteKey && <Script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" strategy="afterInteractive" onReady={onTurnstileLoad} />}
+      {turnstileSiteKey && <Script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" strategy="afterInteractive" nonce={nonce} onReady={onTurnstileLoad} />}
     </>
   );
   // A booking that waits for its payment, as the summary shows it: only what the booking itself says.

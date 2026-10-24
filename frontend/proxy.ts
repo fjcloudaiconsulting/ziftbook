@@ -1,8 +1,9 @@
 import createMiddleware from "next-intl/middleware";
-import { type NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 import { routing } from "./i18n/routing";
-import { errorFields, logger, requestId } from "./lib/log";
+import { CSP_HEADER, cspFor, newNonce, originOf } from "./lib/csp";
+import { clientRequestId, errorFields, logger, requestId } from "./lib/log";
 import { readNeedsSetup, setupGate, setupRedirect } from "./lib/setup-gate";
 import { endProxySpan, startProxySpan, traceparent } from "./lib/trace";
 import { apiUrl, clientIp, MAX_BODY_BYTES, WEBHOOK_MAX_BODY_BYTES } from "./lib/upstream";
@@ -27,7 +28,10 @@ const REQUEST_ONLY_STRIP = ["host", "expect", "content-length", "proxy-authoriza
 const TRACE_HEADERS = ["traceparent", "tracestate", "baggage"];
 
 function unavailable(id: string): NextResponse {
-  return NextResponse.json({ code: "api_unavailable" }, { status: 502, headers: { "X-Request-ID": id } });
+  return NextResponse.json(
+    { code: "api_unavailable" },
+    { status: 502, headers: { "X-Request-ID": id, "X-Content-Type-Options": "nosniff" } },
+  );
 }
 
 // The whole request body, or null once it passes `limit` (ZIF-136). Read here, not streamed
@@ -63,9 +67,14 @@ async function readBody(request: NextRequest, limit: number): Promise<Uint8Array
 // x-middleware-rewrite (the internal upstream URL) into the response. Owning the forward is the
 // only way to a clean 502 and to keep secrets out of both logs and the response.
 async function forwardApi(request: NextRequest): Promise<Response> {
-  const id = requestId(request.headers.get("x-request-id"));
+  const id = requestId();
+  const clientId = clientRequestId(request.headers.get("x-request-id"));
   const span = startProxySpan(request.method);
-  const spanIds = { trace_id: span.spanContext().traceId, span_id: span.spanContext().spanId };
+  const spanIds = {
+    ...(clientId ? { client_request_id: clientId } : {}),
+    trace_id: span.spanContext().traceId,
+    span_id: span.spanContext().spanId,
+  };
   const upstream = apiUrl();
   if (!upstream) {
     log.error("api url unset", { request_id: id, method: request.method, ...spanIds });
@@ -83,6 +92,9 @@ async function forwardApi(request: NextRequest): Promise<Response> {
   const ip = clientIp(request.headers);
   if (ip) headers.set("x-forwarded-for", ip);
   headers.set("x-request-id", id);
+  // A client's own id (ZB-29): never the request id, only passed along for correlation.
+  headers.delete("x-client-request-id");
+  if (clientId) headers.set("x-client-request-id", clientId);
   const tp = traceparent(span);
   if (tp) headers.set("traceparent", tp);
 
@@ -92,7 +104,10 @@ async function forwardApi(request: NextRequest): Promise<Response> {
     if (body === null) {
       log.info("body too large", { request_id: id, method: request.method, ...spanIds });
       endProxySpan(span, 413);
-      return NextResponse.json({ code: "content_too_large" }, { status: 413, headers: { "X-Request-ID": id } });
+      return NextResponse.json(
+        { code: "content_too_large" },
+        { status: 413, headers: { "X-Request-ID": id, "X-Content-Type-Options": "nosniff" } },
+      );
     }
     const upstreamResponse = await fetch(new URL(pathname + search, upstream), {
       method: request.method,
@@ -105,9 +120,11 @@ async function forwardApi(request: NextRequest): Promise<Response> {
     // value] pair (measured), so no separate getSetCookie() rebuild is needed to keep them apart.
     // content-encoding/content-length are dropped because undici has already decoded the body;
     // the hop-by-hop set is dropped for the same reason it never reaches the upstream request.
+    // server and x-middleware-* are the upstream's (or the framework's) own, never the client's.
     const responseHeaders = new Headers();
     for (const [name, value] of upstreamResponse.headers) {
       if (name === "content-encoding" || name === "content-length" || HOP_BY_HOP.includes(name)) continue;
+      if (name === "server" || name.startsWith("x-middleware-")) continue;
       responseHeaders.append(name, value);
     }
     // Built before ending the span: a throw from the Response constructor must not end it twice.
@@ -121,7 +138,7 @@ async function forwardApi(request: NextRequest): Promise<Response> {
     if (request.signal.aborted) {
       log.debug("client closed", { request_id: id, method: request.method, ...spanIds });
       endProxySpan(span, 499);
-      return new Response(null, { status: 499 });
+      return new Response(null, { status: 499, headers: { "X-Content-Type-Options": "nosniff" } });
     }
     log.error("api unavailable", { request_id: id, method: request.method, ...spanIds, ...errorFields(err) });
     endProxySpan(span, 502, err);
@@ -139,7 +156,26 @@ export default async function proxy(request: NextRequest) {
   const setup = setupRedirect(pathname, routing.locales);
   if (setup && (await needsSetup())) return NextResponse.redirect(new URL(setup, request.url));
 
-  return localize(request);
+  // ZB-12: a fresh nonce for every page. Next reads it from the policy on the request and puts it on its
+  // own scripts; x-nonce hands it to next/script (app/[locale]/layout.tsx). Whatever the client sent
+  // under these names is dropped, so Next can never take its nonce from the client.
+  const nonce = newNonce();
+  // Read per request, like ZIF_API_URL: one build serves every deployment. The upload origin is the
+  // one the API presigns photo uploads for (backend/app/storage.py: the public endpoint, else the endpoint).
+  const policy = cspFor(
+    nonce,
+    originOf(process.env.ZIF_MEDIA_URL),
+    originOf(process.env.ZIF_S3_PUBLIC_ENDPOINT || process.env.ZIF_S3_ENDPOINT),
+  );
+  const headers = new Headers(request.headers);
+  for (const name of ["x-nonce", "content-security-policy", "content-security-policy-report-only"]) headers.delete(name);
+  headers.set("x-nonce", nonce);
+  headers.set(CSP_HEADER, policy);
+  const response = localize(new NextRequest(request, { headers }));
+  // Enforced, this replaces next.config.ts's frame-ancestors-only header (Next sends the proxy's value);
+  // report-only, that header stays the one enforced policy, as a report-only policy enforces nothing.
+  response.headers.set(CSP_HEADER, policy);
+  return response;
 }
 
 export const config = {

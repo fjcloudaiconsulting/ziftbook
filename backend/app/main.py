@@ -322,6 +322,11 @@ def create_app() -> FastAPI:
         generate_unique_id_function=operation_id,
         lifespan=lifespan,
         redirect_slashes=False,
+        # No interactive docs or served schema in any deployment (ZB-30): the contract is the
+        # committed backend/openapi.json, produced in-process by openapi_document().
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
         # The telemetry standard (cloud-infra docs/architecture.md, Telemetry). Native metrics only,
         # recorded on the MeterProvider tracing.configure() registered (its View is the attribute
         # allowlist). The app owns the SERVER span and the logs: native tracing would add a second
@@ -400,6 +405,7 @@ def create_app() -> FastAPI:
             response = await call_next(request)
         # No API response is a page to link from.
         response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["X-Content-Type-Options"] = "nosniff"
         # ZIF-54 spec S4: every guest-link answer, errors included, is private to its bearer. So is
         # every admin answer (ZIF-71): some carry a TOTP secret or recovery codes.
         if request.url.path.startswith(
@@ -418,7 +424,19 @@ def create_app() -> FastAPI:
         request_id = given if REQUEST_ID.fullmatch(given) else uuid.uuid4().hex
         # A fresh context, set and not reset: the 500 handler and uvicorn's error line run
         # after this returns, in this task, and still need the id.
-        logs.CONTEXT.set({"request_id": request_id})
+        # The web proxy forwards a client's own id apart from the request id (ZB-29): logged as its
+        # own field, only when it passes the same check, never the raw header.
+        client_given = request.headers.get("x-client-request-id", "")
+        logs.CONTEXT.set(
+            {
+                "request_id": request_id,
+                **(
+                    {"client_request_id": client_given}
+                    if REQUEST_ID.fullmatch(client_given)
+                    else {}
+                ),
+            }
+        )
         request.state.request_id = request_id
         started = time.perf_counter()
         status = 500  # if call_next raises, the 500 handler answers
@@ -512,11 +530,11 @@ def create_app() -> FastAPI:
         return JSONResponse({"code": "busy"}, status_code=503)
 
     # Anything unexpected, including a commit that fails after the endpoint returned. This runs
-    # outside the middleware above, so it sets Referrer-Policy itself.
+    # outside the middleware above, so it sets Referrer-Policy and nosniff itself.
     @app.exception_handler(Exception)
     async def internal_error(request: Request, error: Exception) -> JSONResponse:
         logger.error("unhandled error", exc_info=error)
-        headers = {"Referrer-Policy": "no-referrer"}
+        headers = {"Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff"}
         if request_id := getattr(request.state, "request_id", None):
             headers["X-Request-ID"] = request_id
         return JSONResponse({"code": "internal"}, status_code=500, headers=headers)
