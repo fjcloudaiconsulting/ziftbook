@@ -10,7 +10,16 @@ from sqlalchemy.orm import Session
 
 from app.db import SessionLocal, reset_session
 from app.jobs import enqueue
-from tests.conftest import fresh_email, mailed, token_in
+from app.main import create_app
+from tests.conftest import (
+    People,
+    email_of,
+    fresh_email,
+    jobs_for,
+    mailed,
+    new_client,
+    token_in,
+)
 
 
 def test_btree_gist_is_installed(app_engine: Engine) -> None:
@@ -169,9 +178,48 @@ def test_worker_role_has_every_privilege_of_the_app_role(migrate_engine: Engine)
     assert inherits is True
 
 
+# ZB-08 FENCE (0051). Wrong impl: ziftbook_app keeps EXECUTE on mint_email_token, so the API role
+# can set the hash an emailed sign-up or reset link carries.
+def test_app_role_cannot_mint_email_tokens(app_engine: Engine, migrate_engine: Engine) -> None:
+    with migrate_engine.connect() as conn:
+        held = conn.scalar(
+            text(
+                "SELECT has_function_privilege('ziftbook_app', "
+                "'mint_email_token(uuid,bytea)', 'EXECUTE')"
+            )
+        )
+    assert held is False
+    with app_engine.connect() as conn, pytest.raises(ProgrammingError) as error:
+        conn.execute(
+            text("SELECT * FROM mint_email_token(:id, :h)"),
+            {"id": uuid.uuid7(), "h": hashlib.sha256(b"probe").digest()},
+        )
+    assert isinstance(error.value.orig, InsufficientPrivilege)
+
+
+# ZB-08 guard. The API only starts a request and queues its job, neither of which mints: as the
+# app role, a sign-up or reset request is still answered and queued with no hash stored, and the
+# worker's job then sends the link.
+@pytest.mark.parametrize("purpose", ["sign_up", "password_reset"])
+def test_link_requests_queue_their_email_without_minting(
+    people: People, app_engine: Engine, migrate_engine: Engine, purpose: str
+) -> None:
+    email = fresh_email() if purpose == "sign_up" else email_of(people.both)
+    path = "/api/sign-up" if purpose == "sign_up" else "/api/password-reset"
+    response = new_client(create_app()).post(path, json={"email": email, "locale": "en"})
+    assert response.status_code == 202
+    with migrate_engine.connect() as conn:
+        hashes = conn.scalars(
+            text("SELECT token_hash FROM email_tokens WHERE email = :e AND purpose = :p"),
+            {"e": email, "p": purpose},
+        ).all()
+    assert (hashes, jobs_for(migrate_engine, email)) == ([None], 1)
+    assert token_in(mailed(email))
+
+
 # ZB-08 FENCE. Wrong impl: the worker reaches mint_email_token only through ziftbook_app, so taking
-# it from the app role in the next release (the contract migration) would leave no role that can
-# mint; or the worker gets grants of its own beyond it.
+# it from the app role (0051) leaves no role that can mint; or the worker gets grants of its own
+# beyond it.
 def test_worker_role_holds_only_mint_email_token_in_its_own_right(migrate_engine: Engine) -> None:
     with migrate_engine.connect() as conn:
         held = conn.scalars(

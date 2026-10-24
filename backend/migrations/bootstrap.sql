@@ -4,12 +4,12 @@
 --   psql -v ON_ERROR_STOP=1 -d <app database> -f backend/migrations/bootstrap.sql
 -- Connect to the application's database (compose: ziftbook): the database grants and the TEMPORARY
 -- revoke below apply to the database psql is connected to.
--- Requires ZIF_MIGRATE_PASSWORD and ZIF_APP_PASSWORD in the environment. If either is unset, the
--- password statement fails and the run stops non-zero (a role created without a password cannot log in).
--- ZIF_WORKER_PASSWORD may still be unset while a deployment's worker connects as ziftbook_app: the run
--- warns and leaves ziftbook_worker's password as it is, so a role created without one cannot log in yet.
--- Empty counts as unset (a PASSWORD '' would clear the role's password). Set it before the release
--- that takes mint_email_token from ziftbook_app (the contract migration, ZB-08).
+-- Requires ZIF_MIGRATE_PASSWORD, ZIF_APP_PASSWORD and ZIF_WORKER_PASSWORD in the environment. If any is
+-- unset, its password statement fails and the run stops non-zero (a role created without a password cannot
+-- log in). An empty ZIF_WORKER_PASSWORD stops it too (a PASSWORD '' would clear the role's password). The
+-- worker must connect as ziftbook_worker: only it may mint email tokens (0051, ZB-08).
+-- A run stopped that way has created the roles but skipped the grants, the TEMPORARY revoke and the role
+-- settings below: set the password and run it again.
 --
 -- ziftbook_migrate owns the schema and runs Alembic. ziftbook_app owns nothing and gets DML only, through
 -- default privileges set in migration #1. Owners bypass row-level security, so the app must never own tables.
@@ -38,7 +38,9 @@ SELECT :'worker_password' <> '' AS worker_password_set \gset
 \if :worker_password_set
 ALTER ROLE ziftbook_worker PASSWORD :'worker_password';
 \else
-\warn 'ZIF_WORKER_PASSWORD is unset or empty: ziftbook_worker''s password is unchanged. Until it has one, it cannot log in and the worker must keep ziftbook_app''s URL.'
+-- Stops non-zero even when the caller did not set ON_ERROR_STOP.
+\set ON_ERROR_STOP on
+DO $$ BEGIN RAISE EXCEPTION 'ZIF_WORKER_PASSWORD is unset or empty: ziftbook_worker needs a password'; END $$;
 \endif
 
 GRANT CONNECT, CREATE ON DATABASE :"DBNAME" TO ziftbook_migrate;

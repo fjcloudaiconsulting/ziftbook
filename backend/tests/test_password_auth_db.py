@@ -22,6 +22,7 @@ from tests.conftest import (
     add_user,
     delete_payment_accounts,
     delete_services,
+    engine_as_worker,
     wait_until_blocked,
 )
 
@@ -46,12 +47,14 @@ ORDER BY 1
 
 
 def issue(app_engine: Engine, purpose: str, email: str, locale: str = "en") -> bytes | None:
-    """A request plus its email job: a pending row, then a minted token. None if not minted."""
+    """A request plus its email job: a pending row (the app role's), then a minted token (the
+    worker role's, the only one that mints, ZB-08). None if not minted."""
     token = secrets.token_bytes(32)
     with app_engine.begin() as conn:
         token_id = conn.scalar(
             text("SELECT start_email_token(:p, :e, :l)"), {"p": purpose, "e": email, "l": locale}
         )
+    with engine_as_worker(app_engine.url) as worker, worker.begin() as conn:
         minted = conn.execute(
             text("SELECT * FROM mint_email_token(:id, :h)"), {"id": token_id, "h": digest(token)}
         ).first()
@@ -492,16 +495,18 @@ def test_minting_sets_the_lifetime_and_skips_resets_for_unknown_emails(
 
 
 def test_minting_again_replaces_the_link_and_expired_requests_are_not_minted(
-    app_engine: Engine, migrate_engine: Engine
+    app_engine: Engine, worker_engine: Engine, migrate_engine: Engine
 ) -> None:
     H1, H2, H3 = (secrets.token_bytes(32) for _ in range(3))
     email = f"{uuid.uuid4()}@example.com"
     with app_engine.begin() as conn:
         token_id = conn.scalar(text("SELECT start_email_token('sign_up', :e, 'en')"), {"e": email})
+    with worker_engine.begin() as conn:  # only the worker mints (ZB-08)
         first = conn.execute(
             text("SELECT * FROM mint_email_token(:id, :h)"), {"id": token_id, "h": H1}
         ).one()
         conn.execute(text("SELECT * FROM mint_email_token(:id, :h)"), {"id": token_id, "h": H2})
+    with app_engine.begin() as conn:
         live_old = conn.scalar(text("SELECT email_token_live(:h, 'sign_up')"), {"h": H1})
         live_new = conn.scalar(text("SELECT email_token_live(:h, 'sign_up')"), {"h": H2})
         stale_id = conn.scalar(text("SELECT start_email_token('sign_up', :e, 'en')"), {"e": email})
@@ -512,7 +517,7 @@ def test_minting_again_replaces_the_link_and_expired_requests_are_not_minted(
             text("UPDATE email_tokens SET expires_at = now() - interval '1 second' WHERE id = :id"),
             {"id": stale_id},
         )
-    with app_engine.begin() as conn:
+    with worker_engine.begin() as conn:
         assert (
             conn.execute(
                 text("SELECT * FROM mint_email_token(:id, :h)"), {"id": stale_id, "h": H3}
@@ -522,13 +527,14 @@ def test_minting_again_replaces_the_link_and_expired_requests_are_not_minted(
 
 
 def test_minting_a_sign_up_for_a_registered_email_says_so_and_keeps_no_link(
-    people: People, app_engine: Engine, migrate_engine: Engine
+    people: People, app_engine: Engine, worker_engine: Engine, migrate_engine: Engine
 ) -> None:
     H4 = secrets.token_bytes(32)
     with app_engine.begin() as conn:
         token_id = conn.scalar(
             text("SELECT start_email_token('sign_up', :e, 'en')"), {"e": email_of(people.both)}
         )
+    with worker_engine.begin() as conn:  # only the worker mints (ZB-08)
         minted = conn.execute(
             text("SELECT * FROM mint_email_token(:id, :h)"), {"id": token_id, "h": H4}
         ).one()

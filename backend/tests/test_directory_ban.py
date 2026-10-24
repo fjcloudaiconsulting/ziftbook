@@ -219,7 +219,6 @@ DEFINERS = [
     "public.confirm_totp_enrolment(p_id_hash bytea, p_proof bytea, p_step bigint, p_code_proofs bytea[])",  # noqa: E501
     "public.email_token_live(p_token_hash bytea, p_purpose text)",
     "public.end_admin_session(p_id_hash bytea)",
-    "public.mint_email_token(p_id uuid, p_token_hash bytea)",
     "public.needs_setup()",
     "public.pass_second_factor(p_id_hash bytea, p_proof bytea, p_step bigint)",
     "public.password_unchanged(p_user_id uuid, p_hash text)",

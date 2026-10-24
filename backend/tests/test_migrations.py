@@ -1696,9 +1696,8 @@ ORDER BY 1
 """)
 
 
-# ZB-08 FENCE. Wrong impl: a downgrade that leaves the worker's grant behind; an upgrade that also
-# takes it from the app role, which is the contract migration's, a release later: until the
-# worker's own URL is deployed it still connects as ziftbook_app.
+# ZB-08 FENCE. Wrong impl: a downgrade that leaves the worker's grant behind, or an upgrade that
+# does not give it to the worker. At head the app role no longer holds it (0051).
 def test_0049_round_trips_the_workers_mint_grant(
     migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1710,11 +1709,7 @@ def test_0049_round_trips_the_workers_mint_grant(
     finally:
         command.upgrade(cfg, "head")
     with migrate_engine.connect() as conn:
-        assert list(conn.scalars(MINT_HOLDERS)) == [
-            "ziftbook_app",
-            "ziftbook_migrate",
-            "ziftbook_worker",
-        ]
+        assert list(conn.scalars(MINT_HOLDERS)) == ["ziftbook_migrate", "ziftbook_worker"]
 
 
 # ZB-31 (0050): which of these may create temporary tables in this database. The owner,
@@ -1816,3 +1811,23 @@ def test_0050_says_nothing_where_it_owns_the_database(
         tx.rollback()
     assert after == [True, False]
     assert skips_0050(log_lines()) == []
+
+
+# ZB-08 FENCE (0051, the contract step). Wrong impl: an upgrade that leaves EXECUTE on the app role
+# or takes it from the worker; a downgrade that does not give the app role its grant back.
+def test_0051_round_trips_the_app_roles_mint_grant(
+    migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = lock_timeout_config(monkeypatch)
+    try:
+        command.downgrade(cfg, "0050")
+        with migrate_engine.connect() as conn:
+            assert list(conn.scalars(MINT_HOLDERS)) == [
+                "ziftbook_app",
+                "ziftbook_migrate",
+                "ziftbook_worker",
+            ]
+    finally:
+        command.upgrade(cfg, "head")
+    with migrate_engine.connect() as conn:
+        assert list(conn.scalars(MINT_HOLDERS)) == ["ziftbook_migrate", "ziftbook_worker"]
