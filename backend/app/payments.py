@@ -69,8 +69,6 @@ INTENT_EVENTS = {
 REFUND_EVENTS = {"charge.refund.updated", "refund.updated", "refund.created", "refund.failed"}
 # The event types with a handler. Others are accepted (200) and dropped until theirs exists.
 HANDLED = {"account.updated"} | INTENT_EVENTS | REFUND_EVENTS
-# The endings that send a paid booking's money back (everything else keeps it: O7).
-REFUNDING = ("declined", "expired", "cancelled_by_merchant", "cancelled_by_client")
 # Per booking and IP, and per IP in all: the per-booking key holds a caller-chosen id and runs
 # before the 404, so without the total random ids would buy unlimited budget.
 PAYMENT_LIMIT, PAYMENT_TOTAL_LIMIT, PAYMENT_WINDOW = 60, 600, timedelta(hours=1)
@@ -443,7 +441,7 @@ JOIN bookings b ON b.tenant_id = p.tenant_id AND b.id = p.booking_id
 WHERE p.settled_at IS NULL
   AND ((p.status = 'open' AND NOT (b.status = 'awaiting_payment' AND b.expires_at > now()))
        OR p.status = 'checked'
-       OR (p.status = 'paid' AND b.status IN ({", ".join(f"'{s}'" for s in REFUNDING)})))
+       OR (p.status = 'paid' AND b.status IN ({", ".join(f"'{s}'" for s in bookings.REFUNDING)})))
 """)
 # `ending` is the status the booking has for money's sake: a hold that ran out before the sweep got
 # to it already counts as expired. The cancel event's refund_pct is the engine's answer at the time.
@@ -870,7 +868,7 @@ def _settle_pass(tenant_id: UUID, booking_id: UUID, *, final: bool) -> bool:
                 if status != "canceled":
                     raise RuntimeError(f"the hold cannot be released ({status})")
                 _write(tenant_id, RELEASED, row, "released")
-            elif row.status == "paid" and row.ending in REFUNDING:
+            elif row.status == "paid" and row.ending in bookings.REFUNDING:
                 _refund(tenant_id, row)
     return reconciled
 

@@ -199,6 +199,11 @@ TRANSITIONS: dict[str, Rule] = {
 }
 Target = Literal["confirmed", "declined", "cancelled_by_merchant", "completed", "no_show"]
 
+# The endings that send a paid booking's money back (everything else keeps it: O7). The one
+# definition: payments settles by it, and transition() gates by it (3d, ZB-02), so a target that
+# starts refunding is the owner's on a paid booking the day it does.
+REFUNDING = ("declined", "expired", "cancelled_by_merchant", "cancelled_by_client")
+
 # Leaving `completed` is the owner's alone, whatever the target. `completed` is the one status a
 # non-owner worker can reach on their OWN booking (may_manage lets the assigned worker transition
 # it), and every exit from it is destructive or irreversible: `no_show` is terminal and frees the
@@ -258,8 +263,20 @@ class BookingRow(BaseModel):
     created_at: datetime  # "booked online 2 hours ago"
 
 
+class PaymentFact(BaseModel):
+    kind: Literal["check", "pay"]
+    status: Literal["open", "checked", "paid", "canceled"]
+    amount_minor: int
+    currency: str
+    refunded_minor: int
+    refund_failed: bool  # Stripe could not send the refund: the business resolves it in Stripe
+
+
 class PendingOut(BookingRow):
     expires_at: datetime  # NOT NULL for every pending: ck_bookings_expires_at
+    # ZB-02: the live payment, as the detail shows it. A paid one is refunded in full by a decline,
+    # which is then the owner's; a checked card is not a payment.
+    payment: PaymentFact | None
 
 
 class AgendaOut(BookingRow):
@@ -274,15 +291,6 @@ class EventOut(BaseModel):
     actor: Literal["client", "team", "system"]
     actor_name: str | None  # null for a removed member, and for a pre-0033 team event
     details: dict[str, Any] | None
-
-
-class PaymentFact(BaseModel):
-    kind: Literal["check", "pay"]
-    status: Literal["open", "checked", "paid", "canceled"]
-    amount_minor: int
-    currency: str
-    refunded_minor: int
-    refund_failed: bool  # Stripe could not send the refund: the business resolves it in Stripe
 
 
 class BookingDetailOut(AgendaOut):
@@ -407,6 +415,13 @@ b.worker_id, b.worker_display_name, b.client_id, coalesce(b.client_name, c.name)
 b.created_at
 """
 
+# A booking's payment `p` as PaymentFact reads it, for the detail and the queue alike.
+PAYMENT_COLUMNS = """
+p.kind AS payment_kind, p.status AS payment_status, p.amount_minor AS payment_amount_minor,
+p.currency AS payment_currency, p.refunded_minor AS payment_refunded_minor,
+p.refund_failed_at IS NOT NULL AS payment_refund_failed
+"""
+
 # ponytail: limit=50 (100 max) with no cursor, so a business holding more live pendings than that
 # sees only the soonest ones and the tail stays invisible until the TTL thins it. Bounded by
 # pending_ttl_hours x arrival rate, capped per address by max_pending_per_email. The upgrade is a
@@ -417,10 +432,16 @@ b.created_at
 # able to settle it rather than have it vanish until the TTL, and recording a booking whose time has
 # passed is a case migration 0026 explicitly supports (its walk-in comment, 0026:159-171). Top of
 # the list is the right urgency order for it.
+#
+# ZB-02: each request carries its live payment, so the panel knows a paid one before offering a
+# decline. A plain join, not DETAIL's lateral: uq_booking_payments_live (0044) allows one payment
+# per booking that is not canceled, so it adds no row, and a pending request's money is that one.
 QUEUE = text(f"""
-SELECT {LIST_COLUMNS}, b.expires_at
+SELECT {LIST_COLUMNS}, b.expires_at, {PAYMENT_COLUMNS}
 FROM bookings b
 JOIN clients c ON c.tenant_id = b.tenant_id AND c.id = b.client_id
+LEFT JOIN booking_payments p
+  ON p.tenant_id = b.tenant_id AND p.booking_id = b.id AND p.status <> 'canceled'
 WHERE b.status = 'pending' AND b.expires_at > now()
   AND (:everyone OR b.worker_id = (SELECT id FROM memberships WHERE user_id = :me))
 ORDER BY b.starts_at, b.id
@@ -459,9 +480,7 @@ SELECT {LIST_COLUMNS}, b.expires_at, b.status, b.source, wm.user_id AS worker_us
        b.cancellation_policy_text, b.reschedule_count, b.max_reschedules,
        coalesce(b.status = ANY(CAST(:expiring AS text[])) AND b.expires_at <= now(), false)
          AS expired,
-       p.kind AS payment_kind, p.status AS payment_status, p.amount_minor AS payment_amount_minor,
-       p.currency AS payment_currency, p.refunded_minor AS payment_refunded_minor,
-       p.refund_failed_at IS NOT NULL AS payment_refund_failed
+       {PAYMENT_COLUMNS}
 FROM bookings b
 JOIN clients c ON c.tenant_id = b.tenant_id AND c.id = b.client_id
 JOIN memberships wm ON wm.tenant_id = b.tenant_id AND wm.id = b.worker_id
@@ -498,7 +517,8 @@ JOIN memberships m ON m.tenant_id = b.tenant_id AND m.id = b.worker_id
 WHERE b.id = :id
 """)
 
-# ZB-02: whether the booking holds a payment that was taken, which a cancellation would refund.
+# ZB-02: whether the booking holds a payment that was taken, which a decline or a cancellation
+# would refund.
 PAID_PAYMENT = text(
     "SELECT EXISTS (SELECT 1 FROM booking_payments WHERE booking_id = :id AND status = 'paid')"
 )
@@ -1275,6 +1295,20 @@ def create(  # sync def: turnstile.verify's urlopen blocks, and runs in FastAPI'
 merchant_router = APIRouter(prefix="/api", tags=["booking-approvals"])
 
 
+def payment_fact(row: Row[Any]) -> PaymentFact | None:
+    """The PAYMENT_COLUMNS of a row, or None when the booking has no payment."""
+    if row.payment_kind is None:
+        return None
+    return PaymentFact(
+        kind=row.payment_kind,
+        status=row.payment_status,
+        amount_minor=row.payment_amount_minor,
+        currency=row.payment_currency,
+        refunded_minor=row.payment_refunded_minor,
+        refund_failed=row.payment_refund_failed,
+    )
+
+
 @merchant_router.get(
     "/bookings/pending", name="list", responses={s: {"model": Error} for s in (401, 422)}
 )
@@ -1292,7 +1326,9 @@ def pending(
         {"everyone": members.is_owner(current), "me": current.user_id, "limit": limit},
     ).all()
     response.headers["Cache-Control"] = "no-store"
-    return [PendingOut.model_validate(row, from_attributes=True) for row in rows]
+    return [
+        PendingOut.model_validate({**row._mapping, "payment": payment_fact(row)}) for row in rows
+    ]
 
 
 @merchant_router.get("/bookings", name="range", responses={s: {"model": Error} for s in (401, 422)})
@@ -1371,20 +1407,8 @@ def detail(booking_id: UUID, current: auth.CurrentSession, response: Response) -
         for e in current.db.execute(HISTORY, {"id": booking_id})
     ]
     response.headers["Cache-Control"] = "no-store"
-    payment = (
-        PaymentFact(
-            kind=row.payment_kind,
-            status=row.payment_status,
-            amount_minor=row.payment_amount_minor,
-            currency=row.payment_currency,
-            refunded_minor=row.payment_refunded_minor,
-            refund_failed=row.payment_refund_failed,
-        )
-        if row.payment_kind is not None
-        else None
-    )
     return BookingDetailOut.model_validate(
-        {**row._mapping, "payment": payment, "history": history}, from_attributes=True
+        {**row._mapping, "payment": payment_fact(row), "history": history}, from_attributes=True
     )
 
 
@@ -1407,8 +1431,9 @@ def transition(
     is the owner's alone, and so is any transition out of `pending` unless the business setting
     `workers_answer_requests` is on (403 `owner_only`). A transition the booking's current status
     does not allow, or an outcome recorded before the appointment starts, is 409
-    `invalid_transition`. A worker may cancel only a future booking with no paid payment; any other
-    cancellation is the owner's (403 `owner_only`).
+    `invalid_transition`. A decline or cancel that would refund a paid payment is the owner's, and
+    so is cancelling a booking that has started (403 `owner_only`): a worker may cancel only a
+    future booking with no paid payment, and decline only a request with no paid payment.
     """
     # Internals, deliberately not in the public schema: the UPDATE's own qualifier is the only
     # authority on whether a transition is legal - the SELECT above it exists for the 404/403 pair
@@ -1436,13 +1461,18 @@ def transition(
         and not business_settings.read(current.db).workers_answer_requests
     ):
         raise ApiError(403, "owner_only")
-    # 3d, ZB-02 (D5): cancelling a booking that has started or carries a paid payment is the
-    # owner's, because it ends in a refund from the business's own account. A worker still cancels
-    # a future, unpaid one.
+    # 3d, ZB-02 (D5): any transition that would refund a paid payment is the owner's, because the
+    # refund comes from the business's own account: a decline or a cancel, whichever target in
+    # REFUNDING (the endings payments refunds by). Cancelling a booking that has started is the
+    # owner's too. A worker still cancels a future, unpaid booking, and one who may answer requests
+    # still declines an unpaid request, started or not.
     if (
-        change.status == "cancelled_by_merchant"
+        change.status in REFUNDING
         and not members.is_owner(current)
-        and (row.starts_at <= row.now or current.db.scalar(PAID_PAYMENT, {"id": booking_id}))
+        and (
+            current.db.scalar(PAID_PAYMENT, {"id": booking_id})
+            or (change.status == "cancelled_by_merchant" and row.starts_at <= row.now)
+        )
     ):
         raise ApiError(403, "owner_only")
     rule = TRANSITIONS[change.status]
