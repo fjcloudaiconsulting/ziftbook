@@ -49,7 +49,7 @@ child: `git rebase --onto origin/main <merged-parent-branch> <child-branch>`, th
 | 1 | [#329](https://github.com/fjcloudaiconsulting/ziftbook/pull/329) | `security/deps` | ZB-33, ZB-34, ZB-35, ZB-36, ZB-06 |
 | 2 | [#331](https://github.com/fjcloudaiconsulting/ziftbook/pull/331) | `security/booking-hardening` | ZB-02, ZB-03, ZB-13, ZB-27, ZB-14, ZB-16 |
 | 3 | [#332](https://github.com/fjcloudaiconsulting/ziftbook/pull/332) | `security/supply-chain` | ZB-07, ZB-22, ZB-23, ZB-24, ZB-26 |
-| 4 | pending | `security/auth-abuse` | ZB-20, ZB-04, ZB-01, ZB-17, ZB-18, ZB-19, ZB-05, ZB-25 |
+| 4 | [#333](https://github.com/fjcloudaiconsulting/ziftbook/pull/333) | `security/auth-abuse` | ZB-20, ZB-04, ZB-01, ZB-17, ZB-18, ZB-19, ZB-05, ZB-25 |
 | 5 | pending | `security/db-privileges` | ZB-15, ZB-11, ZB-09, ZB-10, ZB-08 (part 1), ZB-31, ZB-16 (part 2) |
 | 6 | pending | `security/web-headers` | ZB-28, ZB-29, ZB-30, ZB-12 |
 | 7 (draft) | pending | `security/db-privileges-contract` | ZB-08 (part 2), ZB-15 (contract) |
@@ -66,11 +66,11 @@ Related, independent of the stack:
 |---|---|---|---|---|---|---|---|
 | ZB-33 | Image library (Pillow 12.3.0) decoder advisories reachable from photo uploads | Critical | Dependency / backend | Fixed in PR | #329 | | Pillow 13.0.0, plus a version-independent container and EXIF guard. Containment until deployed: see owner actions. |
 | ZB-34 | Next.js 16.4.0 and sharp 0.35.4 advisories (assessed not reachable) | Medium | Dependency / frontend | Fixed in PR | #329 | | next 16.4.2; image optimizer off |
-| ZB-01 | Sign-in rate limits keyed on the email alone allow account lockout | Medium | Backend | In progress | | | Per-address limits plus a challenge after repeated failures; web form handles the challenge |
+| ZB-01 | Sign-in rate limits keyed on the email alone allow account lockout | Medium | Backend | Fixed in PR | #333 | | Per-address limits plus a challenge after repeated failures; web form handles the challenge |
 | ZB-02 | Workers could cancel paid or started bookings (refund-bearing) | Medium | Backend / web | Fixed in PR | #331 | | Owner-only for started or paid bookings |
 | ZB-03 | No quotas on client-facing booking email | Medium | Backend | Fixed in PR | #331 | | Per-business caps (business-initiated and public separately) and per-recipient caps |
-| ZB-04 | Password-hashing concurrency and IPv6 rate-limit granularity | Medium | Backend | In progress | | | IPv6 /48 for IP-only auth buckets; per-account keys stay /64. Edge rate rules: owner action. |
-| ZB-05 | Unverified guest bookings per business are uncapped | Medium | Backend | In progress | | | Per-business cap on unproven bookings plus an owner alert |
+| ZB-04 | Password-hashing concurrency and IPv6 rate-limit granularity | Medium | Backend | Fixed in PR | #333 | | IPv6 /48 for IP-only auth buckets; per-account keys stay /64. Edge rate rules: owner action. |
+| ZB-05 | Unverified guest bookings per business are uncapped | Medium | Backend | Fixed in PR | #333 | | Per-business cap on unproven bookings plus an owner alert |
 | ZB-06 | Dependency updates taken within hours of publication | Medium | Supply chain | Fixed in PR | #329 | | Renovate release-age cooldown; security updates skip it |
 | ZB-07 | `make setup` trusted a tracked hooks directory | Low | Supply chain | Fixed in PR | #332 | | Installs only the commit-msg hook |
 | ZB-08 | App database role can mint email tokens | Low | Database | In progress | | | Part 1: a worker role holds token minting. Part 2 (revoke from the app role) ships one release later. |
@@ -82,15 +82,15 @@ Related, independent of the stack:
 | ZB-14 | Workers could read client internal notes | Low | Backend | Fixed in PR | #331 | | Owner-only read and write |
 | ZB-15 | Public payment routes relied on the booking id alone | Low | Backend / web | In progress | | | Per-booking checkout secret cookie; staging 3-D Secure check is an owner action |
 | ZB-16 | Photo save held a DB transaction while decoding | Low | Backend | Fixed in PR (part 1) | #331 | | Part 1: decode outside the transaction. Part 2: explicit pool sizes and idle-in-transaction timeout. |
-| ZB-17 | Sign-up and reset requests had no bot check | Low | Backend / web | In progress | | | |
-| ZB-18 | Admin sign-in had no per-account cap across addresses | Low | Backend / web | In progress | | | Challenge after repeated failures plus an alert |
-| ZB-19 | Public booking address limits: lockout and alias bypass | Low | Backend | In progress | | | |
-| ZB-20 | Bot-check result validated only `success`; opt-out logged at INFO | Low | Backend / web | In progress | | | Hostname and action checked; deploy web and API together |
+| ZB-17 | Sign-up and reset requests had no bot check | Low | Backend / web | Fixed in PR | #333 | | |
+| ZB-18 | Admin sign-in had no per-account cap across addresses | Low | Backend / web | Fixed in PR | #333 | | Challenge after repeated failures plus an alert |
+| ZB-19 | Public booking address limits: lockout and alias bypass | Low | Backend | Fixed in PR | #333 | | |
+| ZB-20 | Bot-check result validated only `success`; opt-out logged at INFO | Low | Backend / web | Fixed in PR | #333 | | Hostname and action checked; deploy web and API together |
 | ZB-21 | Org workflows referenced by a movable tag with write permissions | Low | CI | Accepted | | | Mitigated by the org's `v*` tag-protection ruleset. Full fix needs the org `.github` repo and deploy verification to accept SHA-pinned signer identities: owner action. |
 | ZB-22 | Landing deploy installed wrangler without a lockfile | Low | CI | Fixed in PR | #332 | | |
 | ZB-23 | Stripe SDK request logs not silenced | Low | Logging | Fixed in PR | #332 | | |
 | ZB-24 | Admin enrolment ticket printed to the log stream | Low | Logging | Fixed in PR | #332 | | |
-| ZB-25 | Rate-limit keys stored unsalted hashes and raw addresses | Low | Database | In progress | | | |
+| ZB-25 | Rate-limit keys stored unsalted hashes and raw addresses | Low | Database | Fixed in PR | #333 | | |
 | ZB-26 | Production compose and development values lacked safety rails | Low | Config | Fixed in PR | #332 | | |
 | ZB-27 | Legacy consent wording accepted on new bookings | Info | Backend | Fixed in PR | #331 | | |
 | ZB-28 | Proxy passed upstream response headers through unfiltered | Info | Frontend | In progress | | | |
