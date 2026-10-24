@@ -91,9 +91,10 @@ def test_app_role_cannot_change_the_schema(
 
 
 # ZB-10 FENCE. Wrong impl: any of these back on the app role. Sign-up, first-run setup and invites
-# create users and businesses through SECURITY DEFINER functions owned by ziftbook_migrate; the
-# mailer only inserts outbox rows and marks them sent; removing a member ends the membership in
-# place (ZIF-112), so DELETE on memberships went too, in the contract step (0052).
+# create users and businesses through SECURITY DEFINER functions owned by ziftbook_migrate, and
+# sign-up and invites create memberships the same way (0054); the mailer only inserts outbox rows
+# and marks them sent; removing a member ends the membership in place (ZIF-112), so DELETE on
+# memberships went too, in the contract step (0052).
 @pytest.mark.parametrize(
     ("table", "privilege"),
     [
@@ -101,6 +102,8 @@ def test_app_role_cannot_change_the_schema(
         ("users", "UPDATE"),
         ("users", "DELETE"),
         ("tenants", "INSERT"),
+        ("memberships", "INSERT"),
+        ("memberships", "UPDATE"),
         ("memberships", "DELETE"),
         ("email_outbox", "UPDATE"),
         ("email_outbox", "DELETE"),
@@ -130,6 +133,23 @@ def test_app_role_updates_only_the_outbox_columns_the_mailer_sets(migrate_engine
             )
         )
     assert columns == {"status", "sent_at", "subject"}
+
+
+# ZB-10 FENCE (0054). What app/members.py sets: change_role the role, remove the role and
+# removed_at, set_display_name the display name. Wrong impl: UPDATE of user_id or tenant_id back on
+# the app role, which would move a membership to another person or business.
+def test_app_role_updates_only_the_membership_columns_the_app_sets(migrate_engine: Engine) -> None:
+    with migrate_engine.connect() as conn:
+        columns = set(
+            conn.scalars(
+                text("""
+                SELECT column_name FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = 'memberships'
+                  AND has_column_privilege('ziftbook_app', 'memberships', column_name, 'UPDATE')
+                """)
+            )
+        )
+    assert columns == {"role", "removed_at", "display_name"}
 
 
 @pytest.fixture

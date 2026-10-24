@@ -123,7 +123,9 @@ every table that holds a tenant's data:
   locks memberships, then tenants.
 - A membership is never deleted by the app. Removing someone sets `role = 'removed'` and `removed_at`
   (ZIF-112); the row stays because bookings and their history reference it. The app role has no `DELETE` on
-  `memberships` (0052, ZB-10). A new read of `memberships` decides: active (filter `role <> 'removed'`, inside the
+  `memberships` (0052, ZB-10), no `INSERT` (sign-up and invites create memberships in their definer functions), and
+  `UPDATE` of only `role`, `removed_at` and `display_name` (0054): a new column the app sets needs its own column
+  `GRANT`. A new read of `memberships` decides: active (filter `role <> 'removed'`, inside the
   locking statement when it locks) or history (no filter). A read reached through a session needs none:
   `ck_sessions_role` and the sessions foreign key keep a session's membership live. Never infer owner from
   `role <> 'worker'`; compare to `'owner'`. A new table referencing memberships with `ON DELETE CASCADE` also needs

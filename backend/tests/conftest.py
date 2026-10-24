@@ -864,11 +864,17 @@ def add_password(migrate_engine: Engine, user_id: uuid.UUID, password: str) -> N
 
 
 def add_membership(tenant_id: uuid.UUID, user_id: uuid.UUID, role: str = "worker") -> None:
-    with tenant_context(tenant_id) as session:
-        session.execute(
-            text("INSERT INTO memberships (tenant_id, user_id, role) VALUES (:t, :u, :r)"),
-            {"t": tenant_id, "u": user_id, "r": role},
-        )
+    # As the migrate role: the app role inserts no membership (ZB-10); sign-up and invites do,
+    # through SECURITY DEFINER functions.
+    migrate = create_engine(os.environ["ZIF_MIGRATE_DATABASE_URL"], poolclass=NullPool)
+    try:
+        with migrate_tenant_context(migrate, tenant_id) as conn:
+            conn.execute(
+                text("INSERT INTO memberships (tenant_id, user_id, role) VALUES (:t, :u, :r)"),
+                {"t": tenant_id, "u": user_id, "r": role},
+            )
+    finally:
+        migrate.dispose()
 
 
 def member_id(tenant_id: uuid.UUID, user_id: uuid.UUID) -> uuid.UUID:
