@@ -526,20 +526,42 @@ def app_engine(migrated: None) -> Iterator[Engine]:
     engine.dispose()
 
 
-@pytest.fixture
-def worker_engine(migrated: None) -> Iterator[Engine]:
-    """ziftbook_worker, what the worker process connects as (ZB-08), on the app role's database.
+@contextmanager
+def engine_as_worker(url: URL) -> Iterator[Engine]:
+    """A NullPool engine on url's database as ziftbook_worker, what the worker process connects as
+    (ZB-08), disposed on exit.
 
     With ZIF_WORKER_PASSWORD, the password bootstrap.sql gave the role, or when it is unset or
-    empty the local dev and CI one (docker-compose.yaml and ci.yml). Derived from
-    ZIF_DATABASE_URL, which already names this xdist worker's database, so it lands on no other."""
+    empty the local dev and CI one (docker-compose.yaml and ci.yml)."""
     password = os.environ.get("ZIF_WORKER_PASSWORD") or "ziftbook_worker"
-    url = make_url(os.environ["ZIF_DATABASE_URL"]).set(
-        username="ziftbook_worker", password=password
+    engine = create_engine(
+        url.set(username="ziftbook_worker", password=password), poolclass=NullPool
     )
-    engine = create_engine(url, poolclass=NullPool)
-    yield engine
-    engine.dispose()
+    try:
+        yield engine
+    finally:
+        engine.dispose()
+
+
+@pytest.fixture
+def worker_engine(migrated: None) -> Iterator[Engine]:
+    """ziftbook_worker on the app role's database. Derived from ZIF_DATABASE_URL, which already
+    names this xdist worker's database, so it lands on no other."""
+    with engine_as_worker(make_url(os.environ["ZIF_DATABASE_URL"])) as engine:
+        yield engine
+
+
+@contextmanager
+def jobs_as_the_worker() -> Iterator[None]:
+    """SessionLocal bound to ziftbook_worker on the database it is bound to now, as the worker
+    process runs jobs (only it may mint email tokens, ZB-08); the binding is restored after."""
+    bind = SessionLocal.kw["bind"]
+    with engine_as_worker(bind.url) as engine:
+        SessionLocal.configure(bind=engine)
+        try:
+            yield
+        finally:
+            SessionLocal.configure(bind=bind)
 
 
 PASSWORD = "lavender-harbour-19"
@@ -642,12 +664,14 @@ def email_of(user_id: uuid.UUID) -> str:
 
 
 def issue_link(app_engine: Engine, purpose: str, email: str, locale: str = "en") -> str | None:
-    """A request plus its email job: the token a link would carry, or None if nothing was sent."""
+    """A request (the API's, as the app role) plus its email job (the worker's, the only role that
+    mints, ZB-08): the token a link would carry, or None if nothing was sent."""
     token = secrets.token_urlsafe(32)
     with app_engine.begin() as conn:
         token_id = conn.scalar(
             text("SELECT start_email_token(:p, :e, :l)"), {"p": purpose, "e": email, "l": locale}
         )
+    with engine_as_worker(app_engine.url) as worker, worker.begin() as conn:
         minted = conn.execute(
             text("SELECT * FROM mint_email_token(:id, :h)"),
             {"id": token_id, "h": hashlib.sha256(token.encode()).digest()},
@@ -681,13 +705,14 @@ def jobs_for(migrate_engine: Engine, email: str) -> int:
 
 
 def mailed(email: str) -> dict[str, Any]:
-    """Runs the queued jobs, then returns the one message sent to email."""
+    """Runs the queued jobs as the worker does, then returns the one message sent to email."""
 
     async def run_until_idle() -> None:
         while await run_once(KINDS):
             pass
 
-    asyncio.run(run_until_idle())
+    with jobs_as_the_worker():
+        asyncio.run(run_until_idle())
     (sent,) = sent_to(email)
     return sent
 

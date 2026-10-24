@@ -24,6 +24,7 @@ from tests.conftest import (
     People,
     closed,
     end_membership,
+    jobs_as_the_worker,
     migrate_tenant_context,
     points,
     save_setting,
@@ -56,7 +57,8 @@ def send_hello(tenant_id: uuid.UUID, recipient_id: uuid.UUID) -> uuid.UUID:
         while await run_once(KINDS):
             pass
 
-    asyncio.run(run_until_idle())
+    with jobs_as_the_worker():  # as the worker runs jobs (ZB-08)
+        asyncio.run(run_until_idle())
     with SessionLocal.begin() as session:
         job_id: uuid.UUID = session.scalar(
             text("SELECT id FROM jobs WHERE dedupe_key = :k"), {"k": job_key}
