@@ -20,9 +20,11 @@ from tests.conftest import (
     EXPIRE,
     People,
     add_user,
+    delete_memberships,
     delete_payment_accounts,
     delete_services,
     engine_as_worker,
+    migrate_tenant_context,
     wait_until_blocked,
 )
 
@@ -74,11 +76,9 @@ def created(migrate_engine: Engine, bound: None) -> Iterator[list[Created]]:
     """Accounts complete_sign_up creates in a test; removed afterwards by id."""
     accounts: list[Created] = []
     yield accounts
-    for account in accounts:
-        with tenant_context(account.tenant_id) as session:
-            session.execute(text("DELETE FROM memberships"))
     with migrate_engine.begin() as conn:
         ids = {"users": [a.user_id for a in accounts], "tenants": [a.tenant_id for a in accounts]}
+        delete_memberships(conn, ids["tenants"])  # the app role has no DELETE on them (ZB-10)
         conn.execute(text("DELETE FROM password_credentials WHERE user_id = ANY(:users)"), ids)
         conn.execute(text("DELETE FROM users WHERE id = ANY(:users)"), ids)
         delete_services(conn, ids["tenants"])
@@ -160,9 +160,10 @@ def test_sign_in_lookup_finds_the_oldest_membership_without_a_tenant(
         assert (row.user_id, row.password_hash, row.tenant_id) == (user_id, None, people.b)
         assert unknown == []
     finally:
+        # As the migrate role: the app role has no DELETE on memberships (ZB-10).
         for tenant_id in (people.a, people.b):
-            with tenant_context(tenant_id) as session:
-                session.execute(text("DELETE FROM memberships WHERE user_id = :u"), {"u": user_id})
+            with migrate_tenant_context(migrate_engine, tenant_id) as conn:
+                conn.execute(text("DELETE FROM memberships WHERE user_id = :u"), {"u": user_id})
         with migrate_engine.begin() as conn:
             conn.execute(text("DELETE FROM users WHERE id = :u"), {"u": user_id})
 

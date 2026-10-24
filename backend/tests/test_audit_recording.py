@@ -22,6 +22,7 @@ from tests.conftest import (
     People,
     add_password,
     closed,
+    delete_memberships,
     delete_payment_accounts,
     delete_services,
     email_of,
@@ -74,8 +75,8 @@ def businesses(migrate_engine: Engine, bound: None) -> Iterator[list[uuid.UUID]]
         with tenant_context(tenant_id) as session:
             owners = list(session.scalars(text("SELECT user_id FROM memberships")))
             session.execute(text("DELETE FROM settings"))  # they reference the business
-            session.execute(text("DELETE FROM memberships"))
         with migrate_engine.begin() as conn:
+            delete_memberships(conn, [tenant_id])  # the app role has no DELETE on them (ZB-10)
             conn.execute(
                 text("DELETE FROM password_credentials WHERE user_id = ANY(:u)"), {"u": owners}
             )

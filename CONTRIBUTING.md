@@ -120,13 +120,12 @@ every table that holds a tenant's data:
   UPDATE` on the membership), and never locks `tenants` beyond the `KEY SHARE` its foreign keys take: `keep_an_owner`
   locks memberships, then tenants.
 - A membership is never deleted by the app. Removing someone sets `role = 'removed'` and `removed_at`
-  (ZIF-112); the row stays because bookings and their history reference it. The app role keeps `DELETE` on
-  `memberships` while a deployed release from before ZIF-112 still deletes; a later contract migration revokes it
-  (ZB-10). A new read of `memberships` decides: active (filter `role <> 'removed'`, inside the locking statement
-  when it locks) or history (no filter). A read reached through a session needs none: `ck_sessions_role` and
-  the sessions foreign key keep a session's membership live. Never infer owner from `role <> 'worker'`;
-  compare to `'owner'`. A new table referencing memberships with `ON DELETE CASCADE` also needs a line
-  in `members.remove`, which deletes what the cascades used to.
+  (ZIF-112); the row stays because bookings and their history reference it. The app role has no `DELETE` on
+  `memberships` (0052, ZB-10). A new read of `memberships` decides: active (filter `role <> 'removed'`, inside the
+  locking statement when it locks) or history (no filter). A read reached through a session needs none:
+  `ck_sessions_role` and the sessions foreign key keep a session's membership live. Never infer owner from
+  `role <> 'worker'`; compare to `'owner'`. A new table referencing memberships with `ON DELETE CASCADE` also needs
+  a line in `members.remove`, which deletes what the cascades used to.
 - The business's responsible person is derived, not stored: its oldest live owner (`ORDER BY memberships.id`).
   Nothing reads it yet. It is the creator only while they stay an owner: 0045's revive keeps a removed member's old
   `memberships.id`, so a returning creator who is made owner again becomes the oldest owner again.

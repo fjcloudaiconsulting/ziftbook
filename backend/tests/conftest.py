@@ -762,6 +762,14 @@ def migrate_tenant_context(migrate_engine: Engine, tenant_id: object) -> Iterato
         yield conn
 
 
+def delete_memberships(conn: Connection, tenant_ids: Iterable[object]) -> None:
+    """The app role has no DELETE on memberships (ZB-10); fixtures remove them as the migrate role,
+    one business at a time (forced row-level security)."""
+    for tenant_id in tenant_ids:
+        conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(tenant_id)})
+        conn.execute(text("DELETE FROM memberships"))
+
+
 def delete_payment_accounts(conn: Connection, tenant_ids: Iterable[object]) -> None:
     """The app role has no DELETE on payment_accounts (ZIF-158); fixtures remove them as the migrate
     role, one business at a time (forced row-level security)."""
@@ -917,9 +925,9 @@ def people(migrate_engine: Engine, bound: None) -> Iterator[People]:
             session.execute(text("DELETE FROM opening_hours"))
             session.execute(text("DELETE FROM settings"))  # they reference the business
             session.execute(text("DELETE FROM invites"))
-            session.execute(text("DELETE FROM memberships"))
-    # The app role can't delete users; the test cleans up as the migrate role.
+    # The app role can delete neither memberships nor users; the test cleans up as the migrate role.
     with migrate_engine.begin() as conn:
+        delete_memberships(conn, (a, b))
         conn.execute(
             text("DELETE FROM password_credentials WHERE user_id IN (:x, :y, :z)"),
             {"x": people.only_a, "y": people.only_b, "z": people.both},

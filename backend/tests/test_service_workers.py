@@ -286,7 +286,11 @@ def test_a_failed_recording_leaves_assignments_unchanged(
 # 11. fence: a removal in flight makes the assignment a 422, never a foreign key 500.
 @pytest.mark.parametrize("holder_action", ["deleted", "ended"])
 def test_an_assignment_waits_on_a_removal_in_flight(
-    people: People, owner: TestClient, app_engine: Engine, holder_action: str
+    people: People,
+    owner: TestClient,
+    app_engine: Engine,
+    migrate_engine: Engine,
+    holder_action: str,
 ) -> None:
     only_a = member_id(people.a, people.only_a)
     service_id = svc(owner)
@@ -295,7 +299,9 @@ def test_an_assignment_waits_on_a_removal_in_flight(
     def request() -> None:
         results.append(put(owner, service_id, [str(only_a)]))
 
-    with app_engine.connect() as holder:
+    # A deletion comes only from an operator: the app role has no DELETE on memberships (ZB-10).
+    holder_engine = migrate_engine if holder_action == "deleted" else app_engine
+    with holder_engine.connect() as holder:
         with holder.begin():
             holder.execute(
                 text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(people.a)}

@@ -1831,3 +1831,27 @@ def test_0051_round_trips_the_app_roles_mint_grant(
         command.upgrade(cfg, "head")
     with migrate_engine.connect() as conn:
         assert list(conn.scalars(MINT_HOLDERS)) == ["ziftbook_migrate", "ziftbook_worker"]
+
+
+# ZB-10 (0052): ziftbook_app's table privileges on memberships.
+MEMBERSHIP_GRANTS = text("""
+SELECT string_agg(x.privilege_type, ' ' ORDER BY x.privilege_type)
+FROM pg_class c, aclexplode(c.relacl) x
+WHERE c.oid = 'memberships'::regclass AND x.grantee = 'ziftbook_app'::regrole
+""")
+
+
+# ZB-10 FENCE (0052, the contract step). Wrong impl: an upgrade that leaves DELETE on memberships
+# to the app role or takes anything else; a downgrade that does not give it back.
+def test_0052_round_trips_the_app_roles_membership_delete(
+    migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = lock_timeout_config(monkeypatch)
+    try:
+        command.downgrade(cfg, "0051")
+        with migrate_engine.connect() as conn:
+            assert conn.scalar(MEMBERSHIP_GRANTS) == "DELETE INSERT SELECT UPDATE"
+    finally:
+        command.upgrade(cfg, "head")
+    with migrate_engine.connect() as conn:
+        assert conn.scalar(MEMBERSHIP_GRANTS) == "INSERT SELECT UPDATE"

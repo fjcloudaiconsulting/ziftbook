@@ -92,8 +92,8 @@ def test_app_role_cannot_change_the_schema(
 
 # ZB-10 FENCE. Wrong impl: any of these back on the app role. Sign-up, first-run setup and invites
 # create users and businesses through SECURITY DEFINER functions owned by ziftbook_migrate; the
-# mailer only inserts outbox rows and marks them sent. DELETE on memberships is revoked in a later
-# contract step (see 0048).
+# mailer only inserts outbox rows and marks them sent; removing a member ends the membership in
+# place (ZIF-112), so DELETE on memberships went too, in the contract step (0052).
 @pytest.mark.parametrize(
     ("table", "privilege"),
     [
@@ -101,6 +101,7 @@ def test_app_role_cannot_change_the_schema(
         ("users", "UPDATE"),
         ("users", "DELETE"),
         ("tenants", "INSERT"),
+        ("memberships", "DELETE"),
         ("email_outbox", "UPDATE"),
         ("email_outbox", "DELETE"),
     ],
