@@ -37,8 +37,11 @@ ADMIN_ABSOLUTE = timedelta(hours=8)
 
 RESOLVE = text("SELECT * FROM resolve_admin_session(:id_hash)")
 CODE_WINDOW = timedelta(minutes=15)  # the per-address limits on codes and tickets
-# ZB-18: an admin's failures from anywhere ask for a Turnstile challenge, never a lock.
-ADMIN_FAILURES_BEFORE_CHALLENGE = 10
+# ZB-18: an admin's failures from anywhere, business sign-in's included (auth.PASSWORD_ACTIONS), ask
+# for a Turnstile challenge, never a lock. Business sign-in's threshold: above what one address gets
+# across both routes, and the cap on guesses at an admin's password across them. The warning counts
+# this route's own.
+ADMIN_FAILURES_BEFORE_CHALLENGE = auth.FAILURES_BEFORE_CHALLENGE
 TOTP_CODE = re.compile("[0-9]{6}")  # ASCII only: \d and str.isdigit accept Arabic-Indic digits
 
 logger = logging.getLogger(__name__)
@@ -164,6 +167,12 @@ def sign_in(credentials: auth.Credentials, request: Request, response: Response)
             # Email and address together: an email alone would let anyone who knows it lock the
             # admin out. The password only buys a half session now (ZIF-71).
             limits.email_key("admin_sign_in", f"{credentials.email}|{pair_address}"): 5,
+            # ZB-18: business sign-in's attempts from this address too, for every email, so one
+            # address gets PER_ADDRESS_LIMIT attempts at an email across both routes, fewer than
+            # the challenge needs.
+            auth.attempt_key(credentials.email, limits.ip_key("sign_in", ip)): (
+                auth.PER_ADDRESS_LIMIT
+            ),
             address_key: 20,
         },
         auth.SIGN_IN_WINDOW,

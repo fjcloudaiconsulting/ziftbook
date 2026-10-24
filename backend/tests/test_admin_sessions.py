@@ -12,7 +12,7 @@ import pytest
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 from httpx2 import Response
-from sqlalchemy import Engine, text
+from sqlalchemy import Engine, event, text
 
 from app import admin, admin_auth, auth, passwords, turnstile
 from app.admin_auth import ADMIN_COOKIE, AdminSession, business
@@ -324,6 +324,182 @@ def test_a_refused_admin_challenge_keeps_out_even_the_right_password(
 
     assert (refused.status_code, refused.json()) == (429, {"code": "challenge_required"})
     assert calls == [("t", address, "admin_sign_in")]
+
+
+def business_sign_in(client: TestClient, email: str, password: str = PASSWORD) -> Response:
+    return client.post("/api/session", json={"email": email, "password": password})
+
+
+def answer(response: Response) -> tuple[int, str | None]:
+    return response.status_code, response.json().get("code")
+
+
+WRONG = (401, "invalid_credentials")
+CHALLENGE = (429, "challenge_required")
+
+
+@pytest.fixture
+def every_kind(
+    app: FastAPI, an_admin: uuid.UUID, people: People, migrate_engine: Engine
+) -> Iterator[dict[str, str]]:
+    """An email of each kind business sign-in must not tell apart: a platform admin with no
+    business, one with a business, a member who is no admin, an account with no business, and no
+    account at all."""
+    add_password(migrate_engine, people.only_a, PASSWORD)
+    nobody = add_user(migrate_engine)
+    add_password(migrate_engine, nobody, PASSWORD)
+    with migrate_engine.begin() as conn:
+        # Goes with people.both's account (ON DELETE CASCADE).
+        conn.execute(text("INSERT INTO platform_admins (user_id) VALUES (:u)"), {"u": people.both})
+    yield {
+        "admin": email_of(an_admin),
+        "admin_in_a_business": email_of(people.both),
+        "member": email_of(people.only_a),
+        "no_business": email_of(nobody),
+        "unknown": fresh_email(),
+    }
+    with migrate_engine.begin() as conn:
+        conn.execute(text("DELETE FROM password_credentials WHERE user_id = :u"), {"u": nobody})
+        conn.execute(text("DELETE FROM users WHERE id = :u"), {"u": nobody})
+
+
+# ZB-18: wrong passwords tried on business sign-in count toward the admin sign-in challenge.
+def test_business_sign_in_failures_ask_admin_sign_in_for_a_challenge(
+    app: FastAPI, an_admin: uuid.UUID
+) -> None:
+    email = email_of(an_admin)
+    for _ in range(admin_auth.ADMIN_FAILURES_BEFORE_CHALLENGE):
+        assert business_sign_in(new_client(app), email, "wrong-password-123").status_code == 401
+
+    blocked = admin_sign_in(new_client(app), email)
+
+    assert answer(blocked) == CHALLENGE
+    solved = new_client(app).post(
+        "/api/admin/session", json={"email": email, "password": PASSWORD, "turnstile_token": "t"}
+    )
+    assert solved.status_code == 200  # ZIF_TURNSTILE_DISABLED in tests: verify() passes
+
+
+# fence (ZB-18): guesses at an admin's password spread over both routes reach one challenge, after
+# 11 in all, the threshold both routes share. Kills each route counting only its own failures.
+def test_guesses_spread_over_both_routes_reach_one_challenge(
+    app: FastAPI, an_admin: uuid.UUID
+) -> None:
+    email = email_of(an_admin)
+    answers = [
+        answer(
+            new_client(app).post(
+                "/api/session" if n % 2 == 0 else "/api/admin/session",
+                json={"email": email, "password": "wrong-password-123"},
+            )
+        )
+        for n in range(24)
+    ]
+
+    assert answers == [WRONG] * 11 + [CHALLENGE] * 13
+    assert answer(business_sign_in(new_client(app), email)) == CHALLENGE
+    assert answer(admin_sign_in(new_client(app), email)) == CHALLENGE
+
+
+# fence (ZB-01, ZB-18): one address alone never challenges an account, even through both routes:
+# admin sign-in spends business sign-in's attempts from that address too, so it gets 10 password
+# attempts at an email in all, fewer than the challenge's 11. Kills the routes' per-address limits
+# adding up (15 failures from one address) and an admin threshold one address can reach.
+@pytest.mark.parametrize("route", ["/api/session", "/api/admin/session"])
+def test_one_address_using_both_routes_never_challenges_an_account(
+    app: FastAPI, an_admin: uuid.UUID, people: People, migrate_engine: Engine, route: str
+) -> None:
+    if route == "/api/session":
+        add_password(migrate_engine, people.only_a, PASSWORD)
+        email = email_of(people.only_a)  # a member
+    else:
+        email = email_of(an_admin)
+    attacker = new_client(app)
+    on_admin = [answer(admin_sign_in(attacker, email, "wrong-password-123")) for _ in range(5)]
+    on_business = [
+        answer(business_sign_in(attacker, email, "wrong-password-123")) for _ in range(11)
+    ]
+
+    right = new_client(app).post(route, json={"email": email, "password": PASSWORD})
+
+    rate_limited = (429, "rate_limited")
+    assert (right.status_code, on_admin, on_business) == (
+        200,
+        [WRONG] * 5,
+        [WRONG] * 5 + [rate_limited] * 6,
+    )
+
+
+# ZB-18: business sign-in tells no one who is a platform admin. Every email gets the same answers
+# and reaches the challenge after as many wrong passwords, whatever its account.
+def test_business_sign_in_challenges_every_kind_of_email_alike(
+    app: FastAPI, every_kind: dict[str, str]
+) -> None:
+    answers = {
+        kind: [
+            answer(business_sign_in(new_client(app), email, "wrong-password-123"))
+            for _ in range(auth.FAILURES_BEFORE_CHALLENGE + 1)
+        ]
+        for kind, email in every_kind.items()
+    }
+
+    expected = [WRONG] * auth.FAILURES_BEFORE_CHALLENGE + [CHALLENGE]
+    assert answers == dict.fromkeys(every_kind, expected)
+
+
+# ZB-18: admin sign-in's failures count on business sign-in for every email, not only an admin's,
+# so where the challenge comes tells no one who is an admin.
+def test_admin_sign_in_failures_count_on_business_sign_in_for_every_kind_of_email(
+    app: FastAPI, every_kind: dict[str, str]
+) -> None:
+    for email in every_kind.values():
+        for _ in range(admin_auth.ADMIN_FAILURES_BEFORE_CHALLENGE):
+            assert admin_sign_in(new_client(app), email, "wrong-password-123").status_code == 401
+    left = auth.FAILURES_BEFORE_CHALLENGE - admin_auth.ADMIN_FAILURES_BEFORE_CHALLENGE
+
+    answers = {
+        kind: [
+            answer(business_sign_in(new_client(app), email, "wrong-password-123"))
+            for _ in range(left + 1)
+        ]
+        for kind, email in every_kind.items()
+    }
+
+    assert answers == dict.fromkeys(every_kind, [WRONG] * left + [CHALLENGE])
+
+
+# fence (ZB-18): a wrong password on business sign-in runs the same statements and one hash for
+# every kind of email, so its timing tells no one who is an admin. Kills an admin lookup added to
+# one path only.
+def test_a_wrong_business_password_does_the_same_work_for_every_kind_of_email(
+    app: FastAPI,
+    every_kind: dict[str, str],
+    app_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    statements: list[str] = []
+    verify_hash = passwords._verify_hash
+
+    def hashed(stored: str, password: str) -> bool:
+        statements.append("hash")
+        return verify_hash(stored, password)
+
+    def executed(conn: object, cursor: object, statement: str, *args: object) -> None:
+        statements.append(statement)
+
+    monkeypatch.setattr(passwords, "_verify_hash", hashed)
+    work: dict[str, list[str]] = {}
+    event.listen(app_engine, "before_cursor_execute", executed)
+    try:
+        for kind, email in every_kind.items():
+            statements.clear()
+            assert business_sign_in(new_client(app), email, "wrong-password-123").status_code == 401
+            work[kind] = list(statements)
+    finally:
+        event.remove(app_engine, "before_cursor_execute", executed)
+
+    assert work["member"].count("hash") == 1
+    assert work == dict.fromkeys(every_kind, work["member"])
 
 
 # fence: 30 minutes idle ends a session, and use keeps it alive. Kills reusing auth.IDLE (7 days),
