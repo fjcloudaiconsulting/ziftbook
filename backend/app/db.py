@@ -1,3 +1,4 @@
+import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
 from uuid import UUID
@@ -11,6 +12,8 @@ from sqlalchemy.orm import Session, SessionTransaction, sessionmaker
 from sqlalchemy.pool import ConnectionPoolEntry, PoolResetState, QueuePool
 
 from app import logs
+
+logger = logging.getLogger(__name__)
 
 # Deterministic constraint names, so migrations can reference (and later drop) them by name. All
 # columns are in uq and fk names, so composite (tenant_id, ...) constraints never collide.
@@ -92,6 +95,19 @@ def _count(session: Session) -> None:
 def _forget(session: Session, transaction: SessionTransaction) -> None:
     if transaction.parent is None:  # the root ended: a commit already took them, a rollback drops
         session.info.pop("counts", None)
+
+
+def database_role() -> str | None:
+    """The role this process's queries run as (ZB-08): `current_user` on SessionLocal's engine,
+    never `session_user`. A production login role switches to its group role at connect (ALTER ROLE
+    ... SET role), so only `current_user` names the privileges in force. None when the query fails
+    (database down, nothing bound): a startup check never takes the process down."""
+    try:
+        with SessionLocal() as session:
+            return str(session.execute(text("SELECT current_user")).scalar_one())
+    except Exception as error:
+        logger.warning("database role check failed", extra={"error": type(error).__name__})
+        return None
 
 
 POOL = {"db.client.connection.pool.name": "default"}

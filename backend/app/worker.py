@@ -15,7 +15,7 @@ from sqlalchemy import create_engine, event
 
 from app import bookings, jobs, limits, logs, mail, payments, photos, tracing
 from app.config import MailSettings, StripeSettings, WorkerSettings
-from app.db import SessionLocal, reset_session
+from app.db import SessionLocal, database_role, reset_session
 from app.jobs import JobKind, run_once
 
 # Registered job kinds. A new kind ships one release before anything enqueues it.
@@ -124,6 +124,7 @@ async def serve(settings: WorkerSettings) -> None:
     # The secret key alone: release, refund and event jobs need nothing else (ZIF-158).
     payments_on = StripeSettings().secret_ready()
     rate_limit_key = limits.key_state()
+    role = database_role()  # ZB-08
     # Never the Mailgun key or the healthcheck URL. "off": email jobs fail until the key is set.
     logger.info(
         "worker started",
@@ -137,8 +138,18 @@ async def serve(settings: WorkerSettings) -> None:
             # Never the key. "unset"/"weak"/"dev": the recipient limits' keys are not peppered
             # (ZB-25), as the API's.
             "rate_limit_key": rate_limit_key,
+            # ZB-08. The role the worker's queries run as: ziftbook_worker.
+            "database_role": role,
         },
     )
+    # ZB-08: a WARNING, not an ERROR, while ziftbook_app may still mint email tokens (until the
+    # contract migration revokes it). Never a refusal to start. None: the query failed.
+    if role is not None and role != "ziftbook_worker":
+        logger.warning(
+            "worker database role: not ziftbook_worker; sign-up, reset and invite emails fail"
+            " once the contract migration revokes token minting from ziftbook_app",
+            extra={"database_role": role},
+        )
     if not payments_on:
         logger.warning("stripe unset: payments off")
     if rate_limit_key != "set":

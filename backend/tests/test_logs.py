@@ -739,6 +739,7 @@ def test_the_api_logs_its_settings_once_at_startup(
             "rate_limit_key": "unset",
             "storage": "off",
             "payments": "off",
+            "database_role": "ziftbook_app",
         }
     ]
     assert "postgresql" not in json.dumps(log_lines())

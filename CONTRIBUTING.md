@@ -452,7 +452,13 @@ loggers (`web.*`); Next's own stderr output (banners, SSR error traces) is not i
   `turnstile secret unset: bookings, sign-ups, resets and sign-in challenges refused` (ERROR, API);
   `turnstile disabled on a public url` (ERROR, API: `ZIF_TURNSTILE_DISABLED` while `ZIF_APP_URL` is
   not localhost); `rate limit key unset: rate-limit keys are not peppered` (WARNING, API and worker,
-  while their `rate_limit_key` is `unset`, `weak` or `dev`).
+  while their `rate_limit_key` is `unset`, `weak` or `dev`); `api database role: not ziftbook_app, ...`
+  (ERROR, API, `database_role`: the API's `current_user` is another role, as when the worker's
+  connection string sits in the API's secret; never a refusal to start) and
+  `worker database role: not ziftbook_worker; ...` (WARNING, worker, `database_role`: sign-up, reset
+  and invite emails fail once the contract migration revokes token minting from `ziftbook_app`).
+  Both startup lines carry `database_role` (`current_user`, never `session_user`; left out when the
+  query failed).
 - Abuse events, ids and reasons only: `turnstile mismatch` (WARNING, `reason` `hostname` or `action`:
   a passing token solved on another host or for another form, as when `ZIF_APP_URL` doesn't name the
   site's host); `admin sign-in failures` (WARNING, `target` `user:<id>`, null for an unknown email,
@@ -633,7 +639,7 @@ ZIF-38). An empty variable means the default: `env_ignore_empty=True` on the bas
 | Name | Read by | Default | Required in production? | Secret? | What it does |
 |---|---|---|---|---|---|
 | **Database** | | | | | |
-| `ZIF_DATABASE_URL` | api, worker | none | yes | yes | The API's is `ziftbook_app`'s connection string; the worker's is `ziftbook_worker`'s (ZB-08). Keep the two in separate secrets: an API on the worker's URL could mint email tokens itself. A worker still on `ziftbook_app`'s works until the contract migration, then fails every sign-up and reset email. |
+| `ZIF_DATABASE_URL` | api, worker | none | yes | yes | The API's is `ziftbook_app`'s connection string; the worker's is `ziftbook_worker`'s (ZB-08). Keep the two in separate secrets: an API on the worker's URL could mint email tokens itself. A worker still on `ziftbook_app`'s works until the contract migration, then fails every sign-up and reset email; it logs a WARNING at startup. The API logs an ERROR at startup when its role is not `ziftbook_app`. |
 | `ZIF_MIGRATE_DATABASE_URL` | migrations | none | yes | yes | `ziftbook_migrate`'s connection string, used to run Alembic and the admin CLI (`python -m app.admin`). Never give it to the API or the worker: `ziftbook_migrate` owns the schema, so it can change or turn off row-level security. |
 | `ZIF_POSTGRES_PASSWORD` | compose | none | yes | yes | Postgres superuser password. |
 | `ZIF_MIGRATE_PASSWORD` | compose (`bootstrap.sql`) | none | yes | yes | `ziftbook_migrate` role password. |
