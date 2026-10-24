@@ -118,6 +118,9 @@ Newest first.
   - a business no longer reads a removed member's account;
   - the business sign-in challenge moves from 20 to 11 failures per email.
 - **Note:** cloud-infra #277 (ZIF-214) does the same containment as #276; one should be closed.
+- **Later the same day:** #336 gained 0056 (the app role cannot bring back a removed membership) and a static test
+  of `bootstrap.sql`'s password check. cloud-infra #278's production Job now stops cleanly: it checks its passwords
+  first and runs in one transaction.
 - **Needs:**
   - **Owner:** merge the PRs above, keeping one containment PR, and #278 before #279. Then release.
   - **Jira agent:** ZB-02, ZB-08, ZB-10, ZB-18, ZB-31 and ZB-32 gained PRs. ZB-32 is no longer deferred. Five
@@ -216,7 +219,7 @@ Related, independent of the stack (both merged on 2026-10-24):
 | ZB-05 | Unverified guest bookings per business are uncapped | Medium | Backend | Merged | #333 | | Per-business cap on unproven bookings plus an owner alert |
 | ZB-06 | Dependency updates taken within hours of publication | Medium | Supply chain | Merged | #329 | | Renovate release-age cooldown; security updates skip it |
 | ZB-07 | `make setup` trusted a tracked hooks directory | Low | Supply chain | Merged | #332 | | Installs only the commit-msg hook |
-| ZB-08 | App database role can mint email tokens | Low | Database | Merged (part 2 in draft) | #334, #336, #342 | | Part 1 (#334): the worker connects as its own role, which mints email tokens. Part 2 (contract PR #336, one release later): the app role can no longer mint tokens or set an invite token. #342 has the API and the worker log the database role they run as. |
+| ZB-08 | App database role can mint email tokens | Low | Database | Merged (part 2 in draft) | #334, #336, #342 | | Part 1 (#334): the worker connects as its own role, which mints email tokens. Part 2 (contract PR #336, one release later): the app role can no longer mint tokens or set an invite token. #342 has the API and the worker log the database role they run as. #336 also makes bootstrap.sql check every role password before it changes anything. |
 | ZB-09 | Booking evidence columns writable by the app role | Low | Database | Merged | #334 | | Column grants plus a status-transition trigger |
 | ZB-10 | App role keeps unused write privileges | Low | Database | Merged (part 2 in draft) | #334, #336 | | Unused write grants revoked. DELETE on memberships is revoked by the contract PR #336, once no deployed release deletes a membership. #336 also narrows the app role's memberships grants (no INSERT; UPDATE of three columns only). |
 | ZB-11 | Test suite could run destructive migrations against a non-local database | Low | Tooling | Merged | #334 | | |
@@ -240,7 +243,7 @@ Related, independent of the stack (both merged on 2026-10-24):
 | ZB-29 | Client-chosen request ids trusted end to end | Info | Frontend | Merged | #335 | | The proxy mints the request id; a client-sent id is kept, validated, in its own log field |
 | ZB-30 | Interactive API docs routes enabled | Info | Backend | Merged | #335 | | |
 | ZB-31 | Pooled DB connections could carry temp tables or settings | Info | Database | Merged | #334, #341 | | Connections are reset on check-in. TEMPORARY is revoked by bootstrap.sql, and by the migration only where the migrate role owns the database: check production (owner action). #341 makes bootstrap.sql stop when the revoke did not take. |
-| ZB-32 | A business keeps read access to a removed member's account row | Info | Database | Fixed in draft PR | #336 | | A business no longer reads a removed member's account; history keeps the name the member worked under. Ships with #336. |
+| ZB-32 | A business keeps read access to a removed member's account row | Info | Database | Fixed in draft PR | #336 | | A business no longer reads a removed member's account (0055), and the app role can no longer bring a removed membership back (0056); history keeps the name the member worked under. Ships with #336. |
 | ZB-35 | CA bundle (certifi) trusted distrusted roots | Low | Dependency | Merged | #329 | | |
 | ZB-36 | Unreachable or dev-only dependency advisories | Info | Dependency | Merged | #329 | | mako upgraded; dev-only npm advisories follow Renovate |
 
