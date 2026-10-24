@@ -132,7 +132,8 @@ services:
       seaweedfs-init:
         condition: service_completed_successfully
     environment:
-      # Its own role, ziftbook_app plus minting email tokens (ZB-08); the API keeps ziftbook_app.
+      # Its own role, ziftbook_app plus minting email tokens and setting invite tokens (ZB-08); the API
+      # keeps ziftbook_app.
       ZIF_DATABASE_URL: postgresql+psycopg://ziftbook_worker:ziftbook_worker@postgres:5432/ziftbook
       # Mailpit's HTTP send API, never SMTP (ZIF-151); a Mailgun key would take precedence.
       ZIF_MAILPIT_URL: http://mailpit:8025

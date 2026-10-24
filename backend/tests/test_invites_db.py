@@ -10,17 +10,20 @@ from dataclasses import dataclass
 from typing import Any
 
 import pytest
-from psycopg.errors import CheckViolation, UniqueViolation
-from sqlalchemy import Connection, Engine, text
-from sqlalchemy.exc import DBAPIError, IntegrityError
+from psycopg.errors import CheckViolation, InsufficientPrivilege, UniqueViolation
+from sqlalchemy import Connection, Engine, create_engine, make_url, text
+from sqlalchemy.exc import DBAPIError, IntegrityError, ProgrammingError
+from sqlalchemy.pool import NullPool
 
 from app.db import SessionLocal, tenant_context
 from tests.conftest import (
+    ADMIN_DATABASE_URL,
     People,
     add_password,
     email_of,
     end_membership,
     fresh_email,
+    jobs_as_the_worker,
     member_id,
     migrate_tenant_context,
     wait_until_blocked,
@@ -44,17 +47,17 @@ def pending(tenant_id: uuid.UUID, email: str, expires: str = "1 hour") -> uuid.U
 
 
 def minted(tenant_id: uuid.UUID, email: str) -> tuple[uuid.UUID, str]:
-    """A sent invite: token_hash = sha256(secret), a 7-day expiry. Returns (id, secret)."""
+    """A sent invite: token_hash = sha256(secret), a 7-day expiry, set as the worker role, as the
+    email.invite job does (only it may, ZB-08). Returns (id, secret)."""
     secret = secrets.token_urlsafe(32)
-    with tenant_context(tenant_id) as session:
-        invite_id: uuid.UUID = session.scalar(
+    invite_id = pending(tenant_id, email)
+    with jobs_as_the_worker(), tenant_context(tenant_id) as session:
+        session.execute(
             text("""
-            INSERT INTO invites (tenant_id, email, token_hash, expires_at)
-            VALUES (current_setting('app.tenant_id')::uuid, :email, :hash,
-                    now() + interval '7 days')
-            RETURNING id
+            UPDATE invites SET token_hash = :hash, expires_at = now() + interval '7 days'
+            WHERE id = :id
             """),
-            {"email": email, "hash": hashlib.sha256(secret.encode()).digest()},
+            {"id": invite_id, "hash": hashlib.sha256(secret.encode()).digest()},
         )
     return invite_id, secret
 
@@ -109,8 +112,8 @@ def _insert(conn: Connection, tenant_id: uuid.UUID, email: str, token_hash: byte
 
 
 # Missing CHECKs, or a UNIQUE without tenant_id, let a violation through, or refuse a
-# combination the schema should accept.
-def test_invites_check_and_unique_constraints(app_engine: Engine, people: People) -> None:
+# combination the schema should accept. As the worker role: only it writes a token hash (ZB-08).
+def test_invites_check_and_unique_constraints(worker_engine: Engine, people: People) -> None:
     hash32 = secrets.token_bytes(32)
     violations: list[tuple[type[Exception], list[tuple[uuid.UUID, str, bytes | None]]]] = [
         (CheckViolation, [(people.a, fresh_email().upper(), None)]),
@@ -126,7 +129,7 @@ def test_invites_check_and_unique_constraints(app_engine: Engine, people: People
         ),
     ]
     for error_type, rows in violations:
-        with app_engine.connect() as conn:
+        with worker_engine.connect() as conn:
             with conn.begin() as tx:
                 conn.execute(
                     text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(people.a)}
@@ -147,7 +150,7 @@ def test_invites_check_and_unique_constraints(app_engine: Engine, people: People
         [(people.a, fresh_email(), None), (people.a, fresh_email(), None)],
     ]
     for rows in accepted:
-        with app_engine.connect() as conn:
+        with worker_engine.connect() as conn:
             with conn.begin() as tx:
                 for tenant_id, email, token_hash in rows:
                     conn.execute(
@@ -156,6 +159,94 @@ def test_invites_check_and_unique_constraints(app_engine: Engine, people: People
                     )
                     _insert(conn, tenant_id, email, token_hash)
                 tx.rollback()
+
+
+# ZB-08 FENCE (0053). Wrong impl: the app role writes an invite's token hash itself, by UPDATE or
+# by INSERT, so it can make a working invite link that no email carried; or a check that refuses
+# only the app role, so the migrate role, which owns the table, still can.
+@pytest.mark.parametrize("role", ["ziftbook_app", "ziftbook_migrate"], ids=["app", "migrate"])
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "UPDATE invites SET token_hash = :h WHERE id = :i",
+        """
+        INSERT INTO invites (tenant_id, email, token_hash, expires_at)
+        VALUES (current_setting('app.tenant_id')::uuid, :e, :h, now() + interval '7 days')
+        """,
+    ],
+    ids=["update", "insert"],
+)
+def test_no_role_but_the_worker_can_issue_an_invite_token(
+    people: People, app_engine: Engine, migrate_engine: Engine, role: str, statement: str
+) -> None:
+    invite_id = pending(people.a, fresh_email())
+    engine = {"ziftbook_app": app_engine, "ziftbook_migrate": migrate_engine}[role]
+    with pytest.raises(ProgrammingError) as error, engine.begin() as conn:
+        conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(people.a)})
+        assert conn.scalar(text("SELECT current_user")) == role
+        conn.execute(
+            text(statement), {"i": invite_id, "e": fresh_email(), "h": secrets.token_bytes(32)}
+        )
+    assert isinstance(error.value.orig, InsufficientPrivilege)
+
+
+# ZB-08 FENCE (0053). Wrong impl: a check on the login (session_user) rather than the role running
+# the statement (current_user). An operator who must set a hash by hand does it as a superuser
+# after SET ROLE ziftbook_worker, as 0053 says; the superuser as itself is refused.
+def test_a_superuser_sets_an_invite_token_only_as_the_worker_role(
+    people: People, migrate_engine: Engine
+) -> None:
+    invite_id = pending(people.a, fresh_email())
+    hash32 = secrets.token_bytes(32)
+    set_hash = text("UPDATE invites SET token_hash = :h WHERE id = :i")
+    admin = create_engine(
+        make_url(ADMIN_DATABASE_URL).set(database=migrate_engine.url.database), poolclass=NullPool
+    )
+    try:
+        with pytest.raises(ProgrammingError) as error, admin.begin() as conn:
+            conn.execute(set_hash, {"h": hash32, "i": invite_id})
+        assert isinstance(error.value.orig, InsufficientPrivilege)
+        with admin.begin() as conn:
+            conn.execute(text("SET LOCAL ROLE ziftbook_worker"))
+            conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(people.a)})
+            who = conn.execute(text("SELECT current_user, session_user")).one()
+            conn.execute(set_hash, {"h": hash32, "i": invite_id})
+    finally:
+        admin.dispose()
+    assert tuple(who) == ("ziftbook_worker", "ziftbook")
+    assert stored_token_hash(migrate_engine, people.a, invite_id) == hash32
+
+
+# ZB-08 guard (0053): a resend clears the old link's hash as the app role (app/invites.py), and
+# only the worker sets one.
+def test_the_app_role_clears_an_invite_token_and_the_worker_sets_one(
+    people: People, worker_engine: Engine, migrate_engine: Engine
+) -> None:
+    invite_id = pending(people.a, fresh_email())
+    hash32 = secrets.token_bytes(32)
+    with worker_engine.begin() as conn:  # as the email.invite job does
+        conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(people.a)})
+        assert conn.scalar(text("SELECT current_user")) == "ziftbook_worker"
+        conn.execute(
+            text("UPDATE invites SET token_hash = :h WHERE id = :i"), {"h": hash32, "i": invite_id}
+        )
+    assert stored_token_hash(migrate_engine, people.a, invite_id) == hash32
+
+    with tenant_context(people.a) as session:
+        session.execute(
+            text("UPDATE invites SET token_hash = NULL WHERE id = :i"), {"i": invite_id}
+        )
+    assert stored_token_hash(migrate_engine, people.a, invite_id) is None
+
+
+def stored_token_hash(
+    migrate_engine: Engine, tenant_id: uuid.UUID, invite_id: uuid.UUID
+) -> bytes | None:
+    with migrate_tenant_context(migrate_engine, tenant_id) as conn:
+        found: bytes | None = conn.scalar(
+            text("SELECT token_hash FROM invites WHERE id = :i"), {"i": invite_id}
+        )
+    return found
 
 
 def test_invites_are_isolated_by_tenant(people: People) -> None:

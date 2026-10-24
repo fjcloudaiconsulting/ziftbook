@@ -7,14 +7,16 @@
 -- Requires ZIF_MIGRATE_PASSWORD, ZIF_APP_PASSWORD and ZIF_WORKER_PASSWORD in the environment. If any is
 -- unset, its password statement fails and the run stops non-zero (a role created without a password cannot
 -- log in). An empty ZIF_WORKER_PASSWORD stops it too (a PASSWORD '' would clear the role's password). The
--- worker must connect as ziftbook_worker: only it may mint email tokens (0051, ZB-08).
--- A run stopped that way has created the roles but skipped the grants, the TEMPORARY revoke and the role
--- settings below: set the password and run it again.
+-- worker must connect as ziftbook_worker: only it may mint email tokens (0051) and set invite tokens (0053),
+-- so a worker still on ziftbook_app fails every sign-up, reset and invite email (ZB-08).
+-- A run stopped by a missing password has created the roles but skipped the grants, the TEMPORARY
+-- revoke and the role settings below: set the password and run it again.
 --
 -- ziftbook_migrate owns the schema and runs Alembic. ziftbook_app owns nothing and gets DML only, through
 -- default privileges set in migration #1. Owners bypass row-level security, so the app must never own tables.
 -- ziftbook_worker is the worker's: every privilege of ziftbook_app (CONNECT included) plus what only
--- background jobs may do, granted by migrations (0049: mint_email_token). It owns nothing either.
+-- background jobs may do, granted by migrations (0049: mint_email_token) or left to it by a trigger (0053: an
+-- invite's token_hash). It owns nothing either.
 
 \getenv migrate_password ZIF_MIGRATE_PASSWORD
 \getenv app_password ZIF_APP_PASSWORD
