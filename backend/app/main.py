@@ -57,7 +57,7 @@ from app.config import (
     StripeSettings,
     TurnstileSettings,
 )
-from app.db import SessionLocal, reset_session
+from app.db import SessionLocal, database_role, reset_session
 from app.errors import ApiError, Error
 
 HEALTH_PATH = "/api/healthz"
@@ -204,6 +204,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     totp_key = totp.key_state()
     rate_limit_key = limits.key_state()
     storage_on = StorageSettings().configured()
+    role = database_role()  # ZB-08
     payments_on = StripeSettings().configured()
     # Here, not at import: `python -m app.main` prints the OpenAPI document to stdout.
     logger.info(
@@ -224,8 +225,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             "storage": "on" if storage_on else "off",
             # "off": owner payment routes answer 503 and booking pages book with no payment step.
             "payments": "on" if payments_on else "off",
+            # ZB-08. The role the API's queries run as: ziftbook_app, never the worker's.
+            "database_role": role,
         },
     )
+    # ZB-08: logged, never a refusal to start (as the secrets below). A worker's connection string
+    # in the API's secret would hand the API the worker's powers (minting email tokens). None: the
+    # query failed, already logged.
+    if role is not None and role != "ziftbook_app":
+        logger.error(
+            "api database role: not ziftbook_app, the API holds another role's privileges",
+            extra={"database_role": role},
+        )
     # ZIF-116: logged, never a refusal to start. The deployments run one replica with Recreate, so a
     # failed start would take the whole API down over a control only the guarded requests need.
     if not turnstile.enabled() and not TurnstileSettings().turnstile_disabled:
