@@ -2,6 +2,7 @@
 
 import os
 import uuid
+import zlib
 from collections.abc import Callable
 from datetime import timedelta
 from typing import Any
@@ -33,6 +34,7 @@ from tests.conftest import (
     signed_in,
     upload,
 )
+from tests.test_photos import exif_of, jpeg_header, png_with_chunk
 from tests.test_services import service, stored
 
 MEDIA = "https://img.example.test"
@@ -187,6 +189,43 @@ def test_check_is_owner_only_and_needs_storage(
     )
     monkeypatch.delenv("ZIF_S3_ENDPOINT")
     assert owner.post(f"/api/photo-uploads/{upload_id}/check", json={}).status_code == 503
+
+
+# ZB-33 Review Focus 5. guard: pins the code a lossless JPEG, an animated PNG and a big eXIf
+# answer, photo_unreadable, the one the console already explains.
+@pytest.mark.parametrize(
+    "data",
+    [
+        jpeg_header(9600, 16, 1, 1, sof=0xC3),
+        png_with_chunk(b"acTL", b"\x00\x00\x00\x02\x00\x00\x00\x00"),
+        png_with_chunk(b"eXIf", b"Exif\x00\x00" * 11_000),
+    ],
+    ids=["lossless-jpeg", "animated-png", "big-exif"],
+)
+def test_a_container_refused_before_decoding_is_photo_unreadable(
+    s3: S3Client, people: People, owner: TestClient, data: bytes
+) -> None:
+    upload_id = upload(s3, people.a, data)
+    checked = owner.post(f"/api/photo-uploads/{upload_id}/check", json={})
+    assert (checked.status_code, checked.json()) == (422, {"code": "photo_unreadable"})
+
+
+# ZB-33 fence. Kills: EXIF Pillow cannot parse answering 500. A PNG zTXt or iTXt chunk named exif
+# hands Pillow text where it expects bytes.
+@pytest.mark.parametrize(
+    "data",
+    [
+        png_with_chunk(b"zTXt", b"exif\0\0" + zlib.compress(exif_of(6))),
+        png_with_chunk(b"iTXt", b"exif\0\0\0\0\0" + exif_of(6)),
+    ],
+    ids=["ztxt", "itxt"],
+)
+def test_exif_pillow_cannot_parse_is_photo_unreadable(
+    s3: S3Client, people: People, owner: TestClient, data: bytes
+) -> None:
+    upload_id = upload(s3, people.a, data)
+    checked = owner.post(f"/api/photo-uploads/{upload_id}/check", json={})
+    assert (checked.status_code, checked.json()) == (422, {"code": "photo_unreadable"})
 
 
 # ZIF-133 F7. fence. Kills: a rate limit missing from the presign, the check or a Save carrying a

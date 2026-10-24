@@ -3,6 +3,8 @@ import createNextIntlPlugin from "next-intl/plugin";
 
 const nextConfig: NextConfig = {
   output: "standalone",
+  // The app serves no optimized images, so /_next/image and sharp stay unused at runtime.
+  images: { unoptimized: true },
   experimental: {
     // Next keeps a copy of every proxied request body up to this size and ends it there as if
     // complete. Down from 10MB: the proxy forwards at most MAX_BODY_BYTES, or WEBHOOK_MAX_BODY_BYTES for
