@@ -29,7 +29,7 @@ from psycopg.errors import QueryCanceled
 from sqlalchemy import Engine, event, text
 from sqlalchemy.exc import OperationalError
 
-from app import auth, availability, bookings, limits, members, schedule, turnstile
+from app import auth, availability, bookings, clients, limits, members, schedule, turnstile
 from app.db import SessionLocal, tenant_context
 from app.main import create_app
 from app.schedule import to_utc
@@ -162,7 +162,7 @@ def post_booking(
         "name": "Guest",
         "email": fresh_email(),
         "phone": "+31612345678",
-        "policy_version": "2026-09-01",
+        "policy_version": clients.policy_version_for("en"),
         "consents": {},
         **overrides,
     }
@@ -872,7 +872,7 @@ def guest_body(**overrides: Any) -> dict[str, Any]:
         "name": "Guest",
         "email": fresh_email(),
         "phone": "+31612345678",
-        "policy_version": "2026-09-01",
+        "policy_version": clients.policy_version_for("en"),
         "consents": {},
         **overrides,
     }
@@ -1287,7 +1287,7 @@ def test_the_creation_event_carries_the_address_the_browser_and_the_consent_seam
         people.a,
         ready,
         starts_at=at("09:00"),
-        consents={"marketing_email": True, "sms": False},
+        consents={"marketing_email": True},
     )
 
     assert response.status_code == 201
@@ -1304,8 +1304,8 @@ def test_the_creation_event_carries_the_address_the_browser_and_the_consent_seam
     # `"ip": None` was green. auth.origin takes it from the connection, never from a header.
     assert row.ip == address
     assert row.user_agent == "zif-booking-test/1"
-    assert row.policy_version == "2026-09-01"
-    assert row.consent_purposes == {"marketing_email": True, "sms": False}
+    assert row.policy_version == clients.policy_version_for("en")
+    assert row.consent_purposes == {"marketing_email": True}
 
 
 # 32: FENCE - ruling 18.
@@ -1317,7 +1317,7 @@ def test_a_withdrawal_is_recorded_immediately_and_a_grant_is_not(
         people.a,
         ready,
         starts_at=at("09:00"),
-        consents={"marketing_email": False, "sms": True},
+        consents={"marketing_email": False},
     )
 
     assert response.status_code == 201
@@ -1332,6 +1332,42 @@ def test_a_withdrawal_is_recorded_immediately_and_a_grant_is_not(
     assert [(r.purpose, r.granted, r.source) for r in rows] == [
         ("marketing_email", False, "booking_page")
     ]
+
+
+# ZB-27: GUARD. The legacy version still reads back (stored rows) but no new booking takes it.
+def test_a_new_booking_refuses_the_legacy_consent_version(
+    people: People, app: FastAPI, ready: str
+) -> None:
+    email = fresh_email()
+
+    response = post_booking(
+        new_client(app),
+        people.a,
+        ready,
+        starts_at=at("09:00"),
+        email=email,
+        policy_version="2026-09-01",
+        consents={"sms": True},
+    )
+
+    assert (response.status_code, response.json()) == (422, {"code": "unknown_policy_version"})
+    with tenant_context(people.a) as session:
+        assert session.scalar(text("SELECT count(*) FROM bookings")) == 0
+
+
+def test_a_new_booking_takes_the_version_the_page_offers(
+    people: People, app: FastAPI, ready: str
+) -> None:
+    response = post_booking(
+        new_client(app),
+        people.a,
+        ready,
+        starts_at=at("09:00"),
+        policy_version=clients.policy_version_for("en"),
+        consents={"marketing_email": True},
+    )
+
+    assert response.status_code == 201
 
 
 # 33: GUARD.

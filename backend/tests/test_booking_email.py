@@ -14,9 +14,9 @@ from typing import Any
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import Engine, text
+from sqlalchemy import Engine, event, text
 
-from app import auth, mail
+from app import auth, limits, mail
 from app.bookings import CLIENT_CANCEL, email_merchants
 from app.db import tenant_context
 from app.jobs import Job, run_once
@@ -1459,3 +1459,225 @@ def test_without_a_contact_email_there_is_no_reply_to(
     sent = sent_newest(people.a, booking_id, "booking_cancelled")
 
     assert not has_reply_to(sent)
+
+
+# ZB-03: client-facing booking email is capped per business (at enqueue) and per address (at send).
+def _merchant_booking(owner: TestClient, service_id: str, address: str, start: str) -> Any:
+    return owner.post(
+        "/api/bookings",
+        json={
+            "service_id": service_id,
+            "new_client": {"name": "Walk-in", "email": address},
+            "starts_at": at(start),
+        },
+    )
+
+
+def test_quota_client_mail_is_capped_per_business_at_enqueue(
+    people: People,
+    app: FastAPI,
+    ready: str,
+    owner: TestClient,
+    app_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setattr("app.bookings.CLIENT_MAIL_PER_TENANT_HOUR", 2)
+    clear_jobs(app_engine, people.a)
+    addresses = [fresh_email() for _ in range(3)]
+    with caplog.at_level("WARNING", logger="app.bookings"):
+        for start, address in zip(("09:00", "10:00", "11:00"), addresses, strict=True):
+            assert _merchant_booking(owner, ready, address, start).status_code == 201
+
+    with app_engine.begin() as conn:
+        queued = conn.execute(
+            text(
+                "SELECT count(*) FROM jobs WHERE tenant_id = :t AND kind = 'email.booking' "
+                "AND NOT (payload ? 'user_id')"
+            ),
+            {"t": people.a},
+        ).scalar_one()
+    assert queued == 4  # two bookings, each a confirmation and a reminder; the third, neither
+    over = [r for r in caplog.records if r.getMessage() == "client mail over quota"]
+    assert len(over) == 1
+    assert all(address not in caplog.text for address in addresses)
+
+
+def test_quota_client_mail_is_capped_per_recipient_at_send(
+    people: People,
+    app: FastAPI,
+    ready: str,
+    owner: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setattr("app.mail.CLIENT_MAIL_PER_RECIPIENT_HOUR", 1)
+    address = fresh_email()
+    created = owner.post("/api/clients", json={"name": "Walk-in", "email": address})
+    assert created.status_code == 201
+    for start in ("09:00", "10:00"):
+        booked = owner.post(
+            "/api/bookings",
+            json={"service_id": ready, "client_id": created.json()["id"], "starts_at": at(start)},
+        )
+        assert booked.status_code == 201
+    with caplog.at_level("INFO", logger="app.mail"):
+        run_jobs()
+
+    assert len(sent_to(address)) == 1
+    skipped = [r for r in caplog.records if r.getMessage() == "email skipped"]
+    assert [r.reason for r in skipped] == ["recipient_quota"]  # type: ignore[attr-defined]
+    assert address not in caplog.text
+
+
+def test_quota_public_bookings_are_not_counted_against_the_business(
+    people: People,
+    app: FastAPI,
+    ready: str,
+    owner: TestClient,
+    app_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("app.bookings.CLIENT_MAIL_PER_TENANT_HOUR", 1)
+    for start in ("09:00", "10:00"):
+        assert _merchant_booking(owner, ready, fresh_email(), start).status_code == 201
+    clear_jobs(app_engine, people.a)
+
+    booking_id = make_pending(app, people.a, ready, starts_at=at("13:00"))
+
+    templates = {template_of(j) for j in jobs_for_booking(app_engine, people.a, booking_id)}
+    assert "booking_received" in templates
+
+
+def test_quota_staff_emails_are_not_counted(
+    people: People, app: FastAPI, ready: str, app_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("app.bookings.CLIENT_MAIL_PER_TENANT_HOUR", 1)
+    booking_id = make_pending(app, people.a, ready)
+    with tenant_context(people.a) as db:
+        for template in ("booking_new", "booking_request", "booking_moved_team"):
+            email_merchants(
+                db, people.a, uuid.UUID(booking_id), member_id(people.a, people.both), template
+            )
+    # Nothing above counted: the first client attempt is still within the cap of 1.
+    assert limits.hit({f"mail_tenant:{people.a}": 1}, timedelta(hours=1)) is False
+
+
+def test_quota_recipient_cap_is_per_business(
+    people: People,
+    app: FastAPI,
+    ready: str,
+    owner: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("app.mail.CLIENT_MAIL_PER_RECIPIENT_HOUR", 1)
+    address = fresh_email()
+    # Another business exhausted its own allowance for this address (and the old global key too).
+    other = limits.email_key("mail_rcpt", f"{people.b}|{address}")
+    for key in (other, limits.email_key("mail_rcpt", address)):
+        assert limits.hit({key: 1}, timedelta(hours=1)) is False
+        assert limits.hit({key: 1}, timedelta(hours=1)) is True
+    created = owner.post("/api/clients", json={"name": "Walk-in", "email": address})
+    assert created.status_code == 201
+    for start in ("09:00", "10:00"):
+        booked = owner.post(
+            "/api/bookings",
+            json={"service_id": ready, "client_id": created.json()["id"], "starts_at": at(start)},
+        )
+        assert booked.status_code == 201
+    run_jobs()
+
+    assert len(sent_to(address)) == 1
+
+
+def test_quota_public_cap_trips_on_its_own(
+    people: People,
+    app: FastAPI,
+    ready: str,
+    owner: TestClient,
+    app_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("app.bookings.CLIENT_MAIL_PUBLIC_PER_TENANT_HOUR", 2)
+    clear_jobs(app_engine, people.a)
+    ids = [make_pending(app, people.a, ready, starts_at=at(c)) for c in ("09:00", "10:00", "11:00")]
+    # A member's own booking is not held back by the public cap.
+    assert _merchant_booking(owner, ready, fresh_email(), "13:00").status_code == 201
+
+    received = [
+        booking_id
+        for booking_id in ids
+        if "booking_received"
+        in {template_of(j) for j in jobs_for_booking(app_engine, people.a, booking_id)}
+    ]
+    assert len(received) == 2
+    with app_engine.begin() as conn:
+        confirmed = conn.execute(
+            text(
+                "SELECT count(*) FROM jobs WHERE tenant_id = :t "
+                "AND payload->>'template' = 'booking_confirmed' AND NOT (payload ? 'user_id')"
+            ),
+            {"t": people.a},
+        ).scalar_one()
+    assert confirmed == 1
+
+
+def test_quota_recipient_cap_holds_across_businesses(
+    people: People, app: FastAPI, ready: str, owner: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("app.mail.CLIENT_MAIL_PER_RECIPIENT_ANY_HOUR", 1)
+    address = fresh_email()
+    key = limits.email_key("mail_rcpt_any", address)
+    assert limits.hit({key: 1}, timedelta(hours=1)) is False  # another business's send
+    created = owner.post("/api/clients", json={"name": "Walk-in", "email": address})
+    assert created.status_code == 201
+    booked = owner.post(
+        "/api/bookings",
+        json={"service_id": ready, "client_id": created.json()["id"], "starts_at": at("09:00")},
+    )
+    assert booked.status_code == 201
+    run_jobs()
+
+    assert sent_to(address) == []
+
+
+def test_quota_merchant_flag_has_no_default() -> None:
+    import inspect
+
+    from app import bookings
+
+    parameter = inspect.signature(bookings.email).parameters["merchant"]
+    assert parameter.default is inspect.Parameter.empty
+
+
+# ZB-03: the quota is counted on the booking transaction's own connection. A second pooled
+# connection checked out under the tenant lock deadlocks the pool once enough bookings run at once
+# (bookings.account() says why). Kills a limits.hit() that opens its own transaction there.
+def test_quota_is_counted_on_the_bookings_own_connection(
+    people: People, app: FastAPI, ready: str, owner: TestClient, app_engine: Engine
+) -> None:
+    held = [0, 0]  # checked out now, the most at once
+
+    def checkout(*_: Any) -> None:
+        held[0] += 1
+        held[1] = max(held[1], held[0])
+
+    def checkin(*_: Any) -> None:
+        held[0] -= 1
+
+    event.listen(app_engine, "checkout", checkout)
+    event.listen(app_engine, "checkin", checkin)
+    try:
+        booked = _merchant_booking(owner, ready, fresh_email(), "09:00")
+        assert booked.status_code == 201
+        booking_peak, held[1] = held[1], 0
+        assert patch(owner, booked.json()["id"], "cancelled_by_merchant").status_code == 200
+        cancel_peak = held[1]
+    finally:
+        event.remove(app_engine, "checkout", checkout)
+        event.remove(app_engine, "checkin", checkin)
+
+    assert (booking_peak, cancel_peak) == (1, 1)
+    jobs = jobs_for_booking(app_engine, people.a, booked.json()["id"])
+    templates = {template_of(j) for j in jobs}
+    assert {"booking_confirmed", "booking_cancelled"} <= templates  # both went through the quota

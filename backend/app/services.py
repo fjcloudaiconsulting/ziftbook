@@ -3,11 +3,13 @@ Services are archived, never deleted."""
 
 import json
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Body, Request, Response
+from fastapi import APIRouter, Body, Depends, Request, Response
 from pydantic import (
     AfterValidator,
     BaseModel,
@@ -23,6 +25,7 @@ from app import auth, jobs, photos
 from app.accounts import named, printable
 from app.auth import CurrentOwner, CurrentSession, SignedIn
 from app.business_settings import Locale
+from app.db import tenant_context
 from app.errors import ApiError, Error
 
 # Line and paragraph separators are Zl/Zp, not a C* category, so printable() alone lets them
@@ -165,6 +168,27 @@ def found(current: SignedIn, service_id: UUID, lock: str = "") -> ServiceOut:
     return out(found_row(current, service_id, lock))
 
 
+@contextmanager
+def as_owner(session: Row[Any]) -> Iterator[SignedIn]:
+    """A short transaction of its own, as the owner whose session resolved_owner checked."""
+    with tenant_context(session.tenant_id) as db:
+        yield SignedIn(session.user_id, session.tenant_id, session.role, db)
+
+
+def resolved_owner(session: Annotated[Row[Any], Depends(auth.resolve)]) -> Row[Any]:
+    """The signed-in owner's session, checked in its own short transaction as photos.owner_tenant
+    does, but keeping the user for the audit events (ZB-16): a Save opens as_owner only around its
+    reads and writes, so no pooled connection is held while its photo waits on the decode lock. A
+    dependency, as auth.owner, so anyone else gets 403 whatever they send; auth.resolve is one
+    too, so the name-gate walk (tests/test_names.py) sees these routes."""
+    with as_owner(session) as current:
+        auth.owner(auth.named(current))
+    return session
+
+
+ResolvedOwner = Annotated[Row[Any], Depends(resolved_owner)]
+
+
 @router.get("/services", name="list", responses={401: {"model": Error}})
 def list_services(current: CurrentSession, response: Response) -> list[ServiceOut]:
     """Every service of the business, archived ones included; the booking flow (ZIF-51) is what
@@ -194,61 +218,71 @@ def read_service(service_id: UUID, current: CurrentSession, response: Response) 
     responses={s: {"model": Error} for s in (401, 403, 415, 422, 429, 503)},
 )
 def create_service(
-    new: ServiceIn, current: CurrentOwner, request: Request, response: Response
+    new: ServiceIn, owner: ResolvedOwner, request: Request, response: Response
 ) -> ServiceOut:
-    row = current.db.execute(
-        text(f"""
-        INSERT INTO services (tenant_id, name, description, price_amount_minor, price_currency,
-                              duration_minutes, buffer_minutes, photo_placeholder)
-        SELECT id, CAST(:name AS jsonb), CAST(:description AS jsonb), :amount_minor, currency,
-               :duration_minutes, :buffer_minutes, :placeholder
-        FROM tenants WHERE id = current_setting('app.tenant_id')::uuid
-        RETURNING {FIELDS}
-        """),
-        {
-            "name": json.dumps(new.name),
-            "description": json.dumps(new.description),
-            "amount_minor": new.price.amount_minor,
-            "duration_minutes": new.duration_minutes,
-            "buffer_minutes": new.buffer_minutes,
-            "placeholder": new.placeholder,
-        },
-    ).one()
-    service = out(row)
-    auth.record(
-        current.db,
-        request,
-        "service_created",
-        actor_user_id=current.user_id,
-        target=f"service:{service.id}",
-    )
-    response.headers["Cache-Control"] = "no-store"
+    # Chosen here, not by the column default: the photo's key carries it, and the photo is stored
+    # before the row is written. A uuid7 like the default, so services still list in creation order.
+    service_id = uuid.uuid7()
+    stored = None
     if new.photo_upload_id is not None:
-        # The new row is invisible to others until commit, so holding it during the decode blocks
-        # nobody; a refused photo rolls the whole create back.
-        photos.guard(current.tenant_id, request)
-        stored = photos.finalize(current.tenant_id, service.id, new.photo_upload_id)
-        service = out(
-            current.db.execute(
-                text(f"""
-                UPDATE services SET photo_key = :key, photo_content_type = 'image/webp',
-                  photo_width = :width, photo_height = :height
-                WHERE id = :id RETURNING {FIELDS}
-                """),
-                {
-                    "id": service.id,
-                    "key": f"{current.tenant_id}/{service.id}/{new.photo_upload_id}",
-                    "width": stored.width,
-                    "height": stored.height,
-                },
-            ).one()
+        # Before any transaction opens (ZB-16): the decode may wait on the lock, and a transaction
+        # held across it pins a pooled connection. A refused photo is an error before anything is
+        # written, so nothing is created.
+        photos.guard(owner.tenant_id, request)
+        stored = photos.finalize(owner.tenant_id, service_id, new.photo_upload_id)
+    with as_owner(owner) as current:
+        row = current.db.execute(
+            text(f"""
+            INSERT INTO services (id, tenant_id, name, description, price_amount_minor,
+                                  price_currency, duration_minutes, buffer_minutes,
+                                  photo_placeholder)
+            SELECT :id, id, CAST(:name AS jsonb), CAST(:description AS jsonb), :amount_minor,
+                   currency, :duration_minutes, :buffer_minutes, :placeholder
+            FROM tenants WHERE id = current_setting('app.tenant_id')::uuid
+            RETURNING {FIELDS}
+            """),
+            {
+                "id": service_id,
+                "name": json.dumps(new.name),
+                "description": json.dumps(new.description),
+                "amount_minor": new.price.amount_minor,
+                "duration_minutes": new.duration_minutes,
+                "buffer_minutes": new.buffer_minutes,
+                "placeholder": new.placeholder,
+            },
+        ).one()
+        service = out(row)
+        auth.record(
+            current.db,
+            request,
+            "service_created",
+            actor_user_id=current.user_id,
+            target=f"service:{service.id}",
         )
-    if not new.worker_ids:
-        return service
-    # A refused id is an ApiError, which rolls back the insert above too: no unbookable leftover.
-    # Nobody else sees the new row yet, so locking only the members makes no cycle with PUT.
-    assign_workers(current, request, service.id, new.worker_ids)
-    return found(current, service.id)
+        response.headers["Cache-Control"] = "no-store"
+        if stored is not None:
+            service = out(
+                current.db.execute(
+                    text(f"""
+                    UPDATE services SET photo_key = :key, photo_content_type = 'image/webp',
+                      photo_width = :width, photo_height = :height
+                    WHERE id = :id RETURNING {FIELDS}
+                    """),
+                    {
+                        "id": service.id,
+                        "key": f"{current.tenant_id}/{service.id}/{new.photo_upload_id}",
+                        "width": stored.width,
+                        "height": stored.height,
+                    },
+                ).one()
+            )
+        if not new.worker_ids:
+            return service
+        # A refused id is an ApiError, which rolls back the insert above too: no unbookable
+        # leftover. Nobody else sees the new row yet, so locking only the members makes no cycle
+        # with PUT.
+        assign_workers(current, request, service.id, new.worker_ids)
+        return found(current, service.id)
 
 
 @router.patch(
@@ -259,11 +293,12 @@ def create_service(
 def update_service(
     service_id: UUID,
     change: ServiceChange,
-    current: CurrentOwner,
+    owner: ResolvedOwner,
     request: Request,
     response: Response,
 ) -> ServiceOut:
-    row = found_row(current, service_id)  # a 404 before any image work
+    with as_owner(owner) as current:
+        row = found_row(current, service_id)  # a 404 before any image work
     sent = change.model_dump(exclude_unset=True)
     swap = "photo_upload_id" in sent
     upload_id: UUID | None = sent.pop("photo_upload_id", None)
@@ -275,91 +310,99 @@ def update_service(
         )
     stored = None
     if swap and upload_id is not None:
-        # Before the lock, which is taken only afterwards (ZIF-133): bookings take FOR SHARE on
-        # services, so a NO KEY UPDATE held across a decode would turn them into 503 busy.
-        photos.guard(current.tenant_id, request)
-        stored = photos.finalize(current.tenant_id, service_id, upload_id)
-    # NO KEY UPDATE: two owners' changes queue here instead of one overwriting the other's, while
-    # foreign key checks from bookings (KEY SHARE, ZIF-51) don't wait.
-    row = found_row(current, service_id, "FOR NO KEY UPDATE")
-    service = out(row)
-    response.headers["Cache-Control"] = "no-store"
-    # The service in the request's shape, so the two compare field by field.
-    before = service.model_dump(exclude={"id": True, "price": {"currency"}, "photo": True})
-    # The business's own text never goes in the log (it may name a person): only that it changed.
-    changed: dict[str, object] = {
-        key: "changed" if key in LOGGED_AS_CHANGED else {"old": before[key], "new": value}
-        for key, value in sent.items()
-        if before[key] != value
-    }
-    if swap and (
-        row.photo_key is None
-        if stored is None
-        else row.photo_key == f"{current.tenant_id}/{service_id}/{upload_id}"
-    ):
-        swap = False  # another save already removed it, or set this very upload, while we waited
-    if swap:
-        changed["photo"] = (
-            "removed" if stored is None else "added" if row.photo_key is None else "replaced"
-        )
-    if not changed:
-        return service  # an empty body, or the same values: nothing written, nothing recorded
-    after = before | sent
-    key, width, height = row.photo_key, row.photo_width, row.photo_height
-    if swap:
-        key, width, height = (
-            (f"{current.tenant_id}/{service_id}/{upload_id}", stored.width, stored.height)
-            if stored
-            else (None, None, None)
-        )
-    updated = current.db.execute(
-        text(f"""
-        UPDATE services SET
-          name = CAST(:name AS jsonb), description = CAST(:description AS jsonb),
-          price_amount_minor = :amount_minor, duration_minutes = :duration_minutes,
-          buffer_minutes = :buffer_minutes, photo_placeholder = :placeholder,
-          photo_key = :photo_key, photo_width = :photo_width, photo_height = :photo_height,
-          photo_content_type = CASE WHEN CAST(:photo_key AS text) IS NULL THEN NULL
-                                    ELSE 'image/webp' END,
-          -- An archived service keeps the time it was first archived.
-          archived_at = CASE WHEN :archived THEN coalesce(archived_at, now()) END
-        WHERE id = :id
-        RETURNING {FIELDS}
-        """),
-        {
-            "id": service_id,
-            "name": json.dumps(after["name"]),
-            "description": json.dumps(after["description"]),
-            "amount_minor": after["price"]["amount_minor"],
-            "duration_minutes": after["duration_minutes"],
-            "buffer_minutes": after["buffer_minutes"],
-            "archived": after["archived"],
-            "placeholder": after["placeholder"],
-            "photo_key": key,
-            "photo_width": width,
-            "photo_height": height,
-        },
-    ).one()
-    if swap and row.photo_key:
-        # The unique tail: finished jobs keep their dedupe key for 30 days, and the same prefix
-        # may need deleting again after a later Save.
-        prefix = f"{row.photo_key}/"
-        jobs.enqueue(
+        # Between the two transactions (ZB-16): the decode may wait on the lock, and a transaction
+        # held across it pins a pooled connection. So also before the row lock (ZIF-133): bookings
+        # take FOR SHARE on services, and a NO KEY UPDATE held across a decode would turn them
+        # into 503 busy.
+        photos.guard(owner.tenant_id, request)
+        stored = photos.finalize(owner.tenant_id, service_id, upload_id)
+    # The write in a transaction of its own, from the row re-read under its lock: whatever another
+    # save committed while this one decoded is what the comparisons below see, as when both reads
+    # shared the request's transaction (READ COMMITTED), and a service gone since is the same 404.
+    with as_owner(owner) as current:
+        # NO KEY UPDATE: two owners' changes queue here instead of one overwriting the other's,
+        # while foreign key checks from bookings (KEY SHARE, ZIF-51) don't wait.
+        row = found_row(current, service_id, "FOR NO KEY UPDATE")
+        service = out(row)
+        response.headers["Cache-Control"] = "no-store"
+        # The service in the request's shape, so the two compare field by field.
+        before = service.model_dump(exclude={"id": True, "price": {"currency"}, "photo": True})
+        # The business's own text never goes in the log (it may name a person): only that it
+        # changed.
+        changed: dict[str, object] = {
+            key: "changed" if key in LOGGED_AS_CHANGED else {"old": before[key], "new": value}
+            for key, value in sent.items()
+            if before[key] != value
+        }
+        if swap and (
+            row.photo_key is None
+            if stored is None
+            else row.photo_key == f"{current.tenant_id}/{service_id}/{upload_id}"
+        ):
+            # another save already removed it, or set this very upload, while we waited
+            swap = False
+        if swap:
+            changed["photo"] = (
+                "removed" if stored is None else "added" if row.photo_key is None else "replaced"
+            )
+        if not changed:
+            return service  # an empty body, or the same values: nothing written, nothing recorded
+        after = before | sent
+        key, width, height = row.photo_key, row.photo_width, row.photo_height
+        if swap:
+            key, width, height = (
+                (f"{current.tenant_id}/{service_id}/{upload_id}", stored.width, stored.height)
+                if stored
+                else (None, None, None)
+            )
+        updated = current.db.execute(
+            text(f"""
+            UPDATE services SET
+              name = CAST(:name AS jsonb), description = CAST(:description AS jsonb),
+              price_amount_minor = :amount_minor, duration_minutes = :duration_minutes,
+              buffer_minutes = :buffer_minutes, photo_placeholder = :placeholder,
+              photo_key = :photo_key, photo_width = :photo_width, photo_height = :photo_height,
+              photo_content_type = CASE WHEN CAST(:photo_key AS text) IS NULL THEN NULL
+                                        ELSE 'image/webp' END,
+              -- An archived service keeps the time it was first archived.
+              archived_at = CASE WHEN :archived THEN coalesce(archived_at, now()) END
+            WHERE id = :id
+            RETURNING {FIELDS}
+            """),
+            {
+                "id": service_id,
+                "name": json.dumps(after["name"]),
+                "description": json.dumps(after["description"]),
+                "amount_minor": after["price"]["amount_minor"],
+                "duration_minutes": after["duration_minutes"],
+                "buffer_minutes": after["buffer_minutes"],
+                "archived": after["archived"],
+                "placeholder": after["placeholder"],
+                "photo_key": key,
+                "photo_width": width,
+                "photo_height": height,
+            },
+        ).one()
+        if swap and row.photo_key:
+            # The unique tail: finished jobs keep their dedupe key for 30 days, and the same prefix
+            # may need deleting again after a later Save.
+            prefix = f"{row.photo_key}/"
+            jobs.enqueue(
+                current.db,
+                "media.delete",
+                f"media.delete:{current.tenant_id}:{prefix}:{uuid.uuid4().hex}",
+                {"prefix": prefix},
+                tenant_id=current.tenant_id,
+            )
+        auth.record(
             current.db,
-            "media.delete",
-            f"media.delete:{current.tenant_id}:{prefix}:{uuid.uuid4().hex}",
-            {"prefix": prefix},
-            tenant_id=current.tenant_id,
+            request,
+            "service_changed",
+            actor_user_id=current.user_id,
+            target=f"service:{service_id}",
+            details=changed,
         )
-    auth.record(
-        current.db,
-        request,
-        "service_changed",
-        actor_user_id=current.user_id,
-        target=f"service:{service_id}",
-        details=changed,
-    )
-    return out(updated)
+        return out(updated)
 
 
 def lock_members(current: SignedIn, member_ids: list[UUID]) -> dict[UUID, UUID]:

@@ -18,8 +18,17 @@ from app import bookings, payments, stripe_gateway
 from app.db import tenant_context
 from app.jobs import Job
 from app.main import create_app
-from tests.conftest import People, new_client, points, put_settings, save_setting, signed_in
+from tests.conftest import (
+    People,
+    member_id,
+    new_client,
+    points,
+    put_settings,
+    save_setting,
+    signed_in,
+)
 from tests.stripe_fake import FakeGateway
+from tests.test_availability_api import assign, weekdays
 from tests.test_booking_email import (
     clean_outbox,  # noqa: F401 -- autouse: these tests send mail, so they leave outbox rows
     jobs_for_booking,
@@ -42,7 +51,8 @@ from tests.test_booking_payments_api import (
 )
 from tests.test_bookings_api import at
 from tests.test_bookings_approval_api import PAST, expire, patch, shift
-from tests.test_merchant_booking_api import move
+from tests.test_merchant_booking_api import book, move, yesterday
+from tests.test_working_hours import seed
 
 PRICE = 4000
 
@@ -735,3 +745,70 @@ def test_a_refund_retried_after_a_dashboard_refund_is_flagged_not_sent_again(
     assert refund_failed_details(people, booking_id) == [
         {"amount_minor": PRICE - 1000, "refund": None}
     ]
+
+
+def add_worker(people: People, service_id: str) -> tuple[uuid.UUID, uuid.UUID]:
+    """Ana (people.only_a, a worker) performs the service too: (her user id, her member id)."""
+    seed(people.a, people.only_a, weekdays("09:00", "17:00"))
+    assign(people.a, service_id, member_id(people.a, people.only_a))
+    return people.only_a, member_id(people.a, people.only_a)
+
+
+# ZB-02 (D5). Kills: a worker whose cancel of a paid booking refunds the client without the owner.
+def test_a_worker_cannot_cancel_a_paid_booking(
+    people: People,
+    app: FastAPI,
+    owner: TestClient,
+    ready: str,
+    fake_stripe: FakeGateway,
+) -> None:
+    worker_user, worker_member = add_worker(people, ready)
+    _, booking_id, _ = booked(app, people, fake_stripe, ready, "pay", member_id=str(worker_member))
+    assert patch(owner, booking_id, "confirmed").status_code == 200
+    worker = signed_in(app, people.a, worker_user)
+    refused = patch(worker, booking_id, "cancelled_by_merchant")
+    assert (refused.status_code, refused.json()) == (403, {"code": "owner_only"})
+    settle_all()
+    assert fake_stripe.refunded() == []
+    assert status_of(people, booking_id) == "confirmed"
+
+
+# ZB-02. Kills: the started test dropped from the gate (no payment here, so only it can refuse).
+def test_a_worker_cannot_cancel_a_booking_that_has_started(
+    people: People, app: FastAPI, owner: TestClient, ready: str
+) -> None:
+    worker_user, worker_member = add_worker(people, ready)
+    made = book(owner, ready, member_id=worker_member, starts_at=yesterday("10:00"), override=True)
+    assert made.status_code == 201, made.json()
+    assert made.json()["status"] == "confirmed"
+    worker = signed_in(app, people.a, worker_user)
+    refused = patch(worker, made.json()["id"], "cancelled_by_merchant")
+    assert (refused.status_code, refused.json()) == (403, {"code": "owner_only"})
+
+
+# ZB-02. Kills: a gate that shuts workers out of every cancel.
+def test_a_worker_can_still_cancel_a_future_unpaid_booking(
+    people: People, app: FastAPI, owner: TestClient, ready: str
+) -> None:
+    worker_user, worker_member = add_worker(people, ready)
+    made = book(owner, ready, member_id=worker_member)
+    assert made.status_code == 201, made.json()
+    assert made.json()["status"] == "confirmed"
+    worker = signed_in(app, people.a, worker_user)
+    assert patch(worker, made.json()["id"], "cancelled_by_merchant").status_code == 200
+
+
+# ZB-02. Kills: a gate that also refuses the owner, or one that stops the refund.
+def test_an_owner_can_cancel_a_paid_booking_and_it_is_refunded(
+    people: People,
+    app: FastAPI,
+    owner: TestClient,
+    ready: str,
+    fake_stripe: FakeGateway,
+) -> None:
+    _, worker_member = add_worker(people, ready)
+    _, booking_id, _ = booked(app, people, fake_stripe, ready, "pay", member_id=str(worker_member))
+    assert patch(owner, booking_id, "confirmed").status_code == 200
+    assert patch(owner, booking_id, "cancelled_by_merchant").status_code == 200
+    settle_all()
+    assert len(fake_stripe.refunds) == 1

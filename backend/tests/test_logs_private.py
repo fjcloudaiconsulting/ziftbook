@@ -18,7 +18,7 @@ from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 from opentelemetry.sdk.trace import ReadableSpan
 from sqlalchemy import Engine, text
 
-from app import auth, bookings, payments
+from app import auth, bookings, clients, payments
 from app.db import tenant_context
 from app.jobs import run_once
 from app.mail import render
@@ -303,7 +303,7 @@ def test_no_personal_data_ever_reaches_a_log(
             "email": booker_email,
             "phone": booker_phone,
             "message": bad_message,
-            "policy_version": "2026-09-01",
+            "policy_version": clients.policy_version_for("en"),
             "consents": {},
         },
     )
@@ -317,7 +317,7 @@ def test_no_personal_data_ever_reaches_a_log(
             "email": booker_email,
             "phone": booker_phone,
             "message": booker_message,
-            "policy_version": "2026-09-01",
+            "policy_version": clients.policy_version_for("en"),
             "consents": {},
         },
     )
@@ -336,7 +336,7 @@ def test_no_personal_data_ever_reaches_a_log(
             "name": booker_name,
             "email": booker_email,
             "phone": booker_phone,
-            "policy_version": "2026-09-01",
+            "policy_version": clients.policy_version_for("en"),
             "consents": {},
         },
     )
@@ -357,7 +357,7 @@ def test_no_personal_data_ever_reaches_a_log(
             "name": booker_name,
             "email": booker_email,
             "phone": booker_phone,
-            "policy_version": "2026-09-01",
+            "policy_version": clients.policy_version_for("en"),
             "consents": {},
         },
     )

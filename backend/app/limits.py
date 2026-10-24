@@ -5,6 +5,7 @@ import ipaddress
 from datetime import timedelta
 
 from sqlalchemy import text
+from sqlalchemy.orm import Session
 
 from app.db import SessionLocal
 
@@ -29,17 +30,26 @@ DELETE FROM rate_limits WHERE key IN (
 """)
 
 
-def hit(limits: dict[str, int], window: timedelta) -> bool:
+def hit(limits: dict[str, int], window: timedelta, *, db: Session | None = None) -> bool:
     """Count one attempt against each key; True if any key is now over its limit.
 
     Commits in its own transaction, before the request does anything else: the attempt counts even
     if the request then fails. Keys are locked in sorted order, so two attempts sharing keys can't
     deadlock whatever order their callers list them in. The purge stays in this transaction: it
     skips locked rows, so it never makes anyone wait, and a second commit would cost every request.
+
+    With db, the attempt is counted in that session's transaction instead, for a caller that already
+    holds a connection: a second one checked out meanwhile can deadlock the pool (see
+    bookings.account). The rows stay locked until the caller's commit, so only keys nobody else
+    contends for belong here (a tenant's own, under its booking lock), and a rollback uncounts the
+    attempt. No purge there: the deleted rows would stay locked as long, and every other hit purges.
     """
-    with SessionLocal.begin() as session:
-        rows = session.execute(HIT, {"keys": sorted(limits), "window": window}).all()
-        session.execute(PURGE)
+    if db is not None:
+        rows = db.execute(HIT, {"keys": sorted(limits), "window": window}).all()
+    else:
+        with SessionLocal.begin() as session:
+            rows = session.execute(HIT, {"keys": sorted(limits), "window": window}).all()
+            session.execute(PURGE)
     return any(hits > limits[key] for key, hits in rows)
 
 

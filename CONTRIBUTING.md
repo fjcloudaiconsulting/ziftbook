@@ -395,7 +395,10 @@ loggers (`web.*`); Next's own stderr output (banners, SSR error traces) is not i
   (WARNING, retried) and `job gave up` (ERROR, last attempt), with `attempts`;
   `bookings expired` (INFO, `count`, `tenant_id`, from the worker's sweep); `jobs pruned` (INFO, `count`, only when
   something was deleted, from the same sweep); `email sent` (INFO) and
-  `email failed` (WARNING) with `template` (and `error` on failure) plus the job context; never the
+  `email failed` (WARNING) with `template` (and `error` on failure) plus the job context, and
+  `email skipped` (INFO, `template`, `reason` `recipient_quota`, from the worker's send);
+  `client mail over quota` (WARNING, `template`, `source` `merchant` or `public`, when a business's
+  hourly client email quota holds an email back at enqueue); never the
   address, subject or body. Each process logs one startup line (`api started`, `worker started`, `migrations started`) with its
   non-secret settings.
 - `ZIF_LOG_SQL=true` logs SQL statements, never their values, when `ZIF_LOG_LEVEL` is `DEBUG`; off by

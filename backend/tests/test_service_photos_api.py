@@ -499,6 +499,80 @@ def test_the_check_holds_no_transaction_while_it_processes(
     assert seen == [0]
 
 
+# ZB-16. fence. Kills: a Save that decodes its photo inside the request's tenant transaction, which
+# pins a pooled connection while it waits on the decode lock.
+@pytest.mark.parametrize("save", ["create", "update"])
+def test_a_save_holds_no_transaction_while_it_processes_the_photo(
+    s3: S3Client,
+    people: People,
+    owner: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    save: str,
+) -> None:
+    upload_id = upload(s3, people.a, image("PNG", (30, 20)))
+    real = photos.process
+    seen: list[int] = []
+
+    def spy(tenant_id: uuid.UUID, upload: uuid.UUID) -> photos.Variants:
+        seen.append(idle_in_transaction())
+        return real(tenant_id, upload)
+
+    monkeypatch.setattr(photos, "process", spy)
+    if save == "create":
+        saved = service(owner, photo_upload_id=str(upload_id))
+    else:
+        url = f"/api/services/{service(owner).json()['id']}"  # no photo: no process yet
+        saved = owner.patch(url, json={"photo_upload_id": str(upload_id)})
+    assert saved.status_code == (201 if save == "create" else 200)
+    assert saved.json()["photo"]["width"] == 30
+    assert seen == [0]
+
+
+# ZB-16. guard: the write re-reads the service under its lock in its own transaction, so a change
+# another save committed while this one decoded is kept, not overwritten from the earlier read.
+def test_a_save_writes_over_the_service_as_it_is_after_the_decode(
+    s3: S3Client,
+    people: People,
+    owner: TestClient,
+    migrate_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    upload_id = upload(s3, people.a, image("PNG", (30, 20)))
+    service_id = service(owner).json()["id"]
+    real = photos.finalize
+
+    def renamed_meanwhile(tenant_id: uuid.UUID, svc: uuid.UUID, up: uuid.UUID) -> photos.Variants:
+        result = real(tenant_id, svc, up)
+        with tenant_context(people.a) as db:
+            db.execute(
+                text("UPDATE services SET name = CAST(:n AS jsonb) WHERE id = :s"),
+                {"n": '{"en": "Renamed"}', "s": service_id},
+            )
+        return result
+
+    monkeypatch.setattr(photos, "finalize", renamed_meanwhile)
+    patched = owner.patch(f"/api/services/{service_id}", json={"photo_upload_id": str(upload_id)})
+    assert patched.status_code == 200
+    assert (patched.json()["name"], patched.json()["photo"]["width"]) == ({"en": "Renamed"}, 30)
+    assert [r["name"] for r in stored(people.a)] == [{"en": "Renamed"}]
+    (event,) = events(migrate_engine, target=f"service:{service_id}", action="service_changed")
+    assert event["details"] == {"photo": "added"}
+
+
+# ZB-16. guard: a service the business does not have is a 404 before the photo is decoded.
+def test_an_unknown_service_is_a_404_before_any_decode(
+    s3: S3Client, people: People, owner: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    upload_id = upload(s3, people.a, image("PNG", (30, 20)))
+
+    def never(*args: object) -> None:
+        raise AssertionError("processed")
+
+    monkeypatch.setattr(photos, "process", never)
+    missing = owner.patch(f"/api/services/{uuid.uuid7()}", json={"photo_upload_id": str(upload_id)})
+    assert (missing.status_code, missing.json()) == (404, {"code": "not_found"})
+
+
 # ZIF-133 F13. fence. Kills: a media.delete dedupe key with no unique tail: finished jobs keep their
 # key for 30 days, so deleting the same prefix a second time would never be enqueued.
 def test_the_same_prefix_can_be_deleted_twice(

@@ -14,7 +14,7 @@ import logging
 from collections import Counter
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
-from typing import Annotated, Any, Literal, NamedTuple, Self
+from typing import Annotated, Any, Literal, NamedTuple, Self, get_args
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -484,6 +484,11 @@ JOIN memberships m ON m.tenant_id = b.tenant_id AND m.id = b.worker_id
 WHERE b.id = :id
 """)
 
+# ZB-02: whether the booking holds a payment that was taken, which a cancellation would refund.
+PAID_PAYMENT = text(
+    "SELECT EXISTS (SELECT 1 FROM booking_payments WHERE booking_id = :id AND status = 'paid')"
+)
+
 # ZIF-53. Every owner plus the assigned worker, while still a member (a removed worker's past
 # booking mails only the owners): the people who see the request, the same set members.may_manage
 # and the pending queue use. Whether the worker may also answer it is workers_answer_requests
@@ -492,6 +497,13 @@ MERCHANTS = text(
     "SELECT DISTINCT user_id FROM memberships "
     "WHERE role <> 'removed' AND (role = 'owner' OR id = :worker_id)"
 )
+
+
+# ZB-03: client-facing booking emails a business may queue per hour, counted apart for what its own
+# members trigger (merchant=True) and what clients trigger on the public routes. Staff emails are
+# not counted.
+CLIENT_MAIL_PER_TENANT_HOUR = 300
+CLIENT_MAIL_PUBLIC_PER_TENANT_HOUR = 300
 
 
 def email(
@@ -503,8 +515,9 @@ def email(
     *,
     key_suffix: str = "",
     extra: dict[str, str] | None = None,
-) -> None:
-    """Enqueue one booking email, in the caller's transaction.
+    merchant: bool,
+) -> bool:
+    """Enqueue one booking email, in the caller's transaction. False when over the quota.
 
     With user_id, the email is to that merchant (ruling R1) rather than the client, and the
     dedupe key and payload carry the user_id too.
@@ -513,7 +526,20 @@ def email(
     `:r{count}` so a later reschedule's confirmation email is a fresh job, not a dedupe no-op
     against an earlier one's. extra: values merged into the payload (starts_at,
     previous_starts_at); mail.send_booking's starts_at gate reads starts_at back out of it.
+
+    merchant (ZB-03, required): True when a signed-in member's action triggered the client email,
+    False for the public routes, the client's own links and payment outcomes. Each counts against
+    its own per-business hourly quota and is not enqueued over it. Staff emails (user_id) are not
+    counted. Counted in the caller's transaction (every caller holds the tenant's booking lock, so
+    no one else waits on these keys): no second connection, and a rolled-back booking uncounts.
     """
+    if user_id is None:
+        source = "merchant" if merchant else "public"
+        key = f"mail_tenant:{tenant_id}" if merchant else f"mail_tenant_public:{tenant_id}"
+        limit = CLIENT_MAIL_PER_TENANT_HOUR if merchant else CLIENT_MAIL_PUBLIC_PER_TENANT_HOUR
+        if limits.hit({key: limit}, timedelta(hours=1), db=db):
+            logger.warning("client mail over quota", extra={"template": template, "source": source})
+            return False
     key = f"email.booking:{tenant_id}:{booking_id}:{template}{key_suffix}"
     payload: dict[str, str] = {"booking_id": str(booking_id), "template": template}
     if extra:
@@ -522,6 +548,7 @@ def email(
         key += f":{user_id}"
         payload["user_id"] = str(user_id)
     jobs.enqueue(db, "email.booking", key, payload, tenant_id=tenant_id)
+    return True
 
 
 def email_merchants(
@@ -537,7 +564,14 @@ def email_merchants(
     """Enqueue one merchant booking email per active owner plus the assigned worker (ruling R1)."""
     for (user_id,) in db.execute(MERCHANTS, {"worker_id": worker_id}).all():
         email(
-            db, tenant_id, booking_id, template, user_id=user_id, key_suffix=key_suffix, extra=extra
+            db,
+            tenant_id,
+            booking_id,
+            template,
+            user_id=user_id,
+            key_suffix=key_suffix,
+            extra=extra,
+            merchant=False,
         )
 
 
@@ -813,17 +847,18 @@ def announce(
     savepoint: a rollback of the savepoint (a lost race) drops nothing here."""
     if status == "confirmed":
         # starts_at (ZIF-54 D10): a reschedule before this runs makes it skip itself.
-        email(
+        if email(
             db,
             tenant_id,
             booking_id,
             "booking_confirmed",
             extra={"starts_at": starts_at.isoformat()},
-        )
-        remind(db, tenant_id, booking_id, starts_at, now)
+            merchant=False,
+        ):  # over the quota, the reminder is not queued either
+            remind(db, tenant_id, booking_id, starts_at, now)
         email_merchants(db, tenant_id, booking_id, worker_id, "booking_new")
     else:
-        email(db, tenant_id, booking_id, "booking_received")
+        email(db, tenant_id, booking_id, "booking_received", merchant=False)
         email_merchants(db, tenant_id, booking_id, worker_id, "booking_request")
 
 
@@ -874,6 +909,10 @@ def book_online(
     candidates = sorted(hours)  # 5
     # 6. Validate the WHOLE posted map here, before any write, so a bad policy version is a
     #    422 with nothing written - regardless of whether anything was withdrawn.
+    # ZB-27: the legacy version still reads back from stored rows, but a NEW booking takes only
+    # the wording the booking page offers.
+    if policy_version not in {clients.policy_version_for(loc) for loc in get_args(Locale)}:
+        raise ApiError(422, "unknown_policy_version")
     clients.texts_for(policy_version, consents)
     phone = clients.e164(db, phone)  # ZIF-152: also a 422 before any write, after the 404s
     message = message_text(message)  # ZIF-157: likewise
@@ -1244,7 +1283,8 @@ def transition(
     is the owner's alone, and so is any transition out of `pending` unless the business setting
     `workers_answer_requests` is on (403 `owner_only`). A transition the booking's current status
     does not allow, or an outcome recorded before the appointment starts, is 409
-    `invalid_transition`.
+    `invalid_transition`. A worker may cancel only a future booking with no paid payment; any other
+    cancellation is the owner's (403 `owner_only`).
     """
     # Internals, deliberately not in the public schema: the UPDATE's own qualifier is the only
     # authority on whether a transition is legal - the SELECT above it exists for the 404/403 pair
@@ -1270,6 +1310,15 @@ def transition(
         row.status == "pending"
         and not members.is_owner(current)
         and not business_settings.read(current.db).workers_answer_requests
+    ):
+        raise ApiError(403, "owner_only")
+    # 3d, ZB-02 (D5): cancelling a booking that has started or carries a paid payment is the
+    # owner's, because it ends in a refund from the business's own account. A worker still cancels
+    # a future, unpaid one.
+    if (
+        change.status == "cancelled_by_merchant"
+        and not members.is_owner(current)
+        and (row.starts_at <= row.now or current.db.scalar(PAID_PAYMENT, {"id": booking_id}))
     ):
         raise ApiError(403, "owner_only")
     rule = TRANSITIONS[change.status]
@@ -1306,18 +1355,19 @@ def transition(
     # back with the change (test 20). `row.status`, read at step 2 under the advisory lock, is the
     # PRE-transition source.
     if change.status == "confirmed" and row.status == "pending":
-        email(
+        if email(
             current.db,
             current.tenant_id,
             booking_id,
             "booking_confirmed",
             extra={"starts_at": row.starts_at.isoformat()},
-        )
-        remind(current.db, current.tenant_id, booking_id, row.starts_at, row.now)
+            merchant=True,
+        ):  # over the quota, the reminder is not queued either
+            remind(current.db, current.tenant_id, booking_id, row.starts_at, row.now)
     elif change.status == "declined":
-        email(current.db, current.tenant_id, booking_id, "booking_declined")
+        email(current.db, current.tenant_id, booking_id, "booking_declined", merchant=True)
     elif change.status == "cancelled_by_merchant" and row.status in ("pending", "confirmed"):
-        email(current.db, current.tenant_id, booking_id, "booking_cancelled")
+        email(current.db, current.tenant_id, booking_id, "booking_cancelled", merchant=True)
     auth.record(  # 6
         current.db,
         request,
@@ -1432,6 +1482,7 @@ def tell_team(
                 user_id=user_id,
                 key_suffix=key_suffix,
                 extra=extra,
+                merchant=False,
             )
 
 
@@ -1527,14 +1578,15 @@ def book(
     # A booking recorded after the fact (0026's walk-in) tells nobody: it is over.
     if booking.starts_at > row.now:
         # Unconditional: send_booking returns on a client with no address.
-        email(
+        if email(
             db,
             current.tenant_id,
             booking.id,
             "booking_confirmed",
             extra={"starts_at": booking.starts_at.isoformat()},
-        )
-        remind(db, current.tenant_id, booking.id, booking.starts_at, row.now)
+            merchant=True,
+        ):  # over the quota, the reminder is not queued either
+            remind(db, current.tenant_id, booking.id, booking.starts_at, row.now)
         # The booking's worker only, resolved AFTER "anyone" picked one; never email_merchants()
         # (it fans out to every owner).
         tell_team(
@@ -1671,17 +1723,18 @@ def reschedule(
         # reschedule_count does not move, so `:r{count}` would dedupe a move back to an earlier
         # time; the transaction's clock is unique per move (they serialise on the tenant lock).
         stamp = f":m{row.now.timestamp()}"
-        email(
+        if email(
             db,
             current.tenant_id,
             booking_id,
             "booking_confirmed",
             key_suffix=stamp,
             extra={"starts_at": new_iso},
-        )
-        remind(
-            db, current.tenant_id, booking_id, moved.starts_at, row.now
-        )  # the old one self-skips
+            merchant=True,
+        ):  # over the quota, the reminder is not queued either
+            remind(
+                db, current.tenant_id, booking_id, moved.starts_at, row.now
+            )  # the old one self-skips
         changed_member = worker_id != row.worker_id
         # The old worker hears it moved (away, when the member changed); the new one has a new
         # booking, not a move "now with" themselves. The actor is skipped either way.

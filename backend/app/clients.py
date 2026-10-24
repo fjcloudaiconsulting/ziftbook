@@ -15,7 +15,7 @@ from sqlalchemy import Row, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app import auth, passwords
+from app import auth, members, passwords
 from app.accounts import named, printable
 from app.auth import CurrentSession
 from app.business_settings import Locale
@@ -58,7 +58,7 @@ CONSENT_TEXTS: dict[str, dict[Purpose, str]] = {
 }
 # The version a booking page offers, one text per locale: the stored evidence is the wording the
 # person read, so the key is "<version>/<locale>". "2026-09-01" is the legacy English-only version,
-# kept for old tabs.
+# kept only to read stored rows and for the staff consent route; a new booking refuses it (ZB-27).
 POLICY_VERSION = "2026-10-20"
 # The booking page offers email marketing only, so sms/whatsapp stay on the legacy version.
 CONSENT_TEXTS[f"{POLICY_VERSION}/en"] = {
@@ -300,7 +300,9 @@ class ClientOut(BaseModel):
     phone: str | None
     locale: str | None
     client_note: str | None
-    internal_note: str | None  # console-only; see the /api/public fence in tests/test_openapi.py
+    # Console-only (see the /api/public fence in tests/test_openapi.py) and the owner's alone:
+    # null for anyone else.
+    internal_note: str | None
     consents: dict[Purpose, ConsentOut]  # only purposes that have a row
 
 
@@ -324,7 +326,16 @@ def like(query: str) -> str:
 # Fine into the thousands. Add pg_trgm and a GIN index on (name, email, phone) if one business
 # grows past that; nothing else in the route changes.
 
-FIELDS = "id, name, email, phone, locale, client_note, internal_note"
+
+def fields(owner: bool) -> str:
+    """The columns of a client row; the private note is read in SQL only for the owner, as
+    app.time_off.fields does for a reason, so a worker's row never carries it."""
+    return "id, name, email, phone, locale, client_note, " + (
+        "internal_note" if owner else "NULL::text AS internal_note"
+    )
+
+
+FIELDS = fields(True)  # insert(): a new client has no note, so there is nothing to redact
 
 
 class ClientIn(BaseModel):
@@ -376,7 +387,7 @@ def list_clients(
     compact = re.sub(r"[\s().-]", "", stripped) if stripped else None
     rows = current.db.execute(
         text(f"""
-        SELECT {FIELDS} FROM clients
+        SELECT {fields(members.is_owner(current))} FROM clients
         WHERE (CAST(:before AS uuid) IS NULL OR id < :before)
           AND (CAST(:q AS text) IS NULL
                OR name ILIKE :q OR email ILIKE :q OR phone ILIKE :q
@@ -451,7 +462,7 @@ def create_client(
 @router.patch(
     "/clients/{client_id}",
     name="update",
-    responses={s: {"model": Error} for s in (401, 404, 415, 422)},
+    responses={s: {"model": Error} for s in (401, 403, 404, 415, 422)},
 )
 def update_client(
     client_id: UUID,
@@ -463,8 +474,12 @@ def update_client(
     """Change client_note and/or internal_note. Only the fields sent change; both are bound from
     the merged state, as app.services.update_service does, never from the request model directly,
     or a PATCH of one note would silently null the other."""
+    owner = members.is_owner(current)
+    if "internal_note" in change.model_fields_set and not owner:
+        raise ApiError(403, "owner_only")  # even unchanged or null: it is not theirs to send
     row = current.db.execute(
-        text(f"SELECT {FIELDS} FROM clients WHERE id = :id FOR NO KEY UPDATE"), {"id": client_id}
+        text(f"SELECT {fields(owner)} FROM clients WHERE id = :id FOR NO KEY UPDATE"),
+        {"id": client_id},
     ).first()
     if row is None:
         raise ApiError(404, "not_found")
@@ -479,12 +494,15 @@ def update_client(
     after = before | sent
     updated = current.db.execute(
         text(f"""
-        UPDATE clients SET client_note = :client_note, internal_note = :internal_note
+        UPDATE clients SET
+            client_note = :client_note,
+            internal_note = CASE WHEN :owner THEN :internal_note ELSE internal_note END
         WHERE id = :id
-        RETURNING {FIELDS}
+        RETURNING {fields(owner)}
         """),
         {
             "id": client_id,
+            "owner": owner,
             "client_note": after["client_note"],
             "internal_note": after["internal_note"],
         },
@@ -516,7 +534,8 @@ def add_consents(
 ) -> ClientOut:
     """Record what a member says a client granted or withdrew, on the client's behalf."""
     row = current.db.execute(
-        text(f"SELECT {FIELDS} FROM clients WHERE id = :id"), {"id": client_id}
+        text(f"SELECT {fields(members.is_owner(current))} FROM clients WHERE id = :id"),
+        {"id": client_id},
     ).first()
     if row is None:
         raise ApiError(404, "not_found")

@@ -155,6 +155,16 @@ describe("actionsFor (F7)", () => {
       assert.ok(!actionsFor({ ...base, status }, "owner", now, false).includes("reschedule"), status);
     }
   });
+  // ZB-02 fence. Kills: a worker offered a cancel that ends in a refund.
+  test("a worker is offered no cancel on a started or paid booking, but on a future unpaid one", () => {
+    const future = { ...base, status: "confirmed", starts_at: "2026-10-01T10:00:00Z" };
+    assert.ok(!actionsFor({ ...base, status: "confirmed" }, "worker", now, false).includes("cancel"));
+    assert.ok(!actionsFor({ ...future, payment: { status: "paid" } }, "worker", now, false).includes("cancel"));
+    assert.deepEqual(actionsFor(future, "worker", now, false), ["reschedule", "cancel"]);
+    assert.deepEqual(actionsFor({ ...future, payment: { status: "checked" } }, "worker", now, false), ["reschedule", "cancel"]);
+    assert.ok(actionsFor({ ...future, payment: { status: "paid" } }, "owner", now, false).includes("cancel"));
+    assert.ok(actionsFor({ ...base, status: "confirmed" }, "owner", now, false).includes("cancel"));
+  });
   test("completed is the owner's to undo, a worker gets nothing", () => {
     assert.deepEqual(actionsFor({ ...base, status: "completed" }, "worker", now, false), []);
     assert.deepEqual(actionsFor({ ...base, status: "completed" }, "owner", now, false), ["restore", "no_show", "cancel"]);

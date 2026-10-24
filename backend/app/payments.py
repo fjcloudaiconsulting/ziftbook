@@ -946,6 +946,7 @@ def _refund(tenant_id: UUID, row: Row[Any]) -> None:
                     row.booking_id,
                     "booking_expired",
                     extra=None if row.was_booked else {"late": "1"},
+                    merchant=False,
                 )
             count_after_commit(
                 db,
