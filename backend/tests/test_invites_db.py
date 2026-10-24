@@ -22,6 +22,7 @@ from tests.conftest import (
     end_membership,
     fresh_email,
     member_id,
+    migrate_tenant_context,
     wait_until_blocked,
 )
 from tests.test_password_auth_db import HASH
@@ -67,15 +68,13 @@ class NewAccount:
 @pytest.fixture
 def new_accounts(people: People, migrate_engine: Engine) -> Iterator[list[NewAccount]]:
     """Accounts accept_invite creates in a test. Torn down before `people`'s own teardown (this
-    fixture depends on `people`, so pytest tears it down first): their memberships, then, as
-    migrate, their password_credentials, then their users rows."""
+    fixture depends on `people`, so pytest tears it down first), as migrate: their memberships,
+    then their password_credentials, then their users rows."""
     accounts: list[NewAccount] = []
     yield accounts
     for account in accounts:
-        with tenant_context(account.tenant_id) as session:
-            session.execute(
-                text("DELETE FROM memberships WHERE user_id = :u"), {"u": account.user_id}
-            )
+        with migrate_tenant_context(migrate_engine, account.tenant_id) as conn:
+            conn.execute(text("DELETE FROM memberships WHERE user_id = :u"), {"u": account.user_id})
     with migrate_engine.begin() as conn:
         ids = [account.user_id for account in accounts]
         conn.execute(text("DELETE FROM password_credentials WHERE user_id = ANY(:u)"), {"u": ids})

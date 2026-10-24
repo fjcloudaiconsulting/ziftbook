@@ -12,7 +12,7 @@ from sqlalchemy import Engine, text
 from app import auth
 from app.db import tenant_context
 from app.main import create_app
-from tests.conftest import People, email_of, member_id, signed_in
+from tests.conftest import People, email_of, member_id, migrate_tenant_context, signed_in
 
 
 @pytest.fixture
@@ -178,13 +178,14 @@ def test_last_seen_is_written_at_most_every_few_minutes(
 
 
 def test_removing_the_membership_signs_the_user_out_on_the_next_request(
-    people: People, client: TestClient
+    people: People, client: TestClient, migrate_engine: Engine
 ) -> None:
     sign_in(client, people.a, people.only_a)
     assert client.get("/api/session").status_code == 200
 
-    with tenant_context(people.a) as session:
-        session.execute(text("DELETE FROM memberships WHERE user_id = :u"), {"u": people.only_a})
+    # As the migrate role: the app role has no DELETE on memberships (ZB-10).
+    with migrate_tenant_context(migrate_engine, people.a) as conn:
+        conn.execute(text("DELETE FROM memberships WHERE user_id = :u"), {"u": people.only_a})
 
     assert unauthenticated(client.get("/api/session"))
 

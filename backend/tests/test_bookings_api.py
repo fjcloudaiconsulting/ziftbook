@@ -46,6 +46,7 @@ from tests.conftest import (
     fresh_address,
     fresh_email,
     member_id,
+    migrate_tenant_context,
     new_client,
     points,
     put_settings,
@@ -459,8 +460,9 @@ def test_three_concurrent_bookers_and_three_free_workers_all_get_a_booking(
         # the migrate role, exactly as the `people` fixture's own teardown does.
         with migrate_engine.begin() as conn:
             delete_bookings(conn, (people.a,))
-        with tenant_context(people.a) as session:
-            session.execute(text("DELETE FROM memberships WHERE user_id = :u"), {"u": third_user})
+        # The app role has no DELETE on memberships (ZB-10).
+        with migrate_tenant_context(migrate_engine, people.a) as conn:
+            conn.execute(text("DELETE FROM memberships WHERE user_id = :u"), {"u": third_user})
         with migrate_engine.begin() as conn:
             conn.execute(text("DELETE FROM users WHERE id = :u"), {"u": third_user})
 

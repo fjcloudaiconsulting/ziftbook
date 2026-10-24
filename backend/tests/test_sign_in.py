@@ -24,6 +24,7 @@ from tests.conftest import (
     fresh_address,
     fresh_email,
     member_id,
+    migrate_tenant_context,
     new_client,
     wait_until_blocked,
 )
@@ -153,7 +154,7 @@ def test_a_password_is_matched_exactly_up_to_unicode_composition(
 
 
 def test_a_member_of_several_businesses_lands_in_the_oldest_membership(
-    people: People, stranger: uuid.UUID, client: TestClient
+    people: People, stranger: uuid.UUID, client: TestClient, migrate_engine: Engine
 ) -> None:
     older, newer = uuid.uuid7(), uuid.uuid7()
     for membership_id, tenant_id, role in ((newer, people.a, "owner"), (older, people.b, "worker")):
@@ -167,9 +168,7 @@ def test_a_member_of_several_businesses_lands_in_the_oldest_membership(
     try:
         assert sign_in(client, email_of(stranger)).json()["tenant_id"] == str(people.b)
     finally:
-        for tenant_id in (people.a, people.b):
-            with tenant_context(tenant_id) as session:
-                session.execute(text("DELETE FROM memberships WHERE user_id = :u"), {"u": stranger})
+        drop_memberships(migrate_engine, people, stranger)
 
 
 def insert_membership(
@@ -186,15 +185,16 @@ def insert_membership(
         )
 
 
-def drop_memberships(people: People, user_id: uuid.UUID) -> None:
+def drop_memberships(migrate_engine: Engine, people: People, user_id: uuid.UUID) -> None:
+    """As the migrate role: the app role has no DELETE on memberships (ZB-10)."""
     for tenant_id in (people.a, people.b):
-        with tenant_context(tenant_id) as session:
-            session.execute(text("DELETE FROM memberships WHERE user_id = :u"), {"u": user_id})
+        with migrate_tenant_context(migrate_engine, tenant_id) as conn:
+            conn.execute(text("DELETE FROM memberships WHERE user_id = :u"), {"u": user_id})
 
 
 # 16: the oldest ACTIVE membership, not the oldest.
 def test_a_removed_oldest_membership_lands_in_the_oldest_active_one(
-    people: People, stranger: uuid.UUID, client: TestClient
+    people: People, stranger: uuid.UUID, client: TestClient, migrate_engine: Engine
 ) -> None:
     older, newer = uuid.uuid7(), uuid.uuid7()
     insert_membership(people.b, stranger, "removed", id=older)
@@ -204,19 +204,19 @@ def test_a_removed_oldest_membership_lands_in_the_oldest_active_one(
         assert response.status_code == 200
         assert response.json()["tenant_id"] == str(people.a)
     finally:
-        drop_memberships(people, stranger)
+        drop_memberships(migrate_engine, people, stranger)
 
 
 # 17
 def test_only_removed_memberships_is_no_tenant(
-    people: People, stranger: uuid.UUID, client: TestClient
+    people: People, stranger: uuid.UUID, client: TestClient, migrate_engine: Engine
 ) -> None:
     insert_membership(people.a, stranger, "removed")
     try:
         response = sign_in(client, email_of(stranger))
         assert (response.status_code, response.json()) == (403, {"code": "no_tenant"})
     finally:
-        drop_memberships(people, stranger)
+        drop_memberships(migrate_engine, people, stranger)
 
 
 # 18: the sign-in waits for the removal, then finds no live membership.
@@ -457,11 +457,17 @@ def test_every_answer_keeps_the_page_address_to_itself(client: TestClient) -> No
     ids=["deleted", "ended"],
 )
 def test_a_session_whose_membership_just_went_is_refused_not_an_error(
-    people: People, app_engine: Engine, statement: str
+    people: People, migrate_engine: Engine, statement: str
 ) -> None:
-    # The membership is removed after the cookie was checked but before the answer is built.
+    # The membership is removed after the cookie was checked but before the answer is built. A
+    # deletion comes only from an operator: the app role has no DELETE on memberships (ZB-10).
+    deleting = statement.startswith("DELETE")
+    if deleting:
+        with migrate_tenant_context(migrate_engine, people.a) as conn:
+            conn.execute(text(statement), {"u": people.only_a})
     with tenant_context(people.a) as session:
-        session.execute(text(statement), {"u": people.only_a})
+        if not deleting:
+            session.execute(text(statement), {"u": people.only_a})
         with pytest.raises(ApiError) as error:
             auth.describe(session, people.only_a)
     assert (error.value.status_code, error.value.code) == (401, "unauthenticated")
