@@ -44,6 +44,7 @@ from tests.test_booking_payments_api import (
     make_shop,
     pay_rows,
     place,
+    resume,
     run,
     status_of,
     sync,
@@ -812,3 +813,139 @@ def test_an_owner_can_cancel_a_paid_booking_and_it_is_refunded(
     assert patch(owner, booking_id, "cancelled_by_merchant").status_code == 200
     settle_all()
     assert len(fake_stripe.refunds) == 1
+
+
+def answering_worker(app: FastAPI, people: People, service_id: str) -> tuple[TestClient, str]:
+    """Ana performs the service and the business lets her answer requests: (her session, her
+    member id), for a request booked with her."""
+    worker_user, worker_member = add_worker(people, service_id)
+    save_setting(people.a, "workers_answer_requests", True)
+    return signed_in(app, people.a, worker_user), str(worker_member)
+
+
+# ZB-02 (D5, declines). Kills: a gate keyed on the cancel target alone, so a worker's decline of a
+# paid request refunds the client without the owner.
+def test_a_worker_cannot_decline_a_paid_request(
+    people: People, app: FastAPI, ready: str, fake_stripe: FakeGateway
+) -> None:
+    worker, worker_member = answering_worker(app, people, ready)
+    _, booking_id, _ = booked(app, people, fake_stripe, ready, "pay", member_id=worker_member)
+    assert status_of(people, booking_id) == "pending"
+
+    refused = patch(worker, booking_id, "declined")
+
+    assert (refused.status_code, refused.json()) == (403, {"code": "owner_only"})
+    settle_all()
+    assert fake_stripe.refunded() == []
+    assert status_of(people, booking_id) == "pending"
+
+
+# ZB-02. Kills: a gate that also takes accepting a paid request from a worker who may answer (the
+# panel offers them Accept alone there), or a 403 above that came from gate 3 or 3c, not 3d.
+def test_a_worker_who_may_answer_still_accepts_a_paid_request(
+    people: People, app: FastAPI, ready: str, fake_stripe: FakeGateway
+) -> None:
+    worker, worker_member = answering_worker(app, people, ready)
+    _, booking_id, _ = booked(app, people, fake_stripe, ready, "pay", member_id=worker_member)
+
+    assert patch(worker, booking_id, "confirmed").status_code == 200
+
+    assert status_of(people, booking_id) == "confirmed"
+    settle_all()
+    assert fake_stripe.refunded() == []
+
+
+# ZB-02. Kills: a gate that shuts a worker who may answer out of every decline, or one that treats
+# a started request like a started booking's cancel. A card check is not a payment: nothing is
+# refunded, the hold is released.
+@pytest.mark.parametrize("started", [False, True], ids=["future", "started"])
+def test_a_worker_can_still_decline_an_unpaid_request(
+    started: bool, people: People, app: FastAPI, ready: str, fake_stripe: FakeGateway
+) -> None:
+    worker, worker_member = answering_worker(app, people, ready)
+    _, booking_id, _ = booked(app, people, fake_stripe, ready, "check", member_id=worker_member)
+    if started:
+        shift(people.a, booking_id, PAST)  # past, live, and still pending
+
+    assert patch(worker, booking_id, "declined").status_code == 200
+
+    assert status_of(people, booking_id) == "declined"
+    settle_all()
+    assert fake_stripe.refunded() == []
+
+
+# ZB-02. Kills: a gate that also refuses the owner, or one that stops the refund.
+def test_an_owner_can_decline_a_paid_request_and_it_is_refunded(
+    people: People, app: FastAPI, owner: TestClient, ready: str, fake_stripe: FakeGateway
+) -> None:
+    _, worker_member = answering_worker(app, people, ready)
+    _, booking_id, intent = booked(app, people, fake_stripe, ready, "pay", member_id=worker_member)
+
+    assert patch(owner, booking_id, "declined").status_code == 200
+
+    settle_all()
+    assert fake_stripe.refunded(intent) == [PRICE]
+
+
+# Every merchant target that refunds a paid payment: the one definition the gate and settle share.
+MERCHANT_REFUNDING = sorted(set(bookings.TRANSITIONS) & set(bookings.REFUNDING))
+
+
+# ZB-02. Kills: a gate that names its targets (the next refunding target slips past it, as
+# `declined` did), or a REFUNDING of its own beside the one payments settles by.
+@pytest.mark.parametrize("target", MERCHANT_REFUNDING)
+def test_no_refunding_target_is_a_worker_s_on_a_paid_request(
+    target: str, people: People, app: FastAPI, ready: str, fake_stripe: FakeGateway
+) -> None:
+    assert {"declined", "cancelled_by_merchant"} <= set(MERCHANT_REFUNDING)
+    assert not hasattr(payments, "REFUNDING")  # settle reads bookings.REFUNDING, the gate's
+    worker, worker_member = answering_worker(app, people, ready)
+    _, booking_id, _ = booked(app, people, fake_stripe, ready, "pay", member_id=worker_member)
+
+    refused = patch(worker, booking_id, target)
+
+    assert (refused.status_code, refused.json()) == (403, {"code": "owner_only"})
+    settle_all()
+    assert fake_stripe.refunded() == []
+    assert status_of(people, booking_id) == "pending"
+
+
+# ZB-02. Kills: a queue that cannot tell a paid request from an unpaid one, so the panel offers a
+# worker a decline the API refuses, and nobody sees that declining refunds it.
+def test_the_queue_says_which_requests_are_paid(
+    people: People, app: FastAPI, owner: TestClient, ready: str, fake_stripe: FakeGateway
+) -> None:
+    _, paid, _ = booked(app, people, fake_stripe, ready, "pay", starts_at=at("09:00"))
+    _, checked, _ = booked(app, people, fake_stripe, ready, "check", starts_at=at("11:00"))
+    # Paid on the second try: a canceled payment beside the paid one (as resume() leaves it).
+    client = new_client(app)
+    retried = place(app, people, ready, "pay", client=client, starts_at=at("15:00")).json()["id"]
+    fake_stripe.intents[fake_stripe.latest(retried)]["status"] = "canceled"
+    assert resume(client, people, retried, "pay").status_code == 200
+    fake_stripe.confirm(fake_stripe.latest(retried))
+    assert sync(client, people, retried).json()["status"] == "pending"
+    assert [row["status"] for row in pay_rows(people, retried)] == ["canceled", "paid"]
+    assert put_settings(owner, {"payment_check": False}).status_code == 200
+    plain = place(app, people, ready, payment=None, starts_at=at("13:00"))
+    assert plain.status_code == 201, plain.text
+
+    rows = owner.get("/api/bookings/pending").json()
+    queue = {row["id"]: row for row in rows}
+
+    currency = queue[paid]["price"]["currency"]
+    assert queue[paid]["payment"] == {
+        "kind": "pay",
+        "status": "paid",
+        "amount_minor": PRICE,
+        "currency": currency,
+        "refunded_minor": 0,
+        "refund_failed": False,
+    }
+    assert (queue[checked]["payment"]["kind"], queue[checked]["payment"]["status"]) == (
+        "check",
+        "checked",
+    )
+    assert queue[plain.json()["id"]]["payment"] is None
+    # Kills: the queue joining every payment (the canceled one would list the request twice).
+    assert [row["id"] for row in rows].count(retried) == 1
+    assert queue[retried]["payment"]["status"] == "paid"
