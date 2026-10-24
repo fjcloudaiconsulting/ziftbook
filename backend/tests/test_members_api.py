@@ -33,6 +33,7 @@ from tests.conftest import (
 from tests.test_availability_api import new_service
 from tests.test_bookings_db import book, seed_service
 from tests.test_clients_db import seed_client
+from tests.test_invites_db import call, digest, minted
 
 
 @pytest.fixture
@@ -994,12 +995,24 @@ def test_a_worker_probing_another_business_is_not_found_not_forbidden(
     assert stored_name(people.b, other_business_member) is None
 
 
-# 1: the row stays, so booking history still resolves (ZIF-112).
+# 1: the row stays, so booking history still resolves (ZIF-112). History names a removed member by
+# their membership's display name; with none (cleared) they are unnamed: the business no longer
+# reads their account, so its name is no fallback (ZB-32). While they are a member, it is.
+@pytest.mark.parametrize(
+    ("display_name", "removed_actor_name"),
+    [("Worked As", "Worked As"), (None, None)],
+    ids=["display_name", "cleared"],
+)
 def test_removing_a_member_with_past_bookings_keeps_the_row_and_the_history(
-    people: People, app: FastAPI
+    people: People, app: FastAPI, display_name: str | None, removed_actor_name: str | None
 ) -> None:
     owner = signed_in(app, people.a, people.both)
     only_a_member = member_id(people.a, people.only_a)
+    with tenant_context(people.a) as session:
+        session.execute(
+            text("UPDATE memberships SET display_name = :n WHERE id = :i"),
+            {"n": display_name, "i": only_a_member},
+        )
     booking_id = book(
         people.a,
         client_id=seed_client(people.a),
@@ -1017,6 +1030,8 @@ def test_removing_a_member_with_past_bookings_keeps_the_row_and_the_history(
             """),
             {"b": booking_id, "u": people.only_a},
         )
+    live = owner.get(f"/api/bookings/{booking_id}").json()
+    assert live["history"][0]["actor_name"] == (display_name or "Test Person")
 
     assert delete(owner, only_a_member).status_code == 204
 
@@ -1027,7 +1042,38 @@ def test_removing_a_member_with_past_bookings_keeps_the_row_and_the_history(
     body = detail.json()
     assert body["worker_id"] == str(only_a_member)
     assert body["worker_display_name"] == "Old Name"
-    assert body["history"][0]["actor_name"] == "Test Person"
+    assert body["history"][0]["actor_name"] == removed_actor_name
+
+
+def account(tenant_id: uuid.UUID, user_id: uuid.UUID) -> tuple[Any, ...] | None:
+    """The person's account row as the business reads it (the app role, row-level security on)."""
+    with tenant_context(tenant_id) as session:
+        row = session.execute(
+            text("SELECT email, name, locale FROM users WHERE id = :u"), {"u": user_id}
+        ).first()
+    return None if row is None else tuple(row)
+
+
+# ZB-32: a business reads a person's account only while they are its member. Removal hides it
+# from that business alone, and a re-invite, which revives the same membership, shows it again.
+# Kills: the users policy counting a removed membership.
+def test_a_removed_member_s_account_is_hidden_until_they_are_invited_back(
+    people: People, app: FastAPI
+) -> None:
+    add_membership(people.b, people.only_a)
+    owner = signed_in(app, people.a, people.both)
+    their_account = (email_of(people.only_a), "Test Person", None)
+    assert account(people.a, people.only_a) == their_account
+
+    assert delete(owner, member_id(people.a, people.only_a)).status_code == 204
+
+    assert account(people.a, people.only_a) is None
+    assert account(people.b, people.only_a) == their_account
+
+    _, secret = minted(people.a, email_of(people.only_a))
+    assert call(people.a, digest(secret), None).outcome == "accepted"
+
+    assert account(people.a, people.only_a) == their_account
 
 
 # 2: a live appointment blocks the removal; a lapsed hold, a past or a completed one does not.

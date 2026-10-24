@@ -196,14 +196,16 @@ def test_being_a_proven_client_does_not_widen_what_a_can_read(people: People, wo
     assert (direct, joined) == ([], [])
 
 
-# Read from the database on main (ZIF-99): a tenant sees the users that hold a membership in it.
-# No INSERT policy since ZB-10 (0048): the app role creates no user itself.
+# Read from the database on main (ZIF-99): a tenant sees the users that hold a live membership in
+# it, not a removed one (ZB-32, 0055). No INSERT policy since ZB-10 (0048): the app role creates no
+# user itself.
 USERS_POLICIES = [
     [
         "tenant_members",
         "SELECT",
         "{public}",
-        "(id IN ( SELECT memberships.user_id\n   FROM memberships))",
+        "(id IN ( SELECT memberships.user_id\n   FROM memberships\n"
+        "  WHERE (memberships.role <> 'removed'::text)))",
         None,
     ],
 ]

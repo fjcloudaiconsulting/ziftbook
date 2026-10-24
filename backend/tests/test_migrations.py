@@ -1888,6 +1888,65 @@ def test_0054_round_trips_the_app_roles_membership_insert_and_update(
         )
 
 
+# ZB-32 (0055): the users policy's qual, and set_own_name with its owner and grants.
+USERS_POLICY_QUAL = text("""
+SELECT qual FROM pg_policies
+WHERE schemaname = 'public' AND tablename = 'users' AND policyname = 'tenant_members'
+""")
+SET_OWN_NAME_DEF = text("SELECT pg_get_functiondef('set_own_name(uuid,text)'::regprocedure)")
+SET_OWN_NAME_ACCESS = text("""
+SELECT p.proowner::regrole::text, has_function_privilege('ziftbook_app', p.oid, 'EXECUTE'),
+       has_function_privilege('public', p.oid, 'EXECUTE')
+FROM pg_proc p WHERE p.oid = 'set_own_name(uuid,text)'::regprocedure
+""")
+ALL_MEMBERS_QUAL = "(id IN ( SELECT memberships.user_id\n   FROM memberships))"
+LIVE_MEMBERS_QUAL = (
+    "(id IN ( SELECT memberships.user_id\n   FROM memberships\n"
+    "  WHERE (memberships.role <> 'removed'::text)))"
+)
+NAME_GATE = "EXISTS (SELECT 1 FROM memberships m WHERE m.user_id = p_user{});"
+LIVE = " AND m.role <> 'removed'"
+
+
+# ZB-32 FENCE (0055). Wrong impl: an upgrade that leaves either the users policy or set_own_name's
+# gate counting removed memberships; a downgrade that keeps a filter, or changes anything else in
+# the function, its owner or its grants.
+def test_0055_round_trips_the_live_member_filters(
+    migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = lock_timeout_config(monkeypatch)
+    with migrate_engine.connect() as conn:
+        at_head = conn.scalar(SET_OWN_NAME_DEF)
+        access = tuple(conn.execute(SET_OWN_NAME_ACCESS).one())
+    assert NAME_GATE.format(LIVE) in at_head
+    assert access == ("ziftbook_migrate", True, False)
+    try:
+        command.downgrade(cfg, "0054")
+        with migrate_engine.connect() as conn:
+            assert conn.scalar(USERS_POLICY_QUAL) == ALL_MEMBERS_QUAL
+            before = conn.scalar(SET_OWN_NAME_DEF)
+            assert tuple(conn.execute(SET_OWN_NAME_ACCESS).one()) == access
+    finally:
+        command.upgrade(cfg, "head")
+    assert before == at_head.replace(NAME_GATE.format(LIVE), NAME_GATE.format(""))
+    with migrate_engine.connect() as conn:
+        assert conn.scalar(USERS_POLICY_QUAL) == LIVE_MEMBERS_QUAL
+        assert conn.scalar(SET_OWN_NAME_DEF) == at_head
+        assert tuple(conn.execute(SET_OWN_NAME_ACCESS).one()) == access
+
+
+# ZB-32: 0055's set_own_name template, without the gate's filter, is what 0045 installed, so the
+# downgrade restores 0045's function, not a drifted copy.
+def test_0055_set_own_name_is_0045s_plus_the_gate_filter() -> None:
+    old = migration("0045_membership_removed.py")
+    new = migration("0055_removed_member_accounts_hidden.py")
+
+    assert new.set_own_name("") == old.set_own_name(old.ACTIVE)
+    assert new.set_own_name(new.LIVE) == old.set_own_name(old.ACTIVE).replace(
+        NAME_GATE.format(""), NAME_GATE.format(LIVE)
+    )
+
+
 # ZB-08 (0053): the trigger that leaves writing an invite's token hash to the worker, and its
 # function.
 INVITE_TOKEN_GUARD = text("""
