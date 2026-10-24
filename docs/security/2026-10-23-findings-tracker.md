@@ -237,7 +237,7 @@ The security PRs formed one stack, each based on the previous one, and were squa
 
 | Order | PR | Branch | Findings | State |
 |---|---|---|---|---|
-| 1 | [#329](https://github.com/fjcloudaiconsulting/ziftbook/pull/329) | `security/deps` | ZB-33, ZB-34, ZB-35, ZB-36, ZB-06 | Merged; release pending. Containment live (cloud-infra #277) |
+| 1 | [#329](https://github.com/fjcloudaiconsulting/ziftbook/pull/329) | `security/deps` | ZB-33, ZB-34, ZB-35, ZB-36, ZB-06 | Merged as e9297b0 |
 | 2 | [#331](https://github.com/fjcloudaiconsulting/ziftbook/pull/331) | `security/booking-hardening` | ZB-02, ZB-03, ZB-13, ZB-27, ZB-14, ZB-16 | Merged as 7b883ec |
 | 3 | [#332](https://github.com/fjcloudaiconsulting/ziftbook/pull/332) | `security/supply-chain` | ZB-07, ZB-22, ZB-23, ZB-24, ZB-26 | Merged as 1db3f2b |
 | 4 | [#333](https://github.com/fjcloudaiconsulting/ziftbook/pull/333) | `security/auth-abuse` | ZB-20, ZB-04, ZB-01, ZB-17, ZB-18, ZB-19, ZB-05, ZB-25 | Merged as c376409 |
@@ -298,7 +298,7 @@ Related, independent of the stack (both merged on 2026-10-24):
 |---|---|---|---|---|---|
 | 1 | Merge and release PR #329. Until the API runs Pillow 13, turn photo processing off by unsetting a `ZIF_S3_*` variable on the API (photo routes then answer 503; existing photos still load). | ZB-33 | Today | Merged; release pending. Containment: cloud-infra #277, verified | ZIF-214 |
 | 2 | Review and merge the security PRs in stack order, then cut releases (release-please). | all | This week | Merged; release pending | ZIF-215 |
-| 3 | Before deploying #333: set `ZIF_RATE_LIMIT_KEY` (32+ characters) for both the API and the worker (counters restart once when it is first set); deploy the web app with or before the API; check that the host in `ZIF_APP_URL` is the host the challenge widget runs on. | ZB-25, ZB-20 | With the auth release | Open | ZIF-216 |
+| 3 | Before deploying #333: set `ZIF_RATE_LIMIT_KEY` (32+ characters) for both the API and the worker (counters restart once when it is first set); deploy the web app with or before the API; check that the host in `ZIF_APP_URL` is the host the challenge widget runs on. | ZB-25, ZB-20 | With the auth release | cloud-infra #278, #279 | ZIF-216 |
 | 4 | Confirm the production and staging settings: Turnstile secret set, opt-out unset; site key set for the web app (sign-in, admin sign-in, sign-up and reset need it); client-IP header and trusted proxies; setup token removed; log level; NetworkPolicies; no NodePort/LoadBalancer. | ZB-20, ZB-01, ZB-17, ZB-18 | This week | Open | ZIF-217 |
 | 5 | With Cloudflare's test site key, check that the challenge widget appears and works on sign-in, admin sign-in and the invite page. | ZB-01, ZB-18 | Before the auth release | Open | ZIF-218 |
 | 6 | Cloudflare rate-limit rules on the sign-in, admin sign-in, sign-up, password-reset and invite-accept routes, and on the dependencies health check. | ZB-04, ZB-13, ZB-17 | This week | Open | ZIF-219 |
