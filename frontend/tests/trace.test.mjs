@@ -1,9 +1,9 @@
 // lib/trace.ts: the proxy's manual spans. W1 (table id) in docs/specs/zif-87-traces.md.
-// provider() memoizes a single BasicTracerProvider per module instance, so each scenario that
+// provider() memoizes a single TracerProvider per module instance, so each scenario that
 // needs its own env/processors re-imports the module with a cache-busting query string.
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import { InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
+import { InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace";
 import { SpanStatusCode } from "@opentelemetry/api";
 import { AggregationTemporality, InMemoryMetricExporter, PeriodicExportingMetricReader } from "@opentelemetry/sdk-metrics";
 
@@ -35,7 +35,7 @@ describe("lib/trace.ts (W1)", () => {
     delete process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
     delete process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT;
     const { provider } = await freshTrace();
-    const built = provider([new SimpleSpanProcessor(new InMemorySpanExporter())]);
+    const built = provider([new SimpleSpanProcessor({ exporter: new InMemorySpanExporter() })]);
     assert.equal(built._activeSpanProcessor["_spanProcessors"].length, 1);
   });
 
@@ -43,7 +43,7 @@ describe("lib/trace.ts (W1)", () => {
     process.env.OTEL_EXPORTER_OTLP_ENDPOINT = "http://127.0.0.1:4318";
     try {
       const { provider } = await freshTrace();
-      const built = provider([new SimpleSpanProcessor(new InMemorySpanExporter())]);
+      const built = provider([new SimpleSpanProcessor({ exporter: new InMemorySpanExporter() })]);
       assert.equal(built._activeSpanProcessor["_spanProcessors"].length, 2);
     } finally {
       delete process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
@@ -225,5 +225,50 @@ describe("proxy request metrics (ZIF-88)", () => {
     assert.equal(await count({ OTEL_EXPORTER_OTLP_ENDPOINT: DEAD }), 1);
     assert.equal(await count({ OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: DEAD }), 1);
     assert.equal(await count({ OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: DEAD }), 0);
+  });
+});
+
+// SDK 3 stopped reading OTEL_TRACES_SAMPLER itself, so lib/trace.ts does; prod compose sets it.
+describe("lib/trace.ts sampler", () => {
+  async function sampled(name, arg) {
+    const saved = [process.env.OTEL_TRACES_SAMPLER, process.env.OTEL_TRACES_SAMPLER_ARG];
+    if (name === undefined) delete process.env.OTEL_TRACES_SAMPLER;
+    else process.env.OTEL_TRACES_SAMPLER = name;
+    if (arg === undefined) delete process.env.OTEL_TRACES_SAMPLER_ARG;
+    else process.env.OTEL_TRACES_SAMPLER_ARG = arg;
+    try {
+      const { sampler } = await freshTrace();
+      return sampler().toString();
+    } finally {
+      for (const [key, value] of [["OTEL_TRACES_SAMPLER", saved[0]], ["OTEL_TRACES_SAMPLER_ARG", saved[1]]]) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  }
+
+  test("the standard names select the standard samplers", async () => {
+    assert.match(await sampled(undefined), /^ParentBased\{root=AlwaysOnSampler/);
+    assert.equal(await sampled("always_on"), "AlwaysOnSampler");
+    assert.equal(await sampled(" ALWAYS_OFF "), "AlwaysOffSampler");
+    assert.equal(await sampled("traceidratio", "0.25"), "TraceIdRatioBased{0.25}");
+    assert.match(await sampled("parentbased_traceidratio", "0.1"), /^ParentBased\{root=TraceIdRatioBased\{0\.1\}/);
+    assert.match(await sampled("parentbased_always_off"), /^ParentBased\{root=AlwaysOffSampler/);
+  });
+
+  test("an unknown name falls back to parentbased_always_on, a bad ratio to 1", async () => {
+    assert.match(await sampled("nonsense"), /^ParentBased\{root=AlwaysOnSampler/);
+    assert.equal(await sampled("traceidratio", "abc"), "TraceIdRatioBased{1}");
+    assert.equal(await sampled("traceidratio", "2"), "TraceIdRatioBased{1}");
+  });
+
+  test("always_off makes the proxy span non-recording", async () => {
+    process.env.OTEL_TRACES_SAMPLER = "always_off";
+    try {
+      const { startProxySpan } = await freshTrace();
+      assert.equal(startProxySpan("GET").isRecording(), false);
+    } finally {
+      delete process.env.OTEL_TRACES_SAMPLER;
+    }
   });
 });

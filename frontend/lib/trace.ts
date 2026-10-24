@@ -13,9 +13,18 @@ import { OTLPMetricExporter } from "@opentelemetry/exporter-metrics-otlp-http";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
 import { detectResources, envDetector } from "@opentelemetry/resources";
 import { MeterProvider, type MetricReader, PeriodicExportingMetricReader } from "@opentelemetry/sdk-metrics";
-import { BasicTracerProvider, BatchSpanProcessor, type SpanProcessor } from "@opentelemetry/sdk-trace-base";
+import {
+  AlwaysOffSampler,
+  AlwaysOnSampler,
+  BatchSpanProcessor,
+  ParentBasedSampler,
+  type Sampler,
+  type SpanProcessor,
+  TraceIdRatioBasedSampler,
+  TracerProvider,
+} from "@opentelemetry/sdk-trace";
 
-let built: BasicTracerProvider | undefined;
+let built: TracerProvider | undefined;
 let builtMeter: MeterProvider | undefined;
 // performance.now() and method at span start: the span may be non-recording (always_off), so its
 // own startTime and attributes are not usable.
@@ -33,15 +42,39 @@ export function enabled(signal: "TRACES" | "METRICS" = "TRACES"): boolean {
   return exporter !== "none";
 }
 
+// SDK 3 no longer reads OTEL_TRACES_SAMPLER / OTEL_TRACES_SAMPLER_ARG, so the standard values are
+// read here, as the 2.x SDK did: an unknown name falls back to parentbased_always_on, a missing or
+// invalid ratio argument to 1.
+export function sampler(): Sampler {
+  const name = (process.env.OTEL_TRACES_SAMPLER ?? "").trim().toLowerCase();
+  const parsed = Number.parseFloat((process.env.OTEL_TRACES_SAMPLER_ARG ?? "").trim());
+  const ratio = parsed >= 0 && parsed <= 1 ? parsed : 1;
+  switch (name) {
+    case "always_on":
+      return new AlwaysOnSampler();
+    case "always_off":
+      return new AlwaysOffSampler();
+    case "traceidratio":
+      return new TraceIdRatioBasedSampler(ratio);
+    case "parentbased_always_off":
+      return new ParentBasedSampler({ root: new AlwaysOffSampler() });
+    case "parentbased_traceidratio":
+      return new ParentBasedSampler({ root: new TraceIdRatioBasedSampler(ratio) });
+    default:
+      return new ParentBasedSampler({ root: new AlwaysOnSampler() });
+  }
+}
+
 // Lazy and memoized: built once, on first use, never registered globally (register() would make
 // Next's own instrumentation start recording raw request URLs and paths).
-export function provider(processors: SpanProcessor[] = []): BasicTracerProvider {
+export function provider(processors: SpanProcessor[] = []): TracerProvider {
   if (built) return built;
   process.env.OTEL_SERVICE_NAME ??= "ziftbook-web";
   const spanProcessors: SpanProcessor[] = [...processors];
-  if (enabled()) spanProcessors.push(new BatchSpanProcessor(new OTLPTraceExporter()));
-  built = new BasicTracerProvider({
+  if (enabled()) spanProcessors.push(new BatchSpanProcessor({ exporter: new OTLPTraceExporter() }));
+  built = new TracerProvider({
     resource: detectResources({ detectors: [envDetector] }),
+    sampler: sampler(),
     spanProcessors,
   });
   return built;
