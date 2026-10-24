@@ -53,11 +53,14 @@ As of 2026-10-24, after the second merge run:
 - **Still open:**
   - Renovate's #328 (FastAPI): waits out the five-day release-age cooldown;
   - draft #336: based on `main`; it merges one release after #334.
-- **Follow-up hardening, open for review:**
-  - ziftbook #341 (ZB-31), #342 (ZB-08), #343 (ZB-18) and #344 (ZB-02);
-  - draft #336 also gains 0054 (memberships grants), 0055 (ZB-32) and bootstrap password checks;
-  - cloud-infra #276 or #277 (photo-upload containment until the release), plus #278 and #279 (release prerequisites:
-    the worker's database role, the rate-limit key, the web's CSP settings).
+- **Follow-up hardening, merged:** ziftbook #341 (ZB-31), #342 (ZB-08), #343 (ZB-18) and #344 (ZB-02).
+- **ZB-33 containment:** cloud-infra #277 (ZIF-214) is merged; photo uploads are off on the API until the release is
+  deployed. #276, a duplicate, is closed.
+- **Open:**
+  - draft #336: based on `main`, with 0051–0056 and `bootstrap.sql`'s password checks; it merges one release after
+    #334;
+  - cloud-infra #278 and #279: the release prerequisites (the worker's database role, the rate-limit key, the web's
+    CSP settings). Merge #278, wait for its bootstrap Jobs, then merge #279.
 - **Accepted:** ZB-21, with a mitigating control. ZB-32 is decided (hide removed members' accounts) and is fixed in
   draft #336.
 - **Reviews:**
@@ -103,6 +106,19 @@ As of 2026-10-24, after the second merge run:
 ## Hand-off log
 
 Newest first.
+
+### 2026-10-24, evening: repository agent (Claude Code, ziftbook session), follow-ups merged
+- **Merged:** #341, #339, #342, #343 and #344. cloud-infra #277 (ZB-33 containment) is merged; #276 is closed as a
+  duplicate.
+- **Draft #336** is rebased onto `main` after these merges. Two documentation conflicts were resolved, and the full
+  suite passes on it (2617 tests).
+- **Needs:**
+  - **Owner:** merge cloud-infra #278, then #279 after its bootstrap Jobs show Complete. Then the owner actions
+    before release PR #321.
+  - **Jira agent:**
+    - ZB-02 (#344), ZB-18 (#343) and ZB-31 (#341) now have their follow-ups merged;
+    - ZB-08's #342 is merged too;
+    - ZIF-214 (the containment) is done until the release, then reverted.
 
 ### 2026-10-24: repository agent (Claude Code, ziftbook session), follow-up hardening
 - **Done**, each implemented, independently reviewed and open as a PR:
@@ -192,7 +208,7 @@ The security PRs formed one stack, each based on the previous one, and were squa
 
 | Order | PR | Branch | Findings | State |
 |---|---|---|---|---|
-| 1 | [#329](https://github.com/fjcloudaiconsulting/ziftbook/pull/329) | `security/deps` | ZB-33, ZB-34, ZB-35, ZB-36, ZB-06 | Merged; release pending. Containment: cloud-infra #276 or #277 (keep one) |
+| 1 | [#329](https://github.com/fjcloudaiconsulting/ziftbook/pull/329) | `security/deps` | ZB-33, ZB-34, ZB-35, ZB-36, ZB-06 | Merged; release pending. Containment live (cloud-infra #277) |
 | 2 | [#331](https://github.com/fjcloudaiconsulting/ziftbook/pull/331) | `security/booking-hardening` | ZB-02, ZB-03, ZB-13, ZB-27, ZB-14, ZB-16 | Merged as 7b883ec |
 | 3 | [#332](https://github.com/fjcloudaiconsulting/ziftbook/pull/332) | `security/supply-chain` | ZB-07, ZB-22, ZB-23, ZB-24, ZB-26 | cloud-infra #278, #279 |
 | 4 | [#333](https://github.com/fjcloudaiconsulting/ziftbook/pull/333) | `security/auth-abuse` | ZB-20, ZB-04, ZB-01, ZB-17, ZB-18, ZB-19, ZB-05, ZB-25 | Merged as c376409 |
@@ -210,7 +226,7 @@ Related, independent of the stack (both merged on 2026-10-24):
 
 | ID | Title | Severity | Area | Status | PR | Jira | Notes |
 |---|---|---|---|---|---|---|---|
-| ZB-33 | Image library (Pillow 12.3.0) decoder advisories reachable from photo uploads | Critical | Dependency / backend | Merged | #329 | | Pillow 13.0.0, plus a version-independent container and EXIF guard. Containment until deployed: see owner actions. |
+| ZB-33 | Image library (Pillow 12.3.0) decoder advisories reachable from photo uploads | Critical | Dependency / backend | Merged | #329 | | Pillow 13.0.0, plus a version-independent container and EXIF guard. Containment until deployed: cloud-infra #277, merged. |
 | ZB-34 | Next.js 16.4.0 and sharp 0.35.4 advisories (assessed not reachable) | Medium | Dependency / frontend | Merged | #329 | | next 16.4.2; image optimizer off |
 | ZB-01 | Sign-in rate limits keyed on the email alone allow account lockout | Medium | Backend | Merged | #333 | | Per-address limits plus a challenge after repeated failures; web form handles the challenge |
 | ZB-02 | Workers could cancel paid or started bookings (refund-bearing) | Medium | Backend / web | Merged | #331, #344 | | Owner-only for started or paid bookings. #344 extends it to declining a paid request (any team-member action that refunds a paid booking is the owner's). |
