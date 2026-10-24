@@ -315,6 +315,8 @@
       "keepIt": "Toch houden",
       "declineLabel": "Bericht aan {client} (optioneel)",
       "declineHint": "Wordt aan {client} gestuurd met de e-mail over de afgewezen boeking.",
+      "declineRefund": "{client} heeft {amount} online betaald en krijgt alles terug.",
+      "declinePaidOwner": "Alleen een eigenaar kan een betaalde aanvraag afwijzen.",
       "withWorker": "Met {name}",
       "walkIn": "inloop",
       "bookedOnline": "online geboekt {relative}",
@@ -709,7 +711,7 @@
       "workersEditLabel": "Teamleden kunnen hun eigen werktijden wijzigen",
       "workersEditHint": "Uit: alleen jij stelt hun tijden in.",
       "workersAnswerLabel": "Teamleden kunnen hun eigen boekingsaanvragen accepteren en afwijzen",
-      "workersAnswerHint": "Uit: jij beantwoordt elke aanvraag. Teamleden zien die van hen, maar kunnen ze niet accepteren of afwijzen.",
+      "workersAnswerHint": "Aan: ze beantwoorden hun eigen aanvragen, maar het afwijzen van een vooraf betaalde aanvraag betaalt de klant alles terug, dus dat is voorbehouden aan een eigenaar. Uit: jij beantwoordt elke aanvraag. Teamleden zien die van hen, maar kunnen ze niet accepteren of afwijzen.",
       "paymentCheckLabel": "Om betaalgegevens vragen bij het boeken",
       "paymentCheckHint": "Klanten voegen een kaart toe die we controleren zonder af te schrijven, of betalen vooraf. Diensten onder {min} worden geboekt zonder deze stap."
     },

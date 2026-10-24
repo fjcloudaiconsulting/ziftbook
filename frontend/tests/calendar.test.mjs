@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { actionsFor, bookingHref, closedDay, closedDetail, isWaiting, spanTimes, telHref, daySlices, dayWindow, historyLabel, paymentFact, hourRange, hrefFor, lanes, monToSun, nowTop, parseView, switchDate, visibleDays, weekStart, weekdayOf, whenParts } from "../lib/calendar.ts";
+import { actionsFor, bookingHref, closedDay, closedDetail, isPaid, isWaiting, mayDecline, spanTimes, telHref, daySlices, dayWindow, historyLabel, paymentFact, hourRange, hrefFor, lanes, monToSun, nowTop, parseView, switchDate, visibleDays, weekStart, weekdayOf, whenParts } from "../lib/calendar.ts";
 import { formatMoney } from "../lib/money.ts";
 
 const AMS = "Europe/Amsterdam";
@@ -164,6 +164,26 @@ describe("actionsFor (F7)", () => {
     assert.deepEqual(actionsFor({ ...future, payment: { status: "checked" } }, "worker", now, false), ["reschedule", "cancel"]);
     assert.ok(actionsFor({ ...future, payment: { status: "paid" } }, "owner", now, false).includes("cancel"));
     assert.ok(actionsFor({ ...base, status: "confirmed" }, "owner", now, false).includes("cancel"));
+  });
+  // ZB-02 fence, declines. Kills: a worker offered a decline that refunds a paid request; a check that also takes
+  // the decline from an owner, from an unpaid request, or from one whose time has started.
+  test("a worker who may answer is offered no decline on a paid request, but on an unpaid one, started or not", () => {
+    const future = { ...base, status: "pending", starts_at: "2026-10-01T10:00:00Z" };
+    assert.deepEqual(actionsFor({ ...future, payment: { status: "paid" } }, "worker", now, true), ["accept"]);
+    assert.deepEqual(actionsFor({ ...base, status: "pending", payment: { status: "paid" } }, "worker", now, true), ["accept"]);
+    assert.deepEqual(actionsFor({ ...future, payment: { status: "checked" } }, "worker", now, true), ["accept", "decline"]);
+    assert.deepEqual(actionsFor({ ...base, status: "pending", payment: null }, "worker", now, true), ["accept", "decline"]);
+    assert.deepEqual(actionsFor({ ...future, payment: { status: "paid" } }, "owner", now, false), ["accept", "decline"]);
+  });
+  // The Today queue asks the same question of a queue row.
+  test("mayDecline: a paid request is the owner's to decline", () => {
+    assert.equal(mayDecline({ status: "paid" }, "worker"), false);
+    assert.equal(mayDecline({ status: "paid" }, "owner"), true);
+    assert.equal(mayDecline({ status: "checked" }, "worker"), true);
+    assert.equal(mayDecline(null, "worker"), true);
+    assert.equal(isPaid({ status: "paid" }), true);
+    assert.equal(isPaid({ status: "checked" }), false);
+    assert.equal(isPaid(undefined), false);
   });
   test("completed is the owner's to undo, a worker gets nothing", () => {
     assert.deepEqual(actionsFor({ ...base, status: "completed" }, "worker", now, false), []);
