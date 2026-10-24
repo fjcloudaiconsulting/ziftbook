@@ -1696,9 +1696,8 @@ ORDER BY 1
 """)
 
 
-# ZB-08 FENCE. Wrong impl: a downgrade that leaves the worker's grant behind; an upgrade that also
-# takes it from the app role, which is the contract migration's, a release later: until the
-# worker's own URL is deployed it still connects as ziftbook_app.
+# ZB-08 FENCE. Wrong impl: a downgrade that leaves the worker's grant behind, or an upgrade that
+# does not give it to the worker. At head the app role no longer holds it (0051).
 def test_0049_round_trips_the_workers_mint_grant(
     migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1710,11 +1709,7 @@ def test_0049_round_trips_the_workers_mint_grant(
     finally:
         command.upgrade(cfg, "head")
     with migrate_engine.connect() as conn:
-        assert list(conn.scalars(MINT_HOLDERS)) == [
-            "ziftbook_app",
-            "ziftbook_migrate",
-            "ziftbook_worker",
-        ]
+        assert list(conn.scalars(MINT_HOLDERS)) == ["ziftbook_migrate", "ziftbook_worker"]
 
 
 # ZB-31 (0050): which of these may create temporary tables in this database. The owner,
@@ -1816,3 +1811,81 @@ def test_0050_says_nothing_where_it_owns_the_database(
         tx.rollback()
     assert after == [True, False]
     assert skips_0050(log_lines()) == []
+
+
+# ZB-08 FENCE (0051, the contract step). Wrong impl: an upgrade that leaves EXECUTE on the app role
+# or takes it from the worker; a downgrade that does not give the app role its grant back.
+def test_0051_round_trips_the_app_roles_mint_grant(
+    migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = lock_timeout_config(monkeypatch)
+    try:
+        command.downgrade(cfg, "0050")
+        with migrate_engine.connect() as conn:
+            assert list(conn.scalars(MINT_HOLDERS)) == [
+                "ziftbook_app",
+                "ziftbook_migrate",
+                "ziftbook_worker",
+            ]
+    finally:
+        command.upgrade(cfg, "head")
+    with migrate_engine.connect() as conn:
+        assert list(conn.scalars(MINT_HOLDERS)) == ["ziftbook_migrate", "ziftbook_worker"]
+
+
+# ZB-10 (0052): ziftbook_app's table privileges on memberships.
+MEMBERSHIP_GRANTS = text("""
+SELECT string_agg(x.privilege_type, ' ' ORDER BY x.privilege_type)
+FROM pg_class c, aclexplode(c.relacl) x
+WHERE c.oid = 'memberships'::regclass AND x.grantee = 'ziftbook_app'::regrole
+""")
+
+
+# ZB-10 FENCE (0052, the contract step). Wrong impl: an upgrade that leaves DELETE on memberships
+# to the app role or takes anything else; a downgrade that does not give it back.
+def test_0052_round_trips_the_app_roles_membership_delete(
+    migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = lock_timeout_config(monkeypatch)
+    try:
+        command.downgrade(cfg, "0051")
+        with migrate_engine.connect() as conn:
+            assert conn.scalar(MEMBERSHIP_GRANTS) == "DELETE INSERT SELECT UPDATE"
+    finally:
+        command.upgrade(cfg, "head")
+    with migrate_engine.connect() as conn:
+        assert conn.scalar(MEMBERSHIP_GRANTS) == "INSERT SELECT UPDATE"
+
+
+# ZB-08 (0053): the trigger that leaves writing an invite's token hash to the worker, and its
+# function.
+INVITE_TOKEN_GUARD = text("""
+SELECT EXISTS (SELECT FROM pg_trigger WHERE tgname = 'invites_token_hash_by_worker'
+                 AND tgrelid = 'invites'::regclass),
+       to_regprocedure('invites_token_hash_by_worker()') IS NOT NULL
+""")
+INVITE_TOKEN_GUARD_FUNCTION = text("""
+SELECT p.prosecdef, p.proconfig, has_function_privilege('public', p.oid, 'EXECUTE')
+FROM pg_proc p WHERE p.oid = to_regprocedure('invites_token_hash_by_worker()')
+""")
+
+
+# ZB-08 FENCE (0053). Wrong impl: a downgrade that leaves the trigger or its function behind; an
+# upgrade whose function runs as its owner, searches a caller's schema first, or is PUBLIC's.
+def test_0053_round_trips_the_invite_token_guard(
+    migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = lock_timeout_config(monkeypatch)
+    try:
+        command.downgrade(cfg, "0052")
+        with migrate_engine.connect() as conn:
+            assert tuple(conn.execute(INVITE_TOKEN_GUARD).one()) == (False, False)
+    finally:
+        command.upgrade(cfg, "head")
+    with migrate_engine.connect() as conn:
+        assert tuple(conn.execute(INVITE_TOKEN_GUARD).one()) == (True, True)
+        assert tuple(conn.execute(INVITE_TOKEN_GUARD_FUNCTION).one()) == (
+            False,
+            ["search_path=pg_catalog, public, pg_temp"],
+            False,
+        )

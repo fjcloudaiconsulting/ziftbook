@@ -68,7 +68,9 @@ Specifics:
 - Migrations run as `ziftbook_migrate`, never on app startup. The API connects as `ziftbook_app`, which owns
   nothing: never grant it ownership, `BYPASSRLS` or DDL rights.
 - The worker connects as `ziftbook_worker` (ZB-08): a member of `ziftbook_app`, so it has every privilege the app
-  role has, plus what only background jobs may do (`mint_email_token`). The same never-list applies to it.
+  role has, plus what only background jobs may do: `mint_email_token`, which the app role does not have (0051), and
+  setting an invite's `token_hash` (0053). A worker still on `ziftbook_app` fails every sign-up, reset and invite
+  email. The same never-list applies to it.
 - Neither runtime role can create temporary tables, and both search `public` before `pg_temp` (ZB-31;
   `bootstrap.sql`, plus 0050 where `ziftbook_migrate` owns the database; elsewhere 0050 changes nothing and logs
   `temporary tables left to bootstrap.sql` at WARNING). Where the admin role does not own the database either
@@ -119,13 +121,12 @@ every table that holds a tenant's data:
   UPDATE` on the membership), and never locks `tenants` beyond the `KEY SHARE` its foreign keys take: `keep_an_owner`
   locks memberships, then tenants.
 - A membership is never deleted by the app. Removing someone sets `role = 'removed'` and `removed_at`
-  (ZIF-112); the row stays because bookings and their history reference it. The app role keeps `DELETE` on
-  `memberships` while a deployed release from before ZIF-112 still deletes; a later contract migration revokes it
-  (ZB-10). A new read of `memberships` decides: active (filter `role <> 'removed'`, inside the locking statement
-  when it locks) or history (no filter). A read reached through a session needs none: `ck_sessions_role` and
-  the sessions foreign key keep a session's membership live. Never infer owner from `role <> 'worker'`;
-  compare to `'owner'`. A new table referencing memberships with `ON DELETE CASCADE` also needs a line
-  in `members.remove`, which deletes what the cascades used to.
+  (ZIF-112); the row stays because bookings and their history reference it. The app role has no `DELETE` on
+  `memberships` (0052, ZB-10). A new read of `memberships` decides: active (filter `role <> 'removed'`, inside the
+  locking statement when it locks) or history (no filter). A read reached through a session needs none:
+  `ck_sessions_role` and the sessions foreign key keep a session's membership live. Never infer owner from
+  `role <> 'worker'`; compare to `'owner'`. A new table referencing memberships with `ON DELETE CASCADE` also needs
+  a line in `members.remove`, which deletes what the cascades used to.
 - The business's responsible person is derived, not stored: its oldest live owner (`ORDER BY memberships.id`).
   Nothing reads it yet. It is the creator only while they stay an owner: 0045's revive keeps a removed member's old
   `memberships.id`, so a returning creator who is made owner again becomes the oldest owner again.
@@ -162,9 +163,10 @@ Passwords and sign-in tokens live in tables the app role can't read or write (`p
 - Every such function declares `SET search_path = pg_catalog, public, pg_temp` (pg_temp last, or a caller's temporary
   table can stand in for a real one) and is revoked from PUBLIC. `tests/test_password_auth_db.py` checks both.
 - None changes a password without a token.
-- Minting a token is the worker's: `mint_email_token` (the hash an emailed link carries) is granted to
-  `ziftbook_worker` (0049). `ziftbook_app` keeps it until the contract migration, one release later, so a worker
-  that still connects as `ziftbook_app` keeps sending links meanwhile (ZB-08).
+- Minting a token is the worker's alone: `mint_email_token` (the hash an emailed link carries) is granted to
+  `ziftbook_worker` (0049) and not to `ziftbook_app` (0051), so a worker that connects as `ziftbook_app` sends no
+  sign-up or reset link (ZB-08). Likewise only `ziftbook_worker` may set an invite's `token_hash`; the API may only
+  clear it, on a resend (the `invites_token_hash_by_worker` trigger, 0053).
 - The `sign_in` policy lets `ziftbook_migrate` read memberships across tenants only while `app.sign_in` is `on`. A
   function that relies on it sets and restores `app.sign_in` itself; any other definer function that reads memberships
   must clear it, because a caller can set it.
@@ -633,12 +635,12 @@ ZIF-38). An empty variable means the default: `env_ignore_empty=True` on the bas
 | Name | Read by | Default | Required in production? | Secret? | What it does |
 |---|---|---|---|---|---|
 | **Database** | | | | | |
-| `ZIF_DATABASE_URL` | api, worker | none | yes | yes | The API's is `ziftbook_app`'s connection string; the worker's is `ziftbook_worker`'s (ZB-08). Keep the two in separate secrets: an API on the worker's URL could mint email tokens itself. A worker still on `ziftbook_app`'s works until the contract migration, then fails every sign-up and reset email. |
+| `ZIF_DATABASE_URL` | api, worker | none | yes | yes | The API's is `ziftbook_app`'s connection string; the worker's is `ziftbook_worker`'s (ZB-08). Keep the two in separate secrets: an API on the worker's URL could mint email tokens and set invite tokens itself. A worker on `ziftbook_app`'s fails every sign-up, reset and invite email. |
 | `ZIF_MIGRATE_DATABASE_URL` | migrations | none | yes | yes | `ziftbook_migrate`'s connection string, used to run Alembic and the admin CLI (`python -m app.admin`). Never give it to the API or the worker: `ziftbook_migrate` owns the schema, so it can change or turn off row-level security. |
 | `ZIF_POSTGRES_PASSWORD` | compose | none | yes | yes | Postgres superuser password. |
 | `ZIF_MIGRATE_PASSWORD` | compose (`bootstrap.sql`) | none | yes | yes | `ziftbook_migrate` role password. |
 | `ZIF_APP_PASSWORD` | compose (`bootstrap.sql`) | none | yes | yes | `ziftbook_app` role password. |
-| `ZIF_WORKER_PASSWORD` | compose (`bootstrap.sql`), tests | none (tests: `ziftbook_worker`) | yes | yes | `ziftbook_worker` role password (ZB-08); `docker-compose-prod.yaml` requires it. Every environment's database init (whatever runs `bootstrap.sql`) needs it too, and must run before the migrations of the release that adds the role. Unset or empty: `bootstrap.sql` warns and leaves the role's password unchanged, so a role that has none cannot log in and the worker must keep `ziftbook_app`'s URL. Required before the contract migration. |
+| `ZIF_WORKER_PASSWORD` | compose (`bootstrap.sql`), tests | none (tests: `ziftbook_worker`) | yes | yes | `ziftbook_worker` role password (ZB-08); required, by `docker-compose-prod.yaml` and by `bootstrap.sql`, which stops non-zero when it is unset or empty and leaves the role's password unchanged (an empty one would clear it). A run it stops has created the roles but skipped the grants, the TEMPORARY revoke and the role settings: set the password and run it again. Every environment's database init (whatever runs `bootstrap.sql`) needs it, before the migrations of the release that adds the role. |
 | **Mail** | | | | | |
 | `ZIF_MAILGUN_API_KEY` | worker | `""` | needed to send mail | yes | Mailgun sending API key. Unset: the worker logs `mail: "off"` and every email job fails (and retries) until it is set. |
 | `ZIF_MAILGUN_DOMAIN` | worker | `""` | needed to send mail | no | Mailgun sending domain; mail goes from `no-reply@` it. |

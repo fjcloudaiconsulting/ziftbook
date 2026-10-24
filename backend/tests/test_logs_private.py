@@ -29,6 +29,7 @@ from tests.conftest import (
     add_password,
     email_of,
     fresh_email,
+    jobs_as_the_worker,
     mailed,
     member_id,
     migrate_tenant_context,
@@ -58,6 +59,13 @@ def clean_outbox(people: People, migrate_engine: Engine) -> Iterator[None]:
     for tenant_id in (people.a, people.b):
         with migrate_tenant_context(migrate_engine, tenant_id) as conn:
             conn.execute(text("DELETE FROM email_outbox"))
+
+
+def run_jobs_once() -> None:
+    """One batch of due jobs, run as the worker does, as ziftbook_worker: only it mints a link or
+    sets an invite token (ZB-08)."""
+    with jobs_as_the_worker():
+        asyncio.run(run_once(KINDS))
 
 
 def client_for(app: FastAPI) -> Any:
@@ -325,10 +333,10 @@ def test_no_personal_data_ever_reaches_a_log(
         },
     )
     assert booked.status_code == 201
-    asyncio.run(run_once(KINDS))
+    run_jobs_once()
     confirmed = owner.patch(f"/api/bookings/{booked.json()['id']}", json={"status": "confirmed"})
     assert confirmed.status_code == 200
-    asyncio.run(run_once(KINDS))
+    run_jobs_once()
 
     # 6g (ZIF-122): a second booking's hold runs out and the sweep settles it, logging its count.
     assert len(slots) >= 2  # slots[-1] must not be 6f's slot, which is taken
@@ -374,7 +382,7 @@ def test_no_personal_data_ever_reaches_a_log(
         ).status_code
         == 200
     )
-    asyncio.run(run_once(KINDS))
+    run_jobs_once()
 
     # 6i (ZIF-130): a block over 6f's confirmed booking is refused with its client's name in the
     # body, and only there.
@@ -403,7 +411,7 @@ def test_no_personal_data_ever_reaches_a_log(
         },
     )
     assert paused.status_code == 429
-    asyncio.run(run_once(KINDS))
+    run_jobs_once()
 
     # 7: invite flow — send, list, a wrong token, then accept with a brand-new account.
     invite_email = fresh_email()
@@ -490,7 +498,7 @@ def test_no_personal_data_ever_reaches_a_log(
 
     mailgun_replies[fail_email] = 400
     try:
-        asyncio.run(run_once(KINDS))
+        run_jobs_once()
     finally:
         with migrate_engine.begin() as conn:
             conn.execute(

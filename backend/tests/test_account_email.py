@@ -12,7 +12,7 @@ from app.db import SessionLocal
 from app.jobs import Job, enqueue, run_once
 from app.mail import LOCALES, render
 from app.worker import KINDS
-from tests.conftest import MAILGUN_CALLS, People, sent_to
+from tests.conftest import MAILGUN_CALLS, People, jobs_as_the_worker, sent_to
 
 APP_URL = "https://app.example.test"
 
@@ -24,6 +24,13 @@ def bound(app_engine: Engine, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]
     SessionLocal.configure(bind=app_engine)
     yield
     SessionLocal.configure(bind=None)
+
+
+@pytest.fixture(autouse=True)
+def as_the_worker(bound: None) -> Iterator[None]:
+    """The jobs here run as the worker does, as ziftbook_worker: only it mints (ZB-08)."""
+    with jobs_as_the_worker():
+        yield
 
 
 def request(app_engine: Engine, purpose: str, email: str, locale: str) -> Job:

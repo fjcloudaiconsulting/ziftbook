@@ -12,17 +12,27 @@ from app import mail
 from app.db import SessionLocal
 from app.jobs import Job, enqueue, run_once
 from app.worker import KINDS
-from tests.conftest import People, fresh_email, save_setting
-from tests.test_account_email import APP_URL, bound, inbox, link_in, message  # noqa: F401
+from tests.conftest import People, fresh_email, jobs_as_the_worker, save_setting
+from tests.test_account_email import (  # noqa: F401
+    APP_URL,
+    as_the_worker,
+    bound,
+    inbox,
+    link_in,
+    message,
+)
 from tests.test_invites_db import pending
 
 
 def run_jobs() -> None:
+    """Runs the queued jobs as the worker does, as ziftbook_worker (ZB-08)."""
+
     async def loop() -> None:
         while await run_once(KINDS):
             pass
 
-    asyncio.run(loop())
+    with jobs_as_the_worker():
+        asyncio.run(loop())
 
 
 def invite_row(
