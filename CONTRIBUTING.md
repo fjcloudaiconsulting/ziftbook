@@ -632,12 +632,12 @@ ZIF-38). An empty variable means the default: `env_ignore_empty=True` on the bas
 | Name | Read by | Default | Required in production? | Secret? | What it does |
 |---|---|---|---|---|---|
 | **Database** | | | | | |
-| `ZIF_DATABASE_URL` | api, worker | none | yes | yes | The API's is `ziftbook_app`'s connection string; the worker's is `ziftbook_worker`'s (ZB-08). A worker still on `ziftbook_app`'s works until the contract migration, then fails every sign-up and reset email. |
+| `ZIF_DATABASE_URL` | api, worker | none | yes | yes | The API's is `ziftbook_app`'s connection string; the worker's is `ziftbook_worker`'s (ZB-08). Keep the two in separate secrets: an API on the worker's URL could mint email tokens itself. A worker still on `ziftbook_app`'s works until the contract migration, then fails every sign-up and reset email. |
 | `ZIF_MIGRATE_DATABASE_URL` | migrations | none | yes | yes | `ziftbook_migrate`'s connection string, used to run Alembic and the admin CLI (`python -m app.admin`). Never give it to the API or the worker: `ziftbook_migrate` owns the schema, so it can change or turn off row-level security. |
 | `ZIF_POSTGRES_PASSWORD` | compose | none | yes | yes | Postgres superuser password. |
 | `ZIF_MIGRATE_PASSWORD` | compose (`bootstrap.sql`) | none | yes | yes | `ziftbook_migrate` role password. |
 | `ZIF_APP_PASSWORD` | compose (`bootstrap.sql`) | none | yes | yes | `ziftbook_app` role password. |
-| `ZIF_WORKER_PASSWORD` | compose (`bootstrap.sql`), tests | none (tests: `ziftbook_worker`) | yes | yes | `ziftbook_worker` role password (ZB-08); `docker-compose-prod.yaml` requires it. Unset or empty: `bootstrap.sql` warns and leaves the role's password unchanged, so a role that has none cannot log in and the worker must keep `ziftbook_app`'s URL. Required before the contract migration. |
+| `ZIF_WORKER_PASSWORD` | compose (`bootstrap.sql`), tests | none (tests: `ziftbook_worker`) | yes | yes | `ziftbook_worker` role password (ZB-08); `docker-compose-prod.yaml` requires it. Every environment's database init (whatever runs `bootstrap.sql`) needs it too, and must run before the migrations of the release that adds the role. Unset or empty: `bootstrap.sql` warns and leaves the role's password unchanged, so a role that has none cannot log in and the worker must keep `ziftbook_app`'s URL. Required before the contract migration. |
 | **Mail** | | | | | |
 | `ZIF_MAILGUN_API_KEY` | worker | `""` | needed to send mail | yes | Mailgun sending API key. Unset: the worker logs `mail: "off"` and every email job fails (and retries) until it is set. |
 | `ZIF_MAILGUN_DOMAIN` | worker | `""` | needed to send mail | no | Mailgun sending domain; mail goes from `no-reply@` it. |
