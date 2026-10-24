@@ -315,6 +315,8 @@
       "keepIt": "Keep it",
       "declineLabel": "Message to {client} (optional)",
       "declineHint": "Sent to {client} with the email about the declined booking.",
+      "declineRefund": "{client} paid {amount} online and gets everything back.",
+      "declinePaidOwner": "Only an owner can decline a paid request.",
       "withWorker": "With {name}",
       "walkIn": "walk-in",
       "bookedOnline": "booked online {relative}",
@@ -709,7 +711,7 @@
       "workersEditLabel": "Team members can change their own working hours",
       "workersEditHint": "Off: only you set their hours.",
       "workersAnswerLabel": "Team members can accept and decline their own booking requests",
-      "workersAnswerHint": "Off: you answer every request. Team members see theirs but can't accept or decline them.",
+      "workersAnswerHint": "On: they answer their own requests, but declining one paid in advance refunds the client in full, so that stays with an owner. Off: you answer every request. Team members see theirs but can't accept or decline them.",
       "paymentCheckLabel": "Ask for payment details at checkout",
       "paymentCheckHint": "Clients add a card we check without charging it, or pay in advance. Services under {min} book without this step."
     },
