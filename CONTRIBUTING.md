@@ -71,7 +71,9 @@ Specifics:
   role has, plus what only background jobs may do (`mint_email_token`). The same never-list applies to it.
 - Neither runtime role can create temporary tables, and both search `public` before `pg_temp` (ZB-31;
   `bootstrap.sql`, plus 0050 where `ziftbook_migrate` owns the database; elsewhere 0050 changes nothing and logs
-  `temporary tables left to bootstrap.sql` at WARNING). A pooled engine resets each connection
+  `temporary tables left to bootstrap.sql` at WARNING). Where the admin role does not own the database either
+  (some hosted providers), the revoke in `bootstrap.sql` only warns: after a deploy, check that
+  `has_database_privilege('ziftbook_app', current_database(), 'TEMPORARY')` is false. A pooled engine resets each connection
   on check-in with `app.db.reset_session` (`RESET ALL; DISCARD TEMP`, then open cursors, `LISTEN`s, session-level
   advisory locks and `SET ROLE`), so no session state reaches the next request; a new pooled engine adds the same
   listener. A setting meant for every connection goes in the engine's `connect_args` `options` (`-c lock_timeout=5s`),

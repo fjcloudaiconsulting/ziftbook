@@ -1,7 +1,9 @@
 -- Creates the three database roles, their database-level grants and their settings. Idempotent: safe to run on
 -- every deploy.
 -- Run as an admin role (a superuser locally, the provider's admin role when hosted):
---   psql -v ON_ERROR_STOP=1 -f backend/migrations/bootstrap.sql
+--   psql -v ON_ERROR_STOP=1 -d <app database> -f backend/migrations/bootstrap.sql
+-- Connect to the application's database (compose: ziftbook): the database grants and the TEMPORARY
+-- revoke below apply to the database psql is connected to.
 -- Requires ZIF_MIGRATE_PASSWORD and ZIF_APP_PASSWORD in the environment. If either is unset, the
 -- password statement fails and the run stops non-zero (a role created without a password cannot log in).
 -- ZIF_WORKER_PASSWORD may still be unset while a deployment's worker connects as ziftbook_app: the run
@@ -49,6 +51,9 @@ GRANT ziftbook_app TO ziftbook_worker;
 -- does it where ziftbook_migrate owns the database (the test databases). ziftbook_migrate keeps it,
 -- as it does where it owns the database. Role settings need a superuser or CREATEROLE, so they live
 -- here too, one per role: ziftbook_worker inherits ziftbook_app's privileges, not its settings.
+-- Where the admin role neither owns the database nor is a member of its owner (some hosted providers),
+-- the REVOKE only warns that nothing was revoked. Check after the run that
+-- has_database_privilege('ziftbook_app', current_database(), 'TEMPORARY') is false.
 REVOKE TEMPORARY ON DATABASE :"DBNAME" FROM PUBLIC;
 GRANT TEMPORARY ON DATABASE :"DBNAME" TO ziftbook_migrate;
 ALTER ROLE ziftbook_app SET search_path = public, pg_temp;
