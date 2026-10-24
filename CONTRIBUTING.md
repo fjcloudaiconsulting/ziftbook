@@ -308,11 +308,14 @@ A platform admin runs the platform across businesses (ZIF-70). `platform_admins`
   a password (the API verifies it), so `start_admin_session` trusts the API's check. Only the second factor (the
   next bullet) keeps the app role from admin access (ZB-08).
 - Admins sign in with a second factor (TOTP, ZIF-71). An admin enrols with a one-hour ticket from
-  `kubectl exec -it <api pod> -- python -m app.admin enrol <email> --reason "..."`, which wipes their current
-  factor and recovery codes and ends their admin sessions. It writes the ticket to `/dev/tty`, never to stdout or
-  a log, so it needs `-it`: with no terminal it issues nothing and exits 2; exit 1 means no admin has that email.
-  Prefer `kubectl exec` in a deployment: with `kubectl run -it` (or `docker compose run -it`) the container's
-  main process owns the terminal, and the container log records what is written to it. For local development
+  `python -m app.admin enrol <email> --reason "..."`, which wipes their current factor and recovery codes and ends
+  their admin sessions. Like `grant`, it connects as `ziftbook_migrate` (`ZIF_MIGRATE_DATABASE_URL`), so it runs
+  from the migrations image, never in the API's container: the API must never hold the migrate role's URL. It
+  writes the ticket to `/dev/tty`, never to stdout or a log, so it needs a terminal (`-it`): with none it issues
+  nothing and exits 2; exit 1 means no admin has that email. The container log records what a container's main
+  process writes to its terminal (`kubectl run -it`, `docker compose run -it`), so in a deployment start a
+  short-lived pod from the migrations image with only the migrate role's URL and a command that just sleeps, run
+  the CLI in it with `kubectl exec -it`, and delete the pod. For local development
   `docker compose run --rm -it migrate python -m app.admin enrol <email> --reason "..."` is fine, with that
   caveat. Run it after `grant`, and again when an admin loses their authenticator and their recovery codes.
 - Never enable statement or parameter logging (`log_statement`, `log_min_duration_statement` with parameters,
@@ -628,7 +631,7 @@ ZIF-38). An empty variable means the default: `env_ignore_empty=True` on the bas
 |---|---|---|---|---|---|
 | **Database** | | | | | |
 | `ZIF_DATABASE_URL` | api, worker | none | yes | yes | The API's is `ziftbook_app`'s connection string; the worker's is `ziftbook_worker`'s (ZB-08). A worker still on `ziftbook_app`'s works until the contract migration, then fails every sign-up and reset email. |
-| `ZIF_MIGRATE_DATABASE_URL` | migrations | none | yes | yes | `ziftbook_migrate`'s connection string, used to run Alembic. |
+| `ZIF_MIGRATE_DATABASE_URL` | migrations | none | yes | yes | `ziftbook_migrate`'s connection string, used to run Alembic and the admin CLI (`python -m app.admin`). Never give it to the API or the worker: `ziftbook_migrate` owns the schema, so it can change or turn off row-level security. |
 | `ZIF_POSTGRES_PASSWORD` | compose | none | yes | yes | Postgres superuser password. |
 | `ZIF_MIGRATE_PASSWORD` | compose (`bootstrap.sql`) | none | yes | yes | `ziftbook_migrate` role password. |
 | `ZIF_APP_PASSWORD` | compose (`bootstrap.sql`) | none | yes | yes | `ziftbook_app` role password. |
