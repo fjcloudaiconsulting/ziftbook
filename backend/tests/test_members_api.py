@@ -11,17 +11,22 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from httpx2 import Response
-from sqlalchemy import Engine, text
+from psycopg.errors import InsufficientPrivilege
+from sqlalchemy import Engine, create_engine, make_url, text
+from sqlalchemy.exc import ProgrammingError
+from sqlalchemy.pool import NullPool
 
 from app import auth
 from app.db import tenant_context
 from app.main import create_app
 from tests.conftest import (
+    ADMIN_DATABASE_URL,
     PASSWORD,
     People,
     add_membership,
     add_password,
     email_of,
+    end_membership,
     events,
     failing,
     member_id,
@@ -1074,6 +1079,92 @@ def test_a_removed_member_s_account_is_hidden_until_they_are_invited_back(
     assert call(people.a, digest(secret), None).outcome == "accepted"
 
     assert account(people.a, people.only_a) == their_account
+
+
+def membership_state(tenant_id: uuid.UUID, user_id: uuid.UUID) -> tuple[Any, ...]:
+    with tenant_context(tenant_id) as session:
+        row = session.execute(
+            text("SELECT id, role, removed_at FROM memberships WHERE user_id = :u"), {"u": user_id}
+        ).one()
+    return tuple(row)
+
+
+# ZB-32 FENCE (0056). Wrong impl: the app role, or the worker through it, sets a removed membership
+# back to a live role, which shows the business the account 0055 hides, or re-dates its removal;
+# or a check that refuses only the app role, so the worker still can.
+@pytest.mark.parametrize("role", ["ziftbook_app", "ziftbook_worker"], ids=["app", "worker"])
+@pytest.mark.parametrize(
+    "change",
+    [
+        "role = 'worker', removed_at = NULL",
+        "role = 'owner', removed_at = NULL",
+        "removed_at = removed_at - interval '1 day'",
+    ],
+    ids=["revive", "revive-as-owner", "re-date"],
+)
+def test_only_an_invite_brings_back_a_removed_membership(
+    people: People, app_engine: Engine, worker_engine: Engine, role: str, change: str
+) -> None:
+    end_membership(people.a, people.only_a)
+    before = membership_state(people.a, people.only_a)
+    engine = {"ziftbook_app": app_engine, "ziftbook_worker": worker_engine}[role]
+
+    with pytest.raises(ProgrammingError) as error, engine.begin() as conn:
+        conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(people.a)})
+        assert conn.scalar(text("SELECT current_user")) == role
+        conn.execute(
+            text(f"UPDATE memberships SET {change} WHERE user_id = :u"), {"u": people.only_a}
+        )
+
+    assert isinstance(error.value.orig, InsufficientPrivilege)
+    assert membership_state(people.a, people.only_a) == before
+    assert account(people.a, people.only_a) is None
+
+
+# ZB-32 FENCE (0056). Wrong impl: a check on the login (session_user) rather than the role running
+# the statement (current_user). A superuser as itself is refused; after SET ROLE ziftbook_migrate,
+# as 0056 tells an operator to, it brings the membership back.
+def test_a_superuser_brings_back_a_membership_only_as_the_migrate_role(
+    people: People, migrate_engine: Engine
+) -> None:
+    end_membership(people.a, people.only_a)
+    revive = text("UPDATE memberships SET role = 'worker', removed_at = NULL WHERE user_id = :u")
+    tenant = text("SELECT set_config('app.tenant_id', :t, true)")
+    admin = create_engine(
+        make_url(ADMIN_DATABASE_URL).set(database=migrate_engine.url.database), poolclass=NullPool
+    )
+    try:
+        with pytest.raises(ProgrammingError) as error, admin.begin() as conn:
+            conn.execute(tenant, {"t": str(people.a)})
+            conn.execute(revive, {"u": people.only_a})
+        assert isinstance(error.value.orig, InsufficientPrivilege)
+        with admin.begin() as conn:
+            conn.execute(text("SET LOCAL ROLE ziftbook_migrate"))
+            conn.execute(tenant, {"t": str(people.a)})
+            who = conn.execute(text("SELECT current_user, session_user")).one()
+            conn.execute(revive, {"u": people.only_a})
+    finally:
+        admin.dispose()
+    assert tuple(who) == ("ziftbook_migrate", "ziftbook")
+    assert membership_state(people.a, people.only_a)[1:] == ("worker", None)
+
+
+# ZB-32 guard (0056): the app's own membership writes still work beside it, as the app role through
+# the API: a live member's role change and their removal. Then a re-invite revives the same row,
+# through accept_invite, which runs as ziftbook_migrate.
+def test_role_changes_removal_and_a_re_invite_still_work(people: People, app: FastAPI) -> None:
+    owner = signed_in(app, people.a, people.both)
+    only_a_member = member_id(people.a, people.only_a)
+    for role in ("owner", "worker"):
+        changed = owner.patch(f"/api/members/{only_a_member}", json={"role": role})
+        assert (changed.status_code, changed.json()["role"]) == (200, role)
+
+    assert delete(owner, only_a_member).status_code == 204
+    assert membership_state(people.a, people.only_a)[1] == "removed"
+
+    _, secret = minted(people.a, email_of(people.only_a))
+    assert call(people.a, digest(secret), None).outcome == "accepted"
+    assert membership_state(people.a, people.only_a) == (only_a_member, "worker", None)
 
 
 # 2: a live appointment blocks the removal; a lapsed hold, a past or a completed one does not.
