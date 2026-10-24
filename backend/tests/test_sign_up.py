@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 from httpx2 import Response
 from sqlalchemy import Engine, text
 
-from app import auth, business_settings
+from app import auth, business_settings, turnstile
 from app.countries import COUNTRIES, Country
 from app.db import tenant_context
 from app.main import create_app
@@ -446,3 +446,46 @@ def test_a_failure_saving_starting_settings_leaves_no_business(
     with migrate_engine.connect() as conn:
         assert conn.scalar(text("SELECT count(*) FROM users WHERE email = :e"), {"e": email}) == 0
     assert live(app_engine, token, "sign_up")
+
+
+def test_sign_up_needs_a_passing_turnstile(
+    monkeypatch: pytest.MonkeyPatch, client: TestClient
+) -> None:
+    monkeypatch.setenv("ZIF_TURNSTILE_SECRET", "s" * 20)
+    monkeypatch.setattr(
+        turnstile, "verify", lambda token, ip, *, action: token == "good" and action == "sign_up"
+    )
+    refused = client.post("/api/sign-up", json={"email": fresh_email(), "locale": "en"})
+    assert (refused.status_code, refused.json()["code"]) == (403, "turnstile_failed")
+    ok = client.post(
+        "/api/sign-up", json={"email": fresh_email(), "locale": "en", "turnstile_token": "good"}
+    )
+    assert ok.status_code == 202
+
+
+# ZB-17: a request refused at Turnstile spends nothing of its address's own limit, so requests with
+# no pass can never use up an address's sign-ups. Wrong impl: the IP and email keys in one hit()
+# before Turnstile, which makes the fourth request below a 429.
+def test_turnstile_refusals_leave_the_email_limit_unspent(
+    monkeypatch: pytest.MonkeyPatch, client: TestClient
+) -> None:
+    monkeypatch.setenv("ZIF_TURNSTILE_SECRET", "s" * 20)
+    monkeypatch.setattr(turnstile, "verify", lambda token, ip, *, action: token == "good")
+    email = fresh_email()
+
+    refused = [
+        client.post("/api/sign-up", json={"email": email, "locale": "en"}).status_code
+        for _ in range(3)
+    ]
+    passed = client.post(
+        "/api/sign-up", json={"email": email, "locale": "en", "turnstile_token": "good"}
+    )
+
+    assert (refused, passed.status_code) == ([403] * 3, 202)
+
+
+def test_sign_up_works_with_turnstile_disabled(client: TestClient) -> None:
+    assert (
+        client.post("/api/sign-up", json={"email": fresh_email(), "locale": "en"}).status_code
+        == 202
+    )

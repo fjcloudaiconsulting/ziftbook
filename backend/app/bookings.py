@@ -52,6 +52,10 @@ IP_LIMIT, BUSINESS_IP_LIMIT, EMAIL_LIMIT, LIMIT_WINDOW = 30, 10, 5, timedelta(ho
 # Against mail bombing and address farming: one address, every business together. The key name
 # `booking_verify` is kept from ZIF-117 so live counters carry over.
 ADDRESS_LIMIT = 10
+# ZB-05: bookings placed at one business in LIMIT_WINDOW by bookers whose address no session
+# proves, whatever their address or IP. Over it, guest bookings there pause for the rest of the
+# window and the owners are told once (flood()).
+UNPROVEN_PER_BUSINESS_HOUR = 20
 # ZIF-51's own key in app/schedule.py's ticket-number advisory lock convention (OPENING_LOCK = 105):
 # disjoint first arguments, so the two locks can never collide.
 LOCK_KEY = 51
@@ -350,13 +354,21 @@ RETURNING id, status, starts_at, worker_id, now() AS now
 # bookings the booking page auto-confirmed. Those are born with no TTL, so without the second arm
 # auto_confirm left one address uncapped. A booking the merchant accepted or made does not count,
 # so auto_confirm off behaves as before; the refusal stays the generic 429.
+# One row per counted booking, with the address of the request that placed it: its `created`
+# event's ip, from auth.origin like the one book_online compares it with (ZB-19).
 PENDING_COUNT = text("""
-SELECT count(*) FROM bookings
-WHERE client_id = :client_id
-  AND ((status = ANY(CAST(:expiring AS text[])) AND expires_at > :now)
-       OR (status = 'confirmed' AND auto_confirm_at_booking AND source = 'booking_page'
-           AND starts_at > :now))
+SELECT host(e.ip) FROM bookings b
+LEFT JOIN booking_events e
+  ON e.tenant_id = b.tenant_id AND e.booking_id = b.id AND e.event = 'created'
+WHERE b.client_id = :client_id
+  AND ((b.status = ANY(CAST(:expiring AS text[])) AND b.expires_at > :now)
+       OR (b.status = 'confirmed' AND b.auto_confirm_at_booking AND b.source = 'booking_page'
+           AND b.starts_at > :now))
 """)
+# ZB-19. max_pending_per_email counts per address and requester IP (the booking IP key's bucket),
+# so one requester's pendings never lock an address out of a business for everyone else; all IPs
+# together hold at most this many times the setting.
+PENDING_ACROSS_IPS = 3
 
 INSERT_BOOKING = text("""
 INSERT INTO bookings (
@@ -987,12 +999,19 @@ def book_online(
     if not eligible:
         raise ApiError(409, "slot_unavailable")
     # 13. AFTER re-derivation, never before (B6): counting before it makes 429-vs-409 an
-    #     oracle for "this address books here" against a deliberately unbookable slot.
-    pending = db.scalar(
+    #     oracle for "this address books here" against a deliberately unbookable slot. Per
+    #     address and IP bucket, both sides bucketed by limits.ip_key from what auth.origin
+    #     gives (the event's ip is that value), under a ceiling across IPs (ZB-19).
+    placed_from = db.scalars(
         PENDING_COUNT,
         {"client_id": found.id, "expiring": list(availability.EXPIRING), "now": row.now},
-    )
-    if (pending or 0) >= settings.max_pending_per_email:
+    ).all()
+    bucket = limits.ip_key("booking", origin_ip)
+    mine = sum(limits.ip_key("booking", ip) == bucket for ip in placed_from)
+    if (
+        mine >= settings.max_pending_per_email
+        or len(placed_from) >= PENDING_ACROSS_IPS * settings.max_pending_per_email
+    ):
         raise ApiError(429, "rate_limited")
     # 14. The candidate loop: not "one retry" (§1.1). Least loaded that day, then worker_id
     #     ascending - the tiebreak is deterministic, so concurrent requests for the same
@@ -1060,6 +1079,50 @@ def book_online(
     return out, stripe_account, expires_at
 
 
+def give_back(placements: list[str]) -> None:
+    """Refund the placements create() reserved for a booking it did not place. A refund that fails
+    leaves them counted, the safe direction, so it is logged and never replaces the answer.
+
+    Its own connection, like every limits call: never call it inside the booking transaction (the
+    second pooled connection under the tenant lock that account() explains), only once it closed.
+    """
+    try:
+        limits.refund(placements, LIMIT_WINDOW)
+    except Exception:
+        logger.warning("booking placement refund failed", exc_info=True)
+
+
+OWNERS = text("SELECT user_id FROM memberships WHERE role = 'owner'")
+
+
+def flood(tenant_id: UUID) -> None:
+    """Tell every owner that guest bookings at their business are paused (ZB-05), once per
+    LIMIT_WINDOW: only the refusal whose charge on the business's alert key counts 1, exact under
+    the row lock, so concurrent refusals cannot both send. The unproven count cannot decide it:
+    every refusal gives its reservation back, so that count reads the cap plus one again and again.
+
+    Its own connections, like give_back: never inside the booking transaction. A failure is logged
+    and never replaces the 429.
+    """
+    try:
+        if limits.charge(f"booking_flood:{tenant_id}", LIMIT_WINDOW) != 1:
+            return
+        logger.warning("booking flood", extra={"tenant_id": str(tenant_id)})
+        # At least LIMIT_WINDOW between two alerts, so never two in one clock hour.
+        hour = datetime.now(UTC).strftime("%Y-%m-%dT%H")
+        with tenant_context(tenant_id) as db:
+            for (user_id,) in db.execute(OWNERS).all():
+                jobs.enqueue(
+                    db,
+                    "email.booking_flood",
+                    f"email.booking_flood:{tenant_id}:{hour}:{user_id}",
+                    {"user_id": str(user_id)},
+                    tenant_id=tenant_id,
+                )
+    except Exception:
+        logger.warning("booking flood alert failed", exc_info=True)
+
+
 router = APIRouter(prefix="/api/public", tags=["bookings"])
 
 
@@ -1088,27 +1151,49 @@ def create(  # sync def: turnstile.verify's urlopen blocks, and runs in FastAPI'
     ):
         raise ApiError(429, "rate_limited")
     # 2. Turnstile, between the two limits.
-    if not turnstile.verify(new.turnstile_token, ip):
+    if not turnstile.verify(new.turnstile_token, ip, action="booking"):
         raise ApiError(403, "turnstile_failed")
-    # 3. Per address LAST, and in its own hit() call: app/limits.py increments every key
+    # 3. Per address LAST, and in hit() calls of their own: app/limits.py increments every key
     #    unconditionally and only then evaluates which one tripped, so a combined call before
-    #    Turnstile would let a Turnstile-less script lock an address out cheaply.
-    if limits.hit(
-        {
-            limits.email_key("booking", f"{tenant_id}:{new.email}"): EMAIL_LIMIT,
-            limits.email_key("booking_verify", new.email): ADDRESS_LIMIT,
-        },
-        LIMIT_WINDOW,
-    ):
+    #    Turnstile would let a Turnstile-less script lock an address out cheaply. Every address key
+    #    folds aliases (limits.address_for_limits); storage keeps the address as entered (ZB-19).
+    #    Attempts per business, address and IP: refusals from one requester never lock the address
+    #    out for another.
+    folded = limits.address_for_limits(new.email)
+    attempt = limits.email_key("booking", f"{tenant_id}:{folded}|{limits.ip_key('booking', ip)}")
+    if limits.hit({attempt: EMAIL_LIMIT}, LIMIT_WINDOW):
         raise ApiError(429, "rate_limited")
-    request.state.tenant_id = tenant_id
-    response.headers["Cache-Control"] = "no-store"
-    origin_ip, user_agent = auth.origin(request)
-    # Placement and Stripe never share a transaction (ZIF-158): tx1 places the booking, awaiting
-    # payment if the business asks for a card check, and commits; the intent is made at Stripe
-    # with no lock and no transaction open; tx2 (payments.start) records it. Stripe's seconds
-    # would otherwise be held against the whole business's bookings.
+    # 4. Placements per address, at every business (ADDRESS_LIMIT) and at this one (EMAIL_LIMIT):
+    #    reserved here, before placing, in one hit() whose count is exact under the row lock, so
+    #    two bookings racing for an address's last placement cannot both have it. Given back
+    #    below if nothing is placed, so only placed bookings spend them.
+    placements = {
+        limits.email_key("booking_verify", folded): ADDRESS_LIMIT,
+        limits.email_key("booking_placed", f"{tenant_id}:{folded}"): EMAIL_LIMIT,
+    }
+    if limits.hit(placements, LIMIT_WINDOW):
+        give_back(list(placements))
+        raise ApiError(429, "rate_limited")
+    reserved = list(placements)
+    placed = False
     try:
+        # 5. Unproven bookings at this business, every address and IP together (ZB-05): reserved
+        #    after the placements, so an attempt they refuse never holds one, and given back with
+        #    them below, so only placed bookings spend it. Over it, the owners are told (flood()).
+        if not proven:
+            unproven = f"booking_unproven:{tenant_id}"
+            hits = limits.charge(unproven, LIMIT_WINDOW)
+            reserved.append(unproven)
+            if hits > UNPROVEN_PER_BUSINESS_HOUR:
+                flood(tenant_id)
+                raise ApiError(429, "rate_limited")
+        request.state.tenant_id = tenant_id
+        response.headers["Cache-Control"] = "no-store"
+        origin_ip, user_agent = auth.origin(request)
+        # Placement and Stripe never share a transaction (ZIF-158): tx1 places the booking,
+        # awaiting payment if the business asks for a card check, and commits; the intent is made
+        # at Stripe with no lock and no transaction open; tx2 (payments.start) records it. Stripe's
+        # seconds would otherwise be held against the whole business's bookings.
         with tenant_context(tenant_id) as db:
             # 1. The first statement of the transaction, always, nothing above it.
             db.execute(LOCK, {"key": LOCK_KEY})
@@ -1131,6 +1216,7 @@ def create(  # sync def: turnstile.verify's urlopen blocks, and runs in FastAPI'
                 message=new.message,
                 payment=new.payment,
             )
+        placed = True  # committed: the reservation stands
     except OperationalError:
         # DeadlockDetected (40P01) and serialization failures arrive here, NOT as IntegrityError,
         # and abort the whole transaction - ROLLBACK TO SAVEPOINT cannot recover one, so this cannot
@@ -1139,6 +1225,11 @@ def create(  # sync def: turnstile.verify's urlopen blocks, and runs in FastAPI'
         # not know) and not 500. app/passwords.py:84 established the code. No retry behind it: a
         # retry would need the Turnstile token again, which is single-use (C9).
         raise ApiError(503, "busy") from None
+    finally:
+        # A refusal, busy, or any error before the commit: once, whichever, and after the booking
+        # transaction has closed (the with block above has exited by the time this runs).
+        if not placed:
+            give_back(reserved)
     if stripe_account is not None:
         assert expires_at is not None
         from app import payments  # here: payments imports this module

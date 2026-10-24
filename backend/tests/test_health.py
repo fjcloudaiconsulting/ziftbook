@@ -1,5 +1,6 @@
 import logging
 import threading
+from collections.abc import Callable
 from typing import Any
 
 import pytest
@@ -226,3 +227,25 @@ def test_a_hung_probe_serves_the_last_result_only_while_it_is_young(
     assert young.status_code == 200
     assert (old.status_code, old.json()) == (503, {"code": "database_unavailable"})
     assert logged_while_hung == []
+
+
+@pytest.mark.parametrize(
+    ("app_url", "errors"),
+    [("https://app.example.com", 1), ("http://localhost:3000", 0)],
+    ids=["public", "local"],
+)
+def test_startup_flags_the_turnstile_opt_out_on_a_public_url(
+    log_lines: Callable[[], list[dict[str, Any]]],
+    monkeypatch: pytest.MonkeyPatch,
+    app_url: str,
+    errors: int,
+) -> None:
+    monkeypatch.setenv("ZIF_TURNSTILE_DISABLED", "true")
+    monkeypatch.delenv("ZIF_TURNSTILE_SECRET", raising=False)
+    monkeypatch.setenv("ZIF_APP_URL", app_url)
+
+    with TestClient(create_app()) as client:
+        assert client.get("/api/healthz").status_code == 200
+
+    flagged = [line for line in log_lines() if line["msg"] == "turnstile disabled on a public url"]
+    assert [line["level"] for line in flagged] == ["ERROR"] * errors

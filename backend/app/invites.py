@@ -3,13 +3,14 @@
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Request, Response
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 from sqlalchemy import text
 
-from app import auth, limits, passwords, tracing
+from app import auth, limits, passwords, tracing, turnstile
 from app.accounts import DisplayNameText
 from app.auth import CurrentOwner
 from app.db import SessionLocal, count_after_commit, tenant_context
@@ -49,6 +50,8 @@ class AcceptInvite(InviteToken):
     password: str
     # Required for a new account (checked in accept); an existing one keeps its own, so ignored.
     name: DisplayNameText | None = None
+    # An existing account's sign-in challenge (auth.limit_attempt, ZB-01); ignored otherwise.
+    turnstile_token: Annotated[str, StringConstraints(max_length=turnstile.MAX_TOKEN)] | None = None
 
 
 INVITES = "SELECT id, email, expires_at, expires_at <= now() AS expired FROM invites"
@@ -200,7 +203,9 @@ def find(token: str) -> Found:
 def lookup(body: InviteToken, request: Request, response: Response) -> InviteDetails:
     """What an invite link is for, so the page can ask for a new password or the existing one."""
     ip = request.client.host if request.client else None
-    if limits.hit({limits.ip_key("invite_lookup", ip): 10}, LINK_WINDOW):
+    if limits.hit(
+        {limits.ip_key("invite_lookup", ip, v6_prefix=limits.AUTH_V6_PREFIX): 10}, LINK_WINDOW
+    ):
         raise ApiError(429, "rate_limited")
     found = find(body.token)
     response.headers["Cache-Control"] = "no-store"
@@ -224,7 +229,9 @@ def accept(body: AcceptInvite, request: Request, response: Response) -> auth.Ses
     own, so its emails use the business's language until it signs in and sets one.
     """
     ip = request.client.host if request.client else None
-    if limits.hit({limits.ip_key("invite_accept", ip): 10}, LINK_WINDOW):
+    if limits.hit(
+        {limits.ip_key("invite_accept", ip, v6_prefix=limits.AUTH_V6_PREFIX): 10}, LINK_WINDOW
+    ):
         raise ApiError(429, "rate_limited")
     found = find(body.token)  # before any hashing: a dead link costs nothing
     password_hash = None
@@ -234,13 +241,16 @@ def accept(body: AcceptInvite, request: Request, response: Response) -> auth.Ses
         # A weak password is a 422 and the link stays usable.
         password_hash = passwords.hash_password(passwords.check_new_password(body.password))
     else:
-        # The sign-in count: an invite link is no way around the per-account limit.
-        if limits.hit({limits.email_key("sign_in", found.email): 10}, auth.SIGN_IN_WINDOW):
-            raise ApiError(429, "rate_limited")
+        # Sign-in's limits, keyed on this route's own address: an invite link is no way around
+        # the account's challenge, and shares its failure count.
+        auth.limit_attempt(
+            found.email, limits.ip_key("invite_accept", ip), body.turnstile_token, ip
+        )
         # Sign-in's rules: length only, and no database connection held while verifying.
         if len(body.password) > passwords.MAX_PASSWORD or not passwords.verify(
             found.password_hash, body.password
         ):
+            auth.count_failure(found.email)
             with SessionLocal.begin() as session:
                 auth.record(
                     session,

@@ -77,6 +77,7 @@ services:
       ZIF_TURNSTILE_DISABLED: "true" # no secret in development; without it every public booking is refused
       ZIF_SETUP_TOKEN: dev-only-setup-token-not-a-secret-0000 # development only, not a secret; make seed uses it (Makefile)
       ZIF_TOTP_KEY: ZGV2LW9ubHktdG90cC1rZXktbm90LWEtc2VjcmV0ISE= # development only, not a secret
+      ZIF_RATE_LIMIT_KEY: dev-only-rate-limit-key-not-a-secret-0000 # development only, not a secret
       # Photo storage (ZIF-133): the dev object store below. Dev keys, not secrets. The browser
       # PUTs to the public endpoint; the services reach the store by its compose name.
       ZIF_S3_ENDPOINT: http://seaweedfs:8333
@@ -133,6 +134,7 @@ services:
       ZIF_DATABASE_URL: postgresql+psycopg://ziftbook_app:ziftbook_app@postgres:5432/ziftbook
       # Mailpit's HTTP send API, never SMTP (ZIF-151); a Mailgun key would take precedence.
       ZIF_MAILPIT_URL: http://mailpit:8025
+      ZIF_RATE_LIMIT_KEY: dev-only-rate-limit-key-not-a-secret-0000 # development only, not a secret
       # Photo storage (ZIF-133): the dev object store below. Dev keys, not secrets. The browser
       # PUTs to the public endpoint; the services reach the store by its compose name.
       ZIF_S3_ENDPOINT: http://seaweedfs:8333

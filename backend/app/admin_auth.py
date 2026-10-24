@@ -37,6 +37,8 @@ ADMIN_ABSOLUTE = timedelta(hours=8)
 
 RESOLVE = text("SELECT * FROM resolve_admin_session(:id_hash)")
 CODE_WINDOW = timedelta(minutes=15)  # the per-address limits on codes and tickets
+# ZB-18: an admin's failures from anywhere ask for a Turnstile challenge, never a lock.
+ADMIN_FAILURES_BEFORE_CHALLENGE = 10
 TOTP_CODE = re.compile("[0-9]{6}")  # ASCII only: \d and str.isdigit accept Arabic-Indic digits
 
 logger = logging.getLogger(__name__)
@@ -153,19 +155,27 @@ def sign_in(credentials: auth.Credentials, request: Request, response: Response)
     """Sign a platform admin in. An unknown email, a wrong password and someone who is not an admin
     get the same answer, after the same work."""
     ip = request.client.host if request.client else None
+    address_key = limits.ip_key("admin_sign_in", ip, v6_prefix=limits.AUTH_V6_PREFIX)
+    # The per-admin key embeds the narrower /64, so a neighbour in the /48 cannot spend it.
+    pair_address = limits.ip_key("admin_sign_in", ip)
     # Every attempt counts, before anything else, so a correct password doesn't get past the limit.
     if limits.hit(
         {
             # Email and address together: an email alone would let anyone who knows it lock the
             # admin out. The password only buys a half session now (ZIF-71).
-            limits.email_key(
-                "admin_sign_in", f"{credentials.email}|{limits.ip_key('admin_sign_in', ip)}"
-            ): 5,
-            limits.ip_key("admin_sign_in", ip): 20,
+            limits.email_key("admin_sign_in", f"{credentials.email}|{pair_address}"): 5,
+            address_key: 20,
         },
         auth.SIGN_IN_WINDOW,
     ):
         raise ApiError(429, "rate_limited")
+    auth.require_challenge(
+        "admin_sign_in",
+        credentials.email,
+        credentials.turnstile_token,
+        ip,
+        ADMIN_FAILURES_BEFORE_CHALLENGE,
+    )
     with SessionLocal.begin() as session:
         account = session.execute(
             text("SELECT * FROM account_by_email(:email)"), {"email": credentials.email}
@@ -206,6 +216,12 @@ def sign_in(credentials: auth.Credentials, request: Request, response: Response)
                 session.execute(RESOLVE, {"id_hash": id_hash}).one(), from_attributes=True
             )
     if not started:
+        # Unknown emails count too, under the same key: the answers can't tell who is an admin.
+        if auth.count_failure(credentials.email, "admin_sign_in", ADMIN_FAILURES_BEFORE_CHALLENGE):
+            logger.warning(
+                "admin sign-in failures",
+                extra={"target": f"user:{account.user_id}" if account else None},
+            )
         raise ApiError(401, "invalid_credentials")
     set_admin_cookie(response, token)
     response.headers["Cache-Control"] = "no-store"

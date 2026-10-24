@@ -851,7 +851,7 @@ def test_a_client_can_come_back_or_start_over(
     made = place(app, people, ready, client=client, email=address).json()
     booking_id, secret = made["id"], made["payment"]["client_secret"]
     intent = fake_stripe.latest(booking_id)
-    held = place(app, people, ready, email=address, starts_at=at("10:00"))
+    held = place(app, people, ready, client=client, email=address, starts_at=at("10:00"))
     assert (held.status_code, held.json()["code"]) == (429, "rate_limited")
 
     first = resume(client, people, booking_id)

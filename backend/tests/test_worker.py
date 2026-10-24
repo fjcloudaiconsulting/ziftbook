@@ -146,12 +146,57 @@ def test_the_worker_logs_its_settings_once_at_startup(
             "mailgun_domain": "m.example.test",
             "mailgun_region": "us",
             "payments": "off",
+            "rate_limit_key": "unset",
         }
     ]
     assert "stripe.event" in worker.KINDS
     dumped = json.dumps(log_lines())
     assert secret not in dumped
     assert "postgresql" not in dumped
+
+
+# ZB-25: the worker builds peppered keys too (the recipient limits hold a client's address), so its
+# startup line carries the key's state, never the key, with the API's WARNING while it is not set.
+@pytest.mark.parametrize(
+    ("value", "state", "warnings"),
+    [
+        (None, "unset", 1),
+        ("short", "weak", 1),
+        ("dev-only-rate-limit-key-not-a-secret-0000", "dev", 1),
+        ("k" * 40, "set", 0),
+    ],
+    ids=["unset", "weak", "dev", "set"],
+)
+def test_the_worker_startup_line_carries_the_rate_limit_key_state(
+    log_lines: Lines,
+    monkeypatch: pytest.MonkeyPatch,
+    value: str | None,
+    state: str,
+    warnings: int,
+) -> None:
+    if value is None:
+        monkeypatch.delenv("ZIF_RATE_LIMIT_KEY", raising=False)
+    else:
+        monkeypatch.setenv("ZIF_RATE_LIMIT_KEY", value)
+    # A public URL: the development key counts as unset there; any other key keeps its state.
+    monkeypatch.setenv("ZIF_APP_URL", "https://app.example.com")
+
+    async def work(*args: object) -> None:
+        return None
+
+    monkeypatch.setattr(worker, "work", work)
+    asyncio.run(worker.serve(WorkerSettings()))
+
+    lines = log_lines()
+    assert [line["rate_limit_key"] for line in lines if line["msg"] == "worker started"] == [state]
+    unpeppered = [
+        line
+        for line in lines
+        if line["msg"] == "rate limit key unset: rate-limit keys are not peppered"
+    ]
+    assert [line["level"] for line in unpeppered] == ["WARNING"] * warnings
+    if value:
+        assert value not in json.dumps(lines)
 
 
 # B7: a failed healthcheck ping logs the error's class only, never the URL.

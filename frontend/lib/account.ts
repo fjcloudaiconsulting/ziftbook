@@ -74,3 +74,26 @@ export function signUpRequest(
   }
   return { body: { name: owner, business_name: name, country } };
 }
+
+/**
+ * ZIF_TURNSTILE_SITE_KEY as a page hands it to its form: empty (compose passes an unset variable as "") is no site
+ * key, so no form asks for a challenge it has no widget for.
+ */
+export function siteKeyFrom(value: string | undefined): string | null {
+  return value || null;
+}
+
+/**
+ * What a sign-in answer means for the form. A challenge needs a site key to be solvable: without one (dev, CI,
+ * a deployment that has no Turnstile) the form says to try later instead of showing a widget that cannot load.
+ */
+export function signInOutcome(
+  status: number,
+  code: string | undefined,
+  hasSiteKey: boolean,
+): "ok" | "invalid" | "challenge" | "try_later" | "error" {
+  if (status === 200) return "ok";
+  if (status === 401) return "invalid";
+  if (status === 429) return code === "challenge_required" && hasSiteKey ? "challenge" : "try_later";
+  return "error";
+}

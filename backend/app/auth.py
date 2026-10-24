@@ -11,11 +11,11 @@ from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 from sqlalchemy import Row, text
 from sqlalchemy.orm import Session
 
-from app import limits, passwords
+from app import limits, passwords, turnstile
 from app.db import SessionLocal, join_tenant, tenant_context
 from app.errors import ApiError, Error
 
@@ -23,6 +23,10 @@ IDLE = timedelta(days=7)
 ABSOLUTE = timedelta(days=30)
 TOUCH_EVERY = timedelta(minutes=5)
 SIGN_IN_WINDOW = timedelta(minutes=15)
+# ZB-01: the hard cap on an account is per address (IPv6 /64), so nobody elsewhere can use it up;
+# the account's failures from anywhere ask for a challenge instead of locking it.
+PER_ADDRESS_LIMIT = 10
+FAILURES_BEFORE_CHALLENGE = 20
 COOKIE = "__Host-session"  # __Host-: Secure, Path=/ and no Domain, so no subdomain can set it
 
 
@@ -326,6 +330,49 @@ def start(session: Session, request: Request, user_id: UUID) -> str:
 class Credentials(BaseModel):
     email: passwords.Email
     password: str = Field(min_length=1, max_length=passwords.MAX_PASSWORD)
+    # Only looked at once the account has FAILURES_BEFORE_CHALLENGE recent failures (ZB-01).
+    turnstile_token: Annotated[str, StringConstraints(max_length=turnstile.MAX_TOKEN)] | None = None
+
+
+def limit_attempt(
+    email: str, address_key: str, turnstile_token: str | None, ip: str | None
+) -> None:
+    """Sign-in's checks on a password attempt for email, after the caller's own address limit.
+
+    At most PER_ADDRESS_LIMIT attempts from address_key, the caller's default ip_key: IPv6 per /64,
+    not the address limit's /48, which is shared too widely to key one person's sign-in on. Once
+    the account has FAILURES_BEFORE_CHALLENGE recent wrong passwords from anywhere (count_failure),
+    a Turnstile challenge, never a lock. The failures are only read here: an attempt refused before
+    its password is checked adds none.
+    """
+    if limits.hit(
+        {limits.email_key("sign_in", f"{email}|{address_key}"): PER_ADDRESS_LIMIT}, SIGN_IN_WINDOW
+    ):
+        raise ApiError(429, "rate_limited")
+    require_challenge("sign_in", email, turnstile_token, ip, FAILURES_BEFORE_CHALLENGE)
+
+
+def require_challenge(
+    action: str, email: str, turnstile_token: str | None, ip: str | None, threshold: int
+) -> None:
+    """429 challenge_required once email has threshold recent failures (count_failure) for action,
+    unless turnstile_token passes for that action. Only reads the failures."""
+    failures = limits.count(limits.email_key(f"{action}_failed", email), SIGN_IN_WINDOW)
+    # No token is refused before verify(): with Turnstile switched off, verify() passes anything.
+    if failures >= threshold and (
+        not turnstile_token or not turnstile.verify(turnstile_token, ip, action=action)
+    ):
+        raise ApiError(429, "challenge_required")
+
+
+def count_failure(
+    email: str, action: str = "sign_in", threshold: int = FAILURES_BEFORE_CHALLENGE
+) -> bool:
+    """A wrong password for email (an unknown email too): one more towards its challenge.
+
+    True when this failure is the one that reaches threshold.
+    """
+    return limits.charge(limits.email_key(f"{action}_failed", email), SIGN_IN_WINDOW) == threshold
 
 
 @router.post(
@@ -339,20 +386,19 @@ def sign_in(credentials: Credentials, request: Request, response: Response) -> S
     """
     ip = request.client.host if request.client else None
     # Every attempt counts, before anything else, so a correct password doesn't get past the limit.
+    # Alone: an address over its limit charges no account's key.
     if limits.hit(
-        {
-            limits.email_key("sign_in", credentials.email): 10,
-            limits.ip_key("sign_in", ip): 50,
-        },
-        SIGN_IN_WINDOW,
+        {limits.ip_key("sign_in", ip, v6_prefix=limits.AUTH_V6_PREFIX): 50}, SIGN_IN_WINDOW
     ):
         raise ApiError(429, "rate_limited")
+    limit_attempt(credentials.email, limits.ip_key("sign_in", ip), credentials.turnstile_token, ip)
     with SessionLocal.begin() as session:
         account = session.execute(
             text("SELECT * FROM account_by_email(:email)"), {"email": credentials.email}
         ).first()
     # No database connection is held while hashing.
     if not passwords.verify(account.password_hash if account else None, credentials.password):
+        count_failure(credentials.email)
         # One insert either way; the account, if any, only as its id. Never the email typed.
         with SessionLocal.begin() as session:
             target = f"user:{account.user_id}" if account else None

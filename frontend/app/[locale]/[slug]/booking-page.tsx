@@ -422,6 +422,7 @@ export function BookingPage({
     if (!w || !el) return;
     turnstileWidget.current = w.render(el, {
       sitekey: turnstileSiteKey,
+      action: "booking",
       "response-field": false,
       appearance: "interaction-only",
       language: TURNSTILE_LANG[locale] ?? locale,

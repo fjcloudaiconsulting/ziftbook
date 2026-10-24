@@ -16,8 +16,9 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine, event, text
 
-from app import auth, limits, mail
+from app import auth, bookings, limits, mail
 from app.bookings import CLIENT_CANCEL, email_merchants
+from app.config import MailSettings
 from app.db import tenant_context
 from app.jobs import Job, run_once
 from app.mail import STATUS_FOR
@@ -38,7 +39,7 @@ from tests.conftest import (
     signed_in,
 )
 from tests.test_availability_api import assign, new_service, weekdays
-from tests.test_bookings_api import at, post_booking
+from tests.test_bookings_api import at, post_booking, post_guest
 from tests.test_bookings_approval_api import expire, make_pending, patch
 from tests.test_working_hours import seed
 
@@ -1681,3 +1682,65 @@ def test_quota_is_counted_on_the_bookings_own_connection(
     jobs = jobs_for_booking(app_engine, people.a, booked.json()["id"])
     templates = {template_of(j) for j in jobs}
     assert {"booking_confirmed", "booking_cancelled"} <= templates  # both went through the quota
+
+
+# ---------------------------------------------------------------------------
+# ZB-05: the owners' alert when a business's guest bookings are paused.
+# ---------------------------------------------------------------------------
+
+
+# ZB-05 guard. Kills a locale without the business or the calendar link.
+def test_the_flood_template_names_the_business_and_links_the_calendar() -> None:
+    for locale in mail.LOCALES:
+        subject, body = mail.render(
+            "booking_flood", locale, {"business": "BIZ-MARKER", "link": "LINK-MARKER"}
+        )
+        assert subject, locale
+        assert "BIZ-MARKER" in body and "LINK-MARKER" in body, locale
+
+
+# ZB-05 fence. Kills: the alert to the booking's worker or every member rather than every owner;
+# in the business's language rather than the owner's; client details, or a Reply-To, in it.
+def test_the_flood_alert_mails_every_owner_in_their_language_and_names_no_client(
+    people: People, app: FastAPI, ready: str, app_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    second_owner = add_worker(app_engine, people.a, role="owner", locale="pt")
+    set_contact(signed_in(app, people.a, people.both))
+    monkeypatch.setattr(bookings, "UNPROVEN_PER_BUSINESS_HOUR", 0)
+    guest_email = fresh_email()
+    calendar = MailSettings().app_url.rstrip("/")
+
+    refused = post_guest(new_client(app), people.a, ready, name="Flood Guest", email=guest_email)
+    with app_engine.begin() as conn:
+        payloads = conn.scalars(
+            text("SELECT payload FROM jobs WHERE kind = 'email.booking_flood' AND tenant_id = :t"),
+            {"t": people.a},
+        ).all()
+    run_jobs()
+
+    assert (refused.status_code, refused.json()) == (429, {"code": "rate_limited"})
+    assert sorted(payload["user_id"] for payload in payloads) == sorted(
+        [str(people.both), str(second_owner)]
+    )
+    assert all(set(payload) <= {"user_id", "traceparent"} for payload in payloads)
+    for user_id, locale in ((people.both, "nl"), (second_owner, "pt")):
+        sent = mail_for(email_of(user_id))
+        assert sent["Subject"] == _subject("booking_flood", locale)
+        assert f"{calendar}/{locale}/calendar\n" in sent["Text"], sent["Text"]
+        assert "Flood Guest" not in sent["Raw"] and guest_email not in sent["Raw"]
+        assert not has_reply_to(sent)
+    assert subjects_sent_to(email_of(people.only_a)) == []
+    assert subjects_sent_to(guest_email) == []
+
+
+# ZB-05 fence. Kills: the handler mailing whoever the payload names, without checking that they
+# are (still) an owner of the job's business.
+@pytest.mark.parametrize("who", ["worker", "outsider"])
+def test_a_flood_alert_for_someone_not_an_owner_sends_nothing(people: People, who: str) -> None:
+    user_id = people.only_a if who == "worker" else people.only_b
+
+    mail.send_booking_flood(
+        Job(uuid.uuid4(), "email.booking_flood", people.a, {"user_id": str(user_id)})
+    )
+
+    assert subjects_sent_to(email_of(user_id)) == []

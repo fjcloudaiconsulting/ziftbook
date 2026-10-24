@@ -360,9 +360,11 @@ type CheckInboxProps = {
   differentEmail(): void;
   sentAt: number;
   error?: ReactNode;
+  /** The human check, when the server asks for one: a resend needs a fresh pass. */
+  widget?: ReactNode;
 };
 
-export function CheckInbox({ email, lede, resend, differentEmail, sentAt, error }: CheckInboxProps) {
+export function CheckInbox({ email, lede, resend, differentEmail, sentAt, error, widget }: CheckInboxProps) {
   const t = useTranslations("Inbox");
   const left = useSecondsLeft(sentAt);
   const [sending, setSending] = useState(false);
@@ -381,6 +383,7 @@ export function CheckInbox({ email, lede, resend, differentEmail, sentAt, error 
       <p className={styles.lede}>{t.rich(lede, { email, chip: (chunks) => <span className={styles.chip}>{chunks}</span> })}</p>
       <p className={styles.hint}>{t("hint")}</p>
       {error}
+      {widget}
       <div className={styles.stack}>
         <button
           className={`${styles.button} ${styles.secondary}`}

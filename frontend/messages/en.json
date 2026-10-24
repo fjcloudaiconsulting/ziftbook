@@ -35,6 +35,7 @@
     "unexpected": "Something went wrong on our side. Try again in a moment.",
     "noScript": "This page needs JavaScript to keep your link private. Turn it on in your browser, then open the link from the email again.",
     "needsJavaScript": "This page needs JavaScript. Turn it on in your browser, then reload the page.",
+    "verifyFailed": "Confirm you're not a robot below, then send it again.",
     "tryAgain": "Try again"
   },
   "Inbox": {
@@ -116,6 +117,8 @@
     "signingIn": "Signing in…",
     "invalid": "That email and password don't match. Check both, or reset your password.",
     "tooMany": "Too many attempts for now. Wait 15 minutes and try again, or reset your password.",
+    "challenge": "Confirm you're not a robot below, then sign in again.",
+    "tryLater": "Too many attempts for now. Try again later, or reset your password.",
     "noBusiness": "This account isn't part of a business any more. Ask the owner to add you again.",
     "newHere": "New to ziftbook?",
     "createBusiness": "Create your business"
@@ -128,6 +131,8 @@
     "forgot": "Forgot your password?",
     "invalid": "That email and password don't match an admin account. Check both and try again.",
     "tooMany": "Too many attempts for now. Wait 15 minutes and try again.",
+    "challenge": "Confirm you're not a robot below, then sign in again.",
+    "tryLater": "Too many attempts for now. Try again later.",
     "business": "Running a business on ziftbook?",
     "businessLink": "Business sign-in",
     "expired": "Your admin session ended, for example after 30 minutes without activity or because the enrol command ran. Sign in again.",

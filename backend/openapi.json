@@ -293,6 +293,16 @@
               }
             }
           },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "415": {
             "description": "Unsupported Media Type",
             "content": {
@@ -534,6 +544,16 @@
             "content": {
               "application/json": {
                 "schema": {}
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
               }
             }
           },
@@ -6055,6 +6075,18 @@
               }
             ],
             "title": "Name"
+          },
+          "turnstile_token": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 2048
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turnstile Token"
           }
         },
         "type": "object",
@@ -7501,6 +7533,18 @@
             "maxLength": 256,
             "minLength": 1,
             "title": "Password"
+          },
+          "turnstile_token": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 2048
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turnstile Token"
           }
         },
         "type": "object",
@@ -7915,6 +7959,18 @@
               "pt"
             ],
             "title": "Locale"
+          },
+          "turnstile_token": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 2048
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turnstile Token"
           }
         },
         "type": "object",

@@ -35,6 +35,7 @@
     "unexpected": "Er ging bij ons iets mis. Probeer het zo nog eens.",
     "noScript": "Deze pagina heeft JavaScript nodig om je link privé te houden. Zet het aan in je browser en open de link uit de e-mail opnieuw.",
     "needsJavaScript": "Deze pagina heeft JavaScript nodig. Zet het aan in je browser en laad de pagina opnieuw.",
+    "verifyFailed": "Bevestig hieronder dat je geen robot bent en verstuur het daarna opnieuw.",
     "tryAgain": "Probeer opnieuw"
   },
   "Inbox": {
@@ -116,6 +117,8 @@
     "signingIn": "Bezig met inloggen…",
     "invalid": "Dit e-mailadres en wachtwoord horen niet bij elkaar. Controleer ze allebei, of stel je wachtwoord opnieuw in.",
     "tooMany": "Te veel pogingen. Wacht 15 minuten en probeer het opnieuw, of stel je wachtwoord opnieuw in.",
+    "challenge": "Bevestig hieronder dat je geen robot bent en log daarna opnieuw in.",
+    "tryLater": "Te veel pogingen. Probeer het later opnieuw, of stel je wachtwoord opnieuw in.",
     "noBusiness": "Dit account hoort niet meer bij een bedrijf. Vraag de eigenaar om je opnieuw toe te voegen.",
     "newHere": "Nieuw bij ziftbook?",
     "createBusiness": "Maak je bedrijf aan"
@@ -128,6 +131,8 @@
     "forgot": "Wachtwoord vergeten?",
     "invalid": "Dit e-mailadres en wachtwoord horen niet bij een beheerdersaccount. Controleer ze allebei en probeer het opnieuw.",
     "tooMany": "Te veel pogingen. Wacht 15 minuten en probeer het opnieuw.",
+    "challenge": "Bevestig hieronder dat je geen robot bent en log daarna opnieuw in.",
+    "tryLater": "Te veel pogingen. Probeer het later opnieuw.",
     "business": "Heb je een bedrijf op ziftbook?",
     "businessLink": "Inloggen voor bedrijven",
     "expired": "Je beheerderssessie is beëindigd, bijvoorbeeld na 30 minuten zonder activiteit of doordat het enrol-commando is uitgevoerd. Log opnieuw in.",

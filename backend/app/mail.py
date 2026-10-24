@@ -726,3 +726,30 @@ def send_booking(job: Job) -> None:
         )
     deliver(template, recipient_email, subject, body, ics=booking_ics, reply_to=reply_to)
     _mark_sent(job)
+
+
+def send_booking_flood(job: Job) -> None:
+    """The email.booking_flood job (ZB-05): tell an owner that their business's guest bookings are
+    paused for the rest of the hour. Payload: user_id. Someone no longer an owner of the job's
+    business gets nothing. Staff mail, so no Reply-To; and nothing about any client.
+    """
+    if job.tenant_id is None:
+        raise ValueError("email.booking_flood needs a tenant")
+    user_id = job.payload["user_id"]
+    app_url = MailSettings().app_url.rstrip("/")
+    with tenant_context(job.tenant_id) as session:
+        owner = session.execute(MERCHANT, {"id": user_id}).first()
+        if owner is None or owner.role != "owner":  # RLS and the filter: a live owner of THIS one
+            return
+        locale = owner.locale or business_settings.read(session).language
+        business = session.scalar(
+            text("SELECT name FROM tenants WHERE id = :id"), {"id": job.tenant_id}
+        )
+        subject, body = render(
+            "booking_flood", locale, {"business": business, "link": f"{app_url}/{locale}/calendar"}
+        )
+        status = _outbox(session, job, user_id, "booking_flood", subject)
+    if status == "sent":
+        return
+    deliver("booking_flood", owner.email, subject, body)
+    _mark_sent(job)

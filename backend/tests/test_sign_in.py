@@ -1,3 +1,4 @@
+import secrets
 import threading
 import unicodedata
 import uuid
@@ -10,7 +11,7 @@ from fastapi.testclient import TestClient
 from httpx2 import Response
 from sqlalchemy import Engine, text
 
-from app import auth, passwords
+from app import auth, passwords, turnstile
 from app.db import SessionLocal, tenant_context
 from app.errors import ApiError
 from app.main import create_app
@@ -20,6 +21,8 @@ from tests.conftest import (
     add_password,
     add_user,
     email_of,
+    fresh_address,
+    fresh_email,
     member_id,
     new_client,
     wait_until_blocked,
@@ -288,13 +291,92 @@ def test_signing_in_replaces_the_session_the_browser_already_had(
     assert remaining == {auth.hash_token(other_device)}
 
 
-def test_attempts_on_one_email_are_limited_even_with_the_right_password(
+def test_failures_from_other_addresses_do_not_lock_out_a_correct_sign_in(
     people: People, app: FastAPI
 ) -> None:
-    for email, first_ten in ((email_of(people.only_a), 200), (f"{uuid.uuid4()}@example.com", 401)):
-        # A new address for every attempt: only the email limit can refuse the eleventh.
-        results = [sign_in(new_client(app), email).status_code for _ in range(11)]
-        assert results == [first_ten] * 10 + [429]
+    email = email_of(people.only_a)
+    attacker = new_client(app, "198.51.100.7")
+    assert [sign_in(attacker, email, "wrong-password!").status_code for _ in range(11)][-1] == 429
+    assert sign_in(new_client(app, "203.0.113.9"), email).status_code == 200
+
+
+def test_an_address_over_its_limit_does_not_charge_other_emails(
+    people: People, app: FastAPI
+) -> None:
+    attacker = new_client(app, "198.51.100.8")
+    for _ in range(51):
+        sign_in(attacker, fresh_email(), "wrong-password!")
+    refused = [
+        sign_in(attacker, email_of(people.only_a), "wrong-password!").status_code for _ in range(20)
+    ]
+    assert refused == [429] * 20
+    assert sign_in(new_client(app, "203.0.113.10"), email_of(people.only_a)).status_code == 200
+
+
+def test_another_v6_64_in_the_same_48_can_still_sign_in(people: People, app: FastAPI) -> None:
+    # The address limit is per /48, the per-account one per /64: one /64 using up its attempts on
+    # an account leaves the rest of its /48 free to sign in to it.
+    email = email_of(people.only_a)
+    network = f"2001:db8:{secrets.randbelow(65535) + 1:x}"
+    first = new_client(app, f"{network}:1::1")
+    assert [sign_in(first, email, "wrong-password!").status_code for _ in range(11)][-1] == 429
+    assert sign_in(new_client(app, f"{network}:2::1"), email).status_code == 200
+
+
+def test_many_failures_on_one_email_ask_for_a_challenge(people: People, app: FastAPI) -> None:
+    email = email_of(people.only_a)
+    for n in range(20):
+        sign_in(new_client(app, f"198.51.100.{n + 20}"), email, "wrong-password!")
+    blocked = sign_in(new_client(app, "203.0.113.11"), email)
+    assert (blocked.status_code, blocked.json()) == (429, {"code": "challenge_required"})
+    solved = new_client(app, "203.0.113.11").post(
+        "/api/session", json={"email": email, "password": PASSWORD, "turnstile_token": "t"}
+    )
+    assert solved.status_code == 200  # ZIF_TURNSTILE_DISABLED in tests: verify() passes
+
+
+def test_a_refused_challenge_keeps_out_even_the_right_password(
+    people: People, app: FastAPI, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    email = email_of(people.only_a)
+    for _ in range(20):
+        sign_in(new_client(app), email, "wrong-password!")
+    monkeypatch.setattr(turnstile, "verify", lambda token, ip, action: False)
+
+    refused = new_client(app).post(
+        "/api/session", json={"email": email, "password": PASSWORD, "turnstile_token": "t"}
+    )
+
+    assert (refused.status_code, refused.json()) == (429, {"code": "challenge_required"})
+
+
+def test_a_token_is_only_checked_once_failures_reach_the_challenge(
+    people: People, app: FastAPI, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Below the threshold a token is never sent to Cloudflare, which would spend it.
+    calls: list[tuple[str | None, str | None, str]] = []
+
+    def spy(token: str | None, ip: str | None, *, action: str) -> bool:
+        calls.append((token, ip, action))
+        return True
+
+    monkeypatch.setattr(turnstile, "verify", spy)
+    email = email_of(people.only_a)
+    for _ in range(auth.FAILURES_BEFORE_CHALLENGE):
+        wrong = new_client(app).post(
+            "/api/session",
+            json={"email": email, "password": "wrong-password!", "turnstile_token": "t"},
+        )
+        assert wrong.status_code == 401
+    assert calls == []
+
+    address = fresh_address()
+    solved = new_client(app, address).post(
+        "/api/session", json={"email": email, "password": PASSWORD, "turnstile_token": "t"}
+    )
+
+    assert solved.status_code == 200
+    assert calls == [("t", address, "sign_in")]
 
 
 def test_attempts_from_one_address_are_limited_across_emails(

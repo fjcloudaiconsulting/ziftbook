@@ -8,6 +8,7 @@ import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from typing import Any
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
@@ -34,6 +35,7 @@ from app import (
     business_settings,
     clients,
     invites,
+    limits,
     logs,
     members,
     payments,
@@ -48,6 +50,7 @@ from app import (
 )
 from app.config import (
     DatabaseSettings,
+    MailSettings,
     Settings,
     StorageSettings,
     StripeSettings,
@@ -172,6 +175,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         raise RuntimeError("startup failed") from None
     setup_token = setup.token_state()
     totp_key = totp.key_state()
+    rate_limit_key = limits.key_state()
     storage_on = StorageSettings().configured()
     payments_on = StripeSettings().configured()
     # Here, not at import: `python -m app.main` prints the OpenAPI document to stdout.
@@ -180,12 +184,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         extra={
             **logs.settings_fields(),
             "trusted_proxies": Settings().trusted_proxies,
-            # Never the secret. "off": public bookings are refused unless ZIF_TURNSTILE_DISABLED.
+            # Never the secret. "off": bookings, sign-ups, password resets and sign-in challenges
+            # are refused unless ZIF_TURNSTILE_DISABLED.
             "turnstile": "on" if turnstile.enabled() else "off",
             # Never the token. "unset"/"weak"/"dev": first-run setup is refused (ZIF-70).
             "setup_token": setup_token,
             # Never the key. "unset"/"invalid"/"dev": admin TOTP answers 503 (ZIF-71).
             "totp_key": totp_key,
+            # Never the key. "unset"/"weak"/"dev": rate-limit keys are not peppered (ZB-25).
+            "rate_limit_key": rate_limit_key,
             # "off": photo uploads answer 503 photos_unavailable (ZIF-133).
             "storage": "on" if storage_on else "off",
             # "off": owner payment routes answer 503 and booking pages book with no payment step.
@@ -193,9 +200,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         },
     )
     # ZIF-116: logged, never a refusal to start. The deployments run one replica with Recreate, so a
-    # failed start would take the whole API down over a control only public booking needs.
+    # failed start would take the whole API down over a control only the guarded requests need.
     if not turnstile.enabled() and not TurnstileSettings().turnstile_disabled:
-        logger.error("turnstile secret unset: public bookings refused")
+        logger.error(
+            "turnstile secret unset: bookings, sign-ups, resets and sign-in challenges refused"
+        )
+    # The opt-out is for development: on a public URL it leaves every Turnstile-guarded form open.
+    if TurnstileSettings().turnstile_disabled:
+        if urlsplit(MailSettings().app_url).hostname not in ("localhost", "127.0.0.1", "::1"):
+            logger.error("turnstile disabled on a public url")
     # Only while setup is still to be done: operators may remove the token afterwards. Never a
     # refusal to start, and a database error skips the line.
     if setup_token != "set" and setup.needed_at_startup(DatabaseSettings().database_url):
@@ -204,6 +217,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Never a refusal to start (one replica, Recreate): recovery codes still let admins in.
     if totp_key != "set":
         logger.error("totp key unset, invalid or dev value: admin second factor unavailable")
+    if rate_limit_key != "set":
+        logger.warning("rate limit key unset: rate-limit keys are not peppered")
     # A legitimate state until the object store exists: logged, never a refusal to start.
     if not storage_on:
         logger.warning("storage unset: photo uploads refused")

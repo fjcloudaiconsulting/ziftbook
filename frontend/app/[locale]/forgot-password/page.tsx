@@ -1,7 +1,8 @@
-import { useTranslations } from "next-intl";
+import { connection } from "next/server";
 import { getTranslations } from "next-intl/server";
 
 import { Link } from "@/i18n/navigation";
+import { siteKeyFrom } from "@/lib/account";
 
 import { LinkRequest } from "../_ui/link-request";
 import { Screen } from "../_ui/parts";
@@ -12,8 +13,10 @@ export async function generateMetadata() {
   return { title: t("title") };
 }
 
-export default function ForgotPasswordPage() {
-  const t = useTranslations("ForgotPassword");
+export default async function ForgotPasswordPage() {
+  // Read per request: the site key is runtime configuration, not part of the build.
+  await connection();
+  const t = await getTranslations("ForgotPassword");
   return (
     <Screen>
       <LinkRequest
@@ -24,6 +27,7 @@ export default function ForgotPasswordPage() {
             <p className={styles.lede}>{t("lede")}</p>
           </>
         }
+        turnstileSiteKey={siteKeyFrom(process.env.ZIF_TURNSTILE_SITE_KEY)}
         submit={t("submit")}
         aside={
           <p className={styles.aside}>

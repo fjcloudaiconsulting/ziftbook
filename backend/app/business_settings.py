@@ -89,7 +89,8 @@ class BusinessSettings(BaseModel):
     # inside the booking transaction, after find_or_create: pendings hold slots by design, so
     # without a cap a script fills the next 60 days under throwaway addresses and refills as the
     # TTL expires (ZIF-5, denial of availability). Upcoming auto-confirmed bookings count too
-    # (ZIF-115): see app/bookings.py PENDING_COUNT.
+    # (ZIF-115): see app/bookings.py PENDING_COUNT. Counted per requester IP, with a ceiling of
+    # bookings.PENDING_ACROSS_IPS times this over all of them (ZB-19).
     max_pending_per_email: Annotated[int, Field(ge=1, le=50)] = 3
     # How long a pending booking holds its slot before availability stops counting it. Hours, not
     # minutes: it is a merchant-facing promise ("we answer within a day"), not a scheduling grid.

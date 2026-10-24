@@ -46,10 +46,11 @@ class LogSettings(Settings):
 
 
 class TurnstileSettings(Settings):
-    """Cloudflare Turnstile. With no secret every public booking is refused (ZIF-116), unless
-    turnstile_disabled opts out, as development and the test suite do so they need no network. The
-    API logs an ERROR at startup while it refuses, so a deployment that forgot the secret fails
-    closed and says so rather than staying silently open."""
+    """Cloudflare Turnstile. With no secret every public booking, sign-up and password-reset request
+    is refused and no sign-in challenge can be passed (ZIF-116), unless turnstile_disabled opts out,
+    as development and the test suite do so they need no network. The API logs an ERROR at startup
+    while it refuses, so a deployment that forgot the secret fails closed and says so rather than
+    staying silently open."""
 
     # Resolved at runtime from the environment and never committed. In a deployment it comes from
     # Secrets Manager as {{resolve:secretsmanager:...:SecretString:json-key}} so the value never
@@ -93,6 +94,17 @@ class SecondFactorSettings(Settings):
     # Resolved at runtime from a secret, never committed (as turnstile_secret). Losing it makes
     # every stored secret unreadable: back it up with the database credentials.
     totp_key: SecretStr = SecretStr("")
+
+
+class RateLimitSettings(Settings):
+    """Rate-limit keys (ZB-25): the pepper that makes the email and IP in a key an HMAC. Shorter
+    than 32 characters counts as unset, as does the development key on a public ZIF_APP_URL, and
+    unset keeps the unpeppered form; the API and the worker log a WARNING at startup, never a
+    refusal to start."""
+
+    # Resolved at runtime from a secret, never committed (as turnstile_secret). API and worker.
+    # Setting or changing it changes every key, so counters start again once.
+    rate_limit_key: SecretStr = SecretStr("")
 
 
 class StorageSettings(Settings):

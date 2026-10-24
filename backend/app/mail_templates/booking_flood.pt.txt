@@ -1,0 +1,10 @@
+Número incomum de agendamentos online
+Olá,
+
+“$business” recebeu nesta hora um número incomum de pedidos de agendamento online de endereços de e-mail não verificados.
+
+Novos pedidos como esses estão pausados até o fim da hora. Confira sua agenda:
+
+$link
+
+ziftbook

@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 from sqlalchemy import Engine, text
 
-from app import auth, mail, passwords
+from app import auth, mail, passwords, turnstile
 from app.db import tenant_context
 from app.jobs import Job
 from app.main import create_app
@@ -891,7 +891,7 @@ def test_accepting_checks_the_password_before_the_link(
     assert no_hashing == []
 
 
-# C8: accept is limited per IP and (for the existing-account path) per account.
+# C8: accept is limited per IP and (for the existing-account path) asks for sign-in's challenge.
 def test_accept_rate_limits(
     people: People, app: FastAPI, migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -910,8 +910,9 @@ def test_accept_rate_limits(
     )
     assert over.status_code == 429
 
-    # Per account: 10 wrong sign-ins for only_b, from fresh IPs, exhaust its own budget.
-    for _ in range(10):
+    # Per account: 20 failed sign-ins for only_b, from fresh IPs, ask the invite link for a
+    # challenge too.
+    for _ in range(20):
         wrong = new_client(app).post(
             "/api/session", json={"email": email_of(people.only_b), "password": "wrong-pass-xx"}
         )
@@ -926,12 +927,81 @@ def test_accept_rate_limits(
     final = new_client(app).post(
         "/api/invites/accept", json={"token": token, "password": PASSWORD, "name": "New Person"}
     )
-    assert final.status_code == 429
+    assert (final.status_code, final.json()) == (429, {"code": "challenge_required"})
     with tenant_context(people.a) as session:
         member = session.scalar(
             text("SELECT true FROM memberships WHERE user_id = :u"), {"u": people.only_b}
         )
     assert member is None
+    solved = new_client(app).post(
+        "/api/invites/accept",
+        json={"token": token, "password": PASSWORD, "turnstile_token": "t"},
+    )
+    assert solved.status_code == 201  # ZIF_TURNSTILE_DISABLED in tests: verify() passes
+
+
+# ZB-01: a challenge Turnstile refuses keeps an existing account's invite unaccepted.
+def test_accept_with_a_refused_challenge_is_refused(
+    people: People, app: FastAPI, migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    add_password(migrate_engine, people.only_b, PASSWORD)
+    for _ in range(auth.FAILURES_BEFORE_CHALLENGE):
+        new_client(app).post(
+            "/api/session", json={"email": email_of(people.only_b), "password": "wrong-pass-xx"}
+        )
+    created = (
+        signed_in(app, people.a, people.both)
+        .post("/api/invites", json={"email": email_of(people.only_b)})
+        .json()
+    )
+    token = mint(monkeypatch, people.a, uuid.UUID(created["id"]))
+    calls: list[tuple[str | None, str | None, str]] = []
+
+    def refuse(given: str | None, ip: str | None, *, action: str) -> bool:
+        calls.append((given, ip, action))
+        return False
+
+    monkeypatch.setattr(turnstile, "verify", refuse)
+    address = fresh_address()
+
+    refused = new_client(app, address).post(
+        "/api/invites/accept",
+        json={"token": token, "password": PASSWORD, "turnstile_token": "t"},
+    )
+
+    assert (refused.status_code, refused.json()) == (429, {"code": "challenge_required"})
+    assert calls == [("t", address, "sign_in")]
+    with tenant_context(people.a) as session:
+        member = session.scalar(
+            text("SELECT true FROM memberships WHERE user_id = :u"), {"u": people.only_b}
+        )
+    assert member is None
+
+
+# ZB-01: wrong passwords from one address are refused there, not for the account everywhere.
+def test_accept_failures_from_one_address_do_not_lock_out_the_account(
+    people: People, app: FastAPI, migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    add_password(migrate_engine, people.only_b, PASSWORD)
+    created = (
+        signed_in(app, people.a, people.both)
+        .post("/api/invites", json={"email": email_of(people.only_b)})
+        .json()
+    )
+    token = mint(monkeypatch, people.a, uuid.UUID(created["id"]))
+    attacker = new_client(app)
+    statuses = [
+        attacker.post(
+            "/api/invites/accept", json={"token": token, "password": "wrong-pass-xx"}
+        ).status_code
+        for _ in range(11)
+    ]
+    assert statuses == [401] * 10 + [429]
+
+    accepted = new_client(app).post(
+        "/api/invites/accept", json={"token": token, "password": PASSWORD}
+    )
+    assert accepted.status_code == 201
 
 
 # C9: accepting and signing in share one transaction.

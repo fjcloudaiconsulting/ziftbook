@@ -1,0 +1,10 @@
+Ongewoon veel online boekingen
+Hallo,
+
+„$business” kreeg dit uur ongewoon veel online boekingsaanvragen van niet-geverifieerde e-mailadressen.
+
+Nieuwe aanvragen zoals deze zijn de rest van het uur gepauzeerd. Bekijk je agenda:
+
+$link
+
+ziftbook
