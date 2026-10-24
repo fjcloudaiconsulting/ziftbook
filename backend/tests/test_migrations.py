@@ -1947,6 +1947,47 @@ def test_0055_set_own_name_is_0045s_plus_the_gate_filter() -> None:
     )
 
 
+# ZB-32 (0056): the trigger that leaves bringing back a removed membership to ziftbook_migrate
+# (accept_invite's owner), and its function.
+REVIVE_GUARD = text("""
+SELECT (SELECT pg_get_triggerdef(t.oid) FROM pg_trigger t
+        WHERE t.tgname = 'memberships_revive_by_migrate' AND t.tgrelid = 'memberships'::regclass),
+       to_regprocedure('memberships_revive_by_migrate()') IS NOT NULL
+""")
+REVIVE_GUARD_FUNCTION = text("""
+SELECT p.prosecdef, p.proconfig, has_function_privilege('public', p.oid, 'EXECUTE')
+FROM pg_proc p WHERE p.oid = to_regprocedure('memberships_revive_by_migrate()')
+""")
+REVIVE_GUARD_TRIGGER = (
+    "CREATE TRIGGER memberships_revive_by_migrate BEFORE UPDATE OF role, removed_at"
+    " ON public.memberships FOR EACH ROW WHEN ((old.role = 'removed'::text))"
+    " EXECUTE FUNCTION memberships_revive_by_migrate()"
+)
+
+
+# ZB-32 FENCE (0056). Wrong impl: a downgrade that leaves the trigger or its function behind; an
+# upgrade whose trigger misses role or removed_at, or fires on live rows too (which would stop
+# removal itself), or whose function runs as its owner, searches a caller's schema first, or is
+# PUBLIC's.
+def test_0056_round_trips_the_revive_guard(
+    migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = lock_timeout_config(monkeypatch)
+    try:
+        command.downgrade(cfg, "0055")
+        with migrate_engine.connect() as conn:
+            assert tuple(conn.execute(REVIVE_GUARD).one()) == (None, False)
+    finally:
+        command.upgrade(cfg, "head")
+    with migrate_engine.connect() as conn:
+        assert tuple(conn.execute(REVIVE_GUARD).one()) == (REVIVE_GUARD_TRIGGER, True)
+        assert tuple(conn.execute(REVIVE_GUARD_FUNCTION).one()) == (
+            False,
+            ["search_path=pg_catalog, public, pg_temp"],
+            False,
+        )
+
+
 # ZB-08 (0053): the trigger that leaves writing an invite's token hash to the worker, and its
 # function.
 INVITE_TOKEN_GUARD = text("""

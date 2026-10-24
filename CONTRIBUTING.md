@@ -125,7 +125,8 @@ every table that holds a tenant's data:
   (ZIF-112); the row stays because bookings and their history reference it. The app role has no `DELETE` on
   `memberships` (0052, ZB-10), no `INSERT` (sign-up and invites create memberships in their definer functions), and
   `UPDATE` of only `role`, `removed_at` and `display_name` (0054): a new column the app sets needs its own column
-  `GRANT`. A new read of `memberships` decides: active (filter `role <> 'removed'`, inside the
+  `GRANT`. Only `ziftbook_migrate` changes a removed membership's `role` or `removed_at` (a trigger, 0056): bringing
+  one back is `accept_invite`'s. A new read of `memberships` decides: active (filter `role <> 'removed'`, inside the
   locking statement when it locks) or history (no filter). History names a member by `memberships.display_name`
   (or a booking's `worker_display_name`); the account's name is only a fallback for a live member, because a
   business reads a person's account row only while they are a live member (the `users` policy, 0055, ZB-32). A
