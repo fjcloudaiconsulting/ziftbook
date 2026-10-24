@@ -1,30 +1,113 @@
-# Security findings tracker: assessment of 2026-10-23
+# Security remediation: findings tracker and hand-off (assessment of 2026-10-23)
 
 This file tracks the 36 findings (`ZB-01` … `ZB-36`) of the static security assessment run on 2026-10-23,
-and the work that fixes them. It is the hand-off point for whoever records the findings in Jira.
+and the work that fixes them. It is the shared, living record between the repository owner and the agents
+working on this. The agent that writes the fixes has no Jira access, and the agent with Jira access sees the
+work only through this file and the PRs. So this file is where each side reports what it did and what it
+needs.
 
 The full assessment, with code locations and exploit narratives, is kept out of this public repository
 until the fixes are released. The repository owner holds it. Titles here describe the area and the
 weakness at the level of detail the fix PRs already disclose.
 
-## For the agent that records these in Jira
+## How this document works (read this first)
 
-1. Use one Jira issue per finding ID; findings that share a PR still get their own issue. Search for an
-   existing issue first (the ID `ZB-NN` in the summary or a label) and update it instead of creating a
-   duplicate.
-2. Suggested fields:
+Whoever picks this up, agent or person:
+
+1. Read **Status at a glance** and the newest entries of the **Hand-off log**.
+2. Do your part. For the agent with Jira access, that is the section below.
+3. Edit this file so it matches what is true now:
+   - update statuses;
+   - fill in Jira keys;
+   - add rows for anything new;
+   - remove rows that are wrong or obsolete, and say why in the log.
+   You may change any part of it, these instructions included, if that makes the hand-off work better.
+4. Add an entry at the top of the **Hand-off log** with:
+   - the date (YYYY-MM-DD);
+   - who you are (agent or session name, or "owner");
+   - what you did;
+   - what you need, and from whom.
+5. Open a PR with only this file changed:
+   - branch `docs/security-tracker-<date>-<topic>`;
+   - title `docs(security): <what changed> in the findings tracker`.
+   The repository owner merges it. If an earlier tracker PR is still open, build on its branch instead of
+   starting a parallel one.
+
+Rules:
+- The repository is public. Write no exploit details, no personal data (emails, IP addresses, client
+  names) and no secrets.
+- Keep one row per finding in the findings table, with all eight columns.
+- Do not rewrite another author's log entry. Correct it in a new entry.
+- If this file and Jira disagree, the more recent evidence wins. Say in the log which side you corrected.
+
+## Status at a glance
+
+As of 2026-10-24:
+- **Fixes:** 34 of the 36 findings are fixed in PRs #329 and #331–#335. The second half of three of them is in
+  draft #336, which merges one release later.
+- **Accepted and deferred:** ZB-21 is accepted with a mitigating control. ZB-32 is deferred until a product
+  decision.
+- **Reviews:**
+  - Every PR had a task review and a whole-branch review.
+  - Two security reviews of the whole stack found no new vulnerability: one after the fixes, and one
+    four-area review before merging.
+  - The pre-merge review corrected deploy instructions (owner actions 7, 9, 10 and 16).
+- **Merging:** the owner started merging the stack on 2026-10-24. Statuses below say "Fixed in PR" until
+  the next log entry records the merges.
+- **Release:** nothing is released yet. The owner actions decide when.
+
+## For the agent with Jira access
+
+1. **Project.** This repository's tickets are in the Jira project whose keys appear in its commits
+   (`ZIF-NN`, for example ZIF-112 and ZIF-117). Use it unless the owner says otherwise.
+2. **One issue per finding.** Search first, by `ZB-NN` in the summary or by label, and update an existing
+   issue instead of creating a duplicate. Fields:
    - summary `ZB-NN: <title from the table>`;
    - labels `security` and `security-assessment-2026-10-23`;
-   - priority from the severity (Critical → Highest, Medium → High, Low → Medium, Info → Low);
-   - description: the title, area, status, PR link and the notes column.
-3. Link the PR (GitHub URL) on the issue. A finding whose fix is split over several PRs links all of them.
-4. Status mapping: `Fixed in PR` → In Review; `Merged` → Done (pending release); `Released` → Done;
-   `Needs owner action` → Blocked (assign to the repository owner); `Accepted` / `Deferred` → Won't Do or
-   Backlog, with the reason from the notes.
-5. Write the Jira key back into the `Jira` column of the table below in a small PR titled
-   `docs(security): record Jira keys for the 2026-10-23 findings`, so the two stay reconciled.
-6. Do not copy exploit details into Jira comments beyond what is here. Ask the repository owner for the
-   full assessment if a ticket needs it.
+   - priority from the severity: Critical → Highest, Medium → High, Low → Medium, Info → Low;
+   - description: the title, area, PR links and the notes column.
+3. **Record the outcome** as a comment on each issue:
+   - the PR or PRs that fix it;
+   - once merged, that it is on `main` (the PR page links the commit);
+   - once released, the version, also set as the fix version;
+   - anything from the notes column that the owner must still do.
+4. **When to close:**
+   - **Merged** or **Released** → Done, resolution Fixed.
+   - **Split fixes** (ZB-08, ZB-10, ZB-15) stay In Progress until draft #336 merges too. Add a comment saying
+     part 1 is in.
+   - **Accepted** (ZB-21) → close as Won't Do or Accepted Risk, with the reason from the notes. The real fix
+     is owner action 14; track it as its own task.
+   - **Deferred** (ZB-32) → leave it in Backlog with the reason.
+   - **Fixed in PR** → In Review, linked to the PR.
+5. **Owner actions:** one task per row of the owner actions table, assigned to the repository owner and
+   linked to its findings. Close it when the owner confirms, then mark the row Done here.
+6. **Follow-ups:** one backlog issue per row of the follow-ups table, unless the row already names one
+   (ZIF-117).
+7. **Write back:**
+   - put every Jira key in the `Jira` column of its table;
+   - add your entry to the hand-off log;
+   - open the PR (step 5 above).
+8. **Exploit details:** copy none into Jira beyond what is here. If a ticket needs the full assessment, ask
+   the owner.
+
+## Hand-off log
+
+Newest first.
+
+### 2026-10-24: repository agent (Claude Code, ziftbook session)
+- **Done:**
+  - fixes for 34 findings in #329 and #331–#335, plus draft #336 for the contract steps;
+  - #326 and #327 to unblock Renovate;
+  - this tracker.
+- **Reviews:** two security reviews of the whole stack found no new vulnerability. The pre-merge review
+  corrected deploy instructions, which are now in the PR descriptions of #334 and #336 and in owner actions
+  7, 9, 10 and 16.
+- **State:** the owner is merging the stack. #274 and #284 conflict with it on lockfiles and wait for Renovate
+  to rebase them.
+- **Needs:**
+  - **Jira agent:** create or update the issues (section above) and write the keys back here.
+  - **Owner:** finish the merge, then the owner actions before releasing.
+  - **Repository agent (me):** record the merges here once the merge run ends.
 
 ## Status legend
 
@@ -104,43 +187,43 @@ Related, independent of the stack:
 
 ## Owner actions (need a person; not possible from this repo)
 
-| # | Action | Findings | Urgency |
-|---|---|---|---|
-| 1 | Merge and release PR #329. Until the API runs Pillow 13, turn photo processing off by unsetting a `ZIF_S3_*` variable on the API (photo routes then answer 503; existing photos still load). | ZB-33 | Today |
-| 2 | Review and merge the security PRs in stack order, then cut releases (release-please). | all | This week |
-| 3 | Before deploying #333: set `ZIF_RATE_LIMIT_KEY` (32+ characters) for both the API and the worker (counters restart once when it is first set); deploy the web app with or before the API; check that the host in `ZIF_APP_URL` is the host the challenge widget runs on. | ZB-25, ZB-20 | With the auth release |
-| 4 | Confirm the production and staging settings: Turnstile secret set, opt-out unset; site key set for the web app (sign-in, admin sign-in, sign-up and reset need it); client-IP header and trusted proxies; setup token removed; log level; NetworkPolicies; no NodePort/LoadBalancer. | ZB-20, ZB-01, ZB-17, ZB-18 | This week |
-| 5 | With Cloudflare's test site key, check that the challenge widget appears and works on sign-in, admin sign-in and the invite page. | ZB-01, ZB-18 | Before the auth release |
-| 6 | Cloudflare rate-limit rules on the sign-in, admin sign-in, sign-up, password-reset and invite-accept routes, and on the dependencies health check. | ZB-04, ZB-13, ZB-17 | This week |
-| 7 | Worker database role (#334). The init job runs this release's `bootstrap.sql` before the migrations, connected to the application's database (`-d`), with `ZIF_WORKER_PASSWORD` set; without the role the migration stops the rollout. The admin role that runs it needs ADMIN on `ziftbook_app`. Give the worker its own secret and connection URL, separate from the API's: an API switched to the worker's URL could mint email tokens itself. Confirm in `pg_stat_activity` that the API connects as `ziftbook_app` and the worker as `ziftbook_worker` (query in #334). | ZB-08 | With the db-privileges release |
-| 8 | Staging check: a card payment with 3-D Secure (and iDEAL) returns to the page and reaches `confirmed`. | ZB-15 | Before releasing #334 |
-| 9 | After the db-privileges release: `has_database_privilege('ziftbook_app', current_database(), 'TEMPORARY')` and the same for `ziftbook_worker` must both be false. Where the admin role neither owns the database nor belongs to its owner, the revoke in `bootstrap.sql` only warns and the migration skips too; then run the revoke as the database owner. | ZB-31 | After the db-privileges release |
-| 10 | Contract PR #336 (draft). Merge it only after a release containing #334 has been cut and deployed everywhere (merged earlier, both halves ship in one release), and only when all of these hold: the worker connects as `ziftbook_worker` in every environment; `ZIF_WORKER_PASSWORD` is set and non-empty everywhere; every deployed release is v0.31.0 or later (none deletes memberships); and 30 minutes have passed since the last API instance of the release before #334 stopped (the PR body has the check query). If emails fail afterwards, move the worker to its own URL; never re-grant `mint_email_token`, run the downgrades or disable the invite-token trigger. | ZB-08, ZB-10, ZB-15 | One release after #334 |
-| 11 | Web-headers release (#335): give the web app `ZIF_MEDIA_URL` and `ZIF_S3_ENDPOINT` (same values as the API). On the first staging deploy, with the report-only policy, check bookings with card, Link, Apple Pay or Google Pay and 3-D Secure, the challenge widget, admin sign-in and a photo upload. Add a CSP reporting endpoint, then set `ZIF_CSP_ENFORCE=true` in staging, then in production. | ZB-12 | After the web-headers release |
-| 12 | Confirm no HTTP-only subdomain exists under the app and staging hosts (HSTS `includeSubDomains`). | ZB-12 | Before the web-headers release |
-| 13 | Require a reviewer on the `landing` deployment environment (repository settings). | ZB-22 | This week |
-| 14 | Org `.github` repo and cloud-infra: accept SHA-pinned workflow identities, then pin workflows by SHA here. | ZB-21 | Backlog |
-| 15 | Decide when to publish the full assessment (repository is public); suggested: after the fixes are released. | all | After release |
-| 16 | Admin enrolment (from #334's docs): never give the API `ZIF_MIGRATE_DATABASE_URL`. Run `python -m app.admin enrol` in a short-lived pod from the migrations image with only the migrate role's URL, through `kubectl exec -it`, then delete the pod. | ZB-24 | Next enrolment |
+| # | Action | Findings | Urgency | State | Jira |
+|---|---|---|---|---|---|
+| 1 | Merge and release PR #329. Until the API runs Pillow 13, turn photo processing off by unsetting a `ZIF_S3_*` variable on the API (photo routes then answer 503; existing photos still load). | ZB-33 | Today | Open |  |
+| 2 | Review and merge the security PRs in stack order, then cut releases (release-please). | all | This week | Open |  |
+| 3 | Before deploying #333: set `ZIF_RATE_LIMIT_KEY` (32+ characters) for both the API and the worker (counters restart once when it is first set); deploy the web app with or before the API; check that the host in `ZIF_APP_URL` is the host the challenge widget runs on. | ZB-25, ZB-20 | With the auth release | Open |  |
+| 4 | Confirm the production and staging settings: Turnstile secret set, opt-out unset; site key set for the web app (sign-in, admin sign-in, sign-up and reset need it); client-IP header and trusted proxies; setup token removed; log level; NetworkPolicies; no NodePort/LoadBalancer. | ZB-20, ZB-01, ZB-17, ZB-18 | This week | Open |  |
+| 5 | With Cloudflare's test site key, check that the challenge widget appears and works on sign-in, admin sign-in and the invite page. | ZB-01, ZB-18 | Before the auth release | Open |  |
+| 6 | Cloudflare rate-limit rules on the sign-in, admin sign-in, sign-up, password-reset and invite-accept routes, and on the dependencies health check. | ZB-04, ZB-13, ZB-17 | This week | Open |  |
+| 7 | Worker database role (#334). The init job runs this release's `bootstrap.sql` before the migrations, connected to the application's database (`-d`), with `ZIF_WORKER_PASSWORD` set; without the role the migration stops the rollout. The admin role that runs it needs ADMIN on `ziftbook_app`. Give the worker its own secret and connection URL, separate from the API's: an API switched to the worker's URL could mint email tokens itself. Confirm in `pg_stat_activity` that the API connects as `ziftbook_app` and the worker as `ziftbook_worker` (query in #334). | ZB-08 | With the db-privileges release | Open |  |
+| 8 | Staging check: a card payment with 3-D Secure (and iDEAL) returns to the page and reaches `confirmed`. | ZB-15 | Before releasing #334 | Open |  |
+| 9 | After the db-privileges release: `has_database_privilege('ziftbook_app', current_database(), 'TEMPORARY')` and the same for `ziftbook_worker` must both be false. Where the admin role neither owns the database nor belongs to its owner, the revoke in `bootstrap.sql` only warns and the migration skips too; then run the revoke as the database owner. | ZB-31 | After the db-privileges release | Open |  |
+| 10 | Contract PR #336 (draft). Merge it only after a release containing #334 has been cut and deployed everywhere (merged earlier, both halves ship in one release), and only when all of these hold: the worker connects as `ziftbook_worker` in every environment; `ZIF_WORKER_PASSWORD` is set and non-empty everywhere; every deployed release is v0.31.0 or later (none deletes memberships); and 30 minutes have passed since the last API instance of the release before #334 stopped (the PR body has the check query). If emails fail afterwards, move the worker to its own URL; never re-grant `mint_email_token`, run the downgrades or disable the invite-token trigger. | ZB-08, ZB-10, ZB-15 | One release after #334 | Open |  |
+| 11 | Web-headers release (#335): give the web app `ZIF_MEDIA_URL` and `ZIF_S3_ENDPOINT` (same values as the API). On the first staging deploy, with the report-only policy, check bookings with card, Link, Apple Pay or Google Pay and 3-D Secure, the challenge widget, admin sign-in and a photo upload. Add a CSP reporting endpoint, then set `ZIF_CSP_ENFORCE=true` in staging, then in production. | ZB-12 | After the web-headers release | Open |  |
+| 12 | Confirm no HTTP-only subdomain exists under the app and staging hosts (HSTS `includeSubDomains`). | ZB-12 | Before the web-headers release | Open |  |
+| 13 | Require a reviewer on the `landing` deployment environment (repository settings). | ZB-22 | This week | Open |  |
+| 14 | Org `.github` repo and cloud-infra: accept SHA-pinned workflow identities, then pin workflows by SHA here. | ZB-21 | Backlog | Open |  |
+| 15 | Decide when to publish the full assessment (repository is public); suggested: after the fixes are released. | all | After release | Open |  |
+| 16 | Admin enrolment (from #334's docs): never give the API `ZIF_MIGRATE_DATABASE_URL`. Run `python -m app.admin enrol` in a short-lived pod from the migrations image with only the migrate role's URL, through `kubectl exec -it`, then delete the pod. | ZB-24 | Next enrolment | Open |  |
 
 ## Follow-ups outside the remediation waves
 
-| Item | Origin | Why not now |
-|---|---|---|
-| Decode photos in a subprocess with a memory limit | ZB-33 fix, item 3 | Architectural change; Pillow 13 plus the guard close the reachable paths |
-| Put dependency updates that add new lock packages in their own PRs; check new transitive packages' provenance once | ZB-06 fix | Process change for Renovate grouping |
-| Confirm a business's contact email before it becomes Reply-To | ZB-03 | Product flow; own ticket |
-| Step-up verification (email confirmation, ZIF-117) for guest bookings above a threshold, instead of pausing a business's unproven guest bookings for the hour | ZB-05 | Product flow; already ticketed as ZIF-117 |
-| Count admin second-factor failures per session or with time decay, instead of resetting them on success | ZB-08, ZB-18 | Migration on the second-factor function; own ticket |
-| Purge old failed sign-ins, rate-limit rows and stored IPs (sweeper) | ZB-04 | Already a planned ticket |
-| A CSP reporting endpoint (`report-to`) | ZB-12 | Needed before enforcing the policy in production (owner action 11); new endpoint |
-| Serve the platform admin pages from their own subdomain | ZB-12 | Isolates admin sessions from business pages; deployment change |
-| Clear a booking's checkout cookie once the booking settles | ZB-15 | The cookie already expires after an hour and is useless once the booking settles |
-| `bootstrap.sql` run by hand with an empty `ZIF_MIGRATE_PASSWORD` or `ZIF_APP_PASSWORD` clears that role's password | Found during ZB-08 | Present on `main` too; the compose files refuse empty values |
-| The API checks at startup that it connects as `ziftbook_app` and logs an ERROR otherwise | Review of #334 | Small code change; separate secrets (owner action 7) cover it until then |
-| `bootstrap.sql` fails when PUBLIC still holds TEMPORARY after its revoke, instead of only warning | Review of #334 | Would stop deploys on hosted databases the admin does not own; owner action 9 covers it until then |
-| `bootstrap.sql` checks `ZIF_WORKER_PASSWORD` before creating any role | Review of #336 | A stopped run is safe to re-run; documented |
-| Removed-member account visibility | ZB-32 | Product decision |
+| Item | Origin | Why not now | Jira |
+|---|---|---|---|
+| Decode photos in a subprocess with a memory limit | ZB-33 fix, item 3 | Architectural change; Pillow 13 plus the guard close the reachable paths |  |
+| Put dependency updates that add new lock packages in their own PRs; check new transitive packages' provenance once | ZB-06 fix | Process change for Renovate grouping |  |
+| Confirm a business's contact email before it becomes Reply-To | ZB-03 | Product flow; own ticket |  |
+| Step-up verification (email confirmation, ZIF-117) for guest bookings above a threshold, instead of pausing a business's unproven guest bookings for the hour | ZB-05 | Product flow; already ticketed as ZIF-117 | ZIF-117 |
+| Count admin second-factor failures per session or with time decay, instead of resetting them on success | ZB-08, ZB-18 | Migration on the second-factor function; own ticket |  |
+| Purge old failed sign-ins, rate-limit rows and stored IPs (sweeper) | ZB-04 | Already a planned ticket |  |
+| A CSP reporting endpoint (`report-to`) | ZB-12 | Needed before enforcing the policy in production (owner action 11); new endpoint |  |
+| Serve the platform admin pages from their own subdomain | ZB-12 | Isolates admin sessions from business pages; deployment change |  |
+| Clear a booking's checkout cookie once the booking settles | ZB-15 | The cookie already expires after an hour and is useless once the booking settles |  |
+| `bootstrap.sql` run by hand with an empty `ZIF_MIGRATE_PASSWORD` or `ZIF_APP_PASSWORD` clears that role's password | Found during ZB-08 | Present on `main` too; the compose files refuse empty values |  |
+| The API checks at startup that it connects as `ziftbook_app` and logs an ERROR otherwise | Review of #334 | Small code change; separate secrets (owner action 7) cover it until then |  |
+| `bootstrap.sql` fails when PUBLIC still holds TEMPORARY after its revoke, instead of only warning | Review of #334 | Would stop deploys on hosted databases the admin does not own; owner action 9 covers it until then |  |
+| `bootstrap.sql` checks `ZIF_WORKER_PASSWORD` before creating any role | Review of #336 | A stopped run is safe to re-run; documented |  |
+| Removed-member account visibility | ZB-32 | Product decision |  |
 
 ## Renovate PRs
 
