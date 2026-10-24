@@ -52,9 +52,18 @@ GRANT ziftbook_app TO ziftbook_worker;
 -- as it does where it owns the database. Role settings need a superuser or CREATEROLE, so they live
 -- here too, one per role: ziftbook_worker inherits ziftbook_app's privileges, not its settings.
 -- Where the admin role neither owns the database nor is a member of its owner (some hosted providers),
--- the REVOKE only warns that nothing was revoked. Check after the run that
--- has_database_privilege('ziftbook_app', current_database(), 'TEMPORARY') is false.
+-- the REVOKE only warns that nothing was revoked, so the check right after it stops the run with an
+-- error if either runtime role still holds TEMPORARY.
 REVOKE TEMPORARY ON DATABASE :"DBNAME" FROM PUBLIC;
 GRANT TEMPORARY ON DATABASE :"DBNAME" TO ziftbook_migrate;
+-- Stops non-zero even when the caller did not set ON_ERROR_STOP.
+\set ON_ERROR_STOP on
+DO $$
+BEGIN
+  IF has_database_privilege('ziftbook_app', current_database(), 'TEMPORARY')
+     OR has_database_privilege('ziftbook_worker', current_database(), 'TEMPORARY') THEN
+    RAISE EXCEPTION 'ziftbook_app or ziftbook_worker can still create temporary tables in %: the REVOKE TEMPORARY ... FROM PUBLIC did not take. Run that REVOKE as the database owner, or run bootstrap.sql as the owner or a superuser.', current_database();
+  END IF;
+END $$;
 ALTER ROLE ziftbook_app SET search_path = public, pg_temp;
 ALTER ROLE ziftbook_worker SET search_path = public, pg_temp;
