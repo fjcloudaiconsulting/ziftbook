@@ -7,7 +7,8 @@ work only through this file and the PRs. So this file is where each side reports
 needs.
 
 The full assessment, with code locations and exploit narratives, is kept out of this public repository
-until the fixes are released. The repository owner holds it. Titles here describe the area and the
+until the fixes are released. The repository owner holds it, together with a private hand-off for agents: the
+current state, the release runbook, the open risks and the decisions taken. Ask the owner for access. Titles here describe the area and the
 weakness at the level of detail the fix PRs already disclose.
 
 ## How this document works (read this first)
@@ -42,15 +43,16 @@ Rules:
 
 ## Status at a glance
 
-As of 2026-10-24, after the first merge run:
+As of 2026-10-24, after the second merge run:
 - **Merged to `main`:**
   - the whole security stack: #329, #331, #332, #333, #334 and #335;
-  - Renovate's #301.
+  - this tracker (#330);
+  - #326 (Python 3.15) and #327 (frontend OpenTelemetry v3);
+  - Renovate's #301, #284 and #274.
   34 of the 36 findings are fixed on `main`. Three of them (ZB-08, ZB-10, ZB-15) also need draft #336.
 - **Still open:**
-  - this tracker (#330), and #326 and #327: they need one more run of the owner's merge script;
-  - Renovate's #274 and #284: Renovate must first rebase them onto the new `main`;
-  - draft #336: already rebased onto `main`; it merges one release after #334.
+  - Renovate's #328 (FastAPI): waits out the five-day release-age cooldown;
+  - draft #336: based on `main`; it merges one release after #334.
 - **Accepted and deferred:** ZB-21 is accepted with a mitigating control. ZB-32 is deferred until a product
   decision.
 - **Reviews:**
@@ -96,6 +98,19 @@ As of 2026-10-24, after the first merge run:
 ## Hand-off log
 
 Newest first.
+
+### 2026-10-24: repository agent (Claude Code, ziftbook session), after the second merge run
+- **Done:**
+  - Merged: #330 (this file), #326, #327 and Renovate's #284 and #274 (#274 after Renovate rebased it past a
+    lockfile conflict with #327). Every merged commit is authored by the owner's GitHub account.
+  - This update is the first tracker change made through its own PR, as "How this document works" describes.
+- **Open:**
+  - Renovate's #328 (FastAPI), until it is five days old;
+  - draft #336, one release after #334;
+  - release PR #321.
+- **Needs:**
+  - **Owner:** merge this PR, then the owner actions before release PR #321.
+  - **Jira agent:** the findings marked Merged can close as Done. Nothing else changed for Jira.
 
 ### 2026-10-24: repository agent (Claude Code, ziftbook session), after the first merge run
 - **Done:**
@@ -157,9 +172,9 @@ The security PRs formed one stack, each based on the previous one, and were squa
 | 6 | [#335](https://github.com/fjcloudaiconsulting/ziftbook/pull/335) | `security/web-headers` | ZB-28, ZB-29, ZB-30, ZB-12 | Merged as 4b29f61 |
 | 7 (draft) | [#336](https://github.com/fjcloudaiconsulting/ziftbook/pull/336) | `security/db-privileges-contract` | ZB-08 (part 2), ZB-10 (contract), ZB-15 (contract). Merge one release after #334, when owner action 10 holds. | Draft, rebased onto `main` |
 
-Related, independent of the stack:
+Related, independent of the stack (both merged on 2026-10-24):
 - [#326](https://github.com/fjcloudaiconsulting/ziftbook/pull/326) Python 3.15 compatibility, which
-  unblocks Renovate #284.
+  unblocked Renovate #284.
 - [#327](https://github.com/fjcloudaiconsulting/ziftbook/pull/327) frontend OpenTelemetry v3, from the
   Renovate dashboard.
 
@@ -248,12 +263,12 @@ Related, independent of the stack:
 
 | PR | State | Recommendation |
 |---|---|---|
-| #284 Python runtime | Conflicts with the stack's `backend/uv.lock` | Wait for Renovate to rebase it (#326 should merge first), then merge if green |
+| #284 Python runtime | Merged | |
 | #325 wrangler in the landing workflow | Closed by Renovate | Superseded: since #332 the landing deploy runs the locked wrangler |
 | #301 uv | Merged | |
-| #274 npm non-major | Conflicts with the stack's `frontend/package.json` and lockfile | Wait for Renovate to rebase it, then merge if green |
-| #328 FastAPI 0.162.0 | Green | The release changes only form-field handling, which the API does not use. With the cooldown from #329, merge once it is five days old |
-| #327 frontend OpenTelemetry v3 | Green | Independent of the stack |
+| #274 npm non-major | Merged | |
+| #328 FastAPI 0.162.0 | Open | The release changes only form-field handling, which the API does not use. Merge once it is five days old (the cooldown from #329) |
+| #327 frontend OpenTelemetry v3 | Merged | |
 
 ## Other observations (not security findings)
 
