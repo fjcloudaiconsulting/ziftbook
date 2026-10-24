@@ -126,7 +126,10 @@ every table that holds a tenant's data:
   `memberships` (0052, ZB-10), no `INSERT` (sign-up and invites create memberships in their definer functions), and
   `UPDATE` of only `role`, `removed_at` and `display_name` (0054): a new column the app sets needs its own column
   `GRANT`. A new read of `memberships` decides: active (filter `role <> 'removed'`, inside the
-  locking statement when it locks) or history (no filter). A read reached through a session needs none:
+  locking statement when it locks) or history (no filter). History names a member by `memberships.display_name`
+  (or a booking's `worker_display_name`); the account's name is only a fallback for a live member, because a
+  business reads a person's account row only while they are a live member (the `users` policy, 0055, ZB-32). A
+  read reached through a session needs none:
   `ck_sessions_role` and the sessions foreign key keep a session's membership live. Never infer owner from
   `role <> 'worker'`; compare to `'owner'`. A new table referencing memberships with `ON DELETE CASCADE` also needs
   a line in `members.remove`, which deletes what the cascades used to.
