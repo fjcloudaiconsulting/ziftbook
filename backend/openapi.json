@@ -810,6 +810,51 @@
         }
       }
     },
+    "/api/account/sessions": {
+      "delete": {
+        "tags": [
+          "platform-account"
+        ],
+        "summary": "Sign Out Everywhere",
+        "description": "End every session of this person, of both kinds, on every browser.",
+        "operationId": "platform-account-sign_out_everywhere",
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Content Too Large",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/account": {
       "get": {
         "tags": [

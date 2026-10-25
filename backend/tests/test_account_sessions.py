@@ -571,3 +571,36 @@ def test_signing_out_everywhere_from_the_console_ends_every_account_session(
     assert account_sessions_of(migrate_engine, people.both) == 0
     assert elsewhere.get("/api/account").status_code == 401
     assert other.get("/api/account").status_code == 200  # someone else's stays
+
+
+# FENCE. Wrong impl: ending only account sessions, or only this browser's.
+def test_signing_out_everywhere_from_the_account_ends_every_session_of_both_kinds(
+    app: FastAPI, people: People, migrate_engine: Engine
+) -> None:
+    console = new_client(app)
+    assert console_sign_in(console, email_of(people.both)).status_code == 200
+    here = new_client(app)
+    assert account_sign_in(here, email_of(people.both)).status_code == 200
+    other = new_client(app)
+    assert console_sign_in(other, email_of(people.only_a)).status_code == 200
+
+    response = here.request("DELETE", "/api/account/sessions", json={})
+
+    assert response.status_code == 204
+    assert {auth.COOKIE, auth.ACCOUNT_COOKIE} <= set(set_cookies(response))
+    assert (
+        sessions_of(migrate_engine, people.both),
+        account_sessions_of(migrate_engine, people.both),
+    ) == (0, 0)
+    assert console.get("/api/session").status_code == 401
+    assert other.get("/api/session").status_code == 200
+    assert other.get("/api/account").status_code == 200
+    rows = events(migrate_engine, action="signed_out_everywhere", actor_user_id=people.both)
+    assert [r["tenant_id"] for r in rows] == [None]
+
+
+def test_signing_out_everywhere_needs_an_account_session(app: FastAPI, people: People) -> None:
+    business = signed_in(app, people.a, people.both)
+
+    assert business.request("DELETE", "/api/account/sessions", json={}).status_code == 401
+    assert business.get("/api/session").status_code == 200
