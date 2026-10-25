@@ -226,6 +226,7 @@ DEFINERS = [
     "public.password_unchanged(p_user_id uuid, p_hash text)",
     "public.reset_password(p_token_hash bytea, p_password_hash text)",
     "public.resolve_admin_session(p_id_hash bytea)",
+    "public.set_own_locale(p_user uuid, p_locale text)",  # ZIF-102: the caller's own language
     "public.set_own_name(p_user uuid, p_name text)",
     "public.start_admin_session(p_user uuid, p_password_hash text, p_id_hash bytea, p_ip inet, p_user_agent text)",  # noqa: E501
     "public.start_email_token(p_purpose text, p_email text, p_locale text)",

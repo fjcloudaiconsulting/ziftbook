@@ -83,6 +83,7 @@ def test_signing_in_starts_a_session_in_the_business(
         "currency": "EUR",
         "display_name": None,
         "name": "Test Person",
+        "locale": None,  # only_a chose none (ZIF-102)
         "slug": slug,
     }
     client.cookies.set(auth.COOKIE, SimpleCookie(response.headers["set-cookie"])[auth.COOKIE].value)
