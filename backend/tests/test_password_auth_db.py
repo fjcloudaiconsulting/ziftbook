@@ -604,3 +604,43 @@ def test_the_app_role_cannot_create_a_temporary_table(app_engine: Engine) -> Non
     with app_engine.connect() as conn, pytest.raises(ProgrammingError) as error:
         conn.execute(text("CREATE TEMP TABLE x (y int)"))
     assert isinstance(error.value.orig, InsufficientPrivilege)
+
+
+# Definers owned by ziftbook_migrate that mention memberships but never app.sign_in. The sign_in
+# policy (FOR SELECT, TO ziftbook_migrate) applies whenever app.sign_in is 'on', and a caller can
+# set it, so a definer that READS memberships must set-and-restore or clear it (CONTRIBUTING).
+SIGN_IN_UNHANDLED = text(r"""
+SELECT p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+WHERE p.prosecdef AND pg_get_userbyid(p.proowner) = 'ziftbook_migrate' AND n.nspname = 'public'
+  AND p.prosrc ~ '\mmemberships\M' AND p.prosrc !~ 'app\.sign_in'
+ORDER BY 1
+""")
+# Each reason says why the caller's app.sign_in cannot widen it.
+WRITES_ONLY = {
+    # Inserts this business's membership; its ON CONFLICT arbiter is (v.tenant_id, user_id), so
+    # only that business's row can conflict, and the UPDATE stays under tenant_isolation (0045).
+    "accept_invite",
+    # Inserts the new business's first membership; reads none.
+    "complete_sign_up",
+}
+
+
+# ZIF-146 FENCE (security B4, "while there"). Wrong impl: a new definer that selects from
+# memberships without touching app.sign_in, so a caller who set it reads every business's members.
+def test_every_definer_reading_memberships_handles_app_sign_in(migrate_engine: Engine) -> None:
+    with migrate_engine.connect() as conn:
+        assert set(conn.scalars(SIGN_IN_UNHANDLED)) == WRITES_ONLY
+
+
+def test_the_sign_in_check_catches_a_definer_that_forgets_it(migrate_engine: Engine) -> None:
+    with migrate_engine.connect() as conn, conn.begin() as transaction:
+        conn.execute(
+            text("""
+            CREATE FUNCTION leaky_members() RETURNS bigint LANGUAGE sql SECURITY DEFINER
+              SET search_path = pg_catalog, public, pg_temp
+              AS 'SELECT count(*) FROM memberships';
+            """)
+        )
+        found = set(conn.scalars(SIGN_IN_UNHANDLED))
+        transaction.rollback()
+    assert found == WRITES_ONLY | {"leaky_members"}
