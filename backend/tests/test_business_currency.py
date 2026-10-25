@@ -522,3 +522,17 @@ def test_a_stripe_account_is_named_before_the_prices(
     response = owner.put("/api/settings/currency", json={"currency": "USD"})
 
     assert (response.status_code, response.json()) == (409, {"code": "currency_locked_payments"})
+
+
+# FENCE (code review, correctness 2). Wrong impl: no upper bound: a count past the database's
+# integer is bound as bigint, change_currency(text, bigint) does not resolve, and the answer is 500.
+@pytest.mark.parametrize("count", [1_000_001, 3_000_000_000])
+def test_a_confirmed_count_out_of_range_is_a_422(
+    people: People, owner: TestClient, migrate_engine: Engine, count: int
+) -> None:
+    response = owner.put(
+        "/api/settings/currency", json={"currency": "USD", "confirmed_prices": count}
+    )
+
+    assert response.status_code == 422
+    assert currency_of(migrate_engine, people.a) == "EUR"
