@@ -20,7 +20,9 @@ from app import auth, bookings
 from app.db import tenant_context
 from app.main import create_app
 from tests.conftest import (
+    PASSWORD,
     People,
+    add_password,
     add_user,
     email_of,
     end_membership,
@@ -68,6 +70,11 @@ def booked_as(migrate_engine: Engine, tenant_id: uuid.UUID) -> list[uuid.UUID | 
     with migrate_engine.begin() as conn:
         conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(tenant_id)})
         return list(conn.scalars(text("SELECT booked_as FROM bookings ORDER BY created_at")))
+
+
+@pytest.fixture(autouse=True)
+def passwords_for(people: People, migrate_engine: Engine) -> None:
+    add_password(migrate_engine, people.only_b, PASSWORD)
 
 
 @pytest.fixture
@@ -239,3 +246,55 @@ def test_only_the_booking_insert_names_the_placing_account() -> None:
     # argument book_online passes. Nothing that reads it.
     assert len(re.findall(r"\bbooked_as\b", insert)) == 2
     assert naming["bookings.py"] == 2 + 4
+
+
+# FENCE (code review N-1, N-2). Wrong impl: a re-check with laxer rules than the resolver: an
+# account session whose console session ran out, or whose holder became an admin, after step 0
+# would still prove, link and record the booking.
+@pytest.mark.parametrize("meanwhile", ["console session expired", "made a platform admin"])
+def test_the_re_check_applies_the_account_session_rules(
+    app: FastAPI,
+    people: People,
+    ready: str,
+    migrate_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+    meanwhile: str,
+) -> None:
+    client = new_client(app)
+    signed = client.post(
+        "/api/session", json={"email": email_of(people.only_b), "password": PASSWORD}
+    )
+    assert signed.status_code == 200
+    business = client.cookies.get(auth.COOKIE)
+    assert business is not None
+    client.cookies.delete(auth.COOKIE)  # the account session alone proves the booking
+    book_online = bookings.book_online
+
+    def changed_meanwhile(*args: Any, **kwargs: Any) -> Any:
+        with migrate_engine.begin() as conn:
+            if meanwhile == "console session expired":
+                conn.execute(
+                    # Before the booking transaction's own now(), which started first.
+                    text(
+                        "UPDATE sessions SET expires_at = now() - interval '1 minute'"
+                        " WHERE id_hash = :h"
+                    ),
+                    {"h": auth.hash_token(business)},
+                )
+            else:
+                conn.execute(
+                    text("INSERT INTO platform_admins (user_id) VALUES (:u)"), {"u": people.only_b}
+                )
+        return book_online(*args, **kwargs)
+
+    monkeypatch.setattr(bookings, "book_online", changed_meanwhile)
+    try:
+        response = book(client, people, ready, email=email_of(people.only_b))
+    finally:
+        with migrate_engine.begin() as conn:
+            conn.execute(
+                text("DELETE FROM platform_admins WHERE user_id = :u"), {"u": people.only_b}
+            )
+
+    assert (response.status_code, response.json()) == (401, {"code": "unauthenticated"})
+    assert client_row(people.a, email_of(people.only_b)) is None
