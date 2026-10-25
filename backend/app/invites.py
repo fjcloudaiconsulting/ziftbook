@@ -279,7 +279,10 @@ def accept(body: AcceptInvite, request: Request, response: Response) -> auth.Ses
                 actor_user_id=result.account_id,
                 target=f"user:{result.account_id}",
             )
-            token = auth.start(session, request, result.account_id)
+            # The hash this account now has: the new one, or the one checked above (ZIF-146).
+            stored = password_hash if password_hash is not None else found.password_hash
+            assert stored is not None
+            started = auth.start(session, request, result.account_id, stored)
             signed_in_as = auth.describe(session, result.account_id)
     # Outside the transaction: already_member keeps the invite used up.
     if result.outcome == "invalid_token":  # used, revoked or resent since find()
@@ -287,6 +290,6 @@ def accept(body: AcceptInvite, request: Request, response: Response) -> auth.Ses
     if result.outcome in ("account_exists", "already_member"):
         raise ApiError(409, result.outcome)
     assert result.outcome == "accepted"
-    auth.set_cookie(response, token)
+    auth.set_cookies(response, started)
     response.headers["Cache-Control"] = "no-store"
     return signed_in_as

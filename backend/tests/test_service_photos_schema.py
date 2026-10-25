@@ -35,6 +35,7 @@ WHERE t.typname = 'lo' AND a.attnum > 0 AND NOT a.attisdropped
 # Today's bytea columns: credential hashes and one ciphertext, never media. A new one fails the test
 # until someone adds it here on purpose (the owner's rule: images never go in the database).
 ALLOWED = [
+    "account_sessions.id_hash",  # ZIF-146: an account session token's hash
     "admin_sessions.id_hash",
     "booking_holds.secret_hash",
     "booking_holds.token_hash",

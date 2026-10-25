@@ -5,7 +5,6 @@ import hashlib
 import secrets
 import uuid
 from collections.abc import Iterator
-from http.cookies import SimpleCookie
 
 import pytest
 from fastapi import FastAPI
@@ -22,6 +21,7 @@ from tests.conftest import (
     People,
     add_password,
     closed,
+    cookie_named,
     delete_memberships,
     delete_payment_accounts,
     delete_services,
@@ -369,9 +369,9 @@ def test_no_event_holds_a_password_email_token_or_cookie(
     assert signed_up.status_code == 201
     tenant_id, user_id = signed_up.json()["tenant_id"], signed_up.json()["user_id"]
     businesses.append(uuid.UUID(tenant_id))
-    cookies = [SimpleCookie(signed_up.headers["set-cookie"])[auth.COOKIE].value]
+    cookies = [cookie_named(signed_up, auth.COOKIE).value]
     again = sign_in(client_at(app)[0], email)
-    cookies.append(SimpleCookie(again.headers["set-cookie"])[auth.COOKIE].value)
+    cookies.append(cookie_named(again, auth.COOKIE).value)
     assert sign_in(client_at(app)[0], email, "not-the-password-1").status_code == 401
     for path, cookie in (("/api/session", cookies[1]), ("/api/sessions", cookies[0])):
         signing_out = client_at(app)[0]
