@@ -194,26 +194,33 @@ def update(
     sent = change.model_fields_set
     if "name" in sent and change.name is None:
         raise ApiError(422, "invalid_request")
-    phone = current.phone
-    if "phone" in sent:
-        phone = None
-        if change.phone is not None:
-            phone = clients.phone_number(change.phone, None)
-            if phone is None:
-                raise ApiError(422, "phone_invalid")
-    name = change.name if "name" in sent else None
-    changed: dict[str, object] = {
-        key: "changed"
-        for key, before, after in (("name", current.name, name), ("phone", current.phone, phone))
-        if key in sent and before != after
-    }
+    phone = None
+    if "phone" in sent and change.phone is not None:
+        phone = clients.phone_number(change.phone, None)
+        if phone is None:
+            raise ApiError(422, "phone_invalid")
     with SessionLocal.begin() as session:
+        # Only the fields sent are written (code review N3): a name-only edit never writes back a
+        # phone read before another tab changed it.
         row = session.execute(
-            text("SELECT * FROM set_own_profile(:h, :name, :phone)"),
-            {"h": current.id_hash, "name": name, "phone": phone},
+            text("SELECT * FROM set_own_profile(:h, :name, :phone, :set_phone)"),
+            {
+                "h": current.id_hash,
+                "name": change.name if "name" in sent else None,
+                "phone": phone,
+                "set_phone": "phone" in sent,
+            },
         ).first()
         if row is None:  # signed out while this request was under way
             raise ApiError(401, "unauthenticated")
+        changed: dict[str, object] = {
+            key: "changed"
+            for key, before, after in (
+                ("name", row.previous_name, row.name),
+                ("phone", row.previous_phone, row.phone),
+            )
+            if before != after
+        }
         if changed:
             # The field names only, never the values (as clients.update_client).
             auth.record(

@@ -6,11 +6,11 @@ there again (copy at booking, ZIF-99), and no membership's display name changes.
 import uuid
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine, text
 
-from app import auth
+from app import auth, platform_account
 from app.db import tenant_context
 from app.main import create_app
 from tests.conftest import People, events, signed_in
@@ -124,9 +124,37 @@ def test_a_business_session_changes_no_profile(
     with app_engine.begin() as conn:
         assert (
             conn.execute(
-                text("SELECT * FROM set_own_profile(:h, 'Hijack', NULL)"),
+                text("SELECT * FROM set_own_profile(:h, 'Hijack', NULL, false)"),
                 {"h": auth.hash_token(token)},
             ).first()
             is None
         )
     assert stored(migrate_engine, people.both)[0] == "Test Person"
+
+
+# FENCE (code review N3). Wrong impl: writing back the phone the request read before another tab
+# changed it: two edits at once, one in each tab, lose one of them.
+def test_a_name_edit_never_writes_back_a_phone_changed_meanwhile(
+    app: FastAPI, client: TestClient, people: People, migrate_engine: Engine
+) -> None:
+    resolved = platform_account.account_session
+
+    def another_tab_changes_the_phone(request: Request) -> platform_account.AccountSession:
+        current = resolved(request)  # read before the other tab's change commits
+        with migrate_engine.begin() as conn:
+            conn.execute(
+                text("UPDATE users SET phone = '+351912345678' WHERE id = :u"), {"u": people.both}
+            )
+        return current
+
+    app.dependency_overrides[platform_account.account_session] = another_tab_changes_the_phone
+    try:
+        response = client.patch("/api/account", json={"name": "Nova"})
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert stored(migrate_engine, people.both) == ("Nova", "+351912345678")
+    assert response.json()["phone"] == "+351912345678"
+    rows = events(migrate_engine, action="account_details_changed", actor_user_id=people.both)
+    assert [r["details"] for r in rows] == [{"name": "changed"}]
