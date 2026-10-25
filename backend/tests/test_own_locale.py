@@ -10,6 +10,7 @@ from psycopg.errors import InsufficientPrivilege
 from sqlalchemy import Engine, text
 from sqlalchemy.exc import ProgrammingError
 
+from app import auth
 from app.business_settings import Locale
 from app.db import tenant_context
 from app.main import create_app
@@ -219,3 +220,46 @@ def test_a_worker_sets_their_own_language(
 
     assert response.status_code == 200
     assert locale_of(migrate_engine, people.only_a) == "nl"
+
+
+# CONTRIBUTING "Tenant-owned tables": a definer that reads memberships clears app.sign_in and puts
+# back what the caller had. Guard on the restore; the clearing itself is fenced by 7b, which stays
+# red against a body with neither the clearing nor the tenant filter, and green with either alone
+# (mutation-checked).
+def test_set_own_locale_puts_back_the_caller_s_sign_in(people: People) -> None:
+    with tenant_context(people.a) as session:
+        session.execute(text("SELECT set_config('app.sign_in', 'on', true)"))
+        session.execute(text("SELECT set_own_locale(:u, 'pt')"), {"u": people.only_a})
+        assert session.scalar(text("SELECT current_setting('app.sign_in')")) == "on"
+
+
+# Guard (code review, correctness 9): the membership ends after the session resolved (the
+# dependency below ends it, as a removal committing mid-request would). The write is refused and
+# the answer is 401, never 200. A route that ignored set_own_locale's answer would still answer 401
+# here, from auth.describe, which reads the same live membership: the branch is defence in depth,
+# and this pins the outcome both give.
+def test_a_membership_ended_mid_request_is_a_401_and_nothing_is_written(
+    people: People, app: FastAPI, migrate_engine: Engine
+) -> None:
+    client = signed_in(app, people.a, people.only_a)
+
+    def named_then_removed(current: auth.AnySession) -> auth.SignedIn:
+        with migrate_engine.begin() as conn:
+            conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(people.a)})
+            conn.execute(text("DELETE FROM sessions WHERE user_id = :u"), {"u": people.only_a})
+            conn.execute(
+                text(
+                    "UPDATE memberships SET role = 'removed', removed_at = now() WHERE user_id = :u"
+                ),
+                {"u": people.only_a},
+            )
+        return current
+
+    app.dependency_overrides[auth.named] = named_then_removed
+    try:
+        response = client.put("/api/session/locale", json={"locale": "pt"})
+    finally:
+        app.dependency_overrides.clear()
+
+    assert (response.status_code, response.json()) == (401, {"code": "unauthenticated"})
+    assert locale_of(migrate_engine, people.only_a) is None
