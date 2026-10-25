@@ -27,6 +27,10 @@ each one's bookings under its own tenant isolation, so no policy widens what any
 returns no booking id (a capability on older payment routes): the page key is sha256 of the id.
 Hidden: a checkout still open, and an expired checkout that never completed.
 
+Trust, stated: an app role that runs SQL of its own can insert a booking with booked_as set to
+anyone, and it then shows in that person's history. It could already insert bookings in any
+business; showing one in a person's own history is what is new.
+
 Revision ID: 0058
 Revises: 0057
 """
