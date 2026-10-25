@@ -6,6 +6,10 @@ like admin_sessions (0037): the app role has no grant on it, and five SECURITY D
 its only way in. They fix the lifetimes (30 days absolute, 7 days idle, last_seen_at touched at most
 every 5 minutes, "fresh" for 24 hours), so the caller cannot choose one.
 
+- An account session a console sign-in starts is bound to that business session (started_by): it
+  ends when the business session ends or expires, so on a shop's shared device a member's personal
+  session never outlives their console session or their membership. One the person starts on the
+  booking page, on their own device, is not bound.
 - start_account_session starts one only with the stored password hash the API just verified, taking
   that password_credentials row FOR SHARE first, so a password reset racing the sign-in either wins
   (the answer is 'stale') or waits and then deletes the new session. A platform admin gets none
@@ -52,23 +56,38 @@ LIVE = """s.id_hash = p_id_hash AND s.expires_at > now()
         AND s.last_seen_at > now() - interval '7 days'"""
 # LIVE, and never a platform admin's (code review N-1): a person made an admin after signing in
 # keeps no password-only session that reads or changes the admin identity. `grant` also ends them.
-USABLE = LIVE + """
-        AND NOT EXISTS (SELECT FROM platform_admins a WHERE a.user_id = s.user_id)"""
+USABLE = (
+    LIVE
+    + """
+        AND NOT EXISTS (SELECT FROM platform_admins a WHERE a.user_id = s.user_id)
+        AND (s.started_by IS NULL OR EXISTS (
+          SELECT FROM sessions b WHERE b.id_hash = s.started_by AND b.expires_at > now()
+            AND b.last_seen_at > now() - interval '7 days'))"""
+)
+# The last clause (security code review N-2): an account session a console sign-in started lives
+# only as long as that business session. On a shop's shared device it ends with the console's
+# sign-out, its idle or absolute expiry, sign-out everywhere, a password reset and the member's
+# removal, and it is never idle longer than the business session. The foreign key deletes it with
+# that row; this clause covers the expiries, which delete nothing.
 
 FUNCTIONS = {
-    "start_account_session(uuid,text,bytea,inet,text)": f"""
+    "start_account_session(uuid,text,bytea,inet,text,bytea)": f"""
 CREATE FUNCTION start_account_session(
-  p_user uuid, p_password_hash text, p_id_hash bytea, p_ip inet, p_user_agent text)
+  p_user uuid, p_password_hash text, p_id_hash bytea, p_ip inet, p_user_agent text,
+  p_started_by bytea)
 RETURNS text LANGUAGE plpgsql SECURITY DEFINER {SEARCH_PATH} AS $$
 -- 'started', 'stale' (the stored hash is not the one just verified: a reset won), or 'admin' (a
 -- platform admin gets no account session). Lock order: password_credentials, then account_sessions.
+-- p_started_by: the business session a console sign-in started with it, or NULL (the account's own
+-- sign-in): the account session then lives only as long as that one.
 BEGIN
   PERFORM FROM password_credentials c
   WHERE c.user_id = p_user AND c.hash = p_password_hash FOR SHARE;
   IF NOT FOUND THEN RETURN 'stale'; END IF;
   IF EXISTS (SELECT FROM platform_admins a WHERE a.user_id = p_user) THEN RETURN 'admin'; END IF;
-  INSERT INTO account_sessions (id_hash, user_id, expires_at, ip, user_agent)
-  VALUES (p_id_hash, p_user, now() + interval '30 days', p_ip, left(p_user_agent, 512));
+  INSERT INTO account_sessions (id_hash, user_id, expires_at, ip, user_agent, started_by)
+  VALUES (p_id_hash, p_user, now() + interval '30 days', p_ip, left(p_user_agent, 512),
+          p_started_by);
   -- ponytail: purges on every start; move to the ZIF-5 sweeper. SKIP LOCKED, as auth.create:
   -- never wait on a row another transaction holds.
   DELETE FROM account_sessions s WHERE s.id_hash IN (
@@ -186,10 +205,17 @@ def upgrade() -> None:
       last_seen_at timestamptz NOT NULL DEFAULT now(),
       ip inet,
       user_agent text
-        CONSTRAINT ck_account_sessions_user_agent_length CHECK (char_length(user_agent) <= 512)
+        CONSTRAINT ck_account_sessions_user_agent_length CHECK (char_length(user_agent) <= 512),
+      -- The business session a console sign-in started this one with (USABLE): deleting it deletes
+      -- this one. NULL for the account's own sign-in, on the person's own device.
+      started_by bytea
+        CONSTRAINT fk_account_sessions_started_by_sessions REFERENCES sessions (id_hash)
+          ON DELETE CASCADE
     )""")
     op.execute("CREATE INDEX ix_account_sessions_user_id ON account_sessions (user_id)")
     op.execute("CREATE INDEX ix_account_sessions_expires_at ON account_sessions (expires_at)")
+    # The foreign key's cascade: a business session's delete finds its account session.
+    op.execute("CREATE INDEX ix_account_sessions_started_by ON account_sessions (started_by)")
     # Default privileges from 0001 gave the app role DML on every new table; none comes back.
     op.execute("REVOKE ALL ON account_sessions FROM ziftbook_app")
     for signature, definition in FUNCTIONS.items():
