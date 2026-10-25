@@ -536,3 +536,21 @@ def test_a_confirmed_count_out_of_range_is_a_422(
 
     assert response.status_code == 422
     assert currency_of(migrate_engine, people.a) == "EUR"
+
+
+# FENCE (code review, security 7). Wrong impl: GRANT UPDATE (currency) ON payment_accounts: a
+# runtime role could null the column and take the database half of the Stripe lock away. The app
+# role writes it once, with the account; neither runtime role may change it.
+@pytest.mark.parametrize("role", ["ziftbook_app", "ziftbook_worker"])
+def test_a_runtime_role_inserts_the_account_currency_but_never_updates_it(
+    migrate_engine: Engine, role: str
+) -> None:
+    def may(privilege: str) -> bool:
+        with migrate_engine.connect() as conn:
+            granted: bool = conn.scalar(
+                text("SELECT has_column_privilege(:r, 'payment_accounts', 'currency', :p)"),
+                {"r": role, "p": privilege},
+            )
+        return granted
+
+    assert (may("INSERT"), may("UPDATE")) == (True, False)
