@@ -183,7 +183,9 @@ functions owned by `ziftbook_migrate`:
   clear it, on a resend (the `invites_token_hash_by_worker` trigger, 0053).
 - The `sign_in` policy lets `ziftbook_migrate` read memberships across tenants only while `app.sign_in` is `on`. A
   function that relies on it sets and restores `app.sign_in` itself; any other definer function that reads memberships
-  must clear it, because a caller can set it.
+  must clear it, because a caller can set it. The same holds for every flag a policy opens to `ziftbook_migrate` (`app.audit_review`
+  on `audit_events`, `app.stripe_webhook` on `payment_accounts`): `tests/test_password_auth_db.py` lists every definer
+  that reads such a table without its flag, and pins the flags themselves.
 - `complete_sign_up`, `accept_invite`, `set_own_name` and `set_own_profile` are the only writers of `users.name`
   (the app role has no UPDATE policy on `users`). `set_own_name` names a person who has none (legacy accounts only)
   and also fills the `display_name` of every business of theirs where it is unset, including one an owner had
@@ -236,6 +238,9 @@ that person's platform account (ZIF-99).
 - `app.clients.find_or_create` refreshes the copy from what a booker typed **only when the booker is authenticated as
   that address's own account (`refresh=True`); every other caller fills blanks only**, and its docstring is the one
   home for what that costs and for the duties it puts on the route that calls it. Read it before writing that route.
+- A person's history across businesses (`own_bookings`, ZIF-146) lists only bookings their own account placed
+  (`bookings.booked_as`), keyed by their account session hash and never reachable with a business session. It walks
+  the businesses and reads each under its own tenant isolation: no policy widens what any role can read.
 - A business never finds a platform user it has no relationship with: nothing a business's session can reach
   answers by email or name across tenants (`account_by_email` does, but only for sign-in (business, account and
   admin) and invite lookup and acceptance, which need a password or an invite token). `tests/test_directory_ban.py` pins the `users` policies, every SECURITY
