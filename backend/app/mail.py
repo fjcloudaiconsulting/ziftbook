@@ -23,7 +23,7 @@ from opentelemetry.trace import SpanKind
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app import business_settings, limits, passwords, tracing
+from app import business_settings, currencies, limits, passwords, tracing
 from app.business_settings import Locale
 from app.config import MailSettings
 from app.db import SessionLocal, tenant_context
@@ -427,17 +427,21 @@ SYMBOLS = {"EUR": "€", "GBP": "£", "USD": "$"}
 
 
 def _money(amount_minor: int, currency: str, locale: str) -> str:
-    """The frontend's Intl.NumberFormat currency format (frontend/lib/money.ts) for the three
-    currencies in SYMBOLS, two decimals. shortcut: use Babel if a zero-decimal currency comes."""
+    """The web app's money format (frontend/lib/money.ts, Intl.NumberFormat with the currency's
+    style) for en, nl and pt: the business's currency in the reader's number format, with as many
+    decimals as the currency has minor units (app/currencies.py; KeyError for one not listed)."""
+    units = currencies.minor_units(currency)
+    whole, part = divmod(amount_minor, 10**units)
+    fraction = f"{part:0{units}d}" if units else ""
     symbol = SYMBOLS.get(currency)
-    whole, cents = f"{amount_minor // 100:,}", f"{amount_minor % 100:02d}"
     if locale == "en":
+        number = f"{whole:,}" + (f".{fraction}" if units else "")
         # Intl: a symbol touches the amount; a code stands in its place, then a no-break space.
-        return f"{symbol}{whole}.{cents}" if symbol else f"{currency}\u00a0{whole}.{cents}"
-    digits = f"{whole.replace(',', '.')},{cents}"
+        return f"{symbol}{number}" if symbol else f"{currency}\u00a0{number}"
+    number = f"{whole:,}".replace(",", ".") + (f",{fraction}" if units else "")
     if symbol == "$":
         symbol = "US$"  # Intl tells the dollars apart outside en
-    return f"{symbol or currency}\u00a0{digits}"
+    return f"{symbol or currency}\u00a0{number}"
 
 
 def _line(key: str, locale: str, amount_minor: int, currency: str) -> str:
