@@ -9,12 +9,17 @@ from typing import Any
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from psycopg.errors import CheckViolation, FeatureNotSupported, ForeignKeyViolation
+from psycopg.errors import (
+    CheckViolation,
+    FeatureNotSupported,
+    ForeignKeyViolation,
+    InsufficientPrivilege,
+)
 from sqlalchemy import Engine, text
 from sqlalchemy.exc import DBAPIError, IntegrityError
 
 from app import countries
-from app.db import tenant_context
+from app.db import lift_force, tenant_context
 from app.main import create_app
 from tests.conftest import People, events, member_id, signed_in, wait_until_blocked
 from tests.stripe_fake import FakeGateway
@@ -598,3 +603,60 @@ def test_each_country_s_stripe_currencies() -> None:
     for country, defaults in COUNTRIES.items():
         expected = frozenset() if country == "BR" else {defaults.currency}
         assert STRIPE_CURRENCIES[country] == expected, country
+
+
+SERVICES_FK = "fk_services_tenant_id_price_currency_tenants"
+
+
+def with_a_bad_price_in_b(conn: Any, people: People) -> None:
+    """Inside a transaction the test rolls back: the services key dropped, a price of business B in
+    a currency B does not hold, the key back NOT VALID, and the caller's business set to A."""
+    conn.execute(text(f"ALTER TABLE services DROP CONSTRAINT {SERVICES_FK}"))
+    conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(people.b)})
+    conn.execute(
+        text("""
+        INSERT INTO services (tenant_id, name, price_amount_minor, price_currency, duration_minutes)
+        VALUES (:t, '{"en": "Cut"}'::jsonb, 2500, 'USD', 30)
+        """),
+        {"t": people.b},
+    )
+    conn.execute(
+        text(f"""
+        ALTER TABLE services ADD CONSTRAINT {SERVICES_FK}
+          FOREIGN KEY (tenant_id, price_currency) REFERENCES tenants (id, currency)
+          ON UPDATE CASCADE NOT VALID""")
+    )
+    conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(people.a)})
+
+
+VALIDATE = f"ALTER TABLE services VALIDATE CONSTRAINT {SERVICES_FK}"
+
+
+# FENCE (code review, security 3). Wrong impl: validating under FORCE row-level security, which
+# checks only the business in app.tenant_id and marks the key valid. With FORCE lifted (0067's
+# helper), a bad row in another business stops the validation. The first block is the hazard
+# itself, as a positive control: the bad row is there, and a plain VALIDATE misses it.
+def test_lifting_force_validates_every_business(people: People, migrate_engine: Engine) -> None:
+    with migrate_engine.connect() as conn, conn.begin() as transaction:
+        with_a_bad_price_in_b(conn, people)
+        conn.execute(text(VALIDATE))  # under FORCE, in A: passes, wrongly
+        transaction.rollback()
+
+    with pytest.raises(IntegrityError) as error:
+        with migrate_engine.connect() as conn, conn.begin():
+            with_a_bad_price_in_b(conn, people)
+            lift_force(lambda sql: conn.execute(text(sql)), "services", VALIDATE)
+    assert isinstance(error.value.orig, ForeignKeyViolation)
+
+
+# FENCE (code review, security 3). Wrong impl: lift_force without `SET LOCAL row_security = off`.
+# A copy that lifts FORCE on the wrong table leaves the scan under the policy: with the setting it
+# fails closed (42501); without it, it would check business A only and mark the key valid.
+def test_a_validation_left_under_the_policy_fails_closed(
+    people: People, migrate_engine: Engine
+) -> None:
+    with pytest.raises(DBAPIError) as error:
+        with migrate_engine.connect() as conn, conn.begin():
+            with_a_bad_price_in_b(conn, people)
+            lift_force(lambda sql: conn.execute(text(sql)), "payment_accounts", VALIDATE)
+    assert isinstance(error.value.orig, InsufficientPrivilege)

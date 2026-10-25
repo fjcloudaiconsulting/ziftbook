@@ -61,10 +61,13 @@ Specifics:
   `pg_stat_activity`), or split the migration so each step locks less (one table per migration; add a constraint
   `NOT VALID` and validate it in a later one). Waiting for another migration run to finish is not bounded:
   concurrent runs take turns.
-- Validating a constraint added `NOT VALID` on a table with FORCE row-level security fails in a migration: the scan
-  runs as the owner under the tenant policy, with no `app.tenant_id` (42704), and setting one would check a single
-  business's rows. Lift FORCE around it in the same migration (`NO FORCE`, `VALIDATE CONSTRAINT`, `FORCE`, as 0067
-  does); `NO FORCE` holds ACCESS EXCLUSIVE on that table until commit, so do it on small tables only.
+- Validating a constraint on a table with FORCE row-level security (a `VALIDATE CONSTRAINT`, or an `ADD CONSTRAINT`
+  that checks existing rows) scans as the owner under the tenant policy: with no `app.tenant_id` it fails (42704),
+  and with one it checks that business's rows only and still marks the constraint valid. Use `app.db.lift_force`
+  (0067, 0068): it sets `row_security = off` first, so a scan the policy would still filter fails (42501) instead
+  of validating one business, then lifts FORCE around the statement and puts it back. Run it inside the
+  migration's transaction, never in an `autocommit_block()`, so a failure rolls the lift back. `NO FORCE` holds
+  ACCESS EXCLUSIVE on the table until commit: lift one table per migration, and only a small one.
 - `CREATE INDEX CONCURRENTLY` cannot run inside a transaction; put it in its own migration using Alembic's
   `autocommit_block()`. It also waits for every older transaction in the database, and on the 5-second timeout it
   leaves an invalid index behind. Inside the block, run `DROP INDEX CONCURRENTLY IF EXISTS` first, then
