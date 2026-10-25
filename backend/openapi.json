@@ -8680,6 +8680,10 @@
             "type": "boolean",
             "title": "Country Supported"
           },
+          "currency_supported": {
+            "type": "boolean",
+            "title": "Currency Supported"
+          },
           "min_amount_minor": {
             "anyOf": [
               {
@@ -8700,6 +8704,7 @@
         "required": [
           "state",
           "country_supported",
+          "currency_supported",
           "min_amount_minor",
           "currency"
         ],
