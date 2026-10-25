@@ -1,0 +1,10 @@
+Crie sua conta no ziftbook
+Olá,
+
+Abra este link para confirmar seu e-mail e criar sua conta no ziftbook. Com ela, seus dados são preenchidos automaticamente quando você agenda.
+
+$link
+
+O link funciona uma vez, por 24 horas. Se você não pediu uma conta no ziftbook, pode ignorar este e-mail.
+
+ziftbook
