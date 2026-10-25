@@ -7,6 +7,7 @@ Docs: CONTRIBUTING.md "Client records", app.clients.find_or_create, app.bookings
 
 import json
 import re
+import threading
 import uuid
 from pathlib import Path
 from typing import Any
@@ -16,7 +17,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine, text
 
-from app import auth, bookings
+from app import auth, bookings, clients
 from app.db import tenant_context
 from app.main import create_app
 from tests.conftest import (
@@ -30,6 +31,7 @@ from tests.conftest import (
     new_client,
     save_setting,
     signed_in,
+    wait_until_blocked,
 )
 from tests.test_account_sessions import account_client
 from tests.test_availability_api import assign, new_service, weekdays
@@ -298,3 +300,80 @@ def test_the_re_check_applies_the_account_session_rules(
 
     assert (response.status_code, response.json()) == (401, {"code": "unauthenticated"})
     assert client_row(people.a, email_of(people.only_b)) is None
+
+
+# FENCE (code review N2; ZIF-58's relink fence depends on it). Wrong impl: a re-check that reads
+# the session without locking it: a sign-out, reset or erasure committing between the re-check and
+# the booking's commit would leave a link and booked_as under an identity that is gone. And the
+# lock is FOR KEY SHARE, not FOR SHARE: the person's other requests, which touch last_seen_at, must
+# not wait on the booking.
+@pytest.mark.parametrize(
+    ("kind", "table", "cookie"),
+    [
+        ("account", "account_sessions", auth.ACCOUNT_COOKIE),
+        ("business", "sessions", auth.COOKIE),
+    ],
+)
+def test_a_session_delete_waits_for_the_booking_its_session_proves(
+    app: FastAPI,
+    people: People,
+    ready: str,
+    migrate_engine: Engine,
+    member_less: uuid.UUID,
+    monkeypatch: pytest.MonkeyPatch,
+    kind: str,
+    table: str,
+    cookie: str,
+) -> None:
+    person = member_less if kind == "account" else people.only_b
+    if kind == "account":
+        client = account_client(app, migrate_engine, person)
+    else:
+        client = signed_in(app, people.b, person)
+    token = client.cookies.get(cookie)
+    assert token is not None
+    held, release = threading.Event(), threading.Event()
+    find_or_create = clients.find_or_create
+
+    def pause_after_the_re_check(*args: Any, **kwargs: Any) -> Any:
+        held.set()
+        assert release.wait(timeout=20)
+        return find_or_create(*args, **kwargs)
+
+    monkeypatch.setattr(clients, "find_or_create", pause_after_the_re_check)
+    answers: list[Any] = []
+    booking = threading.Thread(
+        target=lambda: answers.append(book(client, people, ready, email=email_of(person)))
+    )
+    booking.start()
+    assert held.wait(timeout=20)
+
+    erased: list[int] = []
+
+    def erase() -> None:
+        with migrate_engine.begin() as conn:
+            erased.append(
+                conn.execute(
+                    text(f"DELETE FROM {table} WHERE user_id = :u"), {"u": person}
+                ).rowcount
+            )
+
+    eraser = threading.Thread(target=erase)
+    eraser.start()
+    try:
+        wait_until_blocked(migrate_engine, 1)  # the delete waits on the booking's lock
+        # The person's other tab is not held up: touching last_seen_at takes no conflicting lock.
+        with migrate_engine.begin() as conn:
+            conn.execute(text("SET LOCAL lock_timeout = '1s'"))
+            conn.execute(
+                text(f"UPDATE {table} SET last_seen_at = now() WHERE id_hash = :h"),
+                {"h": auth.hash_token(token)},
+            )
+    finally:
+        release.set()
+        booking.join(timeout=20)
+        eraser.join(timeout=20)
+
+    assert answers[0].status_code == 201, answers[0].json()
+    assert erased == [1]
+    assert booked_as(migrate_engine, people.a) == [person]
