@@ -40,7 +40,7 @@ class CurrencyChange(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid")
     currency: Currency
     # The number of saved prices the owner agreed to relabel (GET's prices); None: not confirmed.
-    confirmed_prices: Annotated[int, Field(ge=0)] | None = None
+    confirmed_prices: Annotated[int, Field(ge=0, le=1_000_000)] | None = None
 
 
 STATE = text("""
