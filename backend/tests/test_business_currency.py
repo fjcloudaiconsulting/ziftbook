@@ -489,3 +489,36 @@ def test_a_split_double_click_onboards_the_account_the_business_holds(
         p["account"] for op, p in fake_stripe.calls if op in ("onboarding_link", "register_domain")
     ]
     assert linked == ["acct_oldrelease01", "acct_oldrelease01"]
+
+
+# FENCE (code review, correctness 1). Wrong impl: the prices check before the locks: an owner whose
+# business has bookings would be asked to confirm its prices, only to learn after confirming that
+# the currency cannot change. The order is bookings, then the Stripe account, then prices; GET names
+# both locks.
+def test_a_booking_is_named_before_the_stripe_account_and_the_prices(
+    people: People, owner: TestClient, migrate_engine: Engine
+) -> None:
+    a_booking(people)  # its service is a saved price
+    insert_account(migrate_engine, people.a, "acct_bothlocks01")
+
+    response = owner.put("/api/settings/currency", json={"currency": "USD"})
+
+    assert (response.status_code, response.json()) == (409, {"code": "currency_locked_bookings"})
+    state = owner.get("/api/settings/currency").json()
+    assert (state["change"], state["locked_by"], state["prices"]) == (
+        "locked",
+        ["bookings", "payment_account"],
+        1,
+    )
+
+
+# FENCE (code review, correctness 1). Wrong impl: the same, between the Stripe account and prices.
+def test_a_stripe_account_is_named_before_the_prices(
+    people: People, owner: TestClient, migrate_engine: Engine
+) -> None:
+    archived_and_live_services(people.a)
+    insert_account(migrate_engine, people.a, "acct_beforeprice")
+
+    response = owner.put("/api/settings/currency", json={"currency": "USD"})
+
+    assert (response.status_code, response.json()) == (409, {"code": "currency_locked_payments"})
