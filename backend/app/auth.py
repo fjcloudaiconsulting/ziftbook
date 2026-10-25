@@ -417,6 +417,9 @@ def read(current: AnySession, response: Response) -> SessionOut:
     return describe(current.db, current.user_id)
 
 
+PASSWORD_UNCHANGED = text("SELECT password_unchanged(:user_id, :hash)")
+
+
 def start(session: Session, request: Request, user_id: UUID, password_hash: str) -> Started:
     """Sign user_id in on this browser: whatever session it had ends here, whoever it belonged to.
     The person's account session starts with it (ZIF-146), so a console sign-in also fills in a
@@ -424,19 +427,25 @@ def start(session: Session, request: Request, user_id: UUID, password_hash: str)
 
     session is a tenant_context for the business; returns the new cookies' tokens.
     """
-    # create() first: it may wait on the membership (a removal in flight), and must do so holding
-    # no session row, or it deadlocks against members.remove deleting that row.
+    # The lock order every writer keeps (CONTRIBUTING): password_credentials, then sessions, then
+    # account_sessions. The stored hash first, FOR SHARE: a reset either already won (401) or waits.
+    if not session.scalar(PASSWORD_UNCHANGED, {"user_id": user_id, "hash": password_hash}):
+        raise ApiError(401, "invalid_credentials", headers=account_cookie_cleared())
+    # create() before any session row is touched: it may wait on the membership (a removal in
+    # flight), and must do so holding no session row, or it deadlocks against members.remove
+    # deleting that row.
     token = create(
         session,
         user_id,
         ip=request.client.host if request.client else None,
         user_agent=request.headers.get("user-agent"),
     )
-    account_token = start_account(session, request, user_id, password_hash, hash_token(token))
     if old := request.cookies.get(COOKIE):
         session.execute(
             text("DELETE FROM sessions WHERE id_hash = :id_hash"), {"id_hash": hash_token(old)}
         )
+    # account_sessions last.
+    account_token = start_account(session, request, user_id, password_hash, hash_token(token))
     record(session, request, "sign_in_succeeded", actor_user_id=user_id)
     return Started(token, account_token)
 

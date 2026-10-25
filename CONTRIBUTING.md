@@ -207,8 +207,8 @@ functions owned by `ziftbook_migrate`:
     from `sessions` (a denial of service, no data).
 - Lock order for every writer that touches more than one of these: `password_credentials`, then `sessions`, then
   `account_sessions`, then `clients`. `reset_password` follows it; signing out everywhere locks the person's business
-  sessions before it ends their account sessions (`auth.EVERY_SESSION`); `start_account_session` locks the
-  credentials row before it inserts the session; a booking locks its proving session before `find_or_create`. Two
+  sessions before it ends their account sessions (`auth.EVERY_SESSION`); a sign-in locks the stored hash
+  (`password_unchanged`), then ends this browser's old business session, then writes account sessions; a booking locks its proving session before `find_or_create`. Two
   writers taking two of these in opposite orders deadlock, and the loser answers 500.
 
 ## Client records
