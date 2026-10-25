@@ -2020,3 +2020,25 @@ def test_0053_round_trips_the_invite_token_guard(
             ["search_path=pg_catalog, public, pg_temp"],
             False,
         )
+
+
+# ZIF-102 (code review, security 6). FENCE. Wrong impl: 0066 without its preflight: a business
+# holding a currency outside the four (possible before 0066, whose check was only three capitals)
+# would pass the NOT VALID check and stop the deploy later at 0067's validation, with a generic
+# constraint error. 0066 refuses first and names the problem.
+def test_0066_refuses_while_a_business_holds_another_currency(
+    migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = lock_timeout_config(monkeypatch)
+    try:
+        command.downgrade(cfg, "0062")
+        with migrate_engine.begin() as conn:
+            conn.execute(text("INSERT INTO tenants (name, currency) VALUES ('Zurich', 'CHF')"))
+        with pytest.raises(DBAPIError, match="hold a currency outside BRL, EUR, GBP and USD"):
+            command.upgrade(cfg, "0066")
+        with migrate_engine.connect() as conn:
+            assert conn.scalar(VERSION) == "0062"
+    finally:
+        with migrate_engine.begin() as conn:
+            conn.execute(text("DELETE FROM tenants WHERE name = 'Zurich' AND currency = 'CHF'"))
+        command.upgrade(cfg, "head")
