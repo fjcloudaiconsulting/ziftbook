@@ -238,7 +238,11 @@ def end_previous_account_session(request: Request) -> None:
 
 
 def start_account(
-    session: Session, request: Request, user_id: UUID, password_hash: str
+    session: Session,
+    request: Request,
+    user_id: UUID,
+    password_hash: str,
+    started_by: bytes | None = None,
 ) -> str | None:
     """Start an account session for user_id on this browser and return its cookie's token; None for
     a platform admin, who gets none (0057). Whatever account session this browser had ends here,
@@ -248,19 +252,24 @@ def start_account(
     password_hash is the stored hash the caller just verified: a reset that changed it since answers
     401 invalid_credentials, so the caller's transaction rolls back and no session of either kind
     survives the reset. Lock order (CONTRIBUTING): password_credentials, then account_sessions.
+
+    started_by: the hash of the business session a console sign-in starts alongside: the account
+    session then ends with it (0057), so a shop's shared device keeps no member's personal session
+    past their console session or their membership.
     """
     if old := request.cookies.get(ACCOUNT_COOKIE):
         session.execute(text("SELECT end_account_session(:h)"), {"h": hash_token(old)})
     token = secrets.token_urlsafe(32)
     ip, user_agent = origin(request)
     outcome = session.scalar(
-        text("SELECT start_account_session(:u, :h, :id_hash, CAST(:ip AS inet), :ua)"),
+        text("SELECT start_account_session(:u, :h, :id_hash, CAST(:ip AS inet), :ua, :by)"),
         {
             "u": user_id,
             "h": password_hash,
             "id_hash": hash_token(token),
             "ip": ip,
             "ua": user_agent,
+            "by": started_by,
         },
     )
     if outcome == "stale":
@@ -423,7 +432,7 @@ def start(session: Session, request: Request, user_id: UUID, password_hash: str)
         ip=request.client.host if request.client else None,
         user_agent=request.headers.get("user-agent"),
     )
-    account_token = start_account(session, request, user_id, password_hash)
+    account_token = start_account(session, request, user_id, password_hash, hash_token(token))
     if old := request.cookies.get(COOKIE):
         session.execute(
             text("DELETE FROM sessions WHERE id_hash = :id_hash"), {"id_hash": hash_token(old)}
@@ -552,17 +561,9 @@ def sign_in(credentials: Credentials, request: Request, response: Response) -> S
 def end_browser_sessions(request: Request, response: Response) -> None:
     """End this browser's sessions of both kinds, whoever they belong to, and clear both cookies
     (ZIF-146: any sign-out ends both). Needs no live session: an expired cookie is cleared all the
-    same. Each kind in its own transaction, as each event belongs to its own place: the business's
-    in that business, the account's in none."""
-    if token := request.cookies.get(COOKIE):
-        with SessionLocal.begin() as session:
-            ended = session.execute(
-                text("DELETE FROM sessions WHERE id_hash = :id_hash RETURNING tenant_id, user_id"),
-                {"id_hash": hash_token(token)},
-            ).first()
-            if ended:
-                join_tenant(session, ended.tenant_id)
-                record(session, request, "signed_out", actor_user_id=ended.user_id)
+    same. Each kind in its own transaction, as each event belongs to its own place: the account's in
+    none, the business's in that business. The account first: deleting the business session would
+    delete a bound account session with it (0057) and its event would go unrecorded."""
     if token := request.cookies.get(ACCOUNT_COOKIE):
         with SessionLocal.begin() as session:
             user_id = session.scalar(
@@ -576,6 +577,15 @@ def end_browser_sessions(request: Request, response: Response) -> None:
                     actor_user_id=user_id,
                     target=f"user:{user_id}",
                 )
+    if token := request.cookies.get(COOKIE):
+        with SessionLocal.begin() as session:
+            ended = session.execute(
+                text("DELETE FROM sessions WHERE id_hash = :id_hash RETURNING tenant_id, user_id"),
+                {"id_hash": hash_token(token)},
+            ).first()
+            if ended:
+                join_tenant(session, ended.tenant_id)
+                record(session, request, "signed_out", actor_user_id=ended.user_id)
     clear_cookie(response)
     clear_account_cookie(response)
 

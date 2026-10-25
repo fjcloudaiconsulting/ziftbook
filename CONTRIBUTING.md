@@ -195,7 +195,10 @@ functions owned by `ziftbook_migrate`:
   Every sign-in that starts a business session also starts an account session (`auth.start`), except for a platform
   admin, who gets none (granting admin ends the person's account sessions, and no account session answers for an
   admin); every sign-out ends both kinds on that browser; signing out everywhere, a password reset and
-  erasure end both kinds of that person.
+  erasure end both kinds of that person. The account session a console sign-in starts is bound to that business
+  session (`account_sessions.started_by`): it ends with it, by its sign-out, expiry, the member's removal or a
+  role change, so a shop's shared device keeps no member's personal session past their console session. One the
+  person starts on the booking page is not bound.
 - `start_account_session` trusts the API's password check, as `start_admin_session` does: the database cannot check
   a password. An app role running SQL of its own could read a hash with `account_by_email`, start an account session
   for anyone but an admin, and through it read and change that person's name and phone.

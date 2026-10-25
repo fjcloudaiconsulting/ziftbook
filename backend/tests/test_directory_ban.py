@@ -235,7 +235,7 @@ DEFINERS = [
     "public.resolve_admin_session(p_id_hash bytea)",
     "public.set_own_name(p_user uuid, p_name text)",
     "public.set_own_profile(p_id_hash bytea, p_name text, p_phone text, p_set_phone boolean)",
-    "public.start_account_session(p_user uuid, p_password_hash text, p_id_hash bytea, p_ip inet, p_user_agent text)",  # noqa: E501
+    "public.start_account_session(p_user uuid, p_password_hash text, p_id_hash bytea, p_ip inet, p_user_agent text, p_started_by bytea)",  # noqa: E501
     "public.start_admin_session(p_user uuid, p_password_hash text, p_id_hash bytea, p_ip inet, p_user_agent text)",  # noqa: E501
     "public.start_email_token(p_purpose text, p_email text, p_locale text)",
     "public.stripe_account_tenant(p_account text)",

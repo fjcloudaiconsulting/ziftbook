@@ -2054,7 +2054,7 @@ def test_0057_reset_password_is_0037s_plus_one_line() -> None:
 
 ACCOUNT_OBJECTS = text("""
 SELECT to_regclass('account_sessions') IS NOT NULL,
-       to_regprocedure('start_account_session(uuid,text,bytea,inet,text)') IS NOT NULL,
+       to_regprocedure('start_account_session(uuid,text,bytea,inet,text,bytea)') IS NOT NULL,
        to_regprocedure('resolve_account_session(bytea)') IS NOT NULL,
        to_regprocedure('end_account_session(bytea)') IS NOT NULL,
        to_regprocedure('end_account_sessions(bytea)') IS NOT NULL,
