@@ -236,6 +236,9 @@ that person's platform account (ZIF-99).
 - `app.clients.find_or_create` refreshes the copy from what a booker typed **only when the booker is authenticated as
   that address's own account (`refresh=True`); every other caller fills blanks only**, and its docstring is the one
   home for what that costs and for the duties it puts on the route that calls it. Read it before writing that route.
+- A person's history across businesses (`own_bookings`, ZIF-146) lists only bookings their own account placed
+  (`bookings.booked_as`), keyed by their account session hash and never reachable with a business session. It walks
+  the businesses and reads each under its own tenant isolation: no policy widens what any role can read.
 - A business never finds a platform user it has no relationship with: nothing a business's session can reach
   answers by email or name across tenants (`account_by_email` does, but only for sign-in (business, account and
   admin) and invite lookup and acceptance, which need a password or an invite token). `tests/test_directory_ban.py` pins the `users` policies, every SECURITY

@@ -7,19 +7,24 @@ reaches account_sessions only through definer functions keyed by the session has
 Logs: ids and outcome codes only; never an email, name, phone, token, hash or address.
 """
 
+import base64
+import binascii
+import json
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Depends, Query, Request, Response
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app import auth, clients
+from app import auth, clients, limits
 from app.accounts import DisplayNameText
 from app.db import SessionLocal
 from app.errors import ApiError, Error
+from app.services import Price
 
 router = APIRouter(prefix="/api/account", tags=["platform-account"])
 
@@ -238,3 +243,103 @@ def update(
                 details=changed,
             )
     return AccountOut(email=row.email, name=row.name, phone=row.phone)
+
+
+class Business(BaseModel):
+    name: str
+    slug: str  # the booking page's address: /{locale}/{slug}
+
+
+class HistoryBooking(BaseModel):
+    """One booking this account placed. Never an id (a capability on older payment routes), a note,
+    a message or what was typed into the form: tests/test_directory_ban.py pins these fields."""
+
+    business: Business
+    starts_at: datetime
+    ends_at: datetime
+    status: str
+    service_name: dict[str, str]  # all three locales, as snapshotted
+    price: Price
+    worker_display_name: str | None
+
+
+class HistoryPage(BaseModel):
+    bookings: list[HistoryBooking]  # newest first
+    next: str | None  # the cursor of the next page; None on the last
+
+
+HISTORY = text("SELECT * FROM own_bookings(:h, :before_starts_at, :before_key, :limit)")
+HISTORY_WINDOW = timedelta(minutes=1)
+HISTORY_LIMIT = 30  # per account a minute: every call walks every business
+
+
+def cursor_of(starts_at: datetime, key: bytes) -> str:
+    raw = json.dumps({"s": starts_at.isoformat(), "k": key.hex()}).encode()
+    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+
+def parse_cursor(cursor: str) -> tuple[datetime, bytes]:
+    """The (starts_at, key) a cursor carries, or 422: it is opaque, and never a booking id."""
+    try:
+        raw = json.loads(base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4)))
+        starts_at = datetime.fromisoformat(raw["s"])
+        key = bytes.fromhex(raw["k"])
+    except ValueError, KeyError, TypeError, binascii.Error:
+        raise ApiError(422, "invalid_request") from None
+    if starts_at.tzinfo is None or len(key) != 32:
+        raise ApiError(422, "invalid_request")
+    return starts_at, key
+
+
+@router.get(
+    "/history",
+    name="history",
+    dependencies=[Depends(same_origin)],
+    responses={s: {"model": Error} for s in (401, 403, 422, 429)},
+)
+def history(
+    current: CurrentAccount,
+    response: Response,
+    cursor: Annotated[str | None, Query(max_length=200)] = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+) -> HistoryPage:
+    """Every booking this account placed, at every business, past and upcoming, newest first. Only
+    bookings the person placed while signed in: a guest booking made with their address, by anyone,
+    never shows. Needs a session started within the last 24 hours (403
+    reauthentication_required: sign in again)."""
+    private(response)
+    if not current.fresh:
+        raise ApiError(403, "reauthentication_required")
+    if limits.hit(
+        {limits.email_key("account_history", current.email): HISTORY_LIMIT}, HISTORY_WINDOW
+    ):
+        raise ApiError(429, "rate_limited")
+    before_starts_at, before_key = parse_cursor(cursor) if cursor else (None, None)
+    with SessionLocal.begin() as session:
+        # Up to limit + 1 from each business: the newest limit + 1 overall are among them.
+        rows = session.execute(
+            HISTORY,
+            {
+                "h": current.id_hash,
+                "before_starts_at": before_starts_at,
+                "before_key": before_key,
+                "limit": limit + 1,
+            },
+        ).all()
+    rows = sorted(rows, key=lambda r: (r.starts_at, r.sort_key), reverse=True)
+    page = rows[:limit]
+    return HistoryPage(
+        bookings=[
+            HistoryBooking(
+                business=Business(name=r.business_name, slug=r.business_slug),
+                starts_at=r.starts_at,
+                ends_at=r.ends_at,
+                status=r.status,
+                service_name=r.service_name,
+                price=Price(amount_minor=r.price_amount_minor, currency=r.price_currency),
+                worker_display_name=r.worker_display_name,
+            )
+            for r in page
+        ],
+        next=cursor_of(page[-1].starts_at, page[-1].sort_key) if len(rows) > limit else None,
+    )

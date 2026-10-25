@@ -369,3 +369,21 @@ def test_the_account_answers_only_its_own_three_fields() -> None:
         for parameter in operation.get("parameters", [])
     ]
     assert "email" not in parameters
+
+
+# 15: FENCE (ZIF-146, security N9). Wrong impl: a history that carries a booking id (a capability
+# on older payment routes), a note, the decline message or what the booker typed (client_name,
+# client_phone, client_message: a guest with this person's address typed those).
+def test_the_history_carries_only_its_pinned_fields() -> None:
+    schemas = json.loads(CONTRACT.read_text())["components"]["schemas"]
+    assert set(schemas["HistoryPage"]["properties"]) == {"bookings", "next"}
+    assert set(schemas["Business"]["properties"]) == {"name", "slug"}
+    assert set(schemas["HistoryBooking"]["properties"]) == {
+        "business",
+        "starts_at",
+        "ends_at",
+        "status",
+        "service_name",
+        "price",
+        "worker_display_name",
+    }, "HistoryBooking changed." + WIDENING

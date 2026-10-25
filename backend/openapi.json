@@ -967,6 +967,99 @@
         }
       }
     },
+    "/api/account/history": {
+      "get": {
+        "tags": [
+          "platform-account"
+        ],
+        "summary": "History",
+        "description": "Every booking this account placed, at every business, past and upcoming, newest first. Only\nbookings the person placed while signed in: a guest booking made with their address, by anyone,\nnever shows. Needs a session started within the last 24 hours (403\nreauthentication_required: sign in again).",
+        "operationId": "platform-account-history",
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 200
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoryPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          }
+        }
+      }
+    },
     "/api/audit-events": {
       "get": {
         "tags": [
@@ -7225,6 +7318,24 @@
         ],
         "title": "BookingStatusOut"
       },
+      "Business": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "slug": {
+            "type": "string",
+            "title": "Slug"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "slug"
+        ],
+        "title": "Business"
+      },
       "BusinessSettings-Input": {
         "properties": {
           "timezone": {
@@ -8191,6 +8302,88 @@
           "revision"
         ],
         "title": "Health"
+      },
+      "HistoryBooking": {
+        "properties": {
+          "business": {
+            "$ref": "#/components/schemas/Business"
+          },
+          "starts_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Starts At"
+          },
+          "ends_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Ends At"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "service_name": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Service Name"
+          },
+          "price": {
+            "$ref": "#/components/schemas/Price"
+          },
+          "worker_display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Worker Display Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "business",
+          "starts_at",
+          "ends_at",
+          "status",
+          "service_name",
+          "price",
+          "worker_display_name"
+        ],
+        "title": "HistoryBooking",
+        "description": "One booking this account placed. Never an id (a capability on older payment routes), a note,\na message or what was typed into the form: tests/test_directory_ban.py pins these fields."
+      },
+      "HistoryPage": {
+        "properties": {
+          "bookings": {
+            "items": {
+              "$ref": "#/components/schemas/HistoryBooking"
+            },
+            "type": "array",
+            "title": "Bookings"
+          },
+          "next": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next"
+          }
+        },
+        "type": "object",
+        "required": [
+          "bookings",
+          "next"
+        ],
+        "title": "HistoryPage"
       },
       "InTheWay": {
         "properties": {
