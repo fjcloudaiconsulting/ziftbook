@@ -140,3 +140,14 @@ describe("minor units", () => {
     }
   });
 });
+
+// Fence (code review, correctness 7). Wrong impl: trusting Intl's digits for any well-formed code,
+// which are CLDR's default 2 for a code Intl does not know ("XYZ"): an unknown currency would be
+// formatted with cents instead of refused, as the backend refuses it (app/currencies.py).
+describe("an unknown currency", () => {
+  test("minorUnits throws for a code Intl does not list, and so do the helpers built on it", () => {
+    assert.throws(() => minorUnits("XYZ"), /unknown currency/);
+    assert.throws(() => formatMoney(3500, "XYZ", "en"), /unknown currency/);
+    assert.throws(() => parseMoney("35", "XYZ"), /unknown currency/);
+  });
+});
