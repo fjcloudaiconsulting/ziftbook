@@ -16,12 +16,12 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request, Response
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app import auth, clients, limits
-from app.accounts import DisplayNameText
+from app import accounts, auth, clients, limits, passwords
+from app.accounts import DisplayNameText, LinkRequest
 from app.db import SessionLocal
 from app.errors import ApiError, Error
 from app.services import Price
@@ -352,3 +352,85 @@ def history(
         ],
         next=cursor_of(page[-1].starts_at, page[-1].sort_key) if len(rows) > limit else None,
     )
+
+
+@router.post(
+    "/sign-up",
+    name="sign_up",
+    status_code=202,
+    responses={s: {"model": Error} for s in (403, 415, 422, 429)},
+)
+def sign_up(details: LinkRequest, request: Request) -> None:
+    """Send a link that creates the person's own account, or, if the email has an account (a
+    client's, a member's, an owner's), a note to sign in to it. The same answer for every email:
+    the email job decides what the inbox gets. Business sign-up's limits and Turnstile action."""
+    accounts.send_link("account_sign_up", details, request, limit_as="sign_up")
+
+
+class AccountSignUpIn(BaseModel):
+    token: str = Field(min_length=1, max_length=100)  # from the link's fragment
+    password: str
+    name: DisplayNameText  # never logged, never in an event
+    phone: clients.Phone | None = None  # international (+31...): an account has no country
+
+
+@router.post(
+    "/sign-up/complete",
+    name="complete_sign_up",
+    status_code=201,
+    responses={s: {"model": Error} for s in (400, 409, 415, 422, 503)},
+)
+def complete_sign_up(details: AccountSignUpIn, request: Request, response: Response) -> AccountOut:
+    """Create the person's account from an account sign-up link, with no business, and sign them in
+    to it. This browser's previous account session ends, and a business session of a different
+    person (one browser, one person)."""
+    from app import setup  # here: setup imports accounts, which this module imports
+
+    # Before the link is touched, so it still works once setup is done (as business sign-up).
+    if setup.needed():
+        raise ApiError(409, "setup_required")
+    password = passwords.check_new_password(details.password)
+    phone = None
+    if details.phone is not None:
+        phone = clients.phone_number(details.phone, None)
+        if phone is None:  # before the link is touched: it stays usable
+            raise ApiError(422, "phone_invalid")
+    digest = accounts.live_token(details.token, "account_sign_up")
+    password_hash = passwords.hash_password(password)
+    with SessionLocal.begin() as session:
+        created = session.execute(
+            text("SELECT * FROM complete_account_sign_up(:h, :p, :n, :phone)"),
+            {"h": digest, "p": password_hash, "n": details.name, "phone": phone},
+        ).one()
+        if created.outcome == "created":
+            auth.record(
+                session,
+                request,
+                "account_created",
+                actor_user_id=created.user_id,
+                target=f"user:{created.user_id}",
+            )
+    # Outside the transaction: raising inside would roll back using up the link.
+    if created.outcome == "invalid_token":
+        raise ApiError(400, "invalid_token")
+    if created.outcome == "already_registered":
+        raise ApiError(409, "account_exists")
+    auth.end_previous_account_session(request)
+    # Two steps: if this one fails, the account exists and the person signs in normally.
+    with SessionLocal.begin() as session:
+        token = auth.start_account(session, request, created.user_id, password_hash)
+        assert token is not None  # a new account is no platform admin
+        ended_other = end_other_persons_business_session(session, request, created.user_id)
+        auth.record(
+            session,
+            request,
+            "account_signed_in",
+            actor_user_id=created.user_id,
+            target=f"user:{created.user_id}",
+        )
+        row = session.execute(RESOLVE, {"h": auth.hash_token(token)}).one()
+    auth.set_account_cookie(response, token)
+    if ended_other:
+        auth.clear_cookie(response)
+    response.headers["Cache-Control"] = "no-store"
+    return AccountOut(email=row.email, name=row.name, phone=row.phone)
