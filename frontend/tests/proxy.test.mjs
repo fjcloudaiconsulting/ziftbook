@@ -1017,7 +1017,11 @@ function stubBookingPage(slug) {
     description: { en: `${PAYLOAD} description`, nl: PAYLOAD, pt: PAYLOAD },
     duration_minutes: 30,
     price: { amount_minor: 3500, currency: "EUR" },
-    workers: [{ id: "00000000-0000-4000-8000-000000000002", display_name: `${PAYLOAD} worker` }],
+    // Two, so the checkout lists them to choose from.
+    workers: [
+      { id: "00000000-0000-4000-8000-000000000002", display_name: `${PAYLOAD} worker` },
+      { id: "00000000-0000-4000-8000-000000000004", display_name: `${PAYLOAD} second worker` },
+    ],
     placeholder: "hair",
     photo: null,
     payment: false,
@@ -1066,6 +1070,19 @@ describe("a booking page renders merchant text as text (ZIF-146)", () => {
     const html = await response.text();
     assert.ok(html.includes("salon"), "the page rendered the business");
     assert.ok(html.includes("&lt;img src=x onerror=alert(1)&gt;"), "the payload is there, as text");
+    assert.ok(!html.includes("<img src=x onerror"), "no live image handler");
+    assert.ok(!html.includes("<script>alert(2)"), "no live script");
+    assert.doesNotMatch(html, /\b(?:href|src|action)="\s*javascript:/i, "no javascript: link");
+  });
+
+  test("fence: the checkout shows the worker names and the cancellation policy as text too (fold re-verify NB-4)", async () => {
+    const response = await fetch(`http://127.0.0.1:${port}/en/${slug}/book?service=00000000-0000-4000-8000-000000000003`);
+    assert.equal(response.status, 200);
+    const html = await response.text();
+    const escaped = "&lt;img src=x onerror=alert(1)&gt;&lt;script&gt;alert(2)&lt;/script&gt;";
+    for (const field of ["worker", "second worker", "policy"]) {
+      assert.ok(html.includes(`${escaped}&quot;&gt;&lt;a href=&quot;javascript:alert(3)&quot;&gt;x&lt;/a&gt; ${field}`), `${field} is shown, as text`);
+    }
     assert.ok(!html.includes("<img src=x onerror"), "no live image handler");
     assert.ok(!html.includes("<script>alert(2)"), "no live script");
     assert.doesNotMatch(html, /\b(?:href|src|action)="\s*javascript:/i, "no javascript: link");
