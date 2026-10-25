@@ -254,3 +254,21 @@ def test_an_account_sign_up_for_a_registered_email_says_to_sign_in_to_the_accoun
     assert sent["Subject"] == "Je hebt al een ziftbook-account"
     assert f"{APP_URL}/nl/account/sign-in" in body and "#" not in body
     assert stored_hash(migrate_engine, email) is None
+
+
+# ZIF-146 (architecture R7). Wrong impl: telling a person whose account has no business to "sign in"
+# into a console that then answers no_tenant, without saying why.
+@pytest.mark.parametrize(
+    ("locale", "says"),
+    [
+        ("en", "a business can't be added to it for now"),
+        ("nl", "kan er voorlopig geen bedrijf aan worden toegevoegd"),
+        ("pt", "por enquanto não é possível adicionar um a ela"),
+    ],
+)
+def test_the_registered_sign_up_email_says_a_business_cannot_be_added_yet(
+    locale: str, says: str
+) -> None:
+    _, body = render("sign_up_registered", locale, {"sign_in": "https://x.test/marker"})
+
+    assert says in body
