@@ -490,3 +490,15 @@ def test_sign_up_works_with_turnstile_disabled(client: TestClient) -> None:
         client.post("/api/sign-up", json={"email": fresh_email(), "locale": "en"}).status_code
         == 202
     )
+
+
+# ZIF-146 FENCE (security N6). Wrong impl: the per-address key on the address as typed: victim+1@,
+# victim+2@... each got their own 3 emails an hour, all landing in one inbox.
+@pytest.mark.parametrize("route", ["/api/sign-up", "/api/password-reset"])
+def test_aliases_of_one_inbox_share_its_link_budget(client: TestClient, route: str) -> None:
+    local = f"v{uuid.uuid4().hex[:12]}"
+    statuses = [
+        client.post(route, json={"email": f"{local}{tag}@example.com", "locale": "en"}).status_code
+        for tag in ("", "+1", "+2", "+3")
+    ]
+    assert statuses == [202, 202, 202, 429]

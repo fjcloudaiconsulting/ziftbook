@@ -26,17 +26,27 @@ class LinkRequest(BaseModel):
     turnstile_token: Annotated[str, StringConstraints(max_length=turnstile.MAX_TOKEN)] | None = None
 
 
-def send_link(purpose: str, details: LinkRequest, request: Request) -> None:
+def send_link(
+    purpose: str, details: LinkRequest, request: Request, *, limit_as: str | None = None
+) -> None:
     """Queue the email for a link. The same answer and the same work whether or not the email has an
-    account: the email job decides what the inbox gets."""
+    account: the email job decides what the inbox gets.
+
+    limit_as: the purpose whose limits and Turnstile action this request spends, when it shares
+    another's (an account sign-up spends business sign-up's, ZIF-146: one inbox gets at most 3
+    sign-up emails an hour across both kinds). The per-address key folds aliases
+    (limits.address_for_limits), so victim+1@ and victim+2@ share one budget (ZIF-146, security
+    N6); the token keeps the address as typed."""
+    limited = limit_as or purpose
     ip = request.client.host if request.client else None
     # Per IP first, before any outbound call; then Turnstile; the address last and in its own hit(),
     # as the public booking route orders them: a token-less script must not lock an address out.
-    if limits.hit({limits.ip_key(purpose, ip, v6_prefix=limits.AUTH_V6_PREFIX): 10}, LINK_WINDOW):
+    if limits.hit({limits.ip_key(limited, ip, v6_prefix=limits.AUTH_V6_PREFIX): 10}, LINK_WINDOW):
         raise ApiError(429, "rate_limited")
-    if not turnstile.verify(details.turnstile_token, ip, action=purpose):
+    if not turnstile.verify(details.turnstile_token, ip, action=limited):
         raise ApiError(403, "turnstile_failed")
-    if limits.hit({limits.email_key(purpose, details.email): 3}, LINK_WINDOW):
+    folded = limits.address_for_limits(details.email)
+    if limits.hit({limits.email_key(limited, folded): 3}, LINK_WINDOW):
         raise ApiError(429, "rate_limited")
     with SessionLocal.begin() as session:
         token_id = session.scalar(
