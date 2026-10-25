@@ -97,6 +97,7 @@ def test_a_signed_in_user_sees_their_session(
         "currency": "EUR",
         "display_name": None,
         "name": "Test Person",
+        "locale": "nl",  # the person's own (ZIF-102)
         "slug": slug,
     }
 
