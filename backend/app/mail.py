@@ -250,7 +250,12 @@ def send_invite(job: Job) -> None:
         ).first()
         if invite is None:  # revoked, resent (new id) or accepted
             return
-        language = business_settings.read(session).language
+        # The invitee's own language when their account has one (invite_locale, worker-only, 0061),
+        # else the business's.
+        language = (
+            session.scalar(text("SELECT invite_locale(:id)"), {"id": job.payload["invite_id"]})
+            or business_settings.read(session).language
+        )
         link = f"{app_url}/{language}/invite#{job.tenant_id}.{token}"
         subject, body = render("invite", language, {"link": link, "business": invite.business})
         deliver("invite", invite.email, subject, body)
