@@ -220,17 +220,37 @@ def clear_account_cookie(response: Response) -> None:
     response.delete_cookie(ACCOUNT_COOKIE, path="/", secure=True, httponly=True, samesite="strict")
 
 
+def account_cookie_cleared() -> dict[str, str]:
+    """The header that clears the account cookie, for an error answer (ApiError.headers)."""
+    cleared = Response()
+    clear_account_cookie(cleared)
+    return {"set-cookie": cleared.headers["set-cookie"]}
+
+
+def end_previous_account_session(request: Request) -> None:
+    """End this browser's account session, whoever it belongs to, in its own transaction: a sign-in
+    whose credentials passed ends it on every later path (started, stale, a platform admin), so a
+    shared browser never keeps the previous person (one browser, one person; ZIF-146). A failed
+    password ends nothing: the browser still holds only its previous person, who can sign out."""
+    if old := request.cookies.get(ACCOUNT_COOKIE):
+        with SessionLocal.begin() as session:
+            session.execute(text("SELECT end_account_session(:h)"), {"h": hash_token(old)})
+
+
 def start_account(
     session: Session, request: Request, user_id: UUID, password_hash: str
 ) -> str | None:
     """Start an account session for user_id on this browser and return its cookie's token; None for
     a platform admin, who gets none (0057). Whatever account session this browser had ends here,
-    whoever it belonged to.
+    whoever it belonged to, whatever the outcome (callers also end it beforehand in a transaction
+    of its own, end_previous_account_session, so a rollback cannot bring it back).
 
     password_hash is the stored hash the caller just verified: a reset that changed it since answers
     401 invalid_credentials, so the caller's transaction rolls back and no session of either kind
     survives the reset. Lock order (CONTRIBUTING): password_credentials, then account_sessions.
     """
+    if old := request.cookies.get(ACCOUNT_COOKIE):
+        session.execute(text("SELECT end_account_session(:h)"), {"h": hash_token(old)})
     token = secrets.token_urlsafe(32)
     ip, user_agent = origin(request)
     outcome = session.scalar(
@@ -244,11 +264,9 @@ def start_account(
         },
     )
     if outcome == "stale":
-        raise ApiError(401, "invalid_credentials")
+        raise ApiError(401, "invalid_credentials", headers=account_cookie_cleared())
     if outcome == "admin":
         return None
-    if old := request.cookies.get(ACCOUNT_COOKIE):
-        session.execute(text("SELECT end_account_session(:h)"), {"h": hash_token(old)})
     return token
 
 
@@ -265,6 +283,8 @@ def set_cookies(response: Response, started: Started) -> None:
     set_cookie(response, started.token)
     if started.account_token is not None:
         set_account_cookie(response, started.account_token)
+    else:  # a platform admin: whatever account cookie this browser held is ended, so clear it
+        clear_account_cookie(response)
 
 
 # One statement: the live session (neither idle nor past its absolute expiry), and last_seen_at
@@ -496,6 +516,7 @@ def check_credentials(credentials: Credentials, request: Request) -> Row[Any]:
             record(session, request, "sign_in_failed", actor_user_id=None, target=target)
         raise ApiError(401, "invalid_credentials")
     assert account is not None
+    end_previous_account_session(request)
     return account
 
 
@@ -511,17 +532,17 @@ def sign_in(credentials: Credentials, request: Request, response: Response) -> S
     """
     account = check_credentials(credentials, request)
     if account.tenant_id is None:
-        raise ApiError(403, "no_tenant")
+        raise ApiError(403, "no_tenant", headers=account_cookie_cleared())
     with tenant_context(account.tenant_id) as session:
         if not session.scalar(
             text("SELECT password_unchanged(:user_id, :hash)"),
             {"user_id": account.user_id, "hash": account.password_hash},
         ):  # reset while it was being checked
-            raise ApiError(401, "invalid_credentials")
+            raise ApiError(401, "invalid_credentials", headers=account_cookie_cleared())
         try:
             started = start(session, request, account.user_id, account.password_hash)
         except ValueError:  # the membership went away since the lookup
-            raise ApiError(403, "no_tenant") from None
+            raise ApiError(403, "no_tenant", headers=account_cookie_cleared()) from None
         signed_in_as = describe(session, account.user_id)
     set_cookies(response, started)
     response.headers["Cache-Control"] = "no-store"

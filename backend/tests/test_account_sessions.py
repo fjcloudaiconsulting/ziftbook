@@ -461,7 +461,7 @@ def test_a_platform_admin_gets_no_account_session(
     console = new_client(app)
     signed = console_sign_in(console, email_of(admin))
     assert signed.status_code == 200
-    assert set(set_cookies(signed)) == {auth.COOKIE}
+    assert account_cookie_cleared(signed)  # only cleared, never set
 
     response = account_sign_in(new_client(app), email_of(admin))
 
@@ -604,3 +604,116 @@ def test_signing_out_everywhere_needs_an_account_session(app: FastAPI, people: P
 
     assert business.request("DELETE", "/api/account/sessions", json={}).status_code == 401
     assert business.get("/api/session").status_code == 200
+
+
+def holding_account_of(
+    app: FastAPI, migrate_engine: Engine, user_id: uuid.UUID
+) -> tuple[TestClient, str]:
+    """A browser holding user_id's live account session, and that session's token."""
+    client = account_client(app, migrate_engine, user_id)
+    token = client.cookies.get(auth.ACCOUNT_COOKIE)
+    assert token is not None
+    return client, token
+
+
+def live_account_session(migrate_engine: Engine, token: str) -> bool:
+    with migrate_engine.connect() as conn:
+        return bool(
+            conn.scalar(
+                text("SELECT EXISTS (SELECT FROM account_sessions WHERE id_hash = :h)"),
+                {"h": auth.hash_token(token)},
+            )
+        )
+
+
+def account_cookie_cleared(response: Response) -> bool:
+    cookie = set_cookies(response).get(auth.ACCOUNT_COOKIE)
+    return cookie is not None and cookie[auth.ACCOUNT_COOKIE]["max-age"] == "0"
+
+
+# FENCE (one browser, one person; security review fold). Wrong impl: ending the previous person's
+# account session only when the new one starts: a platform admin's sign-in, a sign-in that loses
+# to a reset, a member-less person's console sign-in and the 403 account_unavailable left it live,
+# with its cookie, on a shared browser.
+@pytest.mark.parametrize(
+    "path", ["admin console", "admin account", "stale console", "stale account", "no business"]
+)
+def test_every_sign_in_past_the_password_ends_the_previous_persons_account_session(
+    app: FastAPI,
+    people: People,
+    migrate_engine: Engine,
+    app_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+    path: str,
+) -> None:
+    previous = add_user(migrate_engine, name="Previous Person")
+    client, old = holding_account_of(app, migrate_engine, previous)
+    try:
+        email = email_of(people.both)
+        expected = {
+            "admin console": 200,
+            "admin account": 403,
+            "stale console": 401,
+            "stale account": 401,
+            "no business": 403,
+        }[path]
+        if path.startswith("admin"):
+            with migrate_engine.begin() as conn:
+                conn.execute(
+                    text("INSERT INTO platform_admins (user_id) VALUES (:u)"), {"u": people.both}
+                )
+        if path.startswith("stale"):
+            reset, _ = reset_racing(app_engine, migrate_engine, email)
+            verify = passwords.verify
+
+            def verify_then_reset(stored: str | None, password: str) -> bool:
+                matched = verify(stored, password)
+                reset()
+                return matched
+
+            monkeypatch.setattr(passwords, "verify", verify_then_reset)
+        if path == "no business":
+            email = email_of(add_user(migrate_engine))
+            with migrate_engine.begin() as conn:
+                user = conn.scalar(text("SELECT id FROM users WHERE email = :e"), {"e": email})
+            add_password(migrate_engine, user, PASSWORD)
+        sign_in = console_sign_in if path.endswith(("console", "business")) else account_sign_in
+
+        response = sign_in(client, email)
+
+        assert response.status_code == expected, response.json()
+        assert not live_account_session(migrate_engine, old)
+        assert account_cookie_cleared(response)
+    finally:
+        with migrate_engine.begin() as conn:
+            conn.execute(text("DELETE FROM platform_admins WHERE user_id = :u"), {"u": people.both})
+
+
+# Decided: a wrong password ends nothing. The attempt established no one, the browser still holds
+# only its previous person, and that person can still sign out.
+def test_a_wrong_password_leaves_the_previous_persons_account_session(
+    app: FastAPI, people: People, migrate_engine: Engine
+) -> None:
+    client, old = holding_account_of(app, migrate_engine, people.only_a)
+
+    response = account_sign_in(client, email_of(people.both), "wrong")
+
+    assert response.status_code == 401
+    assert live_account_session(migrate_engine, old)
+    assert auth.ACCOUNT_COOKIE not in set_cookies(response)
+
+
+@pytest.mark.parametrize("sign_in", [console_sign_in, account_sign_in])
+def test_a_successful_sign_in_ends_the_previous_persons_account_session(
+    app: FastAPI,
+    people: People,
+    migrate_engine: Engine,
+    sign_in: Callable[[TestClient, str], Response],
+) -> None:
+    client, old = holding_account_of(app, migrate_engine, people.only_a)
+
+    response = sign_in(client, email_of(people.both))
+
+    assert response.status_code == 200
+    assert not live_account_session(migrate_engine, old)
+    assert set_cookies(response)[auth.ACCOUNT_COOKIE][auth.ACCOUNT_COOKIE].value not in ("", old)

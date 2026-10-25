@@ -97,7 +97,8 @@ def sign_in(credentials: auth.Credentials, request: Request, response: Response)
     with SessionLocal.begin() as session:
         token = auth.start_account(session, request, account.user_id, account.password_hash)
         if token is None:
-            raise ApiError(403, "account_unavailable")
+            # The previous person's account session is already ended (check_credentials).
+            raise ApiError(403, "account_unavailable", headers=auth.account_cookie_cleared())
         ended_other = end_other_persons_business_session(session, request, account.user_id)
         auth.record(
             session,
