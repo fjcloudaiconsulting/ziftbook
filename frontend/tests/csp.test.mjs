@@ -2,7 +2,13 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, test } from "node:test";
 
-import { cspFor, newNonce, originOf } from "../lib/csp.ts";
+import { join } from "node:path";
+
+import { topLevelRoutes } from "../../scripts/check-reserved-routes.mjs";
+import { cspFor, cspHeaderFor, newNonce, originOf, OTHER_ROUTES, PERSONAL_ROUTES, personalPage } from "../lib/csp.ts";
+
+const LOCALE_DIR = join(new URL("..", import.meta.url).pathname, "app", "[locale]");
+const LOCALES = ["en", "nl", "pt"];
 
 // directive name -> its sources, as one space-separated string.
 function directives(policy) {
@@ -120,3 +126,24 @@ describe("originOf", () => {
     }
   });
 });
+
+// ZIF-146 (security B3): the booking, checkout, manage and account pages share an origin with GET /api/account.
+describe("which pages always enforce the policy", () => {
+  test("fence: every route folder is classified, so a new page is a personal page or not on purpose", () => {
+    // Wrong implementation killed: a new route (say /account/history) that falls to report-only, or a
+    // console route that a business slug could shadow being treated as a booking page by accident.
+    const unclassified = topLevelRoutes(LOCALE_DIR).filter((r) => !PERSONAL_ROUTES.has(r) && !OTHER_ROUTES.has(r));
+    assert.deepEqual(unclassified, []);
+  });
+
+  test("the booking, checkout, manage and account pages, in every language, and nothing else", () => {
+    for (const path of ["/en/salon-ana", "/nl/salon-ana/book", "/pt/salon-ana/book?step=pay", "/en/booking", "/en/account/sign-in", "/nl/account/complete", "/salon-ana"]) {
+      assert.equal(personalPage(path, LOCALES), true, path);
+      assert.equal(cspHeaderFor(path, LOCALES), "Content-Security-Policy", path);
+    }
+    for (const path of ["/", "/en", "/en/sign-in", "/nl/calendar", "/pt/admin/sign-in", "/en/services/new", "/en/terms"]) {
+      assert.equal(personalPage(path, LOCALES), false, path);
+    }
+  });
+});
+

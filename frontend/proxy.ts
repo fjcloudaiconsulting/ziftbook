@@ -2,7 +2,7 @@ import createMiddleware from "next-intl/middleware";
 import { NextRequest, NextResponse } from "next/server";
 
 import { routing } from "./i18n/routing";
-import { CSP_HEADER, cspFor, newNonce, originOf } from "./lib/csp";
+import { cspFor, cspHeaderFor, newNonce, originOf, personalPage, TRUSTED_TYPES_REPORT_ONLY } from "./lib/csp";
 import { clientRequestId, errorFields, logger, requestId } from "./lib/log";
 import { readNeedsSetup, setupGate, setupRedirect } from "./lib/setup-gate";
 import { endProxySpan, startProxySpan, traceparent } from "./lib/trace";
@@ -167,14 +167,19 @@ export default async function proxy(request: NextRequest) {
     originOf(process.env.ZIF_MEDIA_URL),
     originOf(process.env.ZIF_S3_PUBLIC_ENDPOINT || process.env.ZIF_S3_ENDPOINT),
   );
+  // ZIF-146: the booking, checkout, manage and account pages always enforce it (lib/csp.ts personalPage).
+  const header = cspHeaderFor(pathname, routing.locales);
   const headers = new Headers(request.headers);
   for (const name of ["x-nonce", "content-security-policy", "content-security-policy-report-only"]) headers.delete(name);
   headers.set("x-nonce", nonce);
-  headers.set(CSP_HEADER, policy);
+  headers.set(header, policy);
   const response = localize(new NextRequest(request, { headers }));
   // Enforced, this replaces next.config.ts's frame-ancestors-only header (Next sends the proxy's value);
   // report-only, that header stays the one enforced policy, as a report-only policy enforces nothing.
-  response.headers.set(CSP_HEADER, policy);
+  response.headers.set(header, policy);
+  if (personalPage(pathname, routing.locales)) {
+    response.headers.set("Content-Security-Policy-Report-Only", TRUSTED_TYPES_REPORT_ONLY);
+  }
   return response;
 }
 

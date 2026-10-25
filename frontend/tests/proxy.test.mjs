@@ -906,7 +906,10 @@ describe("page Content-Security-Policy, report-only (ZB-12)", () => {
     // Wrong implementation killed: a page prerendered at build time, whose scripts have no nonce at all.
     for (const path of ["/en", "/nl/privacy", "/pt/terms", "/en/sign-in", "/en/forgot-password", "/en/admin", "/nl/admin/sign-in", "/en/calendar", "/pt/services/new", "/en/no-such/page"]) {
       const response = await fetch(`${origin}${path}`, { redirect: "manual" });
-      const nonce = policyNonce(response.headers.get("content-security-policy-report-only"));
+      // A booking-page path (an unknown slug, here) enforces its policy (ZIF-146); the rest report only.
+      const nonce =
+        policyNonce(response.headers.get("content-security-policy-report-only")) ??
+        policyNonce(response.headers.get("content-security-policy"));
       assert.ok(nonce, `${path} has a policy`);
       const html = await response.text();
       const scripts = html.match(/<script\b[^>]*>/g) ?? [];
@@ -924,6 +927,36 @@ describe("page Content-Security-Policy, report-only (ZB-12)", () => {
     const preload = (await response.text()).match(/<link[^>]*challenges\.cloudflare\.com\/turnstile[^>]*>/)?.[0];
     assert.ok(preload, "the page preloads Turnstile");
     assert.ok(preload.includes(` nonce="${nonce}"`), preload);
+  });
+
+  test("fence (ZIF-146): the booking, checkout, manage and account pages enforce it in a report-only deployment", async () => {
+    // Wrong implementation killed: one switch for every page, so the pages that share an origin with a
+    // signed-in person's details would only report an injected script, never block it.
+    for (const path of ["/en/salon-ana", "/nl/salon-ana/book", "/en/booking", "/pt/account/sign-in"]) {
+      const enforced = await rawHeaders(port, path, "content-security-policy");
+      assert.equal(enforced.length, 1, `${path}: ${enforced.join(" | ")}`);
+      assert.ok(policyNonce(enforced[0]), `${path} enforces the whole policy`);
+      assert.match(enforced[0], /frame-ancestors 'none'/);
+      // Trusted Types, report-only there, to find any string-to-markup sink before it is enforced.
+      assert.deepEqual(await rawHeaders(port, path, "content-security-policy-report-only"), ["require-trusted-types-for 'script'"], path);
+    }
+    // The console stays report-only until ZIF-224.
+    assert.deepEqual(await rawHeaders(port, "/en/sign-in", "content-security-policy"), ["frame-ancestors 'none'"]);
+  });
+
+  test("fence (ZIF-146): Fetch Metadata reaches the API, which refuses another site's read of a person's details", async () => {
+    // Wrong implementation killed: a proxy that drops Sec-Fetch-*: the API would see no header and answer.
+    const echoed = await new Promise((resolve, reject) => {
+      httpRequest({ host: "127.0.0.1", port, path: "/api/account", headers: { "sec-fetch-site": "cross-site", "sec-fetch-mode": "cors" } }, (res) => {
+        const chunks = [];
+        res.on("data", (c) => chunks.push(c));
+        res.on("end", () => resolve(JSON.parse(Buffer.concat(chunks).toString("utf8"))));
+      })
+        .on("error", reject)
+        .end();
+    });
+    assert.equal(echoed.headers["sec-fetch-site"], "cross-site");
+    assert.equal(echoed.headers["sec-fetch-mode"], "cors");
   });
 
   test("fence: a nonce or policy the client sends never reaches the page", async () => {
