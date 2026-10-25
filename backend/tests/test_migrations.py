@@ -2058,7 +2058,7 @@ SELECT to_regclass('account_sessions') IS NOT NULL,
        to_regprocedure('resolve_account_session(bytea)') IS NOT NULL,
        to_regprocedure('end_account_session(bytea)') IS NOT NULL,
        to_regprocedure('end_account_sessions(bytea)') IS NOT NULL,
-       to_regprocedure('set_own_profile(bytea,text,text)') IS NOT NULL,
+       to_regprocedure('set_own_profile(bytea,text,text,boolean)') IS NOT NULL,
        EXISTS (SELECT FROM information_schema.columns
                WHERE table_name = 'users' AND column_name = 'phone')
 """)

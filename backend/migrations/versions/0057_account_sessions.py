@@ -111,19 +111,22 @@ BEGIN
   DELETE FROM account_sessions s WHERE s.user_id = v_user;
   RETURN v_user;
 END $$""",
-    "set_own_profile(bytea,text,text)": f"""
-CREATE FUNCTION set_own_profile(p_id_hash bytea, p_name text, p_phone text)
-RETURNS TABLE (email text, name text, phone text)
+    "set_own_profile(bytea,text,text,boolean)": f"""
+CREATE FUNCTION set_own_profile(p_id_hash bytea, p_name text, p_phone text, p_set_phone boolean)
+RETURNS TABLE (email text, name text, phone text, previous_name text, previous_phone text)
 LANGUAGE plpgsql SECURITY DEFINER {SEARCH_PATH} AS $$
--- The session holder changes their own name (NULL keeps it) and phone (NULL clears it). Never a
--- membership's display_name, unlike set_own_name: a business sees the new name only where it has
--- no display name of its own. No row: no live account session.
+-- The session holder changes their own name (NULL keeps it) and, when p_set_phone, their phone
+-- (NULL clears it). Only what was sent is written, in this one statement, so two edits at once
+-- never lose one another's field. Never a membership's display_name, unlike set_own_name: a
+-- business sees the new name only where it has no display name of its own. No row: no live account
+-- session.
 BEGIN
   RETURN QUERY
-    UPDATE users u SET name = coalesce(p_name, u.name), phone = p_phone
+    UPDATE users u SET name = coalesce(p_name, u.name),
+                       phone = CASE WHEN p_set_phone THEN p_phone ELSE u.phone END
     FROM account_sessions s
     WHERE {LIVE} AND u.id = s.user_id
-    RETURNING u.email, u.name, u.phone;
+    RETURNING new.email, new.name, new.phone, old.name, old.phone;
 END $$""",
 }
 
