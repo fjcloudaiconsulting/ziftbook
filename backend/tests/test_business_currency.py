@@ -426,3 +426,66 @@ def test_the_currency_constraints_are_validated(migrate_engine: Engine) -> None:
         "fk_services_tenant_id_price_currency_tenants": True,
         "fk_payment_accounts_tenant_id_currency_tenants": True,
     }
+
+
+def stored_elsewhere(
+    migrate_engine: Engine, tenant_id: uuid.UUID, account: str, currency: str
+) -> None:
+    """Another request's account row, committed while this one waits on Stripe."""
+    with migrate_engine.begin() as conn:
+        conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(tenant_id)})
+        conn.execute(
+            text(
+                "INSERT INTO payment_accounts (tenant_id, stripe_account_id, currency) "
+                "VALUES (:t, :a, :c)"
+            ),
+            {"t": tenant_id, "a": account, "c": currency},
+        )
+
+
+# FENCE (code review: security 1, correctness 3). Wrong impl: a conflict read as "the same account
+# twice". A connect that read EUR loses to one that, after a change to USD, stored its USD account
+# first: its own EUR account is skipped by ON CONFLICT (no foreign key check runs), and it must hand
+# the owner the onboarding link of the account the business holds, not of the one it made.
+def test_a_stale_connect_onboards_the_account_the_business_holds(
+    people: People, owner: TestClient, fake_stripe: FakeGateway, migrate_engine: Engine
+) -> None:
+    def other_request_wins(op: str) -> None:
+        if op == "create_account":
+            set_currency(migrate_engine, people.a, "USD")
+            stored_elsewhere(migrate_engine, people.a, "acct_heldusd0001", "USD")
+
+    fake_stripe.on_call = other_request_wins
+    fake_stripe.accounts["acct_heldusd0001"] = {"charges_enabled": False, "domains": []}
+
+    response = owner.post("/api/payments/account", json={"locale": "en"})
+
+    assert response.status_code == 200
+    assert accounts(migrate_engine, people.a) == [("acct_heldusd0001", "USD")]
+    linked = [
+        p["account"] for op, p in fake_stripe.calls if op in ("onboarding_link", "register_domain")
+    ]
+    assert linked == ["acct_heldusd0001", "acct_heldusd0001"]
+
+
+# FENCE (code review, correctness 3). Wrong impl: the same. A double click split across the old
+# release (key account:{t}) and this one (account:{t}:EUR) makes two Stripe accounts in one
+# currency; the request that loses the insert must onboard the stored one, not its own orphan.
+def test_a_split_double_click_onboards_the_account_the_business_holds(
+    people: People, owner: TestClient, fake_stripe: FakeGateway, migrate_engine: Engine
+) -> None:
+    def old_release_wins(op: str) -> None:
+        if op == "create_account":
+            stored_elsewhere(migrate_engine, people.a, "acct_oldrelease01", "EUR")
+
+    fake_stripe.on_call = old_release_wins
+    fake_stripe.accounts["acct_oldrelease01"] = {"charges_enabled": False, "domains": []}
+
+    response = owner.post("/api/payments/account", json={"locale": "en"})
+
+    assert response.status_code == 200
+    assert accounts(migrate_engine, people.a) == [("acct_oldrelease01", "EUR")]
+    linked = [
+        p["account"] for op, p in fake_stripe.calls if op in ("onboarding_link", "register_domain")
+    ]
+    assert linked == ["acct_oldrelease01", "acct_oldrelease01"]
