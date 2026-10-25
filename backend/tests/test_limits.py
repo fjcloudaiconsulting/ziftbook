@@ -361,7 +361,16 @@ def test_known_providers_aliases_share_one_limit_key(alias: str, folded: str) ->
 # Deliberately not folded: `-` and `.` are ordinary letters of real addresses elsewhere, and a
 # subdomain elsewhere is a different mail domain.
 @pytest.mark.parametrize(
-    "address", ["ana-maria@example.com", "ana.maria@outlook.com", "ana@mail.example.com"]
+    "address",
+    [
+        "ana-maria@example.com",
+        "ana.maria@outlook.com",
+        "ana@mail.example.com",
+        # Fold re-verify NB-3: a domain that only starts with "yahoo.", and Yahoo! JAPAN, are not
+        # Yahoo Mail.
+        "ana-maria@yahoo.example.org",
+        "ana-maria@yahoo.co.jp",
+    ],
 )
 def test_other_addresses_keep_their_hyphens_dots_and_subdomains(address: str) -> None:
     assert limits.address_for_limits(address) == address

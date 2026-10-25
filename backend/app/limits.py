@@ -164,8 +164,28 @@ def email_key(action: str, email: str) -> str:
 
 
 GMAIL_DOMAINS = frozenset({"gmail.com", "googlemail.com"})
-# Yahoo's disposable addresses are `base-keyword@` (ZIF-146, security code review N-6).
-YAHOO_DOMAINS = frozenset({"yahoo.com", "ymail.com", "rocketmail.com"})
+# Yahoo's disposable addresses are `base-keyword@` (ZIF-146, security code review N-6): Yahoo Mail's
+# own domains, exactly. Not Yahoo! JAPAN (yahoo.co.jp), a separate service whose IDs may differ, and
+# never any other domain that merely starts with "yahoo.".
+YAHOO_DOMAINS = frozenset(
+    {
+        "yahoo.com",
+        "ymail.com",
+        "rocketmail.com",
+        "yahoo.co.uk",
+        "yahoo.fr",
+        "yahoo.de",
+        "yahoo.es",
+        "yahoo.it",
+        "yahoo.nl",
+        "yahoo.ca",
+        "yahoo.in",
+        "yahoo.com.au",
+        "yahoo.com.br",
+        "yahoo.com.mx",
+        "yahoo.com.ar",
+    }
+)
 # Fastmail delivers `anything@user.fastmail.com` to `user@fastmail.com`.
 FASTMAIL_DOMAINS = frozenset({"fastmail.com", "fastmail.fm"})
 
@@ -185,7 +205,7 @@ def address_for_limits(email: str) -> str:
     local = local.split("+", 1)[0]
     if domain in GMAIL_DOMAINS:
         local, domain = local.replace(".", ""), "gmail.com"
-    elif domain in YAHOO_DOMAINS or domain.startswith("yahoo."):
+    elif domain in YAHOO_DOMAINS:
         local = local.split("-", 1)[0]
     else:
         user, _, parent = domain.partition(".")
