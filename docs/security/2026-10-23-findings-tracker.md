@@ -1,47 +1,23 @@
 # Security remediation: findings tracker and hand-off (assessment of 2026-10-23)
 
-This file tracks the 36 findings (`ZB-01` … `ZB-36`) of the static security assessment run on 2026-10-23,
-and the work that fixes them. It is the shared, living record between the repository owner and the agents
-working on this. The agent that writes the fixes has no Jira access, and the agent with Jira access sees the
-work only through this file and the PRs. So this file is where each side reports what it did and what it
-needs.
+This file tracked the 36 findings (`ZB-01` … `ZB-36`) of the static security assessment run on 2026-10-23,
+and the work that fixes them, while the agents writing the fixes had no Jira access.
 
-The full assessment, with code locations and exploit narratives, is kept out of this public repository
-until the fixes are released. The repository owner holds it, together with a private hand-off for agents: the
-current state, the release runbook, the open risks and the decisions taken. Ask the owner for access. Titles here describe the area and the
-weakness at the level of detail the fix PRs already disclose.
+## This file is frozen (2026-10-25)
 
-## How this document works (read this first)
+Every agent working on this now has Jira access, so the work is tracked in Jira only. This file is a snapshot
+of the state on 2026-10-25 and is no longer updated. Do not open PRs to change it, except to correct an error.
 
-Whoever picks this up, agent or person:
+- **Where the work is:** the repository's Jira project (`ZIF-NN` keys, as in the commit messages), label
+  `security-assessment-2026-10-23`. ZIF-253, labelled `handoff`, is the starting point: the current state, the
+  next steps and the conventions.
+- **Keys:** the tables below give the Jira key of each finding, owner action and follow-up.
+- **The full assessment,** with code locations and exploit narratives, stays out of this public repository.
+  The repository owner holds it; ask for access.
+- **The public-repository rule still applies** to commits and PRs: describe the behaviour, never how to
+  exploit it, and write no personal data or secrets.
 
-1. Read **Status at a glance** and the newest entries of the **Hand-off log**.
-2. Do your part. For the agent with Jira access, that is the section below.
-3. Edit this file so it matches what is true now:
-   - update statuses;
-   - fill in Jira keys;
-   - add rows for anything new;
-   - remove rows that are wrong or obsolete, and say why in the log.
-   You may change any part of it, these instructions included, if that makes the hand-off work better.
-4. Add an entry at the top of the **Hand-off log** with:
-   - the date (YYYY-MM-DD);
-   - who you are (agent or session name, or "owner");
-   - what you did;
-   - what you need, and from whom.
-5. Open a PR with only this file changed:
-   - branch `docs/security-tracker-<date>-<topic>`;
-   - title `docs(security): <what changed> in the findings tracker`.
-   The repository owner merges it. If an earlier tracker PR is still open, build on its branch instead of
-   starting a parallel one.
-
-Rules:
-- The repository is public. Write no exploit details, no personal data (emails, IP addresses, client
-  names) and no secrets.
-- Keep one row per finding in the findings table, with all eight columns.
-- Do not rewrite another author's log entry. Correct it in a new entry.
-- If this file and Jira disagree, the more recent evidence wins. Say in the log which side you corrected.
-
-## Status at a glance
+## Status at a glance (snapshot, 2026-10-25)
 
 As of 2026-10-25, after the v0.31.0 rollout:
 - **Released:** v0.31.0 (release PR #321, tagged 2026-10-24) carries the whole security stack (#329, #331–#335)
@@ -65,45 +41,14 @@ As of 2026-10-25, after the v0.31.0 rollout:
   Findings in v0.31.0 also carry the label `v0.31.0` (the project has no matching fix version). ZB-08, ZB-10,
   ZB-15 and ZB-32 are In Progress until #336.
 
-## For the agent with Jira access
-
-1. **Project.** This repository's tickets are in the Jira project whose keys appear in its commits
-   (`ZIF-NN`, for example ZIF-112 and ZIF-117). Use it unless the owner says otherwise.
-2. **One issue per finding.** Search first, by `ZB-NN` in the summary or by label, and update an existing
-   issue instead of creating a duplicate. Fields:
-   - summary `ZB-NN: <title from the table>`;
-   - labels `security` and `security-assessment-2026-10-23`;
-   - priority from the severity: Critical → Highest, Medium → High, Low → Medium, Info → Low;
-   - description: the title, area, PR links and the notes column.
-3. **Record the outcome** as a comment on each issue:
-   - the PR or PRs that fix it;
-   - once merged, that it is on `main` (the PR page links the commit);
-   - once released, the version, also set as the fix version;
-   - anything from the notes column that the owner must still do.
-4. **When to close:**
-   - **Merged** or **Released** → Done, resolution Fixed.
-   - **Split fixes** (ZB-08, ZB-10, ZB-15) stay In Progress until draft #336 merges too. Add a comment saying
-     part 1 is in.
-   - **Accepted** (ZB-21) → close as Won't Do or Accepted Risk, with the reason from the notes. The real fix
-     is owner action 14; track it as its own task. (The ZIF workflow has no resolution field, so ZB-21 is
-     Done with an "accepted risk, not fixed" comment.)
-   - A finding closed as Done is fixed on `main`, not necessarily live. The open owner-action tasks
-     (release, settings, post-deploy checks) track the deploy; add the release as fix version once it exists.
-   - **Fixed in draft PR** (ZB-32) → In Progress until #336 merges.
-   - **Fixed in PR** → In Review, linked to the PR.
-5. **Owner actions:** one task per row of the owner actions table, assigned to the repository owner and
-   linked to its findings. Close it when the owner confirms, then mark the row Done here.
-6. **Follow-ups:** one backlog issue per row of the follow-ups table, unless the row already names one.
-7. **Write back:**
-   - put every Jira key in the `Jira` column of its table;
-   - add your entry to the hand-off log;
-   - open the PR (step 5 above).
-8. **Exploit details:** copy none into Jira beyond what is here. If a ticket needs the full assessment, ask
-   the owner.
-
 ## Hand-off log
 
 Newest first.
+
+### 2026-10-25: repository agent (Claude Code, ziftbook session), tracking moved to Jira
+- **Done:** froze this file. Every agent now has Jira access, so the instructions for keeping this file and
+  Jira in step are gone. ZIF-253 holds the handoff.
+- **Needs:** the owner merges this PR.
 
 ### 2026-10-25: repository agent (Claude Code, ziftbook session), v0.31.0 rolled out
 - **Done:**
