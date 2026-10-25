@@ -8,11 +8,16 @@ const MAX_MINOR = 1_000_000; // services.py Amount, in minor units whatever the 
 // when it has none. backend/app/mail.py _money writes the same.
 const CURRENCY = { style: "currency", currencyDisplay: "narrowSymbol" } as const;
 
-/** The currency's minor units, as Intl knows them (CLDR; ISO 4217's exponent for every currency a
- * business can hold, CONTRIBUTING.md "Money"). Never an assumed 2. */
+/** The currency's minor units, as Intl knows them (CLDR). For every currency a business can hold
+ * that equals ISO 4217's exponent; for some others it does not (CLDR gives HUF 0 where ISO says 2),
+ * which CONTRIBUTING.md "Money" makes a check when adding a currency. Throws for a code Intl does not
+ * list, rather than taking CLDR's default of 2. */
+let known: Set<string> | undefined; // Intl's currency codes, read once
 export function minorUnits(currency: string): number {
+  known ??= new Set(Intl.supportedValuesOf("currency"));
+  if (!known.has(currency)) throw new Error(`unknown currency ${currency}`);
   const digits = new Intl.NumberFormat("en", { style: "currency", currency }).resolvedOptions().maximumFractionDigits;
-  if (digits === undefined) throw new Error(`no minor units for ${currency}`);
+  if (digits === undefined) throw new Error(`unknown currency ${currency}`);
   return digits;
 }
 
