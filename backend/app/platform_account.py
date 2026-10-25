@@ -270,7 +270,11 @@ class HistoryPage(BaseModel):
 
 HISTORY = text("SELECT * FROM own_bookings(:h, :before_starts_at, :before_key, :limit)")
 HISTORY_WINDOW = timedelta(minutes=1)
-HISTORY_LIMIT = 30  # per account a minute: every call walks every business
+# Every call walks every business: about 6 ms at 1,000 businesses and 58 ms at 10,000 (measured on
+# the dev database, no bookings; ZIF-257 tracks walking only the person's own businesses). Per
+# account a minute, and per address, so many cheap accounts behind one address cost no more.
+HISTORY_LIMIT = 30
+HISTORY_IP_LIMIT = 30
 
 
 def cursor_of(starts_at: datetime, key: bytes) -> str:
@@ -299,6 +303,7 @@ def parse_cursor(cursor: str) -> tuple[datetime, bytes]:
 )
 def history(
     current: CurrentAccount,
+    request: Request,
     response: Response,
     cursor: Annotated[str | None, Query(max_length=200)] = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
@@ -310,6 +315,10 @@ def history(
     private(response)
     if not current.fresh:
         raise ApiError(403, "reauthentication_required")
+    ip = request.client.host if request.client else None
+    # The address first, in a hit() of its own: an address over its limit charges no account.
+    if limits.hit({limits.ip_key("account_history", ip): HISTORY_IP_LIMIT}, HISTORY_WINDOW):
+        raise ApiError(429, "rate_limited")
     if limits.hit(
         {limits.email_key("account_history", current.email): HISTORY_LIMIT}, HISTORY_WINDOW
     ):
