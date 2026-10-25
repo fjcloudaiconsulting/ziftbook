@@ -660,3 +660,21 @@ def test_a_validation_left_under_the_policy_fails_closed(
             with_a_bad_price_in_b(conn, people)
             lift_force(lambda sql: conn.execute(text(sql)), "payment_accounts", VALIDATE)
     assert isinstance(error.value.orig, InsufficientPrivilege)
+
+
+# FENCE (fold re-verify). Wrong impl: the currency refusal before the existing-account check. A
+# business that already holds an account in a currency its country no longer settles (one made
+# before the list was narrowed, or by an owner's widened list) could then neither finish onboarding
+# nor change its currency, which the account holds. The refusal applies only to creating one.
+def test_an_existing_account_in_an_unsettled_currency_still_gets_its_onboarding_link(
+    people: People, owner: TestClient, fake_stripe: FakeGateway, migrate_engine: Engine
+) -> None:
+    set_currency(migrate_engine, people.a, "BRL")
+    stored_elsewhere(migrate_engine, people.a, "acct_heldbrl00001", "BRL")
+    fake_stripe.accounts["acct_heldbrl00001"] = {"charges_enabled": False, "domains": []}
+
+    response = owner.post("/api/payments/account", json={"locale": "en"})
+
+    assert response.status_code == 200
+    assert response.json()["url"].startswith("https://connect.stripe.test/setup/acct_heldbrl00001/")
+    assert fake_stripe.count("create_account") == 0
