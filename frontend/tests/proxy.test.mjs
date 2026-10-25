@@ -906,7 +906,10 @@ describe("page Content-Security-Policy, report-only (ZB-12)", () => {
     // Wrong implementation killed: a page prerendered at build time, whose scripts have no nonce at all.
     for (const path of ["/en", "/nl/privacy", "/pt/terms", "/en/sign-in", "/en/forgot-password", "/en/admin", "/nl/admin/sign-in", "/en/calendar", "/pt/services/new", "/en/no-such/page"]) {
       const response = await fetch(`${origin}${path}`, { redirect: "manual" });
-      const nonce = policyNonce(response.headers.get("content-security-policy-report-only"));
+      // A booking-page path (an unknown slug, here) enforces its policy (ZIF-146); the rest report only.
+      const nonce =
+        policyNonce(response.headers.get("content-security-policy-report-only")) ??
+        policyNonce(response.headers.get("content-security-policy"));
       assert.ok(nonce, `${path} has a policy`);
       const html = await response.text();
       const scripts = html.match(/<script\b[^>]*>/g) ?? [];
@@ -924,6 +927,36 @@ describe("page Content-Security-Policy, report-only (ZB-12)", () => {
     const preload = (await response.text()).match(/<link[^>]*challenges\.cloudflare\.com\/turnstile[^>]*>/)?.[0];
     assert.ok(preload, "the page preloads Turnstile");
     assert.ok(preload.includes(` nonce="${nonce}"`), preload);
+  });
+
+  test("fence (ZIF-146): the booking, checkout, manage and account pages enforce it in a report-only deployment", async () => {
+    // Wrong implementation killed: one switch for every page, so the pages that share an origin with a
+    // signed-in person's details would only report an injected script, never block it.
+    for (const path of ["/en/salon-ana", "/nl/salon-ana/book", "/en/booking", "/pt/account/sign-in"]) {
+      const enforced = await rawHeaders(port, path, "content-security-policy");
+      assert.equal(enforced.length, 1, `${path}: ${enforced.join(" | ")}`);
+      assert.ok(policyNonce(enforced[0]), `${path} enforces the whole policy`);
+      assert.match(enforced[0], /frame-ancestors 'none'/);
+      // Trusted Types, report-only there, to find any string-to-markup sink before it is enforced.
+      assert.deepEqual(await rawHeaders(port, path, "content-security-policy-report-only"), ["require-trusted-types-for 'script'"], path);
+    }
+    // The console stays report-only until ZIF-224.
+    assert.deepEqual(await rawHeaders(port, "/en/sign-in", "content-security-policy"), ["frame-ancestors 'none'"]);
+  });
+
+  test("fence (ZIF-146): Fetch Metadata reaches the API, which refuses another site's read of a person's details", async () => {
+    // Wrong implementation killed: a proxy that drops Sec-Fetch-*: the API would see no header and answer.
+    const echoed = await new Promise((resolve, reject) => {
+      httpRequest({ host: "127.0.0.1", port, path: "/api/account", headers: { "sec-fetch-site": "cross-site", "sec-fetch-mode": "cors" } }, (res) => {
+        const chunks = [];
+        res.on("data", (c) => chunks.push(c));
+        res.on("end", () => resolve(JSON.parse(Buffer.concat(chunks).toString("utf8"))));
+      })
+        .on("error", reject)
+        .end();
+    });
+    assert.equal(echoed.headers["sec-fetch-site"], "cross-site");
+    assert.equal(echoed.headers["sec-fetch-mode"], "cors");
   });
 
   test("fence: a nonce or policy the client sends never reaches the page", async () => {
@@ -970,5 +1003,124 @@ describe("page Content-Security-Policy, enforced (ZB-12)", () => {
 
   test("an /api answer still gets no page policy", async () => {
     assert.deepEqual(await rawHeaders(port, "/api/healthz", "content-security-policy"), []);
+  });
+});
+
+// ZIF-146 (security B3.1, code review N8): a booking page renders every merchant-controlled field as text. A stub
+// API serves a business whose name, services, descriptions, worker names and cancellation policy are script.
+const PAYLOAD = `<img src=x onerror=alert(1)><script>alert(2)</script>"><a href="javascript:alert(3)">x</a>`;
+
+function stubBookingPage(slug) {
+  const service = (id) => ({
+    id,
+    name: { en: `${PAYLOAD} service`, nl: PAYLOAD, pt: PAYLOAD },
+    description: { en: `${PAYLOAD} description`, nl: PAYLOAD, pt: PAYLOAD },
+    duration_minutes: 30,
+    price: { amount_minor: 3500, currency: "EUR" },
+    // Two, so the checkout lists them to choose from.
+    workers: [
+      { id: "00000000-0000-4000-8000-000000000002", display_name: `${PAYLOAD} worker` },
+      { id: "00000000-0000-4000-8000-000000000004", display_name: `${PAYLOAD} second worker` },
+    ],
+    placeholder: "hair",
+    photo: null,
+    payment: false,
+  });
+  const page = {
+    id: "00000000-0000-4000-8000-000000000001",
+    slug,
+    name: `${PAYLOAD} salon`,
+    country: "NL",
+    timezone: "Europe/Amsterdam",
+    language: "en",
+    booking_horizon_days: 60,
+    consent: { en: { policy_version: "2026-10-20/en", marketing_email: "Email me." } },
+    cancellation: { text: `${PAYLOAD} policy`, free_cancellation_hours: 24, reschedule_cutoff_hours: 24, max_reschedules: 2 },
+    services: [service("00000000-0000-4000-8000-000000000003")],
+    auto_confirm: false,
+    payment: null,
+  };
+  return new Promise((resolve) => {
+    const server = createServer((req, res) => {
+      res.setHeader("Content-Type", "application/json");
+      if (req.url === `/api/public/booking-pages/${slug}`) res.end(JSON.stringify(page));
+      else res.end(JSON.stringify({}));
+    }).listen(0, "127.0.0.1", () => resolve(server));
+  });
+}
+
+describe("a booking page renders merchant text as text (ZIF-146)", () => {
+  let api, web;
+  const port = 3230;
+  const slug = "xss-salon";
+  before(async () => {
+    api = await stubBookingPage(slug);
+    web = await startWeb(`http://127.0.0.1:${api.address().port}`, port);
+  });
+  after(async () => {
+    await stop(web);
+    api.close();
+  });
+
+  test("fence: script in every merchant field arrives escaped, never as markup or a javascript: link", async () => {
+    // Wrong implementation killed: any merchant field rendered through dangerouslySetInnerHTML, or put into an
+    // href: the payload would arrive as a live <img onerror>, <script> or javascript: link.
+    const response = await fetch(`http://127.0.0.1:${port}/en/${slug}`);
+    assert.equal(response.status, 200);
+    const html = await response.text();
+    assert.ok(html.includes("salon"), "the page rendered the business");
+    assert.ok(html.includes("&lt;img src=x onerror=alert(1)&gt;"), "the payload is there, as text");
+    assert.ok(!html.includes("<img src=x onerror"), "no live image handler");
+    assert.ok(!html.includes("<script>alert(2)"), "no live script");
+    assert.doesNotMatch(html, /\b(?:href|src|action)="\s*javascript:/i, "no javascript: link");
+  });
+
+  test("fence: the checkout shows the worker names and the cancellation policy as text too (fold re-verify NB-4)", async () => {
+    const response = await fetch(`http://127.0.0.1:${port}/en/${slug}/book?service=00000000-0000-4000-8000-000000000003`);
+    assert.equal(response.status, 200);
+    const html = await response.text();
+    const escaped = "&lt;img src=x onerror=alert(1)&gt;&lt;script&gt;alert(2)&lt;/script&gt;";
+    for (const field of ["worker", "second worker", "policy"]) {
+      assert.ok(html.includes(`${escaped}&quot;&gt;&lt;a href=&quot;javascript:alert(3)&quot;&gt;x&lt;/a&gt; ${field}`), `${field} is shown, as text`);
+    }
+    assert.ok(!html.includes("<img src=x onerror"), "no live image handler");
+    assert.ok(!html.includes("<script>alert(2)"), "no live script");
+    assert.doesNotMatch(html, /\b(?:href|src|action)="\s*javascript:/i, "no javascript: link");
+  });
+});
+
+describe("the personal pages' emergency switch and violation reports (ZIF-146)", () => {
+  let api, web;
+  const port = 3231;
+  const reports = "https://reports.example.test/csp";
+  before(async () => {
+    api = await stubApi("R");
+    web = await startWeb(`http://127.0.0.1:${api.address().port}`, port, {
+      ZIF_CSP_ENFORCE: undefined,
+      ZIF_CSP_PERSONAL_REPORT_ONLY: "true",
+      ZIF_CSP_REPORT_URL: reports,
+    });
+  });
+  after(async () => {
+    await stop(web);
+    api.close();
+  });
+
+  test("fence: ZIF_CSP_PERSONAL_REPORT_ONLY=true puts the booking pages back on the report-only policy", async () => {
+    // Wrong implementation killed: a switch that is read nowhere, so ops cannot undo a blocking policy without a build.
+    for (const path of ["/en/salon-ana", "/en/booking", "/en/invite"]) {
+      assert.deepEqual(await rawHeaders(port, path, "content-security-policy"), ["frame-ancestors 'none'"], path);
+      const reportOnly = await rawHeaders(port, path, "content-security-policy-report-only");
+      assert.equal(reportOnly.length, 1, path);
+      assert.ok(policyNonce(reportOnly[0]), `${path} still reports the whole policy`);
+    }
+  });
+
+  test("fence: with ZIF_CSP_REPORT_URL set, every page's policy reports there", async () => {
+    const response = await fetch(`http://127.0.0.1:${port}/en/sign-in`);
+    const policy = response.headers.get("content-security-policy-report-only") ?? "";
+    assert.match(policy, /report-uri https:\/\/reports\.example\.test\/csp/);
+    assert.match(policy, /report-to csp/);
+    assert.equal(response.headers.get("reporting-endpoints"), `csp="${reports}"`);
   });
 });

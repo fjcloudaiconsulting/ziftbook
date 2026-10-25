@@ -589,3 +589,17 @@ a.textButton, .textButton:has(> svg) { display: inline-flex; align-items: center
 .legal section ul { padding-inline-start: 1.25rem; }
 .legal li + li { margin-top: 0.35rem; }
 .legal section > :last-child { margin-bottom: 0; }
+
+/* ZIF-146: the booking, checkout and manage pages enforce their Content-Security-Policy, which refuses
+ * a style="" attribute in their HTML; these replace the inline styles they used. */
+.tightStack {
+  gap: 0.4rem;
+}
+
+.preLine {
+  white-space: pre-line;
+}
+
+.spinNudge {
+  margin-top: 0.2rem;
+}

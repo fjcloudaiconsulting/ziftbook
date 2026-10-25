@@ -2,7 +2,14 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, test } from "node:test";
 
-import { cspFor, newNonce, originOf } from "../lib/csp.ts";
+import { join } from "node:path";
+
+import { topLevelRoutes } from "../../scripts/check-reserved-routes.mjs";
+import { cspFor, cspHeaderFor, enforcedFor, newNonce, originOf, OTHER_ROUTES, PERSONAL_ROUTES, personalPage, reportUrlOf, trustedTypesReportOnly } from "../lib/csp.ts";
+import { mustReload } from "../lib/personal-pages.ts";
+
+const LOCALE_DIR = join(new URL("..", import.meta.url).pathname, "app", "[locale]");
+const LOCALES = ["en", "nl", "pt"];
 
 // directive name -> its sources, as one space-separated string.
 function directives(policy) {
@@ -118,5 +125,70 @@ describe("originOf", () => {
     for (const value of [undefined, "", "media_url", "mailto:media@example.com", "data:text/plain,x", "ftp://files.example.com"]) {
       assert.equal(originOf(value), null, String(value));
     }
+  });
+});
+
+// ZIF-146 (security B3): the booking, checkout, manage and account pages share an origin with GET /api/account.
+describe("which pages always enforce the policy", () => {
+  test("fence: every route folder is classified, so a new page is a personal page or not on purpose", () => {
+    // Wrong implementation killed: a new route (say /account/history) that falls to report-only, or a
+    // console route that a business slug could shadow being treated as a booking page by accident.
+    const unclassified = topLevelRoutes(LOCALE_DIR).filter((r) => !PERSONAL_ROUTES.has(r) && !OTHER_ROUTES.has(r));
+    assert.deepEqual(unclassified, []);
+  });
+
+  test("the booking, checkout, manage and account pages, in every language, and nothing else", () => {
+    for (const path of ["/en/salon-ana", "/nl/salon-ana/book", "/pt/salon-ana/book?step=pay", "/en/booking", "/en/account/sign-in", "/nl/account/complete", "/salon-ana"]) {
+      assert.equal(personalPage(path, LOCALES), true, path);
+      assert.equal(cspHeaderFor(path, LOCALES), "Content-Security-Policy", path);
+    }
+    for (const path of ["/", "/en", "/en/sign-in", "/nl/calendar", "/pt/admin/sign-in", "/en/services/new", "/en/terms"]) {
+      assert.equal(personalPage(path, LOCALES), false, path);
+    }
+  });
+});
+
+
+describe("the personal pages' policy: switch, reporting and soft navigation (ZIF-146 code reviews)", () => {
+  test("an invite is a personal page: it shows a business's text to someone who may hold an account session", () => {
+    assert.equal(personalPage("/en/invite", LOCALES), true);
+    assert.equal(cspHeaderFor("/en/invite", LOCALES, false), "Content-Security-Policy");
+  });
+
+  test("fence: the emergency switch sends the personal pages' policy report-only again, and nothing else changes", () => {
+    // Wrong implementation killed: no switch, so a policy that blocks a payment can only be undone by a redeploy.
+    assert.equal(cspHeaderFor("/en/salon-ana/book", LOCALES, true), "Content-Security-Policy-Report-Only");
+    assert.equal(cspHeaderFor("/en/salon-ana/book", LOCALES, false), "Content-Security-Policy");
+    assert.equal(enforcedFor("/en/sign-in", LOCALES, false), false);
+  });
+
+  test("fence: with a report URL every policy names it, in both reporting forms", () => {
+    // Wrong implementation killed: an enforced policy that reports nowhere, so a broken checkout goes unseen.
+    const url = "https://reports.example.test/csp";
+    const policy = directives(cspFor("abc", null, null, url));
+    assert.equal(policy["report-uri"], url);
+    assert.equal(policy["report-to"], "csp");
+    assert.equal(trustedTypesReportOnly(url), `require-trusted-types-for 'script'; report-uri ${url}; report-to csp`);
+    // Unset: no reporting directive at all, rather than one pointing nowhere.
+    assert.equal(directives(cspFor("abc", null, null, null))["report-uri"], undefined);
+    assert.equal(trustedTypesReportOnly(null), "require-trusted-types-for 'script'");
+  });
+
+  test("guard: only an https report URL is used", () => {
+    assert.equal(reportUrlOf("https://reports.example.test/csp"), "https://reports.example.test/csp");
+    for (const value of [undefined, "", "http://reports.example.test", "javascript:alert(1)", "not a url"]) {
+      assert.equal(reportUrlOf(value), null, String(value));
+    }
+  });
+
+  test("fence: a personal page reached by a client-side navigation from a report-only document reloads", () => {
+    // Wrong implementation killed: a guard on the current URL, which a client-side navigation has already changed.
+    assert.equal(mustReload(true, false, "/en/calendar", LOCALES), true);
+    assert.equal(mustReload(true, false, "/en/sign-in", LOCALES), true);
+    // Loaded on a personal page: its own policy holds. Policy everywhere, or the switch on: nothing to fix.
+    assert.equal(mustReload(true, false, "/en/salon-ana", LOCALES), false);
+    assert.equal(mustReload(true, true, "/en/calendar", LOCALES), false);
+    assert.equal(mustReload(false, false, "/en/calendar", LOCALES), false);
+    assert.equal(mustReload(true, false, null, LOCALES), false);
   });
 });
