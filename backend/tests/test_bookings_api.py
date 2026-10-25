@@ -1447,8 +1447,9 @@ def test_an_existing_client_row_is_refreshed_and_claimed_by_its_proven_owner(
     assert row.user_id == people.both
 
 
-# 26c: GUARD (kept from D3 for the guest path). Wrong impl: the coalesce in KEEP: a guest who types
-# a person's address would claim that person's row.
+# 26c: GUARD (kept from D3 for the guest path). Wrong impl: book_online passing the signed-in but
+# non-proving person's id: someone signed in who types another person's address would claim that
+# person's row. (KEEP itself writing user_id is pinned in tests/test_clients_db.py.)
 def test_an_existing_client_row_is_never_claimed_by_a_guest(
     people: People, app: FastAPI, ready: str
 ) -> None:
