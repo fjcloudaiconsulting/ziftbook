@@ -260,12 +260,15 @@ def accept(body: AcceptInvite, request: Request, response: Response) -> auth.Ses
                     target=f"user:{found.user_id}",
                 )
             raise ApiError(401, "invalid_credentials")
+    # The invite's person signs in here: whoever's account session this browser held ends, on
+    # every later outcome (ZIF-146, one browser, one person).
+    auth.end_previous_account_session(request)
     with tenant_context(found.tenant_id) as session:
         if found.user_id is not None and not session.scalar(
             text("SELECT password_unchanged(:u, :h)"),
             {"u": found.user_id, "h": found.password_hash},
         ):  # reset while it was being checked
-            raise ApiError(401, "invalid_credentials")
+            raise ApiError(401, "invalid_credentials", headers=auth.account_cookie_cleared())
         result = session.execute(
             text("SELECT * FROM accept_invite(:h, :p, :n)"),
             {"h": found.digest, "p": password_hash, "n": body.name},
