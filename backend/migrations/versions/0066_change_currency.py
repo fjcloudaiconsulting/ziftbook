@@ -20,14 +20,24 @@ change_currency is SECURITY DEFINER because tenants has no row-level security: a
 let the app role change any business's currency. It changes only the business in app.tenant_id.
 It locks that business's row first, so a booking or a Stripe account inserted while it waits (their
 foreign key checks hold the row) is seen by the checks after it; that needs a fresh snapshot per
-statement, so it refuses to run outside READ COMMITTED, as keep_an_owner does (0014). Accepted: a
-booking or service insert racing a change can still fail once on its foreign key, or deadlock
-against the cascade (booking creation reads the service FOR SHARE, then takes the business's row);
-at most once per business, before its first booking.
+statement, so it refuses to run outside READ COMMITTED, as keep_an_owner does (0014).
 
-Expand: both constraints are added NOT VALID, so neither scans under its lock (the foreign key swap
-holds ACCESS EXCLUSIVE on services and tenants for the catalog change only); 0067 validates them.
-A NOT VALID key still checks new rows and still cascades. Executable by ziftbook_app (and so by
+Accepted, at most once per business and only before its first booking:
+- A booking or service insert racing a change can fail once on its foreign key, or deadlock against
+  the cascade (booking creation reads the service FOR SHARE, then takes the business's row).
+- A client who opened the booking page before the change, and books after it, is booked at the
+  number they saw in the new currency: the booking snapshots the service as it is at insert, and
+  the booking request carries no price or currency to compare with. Closing it needs the page to
+  send the currency it showed (a booking-page change, left to the settings-screen work, PR G).
+
+Preflight: the upgrade refuses, naming the problem, while any business holds a currency outside the
+four (possible before this release, whose check was only three capital letters): the NOT VALID check
+would pass, and 0067's validation would then stop the deploy with a bare constraint error.
+
+Expand: both constraints are added NOT VALID, so neither scans under its lock; 0067 validates them.
+The services key is swapped first: that statement locks services, then tenants, so any lock wait
+happens while tenants is still free, and the check then reuses the tenants lock already held. A NOT
+VALID key still checks new rows and still cascades. Executable by ziftbook_app (and so by
 ziftbook_worker, its member).
 
 Revision ID: 0066
@@ -47,14 +57,25 @@ SERVICES_FK = "fk_services_tenant_id_price_currency_tenants"
 
 def upgrade() -> None:
     op.execute("""
-    ALTER TABLE tenants ADD CONSTRAINT ck_tenants_currency_supported
-      CHECK (currency IN ('BRL', 'EUR', 'GBP', 'USD')) NOT VALID""")
+    DO $$
+    DECLARE v_found text;
+    BEGIN
+      SELECT string_agg(DISTINCT currency, ', ' ORDER BY currency) INTO v_found FROM tenants
+      WHERE currency NOT IN ('BRL', 'EUR', 'GBP', 'USD');
+      IF v_found IS NOT NULL THEN
+        RAISE EXCEPTION 'businesses hold a currency outside BRL, EUR, GBP and USD: %', v_found
+          USING HINT = 'Move each to one of the four, then run the migrations again.';
+      END IF;
+    END $$""")
     op.execute(f"""
     ALTER TABLE services
       DROP CONSTRAINT {SERVICES_FK},
       ADD CONSTRAINT {SERVICES_FK}
         FOREIGN KEY (tenant_id, price_currency) REFERENCES tenants (id, currency)
         ON UPDATE CASCADE NOT VALID""")
+    op.execute("""
+    ALTER TABLE tenants ADD CONSTRAINT ck_tenants_currency_supported
+      CHECK (currency IN ('BRL', 'EUR', 'GBP', 'USD')) NOT VALID""")
     op.execute(f"""
 CREATE FUNCTION change_currency(p_currency text, p_confirmed_prices integer)
 RETURNS TABLE (outcome text, prices integer, previous text)
