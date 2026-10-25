@@ -246,7 +246,11 @@ def test_an_open_or_abandoned_checkout_is_not_listed(
     assert listed == [at("15:00"), placed["starts_at"]]
 
 
-# FENCE. Wrong impl: own_bookings leaving the caller's tenant set to the last business it walked.
+# FENCE (code review B1). Wrong impl: own_bookings leaving the caller's tenant set to the last
+# business it walked. The caller's value is no business at all, so the walk can never end on it.
+CALLER_TENANT = uuid.uuid4()
+
+
 def test_the_walk_restores_the_callers_tenant(
     people: People, app_engine: Engine, migrate_engine: Engine, person: uuid.UUID
 ) -> None:
@@ -260,11 +264,13 @@ def test_the_walk_restores_the_callers_tenant(
             {"h": auth.hash_token(token), "u": person},
         )
     with app_engine.begin() as conn:
-        conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(people.b)})
+        conn.execute(
+            text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(CALLER_TENANT)}
+        )
         conn.execute(
             text("SELECT * FROM own_bookings(:h, NULL, NULL, 10)"), {"h": auth.hash_token(token)}
         ).all()
-        assert conn.scalar(text("SELECT current_setting('app.tenant_id')")) == str(people.b)
+        assert conn.scalar(text("SELECT current_setting('app.tenant_id')")) == str(CALLER_TENANT)
 
 
 @pytest.mark.parametrize("cursor", ["x", "e30", "bm90LWpzb24", "eyJzIjogIjIwMjYiLCAiayI6ICIwMCJ9"])
