@@ -205,6 +205,8 @@ functions owned by `ziftbook_migrate`:
     change that person's name and phone;
   - end anyone's account sessions, by passing `end_account_sessions` a business session's hash, which it can read
     from `sessions` (a denial of service, no data).
+  - put a booking into anyone's cross-business history, by inserting it with `booked_as` set to them (it could
+    already insert bookings in any business; showing one in that person's own history is new).
 - Lock order for every writer that touches more than one of these: `password_credentials`, then `sessions`, then
   `account_sessions`, then `clients`. `reset_password` follows it; signing out everywhere locks the person's business
   sessions before it ends their account sessions (`auth.EVERY_SESSION`); a sign-in locks the stored hash
