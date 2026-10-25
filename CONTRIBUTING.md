@@ -193,7 +193,8 @@ functions owned by `ziftbook_migrate`:
   console route ever authenticates with it (`auth.resolve` reads only `sessions` and the `__Host-session` cookie). It
   is reached only by hash (`resolve_account_session`, `end_account_session`, `set_own_profile`), never by user id.
   Every sign-in that starts a business session also starts an account session (`auth.start`), except for a platform
-  admin, who gets none; every sign-out ends both kinds on that browser; signing out everywhere, a password reset and
+  admin, who gets none (granting admin ends the person's account sessions, and no account session answers for an
+  admin); every sign-out ends both kinds on that browser; signing out everywhere, a password reset and
   erasure end both kinds of that person.
 - `start_account_session` trusts the API's password check, as `start_admin_session` does: the database cannot check
   a password. An app role running SQL of its own could read a hash with `account_by_email`, start an account session

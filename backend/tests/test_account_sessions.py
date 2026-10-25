@@ -23,6 +23,7 @@ from psycopg.errors import InsufficientPrivilege
 from sqlalchemy import Engine, text
 from sqlalchemy.exc import ProgrammingError
 
+from app import admin as admin_cli
 from app import auth, passwords
 from app.main import create_app
 from tests.conftest import (
@@ -757,3 +758,43 @@ def test_signing_out_everywhere_and_a_reset_never_deadlock(
         sessions_of(migrate_engine, people.both),
         account_sessions_of(migrate_engine, people.both),
     ) == (0, 0)
+
+
+# FENCE (security code review N-1). Wrong impl: a grant that leaves the person's account session
+# live: for 30 days a password-only session could rename the new admin, read their phone and end
+# their sessions, with no second factor.
+def test_granting_platform_admin_ends_the_persons_account_sessions(
+    app: FastAPI, people: People, migrate_engine: Engine
+) -> None:
+    client = new_client(app)
+    assert account_sign_in(client, email_of(people.both)).status_code == 200
+    try:
+        assert admin_cli.main(["grant", email_of(people.both), "--reason", "on-call operator"]) == 0
+
+        assert account_sessions_of(migrate_engine, people.both) == 0
+        assert client.get("/api/account").status_code == 401
+    finally:
+        with migrate_engine.begin() as conn:
+            conn.execute(text("DELETE FROM platform_admins WHERE user_id = :u"), {"u": people.both})
+
+
+# FENCE (N-1, defence in depth). Wrong impl: the keyed definers trusting any live row: an admin row
+# that appeared some other way (a restore, a hand-run INSERT) would still read and rename the admin.
+def test_no_account_session_answers_for_a_platform_admin(
+    app: FastAPI, admin: uuid.UUID, migrate_engine: Engine, app_engine: Engine
+) -> None:
+    client = account_client(app, migrate_engine, admin)
+    token = client.cookies.get(auth.ACCOUNT_COOKIE)
+    assert token is not None
+
+    assert client.get("/api/account").status_code == 401
+    assert client.patch("/api/account", json={"name": "Renamed"}).status_code == 401
+    with app_engine.begin() as conn:
+        h = auth.hash_token(token)
+        assert conn.execute(text("SELECT * FROM resolve_account_session(:h)"), {"h": h}).all() == []
+        assert (
+            conn.execute(
+                text("SELECT * FROM set_own_profile(:h, 'Renamed', NULL, false)"), {"h": h}
+            ).all()
+            == []
+        )
