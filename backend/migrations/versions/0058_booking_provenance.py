@@ -38,15 +38,21 @@ depends_on = None
 
 SEARCH_PATH = "SET search_path = pg_catalog, public, pg_temp"
 
-LIVE = """s.id_hash = p_id_hash AND s.expires_at > now()
-    AND s.last_seen_at > now() - interval '7 days'"""
+# 0057's USABLE, verbatim (tests/test_migrations.py): a live account session, never a platform
+# admin's, and one a console sign-in started only while that business session lives.
+USABLE = """s.id_hash = p_id_hash AND s.expires_at > now()
+        AND s.last_seen_at > now() - interval '7 days'
+        AND NOT EXISTS (SELECT FROM platform_admins a WHERE a.user_id = s.user_id)
+        AND (s.started_by IS NULL OR EXISTS (
+          SELECT FROM sessions b WHERE b.id_hash = s.started_by AND b.expires_at > now()
+            AND b.last_seen_at > now() - interval '7 days'))"""
 
 FUNCTIONS = {
     "hold_account_session(bytea)": f"""
 CREATE FUNCTION hold_account_session(p_id_hash bytea)
 RETURNS uuid LANGUAGE sql SECURITY DEFINER {SEARCH_PATH} AS $$
   -- The live account session's holder, its row held FOR SHARE until the caller's transaction ends.
-  SELECT s.user_id FROM account_sessions s WHERE {LIVE} FOR SHARE
+  SELECT s.user_id FROM account_sessions s WHERE {USABLE} FOR SHARE
 $$""",
     "own_bookings(bytea,timestamptz,bytea,integer)": f"""
 CREATE FUNCTION own_bookings(
@@ -65,7 +71,7 @@ DECLARE
   v_tenant text := current_setting('app.tenant_id', true);
 BEGIN
   SELECT s.user_id INTO v_user FROM account_sessions s
-  WHERE {LIVE} AND s.started_at > now() - interval '24 hours';
+  WHERE {USABLE} AND s.started_at > now() - interval '24 hours';
   IF NOT FOUND THEN RETURN; END IF;
   SELECT array_agg(n.id ORDER BY n.id) INTO v_tenants FROM tenants n;
   FOREACH t IN ARRAY coalesce(v_tenants, '{{}}') LOOP
