@@ -70,6 +70,8 @@ def test_every_account_template_puts_its_link_in_every_locale() -> None:
         ("sign_up", {"link": "https://x.test/marker"}),
         ("password_reset", {"link": "https://x.test/marker"}),
         ("sign_up_registered", {"sign_in": "https://x.test/marker"}),
+        ("account_sign_up", {"link": "https://x.test/marker"}),
+        ("account_registered", {"sign_in": "https://x.test/marker"}),
         ("invite", {"link": "https://x.test/marker", "business": "Studio Ana"}),
     ):
         for locale in LOCALES:
@@ -205,3 +207,50 @@ def test_an_address_that_reads_as_a_list_reaches_no_second_inbox(app_engine: Eng
 
     # Mailgun splits `to` on commas: nothing may reach it at all.
     assert [c for c in MAILGUN_CALLS if victim in c["To"]] == []
+
+
+# ZIF-146 FENCE. Wrong impl: an account sign-up job without its own page: the link would open the
+# business sign-up, or the job would fail on PAGES and be dropped.
+@pytest.mark.parametrize(
+    ("locale", "subject"),
+    [
+        ("en", "Create your ziftbook account"),
+        ("nl", "Maak je ziftbook-account aan"),
+        ("pt", "Crie sua conta no ziftbook"),
+    ],
+)
+def test_an_account_sign_up_link_opens_the_account_page(
+    app_engine: Engine, migrate_engine: Engine, locale: str, subject: str
+) -> None:
+    email = f"{uuid.uuid4()}@example.com"
+
+    mail.send_token(request(app_engine, "account_sign_up", email, locale))
+
+    (sent,) = inbox(email)
+    body, _ = message(sent["ID"])
+    page, token = link_in(body).split("#")
+    assert page == f"{APP_URL}/{locale}/account/complete"
+    assert sent["Subject"] == subject
+    assert hashlib.sha256(token.encode()).digest() == stored_hash(migrate_engine, email)
+    with migrate_engine.connect() as conn:
+        lifetime = conn.scalar(
+            text("SELECT expires_at - now() FROM email_tokens WHERE email = :e"), {"e": email}
+        )
+    assert lifetime.total_seconds() > 23 * 3600  # a sign-up's 24 hours, not a reset's 15 minutes
+
+
+# ZIF-146 FENCE. Wrong impl: 0007's registered branch, sign_up only: an account sign-up for an
+# existing address would mint a working link to an account that exists, or send the console's
+# sign-in email.
+def test_an_account_sign_up_for_a_registered_email_says_to_sign_in_to_the_account(
+    people: People, app_engine: Engine, migrate_engine: Engine
+) -> None:
+    email = f"{people.both}@example.com"  # both chose Dutch
+
+    mail.send_token(request(app_engine, "account_sign_up", email, "en"))
+
+    (sent,) = inbox(email)
+    body, _ = message(sent["ID"])
+    assert sent["Subject"] == "Je hebt al een ziftbook-account"
+    assert f"{APP_URL}/nl/account/sign-in" in body and "#" not in body
+    assert stored_hash(migrate_engine, email) is None

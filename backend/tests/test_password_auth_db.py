@@ -8,13 +8,14 @@ import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import timedelta
+from typing import Any
 
 import pytest
 from psycopg.errors import InsufficientPrivilege
 from sqlalchemy import Engine, text
 from sqlalchemy.exc import ProgrammingError
 
-from app import auth
+from app import auth, passwords
 from app.db import tenant_context
 from tests.conftest import (
     EXPIRE,
@@ -24,6 +25,8 @@ from tests.conftest import (
     delete_payment_accounts,
     delete_services,
     engine_as_worker,
+    fresh_email,
+    issue_link,
     migrate_tenant_context,
     wait_until_blocked,
 )
@@ -666,3 +669,85 @@ def test_the_flag_check_catches_a_definer_that_forgets_it(
         found = set(conn.scalars(FLAG_UNHANDLED, {"table": table, "flag": flag}))
         transaction.rollback()
     assert found == FLAGS[(table, flag)] | {"leaky_reader"}
+
+
+def complete_account(
+    app_engine: Engine, token: str, name: str = "Cora", phone: str | None = None
+) -> Any:
+    with app_engine.begin() as conn:
+        return conn.execute(
+            text("SELECT * FROM complete_account_sign_up(:h, :p, :n, :ph)"),
+            {
+                "h": auth.hash_token(token),
+                "p": passwords.hash_password("account-pw-1"),
+                "n": name,
+                "ph": phone,
+            },
+        ).one()
+
+
+# ZIF-146 FENCE (security N2). Wrong impl: complete_account_sign_up without its purpose filter: a
+# business sign-up link would create a business-less account, and the reverse.
+def test_each_sign_up_link_completes_only_its_own_kind(
+    app_engine: Engine, migrate_engine: Engine
+) -> None:
+    business = issue_link(app_engine, "sign_up", fresh_email())
+    account = issue_link(app_engine, "account_sign_up", fresh_email())
+    assert business is not None and account is not None
+
+    assert complete_account(app_engine, business).outcome == "invalid_token"
+    with app_engine.begin() as conn:
+        wrong = conn.execute(
+            text("SELECT * FROM complete_sign_up(:h, :p, 'Shop', 'NL', 'EUR', 'Cora')"),
+            {"h": auth.hash_token(account), "p": passwords.hash_password("account-pw-1")},
+        ).one()
+    assert wrong.outcome == "invalid_token"
+
+
+def test_an_account_sign_up_creates_a_person_with_no_business(
+    app_engine: Engine, migrate_engine: Engine
+) -> None:
+    email = fresh_email()
+    token = issue_link(app_engine, "account_sign_up", email)
+    assert token is not None
+
+    created = complete_account(app_engine, token, "Cora Client", "+31612345678")
+
+    assert created.outcome == "created"
+    with migrate_engine.connect() as conn:
+        row = conn.execute(
+            text("SELECT email, name, phone FROM users WHERE id = :u"), {"u": created.user_id}
+        ).one()
+    with migrate_engine.begin() as conn:
+        # Every business at once: the sign_in policy, as account_by_email reads it.
+        conn.execute(text("SELECT set_config('app.sign_in', 'on', true)"))
+        conn.execute(
+            text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(uuid.UUID(int=0))}
+        )
+        memberships = conn.scalar(
+            text("SELECT count(*) FROM memberships WHERE user_id = :u"), {"u": created.user_id}
+        )
+    assert tuple(row) == (email, "Cora Client", "+31612345678")
+    assert memberships == 0
+    assert complete_account(app_engine, token).outcome == "invalid_token"  # used up
+
+
+# ZIF-146 FENCE (security N2). Wrong impl: writing the password before the account insert: an
+# address that gained an account since the link would get a new password on someone's account.
+def test_an_account_sign_up_for_an_address_that_gained_an_account_touches_nothing(
+    app_engine: Engine, migrate_engine: Engine
+) -> None:
+    email = fresh_email()
+    token = issue_link(app_engine, "account_sign_up", email)
+    assert token is not None
+    existing = add_user(migrate_engine, email, name="Already Here")
+
+    assert complete_account(app_engine, token).outcome == "already_registered"
+    with migrate_engine.connect() as conn:
+        assert (
+            conn.scalar(
+                text("SELECT count(*) FROM password_credentials WHERE user_id = :u"),
+                {"u": existing},
+            )
+            == 0
+        )

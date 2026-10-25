@@ -163,7 +163,8 @@ change or delete one (no `INSERT`, `UPDATE` or `DELETE`).
   a business only through their own booking. `phone` is never unique (a duplicate error would tell who holds a
   number). `tests/test_migrations.py` pins the grant.
 
-- Accounts are created only by `complete_sign_up`, `complete_setup` and `accept_invite`.
+- Accounts are created only by `complete_sign_up`, `complete_setup`, `accept_invite` and `complete_account_sign_up`
+  (ZIF-146: a person's own account, with no business and no membership).
 - Never add an INSERT, UPDATE or DELETE policy on `users`; changes to a person's account go through functions owned by
   `ziftbook_migrate`. `ziftbook_migrate` sees every user, including in data migrations.
 - A view over `users` needs `WITH (security_invoker = true)`, or it shows every user.
@@ -183,14 +184,14 @@ functions owned by `ziftbook_migrate`:
   clear it, on a resend (the `invites_token_hash_by_worker` trigger, 0053).
 - The `sign_in` policy lets `ziftbook_migrate` read memberships across tenants only while `app.sign_in` is `on`. A
   function that relies on it sets and restores `app.sign_in` itself; any other definer function that reads memberships
-  must clear it, because a caller can set it. The same holds for every flag a policy opens to `ziftbook_migrate` (`app.audit_review`
-  on `audit_events`, `app.stripe_webhook` on `payment_accounts`): `tests/test_password_auth_db.py` lists every definer
-  that reads such a table without its flag, and pins the flags themselves.
-- `complete_sign_up`, `accept_invite`, `set_own_name` and `set_own_profile` are the only writers of `users.name`
-  (the app role has no UPDATE policy on `users`). `set_own_name` names a person who has none (legacy accounts only)
-  and also fills the `display_name` of every business of theirs where it is unset, including one an owner had
-  cleared. `set_own_profile` (ZIF-146) changes the session holder's own name and phone and never a `display_name`:
-  a business sees a changed account name only where it has no display name of its own.
+  must clear it, because a caller can set it. The same holds for every flag a policy opens to `ziftbook_migrate`
+  (`app.audit_review` on `audit_events`, `app.stripe_webhook` on `payment_accounts`): `tests/test_password_auth_db.py`
+  lists every definer that reads such a table without its flag, and pins the flags themselves.
+- `complete_sign_up`, `accept_invite`, `complete_account_sign_up`, `set_own_name` and `set_own_profile` are the only
+  writers of `users.name` (the app role has no UPDATE policy on `users`). `set_own_name` names a person who has none
+  (legacy accounts only) and also fills the `display_name` of every business of theirs where it is unset, including
+  one an owner had cleared. `set_own_profile` (ZIF-146) changes the session holder's own name and phone and never a
+  `display_name`: a business sees a changed account name only where it has no display name of its own.
 - An account session (`account_sessions`, 0057, ZIF-146) is a person's, not a membership's: it has no tenant, and no
   console route ever authenticates with it (`auth.resolve` reads only `sessions` and the `__Host-session` cookie). It
   is reached only by hash (`resolve_account_session`, `end_account_session`, `set_own_profile`), never by user id.
