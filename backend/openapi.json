@@ -520,6 +520,88 @@
         }
       }
     },
+    "/api/session/locale": {
+      "put": {
+        "tags": [
+          "account"
+        ],
+        "summary": "Set Locale",
+        "description": "The person's own language, kept on their account, so it is theirs in every business\n(ZIF-102). Not an audit event: a personal preference, not something the business did.",
+        "operationId": "account-set_locale",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LocaleIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionOut"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Content",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Content Too Large",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/password-reset": {
       "post": {
         "tags": [
@@ -8010,6 +8092,32 @@
         "title": "LinkedBooking",
         "description": "Never the client's name, email, phone or ids, nor the worker id, source or events: the\nlink is a bearer credential (spec S4, test 12)."
       },
+      "LocaleIn": {
+        "properties": {
+          "locale": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "en",
+                  "nl",
+                  "pt"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Locale"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "locale"
+        ],
+        "title": "LocaleIn"
+      },
       "MemberOut": {
         "properties": {
           "member_id": {
@@ -9103,6 +9211,22 @@
             ],
             "title": "Name"
           },
+          "locale": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "en",
+                  "nl",
+                  "pt"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Locale"
+          },
           "business_name": {
             "type": "string",
             "title": "Business Name"
@@ -9125,6 +9249,7 @@
           "email",
           "display_name",
           "name",
+          "locale",
           "business_name",
           "currency",
           "slug"

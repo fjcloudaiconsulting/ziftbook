@@ -18,8 +18,7 @@ from sqlalchemy.orm import Session
 from app import auth, passwords
 from app.auth import CurrentOwner, CurrentSession
 from app.errors import Error
-
-Locale = Literal["en", "nl", "pt"]
+from app.locales import Locale as Locale  # re-exported: most modules import it from here
 
 # The tzdata package's own list: zoneinfo.available_timezones() also adds the system's files, so the
 # accepted names would differ between machines.

@@ -626,6 +626,35 @@ English (`en`) is the source for every catalog (`frontend/messages`, `landing/st
 first, then to `nl` and `pt` with the same `{placeholders}`; `node scripts/check-catalogs.mjs` (part of
 `make lint`) enforces it.
 
+### Which language a person sees (ZIF-102)
+
+A person's language is their own: `users.locale`, set with `PUT /api/session/locale`, the same in every business
+they belong to. NULL means they chose none. The business's `language` setting is only a fallback.
+
+- Wherever the viewer is known (signed in), their saved language wins over the URL and the browser, on every
+  surface: the console and every public page, the booking page included.
+- Signed in with no saved language: in the console, the browser's language, else the business's; on a public page,
+  the URL's.
+- A guest: the URL's. An address without a language (`/`, a shared `/{slug}`) gets the browser's
+  (Accept-Language), else English (`routing.defaultLocale`).
+- An email: the recipient's own language, else the business's. Its links carry the language it is written in.
+
+No cookie carries the language (`localeCookie: false`); the stored preference lives on the account.
+
+### Adding a language
+
+The languages are one list per side: the backend's `Locale` (`backend/app/locales.py`), and on the frontend
+`routing.locales` (`frontend/i18n/routing.ts`) with its copy `LOCALES` (`frontend/lib/services.ts`), which
+`frontend/tests/locales.test.mjs` checks against the API's enum. Adding one also needs:
+
+- a migration widening the database's checks: `users.locale`, `email_tokens.locale`, `clients.locale`,
+  `booking_holds.locale`, and the per-language JSON key checks on `services.name`, `services.description` and
+  `bookings.service_name`;
+- every mail template in `backend/app/mail_templates`, and `PAYMENT_LINES`, `DATE_FORMAT` and `_money`'s number
+  format in `backend/app/mail.py`;
+- the message catalogs (`frontend/messages`, `landing/strings`);
+- `STRIPE_LOCALE` and `TURNSTILE_LANG` on the booking page.
+
 ## Configuration
 
 Every environment variable our own code reads starts with `ZIF_` (`ZIF_API_URL`, `ZIF_APP_VERSION`,
