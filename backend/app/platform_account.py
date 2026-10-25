@@ -418,9 +418,15 @@ def complete_sign_up(details: AccountSignUpIn, request: Request, response: Respo
     auth.end_previous_account_session(request)
     # Two steps: if this one fails, the account exists and the person signs in normally.
     with SessionLocal.begin() as session:
+        # The lock order every writer keeps (CONTRIBUTING): password_credentials, then sessions,
+        # then account_sessions.
+        if not session.scalar(
+            auth.PASSWORD_UNCHANGED, {"user_id": created.user_id, "hash": password_hash}
+        ):  # reset since it was created: the person signs in with the new password
+            raise ApiError(401, "invalid_credentials", headers=auth.account_cookie_cleared())
+        ended_other = end_other_persons_business_session(session, request, created.user_id)
         token = auth.start_account(session, request, created.user_id, password_hash)
         assert token is not None  # a new account is no platform admin
-        ended_other = end_other_persons_business_session(session, request, created.user_id)
         auth.record(
             session,
             request,

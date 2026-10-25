@@ -1,6 +1,8 @@
 """ZIF-146: a client creates a ziftbook account with no business: email first, then name, optional
 phone and password from the emailed link. The answer never tells whether an email has an account."""
 
+import secrets
+import threading
 from typing import Any
 
 import pytest
@@ -20,6 +22,7 @@ from tests.conftest import (
     live,
     new_client,
     signed_in,
+    wait_until_blocked,
 )
 from tests.test_account_sessions import (
     account_sessions_of,
@@ -209,3 +212,66 @@ def test_completing_ends_the_previous_persons_sessions_on_this_browser(
     assert account_sessions_of(migrate_engine, previous) == 0
     assert client.get("/api/session").status_code == 401  # the other person's ended
     assert auth.COOKIE in set_cookies(response)
+
+
+# FENCE (fold re-verify NB-1). Wrong impl: completing a sign-up that writes account_sessions (its
+# new row, and the purge's locks on expired ones) before deleting the browser's business session of
+# another person, against the one lock order: that person signing out everywhere at the same
+# moment deadlocks with it.
+def test_completing_and_the_previous_persons_sign_out_everywhere_never_deadlock(
+    app: FastAPI,
+    people: People,
+    app_engine: Engine,
+    migrate_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    previous = people.both
+    browser = signed_in(app, people.a, previous)
+    elsewhere = signed_in(app, people.b, previous).cookies.get(auth.COOKIE)
+    assert elsewhere is not None
+    with migrate_engine.begin() as conn:
+        conn.execute(
+            text("""
+            INSERT INTO account_sessions (id_hash, user_id, expires_at)
+            VALUES (:h, :u, now() - interval '1 hour')
+            """),
+            {"h": secrets.token_bytes(32), "u": previous},
+        )
+    token = issue_link(app_engine, "account_sign_up", fresh_email())
+    assert token is not None
+    paused, release = threading.Event(), threading.Event()
+    start = auth.start_account
+
+    def hold_after_the_account_session(*args: Any, **kwargs: Any) -> str | None:
+        started = start(*args, **kwargs)
+        paused.set()
+        assert release.wait(timeout=20)
+        return started
+
+    monkeypatch.setattr(auth, "start_account", hold_after_the_account_session)
+    answers: list[Any] = []
+    completing = threading.Thread(target=lambda: answers.append(complete(browser, token)))
+    completing.start()
+    assert paused.wait(timeout=20)
+    failures: list[BaseException] = []
+
+    def sign_out_everywhere() -> None:
+        try:
+            params = {"u": previous, "h": auth.hash_token(elsewhere)}
+            with app_engine.connect() as conn, conn.begin():
+                for step in auth.EVERY_SESSION:
+                    conn.execute(step, params)
+        except BaseException as error:  # a deadlock victim raises here
+            failures.append(error)
+
+    everywhere = threading.Thread(target=sign_out_everywhere)
+    everywhere.start()
+    try:
+        wait_until_blocked(migrate_engine, 1)
+    finally:
+        release.set()
+        completing.join(timeout=20)
+        everywhere.join(timeout=20)
+
+    assert failures == []
+    assert answers[0].status_code == 201
