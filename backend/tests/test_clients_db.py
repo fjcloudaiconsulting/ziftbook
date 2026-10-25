@@ -489,3 +489,25 @@ def test_a_version_that_omits_a_purpose_is_a_422_not_a_500(
     # The purpose that version does publish is accepted, which is what makes the code above a
     # statement about the purpose and not about the version.
     assert clients.texts_for("test-subset", ["sms"]) == {"sms": "You may text me."}
+
+
+# ZIF-146 FENCE (code review N5). Wrong impl: KEEP writing
+# `user_id = coalesce(clients.user_id, excluded.user_id)`: a caller that passed an unproven booker's
+# id would claim another person's row.
+def test_keep_never_links_a_row_whatever_user_id_it_is_passed(people: People) -> None:
+    email = fresh_email()
+    client_id = seed_client(people.a, name="Kept", email=email)
+
+    with tenant_context(people.a) as session:
+        found = clients.find_or_create(
+            session,
+            name="Typed",
+            email=email,
+            phone=None,
+            locale=None,
+            user_id=uuid.uuid7(),
+            proven=False,
+        )
+
+    assert found.id == client_id
+    assert row_of(people.a, client_id)["user_id"] is None
