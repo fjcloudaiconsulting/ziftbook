@@ -10,9 +10,16 @@ created at Stripe is refused (connect answers 409 currency_changed).
 
 Expand: the column is nullable, existing rows are backfilled from their business (looping over
 tenants, as payment_accounts has FORCE row-level security), and the foreign key is added NOT VALID,
-so no scan runs under its lock; 0067 validates it. A NULL currency is not covered by the key: only
-a row the previous release inserts during the rollout can have one, and the contract step (a later
-release) backfills those and sets NOT NULL. The app role may insert the column.
+so no scan runs under its lock; 0068 validates it. The app role may insert the column, never update
+it.
+
+A NULL currency is not covered by the key. Only a row the previous release inserts during the
+rollout can have one, and such a row may already disagree with its business: an owner served by
+this release can change the currency while the previous release is still creating the account at
+Stripe. So the contract step (a later release, before SET NOT NULL) must not fill those rows from
+tenants.currency, which would hide that. It lists every NULL-currency row with its Stripe account's
+default currency, fills a row only where the two agree with the business's currency, and flags the
+rest for the owner and support, leaving them NULL until resolved.
 
 Revision ID: 0062
 Revises: 0061
