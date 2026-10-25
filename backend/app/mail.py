@@ -429,18 +429,23 @@ SYMBOLS = {"BRL": "R$", "EUR": "€", "GBP": "£", "USD": "$"}
 def _money(amount_minor: int, currency: str, locale: str) -> str:
     """The web app's money format (frontend/lib/money.ts: Intl.NumberFormat, currency style, narrow
     symbol) for en, nl and pt: the business's currency in the reader's number format, with as many
-    decimals as the currency has minor units (app/currencies.py; KeyError for one not listed)."""
+    decimals as the currency has minor units (app/currencies.py; KeyError for one not listed). A
+    negative amount carries its minus where Intl puts it: before the sign in en and pt, before the
+    digits in nl."""
     units = currencies.minor_units(currency)
-    whole, part = divmod(amount_minor, 10**units)
+    minus = "-" if amount_minor < 0 else ""
+    whole, part = divmod(abs(amount_minor), 10**units)
     fraction = f"{part:0{units}d}" if units else ""
     symbol = SYMBOLS.get(currency)
     if locale == "en":
         number = f"{whole:,}" + (f".{fraction}" if units else "")
         # Intl: a symbol touches the amount; a code stands in its place, then a no-break space.
-        return f"{symbol}{number}" if symbol else f"{currency}\u00a0{number}"
+        return f"{minus}{symbol}{number}" if symbol else f"{minus}{currency}\u00a0{number}"
     number = f"{whole:,}".replace(",", ".") + (f",{fraction}" if units else "")
     # The narrow symbol, as the web shows it: "$", never "US$" (ZIF-102, owner's ruling).
-    return f"{symbol or currency}\u00a0{number}"
+    if locale == "nl":
+        return f"{symbol or currency}\u00a0{minus}{number}"
+    return f"{minus}{symbol or currency}\u00a0{number}"
 
 
 def _line(key: str, locale: str, amount_minor: int, currency: str) -> str:
