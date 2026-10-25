@@ -2,7 +2,7 @@ import createMiddleware from "next-intl/middleware";
 import { NextRequest, NextResponse } from "next/server";
 
 import { routing } from "./i18n/routing";
-import { cspFor, cspHeaderFor, newNonce, originOf, personalPage, TRUSTED_TYPES_REPORT_ONLY } from "./lib/csp";
+import { CSP_REPORT_URL, cspFor, cspHeaderFor, newNonce, originOf, personalPage, REPORT_GROUP, trustedTypesReportOnly } from "./lib/csp";
 import { clientRequestId, errorFields, logger, requestId } from "./lib/log";
 import { readNeedsSetup, setupGate, setupRedirect } from "./lib/setup-gate";
 import { endProxySpan, startProxySpan, traceparent } from "./lib/trace";
@@ -177,9 +177,11 @@ export default async function proxy(request: NextRequest) {
   // Enforced, this replaces next.config.ts's frame-ancestors-only header (Next sends the proxy's value);
   // report-only, that header stays the one enforced policy, as a report-only policy enforces nothing.
   response.headers.set(header, policy);
-  if (personalPage(pathname, routing.locales)) {
-    response.headers.set("Content-Security-Policy-Report-Only", TRUSTED_TYPES_REPORT_ONLY);
+  if (personalPage(pathname, routing.locales) && header === "Content-Security-Policy") {
+    response.headers.set("Content-Security-Policy-Report-Only", trustedTypesReportOnly());
   }
+  // Where the policies' report-to sends violations (ZIF-236 provides the endpoint).
+  if (CSP_REPORT_URL) response.headers.set("Reporting-Endpoints", `${REPORT_GROUP}="${CSP_REPORT_URL}"`);
   return response;
 }
 

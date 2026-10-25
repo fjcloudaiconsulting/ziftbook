@@ -5,7 +5,7 @@ import { afterEach, describe, test } from "node:test";
 import { join } from "node:path";
 
 import { topLevelRoutes } from "../../scripts/check-reserved-routes.mjs";
-import { cspFor, cspHeaderFor, newNonce, originOf, OTHER_ROUTES, PERSONAL_ROUTES, personalPage } from "../lib/csp.ts";
+import { cspFor, cspHeaderFor, enforcedFor, newNonce, originOf, OTHER_ROUTES, PERSONAL_ROUTES, personalPage, reportUrlOf, trustedTypesReportOnly } from "../lib/csp.ts";
 
 const LOCALE_DIR = join(new URL("..", import.meta.url).pathname, "app", "[locale]");
 const LOCALES = ["en", "nl", "pt"];
@@ -147,3 +147,31 @@ describe("which pages always enforce the policy", () => {
   });
 });
 
+
+describe("the personal pages' policy: switch and reporting (ZIF-146 code reviews)", () => {
+  test("fence: the emergency switch sends the personal pages' policy report-only again, and nothing else changes", () => {
+    // Wrong implementation killed: no switch, so a policy that blocks a payment can only be undone by a redeploy.
+    assert.equal(cspHeaderFor("/en/salon-ana/book", LOCALES, true), "Content-Security-Policy-Report-Only");
+    assert.equal(cspHeaderFor("/en/salon-ana/book", LOCALES, false), "Content-Security-Policy");
+    assert.equal(enforcedFor("/en/sign-in", LOCALES, false), false);
+  });
+
+  test("fence: with a report URL every policy names it, in both reporting forms", () => {
+    // Wrong implementation killed: an enforced policy that reports nowhere, so a broken checkout goes unseen.
+    const url = "https://reports.example.test/csp";
+    const policy = directives(cspFor("abc", null, null, url));
+    assert.equal(policy["report-uri"], url);
+    assert.equal(policy["report-to"], "csp");
+    assert.equal(trustedTypesReportOnly(url), `require-trusted-types-for 'script'; report-uri ${url}; report-to csp`);
+    // Unset: no reporting directive at all, rather than one pointing nowhere.
+    assert.equal(directives(cspFor("abc", null, null, null))["report-uri"], undefined);
+    assert.equal(trustedTypesReportOnly(null), "require-trusted-types-for 'script'");
+  });
+
+  test("guard: only an https report URL is used", () => {
+    assert.equal(reportUrlOf("https://reports.example.test/csp"), "https://reports.example.test/csp");
+    for (const value of [undefined, "", "http://reports.example.test", "javascript:alert(1)", "not a url"]) {
+      assert.equal(reportUrlOf(value), null, String(value));
+    }
+  });
+});

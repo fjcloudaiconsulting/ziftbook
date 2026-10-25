@@ -1005,3 +1005,39 @@ describe("page Content-Security-Policy, enforced (ZB-12)", () => {
     assert.deepEqual(await rawHeaders(port, "/api/healthz", "content-security-policy"), []);
   });
 });
+
+describe("the personal pages' emergency switch and violation reports (ZIF-146)", () => {
+  let api, web;
+  const port = 3231;
+  const reports = "https://reports.example.test/csp";
+  before(async () => {
+    api = await stubApi("R");
+    web = await startWeb(`http://127.0.0.1:${api.address().port}`, port, {
+      ZIF_CSP_ENFORCE: undefined,
+      ZIF_CSP_PERSONAL_REPORT_ONLY: "true",
+      ZIF_CSP_REPORT_URL: reports,
+    });
+  });
+  after(async () => {
+    await stop(web);
+    api.close();
+  });
+
+  test("fence: ZIF_CSP_PERSONAL_REPORT_ONLY=true puts the booking pages back on the report-only policy", async () => {
+    // Wrong implementation killed: a switch that is read nowhere, so ops cannot undo a blocking policy without a build.
+    for (const path of ["/en/salon-ana", "/en/booking"]) {
+      assert.deepEqual(await rawHeaders(port, path, "content-security-policy"), ["frame-ancestors 'none'"], path);
+      const reportOnly = await rawHeaders(port, path, "content-security-policy-report-only");
+      assert.equal(reportOnly.length, 1, path);
+      assert.ok(policyNonce(reportOnly[0]), `${path} still reports the whole policy`);
+    }
+  });
+
+  test("fence: with ZIF_CSP_REPORT_URL set, every page's policy reports there", async () => {
+    const response = await fetch(`http://127.0.0.1:${port}/en/sign-in`);
+    const policy = response.headers.get("content-security-policy-report-only") ?? "";
+    assert.match(policy, /report-uri https:\/\/reports\.example\.test\/csp/);
+    assert.match(policy, /report-to csp/);
+    assert.equal(response.headers.get("reporting-endpoints"), `csp="${reports}"`);
+  });
+});

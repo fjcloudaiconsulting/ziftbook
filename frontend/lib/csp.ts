@@ -8,6 +8,33 @@ export const CSP_ENFORCE = process.env.ZIF_CSP_ENFORCE === "true";
 
 export const CSP_HEADER = CSP_ENFORCE ? "Content-Security-Policy" : "Content-Security-Policy-Report-Only";
 
+/** Emergency switch (ZIF-146): `true` sends the personal pages' policy report-only again, as every other page's,
+ * without a build, should the enforced policy ever block a payment or the challenge in production. Anything else
+ * (the default) enforces it there. Read once, when the server starts. */
+export const CSP_PERSONAL_REPORT_ONLY = process.env.ZIF_CSP_PERSONAL_REPORT_ONLY === "true";
+
+/** Where browsers send violation reports (ZIF-236 provides the endpoint): an https URL, or null when unset or not
+ * https, and then no policy names one. Read once, when the server starts. */
+export const CSP_REPORT_URL = reportUrlOf(process.env.ZIF_CSP_REPORT_URL);
+
+/** The name the policies' `report-to` uses for the `Reporting-Endpoints` entry proxy.ts sends. */
+export const REPORT_GROUP = "csp";
+
+export function reportUrlOf(value: string | undefined): string | null {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The reporting directives for a policy: both forms, as browsers support one or the other. */
+export function reportingDirectives(reportUrl: string | null): string[] {
+  return reportUrl ? [`report-uri ${reportUrl}`, `report-to ${REPORT_GROUP}`] : [];
+}
+
 /** The top-level routes under app/[locale] that show or fetch a person's own data: the account pages
  * (ZIF-146) and a booking's manage page (`booking`). */
 export const PERSONAL_ROUTES: ReadonlySet<string> = new Set(["account", "booking"]);
@@ -51,15 +78,31 @@ export function personalPage(pathname: string, locales: readonly string[]): bool
   return !OTHER_ROUTES.has(first);
 }
 
-/** The policy header a page gets: enforced on every personal page, else the deployment's setting. */
-export function cspHeaderFor(pathname: string, locales: readonly string[]): string {
-  return personalPage(pathname, locales) ? "Content-Security-Policy" : CSP_HEADER;
+/** Whether this page's policy is enforced: every personal page, unless the emergency switch is on, and every page
+ * when ZIF_CSP_ENFORCE is. */
+export function enforcedFor(
+  pathname: string,
+  locales: readonly string[],
+  personalReportOnly: boolean = CSP_PERSONAL_REPORT_ONLY,
+): boolean {
+  return CSP_ENFORCE || (personalPage(pathname, locales) && !personalReportOnly);
+}
+
+/** The policy header a page gets (enforcedFor). */
+export function cspHeaderFor(
+  pathname: string,
+  locales: readonly string[],
+  personalReportOnly: boolean = CSP_PERSONAL_REPORT_ONLY,
+): string {
+  return enforcedFor(pathname, locales, personalReportOnly) ? "Content-Security-Policy" : "Content-Security-Policy-Report-Only";
 }
 
 /** Sent report-only beside the enforced policy on personal pages: browsers report every DOM sink that
  * takes a plain string (innerHTML and kin), so the pages can be made Trusted Types clean before it is
  * enforced there. */
-export const TRUSTED_TYPES_REPORT_ONLY = "require-trusted-types-for 'script'";
+export function trustedTypesReportOnly(reportUrl: string | null = CSP_REPORT_URL): string {
+  return ["require-trusted-types-for 'script'", ...reportingDirectives(reportUrl)].join("; ");
+}
 
 /** 128 random bits, base64: a page's nonce, never reused. */
 export function newNonce(): string {
@@ -85,7 +128,12 @@ const LINK = "https://link.com https://*.link.com";
  * ('strict-dynamic': Next's chunks, Stripe.js, Turnstile's api.js). `mediaOrigin` serves the service photos;
  * `uploadOrigin` is the store the browser uploads a photo to.
  */
-export function cspFor(nonce: string, mediaOrigin: string | null, uploadOrigin: string | null = null): string {
+export function cspFor(
+  nonce: string,
+  mediaOrigin: string | null,
+  uploadOrigin: string | null = null,
+  reportUrl: string | null = CSP_REPORT_URL,
+): string {
   // `next dev` only: React's development build evaluates code, and Next's dev overlay adds <style> elements.
   const dev = process.env.NODE_ENV === "development";
   return [
@@ -109,5 +157,6 @@ export function cspFor(nonce: string, mediaOrigin: string | null, uploadOrigin: 
     "base-uri 'none'",
     "form-action 'self'",
     "frame-ancestors 'none'",
+    ...reportingDirectives(reportUrl),
   ].join("; ");
 }
