@@ -1659,7 +1659,7 @@ def test_quota_merchant_flag_has_no_default() -> None:
 
 # ZB-03: the quota is counted on the booking transaction's own connection. A second pooled
 # connection checked out under the tenant lock deadlocks the pool once enough bookings run at once
-# (bookings.account() says why). Kills a limits.hit() that opens its own transaction there.
+# (bookings.accounts() says why). Kills a limits.hit() that opens its own transaction there.
 def test_quota_is_counted_on_the_bookings_own_connection(
     people: People, app: FastAPI, ready: str, owner: TestClient, app_engine: Engine
 ) -> None:

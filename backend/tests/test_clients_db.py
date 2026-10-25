@@ -118,8 +118,9 @@ def test_find_or_create_survives_two_bookings_of_the_same_address_at_once(
     assert count == 1
 
 
-# 38: FENCE, rewritten (ZIF-51). Wrong impl: add client_note/internal_note/user_id to either
-# DO UPDATE SET list.
+# 38: FENCE, rewritten (ZIF-51; ZIF-146). Wrong impl: add client_note/internal_note to either
+# DO UPDATE SET list, or write user_id there as `excluded.user_id` (relinking a linked row).
+# REFRESH fills a NULL user_id only (coalesce); a linked row keeps its account.
 def test_find_or_create_never_touches_the_notes_or_the_user_id(people: People) -> None:
     email = fresh_email()
     seeded_user = uuid.uuid7()
@@ -154,7 +155,7 @@ def test_find_or_create_never_touches_the_notes_or_the_user_id(people: People) -
     assert row["locale"] == "nl"
     assert row["client_note"] == "Client note"
     assert row["internal_note"] == "Internal note"
-    assert row["user_id"] == seeded_user  # the conflict path never writes user_id (§8.7b)
+    assert row["user_id"] == seeded_user  # a linked row is never relinked (ZIF-146)
 
 
 # ZIF-157 B2 FENCE 3. Wrong impl: KEEP as DO NOTHING (no row comes back: NoResultFound), or any
@@ -488,3 +489,25 @@ def test_a_version_that_omits_a_purpose_is_a_422_not_a_500(
     # The purpose that version does publish is accepted, which is what makes the code above a
     # statement about the purpose and not about the version.
     assert clients.texts_for("test-subset", ["sms"]) == {"sms": "You may text me."}
+
+
+# ZIF-146 FENCE (code review N5). Wrong impl: KEEP writing
+# `user_id = coalesce(clients.user_id, excluded.user_id)`: a caller that passed an unproven booker's
+# id would claim another person's row.
+def test_keep_never_links_a_row_whatever_user_id_it_is_passed(people: People) -> None:
+    email = fresh_email()
+    client_id = seed_client(people.a, name="Kept", email=email)
+
+    with tenant_context(people.a) as session:
+        found = clients.find_or_create(
+            session,
+            name="Typed",
+            email=email,
+            phone=None,
+            locale=None,
+            user_id=uuid.uuid7(),
+            proven=False,
+        )
+
+    assert found.id == client_id
+    assert row_of(people.a, client_id)["user_id"] is None

@@ -227,7 +227,9 @@ DEFINERS = [
     "public.end_account_session(p_id_hash bytea)",
     "public.end_account_sessions(p_id_hash bytea)",
     "public.end_admin_session(p_id_hash bytea)",
+    "public.hold_account_session(p_id_hash bytea)",
     "public.needs_setup()",
+    "public.own_bookings(p_id_hash bytea, p_before_starts_at timestamp with time zone, p_before_key bytea, p_limit integer)",  # noqa: E501
     "public.pass_second_factor(p_id_hash bytea, p_proof bytea, p_step bigint)",
     "public.password_unchanged(p_user_id uuid, p_hash text)",
     "public.reset_password(p_token_hash bytea, p_password_hash text)",
@@ -261,7 +263,9 @@ def test_the_users_policies_are_pinned(migrate_engine: Engine) -> None:
 
 
 # 9: FENCE. Wrong impl: a new user_exists(email) / find_user(q) definer function, even a wrapper
-# over account_by_email, a SQL-standard body, or a cross-tenant clients definer.
+# over account_by_email, a SQL-standard body, or a cross-tenant definer keyed by an email or a user
+# id. own_bookings (ZIF-146) walks every business, deliberately: it is keyed by the caller's own
+# account session hash and answers only with bookings that session's holder placed.
 def test_the_definer_functions_the_app_can_execute_are_pinned(migrate_engine: Engine) -> None:
     with migrate_engine.connect() as conn:
         names = conn.scalars(

@@ -205,6 +205,8 @@ functions owned by `ziftbook_migrate`:
     change that person's name and phone;
   - end anyone's account sessions, by passing `end_account_sessions` a business session's hash, which it can read
     from `sessions` (a denial of service, no data).
+  - put a booking into anyone's cross-business history, by inserting it with `booked_as` set to them (it could
+    already insert bookings in any business; showing one in that person's own history is new).
 - Lock order for every writer that touches more than one of these: `password_credentials`, then `sessions`, then
   `account_sessions`, then `clients`. `reset_password` follows it; signing out everywhere locks the person's business
   sessions before it ends their account sessions (`auth.EVERY_SESSION`); a sign-in locks the stored hash
@@ -220,6 +222,8 @@ that person's platform account (ZIF-99).
   carries no foreign key and no index on purpose: a foreign key check bypasses row-level security, so the constraint
   alone would tell a business whether an account id exists. A pointer left dangling by a platform erasure is correct.
 - Name and contact only: never a postal address.
+- A client row links to an account (`clients.user_id`) only through that person's own proven booking at that
+  business (ZIF-146): `find_or_create`'s REFRESH fills a NULL `user_id`, never relinks, and nothing links by email.
 - Marketing consent (`consents`) is per business. Nothing writes a platform-level consent, and one business's consent
   never grants another anything.
 - `consents` is append-only: one row per grant or withdrawal per purpose, holding the exact text shown and its policy
@@ -305,6 +309,12 @@ migration 0026), not any code path. A race in a route somebody forgets to guard 
   `GRANT UPDATE (column)` only if a route changes it. A settled booking never becomes `pending` again, and an
   `UPDATE` never moves a booking into `awaiting_payment`, which only placement (the `INSERT`) sets (the
   `bookings_status_to_pending` trigger).
+- `bookings.booked_as` (ZIF-146) is the account whose live session proved the booking, written only by `place()`
+  from that session (re-confirmed `FOR KEY SHARE` inside the booking transaction), never from a body; NULL for a guest
+  or a merchant. It is personal data (it maps a booking to a person): no merchant route selects it and no response
+  schema carries it; only the person's own history (`own_bookings`) reads it. The app role may `INSERT` it, never
+  `UPDATE` it. A proven booking whose session ended after step 0 is refused, so nothing is written under an
+  identity that is gone.
 - The public booking POST writes **no** `audit_events` row: the requester is the data subject, and `auth.record`
   stamps their address into a table with no foreign keys that outlives erased people.
 
