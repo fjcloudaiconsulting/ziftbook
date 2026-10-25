@@ -19,6 +19,7 @@ from tests.conftest import (
     People,
     add_user,
     email_of,
+    fresh_address,
     member_id,
     new_client,
     save_setting,
@@ -386,3 +387,22 @@ def test_the_definer_itself_needs_a_session_started_within_a_day(
             text("SELECT * FROM own_bookings(:h, NULL, NULL, 10)"), {"h": auth.hash_token(token)}
         ).all()
     assert rows == []
+
+
+# FENCE (security code review N-4). Wrong impl: a limit per account only: many cheap accounts behind
+# one address would each get 30 walks of every business a minute.
+def test_history_is_rate_limited_per_address_across_accounts(
+    app: FastAPI, migrate_engine: Engine, person: uuid.UUID
+) -> None:
+    first = account_client(app, migrate_engine, person)
+    second = account_client(app, migrate_engine, add_user(migrate_engine, name="Second"))
+    address = fresh_address()
+    first_from = TestClient(app, base_url="https://testserver", client=(address, 1))
+    second_from = TestClient(app, base_url="https://testserver", client=(address, 1))
+    first_from.cookies = first.cookies
+    second_from.cookies = second.cookies
+
+    statuses = [history(first_from).status_code for _ in range(20)]
+    statuses += [history(second_from).status_code for _ in range(11)]
+
+    assert statuses == [200] * 30 + [429]
