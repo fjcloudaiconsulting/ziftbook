@@ -6,6 +6,8 @@ Someone asked to create a ziftbook account with this email, but it already has o
 Sign in here: $sign_in
 Forgot your password? You can reset it from the sign-in page.
 
+If this account has no business yet, a business can't be added to it for now: to set one up, sign up with another email.
+
 If this wasn't you, you can ignore this email.
 
 ziftbook
