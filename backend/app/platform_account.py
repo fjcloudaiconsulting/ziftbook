@@ -134,6 +134,30 @@ def sign_out(request: Request, response: Response) -> None:
     auth.end_browser_sessions(request, response)
 
 
+@router.delete(
+    "/sessions",
+    name="sign_out_everywhere",
+    status_code=204,
+    responses={s: {"model": Error} for s in (401, 415)},
+)
+def sign_out_everywhere(current: CurrentAccount, request: Request, response: Response) -> None:
+    """End every session of this person, of both kinds, on every browser."""
+    with SessionLocal.begin() as session:
+        user_id = session.scalar(text("SELECT end_account_sessions(:h)"), {"h": current.id_hash})
+        if user_id is None:  # signed out while this request was under way
+            raise ApiError(401, "unauthenticated")
+        session.execute(text("DELETE FROM sessions WHERE user_id = :u"), {"u": user_id})
+        auth.record(
+            session,
+            request,
+            "signed_out_everywhere",
+            actor_user_id=user_id,
+            target=f"user:{user_id}",
+        )
+    auth.clear_cookie(response)
+    auth.clear_account_cookie(response)
+
+
 @router.get(
     "",
     name="read",
