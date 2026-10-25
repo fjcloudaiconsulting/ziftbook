@@ -164,16 +164,33 @@ def email_key(action: str, email: str) -> str:
 
 
 GMAIL_DOMAINS = frozenset({"gmail.com", "googlemail.com"})
+# Yahoo's disposable addresses are `base-keyword@` (ZIF-146, security code review N-6).
+YAHOO_DOMAINS = frozenset({"yahoo.com", "ymail.com", "rocketmail.com"})
+# Fastmail delivers `anything@user.fastmail.com` to `user@fastmail.com`.
+FASTMAIL_DOMAINS = frozenset({"fastmail.com", "fastmail.fm"})
 
 
 def address_for_limits(email: str) -> str:
-    """The address as a limit key sees it: lowercase, without a `+tag`, and for Gmail without dots
-    and under one domain, so aliases of one mailbox share a key. Used only to build limit keys;
-    storage and delivery keep the address as entered."""
+    """The address as a limit key sees it, so aliases of one mailbox share a key: lowercase,
+    without a `+tag` (every provider that has one uses `+`), and for the providers whose own rules
+    are known: Gmail without dots and under one domain, Yahoo without a `-keyword`, Fastmail's
+    `anything@user.fastmail.com` as `user@fastmail.com`. Used only to build limit keys; storage and
+    delivery keep the address as entered.
+
+    Deliberately not folded: a catch-all domain (any address at it reaches one inbox, and nothing
+    tells which domains are), other providers' house rules, and a `-` or `.` anywhere else (both are
+    ordinary letters of many real addresses). Turnstile on every link request and the per-address
+    IP budget bound what is left."""
     local, _, domain = email.lower().rpartition("@")
     local = local.split("+", 1)[0]
     if domain in GMAIL_DOMAINS:
         local, domain = local.replace(".", ""), "gmail.com"
+    elif domain in YAHOO_DOMAINS or domain.startswith("yahoo."):
+        local = local.split("-", 1)[0]
+    else:
+        user, _, parent = domain.partition(".")
+        if parent in FASTMAIL_DOMAINS:
+            local, domain = user, parent
     return f"{local}@{domain}"
 
 
