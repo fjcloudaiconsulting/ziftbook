@@ -12,6 +12,24 @@ const eslintConfig = defineConfig([
   {
     rules: {
       "react/jsx-no-literals": ["error", { allowedStrings: ["ziftbook", "·", "…", "–"] }],
+      // ZIF-146: no string ever becomes markup. The booking and account pages share an origin with the
+      // API that answers a signed-in person's details; merchant text renders only as text.
+      "react/no-danger": "error",
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "AssignmentExpression > MemberExpression.left[property.name=/^(innerHTML|outerHTML)$/]",
+          message: "Never assign markup: render text with React (ZIF-146).",
+        },
+        {
+          selector: "CallExpression[callee.property.name=/^(insertAdjacentHTML|createContextualFragment)$/]",
+          message: "Never parse a string as markup (ZIF-146).",
+        },
+        {
+          selector: "CallExpression[callee.object.name='document'][callee.property.name=/^(write|writeln)$/]",
+          message: "Never parse a string as markup (ZIF-146).",
+        },
+      ],
     },
   },
   // Override default ignores of eslint-config-next.
