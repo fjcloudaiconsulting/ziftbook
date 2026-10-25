@@ -55,7 +55,7 @@ def hit(limits: dict[str, int], window: timedelta, *, db: Session | None = None)
 
     With db, the attempt is counted in that session's transaction instead, for a caller that already
     holds a connection: a second one checked out meanwhile can deadlock the pool (see
-    bookings.account). The rows stay locked until the caller's commit, so only keys nobody else
+    bookings.accounts). The rows stay locked until the caller's commit, so only keys nobody else
     contends for belong here (a tenant's own, under its booking lock), and a rollback uncounts the
     attempt. No purge there: the deleted rows would stay locked as long, and every other hit purges.
     """

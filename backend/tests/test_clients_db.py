@@ -118,8 +118,9 @@ def test_find_or_create_survives_two_bookings_of_the_same_address_at_once(
     assert count == 1
 
 
-# 38: FENCE, rewritten (ZIF-51). Wrong impl: add client_note/internal_note/user_id to either
-# DO UPDATE SET list.
+# 38: FENCE, rewritten (ZIF-51; ZIF-146). Wrong impl: add client_note/internal_note to either
+# DO UPDATE SET list, or write user_id there as `excluded.user_id` (relinking a linked row).
+# REFRESH fills a NULL user_id only (coalesce); a linked row keeps its account.
 def test_find_or_create_never_touches_the_notes_or_the_user_id(people: People) -> None:
     email = fresh_email()
     seeded_user = uuid.uuid7()
@@ -154,7 +155,7 @@ def test_find_or_create_never_touches_the_notes_or_the_user_id(people: People) -
     assert row["locale"] == "nl"
     assert row["client_note"] == "Client note"
     assert row["internal_note"] == "Internal note"
-    assert row["user_id"] == seeded_user  # the conflict path never writes user_id (§8.7b)
+    assert row["user_id"] == seeded_user  # a linked row is never relinked (ZIF-146)
 
 
 # ZIF-157 B2 FENCE 3. Wrong impl: KEEP as DO NOTHING (no row comes back: NoResultFound), or any

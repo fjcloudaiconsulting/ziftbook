@@ -220,6 +220,8 @@ that person's platform account (ZIF-99).
   carries no foreign key and no index on purpose: a foreign key check bypasses row-level security, so the constraint
   alone would tell a business whether an account id exists. A pointer left dangling by a platform erasure is correct.
 - Name and contact only: never a postal address.
+- A client row links to an account (`clients.user_id`) only through that person's own proven booking at that
+  business (ZIF-146): `find_or_create`'s REFRESH fills a NULL `user_id`, never relinks, and nothing links by email.
 - Marketing consent (`consents`) is per business. Nothing writes a platform-level consent, and one business's consent
   never grants another anything.
 - `consents` is append-only: one row per grant or withdrawal per purpose, holding the exact text shown and its policy
