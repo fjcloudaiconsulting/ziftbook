@@ -143,11 +143,10 @@ def sign_out(request: Request, response: Response) -> None:
 )
 def sign_out_everywhere(current: CurrentAccount, request: Request, response: Response) -> None:
     """End every session of this person, of both kinds, on every browser."""
+    user_id = current.user_id
     with SessionLocal.begin() as session:
-        user_id = session.scalar(text("SELECT end_account_sessions(:h)"), {"h": current.id_hash})
-        if user_id is None:  # signed out while this request was under way
-            raise ApiError(401, "unauthenticated")
-        session.execute(text("DELETE FROM sessions WHERE user_id = :u"), {"u": user_id})
+        if not auth.end_every_session(session, user_id, current.id_hash):
+            raise ApiError(401, "unauthenticated")  # signed out while this request was under way
         auth.record(
             session,
             request,
