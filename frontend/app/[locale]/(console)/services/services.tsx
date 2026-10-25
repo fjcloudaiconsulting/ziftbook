@@ -460,7 +460,7 @@ function ServiceFormBody(props: Props) {
   const [description, setDescription] = useState<Record<Locale, string>>(() =>
     service ? { ...emptyNameMap(), ...(service.description as NameMap) } : emptyNameMap(),
   );
-  const [price, setPrice] = useState(() => (service ? priceText(service.price.amount_minor, locale) : ""));
+  const [price, setPrice] = useState(() => (service ? priceText(service.price.amount_minor, service.price.currency, locale) : ""));
   const [duration, setDuration] = useState(() => (service ? String(service.duration_minutes) : "45"));
   const [gap, setGap] = useState<"default" | "fixed">(() => (service?.buffer_minutes != null ? "fixed" : "default"));
   const [fixedGap, setFixedGap] = useState(() => (service?.buffer_minutes != null ? String(service.buffer_minutes) : "0"));
@@ -516,7 +516,8 @@ function ServiceFormBody(props: Props) {
     // `await`, so only the first call in a tick ever gets past it.
     if (submitting.current) return;
     const form: ServiceForm = { name, description, price, duration, gap, fixedGap, placeholder };
-    const result = serviceBody(form, parseMoney);
+    // A price is always in the business's currency (services.py PriceIn).
+    const result = serviceBody(form, (text) => parseMoney(text, session.currency));
     if ("errors" in result && result.errors) {
       setErrors(result.errors);
       return;
