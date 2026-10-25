@@ -12,11 +12,12 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app import auth
+from app import auth, clients
+from app.accounts import DisplayNameText
 from app.db import SessionLocal
 from app.errors import ApiError, Error
 
@@ -144,3 +145,59 @@ def read(current: CurrentAccount, response: Response) -> AccountOut:
     typed email."""
     private(response)
     return current.out()
+
+
+class AccountChange(BaseModel):
+    """Only the fields sent change. phone: null clears it; name cannot be cleared."""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+    name: DisplayNameText | None = None
+    phone: clients.Phone | None = None
+
+
+@router.patch(
+    "",
+    name="update",
+    responses={s: {"model": Error} for s in (401, 415, 422)},
+)
+def update(
+    change: AccountChange, current: CurrentAccount, request: Request, response: Response
+) -> AccountOut:
+    """Change the person's own name and phone. The phone is international (+31...): an account has
+    no country to read a local number in. No business's copy changes: each refreshes when the
+    person next books there (copy at booking, ZIF-99), and no membership's display name changes."""
+    private(response)
+    sent = change.model_fields_set
+    if "name" in sent and change.name is None:
+        raise ApiError(422, "invalid_request")
+    phone = current.phone
+    if "phone" in sent:
+        phone = None
+        if change.phone is not None:
+            phone = clients.phone_number(change.phone, None)
+            if phone is None:
+                raise ApiError(422, "phone_invalid")
+    name = change.name if "name" in sent else None
+    changed: dict[str, object] = {
+        key: "changed"
+        for key, before, after in (("name", current.name, name), ("phone", current.phone, phone))
+        if key in sent and before != after
+    }
+    with SessionLocal.begin() as session:
+        row = session.execute(
+            text("SELECT * FROM set_own_profile(:h, :name, :phone)"),
+            {"h": current.id_hash, "name": name, "phone": phone},
+        ).first()
+        if row is None:  # signed out while this request was under way
+            raise ApiError(401, "unauthenticated")
+        if changed:
+            # The field names only, never the values (as clients.update_client).
+            auth.record(
+                session,
+                request,
+                "account_details_changed",
+                actor_user_id=current.user_id,
+                target=f"user:{current.user_id}",
+                details=changed,
+            )
+    return AccountOut(email=row.email, name=row.name, phone=row.phone)
