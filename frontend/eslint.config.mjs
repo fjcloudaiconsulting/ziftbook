@@ -22,8 +22,23 @@ const eslintConfig = defineConfig([
           message: "Never assign markup: render text with React (ZIF-146).",
         },
         {
-          selector: "CallExpression[callee.property.name=/^(insertAdjacentHTML|createContextualFragment)$/]",
+          // el["innerHTML"] = t
+          selector: "AssignmentExpression > MemberExpression.left[computed=true][property.value=/^(innerHTML|outerHTML)$/]",
+          message: "Never assign markup: render text with React (ZIF-146).",
+        },
+        {
+          // Object.assign(el, { innerHTML: t }), and any other object that carries markup by name.
+          selector: "Property[key.name=/^(innerHTML|outerHTML)$/], Property[key.value=/^(innerHTML|outerHTML)$/]",
+          message: "Never assign markup: render text with React (ZIF-146).",
+        },
+        {
+          selector:
+            "CallExpression[callee.property.name=/^(insertAdjacentHTML|createContextualFragment|parseFromString|setHTMLUnsafe|parseHTMLUnsafe)$/]",
           message: "Never parse a string as markup (ZIF-146).",
+        },
+        {
+          selector: "JSXAttribute[name.name=/^src[dD]oc$/]",
+          message: "Never render a string as a document (ZIF-146).",
         },
         {
           selector: "CallExpression[callee.object.name='document'][callee.property.name=/^(write|writeln)$/]",

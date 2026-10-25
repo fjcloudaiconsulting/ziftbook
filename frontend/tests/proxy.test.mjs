@@ -1006,6 +1006,72 @@ describe("page Content-Security-Policy, enforced (ZB-12)", () => {
   });
 });
 
+// ZIF-146 (security B3.1, code review N8): a booking page renders every merchant-controlled field as text. A stub
+// API serves a business whose name, services, descriptions, worker names and cancellation policy are script.
+const PAYLOAD = `<img src=x onerror=alert(1)><script>alert(2)</script>"><a href="javascript:alert(3)">x</a>`;
+
+function stubBookingPage(slug) {
+  const service = (id) => ({
+    id,
+    name: { en: `${PAYLOAD} service`, nl: PAYLOAD, pt: PAYLOAD },
+    description: { en: `${PAYLOAD} description`, nl: PAYLOAD, pt: PAYLOAD },
+    duration_minutes: 30,
+    price: { amount_minor: 3500, currency: "EUR" },
+    workers: [{ id: "00000000-0000-4000-8000-000000000002", display_name: `${PAYLOAD} worker` }],
+    placeholder: "hair",
+    photo: null,
+    payment: false,
+  });
+  const page = {
+    id: "00000000-0000-4000-8000-000000000001",
+    slug,
+    name: `${PAYLOAD} salon`,
+    country: "NL",
+    timezone: "Europe/Amsterdam",
+    language: "en",
+    booking_horizon_days: 60,
+    consent: { en: { policy_version: "2026-10-20/en", marketing_email: "Email me." } },
+    cancellation: { text: `${PAYLOAD} policy`, free_cancellation_hours: 24, reschedule_cutoff_hours: 24, max_reschedules: 2 },
+    services: [service("00000000-0000-4000-8000-000000000003")],
+    auto_confirm: false,
+    payment: null,
+  };
+  return new Promise((resolve) => {
+    const server = createServer((req, res) => {
+      res.setHeader("Content-Type", "application/json");
+      if (req.url === `/api/public/booking-pages/${slug}`) res.end(JSON.stringify(page));
+      else res.end(JSON.stringify({}));
+    }).listen(0, "127.0.0.1", () => resolve(server));
+  });
+}
+
+describe("a booking page renders merchant text as text (ZIF-146)", () => {
+  let api, web;
+  const port = 3230;
+  const slug = "xss-salon";
+  before(async () => {
+    api = await stubBookingPage(slug);
+    web = await startWeb(`http://127.0.0.1:${api.address().port}`, port);
+  });
+  after(async () => {
+    await stop(web);
+    api.close();
+  });
+
+  test("fence: script in every merchant field arrives escaped, never as markup or a javascript: link", async () => {
+    // Wrong implementation killed: any merchant field rendered through dangerouslySetInnerHTML, or put into an
+    // href: the payload would arrive as a live <img onerror>, <script> or javascript: link.
+    const response = await fetch(`http://127.0.0.1:${port}/en/${slug}`);
+    assert.equal(response.status, 200);
+    const html = await response.text();
+    assert.ok(html.includes("salon"), "the page rendered the business");
+    assert.ok(html.includes("&lt;img src=x onerror=alert(1)&gt;"), "the payload is there, as text");
+    assert.ok(!html.includes("<img src=x onerror"), "no live image handler");
+    assert.ok(!html.includes("<script>alert(2)"), "no live script");
+    assert.doesNotMatch(html, /\b(?:href|src|action)="\s*javascript:/i, "no javascript: link");
+  });
+});
+
 describe("the personal pages' emergency switch and violation reports (ZIF-146)", () => {
   let api, web;
   const port = 3231;
