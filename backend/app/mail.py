@@ -23,7 +23,7 @@ from opentelemetry.trace import SpanKind
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app import business_settings, limits, passwords, tracing
+from app import business_settings, currencies, limits, passwords, tracing
 from app.business_settings import Locale
 from app.config import MailSettings
 from app.db import SessionLocal, tenant_context
@@ -423,20 +423,29 @@ PAYMENT_LINES = {
         "pt": "A taxa de processamento do pagamento ($amount) não é reembolsada.",
     },
 }
-SYMBOLS = {"EUR": "€", "GBP": "£", "USD": "$"}
+SYMBOLS = {"BRL": "R$", "EUR": "€", "GBP": "£", "USD": "$"}
 
 
 def _money(amount_minor: int, currency: str, locale: str) -> str:
-    """The frontend's Intl.NumberFormat currency format (frontend/lib/money.ts) for the three
-    currencies in SYMBOLS, two decimals. shortcut: use Babel if a zero-decimal currency comes."""
+    """The web app's money format (frontend/lib/money.ts: Intl.NumberFormat, currency style, narrow
+    symbol) for en, nl and pt: the business's currency in the reader's number format, with as many
+    decimals as the currency has minor units (app/currencies.py; KeyError for one not listed). A
+    negative amount carries its minus where Intl puts it: before the sign in en and pt, before the
+    digits in nl."""
+    units = currencies.minor_units(currency)
+    minus = "-" if amount_minor < 0 else ""
+    whole, part = divmod(abs(amount_minor), 10**units)
+    fraction = f"{part:0{units}d}" if units else ""
     symbol = SYMBOLS.get(currency)
-    whole, cents = f"{amount_minor // 100:,}", f"{amount_minor % 100:02d}"
     if locale == "en":
-        return f"{symbol}{whole}.{cents}" if symbol else f"{whole}.{cents} {currency}"
-    digits = f"{whole.replace(',', '.')},{cents}"
-    if symbol == "$":
-        symbol = "US$"  # Intl tells the dollars apart outside en
-    return f"{symbol}\u00a0{digits}" if symbol else f"{digits} {currency}"
+        number = f"{whole:,}" + (f".{fraction}" if units else "")
+        # Intl: a symbol touches the amount; a code stands in its place, then a no-break space.
+        return f"{minus}{symbol}{number}" if symbol else f"{minus}{currency}\u00a0{number}"
+    number = f"{whole:,}".replace(",", ".") + (f",{fraction}" if units else "")
+    # The narrow symbol, as the web shows it: "$", never "US$" (ZIF-102, owner's ruling).
+    if locale == "nl":
+        return f"{symbol or currency}\u00a0{minus}{number}"
+    return f"{minus}{symbol or currency}\u00a0{number}"
 
 
 def _line(key: str, locale: str, amount_minor: int, currency: str) -> str:
