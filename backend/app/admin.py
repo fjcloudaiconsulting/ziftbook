@@ -211,6 +211,11 @@ def main(argv: list[str] | None = None) -> int:
                     ),
                     {"u": user_id},
                 )
+                # ZIF-146: an admin keeps no account session, which needs only a password: the one a
+                # person signed in to before becoming an admin ends with the grant.
+                session.execute(
+                    text("DELETE FROM account_sessions WHERE user_id = :u"), {"u": user_id}
+                )
             else:
                 changed = session.scalar(
                     text("DELETE FROM platform_admins WHERE user_id = :u RETURNING user_id"),

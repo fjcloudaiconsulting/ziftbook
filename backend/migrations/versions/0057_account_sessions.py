@@ -11,7 +11,9 @@ every 5 minutes, "fresh" for 24 hours), so the caller cannot choose one.
   (the answer is 'stale') or waits and then deletes the new session. A platform admin gets none
   ('admin'): a password alone must not give an admin identity a session that can rename them.
 - resolve_account_session, end_account_session and set_own_profile are keyed by the session hash
-  alone: none reads or changes a user by id.
+  alone: none reads or changes a user by id. resolve_account_session and set_own_profile answer
+  nothing for a platform admin's session (one made before the person was granted admin; the CLI's
+  grant also ends them).
 - end_account_sessions ends every account session of the person holding a live account or business
   session hash (sign out everywhere).
 
@@ -48,6 +50,10 @@ SEARCH_PATH = "SET search_path = pg_catalog, public, pg_temp"
 # every function below, so the lifetimes live in one place.
 LIVE = """s.id_hash = p_id_hash AND s.expires_at > now()
         AND s.last_seen_at > now() - interval '7 days'"""
+# LIVE, and never a platform admin's (code review N-1): a person made an admin after signing in
+# keeps no password-only session that reads or changes the admin identity. `grant` also ends them.
+USABLE = LIVE + """
+        AND NOT EXISTS (SELECT FROM platform_admins a WHERE a.user_id = s.user_id)"""
 
 FUNCTIONS = {
     "start_account_session(uuid,text,bytea,inet,text)": f"""
@@ -80,7 +86,7 @@ BEGIN
   RETURN QUERY
     WITH live AS (
       SELECT s.id_hash, s.user_id, s.started_at, s.last_seen_at FROM account_sessions s
-      WHERE {LIVE}
+      WHERE {USABLE}
     ), touched AS (
       UPDATE account_sessions t SET last_seen_at = now() FROM live l
       WHERE t.id_hash = l.id_hash AND l.last_seen_at < now() - interval '5 minutes'
@@ -125,7 +131,7 @@ BEGIN
     UPDATE users u SET name = coalesce(p_name, u.name),
                        phone = CASE WHEN p_set_phone THEN p_phone ELSE u.phone END
     FROM account_sessions s
-    WHERE {LIVE} AND u.id = s.user_id
+    WHERE {USABLE} AND u.id = s.user_id
     RETURNING new.email, new.name, new.phone, old.name, old.phone;
 END $$""",
 }
