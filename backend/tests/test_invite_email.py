@@ -287,9 +287,9 @@ def invite_locale(tenant_id: uuid.UUID, invite_id: uuid.UUID) -> str | None:
     return found
 
 
-# ZIF-102 4: FENCE. Wrong impl: a body that reads invites without the caller's business (an
-# explicit tenant id argument, or RLS sidestepped): business A would learn the language of an
-# address B invited.
+# ZIF-102 4: guard. Called in A, an invite of B gives nothing. Row-level security on invites is
+# what holds this today (FORCE binds the definer, its owner); the explicit tenant filter is defence
+# in depth, fenced on its own by the next test.
 def test_invite_locale_reads_only_this_business_s_invites(
     people: People, migrate_engine: Engine
 ) -> None:
@@ -299,6 +299,26 @@ def test_invite_locale_reads_only_this_business_s_invites(
 
     assert invite_locale(people.b, invite_id) == "pt"  # positive control
     assert invite_locale(people.a, invite_id) is None
+
+
+# ZIF-102 4b: FENCE. Wrong impl: invite_locale without its explicit tenant filter, relying on the
+# invites policy alone. A second, wider policy on invites (as memberships has sign_in) would then
+# hand A the language of an address B invited. The probe policy below lives only inside this
+# rolled-back transaction, run as the function's owner, whom FORCE subjects to both policies.
+def test_invite_locale_filters_the_business_itself(people: People, migrate_engine: Engine) -> None:
+    email = fresh_email()
+    add_user(migrate_engine, email=email, locale="pt")
+    invite_id = pending(people.b, email)
+    with migrate_engine.connect() as conn, conn.begin() as transaction:
+        conn.execute(text("CREATE POLICY zif102_probe ON invites FOR SELECT USING (true)"))
+        conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(people.a)})
+        # Positive control: the probe policy does show A the invite of B.
+        assert (
+            conn.scalar(text("SELECT count(*) FROM invites WHERE id = :i"), {"i": invite_id}) == 1
+        )
+        found = conn.scalar(text("SELECT invite_locale(:i)"), {"i": invite_id})
+        transaction.rollback()
+    assert found is None
 
 
 # ZIF-102 5: FENCE. Wrong impl: GRANT EXECUTE ON FUNCTION invite_locale TO ziftbook_app. Only the
