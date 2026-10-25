@@ -2150,3 +2150,13 @@ def test_0058_round_trips_booking_provenance(
     with migrate_engine.connect() as conn:
         assert tuple(conn.execute(PROVENANCE_OBJECTS).one()) == (True,) * 4
         assert tuple(conn.execute(BOOKED_AS_PRIVILEGES).one()) == (True, False)
+
+
+# ZIF-146 guard (code review N-1, N-2): the booking re-check and the history (0058) apply exactly
+# the account-session rules 0057's resolver does: never an admin's, and a console-started one only
+# while its business session lives. A drifted copy would let a booking prove what the page refuses.
+def test_0058_applies_0057s_account_session_rules() -> None:
+    assert (
+        migration("0058_booking_provenance.py").USABLE
+        == migration("0057_account_sessions.py").USABLE
+    )
