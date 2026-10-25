@@ -269,9 +269,9 @@ def connect(body: ConnectIn, seen: Owner, request: Request, response: Response) 
         settles = STRIPE_CURRENCIES.get(seen.country, frozenset())
         if not settles:
             raise ApiError(409, "payments_unavailable_country")
-        # ZIF-102: never an account in a currency its country does not settle; it would then hold
-        # the business's currency for good (0062).
-        if seen.currency not in settles:
+        # ZIF-102: never create an account in a currency its country does not settle; it would then
+        # hold the business's currency for good (0062). An account already held is still onboarded.
+        if seen.account is None and seen.currency not in settles:
             raise ApiError(409, "payments_unavailable_currency")
         if _limited(seen, "write"):
             raise ApiError(429, "rate_limited")
