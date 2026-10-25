@@ -285,10 +285,12 @@ def connect(body: ConnectIn, seen: Owner, request: Request, response: Response) 
                 )
                 account = made.id
                 # The row is written before anything else can fail, so Stripe's events for the
-                # account always find their business. A double click returns the same account
-                # through the idempotency key, so a conflict here is the same account twice.
-                # With the currency the account was made in: the foreign key to tenants (0062)
-                # refuses it if the business's currency changed while Stripe was called.
+                # account always find their business. With the currency the account was made in:
+                # the foreign key to tenants (0062) refuses it if the business's currency changed
+                # while Stripe was called. A conflict means another request stored the business's
+                # account first: the same one for a double click (one idempotency key), another
+                # for a stale connect or a click split across releases, so the stored one is read
+                # back and onboarded, never the one made here.
                 try:
                     with tenant_context(seen.tenant_id) as db:
                         created = (
@@ -316,6 +318,14 @@ def connect(body: ConnectIn, seen: Owner, request: Request, response: Response) 
                                 actor_user_id=seen.user_id,
                                 target=f"payment_account:{account}",
                             )
+                        else:
+                            made_here = account
+                            account = db.execute(ACCOUNT).one().stripe_account_id
+                            if account != made_here:
+                                logger.info(
+                                    "payment account already held",
+                                    extra={"account": account, "unused": made_here},
+                                )
                 except IntegrityError as error:
                     if (
                         isinstance(error.orig, ForeignKeyViolation)
