@@ -13,7 +13,7 @@ import { ESLint } from "eslint";
 const WEB_DIR = new URL("..", import.meta.url).pathname;
 const LOCALE_DIR = join(WEB_DIR, "app", "[locale]");
 // The pages personalPage() enforces: a business's pages ([slug]), the manage page and the account pages.
-const PERSONAL_DIRS = ["[slug]", "booking", "account"].map((d) => join(LOCALE_DIR, d)).filter(existsSync);
+const PERSONAL_DIRS = ["[slug]", "booking", "invite", "account"].map((d) => join(LOCALE_DIR, d)).filter(existsSync);
 
 function sources(dir) {
   return readdirSync(dir).flatMap((name) => {

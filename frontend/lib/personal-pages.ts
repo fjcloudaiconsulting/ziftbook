@@ -2,9 +2,10 @@
 // keeps a soft navigation from rendering one of them inside a document whose policy only reports. Pure: no
 // environment, so client components import it too.
 
-/** The top-level routes under app/[locale] that show or fetch a person's own data: the account pages
- * (ZIF-146) and a booking's manage page (`booking`). */
-export const PERSONAL_ROUTES: ReadonlySet<string> = new Set(["account", "booking"]);
+/** The top-level routes under app/[locale] that show or fetch a person's own data, or render a business's text to
+ * someone who may hold an account session: the account pages (ZIF-146), a booking's manage page (`booking`) and
+ * an invite (`invite`, the business's name, to a person who may already have an account). */
+export const PERSONAL_ROUTES: ReadonlySet<string> = new Set(["account", "booking", "invite"]);
 
 /** Every other top-level route under app/[locale]: the console, the admin, sign-in and the legal pages.
  * Any first segment in neither set is a business's slug: its booking page, its booking and checkout
@@ -15,7 +16,6 @@ export const OTHER_ROUTES: ReadonlySet<string> = new Set([
   "calendar",
   "clients",
   "forgot-password",
-  "invite",
   "my-hours",
   "opening-hours",
   "privacy",

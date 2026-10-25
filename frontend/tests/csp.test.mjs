@@ -149,7 +149,12 @@ describe("which pages always enforce the policy", () => {
 });
 
 
-describe("the personal pages' policy: switch and reporting (ZIF-146 code reviews)", () => {
+describe("the personal pages' policy: switch, reporting and soft navigation (ZIF-146 code reviews)", () => {
+  test("an invite is a personal page: it shows a business's text to someone who may hold an account session", () => {
+    assert.equal(personalPage("/en/invite", LOCALES), true);
+    assert.equal(cspHeaderFor("/en/invite", LOCALES, false), "Content-Security-Policy");
+  });
+
   test("fence: the emergency switch sends the personal pages' policy report-only again, and nothing else changes", () => {
     // Wrong implementation killed: no switch, so a policy that blocks a payment can only be undone by a redeploy.
     assert.equal(cspHeaderFor("/en/salon-ana/book", LOCALES, true), "Content-Security-Policy-Report-Only");

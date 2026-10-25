@@ -1025,7 +1025,7 @@ describe("the personal pages' emergency switch and violation reports (ZIF-146)",
 
   test("fence: ZIF_CSP_PERSONAL_REPORT_ONLY=true puts the booking pages back on the report-only policy", async () => {
     // Wrong implementation killed: a switch that is read nowhere, so ops cannot undo a blocking policy without a build.
-    for (const path of ["/en/salon-ana", "/en/booking"]) {
+    for (const path of ["/en/salon-ana", "/en/booking", "/en/invite"]) {
       assert.deepEqual(await rawHeaders(port, path, "content-security-policy"), ["frame-ancestors 'none'"], path);
       const reportOnly = await rawHeaders(port, path, "content-security-policy-report-only");
       assert.equal(reportOnly.length, 1, path);
