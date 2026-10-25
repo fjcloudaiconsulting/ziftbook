@@ -1706,6 +1706,11 @@ def test_0048_round_trips_the_app_roles_write_privileges(
         command.upgrade(cfg, "head")
     with migrate_engine.connect() as conn:
         assert [tuple(r) for r in conn.execute(WRITE_GRANTS)] == WRITE_GRANTS_AT_HEAD
+        # Unchanged since 0048 (code review N10: kept at head too).
+        assert conn.execute(USERS_INSERT_POLICY).all() == []
+        assert [tuple(r) for r in conn.execute(FUNCTION_DEFAULTS)] == [
+            (0, "{ziftbook_migrate=X/ziftbook_migrate}")
+        ]
 
 
 # ZB-08 (0049): the roles holding EXECUTE on mint_email_token in their own right.
