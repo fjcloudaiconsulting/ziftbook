@@ -4,21 +4,50 @@
 --   psql -v ON_ERROR_STOP=1 -d <app database> -f backend/migrations/bootstrap.sql
 -- Connect to the application's database (compose: ziftbook): the database grants and the TEMPORARY
 -- revoke below apply to the database psql is connected to.
--- Requires ZIF_MIGRATE_PASSWORD and ZIF_APP_PASSWORD in the environment. If either is unset, the
--- password statement fails and the run stops non-zero (a role created without a password cannot log in).
--- ZIF_WORKER_PASSWORD may still be unset while a deployment's worker connects as ziftbook_app: the run
--- warns and leaves ziftbook_worker's password as it is, so a role created without one cannot log in yet.
--- Empty counts as unset (a PASSWORD '' would clear the role's password). Set it before the release
--- that takes mint_email_token from ziftbook_app (the contract migration, ZB-08).
+-- Requires ZIF_MIGRATE_PASSWORD, ZIF_APP_PASSWORD and ZIF_WORKER_PASSWORD in the environment. All three are
+-- checked before anything is created or changed: if any is unset or empty (a PASSWORD '' would clear the
+-- role's password), the run stops non-zero, even without ON_ERROR_STOP, and changes nothing. Set the
+-- password and run it again. The worker must connect as ziftbook_worker: only it may mint email tokens
+-- (0051) and set invite tokens (0053), so a worker still on ziftbook_app fails every sign-up, reset and
+-- invite email (ZB-08).
 --
 -- ziftbook_migrate owns the schema and runs Alembic. ziftbook_app owns nothing and gets DML only, through
 -- default privileges set in migration #1. Owners bypass row-level security, so the app must never own tables.
 -- ziftbook_worker is the worker's: every privilege of ziftbook_app (CONNECT included) plus what only
--- background jobs may do, granted by migrations (0049: mint_email_token). It owns nothing either.
+-- background jobs may do, granted by migrations (0049: mint_email_token) or left to it by a trigger (0053: an
+-- invite's token_hash). It owns nothing either.
 
 \getenv migrate_password ZIF_MIGRATE_PASSWORD
 \getenv app_password ZIF_APP_PASSWORD
 \getenv worker_password ZIF_WORKER_PASSWORD
+
+-- Before any CREATE or ALTER, so a run this stops leaves every role as it was. Empty counts as unset. Each
+-- password starts as missing, and only a set, non-empty value clears that.
+\set migrate_password_missing true
+\set app_password_missing true
+\set worker_password_missing true
+\if :{?migrate_password}
+SELECT :'migrate_password' = '' AS migrate_password_missing \gset
+\endif
+\if :{?app_password}
+SELECT :'app_password' = '' AS app_password_missing \gset
+\endif
+\if :{?worker_password}
+SELECT :'worker_password' = '' AS worker_password_missing \gset
+\endif
+-- Each stops non-zero even when the caller did not set ON_ERROR_STOP.
+\if :migrate_password_missing
+\set ON_ERROR_STOP on
+DO $$ BEGIN RAISE EXCEPTION 'ZIF_MIGRATE_PASSWORD is unset or empty: ziftbook_migrate needs a password'; END $$;
+\endif
+\if :app_password_missing
+\set ON_ERROR_STOP on
+DO $$ BEGIN RAISE EXCEPTION 'ZIF_APP_PASSWORD is unset or empty: ziftbook_app needs a password'; END $$;
+\endif
+\if :worker_password_missing
+\set ON_ERROR_STOP on
+DO $$ BEGIN RAISE EXCEPTION 'ZIF_WORKER_PASSWORD is unset or empty: ziftbook_worker needs a password'; END $$;
+\endif
 
 SELECT 'CREATE ROLE ziftbook_migrate LOGIN'
 WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'ziftbook_migrate') \gexec
@@ -31,15 +60,7 @@ WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'ziftbook_worker') \gexec
 
 ALTER ROLE ziftbook_migrate PASSWORD :'migrate_password';
 ALTER ROLE ziftbook_app PASSWORD :'app_password';
-\set worker_password_set false
-\if :{?worker_password}
-SELECT :'worker_password' <> '' AS worker_password_set \gset
-\endif
-\if :worker_password_set
 ALTER ROLE ziftbook_worker PASSWORD :'worker_password';
-\else
-\warn 'ZIF_WORKER_PASSWORD is unset or empty: ziftbook_worker''s password is unchanged. Until it has one, it cannot log in and the worker must keep ziftbook_app''s URL.'
-\endif
 
 GRANT CONNECT, CREATE ON DATABASE :"DBNAME" TO ziftbook_migrate;
 GRANT CONNECT ON DATABASE :"DBNAME" TO ziftbook_app;

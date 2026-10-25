@@ -526,20 +526,42 @@ def app_engine(migrated: None) -> Iterator[Engine]:
     engine.dispose()
 
 
-@pytest.fixture
-def worker_engine(migrated: None) -> Iterator[Engine]:
-    """ziftbook_worker, what the worker process connects as (ZB-08), on the app role's database.
+@contextmanager
+def engine_as_worker(url: URL) -> Iterator[Engine]:
+    """A NullPool engine on url's database as ziftbook_worker, what the worker process connects as
+    (ZB-08), disposed on exit.
 
     With ZIF_WORKER_PASSWORD, the password bootstrap.sql gave the role, or when it is unset or
-    empty the local dev and CI one (docker-compose.yaml and ci.yml). Derived from
-    ZIF_DATABASE_URL, which already names this xdist worker's database, so it lands on no other."""
+    empty the local dev and CI one (docker-compose.yaml and ci.yml)."""
     password = os.environ.get("ZIF_WORKER_PASSWORD") or "ziftbook_worker"
-    url = make_url(os.environ["ZIF_DATABASE_URL"]).set(
-        username="ziftbook_worker", password=password
+    engine = create_engine(
+        url.set(username="ziftbook_worker", password=password), poolclass=NullPool
     )
-    engine = create_engine(url, poolclass=NullPool)
-    yield engine
-    engine.dispose()
+    try:
+        yield engine
+    finally:
+        engine.dispose()
+
+
+@pytest.fixture
+def worker_engine(migrated: None) -> Iterator[Engine]:
+    """ziftbook_worker on the app role's database. Derived from ZIF_DATABASE_URL, which already
+    names this xdist worker's database, so it lands on no other."""
+    with engine_as_worker(make_url(os.environ["ZIF_DATABASE_URL"])) as engine:
+        yield engine
+
+
+@contextmanager
+def jobs_as_the_worker() -> Iterator[None]:
+    """SessionLocal bound to ziftbook_worker on the database it is bound to now, as the worker
+    process runs jobs (only it may mint email tokens, ZB-08); the binding is restored after."""
+    bind = SessionLocal.kw["bind"]
+    with engine_as_worker(bind.url) as engine:
+        SessionLocal.configure(bind=engine)
+        try:
+            yield
+        finally:
+            SessionLocal.configure(bind=bind)
 
 
 PASSWORD = "lavender-harbour-19"
@@ -642,12 +664,14 @@ def email_of(user_id: uuid.UUID) -> str:
 
 
 def issue_link(app_engine: Engine, purpose: str, email: str, locale: str = "en") -> str | None:
-    """A request plus its email job: the token a link would carry, or None if nothing was sent."""
+    """A request (the API's, as the app role) plus its email job (the worker's, the only role that
+    mints, ZB-08): the token a link would carry, or None if nothing was sent."""
     token = secrets.token_urlsafe(32)
     with app_engine.begin() as conn:
         token_id = conn.scalar(
             text("SELECT start_email_token(:p, :e, :l)"), {"p": purpose, "e": email, "l": locale}
         )
+    with engine_as_worker(app_engine.url) as worker, worker.begin() as conn:
         minted = conn.execute(
             text("SELECT * FROM mint_email_token(:id, :h)"),
             {"id": token_id, "h": hashlib.sha256(token.encode()).digest()},
@@ -681,13 +705,14 @@ def jobs_for(migrate_engine: Engine, email: str) -> int:
 
 
 def mailed(email: str) -> dict[str, Any]:
-    """Runs the queued jobs, then returns the one message sent to email."""
+    """Runs the queued jobs as the worker does, then returns the one message sent to email."""
 
     async def run_until_idle() -> None:
         while await run_once(KINDS):
             pass
 
-    asyncio.run(run_until_idle())
+    with jobs_as_the_worker():
+        asyncio.run(run_until_idle())
     (sent,) = sent_to(email)
     return sent
 
@@ -735,6 +760,14 @@ def migrate_tenant_context(migrate_engine: Engine, tenant_id: object) -> Iterato
     with migrate_engine.begin() as conn:
         conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(tenant_id)})
         yield conn
+
+
+def delete_memberships(conn: Connection, tenant_ids: Iterable[object]) -> None:
+    """The app role has no DELETE on memberships (ZB-10); fixtures remove them as the migrate role,
+    one business at a time (forced row-level security)."""
+    for tenant_id in tenant_ids:
+        conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(tenant_id)})
+        conn.execute(text("DELETE FROM memberships"))
 
 
 def delete_payment_accounts(conn: Connection, tenant_ids: Iterable[object]) -> None:
@@ -831,11 +864,17 @@ def add_password(migrate_engine: Engine, user_id: uuid.UUID, password: str) -> N
 
 
 def add_membership(tenant_id: uuid.UUID, user_id: uuid.UUID, role: str = "worker") -> None:
-    with tenant_context(tenant_id) as session:
-        session.execute(
-            text("INSERT INTO memberships (tenant_id, user_id, role) VALUES (:t, :u, :r)"),
-            {"t": tenant_id, "u": user_id, "r": role},
-        )
+    # As the migrate role: the app role inserts no membership (ZB-10); sign-up and invites do,
+    # through SECURITY DEFINER functions.
+    migrate = create_engine(os.environ["ZIF_MIGRATE_DATABASE_URL"], poolclass=NullPool)
+    try:
+        with migrate_tenant_context(migrate, tenant_id) as conn:
+            conn.execute(
+                text("INSERT INTO memberships (tenant_id, user_id, role) VALUES (:t, :u, :r)"),
+                {"t": tenant_id, "u": user_id, "r": role},
+            )
+    finally:
+        migrate.dispose()
 
 
 def member_id(tenant_id: uuid.UUID, user_id: uuid.UUID) -> uuid.UUID:
@@ -892,9 +931,9 @@ def people(migrate_engine: Engine, bound: None) -> Iterator[People]:
             session.execute(text("DELETE FROM opening_hours"))
             session.execute(text("DELETE FROM settings"))  # they reference the business
             session.execute(text("DELETE FROM invites"))
-            session.execute(text("DELETE FROM memberships"))
-    # The app role can't delete users; the test cleans up as the migrate role.
+    # The app role can delete neither memberships nor users; the test cleans up as the migrate role.
     with migrate_engine.begin() as conn:
+        delete_memberships(conn, (a, b))
         conn.execute(
             text("DELETE FROM password_credentials WHERE user_id IN (:x, :y, :z)"),
             {"x": people.only_a, "y": people.only_b, "z": people.both},

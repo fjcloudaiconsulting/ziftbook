@@ -196,14 +196,16 @@ def test_being_a_proven_client_does_not_widen_what_a_can_read(people: People, wo
     assert (direct, joined) == ([], [])
 
 
-# Read from the database on main (ZIF-99): a tenant sees the users that hold a membership in it.
-# No INSERT policy since ZB-10 (0048): the app role creates no user itself.
+# Read from the database on main (ZIF-99): a tenant sees the users that hold a live membership in
+# it, not a removed one (ZB-32, 0055). No INSERT policy since ZB-10 (0048): the app role creates no
+# user itself.
 USERS_POLICIES = [
     [
         "tenant_members",
         "SELECT",
         "{public}",
-        "(id IN ( SELECT memberships.user_id\n   FROM memberships))",
+        "(id IN ( SELECT memberships.user_id\n   FROM memberships\n"
+        "  WHERE (memberships.role <> 'removed'::text)))",
         None,
     ],
 ]
@@ -219,7 +221,6 @@ DEFINERS = [
     "public.confirm_totp_enrolment(p_id_hash bytea, p_proof bytea, p_step bigint, p_code_proofs bytea[])",  # noqa: E501
     "public.email_token_live(p_token_hash bytea, p_purpose text)",
     "public.end_admin_session(p_id_hash bytea)",
-    "public.mint_email_token(p_id uuid, p_token_hash bytea)",
     "public.needs_setup()",
     "public.pass_second_factor(p_id_hash bytea, p_proof bytea, p_step bigint)",
     "public.password_unchanged(p_user_id uuid, p_hash text)",

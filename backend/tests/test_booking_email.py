@@ -30,6 +30,7 @@ from tests.conftest import (
     add_user,
     end_membership,
     fresh_email,
+    jobs_as_the_worker,
     member_id,
     migrate_tenant_context,
     new_client,
@@ -113,11 +114,14 @@ def raw_for(email: str) -> str:
 
 
 def run_jobs() -> None:
+    """Runs the queued jobs as the worker does, as ziftbook_worker (ZB-08)."""
+
     async def run_until_idle() -> None:
         while await run_once(KINDS):
             pass
 
-    asyncio.run(run_until_idle())
+    with jobs_as_the_worker():
+        asyncio.run(run_until_idle())
 
 
 def run_send_booking(tenant_id: uuid.UUID, booking_id: str, template: str, **extra: Any) -> Job:

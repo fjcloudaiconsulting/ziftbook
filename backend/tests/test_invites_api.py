@@ -26,6 +26,7 @@ from tests.conftest import (
     failing,
     fresh_address,
     fresh_email,
+    jobs_as_the_worker,
     member_id,
     new_client,
     points,
@@ -51,7 +52,8 @@ def mint(monkeypatch: pytest.MonkeyPatch, tenant_id: uuid.UUID, invite_id: uuid.
         captured["body"] = body
 
     monkeypatch.setattr(mail, "deliver", spy)
-    mail.send_invite(Job(uuid4(), "email.invite", tenant_id, {"invite_id": str(invite_id)}))
+    with jobs_as_the_worker():  # only the worker issues invite tokens (ZB-08)
+        mail.send_invite(Job(uuid4(), "email.invite", tenant_id, {"invite_id": str(invite_id)}))
     return link_in(captured["body"]).split("#", 1)[1]
 
 

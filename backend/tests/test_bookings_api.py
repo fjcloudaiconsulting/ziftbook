@@ -46,6 +46,7 @@ from tests.conftest import (
     fresh_address,
     fresh_email,
     member_id,
+    migrate_tenant_context,
     new_client,
     points,
     put_settings,
@@ -139,15 +140,21 @@ def sign_in_as(client: TestClient, tenant_id: object, email: str) -> None:
                 ),
                 {"t": str(tenant_id)},
             )
+        # As the migrate role: the app role inserts no membership (ZB-10).
+        migrate = create_engine(os.environ["ZIF_MIGRATE_DATABASE_URL"], poolclass=NullPool)
+        try:
+            with migrate_tenant_context(migrate, home) as conn:
+                conn.execute(
+                    text(
+                        "INSERT INTO memberships (tenant_id, user_id, role) "
+                        "VALUES (current_setting('app.tenant_id')::uuid, :u, 'worker') "
+                        "ON CONFLICT DO NOTHING"
+                    ),
+                    {"u": user_id},
+                )
+        finally:
+            migrate.dispose()
         with tenant_context(home) as session:
-            session.execute(
-                text(
-                    "INSERT INTO memberships (tenant_id, user_id, role) "
-                    "VALUES (current_setting('app.tenant_id')::uuid, :u, 'worker') "
-                    "ON CONFLICT DO NOTHING"
-                ),
-                {"u": user_id},
-            )
             token = auth.create(session, user_id, ip=None, user_agent=None)
     client.cookies.set(auth.COOKIE, token)
     HELPER_SESSIONS[client] = email
@@ -459,8 +466,9 @@ def test_three_concurrent_bookers_and_three_free_workers_all_get_a_booking(
         # the migrate role, exactly as the `people` fixture's own teardown does.
         with migrate_engine.begin() as conn:
             delete_bookings(conn, (people.a,))
-        with tenant_context(people.a) as session:
-            session.execute(text("DELETE FROM memberships WHERE user_id = :u"), {"u": third_user})
+        # The app role has no DELETE on memberships (ZB-10).
+        with migrate_tenant_context(migrate_engine, people.a) as conn:
+            conn.execute(text("DELETE FROM memberships WHERE user_id = :u"), {"u": third_user})
         with migrate_engine.begin() as conn:
             conn.execute(text("DELETE FROM users WHERE id = :u"), {"u": third_user})
 

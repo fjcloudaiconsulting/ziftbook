@@ -10,7 +10,14 @@ from sqlalchemy import Engine, text
 from sqlalchemy.exc import DBAPIError, IntegrityError
 
 from app.db import tenant_context
-from tests.conftest import People, add_membership, add_user, set_role, wait_until_blocked
+from tests.conftest import (
+    People,
+    add_membership,
+    add_user,
+    migrate_tenant_context,
+    set_role,
+    wait_until_blocked,
+)
 
 
 @pytest.mark.parametrize(
@@ -21,8 +28,15 @@ from tests.conftest import People, add_membership, add_user, set_role, wait_unti
         "UPDATE memberships SET role = 'removed', removed_at = now() WHERE user_id = :u",
     ],
 )
-def test_changing_the_only_owner_is_refused(people: People, statement: str) -> None:
-    with pytest.raises(IntegrityError) as error, tenant_context(people.a) as session:
+def test_changing_the_only_owner_is_refused(
+    people: People, migrate_engine: Engine, statement: str
+) -> None:
+    # The app role has no DELETE on memberships (ZB-10): a DELETE comes only from an operator.
+    deleting = statement.startswith("DELETE")
+    context = (
+        migrate_tenant_context(migrate_engine, people.a) if deleting else tenant_context(people.a)
+    )
+    with pytest.raises(IntegrityError) as error, context as session:
         session.execute(text(statement), {"u": people.both})
 
     assert isinstance(error.value.orig, CheckViolation)
@@ -103,13 +117,14 @@ def test_the_function_and_privileges_the_trigger_needs(
 
 
 def test_the_trigger_only_watches_an_owner_losing_the_role(
-    people: People, app_engine: Engine
+    people: People, app_engine: Engine, migrate_engine: Engine
 ) -> None:
     # A worker leaving an ownerless business: the trigger doesn't fire (WHEN OLD.role = 'owner').
     # Kills a trigger without the WHEN condition: it would fire unconditionally, see b left with
-    # one member and no owner, and wrongly refuse.
-    with tenant_context(people.b) as session:
-        session.execute(text("DELETE FROM memberships WHERE user_id = :u"), {"u": people.only_b})
+    # one member and no owner, and wrongly refuse. As the migrate role: the app role has no DELETE
+    # on memberships (ZB-10).
+    with migrate_tenant_context(migrate_engine, people.b) as conn:
+        conn.execute(text("DELETE FROM memberships WHERE user_id = :u"), {"u": people.only_b})
 
     # An owner demoted while another owner remains.
     set_role(people.a, people.only_a, "owner")
@@ -143,15 +158,15 @@ def test_the_trigger_only_watches_an_owner_losing_the_role(
 def test_tearing_down_a_whole_business_in_one_statement_is_not_a_last_owner_violation(
     migrate_engine: Engine, bound: None
 ) -> None:
-    # As the migrate role: the app role creates no business (ZB-10).
+    # As the migrate role: the app role creates no business and deletes no membership (ZB-10).
     with migrate_engine.begin() as conn:
         tenant_id = conn.scalar(text("INSERT INTO tenants (name) VALUES ('teardown') RETURNING id"))
     owner_id, worker_id = add_user(migrate_engine), add_user(migrate_engine)
     add_membership(tenant_id, owner_id, "owner")
     add_membership(tenant_id, worker_id, "worker")
 
-    with tenant_context(tenant_id) as session:
-        session.execute(text("DELETE FROM memberships"))  # both rows, one statement
+    with migrate_tenant_context(migrate_engine, tenant_id) as conn:
+        conn.execute(text("DELETE FROM memberships"))  # both rows, one statement
     with migrate_engine.begin() as conn:
         conn.execute(
             text("DELETE FROM users WHERE id IN (:o, :w)"), {"o": owner_id, "w": worker_id}
@@ -194,9 +209,11 @@ def test_the_trigger_lock_lets_a_new_membership_through(
                 {"u": people.both},
             )
             try:
-                with tenant_context(people.a) as session:
-                    session.execute(text("SET LOCAL lock_timeout = '500ms'"))
-                    session.execute(
+                # As the migrate role, as accept_invite does: the app role inserts no membership
+                # (ZB-10).
+                with migrate_tenant_context(migrate_engine, people.a) as conn:
+                    conn.execute(text("SET LOCAL lock_timeout = '500ms'"))
+                    conn.execute(
                         text(
                             "INSERT INTO memberships (tenant_id, user_id, role) "
                             "VALUES (:t, :u, 'worker')"
@@ -206,8 +223,8 @@ def test_the_trigger_lock_lets_a_new_membership_through(
             finally:
                 tx.rollback()
     finally:
-        with tenant_context(people.a) as session:
-            session.execute(text("DELETE FROM memberships WHERE user_id = :u"), {"u": new_user})
+        with migrate_tenant_context(migrate_engine, people.a) as conn:
+            conn.execute(text("DELETE FROM memberships WHERE user_id = :u"), {"u": new_user})
         with migrate_engine.begin() as conn:
             conn.execute(text("DELETE FROM users WHERE id = :u"), {"u": new_user})
 
