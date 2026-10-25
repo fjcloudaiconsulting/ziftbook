@@ -341,6 +341,41 @@ def test_aliases_share_one_limit_key() -> None:
     assert limits.address_for_limits("A.B@Example.com") == "a.b@example.com"  # dots count off Gmail
 
 
+# ZIF-146 FENCE (security code review N-6). Wrong impl: folding only `+` and Gmail: Yahoo's
+# `base-keyword@` and Fastmail's `anything@user.fastmail.com` each reach one inbox under endless
+# names, so each gets its own budget of link emails.
+@pytest.mark.parametrize(
+    ("alias", "folded"),
+    [
+        ("Ana-shop@yahoo.com", "ana@yahoo.com"),
+        ("ana-x+y@yahoo.co.uk", "ana@yahoo.co.uk"),
+        ("ana-1@ymail.com", "ana@ymail.com"),
+        ("anything@ana.fastmail.com", "ana@fastmail.com"),
+        ("x+y@ana.fastmail.fm", "ana@fastmail.fm"),
+    ],
+)
+def test_known_providers_aliases_share_one_limit_key(alias: str, folded: str) -> None:
+    assert limits.address_for_limits(alias) == folded
+
+
+# Deliberately not folded: `-` and `.` are ordinary letters of real addresses elsewhere, and a
+# subdomain elsewhere is a different mail domain.
+@pytest.mark.parametrize(
+    "address",
+    [
+        "ana-maria@example.com",
+        "ana.maria@outlook.com",
+        "ana@mail.example.com",
+        # Fold re-verify NB-3: a domain that only starts with "yahoo.", and Yahoo! JAPAN, are not
+        # Yahoo Mail.
+        "ana-maria@yahoo.example.org",
+        "ana-maria@yahoo.co.jp",
+    ],
+)
+def test_other_addresses_keep_their_hyphens_dots_and_subdomains(address: str) -> None:
+    assert limits.address_for_limits(address) == address
+
+
 # ZB-19. Wrong impl: folding that indexes into a split it assumes has an '@', or that encodes.
 @pytest.mark.parametrize("email", ["no-at-sign", "ünï.cødé+tag@exämple.com", "a\ud800@x.nl", "@"])
 def test_folding_never_raises(email: str) -> None:
