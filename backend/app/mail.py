@@ -427,8 +427,8 @@ SYMBOLS = {"BRL": "R$", "EUR": "€", "GBP": "£", "USD": "$"}
 
 
 def _money(amount_minor: int, currency: str, locale: str) -> str:
-    """The web app's money format (frontend/lib/money.ts, Intl.NumberFormat with the currency's
-    style) for en, nl and pt: the business's currency in the reader's number format, with as many
+    """The web app's money format (frontend/lib/money.ts: Intl.NumberFormat, currency style, narrow
+    symbol) for en, nl and pt: the business's currency in the reader's number format, with as many
     decimals as the currency has minor units (app/currencies.py; KeyError for one not listed)."""
     units = currencies.minor_units(currency)
     whole, part = divmod(amount_minor, 10**units)
@@ -439,8 +439,7 @@ def _money(amount_minor: int, currency: str, locale: str) -> str:
         # Intl: a symbol touches the amount; a code stands in its place, then a no-break space.
         return f"{symbol}{number}" if symbol else f"{currency}\u00a0{number}"
     number = f"{whole:,}".replace(",", ".") + (f",{fraction}" if units else "")
-    if symbol == "$":
-        symbol = "US$"  # Intl tells the dollars apart outside en
+    # The narrow symbol, as the web shows it: "$", never "US$" (ZIF-102, owner's ruling).
     return f"{symbol or currency}\u00a0{number}"
 
 
