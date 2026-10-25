@@ -405,3 +405,24 @@ def test_a_worker_reads_the_currency_state(people: People, app: FastAPI) -> None
         "locked_by": [],
         "prices": 2,
     }
+
+
+# F18: FENCE. Wrong impl: the three constraints left NOT VALID at head: rows older than them would
+# never have been checked.
+def test_the_currency_constraints_are_validated(migrate_engine: Engine) -> None:
+    with migrate_engine.connect() as conn:
+        validated: dict[str, bool] = dict(
+            conn.execute(
+                text("""
+                SELECT conname, convalidated FROM pg_constraint
+                WHERE conname IN ('ck_tenants_currency_supported',
+                                  'fk_services_tenant_id_price_currency_tenants',
+                                  'fk_payment_accounts_tenant_id_currency_tenants')
+                """)
+            ).all()
+        )
+    assert validated == {
+        "ck_tenants_currency_supported": True,
+        "fk_services_tenant_id_price_currency_tenants": True,
+        "fk_payment_accounts_tenant_id_currency_tenants": True,
+    }
