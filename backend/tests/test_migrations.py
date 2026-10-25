@@ -21,6 +21,7 @@ from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import NullPool
 
+from app import auth
 from app.db import tenant_context
 from tests.conftest import (
     ADMIN_DATABASE_URL,
@@ -2093,3 +2094,21 @@ def test_0057_round_trips_account_sessions(
         assert conn.scalar(RESET_DEF) == at_head
         assert tuple(conn.execute(ACCOUNT_OBJECTS).one()) == (True,) * 7
         assert [tuple(r) for r in conn.execute(WRITE_GRANTS)] == WRITE_GRANTS_AT_HEAD
+
+
+# ZIF-146 guard (fold re-verify NB-6). Wrong impl: changing auth.IDLE, ABSOLUTE or TOUCH_EVERY (the
+# business session's lifetimes, applied in Python) without the copies 0057 fixes in SQL: a bound
+# account session would outlive its console session, or die before it.
+def test_0057s_lifetimes_are_the_business_sessions() -> None:
+    m = migration("0057_account_sessions.py")
+    idle = f"interval '{auth.IDLE.days} days'"
+    assert auth.IDLE == timedelta(days=auth.IDLE.days)  # whole days, as the SQL states them
+    assert auth.ABSOLUTE == timedelta(days=auth.ABSOLUTE.days)
+    business = m.USABLE[m.USABLE.index("FROM sessions b") :]
+    assert idle in business  # a bound session's console session, idle
+    assert idle in m.LIVE  # the account session's own idle time
+    assert idle in m.FUNCTIONS["end_account_sessions(bytea)"]
+    start = next(v for k, v in m.FUNCTIONS.items() if k.startswith("start_account_session("))
+    assert f"interval '{auth.ABSOLUTE.days} days'" in start
+    touch = f"interval '{int(auth.TOUCH_EVERY.total_seconds() // 60)} minutes'"
+    assert touch in m.FUNCTIONS["resolve_account_session(bytea)"]
