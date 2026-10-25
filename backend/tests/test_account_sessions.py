@@ -852,3 +852,77 @@ def test_no_account_session_answers_for_a_platform_admin(
             ).all()
             == []
         )
+
+
+# FENCE (fold re-verify NB-1). Wrong impl: a sign-in that writes account_sessions (its new row, and
+# the purge of expired ones, which locks them) before it deletes the browser's business session of
+# another person, against the order everywhere else (sessions, then account_sessions): that person
+# signing out everywhere at the same moment deadlocks with it.
+@pytest.mark.parametrize("route", ["account", "console"])
+def test_a_sign_in_and_the_previous_persons_sign_out_everywhere_never_deadlock(
+    app: FastAPI,
+    people: People,
+    migrate_engine: Engine,
+    app_engine: Engine,
+    client_only: uuid.UUID,
+    monkeypatch: pytest.MonkeyPatch,
+    route: str,
+) -> None:
+    previous = people.both
+    browser = signed_in(app, people.a, previous)  # the previous person's console, on this browser
+    elsewhere = signed_in(app, people.b, previous).cookies.get(auth.COOKIE)
+    assert elsewhere is not None
+    with migrate_engine.begin() as conn:  # an expired account session the sign-in's purge will lock
+        conn.execute(
+            text("""
+            INSERT INTO account_sessions (id_hash, user_id, expires_at)
+            VALUES (:h, :u, now() - interval '1 hour')
+            """),
+            {"h": secrets.token_bytes(32), "u": previous},
+        )
+    paused, release = threading.Event(), threading.Event()
+    start = auth.start_account
+
+    def hold_after_the_account_session(*args: Any, **kwargs: Any) -> str | None:
+        token = start(*args, **kwargs)
+        paused.set()
+        assert release.wait(timeout=20)
+        return token
+
+    monkeypatch.setattr(auth, "start_account", hold_after_the_account_session)
+    answers: list[Response] = []
+    signing = threading.Thread(
+        target=lambda: answers.append(
+            account_sign_in(browser, email_of(client_only))
+            if route == "account"
+            else console_sign_in(browser, email_of(people.only_a))
+        )
+    )
+    signing.start()
+    assert paused.wait(timeout=20)
+    failures: list[BaseException] = []
+
+    def sign_out_everywhere() -> None:
+        try:
+            params = {"u": previous, "h": auth.hash_token(elsewhere)}
+            with app_engine.connect() as conn, conn.begin():
+                for step in auth.EVERY_SESSION:
+                    conn.execute(step, params)
+        except BaseException as error:  # a deadlock victim raises here
+            failures.append(error)
+
+    everywhere = threading.Thread(target=sign_out_everywhere)
+    everywhere.start()
+    try:
+        wait_until_blocked(migrate_engine, 1)
+    finally:
+        release.set()
+        signing.join(timeout=20)
+        everywhere.join(timeout=20)
+
+    assert failures == []
+    assert answers[0].status_code == 200
+    assert (
+        sessions_of(migrate_engine, previous),
+        account_sessions_of(migrate_engine, previous),
+    ) == (0, 0)

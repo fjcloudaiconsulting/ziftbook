@@ -95,11 +95,17 @@ def sign_in(credentials: auth.Credentials, request: Request, response: Response)
     person (one browser, one person); one of the same person's stays."""
     account = auth.check_credentials(credentials, request)
     with SessionLocal.begin() as session:
+        # The lock order every writer keeps (CONTRIBUTING): password_credentials, then sessions,
+        # then account_sessions. The stored hash first: a reset either already won or waits.
+        if not session.scalar(
+            auth.PASSWORD_UNCHANGED, {"user_id": account.user_id, "hash": account.password_hash}
+        ):
+            raise ApiError(401, "invalid_credentials", headers=auth.account_cookie_cleared())
+        ended_other = end_other_persons_business_session(session, request, account.user_id)
         token = auth.start_account(session, request, account.user_id, account.password_hash)
         if token is None:
             # The previous person's account session is already ended (check_credentials).
             raise ApiError(403, "account_unavailable", headers=auth.account_cookie_cleared())
-        ended_other = end_other_persons_business_session(session, request, account.user_id)
         auth.record(
             session,
             request,
