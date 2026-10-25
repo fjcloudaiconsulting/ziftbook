@@ -2160,3 +2160,51 @@ def test_0058_applies_0057s_account_session_rules() -> None:
         migration("0058_booking_provenance.py").USABLE
         == migration("0057_account_sessions.py").USABLE
     )
+
+
+# ZIF-146 guard: 0059's mint_email_token template, with the old sign-up test and expiry, is 0007's
+# body verbatim, so its downgrade restores what 0007 wrote.
+def test_0059_mint_email_token_is_0007s_with_account_sign_up() -> None:
+    old = migration("0007_password_auth.py").FUNCTIONS["mint_email_token(uuid,bytea)"]
+    new = migration("0059_account_sign_up.py")
+
+    assert new.mint_email_token(*new.BEFORE) == old.replace(
+        "CREATE FUNCTION", "CREATE OR REPLACE FUNCTION", 1
+    )
+
+
+MINT_DEF = text("SELECT pg_get_functiondef('mint_email_token(uuid,bytea)'::regprocedure)")
+SIGN_UP_OBJECTS = text("""
+SELECT to_regprocedure('complete_account_sign_up(bytea,text,text,text)') IS NOT NULL,
+       pg_get_constraintdef(oid) LIKE '%account_sign_up%'
+FROM pg_constraint WHERE conname = 'ck_email_tokens_purpose'
+""")
+
+
+# ZIF-146 FENCE. Wrong impl: a downgrade that keeps pending account sign-up links (the old CHECK
+# would fail on them) or the new mint_email_token, or that loses the worker's grant.
+def test_0059_round_trips_account_sign_up(
+    migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = lock_timeout_config(monkeypatch)
+    with migrate_engine.begin() as conn:
+        at_head = conn.scalar(MINT_DEF)
+        assert tuple(conn.execute(SIGN_UP_OBJECTS).one()) == (True, True)
+        conn.execute(
+            text(
+                "INSERT INTO email_tokens (purpose, email, locale, expires_at) VALUES"
+                " ('account_sign_up', 'pending@example.com', 'en', now() + interval '1 hour')"
+            )
+        )
+    try:
+        command.downgrade(cfg, "0058")
+        with migrate_engine.connect() as conn:
+            assert tuple(conn.execute(SIGN_UP_OBJECTS).one()) == (False, False)
+            assert "account_sign_up" not in conn.scalar(MINT_DEF)
+            assert list(conn.scalars(MINT_HOLDERS)) == ["ziftbook_migrate", "ziftbook_worker"]
+    finally:
+        command.upgrade(cfg, "head")
+    with migrate_engine.connect() as conn:
+        assert conn.scalar(MINT_DEF) == at_head
+        assert tuple(conn.execute(SIGN_UP_OBJECTS).one()) == (True, True)
+        assert list(conn.scalars(MINT_HOLDERS)) == ["ziftbook_migrate", "ziftbook_worker"]

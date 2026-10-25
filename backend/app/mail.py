@@ -198,7 +198,17 @@ def _send(to: str, subject: str, body: str, ics: bytes | None, reply_to: str | N
 
 
 # The page each purpose's link opens; the token rides in the fragment, which no server ever sees.
-PAGES = {"sign_up": "sign-up/complete", "password_reset": "reset-password"}
+PAGES = {
+    "sign_up": "sign-up/complete",
+    "password_reset": "reset-password",
+    "account_sign_up": "account/complete",  # ZIF-146: a person's own account, no business
+}
+# What a sign-up for an email that already has an account gets instead, and where it signs in:
+# the console's sign-in for a business sign-up, the account's for an account sign-up.
+REGISTERED = {
+    "sign_up": ("sign_up_registered", "sign-in"),
+    "account_sign_up": ("account_registered", "account/sign-in"),
+}
 
 
 def send_token(job: Job) -> None:
@@ -217,9 +227,9 @@ def send_token(job: Job) -> None:
         if row is None:  # gone, expired, or a reset for an email with no account
             return
         if row.registered:
-            template = "sign_up_registered"
+            template, page = REGISTERED[row.purpose]
             subject, body = render(
-                template, row.locale, {"sign_in": f"{app_url}/{row.locale}/sign-in"}
+                template, row.locale, {"sign_in": f"{app_url}/{row.locale}/{page}"}
             )
         else:
             template = row.purpose

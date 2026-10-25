@@ -89,7 +89,14 @@ def test_no_personal_data_ever_reaches_a_log(
     with migrate_engine.begin() as conn:
         conn.execute(text("SET LOCAL app.audit_review = 'on'"))
         started = conn.scalar(text("SELECT clock_timestamp()"))
-    templates = ("sign_up", "sign_up_registered", "password_reset", "invite")
+    templates = (
+        "sign_up",
+        "sign_up_registered",
+        "password_reset",
+        "invite",
+        "account_sign_up",
+        "account_registered",
+    )
     never += [render(template, "en")[0] for template in templates]
 
     def secret(value: str) -> None:
