@@ -61,6 +61,13 @@ Specifics:
   `pg_stat_activity`), or split the migration so each step locks less (one table per migration; add a constraint
   `NOT VALID` and validate it in a later one). Waiting for another migration run to finish is not bounded:
   concurrent runs take turns.
+- Validating a constraint on a table with FORCE row-level security (a `VALIDATE CONSTRAINT`, or an `ADD CONSTRAINT`
+  that checks existing rows) scans as the owner under the tenant policy: with no `app.tenant_id` it fails (42704),
+  and with one it checks that business's rows only and still marks the constraint valid. Use `app.db.lift_force`
+  (0067, 0068): it sets `row_security = off` first, so a scan the policy would still filter fails (42501) instead
+  of validating one business, then lifts FORCE around the statement and puts it back. Run it inside the
+  migration's transaction, never in an `autocommit_block()`, so a failure rolls the lift back. `NO FORCE` holds
+  ACCESS EXCLUSIVE on the table until commit: lift one table per migration, and only a small one.
 - `CREATE INDEX CONCURRENTLY` cannot run inside a transaction; put it in its own migration using Alembic's
   `autocommit_block()`. It also waits for every older transaction in the database, and on the 5-second timeout it
   leaves an invalid index behind. Inside the block, run `DROP INDEX CONCURRENTLY IF EXISTS` first, then
@@ -418,9 +425,17 @@ Adding a currency needs:
 - its row in `MINOR_UNITS` and `Currency` (`backend/app/currencies.py`);
 - Intl's digit count for it (`resolvedOptions().maximumFractionDigits`, which the web uses) equal to that exponent;
   where they differ, the API must start sending the exponent;
-- Stripe's rule for its smallest unit checked (Stripe treats HUF, TWD, ISK and UGX specially), and a `MIN_CHARGE`
-  entry (`backend/app/payments.py`) if it can take payments;
-- its symbol in `mail.SYMBOLS`, and rows for it in the parity fixture.
+- Stripe's rule for its smallest unit checked (Stripe treats HUF, TWD, ISK and UGX specially), and, if it can take
+  payments, a `MIN_CHARGE` entry (`backend/app/payments.py`) and the countries whose Stripe accounts settle it
+  (`STRIPE_CURRENCIES`, `backend/app/countries.py`: connecting Stripe is refused in any other);
+- its symbol in `mail.SYMBOLS`, and rows for it in the parity fixture;
+- a migration widening `ck_tenants_currency_supported`, the database's list.
+
+The owner changes the currency with `PUT /api/settings/currency` while the business has no booking and no Stripe
+account; saved prices keep their amounts in the new currency once the owner confirms how many there are. The
+database holds the rule (`change_currency`, migration 0066): the bookings and `payment_accounts` keys to
+`tenants (id, currency)` refuse a change, and the services key cascades it. The currency is a `tenants` column, not a
+business setting, because those keys need it.
 
 ## Background jobs
 

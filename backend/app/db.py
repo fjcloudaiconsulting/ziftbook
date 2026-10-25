@@ -1,5 +1,5 @@
 import logging
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from uuid import UUID
 
@@ -168,6 +168,26 @@ def join_tenant(session: Session, tenant_id: UUID) -> None:
     session.execute(
         text("SELECT set_config('app.tenant_id', :tenant_id, true)"), {"tenant_id": str(tenant_id)}
     )
+
+
+def lift_force(execute: Callable[[str], object], table: str, statement: str) -> None:
+    """Run `statement` (a VALIDATE CONSTRAINT, or an ADD CONSTRAINT that validates) on a table with
+    FORCE row-level security, so its scan checks every business. CONTRIBUTING.md, "Database
+    migrations"; ZIF-102.
+
+    The scan runs as the table's owner, whom FORCE puts under the tenant policy: with no
+    app.tenant_id it fails, and with one it checks that business's rows only and still marks the
+    constraint valid. So FORCE is lifted around the statement. `row_security = off` first makes any
+    scan the policy would still filter fail (42501) instead, should FORCE not be lifted. Run it
+    inside the migration's transaction, never in an autocommit_block(): a failure then rolls the
+    lift back. `NO FORCE` holds ACCESS EXCLUSIVE on the table until commit, so lift one table per
+    migration, and only a small one. `execute` runs one SQL string (op.execute in a migration).
+    """
+    execute("SET LOCAL row_security = off")
+    execute(f"ALTER TABLE {table} NO FORCE ROW LEVEL SECURITY")
+    execute(statement)
+    execute(f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY")
+    execute("SET LOCAL row_security = on")
 
 
 def enable_tenant_isolation(table: str, *, referenced: bool = True) -> None:

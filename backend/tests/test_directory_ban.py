@@ -215,6 +215,8 @@ DEFINERS = [
     "public.accept_invite(p_token_hash bytea, p_password_hash text, p_name text)",
     "public.account_by_email(p_email text)",
     "public.begin_totp_enrolment(p_id_hash bytea, p_ticket_proof bytea, p_secret_ct bytea, p_proof bytea)",  # noqa: E501
+    # ZIF-102: changes only the caller's business's currency; reads and writes nothing of a user.
+    "public.change_currency(p_currency text, p_confirmed_prices integer)",
     "public.complete_password_reset(p_token_hash bytea, p_password_hash text)",
     "public.complete_setup(p_email text, p_password_hash text, p_name text, p_locale text)",
     "public.complete_sign_up(p_token_hash bytea, p_password_hash text, p_business_name text, p_country text, p_currency text, p_name text)",  # noqa: E501
