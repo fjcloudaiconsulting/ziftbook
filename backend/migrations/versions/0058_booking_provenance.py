@@ -14,9 +14,11 @@ the table's lock. If this migration ever times out on bookings, split the index 
 its own with CREATE INDEX CONCURRENTLY.
 
 hold_account_session re-confirms, inside the booking transaction, the account session that proved
-the booking, FOR SHARE: a sign-out, password reset or erasure that deletes it either waits for the
-booking to commit (and then clears what it linked) or has committed already (and the booking is
-refused). Lock order: account_sessions before clients.
+the booking, FOR KEY SHARE: a sign-out, password reset or erasure that deletes it either waits for
+the booking to commit (and then clears what it linked) or has committed already (and the booking is
+refused). FOR KEY SHARE, not FOR SHARE: both make a DELETE wait, but FOR SHARE would also make the
+person's other requests wait on the booking, as resolving a session updates its last_seen_at.
+Lock order: account_sessions before clients.
 
 own_bookings is the person's history: every booking their account placed, at every business. It is
 keyed by an account session hash (live, started within 24 hours), never a user id; a business
@@ -51,8 +53,10 @@ FUNCTIONS = {
     "hold_account_session(bytea)": f"""
 CREATE FUNCTION hold_account_session(p_id_hash bytea)
 RETURNS uuid LANGUAGE sql SECURITY DEFINER {SEARCH_PATH} AS $$
-  -- The live account session's holder, its row held FOR SHARE until the caller's transaction ends.
-  SELECT s.user_id FROM account_sessions s WHERE {USABLE} FOR SHARE
+  -- The usable account session's holder, its row held FOR KEY SHARE until the caller's transaction
+  -- ends: a DELETE (sign-out, reset, erasure) waits for the booking, while the person's other
+  -- requests, which touch last_seen_at, do not.
+  SELECT s.user_id FROM account_sessions s WHERE {USABLE} FOR KEY SHARE OF s
 $$""",
     "own_bookings(bytea,timestamptz,bytea,integer)": f"""
 CREATE FUNCTION own_bookings(

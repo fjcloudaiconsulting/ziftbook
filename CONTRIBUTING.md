@@ -308,7 +308,7 @@ migration 0026), not any code path. A race in a route somebody forgets to guard 
   `UPDATE` never moves a booking into `awaiting_payment`, which only placement (the `INSERT`) sets (the
   `bookings_status_to_pending` trigger).
 - `bookings.booked_as` (ZIF-146) is the account whose live session proved the booking, written only by `place()`
-  from that session (re-confirmed `FOR SHARE` inside the booking transaction), never from a body; NULL for a guest
+  from that session (re-confirmed `FOR KEY SHARE` inside the booking transaction), never from a body; NULL for a guest
   or a merchant. It is personal data (it maps a booking to a person): no merchant route selects it and no response
   schema carries it; only the person's own history (`own_bookings`) reads it. The app role may `INSERT` it, never
   `UPDATE` it. A proven booking whose session ended after step 0 is refused, so nothing is written under an
