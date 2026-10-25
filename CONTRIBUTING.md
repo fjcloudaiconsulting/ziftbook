@@ -425,8 +425,9 @@ Adding a currency needs:
 - its row in `MINOR_UNITS` and `Currency` (`backend/app/currencies.py`);
 - Intl's digit count for it (`resolvedOptions().maximumFractionDigits`, which the web uses) equal to that exponent;
   where they differ, the API must start sending the exponent;
-- Stripe's rule for its smallest unit checked (Stripe treats HUF, TWD, ISK and UGX specially), and a `MIN_CHARGE`
-  entry (`backend/app/payments.py`) if it can take payments;
+- Stripe's rule for its smallest unit checked (Stripe treats HUF, TWD, ISK and UGX specially), and, if it can take
+  payments, a `MIN_CHARGE` entry (`backend/app/payments.py`) and the countries whose Stripe accounts settle it
+  (`STRIPE_CURRENCIES`, `backend/app/countries.py`: connecting Stripe is refused in any other);
 - its symbol in `mail.SYMBOLS`, and rows for it in the parity fixture;
 - a migration widening `ck_tenants_currency_supported`, the database's list.
 
