@@ -183,7 +183,9 @@ functions owned by `ziftbook_migrate`:
   clear it, on a resend (the `invites_token_hash_by_worker` trigger, 0053).
 - The `sign_in` policy lets `ziftbook_migrate` read memberships across tenants only while `app.sign_in` is `on`. A
   function that relies on it sets and restores `app.sign_in` itself; any other definer function that reads memberships
-  must clear it, because a caller can set it.
+  must clear it, because a caller can set it. The same holds for every flag a policy opens to `ziftbook_migrate` (`app.audit_review`
+  on `audit_events`, `app.stripe_webhook` on `payment_accounts`): `tests/test_password_auth_db.py` lists every definer
+  that reads such a table without its flag, and pins the flags themselves.
 - `complete_sign_up`, `accept_invite`, `set_own_name` and `set_own_profile` are the only writers of `users.name`
   (the app role has no UPDATE policy on `users`). `set_own_name` names a person who has none (legacy accounts only)
   and also fills the `display_name` of every business of theirs where it is unset, including one an owner had
