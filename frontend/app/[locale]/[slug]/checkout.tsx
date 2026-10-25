@@ -431,7 +431,7 @@ export function Processing({ aside, t }: { aside: ReactNode; t: ReturnType<typeo
           </div>
           <div className={styles.stepBody}>
             <div className={`${styles.banner} ${styles.note}`} aria-live="polite">
-              <span className={styles.spinDark} style={{ marginTop: "0.2rem" }} aria-hidden="true" />
+              <span className={`${styles.spinDark} ${styles.spinNudge}`} aria-hidden="true" />
               <span>{t("payProcessing")}</span>
             </div>
           </div>

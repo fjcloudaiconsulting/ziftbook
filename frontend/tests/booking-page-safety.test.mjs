@@ -88,3 +88,11 @@ describe("no account data on the server", () => {
     }
   });
 });
+
+describe("what the enforced policy needs", () => {
+  test("fence: no style attribute on these pages, which the enforced policy refuses in their HTML", () => {
+    // Wrong implementation killed: style={{ whiteSpace: "pre-line" }} on the manage page: server-rendered as a
+    // style="" attribute, blocked, and the text it formats collapses.
+    for (const file of PERSONAL_DIRS.flatMap(sources)) assert.doesNotMatch(readFileSync(file, "utf8"), /\bstyle=\{/, file);
+  });
+});

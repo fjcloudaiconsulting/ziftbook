@@ -138,7 +138,9 @@ export function cspFor(
   const dev = process.env.NODE_ENV === "development";
   return [
     // Also styles and fonts: Next links its CSS and fonts from this site, React applies `style` props from
-    // script (no style attribute is in a page's HTML), and Stripe.js and Turnstile style their elements the same way.
+    // script, and Stripe.js and Turnstile style their elements the same way. A `style` prop a server component
+    // renders is a style="" attribute in the HTML, which this refuses where the policy is enforced: the pages
+    // personalPage() names use none (tests/booking-page-safety.test.mjs).
     "default-src 'self'",
     // The hosts only matter to a browser without 'strict-dynamic', which falls back to them; *.js.stripe.com
     // is on Stripe's documented Stripe.js list.

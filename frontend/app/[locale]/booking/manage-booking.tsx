@@ -290,7 +290,7 @@ function Manage({ token }: { token: string | null }) {
         </Heading>
         {pick.taken && <Banner tone="note">{t("slotTaken")}</Banner>}
         {!pick.chosen && problem}
-        <div className={styles.stack} style={{ gap: "0.4rem" }}>
+        <div className={`${styles.stack} ${styles.tightStack}`}>
           <p className={styles.hint}>{t("nowLabel")}</p>
           {summary}
         </div>
@@ -368,7 +368,7 @@ function Manage({ token }: { token: string | null }) {
       {summary}
       {booking.cancellation_policy_text && (
         // pre-line: the owner types it in a textarea (Settings), so keep their line breaks.
-        <p className={styles.hint} style={{ whiteSpace: "pre-line" }}>
+        <p className={`${styles.hint} ${styles.preLine}`}>
           {booking.cancellation_policy_text}
         </p>
       )}
