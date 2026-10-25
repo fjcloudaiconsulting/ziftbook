@@ -72,3 +72,29 @@ def test_money_scales_by_the_currency_s_minor_units(
     monkeypatch.setitem(mail.SYMBOLS, "JPY", "¥")  # Intl's narrow symbol; BHD has none
 
     assert mail._money(amount, currency, locale) == expected
+
+
+# FENCE (code review, correctness 6). Wrong impl: divmod on a negative amount, which floors (-1 cent
+# read as "€-1.99"), or a sign placed where Intl does not put it. No email reaches a negative amount
+# today (prices, payments and refunds are all >= 0); the format still promises Intl's.
+@pytest.mark.parametrize(
+    ("amount", "currency", "locale", "expected"),
+    [
+        (-1, "EUR", "en", "-€0.01"),
+        (-250, "EUR", "en", "-€2.50"),
+        (-123450, "USD", "en", "-$1,234.50"),
+        (-250, "EUR", "nl", f"€{NB}-2,50"),
+        (-123450, "BRL", "nl", f"R${NB}-1.234,50"),
+        (-250, "EUR", "pt", f"-€{NB}2,50"),
+        (-123450, "GBP", "pt", f"-£{NB}1.234,50"),
+        (-250, "CHF", "en", f"-CHF{NB}2.50"),
+        (-250, "CHF", "nl", f"CHF{NB}-2,50"),
+        (-250, "CHF", "pt", f"-CHF{NB}2,50"),
+    ],
+)
+def test_a_negative_amount_reads_as_intl_writes_it(
+    monkeypatch: pytest.MonkeyPatch, amount: int, currency: str, locale: str, expected: str
+) -> None:
+    monkeypatch.setitem(currencies.MINOR_UNITS, "CHF", 2)
+
+    assert mail._money(amount, currency, locale) == expected
