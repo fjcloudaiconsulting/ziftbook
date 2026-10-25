@@ -41,6 +41,7 @@ from app import (
     members,
     payments,
     photos,
+    platform_account,
     schedule,
     services,
     setup,
@@ -358,6 +359,7 @@ def create_app() -> FastAPI:
         router,
         auth.router,
         accounts.router,
+        platform_account.router,
         audit.router,
         business_settings.router,
         clients.router,
@@ -511,7 +513,7 @@ def create_app() -> FastAPI:
             bookings=error.bookings,
             total=error.total,
         ).model_dump(mode="json", exclude_none=True)
-        return JSONResponse(body, status_code=error.status_code)
+        return JSONResponse(body, status_code=error.status_code, headers=error.headers)
 
     @app.exception_handler(413)
     async def too_large(request: Request, error: Exception) -> JSONResponse:

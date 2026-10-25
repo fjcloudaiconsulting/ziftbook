@@ -1,7 +1,6 @@
 import uuid
 from collections.abc import Iterator
 from datetime import datetime, timedelta
-from http.cookies import SimpleCookie
 
 import pytest
 from fastapi import FastAPI
@@ -12,7 +11,14 @@ from sqlalchemy import Engine, text
 from app import auth
 from app.db import tenant_context
 from app.main import create_app
-from tests.conftest import People, email_of, member_id, migrate_tenant_context, signed_in
+from tests.conftest import (
+    People,
+    cookie_named,
+    email_of,
+    member_id,
+    migrate_tenant_context,
+    signed_in,
+)
 
 
 @pytest.fixture
@@ -57,9 +63,9 @@ def last_seen(app_engine: Engine, token: str) -> datetime | None:
 
 
 def cleared(response: Response) -> bool:
-    (header,) = response.headers.get_list("set-cookie")
-    cookie = SimpleCookie(header)[auth.COOKIE]
-    return cookie["max-age"] == "0" and bool(cookie["secure"])
+    # Both of this browser's cookies (ZIF-146: any sign-out ends both kinds).
+    cookies = [cookie_named(response, name) for name in (auth.COOKIE, auth.ACCOUNT_COOKIE)]
+    return all(c["max-age"] == "0" and bool(c["secure"]) for c in cookies)
 
 
 def unauthenticated(response: Response) -> bool:

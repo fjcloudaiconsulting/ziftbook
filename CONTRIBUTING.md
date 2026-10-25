@@ -155,7 +155,13 @@ own.
   `ziftbook_migrate`.
 
 `users` is global, with row-level security that is enabled but not forced: the app role sees a user only through a
-membership in the current tenant, and can never insert, change or delete one (no `INSERT`, `UPDATE` or `DELETE`).
+membership in the current tenant, and only the columns `id`, `email`, `locale` and `name`; it can never insert,
+change or delete one (no `INSERT`, `UPDATE` or `DELETE`).
+
+- The app role's `SELECT` on `users` is a column list (0057, ZIF-146): a new column the app reads needs its own
+  `GRANT SELECT (column)`. Never grant table-level `SELECT` again, and never grant `phone`: a person's phone reaches
+  a business only through their own booking. `phone` is never unique (a duplicate error would tell who holds a
+  number). `tests/test_migrations.py` pins the grant.
 
 - Accounts are created only by `complete_sign_up`, `complete_setup` and `accept_invite`.
 - Never add an INSERT, UPDATE or DELETE policy on `users`; changes to a person's account go through functions owned by
@@ -164,8 +170,9 @@ membership in the current tenant, and can never insert, change or delete one (no
 - Create memberships only in trusted flows (sign-up, invites), never from a `user_id` the client sends: the foreign
   key to `users` is checked with row-level security bypassed.
 
-Passwords and sign-in tokens live in tables the app role can't read or write (`password_credentials`,
-`email_tokens`). The app reaches them only through `SECURITY DEFINER` functions owned by `ziftbook_migrate`:
+Passwords, sign-in tokens and account sessions live in tables the app role can't read or write
+(`password_credentials`, `email_tokens`, `account_sessions`). The app reaches them only through `SECURITY DEFINER`
+functions owned by `ziftbook_migrate`:
 
 - Every such function declares `SET search_path = pg_catalog, public, pg_temp` (pg_temp last, or a caller's temporary
   table can stand in for a real one) and is revoked from PUBLIC. `tests/test_password_auth_db.py` checks both.
@@ -177,9 +184,32 @@ Passwords and sign-in tokens live in tables the app role can't read or write (`p
 - The `sign_in` policy lets `ziftbook_migrate` read memberships across tenants only while `app.sign_in` is `on`. A
   function that relies on it sets and restores `app.sign_in` itself; any other definer function that reads memberships
   must clear it, because a caller can set it.
-- `complete_sign_up`, `accept_invite` and `set_own_name` are the only writers of `users.name` (the app role has no
-  UPDATE policy on `users`). `set_own_name` names a person who has none (legacy accounts only) and also fills the
-  `display_name` of every business of theirs where it is unset, including one an owner had cleared.
+- `complete_sign_up`, `accept_invite`, `set_own_name` and `set_own_profile` are the only writers of `users.name`
+  (the app role has no UPDATE policy on `users`). `set_own_name` names a person who has none (legacy accounts only)
+  and also fills the `display_name` of every business of theirs where it is unset, including one an owner had
+  cleared. `set_own_profile` (ZIF-146) changes the session holder's own name and phone and never a `display_name`:
+  a business sees a changed account name only where it has no display name of its own.
+- An account session (`account_sessions`, 0057, ZIF-146) is a person's, not a membership's: it has no tenant, and no
+  console route ever authenticates with it (`auth.resolve` reads only `sessions` and the `__Host-session` cookie). It
+  is reached only by hash (`resolve_account_session`, `end_account_session`, `set_own_profile`), never by user id.
+  Every sign-in that starts a business session also starts an account session (`auth.start`), except for a platform
+  admin, who gets none (granting admin ends the person's account sessions, and no account session answers for an
+  admin); every sign-out ends both kinds on that browser; signing out everywhere, a password reset and
+  erasure end both kinds of that person. The account session a console sign-in starts is bound to that business
+  session (`account_sessions.started_by`): it ends with it, by its sign-out, expiry, the member's removal or a
+  role change, so a shop's shared device keeps no member's personal session past their console session. One the
+  person starts on the booking page is not bound.
+- `start_account_session` trusts the API's password check, as `start_admin_session` does: the database cannot check
+  a password. An app role running SQL of its own could therefore:
+  - read a hash with `account_by_email`, start an account session for anyone but an admin, and through it read and
+    change that person's name and phone;
+  - end anyone's account sessions, by passing `end_account_sessions` a business session's hash, which it can read
+    from `sessions` (a denial of service, no data).
+- Lock order for every writer that touches more than one of these: `password_credentials`, then `sessions`, then
+  `account_sessions`, then `clients`. `reset_password` follows it; signing out everywhere locks the person's business
+  sessions before it ends their account sessions (`auth.EVERY_SESSION`); a sign-in locks the stored hash
+  (`password_unchanged`), then ends this browser's old business session, then writes account sessions; a booking locks its proving session before `find_or_create`. Two
+  writers taking two of these in opposite orders deadlock, and the loser answers 500.
 
 ## Client records
 
@@ -203,8 +233,8 @@ that person's platform account (ZIF-99).
   that address's own account (`refresh=True`); every other caller fills blanks only**, and its docstring is the one
   home for what that costs and for the duties it puts on the route that calls it. Read it before writing that route.
 - A business never finds a platform user it has no relationship with: nothing a business's session can reach
-  answers by email or name across tenants (`account_by_email` does, but only for sign-in (app and admin) and invite
-  lookup and acceptance, which need a password or an invite token). `tests/test_directory_ban.py` pins the `users` policies, every SECURITY
+  answers by email or name across tenants (`account_by_email` does, but only for sign-in (business, account and
+  admin) and invite lookup and acceptance, which need a password or an invite token). `tests/test_directory_ban.py` pins the `users` policies, every SECURITY
   DEFINER function the app role can execute, and the views over `users`, so widening any of them is a deliberate
   test change.
 

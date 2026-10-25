@@ -21,6 +21,7 @@ from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import NullPool
 
+from app import auth
 from app.db import tenant_context
 from tests.conftest import (
     ADMIN_DATABASE_URL,
@@ -1039,27 +1040,34 @@ END_ADMIN_SESSIONS = "\n  DELETE FROM admin_sessions s WHERE s.user_id = v_user;
 
 
 # ZIF-70 PR2 guard: 0037's downgrade drops admin sessions and puts 0010's reset_password back; the
-# upgrade restores its own, grants untouched (CREATE OR REPLACE keeps them).
+# upgrade restores its own, grants untouched (CREATE OR REPLACE keeps them). Compared at 0037
+# itself: 0057 (ZIF-146) adds a line of its own at head.
 def test_0037_round_trips_admin_sessions(
     migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     cfg = lock_timeout_config(monkeypatch)
     with migrate_engine.connect() as conn:
         at_head = conn.scalar(RESET_DEF)
-    assert END_ADMIN_SESSIONS in at_head
     try:
+        command.downgrade(cfg, "0037")
+        with migrate_engine.connect() as conn:
+            at_0037 = conn.scalar(RESET_DEF)
+        assert END_ADMIN_SESSIONS in at_0037
         command.downgrade(cfg, "0036")
         with migrate_engine.connect() as conn:
             before = conn.scalar(RESET_DEF)
             assert tuple(conn.execute(ADMIN_SESSION_OBJECTS).one()) == (False,) * 4
             assert tuple(conn.execute(RESET_GRANTS).one()) == (True, False)
+        command.upgrade(cfg, "0037")
+        with migrate_engine.connect() as conn:
+            assert conn.scalar(RESET_DEF) == at_0037
+            assert tuple(conn.execute(ADMIN_SESSION_OBJECTS).one()) == (True,) * 4
+            assert tuple(conn.execute(RESET_GRANTS).one()) == (True, False)
     finally:
         command.upgrade(cfg, "head")
-    assert before == at_head.replace(END_ADMIN_SESSIONS, "")
+    assert before == at_0037.replace(END_ADMIN_SESSIONS, "")
     with migrate_engine.connect() as conn:
         assert conn.scalar(RESET_DEF) == at_head
-        assert tuple(conn.execute(ADMIN_SESSION_OBJECTS).one()) == (True,) * 4
-        assert tuple(conn.execute(RESET_GRANTS).one()) == (True, False)
 
 
 def migration(name: str) -> ModuleType:
@@ -1664,6 +1672,15 @@ WRITE_GRANTS_AT_0048 = [
 ]
 
 
+# ZIF-146 (0057): the app role reads users by column, never phone. A new column it reads needs its
+# own GRANT SELECT; a table-level SELECT or a phone grant is a deliberate change here.
+WRITE_GRANTS_AT_HEAD = [
+    ("email_outbox", "INSERT SELECT", "sent_at UPDATE, status UPDATE, subject UPDATE"),
+    ("tenants", "SELECT", "name UPDATE"),
+    ("users", None, "email SELECT, id SELECT, locale SELECT, name SELECT"),
+]
+
+
 # ZB-10 FENCE. Wrong impl: a downgrade that leaves the email_outbox column grant beside the
 # table-level UPDATE, forgets create_users, or leaves the function default behind.
 def test_0048_round_trips_the_app_roles_write_privileges(
@@ -1678,10 +1695,19 @@ def test_0048_round_trips_the_app_roles_write_privileges(
                 ("create_users", "INSERT", "{public}", "true")
             ]
             assert conn.execute(FUNCTION_DEFAULTS).all() == []
+        # At 0048 itself: 0057 narrows the users SELECT at head (ZIF-146).
+        command.upgrade(cfg, "0048")
+        with migrate_engine.connect() as conn:
+            assert [tuple(r) for r in conn.execute(WRITE_GRANTS)] == WRITE_GRANTS_AT_0048
+            assert conn.execute(USERS_INSERT_POLICY).all() == []
+            assert [tuple(r) for r in conn.execute(FUNCTION_DEFAULTS)] == [
+                (0, "{ziftbook_migrate=X/ziftbook_migrate}")
+            ]
     finally:
         command.upgrade(cfg, "head")
     with migrate_engine.connect() as conn:
-        assert [tuple(r) for r in conn.execute(WRITE_GRANTS)] == WRITE_GRANTS_AT_0048
+        assert [tuple(r) for r in conn.execute(WRITE_GRANTS)] == WRITE_GRANTS_AT_HEAD
+        # Unchanged since 0048 (code review N10: kept at head too).
         assert conn.execute(USERS_INSERT_POLICY).all() == []
         assert [tuple(r) for r in conn.execute(FUNCTION_DEFAULTS)] == [
             (0, "{ziftbook_migrate=X/ziftbook_migrate}")
@@ -2020,3 +2046,69 @@ def test_0053_round_trips_the_invite_token_guard(
             ["search_path=pg_catalog, public, pg_temp"],
             False,
         )
+
+
+# ZIF-146 guard: 0057's reset_password template, with only the admin line, is 0037's body verbatim,
+# so its downgrade restores what 0037 wrote, not a drifted copy.
+def test_0057_reset_password_is_0037s_plus_one_line() -> None:
+    old = migration("0037_admin_sessions.py")
+    new = migration("0057_account_sessions.py")
+
+    assert new.reset_password(new.END_ADMIN_SESSIONS) == old.reset_password(old.END_ADMIN_SESSIONS)
+    assert new.END_ACCOUNT_SESSIONS not in old.reset_password(old.END_ADMIN_SESSIONS)
+
+
+ACCOUNT_OBJECTS = text("""
+SELECT to_regclass('account_sessions') IS NOT NULL,
+       to_regprocedure('start_account_session(uuid,text,bytea,inet,text,bytea)') IS NOT NULL,
+       to_regprocedure('resolve_account_session(bytea)') IS NOT NULL,
+       to_regprocedure('end_account_session(bytea)') IS NOT NULL,
+       to_regprocedure('end_account_sessions(bytea)') IS NOT NULL,
+       to_regprocedure('set_own_profile(bytea,text,text,boolean)') IS NOT NULL,
+       EXISTS (SELECT FROM information_schema.columns
+               WHERE table_name = 'users' AND column_name = 'phone')
+""")
+END_ACCOUNT_SESSIONS = "\n  DELETE FROM account_sessions s WHERE s.user_id = v_user;"
+
+
+# ZIF-146 FENCE. Wrong impl: a downgrade that leaves the users column grant without table-level
+# SELECT (the old release reads users and would fail), or keeps 0057's reset_password line.
+def test_0057_round_trips_account_sessions(
+    migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = lock_timeout_config(monkeypatch)
+    with migrate_engine.connect() as conn:
+        at_head = conn.scalar(RESET_DEF)
+        assert tuple(conn.execute(ACCOUNT_OBJECTS).one()) == (True,) * 7
+    assert END_ACCOUNT_SESSIONS in at_head
+    try:
+        command.downgrade(cfg, "0056")
+        with migrate_engine.connect() as conn:
+            assert tuple(conn.execute(ACCOUNT_OBJECTS).one()) == (False,) * 7
+            assert conn.scalar(RESET_DEF) == at_head.replace(END_ACCOUNT_SESSIONS, "")
+            assert [tuple(r) for r in conn.execute(WRITE_GRANTS)] == WRITE_GRANTS_AT_0048
+            assert tuple(conn.execute(RESET_GRANTS).one()) == (True, False)
+    finally:
+        command.upgrade(cfg, "head")
+    with migrate_engine.connect() as conn:
+        assert conn.scalar(RESET_DEF) == at_head
+        assert tuple(conn.execute(ACCOUNT_OBJECTS).one()) == (True,) * 7
+        assert [tuple(r) for r in conn.execute(WRITE_GRANTS)] == WRITE_GRANTS_AT_HEAD
+
+
+# ZIF-146 guard (fold re-verify NB-6). Wrong impl: changing auth.IDLE, ABSOLUTE or TOUCH_EVERY (the
+# business session's lifetimes, applied in Python) without the copies 0057 fixes in SQL: a bound
+# account session would outlive its console session, or die before it.
+def test_0057s_lifetimes_are_the_business_sessions() -> None:
+    m = migration("0057_account_sessions.py")
+    idle = f"interval '{auth.IDLE.days} days'"
+    assert auth.IDLE == timedelta(days=auth.IDLE.days)  # whole days, as the SQL states them
+    assert auth.ABSOLUTE == timedelta(days=auth.ABSOLUTE.days)
+    business = m.USABLE[m.USABLE.index("FROM sessions b") :]
+    assert idle in business  # a bound session's console session, idle
+    assert idle in m.LIVE  # the account session's own idle time
+    assert idle in m.FUNCTIONS["end_account_sessions(bytea)"]
+    start = next(v for k, v in m.FUNCTIONS.items() if k.startswith("start_account_session("))
+    assert f"interval '{auth.ABSOLUTE.days} days'" in start
+    touch = f"interval '{int(auth.TOUCH_EVERY.total_seconds() // 60)} minutes'"
+    assert touch in m.FUNCTIONS["resolve_account_session(bytea)"]

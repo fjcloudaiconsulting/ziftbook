@@ -578,3 +578,36 @@ def test_a_client_secret_never_reaches_a_log_a_span_or_a_job(
     )
     for secret in secrets:
         assert secret not in everything + stored
+
+
+# ZIF-146 (security N12): the account routes log ids and outcome codes only. Kills: logging the
+# typed email, the name or phone, the account cookie or its hash.
+def test_the_account_routes_log_no_personal_data(
+    people: People,
+    app: FastAPI,
+    migrate_engine: Engine,
+    log_lines: Callable[[], list[dict[str, Any]]],
+) -> None:
+    password = "Account-Pw-Zq-71"
+    add_password(migrate_engine, people.both, password)
+    email = email_of(people.both)
+    name, phone = "Zzyzx Account-7", "+31687654321"
+    never = [email, name, phone, "2001:db8:", UA["User-Agent"], password]
+    client = client_for(app)
+
+    wrong = client.post("/api/account/session", json={"email": email, "password": "Wrong-1"})
+    assert wrong.status_code == 401
+    right = client.post("/api/account/session", json={"email": email, "password": password})
+    assert right.status_code == 200
+    token = right.cookies.get(auth.ACCOUNT_COOKIE)
+    assert token
+    never += [token, hashlib.sha256(token.encode()).hexdigest()]
+    changed = client.patch("/api/account", json={"name": name, "phone": phone})
+    assert changed.status_code == 200
+    assert client.get("/api/account").json()["phone"] == phone
+    assert client.request("DELETE", "/api/account/session", json={}).status_code == 204
+
+    dumped = json.dumps(log_lines())
+    assert any(line["msg"] == "access" for line in log_lines())
+    for value in never:
+        assert value not in dumped, value

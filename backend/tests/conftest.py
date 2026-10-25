@@ -17,6 +17,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from email import message_from_bytes
 from email.policy import default as email_policy
+from http.cookies import SimpleCookie
 from pathlib import Path
 from typing import Any, cast
 
@@ -677,6 +678,17 @@ def issue_link(app_engine: Engine, purpose: str, email: str, locale: str = "en")
             {"id": token_id, "h": hashlib.sha256(token.encode()).digest()},
         ).first()
     return token if minted and not minted.registered else None
+
+
+def cookie_named(response: Response, name: str) -> Any:
+    """The Set-Cookie morsel for one cookie: a sign-in sets two (ZIF-146), so headers["set-cookie"]
+    joins them into a string no cookie parser reads."""
+    for header in response.headers.get_list("set-cookie"):
+        cookie: SimpleCookie = SimpleCookie()
+        cookie.load(header)
+        if name in cookie:
+            return cookie[name]
+    raise KeyError(name)
 
 
 def fresh_email() -> str:

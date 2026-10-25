@@ -41,8 +41,11 @@ class ApiError(Exception):
         *,
         bookings: list[InTheWay] | None = None,
         total: int | None = None,
+        headers: dict[str, str] | None = None,
     ) -> None:
         self.status_code = status_code
+        # Response headers the error carries: only a cookie being cleared (ZIF-146).
+        self.headers = headers
         self.code = code
         self.weekday = weekday
         self.bookings = bookings

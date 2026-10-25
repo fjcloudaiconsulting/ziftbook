@@ -260,12 +260,15 @@ def accept(body: AcceptInvite, request: Request, response: Response) -> auth.Ses
                     target=f"user:{found.user_id}",
                 )
             raise ApiError(401, "invalid_credentials")
+    # The invite's person signs in here: whoever's account session this browser held ends, on
+    # every later outcome (ZIF-146, one browser, one person).
+    auth.end_previous_account_session(request)
     with tenant_context(found.tenant_id) as session:
         if found.user_id is not None and not session.scalar(
             text("SELECT password_unchanged(:u, :h)"),
             {"u": found.user_id, "h": found.password_hash},
         ):  # reset while it was being checked
-            raise ApiError(401, "invalid_credentials")
+            raise ApiError(401, "invalid_credentials", headers=auth.account_cookie_cleared())
         result = session.execute(
             text("SELECT * FROM accept_invite(:h, :p, :n)"),
             {"h": found.digest, "p": password_hash, "n": body.name},
@@ -279,7 +282,10 @@ def accept(body: AcceptInvite, request: Request, response: Response) -> auth.Ses
                 actor_user_id=result.account_id,
                 target=f"user:{result.account_id}",
             )
-            token = auth.start(session, request, result.account_id)
+            # The hash this account now has: the new one, or the one checked above (ZIF-146).
+            stored = password_hash if password_hash is not None else found.password_hash
+            assert stored is not None
+            started = auth.start(session, request, result.account_id, stored)
             signed_in_as = auth.describe(session, result.account_id)
     # Outside the transaction: already_member keeps the invite used up.
     if result.outcome == "invalid_token":  # used, revoked or resent since find()
@@ -287,6 +293,6 @@ def accept(body: AcceptInvite, request: Request, response: Response) -> auth.Ses
     if result.outcome in ("account_exists", "already_member"):
         raise ApiError(409, result.outcome)
     assert result.outcome == "accepted"
-    auth.set_cookie(response, token)
+    auth.set_cookies(response, started)
     response.headers["Cache-Control"] = "no-store"
     return signed_in_as

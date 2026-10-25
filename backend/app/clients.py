@@ -100,10 +100,16 @@ def number(db: Session, phone: str) -> str | None:
     """A typed phone as +31612345678 (ZIF-152), or None when it is no phone number: a local number
     is read in the business's country, one starting with + in its own. A written extension (x,
     ext) is refused."""
+    return phone_number(phone, db.scalar(COUNTRY))
+
+
+def phone_number(phone: str, region: str | None) -> str | None:
+    """number(), in the region given. With None (a person's own account, which has no country,
+    ZIF-146) only an international number (+31...) is read."""
     if any(c.isalpha() for c in phone):  # parse() would read letters as a keypad's digits
         return None
     try:
-        parsed = phonenumbers.parse(phone, db.scalar(COUNTRY))
+        parsed = phonenumbers.parse(phone, region)
     except phonenumbers.NumberParseException:
         return None
     if not phonenumbers.is_valid_number(parsed):

@@ -92,7 +92,7 @@
           "session"
         ],
         "summary": "Sign In",
-        "description": "Sign in with email and password, into the oldest business the person belongs to.\n\nAn unknown email and a wrong password get the same answer, and cost the same time.",
+        "description": "Sign in with email and password, into the oldest business the person belongs to, and to\ntheir account (ZIF-146).\n\nAn unknown email and a wrong password get the same answer, and cost the same time.",
         "operationId": "session-sign_in",
         "requestBody": {
           "content": {
@@ -192,7 +192,7 @@
           "session"
         ],
         "summary": "Sign Out",
-        "description": "Sign out this browser. Needs no live session: an expired cookie is cleared all the same.",
+        "description": "Sign out this browser, of the business and of the account (ZIF-146). Needs no live session:\nan expired cookie is cleared all the same.",
         "operationId": "session-sign_out",
         "responses": {
           "204": {
@@ -227,7 +227,7 @@
           "session"
         ],
         "summary": "Sign Out Everywhere",
-        "description": "Sign the user out of every session, in every tenant.",
+        "description": "Sign the user out of every session, in every tenant, and of every account session\n(ZIF-146).",
         "operationId": "session-sign_out_everywhere",
         "responses": {
           "204": {
@@ -654,6 +654,298 @@
           },
           "503": {
             "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Content Too Large",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/account/session": {
+      "post": {
+        "tags": [
+          "platform-account"
+        ],
+        "summary": "Sign In",
+        "description": "Sign in to the account, with or without a business. Business sign-in's limits, challenge and\nfailure count (auth.check_credentials): one budget of guesses for a person across both.\n\nA platform admin gets no account session (403 account_unavailable, after a correct password\nonly). This browser's previous account session ends; so does a business session of a different\nperson (one browser, one person); one of the same person's stays.",
+        "operationId": "platform-account-sign_in",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Credentials"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountOut"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Content",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Content Too Large",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "platform-account"
+        ],
+        "summary": "Sign Out",
+        "description": "Sign out this browser, of the account and of the business (any sign-out ends both). Needs no\nlive session: an expired cookie is cleared all the same.",
+        "operationId": "platform-account-sign_out",
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "415": {
+            "description": "Unsupported Media Type",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Content Too Large",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/account/sessions": {
+      "delete": {
+        "tags": [
+          "platform-account"
+        ],
+        "summary": "Sign Out Everywhere",
+        "description": "End every session of this person, of both kinds, on every browser.",
+        "operationId": "platform-account-sign_out_everywhere",
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Content Too Large",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/account": {
+      "get": {
+        "tags": [
+          "platform-account"
+        ],
+        "summary": "Read",
+        "description": "The signed-in person's own name, email and phone, to fill in a booking form. Never by a\ntyped email.",
+        "operationId": "platform-account-read",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountOut"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "platform-account"
+        ],
+        "summary": "Update",
+        "description": "Change the person's own name and phone. The phone is international (+31...): an account has\nno country to read a local number in. No business's copy changes: each refreshes when the\nperson next books there (copy at booking, ZIF-99), and no membership's display name changes.",
+        "operationId": "platform-account-update",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AccountChange"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountOut"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Content",
             "content": {
               "application/json": {
                 "schema": {
@@ -6095,6 +6387,78 @@
           "password"
         ],
         "title": "AcceptInvite"
+      },
+      "AccountChange": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 60,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "phone": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 40,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phone"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "AccountChange",
+        "description": "Only the fields sent change. phone: null clears it; name cannot be cleared."
+      },
+      "AccountOut": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "title": "Email"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phone"
+          }
+        },
+        "type": "object",
+        "required": [
+          "email",
+          "name",
+          "phone"
+        ],
+        "title": "AccountOut",
+        "description": "The signed-in person's own details, to fill in a booking form. Nothing else, ever: the\ndirectory-ban test pins these three fields."
       },
       "AdminSession": {
         "properties": {

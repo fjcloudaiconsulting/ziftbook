@@ -176,11 +176,12 @@ def complete_sign_up(
         raise ApiError(400, "invalid_token")
     if created.outcome == "already_registered":
         raise ApiError(409, "account_exists")
+    auth.end_previous_account_session(request)  # one browser, one person (ZIF-146)
     # Two steps: if this one fails, the account exists and the person signs in normally.
     with tenant_context(created.tenant_id) as session:
-        token = auth.start(session, request, created.user_id)
+        started = auth.start(session, request, created.user_id, password_hash)
         signed_in_as = auth.describe(session, created.user_id)
-    auth.set_cookie(response, token)
+    auth.set_cookies(response, started)
     response.headers["Cache-Control"] = "no-store"
     return signed_in_as
 

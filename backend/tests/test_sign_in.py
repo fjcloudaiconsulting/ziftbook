@@ -3,7 +3,6 @@ import threading
 import unicodedata
 import uuid
 from collections.abc import Iterator
-from http.cookies import SimpleCookie
 
 import pytest
 from fastapi import FastAPI
@@ -20,6 +19,7 @@ from tests.conftest import (
     People,
     add_password,
     add_user,
+    cookie_named,
     email_of,
     fresh_address,
     fresh_email,
@@ -85,7 +85,7 @@ def test_signing_in_starts_a_session_in_the_business(
         "name": "Test Person",
         "slug": slug,
     }
-    client.cookies.set(auth.COOKIE, SimpleCookie(response.headers["set-cookie"])[auth.COOKIE].value)
+    client.cookies.set(auth.COOKIE, cookie_named(response, auth.COOKIE).value)
     assert client.get("/api/session").json()["business_name"] == "a"
 
 

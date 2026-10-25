@@ -3,7 +3,6 @@ import secrets
 import threading
 import uuid
 from collections.abc import Callable
-from http.cookies import SimpleCookie
 
 import pytest
 from fastapi import FastAPI
@@ -19,6 +18,7 @@ from tests.conftest import (
     PASSWORD,
     People,
     add_password,
+    cookie_named,
     email_of,
     fresh_email,
     issue_link,
@@ -125,7 +125,7 @@ def test_a_reset_signs_the_person_out_everywhere_and_ends_their_other_links(
     response = complete(client, used)
 
     assert response.status_code == 204
-    cleared = SimpleCookie(response.headers["set-cookie"])[auth.COOKIE]
+    cleared = cookie_named(response, auth.COOKIE)
     assert cleared["max-age"] == "0"
     with app_engine.connect() as conn:
         remaining = set(
@@ -295,9 +295,9 @@ def test_a_reset_during_sign_in_leaves_no_session_behind(
 
         monkeypatch.setattr(passwords, "verify", verify_then_reset)
     else:
-        start: Callable[..., str] = auth.start
+        start: Callable[..., auth.Started] = auth.start
 
-        def start_while_resetting(*args: object) -> str:
+        def start_while_resetting(*args: object) -> auth.Started:
             resetting.start()
             resetting.join(timeout=1)  # a reset that isn't held back finishes here
             return start(*args)
