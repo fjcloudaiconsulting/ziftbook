@@ -16,7 +16,7 @@ import {
 } from "../lib/services.ts";
 
 function body(form) {
-  return serviceBody(form, parseMoney);
+  return serviceBody(form, (text) => parseMoney(text, "EUR"));
 }
 
 describe("serviceName", () => {
