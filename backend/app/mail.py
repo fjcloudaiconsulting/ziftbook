@@ -423,7 +423,7 @@ PAYMENT_LINES = {
         "pt": "A taxa de processamento do pagamento ($amount) não é reembolsada.",
     },
 }
-SYMBOLS = {"EUR": "€", "GBP": "£", "USD": "$"}
+SYMBOLS = {"BRL": "R$", "EUR": "€", "GBP": "£", "USD": "$"}
 
 
 def _money(amount_minor: int, currency: str, locale: str) -> str:

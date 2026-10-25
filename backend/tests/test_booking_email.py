@@ -1307,6 +1307,10 @@ INTL = {
     ("pt", "EUR"): (f"€{NB}40,00", f"€{NB}1.234,56"),
     ("pt", "GBP"): (f"£{NB}40,00", f"£{NB}1.234,56"),
     ("pt", "USD"): (f"US${NB}40,00", f"US${NB}1.234,56"),
+    # ZIF-102: BRL is a currency a business can hold. Kills: SYMBOLS without it ("40,00 BRL").
+    ("en", "BRL"): ("R$40.00", "R$1,234.56"),
+    ("nl", "BRL"): (f"R${NB}40,00", f"R${NB}1.234,56"),
+    ("pt", "BRL"): (f"R${NB}40,00", f"R${NB}1.234,56"),
 }
 
 
