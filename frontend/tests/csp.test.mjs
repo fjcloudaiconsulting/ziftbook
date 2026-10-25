@@ -6,6 +6,7 @@ import { join } from "node:path";
 
 import { topLevelRoutes } from "../../scripts/check-reserved-routes.mjs";
 import { cspFor, cspHeaderFor, enforcedFor, newNonce, originOf, OTHER_ROUTES, PERSONAL_ROUTES, personalPage, reportUrlOf, trustedTypesReportOnly } from "../lib/csp.ts";
+import { mustReload } from "../lib/personal-pages.ts";
 
 const LOCALE_DIR = join(new URL("..", import.meta.url).pathname, "app", "[locale]");
 const LOCALES = ["en", "nl", "pt"];
@@ -173,5 +174,16 @@ describe("the personal pages' policy: switch and reporting (ZIF-146 code reviews
     for (const value of [undefined, "", "http://reports.example.test", "javascript:alert(1)", "not a url"]) {
       assert.equal(reportUrlOf(value), null, String(value));
     }
+  });
+
+  test("fence: a personal page reached by a client-side navigation from a report-only document reloads", () => {
+    // Wrong implementation killed: a guard on the current URL, which a client-side navigation has already changed.
+    assert.equal(mustReload(true, false, "/en/calendar", LOCALES), true);
+    assert.equal(mustReload(true, false, "/en/sign-in", LOCALES), true);
+    // Loaded on a personal page: its own policy holds. Policy everywhere, or the switch on: nothing to fix.
+    assert.equal(mustReload(true, false, "/en/salon-ana", LOCALES), false);
+    assert.equal(mustReload(true, true, "/en/calendar", LOCALES), false);
+    assert.equal(mustReload(false, false, "/en/calendar", LOCALES), false);
+    assert.equal(mustReload(true, false, null, LOCALES), false);
   });
 });

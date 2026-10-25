@@ -95,4 +95,14 @@ describe("what the enforced policy needs", () => {
     // style="" attribute, blocked, and the text it formats collapses.
     for (const file of PERSONAL_DIRS.flatMap(sources)) assert.doesNotMatch(readFileSync(file, "utf8"), /\bstyle=\{/, file);
   });
+
+  test("fence: every personal route renders the guard against a client-side navigation from a report-only page", () => {
+    // Wrong implementation killed: a booking page reached by <Link> from the console, rendered inside the console
+    // document's report-only policy.
+    for (const dir of PERSONAL_DIRS) {
+      const layout = join(dir, "layout.tsx");
+      assert.ok(existsSync(layout), `${dir} has a layout`);
+      assert.match(readFileSync(layout, "utf8"), /<CspGuard \/>/, layout);
+    }
+  });
 });

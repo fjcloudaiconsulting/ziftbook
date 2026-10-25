@@ -1,6 +1,10 @@
 // The pages' Content-Security-Policy (ZB-12). proxy.ts sends it on every page with a fresh nonce; Next puts
 // that nonce on its own scripts, and next/script gets it from the layout (app/[locale]/_ui/nonce.tsx).
 
+import { personalPage } from "./personal-pages.ts";
+
+export { OTHER_ROUTES, PERSONAL_ROUTES, personalPage } from "./personal-pages.ts";
+
 /** `true` enforces the policy on every page. Anything else sends it report-only (browsers report what it
  * would block, and block nothing), except on the pages personalPage() names, which always enforce it.
  * Read once, when the server starts. */
@@ -33,49 +37,6 @@ export function reportUrlOf(value: string | undefined): string | null {
 /** The reporting directives for a policy: both forms, as browsers support one or the other. */
 export function reportingDirectives(reportUrl: string | null): string[] {
   return reportUrl ? [`report-uri ${reportUrl}`, `report-to ${REPORT_GROUP}`] : [];
-}
-
-/** The top-level routes under app/[locale] that show or fetch a person's own data: the account pages
- * (ZIF-146) and a booking's manage page (`booking`). */
-export const PERSONAL_ROUTES: ReadonlySet<string> = new Set(["account", "booking"]);
-
-/** Every other top-level route under app/[locale]: the console, the admin, sign-in and the legal pages.
- * Any first segment in neither set is a business's slug: its booking page, its booking and checkout
- * steps. tests/csp.test.mjs fails for a route folder in neither set, so a new route is classified on
- * purpose. */
-export const OTHER_ROUTES: ReadonlySet<string> = new Set([
-  "admin",
-  "calendar",
-  "clients",
-  "forgot-password",
-  "invite",
-  "my-hours",
-  "opening-hours",
-  "privacy",
-  "reset-password",
-  "services",
-  "settings",
-  "setup",
-  "sign-in",
-  "sign-up",
-  "team",
-  "terms",
-]);
-
-/**
- * Whether a page always gets the enforced policy, whatever ZIF_CSP_ENFORCE says (ZIF-146): a business's
- * booking pages (`/{locale}/{slug}`, `/{locale}/{slug}/book`, its checkout), the manage page and the
- * account pages. They render merchant-controlled text on the origin that answers `GET /api/account` with a
- * signed-in person's details, so a script that got onto them must not run. Everywhere else stays report-only
- * until ZIF-224 enforces it everywhere.
- */
-export function personalPage(pathname: string, locales: readonly string[]): boolean {
-  const segments = pathname.split("/").filter(Boolean);
-  if (segments.length > 0 && locales.includes(segments[0])) segments.shift();
-  const first = segments[0];
-  if (first === undefined) return false; // the home page
-  if (PERSONAL_ROUTES.has(first)) return true;
-  return !OTHER_ROUTES.has(first);
 }
 
 /** Whether this page's policy is enforced: every personal page, unless the emergency switch is on, and every page
