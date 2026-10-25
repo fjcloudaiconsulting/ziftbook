@@ -404,6 +404,24 @@ value needs a redeploy it is an environment variable; otherwise it is a setting.
 - Convert a business's local times with `zoneinfo`, never with SQL `AT TIME ZONE`: Postgres doesn't know every name
   the `tzdata` package accepts (`US/Pacific`, `Asia/Calcutta`).
 
+## Money
+
+An amount is an integer in its currency's minor units everywhere: prices, payments, Stripe calls. How many minor
+units a currency has comes from `backend/app/currencies.py` (ISO 4217's exponent), never an assumed 2. A business
+holds one currency (`tenants.currency`), chosen by the merchant and independent of its country and of anybody's
+language. A price shows in the business's currency and the reader's number format, with the currency's plain
+symbol (€, $, R$; Intl's `narrowSymbol`), else its code: `frontend/lib/money.ts` on the web, `mail._money` in email,
+kept equal by the parity fixture in `backend/tests/test_booking_email.py`.
+
+Adding a currency needs:
+
+- its row in `MINOR_UNITS` and `Currency` (`backend/app/currencies.py`);
+- Intl's digit count for it (`resolvedOptions().maximumFractionDigits`, which the web uses) equal to that exponent;
+  where they differ, the API must start sending the exponent;
+- Stripe's rule for its smallest unit checked (Stripe treats HUF, TWD, ISK and UGX specially), and a `MIN_CHARGE`
+  entry (`backend/app/payments.py`) if it can take payments;
+- its symbol in `mail.SYMBOLS`, and rows for it in the parity fixture.
+
 ## Background jobs
 
 Deferred and scheduled work goes through the `jobs` table (`app/jobs.py`); there is no broker or scheduler.
