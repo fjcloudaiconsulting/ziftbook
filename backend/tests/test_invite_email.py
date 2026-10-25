@@ -9,10 +9,16 @@ import pytest
 from sqlalchemy import Engine, text
 
 from app import mail
-from app.db import SessionLocal
+from app.db import SessionLocal, tenant_context
 from app.jobs import Job, enqueue, run_once
 from app.worker import KINDS
-from tests.conftest import People, fresh_email, jobs_as_the_worker, save_setting
+from tests.conftest import (
+    People,
+    add_user,
+    fresh_email,
+    jobs_as_the_worker,
+    save_setting,
+)
 from tests.test_account_email import (  # noqa: F401
     APP_URL,
     as_the_worker,
@@ -236,3 +242,84 @@ def test_send_invite_runs_through_the_worker(
     run_jobs()
 
     assert [m["Subject"] for m in inbox(email)] == ["You're invited to join a business on ziftbook"]
+
+
+# ZIF-102 1: FENCE. Wrong impl: today's send_invite, always in the business's language: a person
+# who chose a language of their own gets the invite, and its page, in that one.
+def test_an_invite_to_an_account_with_a_language_uses_it(
+    people: People, migrate_engine: Engine
+) -> None:
+    save_setting(people.a, "language", "nl")
+    email = fresh_email()
+    add_user(migrate_engine, email=email, locale="pt")
+    invite_id = pending(people.a, email)
+
+    mail.send_invite(Job(uuid4(), "email.invite", people.a, {"invite_id": str(invite_id)}))
+
+    (sent,) = inbox(email)
+    body, _ = message(sent["ID"])
+    assert sent["Subject"] == "Você recebeu um convite para um negócio no ziftbook"
+    assert link_in(body).startswith(f"{APP_URL}/pt/invite#")
+
+
+# ZIF-102 3: FENCE. Wrong impl: coalesce(users.locale, 'en'): an account that chose no language
+# gets the business's, as a new address does (test_send_invite_uses_the_business_language).
+def test_an_invite_to_an_account_without_a_language_uses_the_business_language(
+    people: People, migrate_engine: Engine
+) -> None:
+    save_setting(people.a, "language", "nl")
+    email = fresh_email()
+    add_user(migrate_engine, email=email)
+    invite_id = pending(people.a, email)
+
+    mail.send_invite(Job(uuid4(), "email.invite", people.a, {"invite_id": str(invite_id)}))
+
+    (sent,) = inbox(email)
+    body, _ = message(sent["ID"])
+    assert sent["Subject"] == "Je bent uitgenodigd voor een bedrijf op ziftbook"
+    assert link_in(body).startswith(f"{APP_URL}/nl/invite#")
+
+
+def invite_locale(tenant_id: uuid.UUID, invite_id: uuid.UUID) -> str | None:
+    """invite_locale as the worker calls it, inside a business."""
+    with tenant_context(tenant_id) as session:
+        found: str | None = session.scalar(text("SELECT invite_locale(:i)"), {"i": invite_id})
+    return found
+
+
+# ZIF-102 4: FENCE. Wrong impl: a body that reads invites without the caller's business (an
+# explicit tenant id argument, or RLS sidestepped): business A would learn the language of an
+# address B invited.
+def test_invite_locale_reads_only_this_business_s_invites(
+    people: People, migrate_engine: Engine
+) -> None:
+    email = fresh_email()
+    add_user(migrate_engine, email=email, locale="pt")
+    invite_id = pending(people.b, email)
+
+    assert invite_locale(people.b, invite_id) == "pt"  # positive control
+    assert invite_locale(people.a, invite_id) is None
+
+
+# ZIF-102 5: FENCE. Wrong impl: GRANT EXECUTE ON FUNCTION invite_locale TO ziftbook_app. Only the
+# invite job needs it, and the API taking an invite id to an account's language is an oracle.
+def test_the_app_role_cannot_execute_invite_locale(app_engine: Engine) -> None:
+    with app_engine.connect() as conn:
+        assert (
+            conn.scalar(
+                text(
+                    "SELECT has_function_privilege('ziftbook_app', 'invite_locale(uuid)', "
+                    "'EXECUTE')"
+                )
+            )
+            is False
+        )
+        assert (
+            conn.scalar(
+                text(
+                    "SELECT has_function_privilege('ziftbook_worker', 'invite_locale(uuid)', "
+                    "'EXECUTE')"
+                )
+            )
+            is True
+        )
