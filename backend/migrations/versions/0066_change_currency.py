@@ -46,6 +46,8 @@ Revises: 0062
 
 from alembic import op
 
+from app.db import lift_force
+
 revision = "0066"
 down_revision = "0062"
 branch_labels = None
@@ -120,14 +122,15 @@ END $$""")
 
 def downgrade() -> None:
     op.execute("DROP FUNCTION change_currency(text, integer)")
-    # Back to 0016's validated NO ACTION key. Its check scans services as the owner, which FORCE
-    # row-level security would subject to the tenant policy (no app.tenant_id here: 42704), so FORCE
-    # is lifted for this one statement, under the ACCESS EXCLUSIVE lock it already takes.
-    op.execute("ALTER TABLE services NO FORCE ROW LEVEL SECURITY")
-    op.execute(f"""
+    # Back to 0016's validated NO ACTION key. Its check scans services as the owner, under FORCE
+    # row-level security, so FORCE is lifted around it (app.db.lift_force).
+    lift_force(
+        op.execute,
+        "services",
+        f"""
     ALTER TABLE services
       DROP CONSTRAINT {SERVICES_FK},
       ADD CONSTRAINT {SERVICES_FK}
-        FOREIGN KEY (tenant_id, price_currency) REFERENCES tenants (id, currency)""")
-    op.execute("ALTER TABLE services FORCE ROW LEVEL SECURITY")
+        FOREIGN KEY (tenant_id, price_currency) REFERENCES tenants (id, currency)""",
+    )
     op.execute("ALTER TABLE tenants DROP CONSTRAINT ck_tenants_currency_supported")
