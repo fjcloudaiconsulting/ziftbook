@@ -3,6 +3,7 @@
 from typing import Literal, NamedTuple
 
 from app.business_settings import Locale
+from app.currencies import MINOR_UNITS
 
 Country = Literal["NL", "PT", "BR", "GB", "US"]
 
@@ -13,8 +14,6 @@ class CountryDefaults(NamedTuple):
     language: Locale
 
 
-# ponytail: every currency here has 2 minor units; one with 0 or 3 (JPY, BHD) needs that recorded
-# before it is added.
 COUNTRIES: dict[Country, CountryDefaults] = {
     "NL": CountryDefaults("EUR", "Europe/Amsterdam", "nl"),
     "PT": CountryDefaults("EUR", "Europe/Lisbon", "pt"),
@@ -23,3 +22,6 @@ COUNTRIES: dict[Country, CountryDefaults] = {
     # A starting point only: US time zones span six of them, so the owner changes it in settings.
     "US": CountryDefaults("USD", "America/New_York", "en"),
 }
+
+# A country's starting currency is one a business can hold (app/currencies.py).
+assert {defaults.currency for defaults in COUNTRIES.values()} <= MINOR_UNITS.keys()
