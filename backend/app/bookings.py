@@ -122,15 +122,24 @@ class BookingOut(BookingCore):
 
 @dataclass(frozen=True)
 class Account:
+    """A live session on this request and its holder's VERIFIED account email (an emailed sign-up or
+    invite link proved it; only the first-run admin's and the admin CLI's are typed by an
+    operator). kind and id_hash let the booking transaction re-confirm the session (held())."""
+
     user_id: UUID
     email: str
+    kind: Literal["account", "business"]
+    id_hash: bytes
 
 
-def account(request: Request) -> Account | None:
-    """The signed-in person and their VERIFIED account email, or None. Its own transaction, like
-    app.auth.signed_in: the path's business is not this session's business, and users' policy shows
-    a user only through a membership in the CURRENT tenant, so the email must be read under the
-    session's own tenant and never under the path's.
+def accounts(request: Request) -> list[Account]:
+    """Every live session on this request, the account session first (ZIF-146): a booking is proven
+    by whichever one's verified email equals the typed one, never by cookie order. Its own
+    transaction, like app.auth.signed_in: the path's business is not the session's business, and
+    users' policy shows a user only through a membership in the CURRENT tenant, so a business
+    session's email is read under its own tenant and never under the path's; an account session's
+    comes from resolve_account_session, which reads users as its owner (a person with no business
+    has no tenant at all, ZIF-146).
 
     CALL IT AT STEP 0, BEFORE tenant_context IS OPENED, and let this transaction CLOSE first.
     app/auth.py:187-201 closes its own transaction before opening the endpoint's for the same
@@ -139,19 +148,54 @@ def account(request: Request) -> Account | None:
     against a 40-thread pool, about 15 concurrent bookings deadlock on CONNECTION CHECKOUT, each
     holding its connection until the pool timeout fails it as 503 busy (app/main.py, ZB-16).
     """
-    token = request.cookies.get(auth.COOKIE)
-    if not token:
-        return None
+    found: list[Account] = []
+    account_token = request.cookies.get(auth.ACCOUNT_COOKIE)
+    business_token = request.cookies.get(auth.COOKIE)
+    if not account_token and not business_token:
+        return found
     with SessionLocal.begin() as session:
-        row = session.execute(
-            auth.RESOLVE,
-            {"id_hash": auth.hash_token(token), "idle": auth.IDLE, "touch_every": auth.TOUCH_EVERY},
-        ).first()
-        if row is None:
-            return None
-        join_tenant(session, row.tenant_id)
-        email = session.scalar(text("SELECT email FROM users WHERE id = :id"), {"id": row.user_id})
-    return None if email is None else Account(row.user_id, email)
+        if account_token:
+            id_hash = auth.hash_token(account_token)
+            row = session.execute(
+                text("SELECT user_id, email FROM resolve_account_session(:h)"), {"h": id_hash}
+            ).first()
+            if row is not None:
+                found.append(Account(row.user_id, row.email, "account", id_hash))
+        if business_token:
+            id_hash = auth.hash_token(business_token)
+            row = session.execute(
+                auth.RESOLVE,
+                {"id_hash": id_hash, "idle": auth.IDLE, "touch_every": auth.TOUCH_EVERY},
+            ).first()
+            if row is not None:
+                join_tenant(session, row.tenant_id)
+                email = session.scalar(
+                    text("SELECT email FROM users WHERE id = :id"), {"id": row.user_id}
+                )
+                if email is not None:
+                    found.append(Account(row.user_id, email, "business", id_hash))
+    return found
+
+
+# The proving session, re-confirmed inside the booking transaction and held FOR SHARE to its end
+# (ZIF-146): a sign-out, password reset or erasure (ZIF-58) that deletes it either waits for this
+# booking to commit, and then clears what it linked, or has already committed, and this booking is
+# refused. Lock order: the session, then clients (find_or_create).
+HOLD_ACCOUNT = text("SELECT hold_account_session(:h)")
+HOLD_BUSINESS = text("""
+SELECT user_id FROM sessions
+WHERE id_hash = :h AND expires_at > now() AND last_seen_at > now() - :idle
+FOR SHARE
+""")
+
+
+def held(db: Session, proof: Account) -> bool:
+    """Whether proof's session is still live and still its holder's, now held FOR SHARE."""
+    if proof.kind == "account":
+        holder = db.scalar(HOLD_ACCOUNT, {"h": proof.id_hash})
+    else:
+        holder = db.scalar(HOLD_BUSINESS, {"h": proof.id_hash, "idle": auth.IDLE})
+    return bool(holder == proof.user_id)
 
 
 class Rule(NamedTuple):
@@ -386,7 +430,7 @@ INSERT INTO bookings (
   service_name, price_amount_minor, price_currency, duration_minutes, cancellation_policy_text,
   auto_confirm_at_booking, worker_display_name, free_cancellation_hours, reschedule_cutoff_hours,
   original_starts_at, earliest_starts_at, max_reschedules,
-  client_name, client_phone, client_message, checkout_hash)
+  client_name, client_phone, client_message, checkout_hash, booked_as)
 VALUES (
   current_setting('app.tenant_id')::uuid, :client_id, :worker_id, :service_id,
   :starts_at, :starts_at + make_interval(mins => :duration_minutes), :status, :expires_at,
@@ -395,7 +439,10 @@ VALUES (
   :free_cancellation_hours, :reschedule_cutoff_hours,
   -- ZIF-54 (D8). Both snapshotted = the insert's own starts_at, never re-read afterwards.
   :starts_at, :starts_at, :max_reschedules,
-  :client_name, :client_phone, :client_message, :checkout_hash)
+  :client_name, :client_phone, :client_message, :checkout_hash,
+  -- ZIF-146: the account whose live session proved this booking; never from a body, NULL for a
+  -- guest or a merchant. Personal data: no merchant query selects it.
+  :booked_as)
 RETURNING id, status, starts_at, ends_at
 """)
 
@@ -761,6 +808,7 @@ def place(
     client_phone: str | None = None,
     client_message: str | None = None,
     checkout_hash: bytes | None = None,
+    booked_as: UUID | None = None,
     metric: dict[str, str] | None = None,
 ) -> tuple[Row[Any], UUID]:
     """The one insert path for a new booking (ZIF-57): the public create() and the merchant's both
@@ -817,6 +865,7 @@ def place(
                         "client_phone": client_phone,
                         "client_message": client_message,
                         "checkout_hash": checkout_hash,
+                        "booked_as": booked_as,
                     },
                 ).one()
                 # Inside the winning savepoint, immediately after the booking insert.
@@ -925,8 +974,7 @@ def book_online(
     address: str,
     phone: str,
     locale: str | None,
-    user_id: UUID | None,
-    proven: bool,
+    proof: Account | None,
     policy_version: str,
     consents: dict[Purpose, bool],
     origin_ip: str | None,
@@ -939,7 +987,10 @@ def book_online(
     (its transaction's first statement) and catches OperationalError as 503 busy.
 
     address: the client's email, already normalised (never `email`: that names this module's
-    enqueue helper). proven: see app.clients.find_or_create; user_id is passed only when proven.
+    enqueue helper). proof: the live session whose verified email equals address, or None (a
+    guest); see app.clients.find_or_create for what proven means. It is re-confirmed here, held FOR
+    SHARE, before anything is written (held()): a session ended since step 0 is 401
+    unauthenticated, so nothing is written under an identity that is gone.
 
     Returns the booking, and while the business's payment step is on, the Stripe account to check
     the card on and the hold's deadline: the booking is then `awaiting_payment`, keeps
@@ -979,6 +1030,9 @@ def book_online(
         raise ApiError(422, "payment_required")
     if stripe_account is None and payment is not None:
         raise ApiError(422, "payment_not_offered")
+    proven = proof is not None
+    if proof is not None and not held(db, proof):
+        raise ApiError(401, "unauthenticated")
     # Consent WITHDRAWALS only; grants ride the booking_events row instead (ruling 18, §10). A guest
     # cannot withdraw anything: an unproven address says nothing about its owner, and the event
     # keeps only what was ticked.
@@ -995,7 +1049,7 @@ def book_online(
         email=address,
         phone=phone,
         locale=locale,
-        user_id=user_id if proven else None,
+        user_id=proof.user_id if proof is not None else None,
         proven=proven,
     )
     if withdrawals:  # 8: record_consents calls texts_for again - its own trust boundary
@@ -1084,6 +1138,7 @@ def book_online(
         client_phone=phone,
         client_message=message,
         checkout_hash=checkout_hash if stripe_account is not None else None,
+        booked_as=proof.user_id if proof is not None else None,
         metric={"booking.proven": "true" if proven else "false"},
         event={
             "ip": origin_ip,
@@ -1180,8 +1235,10 @@ def create(  # sync def: turnstile.verify's urlopen blocks, and runs in FastAPI'
 ) -> BookingOut:
     """Book a free slot straight away, as a guest or signed in. The address is `proven` only for
     its own signed-in account; a guest's booking never changes an existing client (ZIF-157)."""
-    signed_in_as = account(request)  # step 0: its own transaction, opened and closed here
-    proven = signed_in_as is not None and signed_in_as.email == new.email
+    # Step 0: its own transaction, opened and closed here. Proven by whichever live session's
+    # verified email is the typed one.
+    proof = next((a for a in accounts(request) if a.email == new.email), None)
+    proven = proof is not None
     ip = request.client.host if request.client else None
     # 1. Per IP first, before any outbound call: Turnstile ahead of a limit would give an anonymous
     #    caller a free outbound HTTPS POST per request. Overall, and per business.
@@ -1252,8 +1309,7 @@ def create(  # sync def: turnstile.verify's urlopen blocks, and runs in FastAPI'
                 address=new.email,
                 phone=new.phone,
                 locale=new.locale,
-                user_id=signed_in_as.user_id if signed_in_as is not None else None,
-                proven=proven,
+                proof=proof,
                 policy_version=new.policy_version,
                 consents=new.consents,
                 origin_ip=origin_ip,

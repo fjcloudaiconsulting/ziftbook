@@ -305,6 +305,12 @@ migration 0026), not any code path. A race in a route somebody forgets to guard 
   `GRANT UPDATE (column)` only if a route changes it. A settled booking never becomes `pending` again, and an
   `UPDATE` never moves a booking into `awaiting_payment`, which only placement (the `INSERT`) sets (the
   `bookings_status_to_pending` trigger).
+- `bookings.booked_as` (ZIF-146) is the account whose live session proved the booking, written only by `place()`
+  from that session (re-confirmed `FOR SHARE` inside the booking transaction), never from a body; NULL for a guest
+  or a merchant. It is personal data (it maps a booking to a person): no merchant route selects it and no response
+  schema carries it; only the person's own history (`own_bookings`) reads it. The app role may `INSERT` it, never
+  `UPDATE` it. A proven booking whose session ended after step 0 is refused, so nothing is written under an
+  identity that is gone.
 - The public booking POST writes **no** `audit_events` row: the requester is the data subject, and `auth.record`
   stamps their address into a table with no foreign keys that outlives erased people.
 
