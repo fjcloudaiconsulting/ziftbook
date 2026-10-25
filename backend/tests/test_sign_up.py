@@ -2,7 +2,6 @@ import json
 import secrets
 import uuid
 from collections.abc import Iterator
-from http.cookies import SimpleCookie
 from typing import Any, get_args
 
 import pytest
@@ -19,6 +18,7 @@ from tests.conftest import (
     EXPIRE,
     PASSWORD,
     People,
+    cookie_named,
     delete_memberships,
     delete_payment_accounts,
     delete_services,
@@ -129,7 +129,7 @@ def test_the_emailed_link_sets_up_the_business_and_the_owner_can_sign_in_again(
         "owner",
         "Studio Ana Nails",
     )
-    client.cookies.set(auth.COOKIE, SimpleCookie(response.headers["set-cookie"])[auth.COOKIE].value)
+    client.cookies.set(auth.COOKIE, cookie_named(response, auth.COOKIE).value)
     assert client.get("/api/session").json()["tenant_id"] == session["tenant_id"]
     with tenant_context(uuid.UUID(session["tenant_id"])) as db:
         # The language of the page the owner signed up on.
@@ -429,7 +429,7 @@ def test_a_business_created_with_a_country_reports_its_currency(
     session = created(response, businesses)
 
     assert session["currency"] == "BRL"
-    client.cookies.set(auth.COOKIE, SimpleCookie(response.headers["set-cookie"])[auth.COOKIE].value)
+    client.cookies.set(auth.COOKIE, cookie_named(response, auth.COOKIE).value)
     assert client.get("/api/session").json()["currency"] == "BRL"
 
 

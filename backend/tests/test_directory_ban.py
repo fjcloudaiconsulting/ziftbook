@@ -16,7 +16,9 @@ from typing import Any
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from psycopg.errors import InsufficientPrivilege
 from sqlalchemy import Engine, text
+from sqlalchemy.exc import ProgrammingError
 
 from app.db import tenant_context
 from app.main import create_app
@@ -210,7 +212,9 @@ USERS_POLICIES = [
     ],
 ]
 # Every SECURITY DEFINER function ziftbook_app may EXECUTE, in any schema but the system ones, by
-# name and identity arguments. Read from the migrated database.
+# name and identity arguments. Read from the migrated database. ZIF-146 adds the account-session
+# functions on purpose: each is keyed by a live session hash or a just-verified password hash, takes
+# no email, name or query, and answers about no one but the session's own holder.
 DEFINERS = [
     "public.accept_invite(p_token_hash bytea, p_password_hash text, p_name text)",
     "public.account_by_email(p_email text)",
@@ -220,13 +224,18 @@ DEFINERS = [
     "public.complete_sign_up(p_token_hash bytea, p_password_hash text, p_business_name text, p_country text, p_currency text, p_name text)",  # noqa: E501
     "public.confirm_totp_enrolment(p_id_hash bytea, p_proof bytea, p_step bigint, p_code_proofs bytea[])",  # noqa: E501
     "public.email_token_live(p_token_hash bytea, p_purpose text)",
+    "public.end_account_session(p_id_hash bytea)",
+    "public.end_account_sessions(p_id_hash bytea)",
     "public.end_admin_session(p_id_hash bytea)",
     "public.needs_setup()",
     "public.pass_second_factor(p_id_hash bytea, p_proof bytea, p_step bigint)",
     "public.password_unchanged(p_user_id uuid, p_hash text)",
     "public.reset_password(p_token_hash bytea, p_password_hash text)",
+    "public.resolve_account_session(p_id_hash bytea)",
     "public.resolve_admin_session(p_id_hash bytea)",
     "public.set_own_name(p_user uuid, p_name text)",
+    "public.set_own_profile(p_id_hash bytea, p_name text, p_phone text)",
+    "public.start_account_session(p_user uuid, p_password_hash text, p_id_hash bytea, p_ip inet, p_user_agent text)",  # noqa: E501
     "public.start_admin_session(p_user uuid, p_password_hash text, p_id_hash bytea, p_ip inet, p_user_agent text)",  # noqa: E501
     "public.start_email_token(p_purpose text, p_email text, p_locale text)",
     "public.stripe_account_tenant(p_account text)",
@@ -315,3 +324,44 @@ def test_no_route_lists_users_and_a_client_has_no_account_field() -> None:
         "internal_note",
         "consents",
     }, "ClientOut changed." + WIDENING
+
+
+# 13: FENCE (ZIF-146). Wrong impl: keeping table-level SELECT on users once it has a phone: a
+# business would read its members' platform phone through the users policy.
+def test_a_business_cannot_read_a_members_phone(people: People, app_engine: Engine) -> None:
+    with pytest.raises(ProgrammingError) as error, tenant_context(people.a) as session:
+        session.execute(text("SELECT phone FROM users WHERE id = :u"), {"u": people.both})
+    assert isinstance(error.value.orig, InsufficientPrivilege)
+
+
+# 13b: FENCE (ZIF-146). Wrong impl: a UNIQUE phone: a duplicate error on a profile change would tell
+# anyone which account holds a number.
+def test_no_constraint_or_index_makes_a_phone_unique(migrate_engine: Engine) -> None:
+    with migrate_engine.connect() as conn:
+        unique = conn.scalars(
+            text("""
+            SELECT i.indexrelid::regclass::text FROM pg_index i
+            JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY (i.indkey)
+            WHERE i.indrelid = 'users'::regclass AND i.indisunique AND a.attname = 'phone'
+            """)
+        ).all()
+    assert unique == []
+
+
+# 14: FENCE (ZIF-146). Wrong impl: a lookup by typed email (GET /api/account?email=) or a richer
+# account answer (has_account, memberships, businesses).
+def test_the_account_answers_only_its_own_three_fields() -> None:
+    spec = json.loads(CONTRACT.read_text())
+    assert set(spec["components"]["schemas"]["AccountOut"]["properties"]) == {
+        "email",
+        "name",
+        "phone",
+    }, "AccountOut changed." + WIDENING
+    parameters = [
+        parameter["name"]
+        for path, operations in spec["paths"].items()
+        if path.startswith("/api/account")
+        for operation in operations.values()
+        for parameter in operation.get("parameters", [])
+    ]
+    assert "email" not in parameters

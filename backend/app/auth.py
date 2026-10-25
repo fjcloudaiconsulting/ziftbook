@@ -37,6 +37,9 @@ FAILURES_BEFORE_CHALLENGE = PER_ADDRESS_LIMIT + 1
 PasswordAction = Literal["sign_in", "admin_sign_in"]
 PASSWORD_ACTIONS: tuple[PasswordAction, ...] = get_args(PasswordAction)
 COOKIE = "__Host-session"  # __Host-: Secure, Path=/ and no Domain, so no subdomain can set it
+# ZIF-146: the person's own account session, beside the business one: no tenant, no role, its own
+# table (0057), reached only through definer functions. No console route reads it.
+ACCOUNT_COOKIE = "__Host-account-session"
 
 
 def hash_token(token: str) -> bytes:
@@ -122,6 +125,11 @@ Action = Literal[
     "booking_rescheduled",
     # ZIF-158: an owner connects the business to Stripe, first time only.
     "payment_account_created",
+    # ZIF-146: a person's own account, outside any business (tenant_id NULL).
+    "account_created",
+    "account_signed_in",
+    "account_signed_out",
+    "account_details_changed",
 ]
 
 
@@ -192,6 +200,71 @@ def set_cookie(response: Response, token: str) -> None:
 
 def clear_cookie(response: Response) -> None:
     response.delete_cookie(COOKIE, path="/", secure=True, httponly=True, samesite="lax")
+
+
+def set_account_cookie(response: Response, token: str) -> None:
+    # Strict, unlike the business cookie: only same-site requests carry it, and no page renders
+    # account data on the server, so a navigation from another site never needs it (ZIF-146).
+    response.set_cookie(
+        ACCOUNT_COOKIE,
+        token,
+        max_age=int(ABSOLUTE.total_seconds()),
+        path="/",
+        secure=True,
+        httponly=True,
+        samesite="strict",
+    )
+
+
+def clear_account_cookie(response: Response) -> None:
+    response.delete_cookie(ACCOUNT_COOKIE, path="/", secure=True, httponly=True, samesite="strict")
+
+
+def start_account(
+    session: Session, request: Request, user_id: UUID, password_hash: str
+) -> str | None:
+    """Start an account session for user_id on this browser and return its cookie's token; None for
+    a platform admin, who gets none (0057). Whatever account session this browser had ends here,
+    whoever it belonged to.
+
+    password_hash is the stored hash the caller just verified: a reset that changed it since answers
+    401 invalid_credentials, so the caller's transaction rolls back and no session of either kind
+    survives the reset. Lock order (CONTRIBUTING): password_credentials, then account_sessions.
+    """
+    token = secrets.token_urlsafe(32)
+    ip, user_agent = origin(request)
+    outcome = session.scalar(
+        text("SELECT start_account_session(:u, :h, :id_hash, CAST(:ip AS inet), :ua)"),
+        {
+            "u": user_id,
+            "h": password_hash,
+            "id_hash": hash_token(token),
+            "ip": ip,
+            "ua": user_agent,
+        },
+    )
+    if outcome == "stale":
+        raise ApiError(401, "invalid_credentials")
+    if outcome == "admin":
+        return None
+    if old := request.cookies.get(ACCOUNT_COOKIE):
+        session.execute(text("SELECT end_account_session(:h)"), {"h": hash_token(old)})
+    return token
+
+
+@dataclass(frozen=True)
+class Started:
+    """A sign-in's two cookies: the business session's and, unless the person is a platform admin,
+    the account session's (ZIF-146: one sign-in issues both)."""
+
+    token: str
+    account_token: str | None
+
+
+def set_cookies(response: Response, started: Started) -> None:
+    set_cookie(response, started.token)
+    if started.account_token is not None:
+        set_account_cookie(response, started.account_token)
 
 
 # One statement: the live session (neither idle nor past its absolute expiry), and last_seen_at
@@ -315,10 +388,12 @@ def read(current: AnySession, response: Response) -> SessionOut:
     return describe(current.db, current.user_id)
 
 
-def start(session: Session, request: Request, user_id: UUID) -> str:
+def start(session: Session, request: Request, user_id: UUID, password_hash: str) -> Started:
     """Sign user_id in on this browser: whatever session it had ends here, whoever it belonged to.
+    The person's account session starts with it (ZIF-146), so a console sign-in also fills in a
+    booking page; password_hash is the stored hash the caller verified (start_account).
 
-    session is a tenant_context for the business; returns the new cookie's token.
+    session is a tenant_context for the business; returns the new cookies' tokens.
     """
     # create() first: it may wait on the membership (a removal in flight), and must do so holding
     # no session row, or it deadlocks against members.remove deleting that row.
@@ -328,12 +403,13 @@ def start(session: Session, request: Request, user_id: UUID) -> str:
         ip=request.client.host if request.client else None,
         user_agent=request.headers.get("user-agent"),
     )
+    account_token = start_account(session, request, user_id, password_hash)
     if old := request.cookies.get(COOKIE):
         session.execute(
             text("DELETE FROM sessions WHERE id_hash = :id_hash"), {"id_hash": hash_token(old)}
         )
     record(session, request, "sign_in_succeeded", actor_user_id=user_id)
-    return token
+    return Started(token, account_token)
 
 
 class Credentials(BaseModel):
@@ -393,12 +469,9 @@ def count_failure(
     return limits.charge(limits.email_key(f"{action}_failed", email), SIGN_IN_WINDOW) == threshold
 
 
-@router.post(
-    "/session",
-    responses={status: {"model": Error} for status in (401, 403, 415, 422, 429, 503)},
-)
-def sign_in(credentials: Credentials, request: Request, response: Response) -> SessionOut:
-    """Sign in with email and password, into the oldest business the person belongs to.
+def check_credentials(credentials: Credentials, request: Request) -> Row[Any]:
+    """Sign-in's checks, shared by the business and the account sign-in (ZIF-146) so both spend one
+    budget of guesses: the limits, the challenge, and the password. Returns account_by_email's row.
 
     An unknown email and a wrong password get the same answer, and cost the same time.
     """
@@ -423,6 +496,20 @@ def sign_in(credentials: Credentials, request: Request, response: Response) -> S
             record(session, request, "sign_in_failed", actor_user_id=None, target=target)
         raise ApiError(401, "invalid_credentials")
     assert account is not None
+    return account
+
+
+@router.post(
+    "/session",
+    responses={status: {"model": Error} for status in (401, 403, 415, 422, 429, 503)},
+)
+def sign_in(credentials: Credentials, request: Request, response: Response) -> SessionOut:
+    """Sign in with email and password, into the oldest business the person belongs to, and to
+    their account (ZIF-146).
+
+    An unknown email and a wrong password get the same answer, and cost the same time.
+    """
+    account = check_credentials(credentials, request)
     if account.tenant_id is None:
         raise ApiError(403, "no_tenant")
     with tenant_context(account.tenant_id) as session:
@@ -432,20 +519,21 @@ def sign_in(credentials: Credentials, request: Request, response: Response) -> S
         ):  # reset while it was being checked
             raise ApiError(401, "invalid_credentials")
         try:
-            token = start(session, request, account.user_id)
+            started = start(session, request, account.user_id, account.password_hash)
         except ValueError:  # the membership went away since the lookup
             raise ApiError(403, "no_tenant") from None
         signed_in_as = describe(session, account.user_id)
-    set_cookie(response, token)
+    set_cookies(response, started)
     response.headers["Cache-Control"] = "no-store"
     return signed_in_as
 
 
-@router.delete("/session", status_code=204, responses={415: {"model": Error}})
-def sign_out(request: Request, response: Response) -> None:
-    """Sign out this browser. Needs no live session: an expired cookie is cleared all the same."""
-    token = request.cookies.get(COOKIE)
-    if token:
+def end_browser_sessions(request: Request, response: Response) -> None:
+    """End this browser's sessions of both kinds, whoever they belong to, and clear both cookies
+    (ZIF-146: any sign-out ends both). Needs no live session: an expired cookie is cleared all the
+    same. Each kind in its own transaction, as each event belongs to its own place: the business's
+    in that business, the account's in none."""
+    if token := request.cookies.get(COOKIE):
         with SessionLocal.begin() as session:
             ended = session.execute(
                 text("DELETE FROM sessions WHERE id_hash = :id_hash RETURNING tenant_id, user_id"),
@@ -454,14 +542,41 @@ def sign_out(request: Request, response: Response) -> None:
             if ended:
                 join_tenant(session, ended.tenant_id)
                 record(session, request, "signed_out", actor_user_id=ended.user_id)
+    if token := request.cookies.get(ACCOUNT_COOKIE):
+        with SessionLocal.begin() as session:
+            user_id = session.scalar(
+                text("SELECT end_account_session(:h)"), {"h": hash_token(token)}
+            )
+            if user_id:
+                record(
+                    session,
+                    request,
+                    "account_signed_out",
+                    actor_user_id=user_id,
+                    target=f"user:{user_id}",
+                )
     clear_cookie(response)
+    clear_account_cookie(response)
+
+
+@router.delete("/session", status_code=204, responses={415: {"model": Error}})
+def sign_out(request: Request, response: Response) -> None:
+    """Sign out this browser, of the business and of the account (ZIF-146). Needs no live session:
+    an expired cookie is cleared all the same."""
+    end_browser_sessions(request, response)
 
 
 @router.delete(
     "/sessions", status_code=204, responses={401: {"model": Error}, 415: {"model": Error}}
 )
 def sign_out_everywhere(current: AnySession, request: Request, response: Response) -> None:
-    """Sign the user out of every session, in every tenant."""
+    """Sign the user out of every session, in every tenant, and of every account session
+    (ZIF-146)."""
+    token = request.cookies.get(COOKIE)
+    assert token is not None  # AnySession resolved it
+    # Before the business sessions go: it finds the person through this session's live hash.
+    current.db.execute(text("SELECT end_account_sessions(:h)"), {"h": hash_token(token)})
     current.db.execute(text("DELETE FROM sessions WHERE user_id = :id"), {"id": current.user_id})
     record(current.db, request, "signed_out_everywhere", actor_user_id=current.user_id)
     clear_cookie(response)
+    clear_account_cookie(response)
