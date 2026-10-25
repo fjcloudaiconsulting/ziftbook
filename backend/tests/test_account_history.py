@@ -28,6 +28,7 @@ from tests.conftest import (
 from tests.test_account_sessions import account_client
 from tests.test_availability_api import assign, new_service, weekdays
 from tests.test_bookings_api import at, booking_url, guest_body
+from tests.test_clients_db import seed_client
 from tests.test_working_hours import seed
 
 APP_DIR = Path(__file__).parent.parent / "app"
@@ -309,3 +310,79 @@ def test_only_the_history_route_calls_own_bookings() -> None:
         path.name for path in APP_DIR.rglob("*.py") if "own_bookings" in path.read_text()
     )
     assert callers == ["platform_account.py"]
+
+
+# FENCE (code review N6). Wrong impl: a cursor on starts_at alone: of two bookings at the same
+# instant (two businesses, or two workers), the one on the next page would never show.
+def test_bookings_at_the_same_instant_each_appear_once_across_pages(
+    app: FastAPI,
+    people: People,
+    services: dict[uuid.UUID, str],
+    migrate_engine: Engine,
+    person: uuid.UUID,
+) -> None:
+    mine = account_client(app, migrate_engine, person)
+    email = email_of(person)
+    book(mine, people.a, services[people.a], "10:00", email)
+    book(mine, people.b, services[people.b], "10:00", email)
+
+    first = history(mine, limit=1).json()
+    second = history(mine, limit=1, cursor=first["next"]).json()
+
+    assert second["next"] is None
+    names = [b["business"]["name"] for b in first["bookings"] + second["bookings"]]
+    assert sorted(names) == ["a", "b"]
+
+
+# The spec's PR3 list (code review N7). Wrong impl: history through the person's linked client
+# rows: a merchant's booking on a row linked to them, under another address, would show.
+def test_a_merchant_booking_on_a_row_linked_to_me_is_not_mine(
+    app: FastAPI,
+    people: People,
+    services: dict[uuid.UUID, str],
+    migrate_engine: Engine,
+    person: uuid.UUID,
+) -> None:
+    other_email = f"other-{uuid.uuid4().hex[:8]}@example.com"
+    client_id = seed_client(people.a, name="Linked Elsewhere", email=other_email, user_id=person)
+    owner = signed_in(app, people.a, people.both)
+    entered = owner.post(
+        "/api/bookings",
+        json={
+            "service_id": services[people.a],
+            "client_id": str(client_id),
+            "starts_at": at("13:00"),
+        },
+    )
+    assert entered.status_code == 201
+
+    assert history(account_client(app, migrate_engine, person)).json()["bookings"] == []
+
+
+# FENCE (code review N7). Wrong impl: own_bookings trusting the route's freshness check: the definer
+# answers for any live session if called directly.
+def test_the_definer_itself_needs_a_session_started_within_a_day(
+    people: People,
+    services: dict[uuid.UUID, str],
+    app: FastAPI,
+    app_engine: Engine,
+    migrate_engine: Engine,
+    person: uuid.UUID,
+) -> None:
+    mine = account_client(app, migrate_engine, person)
+    book(mine, people.a, services[people.a], "09:00", email_of(person))
+    token = mine.cookies.get(auth.ACCOUNT_COOKIE)
+    assert token is not None
+    with migrate_engine.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE account_sessions SET started_at = now() - interval '25 hours'"
+                " WHERE id_hash = :h"
+            ),
+            {"h": auth.hash_token(token)},
+        )
+    with app_engine.begin() as conn:
+        rows = conn.execute(
+            text("SELECT * FROM own_bookings(:h, NULL, NULL, 10)"), {"h": auth.hash_token(token)}
+        ).all()
+    assert rows == []
