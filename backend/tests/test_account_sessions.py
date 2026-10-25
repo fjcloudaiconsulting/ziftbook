@@ -302,7 +302,7 @@ def test_a_start_with_a_hash_that_is_not_the_stored_one_is_stale(
 ) -> None:
     with app_engine.begin() as conn:
         outcome = conn.scalar(
-            text("SELECT start_account_session(:u, :p, :h, NULL, NULL)"),
+            text("SELECT start_account_session(:u, :p, :h, NULL, NULL, NULL)"),
             {
                 "u": client_only,
                 "p": passwords.hash_password("not-it"),
@@ -471,22 +471,70 @@ def test_a_platform_admin_gets_no_account_session(
     assert account_sessions_of(migrate_engine, admin) == 0
 
 
-def test_removing_a_member_leaves_their_account_session(
+# FENCE (security code review N-2; supersedes "removal leaves the account session"). Wrong impl: an
+# account session a console sign-in started that outlives the membership: on a shop's shared device
+# the removed member's details and history would stay one click away.
+def test_removing_a_member_ends_the_account_session_their_console_sign_in_started(
     app: FastAPI, people: People, migrate_engine: Engine
 ) -> None:
     owner = signed_in(app, people.a, people.both)
-    worker = new_client(app)
-    assert console_sign_in(worker, email_of(people.only_a)).status_code == 200
+    shop_device = new_client(app)
+    assert console_sign_in(shop_device, email_of(people.only_a)).status_code == 200
+    own_phone = new_client(app)
+    assert account_sign_in(own_phone, email_of(people.only_a)).status_code == 200
 
-    assert (
-        owner.request(
-            "DELETE", f"/api/members/{member_id(people.a, people.only_a)}", json={}
-        ).status_code
-        == 204
-    )
+    removed = owner.request("DELETE", f"/api/members/{member_id(people.a, people.only_a)}", json={})
 
-    assert worker.get("/api/session").status_code == 401
-    assert worker.get("/api/account").status_code == 200
+    assert removed.status_code == 204
+    assert shop_device.get("/api/session").status_code == 401
+    assert shop_device.get("/api/account").status_code == 401
+    # Their own device's account session is theirs, not the shop's: they are still a client.
+    assert own_phone.get("/api/account").status_code == 200
+
+
+def business_session_of(client: TestClient) -> bytes:
+    token = client.cookies.get(auth.COOKIE)
+    assert token is not None
+    return auth.hash_token(token)
+
+
+# FENCE (N-2). Wrong impl: an account session bound only by the foreign key: an expiry deletes no
+# row, so a console session that went idle or ran out would leave its account session usable, idle
+# for longer than the console allows.
+@pytest.mark.parametrize(
+    ("column", "value"), [("last_seen_at", "now() - interval '8 days'"), ("expires_at", "now()")]
+)
+def test_the_account_session_ends_when_its_console_session_expires(
+    app: FastAPI, people: People, migrate_engine: Engine, column: str, value: str
+) -> None:
+    client = new_client(app)
+    assert console_sign_in(client, email_of(people.both)).status_code == 200
+    assert client.get("/api/account").status_code == 200
+
+    with migrate_engine.begin() as conn:
+        conn.execute(
+            text(f"UPDATE sessions SET {column} = {value} WHERE id_hash = :h"),
+            {"h": business_session_of(client)},
+        )
+
+    assert client.get("/api/account").status_code == 401
+
+
+# FENCE (N-2). Wrong impl: no foreign key: a business session deleted by another path (a role
+# change, a removal, a reset) would leave a bound row for the purge, and a later bug in USABLE would
+# revive it.
+def test_deleting_the_console_session_deletes_its_account_session(
+    app: FastAPI, people: People, migrate_engine: Engine
+) -> None:
+    client = new_client(app)
+    assert console_sign_in(client, email_of(people.both)).status_code == 200
+
+    with migrate_engine.begin() as conn:
+        conn.execute(
+            text("DELETE FROM sessions WHERE id_hash = :h"), {"h": business_session_of(client)}
+        )
+
+    assert account_sessions_of(migrate_engine, people.both) == 0
 
 
 # FENCE (security B3). Wrong impl: no Fetch Metadata check, or a cacheable answer.
