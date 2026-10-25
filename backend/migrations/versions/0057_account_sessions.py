@@ -32,7 +32,9 @@ on it, split them into a migration of their own.
 
 Trust, stated: the database cannot check a password. An app role that runs SQL of its own can read a
 hash with account_by_email and start an account session for anyone but a platform admin, and then
-read and change that person's name and phone. It could already insert business sessions.
+read and change that person's name and phone. It can also end anyone's account sessions, by passing
+end_account_sessions a business session's hash, which it reads from sessions (a denial of service,
+no data). It could already insert business sessions.
 
 The downgrade drops the functions and the table (every account session ends), restores table-level
 SELECT on users and drops users.phone (stored phones are lost).

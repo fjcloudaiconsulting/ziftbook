@@ -200,8 +200,11 @@ functions owned by `ziftbook_migrate`:
   role change, so a shop's shared device keeps no member's personal session past their console session. One the
   person starts on the booking page is not bound.
 - `start_account_session` trusts the API's password check, as `start_admin_session` does: the database cannot check
-  a password. An app role running SQL of its own could read a hash with `account_by_email`, start an account session
-  for anyone but an admin, and through it read and change that person's name and phone.
+  a password. An app role running SQL of its own could therefore:
+  - read a hash with `account_by_email`, start an account session for anyone but an admin, and through it read and
+    change that person's name and phone;
+  - end anyone's account sessions, by passing `end_account_sessions` a business session's hash, which it can read
+    from `sessions` (a denial of service, no data).
 - Lock order for every writer that touches more than one of these: `password_credentials`, then `sessions`, then
   `account_sessions`, then `clients`. `reset_password` follows it; signing out everywhere locks the person's business
   sessions before it ends their account sessions (`auth.EVERY_SESSION`); `start_account_session` locks the
