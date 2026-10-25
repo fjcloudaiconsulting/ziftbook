@@ -275,6 +275,8 @@ that person's platform account (ZIF-99).
   cancellations were announced the first time; a refund that fails later must still reach the client). A CHECK keeps
   `purge_after` at most 31 days after `created_at`; the worker deletes the hold by then. Only the core writes it; the
   app role can neither read nor write it; the worker reads and deletes it.
+- A client row links to an account (`clients.user_id`) only through that person's own proven booking at that
+  business (ZIF-146): `find_or_create`'s REFRESH fills a NULL `user_id`, never relinks, and nothing links by email.
 - Marketing consent (`consents`) is per business. Nothing writes a platform-level consent, and one business's consent
   never grants another anything.
 - `consents` is append-only: one row per grant or withdrawal per purpose, holding the exact text shown and its policy

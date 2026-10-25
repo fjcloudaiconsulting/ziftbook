@@ -140,13 +140,14 @@ ON CONFLICT (tenant_id, email) DO UPDATE SET
 _RETURNING = "\nRETURNING id, phone, locale\n"
 
 # The address is proven (its account is signed in):
-# what they type is what they own.
+# what they type is what they own, and an unlinked row links to them (ZIF-146).
 REFRESH = text(
     _INSERT
     + """
   name = excluded.name,
   phone = coalesce(excluded.phone, clients.phone),
-  locale = coalesce(excluded.locale, clients.locale)
+  locale = coalesce(excluded.locale, clients.locale),
+  user_id = coalesce(clients.user_id, excluded.user_id)
 """
     + _RETURNING
 )
@@ -189,11 +190,15 @@ def find_or_create(
     tests/test_openapi.py holds that fence for every public RESPONSE schema.
 
     user_id. Set it from the booker's own session and never from a request body (the confirmed
-    link passes None: it proves an address, not a platform account), and it goes in the INSERT
-    list only - never in the DO UPDATE SET list. There, a link-confirmed booking would null a
-    client's platform link and a stranger's account could claim a client row as its own.
-    tests/test_clients_db.py test 2 fences the SET list; tests/test_openapi.py fences user_id out
-    of every request schema.
+    link passes None: it proves an address, not a platform account). On a new row it goes in the
+    INSERT list. On an existing row only REFRESH (proven) writes it, and only into a NULL:
+    `coalesce(clients.user_id, excluded.user_id)` (ZIF-146; this supersedes ZIF-51's D3, "refreshed
+    but never claimed", on the ticket's acceptance criterion and the owner's 2026-10-25 ruling 8).
+    A row links to an account only through that person's own proven booking at this business:
+    REFRESH runs only when the session's verified email is the typed one, which is the conflict key,
+    so a stranger cannot claim it; a linked row is never relinked; KEEP (a guest) never writes it,
+    and a caller passing None can never unlink. tests/test_clients_db.py test 38 fences the SET
+    list; tests/test_openapi.py fences user_id out of every request schema.
 
     Locking. The ON CONFLICT DO UPDATE takes a row lock on the client. ZIF-51 calls this BEFORE
     opening its savepoint, exactly once. ROLLBACK TO SAVEPOINT releases locks taken inside the

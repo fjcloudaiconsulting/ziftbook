@@ -1174,7 +1174,7 @@ def test_a_booking_racing_for_the_last_placement_is_refused(
 
 # ZB-19. Wrong impls: the placement keys reserved and not given back when nothing is placed, or
 # given back twice (each key starts at one hit, so a second refund shows), or given back inside the
-# booking transaction (a second pooled connection under the tenant lock, see bookings.account).
+# booking transaction (a second pooled connection under the tenant lock, see bookings.accounts).
 @pytest.mark.parametrize("failure", ["refused", "busy", "error"])
 def test_a_booking_not_placed_gives_its_placement_back(
     people: People,
@@ -1411,8 +1411,10 @@ def test_the_address_s_own_account_refreshes_and_links_a_new_client_row(
     assert row.user_id == people.both
 
 
-# 26b: GUARD - D3's ruling.
-def test_an_existing_client_row_is_refreshed_but_never_claimed(
+# 26b: FENCE (ZIF-146; supersedes ZIF-51's D3, "refreshed but never claimed", on the ticket's
+# acceptance criterion and the owner's 2026-10-25 ruling 8). Wrong impl: today's REFRESH without
+# user_id, which never links a row that existed before the person's first signed-in booking.
+def test_an_existing_client_row_is_refreshed_and_claimed_by_its_proven_owner(
     people: People, app: FastAPI, ready: str
 ) -> None:
     own_email = email_of(people.both)
@@ -1442,7 +1444,35 @@ def test_an_existing_client_row_is_refreshed_but_never_claimed(
             text("SELECT name, phone, user_id FROM clients WHERE email = :e"), {"e": own_email}
         ).one()
     assert (row.name, row.phone) == ("New Name", "+31611111111")
-    assert row.user_id is None
+    assert row.user_id == people.both
+
+
+# 26c: GUARD (kept from D3 for the guest path). Wrong impl: the coalesce in KEEP: a guest who types
+# a person's address would claim that person's row.
+def test_an_existing_client_row_is_never_claimed_by_a_guest(
+    people: People, app: FastAPI, ready: str
+) -> None:
+    own_email = email_of(people.both)
+    with tenant_context(people.a) as session:
+        session.execute(
+            text("""
+            INSERT INTO clients (tenant_id, name, email)
+            VALUES (current_setting('app.tenant_id')::uuid, 'Old Name', :email)
+            """),
+            {"email": own_email},
+        )
+    other = signed_in(app, people.a, people.only_a)  # signed in, but not as this address
+
+    response = post_booking(
+        other, people.a, ready, starts_at=at("09:00"), name="New Name", email=own_email
+    )
+
+    assert response.status_code == 201
+    with tenant_context(people.a) as session:
+        row = session.execute(
+            text("SELECT name, user_id FROM clients WHERE email = :e"), {"e": own_email}
+        ).one()
+    assert (row.name, row.user_id) == ("Old Name", None)
 
 
 # 27: FENCE - archived-service race. Wrong impl: drop FOR SHARE from step 2.
