@@ -36,6 +36,7 @@ from tests.conftest import (
     member_id,
     new_client,
     signed_in,
+    wait_until_blocked,
 )
 from tests.test_names import routes_behind_signed_in
 
@@ -717,3 +718,42 @@ def test_a_successful_sign_in_ends_the_previous_persons_account_session(
     assert response.status_code == 200
     assert not live_account_session(migrate_engine, old)
     assert set_cookies(response)[auth.ACCOUNT_COOKIE][auth.ACCOUNT_COOKIE].value not in ("", old)
+
+
+# FENCE (code review N1). Wrong impl: sign-out everywhere ending account sessions before business
+# ones, against reset_password's order: a reset that deleted the business sessions waits on the
+# account rows while sign-out everywhere waits on the business rows: a deadlock, answered 500.
+def test_signing_out_everywhere_and_a_reset_never_deadlock(
+    app: FastAPI, people: People, app_engine: Engine, migrate_engine: Engine
+) -> None:
+    email = email_of(people.both)
+    client = new_client(app)
+    assert console_sign_in(client, email).status_code == 200
+    token = client.cookies.get(auth.COOKIE)
+    assert token is not None
+    reset, resets = reset_racing(app_engine, migrate_engine, email)
+    failures: list[BaseException] = []
+
+    def resetting() -> None:
+        try:
+            reset()
+        except BaseException as error:  # a deadlock victim raises here
+            failures.append(error)
+
+    thread = threading.Thread(target=resetting)
+    params = {"u": people.both, "h": auth.hash_token(token)}
+    with app_engine.connect() as conn, conn.begin():
+        conn.execute(auth.EVERY_SESSION[0], params)
+        thread.start()
+        wait_until_blocked(migrate_engine, 1)  # the reset waits on this sign-out's first lock
+        for step in auth.EVERY_SESSION[1:]:
+            conn.execute(step, params)
+    thread.join(timeout=10)
+
+    assert not thread.is_alive()
+    assert failures == []
+    assert resets == [True]
+    assert (
+        sessions_of(migrate_engine, people.both),
+        account_sessions_of(migrate_engine, people.both),
+    ) == (0, 0)

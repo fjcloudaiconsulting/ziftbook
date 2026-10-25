@@ -198,9 +198,11 @@ functions owned by `ziftbook_migrate`:
 - `start_account_session` trusts the API's password check, as `start_admin_session` does: the database cannot check
   a password. An app role running SQL of its own could read a hash with `account_by_email`, start an account session
   for anyone but an admin, and through it read and change that person's name and phone.
-- Lock order for every writer that touches more than one of these: `password_credentials`, then `account_sessions`
-  and `sessions`, then `clients`. `reset_password` follows it; `start_account_session` locks the credentials row
-  before it inserts the session; a booking locks its proving session before `find_or_create`.
+- Lock order for every writer that touches more than one of these: `password_credentials`, then `sessions`, then
+  `account_sessions`, then `clients`. `reset_password` follows it; signing out everywhere locks the person's business
+  sessions before it ends their account sessions (`auth.EVERY_SESSION`); `start_account_session` locks the
+  credentials row before it inserts the session; a booking locks its proving session before `find_or_create`. Two
+  writers taking two of these in opposite orders deadlock, and the loser answers 500.
 
 ## Client records
 

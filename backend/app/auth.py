@@ -587,6 +587,28 @@ def sign_out(request: Request, response: Response) -> None:
     end_browser_sessions(request, response)
 
 
+# Sign out everywhere, in the lock order every writer keeps (CONTRIBUTING): the person's business
+# sessions first, then their account sessions. A password reset deletes them in the same order, so
+# the two never wait on each other the other way round (a deadlock, answered 500). The business rows
+# are locked, not deleted, first: end_account_sessions finds the person through a live session hash,
+# which on the console is one of them.
+EVERY_SESSION = (
+    text("SELECT 1 FROM sessions WHERE user_id = :u FOR UPDATE"),
+    text("SELECT end_account_sessions(:h)"),
+    text("DELETE FROM sessions WHERE user_id = :u"),
+)
+
+
+def end_every_session(db: Session, user_id: UUID, id_hash: bytes) -> bool:
+    """End every session of user_id, of both kinds, on every browser; id_hash is the caller's own
+    live session, of either kind. False when that session ended meanwhile."""
+    params = {"u": user_id, "h": id_hash}
+    db.execute(EVERY_SESSION[0], params)
+    ended = db.scalar(EVERY_SESSION[1], params)
+    db.execute(EVERY_SESSION[2], params)
+    return ended is not None
+
+
 @router.delete(
     "/sessions", status_code=204, responses={401: {"model": Error}, 415: {"model": Error}}
 )
@@ -595,9 +617,7 @@ def sign_out_everywhere(current: AnySession, request: Request, response: Respons
     (ZIF-146)."""
     token = request.cookies.get(COOKIE)
     assert token is not None  # AnySession resolved it
-    # Before the business sessions go: it finds the person through this session's live hash.
-    current.db.execute(text("SELECT end_account_sessions(:h)"), {"h": hash_token(token)})
-    current.db.execute(text("DELETE FROM sessions WHERE user_id = :id"), {"id": current.user_id})
+    end_every_session(current.db, current.user_id, hash_token(token))
     record(current.db, request, "signed_out_everywhere", actor_user_id=current.user_id)
     clear_cookie(response)
     clear_account_cookie(response)
