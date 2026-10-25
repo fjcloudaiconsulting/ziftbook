@@ -78,7 +78,10 @@ describe("no string becomes markup", () => {
 });
 
 // A same-origin path: a template that starts with one "/" and not "//" or "/\" (another origin to a browser).
-const SAME_ORIGIN = /^`\/(?![/\\])/;
+// A template whose first segment is interpolated, `/${x}`, is "//host" when x starts with "/": only the values
+// whose shape is known qualify (fold re-verify NB-5): the locale (routing's own list) and a business's slug
+// (^[a-z0-9]+(-[a-z0-9]+)*$, enforced by the database and slugLooksValid).
+const SAME_ORIGIN = /^`\/(?![/\\]|\$\{)|^`\/\$\{(?:locale|slug|page\.slug)\}/;
 const SAME_ORIGIN_LITERAL = /^["']\/(?![/\\])/;
 
 // An href, src, action or navigation on these pages that is neither a same-origin path nor a safeLink() call, each
@@ -125,8 +128,11 @@ const NAVIGATION_ALLOWED = new Map([
 
 function unsafeNavigations(file, text) {
   const allowed = NAVIGATION_ALLOWED.get(file) ?? new Set();
-  const calls = /\b(?:location\.(?:assign|replace)|window\.open|router\.(?:push|replace))\(\s*([^,)]*)/g;
-  const sets = /\blocation\.href\s*=\s*([^;\n]+)/g;
+  // location.assign/replace, window.open and a bare open() with an argument (not a local function's
+  // declaration or a call with none), router.push/replace.
+  const calls = /(?:\blocation\.(?:assign|replace)|\bwindow\.open|(?<![\w.]|function )open|\brouter\.(?:push|replace))\(\s*([^,)]+)/g;
+  // location.href = ..., and window.location = ... / document.location = ... / location = ...
+  const sets = /(?<![\w.])(?:(?:window|document)\.)?location(?:\.href)?\s*=(?!=)\s*([^;\n]+)/g;
   return [...text.matchAll(calls), ...text.matchAll(sets)]
     .map((m) => m[1].trim())
     .filter((expr) => !SAME_ORIGIN.test(expr) && !SAME_ORIGIN_LITERAL.test(expr) && !/^safeLink\(/.test(expr) && !allowed.has(expr));
@@ -161,8 +167,19 @@ describe("no link built from API text", () => {
       "<a href={safeLink(page.site)}>ok</a>",
     ].join(" ");
     assert.deepEqual(unsafeLinks("probe.tsx", probe), ["page.contact_url", "`//${page.domain}/x`", "`/\\\\evil.example`"]);
-    const nav = "router.push(page.website); window.open(url, '_blank'); location.href = page.site; router.replace(`/${slug}`); router.push('/')";
-    assert.deepEqual(unsafeNavigations("probe.tsx", nav), ["page.website", "url", "page.site"]);
+    const nav = [
+      "router.push(page.website);",
+      "window.open(url, '_blank');",
+      "location.href = page.site;",
+      "window.location = page.home;",
+      "document.location = page.home2;",
+      "open(page.popup);",
+      "router.replace(`/${slug}`);",
+      "router.push('/');",
+    ].join(" ");
+    assert.deepEqual(unsafeNavigations("probe.tsx", nav).sort(), ["page.home", "page.home2", "page.popup", "page.site", "page.website", "url"]);
+    // Fold re-verify NB-5: an interpolated first segment is "//host" when it starts with "/".
+    assert.deepEqual(unsafeLinks("probe.tsx", "<a href={`/${page.path}`}>x</a> <a href={`/${locale}/${slug}`}>ok</a>"), ["`/${page.path}`"]);
     assert.deepEqual(spreads("<a {...link}>x</a> <Link {...props} />"), ["link", "props"]);
   });
 });
