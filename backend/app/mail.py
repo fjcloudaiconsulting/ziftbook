@@ -432,11 +432,12 @@ def _money(amount_minor: int, currency: str, locale: str) -> str:
     symbol = SYMBOLS.get(currency)
     whole, cents = f"{amount_minor // 100:,}", f"{amount_minor % 100:02d}"
     if locale == "en":
-        return f"{symbol}{whole}.{cents}" if symbol else f"{whole}.{cents} {currency}"
+        # Intl: a symbol touches the amount; a code stands in its place, then a no-break space.
+        return f"{symbol}{whole}.{cents}" if symbol else f"{currency}\u00a0{whole}.{cents}"
     digits = f"{whole.replace(',', '.')},{cents}"
     if symbol == "$":
         symbol = "US$"  # Intl tells the dollars apart outside en
-    return f"{symbol}\u00a0{digits}" if symbol else f"{digits} {currency}"
+    return f"{symbol or currency}\u00a0{digits}"
 
 
 def _line(key: str, locale: str, amount_minor: int, currency: str) -> str:
