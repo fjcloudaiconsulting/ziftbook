@@ -61,6 +61,10 @@ Specifics:
   `pg_stat_activity`), or split the migration so each step locks less (one table per migration; add a constraint
   `NOT VALID` and validate it in a later one). Waiting for another migration run to finish is not bounded:
   concurrent runs take turns.
+- Validating a constraint added `NOT VALID` on a table with FORCE row-level security fails in a migration: the scan
+  runs as the owner under the tenant policy, with no `app.tenant_id` (42704), and setting one would check a single
+  business's rows. Lift FORCE around it in the same migration (`NO FORCE`, `VALIDATE CONSTRAINT`, `FORCE`, as 0067
+  does); `NO FORCE` holds ACCESS EXCLUSIVE on that table until commit, so do it on small tables only.
 - `CREATE INDEX CONCURRENTLY` cannot run inside a transaction; put it in its own migration using Alembic's
   `autocommit_block()`. It also waits for every older transaction in the database, and on the 5-second timeout it
   leaves an invalid index behind. Inside the block, run `DROP INDEX CONCURRENTLY IF EXISTS` first, then
@@ -420,7 +424,14 @@ Adding a currency needs:
   where they differ, the API must start sending the exponent;
 - Stripe's rule for its smallest unit checked (Stripe treats HUF, TWD, ISK and UGX specially), and a `MIN_CHARGE`
   entry (`backend/app/payments.py`) if it can take payments;
-- its symbol in `mail.SYMBOLS`, and rows for it in the parity fixture.
+- its symbol in `mail.SYMBOLS`, and rows for it in the parity fixture;
+- a migration widening `ck_tenants_currency_supported`, the database's list.
+
+The owner changes the currency with `PUT /api/settings/currency` while the business has no booking and no Stripe
+account; saved prices keep their amounts in the new currency once the owner confirms how many there are. The
+database holds the rule (`change_currency`, migration 0066): the bookings and `payment_accounts` keys to
+`tenants (id, currency)` refuse a change, and the services key cascades it. The currency is a `tenants` column, not a
+business setting, because those keys need it.
 
 ## Background jobs
 
