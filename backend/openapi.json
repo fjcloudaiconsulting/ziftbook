@@ -955,6 +955,137 @@
         }
       }
     },
+    "/api/settings/currency": {
+      "get": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Read Currency",
+        "operationId": "settings-read_currency",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CurrencyState"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Change Currency",
+        "description": "Change the business's currency. Saved prices keep their numbers in the new currency, so the\nowner first confirms how many there are (a 409 currency_prices_exist says, in total).",
+        "operationId": "settings-change_currency",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CurrencyChange"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CurrencyState"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Content",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Content Too Large",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/clients": {
       "get": {
         "tags": [
@@ -7635,6 +7766,120 @@
           "password"
         ],
         "title": "Credentials"
+      },
+      "CurrencyChange": {
+        "properties": {
+          "currency": {
+            "type": "string",
+            "enum": [
+              "BRL",
+              "EUR",
+              "GBP",
+              "USD"
+            ],
+            "title": "Currency"
+          },
+          "confirmed_prices": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confirmed Prices"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "currency"
+        ],
+        "title": "CurrencyChange"
+      },
+      "CurrencyOption": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "enum": [
+              "BRL",
+              "EUR",
+              "GBP",
+              "USD"
+            ],
+            "title": "Code"
+          },
+          "minor_units": {
+            "type": "integer",
+            "title": "Minor Units"
+          }
+        },
+        "type": "object",
+        "required": [
+          "code",
+          "minor_units"
+        ],
+        "title": "CurrencyOption"
+      },
+      "CurrencyState": {
+        "properties": {
+          "currency": {
+            "type": "string",
+            "enum": [
+              "BRL",
+              "EUR",
+              "GBP",
+              "USD"
+            ],
+            "title": "Currency"
+          },
+          "minor_units": {
+            "type": "integer",
+            "title": "Minor Units"
+          },
+          "options": {
+            "items": {
+              "$ref": "#/components/schemas/CurrencyOption"
+            },
+            "type": "array",
+            "title": "Options"
+          },
+          "change": {
+            "type": "string",
+            "enum": [
+              "open",
+              "locked"
+            ],
+            "title": "Change"
+          },
+          "locked_by": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "bookings",
+                "payment_account"
+              ]
+            },
+            "type": "array",
+            "title": "Locked By"
+          },
+          "prices": {
+            "type": "integer",
+            "title": "Prices"
+          }
+        },
+        "type": "object",
+        "required": [
+          "currency",
+          "minor_units",
+          "options",
+          "change",
+          "locked_by",
+          "prices"
+        ],
+        "title": "CurrencyState"
       },
       "Dependencies": {
         "properties": {
