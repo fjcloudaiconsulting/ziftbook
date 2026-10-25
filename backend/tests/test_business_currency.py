@@ -13,6 +13,7 @@ from psycopg.errors import CheckViolation, FeatureNotSupported, ForeignKeyViolat
 from sqlalchemy import Engine, text
 from sqlalchemy.exc import DBAPIError, IntegrityError
 
+from app import countries
 from app.db import tenant_context
 from app.main import create_app
 from tests.conftest import People, events, member_id, signed_in, wait_until_blocked
@@ -75,10 +76,18 @@ def test_a_stripe_account_holds_the_currency_in_the_database(
 
 # F9: FENCE. Wrong impl: today's connect, which reads the currency, calls Stripe, then inserts the
 # account with no currency: a change committed meanwhile leaves a USD business with an EUR account,
-# and the idempotency key without the currency hands every retry that same EUR account.
+# and the idempotency key without the currency hands every retry that same EUR account. The Dutch
+# business is let settle USD here (the owner may widen app/countries.py STRIPE_CURRENCIES), so the
+# retry reaches Stripe.
 def test_a_currency_changed_while_stripe_is_called_is_refused_and_a_retry_starts_afresh(
-    people: People, owner: TestClient, fake_stripe: FakeGateway, migrate_engine: Engine
+    people: People,
+    owner: TestClient,
+    fake_stripe: FakeGateway,
+    migrate_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setitem(countries.STRIPE_CURRENCIES, "NL", frozenset({"EUR", "USD"}))
+
     def change_once(op: str) -> None:
         if op == "create_account" and fake_stripe.count("create_account") == 1:
             set_currency(migrate_engine, people.a, "USD")
@@ -554,3 +563,38 @@ def test_a_runtime_role_inserts_the_account_currency_but_never_updates_it(
         return granted
 
     assert (may("INSERT"), may("UPDATE")) == (True, False)
+
+
+# FENCE (code review, correctness 4). Wrong impl: connect gated on the country alone. A Dutch
+# business that chose BRL would create a Stripe account in a currency its country does not settle,
+# and that account would then lock the currency for good. Connecting is refused before Stripe is
+# called, and the account state says why.
+def test_connecting_stripe_in_a_currency_the_country_does_not_settle_is_refused(
+    people: People, owner: TestClient, fake_stripe: FakeGateway, migrate_engine: Engine
+) -> None:
+    assert owner.put("/api/settings/currency", json={"currency": "BRL"}).status_code == 200
+
+    response = owner.post("/api/payments/account", json={"locale": "en"})
+
+    assert (response.status_code, response.json()) == (
+        409,
+        {"code": "payments_unavailable_currency"},
+    )
+    assert fake_stripe.count("create_account") == 0
+    assert accounts(migrate_engine, people.a) == []
+    state = owner.get("/api/payments/account").json()
+    assert (state["country_supported"], state["currency_supported"]) == (True, False)
+    # The way back: the currency is still open to change, and EUR connects.
+    assert owner.put("/api/settings/currency", json={"currency": "EUR"}).status_code == 200
+    assert owner.post("/api/payments/account", json={"locale": "en"}).status_code == 200
+
+
+# Guard: one list, in app/countries.py. Every country Stripe Connect serves settles its own starting
+# currency; a country it does not serve (BR, ZIF-59) settles none.
+def test_each_country_s_stripe_currencies() -> None:
+    from app.countries import COUNTRIES, STRIPE_CURRENCIES
+
+    assert set(STRIPE_CURRENCIES) == set(COUNTRIES)
+    for country, defaults in COUNTRIES.items():
+        expected = frozenset() if country == "BR" else {defaults.currency}
+        assert STRIPE_CURRENCIES[country] == expected, country

@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session
 from app import auth, bookings, business_settings, jobs, limits, logs, stripe_gateway, tracing
 from app.business_settings import BusinessSettings, Locale
 from app.config import MailSettings, StripeSettings
+from app.countries import STRIPE_CURRENCIES
 from app.db import SessionLocal, count_after_commit, tenant_context
 from app.errors import ApiError, Error
 from app.jobs import Job
@@ -44,8 +45,6 @@ WEBHOOK_PATH = "/api/stripe/webhook"
 
 # D6 (ZIF-158): who pays Stripe's fees on an account created now. Stripe fixes it at creation.
 NEW_ACCOUNT_FEE_MODE = "business_pays"
-# ZIF-59: Stripe Connect is not offered to Brazilian businesses.
-UNSUPPORTED_COUNTRIES = {"BR"}
 # Stripe's smallest charge, in minor units, per currency it publishes one for.
 MIN_CHARGE = {"EUR": 50, "USD": 50, "GBP": 30}
 # How a card is checked (decisions: the authorisation is the default, the SetupIntent the fallback
@@ -83,7 +82,9 @@ STRIPE_LIMIT, STRIPE_WINDOW = 20, timedelta(minutes=1)
 
 class PaymentAccountOut(BaseModel):
     state: Literal["off", "none", "onboarding", "ready"]
-    country_supported: bool
+    country_supported: bool  # Stripe Connect is offered in the business's country
+    # ...and settles the business's currency there (app/countries.py STRIPE_CURRENCIES, ZIF-102)
+    currency_supported: bool
     min_amount_minor: int | None
     currency: str
 
@@ -248,7 +249,8 @@ def read_account(seen: AnyMember, response: Response) -> PaymentAccountOut:
             state = "ready" if enabled else "onboarding"
         return PaymentAccountOut(
             state=state,
-            country_supported=seen.country not in UNSUPPORTED_COUNTRIES,
+            country_supported=bool(STRIPE_CURRENCIES.get(seen.country)),
+            currency_supported=seen.currency in STRIPE_CURRENCIES.get(seen.country, frozenset()),
             min_amount_minor=MIN_CHARGE.get(seen.currency),
             currency=seen.currency,
         )
@@ -264,8 +266,13 @@ def connect(body: ConnectIn, seen: Owner, request: Request, response: Response) 
         response.headers["Cache-Control"] = "no-store"
         if not StripeSettings().configured():
             raise _unavailable()
-        if seen.country in UNSUPPORTED_COUNTRIES:
+        settles = STRIPE_CURRENCIES.get(seen.country, frozenset())
+        if not settles:
             raise ApiError(409, "payments_unavailable_country")
+        # ZIF-102: never an account in a currency its country does not settle; it would then hold
+        # the business's currency for good (0062).
+        if seen.currency not in settles:
+            raise ApiError(409, "payments_unavailable_currency")
         if _limited(seen, "write"):
             raise ApiError(429, "rate_limited")
         gateway = stripe_gateway.gateway
