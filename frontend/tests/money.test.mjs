@@ -15,7 +15,22 @@ describe("formatMoney", () => {
 
   test("3500 BRL pt, and 3500 USD nl: the currency's own sign, not a hardcoded €", () => {
     assert.equal(formatMoney(3500, "BRL", "pt"), "R$ 35,00");
-    assert.equal(formatMoney(3500, "USD", "nl"), "US$ 35,00");
+    assert.equal(formatMoney(3500, "USD", "nl"), "$ 35,00");
+  });
+
+  // ZIF-102 ruling 2. Fence. Wrong impl: currencyDisplay "symbol" (Intl's default), which writes
+  // "US$" for a Dutch or Portuguese reader. Prices show the plain symbol, the same as email
+  // (backend/tests/test_booking_email.py INTL).
+  test("a US dollar price reads $ in every language, on the price and in the form's sign", () => {
+    for (const locale of ["nl", "pt"]) assert.equal(formatMoney(4000, "USD", locale), "$\u00a040,00", locale);
+    assert.equal(formatMoney(4000, "USD", "en"), "$40.00");
+    assert.equal(currencySign(0, "USD", "pt"), "$");
+    assert.equal(formatMoney(3500, "JPY", "nl"), "¥\u00a03.500");
+  });
+
+  // The owner's example: a Portuguese reader of a euro business.
+  test("guard: 3500 EUR for a pt reader is € 35,00", () => {
+    assert.equal(formatMoney(3500, "EUR", "pt"), "€\u00a035,00");
   });
 
   test("CHF en falls back to the currency code (no sign)", () => {

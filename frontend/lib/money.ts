@@ -4,6 +4,9 @@
 // Intl's digits agree with. Kept free of React so node --test can run it directly.
 
 const MAX_MINOR = 1_000_000; // services.py Amount, in minor units whatever the currency
+// The currency's plain symbol for every reader ("$", never "US$"; ZIF-102, owner's ruling), its code
+// when it has none. backend/app/mail.py _money writes the same.
+const CURRENCY = { style: "currency", currencyDisplay: "narrowSymbol" } as const;
 
 /** The currency's minor units, as Intl knows them (CLDR; ISO 4217's exponent for every currency a
  * business can hold, CONTRIBUTING.md "Money"). Never an assumed 2. */
@@ -13,11 +16,11 @@ export function minorUnits(currency: string): number {
   return digits;
 }
 
-/** `Intl.NumberFormat(locale, {style: "currency", currency})` of the amount in major units: the
- * sign, the grouping and the decimal separator all come from `locale`, never a hardcoded sign or a
- * manual `toFixed`. */
+/** `Intl.NumberFormat(locale, {style: "currency", currencyDisplay: "narrowSymbol", currency})` of
+ * the amount in major units: the sign, the grouping and the decimal separator all come from
+ * `locale`, never a hardcoded sign or a manual `toFixed`. */
 export function formatMoney(minor: number, currency: string, locale: string): string {
-  return new Intl.NumberFormat(locale, { style: "currency", currency }).format(minor / 10 ** minorUnits(currency));
+  return new Intl.NumberFormat(locale, { ...CURRENCY, currency }).format(minor / 10 ** minorUnits(currency));
 }
 
 /** One `.` or `,` decimal separator, at most as many decimals as the currency has (none for a
@@ -43,7 +46,7 @@ export function priceText(minor: number, currency: string, locale: string): stri
 }
 
 function parts(minor: number, currency: string, locale: string): Intl.NumberFormatPart[] {
-  return new Intl.NumberFormat(locale, { style: "currency", currency }).formatToParts(minor / 10 ** minorUnits(currency));
+  return new Intl.NumberFormat(locale, { ...CURRENCY, currency }).formatToParts(minor / 10 ** minorUnits(currency));
 }
 
 /** The currency's sign (or its code, when Intl has no sign for it, as CHF in en). */
