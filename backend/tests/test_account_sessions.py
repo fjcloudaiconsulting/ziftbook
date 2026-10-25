@@ -562,11 +562,16 @@ def test_the_details_are_private_to_this_browser(
     assert "etag" not in response.headers
 
 
+# FENCE (code review N4). Wrong impl: 0057's reset_password without its account_sessions line: the
+# browser that completes the reset is signed out anyway (auth.sign_out), so only another browser's
+# account session tells.
 def test_a_password_reset_ends_account_sessions(
     app: FastAPI, people: People, app_engine: Engine, migrate_engine: Engine
 ) -> None:
     client = new_client(app)
     assert console_sign_in(client, email_of(people.both)).status_code == 200
+    elsewhere = new_client(app)
+    assert account_sign_in(elsewhere, email_of(people.both)).status_code == 200
     token = issue_link(app_engine, "password_reset", email_of(people.both))
     assert token is not None
 
@@ -576,6 +581,7 @@ def test_a_password_reset_ends_account_sessions(
 
     assert response.status_code == 204
     assert account_sessions_of(migrate_engine, people.both) == 0
+    assert elsewhere.get("/api/account").status_code == 401
     assert auth.ACCOUNT_COOKIE in set_cookies(response)  # this browser's is cleared too
 
 
