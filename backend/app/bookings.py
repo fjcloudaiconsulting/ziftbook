@@ -177,20 +177,22 @@ def accounts(request: Request) -> list[Account]:
     return found
 
 
-# The proving session, re-confirmed inside the booking transaction and held FOR SHARE to its end
-# (ZIF-146): a sign-out, password reset or erasure (ZIF-58) that deletes it either waits for this
-# booking to commit, and then clears what it linked, or has already committed, and this booking is
-# refused. Lock order: the session, then clients (find_or_create).
+# The proving session, re-confirmed inside the booking transaction and held FOR KEY SHARE to its
+# end (ZIF-146): a sign-out, password reset or erasure (ZIF-58) that deletes it either waits for
+# this booking to commit, and then clears what it linked, or has already committed, and this
+# booking is refused. FOR KEY SHARE, not FOR SHARE: both make a DELETE wait, but FOR SHARE would
+# also make the person's other requests wait on this booking, as resolving a session updates its
+# last_seen_at. Lock order: the session, then clients (find_or_create).
 HOLD_ACCOUNT = text("SELECT hold_account_session(:h)")
 HOLD_BUSINESS = text("""
 SELECT user_id FROM sessions
 WHERE id_hash = :h AND expires_at > now() AND last_seen_at > now() - :idle
-FOR SHARE
+FOR KEY SHARE
 """)
 
 
 def held(db: Session, proof: Account) -> bool:
-    """Whether proof's session is still live and still its holder's, now held FOR SHARE."""
+    """Whether proof's session is still live and still its holder's, now held FOR KEY SHARE."""
     if proof.kind == "account":
         holder = db.scalar(HOLD_ACCOUNT, {"h": proof.id_hash})
     else:
