@@ -14,7 +14,7 @@ networks:
 
 services:
   postgres:
-    image: mirror.gcr.io/library/postgres:18@sha256:edb0c08dc33befd0262ab3b5cf1c4f3f8cfd8b09e88c05b45adee29d6761ddb6
+    image: mirror.gcr.io/library/postgres:18@sha256:979bccfde35445db618c65107d27d08c6c21339d8dc3ad4c830c6633947be0e4
     environment:
       POSTGRES_USER: ziftbook
       POSTGRES_PASSWORD: ziftbook
@@ -32,7 +32,7 @@ services:
 
   # Creates the database roles (backend/migrations/bootstrap.sql) on every start; idempotent.
   db-init:
-    image: mirror.gcr.io/library/postgres:18@sha256:edb0c08dc33befd0262ab3b5cf1c4f3f8cfd8b09e88c05b45adee29d6761ddb6
+    image: mirror.gcr.io/library/postgres:18@sha256:979bccfde35445db618c65107d27d08c6c21339d8dc3ad4c830c6633947be0e4
     depends_on:
       postgres:
         condition: service_healthy
@@ -208,7 +208,7 @@ services:
 
   # Catches every email sent locally, through its HTTP API: http://localhost:8025
   mailpit:
-    image: mirror.gcr.io/axllent/mailpit:v1.32.0@sha256:0790692be935ea4420d085694f7985b1f692ca6a8771ab0e0bd8ba75ac180498
+    image: mirror.gcr.io/axllent/mailpit:v1.33.0@sha256:9b3a463be15354c0f0eba91697d80e3e0d8a5623ef0e627cacc836bc17fd5231
     ports:
       - "127.0.0.1:8025:8025"
     # The image's own check plus a network: a retry after a failed port bind can leave Mailpit
@@ -223,7 +223,7 @@ services:
   # identity (the keys in the backend's environment) and no anonymous access; the bucket
   # policy below opens the media bucket for reading.
   seaweedfs:
-    image: mirror.gcr.io/chrislusf/seaweedfs:4.48@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d
+    image: mirror.gcr.io/chrislusf/seaweedfs:4.51@sha256:f7a49e3f3972ebed5be2ed4befa4a0c68eb7bdddba6e692d42729ceb545134b8
     command: ["server", "-s3", "-s3.config=/etc/seaweedfs/s3.json", "-dir=/data"]
     ports:
       - "127.0.0.1:8333:8333"
@@ -241,7 +241,7 @@ services:
   # Creates the two buckets, the media bucket's public-read policy and the uploads bucket's CORS
   # (the browser PUTs from the web app's origin) on every start; idempotent.
   seaweedfs-init:
-    image: mirror.gcr.io/amazon/aws-cli:2.38.5@sha256:c8156a0e74e13929a42d7e60f0d4e14e7d28d980cd21822505d4bff80e5460c1
+    image: mirror.gcr.io/amazon/aws-cli:2.39.3@sha256:d557b3524475d70dd3104cf44d96568ee3188897b73a6ece2b37aa50e1af362f
     depends_on:
       seaweedfs:
         condition: service_healthy
