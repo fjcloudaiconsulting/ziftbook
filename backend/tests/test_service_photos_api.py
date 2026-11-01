@@ -535,6 +535,8 @@ def test_startup_warns_while_storage_is_unset(
     # ZIF-230: the pod's memory budget for the API and a decode, from its cgroup.
     expected = "unlimited" if not Path("/sys/fs/cgroup/memory.max").exists() else photos.budget()
     assert [line["photo_budget"] for line in lines if line["msg"] == "api started"] == [expected]
+    hardening = "on" if sys.platform == "linux" else "unsupported"
+    assert [line["proc_hardening"] for line in lines if line["msg"] == "api started"] == [hardening]
     warned = [
         line["level"] for line in lines if line["msg"] == "storage unset: photo uploads refused"
     ]

@@ -217,6 +217,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     rate_limit_key = limits.key_state()
     storage_on = StorageSettings().configured()
     photo_budget = photos.budget()  # ZIF-230: logs an ERROR itself when too small
+    proc_hardening = photos.harden()  # ZIF-230: ditto when it fails
     role = database_role()  # ZB-08
     payments_on = StripeSettings().configured()
     ledger_on = bool(LedgerBucketSettings().erasure_ledger_bucket)
@@ -239,6 +240,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             "storage": "on" if storage_on else "off",
             # ZIF-230. "tight": the pod's memory limit cannot hold the API and a photo decode.
             "photo_budget": photo_budget,
+            # ZIF-230. "on": no process of this uid (a photo decoder) reads this one through /proc.
+            # "failed": photo decodes answer 503 busy.
+            "proc_hardening": proc_hardening,
             # "off": owner payment routes answer 503 and booking pages book with no payment step.
             "payments": "on" if payments_on else "off",
             # ZIF-58. "off": erasure answers 503 erasure_unavailable outside localhost.

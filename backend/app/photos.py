@@ -6,6 +6,7 @@ The decode never runs in this process (ZIF-230): each one is a child process of 
 (photo_child.py, photo_decode.py) under resource limits, so a decoder fault or a bomb ends the
 child, not the API. This module never imports Pillow, and trusts nothing the child writes."""
 
+import ctypes
 import logging
 import os
 import re
@@ -242,6 +243,37 @@ class Run:
 
 # Children killed but not yet reaped; each later run tries again (photo decoder not reaped).
 _UNREAPED: list[subprocess.Popen[bytes]] = []
+
+
+# Whether this process is non-dumpable, which main.py's lifespan sets (harden): until then
+# "unset", and the tests and scripts that never start the app decode as before.
+HARDENING: Literal["on", "unsupported", "failed", "unset"] = "unset"
+PR_SET_DUMPABLE = 4
+
+
+def _undumpable() -> bool:
+    return bool(ctypes.CDLL(None, use_errno=True).prctl(PR_SET_DUMPABLE, 0, 0, 0, 0) == 0)
+
+
+def harden(platform: str = sys.platform) -> Literal["on", "unsupported", "failed"]:
+    """Make the API process non-dumpable (ruling D1), so a child that a decoder bug took over, which
+    runs as the same uid, cannot read the API's environment (its secrets) or memory through /proc:
+    env={} alone does not stop that. Linux only (development elsewhere). The process's own
+    /proc/self/environ, io and auxv become unreadable to it too, and it dumps no core. A failure
+    is an ERROR and refuses every decode (503 busy), never a refusal to start."""
+    global HARDENING
+    if platform != "linux":
+        HARDENING = "unsupported"
+        return HARDENING
+    try:
+        hardened = _undumpable()
+    except OSError, AttributeError:
+        hardened = False
+    HARDENING = "on" if hardened else "failed"
+    if not hardened:
+        logger.error("api hardening failed: photo decodes refused")
+        return "failed"
+    return "on"
 
 
 def _cgroup_int(name: str) -> int | None:
@@ -521,9 +553,14 @@ def variants(upload: IO[bytes], upload_id: UUID, span: Span) -> Variants:
     variants, the child's own refusal (422), 422 photo_unreadable when the child failed (killed by a
     limit, crashed, wrote too much or nothing usable), 503 busy when it could not start or was
     starved of CPU (the node's fault, not the photo's). Logs ids and closed sets only."""
+    if HARDENING == "failed":  # a child could read this process's environment
+        fields: dict[str, Any] = {"decoder": "hardening", "upload_id": str(upload_id)}
+        span.set_attribute("decoder", "hardening")
+        logger.error("photo decoder could not start", extra=fields)
+        raise Refusal(503, "busy", fields)
     short = _headroom()
     if short is not None:  # a child at its ceiling could OOM the whole pod
-        fields: dict[str, Any] = {"decoder": "headroom", "upload_id": str(upload_id), **short}
+        fields = {"decoder": "headroom", "upload_id": str(upload_id), **short}
         span.set_attribute("decoder", "headroom")
         logger.error("photo decoder could not start", extra=fields)
         raise Refusal(503, "busy", fields)
