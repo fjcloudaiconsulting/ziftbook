@@ -26,8 +26,9 @@ its own, is ZIF-261.
 
 Deploy: a use_recovery_code call that blocks on this migration's table lock finishes 0039's body
 after the commit, so it may reset one count to 0, once. The downgrade restores 0039's bodies,
-lowers each unlocked count to its failures since the last pass (0039's meaning; never higher,
-locks kept), and drops both columns.
+lowers each enrolled factor's unlocked count to its failures since the last pass (0039's meaning;
+never higher, locks kept; a pending enrolment's count of wrong confirm codes stays as it is), and
+drops both columns.
 
 Revision ID: 0069
 Revises: 0056
@@ -267,11 +268,12 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     install(FUNCTIONS_0039)
-    # 0039 reads failed_attempts as the failures since the last success: never raise a count,
-    # keep every lock.
+    # 0039 reads an enrolled factor's failed_attempts as the failures since the last success: never
+    # raise a count, keep every lock. A pending enrolment's count is its wrong confirm codes, which
+    # failures_since_pass never counted: it stays.
     op.execute("""
     UPDATE second_factors SET failed_attempts = least(failed_attempts, failures_since_pass)
-    WHERE failed_attempts < 10
+    WHERE failed_attempts < 10 AND confirmed_at IS NOT NULL
     """)
     op.execute("""
     ALTER TABLE second_factors DROP COLUMN failures_since_pass, DROP COLUMN failures_leaked_at

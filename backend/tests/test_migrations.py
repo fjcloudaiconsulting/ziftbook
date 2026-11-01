@@ -2061,7 +2061,14 @@ def dollar_body(definition: str) -> str:
     return definition.split("AS $$", 1)[1].rsplit("$$", 1)[0]
 
 
-def seed_failures(migrate_engine: Engine, columns: str, values: str) -> uuid.UUID:
+def seed_failures(
+    migrate_engine: Engine, columns: str, values: str, *, confirmed: bool
+) -> uuid.UUID:
+    """A second_factors row with those columns; confirmed (an enrolled factor, the rows
+    pass_second_factor reads) or an enrolment begun and not confirmed."""
+    if confirmed:
+        columns += ", confirmed_at, secret_ct, proof_hash"
+        values += ", now(), decode('00', 'hex'), sha256(decode('00', 'hex'))"
     user_id = add_user(migrate_engine)
     with migrate_engine.begin() as conn:
         conn.execute(
@@ -2071,11 +2078,12 @@ def seed_failures(migrate_engine: Engine, columns: str, values: str) -> uuid.UUI
     return user_id
 
 
-# ZIF-234 FENCE (0069). Wrong impl: a downgrade that leaves a column, restores a drifted body or
-# keeps a leaky count the old functions would read as consecutive failures; an upgrade whose
-# backfill starts no leak or loses the report; a CREATE OR REPLACE that changes an owner, a grant,
-# SECURITY DEFINER or search_path; or new bodies an API connection that already ran the old ones
-# cannot use. Injected by deleting the downgrade's count UPDATE, then the backfill, then
+# ZIF-234 FENCE (0069). Wrong impl: a downgrade that leaves a column, restores a drifted body,
+# keeps a leaky count the old functions would read as consecutive failures, or lowers a pending
+# enrolment's count of wrong confirm codes; an upgrade whose backfill starts no leak or loses the
+# report; a CREATE OR REPLACE that changes an owner, a grant, SECURITY DEFINER or search_path; or
+# new bodies an API connection that already ran the old ones cannot use. Injected by deleting the
+# downgrade's count UPDATE, then its `confirmed_at IS NOT NULL`, then the backfill, then
 # `SECURITY DEFINER` from one new header, then by restoring 0039's text with one character changed.
 def test_0069_round_trips_the_failure_budget(
     app_engine: Engine, migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
@@ -2088,13 +2096,21 @@ def test_0069_round_trips_the_failure_budget(
         }
     for row in at_head.values():
         assert tuple(row)[3:] == DEFINER_ACCESS
-    # (count, since the last pass) at head -> the count 0039's functions get after the downgrade.
-    downgraded = {(6, 2): 2, (3, 5): 3, (10, 3): 10, (0, 0): 0}
+    # (count, since the last pass, confirmed) at head -> the count 0039's functions get after the
+    # downgrade. Unconfirmed: a pending enrolment's wrong confirm codes, which stay counted.
+    downgraded = {
+        (6, 2, True): 2,
+        (3, 5, True): 3,
+        (10, 3, True): 10,
+        (0, 0, True): 0,
+        (7, 0, False): 7,
+    }
     seeded = {
         key: seed_failures(
             migrate_engine,
             "failed_attempts, failures_since_pass, failures_leaked_at",
             f"{key[0]}, {key[1]}, now()",
+            confirmed=key[2],
         )
         for key in downgraded
     }
@@ -2116,8 +2132,8 @@ def test_0069_round_trips_the_failure_budget(
                 for key, user_id in seeded.items()
             }
         assert counts == downgraded
-        counted = seed_failures(migrate_engine, "failed_attempts", "4")
-        locked = seed_failures(migrate_engine, "failed_attempts", "10")
+        counted = seed_failures(migrate_engine, "failed_attempts", "4", confirmed=True)
+        locked = seed_failures(migrate_engine, "failed_attempts", "10", confirmed=True)
         session = half_session(app_engine, migrate_engine, e.user_id)
         # An API connection runs 0039's body before the upgrade, and keeps running afterwards.
         first = old_conn.execute(PASS, {"id": session, "p": wrong(), "step": None}).one()
