@@ -2760,3 +2760,27 @@ def test_0072_round_trips_the_retention_indexes_and_replaces_an_invalid_leftover
         admin.dispose()
     with migrate_engine.connect() as conn:
         assert [tuple(row) for row in conn.execute(RETENTION_INDEXES)] == RETENTION_INDEX_DEFS
+
+
+RETENTION_POLICY_NAMES = text("""
+SELECT policyname FROM pg_policies WHERE schemaname = 'public' AND tablename = 'audit_events'
+  AND policyname LIKE 'retention_sweep%' ORDER BY 1
+""")
+
+
+# ZIF-235 FENCE (0073). Wrong impl: a downgrade that leaves either policy behind.
+def test_0073_round_trips_the_audit_retention_policies(
+    migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = lock_timeout_config(monkeypatch)
+    try:
+        command.downgrade(cfg, "0072")
+        with migrate_engine.connect() as conn:
+            assert conn.scalars(RETENTION_POLICY_NAMES).all() == []
+    finally:
+        command.upgrade(cfg, "head")
+    with migrate_engine.connect() as conn:
+        assert conn.scalars(RETENTION_POLICY_NAMES).all() == [
+            "retention_sweep",
+            "retention_sweep_read",
+        ]
