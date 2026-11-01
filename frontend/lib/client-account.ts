@@ -255,13 +255,9 @@ export function rememberReturn(store: () => StorageLike, slug: string, now: numb
   }
 }
 
-/** The slug to go back to after the account is created, once: anything else stored there, or older than the link,
- * leads nowhere. */
-export function takeReturn(store: () => StorageLike, now: number): string | null {
+/** A stored way back that is still good: our shape, a valid slug, within the link's 24 hours. */
+function goodReturn(raw: string | null, now: number): string | null {
   try {
-    const storage = store();
-    const raw = storage.getItem(RETURN_KEY);
-    storage.removeItem(RETURN_KEY);
     const value: unknown = JSON.parse(raw ?? "null");
     if (!value || typeof value !== "object") return null;
     const { slug, at } = value as { slug?: unknown; at?: unknown };
@@ -269,6 +265,31 @@ export function takeReturn(store: () => StorageLike, now: number): string | null
     return slugLooksValid(slug) && slug === slug.toLowerCase() ? slug : null;
   } catch {
     return null;
+  }
+}
+
+/** The slug to go back to after the account is created, once: anything else stored there, or older than the link,
+ * leads nowhere. */
+export function takeReturn(store: () => StorageLike, now: number): string | null {
+  try {
+    const storage = store();
+    const raw = storage.getItem(RETURN_KEY);
+    storage.removeItem(RETURN_KEY);
+    return goodReturn(raw, now);
+  } catch {
+    return null;
+  }
+}
+
+/** On every page load: a way back past its 24 hours, or one that is not ours, is removed, so a shared device does not
+ * keep which business someone booked with (security review 3). A good one stays for the sign-up. */
+export function forgetStaleReturn(store: () => StorageLike, now: number): void {
+  try {
+    const storage = store();
+    const raw = storage.getItem(RETURN_KEY);
+    if (raw !== null && goodReturn(raw, now) === null) storage.removeItem(RETURN_KEY);
+  } catch {
+    // Storage refused: there is nothing kept to remove.
   }
 }
 

@@ -19,6 +19,7 @@ import {
   dialRegion,
   emailNotSaved,
   fillFrom,
+  forgetStaleReturn,
   filledForm,
   historyOutcome,
   historySections,
@@ -728,5 +729,39 @@ describe("signing out empties the bookings at once (PR 6 review, correctness 10)
   test("fence: the list listens for the sign-out and empties itself, before the sign-in page loads", () => {
     const text = readFileSync(new URL("../app/[locale]/account/your-bookings.tsx", import.meta.url), "utf8");
     assert.match(text, /useEffect\(\s*\(\) =>\s*shownAccount\.onSignedOut\(\(\) => \{\s*setBookings\(\[\]\);\s*setNext\(null\);\s*setAccount\(null\);/);
+  });
+});
+
+describe("the way back is gone after its 24 hours, read or not (security review 3)", () => {
+  function memory(value) {
+    const items = new Map(value === undefined ? [] : [[RETURN_KEY, value]]);
+    return { items, getItem: (k) => items.get(k) ?? null, setItem: (k, v) => items.set(k, v), removeItem: (k) => items.delete(k) };
+  }
+  const t0 = 1_000_000;
+
+  test("an entry past its 24 hours, or one that is not ours, is removed; a fresh one stays for the sign-up", () => {
+    // Wrong implementation killed: expiring only on read, which leaves which business someone booked with on a
+    // shared device for good when the sign-up is finished elsewhere.
+    const stale = memory(JSON.stringify({ slug: "therapist", at: t0 }));
+    forgetStaleReturn(() => stale, t0 + 24 * 3_600_000 + 1);
+    assert.equal(stale.items.size, 0);
+    const fresh = memory(JSON.stringify({ slug: "therapist", at: t0 }));
+    forgetStaleReturn(() => fresh, t0 + 3_600_000);
+    assert.equal(fresh.items.size, 1);
+    for (const junk of ["junk", '{"slug":1,"at":1}', '{"slug":"//x","at":1000000}']) {
+      const store = memory(junk);
+      forgetStaleReturn(() => store, t0);
+      assert.equal(store.items.size, 0, junk);
+    }
+    const empty = memory();
+    assert.doesNotThrow(() => forgetStaleReturn(() => empty, t0));
+    assert.doesNotThrow(() => forgetStaleReturn(() => { throw new Error("SecurityError"); }, t0));
+  });
+
+  test("fence: every page load prunes it", () => {
+    const layout = readFileSync(new URL("../app/[locale]/layout.tsx", import.meta.url), "utf8");
+    assert.match(layout, /<ReturnPrune \/>/);
+    const prune = readFileSync(new URL("../app/[locale]/_ui/return-prune.tsx", import.meta.url), "utf8");
+    assert.match(prune, /useEffect\(\(\) => forgetStaleReturn\(\(\) => window\.localStorage, Date\.now\(\)\), \[\]\);/);
   });
 });
