@@ -852,7 +852,10 @@ loggers (`web.*`); Next's own stderr output (banners, SSR error traces) is not i
   `booking_refund_failed` whose hold is gone, from the worker's send);
   `client mail over quota` (WARNING, `template`, `source` `merchant` or `public`, when a business's
   hourly client email quota holds an email back at enqueue); never the
-  address, subject or body. Each process logs one startup line (`api started`, `worker started`, `migrations started`) with its
+  address, subject or body. `retention swept` (one per retention run, ZIF-235: counts of what each step
+  deleted or cleared, `batches`, `complete`, `busy`, `held`, and `hold_until` while a hold holds; INFO, or
+  WARNING when the run left a backlog, found the audit sweep busy or kept evidence for a hold) and
+  `retention sweep failed` (ERROR, with `exc`; the ping is withheld). Each process logs one startup line (`api started`, `worker started`, `migrations started`) with its
   non-secret settings. Among the startup lines that need acting on:
   `turnstile secret unset: bookings, sign-ups, resets and sign-in challenges refused` (ERROR, API);
   `turnstile disabled on a public url` (ERROR, API: `ZIF_TURNSTILE_DISABLED` while `ZIF_APP_URL` is
@@ -870,6 +873,10 @@ loggers (`web.*`); Next's own stderr output (banners, SSR error traces) is not i
   invite and contact email links fail once the contract migration revokes token minting from `ziftbook_app`).
   Both startup lines carry `database_role` (`current_user`, never `session_user`; left out when the
   query failed).
+  The worker's retention hold (`ZIF_RETENTION_HOLD_UNTIL`, `hold_until` as set; `worker started` carries
+  `retention_hold_until`): `retention hold on: ...` (WARNING, a valid hold), `retention hold date has passed:
+  not holding` (ERROR, a past date), and `retention hold value invalid: holding until it is fixed ...` (ERROR,
+  any other value, at startup and on every retention run, with the ping withheld).
 - Abuse events, ids and reasons only: `turnstile mismatch` (WARNING, `reason` `hostname` or `action`:
   a passing token solved on another host or for another form, as when `ZIF_APP_URL` doesn't name the
   site's host); `admin sign-in failures` (WARNING, `target` `user:<id>`, null for an unknown email,
