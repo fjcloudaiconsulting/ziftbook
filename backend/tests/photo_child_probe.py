@@ -9,6 +9,7 @@ import importlib.util
 import json
 import os
 import resource
+import signal
 import socket
 import struct
 import sys
@@ -41,6 +42,87 @@ def refusal(error: str) -> bytes:
     head |= {"format": None, "pixels": None, "peak_kb": 0, "cpu_ms": 0}
     text = json.dumps(head).encode()
     return struct.pack(">I", len(text)) + text
+
+
+# The syscalls a probe calls by number, its own table (not photo_child's): (aarch64, x86_64).
+NR = {
+    "tkill": (130, 200),
+    "tgkill": (131, 234),
+    "rt_sigqueueinfo": (138, 129),
+    "rt_tgsigqueueinfo": (240, 297),
+    "sched_setattr": (274, 314),
+    "ioprio_get": (31, 252),
+    "ioprio_set": (30, 251),
+    "process_vm_writev": (271, 311),
+    "kcmp": (272, 312),
+}
+
+
+def syscall(name: str, *args: Any) -> int:
+    nr = NR[name][0 if os.uname().machine == "aarch64" else 1]
+    libc = ctypes.CDLL(None, use_errno=True)
+    result: int = libc.syscall(nr, *[ctypes.c_long(a) if isinstance(a, int) else a for a in args])
+    if result == -1:
+        raise OSError(ctypes.get_errno(), name)
+    return result
+
+
+def expect(checks: list[tuple[Any, int | None]]) -> None:
+    """Exit 10 + i at the first check that does not end as it should: an errno, or None to
+    succeed. The decode's exit code then names the check."""
+    for i, (call, wanted) in enumerate(checks):
+        try:
+            call()
+            got = None
+        except OSError as error:
+            got = error.errno
+        if got != wanted:
+            os._exit(10 + i)
+
+
+def siginfo() -> Any:
+    """A siginfo for sig 0 with si_code SI_QUEUE (-1), as a user process may send."""
+    info = ctypes.create_string_buffer(128)
+    struct.pack_into("=iii", info, 0, 0, 0, -1)
+    return info
+
+
+def parent_checks() -> list[tuple[Any, int | None]]:
+    """Every call that names another process, against the API (its parent), each a no-op if it
+    were allowed; then the same calls against this process, which must stay allowed."""
+    if sys.platform != "linux":  # the filter is Linux's; so are half of these calls
+        return []
+    api, me, eperm = os.getppid(), os.getpid(), 1
+    sched_attr = ctypes.create_string_buffer(48)
+    struct.pack_into("=I", sched_attr, 0, 48)
+    return [
+        (lambda: os.kill(api, 0), eperm),
+        (lambda: os.kill(0, 0), eperm),  # the process group
+        (lambda: os.kill(-1, 0), eperm),  # every process it may signal
+        (lambda: syscall("tkill", api, 0), eperm),
+        (lambda: syscall("tgkill", api, api, 0), eperm),
+        (lambda: syscall("rt_sigqueueinfo", api, 0, siginfo()), eperm),
+        (lambda: syscall("rt_tgsigqueueinfo", api, api, 0, siginfo()), eperm),
+        (lambda: resource.prlimit(api, resource.RLIMIT_MSGQUEUE), eperm),
+        (lambda: os.setpriority(os.PRIO_PROCESS, api, os.getpriority(os.PRIO_PROCESS, api)), eperm),
+        (lambda: os.sched_setaffinity(api, os.sched_getaffinity(api)), eperm),
+        (lambda: os.sched_setscheduler(api, os.SCHED_OTHER, os.sched_param(0)), eperm),
+        (lambda: os.sched_setparam(api, os.sched_param(0)), eperm),
+        (lambda: syscall("sched_setattr", api, sched_attr, 0), eperm),
+        (lambda: syscall("ioprio_set", 1, api, syscall("ioprio_get", 1, api)), eperm),
+        (lambda: os.pidfd_open(api), eperm),
+        (lambda: signal.pidfd_send_signal(0, 0), eperm),
+        (lambda: syscall("process_vm_writev", me, None, 0, None, 0, 0), eperm),
+        (lambda: syscall("kcmp", me, me, 0, 0, 0), eperm),
+        (lambda: os.setpriority(os.PRIO_PROCESS, 0, os.getpriority(os.PRIO_PROCESS, 0)), eperm),
+        # Still allowed: the same calls on itself (glibc's raise and setrlimit use them).
+        (lambda: os.kill(me, 0), None),
+        (lambda: syscall("tgkill", me, me, 0), None),
+        (lambda: resource.prlimit(0, resource.RLIMIT_NOFILE), None),
+        (lambda: resource.prlimit(me, resource.RLIMIT_NOFILE), None),
+        (lambda: os.sched_setaffinity(0, os.sched_getaffinity(0)), None),
+        (lambda: os.sched_setscheduler(me, os.SCHED_OTHER, os.sched_param(0)), None),
+    ]
 
 
 def spin() -> None:
@@ -160,6 +242,10 @@ def record(data: bytes) -> bytes:
             except OSError as error:
                 seen.append(type(error).__name__)
         return refusal("_".join(seen))
+    if MODE == "probe-parent":  # nothing reaches the API by its pid
+        expect(parent_checks())
+        checked: bytes = real_load().record(rest)
+        return checked
     if MODE == "probe-environ":  # the API's own environment, through /proc
         try:
             with open(f"/proc/{os.getppid()}/environ", "rb") as environ:
