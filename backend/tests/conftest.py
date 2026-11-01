@@ -442,6 +442,7 @@ METRIC_KEYS = {
     "stripe.result",
     "payment.kind",
     "payment.outcome",
+    "photo.outcome",
     "db.client.connection.state",
     "db.client.connection.pool.name",
 }

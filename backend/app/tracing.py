@@ -66,6 +66,8 @@ CSP_VIOLATIONS = _meter.create_counter("ziftbook.csp.violations", unit="{violati
 # ZIF-264: hit() calls refused by the per-address cap, by limiter.tier: "address" (its IPv4 or
 # IPv6 /64 was full) or "network" (its /48 was). Never the address.
 LIMITER_AT_CAP = _meter.create_counter("ziftbook.limiter.at_cap", unit="{call}")
+# photo.outcome: photos.OUTCOMES (ZIF-230).
+PHOTO_DECODES = _meter.create_counter("ziftbook.photo.decodes", unit="{decode}")
 
 _configured = False
 
