@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { describe, test } from "node:test";
 
-import { cspFor, cspStartupFields, reportingDirectives, reportUrlOf } from "../lib/csp.ts";
+import { cspFor, cspStartupFields, reportingDirectives, reportUrlFor, reportUrlOf } from "../lib/csp.ts";
 
 const GOOD = "https://app.example.test/api/csp-reports";
 
@@ -71,6 +71,23 @@ describe("CSP_REPORT_URL", () => {
       }).trim();
     assert.equal(read(GOOD), JSON.stringify(GOOD));
     assert.equal(read("https://reports.example.test/csp"), "null");
+  });
+});
+
+describe("reportUrlFor", () => {
+  test("fence: a page names the report URL only when the URL's host is the one the page was served on", () => {
+    // Wrong implementation killed: a URL with a typo'd or another environment's host, which would send every
+    // visitor's raw reports there cross-origin (report-uri needs no preflight).
+    for (const host of ["app.example.test", "APP.Example.Test", "app.example.test:443"]) {
+      assert.equal(reportUrlFor(host, GOOD), GOOD, host);
+    }
+    for (const host of [null, undefined, "", "dev.example.test", "app.example.test:8443", "app.example.test.evil", "a b", "app.example.test/x"]) {
+      assert.equal(reportUrlFor(host, GOOD), null, String(host));
+    }
+    const port = "https://app.example.test:8443/api/csp-reports";
+    assert.equal(reportUrlFor("app.example.test:8443", port), port);
+    assert.equal(reportUrlFor("app.example.test", port), null);
+    assert.equal(reportUrlFor("app.example.test", null), null);
   });
 });
 

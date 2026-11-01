@@ -841,6 +841,18 @@ describe("proxy log lines carry the span's ids (W4)", () => {
 const policyNonce = (policy) => /'nonce-([^']+)'/.exec(policy ?? "")?.[1];
 
 // Every header of that name, as sent: fetch() joins repeats into one value.
+// A page as a browser on `host` would load it: http.request, as fetch() never sends a chosen Host.
+function pageOn(port, path, host) {
+  return new Promise((resolve, reject) => {
+    httpRequest({ host: "127.0.0.1", port, path, headers: { host } }, (res) => {
+      res.resume();
+      res.on("end", () => resolve({ status: res.statusCode, headers: res.headers }));
+    })
+      .on("error", reject)
+      .end();
+  });
+}
+
 function rawHeaders(port, path, name) {
   return new Promise((resolve, reject) => {
     httpRequest({ host: "127.0.0.1", port, path }, (res) => {
@@ -991,16 +1003,30 @@ describe("CSP violation reports (ZIF-236)", () => {
     echo.close();
   });
 
-  test("fence: with ZIF_CSP_REPORT_URL set, every page's policy reports there, in both forms", async () => {
+  test("fence: with ZIF_CSP_REPORT_URL set, every page served on its host reports there, in both forms", async () => {
     // Wrong implementation killed: report-to without the Reporting-Endpoints header that names its group.
-    const response = await fetch(`http://127.0.0.1:${port}/en/sign-in`);
-    const policy = response.headers.get("content-security-policy-report-only") ?? "";
+    const response = await pageOn(port, "/en/sign-in", "app.example.test");
+    const policy = response.headers["content-security-policy-report-only"] ?? "";
     assert.match(policy, /report-uri https:\/\/app\.example\.test\/api\/csp-reports(;|$)/);
     assert.match(policy, /report-to csp(;|$)/);
-    assert.equal(response.headers.get("reporting-endpoints"), `csp="${reports}"`);
+    assert.equal(response.headers["reporting-endpoints"], `csp="${reports}"`);
     assert.deepEqual(await rawHeaders(port, "/en/sign-in", "content-security-policy"), ["frame-ancestors 'none'"]);
     const started = parsedLogLines(web.logs.stdout, "started");
     assert.deepEqual([started[0]?.csp, started[0]?.csp_reports], ["report-only", "on"]);
+  });
+
+  test("fence: a page served on another host names no report endpoint, and says so once", async () => {
+    // Wrong implementation killed: a typo'd or another environment's URL that ships every visitor's raw reports
+    // (a checkout's client secret in them) cross-origin to a host nobody chose.
+    for (const host of [`127.0.0.1:${port}`, "dev.example.test", `app.example.test:8443`]) {
+      const response = await pageOn(port, "/en/sign-in", host);
+      assert.doesNotMatch(response.headers["content-security-policy-report-only"] ?? "", /report-(uri|to)/, host);
+      assert.equal(response.headers["reporting-endpoints"], undefined, host);
+    }
+    const warnings = await waitForLog(web.logs.stdout, "csp report url is not this page's host: violations are not reported");
+    assert.equal(warnings.length, 1);
+    assert.equal(warnings[0].level, "WARNING");
+    assert.doesNotMatch(JSON.stringify(warnings[0]), /example|127\.0\.0\.1/);
   });
 
   test("fence: a refused ZIF_CSP_REPORT_URL names no endpoint, and the startup line says so without the URL", async () => {

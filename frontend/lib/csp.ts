@@ -35,6 +35,21 @@ export function reportUrlOf(value: string | undefined): string | null {
  * when unset or refused (reportUrlOf), and then no policy names one. Read once, when the server starts. */
 export const CSP_REPORT_URL = reportUrlOf(process.env.ZIF_CSP_REPORT_URL);
 
+// A Host header as a browser sends it: a DNS name or IPv4 address, with an optional port. Nothing else is compared.
+const HOST = /^[A-Za-z0-9.-]+(?::\d{1,5})?$/;
+
+/** The report URL for a page served on `host` (the request's Host header), or null when its host is another:
+ * a typo'd or another environment's URL would otherwise ship every visitor's raw reports there cross-origin
+ * (report-uri needs no preflight). A forged Host changes only the forger's own page. */
+export function reportUrlFor(host: string | null | undefined, reportUrl: string | null = CSP_REPORT_URL): string | null {
+  if (!reportUrl || !host || !HOST.test(host)) return null;
+  try {
+    return new URL(`https://${host}`).host === new URL(reportUrl).host ? reportUrl : null;
+  } catch {
+    return null;
+  }
+}
+
 /** The reporting directives for a policy: both forms, as browsers support one or the other. */
 export function reportingDirectives(reportUrl: string | null): string[] {
   return reportUrl ? [`report-uri ${reportUrl}`, `report-to ${REPORT_GROUP}`] : [];
