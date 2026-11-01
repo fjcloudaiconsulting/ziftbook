@@ -1,10 +1,22 @@
 // ZIF-146: the logic behind a client's own account: signing in to it, filling the checkout from it, its bookings
 // and the way back to a booking page after an emailed sign-up.
 import assert from "node:assert/strict";
-import { describe, test } from "node:test";
 import { readFileSync } from "node:fs";
+import { describe, test } from "node:test";
 
-import { accountSignInOutcome, applyFill, bookAgainSlug, fillFrom, offerNext, splitPhone, historyOutcome, historySections, historyServiceName, statusPill } from "../lib/client-account.ts";
+import {
+  accountSignInOutcome,
+  applyFill,
+  bookAgainSlug,
+  emailNotSaved,
+  fillFrom,
+  historyOutcome,
+  historySections,
+  historyServiceName,
+  offerNext,
+  splitPhone,
+  statusPill,
+} from "../lib/client-account.ts";
 
 describe("account sign-in", () => {
   test("a wrong password is the console's own generic answer, never a hint that the email has an account", () => {
@@ -143,5 +155,59 @@ describe("filling the checkout from the account", () => {
     const before = text.slice(0, calls[0].index);
     const opened = before.lastIndexOf("async function fillFromAccount(");
     assert.ok(opened > before.lastIndexOf("useEffect("), "inside the offer's click handler, not an effect");
+  });
+});
+
+describe("a different email books as a guest (ZIF-146 G1)", () => {
+  // The backend proves a booking only with the signed-in account's own email: any other address books as a guest,
+  // links nothing and never shows in the account's bookings (tests/test_bookings_api.py pins it).
+  const ana = { email: "ana@example.com", name: "Ana Silva", phone: null };
+  const page = () => readFileSync(new URL("../app/[locale]/[slug]/booking-page.tsx", import.meta.url), "utf8");
+  const fillParts = () => readFileSync(new URL("../app/[locale]/[slug]/account-fill.tsx", import.meta.url), "utf8");
+
+  test("the hint shows only while the email differs from the account's own", () => {
+    assert.equal(emailNotSaved(ana, "ana@example.com"), false);
+    assert.equal(emailNotSaved(ana, "someone@example.com"), true);
+    assert.equal(emailNotSaved(ana, "ana@example.co"), true);
+  });
+
+  test("it compares as the server does: case, spaces around it and the Unicode form don't make it another address", () => {
+    assert.equal(emailNotSaved(ana, "  Ana@Example.COM "), false);
+    assert.equal(emailNotSaved({ ...ana, email: "jos\u00e9@example.com" }, "jose\u0301@example.com"), false);
+  });
+
+  test("an empty field gets its own error, not the hint", () => {
+    assert.equal(emailNotSaved(ana, ""), false);
+    assert.equal(emailNotSaved(ana, "   "), false);
+  });
+
+  test("signed out, there is no hint whatever is typed: nothing is compared or looked up", () => {
+    for (const typed of ["", "ana@example.com", "someone@example.com"]) assert.equal(emailNotSaved(null, typed), false);
+  });
+
+  test("fence: the hint under the email field comes from that comparison and nothing else", () => {
+    assert.match(page(), /const notSaved = emailNotSaved\(account, flow\.email\);/);
+    assert.match(page(), /\{notSaved && \(\s*<p className=\{styles\.hint\} id="bp-email-account">\s*\{t\("emailNotSaved"\)\}/);
+  });
+
+  test("fence: the signed-out offer is the same for any typed value", () => {
+    // Wrong implementation killed: an offer that changes with the typed email ("This email has an account, sign
+    // in"), which tells a stranger who has an account.
+    const props = /export function AccountOffer\(\{ ([^}]*) \}: \{ ([^}]*) \}\)/.exec(fillParts());
+    assert.ok(props, "AccountOffer's own props");
+    assert.equal(props[1], "t, busy, error, onOpen");
+    const uses = [...page().matchAll(/<AccountOffer ([\s\S]*?)\/>/g)].map((m) => m[1]);
+    assert.equal(uses.length, 1);
+    assert.doesNotMatch(uses[0], /flow|email|name|phone|region|message|marketing/);
+  });
+
+  test("the signed-in note says up front that a different email is not saved to the account", () => {
+    for (const locale of ["en", "nl", "pt"]) {
+      const strings = JSON.parse(readFileSync(new URL(`../messages/${locale}.json`, import.meta.url))).BookingPage;
+      assert.ok(strings.filledIn.length > 0 && strings.emailNotSaved.length > 0, locale);
+    }
+    const en = JSON.parse(readFileSync(new URL("../messages/en.json", import.meta.url))).BookingPage;
+    assert.match(en.filledIn, /with a different email it won't be saved to your account/);
+    assert.equal(en.emailNotSaved, "This booking won't appear in your bookings.");
   });
 });

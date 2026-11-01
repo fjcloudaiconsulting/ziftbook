@@ -1116,6 +1116,7 @@
     "signInLede": "Your name, email and phone fill in. You can still change them.",
     "signInGuest": "No account? Book as a guest, and save your details after.",
     "signedInAs": "Signed in as {name}.",
-    "filledIn": "Your details are filled in. Changes here are for this booking only."
+    "filledIn": "Your details are filled in. Changes here are for this booking only; with a different email it won't be saved to your account.",
+    "emailNotSaved": "This booking won't appear in your bookings."
   }
 }

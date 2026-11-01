@@ -35,7 +35,7 @@ import {
   weekFor,
   withName,
 } from "@/lib/booking-page";
-import { applyFill, fillFrom, offerNext } from "@/lib/client-account";
+import { applyFill, emailNotSaved, fillFrom, offerNext } from "@/lib/client-account";
 import { dateLocale } from "@/lib/console";
 import { defaultDial, dialOptions } from "@/lib/dial-codes";
 import { formatMoney } from "@/lib/money";
@@ -927,6 +927,7 @@ export function BookingPage({
   // A resumed booking without its secret yet shows the kind it was made with.
   const shown = start === null && sync ? sync.payment.kind : choice;
   const sendText = flow.busy ? (auto ? t("booking") : t("sending")) : t(sendLabel(stepOn ? shown : null, auto), { price });
+  const notSaved = emailNotSaved(account, flow.email);
   const extraTerms = termsLines(stepOn ? shown : null, Boolean(page.payment?.keeps_card_fee));
 
   // The page's frame: heading and business line, and (unless the booking is no longer open) the way back.
@@ -1154,7 +1155,7 @@ export function BookingPage({
                           onChange={(e) => fieldChange("email", e.target.value)}
                           onBlur={emailBlur}
                           aria-invalid={flow.errors.email ? true : undefined}
-                          aria-describedby={`bp-email-hint${flow.errors.email ? " bp-email-err" : ""}`}
+                          aria-describedby={`bp-email-hint${notSaved ? " bp-email-account" : ""}${flow.errors.email ? " bp-email-err" : ""}`}
                         />
                       </div>
                       <p className={styles.hint} id="bp-email-hint">
@@ -1162,6 +1163,12 @@ export function BookingPage({
                       </p>
                       {flow.errors.email && <FieldError id="bp-email-err">{flow.errors.email}</FieldError>}
                       <div aria-live="polite">
+                        {/* ZIF-146 G1: another address books as a guest, saved to no account. */}
+                        {notSaved && (
+                          <p className={styles.hint} id="bp-email-account">
+                            {t("emailNotSaved")}
+                          </p>
+                        )}
                         {flow.suggest && (
                           <p className={styles.hint}>
                             {t("didYouMean", { email: flow.suggest })}{" "}

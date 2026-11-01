@@ -116,3 +116,19 @@ export function applyFill(current: Details, fill: Fill): Details {
     region: fill.phone !== null && fill.region ? fill.region : current.region,
   };
 }
+
+/** An email as the server keeps it (backend/app/passwords.py normalise_email): NFC, no spaces around, lower case. */
+function normalEmail(email: string): string {
+  return email.trim().toLowerCase().normalize("NFC");
+}
+
+/**
+ * Whether the email typed differs from the signed-in account's own (ZIF-146 G1): such a booking is a guest's, saved
+ * to no account and absent from its bookings, so the field says so. It compares with the person's own address, which
+ * this page already holds from their own sign-in: nothing is looked up. Signed out (`account` null) it is always
+ * false, whatever is typed; an empty field gets its own error instead.
+ */
+export function emailNotSaved(account: { email: string } | null, typed: string): boolean {
+  if (!account || !typed.trim()) return false;
+  return normalEmail(typed) !== normalEmail(account.email);
+}
