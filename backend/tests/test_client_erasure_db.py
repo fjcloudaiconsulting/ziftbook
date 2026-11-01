@@ -7,6 +7,7 @@ The core is called here as ziftbook_migrate, its owner and the only role that ma
 
 import json
 import os
+import threading
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -27,6 +28,7 @@ from tests.conftest import (
     member_id,
     migrate_tenant_context,
     set_role,
+    wait_until_blocked,
 )
 from tests.test_bookings_db import seed_service
 
@@ -880,3 +882,35 @@ def test_the_core_refuses_a_client_with_a_live_booking(
         assert take(migrate_engine, people.a) == before
     else:
         assert erase(migrate_engine, people.a, client_id) is not None
+
+
+# ZIF-58 FENCE. Wrong impl: erase_client reads the owner's session without locking it. A role
+# change or a removal deletes the member's sessions first, then changes the membership, and takes
+# no booking lock; an erasure that read the session just before that commit would proceed for
+# someone no longer an owner. With FOR KEY SHARE it waits for the delete and then finds nothing.
+def test_an_erasure_waits_for_its_session_being_ended(
+    people: People, world: World, migrate_engine: Engine, app_engine: Engine
+) -> None:
+    owner = session_hash(people.a, people.both)
+    refused: dict[str, BaseException] = {}
+
+    def erase_as_owner() -> None:
+        try:
+            with tenant_context(people.a) as session:
+                booking_lock(session)
+                session.execute(ERASE_CLIENT, {"h": owner, "id": world.a.client_id})
+        except DBAPIError as error:
+            refused["error"] = error
+
+    eraser = threading.Thread(target=erase_as_owner)
+    with migrate_engine.begin() as conn:
+        conn.execute(text("DELETE FROM sessions WHERE id_hash = :h"), {"h": owner})
+        eraser.start()
+        wait_until_blocked(app_engine, 1)
+    eraser.join(timeout=10)
+    assert not eraser.is_alive()
+
+    error = refused["error"]
+    assert isinstance(error, DBAPIError)
+    assert isinstance(error.orig, InsufficientPrivilege)
+    assert erased_at(people.a, world.a.client_id) is None

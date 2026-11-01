@@ -166,11 +166,17 @@ BEGIN
   IF coalesce(current_setting('app.tenant_id', true), '') = '' THEN
     RAISE EXCEPTION 'erase_client needs a business' USING ERRCODE = 'insufficient_privilege';
   END IF;
-  IF NOT EXISTS (SELECT 1 FROM sessions
-                 WHERE id_hash = p_session_hash
-                   AND tenant_id = current_setting('app.tenant_id')::uuid
-                   AND role = 'owner' AND expires_at > now()
-                   AND last_seen_at > now() - interval '7 days') THEN
+  -- FOR KEY SHARE: a role change or a removal deletes the member's sessions before changing the
+  -- membership, and takes no booking lock. Locked, the session cannot be deleted under this
+  -- erasure; one being deleted is waited for and then found gone. Sessions before clients, as
+  -- CONTRIBUTING's lock order has it.
+  PERFORM 1 FROM sessions
+   WHERE id_hash = p_session_hash
+     AND tenant_id = current_setting('app.tenant_id')::uuid
+     AND role = 'owner' AND expires_at > now()
+     AND last_seen_at > now() - interval '7 days'
+   FOR KEY SHARE;
+  IF NOT FOUND THEN
     RAISE EXCEPTION 'erase_client needs a live owner session of this business'
       USING ERRCODE = 'insufficient_privilege';
   END IF;
