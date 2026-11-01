@@ -66,6 +66,19 @@ describe("the ask (askView)", () => {
   });
 });
 
+describe("the ask, where it is wired (settings/currency.tsx)", () => {
+  test("fence: it opens with nothing chosen, and Change stays disabled until a currency is", () => {
+    // Wrong implementations killed: open() preselecting the first option again, and the button
+    // losing its disabled state, either of which lets one click relabel every price as BRL.
+    const src = readFileSync(new URL("../app/[locale]/(console)/settings/currency.tsx", import.meta.url), "utf8");
+    const open = src.slice(src.indexOf("function open()"), src.indexOf("function close()"));
+    assert.match(open, /setNext\(null\);/);
+    assert.doesNotMatch(open, /currencyChoices\(/);
+    assert.match(src, /aria-disabled=\{busy \|\| !ask\.canConfirm \|\| undefined\}\s*onClick=\{change\}/);
+    assert.match(src, /if \(!state \|\| !next \|\| submitting\.current\) return;/);
+  });
+});
+
 describe("currencyChangeError", () => {
   test("fence: each refusal has its own handling, the count first", () => {
     assert.equal(currencyChangeError({ status: 409, code: "currency_prices_exist", total: 4 }), "recount");
