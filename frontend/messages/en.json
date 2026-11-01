@@ -697,7 +697,7 @@
       "contactEmailLabel": "Contact email for clients",
       "contactEmailOptional": "· optional",
       "contactEmailHint": "Clients see it on your booking page. Replies to emails about a declined, cancelled or expired booking come here.",
-      "contactEmailInvalid": "Use plain letters and numbers only, like name@yourbusiness.com.",
+      "contactEmailInvalid": "Use letters without accents, like name@yourbusiness.com.",
       "autoConfirmLabel": "Confirm new bookings automatically",
       "autoConfirmHint": "Off: every new booking waits for you to accept or decline it.",
       "slotStepLabel": "Time between start times",

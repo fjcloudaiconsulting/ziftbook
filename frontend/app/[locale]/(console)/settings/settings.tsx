@@ -11,7 +11,7 @@ import {
   type Draft,
   draftFrom,
   effective,
-  emailProblem,
+  emailMessageKey,
   FIELDS,
   type IntKey,
   type Key,
@@ -148,7 +148,7 @@ export function Settings() {
   const set = (key: Key, value: string | boolean) => setDraft((d) => ({ ...d, [key]: value }));
   const err = (key: Key) => invalid.includes(key) && rangeMsg(key);
   // An address with accents says why it is refused; anything else the API refuses reads as Form's.
-  const emailErr = invalid.includes("contact_email") && (emailProblem(String(draft.contact_email)) === "accents" ? t("contactEmailInvalid") : form("invalidEmail"));
+  const emailErr = invalid.includes("contact_email") && (emailMessageKey(String(draft.contact_email)) === "contactEmailInvalid" ? t("contactEmailInvalid") : form("invalidEmail"));
   const step = effective(settings, draft, "slot_step_minutes");
   const pct = effective(settings, draft, "buffer_pct");
   const count = (key: IntKey) => effective(settings, draft, key);
