@@ -66,7 +66,8 @@ def limit() -> None:
 # A seccomp filter of syscalls the child never needs and a decoder bug could use (ZIF-230): the
 # network, io_uring (it would bypass the filter), any change to the filesystem (owners, times,
 # extended attributes, holes and memfds included), open(at) with a write, create or truncate flag,
-# and exec (which would make the child dumpable again). It stacks on the container
+# and exec (which would make the child dumpable again). The upload's own descriptor is read-only
+# (photos._spawn), so no shared writable mapping changes it either. It stacks on the container
 # runtime's own filter. Per architecture: aarch64 (production) and x86_64 (CI); another kills
 # nothing and is refused (exit 3). A syscall from a foreign ABI (x32, a 32-bit one) is killed.
 DENY = {

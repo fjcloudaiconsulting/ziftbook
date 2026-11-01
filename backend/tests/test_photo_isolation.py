@@ -603,6 +603,27 @@ def test_the_child_cannot_reach_the_api_by_its_pid() -> None:
     assert own_state() == before
 
 
+# ZIF-230 fence (re-verify N1). Kills: the child holding the upload's file open for writing. No
+# syscall can change it (the filter), but a shared writable mapping needs none: the child's
+# descriptor is read-only, so the mapping is refused and the API's copy stays as it was.
+@only_linux
+def test_the_child_cannot_write_the_upload_through_a_mapping() -> None:
+    data = probe("probe-mmap-write", PNG)
+    with tempfile.TemporaryFile() as upload_file:
+        upload_file.write(data)
+        upload_file.seek(0)
+        previous, photos.CHILD = photos.CHILD, PROBE
+        try:
+            found = photos.variants(upload_file, uuid.uuid4(), trace.INVALID_SPAN)
+        except photos.Refusal as refusal:
+            pytest.fail(f"the child could map its upload to write: {refusal}")
+        finally:
+            photos.CHILD = previous
+        upload_file.seek(0)
+        assert upload_file.read() == data
+    assert found.width == 20
+
+
 # ZIF-230 fence (build review, security 1). Kills: the child in the API's process group, where a
 # kill(0, ...) that any rule missed would reach the API too.
 def test_the_child_has_a_process_group_of_its_own() -> None:
