@@ -162,8 +162,9 @@ export function BookingPage({
   const ensureWeekToken = useRef(new Map<string, number>());
   const working = useRef(false);
   // The address this page load placed its checkout with: shown when it ends, never stored.
-  // `signedIn`: an account had filled this page in when it was placed (the done screen then offers no account).
-  const placed = useRef<{ bookingId: string; email: string; signedIn: boolean } | null>(null);
+  // How it was placed, for the done screen's offer (saveDetailsOffer): whether the booking's answer says this
+  // browser's account placed it, and whether an account had filled this page in.
+  const placed = useRef<{ bookingId: string; email: string; placedByAccount: boolean; signedIn: boolean } | null>(null);
   const nameRef = useRef<HTMLInputElement>(null);
   const emailRef = useRef<HTMLInputElement>(null);
   const phoneRef = useRef<HTMLInputElement>(null);
@@ -559,7 +560,13 @@ export function BookingPage({
     setSync(s);
     setBookingId(s.id);
     if (view.kind === "done") {
-      setOfferAccount(saveDetailsOffer(placed.current?.bookingId === s.id, placed.current?.signedIn ?? true));
+      setOfferAccount(
+        saveDetailsOffer({
+          placedHere: placed.current?.bookingId === s.id,
+          placedByAccount: placed.current?.placedByAccount ?? true,
+          signedInOnPage: placed.current?.signedIn ?? true,
+        }),
+      );
       forget(true);
       setEnd(null);
       setOffer(null);
@@ -781,7 +788,7 @@ export function BookingPage({
 
     if (outcome.kind === "done" && answer.data?.status === "awaiting_payment" && answer.data.payment) {
       const { id, payment } = answer.data;
-      placed.current = { bookingId: id, email: f.email, signedIn: account !== null };
+      placed.current = { bookingId: id, email: f.email, placedByAccount: answer.data.placed_by_account ?? false, signedIn: account !== null };
       writeStored({ bookingId: id, serviceId: f.service.id });
       setBookingParam(id);
       setBookingId(id);
@@ -790,7 +797,7 @@ export function BookingPage({
       return;
     }
     if (outcome.kind === "done" && answer.data) {
-      setOfferAccount(saveDetailsOffer(true, account !== null));
+      setOfferAccount(saveDetailsOffer({ placedHere: true, placedByAccount: answer.data.placed_by_account ?? false, signedInOnPage: account !== null }));
       setDone({
         status: answer.data.status,
         service: f.service,

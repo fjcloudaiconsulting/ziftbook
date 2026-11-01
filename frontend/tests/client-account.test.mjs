@@ -679,20 +679,28 @@ describe("an account that ended elsewhere is noticed (security review 6)", () =>
   });
 });
 
-describe("the done screen never asks someone signed in to create an account (PR 6 review, correctness 5)", () => {
-  test("offered only for a booking this page placed with no account signed in on it", () => {
-    assert.equal(saveDetailsOffer(true, false), true);
-    assert.equal(saveDetailsOffer(true, true), false);
-    // A redirect payment (3-D Secure, iDEAL) comes back in a new page load: it may have been placed signed in, and
-    // nothing about the person is kept to tell, so it is not offered.
-    assert.equal(saveDetailsOffer(false, false), false);
+describe("the done screen never asks someone signed in to create an account (PR 6 review 5, fold concern 2)", () => {
+  const offer = (placedHere, placedByAccount, signedInOnPage) => saveDetailsOffer({ placedHere, placedByAccount, signedInOnPage });
+
+  test("offered only for a booking this page placed that the server says no account placed", () => {
+    assert.equal(offer(true, false, false), true);
+    // Signed in on this browser without ever using the offer, and booked with the account's own email: the server
+    // proved it and recorded it as the account's.
+    assert.equal(offer(true, true, false), false);
+    // Filled in from an account on this page: that person has one, whatever email they booked with (G1).
+    assert.equal(offer(true, false, true), false);
+    // A redirect payment (3-D Secure, iDEAL) comes back in a new page load with no answer to read: not offered.
+    assert.equal(offer(false, false, false), false);
   });
 
-  test("fence: both ways to the done screen decide it from how this page placed the booking", () => {
+  test("fence: both ways to the done screen decide it from the booking's own answer, never from reading the account", () => {
     const page = readFileSync(new URL("../app/[locale]/[slug]/booking-page.tsx", import.meta.url), "utf8");
-    assert.match(page, /placed\.current = \{ bookingId: id, email: f\.email, signedIn: account !== null \};/);
-    assert.match(page, /setOfferAccount\(saveDetailsOffer\(placed\.current\?\.bookingId === s\.id, placed\.current\?\.signedIn \?\? true\)\);/);
-    assert.match(page, /setOfferAccount\(saveDetailsOffer\(true, account !== null\)\);/);
+    assert.match(page, /placed\.current = \{ bookingId: id, email: f\.email, placedByAccount: answer\.data\.placed_by_account \?\? false, signedIn: account !== null \};/);
+    assert.match(page, /saveDetailsOffer\(\{\s*placedHere: placed\.current\?\.bookingId === s\.id,\s*placedByAccount: placed\.current\?\.placedByAccount \?\? true,\s*signedInOnPage: placed\.current\?\.signedIn \?\? true,\s*\}\)/);
+    assert.match(page, /saveDetailsOffer\(\{ placedHere: true, placedByAccount: answer\.data\.placed_by_account \?\? false, signedInOnPage: account !== null \}\)/);
+    // The done screen itself reads nothing about the person.
+    const done = readFileSync(new URL("../app/[locale]/[slug]/checkout.tsx", import.meta.url), "utf8");
+    assert.doesNotMatch(done, /platformAccount|shownAccount|sessionRead/);
   });
 });
 

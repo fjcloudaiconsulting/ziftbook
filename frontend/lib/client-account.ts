@@ -354,8 +354,9 @@ export function recheckOutcome(status: number, data: { email: string } | undefin
 }
 
 /** Whether the done screen offers "Save your details for next time": only for a booking this page load placed
- * (`placedHere`) with no account signed in on the page. A booking that comes back from a redirect payment is a new
- * page load that may have been placed signed in, and nothing about the person is kept to tell: not offered. */
-export function saveDetailsOffer(placedHere: boolean, signedInOnPage: boolean): boolean {
-  return placedHere && !signedInOnPage;
+ * (`placedHere`), that the booking's own answer says no account placed (`placedByAccount`: this browser's session
+ * proved the email), with no account filled in on the page. A booking that comes back from a redirect payment is a
+ * new page load with no answer to read: not offered. Nothing here reads the account. */
+export function saveDetailsOffer(s: { placedHere: boolean; placedByAccount: boolean; signedInOnPage: boolean }): boolean {
+  return s.placedHere && !s.placedByAccount && !s.signedInOnPage;
 }
