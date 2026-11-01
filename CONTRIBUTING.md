@@ -194,6 +194,9 @@ that person's platform account (ZIF-99).
   ever reads NULL), and `user_id`, `email`, `phone`, `locale` and both notes are NULL (`ck_clients_name_or_erased`).
   The row stays, so its bookings and payments keep their foreign key. The `clients_erased_final` trigger refuses any
   UPDATE of an erased row, `ziftbook_migrate`'s included: an erasure is never undone and its time never rewritten.
+  Nothing new attaches to an erased client: the `bookings_client_not_erased` and `consents_client_not_erased`
+  triggers refuse an INSERT naming one (`clients_erased_children`), reading the client `FOR SHARE` so an INSERT racing
+  an erasure waits for it.
   Only the erase function writes `erased_at`: the app role's `INSERT` and `UPDATE` on `clients` are column lists
   without it (0063), so a column added later that the app writes needs its own `GRANT INSERT (column)` or
   `GRANT UPDATE (column)`, or every client write fails.

@@ -10,6 +10,8 @@ A trigger refuses any UPDATE of an erased row, whoever runs it: an erasure is ne
 time is never rewritten. The CHECK alone cannot say that, because an UPDATE that sets erased_at
 back to NULL and a new name passes it.
 
+A second trigger refuses a new booking or consent for an erased client, whoever inserts it.
+
 Only the erase function (0064, owned by ziftbook_migrate) writes erased_at. The app role's INSERT
 and UPDATE on clients become column lists, so the running release keeps every write it makes and
 gains none of erased_at. INSERT keeps every column it held; UPDATE drops id and tenant_id, which no
@@ -33,6 +35,8 @@ branch_labels = None
 depends_on = None
 
 SEARCH_PATH = "SET search_path = pg_catalog, public, pg_temp"
+# The tables whose rows name a client and would carry the person's data.
+CHILDREN = ("bookings", "consents")
 
 # The app role's writable columns: every column it writes today, so nothing it writes is refused,
 # and not erased_at. INSERT names every column before this migration; UPDATE leaves out id and
@@ -68,6 +72,30 @@ def upgrade() -> None:
       EXECUTE FUNCTION clients_erased_final()""")
     # Firing a trigger checks no EXECUTE privilege (0030), so no role needs it.
     op.execute("REVOKE EXECUTE ON FUNCTION clients_erased_final() FROM PUBLIC")
+    # Nothing new attaches to an erased client: a booking would carry a typed name, a consent the
+    # person's address and browser. The routes refuse first; this holds against one that forgets.
+    # FOR SHARE, and no erased_at in the WHERE: the row is locked whatever its state, so an INSERT
+    # racing an erasure in flight waits for it (a foreign key's KEY SHARE would not) and then reads
+    # the erased row. SECURITY INVOKER: the app role's column UPDATE grant allows FOR SHARE.
+    op.execute(f"""
+    CREATE FUNCTION clients_erased_children() RETURNS trigger
+      LANGUAGE plpgsql SECURITY INVOKER {SEARCH_PATH} AS $$
+      DECLARE v_erased timestamptz;
+      BEGIN
+        SELECT erased_at INTO v_erased FROM clients
+         WHERE tenant_id = NEW.tenant_id AND id = NEW.client_id
+         FOR SHARE;
+        IF v_erased IS NOT NULL THEN
+          RAISE EXCEPTION 'an erased client takes no new booking or consent'
+            USING ERRCODE = '23514', CONSTRAINT = 'clients_erased_children';
+        END IF;
+        RETURN NEW;
+      END $$""")
+    for child in CHILDREN:
+        op.execute(f"""
+        CREATE TRIGGER {child}_client_not_erased BEFORE INSERT ON {child}
+          FOR EACH ROW EXECUTE FUNCTION clients_erased_children()""")
+    op.execute("REVOKE EXECUTE ON FUNCTION clients_erased_children() FROM PUBLIC")
     # Each REVOKE runs before its GRANT (CONTRIBUTING.md): revoking a table-level privilege also
     # takes every column grant of it, so the other order would leave nothing. SELECT stays
     # table-level, and DELETE stays revoked (0024).
@@ -80,6 +108,9 @@ def downgrade() -> None:
     # Back to 0024's table-level INSERT and UPDATE. REVOKE first, as above.
     op.execute("REVOKE INSERT, UPDATE ON clients FROM ziftbook_app")
     op.execute("GRANT INSERT, UPDATE ON clients TO ziftbook_app")
+    for child in CHILDREN:
+        op.execute(f"DROP TRIGGER {child}_client_not_erased ON {child}")
+    op.execute("DROP FUNCTION clients_erased_children()")
     op.execute("DROP TRIGGER clients_erased_final ON clients")
     op.execute("DROP FUNCTION clients_erased_final()")
     op.execute("""

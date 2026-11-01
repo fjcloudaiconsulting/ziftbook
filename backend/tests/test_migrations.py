@@ -2214,6 +2214,19 @@ TOMBSTONE_GUARD_FUNCTION = text("""
 SELECT p.prosecdef, p.proconfig, has_function_privilege('public', p.oid, 'EXECUTE')
 FROM pg_proc p WHERE p.oid = to_regprocedure('clients_erased_final()')
 """)
+CHILD_GUARD = text("""
+SELECT array_agg(pg_get_triggerdef(t.oid) ORDER BY t.tgname) FROM pg_trigger t
+WHERE t.tgname IN ('bookings_client_not_erased', 'consents_client_not_erased')
+""")
+CHILD_GUARD_FUNCTION = text("""
+SELECT p.prosecdef, p.proconfig, has_function_privilege('public', p.oid, 'EXECUTE')
+FROM pg_proc p WHERE p.oid = to_regprocedure('clients_erased_children()')
+""")
+CHILD_GUARD_TRIGGERS = [
+    f"CREATE TRIGGER {child}_client_not_erased BEFORE INSERT ON public.{child} FOR EACH ROW"
+    " EXECUTE FUNCTION clients_erased_children()"
+    for child in ("bookings", "consents")
+]
 TOMBSTONE_GUARD_TRIGGER = (
     "CREATE TRIGGER clients_erased_final BEFORE UPDATE ON public.clients FOR EACH ROW"
     " WHEN ((old.erased_at IS NOT NULL)) EXECUTE FUNCTION clients_erased_final()"
@@ -2244,8 +2257,8 @@ CLIENT_COLUMN_GRANTS = ", ".join(
 # or the column grants behind, or does not put back ck_clients_name_length and the table-level
 # INSERT and UPDATE; an upgrade that GRANTs the column lists without the REVOKE (the table-level
 # INSERT and UPDATE stay, erased_at with them), names a column more or less (UPDATE of id or
-# tenant_id included), or whose trigger fires on live rows, runs as its owner, searches a caller's
-# schema first, or is PUBLIC's.
+# tenant_id included), or whose triggers fire on live rows, miss bookings or consents, run as
+# their owner, search a caller's schema first, or are PUBLIC's.
 def test_0063_round_trips_the_client_tombstone(
     migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2256,6 +2269,8 @@ def test_0063_round_trips_the_client_tombstone(
             assert conn.scalar(CLIENT_NAME_CHECKS) == ["ck_clients_name_length"]
             assert conn.scalar(ERASED_AT_COLUMN) == 0
             assert tuple(conn.execute(TOMBSTONE_GUARD).one()) == (None, False)
+            assert conn.scalar(CHILD_GUARD) is None
+            assert conn.execute(CHILD_GUARD_FUNCTION).first() is None
             assert tuple(conn.execute(CLIENT_GRANTS).one()) == ("INSERT SELECT UPDATE", None)
     finally:
         command.upgrade(cfg, "head")
@@ -2263,6 +2278,12 @@ def test_0063_round_trips_the_client_tombstone(
         assert conn.scalar(CLIENT_NAME_CHECKS) == ["ck_clients_name_or_erased"]
         assert conn.scalar(ERASED_AT_COLUMN) == 1
         assert tuple(conn.execute(TOMBSTONE_GUARD).one()) == (TOMBSTONE_GUARD_TRIGGER, True)
+        assert conn.scalar(CHILD_GUARD) == CHILD_GUARD_TRIGGERS
+        assert tuple(conn.execute(CHILD_GUARD_FUNCTION).one()) == (
+            False,
+            ["search_path=pg_catalog, public, pg_temp"],
+            False,
+        )
         assert tuple(conn.execute(TOMBSTONE_GUARD_FUNCTION).one()) == (
             False,
             ["search_path=pg_catalog, public, pg_temp"],
