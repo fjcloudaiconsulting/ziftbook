@@ -207,6 +207,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     totp_key = totp.key_state()
     rate_limit_key = limits.key_state()
     storage_on = StorageSettings().configured()
+    photo_budget = photos.budget()  # ZIF-230: logs an ERROR itself when too small
     role = database_role()  # ZB-08
     payments_on = StripeSettings().configured()
     # Here, not at import: `python -m app.main` prints the OpenAPI document to stdout.
@@ -226,6 +227,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             "rate_limit_key": rate_limit_key,
             # "off": photo uploads answer 503 photos_unavailable (ZIF-133).
             "storage": "on" if storage_on else "off",
+            # ZIF-230. "tight": the pod's memory limit cannot hold the API and a photo decode.
+            "photo_budget": photo_budget,
             # "off": owner payment routes answer 503 and booking pages book with no payment step.
             "payments": "on" if payments_on else "off",
             # ZB-08. The role the API's queries run as: ziftbook_app, never the worker's.

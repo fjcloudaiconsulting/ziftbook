@@ -7,6 +7,7 @@ import uuid
 import zlib
 from collections.abc import Callable
 from datetime import timedelta
+from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
@@ -531,6 +532,9 @@ def test_startup_warns_while_storage_is_unset(
     assert [line["storage"] for line in lines if line["msg"] == "api started"] == [
         "on" if on else "off"
     ]
+    # ZIF-230: the pod's memory budget for the API and a decode, from its cgroup.
+    expected = "unlimited" if not Path("/sys/fs/cgroup/memory.max").exists() else photos.budget()
+    assert [line["photo_budget"] for line in lines if line["msg"] == "api started"] == [expected]
     warned = [
         line["level"] for line in lines if line["msg"] == "storage unset: photo uploads refused"
     ]

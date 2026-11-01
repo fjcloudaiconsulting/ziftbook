@@ -316,8 +316,8 @@ def test_the_child_gets_no_environment_and_no_descriptors(
         os.close(write)
 
 
-# ZIF-230 fence (ruling D3). Kills: a child that a decoder bug took over reaching the network (egress
-# is open to the cluster and the internet) or io_uring, which would bypass the filter.
+# ZIF-230 fence (ruling D3). Kills: a child that a decoder bug took over reaching the network
+# (egress is open to the cluster and the internet) or io_uring, which would bypass the filter.
 @only_linux
 def test_the_child_cannot_open_a_socket() -> None:
     assert probe_says("probe-socket") == "PermissionError"
@@ -608,3 +608,77 @@ def test_a_child_that_cannot_be_spawned_is_busy(
 def test_the_child_cannot_fork_or_start_threads() -> None:
     # macOS does not count threads against RLIMIT_NPROC; Linux does.
     assert probe_says("probe-fork") == ("fork_no_thread_no" if LINUX else "fork_no_thread_yes")
+
+
+MIB = 1024 * 1024
+
+
+@pytest.fixture
+def cgroup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A fake /sys/fs/cgroup for this process's container."""
+    monkeypatch.setattr(photos, "CGROUP", tmp_path)
+    return tmp_path
+
+
+# ZIF-230 fence (review finding 1). Kills: a pod whose memory limit cannot hold the API and a child
+# at its ceiling going unnoticed. With memory.oom.group (the kubelet sets it on cgroup v2) a child
+# OOM restarts the whole pod, so the budget is checked at startup and logged, never refused.
+@pytest.mark.parametrize(
+    ("memory_max", "state"),
+    [(None, "unlimited"), ("max", "unlimited"), (str(384 * MIB), "ok"), (str(300 * MIB), "tight")],
+)
+def test_the_startup_budget_check(
+    cgroup: Path,
+    memory_max: str | None,
+    state: str,
+    failed: Callable[[], list[dict[str, Any]]],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    if memory_max is not None:
+        (cgroup / "memory.max").write_text(memory_max + "\n")
+        (cgroup / "memory.oom.group").write_text("1\n")
+    with caplog.at_level(logging.ERROR, logger="app.photos"):
+        assert photos.budget() == state
+    errors = [r.__dict__ for r in caplog.records if r.getMessage().startswith("photo decoder mem")]
+    if state == "tight":
+        [line] = errors
+        assert line["memory_max"] == 300 * MIB and line["oom_group"] == 1
+        assert line["required"] == photos.API_ALLOWANCE + photo_child.MEMORY + photos.OUTPUT_CAP + (
+            photos.BUDGET_MARGIN
+        )
+    else:
+        assert errors == []
+
+
+# ZIF-230 fence (review finding 1). Kills: a spawn the pod's memory cannot hold, which with
+# memory.oom.group would restart the pod: it answers 503 busy instead and starts nothing.
+def test_a_decode_the_pod_cannot_hold_is_busy(
+    cgroup: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    runs: list[photos.Run],
+    failed: Callable[[], list[dict[str, Any]]],
+) -> None:
+    (cgroup / "memory.max").write_text(str(384 * MIB))
+    monkeypatch.setattr(photos, "_rss", lambda: 200 * MIB)
+    assert refused(PNG, photos.CHILD) == (503, "busy")
+    assert runs == []
+    [line] = failed()
+    assert (line["msg"], line["decoder"]) == ("photo decoder could not start", "headroom")
+    assert (line["memory_max"], line["rss"]) == (384 * MIB, 200 * MIB)
+    monkeypatch.setattr(photos, "_rss", lambda: 150 * MIB)
+    assert decode(PNG, photos.CHILD).width == 20
+
+
+def test_the_own_rss_is_read() -> None:
+    rss = photos._rss()
+    assert (rss > 10 * MIB) if LINUX else rss == 0
+
+
+# ZIF-230 fence (review finding 1). Kills: a limit raised past what the pods were sized for. The
+# production and staging API pods have 384Mi (cloud-infra clusters/hetzner/ziftbook-*/backend.yaml);
+# a child OOM there restarts the pod, so raising the child's limit or the API's allowance means
+# raising that limit with it.
+def test_the_memory_budget_fits_the_pod() -> None:
+    assert photos.API_ALLOWANCE + photo_child.MEMORY + photos.OUTPUT_CAP + photos.BUDGET_MARGIN <= (
+        384 * MIB
+    )
