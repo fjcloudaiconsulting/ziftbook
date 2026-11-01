@@ -574,7 +574,8 @@ Deferred and scheduled work goes through the `jobs` table (`app/jobs.py`); there
   (`limits.MAX_WINDOW`, one day: no limit may use a longer window, `limits` refuses one), sessions and admin sessions
   an hour after they stop being live, audit events past their period (see "Audit log"), and clears `ip` and
   `user_agent` of a booking event once the event and its booking's end are both 18 months old (the row stays as
-  evidence). The hour is a margin for readers whose transaction began before the sweep. Every table that stores an
+  evidence), walking the businesses in id order; a run that stops before the end leaves its place, and the next
+  run goes on from it (a worker restart starts the pass again). The hour is a margin for readers whose transaction began before the sweep. Every table that stores an
   address or a browser is listed in `retention.COVERED` with its rule; a test compares it with the catalog, so a new
   one needs a rule (or a reasoned exemption, as `consents` has until ZIF-156) before it ships.
 - Payloads hold ids only; the handler loads what it needs inside `tenant_context(job.tenant_id)`. A job with no tenant
