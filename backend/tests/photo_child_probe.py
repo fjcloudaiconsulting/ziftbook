@@ -227,6 +227,12 @@ def record(data: bytes) -> bytes:
     if MODE == "probe-cpu":  # past a CPU limit lowered to 1 s
         resource.setrlimit(resource.RLIMIT_CPU, (1, child.CPU[1]))
         spin()
+    if (
+        MODE == "probe-ignore-xcpu"
+    ):  # past the soft CPU limit, ignoring its SIGXCPU, to the hard one
+        signal.signal(signal.SIGXCPU, signal.SIG_IGN)
+        resource.setrlimit(resource.RLIMIT_CPU, (1, 2))
+        spin()
     if MODE == "probe-spin":  # busy past the parent's deadline
         spin()
     if MODE in ("probe-sleep", "probe-alarm"):
