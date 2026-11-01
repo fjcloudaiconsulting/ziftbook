@@ -104,7 +104,7 @@ def delete_as_migrate(migrate_engine: Engine, prefix: str, *, flag: bool, tenant
 
 # 11: FENCE. Wrong impl: a DELETE policy without the cutoff (the owner, flag on, could then delete
 # events still inside their window, whatever the function body does), or one not gated on the
-# flag (any migrate session, the superuser CLI's included, could delete events).
+# flag (any migrate session, the admin CLI's included, could delete events).
 def test_the_owner_deletes_only_events_past_their_window_and_only_with_the_flag(
     superuser: Engine, migrate_engine: Engine, audit_marker: str
 ) -> None:
@@ -138,14 +138,21 @@ def test_the_retention_flag_gives_the_app_nothing(
     assert audit_targets(superuser, audit_marker) == {f"{audit_marker}:old"}
 
 
-# Every function owned by ziftbook_migrate, with whether it is a definer and returns a trigger.
+# Every function owned by ziftbook_migrate, with whether it is a definer, and its body. The body
+# from pg_get_functiondef, never prosrc: a SQL-standard body (BEGIN ATOMIC) leaves prosrc empty and
+# lives in prosqlbody, so a fence on prosrc never sees it (build review, security #1).
 FUNCTIONS = text("""
-SELECT p.proname, p.prosecdef, p.prorettype = 'trigger'::regtype AS is_trigger, p.prosrc
+SELECT p.proname, p.prosecdef, pg_get_functiondef(p.oid)
 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
 WHERE pg_get_userbyid(p.proowner) = 'ziftbook_migrate' AND n.nspname = 'public'
+  AND p.prokind IN ('f', 'p')
 ORDER BY 1
 """)
-CLEARS_FLAG = "set_config('app.retention_sweep', '', true)"
+# As written in a plpgsql body, or as Postgres deparses a BEGIN ATOMIC one ('...'::text).
+CLEARS_FLAG = re.compile(
+    r"set_config\(\s*'app\.retention_sweep'(::text)?\s*,\s*''(::text)?\s*,\s*true\s*\)",
+    re.IGNORECASE,
+)
 # Definers that read audit_events without clearing the flag first, each with why that is safe.
 FLAG_ALLOWED: dict[str, str] = {
     # The sweep itself: it sets the flag to 'on' to reach the events past their retention, and
@@ -154,9 +161,18 @@ FLAG_ALLOWED: dict[str, str] = {
 }
 
 
+def body(definition: str) -> str:
+    """The body of a pg_get_functiondef: past the header, which names the function and its
+    arguments, never a table."""
+    if "$function$" in definition:
+        return definition.split("$function$")[1]
+    found = re.search(r"\bBEGIN\s+ATOMIC\b", definition, re.IGNORECASE)
+    return definition[found.start() :] if found else definition
+
+
 def code(source: str) -> str:
     """A function body without its comments: a name in a comment reads nothing."""
-    return re.sub(r"--[^\n]*|/\*.*?\*/", "", source, flags=re.DOTALL)
+    return re.sub(r"--[^\n]*|/\*.*?\*/", "", body(source), flags=re.DOTALL)
 
 
 def reads_audit_events(source: str) -> int | None:
@@ -168,22 +184,24 @@ def reads_audit_events(source: str) -> int | None:
 def flag_unhandled(conn: Connection) -> set[str]:
     """Migrate-owned definers that name audit_events before clearing app.retention_sweep."""
     unhandled = set()
-    for name, definer, _, source in conn.execute(FUNCTIONS):
+    for name, definer, source in conn.execute(FUNCTIONS):
         first = reads_audit_events(source)
         if not definer or first is None:
             continue
-        cleared = code(source).find(CLEARS_FLAG)
-        if cleared == -1 or cleared > first:
+        cleared = CLEARS_FLAG.search(code(source))
+        if cleared is None or cleared.start() > first:
             unhandled.add(name)
     return unhandled
 
 
 def invoker_readers(conn: Connection) -> set[str]:
-    """Migrate-owned SECURITY INVOKER functions, triggers aside, that name audit_events."""
+    """Migrate-owned SECURITY INVOKER functions, trigger functions included, that name
+    audit_events: a trigger runs as the role whose statement fired it, so one fired inside a
+    migrate definer runs as ziftbook_migrate too (build review, security #5)."""
     return {
         name
-        for name, definer, is_trigger, source in conn.execute(FUNCTIONS)
-        if not definer and not is_trigger and reads_audit_events(source) is not None
+        for name, definer, source in conn.execute(FUNCTIONS)
+        if not definer and reads_audit_events(source) is not None
     }
 
 
@@ -197,11 +215,23 @@ def test_every_definer_reading_audit_events_clears_the_retention_flag_first(
         assert flag_unhandled(conn) == set(FLAG_ALLOWED)
 
 
+DEFINER = """
+CREATE FUNCTION {name}() RETURNS bigint LANGUAGE sql SECURITY DEFINER
+  SET search_path = pg_catalog, public, pg_temp
+"""
 LEAKY = {
-    "never": "SELECT count(*) FROM audit_events",
+    "never": "AS $$ -- reads audit_events\n SELECT count(*) FROM audit_events $$",
     "after the read": (
-        "SELECT count(*) FROM audit_events"
-        " WHERE set_config('app.retention_sweep', '', true) IS NOT NULL"
+        "AS $$ SELECT count(*) FROM audit_events"
+        " WHERE set_config('app.retention_sweep', '', true) IS NOT NULL $$"
+    ),
+    # A SQL-standard body: prosrc is empty, the body is in prosqlbody.
+    "begin atomic": "BEGIN ATOMIC SELECT count(*) FROM audit_events; END",
+}
+SAFE = {
+    "clears first": (
+        "AS $$ SELECT count(*) FROM audit_events"
+        " WHERE (SELECT set_config('app.retention_sweep', '', true)) IS NOT NULL $$"
     ),
 }
 
@@ -211,17 +241,37 @@ def test_the_flag_check_catches_a_definer_that_forgets_it(
     migrate_engine: Engine, body: str
 ) -> None:
     with migrate_engine.connect() as conn, conn.begin() as transaction:
-        conn.execute(
-            text(f"""
-            CREATE FUNCTION leaky_audit_reader() RETURNS bigint LANGUAGE sql SECURITY DEFINER
-              SET search_path = pg_catalog, public, pg_temp
-              AS $$ -- reads audit_events
-              {LEAKY[body]} $$
-            """)
-        )
+        conn.execute(text(DEFINER.format(name="leaky_audit_reader") + LEAKY[body]))
         found = flag_unhandled(conn)
         transaction.rollback()
     assert found == set(FLAG_ALLOWED) | {"leaky_audit_reader"}
+
+
+# The positive control's other half: a body that clears the flag before naming the table passes,
+# in a plpgsql body as in a deparsed BEGIN ATOMIC one.
+@pytest.mark.parametrize(
+    "definition",
+    [
+        "LANGUAGE plpgsql AS $$ BEGIN PERFORM set_config('app.retention_sweep', '', true);"
+        " RETURN (SELECT count(*) FROM audit_events); END $$",
+        "LANGUAGE sql BEGIN ATOMIC SELECT set_config('app.retention_sweep', '', true);"
+        " SELECT count(*) FROM audit_events; END",
+    ],
+    ids=["plpgsql", "begin atomic"],
+)
+def test_the_flag_check_passes_a_definer_that_clears_it_first(
+    migrate_engine: Engine, definition: str
+) -> None:
+    with migrate_engine.connect() as conn, conn.begin() as transaction:
+        conn.execute(
+            text(
+                "CREATE FUNCTION careful_audit_reader() RETURNS bigint SECURITY DEFINER"
+                " SET search_path = pg_catalog, public, pg_temp " + definition
+            )
+        )
+        found = flag_unhandled(conn)
+        transaction.rollback()
+    assert found == set(FLAG_ALLOWED)
 
 
 # M6: FENCE (review #6). Wrong impl: a migrate-owned SECURITY INVOKER helper that reads
@@ -245,9 +295,21 @@ def test_the_invoker_check_catches_one_and_ignores_comments(migrate_engine: Engi
               AS $$ SELECT 1::bigint -- not audit_events $$
             """)
         )
+        conn.execute(
+            text("""
+            CREATE FUNCTION atomic_audit_reader() RETURNS bigint LANGUAGE sql
+              BEGIN ATOMIC SELECT count(*) FROM audit_events; END
+            """)
+        )
+        conn.execute(
+            text("""
+            CREATE FUNCTION trigger_audit_reader() RETURNS trigger LANGUAGE plpgsql AS $$
+            BEGIN PERFORM count(*) FROM audit_events; RETURN NEW; END $$
+            """)
+        )
         found = invoker_readers(conn)
         transaction.rollback()
-    assert found == {"invoker_audit_reader"}
+    assert found == {"invoker_audit_reader", "atomic_audit_reader", "trigger_audit_reader"}
 
 
 # ---- 0074: the worker's three retention functions ----
@@ -516,7 +578,7 @@ def test_two_sweeps_at_once_both_finish(
     assert audit_targets(superuser, audit_marker) == set()
 
 
-# ---- superuser sessions ----
+# ---- admin sessions ----
 
 
 @pytest.fixture
@@ -849,7 +911,13 @@ def test_the_retention_flag_reads_no_other_business_through_a_definer(
 # ---- M2: what each function's body may write ----
 
 # A statement that writes a table; FOR UPDATE (a row lock) is not one.
-WRITES = re.compile(r"(?<!for )\b(update|insert\s+into|delete\s+from)\s+(\w+)", re.IGNORECASE)
+WRITES = re.compile(
+    r"(?<!for )\b(update|insert\s+into|delete\s+from|merge\s+into|truncate(?:\s+table)?)\s+(\w+)",
+    re.IGNORECASE,
+)
+# Dynamic SQL: a write the static check cannot read.
+DYNAMIC = re.compile(r"\bexecute\b", re.IGNORECASE)
+CALLS = re.compile(r"\b(\w+)\s*\(")
 BOOKING_ORIGIN_WRITE = re.compile(
     r"\bupdate\s+booking_events\s+e\s+set\s+ip\s*=\s*null\s*,\s*user_agent\s*=\s*null"
     r"\s+where\b",
@@ -861,11 +929,24 @@ def writes(source: str) -> list[tuple[str, str]]:
     return [(verb.lower().split()[0], table) for verb, table in WRITES.findall(code(source))]
 
 
-def origin_writes_ok(source: str) -> bool:
+def violations(source: str, own: str, schema_functions: set[str]) -> list[str]:
+    """What a retention body may not hold: dynamic SQL, or a call to a function of our schema
+    (whose own writes this check does not see)."""
+    found = [f"execute: {m.group(0)}" for m in DYNAMIC.finditer(code(source))]
+    found += [
+        f"call: {name}"
+        for name in CALLS.findall(code(source))
+        if name in schema_functions and name != own
+    ]
+    return found
+
+
+def origin_writes_ok(source: str, schema_functions: frozenset[str] = frozenset()) -> bool:
     """The body's only write is the one statement that clears ip and user_agent, nothing else."""
-    body = code(source)
-    return writes(source) == [("update", "booking_events")] and bool(
-        BOOKING_ORIGIN_WRITE.search(body)
+    return (
+        writes(source) == [("update", "booking_events")]
+        and bool(BOOKING_ORIGIN_WRITE.search(code(source)))
+        and not violations(source, "sweep_booking_origins", set(schema_functions))
     )
 
 
@@ -879,21 +960,35 @@ EXPECTED_WRITES = {
     "sweep_admin_sessions": [("delete", "admin_sessions")],
     "sweep_booking_origins": [("update", "booking_events")],
 }
+DEFINITIONS = text("""
+SELECT p.proname, pg_get_functiondef(p.oid) FROM pg_proc p
+JOIN pg_namespace n ON n.oid = p.pronamespace
+WHERE n.nspname = 'public' AND p.proname = ANY(:n)
+""")
+SCHEMA_FUNCTIONS = text("""
+SELECT p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+WHERE n.nspname = 'public'
+""")
 
 
-# M2: FENCE (review B2). Wrong impl: a body that writes anything else: another column of a booking
-# event (its evidence), another table, or an INSERT or DELETE. booking_events, platform events and
-# superuser sessions have no policy holding the line, so this and the boundary tests do.
+def definitions(conn: Connection) -> dict[str, str]:
+    return {name: src for name, src in conn.execute(DEFINITIONS, {"n": sorted(EXPECTED_WRITES)})}
+
+
+# M2: FENCE (review B2; build review, security #4). Wrong impl: a body that writes anything else:
+# another column of a booking event (its evidence), another table, an INSERT, DELETE, MERGE or
+# TRUNCATE, dynamic SQL, or a call to another function of ours that writes for it. booking_events,
+# platform events and admin sessions have no policy holding the line, so this and the boundary
+# tests do.
 def test_each_retention_function_writes_only_what_it_is_for(migrate_engine: Engine) -> None:
     with migrate_engine.connect() as conn:
-        sources: dict[str, str] = dict(
-            conn.execute(
-                text("SELECT proname, prosrc FROM pg_proc WHERE proname = ANY(:n)"),
-                {"n": sorted(EXPECTED_WRITES)},
-            ).all()
-        )
+        sources = definitions(conn)
+        schema = frozenset(conn.scalars(SCHEMA_FUNCTIONS))
     assert {name: writes(src) for name, src in sources.items()} == EXPECTED_WRITES
-    assert origin_writes_ok(sources["sweep_booking_origins"])
+    assert {name: violations(src, name, set(schema)) for name, src in sources.items()} == {
+        name: [] for name in EXPECTED_WRITES
+    }
+    assert origin_writes_ok(sources["sweep_booking_origins"], schema)
 
 
 @pytest.mark.parametrize(
@@ -903,8 +998,39 @@ def test_each_retention_function_writes_only_what_it_is_for(migrate_engine: Engi
         "UPDATE booking_events e SET ip = NULL WHERE true",
         "UPDATE booking_events e SET ip = NULL, user_agent = NULL WHERE true;"
         " DELETE FROM booking_events WHERE true",
+        "UPDATE booking_events e SET ip = NULL, user_agent = NULL WHERE true;"
+        " MERGE INTO booking_events t USING x ON true WHEN MATCHED THEN DELETE",
+        "UPDATE booking_events e SET ip = NULL, user_agent = NULL WHERE true;"
+        " TRUNCATE platform_audit_events",
+        "UPDATE booking_events e SET ip = NULL, user_agent = NULL WHERE true;"
+        " EXECUTE 'UPDATE booking_events SET details = NULL'",
+        "UPDATE booking_events e SET ip = NULL, user_agent = NULL WHERE true;"
+        " PERFORM other_writer()",
     ],
+    ids=["column", "half", "delete", "merge", "truncate", "execute", "call"],
 )
 def test_the_write_check_catches_a_wider_statement(statement: str) -> None:
-    assert not origin_writes_ok(statement)
-    assert origin_writes_ok("UPDATE booking_events e SET ip = NULL, user_agent = NULL WHERE true")
+    schema = frozenset({"other_writer", "sweep_booking_origins"})
+    assert not origin_writes_ok(statement, schema)
+    assert origin_writes_ok(
+        "UPDATE booking_events e SET ip = NULL, user_agent = NULL WHERE true", schema
+    )
+
+
+# Build review (correctness #5): every batch takes its rows oldest first. Wrong impl: a batch
+# statement with a LIMIT and no ORDER BY created_at (any expired rows may go, but the stated order
+# and T9's claim would no longer hold; an index scan happens to return them in order today).
+ORDERED_BATCH = re.compile(r"ORDER\s+BY\s+x\.created_at\s+LIMIT\b", re.IGNORECASE)
+
+
+def unordered_batches(source: str) -> int:
+    limits_found = len(re.findall(r"\bLIMIT\b", code(source), re.IGNORECASE))
+    return limits_found - len(ORDERED_BATCH.findall(code(source)))
+
+
+def test_every_event_batch_takes_the_oldest_first(migrate_engine: Engine) -> None:
+    with migrate_engine.connect() as conn:
+        sources = definitions(conn)
+    assert unordered_batches(sources["sweep_audit_events"]) == 0
+    assert unordered_batches(sources["sweep_booking_origins"]) == 0
+    assert unordered_batches("SELECT x.id FROM t x WHERE true LIMIT 1000") == 1
