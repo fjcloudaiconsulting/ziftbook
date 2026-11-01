@@ -203,7 +203,9 @@ that person's platform account (ZIF-99).
   filters `erased_at IS NULL`: the trigger refuses the first erased row, and CI has none, so it would fail in
   production.
 - An erased client leaves the console. A read that offers a client to act on filters `erased_at IS NULL`: the client
-  list and search skip it, `PATCH` and consents answer 404, and booking it answers 422 `unknown_client`. A read that
+  list and search skip it, `PATCH` and consents answer 404, and booking it answers 422 `unknown_client`. Nothing
+  makes an erased client's booking live again: a statement that moves a booking (`MOVE`, `RESCHEDULE`,
+  `PENDING_MOVE`) carries `bookings.CLIENT_NOT_ERASED` as a qualifier, and so must any new one. A read that
   shows a booking keeps it and says `client_erased: true` with `client_name: ""`, the permanent pinned contract
   (`app.errors.CLIENT_NAME`). A writer that reads a client before writing next to it locks the row (`FOR SHARE` or
   stronger, with the filter), because a foreign key's `KEY SHARE` does not wait for an erasure in flight. The team

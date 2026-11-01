@@ -534,7 +534,9 @@ def reschedule(body: RescheduleIn, request: Request) -> LinkedBooking:
                 ):
                     raise ApiError(409, "slot_taken") from None
                 raise
-            if changed is None:  # the echo was stale under our own lock: the CHECK is the backstop
+            # The echo was stale under our own lock (the CHECK is the backstop), or the client is
+            # erased (ZIF-58; its links are deleted then, so this is the statement's own guard).
+            if changed is None:
                 raise ApiError(409, "changed")
             _event(
                 db,

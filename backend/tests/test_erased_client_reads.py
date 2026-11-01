@@ -7,6 +7,7 @@ import json
 import threading
 import uuid
 from collections.abc import Iterator
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -14,6 +15,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import Connection, Engine, text
 
+from app import bookings
 from app.db import tenant_context
 from app.main import create_app, openapi_document
 from tests.conftest import (
@@ -30,6 +32,8 @@ from tests.test_availability_api import assign, new_service, weekdays
 from tests.test_booking_email import outbox_for, run_send_booking
 from tests.test_bookings_api import at
 from tests.test_bookings_approval_api import make_pending
+from tests.test_bookings_db import insert_booking
+from tests.test_clients_db import seed_client
 from tests.test_working_hours import seed
 
 # What the erase function blanks of a client and of its bookings (spec 1.1, 1.3).
@@ -328,3 +332,92 @@ def test_the_team_gets_no_booking_mail_for_an_erased_client(
 
     assert outbox_for(people.a, erased.id) is None
     assert outbox_for(people.a, live.id) is not None
+
+
+def started_booking(
+    people: People, service_id: str, client_name: str, minutes_ago: int = 10
+) -> tuple[str, uuid.UUID]:
+    """A confirmed booking that started minutes ago, for a new client: what an erasure keeps."""
+    client_id = seed_client(people.a, name=client_name, email=fresh_email())
+    starts = datetime.now(UTC) - timedelta(minutes=minutes_ago)
+    with tenant_context(people.a) as session:
+        booking_id = insert_booking(
+            session,
+            client_id=client_id,
+            worker_id=member_id(people.a, people.both),
+            service_id=uuid.UUID(service_id),
+            starts_at=starts,
+            ends_at=starts + timedelta(minutes=30),
+        )
+    return str(booking_id), client_id
+
+
+def starts_of(tenant_id: uuid.UUID, booking_id: str) -> datetime:
+    with tenant_context(tenant_id) as session:
+        found: datetime = session.scalar(
+            text("SELECT starts_at FROM bookings WHERE id = :id"), {"id": booking_id}
+        )
+    return found
+
+
+# ZIF-58 FENCE. Wrong impl: today's reschedule, which checks only the status. An erasure keeps a
+# confirmed booking that has already started, so moving it to a future time would make a live
+# appointment of a client who can no longer be told, and that no erasure can end again. The same
+# move for a live client goes through.
+def test_an_erased_clients_booking_cannot_be_moved(
+    people: People, owner: TestClient, migrate_engine: Engine, ready: str
+) -> None:
+    gone, gone_client = started_booking(people, ready, "Gone Mover")
+    kept, _ = started_booking(people, ready, "Kept Mover", minutes_ago=120)
+    erase_by_hand(migrate_engine, people.a, gone_client)
+    before = starts_of(people.a, gone)
+
+    moved = owner.post(
+        f"/api/bookings/{gone}/reschedule", json={"starts_at": at("12:00"), "override": True}
+    )
+
+    assert (moved.status_code, moved.json()["code"]) == (409, "invalid_transition")
+    assert starts_of(people.a, gone) == before
+    assert (
+        owner.post(
+            f"/api/bookings/{kept}/reschedule", json={"starts_at": at("13:00"), "override": True}
+        ).status_code
+        == 200
+    )
+
+
+# ZIF-58 FENCE. Wrong impl: any of the three moving statements (the console's MOVE, the client's
+# RESCHEDULE and PENDING_MOVE) without the erased-client qualifier. The client's routes need a
+# manage link, which an erasure deletes; the statements refuse on their own all the same.
+@pytest.mark.parametrize("statement", ["MOVE", "RESCHEDULE", "PENDING_MOVE"])
+def test_no_moving_statement_moves_an_erased_clients_booking(
+    people: People, migrate_engine: Engine, ready: str, statement: str
+) -> None:
+    client_id = seed_client(people.a, name="Gone Statement", email=fresh_email())
+    starts = datetime.now(UTC) + timedelta(days=5)
+    pending = statement == "PENDING_MOVE"
+    with tenant_context(people.a) as session:
+        booking_id = insert_booking(
+            session,
+            client_id=client_id,
+            worker_id=member_id(people.a, people.both),
+            service_id=uuid.UUID(ready),
+            starts_at=starts,
+            ends_at=starts + timedelta(minutes=30),
+            status="pending" if pending else "confirmed",
+            expires_at=starts if pending else None,
+            original_starts_at=starts,
+            earliest_starts_at=starts,
+        )
+    erase_by_hand(migrate_engine, people.a, client_id)
+    params = {
+        "id": booking_id,
+        "new": starts + timedelta(days=1),
+        "seen": 0,
+        "worker": member_id(people.a, people.both),
+        "name": "Worker",
+    }
+
+    with tenant_context(people.a) as session:
+        assert session.execute(getattr(bookings, statement), params).first() is None
+    assert starts_of(people.a, str(booking_id)) == starts
