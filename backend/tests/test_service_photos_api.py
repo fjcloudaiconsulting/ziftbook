@@ -1,5 +1,6 @@
 """ZIF-133: the photo upload API and a service's photo at Save."""
 
+import logging
 import os
 import uuid
 import zlib
@@ -226,6 +227,33 @@ def test_exif_pillow_cannot_parse_is_photo_unreadable(
     upload_id = upload(s3, people.a, data)
     checked = owner.post(f"/api/photo-uploads/{upload_id}/check", json={})
     assert (checked.status_code, checked.json()) == (422, {"code": "photo_unreadable"})
+
+
+# ZIF-230 fence. Kills: a ~2 KB PNG answering 500. Pillow inflates a profile or text chunk before
+# the image data at open, and refuses one past 1 MiB with ValueError, which nothing caught.
+@pytest.mark.parametrize(
+    "data",
+    [
+        png_with_chunk(b"iCCP", b"p\0\0" + zlib.compress(b"\0" * 2 * 1024 * 1024)),
+        png_with_chunk(b"zTXt", b"note\0\0" + zlib.compress(b"\0" * 2 * 1024 * 1024)),
+        png_with_chunk(b"iTXt", b"note\0\1\0\0\0" + zlib.compress(b"\0" * 2 * 1024 * 1024)),
+    ],
+    ids=["iccp", "ztxt", "itxt"],
+)
+def test_a_chunk_that_inflates_past_pillows_limit_is_photo_unreadable(
+    s3: S3Client,
+    people: People,
+    owner: TestClient,
+    data: bytes,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    assert len(data) < 4096
+    upload_id = upload(s3, people.a, data)
+    with caplog.at_level(logging.INFO, logger="app.photos"):
+        checked = owner.post(f"/api/photo-uploads/{upload_id}/check", json={})
+    assert (checked.status_code, checked.json()) == (422, {"code": "photo_unreadable"})
+    refused = [r for r in caplog.records if r.getMessage() == "photo refused"]
+    assert [r.__dict__["code"] for r in refused] == ["photo_unreadable"]
 
 
 # ZIF-133 F7. fence. Kills: a rate limit missing from the presign, the check or a Save carrying a

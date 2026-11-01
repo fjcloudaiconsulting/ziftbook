@@ -290,7 +290,8 @@ def variants(data: bytes) -> Variants:
         opened = Image.open(io.BytesIO(data), formats=["JPEG", "PNG", "WEBP"])
     except UnidentifiedImageError:
         raise ApiError(422, "photo_type") from None
-    except Image.DecompressionBombError, OSError:
+    # ValueError: Pillow refuses a profile or text chunk that inflates past 1 MiB while it opens.
+    except Image.DecompressionBombError, OSError, ValueError:
         raise ApiError(422, "photo_unreadable") from None
     im: Image.Image = opened
     trace.get_current_span().set_attributes(
