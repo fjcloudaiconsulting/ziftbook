@@ -316,6 +316,10 @@ def fake_load() -> Any:
         os._exit(int(ARG))
     if MODE == "probe-crash-before":
         ctypes.string_at(0)
+    if MODE == "probe-sleep-before":
+        time.sleep(60)
+    if MODE == "probe-spin-before":
+        spin()
     return SimpleNamespace(record=record)
 
 
