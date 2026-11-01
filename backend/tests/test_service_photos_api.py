@@ -2,6 +2,7 @@
 
 import logging
 import os
+import sys
 import uuid
 import zlib
 from collections.abc import Callable
@@ -35,6 +36,7 @@ from tests.conftest import (
     signed_in,
     upload,
 )
+from tests.test_photo_isolation import PROBE, probe
 from tests.test_photos import ICC_AT_CAP, exif_of, jpeg_header, jpeg_with_icc, png_with_chunk
 from tests.test_services import service, stored
 
@@ -252,8 +254,12 @@ def test_a_chunk_that_inflates_past_pillows_limit_is_photo_unreadable(
     with caplog.at_level(logging.INFO, logger="app.photos"):
         checked = owner.post(f"/api/photo-uploads/{upload_id}/check", json={})
     assert (checked.status_code, checked.json()) == (422, {"code": "photo_unreadable"})
-    refused = [r for r in caplog.records if r.getMessage() == "photo refused"]
-    assert [r.__dict__["code"] for r in refused] == ["photo_unreadable"]
+    # The decoder's own refusal (ZIF-230), not a child that died on the error.
+    refused = [r.__dict__ for r in caplog.records if r.getMessage() == "photo refused"]
+    assert [(r["code"], r["decoder"], r["error"]) for r in refused] == [
+        ("photo_unreadable", "refused", "ValueError")
+    ]
+    assert not [r for r in caplog.records if r.getMessage() == "photo decoder failed"]
 
 
 # ZIF-230 guard: a profile over the cap answers the code the console already explains.
@@ -263,6 +269,49 @@ def test_a_jpeg_with_an_oversized_profile_is_photo_unreadable(
     upload_id = upload(s3, people.a, jpeg_with_icc(*ICC_AT_CAP, 1))
     checked = owner.post(f"/api/photo-uploads/{upload_id}/check", json={})
     assert (checked.status_code, checked.json()) == (422, {"code": "photo_unreadable"})
+
+
+# ZIF-230 fence. Kills: a decode past the child's memory limit taking the API down or answering
+# anything but the undecodable photo's code. The same app then checks a real photo.
+@pytest.mark.skipif(sys.platform != "linux", reason="RLIMIT_AS is enforced on Linux only")
+def test_a_decode_over_the_memory_limit_kills_only_the_child(
+    s3: S3Client, people: People, owner: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(photos, "CHILD", PROBE)
+    bomb = upload(s3, people.a, probe("probe-memory"))
+    checked = owner.post(f"/api/photo-uploads/{bomb}/check", json={})
+    assert (checked.status_code, checked.json()) == (422, {"code": "photo_unreadable"})
+    monkeypatch.undo()
+    good = upload(s3, people.a, image("PNG", (20, 10)))
+    assert owner.post(f"/api/photo-uploads/{good}/check", json={}).json() == {
+        "width": 20,
+        "height": 10,
+    }
+
+
+# ZIF-230 fence. Kills: a Save whose decoder crashed writing the service or a variant.
+def test_a_save_whose_decoder_crashes_writes_nothing(
+    s3: S3Client, people: People, owner: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service_id = service(owner).json()["id"]
+    monkeypatch.setattr(photos, "CHILD", PROBE)
+    crash = upload(s3, people.a, probe("probe-crash"))
+    created = service(owner, photo_upload_id=str(crash))
+    assert (created.status_code, created.json()) == (422, {"code": "photo_unreadable"})
+    patched = owner.patch(f"/api/services/{service_id}", json={"photo_upload_id": str(crash)})
+    assert (patched.status_code, patched.json()) == (422, {"code": "photo_unreadable"})
+    assert [row["photo_key"] for row in stored(people.a)] == [None]
+    assert "Contents" not in s3.list_objects_v2(Bucket="ziftbook-media")
+
+
+# ZIF-230 guard: a decoder that cannot start is the server's fault, not the photo's.
+def test_a_check_whose_decoder_cannot_start_is_busy(
+    s3: S3Client, people: People, owner: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(photos, "CHILD", PROBE)
+    upload_id = upload(s3, people.a, probe("probe-exit-before:3"))
+    checked = owner.post(f"/api/photo-uploads/{upload_id}/check", json={})
+    assert (checked.status_code, checked.json()) == (503, {"code": "busy"})
 
 
 # ZIF-133 F7. fence. Kills: a rate limit missing from the presign, the check or a Save carrying a
