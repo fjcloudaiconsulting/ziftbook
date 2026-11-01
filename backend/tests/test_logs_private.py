@@ -445,6 +445,10 @@ def test_no_personal_data_ever_reaches_a_log(
         },
     )
     assert rebooked.status_code == 422
+    assert owner.get("/api/bookings/pending").status_code == 200
+    agenda = owner.get("/api/bookings", params={"from": slots[0], "to": slots[-1]})
+    assert agenda.status_code == 200
+    assert owner.get(f"/api/bookings/{booked.json()['id']}").json()["client_erased"] is True
 
     # 7: invite flow — send, list, a wrong token, then accept with a brand-new account.
     invite_email = fresh_email()
