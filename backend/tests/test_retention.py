@@ -416,7 +416,7 @@ def test_the_hold_date_must_be_a_date(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 # 28b: FENCE. Wrong impl: a hold that is ignored, one that also stops sessions, rate limits or
-# superuser sessions (live state, not evidence), or one said nowhere.
+# admin sessions (live state, not evidence), or one said nowhere.
 def test_a_hold_keeps_the_evidence_and_says_so_every_run(
     action: str,
     app_engine: Engine,
