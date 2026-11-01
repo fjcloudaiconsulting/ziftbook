@@ -611,12 +611,30 @@ def test_the_limiter_counts_before_the_body_is_parsed(app: FastAPI, log_lines: L
     assert violations(log_lines) == []
 
 
+class _LockTimeout(Exception):
+    sqlstate = "55P03"  # lock_timeout on the limiter row's lock (ZIF-114)
+
+
+# What a database incident raises from the limiter: the pool's own timeout, a lost or refused
+# connection, and a lock wait past lock_timeout.
+LIMITER_ERRORS: list[Callable[[], Exception]] = [
+    lambda: sqlalchemy.exc.TimeoutError(),
+    lambda: sqlalchemy.exc.OperationalError("SELECT 1", {}, ConnectionRefusedError()),
+    lambda: sqlalchemy.exc.OperationalError("SELECT 1", {}, _LockTimeout()),
+]
+LIMITER_ERROR_IDS = ["pool_timeout", "connection", "lock_timeout"]
+
+
 # 16. B2 fence: a limiter that cannot count is a 204, never a 503, and one drop line, not one each.
+@pytest.mark.parametrize("error", LIMITER_ERRORS, ids=LIMITER_ERROR_IDS)
 def test_a_limiter_failure_is_a_204_and_one_warning(
-    client: TestClient, log_lines: Lines, monkeypatch: pytest.MonkeyPatch
+    client: TestClient,
+    log_lines: Lines,
+    monkeypatch: pytest.MonkeyPatch,
+    error: Callable[[], Exception],
 ) -> None:
     def broken(key: str, window: Any) -> int:
-        raise sqlalchemy.exc.TimeoutError()
+        raise error()
 
     monkeypatch.setattr(limits, "charge", broken)
     for _ in range(50):
@@ -627,9 +645,37 @@ def test_a_limiter_failure_is_a_204_and_one_warning(
     assert (drop["level"], drop["limiter_unavailable"], drop["error"]) == (
         "WARNING",
         1,
-        "TimeoutError",
+        type(error()).__name__,
     )
-    assert not [line for line in log_lines() if line["msg"] == "connection pool exhausted"]
+    noisy = {"connection pool exhausted", "lock wait timed out", "unhandled error"}
+    assert not [line for line in log_lines() if line["msg"] in noisy]
+
+
+# 16a. Build review 1: a failed limiter call gives its slot back, so once the database recovers,
+# reports are counted and logged again (never "busy" until a restart).
+@pytest.mark.parametrize("error", LIMITER_ERRORS, ids=LIMITER_ERROR_IDS)
+def test_the_slot_is_given_back_when_the_limiter_fails(
+    client: TestClient,
+    log_lines: Lines,
+    monkeypatch: pytest.MonkeyPatch,
+    error: Callable[[], Exception],
+) -> None:
+    failing = [True]
+
+    def charge(key: str, window: Any) -> int:
+        if failing[0]:
+            raise error()
+        return 1
+
+    monkeypatch.setattr(limits, "charge", charge)
+    for _ in range(csp_reports.MAX_IN_FLIGHT + 1):
+        assert post(client, legacy()).status_code == 204
+    failing[0] = False
+
+    assert post(client, legacy()).status_code == 204
+
+    assert len(violations(log_lines)) == 1
+    assert csp_reports._in_flight == 0
 
 
 # 16b. B4: the drop line is at most one a minute, and carries what accumulated since.
@@ -738,6 +784,7 @@ def test_reports_never_hold_more_than_two_connections(
     assert len(calls) == csp_reports.MAX_IN_FLIGHT
     assert dropped(log_lines)[0]["busy"] == 1
     assert len(violations(log_lines)) == csp_reports.MAX_IN_FLIGHT
+    assert csp_reports._in_flight == 0
 
 
 # 19. B4 fence: a process-wide budget of violation lines a minute.
