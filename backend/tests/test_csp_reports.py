@@ -1006,13 +1006,51 @@ def test_every_violation_is_counted_in_the_metric(
     [point] = points(metric_reader, "ziftbook.csp.violations")
     assert point.value == 2
     assert dict(point.attributes) == {
-        "csp.report_format": "reports+json",
         "csp.directive": "style-src-attr",
         "csp.disposition": "report",
-        "csp.page": "/[locale]/sign-in",
         "csp.blocked": "inline",
-        "csp.source": "self",
     }
+
+
+# 20a. Build review (security 1): the metric's series are bounded twice. Its three attributes allow
+# at most 26 x 3 x 21 combinations; past MAX_SERIES distinct ones in a process, every violation is
+# counted in one overflow series instead, whatever a client sends.
+def test_the_metric_has_three_closed_attributes_and_a_bounded_product() -> None:
+    product = (
+        len(csp_reports.CLOSED_VALUES["directive"])
+        * len(csp_reports.CLOSED_VALUES["disposition"])
+        * len(csp_reports.CLOSED_VALUES["blocked"])
+    )
+    assert product <= 1638
+    assert csp_reports.MAX_SERIES < product
+
+
+def test_hostile_input_cannot_pass_the_series_cap(
+    app: FastAPI, monkeypatch: pytest.MonkeyPatch, metric_reader: InMemoryMetricReader
+) -> None:
+    monkeypatch.setattr(csp_reports, "MAX_SERIES", 5)
+    monkeypatch.setattr(csp_reports, "LIMIT", 10**6)
+    client = new_client(app)
+    blocked = ["inline", "eval", "data", "blob", "https://js.stripe.com/", "https://x.test/"]
+    sent = 0
+    for directive in sorted(csp_reports.DIRECTIVES)[:6]:
+        items = [
+            entry(effectiveDirective=directive, blockedURL=b, disposition=d)
+            for b in blocked
+            for d in ("enforce", "report")
+        ]
+        for chunk in range(0, len(items), 10):
+            part = items[chunk : chunk + 10]
+            assert post(client, batch(*part), BATCH).status_code == 204
+            sent += len(part)
+
+    found = points(metric_reader, "ziftbook.csp.violations")
+    assert len(found) <= csp_reports.MAX_SERIES + 1
+    assert sum(point.value for point in found) == sent
+    overflow = [p for p in found if dict(p.attributes) == csp_reports.OVERFLOW]
+    assert overflow and overflow[0].value == sent - sum(
+        p.value for p in found if dict(p.attributes) != csp_reports.OVERFLOW
+    )
 
 
 # 20b. Build review 6: a client that hangs up halfway through its report is a quiet 204, never an

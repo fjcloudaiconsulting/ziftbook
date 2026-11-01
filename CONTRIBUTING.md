@@ -566,7 +566,7 @@ from `.env`; it fixes the log settings at `DEBUG`/`text`, passes no `ZIF_LOG_SQL
   | `db.client.connection.pending_requests` | observable up-down counter | `db.client.connection.pool.name` | api, worker |
   | `ziftbook.sign_up.completed`, `ziftbook.invite.sent`, `ziftbook.invite.accepted` | counters | none | api |
   | `ziftbook.booking.created` | counter | `booking.source` (booking_page, merchant) | api |
-  | `ziftbook.csp.violations` | counter | `csp.report_format`, `csp.directive`, `csp.disposition`, `csp.page` (the route template), `csp.blocked`, `csp.source`: the `csp violation` line's closed sets (Logging); counted whether or not the line budget logs it, never for another origin's page | api |
+  | `ziftbook.csp.violations` | counter | `csp.directive`, `csp.disposition`, `csp.blocked`: the `csp violation` line's closed sets (Logging), so at most 26 × 3 × 21 = 1,638 series; and at most 500 distinct ones per process, past which every violation is counted in one overflow series (all three `other`), whatever a client sends. Counted whether or not the line budget logs it, never for another origin's page; the page, source and format stay in the log line | api |
   | `ziftbook.web.request.errors` | counter | `http.route` (the template) | web |
 
   The queue series come from every worker, so aggregate them with `max`, not `sum`. `job.running`

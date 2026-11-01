@@ -56,6 +56,11 @@ LINE_BUDGET = 600
 # At most one `csp reports dropped` line this often, process-wide, with each reason's count since
 # the last one.
 DROP_EVERY = 60.0  # seconds
+# Distinct ziftbook.csp.violations series a process records. Its three attributes allow 26 x 3 x 21
+# = 1638 combinations at most; past this many, whatever a client sends, a violation is counted in
+# the one OVERFLOW series (every series lives in memory and in every export for the process's life).
+MAX_SERIES = 500
+OVERFLOW = {"csp.directive": "other", "csp.disposition": "other", "csp.blocked": "other"}
 
 # The route template of every page under frontend/app/[locale] (route groups flattened, Next's own
 # segment names). scripts/check-csp-pages.test.mjs fails when this and the app's pages differ.
@@ -376,6 +381,7 @@ _drops: Counter[str] = Counter()
 _drop_error: str | None = None
 _drops_logged_at: float | None = None
 _drops_since: float | None = None  # when the first count not yet written was made
+_series: set[tuple[str, str, str]] = set()
 _lines_since: float | None = None
 _lines = 0
 
@@ -388,6 +394,7 @@ def reset() -> None:
     _drop_error = None
     _drops_logged_at = None
     _drops_since = None
+    _series.clear()
     _lines_since = None
     _lines = 0
 
@@ -437,6 +444,20 @@ async def flush_drops_every(interval: float = DROP_EVERY) -> None:
 def flush_drops_now() -> None:
     """At shutdown: whatever is still counted, whenever the last line was."""
     _flush_drops(force=True)
+
+
+def _record(violation: Violation, count: int) -> None:
+    """The metric keeps three of the six fields (the page, source and format stay in the log line),
+    in at most MAX_SERIES series, then OVERFLOW."""
+    series = (violation.directive, violation.disposition, violation.blocked)
+    if series not in _series and len(_series) >= MAX_SERIES:
+        tracing.CSP_VIOLATIONS.add(count, OVERFLOW)
+        return
+    _series.add(series)
+    directive, disposition, blocked = series
+    tracing.CSP_VIOLATIONS.add(
+        count, {"csp.directive": directive, "csp.disposition": disposition, "csp.blocked": blocked}
+    )
 
 
 def _spend_line() -> bool:
@@ -517,7 +538,7 @@ async def report(request: Request) -> Response:
         if violation.page == "foreign":
             continue
         # Counted whether or not the line budget lets it be logged.
-        tracing.CSP_VIOLATIONS.add(count, {f"csp.{k}": v for k, v in violation._asdict().items()})
+        _record(violation, count)
         if not _spend_line():
             _count("global_cap", count)
             continue
