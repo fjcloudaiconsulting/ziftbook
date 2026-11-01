@@ -74,8 +74,6 @@ const booking = (startsAt, status = "confirmed", slug = "salon-bloom") => ({
 });
 
 describe("your bookings", () => {
-  const now = new Date("2026-10-30T12:00:00Z");
-
   test("an answer: the list, sign in again, the password again for a session older than a day, or a problem", () => {
     assert.equal(historyOutcome(200, undefined), "ok");
     assert.equal(historyOutcome(401, "unauthenticated"), "signIn");
