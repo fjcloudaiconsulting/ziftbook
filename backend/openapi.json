@@ -7843,6 +7843,17 @@
                 "type": "null"
               }
             ]
+          },
+          "contact_email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contact Email"
           }
         },
         "type": "object",
@@ -7858,7 +7869,8 @@
           "cancellation",
           "services",
           "auto_confirm",
-          "payment"
+          "payment",
+          "contact_email"
         ],
         "title": "BookingPageOut"
       },

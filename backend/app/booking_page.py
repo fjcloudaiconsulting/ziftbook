@@ -87,6 +87,9 @@ class BookingPageOut(BaseModel):
     services: list[PublicServiceOut]
     auto_confirm: bool
     payment: PagePaymentOut | None  # null while the business takes no card check
+    # ZIF-99. Where clients can write to the business: its own setting, null when it has none. Not
+    # confirmed yet (ZIF-232).
+    contact_email: str | None
 
 
 @router.get(
@@ -175,4 +178,5 @@ def read(slug: str, request: Request) -> BookingPageOut:
         )
         if account is not None and minimum is not None
         else None,
+        contact_email=settings.contact_email,
     )
