@@ -697,7 +697,7 @@
       "contactEmailLabel": "Contactadres voor klanten",
       "contactEmailOptional": "· optioneel",
       "contactEmailHint": "Klanten zien het op je boekingspagina. Antwoorden op e-mails over een geweigerde, geannuleerde of verlopen afspraak komen hier binnen.",
-      "contactEmailInvalid": "Gebruik alleen gewone letters en cijfers, zoals naam@jouwbedrijf.nl.",
+      "contactEmailInvalid": "Gebruik letters zonder accenten, zoals naam@jouwbedrijf.nl.",
       "autoConfirmLabel": "Nieuwe boekingen automatisch bevestigen",
       "autoConfirmHint": "Uit: elke nieuwe boeking wacht tot je die accepteert of afwijst.",
       "slotStepLabel": "Tijd tussen starttijden",

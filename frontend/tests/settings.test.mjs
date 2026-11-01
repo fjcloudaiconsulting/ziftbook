@@ -9,6 +9,7 @@ import {
   changedKeys,
   draftFrom,
   effective,
+  emailMessageKey,
   emailProblem,
   FIELDS,
   mergeSaved,
@@ -349,5 +350,35 @@ describe("ZIF-99 an international domain", () => {
       assert.equal(asciiEmail(text), text.trim().toLowerCase(), JSON.stringify(text));
       assert.notEqual(emailProblem(text), null, JSON.stringify(text));
     }
+  });
+});
+
+describe("ZIF-99 the message a refused address shows", () => {
+  test("fence: an accented name gets its own message, anything else the usual one", () => {
+    // Wrong implementation killed: one generic message for every refusal, so an owner never learns the accent
+    // is the problem (design notes 1a).
+    assert.equal(emailMessageKey("josé@salon.nl"), "contactEmailInvalid");
+    assert.equal(emailMessageKey("hello@salon"), "invalidEmail");
+    assert.equal(emailMessageKey("shop[1]@salon.nl"), "invalidEmail"); // refused by the API alone
+    assert.equal(emailMessageKey("hello@café.nl"), "invalidEmail"); // converted, so only the API could refuse it
+    const src = readFileSync(new URL("../app/[locale]/(console)/settings/settings.tsx", import.meta.url), "utf8");
+    assert.match(
+      src,
+      /const emailErr = invalid\.includes\("contact_email"\) && \(emailMessageKey\(String\(draft\.contact_email\)\) === "contactEmailInvalid" \? t\("contactEmailInvalid"\) : form\("invalidEmail"\)\);/,
+    );
+  });
+
+  test("fence: the accents message says what is wrong and refuses nothing the API accepts", () => {
+    // Wrong implementation killed: "plain letters and numbers only", which contradicts its own example and
+    // tells owners that + - _ . are refused.
+    const msg = (l) => JSON.parse(readFileSync(new URL(`../messages/${l}.json`, import.meta.url), "utf8")).Console.settings.contactEmailInvalid;
+    assert.deepEqual(
+      ["en", "nl", "pt"].map(msg),
+      [
+        "Use letters without accents, like name@yourbusiness.com.",
+        "Gebruik letters zonder accenten, zoals naam@jouwbedrijf.nl.",
+        "Use letras sem acento, como nome@seunegocio.com.br.",
+      ],
+    );
   });
 });

@@ -113,6 +113,12 @@ export function emailProblem(text: string): "accents" | "invalid" | null {
   return null;
 }
 
+/** Which message a refused contact email shows: an accented name its own (the API cannot put it in a
+ * mail header), anything else the usual invalid-email one. */
+export function emailMessageKey(text: string): "contactEmailInvalid" | "invalidEmail" {
+  return emailProblem(text) === "accents" ? "contactEmailInvalid" : "invalidEmail";
+}
+
 /** The value to compare and send, or undefined when the text does not parse. */
 function parse(field: Field, value: string | boolean): string | number | boolean | null | undefined {
   if (field.kind === "bool" || field.kind === "text") return value;

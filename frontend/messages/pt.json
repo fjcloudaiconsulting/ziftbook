@@ -697,7 +697,7 @@
       "contactEmailLabel": "E-mail de contato para clientes",
       "contactEmailOptional": "· opcional",
       "contactEmailHint": "Os clientes veem este e-mail na sua página de agendamento. As respostas a e-mails sobre um agendamento recusado, cancelado ou expirado chegam aqui.",
-      "contactEmailInvalid": "Use só letras sem acento e números, como nome@seunegocio.com.br.",
+      "contactEmailInvalid": "Use letras sem acento, como nome@seunegocio.com.br.",
       "autoConfirmLabel": "Confirmar novos agendamentos automaticamente",
       "autoConfirmHint": "Desativado: cada novo agendamento espera você aceitar ou recusar.",
       "slotStepLabel": "Intervalo entre horários de início",
