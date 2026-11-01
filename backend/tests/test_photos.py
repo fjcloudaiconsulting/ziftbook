@@ -17,7 +17,8 @@ from urllib.parse import parse_qs, urlparse
 import boto3
 import PIL
 import pytest
-from botocore.exceptions import EndpointConnectionError
+from botocore.exceptions import EndpointConnectionError, ReadTimeoutError
+from botocore.response import StreamingBody
 from mypy_boto3_s3 import S3Client
 from PIL import Image, ImageCms, ImageFile, ImageOps
 from sqlalchemy import text
@@ -242,7 +243,7 @@ def test_a_busy_decoder_is_a_503(s3: S3Client, monkeypatch: pytest.MonkeyPatch) 
     upload_id = upload(s3, t, image("PNG", (10, 10)))
     monkeypatch.setattr(photos, "LOCK_WAIT", 0.01)
     read: list[str] = []
-    monkeypatch.setattr(storage, "read", lambda key: read.append(key))
+    monkeypatch.setattr(storage, "read_into", lambda key, sink, limit: read.append(key))
     with photos._LOCK:
         assert refusal(t, upload_id) == (503, "busy")
     assert read == []  # a waiter never holds the body it has not decoded yet
@@ -460,6 +461,95 @@ def test_an_upload_gone_after_the_head_is_missing(
     t = uuid.uuid4()
     monkeypatch.setattr(storage, "size", lambda key: 10)
     assert refusal(t, uuid.uuid4()) == (409, "photo_missing")
+
+
+def count_body_reads(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """The bytes every StreamingBody.read in this test returned, one entry per call."""
+    seen: list[int] = []
+    real = StreamingBody.read
+
+    def read(self: StreamingBody, amt: int | None = None) -> bytes:
+        chunk: bytes = real(self, amt)
+        seen.append(len(chunk))
+        return chunk
+
+    monkeypatch.setattr(StreamingBody, "read", read)
+    return seen
+
+
+# ZIF-230 fence. Kills: trusting the HEAD (an object replaced after it). The store's own length
+# for the ranged GET refuses it before a byte is read.
+def test_the_read_stops_at_the_cap_whatever_the_head_said(
+    s3: S3Client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    t = uuid.uuid4()
+    upload_id = upload(s3, t, b"\0" * (2 * photos.MAX_BYTES))
+    monkeypatch.setattr(storage, "size", lambda key: 10)
+    seen = count_body_reads(monkeypatch)
+    assert refusal(t, upload_id) == (422, "photo_too_large")
+    assert sum(seen) <= photos.MAX_BYTES + 1
+
+
+# ZIF-230 fence. Kills: a cap taken from the response's length alone (a store or proxy that sends
+# a chunked body, a wrong length or none): the read itself stops one byte past the cap, and the
+# GET asks for no more than that.
+@pytest.mark.parametrize("length", [{"ContentLength": 10}, {}], ids=["lying-length", "no-length"])
+def test_the_streamed_read_is_capped(
+    s3: S3Client, monkeypatch: pytest.MonkeyPatch, length: dict[str, int]
+) -> None:
+    t = uuid.uuid4()
+    upload_id = upload(s3, t, image("PNG", (10, 10)))
+    asked: list[dict[str, object]] = []
+    real = storage.client
+
+    def lying(**kw: bool) -> S3Client:
+        c = real(**kw)
+
+        def get_object(**params: object) -> dict[str, object]:
+            asked.append(params)
+            # No length to check against: the stream just keeps sending.
+            body = StreamingBody(io.BytesIO(b"\0" * (2 * photos.MAX_BYTES)), None)  # type: ignore[arg-type]
+            return {"Body": body, **length}
+
+        c.get_object = get_object  # type: ignore[method-assign,assignment]
+        return c
+
+    monkeypatch.setattr(storage, "client", lying)
+    seen = count_body_reads(monkeypatch)
+    assert refusal(t, upload_id) == (422, "photo_too_large")
+    assert sum(seen) <= photos.MAX_BYTES + 1
+    assert [a["Range"] for a in asked] == [f"bytes=0-{photos.MAX_BYTES}"]
+
+
+# ZIF-230 guard: an upload of exactly the cap is read whole and reaches the decoder.
+def test_an_upload_exactly_at_the_cap_is_read(s3: S3Client) -> None:
+    t = uuid.uuid4()
+    assert refusal(t, upload(s3, t, b"\0" * photos.MAX_BYTES)) == (422, "photo_type")
+
+
+# ZIF-230 guard: read_into copies the object exactly, None when there is none, 0 for an empty one
+# (a ranged GET of it is refused as InvalidRange), and a failure mid-stream is a StorageError
+# carrying the class only.
+def test_read_into_copies_and_misses(s3: S3Client, monkeypatch: pytest.MonkeyPatch) -> None:
+    t = uuid.uuid4()
+    data = random.Random(230).randbytes(300_000)
+    upload_id = upload(s3, t, data)
+    sink = io.BytesIO()
+    assert storage.read_into(f"{t}/{upload_id}", sink, photos.MAX_BYTES) == len(data)
+    assert sink.getvalue() == data
+    assert storage.read_into(f"{t}/{uuid.uuid4()}", io.BytesIO(), photos.MAX_BYTES) is None
+    empty = upload(s3, t, b"")
+    assert storage.read_into(f"{t}/{empty}", io.BytesIO(), photos.MAX_BYTES) == 0
+    with pytest.raises(storage.TooLarge):
+        storage.read_into(f"{t}/{upload_id}", io.BytesIO(), len(data) - 1)
+
+    def stalled(self: StreamingBody, amt: int | None = None) -> bytes:
+        raise ReadTimeoutError(endpoint_url=f"https://secret.example/{t}/{upload_id}")
+
+    monkeypatch.setattr(StreamingBody, "read", stalled)
+    with pytest.raises(storage.StorageError) as failed:
+        storage.read_into(f"{t}/{upload_id}", io.BytesIO(), photos.MAX_BYTES)
+    assert str(failed.value) == "ReadTimeoutError"
 
 
 # ZIF-133 G1. guard: each client has a session of its own (the default one is not thread-safe).
