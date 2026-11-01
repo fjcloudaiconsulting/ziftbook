@@ -4,7 +4,7 @@ stdout a pipe. A decoder fault or a decompression bomb then ends this process, n
 
 The order is the point:
 1. the resource limits and the syscall filter, before anything reads the upload or imports Pillow;
-2. the upload, at most MAX_BYTES + 1 bytes;
+2. the upload, at most MAX_BYTES + 1 bytes, then no longer dumpable;
 3. the decoder (photo_decode.py, by path: -I leaves the app off sys.path), then the READY byte;
 4. the record photo_decode writes, then exit 0.
 
@@ -82,6 +82,7 @@ OPENS = {"aarch64": {56: 2}, "x86_64": {2: 1, 257: 2}}  # open(at): the index of
 AUDIT_ARCH = {"aarch64": 0xC00000B7, "x86_64": 0xC000003E}
 WRITE_FLAGS = 0o1 | 0o2 | 0o100 | 0o1000  # O_WRONLY, O_RDWR, O_CREAT, O_TRUNC (both architectures)
 X32 = 0x40000000
+PR_SET_DUMPABLE = 4
 PR_SET_NO_NEW_PRIVS = 38
 PR_SET_SECCOMP = 22
 SECCOMP_MODE_FILTER = 2
@@ -128,6 +129,16 @@ def confine() -> None:
         raise OSError(ctypes.get_errno(), "seccomp")
 
 
+def undumpable() -> None:
+    """No core file of the upload, whatever the host's core_pattern (a piped pattern ignores
+    RLIMIT_CORE), and no other process of this uid reading this one through /proc. Set once the
+    upload is read, so a test can still inspect the child while it waits for it (Linux only)."""
+    if sys.platform != "linux":
+        return
+    if ctypes.CDLL(None, use_errno=True).prctl(PR_SET_DUMPABLE, 0, 0, 0, 0) != 0:
+        raise OSError(ctypes.get_errno(), "dumpable")
+
+
 def load() -> ModuleType:
     spec = importlib.util.spec_from_file_location("photo_decode", DECODER)
     if spec is None or spec.loader is None:
@@ -146,6 +157,10 @@ def main() -> int:
     data = sys.stdin.buffer.read(MAX_BYTES + 1)
     if len(data) > MAX_BYTES:  # photos.py never sends more
         return 1
+    try:
+        undumpable()
+    except Exception:
+        return EXIT_LIMITS
     try:
         decoder = load()
     except BaseException:

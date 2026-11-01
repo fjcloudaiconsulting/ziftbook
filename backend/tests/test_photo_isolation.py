@@ -301,7 +301,8 @@ def test_a_malformed_record_is_photo_unreadable(
 
 
 # ZIF-230 fence. Kills: the API's environment (its secrets), a descriptor (a database socket) or
-# the working directory reaching the child, or -I/-B missing. The probe decodes only if all hold.
+# the working directory reaching the child, -I/-B missing, or (Linux) a child still dumpable when it
+# decodes. The probe decodes only if all hold.
 def test_the_child_gets_no_environment_and_no_descriptors(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
