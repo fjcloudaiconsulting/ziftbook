@@ -8,6 +8,7 @@ import {
   changedKeys,
   draftFrom,
   effective,
+  emailProblem,
   FIELDS,
   mergeSaved,
   noticeOptions,
@@ -35,6 +36,7 @@ const saved = {
   max_reschedules: 2,
   cancellation_policy_text: "Please cancel at least 48 hours ahead.",
   workers_edit_own_hours: false,
+  contact_email: null,
 };
 const ints = FIELDS.filter((f) => f.kind === "int");
 
@@ -229,5 +231,65 @@ describe("F2 the payment switch", () => {
     const withCheck = { ...saved, payment_check: false };
     assert.deepEqual(changedKeys(withCheck, { ...draftFrom(withCheck), payment_check: true }), ["payment_check"]);
     assert.deepEqual(settingsBody(withCheck, { ...draftFrom(withCheck), payment_check: true }).body, { payment_check: true });
+  });
+});
+
+describe("ZIF-99 the contact email for clients", () => {
+  const withEmail = { ...saved, contact_email: "hello@salonbloom.nl" };
+
+  test("fence: it sits in Your business, right after the email language", () => {
+    // Wrong implementation killed: the key missing from FIELDS (never sent, never dirty) or listed out of page order.
+    const keys = FIELDS.map((f) => f.key);
+    assert.equal(keys[keys.indexOf("language") + 1], "contact_email");
+  });
+
+  test("fence: no address is an empty box, and an untouched empty box is clean", () => {
+    // Wrong implementation killed: String(null) putting the text "null" in the box (and then sending it).
+    assert.equal(draftFrom(saved).contact_email, "");
+    assert.deepEqual(changedKeys(saved, draftFrom(saved)), []);
+    assert.equal(draftFrom(withEmail).contact_email, "hello@salonbloom.nl");
+  });
+
+  test("fence: an address is sent the way the API stores it; spaces and capitals alone are no change", () => {
+    // Wrong implementation killed: an unsaved-changes bar that never goes away after the server lowercases the address.
+    assert.deepEqual(settingsBody(saved, { ...draftFrom(saved), contact_email: " Hello@SalonBloom.nl " }), {
+      body: { contact_email: "hello@salonbloom.nl" },
+      invalid: [],
+    });
+    assert.deepEqual(changedKeys(withEmail, { ...draftFrom(withEmail), contact_email: " HELLO@salonbloom.nl" }), []);
+  });
+
+  test("fence: emptying the box removes the address (null), never an empty string", () => {
+    // Wrong implementation killed: sending "", which the API refuses as an address.
+    for (const text of ["", "   "]) {
+      assert.deepEqual(settingsBody(withEmail, { ...draftFrom(withEmail), contact_email: text }), { body: { contact_email: null }, invalid: [] });
+    }
+  });
+
+  test("fence: an address with accents is refused with its own message; a malformed one with the usual one", () => {
+    // Wrong implementation killed: sending an address the API refuses (non-ASCII cannot go in a mail header),
+    // or one generic message that never says why an accented address is refused.
+    assert.equal(emailProblem("hello@café.nl"), "accents");
+    assert.equal(emailProblem("josé@salon.nl"), "accents");
+    for (const text of ["hello", "hello@salon", "@salon.nl", "a@b@c.nl", "a b@c.nl", "a@b.nl, c@d.nl", "<a@b.nl>", "a@b.nl\nBcc: c@d.nl", "=?utf-8?q?x?=@b.nl", `${"a".repeat(250)}@b.nl`]) {
+      assert.equal(emailProblem(text), "invalid", JSON.stringify(text));
+    }
+    for (const text of ["", "  ", "hello@salonbloom.nl", " Hello@SalonBloom.NL ", "first.last+shop@xn--caf-dma.nl"]) {
+      assert.equal(emailProblem(text), null, JSON.stringify(text));
+    }
+    const { body, invalid } = settingsBody(saved, { ...draftFrom(saved), contact_email: "hello@café.nl", buffer_pct: "20" });
+    assert.deepEqual([body, invalid], [{ buffer_pct: 20 }, ["contact_email"]]);
+  });
+
+  test("every language has the field's words, and Your business says where clients reach you", () => {
+    for (const locale of ["en", "nl", "pt"]) {
+      const t = JSON.parse(readFileSync(new URL(`../messages/${locale}.json`, import.meta.url), "utf8")).Console.settings;
+      for (const key of ["contactEmailLabel", "contactEmailOptional", "contactEmailHint", "contactEmailInvalid"]) assert.ok(t[key], `${locale}.${key}`);
+      assert.ok(t.changed.contact_email, `${locale}.changed.contact_email`);
+    }
+    const desc = (locale) => JSON.parse(readFileSync(new URL(`../messages/${locale}.json`, import.meta.url), "utf8")).Console.settings.yourBusinessDesc;
+    assert.equal(desc("en"), "Your time zone, the default language for client emails, and where clients can reach you.");
+    assert.equal(desc("nl"), "Je tijdzone, de standaardtaal voor e-mails aan klanten en waar klanten je kunnen bereiken.");
+    assert.equal(desc("pt"), "Seu fuso horário, o idioma padrão dos e-mails para clientes e onde os clientes podem falar com você.");
   });
 });
