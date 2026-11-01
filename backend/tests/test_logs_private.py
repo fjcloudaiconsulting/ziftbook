@@ -466,6 +466,7 @@ def test_no_personal_data_ever_reaches_a_log(
     # 6l (ZIF-58): the 6d client, with its notes and consent, is erased by erase_client as the
     # owner's live session, the database half of the erase route.
     with tenant_context(people.a) as session:
+        session.execute(bookings.LOCK, {"key": bookings.LOCK_KEY})
         assert session.scalar(
             text("SELECT erase_client(:h, :id)"),
             {"h": auth.hash_token(owner.cookies[auth.COOKIE]), "id": client_id},

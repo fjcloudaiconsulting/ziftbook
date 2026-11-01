@@ -13,13 +13,21 @@ from datetime import datetime, timedelta
 from typing import Any
 
 import pytest
-from psycopg.errors import InsufficientPrivilege
+from psycopg.errors import InsufficientPrivilege, ObjectNotInPrerequisiteState
 from sqlalchemy import Connection, Engine, TextClause, text
 from sqlalchemy.exc import DBAPIError
+from sqlalchemy.orm import Session
 
 from app import auth, bookings
 from app.db import tenant_context
-from tests.conftest import People, fresh_email, member_id, migrate_tenant_context, set_role
+from tests.conftest import (
+    People,
+    delete_clients,
+    fresh_email,
+    member_id,
+    migrate_tenant_context,
+    set_role,
+)
 from tests.test_bookings_db import seed_service
 
 # Every column of the six tables that hold a client's personal data or point at it, classified
@@ -330,8 +338,14 @@ def take(migrate_engine: Engine, tenant_id: uuid.UUID) -> Snapshot:
         return snapshot(conn, tenant_id)
 
 
+def booking_lock(conn: Connection | Session) -> None:
+    """The tenant booking lock, which every caller of the core takes first."""
+    conn.execute(bookings.LOCK, {"key": bookings.LOCK_KEY})
+
+
 def erase(migrate_engine: Engine, tenant_id: uuid.UUID, client_id: uuid.UUID) -> Any:
     with migrate_tenant_context(migrate_engine, tenant_id) as conn:
+        booking_lock(conn)
         return conn.scalar(CORE, {"id": client_id})
 
 
@@ -469,6 +483,7 @@ def test_a_widened_policy_does_not_reach_another_business(
                 text(f"CREATE POLICY probe ON {widened} FOR ALL TO ziftbook_migrate USING (true)")
             )
         conn.execute(SET_TENANT, {"t": str(world.a.tenant_id)})
+        booking_lock(conn)
         result = conn.scalar(CORE, {"id": world.b.client_id})
         after = snapshot(conn, world.b.tenant_id)
         transaction.rollback()
@@ -553,6 +568,7 @@ def test_only_a_live_owner_session_of_this_business_erases(
 
     for id_hash in refused:
         with pytest.raises(DBAPIError) as error, tenant_context(people.a) as session:
+            booking_lock(session)
             session.execute(ERASE_CLIENT, {"h": id_hash, "id": world.a.client_id})
         assert isinstance(error.value.orig, InsufficientPrivilege)
         assert erased_at(people.a, world.a.client_id) is None
@@ -561,6 +577,7 @@ def test_only_a_live_owner_session_of_this_business_erases(
     owner = session_hash(people.a, people.both)
     age(migrate_engine, owner, "last_seen_at", auth.IDLE - timedelta(minutes=1))
     with tenant_context(people.a) as session:
+        booking_lock(session)
         at = session.scalar(ERASE_CLIENT, {"h": owner, "id": world.a.client_id})
     assert at is not None
     assert erased_at(people.a, world.a.client_id) == at
@@ -659,6 +676,7 @@ def hold_after(
                     "details": json.dumps({"reason": reason}),
                 },
             )
+        booking_lock(conn)
         erased = conn.scalar(
             text("SELECT erase_client_core(:id, :announce)"),
             {"id": seeded.client_id, "announce": announce},
@@ -770,3 +788,43 @@ def test_money_still_owed_is_one_rule_and_decides_the_hold(
     holds = hold_after(migrate_engine, seeded, people.both, reason=None, announce=False)
 
     assert holds == ([(seeded.client_id, seeded.email, "nl", True, True)] if owed else [])
+
+
+LOCKED_TENANT = text("""
+INSERT INTO tenants (id, name) VALUES (:t, 'Hashed') RETURNING hashtext(id::text) < 0
+""")
+
+
+def tenant_hashing(migrate_engine: Engine, negative: bool) -> uuid.UUID:
+    """A new business whose id hashes (hashtext, as the booking lock keys it) to that sign."""
+    while True:
+        candidate = uuid.uuid7()
+        with migrate_engine.begin() as conn:
+            if conn.scalar(text("SELECT hashtext(:t) < 0"), {"t": str(candidate)}) is negative:
+                conn.execute(LOCKED_TENANT, {"t": candidate})
+                return candidate
+
+
+# ZIF-58 FENCE. Wrong impl: a core that trusts its caller to hold the tenant booking lock. Every
+# booking writer takes it first, and the console's booking of a client relies on it to see an
+# erasure whole; a caller that forgot it would let a booking or a client's link action interleave
+# with the erasure. The core reads pg_locks for this backend's (51, hashtext(tenant)) lock: the
+# second key is signed, so a business whose id hashes negative is tried as well as one positive.
+@pytest.mark.parametrize("negative", [True, False], ids=["negative hash", "positive hash"])
+def test_the_core_needs_the_booking_lock(migrate_engine: Engine, negative: bool) -> None:
+    tenant_id = tenant_hashing(migrate_engine, negative)
+    try:
+        with migrate_tenant_context(migrate_engine, tenant_id) as conn:
+            client_id = conn.scalar(INSERT_CLIENT, {"email": fresh_email(), "user_id": None})
+        with (
+            pytest.raises(DBAPIError) as error,
+            migrate_tenant_context(migrate_engine, tenant_id) as conn,
+        ):
+            conn.scalar(CORE, {"id": client_id})
+        assert isinstance(error.value.orig, ObjectNotInPrerequisiteState)
+        assert "needs the booking lock" in str(error.value.orig)
+        assert erase(migrate_engine, tenant_id, client_id) is not None
+    finally:
+        with migrate_engine.begin() as conn:
+            delete_clients(conn, [tenant_id])
+            conn.execute(text("DELETE FROM tenants WHERE id = :t"), {"t": tenant_id})

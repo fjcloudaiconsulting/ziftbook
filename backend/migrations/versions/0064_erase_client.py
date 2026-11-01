@@ -87,6 +87,17 @@ BEGIN
     RAISE EXCEPTION 'erase_client needs a business' USING ERRCODE = 'insufficient_privilege';
   END IF;
   v_tenant := current_setting('app.tenant_id')::uuid;
+  -- The caller holds the tenant booking lock, as every booking writer does first: the console's
+  -- booking of a client relies on it to see an erasure whole. Read here, not taken: taking it after
+  -- a caller's row locks would invert the lock order. The lock's second key is a signed int4 that
+  -- pg_locks shows as an oid, hence the cast.
+  IF NOT EXISTS (SELECT 1 FROM pg_locks
+                 WHERE locktype = 'advisory' AND pid = pg_backend_pid() AND granted
+                   AND classid = 51 AND objsubid = 2
+                   AND objid = hashtext(current_setting('app.tenant_id'))::oid) THEN
+    RAISE EXCEPTION 'erase_client_core needs the booking lock'
+      USING ERRCODE = 'object_not_in_prerequisite_state';
+  END IF;
   SELECT email, locale INTO v_email, v_locale FROM clients
    WHERE tenant_id = v_tenant AND id = p_client AND erased_at IS NULL
    FOR NO KEY UPDATE;
