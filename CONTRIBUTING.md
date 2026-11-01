@@ -337,7 +337,10 @@ A platform admin runs the platform across businesses (ZIF-70). `platform_admins`
   `second_factor_passed` is the failures since the last pass. A lock, or a lock again soon after a recovery code,
   means someone is sending codes: a password holder (reset the password, then `enrol`), or someone who can run SQL
   as the app role, which starts admin sessions from the stored hash (rotate the database credentials, `enrol`, and
-  handle it as a ZB-08 incident).
+  handle it as a ZB-08 incident). That second kind can keep a wrong code from being counted at all (ZIF-261), so
+  look at the log too: `second factor failed` lines for an admin with no matching `second_factor_failed` audit
+  event, or whose `failures` stays the same from line to line, mean requests are being cut off before they commit.
+  Handle that as the same ZB-08 incident.
 - Never enable statement or parameter logging (`log_statement`, `log_min_duration_statement` with parameters,
   `auto_explain` with parameters) on the app database. Bind values include bearer proofs: a logged TOTP proof,
   recovery-code proof or ticket proof lets anyone who can read the log and run SQL pass an admin's second factor.
