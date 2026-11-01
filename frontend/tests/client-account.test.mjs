@@ -630,3 +630,20 @@ describe("the done screen never asks someone signed in to create an account (PR 
     assert.match(page, /setOfferAccount\(saveDetailsOffer\(true, account !== null\)\);/);
   });
 });
+
+describe("pt on the client's pages says reserva (PR 6 review, correctness 7)", () => {
+  const pt = JSON.parse(readFileSync(new URL("../messages/pt.json", import.meta.url)));
+
+  test("the account pages and the checkout's hint say reservas, never the console's agendamentos", () => {
+    const strings = [...Object.values(pt.ClientHome), ...Object.values(pt.ClientSignUp), pt.BookingPage.emailNotSaved, pt.SignIn.noTenant];
+    for (const text of strings) assert.doesNotMatch(text, /agendament/i, text);
+  });
+
+  test("headings and pills agree with the feminine noun", () => {
+    assert.equal(pt.ClientHome.title, "Suas reservas");
+    assert.deepEqual(
+      [pt.ClientHome.upcoming, pt.ClientHome.confirmed, pt.ClientHome.cancelled, pt.ClientHome.declined, pt.ClientHome.expired],
+      ["Próximas", "Confirmada", "Cancelada", "Recusada", "Expirada"],
+    );
+  });
+});
