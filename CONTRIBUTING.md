@@ -75,8 +75,9 @@ Specifics:
 - Migrations run as `ziftbook_migrate`, never on app startup. The API connects as `ziftbook_app`, which owns
   nothing: never grant it ownership, `BYPASSRLS` or DDL rights.
 - The worker connects as `ziftbook_worker` (ZB-08): a member of `ziftbook_app`, so it has every privilege the app
-  role has, plus what only background jobs may do: `mint_email_token`, which the app role does not have (0051), and
-  setting an invite's `token_hash` (0053). A worker still on `ziftbook_app` fails every sign-up, reset and invite
+  role has, plus what only background jobs may do: `mint_email_token`, which the app role does not have (0051),
+  setting an invite's `token_hash` (0053), and the retention functions `sweep_audit_events`,
+  `sweep_admin_sessions` and `sweep_booking_origins` (0074, ZIF-235). A worker still on `ziftbook_app` fails every sign-up, reset and invite
   email. The same never-list applies to it.
 - Neither runtime role can create temporary tables, and both search `public` before `pg_temp` (ZB-31;
   `bootstrap.sql`, plus 0050 where `ziftbook_migrate` owns the database; elsewhere 0050 changes nothing and logs

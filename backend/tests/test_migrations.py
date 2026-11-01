@@ -2674,3 +2674,39 @@ def test_0073_round_trips_the_audit_retention_policies(
             "retention_sweep",
             "retention_sweep_read",
         ]
+
+
+RETENTION_FUNCTIONS = text("""
+SELECT p.oid::regprocedure::text, pg_get_userbyid(p.proowner), p.prosecdef, p.proconfig,
+       has_function_privilege('ziftbook_worker', p.oid, 'EXECUTE'),
+       has_function_privilege('ziftbook_app', p.oid, 'EXECUTE'),
+       has_function_privilege('public', p.oid, 'EXECUTE')
+FROM pg_proc p WHERE p.proname IN ('sweep_audit_events', 'sweep_admin_sessions',
+                                   'sweep_booking_origins')
+ORDER BY 1
+""")
+
+
+# ZIF-235 FENCE (0074). Wrong impl: a downgrade that leaves a function behind; an upgrade whose
+# function runs as its caller, searches a caller's schema first, or is executable by the app role
+# or PUBLIC.
+def test_0074_round_trips_the_retention_functions(
+    migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = lock_timeout_config(monkeypatch)
+    try:
+        command.downgrade(cfg, "0073")
+        with migrate_engine.connect() as conn:
+            assert conn.execute(RETENTION_FUNCTIONS).all() == []
+    finally:
+        command.upgrade(cfg, "head")
+    pinned = ["search_path=pg_catalog, public, pg_temp"]
+    with migrate_engine.connect() as conn:
+        assert [tuple(row) for row in conn.execute(RETENTION_FUNCTIONS)] == [
+            (name, "ziftbook_migrate", True, pinned, True, False, False)
+            for name in (
+                "sweep_admin_sessions()",
+                "sweep_audit_events()",
+                "sweep_booking_origins(uuid)",
+            )
+        ]
