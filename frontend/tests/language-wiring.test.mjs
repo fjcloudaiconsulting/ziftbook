@@ -51,3 +51,16 @@ describe("the moves to the person's own language are wired in", () => {
     assert.match(src, /if \(language !== locale\) return null;/);
   });
 });
+
+const hook = () => {
+  const src = read("../app/[locale]/_ui/header.tsx");
+  return src.slice(src.indexOf("export function useOwnLanguage("), src.indexOf("export function OwnLanguageSwitcher("));
+};
+
+describe("the public hook's own safeguards, where they are wired", () => {
+  test("fence: the hook honours `hold` before it can move the page", () => {
+    // Wrong implementation killed: `hold` passed by the checkout but ignored, so a signed-in viewer
+    // back from Stripe is moved mid-resume and the checkout remounts and checks again.
+    assert.match(hook(), /setViewer\([^;]*\);\s*if \(hold\) return;\s*const own = resolveLocale\(/);
+  });
+});
