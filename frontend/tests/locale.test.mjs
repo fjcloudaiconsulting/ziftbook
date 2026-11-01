@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { browserLocale, forgetPick, pickedHere, recordPick, resolveLocale, takeUnsavedNotice } from "../lib/locale.ts";
+import { browserLocale, forgetPick, pickedHere, recordPick, resolveLocale, savePickedLanguage, takeUnsavedNotice } from "../lib/locale.ts";
 
 describe("a language picked with the language button", () => {
   test("fence: a pick that could not be saved is remembered for this tab", () => {
@@ -95,5 +95,28 @@ describe("browserLocale", () => {
   test("guard: none of ours, none at all", () => {
     assert.equal(browserLocale(["de", "fr-FR"]), null);
     assert.equal(browserLocale([]), null);
+  });
+});
+
+describe("saving a public page's language pick (savePickedLanguage)", () => {
+  const ana = { user_id: "ana", tenant_id: "salon" };
+
+  test("fence: a session that changed to someone else in another tab is never written", async () => {
+    // Wrong implementation killed: the PUT sent straight away, which saves the pick to whoever's
+    // cookie the browser now holds (Bruno), while telling the clicker it was saved.
+    let put = 0;
+    const result = await savePickedLanguage(ana, async () => ({ status: 200, data: { user_id: "bruno", tenant_id: "salon" } }), async () => {
+      put += 1;
+      return { status: 200 };
+    });
+    assert.equal(result, "mismatch");
+    assert.equal(put, 0);
+  });
+
+  test("guard: the same person is saved; a signed-out session and a failed save are not", async () => {
+    const same = async () => ({ status: 200, data: ana });
+    assert.equal(await savePickedLanguage(ana, same, async () => ({ status: 200 })), "saved");
+    assert.equal(await savePickedLanguage(ana, same, async () => ({ status: 503 })), "failed");
+    assert.equal(await savePickedLanguage(ana, async () => ({ status: 401 }), async () => ({ status: 200 })), "signedOut");
   });
 });

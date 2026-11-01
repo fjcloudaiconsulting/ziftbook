@@ -2,6 +2,7 @@
 // sees"). It matches against routing.locales only, never a list of its own (ruling 5).
 
 import { routing } from "../i18n/routing.ts";
+import { guardedWrite } from "./console.ts";
 
 export type Locale = (typeof routing.locales)[number];
 
@@ -75,4 +76,19 @@ export function resolveLocale(input: {
   if (saved) return saved;
   if (surface === "public") return url;
   return browserLocale(browser) ?? known(business) ?? url;
+}
+
+type Identity = { user_id: string; tenant_id: string };
+
+/** A public page's language pick, saved to the signed-in person it was offered to: through the same
+ * same-session check as every console write (lib/console.ts guardedWrite), so a sign-in as someone
+ * else in another tab is never written. "mismatch": reload, as the console does. */
+export async function savePickedLanguage(
+  viewer: Identity,
+  readSession: () => Promise<{ status: number; data?: Identity }>,
+  put: () => Promise<{ status: number }>,
+): Promise<"saved" | "failed" | "mismatch" | "signedOut"> {
+  const result = await guardedWrite(readSession, viewer, put);
+  if (result.kind === "mismatch" || result.kind === "signedOut") return result.kind;
+  return result.kind === "sent" && result.outcome.status === 200 ? "saved" : "failed";
 }

@@ -6,7 +6,7 @@ import { type MouseEvent, useEffect, useId, useRef, useState } from "react";
 import { accountSetLocale, sessionRead } from "@/api-client";
 import { Link, usePathname, useRouter } from "@/i18n/navigation";
 import { routing } from "@/i18n/routing";
-import { pickedHere, recordPick, resolveLocale, takeUnsavedNotice } from "@/lib/locale";
+import { pickedHere, recordPick, resolveLocale, savePickedLanguage, takeUnsavedNotice } from "@/lib/locale";
 
 import { send } from "./parts";
 import styles from "./ui.module.css";
@@ -142,13 +142,6 @@ export function LanguageSwitcher({ save }: { save?: SaveLanguage }) {
   );
 }
 
-/** ZIF-102: on a public page, a signed-in viewer's language button saves to their account (signed
- * out, it changes only this view). GET /api/session tells them apart: a 401 is a guest. */
-async function savePublic(locale: Locale): Promise<boolean> {
-  const outcome = await send(accountSetLocale({ body: { locale } }));
-  return outcome.status === 200;
-}
-
 /**
  * ZIF-102, ruling 4: on a public page, the booking page included, a signed-in viewer's own language
  * wins over the link (CONTRIBUTING.md, "Which language a person sees"); a guest keeps the page's.
@@ -160,13 +153,14 @@ export function useOwnLanguage({ hold = false }: { hold?: boolean } = {}): SaveL
   const locale = useLocale();
   const pathname = usePathname();
   const router = useRouter();
-  const [signedIn, setSignedIn] = useState(false);
+  // The person the page was read for: a pick saves to them only (savePickedLanguage).
+  const [viewer, setViewer] = useState<{ user_id: string; tenant_id: string } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     void send(sessionRead()).then((outcome) => {
       if (cancelled || outcome.status !== 200 || !outcome.data) return;
-      setSignedIn(true);
+      setViewer({ user_id: outcome.data.user_id, tenant_id: outcome.data.tenant_id });
       if (hold) return;
       const own = resolveLocale({
         own: outcome.data.locale,
@@ -186,7 +180,15 @@ export function useOwnLanguage({ hold = false }: { hold?: boolean } = {}): SaveL
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  return signedIn ? savePublic : undefined;
+  if (!viewer) return undefined;
+  return async (picked) => {
+    const result = await savePickedLanguage(viewer, () => send(sessionRead()), () => send(accountSetLocale({ body: { locale: picked } })));
+    // Someone else signed in in another tab: start over as them, as the console does.
+    if (result === "mismatch") window.location.reload();
+    // Signed out meanwhile: the button changes only this view again.
+    if (result === "signedOut") setViewer(null);
+    return result === "saved";
+  };
 }
 
 /** The language button of a public page, for a signed-in viewer their own language (useOwnLanguage). */
