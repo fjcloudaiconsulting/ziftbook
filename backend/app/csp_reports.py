@@ -382,6 +382,7 @@ _drop_error: str | None = None
 _drops_logged_at: float | None = None
 _drops_since: float | None = None  # when the first count not yet written was made
 _series: set[tuple[str, str, str]] = set()
+_timer_failure_logged = False
 _lines_since: float | None = None
 _lines = 0
 
@@ -389,6 +390,8 @@ _lines = 0
 def reset() -> None:
     """Back to a fresh process: for tests."""
     global _in_flight, _drop_error, _drops_logged_at, _drops_since, _lines_since, _lines
+    global _timer_failure_logged
+    _timer_failure_logged = False
     _in_flight = 0
     _drops.clear()
     _drop_error = None
@@ -435,10 +438,18 @@ def _drop(reason: str, count: int = 1) -> Response:
 
 
 async def flush_drops_every(interval: float = DROP_EVERY) -> None:
-    """Run by the API's lifespan: writes counts that no later report would, within two minutes."""
+    """Run by the API's lifespan: writes counts that no later report would, within two minutes. A
+    tick that fails is logged once and the timer goes on: it never dies, so it never takes the
+    shutdown down with it."""
+    global _timer_failure_logged
     while True:
         await asyncio.sleep(interval)
-        _flush_drops()
+        try:
+            _flush_drops()
+        except Exception:
+            if not _timer_failure_logged:
+                _timer_failure_logged = True
+                logger.error("csp drop timer failed", exc_info=True)
 
 
 def flush_drops_now() -> None:

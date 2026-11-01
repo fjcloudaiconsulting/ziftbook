@@ -485,7 +485,8 @@ loggers (`web.*`); Next's own stderr output (banners, SSR error traces) is not i
   `busy` (two limiter calls already running), `rate_limited` (30 a minute per address, IPv6 per /48),
   `limiter_unavailable` (the database could not count), `disconnected` (the client hung up mid-report), `foreign`
   (a page on another origin), `batch_cap` (past 10 violations in one request) and `global_cap` (past the line
-  budget).
+  budget). `csp drop timer failed` (ERROR, with `exc`, once per process): the timer's write failed; it keeps
+  ticking.
 - `ZIF_LOG_SQL=true` logs SQL statements, never their values, when `ZIF_LOG_LEVEL` is `DEBUG`; off by
   default.
 - Ids only: never a password, token or its hash, cookie, email address, name, business or service name,

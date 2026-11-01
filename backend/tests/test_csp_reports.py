@@ -791,6 +791,30 @@ def test_the_api_lifespan_runs_the_drop_timer_and_flushes_at_shutdown(
     assert events == ["timer started", "timer stopped", "flushed"]
 
 
+# 16e. Re-verify N1: a tick that raises is logged once, as an ERROR, and the timer keeps ticking.
+def test_a_failing_tick_is_logged_once_and_the_timer_keeps_ticking(
+    log_lines: Lines, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ticks: list[int] = []
+
+    def failing(force: bool = False) -> None:
+        ticks.append(1)
+        raise RuntimeError("tick")
+
+    monkeypatch.setattr(csp_reports, "_flush_drops", failing)
+
+    async def run() -> None:
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(csp_reports.flush_drops_every(0.01), 0.3)
+
+    asyncio.run(run())
+
+    assert len(ticks) > 2
+    failed = [line for line in log_lines() if line["msg"] == "csp drop timer failed"]
+    assert [line["level"] for line in failed] == ["ERROR"]
+    assert failed[0]["exc"][0]["type"] == "builtins.RuntimeError"
+
+
 # 17. B3 fence: a report another site's page sent is dropped before any database work.
 @pytest.mark.parametrize("site", ["cross-site", "same-site", "none", "CROSS-SITE", "junk"])
 def test_a_report_not_from_this_origin_is_dropped_before_the_limiter(
