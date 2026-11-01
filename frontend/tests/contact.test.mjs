@@ -49,6 +49,12 @@ describe("the contact line", () => {
     assert.doesNotMatch(line, /`mailto:/);
   });
 
+  test("fence: the label is for screen readers only, right before the link", () => {
+    // Wrong implementation killed: a plain span, which shows "Contact email:" as visible text on both pages.
+    assert.match(line, /<MailIcon \/>\s*<span className=\{styles\.srOnly\}>\{label\}<\/span>\s*<a href=/);
+    assert.match(read("../app/[locale]/_ui/ui.module.css"), /^\.srOnly \{/m);
+  });
+
   test("fence: the booking page shows it in the business header only when there is an address", () => {
     // Wrong implementation killed: an empty line (icon, label, empty link) when the setting is empty.
     const page = read("../app/[locale]/[slug]/services-page.tsx");
