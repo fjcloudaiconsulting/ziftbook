@@ -68,6 +68,8 @@ DENY = {
         **{"mknodat": 33, "mkdirat": 34, "unlinkat": 35, "symlinkat": 36, "linkat": 37},
         **{"renameat": 38, "renameat2": 276, "truncate": 45, "ftruncate": 46},
         **{"fchmod": 52, "fchmodat": 53, "fchmodat2": 452, "openat2": 437},
+        **{"setpriority": 140, "ioprio_set": 30, "pidfd_open": 434, "pidfd_send_signal": 424},
+        **{"process_vm_writev": 271, "kcmp": 272},
     },
     "x86_64": {
         **{"socket": 41, "socketpair": 53, "io_uring_setup": 425},
@@ -76,7 +78,29 @@ DENY = {
         **{"link": 86, "linkat": 265, "rename": 82, "renameat": 264, "renameat2": 316},
         **{"truncate": 76, "ftruncate": 77, "creat": 85, "openat2": 437},
         **{"chmod": 90, "fchmod": 91, "fchmodat": 268, "fchmodat2": 452},
+        **{"setpriority": 141, "ioprio_set": 251, "pidfd_open": 434, "pidfd_send_signal": 424},
+        **{"process_vm_writev": 311, "kcmp": 312},
     },
+}
+# Syscalls that name a process, allowed only on the child itself: its pid as the first argument
+# (SELF), or its pid or 0, which means itself (SELF_OR_ZERO). A same-uid kill, prlimit64 or
+# scheduler call needs no capability and ignores dumpability, so without these a child taken over
+# by a decoder bug could end or degrade the API. glibc's raise() and setrlimit() stay allowed.
+SELF = {
+    "aarch64": {"kill": 129, "tkill": 130, "tgkill": 131},
+    "x86_64": {"kill": 62, "tkill": 200, "tgkill": 234},
+}
+SELF |= {
+    "aarch64": SELF["aarch64"] | {"rt_sigqueueinfo": 138, "rt_tgsigqueueinfo": 240},
+    "x86_64": SELF["x86_64"] | {"rt_sigqueueinfo": 129, "rt_tgsigqueueinfo": 297},
+}
+SELF_OR_ZERO = {
+    "aarch64": {"prlimit64": 261, "sched_setparam": 118, "sched_setscheduler": 119},
+    "x86_64": {"prlimit64": 302, "sched_setparam": 142, "sched_setscheduler": 144},
+}
+SELF_OR_ZERO |= {
+    "aarch64": SELF_OR_ZERO["aarch64"] | {"sched_setaffinity": 122, "sched_setattr": 274},
+    "x86_64": SELF_OR_ZERO["x86_64"] | {"sched_setaffinity": 203, "sched_setattr": 314},
 }
 OPENS = {"aarch64": {56: 2}, "x86_64": {2: 1, 257: 2}}  # open(at): the index of its flags argument
 AUDIT_ARCH = {"aarch64": 0xC00000B7, "x86_64": 0xC000003E}
@@ -92,8 +116,9 @@ def _bpf(code: int, jt: int, jf: int, k: int) -> bytes:
     return struct.pack("=HBBI", code, jt, jf, k)
 
 
-def program(machine: str) -> bytes:
-    """The filter as classic BPF over struct seccomp_data (nr at 0, arch at 4, args from 16)."""
+def program(machine: str, pid: int) -> bytes:
+    """The filter as classic BPF over struct seccomp_data (nr at 0, arch at 4, args from 16), for
+    the process pid (the child: single-threaded, so its one thread's id is its pid too)."""
     ld, jeq, jge, jset, ret = 0x20, 0x15, 0x35, 0x45, 0x06
     allow, kill, eperm = 0x7FFF0000, 0x80000000, 0x00050000 | errno.EPERM
     code = [_bpf(ld, 0, 0, 4), _bpf(jeq, 1, 0, AUDIT_ARCH[machine]), _bpf(ret, 0, 0, kill)]
@@ -102,6 +127,13 @@ def program(machine: str) -> bytes:
         code += [_bpf(jge, 0, 1, X32), _bpf(ret, 0, 0, kill)]
     for nr in sorted(DENY[machine].values()):
         code += [_bpf(jeq, 0, 1, nr), _bpf(ret, 0, 0, eperm)]
+    # A pid is an int: its argument's low 32 bits (a negative one, as -1 for all, differs).
+    for nr in sorted(SELF[machine].values()):
+        code += [_bpf(jeq, 0, 4, nr), _bpf(ld, 0, 0, 16), _bpf(jeq, 1, 0, pid)]
+        code += [_bpf(ret, 0, 0, eperm), _bpf(ret, 0, 0, allow)]
+    for nr in sorted(SELF_OR_ZERO[machine].values()):
+        code += [_bpf(jeq, 0, 5, nr), _bpf(ld, 0, 0, 16), _bpf(jeq, 2, 0, pid), _bpf(jeq, 1, 0, 0)]
+        code += [_bpf(ret, 0, 0, eperm), _bpf(ret, 0, 0, allow)]
     for nr, flags in OPENS[machine].items():
         # Not this syscall: skip its four instructions, the number still loaded for the next.
         code += [_bpf(jeq, 0, 4, nr), _bpf(ld, 0, 0, 16 + 8 * flags)]
@@ -119,7 +151,7 @@ def confine() -> None:
     requires of an unprivileged process (Kubernetes already sets it)."""
     if sys.platform != "linux":
         return
-    code = program(os.uname().machine)  # KeyError on another architecture: refused
+    code = program(os.uname().machine, os.getpid())  # KeyError elsewhere: refused
     buffer = ctypes.create_string_buffer(code)
     prog = _Program(len(code) // 8, ctypes.cast(buffer, ctypes.c_void_p))
     prctl = ctypes.CDLL(None, use_errno=True).prctl

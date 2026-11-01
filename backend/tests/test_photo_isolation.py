@@ -390,6 +390,34 @@ def test_the_child_cannot_change_the_filesystem() -> None:
     assert probe_says("probe-write") == "PermissionError_PermissionError_PermissionError"
 
 
+def own_state() -> dict[str, object]:
+    me = os.getpid()
+    if sys.platform != "linux":
+        return {}
+    return {
+        "limits": {
+            n: resource.getrlimit(getattr(resource, n)) for n in dir(resource) if n[:7] == "RLIMIT_"
+        },
+        "nice": os.getpriority(os.PRIO_PROCESS, me),
+        "affinity": os.sched_getaffinity(me),
+        "policy": os.sched_getscheduler(me),
+    }
+
+
+# ZIF-230 fence (build review, security 1). Kills: a child that a decoder bug took over killing or
+# degrading the API by its pid: same-uid kill, prlimit64, setpriority, the scheduler calls and
+# ioprio need no capability, and non-dumpability does not cover them. Each is refused unless it
+# names the child itself; this process's limits, priority, affinity and policy stay as they were.
+@only_linux
+def test_the_child_cannot_reach_the_api_by_its_pid() -> None:
+    before = own_state()
+    try:
+        assert decode(probe("probe-parent", PNG)).width == 20
+    except photos.Refusal as refusal:
+        pytest.fail(f"check {refusal.fields.get('exit_code', 0) - 10} was not refused: {refusal}")
+    assert own_state() == before
+
+
 def status(pid: int | str) -> dict[str, str]:
     with open(f"/proc/{pid}/status") as lines:
         return {k: v.strip() for k, v in (line.split(":", 1) for line in lines)}
@@ -588,6 +616,42 @@ def test_the_decoder_limits_are_pinned() -> None:
     assert (photos.OUTPUT_CAP, photo_decode.ICC_CAP) == (4 * mib, mib)
     assert photos.MAX_PIXELS == photo_decode.JPEG_CAP
     assert photos.MAX_BYTES == photo_child.MAX_BYTES == 10 * mib
+
+
+# ZIF-230 fence (build review, security 1). Kills: a syscall that names a process dropped from the
+# filter, or a number drifting from the kernel's table (tests/photo_child_probe.py checks them
+# against its own table on the architecture it runs on).
+def test_the_filter_tables_are_pinned() -> None:
+    assert photo_child.SELF == {
+        "aarch64": {
+            **{"kill": 129, "tkill": 130, "tgkill": 131},
+            **{"rt_sigqueueinfo": 138, "rt_tgsigqueueinfo": 240},
+        },
+        "x86_64": {
+            **{"kill": 62, "tkill": 200, "tgkill": 234},
+            **{"rt_sigqueueinfo": 129, "rt_tgsigqueueinfo": 297},
+        },
+    }
+    assert photo_child.SELF_OR_ZERO == {
+        "aarch64": {
+            **{"prlimit64": 261, "sched_setparam": 118, "sched_setscheduler": 119},
+            **{"sched_setaffinity": 122, "sched_setattr": 274},
+        },
+        "x86_64": {
+            **{"prlimit64": 302, "sched_setparam": 142, "sched_setscheduler": 144},
+            **{"sched_setaffinity": 203, "sched_setattr": 314},
+        },
+    }
+    named = {"setpriority", "ioprio_set", "pidfd_open", "pidfd_send_signal"}
+    named |= {"process_vm_writev", "kcmp"}
+    assert {k: photo_child.DENY["aarch64"][k] for k in named} == {
+        **{"setpriority": 140, "ioprio_set": 30, "pidfd_open": 434, "pidfd_send_signal": 424},
+        **{"process_vm_writev": 271, "kcmp": 272},
+    }
+    assert {k: photo_child.DENY["x86_64"][k] for k in named} == {
+        **{"setpriority": 141, "ioprio_set": 251, "pidfd_open": 434, "pidfd_send_signal": 424},
+        **{"process_vm_writev": 311, "kcmp": 312},
+    }
 
 
 def imports(path: Path) -> set[str]:
