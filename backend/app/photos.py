@@ -22,7 +22,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
-from typing import IO, Annotated, Any, Literal
+from typing import IO, Annotated, Any, Literal, get_args
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request, Response
@@ -443,6 +443,26 @@ def _run(upload: IO[bytes]) -> Run:
 
 
 FORMATS = Literal["JPEG", "PNG", "WEBP"]
+# photo_decode.ERRORS (pinned equal by a test): the names a refusal's error can take.
+ERROR = Literal[
+    "unsafe_container",
+    "pixel_cap",
+    "exif_cap",
+    "icc_cap",
+    "UnidentifiedImageError",
+    "DecompressionBombError",
+    "OSError",
+    "ValueError",
+    "SyntaxError",
+    "TypeError",
+    "AttributeError",
+    "error",
+]
+ERRORS = get_args(ERROR)
+# A child's usage, bounded: twice its limits leaves room for accounting and stops a huge number
+# reaching a log.
+PEAK_KB = Annotated[int, Field(ge=0, le=2 * photo_child.MEMORY // 1024)]
+CPU_MS = Annotated[int, Field(ge=0, le=2 * photo_child.CPU[1] * 1000)]
 
 
 class Decoded(BaseModel):
@@ -454,20 +474,19 @@ class Decoded(BaseModel):
     height: Annotated[int, Field(ge=1, le=1200)]
     thumb: Annotated[int, Field(ge=1)]
     detail: Annotated[int, Field(ge=1)]
-    peak_kb: Annotated[int, Field(ge=0)]
-    cpu_ms: Annotated[int, Field(ge=0)]
+    peak_kb: PEAK_KB
+    cpu_ms: CPU_MS
 
 
 class Refused(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid")
     kind: Literal["refused"]
     code: Literal["photo_type", "photo_unreadable"]
-    # A class or check name: it goes into a log line as it is.
-    error: Annotated[str, Field(pattern=r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")]
+    error: ERROR  # it goes into a log line: a closed set, never the child's own text
     format: FORMATS | None
     pixels: Annotated[int, Field(ge=1, le=2**62)] | None
-    peak_kb: Annotated[int, Field(ge=0)]
-    cpu_ms: Annotated[int, Field(ge=0)]
+    peak_kb: PEAK_KB
+    cpu_ms: CPU_MS
 
 
 _RECORD: TypeAdapter[Decoded | Refused] = TypeAdapter(
