@@ -802,6 +802,23 @@ def test_past_the_line_budget_no_violation_is_logged_and_one_drop_line_says_so(
     assert drop["global_cap"] == 1
 
 
+# 19b. Build review 2: the budget is a minute's, so violations are logged again the next minute.
+def test_the_line_budget_is_per_minute(
+    app: FastAPI, log_lines: Lines, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    now = [1000.0]
+    monkeypatch.setattr(csp_reports, "_now", lambda: now[0])
+    monkeypatch.setattr(csp_reports, "LINE_BUDGET", 1)
+    for directive in ("img-src", "font-src"):
+        post(new_client(app, fresh_address()), legacy(**{"effective-directive": directive}))
+    assert len(violations(log_lines)) == 1
+
+    now[0] += csp_reports.DROP_EVERY
+    post(new_client(app, fresh_address()), legacy(**{"effective-directive": "media-src"}))
+
+    assert [line["directive"] for line in violations(log_lines)] == ["img-src", "media-src"]
+
+
 # 20. N6: every violation is counted, including those the line budget drops; foreign ones never.
 def test_every_violation_is_counted_in_the_metric(
     client: TestClient, monkeypatch: pytest.MonkeyPatch, metric_reader: InMemoryMetricReader
