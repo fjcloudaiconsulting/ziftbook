@@ -9348,7 +9348,7 @@
           "pending_consents"
         ],
         "title": "LinkedBooking",
-        "description": "Never the client's name, email, phone or ids, nor the worker id, source or events: the\nlink is a bearer credential (spec S4, test 12)."
+        "description": "Never the client's name, email, phone or ids, nor the worker id, source or events: the\nlink is a bearer credential (spec S4, test 12). The business's own contact email is included\non purpose (ZIF-99): it is the business's public address, not the client's."
       },
       "LocaleIn": {
         "properties": {
@@ -11279,6 +11279,17 @@
                 "type": "null"
               }
             ]
+          },
+          "contact_email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contact Email"
           }
         },
         "type": "object",
@@ -11295,7 +11306,8 @@
           "worker_display_name",
           "cancellation_policy_text",
           "paid",
-          "card_fee"
+          "card_fee",
+          "contact_email"
         ],
         "title": "BookingOut"
       },

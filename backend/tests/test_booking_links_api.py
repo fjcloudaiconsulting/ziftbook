@@ -386,7 +386,10 @@ def test_linked_booking_carries_no_client_identity(
 ) -> None:
     email = fresh_email()
     booking_id = confirmed_booking(app, people.a, ready, email=email)
-    assert patch(signed_in(app, people.a, people.both), booking_id, "confirmed").status_code == 200
+    owner = signed_in(app, people.a, people.both)
+    assert patch(owner, booking_id, "confirmed").status_code == 200
+    # ZIF-99: the business's own contact email is in the payload on purpose; the client's is not.
+    assert put_settings(owner, {"contact_email": "shop@example.com"}).status_code == 200
     client = linked(app, people.a, booking_id)
 
     body = get(client).json()
@@ -417,7 +420,9 @@ def test_linked_booking_carries_no_client_identity(
         "cancellation_policy_text",
         "paid",
         "card_fee",
+        "contact_email",
     }
+    assert body["booking"]["contact_email"] == "shop@example.com"
     assert "Guest" not in blob  # post_booking's default client name
     assert email not in blob
     with tenant_context(people.a) as session:
@@ -426,6 +431,33 @@ def test_linked_booking_carries_no_client_identity(
         ).one()
     assert str(ids.client_id) not in blob
     assert str(ids.worker_id) not in blob
+
+
+# ZIF-99 fence. The manage page shows the business's own contact email, read in the link's own
+# tenant: the saved setting, null when there is none, never another business's. Every route that
+# answers a LinkedBooking builds it through the one view, so GET and the cancel answer stand for
+# all of them. Kills a hard-coded null, a read outside the link's tenant, and a cancel answer
+# that drops the field.
+def test_the_manage_page_shows_the_business_s_contact_email(
+    people: People, app: FastAPI, ready: str
+) -> None:
+    booking_id = confirmed_booking(app, people.a, ready)
+    owner = signed_in(app, people.a, people.both)
+    assert patch(owner, booking_id, "confirmed").status_code == 200
+    save_setting(people.b, "contact_email", "other@example.com")  # another business's address
+    client = linked(app, people.a, booking_id)
+
+    assert get(client).json()["booking"]["contact_email"] is None
+
+    assert put_settings(owner, {"contact_email": " Shop@Example.COM "}).status_code == 200
+    body = get(client).json()
+    assert body["booking"]["contact_email"] == "shop@example.com"
+    assert "other@example.com" not in str(body)
+
+    refund_pct = body["engine"]["refund_pct"]
+    cancelled = post(client, "/cancel", cancel_body(booking_id, refund_pct))
+    assert cancelled.status_code == 200
+    assert cancelled.json()["booking"]["contact_email"] == "shop@example.com"
 
 
 # ---------------------------------------------------------------------------
