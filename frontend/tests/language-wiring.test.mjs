@@ -32,3 +32,22 @@ describe("a signed-in viewer's own language on the booking page (ruling 4: on th
     assert.match(read("../app/[locale]/_ui/header.tsx"), /export function Header\(\)[\s\S]*<OwnLanguageSwitcher \/>/);
   });
 });
+
+describe("the moves to the person's own language are wired in", () => {
+  test("fence: the public hook resolves the viewer's language and moves the page to it", () => {
+    // Wrong implementation killed: the move left out, so the resolveLocale fences pass while no page
+    // ever changes language.
+    const src = read("../app/[locale]/_ui/header.tsx");
+    const hook = src.slice(src.indexOf("export function useOwnLanguage("), src.indexOf("export function OwnLanguageSwitcher("));
+    assert.match(hook, /const own = resolveLocale\(\{[\s\S]*surface: "public"[\s\S]*\}\);\s*if \(own !== locale\) router\.replace\(`\$\{pathname\}\$\{window\.location\.search\}`, \{ locale: own \}\);/);
+  });
+
+  test("fence: the console's shell resolves the person's language and moves the page to it", () => {
+    // Wrong implementation killed: a console that never leaves the URL's language, so a Portuguese
+    // speaker in a Dutch salon keeps a Dutch console (the ticket's visible outcome).
+    const src = read("../app/[locale]/_ui/console.tsx");
+    assert.match(src, /const language = session\s*\? resolveLocale\(\{[\s\S]*surface: "console"[\s\S]*\}\)\s*: locale;/);
+    assert.match(src, /if \(language !== locale\) router\.replace\(`\$\{pathname\}\$\{window\.location\.search\}`, \{ locale: language \}\);/);
+    assert.match(src, /if \(language !== locale\) return null;/);
+  });
+});

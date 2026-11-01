@@ -629,3 +629,12 @@ describe("F-currency the currency the page showed", () => {
     assert.equal(repriced(held, undefined), held);
   });
 });
+
+describe("F-currency wiring", () => {
+  test("fence: the booking POST carries the currency of the held service's price", () => {
+    // Wrong implementation killed: the query left out of the call, which the API reads as a page from
+    // the previous release and books (the race reopens with every unit fence still green).
+    const src = readFileSync(new URL("../app/[locale]/[slug]/booking-page.tsx", import.meta.url), "utf8");
+    assert.match(src, /bookingsCreate\(\{ path: \{ tenant_id: page\.id, service_id: f\.service\.id \}, query: bookingQuery\(f\.service\.price\), body:/);
+  });
+});
