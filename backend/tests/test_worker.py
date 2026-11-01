@@ -682,11 +682,13 @@ def test_a_failing_housekeeping_step_does_not_stop_the_other(
         (None, None, "off"),
         ("+10", "WARNING", "on"),
         ("-3", "ERROR", "past"),
+        # The architect's ruling: exclusive, so a hold until today ended at 00:00 UTC today.
+        ("+0", "ERROR", "past"),
         ("0", "ERROR", "invalid"),
         ("bad", "ERROR", "invalid"),
         ("+400", "ERROR", "invalid"),
     ],
-    ids=["unset", "on", "past", "zero", "malformed", "far"],
+    ids=["unset", "on", "past", "today", "zero", "malformed", "far"],
 )
 def test_the_worker_starts_with_its_retention_hold_and_says_so(
     log_lines: Lines,

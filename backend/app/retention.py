@@ -173,9 +173,10 @@ WALK = _Walk()
 class Hold:
     """ZIF_RETENTION_HOLD_UNTIL, parsed (owner ruling D6, the architect's ruling on the review).
 
-    on: a plain YYYY-MM-DD from tomorrow to MAX_HOLD ahead; held until that day (UTC), then over
-    by itself. past: a date that parsed and has come; not held (the worker logs an ERROR at
-    startup: a mistyped year must show). invalid: anything else (`0`, a datetime, a number, more
+    on: a plain YYYY-MM-DD from tomorrow to MAX_HOLD ahead; exclusive, held until 00:00 UTC on
+    that date, then over by itself (today's date has therefore passed). past: a date that parsed
+    and has come; not held (the worker logs an ERROR at startup: a mistyped year must show).
+    invalid: anything else (`0`, a datetime, a number, more
     than MAX_HOLD ahead); held until someone fixes it, with an ERROR every run and no healthcheck
     ping, so it can neither turn the protection off nor keep data quietly for years."""
 
