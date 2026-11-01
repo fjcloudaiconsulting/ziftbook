@@ -419,6 +419,14 @@ def test_only_a_plain_date_within_90_days_is_a_hold_that_ends_by_itself(
     assert hold.held(TODAY) is (state in ("on", "invalid"))
 
 
+# The architect's ruling: the date is exclusive. A hold until D lasts until 00:00 UTC on D; on D it
+# holds nothing, and D given on D itself is a date that has passed.
+def test_a_hold_is_exclusive_of_its_date() -> None:
+    assert retention.parse_hold("2026-11-01", TODAY).state == "past"
+    assert retention.parse_hold("2026-11-02", TODAY).held(date(2026, 11, 1))
+    assert not retention.parse_hold("2026-11-02", TODAY).held(date(2026, 11, 2))
+
+
 def test_an_on_hold_ends_on_its_date_and_an_invalid_one_never() -> None:
     on = retention.parse_hold("2026-11-20", TODAY)
     invalid = retention.parse_hold("0", TODAY)
