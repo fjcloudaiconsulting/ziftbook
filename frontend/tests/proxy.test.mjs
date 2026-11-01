@@ -972,3 +972,54 @@ describe("page Content-Security-Policy, enforced (ZB-12)", () => {
     assert.deepEqual(await rawHeaders(port, "/api/healthz", "content-security-policy"), []);
   });
 });
+
+describe("CSP violation reports (ZIF-236)", () => {
+  let echo, web, refused;
+  const port = 3240;
+  const reports = `https://app.example.test/api/csp-reports`;
+  before(async () => {
+    echo = await stubEcho();
+    web = await startWeb(`http://127.0.0.1:${echo.address().port}`, port, { ZIF_CSP_ENFORCE: undefined, ZIF_CSP_REPORT_URL: reports });
+    refused = await startWeb(`http://127.0.0.1:${echo.address().port}`, port + 1, {
+      ZIF_CSP_ENFORCE: undefined,
+      ZIF_CSP_REPORT_URL: "https://Zzyzx-collector.example.test/csp",
+    });
+  });
+  after(async () => {
+    await stop(web);
+    await stop(refused);
+    echo.close();
+  });
+
+  test("fence: with ZIF_CSP_REPORT_URL set, every page's policy reports there, in both forms", async () => {
+    // Wrong implementation killed: report-to without the Reporting-Endpoints header that names its group.
+    const response = await fetch(`http://127.0.0.1:${port}/en/sign-in`);
+    const policy = response.headers.get("content-security-policy-report-only") ?? "";
+    assert.match(policy, /report-uri https:\/\/app\.example\.test\/api\/csp-reports(;|$)/);
+    assert.match(policy, /report-to csp(;|$)/);
+    assert.equal(response.headers.get("reporting-endpoints"), `csp="${reports}"`);
+    assert.deepEqual(await rawHeaders(port, "/en/sign-in", "content-security-policy"), ["frame-ancestors 'none'"]);
+    const started = parsedLogLines(web.logs.stdout, "started");
+    assert.deepEqual([started[0]?.csp, started[0]?.csp_reports], ["report-only", "on"]);
+  });
+
+  test("fence: a refused ZIF_CSP_REPORT_URL names no endpoint, and the startup line says so without the URL", async () => {
+    const response = await fetch(`http://127.0.0.1:${port + 1}/en/sign-in`);
+    assert.doesNotMatch(response.headers.get("content-security-policy-report-only") ?? "", /report-/);
+    assert.equal(response.headers.get("reporting-endpoints"), null);
+    const [warning] = await waitForLog(refused.logs.stdout, "csp report url refused: violations are not reported");
+    assert.equal(warning?.level, "WARNING");
+    assert.equal(parsedLogLines(refused.logs.stdout, "started")[0]?.csp_reports, "off");
+    assert.doesNotMatch(refused.logs.stdout() + refused.logs.stderr(), /Zzyzx/i);
+  });
+
+  test("a report reaches the API with its own content type and body, in either format", async () => {
+    for (const type of ["application/csp-report", "application/reports+json"]) {
+      const body = type === "application/csp-report" ? '{"csp-report":{}}' : '[{"type":"csp-violation","body":{}}]';
+      const response = await fetch(`http://127.0.0.1:${port}/api/csp-reports`, { method: "POST", headers: { "content-type": type }, body });
+      assert.equal(response.status, 200, type);
+      assert.deepEqual(await response.json(), { method: "POST", body });
+      assert.equal(echo.requests.at(-1)["content-type"], type);
+    }
+  });
+});

@@ -12,6 +12,7 @@ import {
   parseLevel,
   requestErrorFields,
 } from "./lib/log.ts";
+import { cspStartupFields } from "./lib/csp.ts";
 import { meterProvider } from "./lib/trace.ts";
 
 const startupLog = logger("web.startup");
@@ -31,7 +32,10 @@ export function register(): void {
     process.stderr.write(`invalid ${err instanceof Error ? err.message : "ZIF_LOG_FORMAT"}\n`);
     process.exit(1);
   }
-  startupLog.info("started", { log_level: level, log_format: format });
+  const csp = cspStartupFields();
+  startupLog.info("started", { log_level: level, log_format: format, ...csp.fields });
+  // ZIF-236: set but refused, violations would go unreported with nothing to say so. Never the value.
+  if (csp.refused) startupLog.warning("csp report url refused: violations are not reported");
 }
 
 export function onRequestError(err: unknown, request: ErrorRequest, context: ErrorContext): void {
