@@ -910,11 +910,35 @@ def test_the_retention_flag_reads_no_other_business_through_a_definer(
 
 # ---- M2: what each function's body may write ----
 
-# A statement that writes a table; FOR UPDATE (a row lock) is not one.
-WRITES = re.compile(
-    r"(?<!for )\b(update|insert\s+into|delete\s+from|merge\s+into|truncate(?:\s+table)?)\s+(\w+)",
+# An allow-list (re-verify N2): the body is cut into statements (at `;` and after THEN, ELSE,
+# LOOP, BEGIN and DECLARE, so nothing hides behind a condition), and each one must open with a
+# plpgsql construct these functions use, or be one of the writes the function exists for. Anything
+# else (DDL, COPY, GRANT, MERGE, TRUNCATE, INSERT, EXECUTE, CALL, a WITH that writes) is refused.
+ALLOWED = [
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r"^$",
+        r"^end(\s+(if|loop))?$",
+        r"^(exit|return)$",
+        r"^perform\s",
+        r"^get\s+diagnostics\s+\w+\s*=\s*row_count$",
+        r"^(if|elsif)\s",
+        r"^for\s+\w+\s+in\s+select\s",
+        r"^\w+\s*:=",  # an assignment
+        r"^\w+\s+(text|uuid|integer|boolean)\b",  # a declaration
+    )
+]
+# A write, with its table quoted, schema-qualified or neither.
+TABLE = r'(?:"?public"?\.)?"?(\w+)"?'
+WRITE = re.compile(rf"^(update|delete\s+from)\s+{TABLE}", re.IGNORECASE)
+# Every write verb anywhere in the body, as a second layer under the allow-list; FOR UPDATE (a row
+# lock) is not one.
+WRITES_ANYWHERE = re.compile(
+    rf"(?<!for )\b(update|insert\s+into|delete\s+from|merge\s+into|truncate(?:\s+table)?"
+    rf"|alter\s+table|drop\s+table|create\s+table|copy|grant)\s+{TABLE}",
     re.IGNORECASE,
 )
+SPLIT = re.compile(r";|\b(?:then|else|loop|begin|declare)\b", re.IGNORECASE)
 # Dynamic SQL: a write the static check cannot read.
 DYNAMIC = re.compile(r"\bexecute\b", re.IGNORECASE)
 CALLS = re.compile(r"\b(\w+)\s*\(")
@@ -925,8 +949,25 @@ BOOKING_ORIGIN_WRITE = re.compile(
 )
 
 
+def statements(source: str) -> list[str]:
+    return [" ".join(part.split()) for part in SPLIT.split(code(source))]
+
+
 def writes(source: str) -> list[tuple[str, str]]:
-    return [(verb.lower().split()[0], table) for verb, table in WRITES.findall(code(source))]
+    """The writes the body's statements make, and refused statements as ("refused", text)."""
+    found: list[tuple[str, str]] = []
+    for statement in statements(source):
+        write = WRITE.match(statement)
+        if write:
+            found.append((write.group(1).lower().split()[0], write.group(2)))
+        elif not any(pattern.match(statement) for pattern in ALLOWED):
+            found.append(("refused", statement[:60]))
+    anywhere = [
+        (verb.lower().split()[0], table) for verb, table in WRITES_ANYWHERE.findall(code(source))
+    ]
+    if sorted(anywhere) != sorted(w for w in found if w[0] != "refused"):
+        found.append(("hidden", repr(anywhere)))
+    return found
 
 
 def violations(source: str, own: str, schema_functions: set[str]) -> list[str]:
@@ -976,8 +1017,9 @@ def definitions(conn: Connection) -> dict[str, str]:
 
 
 # M2: FENCE (review B2; build review, security #4). Wrong impl: a body that writes anything else:
-# another column of a booking event (its evidence), another table, an INSERT, DELETE, MERGE or
-# TRUNCATE, dynamic SQL, or a call to another function of ours that writes for it. booking_events,
+# another column of a booking event (its evidence), another table (quoted or schema-qualified
+# too), an INSERT, DELETE, MERGE or TRUNCATE, DDL, COPY or GRANT, a write behind a condition or in a
+# WITH, dynamic SQL, or a call to another function of ours that writes for it. booking_events,
 # platform events and admin sessions have no policy holding the line, so this and the boundary
 # tests do.
 def test_each_retention_function_writes_only_what_it_is_for(migrate_engine: Engine) -> None:
@@ -1006,8 +1048,47 @@ def test_each_retention_function_writes_only_what_it_is_for(migrate_engine: Engi
         " EXECUTE 'UPDATE booking_events SET details = NULL'",
         "UPDATE booking_events e SET ip = NULL, user_agent = NULL WHERE true;"
         " PERFORM other_writer()",
+        # Re-verify N2: forms a deny-list of verbs and bare names let through.
+        "UPDATE booking_events e SET ip = NULL, user_agent = NULL WHERE true;"
+        ' UPDATE "booking_events" SET details = NULL',
+        "UPDATE booking_events e SET ip = NULL, user_agent = NULL WHERE true;"
+        ' DELETE FROM "platform_audit_events"',
+        "UPDATE booking_events e SET ip = NULL, user_agent = NULL WHERE true;"
+        " UPDATE public.booking_events SET details = NULL",
+        "UPDATE booking_events e SET ip = NULL, user_agent = NULL WHERE true;"
+        " ALTER TABLE booking_events DROP COLUMN details",
+        "UPDATE booking_events e SET ip = NULL, user_agent = NULL WHERE true;"
+        " DROP TABLE platform_audit_events",
+        "UPDATE booking_events e SET ip = NULL, user_agent = NULL WHERE true;"
+        " CREATE TABLE copy_of AS SELECT * FROM booking_events",
+        "UPDATE booking_events e SET ip = NULL, user_agent = NULL WHERE true;"
+        " COPY audit_events FROM PROGRAM 'x'",
+        "UPDATE booking_events e SET ip = NULL, user_agent = NULL WHERE true;"
+        " GRANT DELETE ON booking_events TO ziftbook_app",
+        "UPDATE booking_events e SET ip = NULL, user_agent = NULL WHERE true;"
+        " IF true THEN DROP TABLE booking_events; END IF",
+        "UPDATE booking_events e SET ip = NULL, user_agent = NULL WHERE true;"
+        " WITH gone AS (DELETE FROM booking_events RETURNING 1) SELECT 1",
     ],
-    ids=["column", "half", "delete", "merge", "truncate", "execute", "call"],
+    ids=[
+        "column",
+        "half",
+        "delete",
+        "merge",
+        "truncate",
+        "execute",
+        "call",
+        "quoted update",
+        "quoted delete",
+        "schema update",
+        "alter",
+        "drop",
+        "create",
+        "copy",
+        "grant",
+        "after then",
+        "cte",
+    ],
 )
 def test_the_write_check_catches_a_wider_statement(statement: str) -> None:
     schema = frozenset({"other_writer", "sweep_booking_origins"})
