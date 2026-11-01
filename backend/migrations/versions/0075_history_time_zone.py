@@ -9,7 +9,9 @@ booking page: nothing about the person is added.
 Expand-safe for the release still running: its history route reads SELECT * by column name, and
 every 0058 column keeps its name, type and place. A new return type needs DROP and CREATE (CREATE OR
 REPLACE cannot change one), so both run in this migration's one transaction, and the grant is given
-again; a call during it waits on the function's lock and then sees the new one.
+again. Calling a function takes no lock: a call made meanwhile does not wait, it runs the old
+committed function until this transaction commits, and the new one after. No caller ever finds
+the function missing.
 
 OLD is 0058's own_bookings verbatim (tests/test_migrations.py), so the downgrade restores it byte
 for byte. USABLE is 0057's, verbatim, as in 0058.
