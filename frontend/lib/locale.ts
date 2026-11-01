@@ -10,34 +10,33 @@ function known(value: string | null | undefined): Locale | null {
   return value && (routing.locales as readonly string[]).includes(value) ? (value as Locale) : null;
 }
 
-// A language the person picked with the language button in this tab that could not be saved to
-// their account. It applies to this tab until the page is loaded again ("on this device only for
-// now"); a saved pick needs nothing here, the account holds it.
-let unsaved: string | null = null;
-// Whether the page a pick led to still has to say it could not be saved (once).
-let untold = false;
+// A language a person picked with the language button in this tab that could not be saved to their
+// account, with who picked it. It applies to that person in this tab until the page is loaded again
+// ("on this device only for now"); a saved pick needs nothing here, the account holds it. Bound to
+// the person, so someone who signs in next in the same tab (after a sign-out or an expired session)
+// gets their own language.
+let unsaved: { user: string; locale: string; untold: boolean } | null = null;
 
-export function recordPick(locale: string, saved: boolean): void {
-  unsaved = saved ? null : locale;
-  untold = !saved;
+export function recordPick(user: string, locale: string, saved: boolean): void {
+  unsaved = saved ? null : { user, locale, untold: true };
 }
 
-/** True once, on the page in the language of a pick that could not be saved: the language menu
- * then opens there to say so. */
-export function takeUnsavedNotice(locale: string): boolean {
-  if (!untold || unsaved !== locale) return false;
-  untold = false;
+/** True once, for the person who picked, on the page in the language of a pick that could not be
+ * saved: the language menu then opens there to say so. */
+export function takeUnsavedNotice(user: string, locale: string): boolean {
+  if (!unsaved?.untold || unsaved.user !== user || unsaved.locale !== locale) return false;
+  unsaved.untold = false;
   return true;
 }
 
-export function pickedHere(): string | null {
-  return unsaved;
+/** The language this person picked here that could not be saved, else null (resolveLocale's `picked`). */
+export function pickedHere(user: string): string | null {
+  return unsaved?.user === user ? unsaved.locale : null;
 }
 
-/** On sign-out: the next person's own language applies. */
+/** On sign-out: nothing is left for whoever signs in next. */
 export function forgetPick(): void {
   unsaved = null;
-  untold = false;
 }
 
 /** The first of the browser's languages (navigator.languages, in its order) that we speak, matched

@@ -7,41 +7,51 @@ import { describe, test } from "node:test";
 
 import { browserLocale, forgetPick, isAdminPath, pickedHere, recordPick, resolveLocale, savePickedLanguage, takeUnsavedNotice } from "../lib/locale.ts";
 
+const base = { own: null, signedIn: true, surface: "console", browser: [], business: null, url: "en", picked: null };
+
 describe("a language picked with the language button", () => {
   test("fence: a pick that could not be saved is remembered for this tab", () => {
     // Wrong implementation killed: forgetting it, so the saved language takes the page back.
     forgetPick();
-    recordPick("pt", false);
-    assert.equal(pickedHere(), "pt");
+    recordPick("ana", "pt", false);
+    assert.equal(pickedHere("ana"), "pt");
   });
 
   test("fence: a saved pick leaves nothing behind (the account holds it now)", () => {
-    recordPick("pt", false);
-    recordPick("nl", true);
-    assert.equal(pickedHere(), null);
+    recordPick("ana", "pt", false);
+    recordPick("ana", "nl", true);
+    assert.equal(pickedHere("ana"), null);
   });
 
   test("fence: the page a pick that could not be saved led to says so, once", () => {
     // Wrong implementation killed: a silent failure (the person believes it is saved), or a note
-    // on every page after it.
-    // Not on the page the pick was made on, before the language has changed.
+    // on every page after it. Not on the page the pick was made on, before the language changed.
     forgetPick();
-    recordPick("pt", false);
-    assert.equal(takeUnsavedNotice("en"), false);
-    assert.equal(takeUnsavedNotice("pt"), true);
-    assert.equal(takeUnsavedNotice("pt"), false);
-    recordPick("nl", true);
-    assert.equal(takeUnsavedNotice("nl"), false);
+    recordPick("ana", "pt", false);
+    assert.equal(takeUnsavedNotice("ana", "en"), false);
+    assert.equal(takeUnsavedNotice("ana", "pt"), true);
+    assert.equal(takeUnsavedNotice("ana", "pt"), false);
+    recordPick("ana", "nl", true);
+    assert.equal(takeUnsavedNotice("ana", "nl"), false);
   });
 
-  test("guard: signing out forgets it, so the next person's own language applies", () => {
-    recordPick("pt", false);
+  test("fence: a pick belongs to the person who made it", () => {
+    // Wrong implementation killed: one pick for the whole tab. Ana's session expires, Bruno signs in
+    // in the same tab: his saved language must win, and no "couldn't be saved" note is his.
     forgetPick();
-    assert.equal(pickedHere(), null);
+    recordPick("ana", "pt", false);
+    assert.equal(pickedHere("bruno"), null);
+    assert.equal(takeUnsavedNotice("bruno", "pt"), false);
+    assert.equal(resolveLocale({ ...base, own: "nl", url: "pt", picked: pickedHere("bruno") }), "nl");
+  });
+
+  test("guard: signing out forgets it", () => {
+    recordPick("ana", "pt", false);
+    forgetPick();
+    assert.equal(pickedHere("ana"), null);
   });
 });
 
-const base = { own: null, signedIn: true, surface: "console", browser: [], business: null, url: "en", picked: null };
 
 describe("resolveLocale", () => {
   test("fence: a signed-in viewer's saved language wins over the link on a public page", () => {

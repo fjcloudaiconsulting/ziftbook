@@ -58,26 +58,27 @@ function Flag({ locale }: { locale: Locale }) {
   );
 }
 
-/** ZIF-102: saves a language to the signed-in person; true once their account holds it. */
-export type SaveLanguage = (locale: Locale) => Promise<boolean>;
+/** ZIF-102: the signed-in person the language button is for, and how to save a pick to their
+ * account (true once it holds it). */
+export type OwnLanguage = { user: string; save(locale: Locale): Promise<boolean> };
 
-/** The language list, shared by the signed-out header's popover and the console's. With `save`
+/** The language list, shared by the signed-out header's popover and the console's. With `own`
  * (a signed-in person), a pick is saved to their account before the page changes language. */
-export function LanguageLinks({ save }: { save?: SaveLanguage }) {
+export function LanguageLinks({ own }: { own?: OwnLanguage }) {
   const locale = useLocale();
   const pathname = usePathname();
   const router = useRouter();
   const [busy, setBusy] = useState(false);
 
   async function pick(event: MouseEvent, id: Locale) {
-    if (!save) return; // signed out: the link only changes this view, as before
+    if (!own) return; // signed out: the link only changes this view, as before
     event.preventDefault();
     if (busy) return;
     setBusy(true);
-    const saved = await save(id);
+    const saved = await own.save(id);
     setBusy(false);
     // Not saved: it still applies here, for now (resolveLocale's `picked`), and the menu says so.
-    recordPick(id, saved);
+    recordPick(own.user, id, saved);
     if (id !== locale) router.replace(pathname, { locale: id });
   }
 
@@ -92,7 +93,7 @@ export function LanguageLinks({ save }: { save?: SaveLanguage }) {
             hrefLang={id}
             lang={id}
             aria-current={id === locale ? "page" : undefined}
-            onClick={save ? (event) => void pick(event, id) : undefined}
+            onClick={own ? (event) => void pick(event, id) : undefined}
           >
             <span className={styles.languageRow}>
               <Flag locale={id} />
@@ -109,30 +110,31 @@ export function LanguageLinks({ save }: { save?: SaveLanguage }) {
  * The language button and its popover: one component for the signed-out header and the console
  * top bar, so there is only ever one switcher to keep in sync. Closed, it shows only the current
  * language's flag; its accessible name (e.g. "Language: English") still names the language, for
- * anyone not reading the flag. With `save` (ZIF-102), the menu is the person's own language: a
+ * anyone not reading the flag. With `own` (ZIF-102), the menu is the person's own language: a
  * pick is saved to their account, and the menu says so.
  */
-export function LanguageSwitcher({ save }: { save?: SaveLanguage }) {
+export function LanguageSwitcher({ own }: { own?: OwnLanguage }) {
   const t = useTranslations("Header");
   const locale = useLocale() as Locale;
   const id = useId();
   const menu = useRef<HTMLElement>(null);
-  const unsaved = Boolean(save) && pickedHere() === locale;
+  const user = own?.user;
+  const unsaved = user !== undefined && pickedHere(user) === locale;
 
   // The page a pick that could not be saved led to: open the menu once, where its note says so.
   useEffect(() => {
-    if (save && takeUnsavedNotice(locale)) menu.current?.showPopover?.();
-  }, [save, locale]);
+    if (user !== undefined && takeUnsavedNotice(user, locale)) menu.current?.showPopover?.();
+  }, [user, locale]);
 
   return (
     <>
       <button className={styles.languageButton} type="button" popoverTarget={id} aria-label={`${t("language")}: ${t("languageName")}`}>
         <Flag locale={locale} />
       </button>
-      <nav ref={menu} id={id} className={styles.languageMenu} popover="auto" aria-label={save ? t("yourLanguage") : t("language")}>
-        {save && <p className={styles.languageHead}>{t("yourLanguage")}</p>}
-        <LanguageLinks save={save} />
-        {save && (
+      <nav ref={menu} id={id} className={styles.languageMenu} popover="auto" aria-label={own ? t("yourLanguage") : t("language")}>
+        {own && <p className={styles.languageHead}>{t("yourLanguage")}</p>}
+        <LanguageLinks own={own} />
+        {own && (
           <p className={styles.languageFoot} role="status">
             {unsaved ? t("languageNotSaved") : t("languageSaved")}
           </p>
@@ -150,7 +152,7 @@ export function LanguageSwitcher({ save }: { save?: SaveLanguage }) {
  * resuming a booking from its address, where a move would remount it mid-check). Never on the
  * platform admin's pages (isAdminPath).
  */
-export function useOwnLanguage({ hold = false }: { hold?: boolean } = {}): SaveLanguage | undefined {
+export function useOwnLanguage({ hold = false }: { hold?: boolean } = {}): OwnLanguage | undefined {
   const locale = useLocale();
   const pathname = usePathname();
   const router = useRouter();
@@ -172,7 +174,7 @@ export function useOwnLanguage({ hold = false }: { hold?: boolean } = {}): SaveL
         browser: [],
         business: null,
         url: locale as Locale,
-        picked: pickedHere(),
+        picked: pickedHere(outcome.data.user_id),
       });
       if (own !== locale) router.replace(`${pathname}${window.location.search}`, { locale: own });
     });
@@ -184,19 +186,22 @@ export function useOwnLanguage({ hold = false }: { hold?: boolean } = {}): SaveL
   }, []);
 
   if (admin || !viewer) return undefined;
-  return async (picked) => {
-    const result = await savePickedLanguage(viewer, () => send(sessionRead()), () => send(accountSetLocale({ body: { locale: picked } })));
-    // Someone else signed in in another tab: start over as them, as the console does.
-    if (result === "mismatch") window.location.reload();
-    // Signed out meanwhile: the button changes only this view again.
-    if (result === "signedOut") setViewer(null);
-    return result === "saved";
+  return {
+    user: viewer.user_id,
+    async save(picked) {
+      const result = await savePickedLanguage(viewer, () => send(sessionRead()), () => send(accountSetLocale({ body: { locale: picked } })));
+      // Someone else signed in in another tab: start over as them, as the console does.
+      if (result === "mismatch") window.location.reload();
+      // Signed out meanwhile: the button changes only this view again.
+      if (result === "signedOut") setViewer(null);
+      return result === "saved";
+    },
   };
 }
 
 /** The language button of a public page, for a signed-in viewer their own language (useOwnLanguage). */
 export function OwnLanguageSwitcher({ hold = false }: { hold?: boolean }) {
-  return <LanguageSwitcher save={useOwnLanguage({ hold })} />;
+  return <LanguageSwitcher own={useOwnLanguage({ hold })} />;
 }
 
 export function Header() {

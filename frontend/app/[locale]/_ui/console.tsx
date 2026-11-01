@@ -22,7 +22,7 @@ import { forgetPick, type Locale, pickedHere, resolveLocale } from "@/lib/locale
 import { badgeText } from "@/lib/today";
 import { type AppVersion, versionLabel } from "@/lib/version";
 
-import { LanguageSwitcher, type SaveLanguage } from "./header";
+import { LanguageSwitcher, type OwnLanguage } from "./header";
 import { Banner, FieldError, Heading, JSON_WRITE, NoScript, type Outcome, problem, send, Submit } from "./parts";
 import styles from "./console.module.css";
 import uiStyles from "./ui.module.css";
@@ -439,7 +439,7 @@ export function Shell({ children }: { children: ReactNode }) {
         browser: navigator.languages,
         business: settings?.language,
         url: locale as Locale,
-        picked: pickedHere(),
+        picked: pickedHere(session.user_id),
       })
     : locale;
   useEffect(() => {
@@ -497,12 +497,17 @@ export function Shell({ children }: { children: ReactNode }) {
   }
 
   /** ZIF-102: the language button saves the person's own language (PUT /api/session/locale). */
-  const saveLanguage: SaveLanguage = async (locale) => {
-    const outcome = await call(() => accountSetLocale({ body: { locale } }), { write: true });
-    if (outcome.status !== 200 || !outcome.data) return false;
-    updateSession({ locale: outcome.data.locale });
-    return true;
-  };
+  const ownLanguage: OwnLanguage | undefined = session
+    ? {
+        user: session.user_id,
+        async save(locale) {
+          const outcome = await call(() => accountSetLocale({ body: { locale } }), { write: true });
+          if (outcome.status !== 200 || !outcome.data) return false;
+          updateSession({ locale: outcome.data.locale });
+          return true;
+        },
+      }
+    : undefined;
 
   // On its way to the person's own language: nothing in this one.
   if (language !== locale) return null;
@@ -545,7 +550,7 @@ export function Shell({ children }: { children: ReactNode }) {
             <span className={styles.bizName}>{session.business_name}</span>
           </span>
           <div className={styles.topbarActions}>
-            <LanguageSwitcher save={saveLanguage} />
+            <LanguageSwitcher own={ownLanguage} />
             <button className={styles.iconButton} type="button" popoverTarget="account" aria-label={accountT("menu")}>
               <svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18">
                 <circle cx="12" cy="9" r="3.5" fill="none" stroke="currentColor" strokeWidth="1.8" />
