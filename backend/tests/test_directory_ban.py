@@ -221,6 +221,9 @@ DEFINERS = [
     "public.confirm_totp_enrolment(p_id_hash bytea, p_proof bytea, p_step bigint, p_code_proofs bytea[])",  # noqa: E501
     "public.email_token_live(p_token_hash bytea, p_purpose text)",
     "public.end_admin_session(p_id_hash bytea)",
+    # ZIF-58 (0064): keyed by the caller's own live owner session and a client id of that
+    # business; returns a timestamp or NULL; never another business's row, never a user.
+    "public.erase_client(p_session_hash bytea, p_client uuid)",
     "public.needs_setup()",
     "public.pass_second_factor(p_id_hash bytea, p_proof bytea, p_step bigint)",
     "public.password_unchanged(p_user_id uuid, p_hash text)",

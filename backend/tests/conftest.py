@@ -746,9 +746,17 @@ def delete_services(conn: Connection, tenant_ids: Iterable[object]) -> None:
 
 def delete_clients(conn: Connection, tenant_ids: Iterable[object]) -> None:
     """The app role can delete neither consents nor clients; fixtures remove them as the migrate
-    role, one business at a time (forced row-level security), consents first for the foreign key."""
+    role, one business at a time (forced row-level security), consents and contact holds first for
+    the foreign key.
+
+    client_erasure_holds may not exist: some test_migrations.py tests call this while temporarily
+    downgraded below 0064.
+    """
+    has_holds = conn.scalar(text("SELECT to_regclass('client_erasure_holds')")) is not None
     for tenant_id in tenant_ids:
         conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(tenant_id)})
+        if has_holds:
+            conn.execute(text("DELETE FROM client_erasure_holds"))
         conn.execute(text("DELETE FROM consents"))
         conn.execute(text("DELETE FROM clients"))
 
