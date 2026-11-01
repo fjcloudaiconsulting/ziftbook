@@ -72,3 +72,12 @@ describe("the public hook's own safeguards, where they are wired", () => {
     assert.equal(src.match(/accountSetLocale\(/g)?.length, 1);
   });
 });
+
+describe("the console's own language, where it is wired", () => {
+  test("fence: the console's language button leaves a saved pick to the shell, so the page moves once", () => {
+    // Wrong implementation killed: shellMoves false (or missing), so the button and the shell both
+    // navigate after a saved pick.
+    const src = read("../app/[locale]/_ui/console.tsx");
+    assert.match(src, /const ownLanguage: OwnLanguage \| undefined = session\s*\? \{\s*user: session\.user_id,\s*shellMoves: true,/);
+  });
+});
