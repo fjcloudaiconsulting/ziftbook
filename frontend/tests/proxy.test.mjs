@@ -1013,13 +1013,22 @@ describe("CSP violation reports (ZIF-236)", () => {
     assert.doesNotMatch(refused.logs.stdout() + refused.logs.stderr(), /Zzyzx/i);
   });
 
-  test("a report reaches the API with its own content type and body, in either format", async () => {
+  test("a report reaches the API with its own content type, body and Sec-Fetch-Site, in either format", async () => {
+    // Wrong implementation killed: a proxy that drops Sec-Fetch-Site, so the API's cross-site filter (ZIF-236 B3)
+    // sees every report as unlabelled and lets another site's reports through to its database.
     for (const type of ["application/csp-report", "application/reports+json"]) {
       const body = type === "application/csp-report" ? '{"csp-report":{}}' : '[{"type":"csp-violation","body":{}}]';
-      const response = await fetch(`http://127.0.0.1:${port}/api/csp-reports`, { method: "POST", headers: { "content-type": type }, body });
-      assert.equal(response.status, 200, type);
-      assert.deepEqual(await response.json(), { method: "POST", body });
-      assert.equal(echo.requests.at(-1)["content-type"], type);
+      for (const site of ["cross-site", "same-origin"]) {
+        const response = await fetch(`http://127.0.0.1:${port}/api/csp-reports`, {
+          method: "POST",
+          headers: { "content-type": type, "sec-fetch-site": site },
+          body,
+        });
+        assert.equal(response.status, 200, type);
+        assert.deepEqual(await response.json(), { method: "POST", body });
+        assert.equal(echo.requests.at(-1)["content-type"], type);
+        assert.equal(echo.requests.at(-1)["sec-fetch-site"], site);
+      }
     }
   });
 
