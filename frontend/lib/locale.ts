@@ -16,9 +16,19 @@ function known(value: string | null | undefined): Locale | null {
 // the person, so someone who signs in next in the same tab (after a sign-out or an expired session)
 // gets their own language.
 let unsaved: { user: string; locale: string; untold: boolean } | null = null;
+// The language menus showing the pick's note (useSyncExternalStore), told of every change.
+const listeners = new Set<() => void>();
 
-export function recordPick(user: string, locale: string, saved: boolean): void {
-  unsaved = saved ? null : { user, locale, untold: true };
+export function subscribePick(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
+
+/** `onScreen`: the pick is the language already shown (no page change follows), so the menu says it
+ * could not be saved there and then, and no later page has to. */
+export function recordPick(user: string, locale: string, saved: boolean, { onScreen = false }: { onScreen?: boolean } = {}): void {
+  unsaved = saved ? null : { user, locale, untold: !onScreen };
+  for (const listener of listeners) listener();
 }
 
 /** True once, for the person who picked, on the page in the language of a pick that could not be
@@ -37,6 +47,7 @@ export function pickedHere(user: string): string | null {
 /** On sign-out: nothing is left for whoever signs in next. */
 export function forgetPick(): void {
   unsaved = null;
+  for (const listener of listeners) listener();
 }
 
 /** The first of the browser's languages (navigator.languages, in its order) that we speak, matched

@@ -1,12 +1,12 @@
 "use client";
 
 import { useLocale, useTranslations } from "next-intl";
-import { type MouseEvent, useEffect, useId, useRef, useState } from "react";
+import { type MouseEvent, useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 
 import { accountSetLocale, sessionRead } from "@/api-client";
 import { Link, usePathname, useRouter } from "@/i18n/navigation";
 import { routing } from "@/i18n/routing";
-import { isAdminPath, pickedHere, recordPick, resolveLocale, savePickedLanguage, takeUnsavedNotice } from "@/lib/locale";
+import { isAdminPath, pickedHere, recordPick, resolveLocale, savePickedLanguage, subscribePick, takeUnsavedNotice } from "@/lib/locale";
 
 import { send } from "./parts";
 import styles from "./ui.module.css";
@@ -78,7 +78,7 @@ export function LanguageLinks({ own }: { own?: OwnLanguage }) {
     const saved = await own.save(id);
     setBusy(false);
     // Not saved: it still applies here, for now (resolveLocale's `picked`), and the menu says so.
-    recordPick(own.user, id, saved);
+    recordPick(own.user, id, saved, { onScreen: id === locale });
     if (id !== locale) router.replace(pathname, { locale: id });
   }
 
@@ -119,7 +119,9 @@ export function LanguageSwitcher({ own }: { own?: OwnLanguage }) {
   const id = useId();
   const menu = useRef<HTMLElement>(null);
   const user = own?.user;
-  const unsaved = user !== undefined && pickedHere(user) === locale;
+  // Re-read on every pick, so a failed save of the language on screen says so at once.
+  const picked = useSyncExternalStore(subscribePick, () => (user === undefined ? null : pickedHere(user)), () => null);
+  const unsaved = picked !== null && picked === locale;
 
   // The page a pick that could not be saved led to: open the menu once, where its note says so.
   useEffect(() => {

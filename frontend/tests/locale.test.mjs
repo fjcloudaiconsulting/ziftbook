@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, test } from "node:test";
 
-import { browserLocale, forgetPick, isAdminPath, pickedHere, recordPick, resolveLocale, savePickedLanguage, takeUnsavedNotice } from "../lib/locale.ts";
+import { browserLocale, forgetPick, isAdminPath, pickedHere, recordPick, resolveLocale, savePickedLanguage, subscribePick, takeUnsavedNotice } from "../lib/locale.ts";
 
 const base = { own: null, signedIn: true, surface: "console", browser: [], business: null, url: "en", picked: null };
 
@@ -43,6 +43,23 @@ describe("a language picked with the language button", () => {
     assert.equal(pickedHere("bruno"), null);
     assert.equal(takeUnsavedNotice("bruno", "pt"), false);
     assert.equal(resolveLocale({ ...base, own: "nl", url: "pt", picked: pickedHere("bruno") }), "nl");
+  });
+
+  test("fence: a failed save of the language already on screen is told at once, not on a later page", () => {
+    // Wrong implementation killed: the menu kept saying "Saved to your account" (nothing re-read the
+    // pick), and the note popped open later on an unrelated page.
+    forgetPick();
+    let told = 0;
+    const stop = subscribePick(() => (told += 1));
+    recordPick("ana", "pt", false, { onScreen: true });
+    assert.equal(told, 1); // the menu re-reads the pick now
+    assert.equal(pickedHere("ana"), "pt"); // its note: couldn't be saved
+    assert.equal(takeUnsavedNotice("ana", "pt"), false); // already on screen
+    forgetPick();
+    assert.equal(told, 2);
+    stop();
+    recordPick("ana", "nl", false);
+    assert.equal(told, 2);
   });
 
   test("guard: signing out forgets it", () => {
