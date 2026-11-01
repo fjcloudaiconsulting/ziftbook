@@ -248,6 +248,24 @@ def test_app_role_has_no_access_to_second_factors(
     assert isinstance(error.value.orig, InsufficientPrivilege)
 
 
+# fence (ZIF-234): neither runtime role holds any privilege on any column of second_factors, the
+# columns 0069 adds included: a column grant on failures_leaked_at would let the app role set the
+# anchor back and leak the whole count. Kills a column-level grant the table-level checks miss.
+# Injected by `GRANT UPDATE (failures_leaked_at) ON second_factors TO ziftbook_app` in 0069, then
+# separately `GRANT SELECT (failures_since_pass) ... TO ziftbook_worker`.
+@pytest.mark.parametrize("role", ["ziftbook_app", "ziftbook_worker"])
+def test_runtime_roles_hold_no_column_of_second_factors(migrate_engine: Engine, role: str) -> None:
+    with migrate_engine.connect() as conn:
+        held = {
+            privilege: conn.scalar(
+                text("SELECT has_any_column_privilege(:role, 'second_factors', :privilege)"),
+                {"role": role, "privilege": privilege},
+            )
+            for privilege in ("SELECT", "INSERT", "UPDATE", "REFERENCES")
+        }
+    assert held == {"SELECT": False, "INSERT": False, "UPDATE": False, "REFERENCES": False}
+
+
 # guard: live_admin_user is no definer and not the app's to call (calling it would fail anyway on
 # admin_sessions, which the app role can't read). Kills a REVOKE left out.
 def test_app_role_cannot_call_live_admin_user(app_engine: Engine) -> None:
