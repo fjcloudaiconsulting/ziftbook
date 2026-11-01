@@ -380,7 +380,8 @@ def list_clients(
     before: UUID | None = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
 ) -> list[ClientOut]:
-    """This business's clients, newest first, optionally searched by name, email or phone."""
+    """This business's clients, newest first, optionally searched by name, email or phone. An
+    erased client is never listed."""
     stripped = q.strip() if q else None
     # Phones are stored as +31612345678 (ZIF-152): "12 34 56" matches without its spaces, and
     # "06 1234 5678" as the number it is. Older free-text phones still match as typed.
@@ -388,7 +389,8 @@ def list_clients(
     rows = current.db.execute(
         text(f"""
         SELECT {fields(members.is_owner(current))} FROM clients
-        WHERE (CAST(:before AS uuid) IS NULL OR id < :before)
+        WHERE erased_at IS NULL  -- an erased client leaves the console (ZIF-58)
+          AND (CAST(:before AS uuid) IS NULL OR id < :before)
           AND (CAST(:q AS text) IS NULL
                OR name ILIKE :q OR email ILIKE :q OR phone ILIKE :q
                OR phone ILIKE :compact OR phone = :number)

@@ -879,7 +879,7 @@
           "clients"
         ],
         "summary": "List",
-        "description": "This business's clients, newest first, optionally searched by name, email or phone.",
+        "description": "This business's clients, newest first, optionally searched by name, email or phone. An\nerased client is never listed.",
         "operationId": "clients-list",
         "parameters": [
           {

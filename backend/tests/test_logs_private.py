@@ -45,6 +45,7 @@ from tests.conftest import (
 from tests.stripe_fake import FakeGateway
 from tests.test_booking_payments_api import make_shop, resume, run, sync
 from tests.test_bookings_api import post_booking, sign_in_as
+from tests.test_erased_client_reads import erase_in
 from tests.test_second_factor_db import issue_ticket
 from tests.test_working_hours import seed
 
@@ -416,6 +417,16 @@ def test_no_personal_data_ever_reaches_a_log(
     )
     assert paused.status_code == 429
     run_jobs_once()
+
+    # 6k (ZIF-58): the booker's client is erased, as the erase function will erase it, and the
+    # console reads around it.
+    with tenant_context(people.a) as session:
+        gone = session.scalar(
+            text("SELECT client_id FROM bookings WHERE id = :id"), {"id": booked.json()["id"]}
+        )
+    with migrate_tenant_context(migrate_engine, people.a) as conn:
+        erase_in(conn, gone)
+    assert str(gone) not in [c["id"] for c in owner.get("/api/clients").json()]
 
     # 7: invite flow — send, list, a wrong token, then accept with a brand-new account.
     invite_email = fresh_email()
