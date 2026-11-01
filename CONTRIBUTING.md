@@ -469,6 +469,17 @@ loggers (`web.*`); Next's own stderr output (banners, SSR error traces) is not i
   address limits counted); `booking flood`
   (WARNING, `tenant_id`, at most once an hour: a business's unproven guest bookings reached their cap
   and its owners are emailed) and `booking flood alert failed` (WARNING, with `exc`).
+- CSP violations (ZIF-236, `app/csp_reports.py`): `csp violation` (INFO) with `report_format`, `directive`,
+  `disposition`, `page` (the route template, `/[locale]/[slug]/book`, or `other`), `blocked` and `source` (a
+  category: a CSP keyword, `self`, `media`, `upload`, a provider such as `stripe` or `cloudflare`, `extension`,
+  `external`, `ip-address`, `other`, `none`) and `count` (identical violations in one request share a line). Every
+  value is from a closed set: never the page's path, query or fragment (a checkout's query holds Stripe's client
+  secret), a host, the referrer, the policy (its nonce), the sample or the user agent. At most 600 such lines a
+  minute per process. `csp reports dropped` (INFO; WARNING when it holds `limiter_unavailable`, with `error`) at most
+  once a minute per process, with a count per reason since the last one: `cross_site` (sent by another site's page),
+  `busy` (two limiter calls already running), `rate_limited` (30 a minute per address, IPv6 per /48),
+  `limiter_unavailable` (the database could not count), `foreign` (a page on another origin), `batch_cap` (past 10
+  violations in one request) and `global_cap` (past the line budget).
 - `ZIF_LOG_SQL=true` logs SQL statements, never their values, when `ZIF_LOG_LEVEL` is `DEBUG`; off by
   default.
 - Ids only: never a password, token or its hash, cookie, email address, name, business or service name,
@@ -611,6 +622,14 @@ web app.
   answer 404 for anything the business doesn't own, and return no personal data beyond what a client must see.
   A route named by a slug instead (the booking page) resolves the tenant from it first, then calls `join_tenant`
   inside the same `SessionLocal.begin()`, rather than opening `tenant_context` directly.
+- `POST /api/csp-reports` (ZIF-236) is the one write whose body is not `application/json`: browsers send their
+  Content-Security-Policy violation reports there as `application/csp-report` (`report-uri`) or
+  `application/reports+json` (`report-to`), and `json_only` lets those two types through on that path alone. That
+  is no CSRF defence there, as a browser delivers a report cross-site with no preflight; the route needs none: a
+  cross-site report carries no cookie, the route reads none, and its only state is its own rate-limit row. It answers
+  204 to everything it accepts (rate limited, malformed or dropped included), because Chrome retries any other
+  answer. It drops, before any database work, a report whose `Sec-Fetch-Site` is present and not `same-origin`, and
+  one arriving while two limiter calls are already running.
 
 ## Translations
 
