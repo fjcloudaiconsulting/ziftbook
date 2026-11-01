@@ -197,7 +197,10 @@ def sweep(should_stop: Callable[[], bool] = lambda: False, hold_until: date | No
         fields = asdict(swept)
         for name, value in fields.items():
             span.set_attribute(name, value)
-    level = logging.INFO if swept.complete and not swept.held else logging.WARNING
+    # WARNING when anything was left: a backlog, a hold, or a busy audit sweep (one worker runs in
+    # production, so a lasting busy means something else holds the sweep's lock).
+    quiet = swept.complete and not swept.held and not swept.busy
+    level = logging.INFO if quiet else logging.WARNING
     if held:
         assert hold_until is not None
         fields["hold_until"] = hold_until.isoformat()
