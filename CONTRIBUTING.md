@@ -477,6 +477,9 @@ loggers (`web.*`); Next's own stderr output (banners, SSR error traces) is not i
   site's host); `admin sign-in failures` (WARNING, `target` `user:<id>`, null for an unknown email,
   when an email's wrong passwords on admin sign-in itself reach the admin challenge's threshold (the
   challenge also counts wrong passwords on business sign-in, so it can come first));
+  `second factor failed` and `totp enrolment failed` (WARNING, `user_id`, `failures`: every wrong admin
+  TOTP code, at sign-in or at enrolment confirm, logged inside its transaction before the commit, so a
+  failure whose count never commits still leaves a line; none for an attempt refused as locked);
   `booking placement refund failed` (WARNING, with `exc`: a booking that was not placed keeps its
   address limits counted); `booking flood`
   (WARNING, `tenant_id`, at most once an hour: a business's unproven guest bookings reached their cap
