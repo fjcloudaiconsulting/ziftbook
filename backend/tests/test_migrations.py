@@ -2710,3 +2710,17 @@ def test_0074_round_trips_the_retention_functions(
                 "sweep_booking_origins(uuid)",
             )
         ]
+
+
+# ZIF-235 (build review, correctness #3) FENCE. Wrong impl: 0072 leaves the session's lock_timeout
+# at 0 after its block (the restore dropped or reordered). 0073 would then wait without bound for
+# its ACCESS EXCLUSIVE on audit_events, and every sign-in would queue behind it (ZIF-34). Run on one
+# connection, as env.py runs every migration of a deploy on one.
+def test_0072_leaves_the_lock_timeout_as_it_found_it(migrate_engine: Engine) -> None:
+    module = migration("0072_retention_indexes.py")
+    with migrate_engine.connect() as conn:
+        conn.execute(text("SET lock_timeout = '5s'"))
+        conn.commit()
+        with Operations.context(MigrationContext.configure(conn)):
+            module.upgrade()
+        assert conn.scalar(text("SHOW lock_timeout")) == "5s"
