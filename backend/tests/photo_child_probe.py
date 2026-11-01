@@ -114,6 +114,10 @@ def record(data: bytes) -> bytes:
         sys.stdout.flush()
         os.close(1)
         spin()
+    if MODE == "probe-overflow-exit":  # one byte past the cap, then gone
+        sys.stdout.buffer.write(b"\0" * (int(ARG) + 1))
+        sys.stdout.flush()
+        os._exit(0)
     if MODE == "probe-flood":
         while True:
             sys.stdout.buffer.write(b"\0" * 65_536)
