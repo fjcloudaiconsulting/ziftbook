@@ -765,3 +765,14 @@ describe("the way back is gone after its 24 hours, read or not (security review 
     assert.match(prune, /useEffect\(\(\) => forgetStaleReturn\(\(\) => window\.localStorage, Date\.now\(\)\), \[\]\);/);
   });
 });
+
+describe("the finish screen loads no third-party script while a usable link is on the page (security review 5)", () => {
+  test("fence: the form renders no Turnstile; only the screen that asks for a new link does", () => {
+    const text = readFileSync(new URL("../app/[locale]/account/complete/complete-account.tsx", import.meta.url), "utf8");
+    const form = text.slice(text.lastIndexOf('<h1 className={styles.heading}>{t("completeTitle")}</h1>'));
+    assert.ok(form.includes("<form"));
+    assert.doesNotMatch(form, /<Turnstile|<LinkRequest/);
+    const page = readFileSync(new URL("../app/[locale]/account/complete/page.tsx", import.meta.url), "utf8");
+    assert.match(page, /no third-party script while a usable link is on the page/);
+  });
+});

@@ -12,8 +12,9 @@ export async function generateMetadata() {
   return { title: t("completeTitle") };
 }
 
-/** ZIF-146: the account sign-up link opens here, its token in the fragment (never sent to the server). The page
- * loads no third-party script until the person asks for a new link (security B3.7). */
+/** ZIF-146: the account sign-up link opens here, its token in the fragment (never sent to the server). The page loads
+ * no third-party script while a usable link is on the page (security B3.7): Turnstile appears only on the screen that
+ * asks for a new link, once the token is spent, refused or missing and already gone from the address bar. */
 export default async function CompleteAccountPage() {
   // Read per request: the site key is runtime configuration, not part of the build.
   await connection();
