@@ -117,10 +117,12 @@ def advisory_waits(engine: Engine, count: int) -> list[tuple[int, int, list[int]
     raise AssertionError(f"never saw {count} advisory lock waits, last saw {rows}")
 
 
-# Kills: no pg_advisory_lock in env.py, pg_try_advisory_lock (does not wait), and
+# Kills: no advisory lock in env.py, a single pg_try_advisory_lock (does not wait), and
 # pg_advisory_xact_lock (released by the commit before the first migration). In each, the second run
-# never waits on an advisory lock: it heads into the probe revision too, blocked on the first run's
-# uncommitted alembic_version instead.
+# heads into the probe revision too and parks on the gate beside the first. env.py polls the lock
+# (ZIF-235: a run waiting in pg_advisory_lock would hold a snapshot and deadlock with a concurrent
+# index build), so the second run never shows as a lock waiter: it is alive, has not run the probe,
+# and the gate has one waiter only.
 def test_a_second_run_waits_for_the_first_to_finish(scratch: tuple[Path, Engine]) -> None:
     versions, engine = scratch
     runs: list[subprocess.Popen[str]] = []
@@ -128,15 +130,16 @@ def test_a_second_run_waits_for_the_first_to_finish(scratch: tuple[Path, Engine]
         gate.execute(text("SELECT pg_advisory_lock(:key)"), {"key": GATE})
         try:
             runs.append(start_upgrade(versions))
-            [(first, key, _)] = advisory_waits(engine, 1)
+            [(_, key, _)] = advisory_waits(engine, 1)
             assert key == GATE  # the first run is inside its migration, holding env.py's lock
 
             runs.append(start_upgrade(versions))
-            waits = advisory_waits(engine, 2)
-            [(_, key, by)] = [wait for wait in waits if wait[0] != first]
-            # The second run waits on an advisory lock that the first run holds, not on the gate.
-            assert key != GATE, waits
-            assert by == [first], waits
+            time.sleep(5)  # long enough for a second run with no lock to reach the gate too
+            assert runs[1].poll() is None  # still waiting its turn
+            with engine.connect() as conn:
+                waits = [(pid, key, list(by)) for pid, key, by in conn.execute(ADVISORY_WAITS)]
+                assert conn.scalar(text("SELECT count(*) FROM runs")) == 0
+            assert [key for _, key, _ in waits] == [GATE], waits
         finally:
             gate.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": GATE})
             outputs = [finish(run) for run in runs]
