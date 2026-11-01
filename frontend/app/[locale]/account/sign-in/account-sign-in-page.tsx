@@ -17,13 +17,18 @@ export function AccountSignInPage({ turnstileSiteKey }: { turnstileSiteKey: stri
       turnstileSiteKey={turnstileSiteKey}
       onSignedIn={() => router.replace("/account")}
       aside={
-        <p className={styles.aside}>
-          {t("newHere")} <Link href="/account/sign-up">{t("createAccount")}</Link>
-        </p>
+        <>
+          <p className={styles.aside}>
+            {t("newHere")} <Link href="/account/sign-up">{t("createAccount")}</Link>
+          </p>
+          <p className={styles.aside}>{t.rich("businessInstead", { business: (chunks) => <Link href="/sign-in">{chunks}</Link> })}</p>
+        </>
       }
       intro={
         <>
           <h1 className={styles.heading}>{t("title")}</h1>
+          {/* The same heading and form as the business sign-in: the lede says whose this one is (security review 7). */}
+          <p className={styles.lede}>{t("accountLede")}</p>
           <NoScript>{form("needsJavaScript")}</NoScript>
         </>
       }

@@ -125,7 +125,9 @@
     "accountUnavailable": "Met dit account kun je hier niet inloggen.",
     "createAccount": "Account aanmaken",
     "newHereBoth": "Nieuw bij ziftbook? <account>Maak een account aan</account> of <business>maak je bedrijf aan</business>.",
-    "noTenant": "Dit account hoort niet bij een bedrijf. Om je eigen afspraken te zien, <account>log je in op je ziftbook-account</account>. Werk je bij een bedrijf? Vraag de eigenaar om je opnieuw toe te voegen."
+    "noTenant": "Dit account hoort niet bij een bedrijf. Om je eigen afspraken te zien, <account>log je in op je ziftbook-account</account>. Werk je bij een bedrijf? Vraag de eigenaar om je opnieuw toe te voegen.",
+    "accountLede": "Voor je eigen ziftbook-account: je afspraken bij elk bedrijf, en je gegevens ingevuld als je boekt.",
+    "businessInstead": "Log je in om een bedrijf te beheren? <business>Gebruik de bedrijfslogin</business>."
   },
   "ClientSignUp": {
     "emailPlaceholder": "jij@voorbeeld.nl",

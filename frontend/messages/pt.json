@@ -125,7 +125,9 @@
     "accountUnavailable": "Esta conta não pode entrar aqui.",
     "createAccount": "Criar uma conta",
     "newHereBoth": "Novo no ziftbook? <account>Crie uma conta</account> ou <business>cadastre seu negócio</business>.",
-    "noTenant": "Esta conta não faz parte de um negócio. Para ver suas reservas, <account>entre na sua conta ziftbook</account>. Se você trabalha em um negócio, peça ao responsável para adicionar você de novo."
+    "noTenant": "Esta conta não faz parte de um negócio. Para ver suas reservas, <account>entre na sua conta ziftbook</account>. Se você trabalha em um negócio, peça ao responsável para adicionar você de novo.",
+    "accountLede": "Para sua própria conta ziftbook: suas reservas em qualquer negócio e seus dados preenchidos quando você reserva.",
+    "businessInstead": "Vai entrar para gerenciar um negócio? <business>Use o acesso do negócio</business>."
   },
   "ClientSignUp": {
     "emailPlaceholder": "voce@exemplo.com.br",

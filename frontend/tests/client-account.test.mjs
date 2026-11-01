@@ -776,3 +776,16 @@ describe("the finish screen loads no third-party script while a usable link is o
     assert.match(page, /no third-party script while a usable link is on the page/);
   });
 });
+
+describe("the account sign-in says whose sign-in it is (security review 7, owner may overrule)", () => {
+  test("fence: a lede for client accounts and a way to the business sign-in, in every locale", () => {
+    const text = readFileSync(new URL("../app/[locale]/account/sign-in/account-sign-in-page.tsx", import.meta.url), "utf8");
+    assert.match(text, /<p className=\{styles\.lede\}>\{t\("accountLede"\)\}<\/p>/);
+    assert.match(text, /t\.rich\("businessInstead", \{ business: \(chunks\) => <Link href="\/sign-in">\{chunks\}<\/Link> \}\)/);
+    for (const locale of ["en", "nl", "pt"]) {
+      const strings = JSON.parse(readFileSync(new URL(`../messages/${locale}.json`, import.meta.url))).SignIn;
+      assert.ok(strings.accountLede, locale);
+      assert.match(strings.businessInstead, /<business>.+<\/business>/, locale);
+    }
+  });
+});

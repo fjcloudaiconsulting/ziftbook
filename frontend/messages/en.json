@@ -125,7 +125,9 @@
     "accountUnavailable": "This account can't sign in here.",
     "createAccount": "Create an account",
     "newHereBoth": "New to ziftbook? <account>Create an account</account> or <business>create your business</business>.",
-    "noTenant": "This account isn't part of a business. To see your own bookings, <account>sign in to your ziftbook account</account>. If you work at a business, ask its owner to add you again."
+    "noTenant": "This account isn't part of a business. To see your own bookings, <account>sign in to your ziftbook account</account>. If you work at a business, ask its owner to add you again.",
+    "accountLede": "For your own ziftbook account: your bookings with any business, and your details filled in when you book.",
+    "businessInstead": "Signing in to run a business? <business>Use the business sign-in</business>."
   },
   "ClientSignUp": {
     "emailPlaceholder": "you@example.com",
