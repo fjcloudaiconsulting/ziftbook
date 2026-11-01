@@ -379,6 +379,43 @@ def test_every_column_is_classified(migrate_engine: Engine) -> None:
     assert found == {table: set(columns) for table, columns in CLASSIFICATION.items()}
 
 
+# Tables that point at a client or a booking but are not in CLASSIFICATION, each with its reason.
+CHILDREN_ALLOWED = {
+    # The erased client's address for at most a month, the only key back by design; the worker's
+    # purge deletes it.
+    "client_erasure_holds": "the bounded contact hold",
+}
+# Columns that name a client by id outside a foreign key, each with its reason.
+CLIENT_ID_COLUMNS = {
+    ("bookings", "client_id"): "classified",
+    ("consents", "client_id"): "classified",
+    ("client_erasure_holds", "client_id"): "the bounded contact hold",
+    # The client or member a mail went to: an id, with a template and a subject that never name
+    # anyone. Kept as the record of what was sent.
+    ("email_outbox", "recipient_id"): "an id only",
+}
+CHILD_TABLES = text("""
+SELECT DISTINCT conrelid::regclass::text FROM pg_constraint
+WHERE contype = 'f' AND confrelid IN ('clients'::regclass, 'bookings'::regclass)
+""")
+ID_COLUMNS = text("""
+SELECT table_name, column_name FROM information_schema.columns
+WHERE table_schema = 'public' AND column_name IN ('client_id', 'recipient_id')
+""")
+
+
+# ZIF-58 F14 FENCE (catalog, tables). Wrong impl: a new table that holds a client's data and points
+# at a client or a booking (a foreign key) or names one by id (client_id, recipient_id), which the
+# core would never touch, so erasure would be silently incomplete. Every such table is classified
+# above or allowed here with its reason.
+def test_every_table_that_points_at_a_client_is_classified(migrate_engine: Engine) -> None:
+    with migrate_engine.connect() as conn:
+        children = set(conn.scalars(CHILD_TABLES))
+        columns = {(table, column) for table, column in conn.execute(ID_COLUMNS)}
+    assert children == (set(CLASSIFICATION) - {"clients"}) | set(CHILDREN_ALLOWED)
+    assert columns == set(CLIENT_ID_COLUMNS)
+
+
 # ZIF-58 F15 FENCE (and F17c). Wrong impl: a core that forgets decline_message, checkout_hash, the
 # client's events or the consents rows, that blanks the team's events too, or that touches another
 # client of the business. Parametrised by CLASSIFICATION: each "blank" column was set before and is
