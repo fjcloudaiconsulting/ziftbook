@@ -6,10 +6,12 @@ import time
 import uuid
 from collections.abc import Callable, Iterator
 from datetime import timedelta
+from typing import Any, cast
 
 import pytest
 from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 from sqlalchemy import Engine, text
+from sqlalchemy.orm import Session
 
 from app import limits
 from app.db import SessionLocal, tenant_context
@@ -636,3 +638,34 @@ def test_each_refusal_is_counted_by_its_tier_and_never_by_address(
         for point in points(metric_reader, "ziftbook.limiter.at_cap")
     }
     assert found == {(("limiter.tier", "address"),): 2, (("limiter.tier", "network"),): 1}
+
+
+# ZIF-235 FENCE. The retention sweep deletes rows whose window started more than MAX_WINDOW (plus a
+# margin) ago, so a longer window would be cut short without anyone noticing. Wrong impl: no
+# check, a check in hit() only, or a check that also refuses MAX_WINDOW itself (invites' 1-day
+# per-business quota).
+LONGER = limits.MAX_WINDOW + timedelta(seconds=1)
+CALLS: dict[str, Callable[[str, timedelta], Any]] = {
+    "hit": lambda key, window: limits.hit({key: 1}, window),
+    "hit_in_session": lambda key, window: limits.hit({key: 1}, window, db=_no_session()),
+    "charge": lambda key, window: limits.charge(key, window),
+    "refund": lambda key, window: limits.refund([key], window),
+    "count": lambda key, window: limits.count(key, window),
+    "count_all": lambda key, window: limits.count_all([key], window),
+}
+
+
+def _no_session() -> Session:
+    """The check comes before any statement: a session that is never used is enough."""
+    return cast(Session, object())
+
+
+@pytest.mark.parametrize("call", sorted(CALLS))
+def test_a_window_longer_than_the_sweep_keeps_is_refused(action: str, call: str) -> None:
+    with pytest.raises(ValueError, match="MAX_WINDOW"):
+        CALLS[call](f"{action}:k", LONGER)
+
+
+@pytest.mark.parametrize("call", ["hit", "charge", "refund", "count", "count_all"])
+def test_the_longest_window_is_accepted(action: str, call: str) -> None:
+    CALLS[call](f"{action}:k", limits.MAX_WINDOW)
