@@ -12,6 +12,7 @@ import {
   type AnswerOutcome,
   answerState,
   bookingBody,
+  bookingQuery,
   checkoutUrl,
   cleanMessage,
   doneState,
@@ -24,6 +25,7 @@ import {
   type PaymentChoice,
   phoneValue,
   pickFromUrl,
+  repriced,
   returnParams,
   scanWindow,
   sendAction,
@@ -186,6 +188,17 @@ export function BookingPage({
   // --- ZIF-158: the payment step ---
   const liveService = page.services.find((svc) => svc.id === serviceId);
   const stepOn = Boolean(page.payment && liveService?.payment);
+  // ZIF-102: when the reloaded page prices the held service in another currency (the owner changed
+  // it), the steps show, and the booking sends, the new one. Adjusted while rendering, as React
+  // recommends for state that follows a prop, never in an effect.
+  const [seenLive, setSeenLive] = useState(liveService);
+  if (seenLive !== liveService) {
+    setSeenLive(liveService);
+    setFlow((f) => {
+      const service = f.service && repriced(f.service, liveService);
+      return service === f.service ? f : { ...f, service };
+    });
+  }
   const [choice, setChoice] = useState<PaymentChoice>("check");
   const [bookingId, setBookingId] = useState<string | null>(booking);
   const [checking, setChecking] = useState(booking !== null);
@@ -708,7 +721,10 @@ export function BookingPage({
       message: cleanMessage(message),
       payment: stepOn ? choice : null,
     });
-    const answer = await send(bookingsCreate({ path: { tenant_id: page.id, service_id: f.service.id }, body: { ...body, locale: loc } }));
+    // The currency of the price the button shows (sendText's): a change since is refused, never booked.
+    const answer = await send(
+      bookingsCreate({ path: { tenant_id: page.id, service_id: f.service.id }, query: bookingQuery(f.service.price), body: { ...body, locale: loc } }),
+    );
     working.current = false;
     const outcome = answerState(answer, Boolean(turnstileSiteKey));
     // Reset after EVERY answer, 201 included: a token is never reused.
@@ -802,6 +818,13 @@ export function BookingPage({
     if (outcome.kind === "policyChanged") {
       router.refresh();
       setFlow({ ...f, busy: false, banner: { where: "c", tone: "error", text: t("policyChanged") } });
+      return;
+    }
+    if (outcome.kind === "pricesChanged") {
+      // The owner changed the business's currency: load the prices again (the held service takes the
+      // new one as the page renders it), and say so by the button. Nothing was booked.
+      router.refresh();
+      setFlow({ ...f, busy: false, banner: { where: "c", tone: "note", text: t("pricesChanged") } });
       return;
     }
     if (outcome.kind === "paymentChanged") {

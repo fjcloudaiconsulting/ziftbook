@@ -1127,6 +1127,7 @@
     "payExpiredPaid": "We hebben je tijd 30 minuten vastgehouden; die is nu vrijgegeven. Je betaling van {price} wordt volledig terugbetaald; je bank kan er een paar dagen over doen om dat te tonen. Kies opnieuw een tijd.",
     "payUnavailable": "Betalen is nu niet beschikbaar. Probeer het over een paar minuten opnieuw.",
     "paymentChanged": "De betaalopties op deze pagina zijn veranderd. Controleer ze en verstuur opnieuw.",
+    "pricesChanged": "De prijzen op deze pagina zijn veranderd. Controleer de prijs en verstuur opnieuw.",
     "doneChecked": "We hebben je kaart gecontroleerd voor {price}. Er is niets afgeschreven.",
     "doneCheckedSetup": "We hebben je kaart gecontroleerd. Er is niets afgeschreven.",
     "donePaid": "Je hebt {price} betaald.",

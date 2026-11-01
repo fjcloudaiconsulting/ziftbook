@@ -1127,6 +1127,7 @@
     "payExpiredPaid": "We held your time for 30 minutes and it has been released. Your payment of {price} is refunded in full; your bank may take a few days to show it. Choose a time again.",
     "payUnavailable": "Payments aren't available right now. Try again in a few minutes.",
     "paymentChanged": "The payment options on this page changed. Check them and send again.",
+    "pricesChanged": "The prices on this page changed. Check the price and send again.",
     "doneChecked": "We checked your card for {price}. Nothing was charged.",
     "doneCheckedSetup": "We checked your card. Nothing was charged.",
     "donePaid": "You paid {price}.",
