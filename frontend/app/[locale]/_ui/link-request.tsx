@@ -10,6 +10,9 @@ import { Banner, CheckInbox, EmailField, NoScript, problem, send, Submit } from 
 import { Turnstile } from "./turnstile";
 import styles from "./ui.module.css";
 
+/** The API call each purpose makes (linkRequestShape names it). */
+const ENDPOINTS = { accountRequestPasswordReset, accountSignUp, platformAccountSignUp } as const;
+
 type Props = {
   /** `account_sign_up`: a client's own account, with no business (ZIF-146). */
   purpose: LinkPurpose;
@@ -40,7 +43,7 @@ export function LinkRequest({ purpose, intro, submit, aside, turnstileSiteKey }:
   );
 
   async function request(): Promise<number | null> {
-    const call = purpose === "sign_up" ? accountSignUp : purpose === "account_sign_up" ? platformAccountSignUp : accountRequestPasswordReset;
+    const call = ENDPOINTS[shape.endpoint];
     const outcome = await send(call({ body: { email, locale, turnstile_token: token } }));
     if (token) {
       setToken(null);

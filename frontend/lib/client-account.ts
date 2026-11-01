@@ -190,16 +190,18 @@ export function afterSignOut(current: Details, written: Fill, businessRegion: st
 
 export type LinkPurpose = "sign_up" | "account_sign_up" | "password_reset";
 
-/** How a link request behaves: its Turnstile action, its "check your inbox" lede and where its "too many" message
- * lives. A client's account sign-up shares business sign-up's action and limits (the backend's own keys), so one
- * inbox gets at most three sign-up emails an hour across both. */
+/** How a link request behaves: the API call it makes, its Turnstile action, its "check your inbox" lede and where
+ * its "too many" message lives. A client's account sign-up shares business sign-up's action and limits (the
+ * backend's own keys), so one inbox gets at most three sign-up emails an hour across both. */
 export function linkRequestShape(purpose: LinkPurpose): {
   action: "sign_up" | "password_reset";
   lede: "signUpLede" | "clientLede" | "resetLede";
   tooMany: "SignUp" | "ForgotPassword";
+  endpoint: "accountSignUp" | "platformAccountSignUp" | "accountRequestPasswordReset";
 } {
-  if (purpose === "password_reset") return { action: "password_reset", lede: "resetLede", tooMany: "ForgotPassword" };
-  return { action: "sign_up", lede: purpose === "account_sign_up" ? "clientLede" : "signUpLede", tooMany: "SignUp" };
+  if (purpose === "password_reset") return { action: "password_reset", lede: "resetLede", tooMany: "ForgotPassword", endpoint: "accountRequestPasswordReset" };
+  if (purpose === "account_sign_up") return { action: "sign_up", lede: "clientLede", tooMany: "SignUp", endpoint: "platformAccountSignUp" };
+  return { action: "sign_up", lede: "signUpLede", tooMany: "SignUp", endpoint: "accountSignUp" };
 }
 
 // --- Finishing the account (POST /api/account/sign-up/complete) ---

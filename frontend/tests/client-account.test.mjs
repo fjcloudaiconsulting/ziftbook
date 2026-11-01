@@ -318,12 +318,19 @@ describe("Not you? Sign out", () => {
 describe("client sign-up, email first", () => {
   test("an account sign-up link: business sign-up's challenge and limits, and an inbox screen of its own", () => {
     // The backend shares the Turnstile action, the IP key and the per-address key with business sign-up.
-    assert.deepEqual(linkRequestShape("account_sign_up"), { action: "sign_up", lede: "clientLede", tooMany: "SignUp" });
+    assert.deepEqual(linkRequestShape("account_sign_up"), { action: "sign_up", lede: "clientLede", tooMany: "SignUp", endpoint: "platformAccountSignUp" });
   });
 
   test("the business sign-up and the reset link are unchanged", () => {
-    assert.deepEqual(linkRequestShape("sign_up"), { action: "sign_up", lede: "signUpLede", tooMany: "SignUp" });
-    assert.deepEqual(linkRequestShape("password_reset"), { action: "password_reset", lede: "resetLede", tooMany: "ForgotPassword" });
+    assert.deepEqual(linkRequestShape("sign_up"), { action: "sign_up", lede: "signUpLede", tooMany: "SignUp", endpoint: "accountSignUp" });
+    assert.deepEqual(linkRequestShape("password_reset"), { action: "password_reset", lede: "resetLede", tooMany: "ForgotPassword", endpoint: "accountRequestPasswordReset" });
+  });
+
+  test("fence: the link request calls the endpoint its shape names (PR 6 review, correctness 11, M1)", () => {
+    // Wrong implementation killed: account sign-up calling the business sign-up, which emails a business link.
+    const text = readFileSync(new URL("../app/[locale]/_ui/link-request.tsx", import.meta.url), "utf8");
+    assert.match(text, /const call = ENDPOINTS\[shape\.endpoint\];/);
+    assert.match(text, /const ENDPOINTS = \{ accountRequestPasswordReset, accountSignUp, platformAccountSignUp \} as const;/);
   });
 
   test("both sign-in pages offer to create an account", () => {
