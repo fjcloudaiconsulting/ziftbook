@@ -842,9 +842,9 @@ const policyNonce = (policy) => /'nonce-([^']+)'/.exec(policy ?? "")?.[1];
 
 // Every header of that name, as sent: fetch() joins repeats into one value.
 // A page as a browser on `host` would load it: http.request, as fetch() never sends a chosen Host.
-function pageOn(port, path, host) {
+function pageOn(port, path, host, headers = {}) {
   return new Promise((resolve, reject) => {
-    httpRequest({ host: "127.0.0.1", port, path, headers: { host } }, (res) => {
+    httpRequest({ host: "127.0.0.1", port, path, headers: { ...headers, host } }, (res) => {
       res.resume();
       res.on("end", () => resolve({ status: res.statusCode, headers: res.headers }));
     })
@@ -1023,6 +1023,10 @@ describe("CSP violation reports (ZIF-236)", () => {
       assert.doesNotMatch(response.headers["content-security-policy-report-only"] ?? "", /report-(uri|to)/, host);
       assert.equal(response.headers["reporting-endpoints"], undefined, host);
     }
+    // Only the Host the page was served on counts: an X-Forwarded-Host naming the URL's host changes nothing.
+    const forwarded = await pageOn(port, "/en/sign-in", "evil.example.test", { "x-forwarded-host": "app.example.test" });
+    assert.doesNotMatch(forwarded.headers["content-security-policy-report-only"] ?? "", /report-(uri|to)/);
+    assert.equal(forwarded.headers["reporting-endpoints"], undefined);
     const warnings = await waitForLog(web.logs.stdout, "csp report url is not this page's host: violations are not reported");
     assert.equal(warnings.length, 1);
     assert.equal(warnings[0].level, "WARNING");
