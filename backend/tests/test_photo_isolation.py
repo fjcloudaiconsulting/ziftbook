@@ -370,6 +370,77 @@ def records() -> list[tuple[str, bytes]]:
     ]
 
 
+def as_bytes(im: Image.Image, fmt: str, **kw: Any) -> bytes:
+    buf = io.BytesIO()
+    im.save(buf, fmt, **kw)
+    return buf.getvalue()
+
+
+def riff(chunks: list[tuple[bytes, bytes]], pad: bool = True) -> bytes:
+    """A WebP from its chunks, its RIFF size its own (pad=False leaves an odd chunk unpadded)."""
+    body = b"".join(
+        kind + struct.pack("<I", len(data)) + data + (b"\0" * (len(data) & 1) if pad else b"")
+        for kind, data in chunks
+    )
+    return b"RIFF" + struct.pack("<I", 4 + len(body)) + b"WEBP" + body
+
+
+def chunks_of(blob: bytes) -> list[tuple[bytes, bytes]]:
+    found, i = [], 12
+    while i < len(blob):
+        n = int.from_bytes(blob[i + 4 : i + 8], "little")
+        found.append((blob[i : i + 4], blob[i + 8 : i + 8 + n]))
+        i += 8 + n + (n & 1)
+    return found
+
+
+def webp_rows() -> list[tuple[str, bytes]]:
+    """Variants a compromised child could write that only the structure check refuses (build
+    review, correctness 6), each in a record otherwise good."""
+    rgba = Image.new("RGBA", (20, 10), (200, 100, 50, 128))
+    good = good_record(as_bytes(rgba, "PNG"))
+    head = json.loads(good[4 : 4 + int.from_bytes(good[:4])])
+    thumb = good[4 + int.from_bytes(good[:4]) :][: head["thumb"]]
+    detail = good[4 + int.from_bytes(good[:4]) :][head["thumb"] :]
+    vp8x, alph, vp8 = chunks_of(detail)
+    assert (vp8x[0], alph[0], vp8[0]) == (b"VP8X", b"ALPH", b"VP8 ")
+    rows = []
+    for flag, name in ((0x20, "icc"), (0x08, "exif"), (0x04, "xmp"), (0x02, "animation")):
+        flagged = riff([(b"VP8X", bytes([vp8x[1][0] | flag]) + vp8x[1][1:]), alph, vp8])
+        rows.append((f"vp8x-{name}-flag", with_blobs(good, thumb, flagged, detail=len(flagged))))
+    wider = vp8x[1][:4] + (20).to_bytes(3, "little") + vp8x[1][7:]  # canvas 21 x 10, frame 20 x 10
+    canvas = riff([(b"VP8X", wider), alph, vp8])
+    rows.append(("canvas-not-the-frame", with_blobs(good, thumb, canvas, detail=len(canvas))))
+    odd = next(  # a lossless still (VP8L) whose one chunk has an odd length
+        w
+        for w in (
+            as_bytes(Image.new("RGB", (20, 10), (n, 7, 9)), "WEBP", lossless=True)
+            for n in range(256)
+        )
+        if int.from_bytes(w[16:20], "little") % 2
+    )
+    unpadded = riff(chunks_of(odd), pad=False)
+    plain = good_record()
+    plain_head = json.loads(plain[4 : 4 + int.from_bytes(plain[:4])])
+    plain_thumb = plain[4 + int.from_bytes(plain[:4]) :][: plain_head["thumb"]]
+    rows.append(
+        ("odd-chunk-unpadded", with_blobs(plain, plain_thumb, unpadded, detail=len(unpadded)))
+    )
+    return rows
+
+
+# ZIF-230 fence (build review, correctness 6). Kills: the structure check's VP8X flag rule, its
+# canvas = frame rule, or its end-of-blob rule (an odd chunk must carry its pad byte) dropped.
+@pytest.mark.parametrize(("name", "body"), webp_rows(), ids=[n for n, _ in webp_rows()])
+def test_a_variant_outside_the_still_webp_layout_is_refused(name: str, body: bytes) -> None:
+    assert photos.parse(body) is None
+
+
+def test_the_rows_differ_from_a_good_rgba_record_only_where_named() -> None:
+    rgba = Image.new("RGBA", (20, 10), (200, 100, 50, 128))
+    assert photos.parse(good_record(as_bytes(rgba, "PNG"))) is not None
+
+
 # ZIF-230 fence. Kills: trusting what the child wrote. Every part of the record is checked, and the
 # variants (served publicly) must be plain still WebPs of the size the record names.
 @pytest.mark.parametrize(("name", "body"), records(), ids=[n for n, _ in records()])
