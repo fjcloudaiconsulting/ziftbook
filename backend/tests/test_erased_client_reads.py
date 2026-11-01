@@ -258,7 +258,7 @@ def schema(spec: dict[str, Any], name: str) -> dict[str, Any]:
 # ZIF-58 F11 FENCE, the contract (review finding 5): client_name stays a required, non-nullable
 # string, client_erased a required boolean, and the field description says that "" goes with
 # client_erased true. Wrong impl: client_name: str | None, or client_erased optional or absent.
-@pytest.mark.parametrize("name", ["PendingOut", "AgendaOut", "BookingDetailOut"])
+@pytest.mark.parametrize("name", ["PendingOut", "AgendaOut", "BookingDetailOut", "InTheWay"])
 def test_the_erased_client_pair_is_a_pinned_contract(name: str) -> None:
     # The app's own document: tests/test_openapi.py holds backend/openapi.json to it.
     spec = json.loads(openapi_document())
@@ -270,3 +270,26 @@ def test_the_erased_client_pair_is_a_pinned_contract(name: str) -> None:
     assert {"client_name", "client_erased"} <= set(found["required"])
     assert '""' in client_name["description"]
     assert "client_erased" in client_name["description"]
+
+
+# ZIF-58 F12 FENCE. Wrong impl: today's InTheWay, with no client_erased (the console cannot tell
+# the refused block's erased client from a blank name).
+def test_a_refused_block_marks_an_erased_client(
+    people: People, owner: TestClient, migrate_engine: Engine, booked: dict[str, str]
+) -> None:
+    erase_by_hand(migrate_engine, people.a, client_of(people.a, booked["pending"]))
+
+    refused = owner.post(
+        f"/api/members/{member_id(people.a, people.both)}/time-off",
+        json={"starts_at": at("08:00"), "ends_at": at("12:00")},
+    )
+
+    assert (refused.status_code, refused.json()["code"]) == (409, "overlaps_bookings")
+    named = {
+        row["id"]: (row["client_name"], row["client_erased"]) for row in refused.json()["bookings"]
+    }
+    assert named == {
+        booked["pending"]: ("", True),
+        booked["confirmed"]: ("", True),
+        booked["live"]: ("Live Booker", False),
+    }

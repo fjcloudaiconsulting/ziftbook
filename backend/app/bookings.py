@@ -45,7 +45,7 @@ from app import time_off as time_off_module
 from app.business_settings import Locale
 from app.clients import ClientName, Phone, PolicyVersion, Purpose
 from app.db import SessionLocal, count_after_commit, join_tenant, tenant_context
-from app.errors import ApiError, Error
+from app.errors import CLIENT_ERASED, CLIENT_NAME, ApiError, Error
 from app.services import STRICT, DescriptionText, Price, multiline
 
 logger = logging.getLogger(__name__)
@@ -244,15 +244,6 @@ class StatusChange(BaseModel):
 class BookingStatusOut(BaseModel):
     id: UUID
     status: Target
-
-
-# ZIF-58: the permanent wire contract for an erased client, pinned in
-# tests/test_erased_client_reads.py. client_name stays a string, never null.
-CLIENT_NAME = (
-    'The client\'s name. "" exactly when client_erased is true: an erased client has no name, '
-    "and the console shows it as an erased client."
-)
-CLIENT_ERASED = 'True when the client was erased; client_name is then "".'
 
 
 class BookingRow(BaseModel):

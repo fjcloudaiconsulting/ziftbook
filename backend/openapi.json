@@ -7914,7 +7914,13 @@
           },
           "client_name": {
             "type": "string",
-            "title": "Client Name"
+            "title": "Client Name",
+            "description": "The client's name. \"\" exactly when client_erased is true: an erased client has no name, and the console shows it as an erased client."
+          },
+          "client_erased": {
+            "type": "boolean",
+            "title": "Client Erased",
+            "description": "True when the client was erased; client_name is then \"\"."
           },
           "service_name": {
             "additionalProperties": {
@@ -7938,6 +7944,7 @@
           "starts_at",
           "ends_at",
           "client_name",
+          "client_erased",
           "service_name",
           "status"
         ],

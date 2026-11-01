@@ -172,7 +172,7 @@ def lock_bookings(current: SignedIn) -> None:
 # `completed` never counts, even when marked before it ends.
 IN_THE_WAY = text("""
 SELECT b.id, b.starts_at, b.ends_at, coalesce(b.client_name, c.name) AS client_name,
-       b.service_name, b.status, count(*) OVER () AS total
+       c.erased_at IS NOT NULL AS client_erased, b.service_name, b.status, count(*) OVER () AS total
 FROM bookings b
 JOIN clients c ON c.tenant_id = b.tenant_id AND c.id = b.client_id
 WHERE b.worker_id = :member_id
