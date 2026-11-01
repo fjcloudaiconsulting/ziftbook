@@ -1015,6 +1015,12 @@ def test_the_filter_program_decides_each_syscall(machine: str) -> None:
     assert run_filter(machine, nr["fcntl"], (1, 4, 0o4000)) == ALLOW  # F_SETFL O_NONBLOCK
     for cmd in (0, 1, 2, 3, 9, 1030):  # F_DUPFD, F_GETFD, F_SETFD, F_GETFL, F_GETOWN, CLOEXEC
         assert run_filter(machine, nr["fcntl"], (1, cmd, 0o20000)) == ALLOW, cmd
+    # Past the highest number the tables were written against (a syscall a later kernel adds):
+    # "no such syscall", so a library falls back as it would on an older kernel.
+    enosys = 0x00050000 | 38
+    for number in (470, 471, 1000, 0x3FFFFFFF):
+        assert run_filter(machine, number) == enosys, number
+    assert run_filter(machine, photo_child.CEILING) != enosys
     other = photo_child.AUDIT_ARCH["x86_64" if machine == "aarch64" else "aarch64"]
     assert run_filter(machine, nr["read"], arch=other) == KILL
     assert run_filter(machine, nr["read"], arch=0x40000003) == KILL  # i386
