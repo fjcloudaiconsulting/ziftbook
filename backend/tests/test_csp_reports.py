@@ -5,6 +5,7 @@ query or fragment; a blocked or source URL is a category, never its host.
 """
 
 import asyncio
+import contextlib
 import io
 import json
 import logging
@@ -719,6 +720,75 @@ def test_drops_are_one_line_a_minute_with_a_count_per_reason(
 
     [first, second] = dropped(log_lines)
     assert {k: second[k] for k in ("cross_site", "foreign")} == {"cross_site": 3, "foreign": 1}
+
+
+# 16d. Build review 7: counts are written within a minute or two by a timer, not only by the next
+# report, and each drop line says how many seconds it covers.
+def test_drop_counts_are_written_by_the_timer_with_their_window(
+    client: TestClient, log_lines: Lines, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    now = [1000.0]
+    monkeypatch.setattr(csp_reports, "_now", lambda: now[0])
+    cross = {**LEGACY, "sec-fetch-site": "cross-site"}
+    post(client, legacy(), cross)  # the first drop is written at once
+    now[0] += 5
+    post(client, legacy(), cross)  # this one waits for the minute
+    now[0] += 7
+    post(client, legacy(), cross)
+    [first] = dropped(log_lines)
+    assert (first["cross_site"], first["seconds"]) == (1, 0)
+
+    now[0] = 1000.0 + csp_reports.DROP_EVERY
+
+    async def tick() -> None:
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(csp_reports.flush_drops_every(0.01), 0.2)
+
+    asyncio.run(tick())
+
+    [_, second] = dropped(log_lines)
+    assert (second["cross_site"], second["seconds"]) == (2, csp_reports.DROP_EVERY - 5)
+
+
+def test_pending_drop_counts_are_written_at_shutdown(
+    client: TestClient, log_lines: Lines, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    now = [1000.0]
+    monkeypatch.setattr(csp_reports, "_now", lambda: now[0])
+    cross = {**LEGACY, "sec-fetch-site": "cross-site"}
+    post(client, legacy(), cross)
+    now[0] += 3
+    post(client, legacy(), cross)
+    now[0] += 4
+
+    csp_reports.flush_drops_now()
+
+    [_, last] = dropped(log_lines)
+    assert (last["cross_site"], last["seconds"]) == (1, 4)
+    csp_reports.flush_drops_now()  # nothing pending: no line
+    assert len(dropped(log_lines)) == 2
+
+
+def test_the_api_lifespan_runs_the_drop_timer_and_flushes_at_shutdown(
+    migrated: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    events: list[str] = []
+
+    async def every(interval: float = csp_reports.DROP_EVERY) -> None:
+        events.append("timer started")
+        try:
+            await asyncio.sleep(3600)
+        except asyncio.CancelledError:
+            events.append("timer stopped")
+            raise
+
+    monkeypatch.setattr(csp_reports, "flush_drops_every", every)
+    monkeypatch.setattr(csp_reports, "flush_drops_now", lambda: events.append("flushed"))
+
+    with TestClient(create_app()):
+        assert events == ["timer started"]
+
+    assert events == ["timer started", "timer stopped", "flushed"]
 
 
 # 17. B3 fence: a report another site's page sent is dropped before any database work.

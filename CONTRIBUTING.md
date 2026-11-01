@@ -478,7 +478,8 @@ loggers (`web.*`); Next's own stderr output (banners, SSR error traces) is not i
   value is from a closed set: never the page's path, query or fragment (a checkout's query holds Stripe's client
   secret), a host, the referrer, the policy (its nonce), the sample or the user agent. At most 600 such lines a
   minute per process. `csp reports dropped` (INFO; WARNING when it holds `limiter_unavailable`, with `error`) at most
-  once a minute per process, with a count per reason since the last one: `cross_site` (sent by another site's page),
+  once a minute per process (a timer writes counts no report follows within two minutes, and shutdown writes what is
+  left), with `seconds` (the time its counts cover) and a count per reason: `cross_site` (sent by another site's page),
   `busy` (two limiter calls already running), `rate_limited` (30 a minute per address, IPv6 per /48),
   `limiter_unavailable` (the database could not count), `disconnected` (the client hung up mid-report), `foreign`
   (a page on another origin), `batch_cap` (past 10 violations in one request) and `global_cap` (past the line

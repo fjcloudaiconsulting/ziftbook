@@ -1,3 +1,5 @@
+import asyncio
+import contextlib
 import ipaddress
 import json
 import logging
@@ -263,9 +265,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.warning("storage unset: photo uploads refused")
     if not payments_on:
         logger.warning("stripe unset: payments off")
+    # ZIF-236: report drop counts are written within two minutes even if no report follows them.
+    drop_timer = asyncio.create_task(csp_reports.flush_drops_every())
     try:
         yield
     finally:
+        drop_timer.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await drop_timer
+        csp_reports.flush_drops_now()
         try:
             SessionLocal.configure(bind=None)
             engine.dispose()

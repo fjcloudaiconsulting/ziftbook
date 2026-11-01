@@ -11,6 +11,7 @@ script or string. None of that is ever read. A logged violation holds six fields
 set: the page as its route template, a blocked or source URL as a category, never a host.
 """
 
+import asyncio
 import ipaddress
 import json
 import logging
@@ -374,42 +375,68 @@ _in_flight = 0
 _drops: Counter[str] = Counter()
 _drop_error: str | None = None
 _drops_logged_at: float | None = None
+_drops_since: float | None = None  # when the first count not yet written was made
 _lines_since: float | None = None
 _lines = 0
 
 
 def reset() -> None:
     """Back to a fresh process: for tests."""
-    global _in_flight, _drop_error, _drops_logged_at, _lines_since, _lines
+    global _in_flight, _drop_error, _drops_logged_at, _drops_since, _lines_since, _lines
     _in_flight = 0
     _drops.clear()
     _drop_error = None
     _drops_logged_at = None
+    _drops_since = None
     _lines_since = None
     _lines = 0
 
 
-def _flush_drops() -> None:
-    """One `csp reports dropped` line, at most every DROP_EVERY seconds, with each reason's count
-    since the last one. WARNING when the limiter could not count (a database problem)."""
-    global _drop_error, _drops_logged_at
+def _flush_drops(force: bool = False) -> None:
+    """One `csp reports dropped` line, at most every DROP_EVERY seconds unless forced, with each
+    reason's count since the last one and `seconds`, the time those counts cover. WARNING when the
+    limiter could not count (a database problem)."""
+    global _drop_error, _drops_logged_at, _drops_since
     now = _now()
-    if not _drops or (_drops_logged_at is not None and now - _drops_logged_at < DROP_EVERY):
+    if not _drops:
+        return
+    if not force and _drops_logged_at is not None and now - _drops_logged_at < DROP_EVERY:
         return
     level = logging.WARNING if _drops["limiter_unavailable"] else logging.INFO
     extra: dict[str, Any] = {reason: _drops[reason] for reason in DROP_REASONS if _drops[reason]}
+    extra["seconds"] = round(now - (_drops_since if _drops_since is not None else now))
     if _drop_error:
         extra["error"] = _drop_error
     logger.log(level, "csp reports dropped", extra=extra)
     _drops.clear()
     _drop_error = None
     _drops_logged_at = now
+    _drops_since = None
+
+
+def _count(reason: str, count: int = 1) -> None:
+    global _drops_since
+    if not _drops:
+        _drops_since = _now()
+    _drops[reason] += count
 
 
 def _drop(reason: str, count: int = 1) -> Response:
-    _drops[reason] += count
+    _count(reason, count)
     _flush_drops()
     return Response(status_code=204)
+
+
+async def flush_drops_every(interval: float = DROP_EVERY) -> None:
+    """Run by the API's lifespan: writes counts that no later report would, within two minutes."""
+    while True:
+        await asyncio.sleep(interval)
+        _flush_drops()
+
+
+def flush_drops_now() -> None:
+    """At shutdown: whatever is still counted, whenever the last line was."""
+    _flush_drops(force=True)
 
 
 def _spend_line() -> bool:
@@ -479,20 +506,20 @@ async def report(request: Request) -> Response:
         return _drop("disconnected")
     reports = _reports(media, body)
     if len(reports) > MAX_REPORTS:
-        _drops["batch_cap"] += len(reports) - MAX_REPORTS
+        _count("batch_cap", len(reports) - MAX_REPORTS)
     known = known_origins()
     found = Counter(_violation(FORMATS[media], r, known) for r in reports[:MAX_REPORTS])
     foreign = sum(count for v, count in found.items() if v.page == "foreign")
     if foreign:
         # By construction another origin's pages: counted, never logged one by one.
-        _drops["foreign"] += foreign
+        _count("foreign", foreign)
     for violation, count in sorted(found.items()):
         if violation.page == "foreign":
             continue
         # Counted whether or not the line budget lets it be logged.
         tracing.CSP_VIOLATIONS.add(count, {f"csp.{k}": v for k, v in violation._asdict().items()})
         if not _spend_line():
-            _drops["global_cap"] += count
+            _count("global_cap", count)
             continue
         logger.info("csp violation", extra={**violation._asdict(), "count": count})
     _flush_drops()
