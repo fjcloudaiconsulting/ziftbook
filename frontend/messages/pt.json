@@ -127,6 +127,25 @@
   "ClientSignUp": {
     "emailPlaceholder": "voce@exemplo.com.br"
   },
+  "ClientHome": {
+    "title": "Seus agendamentos",
+    "lede": "Todos os agendamentos feitos com esta conta. Cada negócio vê só os seus.",
+    "upcoming": "Próximos",
+    "past": "Anteriores",
+    "bookAgain": "Agendar de novo",
+    "waiting": "Aguardando resposta",
+    "confirmed": "Confirmado",
+    "cancelled": "Cancelado",
+    "declined": "Recusado",
+    "expired": "Expirado",
+    "noShow": "Não compareceu",
+    "emptyTitle": "Nenhum agendamento ainda",
+    "emptyBody": "Os agendamentos feitos com a conta aparecem aqui.",
+    "more": "Mostrar mais",
+    "loadingMore": "Carregando…",
+    "reauth": "Para sua privacidade, digite sua senha de novo para ver seus agendamentos.",
+    "tooMany": "Muitas solicitações por agora. Tente de novo em um minuto."
+  },
   "Admin": {
     "title": "Entrar como administrador",
     "lede": "Para o administrador da plataforma, que cuida de todos os negócios deste ziftbook.",

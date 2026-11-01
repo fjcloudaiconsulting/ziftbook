@@ -24,6 +24,7 @@ export function AccountSignIn({
   intro,
   aside,
   forgotNewTab = false,
+  initialEmail = "",
 }: {
   turnstileSiteKey: string | null;
   onSignedIn(account: AccountOut): void;
@@ -31,12 +32,14 @@ export function AccountSignIn({
   aside?: ReactNode;
   /** In the checkout's dialog: the reset page opens beside it, so nothing typed into the booking is lost. */
   forgotNewTab?: boolean;
+  /** Asking a signed-in person for their password again (history needs a session started within a day). */
+  initialEmail?: string;
 }) {
   const t = useTranslations("SignIn");
   const form = useTranslations("Form");
   const client = useTranslations("ClientSignUp");
   const locale = useLocale();
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState(initialEmail);
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<Message | null>(null);

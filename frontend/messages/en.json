@@ -127,6 +127,25 @@
   "ClientSignUp": {
     "emailPlaceholder": "you@example.com"
   },
+  "ClientHome": {
+    "title": "Your bookings",
+    "lede": "Every booking you made with this account. Each business sees only its own.",
+    "upcoming": "Upcoming",
+    "past": "Past",
+    "bookAgain": "Book again",
+    "waiting": "Waiting for an answer",
+    "confirmed": "Confirmed",
+    "cancelled": "Cancelled",
+    "declined": "Declined",
+    "expired": "Expired",
+    "noShow": "No-show",
+    "emptyTitle": "No bookings yet",
+    "emptyBody": "Bookings you make while signed in show up here.",
+    "more": "Show more",
+    "loadingMore": "Loading…",
+    "reauth": "For your privacy, enter your password again to see your bookings.",
+    "tooMany": "Too many requests for now. Try again in a minute."
+  },
   "Admin": {
     "title": "Admin sign-in",
     "lede": "For the platform admin, who looks after every business on this ziftbook.",
