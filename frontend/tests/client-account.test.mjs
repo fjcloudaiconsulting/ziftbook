@@ -252,6 +252,13 @@ describe("Not you? Sign out", () => {
     const button = readFileSync(new URL("../app/[locale]/_ui/account-button.tsx", import.meta.url), "utf8");
     assert.match(button, /platformAccountSignOut\(/);
   });
+
+  test("fence: a request already sent keeps the details it went with when the account signs out", () => {
+    // Wrong implementation killed: emptying the locked fields of a request waiting for its payment, whose resend
+    // and done screen read them.
+    const text = readFileSync(new URL("../app/[locale]/[slug]/booking-page.tsx", import.meta.url), "utf8");
+    assert.match(text, /if \(written && !locked\) \{\s*const next = afterSignOut\(/);
+  });
 });
 
 describe("client sign-up, email first", () => {

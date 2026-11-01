@@ -256,11 +256,12 @@ export function BookingPage({
   }, [noteFocus]);
 
   // The account signed out on this browser ("Not you?" or the header's menu): the fields that still hold its values
-  // empty out, and the offer is back. A ref, always current: the store's listener is registered once.
+  // empty out, and the offer is back. A request already sent keeps the details it went with (its fields are locked).
+  // A ref, always current: the store's listener is registered once.
   const signedOutRef = useRef<() => void>(() => {});
   useEffect(() => {
     signedOutRef.current = () => {
-      if (written) {
+      if (written && !locked) {
         const next = afterSignOut({ name: flow.name, email: flow.email, phone: flow.phone, region }, written, page.country);
         setFlow((f) => ({ ...f, name: next.name, email: next.email, phone: next.phone, suggest: null }));
         setRegion(next.region);
