@@ -315,6 +315,25 @@ def test_the_child_gets_no_environment_and_no_descriptors(
         os.close(write)
 
 
+# ZIF-230 fence (ruling D3). Kills: a child that a decoder bug took over reaching the network (egress
+# is open to the cluster and the internet) or io_uring, which would bypass the filter.
+@only_linux
+def test_the_child_cannot_open_a_socket() -> None:
+    assert probe_says("probe-socket") == "PermissionError"
+
+
+# ZIF-230 fence (ruling D3). Kills: a child that a decoder bug took over changing the filesystem: a
+# directory or an empty file in /tmp (RLIMIT_FSIZE stops neither), or the upload opened to write.
+@only_linux
+def test_the_child_cannot_change_the_filesystem() -> None:
+    assert probe_says("probe-write") == "PermissionError_PermissionError_PermissionError"
+
+
+def status(pid: int | str) -> dict[str, str]:
+    with open(f"/proc/{pid}/status") as lines:
+        return {k: v.strip() for k, v in (line.split(":", 1) for line in lines)}
+
+
 def proc_limits(pid: int) -> dict[str, tuple[str, str]]:
     with open(f"/proc/{pid}/limits") as limits:
         lines = limits.read().splitlines()[1:]
@@ -331,9 +350,9 @@ EXPECTED_LIMITS = {
 }
 
 
-# ZIF-230 fence. Kills: limits set after Pillow is imported, or not at all. The real child, started
-# as photos starts it, blocks reading an upload that never comes: its limits are in force and
-# Pillow is not loaded yet.
+# ZIF-230 fence. Kills: limits or the syscall filter set after Pillow is imported, or not at all.
+# The real child, started as photos starts it, blocks reading an upload that never comes: its
+# limits and filter are in force and Pillow is not loaded yet.
 @only_linux
 def test_the_child_sets_its_limits_before_it_imports_pillow() -> None:
     read, write = os.pipe()
@@ -349,6 +368,11 @@ def test_the_child_sets_its_limits_before_it_imports_pillow() -> None:
         assert {k: limits[k] for k in EXPECTED_LIMITS} == EXPECTED_LIMITS
         with open(f"/proc/{proc.pid}/oom_score_adj") as adj:
             assert adj.read().strip() == "1000"
+        # One filter more than this process has (the container runtime may have its own), and
+        # no_new_privs, which a filter needs.
+        theirs, ours = status(proc.pid), status("self")
+        assert (theirs["NoNewPrivs"], theirs["Seccomp"]) == ("1", "2")
+        assert int(theirs["Seccomp_filters"]) == int(ours["Seccomp_filters"]) + 1
         with open(f"/proc/{proc.pid}/maps") as maps:
             assert "PIL" not in maps.read()
     finally:
