@@ -49,9 +49,15 @@ WHERE id = :id
 """)
 
 
+ERASE_LINKS = text("""
+DELETE FROM booking_links WHERE booking_id IN (SELECT id FROM bookings WHERE client_id = :id)
+""")
+
+
 def erase_in(conn: Connection, client_id: object) -> None:
+    conn.execute(ERASE_CLIENT, {"id": client_id})  # first: the client's row lock, as the core
     conn.execute(ERASE_BOOKINGS, {"id": client_id})
-    conn.execute(ERASE_CLIENT, {"id": client_id})
+    conn.execute(ERASE_LINKS, {"id": client_id})
 
 
 def erase_by_hand(migrate_engine: Engine, tenant_id: uuid.UUID, client_id: object) -> None:
@@ -421,3 +427,44 @@ def test_no_moving_statement_moves_an_erased_clients_booking(
     with tenant_context(people.a) as session:
         assert session.execute(getattr(bookings, statement), params).first() is None
     assert starts_of(people.a, str(booking_id)) == starts
+
+
+def links_of(tenant_id: uuid.UUID, booking_id: str) -> int:
+    with tenant_context(tenant_id) as session:
+        count: int = session.scalar(
+            text("SELECT count(*) FROM booking_links WHERE booking_id = :id"), {"id": booking_id}
+        )
+    return count
+
+
+# ZIF-58 FENCE (the twin of the consents race). Wrong impl: the mail job reads the booking and its
+# client without locking the client. A link's foreign key takes only KEY SHARE on the booking,
+# which an erasure does not block, so a job that read the client before an erasure committed would
+# mint a manage link after the erasure deleted them, and mail what it read before. With FOR SHARE
+# the job waits for the erasure, re-reads the client and sends nothing.
+@pytest.mark.parametrize("template", ["booking_confirmed", "booking_new"])
+def test_a_booking_mail_waits_for_an_erasure_in_flight_then_sends_nothing(
+    people: People,
+    migrate_engine: Engine,
+    app_engine: Engine,
+    booked: dict[str, str],
+    clean_outbox: None,
+    template: str,
+) -> None:
+    booking_id = booked["confirmed"]
+    team = {"user_id": str(people.both)} if template == "booking_new" else {}
+    sent: dict[str, Any] = {}
+
+    def mail() -> None:
+        sent["job"] = run_send_booking(people.a, booking_id, template, **team)
+
+    writer = threading.Thread(target=mail)
+    with migrate_tenant_context(migrate_engine, people.a) as conn:
+        erase_in(conn, client_of(people.a, booking_id))  # holds the client's row lock
+        writer.start()
+        wait_until_blocked(app_engine, 1)
+    writer.join(timeout=10)
+    assert not writer.is_alive()
+
+    assert outbox_for(people.a, sent["job"].id) is None
+    assert links_of(people.a, booking_id) == 0
