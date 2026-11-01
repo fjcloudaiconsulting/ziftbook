@@ -52,6 +52,30 @@ DENIED: dict[str, tuple[int | None, int | None]] = {
     "pidfd_send_signal": (424, 424),
     "process_vm_writev": (271, 311),
     "kcmp": (272, 312),
+    "execve": (221, 59),
+    "execveat": (281, 322),
+    "fallocate": (47, 285),
+    "setxattr": (5, 188),
+    "lsetxattr": (6, 189),
+    "fsetxattr": (7, 190),
+    "removexattr": (14, 197),
+    "lremovexattr": (15, 198),
+    "fremovexattr": (16, 199),
+    "utimensat": (88, 280),
+    "utime": (None, 132),
+    "utimes": (None, 235),
+    "futimesat": (None, 261),
+    "fchown": (55, 93),
+    "fchownat": (54, 260),
+    "chown": (None, 92),
+    "lchown": (None, 94),
+    "memfd_create": (279, 319),
 }
-# Arguments other than all zeros, where zeros would be refused by the kernel anyway.
-DENIED_ARGS: dict[str, tuple[int, ...]] = {}
+# Arguments other than all zeros, where zeros would be refused by the kernel anyway: a chown to
+# uid 0. -1 changes no owner.
+DENIED_ARGS: dict[str, tuple[int, ...]] = {
+    "fchown": (0, -1, -1),
+    "fchownat": (0, 0, -1, -1, 0),
+    "chown": (0, -1, -1),
+    "lchown": (0, -1, -1),
+}
