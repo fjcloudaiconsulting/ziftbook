@@ -86,7 +86,8 @@ const NOT_A_HOST = /[\s\x00-\x1f\x7f/?#%:@\\[\]]/;
 /** The address with an international domain in its ASCII (xn--) form, which is how a mail header
  * carries it and what the API accepts. The same in every browser: Chromium's type=email converts the
  * domain itself, Firefox and Safari do not. Only the domain: the part before the @ has no ASCII
- * form. A domain the URL parser would rewrite (a line break, a slash, a %) is left as typed. */
+ * form. A domain the URL parser would rewrite (a line break, a slash, a %, or digits it reads as an IP
+ * address) is left as typed. */
 export function asciiEmail(text: string): string {
   const email = normaliseEmail(text);
   const at = email.lastIndexOf("@");
@@ -94,7 +95,9 @@ export function asciiEmail(text: string): string {
   if (at === -1 || !/[^\x00-\x7f]/.test(domain) || NOT_A_HOST.test(domain)) return email;
   try {
     const host = new URL(`http://${domain}`).hostname;
-    return /^[\x21-\x7e]+$/.test(host) ? `${email.slice(0, at)}@${host}` : email;
+    // A last label with no letter is an address the parser read as an IP (fullwidth digits: １.２ -> 1.0.0.2).
+    const ip = !/[a-z]/.test(host.slice(host.lastIndexOf(".") + 1));
+    return /^[\x21-\x7e]+$/.test(host) && !ip ? `${email.slice(0, at)}@${host}` : email;
   } catch {
     return email;
   }
