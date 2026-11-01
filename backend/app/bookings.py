@@ -118,6 +118,10 @@ class BookingCore(BaseModel):
 
 class BookingOut(BookingCore):
     payment: PaymentStart | None = None
+    # Whether this request's own live session proved the email, so the booking was recorded as
+    # placed by that account (ZIF-146): the booking page then offers no "save your details". It
+    # answers only the browser that sent the request, about its own session.
+    placed_by_account: bool = False
 
 
 @dataclass(frozen=True)
@@ -1175,6 +1179,7 @@ def book_online(
         worker_id=candidate,
         worker_display_name=names[candidate],
         cancellation_policy_text=settings.cancellation_policy_text or None,
+        placed_by_account=proof is not None,  # re-confirmed above: held(), or refused 401
     )
     return out, stripe_account, expires_at
 

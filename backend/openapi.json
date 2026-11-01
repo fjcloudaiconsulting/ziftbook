@@ -10788,6 +10788,11 @@
                 "type": "null"
               }
             ]
+          },
+          "placed_by_account": {
+            "type": "boolean",
+            "title": "Placed By Account",
+            "default": false
           }
         },
         "type": "object",
