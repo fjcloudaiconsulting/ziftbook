@@ -507,6 +507,10 @@ def test_no_personal_data_ever_reaches_a_log(
     csp_reports.reset()
     app_url = MailSettings().app_url.rstrip("/")
     reporter = client_for(app)
+    # The blocked host below carries the token lower-cased, a checkout's URL Stripe's secret.
+    secret(signup_token.lower()[:40])
+    client_secret = "pi_Zzyzx9_secret_" + hashlib.sha256(signup_token.encode()).hexdigest()[:24]
+    secret(client_secret)
     legacy_report = {
         "csp-report": {
             "document-uri": f"{app_url}/en/reset-password?e={sign_up_email}#{signup_token}",
@@ -531,7 +535,20 @@ def test_no_personal_data_ever_reaches_a_log(
                 "sample": f"{signer_name} {sign_up_email}",
                 "disposition": "enforce",
             },
-        }
+        },
+        {
+            "type": "csp-violation",
+            "url": f"{app_url}/en/{business_name}/book",
+            "body": {
+                "documentURL": f"{app_url}/en/salon-zzyzx/book?service=1&booking=2"
+                f"&payment_intent=pi_Zzyzx9&payment_intent_client_secret={client_secret}"
+                "&redirect_status=succeeded",
+                "blockedURL": f"https://js.stripe.com/v3?secret={client_secret}",
+                "sourceFile": f"{app_url}/en/salon-zzyzx/book?s={client_secret}",
+                "effectiveDirective": "frame-src",
+                "disposition": "report",
+            },
+        },
     ]
     for body, media in (
         (legacy_report, "application/csp-report"),
@@ -541,7 +558,15 @@ def test_no_personal_data_ever_reaches_a_log(
             "/api/csp-reports", content=json.dumps(body), headers={"content-type": media}
         )
         assert reported.status_code == 204
-    assert len([line for line in log_lines() if line["msg"] == "csp violation"]) == 2
+    assert len([line for line in log_lines() if line["msg"] == "csp violation"]) == 3
+    # The drop line too: a batch past its cap and a cross-site report, written at once.
+    over_cap = batch_report * (csp_reports.MAX_REPORTS + 1)
+    cross_site = {"content-type": "application/reports+json", "sec-fetch-site": "cross-site"}
+    for headers in ({"content-type": "application/reports+json"}, cross_site):
+        reported = reporter.post("/api/csp-reports", content=json.dumps(over_cap), headers=headers)
+        assert reported.status_code == 204
+    csp_reports.flush_drops_now()
+    assert [line for line in log_lines() if line["msg"] == "csp reports dropped"]
 
     dumped = json.dumps(log_lines())
     for value in never:
