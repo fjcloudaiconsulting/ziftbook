@@ -8,18 +8,21 @@ import re
 import time
 import uuid
 from collections.abc import Callable, Iterator
-from datetime import timedelta
+from datetime import UTC, date, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 from sqlalchemy import Engine, create_engine, event, text
 from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.orm import Session
 
 from app import auth, limits, retention
+from app.config import WorkerSettings
 from app.db import SessionLocal
 from tests.conftest import People, engine_as_worker, jobs_as_the_worker
+from tests.test_retention_db import audit_targets, seed_audit
 from tests.test_sessions import start
 
 Lines = Callable[[], list[dict[str, Any]]]
@@ -369,3 +372,69 @@ def test_a_quiet_run_takes_one_batch(action: str) -> None:
     second = retention.sweep()
     assert first.complete and second.complete
     assert second.batches == 1
+
+
+# ---- D6: the retention hold (ZIF_RETENTION_HOLD_UNTIL) ----
+
+TODAY = date(2026, 11, 1)
+
+
+# 28a: FENCE. Wrong impl: a far-future (mistyped) date that turns the hold off, or one kept as is
+# (an indefinite hold is its own over-retention); a date within 90 days changed.
+@pytest.mark.parametrize(
+    ("requested", "effective", "clamped"),
+    [
+        (None, None, False),
+        (date(2026, 11, 20), date(2026, 11, 20), False),
+        (TODAY + timedelta(days=90), TODAY + timedelta(days=90), False),
+        (TODAY + timedelta(days=91), TODAY + timedelta(days=90), True),
+        (date(2062, 1, 1), TODAY + timedelta(days=90), True),
+    ],
+)
+def test_a_hold_more_than_90_days_ahead_holds_90_days(
+    requested: date | None, effective: date | None, clamped: bool
+) -> None:
+    assert retention.effective_hold(requested, TODAY) == (effective, clamped)
+
+
+def test_the_hold_date_must_be_a_date(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ZIF_DATABASE_URL", "postgresql+psycopg://x@localhost/x")
+    monkeypatch.setenv("ZIF_RETENTION_HOLD_UNTIL", "next tuesday")
+    with pytest.raises(ValidationError):
+        WorkerSettings()
+    monkeypatch.setenv("ZIF_RETENTION_HOLD_UNTIL", "2026-11-20")
+    assert WorkerSettings().retention_hold_until == date(2026, 11, 20)
+
+
+# 28b: FENCE. Wrong impl: a hold that is ignored, one that also stops sessions, rate limits or
+# superuser sessions (live state, not evidence), or one said nowhere.
+def test_a_hold_keeps_the_evidence_and_says_so_every_run(
+    action: str,
+    app_engine: Engine,
+    superuser: Engine,
+    audit_marker: str,
+    log_lines: Lines,
+) -> None:
+    seed_audit(superuser, f"{audit_marker}:old", "signed_out", "1 year 1 hour")
+    seed_key(app_engine, f"{action}:old", 1, "3 days")
+    until = datetime.now(UTC).date() + timedelta(days=1)
+
+    swept = retention.sweep(hold_until=until)
+
+    assert swept.held is True and swept.complete is True
+    assert audit_targets(superuser, audit_marker) == {f"{audit_marker}:old"}
+    assert keys(app_engine, action) == set()
+    (line,) = [line for line in log_lines() if line.get("logger") == "app.retention"]
+    assert line["level"] == "WARNING" and line["hold_until"] == until.isoformat()
+
+
+# 28c: GUARD. A hold whose date has come is over by itself.
+def test_a_hold_ends_on_its_date(
+    action: str, superuser: Engine, audit_marker: str, worker_engine: Engine
+) -> None:
+    seed_audit(superuser, f"{audit_marker}:old", "signed_out", "1 year 1 hour")
+
+    swept = retention.sweep(hold_until=datetime.now(UTC).date())
+
+    assert swept.held is False
+    assert audit_targets(superuser, audit_marker) == set()

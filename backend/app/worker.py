@@ -7,7 +7,7 @@ import time
 import urllib.request
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from datetime import timedelta
+from datetime import UTC, date, datetime, timedelta
 
 from opentelemetry import metrics
 from opentelemetry.metrics import CallbackOptions, Observation
@@ -106,9 +106,14 @@ def ping(url: str) -> None:
     urllib.request.urlopen(url, timeout=5).close()
 
 
-async def work(kinds: dict[str, JobKind], healthcheck_url: str | None, stop: asyncio.Event) -> None:
+async def work(
+    kinds: dict[str, JobKind],
+    healthcheck_url: str | None,
+    stop: asyncio.Event,
+    hold_until: date | None = None,
+) -> None:
     """Run due jobs until nothing is due, sweep when due, ping, then wait POLL_SECONDS or until
-    stopped."""
+    stopped. hold_until: the retention hold in force (ZIF-235), if any."""
     swept: float | None = None  # monotonic time of the last SUCCESSFUL sweep
     retention_due: float | None = None  # when the next retention run is due; None: now
     while not stop.is_set():
@@ -145,7 +150,7 @@ async def work(kinds: dict[str, JobKind], healthcheck_url: str | None, stop: asy
         # bounds its own run (a time budget, and stop checked between batches).
         if not stop.is_set() and (retention_due is None or time.monotonic() >= retention_due):
             try:
-                result = await asyncio.to_thread(retention.sweep, stop.is_set)
+                result = await asyncio.to_thread(retention.sweep, stop.is_set, hold_until)
                 wait = RETENTION_SECONDS if result.complete else RETENTION_BACKLOG_SECONDS
                 retention_due = time.monotonic() + wait
             except Exception:
@@ -216,7 +221,24 @@ async def serve(settings: WorkerSettings) -> None:
         )
     if rate_limit_key != "set":
         logger.warning("rate limit key unset: rate-limit keys are not peppered")
-    await work(KINDS, settings.healthcheck_url, stop)
+    # ZIF-235 D6. Never silent: a date too far ahead (a typo) holds 90 days, with an ERROR.
+    today = datetime.now(UTC).date()
+    hold_until, clamped = retention.effective_hold(settings.retention_hold_until, today)
+    if clamped:
+        assert hold_until is not None and settings.retention_hold_until is not None
+        logger.error(
+            "retention hold more than 90 days ahead: holding 90 days from now instead",
+            extra={
+                "hold_until": hold_until.isoformat(),
+                "requested": settings.retention_hold_until.isoformat(),
+            },
+        )
+    elif hold_until is not None and today < hold_until:
+        logger.warning(
+            "retention hold on: audit events and booking addresses are kept",
+            extra={"hold_until": hold_until.isoformat()},
+        )
+    await work(KINDS, settings.healthcheck_url, stop, hold_until)
     logger.info("worker stopped")
 
 

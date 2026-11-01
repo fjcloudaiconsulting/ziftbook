@@ -3,7 +3,7 @@ their retention, and the worker-only functions that do it.
 
 Rows are seeded and backdated as the superuser (it bypasses row-level security; created_at is
 never the app's to set). The xdist database keeps other tests' rows, so every assertion is on the
-seeded rows (their `target` marker or id), never on a total."""
+seeded rows (their `target` audit_marker or id), never on a total."""
 
 import re
 import secrets
@@ -14,52 +14,28 @@ from datetime import datetime, timedelta
 from typing import Any, get_args
 
 import pytest
-from sqlalchemy import Connection, Engine, create_engine, make_url, text
+from sqlalchemy import Connection, Engine, text
 from sqlalchemy.exc import ProgrammingError
-from sqlalchemy.pool import NullPool
 
 from app import admin as platform
 from app import auth, availability, bookings, limits
 from app.db import tenant_context
-from tests.conftest import ADMIN_DATABASE_URL, People, add_user, fresh_email, member_id
+from tests.conftest import People, add_user, fresh_email, member_id
 from tests.test_bookings_db import book, seed_service
 from tests.test_clients_db import seed_client
 
 NIL = "00000000-0000-0000-0000-000000000000"
 
 
-@pytest.fixture
-def admin(migrate_engine: Engine) -> Iterator[Engine]:
-    """The superuser on this xdist worker's database: seeds and backdates past row-level
-    security."""
-    engine = create_engine(
-        make_url(ADMIN_DATABASE_URL).set(database=migrate_engine.url.database), poolclass=NullPool
-    )
-    yield engine
-    engine.dispose()
-
-
-@pytest.fixture
-def marker(admin: Engine) -> Iterator[str]:
-    """A target prefix for this test's audit rows; they go afterwards, whatever the test did."""
-    prefix = f"test-retention:{uuid.uuid4()}"
-    yield prefix
-    with admin.begin() as conn:
-        conn.execute(text("DELETE FROM audit_events WHERE target LIKE :p"), {"p": f"{prefix}%"})
-        conn.execute(
-            text("DELETE FROM platform_audit_events WHERE target LIKE :p"), {"p": f"{prefix}%"}
-        )
-
-
 def seed_audit(
-    admin: Engine,
+    superuser: Engine,
     target: str,
     action: str,
     age: str,
     tenant_id: uuid.UUID | None = None,
 ) -> None:
     """age: a Postgres interval, so a boundary is the cutoff's own ('1 year 1 hour')."""
-    with admin.begin() as conn:
+    with superuser.begin() as conn:
         conn.execute(
             text("""
             INSERT INTO audit_events (tenant_id, action, target, ip, user_agent, created_at)
@@ -69,8 +45,8 @@ def seed_audit(
         )
 
 
-def audit_targets(admin: Engine, prefix: str) -> set[str]:
-    with admin.connect() as conn:
+def audit_targets(superuser: Engine, prefix: str) -> set[str]:
+    with superuser.connect() as conn:
         return set(
             conn.scalars(
                 text("SELECT target FROM audit_events WHERE target LIKE :p"), {"p": f"{prefix}%"}
@@ -128,19 +104,19 @@ def delete_as_migrate(migrate_engine: Engine, prefix: str, *, flag: bool, tenant
 
 # 11: FENCE. Wrong impl: a DELETE policy without the cutoff (the owner, flag on, could then delete
 # events still inside their window, whatever the function body does), or one not gated on the
-# flag (any migrate session, the admin CLI's included, could delete events).
+# flag (any migrate session, the superuser CLI's included, could delete events).
 def test_the_owner_deletes_only_events_past_their_window_and_only_with_the_flag(
-    admin: Engine, migrate_engine: Engine, marker: str
+    superuser: Engine, migrate_engine: Engine, audit_marker: str
 ) -> None:
     tenant = uuid.uuid4()
     for i, (action, age) in enumerate(IN_WINDOW + PAST):
-        seed_audit(admin, f"{marker}:{i}", action, age, tenant if i % 2 else None)
+        seed_audit(superuser, f"{audit_marker}:{i}", action, age, tenant if i % 2 else None)
 
-    assert delete_as_migrate(migrate_engine, marker, flag=False, tenant=NIL) == set()
-    gone = delete_as_migrate(migrate_engine, marker, flag=True, tenant=NIL)
+    assert delete_as_migrate(migrate_engine, audit_marker, flag=False, tenant=NIL) == set()
+    gone = delete_as_migrate(migrate_engine, audit_marker, flag=True, tenant=NIL)
 
-    assert gone == {f"{marker}:2", f"{marker}:3"}
-    assert audit_targets(admin, marker) == {f"{marker}:0", f"{marker}:1"}
+    assert gone == {f"{audit_marker}:2", f"{audit_marker}:3"}
+    assert audit_targets(superuser, audit_marker) == {f"{audit_marker}:0", f"{audit_marker}:1"}
 
 
 # 12: GUARD. The flag gives the app role nothing: it has no DELETE or UPDATE on audit_events, and
@@ -153,13 +129,13 @@ def test_the_owner_deletes_only_events_past_their_window_and_only_with_the_flag(
     ],
 )
 def test_the_retention_flag_gives_the_app_nothing(
-    app_engine: Engine, admin: Engine, marker: str, statement: str
+    app_engine: Engine, superuser: Engine, audit_marker: str, statement: str
 ) -> None:
-    seed_audit(admin, f"{marker}:old", "signed_out", "400 days")
+    seed_audit(superuser, f"{audit_marker}:old", "signed_out", "400 days")
     with pytest.raises(ProgrammingError), app_engine.begin() as conn:
         conn.execute(text("SELECT set_config('app.retention_sweep', 'on', true)"))
-        conn.execute(text(statement), {"p": f"{marker}%"})
-    assert audit_targets(admin, marker) == {f"{marker}:old"}
+        conn.execute(text(statement), {"p": f"{audit_marker}%"})
+    assert audit_targets(superuser, audit_marker) == {f"{audit_marker}:old"}
 
 
 # Every function owned by ziftbook_migrate, with whether it is a definer and returns a trigger.
@@ -360,30 +336,34 @@ FAILED = [action for action in get_args(auth.Action) if action.endswith("_failed
 # nothing.
 @pytest.mark.parametrize("action", FAILED)
 def test_a_failed_sign_in_goes_after_30_days_and_stays_before(
-    admin: Engine, worker_engine: Engine, marker: str, action: str
+    superuser: Engine, worker_engine: Engine, audit_marker: str, action: str
 ) -> None:
-    seed_audit(admin, f"{marker}:kept", action, "30 days -1 hour")
-    seed_audit(admin, f"{marker}:gone", action, "30 days 1 hour")
+    seed_audit(superuser, f"{audit_marker}:kept", action, "30 days -1 hour")
+    seed_audit(superuser, f"{audit_marker}:gone", action, "30 days 1 hour")
 
     sweep_audit_until_done(worker_engine)
-    assert audit_targets(admin, marker) == {f"{marker}:kept"}
+    assert audit_targets(superuser, audit_marker) == {f"{audit_marker}:kept"}
     sweep_audit_until_done(worker_engine)
-    assert audit_targets(admin, marker) == {f"{marker}:kept"}
+    assert audit_targets(superuser, audit_marker) == {f"{audit_marker}:kept"}
 
 
 # 4: FENCE. Wrong impl: a cutoff other than a year, or a sweep limited to one business (or to
 # events of a business, leaving the no-business ones).
 def test_other_audit_events_go_after_a_year_whatever_their_business(
-    admin: Engine, worker_engine: Engine, marker: str
+    superuser: Engine, worker_engine: Engine, audit_marker: str
 ) -> None:
     for tenant in (uuid.uuid4(), uuid.uuid4(), None):
-        seed_audit(admin, f"{marker}:{tenant}:kept", "signed_out", "1 year -1 hour", tenant)
-        seed_audit(admin, f"{marker}:{tenant}:gone", "signed_out", "1 year 1 hour", tenant)
+        seed_audit(
+            superuser, f"{audit_marker}:{tenant}:kept", "signed_out", "1 year -1 hour", tenant
+        )
+        seed_audit(
+            superuser, f"{audit_marker}:{tenant}:gone", "signed_out", "1 year 1 hour", tenant
+        )
 
     sweep_audit_until_done(worker_engine)
 
-    assert {t.rsplit(":", 1)[1] for t in audit_targets(admin, marker)} == {"kept"}
-    assert len(audit_targets(admin, marker)) == 3
+    assert {t.rsplit(":", 1)[1] for t in audit_targets(superuser, audit_marker)} == {"kept"}
+    assert len(audit_targets(superuser, audit_marker)) == 3
 
 
 SETTINGS = text("""
@@ -402,13 +382,13 @@ def set_settings(conn: Connection, tenant: uuid.UUID) -> None:
 # would run with the flag on, or another business), or a sweep that follows the caller's
 # app.tenant_id or app.audit_review instead of its own.
 def test_the_sweep_reaches_every_business_and_restores_the_callers_settings(
-    admin: Engine, worker_engine: Engine, marker: str
+    superuser: Engine, worker_engine: Engine, audit_marker: str
 ) -> None:
     mine, other = uuid.uuid4(), uuid.uuid4()
-    seed_audit(admin, f"{marker}:mine", "signed_out", "1 year 1 hour", mine)
-    seed_audit(admin, f"{marker}:other", "signed_out", "1 year 1 hour", other)
-    seed_audit(admin, f"{marker}:none", "sign_in_failed", "30 days 1 hour")
-    seed_audit(admin, f"{marker}:recent", "signed_out", "1 day", other)
+    seed_audit(superuser, f"{audit_marker}:mine", "signed_out", "1 year 1 hour", mine)
+    seed_audit(superuser, f"{audit_marker}:other", "signed_out", "1 year 1 hour", other)
+    seed_audit(superuser, f"{audit_marker}:none", "sign_in_failed", "30 days 1 hour")
+    seed_audit(superuser, f"{audit_marker}:recent", "signed_out", "1 day", other)
 
     with worker_engine.begin() as conn:
         set_settings(conn, mine)
@@ -416,11 +396,11 @@ def test_the_sweep_reaches_every_business_and_restores_the_callers_settings(
         after = tuple(conn.execute(SETTINGS).one())
 
     assert after == (str(mine), "on", "caller")
-    assert audit_targets(admin, marker) == {f"{marker}:recent"}
+    assert audit_targets(superuser, audit_marker) == {f"{audit_marker}:recent"}
 
 
-def seed_platform(admin: Engine, target: str, action: platform.Action, age: str) -> None:
-    with admin.begin() as conn:
+def seed_platform(superuser: Engine, target: str, action: platform.Action, age: str) -> None:
+    with superuser.begin() as conn:
         conn.execute(
             text("""
             INSERT INTO platform_audit_events (action, kind, target, reason, ip, user_agent,
@@ -431,8 +411,8 @@ def seed_platform(admin: Engine, target: str, action: platform.Action, age: str)
         )
 
 
-def platform_targets(admin: Engine, prefix: str) -> set[str]:
-    with admin.connect() as conn:
+def platform_targets(superuser: Engine, prefix: str) -> set[str]:
+    with superuser.connect() as conn:
         return set(
             conn.scalars(
                 text("SELECT target FROM platform_audit_events WHERE target LIKE :p"),
@@ -448,45 +428,45 @@ PLATFORM_FAILED = [a for a in get_args(platform.Action) if a.endswith("_failed")
 # the only guard), a platform failure kept a year, or business_read cut at 30 days.
 @pytest.mark.parametrize("action", [*PLATFORM_FAILED, "business_read", "admin_signed_in"])
 def test_platform_events_follow_the_audit_rule(
-    admin: Engine, worker_engine: Engine, marker: str, action: platform.Action
+    superuser: Engine, worker_engine: Engine, audit_marker: str, action: platform.Action
 ) -> None:
     period = "30 days" if action in PLATFORM_FAILED else "1 year"
-    seed_platform(admin, f"{marker}:kept", action, f"{period} -1 hour")
-    seed_platform(admin, f"{marker}:gone", action, f"{period} 1 hour")
+    seed_platform(superuser, f"{audit_marker}:kept", action, f"{period} -1 hour")
+    seed_platform(superuser, f"{audit_marker}:gone", action, f"{period} 1 hour")
 
     sweep_audit_until_done(worker_engine)
 
-    assert platform_targets(admin, marker) == {f"{marker}:kept"}
+    assert platform_targets(superuser, audit_marker) == {f"{audit_marker}:kept"}
 
 
 # 9: FENCE. Wrong impl: no LIMIT (one unbounded DELETE holding its locks), or a batch taken in no
 # order (the oldest must go first). On seeded ids: the newest of 1001 is what is left.
 def test_the_sweep_works_in_batches_of_1000_oldest_first(
-    admin: Engine, worker_engine: Engine, marker: str
+    superuser: Engine, worker_engine: Engine, audit_marker: str
 ) -> None:
-    with admin.begin() as conn:
+    with superuser.begin() as conn:
         conn.execute(
             text("""
             INSERT INTO audit_events (action, target, created_at)
             SELECT 'sign_in_failed', :p || ':' || n, now() - interval '40 days' - n * interval '1s'
             FROM generate_series(0, 1000) AS n
             """),
-            {"p": marker},
+            {"p": audit_marker},
         )
 
     first = sweep_audit(worker_engine)
-    assert audit_targets(admin, marker) == {f"{marker}:0"}
+    assert audit_targets(superuser, audit_marker) == {f"{audit_marker}:0"}
     assert first["failed_sign_ins"] == 1000
     sweep_audit(worker_engine)
-    assert audit_targets(admin, marker) == set()
+    assert audit_targets(superuser, audit_marker) == set()
 
 
 # 10: FENCE. Wrong impl: a blocking advisory lock (a second replica would queue behind the first),
 # or settings changed on the way out of a busy call.
 def test_a_second_sweeper_gets_busy_at_once_and_changes_nothing(
-    admin: Engine, worker_engine: Engine, migrate_engine: Engine, marker: str
+    superuser: Engine, worker_engine: Engine, migrate_engine: Engine, audit_marker: str
 ) -> None:
-    seed_audit(admin, f"{marker}:old", "signed_out", "1 year 1 hour")
+    seed_audit(superuser, f"{audit_marker}:old", "signed_out", "1 year 1 hour")
     tenant = uuid.uuid4()
     with migrate_engine.connect() as holder, holder.begin():
         holder.execute(text("SELECT pg_advisory_xact_lock(235, 0)"))
@@ -498,20 +478,22 @@ def test_a_second_sweeper_gets_busy_at_once_and_changes_nothing(
 
     assert swept == {"busy": True, **dict.fromkeys(AUDIT_COUNTS, 0)}
     assert after == (str(tenant), "on", "caller")
-    assert audit_targets(admin, marker) == {f"{marker}:old"}
+    assert audit_targets(superuser, audit_marker) == {f"{audit_marker}:old"}
 
 
 # 16: GUARD (reframed per review #10: a sum of counts cannot fail for a missing lock). Two sweeps
 # started together both finish without an error or a deadlock, and the seeded rows are gone.
-def test_two_sweeps_at_once_both_finish(admin: Engine, worker_engine: Engine, marker: str) -> None:
-    with admin.begin() as conn:
+def test_two_sweeps_at_once_both_finish(
+    superuser: Engine, worker_engine: Engine, audit_marker: str
+) -> None:
+    with superuser.begin() as conn:
         conn.execute(
             text("""
             INSERT INTO audit_events (action, target, created_at)
             SELECT 'signed_out', :p || ':' || n, now() - interval '400 days'
             FROM generate_series(1, 50) AS n
             """),
-            {"p": marker},
+            {"p": audit_marker},
         )
     barrier = threading.Barrier(2)
     errors: list[BaseException] = []
@@ -531,26 +513,26 @@ def test_two_sweeps_at_once_both_finish(admin: Engine, worker_engine: Engine, ma
         thread.join(30)
     assert errors == []
     sweep_audit_until_done(worker_engine)  # one of the two may have been busy
-    assert audit_targets(admin, marker) == set()
+    assert audit_targets(superuser, audit_marker) == set()
 
 
-# ---- admin sessions ----
+# ---- superuser sessions ----
 
 
 @pytest.fixture
-def platform_admin(admin: Engine, migrate_engine: Engine) -> Iterator[uuid.UUID]:
+def platform_admin(superuser: Engine, migrate_engine: Engine) -> Iterator[uuid.UUID]:
     user_id = add_user(migrate_engine)
-    with admin.begin() as conn:
+    with superuser.begin() as conn:
         conn.execute(text("INSERT INTO platform_admins (user_id) VALUES (:u)"), {"u": user_id})
     yield user_id
-    with admin.begin() as conn:
+    with superuser.begin() as conn:
         conn.execute(text("DELETE FROM platform_admins WHERE user_id = :u"), {"u": user_id})
         conn.execute(text("DELETE FROM users WHERE id = :u"), {"u": user_id})
 
 
-def seed_admin_session(admin: Engine, user_id: uuid.UUID, expires: str, seen: str) -> bytes:
+def seed_admin_session(superuser: Engine, user_id: uuid.UUID, expires: str, seen: str) -> bytes:
     id_hash = secrets.token_bytes(32)
-    with admin.begin() as conn:
+    with superuser.begin() as conn:
         conn.execute(
             text("""
             INSERT INTO admin_sessions (id_hash, user_id, expires_at, last_seen_at, ip, user_agent)
@@ -566,20 +548,22 @@ def seed_admin_session(admin: Engine, user_id: uuid.UUID, expires: str, seen: st
 # reader whose transaction began before the sweep would still see the row as live: idle 30
 # minutes, expired at now()); dead sessions kept with their address.
 def test_admin_sessions_go_an_hour_after_they_die_and_a_live_one_still_resolves(
-    admin: Engine, app_engine: Engine, worker_engine: Engine, platform_admin: uuid.UUID
+    superuser: Engine, app_engine: Engine, worker_engine: Engine, platform_admin: uuid.UUID
 ) -> None:
     sessions = {
-        "live": seed_admin_session(admin, platform_admin, "1 hour", "1 minute"),
-        "expired_in_margin": seed_admin_session(admin, platform_admin, "-59 minutes", "1 minute"),
-        "expired": seed_admin_session(admin, platform_admin, "-61 minutes", "1 minute"),
-        "idle_in_margin": seed_admin_session(admin, platform_admin, "1 hour", "89 minutes"),
-        "idle": seed_admin_session(admin, platform_admin, "1 hour", "91 minutes"),
+        "live": seed_admin_session(superuser, platform_admin, "1 hour", "1 minute"),
+        "expired_in_margin": seed_admin_session(
+            superuser, platform_admin, "-59 minutes", "1 minute"
+        ),
+        "expired": seed_admin_session(superuser, platform_admin, "-61 minutes", "1 minute"),
+        "idle_in_margin": seed_admin_session(superuser, platform_admin, "1 hour", "89 minutes"),
+        "idle": seed_admin_session(superuser, platform_admin, "1 hour", "91 minutes"),
     }
 
     with worker_engine.begin() as conn:
         deleted = conn.scalar(text("SELECT deleted FROM sweep_admin_sessions()"))
 
-    with admin.connect() as conn:
+    with superuser.connect() as conn:
         left = set(
             conn.scalars(
                 text("SELECT id_hash FROM admin_sessions WHERE user_id = :u"),
@@ -624,7 +608,7 @@ def seed_booking(
 
 
 def seed_event(
-    admin: Engine, tenant_id: uuid.UUID, booking_id: uuid.UUID, age: str, event: str = "created"
+    superuser: Engine, tenant_id: uuid.UUID, booking_id: uuid.UUID, age: str, event: str = "created"
 ) -> uuid.UUID:
     with tenant_context(tenant_id) as db:
         event_id: uuid.UUID = db.scalar(
@@ -637,7 +621,7 @@ def seed_event(
             """),
             {"b": booking_id, "e": event},
         )
-    with admin.begin() as conn:
+    with superuser.begin() as conn:
         conn.execute(
             text(
                 "UPDATE booking_events SET created_at = now() - CAST(:a AS interval) WHERE id = :i"
@@ -653,8 +637,8 @@ FROM booking_events e WHERE id = ANY(:ids)
 """)
 
 
-def event_rows(admin: Engine, ids: list[uuid.UUID]) -> dict[uuid.UUID, Any]:
-    with admin.connect() as conn:
+def event_rows(superuser: Engine, ids: list[uuid.UUID]) -> dict[uuid.UUID, Any]:
+    with superuser.connect() as conn:
         return {row.id: row for row in conn.execute(ROWS, {"ids": ids})}
 
 
@@ -676,21 +660,21 @@ def origins_pass(worker_engine: Engine) -> int:
 # cap reads), on the booking alone, a cutoff other than 18 months, a sweep of one business only,
 # or a statement that touches any other column.
 def test_booking_origins_clear_only_when_event_and_appointment_are_both_past_18_months(
-    people: People, admin: Engine, worker_engine: Engine
+    people: People, superuser: Engine, worker_engine: Engine
 ) -> None:
     cleared, kept = [], []
     for tenant, user in ((people.a, people.both), (people.b, people.only_b)):
-        old = seed_booking(admin, tenant, user, f"{ORIGIN} 1 hour")
-        recent = seed_booking(admin, tenant, user, f"{ORIGIN} -1 hour")
-        cleared.append(seed_event(admin, tenant, old, f"{ORIGIN} 1 hour"))
-        kept.append(seed_event(admin, tenant, old, f"{ORIGIN} -1 hour"))
-        kept.append(seed_event(admin, tenant, recent, f"{ORIGIN} 1 hour"))
-        kept.append(seed_event(admin, tenant, recent, f"{ORIGIN} -1 hour"))
-    before = event_rows(admin, cleared + kept)
+        old = seed_booking(superuser, tenant, user, f"{ORIGIN} 1 hour")
+        recent = seed_booking(superuser, tenant, user, f"{ORIGIN} -1 hour")
+        cleared.append(seed_event(superuser, tenant, old, f"{ORIGIN} 1 hour"))
+        kept.append(seed_event(superuser, tenant, old, f"{ORIGIN} -1 hour"))
+        kept.append(seed_event(superuser, tenant, recent, f"{ORIGIN} 1 hour"))
+        kept.append(seed_event(superuser, tenant, recent, f"{ORIGIN} -1 hour"))
+    before = event_rows(superuser, cleared + kept)
 
     origins_pass(worker_engine)
 
-    after = event_rows(admin, cleared + kept)
+    after = event_rows(superuser, cleared + kept)
     assert {i for i in after if after[i].ip is None and after[i].user_agent is None} == set(cleared)
     assert all(after[i].ip == "192.0.2.10" and after[i].user_agent == "Agent" for i in kept)
     assert all(after[i].rest == before[i].rest for i in after)  # every other column unchanged
@@ -700,14 +684,14 @@ def test_booking_origins_clear_only_when_event_and_appointment_are_both_past_18_
 # reschedule check only its status) counts again in PENDING_COUNT, with its cleared address: it
 # leaves the requester's own per-IP bucket and counts only toward the across-IP ceiling.
 def test_a_revived_ended_booking_counts_only_toward_the_across_ip_ceiling(
-    people: People, admin: Engine, worker_engine: Engine
+    people: People, superuser: Engine, worker_engine: Engine
 ) -> None:
     booking_id = seed_booking(
-        admin, people.a, people.both, f"{ORIGIN} 1 hour", source="booking_page"
+        superuser, people.a, people.both, f"{ORIGIN} 1 hour", source="booking_page"
     )
-    seed_event(admin, people.a, booking_id, f"{ORIGIN} 1 hour")
+    seed_event(superuser, people.a, booking_id, f"{ORIGIN} 1 hour")
     origins_pass(worker_engine)
-    with admin.begin() as conn:
+    with superuser.begin() as conn:
         conn.execute(
             text("""
             UPDATE bookings SET starts_at = now() + interval '1 day',
@@ -732,11 +716,11 @@ def test_a_revived_ended_booking_counts_only_toward_the_across_ip_ceiling(
 # M8 (review #1): the walk never waits on a booking event another transaction holds (an erasure,
 # say): it skips it and clears the rest.
 def test_the_origin_walk_skips_an_event_another_transaction_holds(
-    people: People, admin: Engine, worker_engine: Engine, migrate_engine: Engine
+    people: People, superuser: Engine, worker_engine: Engine, migrate_engine: Engine
 ) -> None:
-    booking_id = seed_booking(admin, people.a, people.both, f"{ORIGIN} 2 hours")
-    held = seed_event(admin, people.a, booking_id, f"{ORIGIN} 2 hours")
-    free = seed_event(admin, people.a, booking_id, f"{ORIGIN} 2 hours")
+    booking_id = seed_booking(superuser, people.a, people.both, f"{ORIGIN} 2 hours")
+    held = seed_event(superuser, people.a, booking_id, f"{ORIGIN} 2 hours")
+    free = seed_event(superuser, people.a, booking_id, f"{ORIGIN} 2 hours")
     with migrate_engine.connect() as holder, holder.begin():
         holder.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(people.a)})
         holder.execute(text("SELECT 1 FROM booking_events WHERE id = :i FOR UPDATE"), {"i": held})
@@ -744,15 +728,15 @@ def test_the_origin_walk_skips_an_event_another_transaction_holds(
             conn.execute(text("SET LOCAL statement_timeout = '5s'"))
             conn.execute(text("SELECT * FROM sweep_booking_origins(:t)"), {"t": people.a}).one()
 
-    rows = event_rows(admin, [held, free])
+    rows = event_rows(superuser, [held, free])
     assert rows[held].ip == "192.0.2.10" and rows[free].ip is None
 
 
 # The walk's bounds: at most 1000 rows per call, resuming at the business it stopped in.
 def test_a_call_clears_at_most_1000_and_the_next_resumes_in_the_same_business(
-    people: People, admin: Engine, worker_engine: Engine
+    people: People, superuser: Engine, worker_engine: Engine
 ) -> None:
-    booking_id = seed_booking(admin, people.a, people.both, f"{ORIGIN} 2 hours")
+    booking_id = seed_booking(superuser, people.a, people.both, f"{ORIGIN} 2 hours")
     with tenant_context(people.a) as db:
         ids = db.scalars(
             text("""
@@ -763,7 +747,7 @@ def test_a_call_clears_at_most_1000_and_the_next_resumes_in_the_same_business(
             """),
             {"b": booking_id},
         ).all()
-    with admin.begin() as conn:
+    with superuser.begin() as conn:
         conn.execute(
             text(
                 "UPDATE booking_events SET created_at = now() - interval '2 years'"
@@ -780,7 +764,7 @@ def test_a_call_clears_at_most_1000_and_the_next_resumes_in_the_same_business(
             text("SELECT * FROM sweep_booking_origins(:t)"), {"t": people.a}
         ).one()
     assert second.cleared >= 1
-    with admin.connect() as conn:
+    with superuser.connect() as conn:
         assert (
             conn.scalar(
                 text("SELECT count(*) FROM booking_events WHERE id = ANY(:i) AND ip IS NOT NULL"),
@@ -840,12 +824,12 @@ def probe_as_app(conn: Connection, tenant: uuid.UUID) -> set[uuid.UUID]:
 
 
 def test_the_retention_flag_reads_no_other_business_through_a_definer(
-    people: People, admin: Engine
+    people: People, superuser: Engine
 ) -> None:
     for tenant, user in ((people.a, people.both), (people.b, people.only_b)):
-        booking_id = seed_booking(admin, tenant, user, "2 years")
-        seed_event(admin, tenant, booking_id, "2 years")
-    with admin.connect() as conn, conn.begin() as transaction:
+        booking_id = seed_booking(superuser, tenant, user, "2 years")
+        seed_event(superuser, tenant, booking_id, "2 years")
+    with superuser.connect() as conn, conn.begin() as transaction:
         conn.execute(text("SET LOCAL ROLE ziftbook_migrate"))
         conn.execute(text(PROBE))
         conn.execute(text("GRANT EXECUTE ON FUNCTION retention_probe() TO ziftbook_app"))
@@ -899,7 +883,7 @@ EXPECTED_WRITES = {
 
 # M2: FENCE (review B2). Wrong impl: a body that writes anything else: another column of a booking
 # event (its evidence), another table, or an INSERT or DELETE. booking_events, platform events and
-# admin sessions have no policy holding the line, so this and the boundary tests do.
+# superuser sessions have no policy holding the line, so this and the boundary tests do.
 def test_each_retention_function_writes_only_what_it_is_for(migrate_engine: Engine) -> None:
     with migrate_engine.connect() as conn:
         sources: dict[str, str] = dict(
