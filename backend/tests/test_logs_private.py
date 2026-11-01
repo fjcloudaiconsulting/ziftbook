@@ -29,9 +29,11 @@ from app import (
     erasure_holds,
     ledger,
     payments,
+    retention,
     storage,
     totp,
 )
+from app import worker as worker_module
 from app.config import MailSettings
 from app.db import tenant_context
 from app.jobs import Job, run_once
@@ -894,3 +896,83 @@ def test_the_account_routes_log_no_personal_data(
     assert any(line["msg"] == "access" for line in log_lines())
     for value in never:
         assert value not in dumped, value
+
+
+@pytest.fixture
+def sql_logging(monkeypatch: pytest.MonkeyPatch) -> None:
+    """ZIF_LOG_SQL on, before log_lines configures logging: statements reach the log too."""
+    monkeypatch.setenv("ZIF_LOG_SQL", "true")
+
+
+# ZIF-235 (build review, security #7): the retention flows at DEBUG with SQL logging: a sweep that
+# deletes rows holding addresses, browsers and a hashed email, a held sweep with an invalid hold
+# value, and a worker iteration whose sweep fails (as the app role, which may not call it). Their
+# lines carry counts, booleans, the hold value and error classes, never what the rows held.
+def test_the_retention_sweep_never_logs_what_it_deletes(
+    people: People,
+    app_engine: Engine,
+    superuser: Engine,
+    audit_marker: str,
+    sql_logging: None,
+    log_lines: Callable[[], list[dict[str, Any]]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    address, agent = "2001:db8:5ec:7e7::9", "zif-retention-never-log/3"
+    email_hash = hashlib.sha256(fresh_email().encode()).hexdigest()
+    never = [address, "192.0.2.199", agent, email_hash]
+    with app_engine.begin() as conn:
+        conn.execute(
+            text("""
+            INSERT INTO rate_limits (key, window_start, hits) VALUES
+              ('test-retention-log:ip:' || :a, now() - interval '3 days', 1),
+              ('test-retention-log:email:' || :e, now() - interval '3 days', 1)
+            """),
+            {"a": address, "e": email_hash},
+        )
+    with tenant_context(people.a) as session:
+        token = auth.create(session, people.only_a, ip=address, user_agent=agent)
+    never.append(token)
+    with app_engine.begin() as conn:
+        conn.execute(
+            text("UPDATE sessions SET expires_at = now() - interval '2 hours' WHERE id_hash = :h"),
+            {"h": auth.hash_token(token)},
+        )
+    with superuser.begin() as conn:
+        conn.execute(
+            text("""
+            INSERT INTO audit_events (action, target, ip, user_agent, created_at)
+            VALUES ('sign_in_failed', :t, '192.0.2.199', :ua, now() - interval '40 days')
+            """),
+            {"t": f"{audit_marker}:old", "ua": agent},
+        )
+
+    # The seeding above runs on test engines that log their parameters: only what follows counts.
+    seeded = len(log_lines())
+    with jobs_as_the_worker():
+        retention.sweep()
+        retention.sweep(hold=retention.parse_hold("0", datetime.now().date()))
+
+    # A worker iteration as ziftbook_app: the sweep fails (42501) and the invalid hold errs.
+    monkeypatch.setattr(worker_module, "POLL_SECONDS", 0.05)
+    monkeypatch.setattr(bookings, "sweep", lambda: 0)
+
+    async def one_iteration() -> None:
+        stop = asyncio.Event()
+        hold = retention.parse_hold("0", datetime.now().date())
+        task = asyncio.create_task(worker_module.work({}, None, stop, hold))
+        await asyncio.sleep(0.5)
+        stop.set()
+        await asyncio.wait_for(task, 5)
+
+    asyncio.run(one_iteration())
+
+    lines = log_lines()[seeded:]
+    dumped = json.dumps(lines)
+    for value in never:
+        assert value not in dumped, value
+    swept = [line for line in lines if line["msg"] == "retention swept"]
+    assert len(swept) == 2 and swept[1]["hold_until"] == "0"
+    failed = [line for line in lines if line["msg"] == "retention sweep failed"]
+    assert failed and all(line["level"] == "ERROR" and "exc" in line for line in failed)
+    assert any(line["msg"].startswith("retention hold value invalid") for line in lines)
+    assert any(line["logger"] == "sqlalchemy.engine.Engine" for line in lines)  # SQL was logged
