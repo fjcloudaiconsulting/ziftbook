@@ -1022,4 +1022,17 @@ describe("CSP violation reports (ZIF-236)", () => {
       assert.equal(echo.requests.at(-1)["content-type"], type);
     }
   });
+
+  test("an oversize report batch is named in the proxy's line, and only a report batch", async () => {
+    // Wrong implementation killed: a 413 on the report route indistinguishable from any other oversize body.
+    const before = echo.requests.length;
+    const big = "x".repeat(MAX_BODY_BYTES + 1);
+    for (const path of ["/api/csp-reports", "/api/sign-up"]) {
+      const response = await fetch(`http://127.0.0.1:${port}${path}`, { method: "POST", headers: { "content-type": "application/csp-report" }, body: big });
+      assert.equal(response.status, 413, path);
+    }
+    assert.equal(echo.requests.length, before, "neither reached the API");
+    const lines = await waitForLog(web.logs.stdout, "body too large");
+    assert.deepEqual(lines.map((line) => line.api_route), ["csp-reports", undefined]);
+  });
 });

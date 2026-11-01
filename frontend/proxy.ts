@@ -102,7 +102,9 @@ async function forwardApi(request: NextRequest): Promise<Response> {
     const limit = pathname === "/api/stripe/webhook" ? WEBHOOK_MAX_BODY_BYTES : MAX_BODY_BYTES;
     const body = request.method === "GET" || request.method === "HEAD" ? undefined : await readBody(request, limit);
     if (body === null) {
-      log.info("body too large", { request_id: id, method: request.method, ...spanIds });
+      // ZIF-236: a dropped CSP report batch is told apart from any other oversize body (browsers retry it).
+      const route = pathname === "/api/csp-reports" ? { api_route: "csp-reports" } : {};
+      log.info("body too large", { request_id: id, method: request.method, ...route, ...spanIds });
       endProxySpan(span, 413);
       return NextResponse.json(
         { code: "content_too_large" },
