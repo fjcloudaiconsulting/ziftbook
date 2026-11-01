@@ -211,18 +211,18 @@ that person's platform account (ZIF-99).
   SHARE` or stronger, with the filter, as the consents route and the booking mail job do), or holds the tenant booking
   lock, which every erasure takes first (as the merchant booking does): a foreign key's `KEY SHARE` does not wait for
   an erasure in flight. The team gets no booking mail about an erased client's booking.
-- Erasure is one function, `erase_client_core(client, announce)` (0064, owned by `ziftbook_migrate`, executable by
-  no other role): in
-  the current business only, with the business named in every statement besides row-level security, it marks the
-  client erased and blanks its fields, blanks what the client typed on its bookings (`client_name`, `client_phone`,
-  `client_message`), the merchant's `decline_message` and the `checkout_hash`, blanks the address and browser on the
-  client's own booking events (the team's keep theirs), and deletes the client's consents and its bookings' manage
-  links. It changes no booking status: the caller ends live bookings first, in the same transaction. The app role
-  reaches it only through `erase_client(session hash, client id)`, which refuses unless the hash is a live owner
-  session of this business. `tests/test_client_erasure_db.py` classifies every column of `clients`, `bookings`,
-  `booking_events`, `consents`, `booking_links` and `booking_payments` (blank, delete, keep, status), so a new column
-  of those tables fails it until it is classified there and, if it holds the person, erased by the core. Those
-  tables, and `client_erasure_holds`, have no policy but `tenant_isolation`.
+- Erasure is one function, `erase_client_core(client, announce)` (0064, owned by `ziftbook_migrate`, executable by no
+  other role): in the current business only, with the business named in every statement besides row-level security, it
+  marks the client erased and blanks its fields, blanks what the client typed on its bookings (`client_name`,
+  `client_phone`, `client_message`), the merchant's `decline_message` and the `checkout_hash`, blanks the address and
+  browser on the client's own booking events (the team's keep theirs), and deletes the client's consents and its
+  bookings' manage links. Its caller holds the tenant booking lock first, as every booking writer does; the core reads
+  `pg_locks` and refuses otherwise. It changes no booking status: the caller ends live bookings first, in the same
+  transaction. The app role reaches it only through `erase_client(session hash, client id)`, which refuses unless the
+  hash is a live owner session of this business. `tests/test_client_erasure_db.py` classifies every column of
+  `clients`, `bookings`, `booking_events`, `consents`, `booking_links` and `booking_payments` (blank, delete, keep,
+  status), so a new column of those tables fails it until it is classified there and, if it holds the person, erased
+  by the core. Those tables, and `client_erasure_holds`, have no policy but `tenant_isolation`.
 - `client_erasure_holds` keeps an erased client's email and locale: the only way to tell the client about a
   cancellation or a failed refund. The core writes one when the client has an address and either `announce` is true
   and the erasure ended one of its bookings, or money is still owed an answer on one (`client_money_owed`, the one
