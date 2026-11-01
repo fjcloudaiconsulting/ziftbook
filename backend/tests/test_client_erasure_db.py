@@ -512,24 +512,36 @@ def test_no_business_is_refused(
         assert "erase_client needs a business" in str(error.value.orig)
 
 
-XMIN = text("SELECT xmin::text FROM clients WHERE id = :id")
+# The row versions of a client, its bookings and their events: a repeat that rewrote any of them
+# with the same NULLs would leave every value equal and every version new.
+XMINS = text("""
+SELECT 'clients', id::text, xmin::text FROM clients WHERE id = :id
+UNION ALL
+SELECT 'bookings', id::text, xmin::text FROM bookings WHERE client_id = :id
+UNION ALL
+SELECT 'booking_events', e.id::text, e.xmin::text
+FROM booking_events e JOIN bookings b ON b.id = e.booking_id WHERE b.client_id = :id
+ORDER BY 1, 2
+""")
 
 
 # ZIF-58 F19 FENCE. Wrong impl: the clients UPDATE without its erased_at IS NULL qualifier (the
-# final trigger then refuses the repeat). A repeat returns the first erasure's time and writes
-# nothing.
+# final trigger then refuses the repeat), or the bookings or events UPDATE without its "something
+# left to blank" qualifier (a new version of every row, the same values). A repeat returns the
+# first erasure's time and writes nothing.
 def test_a_repeat_returns_the_first_erasure_and_writes_nothing(
     world: World, migrate_engine: Engine
 ) -> None:
     first = erase(migrate_engine, world.a.tenant_id, world.a.client_id)
     with migrate_tenant_context(migrate_engine, world.a.tenant_id) as conn:
-        version = conn.scalar(XMIN, {"id": world.a.client_id})
+        versions = conn.execute(XMINS, {"id": world.a.client_id}).all()
     state = take(migrate_engine, world.a.tenant_id)
 
     assert erase(migrate_engine, world.a.tenant_id, world.a.client_id) == first
 
     with migrate_tenant_context(migrate_engine, world.a.tenant_id) as conn:
-        assert conn.scalar(XMIN, {"id": world.a.client_id}) == version
+        assert conn.execute(XMINS, {"id": world.a.client_id}).all() == versions
+    assert {table for table, _, _ in versions} == {"clients", "bookings", "booking_events"}
     assert take(migrate_engine, world.a.tenant_id) == state
 
 
