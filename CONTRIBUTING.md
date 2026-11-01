@@ -222,13 +222,13 @@ that person's platform account (ZIF-99).
   `erase_client(session hash, client id)`, which refuses unless the hash is a live owner session of this business.
   `tests/test_client_erasure_db.py` classifies every column of `clients`, `bookings`, `booking_events`, `consents`,
   `booking_links` and `booking_payments` (blank, delete, keep, status), so a new column of those tables fails it until
-  it is classified there and, if it holds the person, erased by the core. The same file lists every table with a
-  foreign key into `clients` or `bookings`, and every `client_id` or `recipient_id` column, so a new table that points
-  at a client fails it too until it is classified or allowed there with its reason. Those tables, and
-  `client_erasure_holds`, have no policy but `tenant_isolation`. What keeps the core in one business is the clients
-  lookup's tenant predicate: a client id is global, every dependent row reaches its client through a composite foreign
-  key, and the core stops when the id is not this business's; the predicates on the dependent statements are defence
-  in depth.
+  it is classified there and, if it holds the person, erased by the core. The same file lists every table that reaches
+  `clients` or `bookings` by foreign key, directly or through another such table, and every `client_id`, `booking_id`
+  or `recipient_id` column, keyed or not, so a new table that points at a client fails it too until it is classified
+  or allowed there with its reason. Those tables, and `client_erasure_holds`, have no policy but `tenant_isolation`.
+  What keeps the core in one business is the clients lookup's tenant predicate: a client id is global, every dependent
+  row reaches its client through a composite foreign key, and the core stops when the id is not this business's; the
+  predicates on the dependent statements are defence in depth.
 - `client_erasure_holds` keeps an erased client's email and locale: the only way to tell the client about a
   cancellation or a failed refund. The core writes one when the client has an address and either `announce` is true
   and the erasure ended one of its bookings, or money is still owed an answer on one (`client_money_owed`, the one
