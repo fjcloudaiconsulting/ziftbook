@@ -5,7 +5,7 @@ import os
 import threading
 import uuid
 from collections.abc import Callable, Iterator
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from types import SimpleNamespace
 from typing import Any
@@ -554,7 +554,9 @@ def test_the_worker_sweeps_retention_hourly_and_retries_a_failure(
     pings: list[str] = []
     clock = [1000.0]
 
-    def sweep(should_stop: Callable[[], bool], hold_until: date | None = None) -> retention.Swept:
+    def sweep(
+        should_stop: Callable[[], bool], hold: retention.Hold | None = None
+    ) -> retention.Swept:
         assert should_stop() is False
         runs.append(1)
         order.append("retention")
@@ -601,7 +603,9 @@ def test_a_retention_backlog_is_taken_up_again_sooner(
     runs: list[int] = []
     clock = [1000.0]
 
-    def sweep(should_stop: Callable[[], bool], hold_until: date | None = None) -> retention.Swept:
+    def sweep(
+        should_stop: Callable[[], bool], hold: retention.Hold | None = None
+    ) -> retention.Swept:
         runs.append(1)
         return retention.Swept(complete=False)
 
@@ -643,7 +647,7 @@ def test_a_failing_housekeeping_step_does_not_stop_the_other(
         return 0
 
     def retention_sweep(
-        should_stop: Callable[[], bool], hold_until: date | None = None
+        should_stop: Callable[[], bool], hold: retention.Hold | None = None
     ) -> retention.Swept:
         calls["retention"] += 1
         if failing == "retention":
@@ -668,55 +672,97 @@ def test_a_failing_housekeeping_step_does_not_stop_the_other(
     assert pings == []  # every iteration failed somewhere: no ping
 
 
-# ZIF-235 D6. A far-future hold date (a typo) is never a silent "off": the worker logs an ERROR at
-# startup and holds for 90 days from then; a hold in force is a WARNING at startup. The date
-# reaches the loop either way.
+# ZIF-235 D6 (build review, security #2 and the architect's ruling). The worker never stops over the
+# hold value, and never turns it off silently: a hold in force is a WARNING at startup; a past date
+# an ERROR (not held); an invalid value (malformed, `0`, more than 90 days ahead) an ERROR (held
+# until fixed). The value is in the startup line, and the parsed hold reaches the loop.
 @pytest.mark.parametrize(
-    ("days", "level"), [(None, None), (10, "WARNING"), (400, "ERROR")], ids=["unset", "held", "far"]
+    ("value", "level", "state"),
+    [
+        (None, None, "off"),
+        ("+10", "WARNING", "on"),
+        ("-3", "ERROR", "past"),
+        ("0", "ERROR", "invalid"),
+        ("bad", "ERROR", "invalid"),
+        ("+400", "ERROR", "invalid"),
+    ],
+    ids=["unset", "on", "past", "zero", "malformed", "far"],
 )
-def test_the_worker_passes_the_retention_hold_on_and_says_so_at_startup(
-    log_lines: Lines, monkeypatch: pytest.MonkeyPatch, days: int | None, level: str | None
+def test_the_worker_starts_with_its_retention_hold_and_says_so(
+    log_lines: Lines,
+    monkeypatch: pytest.MonkeyPatch,
+    value: str | None,
+    level: str | None,
+    state: str,
 ) -> None:
     today = datetime.now(UTC).date()
-    if days is not None:
-        monkeypatch.setenv("ZIF_RETENTION_HOLD_UNTIL", (today + timedelta(days=days)).isoformat())
-    seen: list[object] = []
+    raw = value
+    if value is not None and value[0] in "+-":
+        raw = (today + timedelta(days=int(value))).isoformat()
+    elif value == "bad":
+        raw = "next tuesday"
+    if raw is not None:
+        monkeypatch.setenv("ZIF_RETENTION_HOLD_UNTIL", raw)
+    seen: list[retention.Hold] = []
 
-    async def work(*args: object) -> None:
+    async def work(*args: Any) -> None:
         seen.append(args[3])
 
     monkeypatch.setattr(worker, "work", work)
     asyncio.run(worker.serve(WorkerSettings()))
 
-    expected = None if days is None else today + timedelta(days=min(days, 90))
-    assert seen == [expected]
-    held = [line for line in log_lines() if line["msg"].startswith("retention hold")]
+    assert [hold.state for hold in seen] == [state]
+    lines = log_lines()
+    [started] = [line for line in lines if line["msg"] == "worker started"]
+    assert started.get("retention_hold_until") == raw  # a None field is left out of a line
+    held = [line for line in lines if line["msg"].startswith("retention hold")]
     assert [line["level"] for line in held] == ([] if level is None else [level])
     if level is not None:
-        assert held[0]["hold_until"] == expected.isoformat()  # type: ignore[union-attr]
+        assert held[0]["hold_until"] == raw
 
 
-# ZIF-235 D6: the loop hands the hold date to every run.
-def test_the_loop_hands_the_hold_to_the_sweep(
-    bound_session: None, monkeypatch: pytest.MonkeyPatch
+# ZIF-235 D6 (the architect's ruling). Wrong impl: an invalid hold value that only logs once: the
+# worker withholds its ping while the value is invalid, so the owner is alerted until someone fixes
+# it, and every retention run logs an ERROR. A valid hold pings as usual.
+@pytest.mark.parametrize("raw", ["0", "tomorrow"], ids=["invalid", "on"])
+def test_an_invalid_hold_withholds_the_ping_and_errs_every_run(
+    bound_session: None, monkeypatch: pytest.MonkeyPatch, log_lines: Lines, raw: str
 ) -> None:
+    today = datetime.now(UTC).date()
+    value = (today + timedelta(days=1)).isoformat() if raw == "tomorrow" else raw
+    hold = retention.parse_hold(value, today)
     holds: list[object] = []
-    hold = date(2026, 12, 1)
+    pings: list[str] = []
+    clock = [1000.0]
 
-    def sweep(should_stop: Callable[[], bool], hold_until: date | None = None) -> retention.Swept:
-        holds.append(hold_until)
-        return retention.Swept(complete=True)
+    def sweep(
+        should_stop: Callable[[], bool], hold: retention.Hold | None = None
+    ) -> retention.Swept:
+        holds.append(hold)
+        return retention.Swept(complete=True, held=True)
 
     monkeypatch.setattr(retention, "sweep", sweep)
     monkeypatch.setattr(bookings, "sweep", lambda: 0)
+    monkeypatch.setattr(worker, "ping", pings.append)
+    monkeypatch.setattr(worker, "time", SimpleNamespace(monotonic=lambda: clock[0]))
     monkeypatch.setattr(worker, "POLL_SECONDS", 0.05)
 
     async def scenario() -> None:
         stop = asyncio.Event()
-        task = asyncio.create_task(work({}, None, stop, hold))
+        task = asyncio.create_task(work({}, "http://ping.invalid/x", stop, hold))
         await until(lambda: len(holds) >= 1)
+        await asyncio.sleep(0.3)  # several polls
+        clock[0] += 3601
+        await until(lambda: len(holds) >= 2)
+        await asyncio.sleep(0.2)
         stop.set()
         await asyncio.wait_for(task, 5)
 
     asyncio.run(scenario())
-    assert holds[0] == hold
+    assert holds[0] is hold
+    errors = [line for line in log_lines() if line["msg"].startswith("retention hold value")]
+    if raw == "0":
+        assert pings == []
+        assert len(errors) == len(holds) >= 2  # one ERROR per run
+    else:
+        assert pings and errors == []
