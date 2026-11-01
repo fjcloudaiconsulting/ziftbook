@@ -30,6 +30,7 @@ from PIL import Image
 
 from app import photo_child, photo_decode, photos, storage
 from app.errors import ApiError
+from tests import photo_syscalls
 from tests.conftest import API_DIR, closed, image, points, upload
 
 PROBE = Path(__file__).with_name("photo_child_probe.py")
@@ -88,15 +89,6 @@ PNG = image("PNG", (20, 10))
 
 def probe(mode: str, rest: bytes = b"") -> bytes:
     return mode.encode() + b"\n" + rest
-
-
-def probe_says(mode: str) -> str:
-    """What a probe that reports through its refusal record saw."""
-    with pytest.raises(photos.Refusal) as error:
-        decode(probe(mode))
-    assert error.value.fields["decoder"] == "refused"
-    said: str = error.value.fields["error"]
-    return said
 
 
 # ZIF-230 fence. Kills: a decode in the API process (Pillow patched to fail here, the photo
@@ -386,18 +378,30 @@ def test_the_child_gets_no_environment_and_no_descriptors(
         os.close(write)
 
 
-# ZIF-230 fence (ruling D3). Kills: a child that a decoder bug took over reaching the network
-# (egress is open to the cluster and the internet) or io_uring, which would bypass the filter.
+# ZIF-230 fence (ruling D3; build review, correctness 5). Kills: any syscall dropped from the
+# filter's deny-list. A child that a decoder bug took over needs no network, so it gets none (nor
+# io_uring, which would bypass the filter), and it changes nothing on the filesystem: no
+# directory, file, link, rename, truncation or permission (RLIMIT_FSIZE stops none of these), no
+# open to write, create or truncate. Each call is one that fails some other way without the filter.
 @only_linux
-def test_the_child_cannot_open_a_socket() -> None:
-    assert probe_says("probe-socket") == "PermissionError"
+def test_every_denied_syscall_is_refused() -> None:
+    try:
+        assert decode(probe("probe-deny", PNG)).width == 20
+    except photos.Refusal as refusal:
+        pytest.fail(f"check {refusal.fields.get('exit_code', 0) - 10} was not refused: {refusal}")
 
 
-# ZIF-230 fence (ruling D3). Kills: a child that a decoder bug took over changing the filesystem: a
-# directory or an empty file in /tmp (RLIMIT_FSIZE stops neither), or the upload opened to write.
+# ZIF-230 fence (build review, correctness 5). Kills: the filter's architecture check dropped. On
+# x86_64 an x32 syscall kills the child (SIGSYS); on aarch64 the program starts by killing any
+# other architecture's syscall.
 @only_linux
-def test_the_child_cannot_change_the_filesystem() -> None:
-    assert probe_says("probe-write") == "PermissionError_PermissionError_PermissionError"
+def test_a_syscall_from_another_abi_is_killed(runs: list[photos.Run]) -> None:
+    if os.uname().machine == "x86_64":
+        refused(probe("probe-x32"))
+        assert [r.returncode for r in runs] == [-signal.SIGSYS]
+    else:
+        head = struct.unpack("=HBBIHBBIHBBI", photo_child.program("aarch64", 1)[:24])
+        assert head == (0x20, 0, 0, 4, 0x15, 1, 0, 0xC00000B7, 0x06, 0, 0, 0x80000000)
 
 
 def own_state() -> dict[str, object]:
@@ -748,8 +752,8 @@ def test_a_child_that_cannot_be_spawned_is_busy(
 # address space would grow by an arena per thread). Root is exempt from it (the dev image).
 @pytest.mark.skipif(ROOT, reason="RLIMIT_NPROC is not enforced for root (dev image)")
 def test_the_child_cannot_fork_or_start_threads() -> None:
-    # macOS does not count threads against RLIMIT_NPROC; Linux does.
-    assert probe_says("probe-fork") == ("fork_no_thread_no" if LINUX else "fork_no_thread_yes")
+    # macOS does not count threads against RLIMIT_NPROC; Linux does (the probe checks both there).
+    assert decode(probe("probe-fork", PNG)).width == 20
 
 
 MIB = 1024 * 1024
@@ -942,3 +946,56 @@ def test_no_scratch_space_for_the_upload_is_busy(
     assert [(f["msg"], f["decoder"]) for f in failed()] == [
         ("photo decoder could not start", "scratch")
     ]
+
+
+def run_filter(machine: str, nr: int, args: tuple[int, ...] = (), arch: int | None = None) -> int:
+    """What photo_child's filter for machine (pid 4242) answers a syscall: classic BPF, run here."""
+    prog = photo_child.program(machine, 4242)
+    full = (*args, *(0,) * (6 - len(args)))
+    data = struct.pack("=iIQ6Q", nr, arch or photo_child.AUDIT_ARCH[machine], 0, *full)
+    pc, acc = 0, 0
+    while True:
+        code, jt, jf, k = (int(v) for v in struct.unpack_from("=HBBI", prog, pc * 8))
+        pc += 1
+        if code == 0x20:
+            acc = struct.unpack_from("=I", data, k)[0]
+        elif code == 0x06:
+            return k
+        else:
+            taken = {0x15: acc == k, 0x35: acc >= k, 0x45: bool(acc & k)}[code]
+            pc += jt if taken else jf
+
+
+ALLOW, KILL, EPERM = 0x7FFF0000, 0x80000000, 0x00050001
+MACHINES = ["aarch64", "x86_64"]
+
+
+# ZIF-230 fence (build review, correctness 5). Kills: a syscall dropped from either architecture's
+# deny-list (io_uring included, which a container runtime may refuse on its own, hiding a gap), a
+# pid rule loosened, the write-flag check or the architecture checks gone. The program itself is
+# run here for both architectures against this file's own syscall table (tests/photo_syscalls.py).
+@pytest.mark.parametrize("machine", MACHINES)
+def test_the_filter_program_decides_each_syscall(machine: str) -> None:
+    i = MACHINES.index(machine)
+    for name, numbers in photo_syscalls.DENIED.items():
+        number = numbers[i]
+        if number is not None:
+            assert run_filter(machine, number) == EPERM, name
+    nr = {name: numbers[i] for name, numbers in photo_syscalls.NR.items()}
+    assert run_filter(machine, nr["read"]) == ALLOW
+    assert run_filter(machine, nr["kill"], (4242, 0)) == ALLOW
+    assert run_filter(machine, nr["kill"], (1, 9)) == EPERM
+    assert run_filter(machine, nr["kill"], (0, 9)) == EPERM
+    assert run_filter(machine, nr["kill"], (0xFFFFFFFF, 9)) == EPERM
+    assert run_filter(machine, nr["tgkill"], (4242, 4242, 6)) == ALLOW
+    assert run_filter(machine, nr["prlimit64"], (0,)) == ALLOW
+    assert run_filter(machine, nr["prlimit64"], (4242,)) == ALLOW
+    assert run_filter(machine, nr["prlimit64"], (1,)) == EPERM
+    assert run_filter(machine, nr["openat"], (0, 0, os.O_RDONLY)) == ALLOW
+    for flag in (0o1, 0o2, 0o100, 0o1000):  # O_WRONLY, O_RDWR, O_CREAT, O_TRUNC on Linux
+        assert run_filter(machine, nr["openat"], (0, 0, flag)) == EPERM
+    other = photo_child.AUDIT_ARCH["x86_64" if machine == "aarch64" else "aarch64"]
+    assert run_filter(machine, nr["read"], arch=other) == KILL
+    assert run_filter(machine, nr["read"], arch=0x40000003) == KILL  # i386
+    if machine == "x86_64":
+        assert run_filter(machine, 0x40000000 | 39) == KILL  # x32

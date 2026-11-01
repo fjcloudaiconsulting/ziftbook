@@ -31,6 +31,8 @@ def load(name: str, path: Path) -> ModuleType:
 
 
 child = load("photo_child", APP / "photo_child.py")
+tables = load("photo_syscalls", Path(__file__).with_name("photo_syscalls.py"))
+NR, DENIED, DENIED_ARGS = tables.NR, tables.DENIED, tables.DENIED_ARGS
 real_load = child.load
 # stdin is the upload's file: read its first line without moving the offset main() reads from.
 MODE, _, ARG = os.pread(0, 256, 0).partition(b"\n")[0].decode().partition(":")
@@ -42,20 +44,6 @@ def refusal(error: str) -> bytes:
     head |= {"format": None, "pixels": None, "peak_kb": 0, "cpu_ms": 0}
     text = json.dumps(head).encode()
     return struct.pack(">I", len(text)) + text
-
-
-# The syscalls a probe calls by number, its own table (not photo_child's): (aarch64, x86_64).
-NR = {
-    "tkill": (130, 200),
-    "tgkill": (131, 234),
-    "rt_sigqueueinfo": (138, 129),
-    "rt_tgsigqueueinfo": (240, 297),
-    "sched_setattr": (274, 314),
-    "ioprio_get": (31, 252),
-    "ioprio_set": (30, 251),
-    "process_vm_writev": (271, 311),
-    "kcmp": (272, 312),
-}
 
 
 def syscall(name: str, *args: Any) -> int:
@@ -78,6 +66,34 @@ def expect(checks: list[tuple[Any, int | None]]) -> None:
             got = error.errno
         if got != wanted:
             os._exit(10 + i)
+
+
+def raw(nr: int, *args: int) -> None:
+    libc = ctypes.CDLL(None, use_errno=True)
+    if libc.syscall(nr, *[ctypes.c_long(a) for a in args]) == -1:
+        raise OSError(ctypes.get_errno(), str(nr))
+
+
+def deny_checks() -> list[tuple[Any, int | None]]:
+    if sys.platform != "linux":
+        return []
+    arm = os.uname().machine == "aarch64"
+    eperm, new = 1, f"/tmp/zif230-probe-{os.getpid()}"
+    checks: list[tuple[Any, int | None]] = []
+    for name, numbers in DENIED.items():
+        nr = numbers[0 if arm else 1]
+        if nr is not None:
+            args = DENIED_ARGS.get(name, (0,) * 6)
+            checks.append((lambda nr=nr, args=args: raw(nr, *args), eperm))
+    return checks + [
+        (lambda: socket.socket(socket.AF_INET6, socket.SOCK_DGRAM), eperm),
+        (lambda: socket.socket(socket.AF_UNIX, socket.SOCK_STREAM), eperm),
+        (lambda: os.open(new, os.O_WRONLY | os.O_CREAT), eperm),
+        (lambda: os.open(new, os.O_RDONLY | os.O_CREAT), eperm),
+        (lambda: os.open("/proc/self/fd/0", os.O_RDWR), eperm),
+        (lambda: os.open("/proc/self/fd/0", os.O_RDONLY | os.O_TRUNC), eperm),
+        (lambda: os.close(os.open("/proc/self/fd/0", os.O_RDONLY)), None),  # reading stays allowed
+    ]
 
 
 def siginfo() -> Any:
@@ -206,42 +222,31 @@ def record(data: bytes) -> bytes:
     if MODE == "probe-exit-after":
         sys.stdout.flush()
         os._exit(int(ARG))
-    if MODE == "probe-fork":
+    if MODE == "probe-fork":  # no fork; no thread where the kernel counts them (Linux)
         try:
             pid = os.fork()
             if pid == 0:
                 os._exit(0)
-            os.waitpid(pid, 0)
-            forked = "yes"
+            os._exit(9)
         except OSError:
-            forked = "no"
+            pass
         try:
             thread = threading.Thread(target=lambda: None)
             thread.start()
             thread.join()
-            threaded = "yes"
+            if sys.platform == "linux":
+                os._exit(10)
         except RuntimeError:
-            threaded = "no"
-        return refusal(f"fork_{forked}_thread_{threaded}")
-    if MODE == "probe-socket":
-        try:
-            socket.socket(socket.AF_INET, socket.SOCK_STREAM).close()
-            return refusal("allowed")
-        except OSError as error:
-            return refusal(type(error).__name__)
-    if MODE == "probe-write":  # a directory, a new file, the upload opened for writing
-        seen = []
-        for attempt in (
-            lambda: os.mkdir(f"/tmp/zif230-probe-{os.getpid()}"),
-            lambda: os.open(f"/tmp/zif230-probe-{os.getpid()}.f", os.O_WRONLY | os.O_CREAT),
-            lambda: os.open("/proc/self/fd/0", os.O_RDWR),
-        ):
-            try:
-                attempt()
-                seen.append("allowed")
-            except OSError as error:
-                seen.append(type(error).__name__)
-        return refusal("_".join(seen))
+            pass
+        forked: bytes = real_load().record(rest)
+        return forked
+    if MODE == "probe-x32":  # a syscall through the x32 ABI (x86_64 only): killed
+        raw(0x40000000 | 39)
+        return refusal("ValueError")
+    if MODE == "probe-deny":  # every syscall the filter denies, and opens to write
+        expect(deny_checks())
+        denied: bytes = real_load().record(rest)
+        return denied
     if MODE == "probe-group":  # a process group of its own, apart from the API's
         if os.getpgrp() != os.getpid():
             os._exit(9)
