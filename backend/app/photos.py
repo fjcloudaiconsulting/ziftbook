@@ -1,47 +1,63 @@
 """Service photos (ZIF-133): the browser PUTs the original to the uploads bucket on a presigned URL,
 the API checks it (type from the bytes, size, pixels), re-encodes two WebP variants without
-metadata and links them to a service when the owner saves it (services.py)."""
+metadata and links them to a service when the owner saves it (services.py).
 
-import io
+The decode never runs in this process (ZIF-230): each one is a child process of its own
+(photo_child.py, photo_decode.py) under resource limits, so a decoder fault or a bomb ends the
+child, not the API. This module never imports Pillow, and trusts nothing the child writes."""
+
 import logging
+import os
 import re
-import struct
+import resource
+import selectors
+import signal
+import subprocess
+import sys
 import tempfile
 import threading
+import time
 import uuid
-from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Annotated
+from pathlib import Path
+from typing import IO, Annotated, Any, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request, Response
-from opentelemetry import trace
-from opentelemetry.trace import SpanKind
-from PIL import Image, ImageCms, ImageOps, UnidentifiedImageError
-from pydantic import BaseModel, ConfigDict, Field
+from opentelemetry.trace import Span, SpanKind
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 from sqlalchemy import text
 
-from app import auth, limits, storage, tracing
+from app import auth, limits, photo_child, storage, tracing
 from app.auth import CurrentOwner, SignedIn
 from app.config import StorageSettings
 from app.db import tenant_context
 from app.errors import ApiError, Error
 from app.jobs import Job
 
-MAX_BYTES = 10 * 1024 * 1024
+MAX_BYTES = photo_child.MAX_BYTES
 TYPES = ("image/jpeg", "image/png", "image/webp")
-JPEG_CAP = 100_000_000
-# Header pixels. Progressive JPEGs and every other format decode at full size (no draft shortcut):
-# 8.3 MP is a 4K screenshot, and at 4 bytes a pixel it keeps a decode inside the 256Mi pod.
-OTHER_CAP = 8_300_000
-# libwebp keeps ~4 full-size buffers while decoding (8.3 MP lossy RGBA measured +176 MB).
-WEBP_CAP = 4_000_000
-Image.MAX_IMAGE_PIXELS = JPEG_CAP  # backstop only: the caps below refuse first
-# One decode at a time (held from the read of the upload): the API pod is small.
+# One decode at a time (held from the read of the upload): one child per API process.
 _LOCK = threading.Lock()
 LOCK_WAIT = 15  # seconds, then 503 busy
-SRGB = ImageCms.createProfile("sRGB")
+CHILD = Path(photo_child.__file__)
+# Wall clock for a child, from its start to its exit. Twice its CPU limit: a costly photo meets
+# RLIMIT_CPU first, so this only ends a child that was stalled or starved of CPU.
+DECODE_TIMEOUT = 10.0
+REAP_GRACE = 5.0  # seconds a killed child gets to be reaped before it is left for later
+# Past the deadline, a child that had this much CPU was the photo's fault (422); less, the node's
+# (503 busy). Half the soft CPU limit, more than twice a legitimate decode.
+STARVED_CPU_MS = 2500
+# The record's cap (header and both variants). The largest legitimate output measured is 2.6 MB
+# (an RGBA noise photo).
+OUTPUT_CAP = 4 * 1024 * 1024
+HEADER_CAP = 1024
+MAX_PIXELS = 100_000_000  # photo_decode.JPEG_CAP: the largest photo it accepts
+# A refusal from a child this close to its address-space limit is counted as memory: libwebp and
+# Pillow report a failed allocation as an ordinary encoding error.
+MEMORY_NEAR = 0.9
+CHUNK = 64 * 1024
 UUID_RE = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["photos"])
@@ -184,7 +200,7 @@ def process(tenant_id: UUID, upload_id: UUID) -> Variants:
                     if got is None:
                         raise ApiError(409, "photo_missing")
                     upload.seek(0)
-                    found = variants(upload.read())
+                    found = variants(upload, upload_id, span)
             finally:
                 _LOCK.release()
             span.set_attribute("outcome", "ok")
@@ -195,173 +211,287 @@ def process(tenant_id: UUID, upload_id: UUID) -> Variants:
             # A refusal is the request's answer, not a failed span.
             refused = error
         span.set_attribute("outcome", refused.code)
-    logger.info("photo refused", extra={"code": refused.code})
+    logger.info("photo refused", extra={"code": refused.code, **getattr(refused, "fields", {})})
     raise refused
 
 
-def _webp(im: Image.Image) -> bytes:
-    buf = io.BytesIO()
-    im.save(buf, "WEBP", quality=80)  # no exif, icc or xmp passed: none is written
-    return buf.getvalue()
+class Refusal(ApiError):
+    """A refusal that carries what the decode said about it, for the `photo refused` line."""
+
+    def __init__(self, status_code: int, code: str, fields: dict[str, Any]) -> None:
+        super().__init__(status_code, code)
+        self.fields = fields
 
 
-def _srgb(im: Image.Image, icc: bytes | None) -> Image.Image:
-    """The image in sRGB when it carried a profile of another RGB space (Display P3, say), so its
-    colours survive the profile being dropped. An unusable profile leaves the pixels as they are."""
-    if icc is None:
-        return im
-    try:
-        return ImageCms.profileToProfile(im, ImageCms.ImageCmsProfile(io.BytesIO(icc)), SRGB) or im
-    except ImageCms.PyCMSError, OSError:  # a corrupt profile keeps the pixels as they are
-        return im
+@dataclass(frozen=True)
+class Run:
+    """One child, ended and reaped (or given up on)."""
+
+    returncode: int | None  # None: never reaped
+    output: bytes  # all of stdout, the ready marker included, at most OUTPUT_CAP + 1 + CHUNK
+    killed: Literal["timeout", "output"] | None  # why this process ended it, if it did
+    cpu_ms: int  # the child's own CPU time, from its rusage (0 if never reaped)
 
 
-def _markers(data: bytes) -> Iterator[tuple[int, int]]:
-    """A JPEG's markers after SOI with their offsets, up to its first scan (SOS) or EOI. Segments
-    are skipped by length, so an EXIF thumbnail inside APP1 is never seen. The walk stops where a
-    marker should start and none does, or at the end of the data."""
-    i = 2
-    while i + 1 < len(data) and data[i] == 0xFF:
-        marker = data[i + 1]
-        if marker == 0xFF:  # fill byte
-            i += 1
-            continue
-        yield i, marker
-        if marker in (0xD9, 0xDA):  # EOI, SOS
-            return
-        if marker == 0x01 or 0xD0 <= marker <= 0xD8:  # no length
-            i += 2
-        else:
-            i += 2 + int.from_bytes(data[i + 2 : i + 4])
+# Children killed but not yet reaped; each later run tries again (photo decoder not reaped).
+_UNREAPED: list[subprocess.Popen[bytes]] = []
 
 
-def multi_scan(data: bytes) -> bool:
-    """Whether a JPEG codes its image in more than one scan, read from the markers (_markers).
-    libjpeg buffers the whole image's coefficients for such a file, interleaved or not. Anything
-    unreadable counts as yes."""
-    frame = None
-    try:
-        for i, marker in _markers(data):
-            if marker == 0xDA:  # SOS: Ns components in this first scan
-                return frame is None or data[i + 4] < frame
-            if marker in range(0xC0, 0xD0) and marker not in (0xC4, 0xC8, 0xCC) and frame is None:
-                frame = data[i + 9]  # Nf
-    except IndexError:
-        pass
-    return True
-
-
-# SOF3, SOF7, SOF11, SOF15 (Huffman or arithmetic coded): libjpeg decodes a lossless frame at full
-# width whatever draft() asked for.
-LOSSLESS_FRAMES = frozenset((0xC3, 0xC7, 0xCB, 0xCF))
-PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
-EXIF_CAP = 65_536  # bytes of EXIF: parsing it costs more than linear time
-# Bytes of colour profile (ZIF-230): Pillow's own ceiling for a PNG's inflated iCCP, for every
-# format. Camera and phone profiles are a few KB.
-ICC_CAP = 1024 * 1024
-ICC_HEADER = b"ICC_PROFILE\x00"  # then a sequence number and a count, then the profile's bytes
-
-
-def unsafe_container(data: bytes) -> bool:
-    """Whether an upload must not reach the decoder (ZB-33): a lossless JPEG, an animated PNG,
-    EXIF over 64 KiB in a JPEG's APP1 segments or a PNG's eXIf chunk, or a colour profile over
-    ICC_CAP in a JPEG's APP2 segments, a PNG's iCCP chunk (compressed) or a WebP's ICCP chunk.
-    Read from the structure before Image.open (which already parses a JPEG's EXIF, for its dpi, and
-    joins its profile); never raises. A JPEG is also unsafe when its markers do not walk to the
-    first scan, or pass an FF00 (no marker) on the way: a decoder skips such bytes and reads on, so
-    the walk cannot vouch for the frame. A PNG is read up to IEND, as Pillow reads it (an eXIf
-    after the image data is parsed too). Anything else is False: Image.open refuses junk.
-    variants() checks EXIF and the profile again once the image is open."""
-    if data[:2] == b"\xff\xd8":
-        last, exif, icc = None, 0, 0
-        for i, marker in _markers(data):
-            if marker == 0x00 or marker in LOSSLESS_FRAMES:
-                return True
-            # Pillow joins every APP1 EXIF segment before the scan into one.
-            if marker == 0xE1 and data[i + 4 : i + 10] == b"Exif\x00\x00":
-                exif += max(int.from_bytes(data[i + 2 : i + 4]) - 2, 0)
-            # And every APP2 profile segment (it reads them up to the frame; counting to the scan
-            # is a superset).
-            if marker == 0xE2 and data[i + 4 : i + 16] == ICC_HEADER:
-                icc += max(int.from_bytes(data[i + 2 : i + 4]) - 2 - len(ICC_HEADER) - 2, 0)
-            last = marker
-        return last != 0xDA or exif > EXIF_CAP or icc > ICC_CAP
-    if data[:8] == PNG_SIGNATURE:
-        i = 8
-        while i + 8 <= len(data):
-            length, kind = int.from_bytes(data[i : i + 4]), data[i + 4 : i + 8]
-            if kind == b"acTL" or (kind == b"eXIf" and length > EXIF_CAP):
-                return True
-            if kind == b"iCCP" and length > ICC_CAP:
-                return True
-            if kind == b"IEND":
-                break
-            i += 12 + length
-    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
-        i = 12
-        while i + 8 <= len(data):
-            kind, length = data[i : i + 4], int.from_bytes(data[i + 4 : i + 8], "little")
-            if kind == b"ICCP" and length > ICC_CAP:
-                return True
-            i += 8 + length + (length & 1)  # a chunk's payload is padded to an even length
-    return False
-
-
-def variants(data: bytes) -> Variants:
-    """Decode with the lock held (process). Memory is the point: the caps run on the header, a JPEG
-    is decoded at a reduced size, and the image is shrunk to 1200px before any conversion."""
-    if unsafe_container(data):  # before Image.open: an animated PNG allocates its canvas there
-        raise ApiError(422, "photo_unreadable")
-    try:
-        opened = Image.open(io.BytesIO(data), formats=["JPEG", "PNG", "WEBP"])
-    except UnidentifiedImageError:
-        raise ApiError(422, "photo_type") from None
-    # ValueError: Pillow refuses a profile or text chunk that inflates past 1 MiB while it opens.
-    except Image.DecompressionBombError, OSError, ValueError:
-        raise ApiError(422, "photo_unreadable") from None
-    im: Image.Image = opened
-    trace.get_current_span().set_attributes(
-        {"format": str(im.format), "pixels": im.width * im.height}
+def _spawn(upload: IO[bytes]) -> subprocess.Popen[bytes]:
+    """The child: no environment (the API's secrets stay here), no descriptor but the upload, a
+    pipe and /dev/null, -I so no PYTHON* variable, user site or working directory reaches it, -B so
+    it writes no bytecode. No preexec_fn: nothing runs between fork and exec in a threaded API."""
+    return subprocess.Popen(
+        [sys.executable, "-I", "-B", str(CHILD)],
+        stdin=upload,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        env={},
+        cwd="/",
+        close_fds=True,
     )
-    # A progressive or multi-scan JPEG has no draft shortcut that saves memory, so it gets the
-    # common cap.
-    baseline = (
-        im.format == "JPEG"
-        and not (im.info.get("progressive") or im.info.get("progression"))
-        and not multi_scan(data)
-    )
-    cap = JPEG_CAP if baseline else WEBP_CAP if im.format == "WEBP" else OTHER_CAP
-    if im.width * im.height > cap:
-        raise ApiError(422, "photo_unreadable")
+
+
+def _reap(proc: subprocess.Popen[bytes], deadline: float) -> resource.struct_rusage | None:
+    """Wait for the child until deadline (wait4, for its own rusage); None if it has not exited."""
+    while True:
+        pid, status, used = os.wait4(proc.pid, os.WNOHANG)
+        if pid:
+            proc.returncode = os.waitstatus_to_exitcode(status)
+            return used
+        if time.monotonic() >= deadline:
+            return None
+        time.sleep(0.005)
+
+
+def _collect(
+    proc: subprocess.Popen[bytes], deadline: float
+) -> tuple[bytes, Literal["timeout", "output"] | None]:
+    """stdout until EOF, the deadline ("timeout") or the cap ("output"): never more than
+    OUTPUT_CAP + 1 + CHUNK bytes in memory. The child never reads from this process (its stdin
+    is a file), so reading one pipe cannot deadlock."""
+    assert proc.stdout is not None
+    fd, out = proc.stdout.fileno(), bytearray()
+    with selectors.DefaultSelector() as selector:
+        selector.register(fd, selectors.EVENT_READ)
+        while True:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                return bytes(out), "timeout"
+            if not selector.select(left):
+                continue
+            chunk = os.read(fd, CHUNK)
+            if not chunk:
+                return bytes(out), None
+            out += chunk
+            if len(out) > len(photo_child.READY) + OUTPUT_CAP:
+                return bytes(out), "output"
+
+
+def _run(upload: IO[bytes]) -> Run:
+    """Start a child on the upload and see it end: one deadline covers its output and its exit,
+    and a child still running past it (or past the output cap) is killed and reaped."""
+    for left in list(_UNREAPED):
+        if _reap(left, time.monotonic()) is not None:
+            _UNREAPED.remove(left)
+    deadline = time.monotonic() + DECODE_TIMEOUT
+    proc = _spawn(upload)
+    output, used = b"", None
+    killed: Literal["timeout", "output"] | None = None
     try:
-        if im.format == "JPEG":
-            im.draft("RGB", (1200, 1200))
-        if im.width * im.height > OTHER_CAP:  # what load() would decode, after draft
-            raise ApiError(422, "photo_unreadable")
-        icc = im.info.get("icc_profile")
-        if icc is not None and len(icc) > ICC_CAP:  # before LittleCMS parses it (_srgb)
-            raise ApiError(422, "photo_unreadable")
-        if im.mode in ("I", "I;16", "I;16L", "I;16B"):  # 16-bit grey: scaled to 8 bits, not clipped
-            im = im.convert("I").point(lambda v: v / 257).convert("L")
-        elif im.mode not in ("L", "RGB", "RGBA"):  # palette, bilevel, LA, CMYK...
-            im = im.convert("RGBA" if "A" in im.getbands() or "transparency" in im.info else "RGB")
-        im.thumbnail((1200, 1200))
-        im.load()  # a PNG's chunks after the image data reach im.info only here
-        # The EXIF exif_transpose parses: info["exif"] (any format) or, from PNG text, the hex
-        # "Raw profile type exif".
-        exif, raw = im.info.get("exif") or b"", im.info.get("Raw profile type exif") or ""
-        if len(exif) > EXIF_CAP or len(raw) > 2 * EXIF_CAP:
-            raise ApiError(422, "photo_unreadable")
-        # Pillow 13 raises these reading or rewriting malformed EXIF: text where it wants bytes, a
-        # value that does not fit its tag, no TIFF header, a raw profile that is no hex.
-        try:
-            ImageOps.exif_transpose(im, in_place=True)
-        except TypeError, AttributeError, struct.error, SyntaxError, ValueError:
-            raise ApiError(422, "photo_unreadable") from None
-        rgb = _srgb(im.convert("RGBA" if im.mode == "RGBA" else "RGB"), icc)
-        return Variants(_webp(ImageOps.fit(rgb, (320, 320))), _webp(rgb), rgb.width, rgb.height)
-    except OSError, ValueError, SyntaxError, Image.DecompressionBombError:
-        raise ApiError(422, "photo_unreadable") from None
+        output, killed = _collect(proc, deadline)
+        if killed is None:
+            used = _reap(proc, deadline)
+            if used is None:  # stdout closed, still running
+                killed = "timeout"
+    finally:
+        if proc.returncode is None:
+            proc.kill()
+            used = _reap(proc, time.monotonic() + REAP_GRACE)
+            if used is None:
+                logger.error("photo decoder not reaped")
+                _UNREAPED.append(proc)
+        assert proc.stdout is not None
+        proc.stdout.close()
+    cpu_ms = round((used.ru_utime + used.ru_stime) * 1000) if used else 0
+    return Run(proc.returncode, output, killed, cpu_ms)
+
+
+FORMATS = Literal["JPEG", "PNG", "WEBP"]
+
+
+class Decoded(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+    kind: Literal["ok"]
+    format: FORMATS
+    pixels: Annotated[int, Field(ge=1, le=MAX_PIXELS)]
+    width: Annotated[int, Field(ge=1, le=1200)]
+    height: Annotated[int, Field(ge=1, le=1200)]
+    thumb: Annotated[int, Field(ge=1)]
+    detail: Annotated[int, Field(ge=1)]
+    peak_kb: Annotated[int, Field(ge=0)]
+    cpu_ms: Annotated[int, Field(ge=0)]
+
+
+class Refused(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+    kind: Literal["refused"]
+    code: Literal["photo_type", "photo_unreadable"]
+    # A class or check name: it goes into a log line as it is.
+    error: Annotated[str, Field(pattern=r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")]
+    format: FORMATS | None
+    pixels: Annotated[int, Field(ge=1, le=2**62)] | None
+    peak_kb: Annotated[int, Field(ge=0)]
+    cpu_ms: Annotated[int, Field(ge=0)]
+
+
+_RECORD: TypeAdapter[Decoded | Refused] = TypeAdapter(
+    Annotated[Decoded | Refused, Field(discriminator="kind")]
+)
+# A still WebP as Pillow writes one with no metadata: VP8X only to say there is alpha.
+WEBP_LAYOUTS = {
+    (b"VP8 ",),
+    (b"VP8L",),
+    (b"VP8X", b"VP8 "),
+    (b"VP8X", b"ALPH", b"VP8 "),
+    (b"VP8X", b"VP8L"),
+}
+VP8X_ALPHA = 0x10
+
+
+def webp_size(blob: bytes) -> tuple[int, int] | None:
+    """The size a still WebP with no metadata declares, read from its structure and never decoded;
+    None for anything else: a RIFF size that is not the blob's, a chunk outside WEBP_LAYOUTS (so
+    no EXIF, XMP, ICCP or animation), a VP8X flag other than alpha, or a canvas that is not the
+    frame's size. The variants are served publicly: the child is not trusted to have made them."""
+    if len(blob) < 20 or blob[:4] != b"RIFF" or blob[8:12] != b"WEBP":
+        return None
+    if int.from_bytes(blob[4:8], "little") != len(blob) - 8:
+        return None
+    chunks, i = [], 12
+    while i < len(blob):
+        n = int.from_bytes(blob[i + 4 : i + 8], "little")
+        if i + 8 + n > len(blob):
+            return None
+        chunks.append((blob[i : i + 4], blob[i + 8 : i + 8 + n]))
+        i += 8 + n + (n & 1)
+    if i != len(blob) or tuple(kind for kind, _ in chunks) not in WEBP_LAYOUTS:
+        return None
+    canvas = frame = None
+    for kind, payload in chunks:
+        if kind == b"VP8X":
+            if len(payload) != 10 or payload[0] & ~VP8X_ALPHA:
+                return None
+            canvas = (
+                int.from_bytes(payload[4:7], "little") + 1,
+                int.from_bytes(payload[7:10], "little") + 1,
+            )
+        elif kind == b"VP8 ":
+            if len(payload) < 10 or payload[3:6] != b"\x9d\x01\x2a":
+                return None
+            frame = (
+                int.from_bytes(payload[6:8], "little") & 0x3FFF,
+                int.from_bytes(payload[8:10], "little") & 0x3FFF,
+            )
+        elif kind == b"VP8L":
+            if len(payload) < 5 or payload[0] != 0x2F:
+                return None
+            bits = int.from_bytes(payload[1:5], "little")
+            frame = ((bits & 0x3FFF) + 1, ((bits >> 14) & 0x3FFF) + 1)
+    if frame is None or (canvas is not None and canvas != frame):
+        return None
+    return frame
+
+
+def parse(body: bytes) -> tuple[Decoded | Refused, bytes, bytes] | None:
+    """The child's record (after the ready marker): None unless every part checks out."""
+    n = int.from_bytes(body[:4])
+    if len(body) < 4 or n > HEADER_CAP or len(body) < 4 + n:
+        return None
+    try:
+        head = _RECORD.validate_json(body[4 : 4 + n])
+    except ValidationError:
+        return None
+    blobs = body[4 + n :]
+    if isinstance(head, Refused):
+        return (head, b"", b"") if not blobs else None
+    if len(blobs) != head.thumb + head.detail:
+        return None
+    thumb, detail = blobs[: head.thumb], blobs[head.thumb :]
+    if webp_size(thumb) != (320, 320) or webp_size(detail) != (head.width, head.height):
+        return None
+    return head, thumb, detail
+
+
+# Exit codes a child gives before its ready marker when it could not start (2 is the
+# interpreter's own: no such script). After the marker, a code is the decode's fault.
+START_FAILURES = {2: "import", photo_child.EXIT_LIMITS: "limits", photo_child.EXIT_IMPORT: "import"}
+
+
+def _judge(run: Run) -> tuple[str, Decoded | Refused | None, bytes, bytes]:
+    """The outcome of a run (ok, refused, or why it failed) and the record when there is one."""
+    ready = run.output[: len(photo_child.READY)] == photo_child.READY
+    if not ready and run.killed is None and run.returncode in START_FAILURES:
+        return START_FAILURES[run.returncode], None, b"", b""
+    if run.killed == "output":
+        return "output", None, b"", b""
+    if run.killed == "timeout":
+        return ("timeout" if run.cpu_ms >= STARVED_CPU_MS else "starved"), None, b"", b""
+    code = run.returncode
+    if code == 0 and ready:
+        parsed = parse(run.output[len(photo_child.READY) :])
+        if parsed is None:
+            return "protocol", None, b"", b""
+        head, thumb, detail = parsed
+        if isinstance(head, Refused) and head.peak_kb * 1024 >= MEMORY_NEAR * photo_child.MEMORY:
+            return "memory", head, b"", b""
+        return ("ok" if isinstance(head, Decoded) else "refused"), head, thumb, detail
+    if code == 0:
+        return "protocol", None, b"", b""
+    if code == -signal.SIGXCPU:
+        return "cpu", None, b"", b""
+    if code == -signal.SIGKILL:  # not this process's: the CPU hard limit, or the OOM killer
+        return ("cpu" if run.cpu_ms >= photo_child.CPU[1] * 1000 - 100 else "oom"), None, b"", b""
+    if code is not None and code < 0:
+        return "signal", None, b"", b""
+    if code == photo_child.EXIT_MEMORY:
+        return "memory", None, b"", b""
+    return "exit", None, b"", b""
+
+
+def variants(upload: IO[bytes], upload_id: UUID, span: Span) -> Variants:
+    """Decode an upload in a child process (_run), with the lock held (process). The answers: the
+    variants, the child's own refusal (422), 422 photo_unreadable when the child failed (killed by a
+    limit, crashed, wrote too much or nothing usable), 503 busy when it could not start or was
+    starved of CPU (the node's fault, not the photo's). Logs ids and closed sets only."""
+    try:
+        run = _run(upload)
+    except OSError:  # no process: out of memory or pids, or no interpreter
+        run = None
+    outcome, head, thumb, detail = ("spawn", None, b"", b"") if run is None else _judge(run)
+    span.set_attribute("decoder", outcome)
+    if head is not None:
+        span.set_attributes({"format": str(head.format), "pixels": head.pixels or 0})
+    fields: dict[str, Any] = {"decoder": outcome, "upload_id": str(upload_id)}
+    if run is not None:
+        fields["cpu_ms"] = run.cpu_ms
+        if run.returncode is not None and run.returncode < 0:
+            fields["signal"] = -run.returncode
+        elif run.returncode is not None:
+            fields["exit_code"] = run.returncode
+    if head is not None:
+        fields["peak_kb"] = head.peak_kb
+    if isinstance(head, Decoded) and outcome == "ok":
+        return Variants(thumb, detail, head.width, head.height)
+    if isinstance(head, Refused) and outcome == "refused":
+        raise Refusal(422, head.code, {**fields, "error": head.error})
+    if outcome in ("spawn", "limits", "import"):
+        logger.error("photo decoder could not start", extra=fields)
+        raise Refusal(503, "busy", fields)
+    logger.warning("photo decoder failed", extra=fields)
+    if outcome == "starved":
+        raise Refusal(503, "busy", fields)
+    raise Refusal(422, "photo_unreadable", fields)
 
 
 def finalize(tenant_id: UUID, service_id: UUID, upload_id: UUID) -> Variants:

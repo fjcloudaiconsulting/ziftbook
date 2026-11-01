@@ -495,6 +495,14 @@ loggers (`web.*`); Next's own stderr output (banners, SSR error traces) is not i
   (a page on another origin), `batch_cap` (past 10 violations in one request) and `global_cap` (past the line
   budget). `csp drop timer failed` (ERROR, with `exc`, once per process): the timer's write failed; it keeps
   ticking.
+- Photo decodes (ZIF-230; each runs in a child process, `app/photo_child.py`): `photo refused` (INFO,
+  `code`; with `decoder`, `error` (a class or check name), `cpu_ms`, `peak_kb` and `upload_id` when the
+  decoder answered); `photo decoder failed` (WARNING, `decoder` one of `cpu`, `memory`, `oom`, `signal`,
+  `exit`, `output`, `protocol`, `timeout`, `starved`, with `cpu_ms`, `signal` or `exit_code`, `upload_id`:
+  a limit ended the child, it crashed, wrote too much or nothing usable, or passed its deadline; the
+  photo answers 422 `photo_unreadable`, or 503 `busy` when `starved`); `photo decoder could not start`
+  (ERROR, `decoder` `spawn`, `limits` or `import`: every photo answers 503 `busy` until it is fixed);
+  `photo decoder not reaped` (ERROR: a killed child did not exit).
 - `ZIF_LOG_SQL=true` logs SQL statements, never their values, when `ZIF_LOG_LEVEL` is `DEBUG`; off by
   default.
 - Ids only: never a password, token or its hash, cookie, email address, name, business or service name,
