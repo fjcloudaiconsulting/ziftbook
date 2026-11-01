@@ -787,6 +787,87 @@ def test_reports_never_hold_more_than_two_connections(
     assert csp_reports._in_flight == 0
 
 
+def _blocking_charge(monkeypatch: pytest.MonkeyPatch) -> tuple[threading.Event, list[str]]:
+    release = threading.Event()
+    calls: list[str] = []
+
+    def blocked(key: str, window: Any) -> int:
+        calls.append(key)
+        release.wait(10)
+        return 1
+
+    monkeypatch.setattr(limits, "charge", blocked)
+    return release, calls
+
+
+async def _until(condition: Callable[[], bool]) -> None:
+    deadline = time.monotonic() + 10
+    while not condition() and time.monotonic() < deadline:
+        await asyncio.sleep(0.01)
+
+
+# 18b. Build review 4: a burst arriving all at once still takes at most MAX_IN_FLIGHT slots (the
+# check and the take are atomic on the event loop).
+def test_a_burst_never_takes_more_than_two_slots(
+    app: FastAPI, log_lines: Lines, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    release, calls = _blocking_charge(monkeypatch)
+    burst = csp_reports.MAX_IN_FLIGHT + 3
+
+    async def scenario() -> list[int]:
+        transport = httpx.ASGITransport(app=app, client=(fresh_address(), 1))
+        async with httpx.AsyncClient(transport=transport, base_url="https://testserver") as http:
+
+            async def send() -> int:
+                response = await http.post("/api/csp-reports", content=legacy(), headers=LEGACY)
+                return response.status_code
+
+            tasks = [asyncio.create_task(send()) for _ in range(burst)]
+            in_flight = csp_reports.MAX_IN_FLIGHT
+            # The right code: two calls held, the other three already answered "busy".
+            await _until(
+                lambda: (
+                    len(calls) >= in_flight
+                    and sum(task.done() for task in tasks) >= burst - in_flight
+                )
+            )
+            await asyncio.sleep(0.2)  # a mutant's late takers would call charge by now
+            release.set()
+            return list(await asyncio.gather(*tasks))
+
+    statuses = asyncio.run(scenario())
+
+    assert statuses == [204] * burst
+    assert len(calls) == csp_reports.MAX_IN_FLIGHT
+    assert csp_reports._in_flight == 0
+
+
+# 18c. Build review 4: a cross-site report is dropped as cross_site even while every slot is held:
+# the Sec-Fetch-Site check comes before the cap.
+def test_a_cross_site_report_is_counted_as_such_while_the_slots_are_held(
+    app: FastAPI, log_lines: Lines, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    release, calls = _blocking_charge(monkeypatch)
+
+    async def scenario() -> int:
+        transport = httpx.ASGITransport(app=app, client=(fresh_address(), 1))
+        async with httpx.AsyncClient(transport=transport, base_url="https://testserver") as http:
+            held = [
+                asyncio.create_task(http.post("/api/csp-reports", content=legacy(), headers=LEGACY))
+                for _ in range(csp_reports.MAX_IN_FLIGHT)
+            ]
+            await _until(lambda: len(calls) >= csp_reports.MAX_IN_FLIGHT)
+            cross = {**LEGACY, "sec-fetch-site": "cross-site"}
+            response = await http.post("/api/csp-reports", content=legacy(), headers=cross)
+            release.set()
+            await asyncio.gather(*held)
+            return response.status_code
+
+    assert asyncio.run(scenario()) == 204
+    first = dropped(log_lines)[0]
+    assert (first.get("cross_site"), first.get("busy")) == (1, None)
+
+
 # 19. B4 fence: a process-wide budget of violation lines a minute.
 def test_past_the_line_budget_no_violation_is_logged_and_one_drop_line_says_so(
     app: FastAPI, log_lines: Lines, monkeypatch: pytest.MonkeyPatch
