@@ -600,7 +600,9 @@ we can show which businesses were not affected.
   names every column, so a new app against the old schema fails on every event, not only the new one.
 - The worker's retention sweep (`app/retention.py`, ZIF-235) deletes failed sign-ins after 30 days and every other
   event after a year, here and in `platform_audit_events` (its three failure actions after 30 days). Rows past their
-  period are gone for good: the owner's audit page shows a year at most.
+  period are gone for good: the owner's audit page shows a year at most. During an incident an operator can hold the
+  evidence with `ZIF_RETENTION_HOLD_UNTIL` (worker; a date, at most 90 days ahead); export what is needed as
+  `ziftbook_migrate` with `app.audit_review` before the hold ends.
 
 ### Platform admin
 
@@ -1156,6 +1158,7 @@ ZIF-38). An empty variable means the default: `env_ignore_empty=True` on the bas
 | `ZIF_APP_REVISION` | api, frontend | `dev` | no | no | Git sha of the build, baked into the backend and frontend images. |
 | `ZIF_SHOW_VERSION` | frontend | none | no | no | `true` shows the version line (`v0.27.1 · 315a9c5`) at the bottom of the console sidebar and More sheet and in the booking pages' footer. Only staging sets it. Read server-side per request, never `NEXT_PUBLIC_*`. |
 | `ZIF_HEALTHCHECK_URL` | worker | none | no | no | Pinged after every successful loop. |
+| `ZIF_RETENTION_HOLD_UNTIL` | worker | none | no | no | An incident's evidence hold (ZIF-235), an ISO date (`2026-12-01`). Until that day (UTC) the retention sweep keeps audit events, platform audit events and booking-event addresses; sessions, rate limits and admin sessions are still swept. The worker logs a WARNING at startup and on every sweep while it holds. A date more than 90 days ahead holds 90 days from the worker's start instead, with an ERROR at startup (a restart starts the 90 days again); a value that is not a date stops the worker at startup. Remove it once the evidence is exported. |
 | `ZIF_IMAGE_TAG` | compose | none | yes | no | Release tag (`vX.Y.Z`) for the three GHCR images. |
 | `ZIF_API_URL` | frontend | none | yes | no | Backend base URL the web app proxies `/api` to. |
 | **Telemetry** | | | | | |

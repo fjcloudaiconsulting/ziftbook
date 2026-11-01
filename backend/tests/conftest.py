@@ -552,6 +552,29 @@ def worker_engine(migrated: None) -> Iterator[Engine]:
         yield engine
 
 
+@pytest.fixture
+def superuser(migrate_engine: Engine) -> Iterator[Engine]:
+    """The superuser on this xdist worker's database: seeds and backdates past row-level
+    security (the retention tests, ZIF-235)."""
+    engine = create_engine(
+        make_url(ADMIN_DATABASE_URL).set(database=migrate_engine.url.database), poolclass=NullPool
+    )
+    yield engine
+    engine.dispose()
+
+
+@pytest.fixture
+def audit_marker(superuser: Engine) -> Iterator[str]:
+    """A target prefix for this test's audit rows; they go afterwards, whatever the test did."""
+    prefix = f"test-retention:{uuid.uuid4()}"
+    yield prefix
+    with superuser.begin() as conn:
+        conn.execute(text("DELETE FROM audit_events WHERE target LIKE :p"), {"p": f"{prefix}%"})
+        conn.execute(
+            text("DELETE FROM platform_audit_events WHERE target LIKE :p"), {"p": f"{prefix}%"}
+        )
+
+
 @contextmanager
 def jobs_as_the_worker() -> Iterator[None]:
     """SessionLocal bound to ziftbook_worker on the database it is bound to now, as the worker
