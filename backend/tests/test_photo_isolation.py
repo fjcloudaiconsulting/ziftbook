@@ -275,7 +275,9 @@ def test_a_child_reaped_elsewhere_keeps_its_outcome() -> None:
 
 
 def good_record(data: bytes = PNG) -> bytes:
-    return photo_decode.record(data)
+    """A record decoded in this process, its usage set to a child's (this process's own peak is
+    the whole test worker's)."""
+    return with_head(photo_decode.record(data), peak_kb=50_000, cpu_ms=200)
 
 
 def with_head(record: bytes, **change: Any) -> bytes:
@@ -310,7 +312,7 @@ def records() -> list[tuple[str, bytes]]:
     with_exif = webp(rgb, exif=exif.tobytes())
     animated = webp(rgb, save_all=True, append_images=[Image.new("RGB", (20, 10))], duration=100)
     assert b"ANMF" in animated
-    refusal = photo_decode.record(b"hello")
+    refusal = with_head(photo_decode.record(b"hello"), peak_kb=50_000, cpu_ms=200)
     return [
         ("empty", b""),
         ("short", b"\0\0"),
@@ -327,6 +329,10 @@ def records() -> list[tuple[str, bytes]]:
         ("pixels-over-cap", with_head(good, pixels=photo_decode.JPEG_CAP + 1)),
         ("size-not-the-detail", with_head(good, width=19)),
         ("error-with-newline", with_head(refusal, error="Value\nError")),
+        ("error-not-a-known-name", with_head(refusal, error="S3cretExfil_AAAA")),
+        ("error-a-class-not-raised", with_head(refusal, error="KeyError")),
+        ("peak-past-twice-the-limit", with_head(good, peak_kb=2 * photo_child.MEMORY // 1024 + 1)),
+        ("cpu-past-twice-the-limit", with_head(good, cpu_ms=2 * photo_child.CPU[1] * 1000 + 1)),
         ("refusal-with-bytes", refusal + b"\0"),
         ("thumb-not-webp", with_blobs(good, b"\0" * thumb_n, detail)),
         ("riff-size-wrong", with_blobs(good, thumb[:4] + b"\0\0\0\0" + thumb[8:], detail)),
@@ -346,7 +352,7 @@ def test_a_malformed_record_is_refused(name: str, body: bytes) -> None:
 def test_a_good_record_parses() -> None:
     parsed = photos.parse(good_record())
     assert parsed is not None and isinstance(parsed[0], photos.Decoded)
-    refusal = photos.parse(photo_decode.record(b"hello"))
+    refusal = photos.parse(with_head(photo_decode.record(b"hello"), peak_kb=1, cpu_ms=1))
     assert refusal is not None and isinstance(refusal[0], photos.Refused)
     assert refusal[0].code == "photo_type"
 
@@ -866,12 +872,13 @@ with TestClient(create_app()):
 dumpable = ctypes.CDLL(None).prctl(3, 0, 0, 0, 0)
 photos.CHILD = photos.Path(sys.argv[1])
 with tempfile.TemporaryFile() as upload:
-    upload.write(b"probe-environ\\n")
+    upload.write(b"probe-environ\\n" + open(sys.argv[2], "rb").read())
     upload.seek(0)
     try:
         photos.variants(upload, uuid.uuid4(), trace.INVALID_SPAN)
+        print("RESULT", dumpable, "refused")
     except photos.Refusal as refusal:
-        print("RESULT", dumpable, refusal.fields.get("error"))
+        print("RESULT", dumpable, refusal.fields)
 """
 
 
@@ -879,16 +886,18 @@ with tempfile.TemporaryFile() as upload:
 # bug runs as the API's uid and could read the API's environment (its secrets) from
 # /proc/<pid>/environ unless the API is not dumpable. The real app's startup must set that.
 @only_linux
-def test_a_child_cannot_read_the_api_environment() -> None:
+def test_a_child_cannot_read_the_api_environment(tmp_path: Path) -> None:
+    png = tmp_path / "photo.png"
+    png.write_bytes(PNG)
     run = subprocess.run(
-        [sys.executable, "-c", HARDENED, str(PROBE)],
+        [sys.executable, "-c", HARDENED, str(PROBE), str(png)],
         cwd=API_DIR,
         capture_output=True,
         text=True,
         env=os.environ,
     )
     [result] = [line for line in run.stdout.splitlines() if line.startswith("RESULT")]
-    assert result == "RESULT 0 PermissionError", run.stderr[-2000:]
+    assert result == "RESULT 0 refused", run.stderr[-2000:]
 
 
 # ZIF-230 guard (ruling D1): a failed hardening is an ERROR at startup, never a refusal to start.
@@ -1055,3 +1064,18 @@ def test_the_filter_program_decides_each_syscall(machine: str) -> None:
     assert run_filter(machine, nr["read"], arch=0x40000003) == KILL  # i386
     if machine == "x86_64":
         assert run_filter(machine, 0x40000000 | 39) == KILL  # x32
+
+
+# ZIF-230 fence (build review, security 5). Kills: a free-text channel from the child into the logs:
+# `error` is a closed set (the checks' names and the classes the decode catches), the same on both
+# sides, and an exception is named by the first of them in its class's ancestry.
+def test_the_error_names_are_a_closed_set() -> None:
+    assert photos.ERRORS == photo_decode.ERRORS
+    assert set(photos.ERRORS) == {
+        *("unsafe_container", "pixel_cap", "exif_cap", "icc_cap"),
+        *("UnidentifiedImageError", "DecompressionBombError", "OSError", "ValueError"),
+        *("SyntaxError", "TypeError", "AttributeError", "error"),
+    }
+    assert photo_decode.error_name(UnicodeDecodeError("utf-8", b"", 0, 1, "x")) == "ValueError"
+    assert photo_decode.error_name(FileNotFoundError()) == "OSError"
+    assert photo_decode.error_name(struct.error()) == "error"

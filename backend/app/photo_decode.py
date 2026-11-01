@@ -24,6 +24,19 @@ Image.MAX_IMAGE_PIXELS = JPEG_CAP  # backstop only: the caps below refuse first
 SRGB = ImageCms.createProfile("sRGB")
 
 
+# Every name a refusal's `error` can take (photos.ERRORS, which logs it): the checks', and the
+# exception classes decode() catches. An exception is named by the first of them in its ancestry.
+ERRORS = (
+    *("unsafe_container", "pixel_cap", "exif_cap", "icc_cap"),
+    *("UnidentifiedImageError", "DecompressionBombError", "OSError", "ValueError"),
+    *("SyntaxError", "TypeError", "AttributeError", "error"),  # error: struct.error
+)
+
+
+def error_name(error: BaseException) -> str:
+    return next(c.__name__ for c in type(error).__mro__ if c.__name__ in ERRORS)
+
+
 class Refused(Exception):
     """The upload is refused with code (photo_type or photo_unreadable). error names why: the
     exception's class, or the check that refused it. format and pixels once the header was read."""
@@ -170,10 +183,10 @@ def _decode(data: bytes, seen: dict[str, Any]) -> Decoded:
     try:
         opened = Image.open(io.BytesIO(data), formats=["JPEG", "PNG", "WEBP"])
     except UnidentifiedImageError as error:
-        raise Refused("photo_type", type(error).__name__) from None
+        raise Refused("photo_type", error_name(error)) from None
     # ValueError: Pillow refuses a profile or text chunk that inflates past 1 MiB while it opens.
     except (Image.DecompressionBombError, OSError, ValueError) as error:
-        raise Refused("photo_unreadable", type(error).__name__) from None
+        raise Refused("photo_unreadable", error_name(error)) from None
     im: Image.Image = opened
     seen["format"], seen["pixels"] = im.format, im.width * im.height
     # A progressive or multi-scan JPEG has no draft shortcut that saves memory, so it gets the
@@ -210,12 +223,12 @@ def _decode(data: bytes, seen: dict[str, Any]) -> Decoded:
         try:
             ImageOps.exif_transpose(im, in_place=True)
         except (TypeError, AttributeError, struct.error, SyntaxError, ValueError) as error:
-            raise Refused("photo_unreadable", type(error).__name__) from None
+            raise Refused("photo_unreadable", error_name(error)) from None
         rgb = _srgb(im.convert("RGBA" if im.mode == "RGBA" else "RGB"), icc)
         thumb, detail = _webp(ImageOps.fit(rgb, (320, 320))), _webp(rgb)
         return Decoded(thumb, detail, rgb.width, rgb.height, str(seen["format"]), seen["pixels"])
     except (OSError, ValueError, SyntaxError, Image.DecompressionBombError) as error:
-        raise Refused("photo_unreadable", type(error).__name__) from None
+        raise Refused("photo_unreadable", error_name(error)) from None
 
 
 def usage() -> dict[str, int]:

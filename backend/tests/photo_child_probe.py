@@ -207,12 +207,12 @@ def record(data: bytes) -> bytes:
         found: bytes = real_load().record(rest)
         return found
     if MODE == "probe-memory":  # a Python allocation past the address-space limit
-        return refusal(f"allocated_{len(bytearray(1 << 30))}")
+        return refusal("ValueError" * (len(bytearray(1 << 30)) > 0))
     if MODE == "probe-native-memory":  # Pillow's own allocation past it
         from PIL import Image
 
         Image.new("RGBA", (12_000, 12_000))
-        return refusal("allocated")
+        return refusal("ValueError")
     if MODE == "probe-near-limit":  # a refusal from a child that came close to the limit
         decoder, ballast = real_load(), list[bytearray]()
         try:
@@ -283,13 +283,10 @@ def record(data: bytes) -> bytes:
         expect(parent_checks())
         checked: bytes = real_load().record(rest)
         return checked
-    if MODE == "probe-environ":  # the API's own environment, through /proc
-        try:
-            with open(f"/proc/{os.getppid()}/environ", "rb") as environ:
-                environ.read()
-            return refusal("allowed")
-        except OSError as error:
-            return refusal(type(error).__name__)
+    if MODE == "probe-environ":  # the API's own environment, through /proc: refused (EACCES)
+        expect([(lambda: open(f"/proc/{os.getppid()}/environ", "rb").close(), 13)])
+        refused: bytes = real_load().record(rest)
+        return refused
     raise SystemExit(f"unknown probe {MODE}")
 
 
