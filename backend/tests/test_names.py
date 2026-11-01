@@ -400,6 +400,20 @@ def test_naming_yourself_skips_a_business_you_were_removed_from(
     assert display_name(people.b, people.both) == "x"
 
 
+# ZB-32 fence: set_own_name names only a live member of the caller's business; a business someone
+# was removed from cannot name them, even while they are a member elsewhere. Kills: its gate
+# counting a removed membership.
+def test_a_business_cannot_name_someone_it_removed(people: People, migrate_engine: Engine) -> None:
+    set_user_name(migrate_engine, people.both, None)
+    end_membership(people.b, people.both)  # a worker there; still an owner of a
+
+    with tenant_context(people.b) as session:
+        assert session.scalar(text("SELECT set_own_name(:u, 'x')"), {"u": people.both}) is False
+
+    assert user_name(migrate_engine, people.both) is None
+    assert display_name(people.a, people.both) is None
+
+
 # F10: leaving is never gated.
 def test_a_nameless_person_can_sign_out(
     people: People, app: FastAPI, migrate_engine: Engine

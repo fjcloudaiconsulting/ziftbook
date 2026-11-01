@@ -15,7 +15,7 @@ from app import payments
 from app.jobs import run_once
 from app.main import WEBHOOK_MAX_BODY, create_app
 from app.worker import KINDS
-from tests.conftest import People, closed, new_client, points
+from tests.conftest import People, closed, jobs_as_the_worker, new_client, points
 from tests.stripe_fake import WEBHOOK_SECRET, FakeGateway, connect, event_body, signed
 
 WRONG_TYPES = (
@@ -43,11 +43,14 @@ def stripe_jobs(migrate_engine: Engine) -> list[str]:
 
 
 def run_jobs() -> None:
+    """Runs the queued jobs as the worker does, as ziftbook_worker (ZB-08)."""
+
     async def drain() -> None:
         while await run_once(KINDS):
             pass
 
-    asyncio.run(drain())
+    with jobs_as_the_worker():
+        asyncio.run(drain())
 
 
 # ZIF-158 F1. fence. Kills: parsing the JSON before verifying; verifying a re-serialised body

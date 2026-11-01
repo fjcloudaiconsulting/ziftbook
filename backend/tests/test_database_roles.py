@@ -10,7 +10,16 @@ from sqlalchemy.orm import Session
 
 from app.db import SessionLocal, reset_session
 from app.jobs import enqueue
-from tests.conftest import fresh_email, mailed, token_in
+from app.main import create_app
+from tests.conftest import (
+    People,
+    email_of,
+    fresh_email,
+    jobs_for,
+    mailed,
+    new_client,
+    token_in,
+)
 
 
 def test_btree_gist_is_installed(app_engine: Engine) -> None:
@@ -82,9 +91,10 @@ def test_app_role_cannot_change_the_schema(
 
 
 # ZB-10 FENCE. Wrong impl: any of these back on the app role. Sign-up, first-run setup and invites
-# create users and businesses through SECURITY DEFINER functions owned by ziftbook_migrate; the
-# mailer only inserts outbox rows and marks them sent. DELETE on memberships is revoked in a later
-# contract step (see 0048).
+# create users and businesses through SECURITY DEFINER functions owned by ziftbook_migrate, and
+# sign-up and invites create memberships the same way (0054); the mailer only inserts outbox rows
+# and marks them sent; removing a member ends the membership in place (ZIF-112), so DELETE on
+# memberships went too, in the contract step (0052).
 @pytest.mark.parametrize(
     ("table", "privilege"),
     [
@@ -92,6 +102,9 @@ def test_app_role_cannot_change_the_schema(
         ("users", "UPDATE"),
         ("users", "DELETE"),
         ("tenants", "INSERT"),
+        ("memberships", "INSERT"),
+        ("memberships", "UPDATE"),
+        ("memberships", "DELETE"),
         ("email_outbox", "UPDATE"),
         ("email_outbox", "DELETE"),
     ],
@@ -120,6 +133,23 @@ def test_app_role_updates_only_the_outbox_columns_the_mailer_sets(migrate_engine
             )
         )
     assert columns == {"status", "sent_at", "subject"}
+
+
+# ZB-10 FENCE (0054). What app/members.py sets: change_role the role, remove the role and
+# removed_at, set_display_name the display name. Wrong impl: UPDATE of user_id or tenant_id back on
+# the app role, which would move a membership to another person or business.
+def test_app_role_updates_only_the_membership_columns_the_app_sets(migrate_engine: Engine) -> None:
+    with migrate_engine.connect() as conn:
+        columns = set(
+            conn.scalars(
+                text("""
+                SELECT column_name FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = 'memberships'
+                  AND has_column_privilege('ziftbook_app', 'memberships', column_name, 'UPDATE')
+                """)
+            )
+        )
+    assert columns == {"role", "removed_at", "display_name"}
 
 
 @pytest.fixture
@@ -169,9 +199,48 @@ def test_worker_role_has_every_privilege_of_the_app_role(migrate_engine: Engine)
     assert inherits is True
 
 
+# ZB-08 FENCE (0051). Wrong impl: ziftbook_app keeps EXECUTE on mint_email_token, so the API role
+# can set the hash an emailed sign-up or reset link carries.
+def test_app_role_cannot_mint_email_tokens(app_engine: Engine, migrate_engine: Engine) -> None:
+    with migrate_engine.connect() as conn:
+        held = conn.scalar(
+            text(
+                "SELECT has_function_privilege('ziftbook_app', "
+                "'mint_email_token(uuid,bytea)', 'EXECUTE')"
+            )
+        )
+    assert held is False
+    with app_engine.connect() as conn, pytest.raises(ProgrammingError) as error:
+        conn.execute(
+            text("SELECT * FROM mint_email_token(:id, :h)"),
+            {"id": uuid.uuid7(), "h": hashlib.sha256(b"probe").digest()},
+        )
+    assert isinstance(error.value.orig, InsufficientPrivilege)
+
+
+# ZB-08 guard. The API only starts a request and queues its job, neither of which mints: as the
+# app role, a sign-up or reset request is still answered and queued with no hash stored, and the
+# worker's job then sends the link.
+@pytest.mark.parametrize("purpose", ["sign_up", "password_reset"])
+def test_link_requests_queue_their_email_without_minting(
+    people: People, app_engine: Engine, migrate_engine: Engine, purpose: str
+) -> None:
+    email = fresh_email() if purpose == "sign_up" else email_of(people.both)
+    path = "/api/sign-up" if purpose == "sign_up" else "/api/password-reset"
+    response = new_client(create_app()).post(path, json={"email": email, "locale": "en"})
+    assert response.status_code == 202
+    with migrate_engine.connect() as conn:
+        hashes = conn.scalars(
+            text("SELECT token_hash FROM email_tokens WHERE email = :e AND purpose = :p"),
+            {"e": email, "p": purpose},
+        ).all()
+    assert (hashes, jobs_for(migrate_engine, email)) == ([None], 1)
+    assert token_in(mailed(email))
+
+
 # ZB-08 FENCE. Wrong impl: the worker reaches mint_email_token only through ziftbook_app, so taking
-# it from the app role in the next release (the contract migration) would leave no role that can
-# mint; or the worker gets grants of its own beyond it.
+# it from the app role (0051) leaves no role that can mint; or the worker gets grants of its own
+# beyond it.
 def test_worker_role_holds_only_mint_email_token_in_its_own_right(migrate_engine: Engine) -> None:
     with migrate_engine.connect() as conn:
         held = conn.scalars(

@@ -23,6 +23,7 @@ from tests.conftest import (
     events,
     failing,
     member_id,
+    migrate_tenant_context,
     new_client,
     put_settings,
     signed_in,
@@ -619,7 +620,12 @@ def test_removing_a_member_cascades_their_time_off(people: People, app: FastAPI)
 @pytest.mark.parametrize("holder_action", ["deleted", "ended"])
 @pytest.mark.parametrize("op", ["POST", "PATCH"])
 def test_a_write_waits_on_a_membership_removal_in_flight(
-    people: People, app: FastAPI, app_engine: Engine, op: str, holder_action: str
+    people: People,
+    app: FastAPI,
+    app_engine: Engine,
+    migrate_engine: Engine,
+    op: str,
+    holder_action: str,
 ) -> None:
     only_a_member = member_id(people.a, people.only_a)
     existing_id = None
@@ -636,7 +642,9 @@ def test_a_write_waits_on_a_membership_removal_in_flight(
         else:
             results.append(owner.patch(block_path(existing_id), json={"reason": "Dentist"}))
 
-    with app_engine.connect() as holder:
+    # A deletion comes only from an operator: the app role has no DELETE on memberships (ZB-10).
+    holder_engine = migrate_engine if holder_action == "deleted" else app_engine
+    with holder_engine.connect() as holder:
         with holder.begin():
             holder.execute(
                 text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(people.a)}
@@ -927,7 +935,8 @@ def test_the_composite_fk_refuses_a_member_from_another_tenant(people: People) -
     assert isinstance(exc_info.value.orig, pg_errors.ForeignKeyViolation)
 
 
-# 21. guard: the index and the grants the lock and the cascade depend on are really there.
+# 21. guard: the index and the grants the lock and the cascade depend on are really there. The
+# membership row lock needs UPDATE of one column at least (0054 grants three, not the table).
 def test_schema_grants_and_index(migrate_engine: Engine) -> None:
     with migrate_engine.connect() as conn:
         index_columns: str | None = conn.execute(
@@ -940,7 +949,7 @@ def test_schema_grants_and_index(migrate_engine: Engine) -> None:
             text("SELECT has_table_privilege('ziftbook_app', 'time_off', 'DELETE')")
         )
         update_priv = conn.scalar(
-            text("SELECT has_table_privilege('ziftbook_app', 'memberships', 'UPDATE')")
+            text("SELECT has_any_column_privilege('ziftbook_app', 'memberships', 'UPDATE')")
         )
     assert index_columns is not None
     assert "tenant_id" in index_columns
@@ -1249,8 +1258,10 @@ def test_a_day_block_behaves_like_a_partial_one_for_visibility_audit_and_cascade
     before = events(migrate_engine, tenant_id=people.a, action="time_off_created")
     assert len(before) >= 1
 
+    # As the migrate role: the app role has no DELETE on memberships (ZB-10).
+    with migrate_tenant_context(migrate_engine, people.a) as conn:
+        conn.execute(text("DELETE FROM memberships WHERE id = :id"), {"id": only_a_member})
     with tenant_context(people.a) as session:
-        session.execute(text("DELETE FROM memberships WHERE id = :id"), {"id": only_a_member})
         removed = session.execute(
             text("SELECT count(*) FROM time_off WHERE id = :id"), {"id": cascaded["id"]}
         ).scalar()

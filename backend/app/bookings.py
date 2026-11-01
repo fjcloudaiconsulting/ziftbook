@@ -289,7 +289,7 @@ class EventOut(BaseModel):
     event: str
     at: datetime
     actor: Literal["client", "team", "system"]
-    actor_name: str | None  # null for a removed member, and for a pre-0033 team event
+    actor_name: str | None  # null: a removed member with no display name, or a pre-0033 team event
     details: dict[str, Any] | None
 
 
@@ -494,8 +494,10 @@ WHERE b.id = :id
 
 # Named columns, never SELECT *: ip, user_agent, policy_version and consent_purposes are the
 # employee's and the guest's personal data (0026:219-223) and stay out of this response. The actor
-# is joined to memberships by user_id and to users only through that membership, so a removed
-# member (the row stays, ZIF-112) keeps their name.
+# is joined to memberships by user_id (the row stays when they are removed, ZIF-112) and to users
+# only through that membership. Their name is the membership's display_name; the account's name is
+# a fallback only for a live member, because a business no longer reads a removed member's account
+# (ZB-32, 0055). So a removed member with no display name is unnamed (null).
 HISTORY = text("""
 SELECT e.event, e.created_at AS at, e.actor_user_id, e.details,
        coalesce(m.display_name, u.name) AS actor_name

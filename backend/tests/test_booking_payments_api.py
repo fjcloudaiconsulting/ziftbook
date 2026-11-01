@@ -1089,25 +1089,34 @@ def test_the_booking_browser_can_sync(
     assert sync(client, people, made.json()["id"]).status_code == 200
 
 
-# ZB-15, review focus 2: FENCE. A checkout placed by the release before the secret has none; during
-# the deploy overlap it must still sync, resume and abandon from any browser, as before. Kills a
-# comparison that refuses a NULL hash.
-def test_a_booking_without_a_secret_still_syncs(
+# ZB-15 (contract): FENCE. A checkout with no secret stored is refused exactly as an unknown id,
+# from every browser, the one that placed it included: the release that placed checkouts without
+# one is gone and their holds have run out. Kills a comparison that still accepts a NULL hash.
+def test_a_booking_without_a_secret_is_refused(
     app: FastAPI, people: People, fake_stripe: FakeGateway, ready: str, migrate_engine: Engine
 ) -> None:
-    first = place(app, people, ready, payment="pay", client=new_client(app)).json()["id"]
-    second = place(app, people, ready, starts_at=at("10:00"), client=new_client(app)).json()["id"]
+    client = new_client(app)
+    first = place(app, people, ready, payment="pay", client=client).json()["id"]
+    second = place(app, people, ready, starts_at=at("10:00"), client=client).json()["id"]
     with migrate_engine.begin() as conn:
         conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(people.a)})
         conn.execute(
             text("UPDATE bookings SET checkout_hash = NULL WHERE id = ANY(:ids)"),
             {"ids": [uuid.UUID(first), uuid.UUID(second)]},
         )
+    nobody = {
+        route: (r.status_code, r.text) for route, r in unknown(new_client(app), people).items()
+    }
 
-    assert sync(new_client(app), people, first).status_code == 200
-    assert resume(new_client(app), people, first, "check").status_code == 200
-    assert abandon(new_client(app), people, second).status_code == 204
-    assert status_of(people, second) == "expired"
+    for browser in (client, new_client(app)):
+        answers = {
+            "sync": sync(browser, people, first),
+            "resume": resume(browser, people, first, "check"),
+            "abandon": abandon(browser, people, second),
+        }
+        assert {route: (r.status_code, r.text) for route, r in answers.items()} == nobody
+    assert status_of(people, second) == "awaiting_payment"
+    assert [row["kind"] for row in pay_rows(people, first)] == ["pay"]  # no switch happened
 
 
 def test_stripe_down_at_sync_is_a_503(

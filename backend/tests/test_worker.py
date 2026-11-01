@@ -19,7 +19,7 @@ from app.config import WorkerSettings
 from app.db import SessionLocal, tenant_context
 from app.jobs import Job, JobKind, enqueue, run_once
 from app.worker import work
-from tests.conftest import People
+from tests.conftest import People, jobs_as_the_worker
 from tests.stripe_fake import FakeGateway, connect
 
 Lines = Callable[[], list[dict[str, Any]]]
@@ -401,7 +401,8 @@ def test_the_worker_needs_only_the_secret_key(
         while await run_once(worker.KINDS):
             pass
 
-    asyncio.run(drain())
+    with jobs_as_the_worker():  # as the worker runs jobs (ZB-08)
+        asyncio.run(drain())
 
     lines = log_lines()
     assert [line["payments"] for line in lines if line["msg"] == "worker started"] == ["on"]

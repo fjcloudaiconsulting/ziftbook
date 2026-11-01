@@ -697,7 +697,7 @@ def test_to_utc_pins_the_dst_edges_zif_48_inherits() -> None:
 
 
 # The range type is owned by ziftbook_migrate, and usable by the app role with no grant;
-# memberships' UPDATE, which the row lock needs, is still granted.
+# memberships' UPDATE of one column at least (0054), which the row lock needs, is still granted.
 def test_the_migrate_role_owns_the_range_type_the_app_role_may_use_it(
     migrate_engine: Engine, app_engine: Engine
 ) -> None:
@@ -710,7 +710,7 @@ def test_the_migrate_role_owns_the_range_type_the_app_role_may_use_it(
         )
         usage = conn.scalar(text("SELECT has_type_privilege('ziftbook_app', 'timerange', 'USAGE')"))
         update_priv = conn.scalar(
-            text("SELECT has_table_privilege('ziftbook_app', 'memberships', 'UPDATE')")
+            text("SELECT has_any_column_privilege('ziftbook_app', 'memberships', 'UPDATE')")
         )
     assert owner == "ziftbook_migrate"
     assert usage is True

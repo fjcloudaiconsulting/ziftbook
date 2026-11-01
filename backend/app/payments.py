@@ -1081,10 +1081,10 @@ def _checkout(
 
 
 def _placed_by(booking: Row[Any], request: Request) -> bool:
-    """The request carries the secret whose hash the booking keeps. A booking with none was placed
-    by the release before the secret (the deploy overlap) and is answered as it was then."""
+    """The request carries the secret whose hash the booking keeps. A booking with none (one placed
+    before the secret existed, long since settled or expired) is nobody's."""
     if booking.checkout_hash is None:
-        return True
+        return False
     secret = request.cookies.get(bookings.checkout_cookie(booking.id), "")
     return hmac.compare_digest(bookings.checkout_digest(secret), booking.checkout_hash)
 
