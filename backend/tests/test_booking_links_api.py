@@ -434,14 +434,16 @@ def test_linked_booking_carries_no_client_identity(
 
 
 # ZIF-99 fence. The manage page shows the business's own contact email, read in the link's own
-# tenant: the saved setting, null when there is none, never another business's. Every route that
-# answers a LinkedBooking builds it through the one view, so GET and the cancel answer stand for
-# all of them. Kills a hard-coded null, a read outside the link's tenant, and a cancel answer
-# that drops the field.
+# tenant: the saved setting, null when there is none, never another business's. The page re-renders
+# from every route's answer, so each of the four routes that answer a LinkedBooking (read, consents,
+# reschedule, cancel) is checked on its own. Kills a hard-coded null, a read outside the link's
+# tenant, and any one route building its answer without the setting.
 def test_the_manage_page_shows_the_business_s_contact_email(
     people: People, app: FastAPI, ready: str
 ) -> None:
-    booking_id = confirmed_booking(app, people.a, ready)
+    booking_id = confirmed_booking(
+        app, people.a, ready, starts_at=at("10:00"), consents={"marketing_email": True}
+    )
     owner = signed_in(app, people.a, people.both)
     assert patch(owner, booking_id, "confirmed").status_code == 200
     save_setting(people.b, "contact_email", "other@example.com")  # another business's address
@@ -454,7 +456,15 @@ def test_the_manage_page_shows_the_business_s_contact_email(
     assert body["booking"]["contact_email"] == "shop@example.com"
     assert "other@example.com" not in str(body)
 
-    refund_pct = body["engine"]["refund_pct"]
+    confirmed = post(client, "/consents", {"booking_id": booking_id})
+    assert confirmed.status_code == 200, confirmed.content
+    assert confirmed.json()["booking"]["contact_email"] == "shop@example.com"
+
+    moved = post(client, "/reschedule", reschedule_body(booking_id, at("10:30"), 0))
+    assert moved.status_code == 200, moved.content
+    assert moved.json()["booking"]["contact_email"] == "shop@example.com"
+
+    refund_pct = moved.json()["engine"]["refund_pct"]
     cancelled = post(client, "/cancel", cancel_body(booking_id, refund_pct))
     assert cancelled.status_code == 200
     assert cancelled.json()["booking"]["contact_email"] == "shop@example.com"
