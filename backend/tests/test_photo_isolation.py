@@ -28,7 +28,7 @@ from opentelemetry import trace
 from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 from PIL import Image
 
-from app import photo_child, photo_decode, photos, storage
+from app import photo_child, photo_decode, photos
 from app.errors import ApiError
 from tests import photo_syscalls
 from tests.conftest import API_DIR, closed, image, points, upload
@@ -993,31 +993,52 @@ def test_every_decode_is_counted_by_outcome(
     closed(metric_reader)
 
 
-# ZIF-230 fence. Kills: a full or unwritable /tmp (the upload's scratch file) answering 500: it is
-# the server's fault, 503 busy and an ERROR, and no child is started.
-@pytest.mark.parametrize("where", ["create", "write"])
+class FullDisk(io.RawIOBase):
+    """A file on a full disk: every write to it fails with ENOSPC."""
+
+    def readable(self) -> bool:
+        return True
+
+    def writable(self) -> bool:
+        return True
+
+    def seekable(self) -> bool:
+        return True
+
+    def seek(self, offset: int, whence: int = 0) -> int:
+        return 0
+
+    def readinto(self, buffer: Any) -> int:
+        return 0
+
+    def write(self, data: Any) -> int:
+        raise OSError(28, "No space left on device")
+
+
+# ZIF-230 fence (build review, correctness 3). Kills: a full or unwritable /tmp (the upload's
+# scratch file) answering 500: it is the server's fault, 503 busy and an ERROR, and no child starts.
+# Through the real buffered write path: a small upload fails only when its buffer is flushed (at
+# the seek before the decode), a large one while it streams.
+@pytest.mark.parametrize(
+    ("where", "size"), [("create", 10), ("flush", 100_000), ("write", 600_000)]
+)
 def test_no_scratch_space_for_the_upload_is_busy(
     where: str,
+    size: int,
     s3: S3Client,
     monkeypatch: pytest.MonkeyPatch,
     runs: list[photos.Run],
     failed: Callable[[], list[dict[str, Any]]],
 ) -> None:
     t = uuid.uuid4()
-    upload_id = upload(s3, t, PNG)
-    full = OSError(28, "No space left on device")
-    if where == "create":
+    upload_id = upload(s3, t, b"\0" * size)
 
-        def no_file() -> None:
-            raise full
+    def scratch() -> io.BufferedRandom:
+        if where == "create":
+            raise OSError(28, "No space left on device")
+        return io.BufferedRandom(FullDisk())
 
-        monkeypatch.setattr(tempfile, "TemporaryFile", no_file)
-    else:
-
-        def no_space(key: str, sink: object, limit: int) -> None:
-            raise full
-
-        monkeypatch.setattr(storage, "read_into", no_space)
+    monkeypatch.setattr(tempfile, "TemporaryFile", scratch)
     with pytest.raises(ApiError) as error:
         photos.process(t, upload_id)
     assert (error.value.status_code, error.value.code) == (503, "busy")
