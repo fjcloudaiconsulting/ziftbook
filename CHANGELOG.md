@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.31.1](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.31.0...v0.31.1) (2026-11-01)
+
+
+### Bug Fixes
+
+* **deps:** update dependency fastapi to v0.162.0 ([#328](https://github.com/fjcloudaiconsulting/ziftbook/issues/328)) ([ca47fc4](https://github.com/fjcloudaiconsulting/ziftbook/commit/ca47fc4cc98007ef3c2f17fcfc5e53c6fc4539c9))
+* **deps:** update npm non-major ([#345](https://github.com/fjcloudaiconsulting/ziftbook/issues/345)) ([a1592e6](https://github.com/fjcloudaiconsulting/ziftbook/commit/a1592e64456059fc9e46dc8acfb2e0b441b3897d))
+* **deps:** update python non-major ([#361](https://github.com/fjcloudaiconsulting/ziftbook/issues/361)) ([9a7b566](https://github.com/fjcloudaiconsulting/ziftbook/commit/9a7b5661caeb887f4153fa99f63d465136f6d623))
+
 ## [0.31.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.30.0...v0.31.0) (2026-10-24)
 
 
