@@ -682,3 +682,62 @@ def test_the_memory_budget_fits_the_pod() -> None:
     assert photos.API_ALLOWANCE + photo_child.MEMORY + photos.OUTPUT_CAP + photos.BUDGET_MARGIN <= (
         384 * MIB
     )
+
+
+HARDENED = """
+import ctypes, sys, tempfile, uuid
+from fastapi.testclient import TestClient
+from opentelemetry import trace
+from app import photos
+from app.main import create_app
+with TestClient(create_app()):
+    pass
+dumpable = ctypes.CDLL(None).prctl(3, 0, 0, 0, 0)
+photos.CHILD = photos.Path(sys.argv[1])
+with tempfile.TemporaryFile() as upload:
+    upload.write(b"probe-environ\\n")
+    upload.seek(0)
+    try:
+        photos.variants(upload, uuid.uuid4(), trace.INVALID_SPAN)
+    except photos.Refusal as refusal:
+        print("RESULT", dumpable, refusal.fields.get("error"))
+"""
+
+
+# ZIF-230 fence (ruling D1). Kills: env={} bypassed through /proc. A child taken over by a decoder
+# bug runs as the API's uid and could read the API's environment (its secrets) from
+# /proc/<pid>/environ unless the API is not dumpable. The real app's startup must set that.
+@only_linux
+def test_a_child_cannot_read_the_api_environment() -> None:
+    run = subprocess.run(
+        [sys.executable, "-c", HARDENED, str(PROBE)],
+        cwd=API_DIR,
+        capture_output=True,
+        text=True,
+        env=os.environ,
+    )
+    [result] = [line for line in run.stdout.splitlines() if line.startswith("RESULT")]
+    assert result == "RESULT 0 PermissionError", run.stderr[-2000:]
+
+
+# ZIF-230 fence (ruling D1). Kills: decodes going on in an API whose hardening failed: they answer
+# 503 busy (an ERROR at startup and per photo) until it is fixed.
+def test_decodes_are_refused_when_the_api_could_not_be_hardened(
+    monkeypatch: pytest.MonkeyPatch,
+    failed: Callable[[], list[dict[str, Any]]],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setattr(photos, "HARDENING", "unset")
+    monkeypatch.setattr(photos, "_undumpable", lambda: False)
+    assert photos.harden("linux") == "failed"
+    assert [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR] == [
+        "api hardening failed: photo decodes refused"
+    ]
+    assert refused(PNG, photos.CHILD) == (503, "busy")
+    assert [(f["msg"], f["decoder"]) for f in failed()] == [
+        ("photo decoder could not start", "hardening")
+    ]
+    monkeypatch.setattr(photos, "_undumpable", lambda: True)
+    assert photos.harden("linux") == "on"
+    assert photos.harden("darwin") == "unsupported"
+    assert decode(PNG, photos.CHILD).width == 20

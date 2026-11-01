@@ -508,6 +508,13 @@ loggers (`web.*`); Next's own stderr output (banners, SSR error traces) is not i
   the cgroup's `memory.max`), and `photo decoder memory budget too small` (ERROR, `memory_max`,
   `required`, `oom_group`) says the pod cannot hold the API and a decode: with `memory.oom.group`, as
   the kubelet sets on cgroup v2, a child's OOM restarts the whole pod. Never a refusal to start.
+  `api started` also carries `proc_hardening` (`on`, `unsupported` off Linux, or `failed`, with the
+  ERROR `api hardening failed: photo decodes refused`, after which every photo answers 503 `busy`): on
+  Linux the API makes itself non-dumpable at startup, so a decoder child (same uid) cannot read its
+  environment or memory through `/proc`. Side effects: the API's own `/proc/self/environ`, `io` and
+  `auxv` are unreadable even to it (nothing reads them), it writes no core dump, and
+  `cat /proc/1/environ` through `kubectl exec` is refused; `kubectl debug` with `SYS_PTRACE` still
+  works.
 - `ZIF_LOG_SQL=true` logs SQL statements, never their values, when `ZIF_LOG_LEVEL` is `DEBUG`; off by
   default.
 - Ids only: never a password, token or its hash, cookie, email address, name, business or service name,

@@ -740,6 +740,7 @@ def test_the_api_logs_its_settings_once_at_startup(
             "storage": "off",
             # ZIF-230: from this machine's cgroup ("unlimited" without one).
             "photo_budget": photos.budget(),
+            "proc_hardening": "on" if sys.platform == "linux" else "unsupported",
             "payments": "off",
             "database_role": "ziftbook_app",
         }
