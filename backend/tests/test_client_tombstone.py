@@ -121,11 +121,13 @@ def test_an_erased_row_holds_nothing_about_the_person(
     assert constraint_of(error) == "ck_clients_name_or_erased"
 
 
-# ZIF-58 F4 FENCE, both sides. Wrong impl: a CHECK that lets a live row have no name. The positive
+# ZIF-58 F4 FENCE, both sides. Wrong impl: a CHECK that lets a live row have no name, or a name
+# over 100 characters (the bound ck_clients_name_length held before 0063 rewrote it). The positive
 # control: a blank tombstone is accepted, so the refusals above are not a CHECK refusing every
 # erased row.
-def test_a_live_row_needs_a_name_and_a_blank_tombstone_is_accepted(
-    people: People, migrate_engine: Engine
+@pytest.mark.parametrize("name", ["", "x" * 101], ids=["empty", "101"])
+def test_a_live_row_needs_a_name_of_1_to_100_and_a_blank_tombstone_is_accepted(
+    people: People, migrate_engine: Engine, name: str
 ) -> None:
     with (
         pytest.raises(DBAPIError) as error,
@@ -134,13 +136,19 @@ def test_a_live_row_needs_a_name_and_a_blank_tombstone_is_accepted(
         conn.execute(
             text("""
             INSERT INTO clients (tenant_id, name)
-            VALUES (current_setting('app.tenant_id')::uuid, '')
-            """)
+            VALUES (current_setting('app.tenant_id')::uuid, :name)
+            """),
+            {"name": name},
         )
     assert isinstance(error.value.orig, CheckViolation)
     assert constraint_of(error) == "ck_clients_name_or_erased"
 
     assert seed_tombstone(migrate_engine, people.a)
+    with migrate_tenant_context(migrate_engine, people.a) as conn:  # and 100 is a name
+        conn.execute(
+            text("INSERT INTO clients (tenant_id, name) VALUES (:t, :name)"),
+            {"t": people.a, "name": "x" * 100},
+        )
 
 
 # ZIF-58 F5 FENCE. Wrong impl: no trigger (both updates succeed: each satisfies the CHECK), or a
