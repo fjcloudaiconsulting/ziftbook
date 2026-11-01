@@ -211,7 +211,8 @@ that person's platform account (ZIF-99).
   SHARE` or stronger, with the filter, as the consents route and the booking mail job do), or holds the tenant booking
   lock, which every erasure takes first (as the merchant booking does): a foreign key's `KEY SHARE` does not wait for
   an erasure in flight. The team gets no booking mail about an erased client's booking.
-- Erasure is one function, `erase_client_core` (0064, owned by `ziftbook_migrate`, executable by no other role): in
+- Erasure is one function, `erase_client_core(client, announce)` (0064, owned by `ziftbook_migrate`, executable by
+  no other role): in
   the current business only, with the business named in every statement besides row-level security, it marks the
   client erased and blanks its fields, blanks what the client typed on its bookings (`client_name`, `client_phone`,
   `client_message`), the merchant's `decline_message` and the `checkout_hash`, blanks the address and browser on the
@@ -222,10 +223,13 @@ that person's platform account (ZIF-99).
   `booking_events`, `consents`, `booking_links` and `booking_payments` (blank, delete, keep, status), so a new column
   of those tables fails it until it is classified there and, if it holds the person, erased by the core. Those
   tables, and `client_erasure_holds`, have no policy but `tenant_isolation`.
-- `client_erasure_holds` keeps an erased client's email and locale for at most 31 days (a CHECK), and only when the
-  erasure ended one of its bookings or money is still owed an answer on one: the only way to tell the client about a
-  cancellation or a failed refund. Only the core writes it; the app role can neither read nor write it; the worker
-  reads and deletes it.
+- `client_erasure_holds` keeps an erased client's email and locale: the only way to tell the client about a
+  cancellation or a failed refund. The core writes one when the client has an address and either `announce` is true
+  and the erasure ended one of its bookings, or money is still owed an answer on one, whatever `announce` says. An
+  owner's erasure and an account deletion pass true; re-applying an erasure after a restore passes false (the
+  cancellations were announced the first time; a refund that fails later must still reach the client). A CHECK keeps
+  `purge_after` at most 31 days after `created_at`; the worker deletes the hold by then. Only the core writes it; the
+  app role can neither read nor write it; the worker reads and deletes it.
 - Marketing consent (`consents`) is per business. Nothing writes a platform-level consent, and one business's consent
   never grants another anything.
 - `consents` is append-only: one row per grant or withdrawal per purpose, holding the exact text shown and its policy

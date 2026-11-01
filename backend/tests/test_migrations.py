@@ -2294,14 +2294,14 @@ def test_0063_round_trips_the_client_tombstone(
 
 # ZIF-58 (0064): the erase functions, the contact hold table, and who may use them.
 ERASE_FUNCTIONS = text("""
-SELECT to_regprocedure('erase_client_core(uuid)') IS NOT NULL,
+SELECT to_regprocedure('erase_client_core(uuid,boolean)') IS NOT NULL,
        to_regprocedure('erase_client(bytea,uuid)') IS NOT NULL,
        to_regclass('client_erasure_holds') IS NOT NULL
 """)
 ERASE_ACCESS = text("""
 SELECT has_function_privilege('ziftbook_app', 'erase_client(bytea,uuid)', 'EXECUTE'),
-       has_function_privilege('ziftbook_app', 'erase_client_core(uuid)', 'EXECUTE'),
-       has_function_privilege('ziftbook_worker', 'erase_client_core(uuid)', 'EXECUTE'),
+       has_function_privilege('ziftbook_app', 'erase_client_core(uuid,boolean)', 'EXECUTE'),
+       has_function_privilege('ziftbook_worker', 'erase_client_core(uuid,boolean)', 'EXECUTE'),
        has_any_column_privilege('ziftbook_app', 'client_erasure_holds', 'SELECT'),
        has_table_privilege('ziftbook_worker', 'client_erasure_holds', 'SELECT'),
        has_table_privilege('ziftbook_worker', 'client_erasure_holds', 'DELETE'),
