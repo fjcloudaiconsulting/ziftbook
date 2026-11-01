@@ -86,6 +86,15 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[None]) ->
     return report
 
 
+@pytest.fixture(autouse=True, scope="session")
+def _hardened() -> None:
+    """ZIF-230: the API is non-dumpable before it decodes a photo (main.py's lifespan); so is the
+    test process, which decodes them too. A no-op off Linux."""
+    from app import photos
+
+    photos.harden()
+
+
 @pytest.hookimpl(trylast=True)
 def pytest_configure(config: pytest.Config) -> None:
     global _pytest_thread_hook

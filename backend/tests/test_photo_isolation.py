@@ -880,26 +880,43 @@ def test_a_child_cannot_read_the_api_environment() -> None:
     assert result == "RESULT 0 PermissionError", run.stderr[-2000:]
 
 
-# ZIF-230 fence (ruling D1). Kills: decodes going on in an API whose hardening failed: they answer
-# 503 busy (an ERROR at startup and per photo) until it is fixed.
-def test_decodes_are_refused_when_the_api_could_not_be_hardened(
-    monkeypatch: pytest.MonkeyPatch,
-    failed: Callable[[], list[dict[str, Any]]],
-    caplog: pytest.LogCaptureFixture,
+# ZIF-230 guard (ruling D1): a failed hardening is an ERROR at startup, never a refusal to start.
+def test_a_failed_hardening_is_logged(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    monkeypatch.setattr(photos, "HARDENING", "unset")
     monkeypatch.setattr(photos, "_undumpable", lambda: False)
     assert photos.harden("linux") == "failed"
     assert [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR] == [
         "api hardening failed: photo decodes refused"
     ]
-    assert refused(PNG, photos.CHILD) == (503, "busy")
-    assert [(f["msg"], f["decoder"]) for f in failed()] == [
-        ("photo decoder could not start", "hardening")
-    ]
     monkeypatch.setattr(photos, "_undumpable", lambda: True)
     assert photos.harden("linux") == "on"
     assert photos.harden("darwin") == "unsupported"
+
+
+def set_dumpable(value: int) -> None:
+    import ctypes
+
+    assert ctypes.CDLL(None).prctl(4, value, 0, 0, 0) == 0  # PR_SET_DUMPABLE
+
+
+# ZIF-230 fence (build review, security 3). Kills: a decode while this process is dumpable, however
+# it got there (hardening never run, as with --lifespan off or a script, or failed): its child
+# could read this process's environment through /proc. The invariant itself is checked before
+# every spawn, not the bookkeeping: 503 busy and an ERROR, no child.
+@only_linux
+def test_decodes_are_refused_while_the_api_is_dumpable(
+    runs: list[photos.Run], failed: Callable[[], list[dict[str, Any]]]
+) -> None:
+    set_dumpable(1)
+    try:
+        assert refused(PNG, photos.CHILD) == (503, "busy")
+    finally:
+        set_dumpable(0)
+    assert runs == []
+    assert [(f["msg"], f["decoder"]) for f in failed()] == [
+        ("photo decoder could not start", "hardening")
+    ]
     assert decode(PNG, photos.CHILD).width == 20
 
 
@@ -913,7 +930,7 @@ def test_every_decode_is_counted_by_outcome(
         decode(b"hello", photos.CHILD)
     with pytest.raises(ApiError):
         decode(probe("probe-crash"))
-    monkeypatch.setattr(photos, "HARDENING", "failed")
+    monkeypatch.setattr(photos, "_api_dumpable", lambda: True)
     with pytest.raises(ApiError):
         decode(PNG, photos.CHILD)
     counted = {
