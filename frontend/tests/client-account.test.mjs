@@ -702,3 +702,10 @@ describe("the finish screen's country picker keeps its order (PR 6 review, corre
     assert.match(text, /useMemo\(\(\) => dialOptions\(startRegion, locale\), \[startRegion, locale\]\)/);
   });
 });
+
+describe("signing out empties the bookings at once (PR 6 review, correctness 10)", () => {
+  test("fence: the list listens for the sign-out and empties itself, before the sign-in page loads", () => {
+    const text = readFileSync(new URL("../app/[locale]/account/your-bookings.tsx", import.meta.url), "utf8");
+    assert.match(text, /useEffect\(\s*\(\) =>\s*shownAccount\.onSignedOut\(\(\) => \{\s*setBookings\(\[\]\);\s*setNext\(null\);\s*setAccount\(null\);/);
+  });
+});

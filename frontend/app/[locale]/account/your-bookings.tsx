@@ -76,6 +76,17 @@ export function YourBookings({ turnstileSiteKey }: { turnstileSiteKey: string | 
     await loadPage(null);
   }
 
+  // Signed out from the header's menu: the list goes at once, before the sign-in page loads.
+  useEffect(
+    () =>
+      shownAccount.onSignedOut(() => {
+        setBookings([]);
+        setNext(null);
+        setAccount(null);
+      }),
+    [],
+  );
+
   // A tick after mounting (never a state update in the effect's own body).
   useEffect(() => {
     let cancelled = false;
