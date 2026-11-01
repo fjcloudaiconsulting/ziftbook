@@ -427,6 +427,14 @@ def test_no_personal_data_ever_reaches_a_log(
     with migrate_tenant_context(migrate_engine, people.a) as conn:
         erase_in(conn, gone)
     assert str(gone) not in [c["id"] for c in owner.get("/api/clients").json()]
+    assert owner.patch(f"/api/clients/{gone}", json={"client_note": client_note}).status_code == 404
+    assert (
+        owner.post(
+            f"/api/clients/{gone}/consents",
+            json={"policy_version": "2026-09-01", "purposes": {"sms": True}},
+        ).status_code
+        == 404
+    )
 
     # 7: invite flow — send, list, a wrong token, then accept with a brand-new account.
     invite_email = fresh_email()

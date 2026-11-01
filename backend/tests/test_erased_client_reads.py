@@ -3,8 +3,10 @@ PATCH and consents answer 404, it cannot be booked, the booking lists mark it wi
 and the team gets no booking mail naming it. Erased rows are written here as the erase function
 will write them, as the migrate role: the app role cannot write erased_at (0063)."""
 
+import threading
 import uuid
 from collections.abc import Iterator
+from typing import Any
 
 import pytest
 from fastapi import FastAPI
@@ -15,9 +17,11 @@ from app.db import tenant_context
 from app.main import create_app
 from tests.conftest import (
     People,
+    events,
     fresh_email,
     migrate_tenant_context,
     signed_in,
+    wait_until_blocked,
 )
 
 # What the erase function blanks of a client and of its bookings (spec 1.1, 1.3).
@@ -94,3 +98,64 @@ def test_the_client_list_skips_an_erased_client(
     paged = [c["id"] for c in owner.get("/api/clients", params={"before": kept}).json()]
     assert gone not in paged
     assert [c["id"] for c in owner.get("/api/clients", params={"q": "Client"}).json()] == [kept]
+
+
+# ZIF-58 F8 FENCE. Wrong impl: PATCH's FOR NO KEY UPDATE select, or the consents select, without
+# the erased_at filter (PATCH then reaches the final trigger, a 500; consents then adds a row to a
+# tombstone). Nothing is written and nothing recorded.
+def test_an_erased_client_cannot_be_edited_or_given_a_consent(
+    people: People, owner: TestClient, migrate_engine: Engine, added: tuple[str, str]
+) -> None:
+    gone, _ = added
+    erase_by_hand(migrate_engine, people.a, gone)
+    changed = len(events(migrate_engine, tenant_id=people.a, action="client_changed"))
+    recorded = len(events(migrate_engine, tenant_id=people.a, action="consent_recorded"))
+
+    patched = owner.patch(f"/api/clients/{gone}", json={"client_note": "Back again"})
+    consented = owner.post(
+        f"/api/clients/{gone}/consents",
+        json={"policy_version": "2026-09-01", "purposes": {"sms": True}},
+    )
+
+    assert (patched.status_code, patched.json()["code"]) == (404, "not_found")
+    assert (consented.status_code, consented.json()["code"]) == (404, "not_found")
+    assert consent_rows(people.a, gone) == 0
+    assert len(events(migrate_engine, tenant_id=people.a, action="client_changed")) == changed
+    assert len(events(migrate_engine, tenant_id=people.a, action="consent_recorded")) == recorded
+
+
+# ZIF-58 F9 FENCE (review finding 9). Wrong impl: the consents select without FOR SHARE. The
+# consent's foreign key takes only KEY SHARE on the client, which an erasure's NO KEY UPDATE does
+# not block, so without FOR SHARE the consent is written on a row being erased and lands on the
+# tombstone. With it, the POST waits for the erasure, re-reads the row and answers 404.
+@pytest.mark.parametrize("route", ["consents", "patch"])
+def test_a_write_waits_for_an_erasure_in_flight_then_finds_nothing(
+    people: People,
+    owner: TestClient,
+    migrate_engine: Engine,
+    app_engine: Engine,
+    added: tuple[str, str],
+    route: str,
+) -> None:
+    gone, _ = added
+    answered: dict[str, Any] = {}
+
+    def write() -> None:
+        if route == "consents":
+            answered["r"] = owner.post(
+                f"/api/clients/{gone}/consents",
+                json={"policy_version": "2026-09-01", "purposes": {"sms": True}},
+            )
+        else:
+            answered["r"] = owner.patch(f"/api/clients/{gone}", json={"client_note": "Late"})
+
+    writer = threading.Thread(target=write)
+    with migrate_tenant_context(migrate_engine, people.a) as conn:
+        erase_in(conn, gone)  # holds the client's row lock until this block commits
+        writer.start()
+        wait_until_blocked(app_engine, 1)
+    writer.join(timeout=10)
+    assert not writer.is_alive()
+
+    assert (answered["r"].status_code, answered["r"].json()["code"]) == (404, "not_found")
+    assert consent_rows(people.a, gone) == 0
