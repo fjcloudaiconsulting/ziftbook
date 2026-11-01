@@ -792,6 +792,32 @@ def test_the_api_lifespan_runs_the_drop_timer_and_flushes_at_shutdown(
     assert events == ["timer started", "timer stopped", "flushed"]
 
 
+# 16g. Re-verify N2: the timer keeps the once-a-minute rule; its ticks never force a line.
+def test_the_timer_writes_at_most_one_drop_line_a_minute(
+    client: TestClient, log_lines: Lines, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    now = [1000.0]
+    monkeypatch.setattr(csp_reports, "_now", lambda: now[0])
+    cross = {**LEGACY, "sec-fetch-site": "cross-site"}
+    post(client, legacy(), cross)  # written at once
+    now[0] += 1
+    post(client, legacy(), cross)  # pending
+
+    async def ticks() -> None:
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(csp_reports.flush_drops_every(0.01), 0.2)
+
+    asyncio.run(ticks())  # many ticks inside the minute
+    assert len(dropped(log_lines)) == 1
+
+    now[0] = 1000.0 + csp_reports.DROP_EVERY
+    post(client, legacy(), cross)  # written: the minute is up
+    now[0] += 1
+    post(client, legacy(), cross)  # pending again
+    asyncio.run(ticks())
+    assert len(dropped(log_lines)) == 2
+
+
 # 16f. Re-verify N1: a timer that died anyway never stops the shutdown: the final flush and the
 # engine's dispose still run.
 def test_a_dead_timer_never_takes_the_shutdown_down(
