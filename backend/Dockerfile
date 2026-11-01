@@ -18,6 +18,15 @@ ENV PATH="/app/.venv/bin:$PATH"
 EXPOSE 8000
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-dir", "app", "--no-proxy-headers"]
 
+# ZIF-230: the photo decoder's isolation tests (tests/test_photo_isolation.py) in this image's own
+# interpreter and Pillow, on the architecture being built, as the pods' non-root uid: the child's
+# limits, syscall filter (per-architecture tables) and memory headroom are proven where they ship.
+# They need no database. The prod image mounts this stage's marker, so it never builds without it.
+FROM dev AS photo-check
+USER 10001:10001
+RUN PYTHONDONTWRITEBYTECODE=1 python -m pytest -q -p no:cacheprovider tests/test_photo_isolation.py \
+    && touch /tmp/photo-check.ok
+
 FROM base AS build
 RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=uv.lock,target=uv.lock \
@@ -47,6 +56,7 @@ CMD ["alembic", "upgrade", "head"]
 
 # Backend image. The worker reuses it with another command.
 FROM runtime AS prod
+RUN --mount=type=bind,from=photo-check,source=/tmp/photo-check.ok,target=/tmp/photo-check.ok true
 ARG APP_VERSION=dev
 ARG APP_REVISION=dev
 ENV ZIF_APP_VERSION=$APP_VERSION \
