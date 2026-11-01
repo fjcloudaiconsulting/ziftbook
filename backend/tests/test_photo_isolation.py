@@ -722,18 +722,29 @@ def test_the_decoder_modules_import_nothing_from_the_app() -> None:
 
 
 # ZIF-230 fence. Kills: a deploy whose child cannot start telling owners their photo is unreadable
-# (it is the server's fault: 503 busy, and an ERROR), and a decoder that, after its ready marker,
-# fakes a start failure to page someone.
+# (it is the server's fault: 503 busy, and an ERROR): any end before the ready marker, an exit or a
+# signal (a filter for the wrong architecture, an import that crashes), since no upload byte has
+# been parsed by then. And a decoder that, after its marker, fakes a start failure to page someone.
 @pytest.mark.parametrize(
     ("child", "data", "answer", "outcome"),
     [
         (Path("/nonexistent/photo_child.py"), PNG, (503, "busy"), "import"),
         (PROBE, probe("probe-exit-before:3"), (503, "busy"), "limits"),
         (PROBE, probe("probe-exit-before:4"), (503, "busy"), "import"),
+        (PROBE, probe("probe-exit-before:1"), (503, "busy"), "start"),
+        (PROBE, probe("probe-crash-before"), (503, "busy"), "start"),
         (PROBE, probe("probe-exit-after:3"), (422, "photo_unreadable"), "exit"),
         (PROBE, probe("probe-exit-after:4"), (422, "photo_unreadable"), "exit"),
     ],
-    ids=["no-script", "limits", "import", "limits-after-ready", "import-after-ready"],
+    ids=[
+        "no-script",
+        "limits",
+        "import",
+        "exit-1-before-ready",
+        "crash-before-ready",
+        "limits-after-ready",
+        "import-after-ready",
+    ],
 )
 def test_a_decoder_that_cannot_start_is_busy(
     child: Path,
@@ -940,7 +951,8 @@ def test_every_decode_is_counted_by_outcome(
     assert counted == {"ok": 1, "refused": 1, "signal": 1, "hardening": 1}
     assert set(photos.OUTCOMES) == {
         *("ok", "refused", "cpu", "memory", "oom", "signal", "exit", "output", "protocol"),
-        *("timeout", "starved", "headroom", "scratch", "spawn", "limits", "import", "hardening"),
+        *("timeout", "starved", "headroom", "scratch", "spawn", "limits", "import", "start"),
+        "hardening",
     }
     closed(metric_reader)
 

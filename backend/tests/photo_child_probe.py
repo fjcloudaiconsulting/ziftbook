@@ -296,6 +296,8 @@ def record(data: bytes) -> bytes:
 def fake_load() -> Any:
     if MODE == "probe-exit-before":
         os._exit(int(ARG))
+    if MODE == "probe-crash-before":
+        ctypes.string_at(0)
     return SimpleNamespace(record=record)
 
 

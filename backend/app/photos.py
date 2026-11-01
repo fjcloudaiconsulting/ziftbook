@@ -552,7 +552,8 @@ def parse(body: bytes) -> tuple[Decoded | Refused, bytes, bytes] | None:
 # logs' `decoder`. ok and refused are the photo's answer; the rest say why the child failed.
 OUTCOMES = (
     *("ok", "refused", "cpu", "memory", "oom", "signal", "exit", "output", "protocol"),
-    *("timeout", "starved", "headroom", "scratch", "spawn", "limits", "import", "hardening"),
+    *("timeout", "starved", "headroom", "scratch", "spawn", "limits", "import", "start"),
+    "hardening",
 )
 
 
@@ -561,16 +562,17 @@ def _count(outcome: str, span: Span) -> None:
     tracing.PHOTO_DECODES.add(1, {"photo.outcome": outcome})
 
 
-# Exit codes a child gives before its ready marker when it could not start (2 is the
-# interpreter's own: no such script). After the marker, a code is the decode's fault.
+# How a child that ended before its ready marker could not start: these exit codes (2 is the
+# interpreter's own: no such script), or "start" for any other end (an exit, a signal: a filter
+# for the wrong architecture, a crash in the import). After the marker, an end is the decode's.
 START_FAILURES = {2: "import", photo_child.EXIT_LIMITS: "limits", photo_child.EXIT_IMPORT: "import"}
 
 
 def _judge(run: Run) -> tuple[str, Decoded | Refused | None, bytes, bytes]:
     """The outcome of a run (ok, refused, or why it failed) and the record when there is one."""
     ready = run.output[: len(photo_child.READY)] == photo_child.READY
-    if not ready and run.killed is None and run.returncode in START_FAILURES:
-        return START_FAILURES[run.returncode], None, b"", b""
+    if not ready and run.killed is None:  # no upload byte parsed yet: never the photo's fault
+        return START_FAILURES.get(run.returncode or 0, "start"), None, b"", b""
     if run.killed == "output":
         return "output", None, b"", b""
     if run.killed == "timeout":
@@ -584,8 +586,6 @@ def _judge(run: Run) -> tuple[str, Decoded | Refused | None, bytes, bytes]:
         if isinstance(head, Refused) and head.peak_kb * 1024 >= MEMORY_NEAR * photo_child.MEMORY:
             return "memory", head, b"", b""
         return ("ok" if isinstance(head, Decoded) else "refused"), head, thumb, detail
-    if code == 0:
-        return "protocol", None, b"", b""
     if code == -signal.SIGXCPU:
         return "cpu", None, b"", b""
     if code == -signal.SIGKILL:  # not this process's: the CPU hard limit, or the OOM killer
@@ -634,7 +634,7 @@ def variants(upload: IO[bytes], upload_id: UUID, span: Span) -> Variants:
         return Variants(thumb, detail, head.width, head.height)
     if isinstance(head, Refused) and outcome == "refused":
         raise Refusal(422, head.code, {**fields, "error": head.error})
-    if outcome in ("spawn", "limits", "import"):
+    if outcome in ("spawn", "limits", "import", "start"):
         logger.error("photo decoder could not start", extra=fields)
         raise Refusal(503, "busy", fields)
     logger.warning("photo decoder failed", extra=fields)

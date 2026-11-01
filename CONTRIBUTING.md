@@ -501,7 +501,8 @@ loggers (`web.*`); Next's own stderr output (banners, SSR error traces) is not i
   `exit`, `output`, `protocol`, `timeout`, `starved`, with `cpu_ms`, `signal` or `exit_code`, `upload_id`:
   a limit ended the child, it crashed, wrote too much or nothing usable, or passed its deadline; the
   photo answers 422 `photo_unreadable`, or 503 `busy` when `starved`); `photo decoder could not start`
-  (ERROR, `decoder` `spawn`, `limits` or `import`: every photo answers 503 `busy` until it is fixed;
+  (ERROR, `decoder` `spawn`, `limits`, `import` or `start` (any other end before the child's ready
+  marker): every photo answers 503 `busy` until it is fixed;
   `headroom`, with `memory_max` and `rss`: the container's memory could not hold a child at its
   ceiling beside the API, so none was started; `scratch`: the upload's file in `/tmp` could not be made
   or written); `photo decoder not reaped` (ERROR: a killed child
@@ -602,7 +603,7 @@ from `.env`; it fixes the log settings at `DEBUG`/`text`, passes no `ZIF_LOG_SQL
   | `ziftbook.sign_up.completed`, `ziftbook.invite.sent`, `ziftbook.invite.accepted` | counters | none | api |
   | `ziftbook.booking.created` | counter | `booking.source` (booking_page, merchant) | api |
   | `ziftbook.csp.violations` | counter | `csp.directive`, `csp.disposition`, `csp.blocked`: the `csp violation` line's closed sets (Logging), so at most 26 × 3 × 21 = 1,638 series; and at most 500 distinct ones per process, past which every violation is counted in one overflow series (all three `other`), whatever a client sends. Counted whether or not the line budget logs it, never for another origin's page; the page, source and format stay in the log line | api |
-| `ziftbook.photo.decodes` | counter | `photo.outcome` (ok, refused, cpu, memory, oom, signal, exit, output, protocol, timeout, starved, headroom, scratch, spawn, limits, import, hardening: `photos.OUTCOMES`, see Logging) | api |
+| `ziftbook.photo.decodes` | counter | `photo.outcome` (ok, refused, cpu, memory, oom, signal, exit, output, protocol, timeout, starved, headroom, scratch, spawn, limits, import, start, hardening: `photos.OUTCOMES`, see Logging) | api |
   | `ziftbook.web.request.errors` | counter | `http.route` (the template) | web |
 
   The queue series come from every worker, so aggregate them with `max`, not `sum`. `job.running`
