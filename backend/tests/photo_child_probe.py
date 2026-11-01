@@ -242,6 +242,11 @@ def record(data: bytes) -> bytes:
             except OSError as error:
                 seen.append(type(error).__name__)
         return refusal("_".join(seen))
+    if MODE == "probe-group":  # a process group of its own, apart from the API's
+        if os.getpgrp() != os.getpid():
+            os._exit(9)
+        grouped: bytes = real_load().record(rest)
+        return grouped
     if MODE == "probe-parent":  # nothing reaches the API by its pid
         expect(parent_checks())
         checked: bytes = real_load().record(rest)

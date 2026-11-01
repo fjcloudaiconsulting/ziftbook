@@ -342,8 +342,9 @@ def _headroom() -> dict[str, int] | None:
 
 def _spawn(upload: IO[bytes]) -> subprocess.Popen[bytes]:
     """The child: no environment (the API's secrets stay here), no descriptor but the upload, a
-    pipe and /dev/null, -I so no PYTHON* variable, user site or working directory reaches it, -B so
-    it writes no bytecode. No preexec_fn: nothing runs between fork and exec in a threaded API."""
+    pipe and /dev/null, a process group of its own, -I so no PYTHON* variable, user site or
+    working directory reaches it, -B so it writes no bytecode. No preexec_fn: nothing runs
+    between fork and exec in a threaded API."""
     return subprocess.Popen(
         [sys.executable, "-I", "-B", str(CHILD)],
         stdin=upload,
@@ -352,6 +353,7 @@ def _spawn(upload: IO[bytes]) -> subprocess.Popen[bytes]:
         env={},
         cwd="/",
         close_fds=True,
+        process_group=0,  # its own: a kill(0, ...) from it never reaches the API
     )
 
 
