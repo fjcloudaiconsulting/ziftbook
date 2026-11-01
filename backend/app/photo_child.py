@@ -3,7 +3,7 @@ empty environment and only stdin, stdout and stderr open, once per decode. stdin
 stdout a pipe. A decoder fault or a decompression bomb then ends this process, never the API.
 
 The order is the point:
-1. the resource limits, before anything reads the upload or imports Pillow;
+1. the resource limits and the syscall filter, before anything reads the upload or imports Pillow;
 2. the upload, at most MAX_BYTES + 1 bytes;
 3. the decoder (photo_decode.py, by path: -I leaves the app off sys.path), then the READY byte;
 4. the record photo_decode writes, then exit 0.
@@ -12,8 +12,12 @@ Imports only the standard library, and nothing from the app: photos.py imports i
 and the exit codes. Exit codes before READY are the start failures photos.py answers 503 for; a
 code after it is the decode's fault."""
 
+import ctypes
+import errno
 import importlib.util
+import os
 import resource
+import struct
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -53,6 +57,77 @@ def limit() -> None:
         resource.setrlimit(which, (soft, hard))
 
 
+# A seccomp filter of syscalls the child never needs and a decoder bug could use (ZIF-230): the
+# network (egress is open), io_uring (it would bypass the filter), and any change to the
+# filesystem; open(at) with a write, create or truncate flag too. It stacks on the container
+# runtime's own filter. Per architecture: aarch64 (production) and x86_64 (CI); another kills
+# nothing and is refused (exit 3). A syscall from a foreign ABI (x32, a 32-bit one) is killed.
+DENY = {
+    "aarch64": {
+        **{"socket": 198, "socketpair": 199, "io_uring_setup": 425},
+        **{"mknodat": 33, "mkdirat": 34, "unlinkat": 35, "symlinkat": 36, "linkat": 37},
+        **{"renameat": 38, "renameat2": 276, "truncate": 45, "ftruncate": 46},
+        **{"fchmod": 52, "fchmodat": 53, "fchmodat2": 452, "openat2": 437},
+    },
+    "x86_64": {
+        **{"socket": 41, "socketpair": 53, "io_uring_setup": 425},
+        **{"mknod": 133, "mknodat": 259, "mkdir": 83, "mkdirat": 258, "rmdir": 84},
+        **{"unlink": 87, "unlinkat": 263, "symlink": 88, "symlinkat": 266},
+        **{"link": 86, "linkat": 265, "rename": 82, "renameat": 264, "renameat2": 316},
+        **{"truncate": 76, "ftruncate": 77, "creat": 85, "openat2": 437},
+        **{"chmod": 90, "fchmod": 91, "fchmodat": 268, "fchmodat2": 452},
+    },
+}
+OPENS = {"aarch64": {56: 2}, "x86_64": {2: 1, 257: 2}}  # open(at): the index of its flags argument
+AUDIT_ARCH = {"aarch64": 0xC00000B7, "x86_64": 0xC000003E}
+WRITE_FLAGS = 0o1 | 0o2 | 0o100 | 0o1000  # O_WRONLY, O_RDWR, O_CREAT, O_TRUNC (both architectures)
+X32 = 0x40000000
+PR_SET_NO_NEW_PRIVS = 38
+PR_SET_SECCOMP = 22
+SECCOMP_MODE_FILTER = 2
+
+
+def _bpf(code: int, jt: int, jf: int, k: int) -> bytes:
+    return struct.pack("=HBBI", code, jt, jf, k)
+
+
+def program(machine: str) -> bytes:
+    """The filter as classic BPF over struct seccomp_data (nr at 0, arch at 4, args from 16)."""
+    ld, jeq, jge, jset, ret = 0x20, 0x15, 0x35, 0x45, 0x06
+    allow, kill, eperm = 0x7FFF0000, 0x80000000, 0x00050000 | errno.EPERM
+    code = [_bpf(ld, 0, 0, 4), _bpf(jeq, 1, 0, AUDIT_ARCH[machine]), _bpf(ret, 0, 0, kill)]
+    code.append(_bpf(ld, 0, 0, 0))
+    if machine == "x86_64":
+        code += [_bpf(jge, 0, 1, X32), _bpf(ret, 0, 0, kill)]
+    for nr in sorted(DENY[machine].values()):
+        code += [_bpf(jeq, 0, 1, nr), _bpf(ret, 0, 0, eperm)]
+    for nr, flags in OPENS[machine].items():
+        # Not this syscall: skip its four instructions, the number still loaded for the next.
+        code += [_bpf(jeq, 0, 4, nr), _bpf(ld, 0, 0, 16 + 8 * flags)]
+        code += [_bpf(jset, 0, 1, WRITE_FLAGS), _bpf(ret, 0, 0, eperm), _bpf(ret, 0, 0, allow)]
+    code.append(_bpf(ret, 0, 0, allow))
+    return b"".join(code)
+
+
+class _Program(ctypes.Structure):
+    _fields_ = [("len", ctypes.c_ushort), ("filter", ctypes.c_void_p)]
+
+
+def confine() -> None:
+    """Install the filter (Linux only: development elsewhere). no_new_privs first, as the kernel
+    requires of an unprivileged process (Kubernetes already sets it)."""
+    if sys.platform != "linux":
+        return
+    code = program(os.uname().machine)  # KeyError on another architecture: refused
+    buffer = ctypes.create_string_buffer(code)
+    prog = _Program(len(code) // 8, ctypes.cast(buffer, ctypes.c_void_p))
+    prctl = ctypes.CDLL(None, use_errno=True).prctl
+    if prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0:
+        raise OSError(ctypes.get_errno(), "no_new_privs")
+    if prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, ctypes.byref(prog), 0, 0) != 0:
+        raise OSError(ctypes.get_errno(), "seccomp")
+
+
 def load() -> ModuleType:
     spec = importlib.util.spec_from_file_location("photo_decode", DECODER)
     if spec is None or spec.loader is None:
@@ -65,6 +140,7 @@ def load() -> ModuleType:
 def main() -> int:
     try:
         limit()
+        confine()
     except Exception:
         return EXIT_LIMITS
     data = sys.stdin.buffer.read(MAX_BYTES + 1)
