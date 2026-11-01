@@ -22,10 +22,19 @@ from app import auth, limits, retention
 from app.config import WorkerSettings
 from app.db import SessionLocal
 from tests.conftest import People, engine_as_worker, jobs_as_the_worker
-from tests.test_retention_db import audit_targets, seed_audit
+from tests.test_retention_db import audit_targets, event_rows, seed_audit, seed_booking, seed_event
 from tests.test_sessions import start
 
 Lines = Callable[[], list[dict[str, Any]]]
+
+
+@pytest.fixture(autouse=True)
+def _walk_from_the_start() -> Iterator[None]:
+    """The booking-origin walk keeps its place across runs (module state): each test starts a new
+    pass, and leaves none behind."""
+    retention.WALK.start = None
+    yield
+    retention.WALK.start = None
 
 
 @pytest.fixture
@@ -438,3 +447,36 @@ def test_a_hold_ends_on_its_date(
 
     assert swept.held is False
     assert audit_targets(superuser, audit_marker) == set()
+
+
+# Build review (correctness #1) FENCE. Wrong impl: a walk that starts at the first business on every
+# run. A run that cannot finish the pass (budget, MAX_BATCHES, a backlog elsewhere) would throw its
+# place away, and the businesses past what one run reaches (the newest: ids are uuidv7) would keep
+# their booking addresses forever. The reviewer's probe: 200 businesses sorting first, one batch
+# per run; the target business must be reached within the runs a full pass needs.
+def test_the_origin_walk_resumes_where_the_last_run_stopped(
+    people: People, superuser: Engine, migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    booking_id = seed_booking(superuser, people.a, people.both, "18 months 2 hours")
+    event_id = seed_event(superuser, people.a, booking_id, "18 months 2 hours")
+    with migrate_engine.begin() as conn:
+        ahead = conn.scalars(
+            text("""
+            INSERT INTO tenants (id, name)
+            SELECT CAST('00000000-0000-7000-8000-' || lpad(n::text, 12, '0') AS uuid), 'ahead'
+            FROM generate_series(1, 200) AS n
+            RETURNING id
+            """)
+        ).all()
+        businesses = conn.scalar(text("SELECT count(*) FROM tenants"))
+    monkeypatch.setattr(retention, "MAX_BATCHES", 1)
+    try:
+        with jobs_as_the_worker():
+            for _ in range(-(-businesses // 200) + 1):
+                retention.sweep()
+                if event_rows(superuser, [event_id])[event_id].ip is None:
+                    break
+        assert event_rows(superuser, [event_id])[event_id].ip is None
+    finally:
+        with migrate_engine.begin() as conn:
+            conn.execute(text("DELETE FROM tenants WHERE id = ANY(:i)"), {"i": list(ahead)})
