@@ -19,17 +19,20 @@ export type Settings = {
   workers_edit_own_hours: boolean;
   workers_answer_requests: boolean;
   payment_check: boolean;
+  contact_email: string | null;
 };
 export type Key = keyof Settings;
 export type Draft = Record<Key, string | boolean>;
 
-/** int: a number input (whole, bounded); select: a numeric select; text: a string; bool: a checkbox. */
-export type Field = { key: Key; kind: "int" | "select" | "bool" | "text"; min?: number; max?: number };
+/** int: a number input (whole, bounded); select: a numeric select; text: a string; bool: a checkbox;
+ * email: one address or none (an empty box is null). */
+export type Field = { key: Key; kind: "int" | "select" | "bool" | "text" | "email"; min?: number; max?: number };
 
 /** In page order; `published` is never here (it saves on its own). */
 export const FIELDS: Field[] = [
   { key: "timezone", kind: "text" },
   { key: "language", kind: "text" },
+  { key: "contact_email", kind: "email" },
   { key: "auto_confirm", kind: "bool" },
   { key: "slot_step_minutes", kind: "select" },
   { key: "min_notice_minutes", kind: "select", min: 0, max: 10080 },
@@ -56,7 +59,7 @@ export function draftFrom(s: Partial<Settings>): Draft {
   const draft: Record<string, string | boolean> = {};
   for (const { key, kind } of FIELDS) {
     if (!(key in s)) continue;
-    draft[key] = kind === "bool" ? (s[key] as boolean) : String(s[key]);
+    draft[key] = kind === "bool" ? (s[key] as boolean) : String(s[key] ?? "");
   }
   return draft as Draft;
 }
@@ -69,11 +72,37 @@ export function parseWhole(text: string, min: number, max: number): number | nul
   return value >= min && value <= max ? value : null;
 }
 
-function parse(field: Field, value: string | boolean): string | number | boolean | null {
+// The API's own address rule (backend/app/passwords.py _EMAIL): one address, no names or lists.
+const EMAIL = /^[^@\s<>(),;:"\\\x00-\x1f]+@[^@\s<>(),;:"\\\x00-\x1f]+\.[^@\s<>(),;:"\\\x00-\x1f]+$/;
+
+/** The address as the API stores it: trimmed and lowercased. */
+function normaliseEmail(text: string): string {
+  return text.trim().toLowerCase();
+}
+
+/** Why the API would refuse this contact email, or null (an empty box is fine: it means none).
+ * "accents": any non-ASCII character, which a mail header cannot carry as a plain address
+ * (backend/app/business_settings.py header_address). The API also refuses a few odd shapes the
+ * browser does not check (it answers 422, shown as "invalid"). */
+export function emailProblem(text: string): "accents" | "invalid" | null {
+  const email = normaliseEmail(text);
+  if (email === "") return null;
+  if (/[^\x00-\x7f]/.test(email)) return "accents";
+  if (email.length > 254 || email.includes("=?") || !EMAIL.test(email)) return "invalid";
+  return null;
+}
+
+/** The value to compare and send, or undefined when the text does not parse. */
+function parse(field: Field, value: string | boolean): string | number | boolean | null | undefined {
   if (field.kind === "bool" || field.kind === "text") return value;
-  if (field.kind === "int") return parseWhole(String(value), field.min!, field.max!);
+  if (field.kind === "email") {
+    const email = normaliseEmail(String(value ?? ""));
+    if (email === "") return null;
+    return emailProblem(email) ? undefined : email;
+  }
+  if (field.kind === "int") return parseWhole(String(value), field.min!, field.max!) ?? undefined;
   const n = Number(value);
-  return Number.isInteger(n) ? n : null;
+  return Number.isInteger(n) ? n : undefined;
 }
 
 /** Keys whose parsed draft value differs from the saved one (unparsable counts as changed), in page order. */
@@ -87,7 +116,7 @@ export function settingsBody(saved: Settings, draft: Draft): { body: Partial<Set
   const invalid: Key[] = [];
   for (const key of changedKeys(saved, draft)) {
     const value = parse(FIELDS.find((f) => f.key === key)!, draft[key]);
-    if (value === null) invalid.push(key);
+    if (value === undefined) invalid.push(key);
     else body[key] = value;
   }
   return { body: body as Partial<Settings>, invalid };

@@ -11,6 +11,7 @@ import {
   type Draft,
   draftFrom,
   effective,
+  emailProblem,
   FIELDS,
   type IntKey,
   type Key,
@@ -37,6 +38,7 @@ import { Payments } from "./payments";
 function Field({
   id,
   label,
+  optional,
   unit,
   hint,
   error,
@@ -45,6 +47,7 @@ function Field({
 }: {
   id: string;
   label: string;
+  optional?: string;
   unit?: string;
   hint?: string;
   error?: string | false;
@@ -57,6 +60,7 @@ function Field({
     <div className={uiStyles.field}>
       <label className={uiStyles.label} htmlFor={id}>
         {label}
+        {optional && <> <span className={styles.optional}>{optional}</span></>}
       </label>
       {unit ? (
         <div className={styles.unitRow}>
@@ -142,6 +146,8 @@ export function Settings() {
   };
   const set = (key: Key, value: string | boolean) => setDraft((d) => ({ ...d, [key]: value }));
   const err = (key: Key) => invalid.includes(key) && rangeMsg(key);
+  // An address with accents says why it is refused; anything else the API refuses reads as Form's.
+  const emailErr = invalid.includes("contact_email") && (emailProblem(String(draft.contact_email)) === "accents" ? t("contactEmailInvalid") : form("invalidEmail"));
   const step = effective(settings, draft, "slot_step_minutes");
   const pct = effective(settings, draft, "buffer_pct");
   const count = (key: IntKey) => effective(settings, draft, key);
@@ -229,6 +235,11 @@ export function Settings() {
       } else if (outcome.status === 401) {
         setSignedOut(true);
         setSaveFailed(true);
+      } else if (outcome.status === 422 && sent.includes("contact_email")) {
+        // Every other key is checked before sending; the API refuses a few address shapes the browser does not.
+        setInvalid(["contact_email"]);
+        setSaveFailed(true);
+        document.getElementById(`${formId}-contact_email`)?.focus();
       } else if (outcome.status === 403 && outcome.code === "owner_only") {
         setMessage({ tone: "error", text: errorsT("ownerOnly") });
         setSaveFailed(true);
@@ -373,6 +384,28 @@ export function Settings() {
           </Field>
           <Field id={fid("language")} label={t("languageLabel")} hint={t("languageHint")} short>
             {(p) => pick("language", p.id, p.describedBy, Object.entries(NAMES).map(([value, label]) => ({ value, label })))}
+          </Field>
+          <Field
+            id={fid("contact_email")}
+            label={t("contactEmailLabel")}
+            optional={t("contactEmailOptional")}
+            hint={t("contactEmailHint")}
+            error={emailErr}
+          >
+            {(p) => (
+              <input
+                id={p.id}
+                type="email"
+                autoComplete="off"
+                autoCapitalize="none"
+                spellCheck={false}
+                maxLength={254}
+                value={String(draft.contact_email)}
+                onChange={(e) => set("contact_email", e.target.value)}
+                aria-invalid={p.invalid}
+                aria-describedby={p.describedBy}
+              />
+            )}
           </Field>
           <ContactEmail />
           </div>
