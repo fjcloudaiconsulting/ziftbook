@@ -59,7 +59,9 @@ INVITES_ACCEPTED = _meter.create_counter("ziftbook.invite.accepted", unit="{invi
 BOOKINGS_CREATED = _meter.create_counter("ziftbook.booking.created", unit="{booking}")
 STRIPE_WEBHOOKS = _meter.create_counter("ziftbook.stripe.webhooks", unit="{event}")
 PAYMENT_OUTCOMES = _meter.create_counter("ziftbook.payment.outcomes", unit="{payment}")
-# ZIF-236: every attribute is one of csp_reports.CLOSED_VALUES (the route template, never a path).
+# ZIF-236: three attributes, the directive, disposition and blocked category, each from
+# csp_reports.CLOSED_VALUES; at most csp_reports.MAX_SERIES series a process, then one overflow
+# series (csp_reports._record). The page, source and format stay in the log line.
 CSP_VIOLATIONS = _meter.create_counter("ziftbook.csp.violations", unit="{violation}")
 
 _configured = False
