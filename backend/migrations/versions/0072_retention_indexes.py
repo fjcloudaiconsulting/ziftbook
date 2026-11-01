@@ -11,7 +11,9 @@ by business. Each of its statements is a range scan on one of these:
 
 The first autocommit_block in this repository: CREATE INDEX CONCURRENTLY cannot run in a
 transaction (CONTRIBUTING, "Database migrations"). With transaction_per_migration, Alembic commits
-0056's transaction before the block, runs the block in autocommit, and stamps 0072 only after it.
+0072's own (empty) per-migration transaction before the block, runs the block in autocommit, and
+stamps 0072 only after it. A second migration run waiting its turn holds no snapshot (env.py polls
+its lock), so it never deadlocks with these builds.
 A run that fails part-way leaves the indexes built so far valid, any half-built one invalid, and
 the version at 0056; the re-run drops each index first (DROP INDEX CONCURRENTLY IF EXISTS, so an
 invalid leftover never survives) and builds it again. lock_timeout is 0 while building, so the
