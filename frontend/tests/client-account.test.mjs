@@ -821,3 +821,41 @@ describe("a failed sign-out keeps the account shown (PR 6 review, correctness 11
     assert.match(button, /return signOutWith\(\(\) => send\(platformAccountSignOut\(\{ \.\.\.JSON_WRITE \}\)\), shownAccount\);/);
   });
 });
+
+describe("the wiring the review's mutations got through (PR 6 review, correctness 11)", () => {
+  const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
+
+  test("M2, M3: the checkout records what a fill wrote, and a sign-out drops the account", () => {
+    const page = read("../app/[locale]/[slug]/booking-page.tsx");
+    assert.match(page, /setAcct\(\(state\) => afterFill\(state, signedIn, filled, false\)\);/);
+    // Both: the sign-out listener and the unlock.
+    assert.equal([...page.matchAll(/if \(clear\) setFlow\(\(f\) => signedOutForm\(f, clear, page\.country\)\);\s*setAcct\(state\);/g)].length, 2);
+  });
+
+  test("M5: no account session on the bookings page goes to the account sign-in", () => {
+    assert.match(read("../app/[locale]/account/your-bookings.tsx"), /if \(meaning === "signIn"\) router\.replace\("\/account\/sign-in"\);/);
+  });
+
+  test("M7: a used sign-up link is forgotten, so coming back does not offer its form again", () => {
+    const text = read("../app/[locale]/account/complete/complete-account.tsx");
+    assert.match(text, /if \(meaning === "done" && outcome\.data\) \{\s*forgetLink\(TOKEN_KEY, link\);/);
+  });
+
+  test("M9: an upper-case slug is not one, for Book again or for the way back", () => {
+    const row = { business: { slug: "Salon-Bloom" } };
+    assert.equal(bookAgainSlug(row, false), null);
+    const items = new Map([[RETURN_KEY, JSON.stringify({ slug: "Salon-Bloom", at: 1 })]]);
+    const store = { getItem: (k) => items.get(k) ?? null, setItem: (k, v) => items.set(k, v), removeItem: (k) => items.delete(k) };
+    assert.equal(takeReturn(() => store, 2), null);
+  });
+
+  test("M10: the account sign-in's challenge uses the action the server verifies", () => {
+    // The backend verifies Turnstile with action sign_in for every password guess (app/auth.py require_challenge).
+    assert.match(read("../app/[locale]/_ui/account-sign-in.tsx"), /<Turnstile key=\{attempt\} siteKey=\{turnstileSiteKey\} action="sign_in" onToken=\{setToken\} \/>/);
+  });
+
+  test("M11: asking for the password again keeps the person's own email filled in", () => {
+    assert.match(read("../app/[locale]/account/your-bookings.tsx"), /initialEmail=\{account\.email\}/);
+    assert.match(read("../app/[locale]/_ui/account-sign-in.tsx"), /useState\(initialEmail\)/);
+  });
+});
