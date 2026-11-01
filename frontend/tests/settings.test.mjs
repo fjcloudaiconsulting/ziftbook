@@ -346,7 +346,8 @@ describe("ZIF-99 an international domain", () => {
   test("fence: a domain the URL parser would rewrite is left alone and refused", () => {
     // Wrong implementation killed: handing the URL parser a domain it silently changes (it drops tabs and
     // line breaks, and reads /, ?, #, % and : as URL syntax), which would save a different address.
-    for (const text of ["a@caf\né.nl", "a@caf\té.nl", "a@café.nl/x", "a@café.nl?x", "a@café.nl#x", "a@café%20.nl", "a@café.nl:80", "a@ café.nl"]) {
+    // Fullwidth digits: the parser reads them as an IPv4 address (a@１.２ -> a@1.0.0.2, a@０ｘ７ｆ.１ -> a@127.0.0.1).
+    for (const text of ["a@caf\né.nl", "a@caf\té.nl", "a@café.nl/x", "a@café.nl?x", "a@café.nl#x", "a@café%20.nl", "a@café.nl:80", "a@ café.nl", "a@１.２", "a@０ｘ７ｆ.１"]) {
       assert.equal(asciiEmail(text), text.trim().toLowerCase(), JSON.stringify(text));
       assert.notEqual(emailProblem(text), null, JSON.stringify(text));
     }
