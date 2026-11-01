@@ -491,7 +491,9 @@ loggers (`web.*`); Next's own stderr output (banners, SSR error traces) is not i
   challenge also counts wrong passwords on business sign-in, so it can come first));
   `second factor failed` and `totp enrolment failed` (WARNING, `user_id`, `failures`: every wrong admin
   TOTP code, at sign-in or at enrolment confirm, logged inside its transaction before the commit, so a
-  failure whose count never commits still leaves a line; none for an attempt refused as locked);
+  failure whose count never commits still leaves a line; none for an attempt refused as locked). Until
+  ZIF-261 is done these lines are the only trace of such a failure, so the API must log at `WARNING` or
+  below and its stdout must be kept (see Platform admin for how to read them);
   `booking placement refund failed` (WARNING, with `exc`: a booking that was not placed keeps its
   address limits counted); `booking flood`
   (WARNING, `tenant_id`, at most once an hour: a business's unproven guest bookings reached their cap
@@ -569,7 +571,7 @@ from `.env`; it fixes the log settings at `DEBUG`/`text`, passes no `ZIF_LOG_SQL
 
 | Signal | Leaves the app as | On | Off | Tune |
 |---|---|---|---|---|
-| Logs | JSON lines on stdout (`ZIF_LOG_FORMAT=json`, the default; `text` in dev). The API, worker, migrations and web app never send logs over OTLP: a log collector reads their stdout (none is set up yet). | always (stdout) | stdout cannot be turned off; raise `ZIF_LOG_LEVEL` to `ERROR` for the least | `ZIF_LOG_LEVEL` (default `INFO`), `ZIF_LOG_SQL` (see Logging) |
+| Logs | JSON lines on stdout (`ZIF_LOG_FORMAT=json`, the default; `text` in dev). The API, worker, migrations and web app never send logs over OTLP: a log collector reads their stdout (none is set up yet). | always (stdout) | stdout cannot be turned off; raise `ZIF_LOG_LEVEL` to `ERROR` for the least, except the API's, which stays at `WARNING` or below until ZIF-261 is done (the `second factor failed` lines, see Logging) | `ZIF_LOG_LEVEL` (default `INFO`), `ZIF_LOG_SQL` (see Logging) |
 | Traces | OTLP/HTTP to `ZIF_OTEL_EXPORTER_OTLP_ENDPOINT` | set the endpoint (plus `ZIF_OTEL_EXPORTER_OTLP_HEADERS` if the collector wants auth) | leave the endpoint unset: no spans are exported and no connection is attempted. `ZIF_OTEL_TRACES_EXPORTER=none` turns traces off with the endpoint still set. In prod you can also set `ZIF_OTEL_TRACES_SAMPLER=always_off` | prod: `ZIF_OTEL_TRACES_SAMPLER` / `_ARG` (default 10% of new traces, following the caller's decision); dev: 100% |
 | Metrics | API: `http.server.*`, `db.client.connection.*`, business counters (`ziftbook.sign_up.*`, `ziftbook.invite.*`, `ziftbook.booking.created`), `ziftbook.csp.violations`; worker: `ziftbook.job.*`, `ziftbook.email.deliveries`, `db.client.connection.*`; web: `http.server.request.duration` for `/api` only, `ziftbook.web.request.errors` for pages; over OTLP/HTTP to `ZIF_OTEL_EXPORTER_OTLP_ENDPOINT` every 60s | set the endpoint | leave the endpoint unset: no reader, no connection. `ZIF_OTEL_METRICS_EXPORTER=none` turns metrics off with the endpoint still set | every 60s (the Python SDK's `OTEL_METRIC_EXPORT_INTERVAL`, which compose does not pass; the web app is fixed at 60s) |
 
