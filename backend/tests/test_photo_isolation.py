@@ -213,6 +213,65 @@ def test_decoder_output_is_capped(
     assert [f["decoder"] for f in failed()] == ["output"]
 
 
+# ZIF-230 fence (build review, correctness 1). Kills: the kill reaping a child that exited after the
+# parent last looked (Popen.kill polls first), which lost its outcome and rusage, answered 503
+# "could not start" (a forgeable page) and leaked the pipe. The parent is slowed past the exit.
+def test_a_child_that_exits_before_the_kill_keeps_its_outcome(
+    monkeypatch: pytest.MonkeyPatch, runs: list[photos.Run]
+) -> None:
+    spawned: list[subprocess.Popen[bytes]] = []
+    real_spawn, real_collect = photos._spawn, photos._collect
+
+    def spawn(upload_file: Any) -> subprocess.Popen[bytes]:
+        spawned.append(real_spawn(upload_file))
+        return spawned[-1]
+
+    def slow_collect(proc: Any, deadline: float) -> Any:
+        found = real_collect(proc, deadline)
+        time.sleep(0.2)  # the child exits meanwhile
+        return found
+
+    monkeypatch.setattr(photos, "_spawn", spawn)
+    monkeypatch.setattr(photos, "_collect", slow_collect)
+    assert refused(probe(f"probe-overflow-exit:{photos.OUTPUT_CAP}")) == (422, "photo_unreadable")
+    [run] = runs
+    assert (run.killed, run.returncode) == ("output", 0)
+    assert run.cpu_ms > 0  # its own rusage, read when this module reaped it
+    [proc] = spawned
+    assert proc.stdout is not None and proc.stdout.closed
+
+
+# ZIF-230 guard: the pipe is closed on every path, a failing reap included.
+def test_the_pipe_is_closed_when_the_reap_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    spawned: list[subprocess.Popen[bytes]] = []
+    real_spawn = photos._spawn
+
+    def spawn(upload_file: Any) -> subprocess.Popen[bytes]:
+        spawned.append(real_spawn(upload_file))
+        return spawned[-1]
+
+    def broken(proc: Any, deadline: float) -> None:
+        raise RuntimeError("reap failed")
+
+    monkeypatch.setattr(photos, "_spawn", spawn)
+    monkeypatch.setattr(photos, "_reap", broken)
+    monkeypatch.setattr(photos, "DECODE_TIMEOUT", 0.5)
+    with pytest.raises(RuntimeError):
+        decode(probe("probe-sleep"))
+    [proc] = spawned
+    assert proc.stdout is not None and proc.stdout.closed
+    proc.kill()
+    proc.wait()
+
+
+# ZIF-230 guard: a child something else reaped is no error, and keeps the outcome recorded for it.
+def test_a_child_reaped_elsewhere_keeps_its_outcome() -> None:
+    proc = subprocess.Popen([sys.executable, "-c", "raise SystemExit(7)"])
+    proc.wait()
+    assert photos._reap(proc, time.monotonic()) is photos.NO_USAGE
+    assert proc.returncode == 7
+
+
 def good_record(data: bytes = PNG) -> bytes:
     return photo_decode.record(data)
 

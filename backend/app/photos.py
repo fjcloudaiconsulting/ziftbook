@@ -355,10 +355,18 @@ def _spawn(upload: IO[bytes]) -> subprocess.Popen[bytes]:
     )
 
 
+# The rusage of a child something else reaped: none to read.
+NO_USAGE = resource.struct_rusage((0.0, 0.0) + (0,) * 14)
+
+
 def _reap(proc: subprocess.Popen[bytes], deadline: float) -> resource.struct_rusage | None:
-    """Wait for the child until deadline (wait4, for its own rusage); None if it has not exited."""
+    """Wait for the child until deadline (wait4, for its own rusage); None if it has not exited.
+    One reaped elsewhere keeps the outcome already recorded for it."""
     while True:
-        pid, status, used = os.wait4(proc.pid, os.WNOHANG)
+        try:
+            pid, status, used = os.wait4(proc.pid, os.WNOHANG)
+        except ChildProcessError:
+            return NO_USAGE
         if pid:
             proc.returncode = os.waitstatus_to_exitcode(status)
             return used
@@ -408,14 +416,21 @@ def _run(upload: IO[bytes]) -> Run:
             if used is None:  # stdout closed, still running
                 killed = "timeout"
     finally:
-        if proc.returncode is None:
-            proc.kill()
-            used = _reap(proc, time.monotonic() + REAP_GRACE)
-            if used is None:
-                logger.error("photo decoder not reaped")
-                _UNREAPED.append(proc)
-        assert proc.stdout is not None
-        proc.stdout.close()
+        try:
+            if proc.returncode is None:
+                # Not Popen.kill(): it polls first, and would reap a child that just exited,
+                # losing its rusage. The pid cannot be reused before this process reaps it.
+                try:
+                    os.kill(proc.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                used = _reap(proc, time.monotonic() + REAP_GRACE)
+                if used is None:
+                    logger.error("photo decoder not reaped")
+                    _UNREAPED.append(proc)
+        finally:
+            assert proc.stdout is not None
+            proc.stdout.close()
     cpu_ms = round((used.ru_utime + used.ru_stime) * 1000) if used else 0
     return Run(proc.returncode, output, killed, cpu_ms)
 
