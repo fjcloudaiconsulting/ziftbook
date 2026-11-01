@@ -1,7 +1,7 @@
 "use client";
 
-import { useTranslations } from "next-intl";
-import { type FormEvent, useRef, useState } from "react";
+import { useLocale, useTranslations } from "next-intl";
+import { type FormEvent, type ReactNode, useRef, useState } from "react";
 
 import { sessionSignIn } from "@/api-client";
 import { Link, useRouter } from "@/i18n/navigation";
@@ -11,11 +11,12 @@ import { Banner, EmailField, NoScript, PasswordField, problem, Screen, send, Sub
 import { Turnstile } from "../_ui/turnstile";
 import styles from "../_ui/ui.module.css";
 
-type Message = { tone: "error" | "note"; text: string };
+type Message = { tone: "error" | "note"; text: ReactNode };
 
 export function SignInForm({ turnstileSiteKey }: { turnstileSiteKey: string | null }) {
   const t = useTranslations("SignIn");
   const form = useTranslations("Form");
+  const locale = useLocale();
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -55,6 +56,13 @@ export function SignInForm({ turnstileSiteKey }: { turnstileSiteKey: string | nu
       setEmailError(form("invalidEmail"));
     } else if (meaning === "try_later") {
       setMessage({ tone: "note", text: t(outcome.code === "challenge_required" ? "tryLater" : "tooMany") });
+    } else if (outcome.status === 403 && outcome.code === "no_tenant") {
+      // Only after a correct password (the server checks it first): a client's own account, or a removed member's,
+      // has no business. A plain link, a full page load: the account pages enforce their own policy (ZIF-146).
+      setMessage({
+        tone: "error",
+        text: t.rich("noTenant", { account: (chunks) => <a href={`/${locale}/account/sign-in`}>{chunks}</a> }),
+      });
     } else if (outcome.status === 403) {
       setMessage({ tone: "error", text: t("noBusiness") });
     } else {
@@ -83,7 +91,11 @@ export function SignInForm({ turnstileSiteKey }: { turnstileSiteKey: string | nu
         </Submit>
       </form>
       <p className={styles.aside}>
-        {t("newHere")} <Link href="/sign-up">{t("createBusiness")}</Link>
+        {t.rich("newHereBoth", {
+          // A plain link, a full page load: the account pages enforce their own policy (ZIF-146).
+          account: (chunks) => <a href={`/${locale}/account/sign-up`}>{chunks}</a>,
+          business: (chunks) => <Link href="/sign-up">{chunks}</Link>,
+        })}
       </p>
     </Screen>
   );

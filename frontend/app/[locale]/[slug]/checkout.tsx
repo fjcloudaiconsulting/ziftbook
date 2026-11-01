@@ -4,7 +4,9 @@ import { useTranslations } from "next-intl";
 import type { ReactNode, Ref } from "react";
 
 import type { BookingPageOut } from "@/api-client";
+import { Link } from "@/i18n/navigation";
 import { addDays, localDay, localWhen } from "@/lib/booking-link";
+import { rememberReturn } from "@/lib/client-account";
 import { cancellationState, freeNamed, nextWeekDisabled, ownPolicyText, type PaymentChoice, slotsFor } from "@/lib/booking-page";
 import { formatMoney } from "@/lib/money";
 import { type Locale } from "@/lib/services";
@@ -289,16 +291,20 @@ export function DoneScreen({
   dLocale,
   zone,
   t,
+  saveDetails,
   onAgain,
 }: {
-  page: Pick<BookingPageOut, "name" | "language" | "payment">;
+  page: Pick<BookingPageOut, "name" | "language" | "payment" | "slug">;
   done: Done;
   locale: Locale;
   dLocale: string;
   zone: string;
   t: ReturnType<typeof useTranslations>;
+  /** ZIF-146: offer a client account, to someone who booked without one on this page. */
+  saveDetails: boolean;
   onAgain(): void;
 }) {
+  const slug = page.slug;
   // Only these two are a booking; the caller (doneState) never sends another.
   const pending = done.status === "pending";
   if (!pending && done.status !== "confirmed") return null;
@@ -331,6 +337,16 @@ export function DoneScreen({
           </li>
           {done.payment && <li>{t(done.payment === "paid" ? "donePaid" : page.payment?.check_with === "setup" ? "doneCheckedSetup" : "doneChecked", { price })}</li>}
         </ul>
+        {saveDetails && (
+          <div className={styles.empty}>
+            <strong>{t("saveDetailsTitle")}</strong>
+            <span>{t("saveDetailsBody")}</span>
+            {/* The way back after the emailed link, in this browser only (owner ruling 7): the slug, nothing else. */}
+            <Link className={`${styles.button} ${styles.primary} ${styles.small}`} href="/account/sign-up" onClick={() => rememberReturn(() => window.localStorage, slug, Date.now())}>
+              {t("saveDetailsAction")}
+            </Link>
+          </div>
+        )}
         <p className={styles.hint}>{t("spam")}</p>
         <button className={`${styles.button} ${styles.secondary}`} type="button" onClick={onAgain}>
           {t("another")}

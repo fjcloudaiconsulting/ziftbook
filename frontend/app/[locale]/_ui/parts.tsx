@@ -45,10 +45,11 @@ export function problem(outcome: Outcome<unknown>): "busy" | "unreachable" | "in
   return "unexpected";
 }
 
-export function Screen({ children }: { children: ReactNode }) {
+/** `headerEnd`: what the header shows after the language button (Header). */
+export function Screen({ children, headerEnd }: { children: ReactNode; headerEnd?: ReactNode }) {
   return (
     <>
-      <Header />
+      <Header end={headerEnd} />
       <main className={styles.screen}>
         <div className={styles.col}>{children}</div>
       </main>
@@ -354,7 +355,7 @@ function useSecondsLeft(sentAt: number): number {
 
 type CheckInboxProps = {
   email: string;
-  lede: "signUpLede" | "resetLede";
+  lede: "signUpLede" | "clientLede" | "resetLede";
   /** Sends the link again; resolves with when it was sent, or null if it wasn't. */
   resend(): Promise<number | null>;
   differentEmail(): void;

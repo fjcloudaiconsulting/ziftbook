@@ -4,6 +4,7 @@ never reachable with a business session; paginated with no cap."""
 
 import secrets
 import uuid
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -71,6 +72,9 @@ def book(
     return body
 
 
+SECTION = text("SELECT * FROM own_bookings_in(:h, :up, NULL, NULL, 10)")
+
+
 def history(client: TestClient, **params: Any) -> Any:
     return client.get("/api/account/history", params=params)
 
@@ -113,7 +117,11 @@ def test_only_the_bookings_this_account_placed_are_listed(
     assert starts(page) == [("b", placed_b["starts_at"]), ("a", placed_a["starts_at"])]
     assert page["next"] is None
     assert page["bookings"][0] == {
-        "business": {"name": "b", "slug": page["bookings"][0]["business"]["slug"]},
+        "business": {
+            "name": "b",
+            "slug": page["bookings"][0]["business"]["slug"],
+            "timezone": "Europe/Amsterdam",
+        },
         "starts_at": placed_b["starts_at"],
         "ends_at": placed_b["ends_at"],
         "status": placed_b["status"],
@@ -121,6 +129,48 @@ def test_only_the_bookings_this_account_placed_are_listed(
         "price": placed_b["price"],
         "worker_display_name": placed_b["worker_display_name"],
     }
+
+
+# FENCE (ZIF-146 PR 6 review, correctness 1). Wrong impl: a history with no time zone, or one
+# zone for every business: the page would show a booking at another hour than its booking page,
+# its emails and its manage page, which all use the business's own zone.
+def test_each_booking_names_its_business_time_zone(
+    app: FastAPI,
+    people: People,
+    services: dict[uuid.UUID, str],
+    migrate_engine: Engine,
+    person: uuid.UUID,
+) -> None:
+    # Lisbon is an hour behind: 11:00 in Amsterdam is 10:00 there, inside its working hours.
+    save_setting(people.b, "timezone", "Europe/Lisbon")
+    mine = account_client(app, migrate_engine, person)
+    email = email_of(person)
+    book(mine, people.a, services[people.a], "09:00", email)
+    book(mine, people.b, services[people.b], "11:00", email)
+
+    bookings = history(mine).json()["bookings"]
+    zones = {b["business"]["name"]: b["business"]["timezone"] for b in bookings}
+
+    # A saved nothing: the business's default zone, as its booking page shows.
+    assert zones == {"a": "Europe/Amsterdam", "b": "Europe/Lisbon"}
+
+
+# GUARD. Wrong impl: passing a saved zone through unchecked. One the registry no longer knows
+# (only a hand edit could save it) reads as the default: a browser could not format with it.
+def test_a_zone_the_registry_does_not_know_reads_as_the_default(
+    app: FastAPI,
+    people: People,
+    services: dict[uuid.UUID, str],
+    migrate_engine: Engine,
+    person: uuid.UUID,
+) -> None:
+    mine = account_client(app, migrate_engine, person)
+    book(mine, people.a, services[people.a], "09:00", email_of(person))
+    save_setting(people.a, "timezone", "Mars/Olympus_Mons")
+
+    [booking] = history(mine).json()["bookings"]
+
+    assert booking["business"]["timezone"] == "Europe/Amsterdam"
 
 
 # FENCE. Wrong impl: a per-business cap without the merge (each business's newest `limit`, pasted
@@ -175,10 +225,14 @@ def test_a_business_session_gets_no_history(
     token = business.cookies.get(auth.COOKIE)
     assert token is not None
     with app_engine.begin() as conn:
-        rows = conn.execute(
-            text("SELECT * FROM own_bookings(:h, NULL, NULL, 100)"),
-            {"h": auth.hash_token(token)},
-        ).all()
+        rows = list(
+            conn.execute(
+                text("SELECT * FROM own_bookings(:h, NULL, NULL, 100)"),
+                {"h": auth.hash_token(token)},
+            ).all()
+        )
+        rows += conn.execute(SECTION, {"h": auth.hash_token(token), "up": True}).all()
+        rows += conn.execute(SECTION, {"h": auth.hash_token(token), "up": False}).all()
     assert rows == []
 
 
@@ -273,6 +327,11 @@ def test_the_walk_restores_the_callers_tenant(
             text("SELECT * FROM own_bookings(:h, NULL, NULL, 10)"), {"h": auth.hash_token(token)}
         ).all()
         assert conn.scalar(text("SELECT current_setting('app.tenant_id')")) == str(CALLER_TENANT)
+        for upcoming in (True, False):
+            conn.execute(SECTION, {"h": auth.hash_token(token), "up": upcoming}).all()
+            assert conn.scalar(text("SELECT current_setting('app.tenant_id')")) == str(
+                CALLER_TENANT
+            )
 
 
 @pytest.mark.parametrize("cursor", ["x", "e30", "bm90LWpzb24", "eyJzIjogIjIwMjYiLCAiayI6ICIwMCJ9"])
@@ -383,9 +442,14 @@ def test_the_definer_itself_needs_a_session_started_within_a_day(
             {"h": auth.hash_token(token)},
         )
     with app_engine.begin() as conn:
-        rows = conn.execute(
-            text("SELECT * FROM own_bookings(:h, NULL, NULL, 10)"), {"h": auth.hash_token(token)}
-        ).all()
+        rows = list(
+            conn.execute(
+                text("SELECT * FROM own_bookings(:h, NULL, NULL, 10)"),
+                {"h": auth.hash_token(token)},
+            ).all()
+        )
+        for upcoming in (True, False):
+            rows += conn.execute(SECTION, {"h": auth.hash_token(token), "up": upcoming}).all()
     assert rows == []
 
 
@@ -406,3 +470,168 @@ def test_history_is_rate_limited_per_address_across_accounts(
     statuses += [history(second_from).status_code for _ in range(11)]
 
     assert statuses == [200] * 30 + [429]
+
+
+# One "now" for a whole test, so a time written and the same time asserted are equal.
+NOW = datetime.now(UTC).replace(microsecond=0)
+
+
+def instant(minutes_from_now: int) -> str:
+    """NOW plus the minutes, as the API writes an instant. NOW is set when the module is imported,
+    at most a few minutes before a test runs; every boundary these tests use is 20 or more minutes
+    away (a 30-minute booking that began 10 minutes before NOW is still in progress)."""
+    return (NOW + timedelta(minutes=minutes_from_now)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def section(client: TestClient, which: str, **params: Any) -> list[dict[str, Any]]:
+    """Every booking of one section, page by page, in the order the pages give them."""
+    seen: list[dict[str, Any]] = []
+    cursor = None
+    while True:
+        page = history(client, section=which, **params, **({"cursor": cursor} if cursor else {}))
+        assert page.status_code == 200, page.json()
+        seen += page.json()["bookings"]
+        cursor = page.json()["next"]
+        if cursor is None:
+            return seen
+
+
+# FENCE (PR 6 fold, concern 3). Wrong impl: upcoming in the history's newest-first order, where
+# with more than a page of bookings ahead the next one is on a later page.
+def test_upcoming_comes_soonest_first_from_its_first_page(
+    app: FastAPI,
+    people: People,
+    services: dict[uuid.UUID, str],
+    migrate_engine: Engine,
+    person: uuid.UUID,
+) -> None:
+    mine = account_client(app, migrate_engine, person)
+    email = email_of(person)
+    for tenant, clock in ((people.a, "11:00"), (people.b, "09:30"), (people.a, "09:00")):
+        book(mine, tenant, services[tenant], clock, email)
+    # More ahead at one business than a page and one (the walk asks each for limit + 1): its own
+    # soonest must come first from the walk itself.
+    for clock in ("10:00", "12:00"):
+        copy_booking(migrate_engine, people.a, at(clock), status="pending", checkout_hash=None)
+    copy_booking(
+        migrate_engine, people.a, instant(-24 * 60), status="confirmed", checkout_hash=None
+    )
+
+    first = history(mine, section="upcoming", limit=2).json()
+
+    assert [b["starts_at"] for b in first["bookings"]] == [at("09:00"), at("09:30")]
+    every = [b["starts_at"] for b in section(mine, "upcoming", limit=2)]
+    assert every == [at(c) for c in ("09:00", "09:30", "10:00", "11:00", "12:00")]
+    assert [b["starts_at"] for b in section(mine, "past", limit=2)] == [instant(-24 * 60)]
+
+
+# FENCE (PR 6 fold, concern 3; architect's ruling 8). Wrong impl: sections split on starts_at, or on
+# time alone: a booking in progress is still to come, and a cancelled one next week is not.
+def test_the_server_decides_what_is_still_to_come(
+    app: FastAPI,
+    people: People,
+    services: dict[uuid.UUID, str],
+    migrate_engine: Engine,
+    person: uuid.UUID,
+) -> None:
+    mine = account_client(app, migrate_engine, person)
+    book(mine, people.a, services[people.a], "09:00", email_of(person))
+    ahead = {"pending": 60, "confirmed": 120}
+    gone_ahead = {"cancelled_by_client": 180, "cancelled_by_merchant": 240, "declined": 300}
+    gone_ahead |= {"expired": 360, "no_show": 420}
+    for status, minutes in (ahead | gone_ahead).items():
+        copy_booking(migrate_engine, people.a, instant(minutes), status=status, checkout_hash=None)
+    copy_booking(migrate_engine, people.a, instant(-10), status="confirmed", checkout_hash=None)
+    copy_booking(migrate_engine, people.a, instant(-60), status="confirmed", checkout_hash=None)
+
+    upcoming = [(b["status"], b["starts_at"]) for b in section(mine, "upcoming")]
+    past = [(b["status"], b["starts_at"]) for b in section(mine, "past")]
+
+    # Still standing and not ended (one in progress included), soonest first.
+    assert upcoming == [
+        ("confirmed", instant(-10)),
+        ("pending", instant(60)),
+        ("confirmed", instant(120)),
+        ("pending", at("09:00")),  # placed on the page: the business confirms it
+    ]
+    # Everything else, newest first.
+    assert past == [
+        *[(status, instant(minutes)) for status, minutes in reversed(gone_ahead.items())],
+        ("confirmed", instant(-60)),
+    ]
+
+
+# FENCE. Wrong impl: a cursor read the same way in both sections, which turns "after" into "before"
+# and repeats or skips bookings.
+def test_a_cursor_from_one_section_is_refused_in_another(
+    app: FastAPI,
+    people: People,
+    services: dict[uuid.UUID, str],
+    migrate_engine: Engine,
+    person: uuid.UUID,
+) -> None:
+    mine = account_client(app, migrate_engine, person)
+    email = email_of(person)
+    book(mine, people.a, services[people.a], "09:00", email)
+    book(mine, people.a, services[people.a], "10:00", email)
+    upcoming = history(mine, section="upcoming", limit=1).json()["next"]
+    newest_first = history(mine, limit=1).json()["next"]
+
+    for wrong in (
+        history(mine, section="past", cursor=upcoming),
+        history(mine, cursor=upcoming),
+        history(mine, section="upcoming", cursor=newest_first),
+    ):
+        assert (wrong.status_code, wrong.json()) == (422, {"code": "invalid_request"})
+
+
+def copy_own_booking(
+    migrate_engine: Engine, tenant: uuid.UUID, who: uuid.UUID, starts_at: str
+) -> None:
+    """A copy of one of `who`'s bookings at the tenant, at another time, confirmed, as migrate."""
+    with migrate_engine.begin() as conn:
+        conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(tenant)})
+        conn.execute(
+            text("""
+            INSERT INTO bookings (tenant_id, client_id, worker_id, service_id, starts_at, ends_at,
+              status, expires_at, source, service_name, price_amount_minor, price_currency,
+              duration_minutes, auto_confirm_at_booking, free_cancellation_hours,
+              reschedule_cutoff_hours, booked_as)
+            SELECT tenant_id, client_id, worker_id, service_id, CAST(:s AS timestamptz),
+              CAST(:s AS timestamptz) + interval '30 minutes', 'confirmed',
+              now() + interval '1 hour', source, service_name, price_amount_minor,
+              price_currency, duration_minutes, auto_confirm_at_booking,
+              free_cancellation_hours, reschedule_cutoff_hours, booked_as
+            FROM bookings WHERE booked_as = :who LIMIT 1
+            """),
+            {"s": starts_at, "who": who},
+        )
+
+
+# FENCE (PR 6 re-verify N1). Wrong impl: a section of own_bookings_in without the booked_as filter
+# (each branch has its own query), which lists every booking at every business to anyone with an
+# account session.
+def test_each_section_lists_only_the_session_persons_own_bookings(
+    app: FastAPI,
+    people: People,
+    services: dict[uuid.UUID, str],
+    migrate_engine: Engine,
+    person: uuid.UUID,
+) -> None:
+    other = add_user(migrate_engine, name="Other Person")
+    mine = account_client(app, migrate_engine, person)
+    theirs = account_client(app, migrate_engine, other)
+    book(mine, people.a, services[people.a], "09:00", email_of(person))
+    book(theirs, people.a, services[people.a], "11:00", email_of(other))
+    copy_own_booking(migrate_engine, people.a, person, instant(-2 * 24 * 60))
+    copy_own_booking(migrate_engine, people.a, other, instant(-3 * 24 * 60))
+
+    def listed(client: TestClient, which: str) -> list[str]:
+        response = history(client, section=which)
+        assert response.status_code == 200, response.json()
+        return [b["starts_at"] for b in response.json()["bookings"]]
+
+    assert listed(mine, "upcoming") == [at("09:00")]
+    assert listed(theirs, "upcoming") == [at("11:00")]
+    assert listed(mine, "past") == [instant(-2 * 24 * 60)]
+    assert listed(theirs, "past") == [instant(-3 * 24 * 60)]

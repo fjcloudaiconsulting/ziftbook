@@ -7,6 +7,7 @@ import { notFound } from "next/navigation";
 import { routing } from "@/i18n/routing";
 
 import { NonceProvider } from "./_ui/nonce";
+import { ReturnPrune } from "./_ui/return-prune";
 
 import "../tokens.css";
 
@@ -46,6 +47,7 @@ export default async function LocaleLayout({ children, params }: LayoutProps<"/[
       <body suppressHydrationWarning>
         <NextIntlClientProvider>
           <NonceProvider nonce={nonce}>{children}</NonceProvider>
+          <ReturnPrune />
         </NextIntlClientProvider>
       </body>
     </html>

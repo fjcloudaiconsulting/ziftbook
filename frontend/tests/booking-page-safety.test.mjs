@@ -95,6 +95,8 @@ const ALLOWED = new Map([
   ["_ui/header.tsx", new Set(["pathname"])],
   // A service's photo thumb URL on an <img>, as on the services page: never runs script, img-src limits it.
   ["_ui/service-tile.tsx", new Set(["photo"])],
+  // Turnstile's action name, not a URL: one of two literals from linkRequestShape (lib/client-account.ts).
+  ["_ui/link-request.tsx", new Set(["shape.action"])],
 ]);
 
 /** Every JSX expression given to one of these attributes, braces balanced. */
@@ -199,6 +201,43 @@ describe("what the enforced policy needs", () => {
       assert.ok(existsSync(layout), `${name(dir)} has a layout`);
       assert.match(readFileSync(layout, "utf8"), /<CspGuard \/>/, name(layout));
     }
+  });
+});
+
+describe("fill only on an explicit action (security B3.4)", () => {
+  // Where a person's own details may be read, among every file the booking, checkout, manage, invite and account
+  // pages render (security review 1): the checkout's own handlers (tests/client-account.test.mjs pins them to the
+  // offer's click and the re-check of an account already filled in from) and the account page itself.
+  const READS = new Map([
+    ["platformAccountRead", new Set(["[slug]/booking-page.tsx", "account/your-bookings.tsx"])],
+    ["platformAccountHistory", new Set(["account/your-bookings.tsx"])],
+  ]);
+
+  function readers(files) {
+    const found = new Map([...READS.keys()].map((call) => [call, new Set()]));
+    for (const [file, text] of files) {
+      for (const call of READS.keys()) if (new RegExp(`\\b${call}\\(`).test(text)) found.get(call).add(file);
+    }
+    return found;
+  }
+
+  test("fence: a person's details are read only where the person asked for them", () => {
+    // Wrong implementation killed: the header's account button reading GET /api/account on load to show "whoever is
+    // signed in", which puts a staff member's name and email into every booking page they open.
+    const found = readers(FILES.map((file) => [name(file), readFileSync(file, "utf8")]));
+    for (const [call, allowed] of READS) assert.deepEqual([...found.get(call)].sort(), [...allowed].sort(), call);
+    assert.ok(FILES.some((file) => name(file) === "_ui/account-button.tsx"), "the walk reaches the header's account button");
+  });
+
+  test("the check itself catches a read in any rendered file", () => {
+    const found = readers([["_ui/account-button.tsx", "useEffect(() => { void send(platformAccountRead()); }, []);"]]);
+    assert.deepEqual([...found.get("platformAccountRead")], ["_ui/account-button.tsx"]);
+  });
+
+  test("fence: no personal page reads the console session's details", () => {
+    // Wrong implementation killed: the checkout's old on-load GET /api/session, which put a signed-in staff
+    // member's name and email into every booking page they merely opened.
+    for (const file of FILES) assert.doesNotMatch(readFileSync(file, "utf8"), /\bsessionRead\b/, name(file));
   });
 });
 

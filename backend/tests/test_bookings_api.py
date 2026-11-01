@@ -208,6 +208,8 @@ def test_a_guest_books_a_slot_the_public_page_offered(
         "worker_display_name",
         "cancellation_policy_text",
         "payment",
+        # ZIF-146: whether this browser's own session placed it (tests/test_proven_booking.py).
+        "placed_by_account",
     }
     assert body["status"] == "pending"
     assert response.headers["cache-control"] == "no-store"

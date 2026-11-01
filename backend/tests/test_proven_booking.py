@@ -377,3 +377,31 @@ def test_a_session_delete_waits_for_the_booking_its_session_proves(
     assert answers[0].status_code == 201, answers[0].json()
     assert erased == [1]
     assert booked_as(migrate_engine, people.a) == [person]
+
+
+# FENCE (PR 6 review fold, concern 2). Wrong impl: no answer to "was this booking placed by my
+# account?", or one that says yes for any signed-in browser. The booking page offers "Save your
+# details for next time" only for a booking no account placed. The answer goes only to the browser
+# that sent the request, about its own session, so it tells nothing new; it is not booked_as (no
+# response carries that) but whether one was recorded.
+@pytest.mark.parametrize("who", ["signed in, own email", "guest", "signed in, another email"])
+def test_the_answer_says_whether_the_account_placed_the_booking(
+    app: FastAPI,
+    people: People,
+    ready: str,
+    migrate_engine: Engine,
+    member_less: uuid.UUID,
+    who: str,
+) -> None:
+    if who == "guest":
+        client, email = new_client(app), email_of(member_less)
+    else:
+        client = account_client(app, migrate_engine, member_less)
+        email = email_of(member_less) if who == "signed in, own email" else email_of(people.only_b)
+
+    response = book(client, people, ready, email=email)
+
+    assert response.status_code == 201, response.json()
+    placed = response.json()["placed_by_account"]
+    assert placed is (who == "signed in, own email")
+    assert booked_as(migrate_engine, people.a) == [member_less if placed else None]

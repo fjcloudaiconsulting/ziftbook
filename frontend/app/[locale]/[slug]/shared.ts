@@ -35,6 +35,9 @@ export type Flow = {
   name: string;
   email: string;
   phone: string;
+  // The phone's country code (an ISO region), beside the number it belongs to: a fill and a sign-out change both
+  // in one update (ZIF-146).
+  region: string;
   errors: { name?: string; email?: string; phone?: string; message?: string };
   suggest: string | null;
   banner: { where: 2 | 3 | "c"; tone: "note" | "error"; text: string } | null;

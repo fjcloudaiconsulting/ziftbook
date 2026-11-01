@@ -3,14 +3,19 @@
 import { useLocale, useTranslations } from "next-intl";
 import { type FormEvent, type ReactNode, useState } from "react";
 
-import { accountRequestPasswordReset, accountSignUp } from "@/api-client";
+import { accountRequestPasswordReset, accountSignUp, platformAccountSignUp } from "@/api-client";
+import { type LinkPurpose, linkRequestShape } from "@/lib/client-account";
 
 import { Banner, CheckInbox, EmailField, NoScript, problem, send, Submit } from "./parts";
 import { Turnstile } from "./turnstile";
 import styles from "./ui.module.css";
 
+/** The API call each purpose makes (linkRequestShape names it). */
+const ENDPOINTS = { accountRequestPasswordReset, accountSignUp, platformAccountSignUp } as const;
+
 type Props = {
-  purpose: "sign_up" | "password_reset";
+  /** `account_sign_up`: a client's own account, with no business (ZIF-146). */
+  purpose: LinkPurpose;
   /** What sits above the email field: a heading, and a mark or a lede. */
   intro: ReactNode;
   submit: string;
@@ -22,7 +27,8 @@ type Props = {
 /** Ask for an emailed link, then "check your inbox" with a 60-second resend countdown. */
 export function LinkRequest({ purpose, intro, submit, aside, turnstileSiteKey }: Props) {
   const form = useTranslations("Form");
-  const tooMany = useTranslations(purpose === "sign_up" ? "SignUp" : "ForgotPassword")("tooMany");
+  const shape = linkRequestShape(purpose);
+  const tooMany = useTranslations(shape.tooMany)("tooMany");
   const locale = useLocale() as "en" | "nl" | "pt";
   const [email, setEmail] = useState("");
   const [busy, setBusy] = useState(false);
@@ -33,11 +39,11 @@ export function LinkRequest({ purpose, intro, submit, aside, turnstileSiteKey }:
   const [token, setToken] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
   const widget = turnstileSiteKey && (
-    <Turnstile key={attempt} siteKey={turnstileSiteKey} action={purpose} onToken={setToken} />
+    <Turnstile key={attempt} siteKey={turnstileSiteKey} action={shape.action} onToken={setToken} />
   );
 
   async function request(): Promise<number | null> {
-    const call = purpose === "sign_up" ? accountSignUp : accountRequestPasswordReset;
+    const call = ENDPOINTS[shape.endpoint];
     const outcome = await send(call({ body: { email, locale, turnstile_token: token } }));
     if (token) {
       setToken(null);
@@ -69,7 +75,7 @@ export function LinkRequest({ purpose, intro, submit, aside, turnstileSiteKey }:
     return (
       <CheckInbox
         email={email}
-        lede={purpose === "sign_up" ? "signUpLede" : "resetLede"}
+        lede={shape.lede}
         sentAt={sentAt}
         resend={request}
         differentEmail={() => {

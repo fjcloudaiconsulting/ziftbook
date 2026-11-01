@@ -39,3 +39,21 @@ export function CloseIcon() {
     </svg>
   );
 }
+
+export function PersonIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16">
+      <circle cx="12" cy="9" r="3.5" fill="none" stroke="currentColor" strokeWidth="1.9" />
+      <path d="M5 19.5c1.2-3.3 3.8-5 7-5s5.8 1.7 7 5" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function OkCircleIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 16 16" width="16" height="16">
+      <circle cx="8" cy="8" r="6.5" fill="currentColor" />
+      <path d="M5 8.2l2 2 4-4.3" fill="none" stroke="white" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}

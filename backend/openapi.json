@@ -973,7 +973,7 @@
           "platform-account"
         ],
         "summary": "History",
-        "description": "Every booking this account placed, at every business, past and upcoming, newest first. Only\nbookings the person placed while signed in: a guest booking made with their address, by anyone,\nnever shows. Needs a session started within the last 24 hours (403\nreauthentication_required: sign in again).",
+        "description": "Every booking this account placed, at every business, past and upcoming, newest first. Only\nbookings the person placed while signed in: a guest booking made with their address, by anyone,\nnever shows. Needs a session started within the last 24 hours (403\nreauthentication_required: sign in again).\n\nsection=upcoming: only what is still to come (pending or confirmed, not ended yet: one in\nprogress too), soonest first. section=past: everything else, newest first. Without it, the\nwhole list, newest first, as before.",
         "operationId": "platform-account-history",
         "parameters": [
           {
@@ -1003,6 +1003,26 @@
               "minimum": 1,
               "default": 50,
               "title": "Limit"
+            }
+          },
+          {
+            "name": "section",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "upcoming",
+                    "past"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Section"
             }
           }
         ],
@@ -7539,12 +7559,17 @@
           "slug": {
             "type": "string",
             "title": "Slug"
+          },
+          "timezone": {
+            "type": "string",
+            "title": "Timezone"
           }
         },
         "type": "object",
         "required": [
           "name",
-          "slug"
+          "slug",
+          "timezone"
         ],
         "title": "Business"
       },
@@ -10783,6 +10808,11 @@
                 "type": "null"
               }
             ]
+          },
+          "placed_by_account": {
+            "type": "boolean",
+            "title": "Placed By Account",
+            "default": false
           }
         },
         "type": "object",

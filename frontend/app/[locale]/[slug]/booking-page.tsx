@@ -4,7 +4,7 @@ import Script from "next/script";
 import { useTranslations } from "next-intl";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 
-import { availabilityRead, bookingsAbandon, bookingsCreate, bookingsResume, bookingsSync, type BookingPageOut, type PaymentStart, sessionRead, type SyncOut } from "@/api-client";
+import { type AccountOut, availabilityRead, bookingsAbandon, bookingsCreate, bookingsResume, bookingsSync, type BookingPageOut, type PaymentStart, platformAccountRead, type SyncOut } from "@/api-client";
 import { Link, useRouter } from "@/i18n/navigation";
 import { addDays, localDay, localWhen, slotsByDay, weekDays } from "@/lib/booking-link";
 import {
@@ -35,6 +35,7 @@ import {
   weekFor,
   withName,
 } from "@/lib/booking-page";
+import { accountHeld, afterAccountSignOut, afterFill, afterUnlock, type AccountState, emailNotSaved, filledForm, fillFrom, offerNext, recheckOutcome, saveDetailsOffer, SIGNED_OUT, signedOutForm } from "@/lib/client-account";
 import { dateLocale } from "@/lib/console";
 import { defaultDial, dialOptions } from "@/lib/dial-codes";
 import { formatMoney } from "@/lib/money";
@@ -42,10 +43,12 @@ import { type Locale } from "@/lib/services";
 import type { AppVersion } from "@/lib/version";
 import { zoneCity } from "@/lib/week";
 
+import { shownAccount, signOutAccount } from "../_ui/account-button";
 import { useNonce } from "../_ui/nonce";
-import { Banner, FieldError, JSON_WRITE, send, Submit } from "../_ui/parts";
+import { Banner, FieldError, JSON_WRITE, problem, send, Submit } from "../_ui/parts";
 import { CheckIcon } from "../_ui/picker";
 import styles from "../_ui/ui.module.css";
+import { AccountOffer, SignedInNote, SignInDialog } from "./account-fill";
 import { type Done, DoneScreen, PayEnd, Picker, Processing, ResumeView, WhoAt } from "./checkout";
 import { DialPicker } from "./dial-picker";
 import { BookingFooter, NewTab } from "./footer";
@@ -91,7 +94,7 @@ function setBookingParam(id: string | null, dropAt = false) {
 
 type End = "processing" | "expired" | "expiredPaid" | "expiredProcessing" | "stale" | "checkEmail";
 
-const INITIAL: Omit<Flow, "name" | "email" | "phone" | "service" | "worker" | "weekStart"> = {
+const INITIAL: Omit<Flow, "name" | "email" | "phone" | "region" | "service" | "worker" | "weekStart"> = {
   step: 2,
   day: null,
   slot: null,
@@ -128,6 +131,7 @@ export function BookingPage({
   booking: string | null;
 }) {
   const t = useTranslations("BookingPage");
+  const form = useTranslations("Form");
   const router = useRouter();
   const nonce = useNonce();
   const loc = locale as Locale;
@@ -140,11 +144,12 @@ export function BookingPage({
     const worker = memberId ?? (service?.workers.length === 1 ? service.workers[0].id : "any");
     // The week of the picked time (jumpTo's rule), so a pick weeks out comes back on screen.
     const weekStart = at ? weekFor(localDay(at, zone), today) : today;
-    return { ...INITIAL, name: "", email: "", phone: "", service, worker, weekStart };
+    return { ...INITIAL, name: "", email: "", phone: "", region: page.country, service, worker, weekStart };
   });
   const dials = useMemo(() => dialOptions(page.country, locale), [page.country, locale]);
   const [done, setDone] = useState<Done | null>(null);
-  const [region, setRegion] = useState<string>(page.country);
+  // ZIF-146: the done screen's "Save your details for next time" (saveDetailsOffer).
+  const [offerAccount, setOfferAccount] = useState(false);
   const [marketing, setMarketing] = useState(false);
   const [message, setMessage] = useState("");
   const [messageOpen, setMessageOpen] = useState(false);
@@ -157,7 +162,9 @@ export function BookingPage({
   const ensureWeekToken = useRef(new Map<string, number>());
   const working = useRef(false);
   // The address this page load placed its checkout with: shown when it ends, never stored.
-  const placed = useRef<{ bookingId: string; email: string } | null>(null);
+  // How it was placed, for the done screen's offer (saveDetailsOffer): whether the booking's answer says this
+  // browser's account placed it, and whether an account had filled this page in.
+  const placed = useRef<{ bookingId: string; email: string; placedByAccount: boolean; signedIn: boolean } | null>(null);
   const nameRef = useRef<HTMLInputElement>(null);
   const emailRef = useRef<HTMLInputElement>(null);
   const phoneRef = useRef<HTMLInputElement>(null);
@@ -183,6 +190,25 @@ export function BookingPage({
   // by onTurnstileLoad and would otherwise close over the render's doBook from that moment (stale).
   const doBookRef = useRef<(token: string | null) => Promise<void>>(async () => {});
 
+  // --- ZIF-146: the details filled in from the person's own account, only on their click (security B3.4) ---
+  // The account that filled the form in, and what it wrote: "Not you? Sign out" empties only the fields that still
+  // hold it (lib/client-account.ts).
+  const [acct, setAcct] = useState<AccountState<AccountOut>>(SIGNED_OUT);
+  const account = acct.account;
+  const [signOutBusy, setSignOutBusy] = useState(false);
+  const [signOutError, setSignOutError] = useState<string | null>(null);
+  const [signInOpen, setSignInOpen] = useState(false);
+  // An account already signed in on this browser, waiting for "Continue as {name}?" (security review 4).
+  const [confirming, setConfirming] = useState<AccountOut | null>(null);
+  const signInOpenRef = useRef(false);
+  useEffect(() => {
+    signInOpenRef.current = signInOpen;
+  });
+  const [offerBusy, setOfferBusy] = useState(false);
+  const [offerError, setOfferError] = useState<string | null>(null);
+  const noteRef = useRef<HTMLDivElement>(null);
+  const [noteFocus, setNoteFocus] = useState(0);
+
   // --- ZIF-158: the payment step ---
   const liveService = page.services.find((svc) => svc.id === serviceId);
   const stepOn = Boolean(page.payment && liveService?.payment);
@@ -199,21 +225,6 @@ export function BookingPage({
   // The request is sent and waits for payment: its fields stay as they were (a retry must never confirm
   // the old intent for a changed time or address).
   const locked = bookingId !== null && sync === null && !checking;
-
-  // Autofill: GET /api/session once (the person's own name, not their name in some business); fill
-  // name/email ONLY if still empty. Any other answer (no session, network, whatever) is ignored
-  // silently.
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      const answer = await send(sessionRead());
-      if (cancelled || answer.status !== 200 || !answer.data) return;
-      setFlow((f) => ({ ...f, name: f.name || answer.data!.name || f.name, email: f.email || answer.data!.email || f.email }));
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   // Once mounted, a tick later (never a state update in the effect's own body): the week's times
   // load, and a time from the URL is kept only if that window still offers it (else `at` is dropped).
@@ -248,6 +259,59 @@ export function BookingPage({
   useEffect(() => {
     if (focusStep !== null) headingRefs.current[focusStep]?.focus();
   }, [focusStep]);
+
+  // After filling in (the dialog closed, or the offer's own click): to the note that says so.
+  useEffect(() => {
+    if (noteFocus) noteRef.current?.focus();
+  }, [noteFocus]);
+
+  // From Send to the answer, and while a sent request waits for its payment, the form's details are the request's:
+  // the account controls wait (PR 6 review, correctness 3). `heldNow()` for handlers and late answers, which also
+  // see the send lock taken before any state changes.
+  const heldRef = useRef(false);
+  useEffect(() => {
+    heldRef.current = accountHeld({ locked, busy: flow.busy, verifying, working: false });
+  });
+  const heldNow = () => heldRef.current || working.current;
+  const formHeld = accountHeld({ locked, busy: flow.busy, verifying, working: false });
+
+  // A sign-out that came while the form was held left its clear pending. Whenever the form is free again (a refused
+  // request, a release, a resumed booking that is gone), it is applied, so the previous person's details never stay
+  // editable with no note (re-verify N2). Never during a send: heldNow() also sees the send lock.
+  useEffect(() => {
+    if (formHeld || !acct.pending) return;
+    const timer = setTimeout(() => {
+      if (!heldNow()) unlockAccount();
+    });
+    return () => clearTimeout(timer);
+    // unlockAccount and heldNow read the render's state and refs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formHeld, acct.pending]);
+
+  // The account signed out on this browser ("Not you?" or the header's menu): the fields that still hold its values
+  // empty out, and the offer is back. While held, the request keeps the details it went with.
+  // A ref, always current: the store's listener is registered once.
+  const signedOutRef = useRef<() => void>(() => {});
+  useEffect(() => {
+    signedOutRef.current = () => {
+      const { state, clear } = afterAccountSignOut(acct, heldNow());
+      if (clear) setFlow((f) => signedOutForm(f, clear, page.country));
+      setAcct(state);
+    };
+  });
+  useEffect(() => shownAccount.onSignedOut(() => signedOutRef.current()), []);
+
+  // Back on the page (another tab, another app): the account that filled this in may have ended meanwhile
+  // (security review 6). Only once the person filled in from it: recheckAccount returns at once otherwise.
+  const recheckRef = useRef<() => Promise<boolean>>(async () => true);
+  useEffect(() => {
+    recheckRef.current = recheckAccount;
+  });
+  useEffect(() => {
+    const onFocus = () => void recheckRef.current();
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, []);
 
   // Runs after the details have (re)rendered with their inputs mounted, so a field targeted before
   // they were open still gets focused once they are.
@@ -510,6 +574,13 @@ export function BookingPage({
     setSync(s);
     setBookingId(s.id);
     if (view.kind === "done") {
+      setOfferAccount(
+        saveDetailsOffer({
+          placedHere: placed.current?.bookingId === s.id,
+          placedByAccount: placed.current?.placedByAccount ?? true,
+          signedInOnPage: placed.current?.signedIn ?? true,
+        }),
+      );
       forget(true);
       setEnd(null);
       setOffer(null);
@@ -590,8 +661,16 @@ export function BookingPage({
     return false;
   }
 
+  /** The form unlocks: a sign-out that came while it was held now empties what the account filled in. */
+  function unlockAccount() {
+    const { state, clear } = afterUnlock(acct);
+    if (clear) setFlow((f) => signedOutForm(f, clear, page.country));
+    setAcct(state);
+  }
+
   /** Back to a plain checkout: no booking in the address, nothing stored, the form open again. */
   function reset() {
+    unlockAccount();
     forget(false);
     setBookingId(null);
     setStart(null);
@@ -693,6 +772,13 @@ export function BookingPage({
     }
     working.current = true;
     setFlow((f) => ({ ...f, busy: true, banner: null }));
+    // The account that filled this in may have ended elsewhere: the note said the booking would be saved to it, so
+    // say it won't and let the person send it again, as a guest or after signing in (security review 6).
+    if (account && !(await recheckAccount())) {
+      working.current = false;
+      setFlow((f) => ({ ...f, busy: false, banner: { where: "c", tone: "note", text: t("accountEnded") } }));
+      return;
+    }
     const f = flow as Step2Plus;
     const member = f.pick ?? (f.worker === "any" ? null : f.worker);
     const body = bookingBody({
@@ -700,7 +786,7 @@ export function BookingPage({
       memberId: member,
       name: f.name,
       email: f.email,
-      phone: phoneValue(defaultDial(region), defaultDial(page.country), f.phone),
+      phone: phoneValue(defaultDial(f.region), defaultDial(page.country), f.phone),
       locale,
       policyVersion: page.consent[loc].policy_version,
       turnstileToken: token,
@@ -716,7 +802,7 @@ export function BookingPage({
 
     if (outcome.kind === "done" && answer.data?.status === "awaiting_payment" && answer.data.payment) {
       const { id, payment } = answer.data;
-      placed.current = { bookingId: id, email: f.email };
+      placed.current = { bookingId: id, email: f.email, placedByAccount: answer.data.placed_by_account ?? false, signedIn: account !== null };
       writeStored({ bookingId: id, serviceId: f.service.id });
       setBookingParam(id);
       setBookingId(id);
@@ -725,6 +811,7 @@ export function BookingPage({
       return;
     }
     if (outcome.kind === "done" && answer.data) {
+      setOfferAccount(saveDetailsOffer({ placedHere: true, placedByAccount: answer.data.placed_by_account ?? false, signedInOnPage: account !== null }));
       setDone({
         status: answer.data.status,
         service: f.service,
@@ -854,6 +941,7 @@ export function BookingPage({
         setChecking(false);
         if (known) apply(answer.data!, null);
         else if (gone) {
+          unlockAccount();
           forget(false);
           setBookingId(null);
           void ensureWeek(flow.service!, flow.worker, flow.weekStart);
@@ -891,6 +979,81 @@ export function BookingPage({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [end, bookingId]);
 
+  /** The account's name, email and phone into the form; anything it has no value for stays as typed. */
+  function fill(signedIn: AccountOut) {
+    // A request on its way keeps the details it was sent with.
+    if (heldNow()) return;
+    const filled = fillFrom(signedIn, page.country);
+    setFlow((f) => filledForm(f, filled));
+    setAcct((state) => afterFill(state, signedIn, filled, false));
+    shownAccount.show(signedIn);
+    setSignInOpen(false);
+    setConfirming(null);
+    setOfferError(null);
+    setNoteFocus((n) => n + 1);
+  }
+
+  /** The dialog's sign-in. One that finishes after the dialog was closed fills nothing in: the form is the person's
+   * again by then (PR 6 review, correctness 6). */
+  function fillFromDialog(signedIn: AccountOut) {
+    // Read through a ref: this runs after an await, when the render's own value may be old.
+    if (signInOpenRef.current) fill(signedIn);
+  }
+
+  /** "Continue" on "Continue as …?": fills the form in, unless a booking went on its way while the dialog was open,
+   * which keeps its details; then the dialog closes instead of leaving a Continue that does nothing. */
+  function continueAsAccount() {
+    // A send that was waiting on its verification went on while the dialog was open, or the account went away:
+    // close, with nothing filled in.
+    if (heldNow() || !confirming) {
+      setSignInOpen(false);
+      setConfirming(null);
+      return;
+    }
+    fillFromDialog(confirming);
+  }
+
+  /** The offer's click: an account signed in on this browser is confirmed in the dialog ("Continue as {name}?"),
+   * else the dialog asks to sign in. The only read of the person's details on this page until they filled in. */
+  async function fillFromAccount() {
+    if (offerBusy || heldNow()) return;
+    setOfferBusy(true);
+    setOfferError(null);
+    const answer = await send(platformAccountRead());
+    setOfferBusy(false);
+    // A booking went on its way meanwhile: it keeps its details, and no dialog opens over it.
+    if (heldNow()) return;
+    const nextStep = offerNext(answer.status);
+    if (nextStep === "confirm" && answer.data) {
+      setConfirming(answer.data);
+      setSignInOpen(true);
+    } else if (nextStep === "signIn") setSignInOpen(true);
+    else setOfferError(form(problem(answer)));
+  }
+
+  /** Whether the account that filled this page in is still the one signed in on this browser; when it ended
+   * (signed out elsewhere, a reset, another person signed in), its note and header button go and the person's
+   * fields stay. True when nothing was filled in, or when there is no answer. */
+  async function recheckAccount(): Promise<boolean> {
+    if (!account) return true;
+    const answer = await send(platformAccountRead());
+    if (recheckOutcome(answer.status, answer.data, account) !== "ended") return true;
+    setAcct(SIGNED_OUT);
+    shownAccount.ended();
+    return false;
+  }
+
+  /** "Not you? Sign out": this browser's account session ends (and its console session, spec section 1.4); the
+   * store's listener above then empties what the account filled in (afterSignOut). */
+  async function signOut() {
+    if (signOutBusy || heldNow()) return;
+    setSignOutBusy(true);
+    setSignOutError(null);
+    const answer = await signOutAccount();
+    setSignOutBusy(false);
+    if (answer.status !== 204) setSignOutError(form(problem(answer)));
+  }
+
   const s2 = flow.service ? (flow as Step2Plus) : null;
   if (!s2) return null;
   const s2With = withName(s2.service.workers, s2.worker, s2.pick, t("anyone"));
@@ -901,6 +1064,8 @@ export function BookingPage({
   // A resumed booking without its secret yet shows the kind it was made with.
   const shown = start === null && sync ? sync.payment.kind : choice;
   const sendText = flow.busy ? (auto ? t("booking") : t("sending")) : t(sendLabel(stepOn ? shown : null, auto), { price });
+  const notSaved = emailNotSaved(account, flow.email);
+  const held = accountHeld({ locked, busy: flow.busy, verifying, working: false });
   const extraTerms = termsLines(stepOn ? shown : null, Boolean(page.payment?.keeps_card_fee));
 
   // The page's frame: heading and business line, and (unless the booking is no longer open) the way back.
@@ -1000,7 +1165,7 @@ export function BookingPage({
       <>
         <main className={styles.screen}>
           <div className={`${styles.col} ${styles.bookingWide}`}>
-            <DoneScreen page={page} done={done} locale={loc} dLocale={dLocale} zone={zone} t={t} onAgain={() => router.push(`/${page.slug}`)} />
+            <DoneScreen page={page} done={done} locale={loc} dLocale={dLocale} zone={zone} t={t} saveDetails={offerAccount} onAgain={() => router.push(`/${page.slug}`)} />
           </div>
         </main>
         <BookingFooter version={version} />
@@ -1078,6 +1243,24 @@ export function BookingPage({
             </div>
             {detailsOpen && (
               <div className={styles.stepBody}>
+                {account ? (
+                  <SignedInNote account={account} t={t} noteRef={noteRef} busy={signOutBusy || held} error={signOutError} onSignOut={() => void signOut()} />
+                ) : (
+                  !held && <AccountOffer t={t} busy={offerBusy} error={offerError} onOpen={() => void fillFromAccount()} />
+                )}
+                <SignInDialog
+                  open={signInOpen}
+                  confirm={confirming}
+                  t={t}
+                  turnstileSiteKey={turnstileSiteKey}
+                  onClose={() => {
+                    setSignInOpen(false);
+                    setConfirming(null);
+                  }}
+                  onContinue={continueAsAccount}
+                  onSomeoneElse={() => setConfirming(null)}
+                  onSignedIn={fillFromDialog}
+                />
                 <WhoAt s2={s2} locked={locked} banner={flow.banner?.where === 3 ? flow.banner : null} zone={zone} dLocale={dLocale} t={t} onPick={(pick) => setFlow((f) => ({ ...f, pick }))} />
                 <form
                   className={styles.form}
@@ -1122,7 +1305,7 @@ export function BookingPage({
                           onChange={(e) => fieldChange("email", e.target.value)}
                           onBlur={emailBlur}
                           aria-invalid={flow.errors.email ? true : undefined}
-                          aria-describedby={`bp-email-hint${flow.errors.email ? " bp-email-err" : ""}`}
+                          aria-describedby={`bp-email-hint${notSaved ? " bp-email-account" : ""}${flow.errors.email ? " bp-email-err" : ""}`}
                         />
                       </div>
                       <p className={styles.hint} id="bp-email-hint">
@@ -1130,6 +1313,12 @@ export function BookingPage({
                       </p>
                       {flow.errors.email && <FieldError id="bp-email-err">{flow.errors.email}</FieldError>}
                       <div aria-live="polite">
+                        {/* ZIF-146 G1: another address books as a guest, saved to no account. */}
+                        {notSaved && (
+                          <p className={styles.hint} id="bp-email-account">
+                            {t("emailNotSaved")}
+                          </p>
+                        )}
                         {flow.suggest && (
                           <p className={styles.hint}>
                             {t("didYouMean", { email: flow.suggest })}{" "}
@@ -1145,7 +1334,7 @@ export function BookingPage({
                         {t("phone")}
                       </label>
                       <div className={styles.phonePair}>
-                        <DialPicker options={dials} value={region} onChange={setRegion} />
+                        <DialPicker options={dials} value={flow.region} onChange={(region) => setFlow((f) => ({ ...f, region }))} />
                         <div className={styles.input}>
                           <input
                             ref={phoneRef}
