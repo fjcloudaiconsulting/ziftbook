@@ -17,6 +17,7 @@ import sys
 import tempfile
 import threading
 import time
+import tracemalloc
 import uuid
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -374,6 +375,24 @@ def records() -> list[tuple[str, bytes]]:
 @pytest.mark.parametrize(("name", "body"), records(), ids=[n for n, _ in records()])
 def test_a_malformed_record_is_refused(name: str, body: bytes) -> None:
     assert photos.parse(body) is None
+
+
+# ZIF-230 fence (build review, security 7). Kills: the child's output copied on its way to the
+# variants. The API holds one output buffer (OUTPUT_CAP) and one copy of the two variants, which
+# the memory budget counts as 2 x OUTPUT_CAP.
+def test_the_output_is_copied_once() -> None:
+    noise_png = encoded(noise("RGBA", (1200, 1200), 0xFF, 9), "PNG")
+    body = with_head(photo_decode.record(noise_png), peak_kb=50_000, cpu_ms=200)
+    run = photos.Run(0, bytearray(photo_child.READY + body), None, 200)
+    tracemalloc.start()
+    try:
+        outcome, _, thumb, detail = photos._judge(run)
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+    assert outcome == "ok" and len(thumb) + len(detail) > 2_000_000
+    assert peak <= len(thumb) + len(detail) + 256 * 1024
+    assert photos.OUTPUT_COPIES == 2
 
 
 def test_a_good_record_parses() -> None:
@@ -847,8 +866,11 @@ def test_the_startup_budget_check(
     if state == "tight":
         [line] = errors
         assert line["memory_max"] == 300 * MIB and line["oom_group"] == 1
-        assert line["required"] == photos.API_ALLOWANCE + photo_child.MEMORY + photos.OUTPUT_CAP + (
-            photos.BUDGET_MARGIN
+        assert line["required"] == (
+            photos.API_ALLOWANCE
+            + photo_child.MEMORY
+            + photos.OUTPUT_COPIES * photos.OUTPUT_CAP
+            + photos.BUDGET_MARGIN
         )
     else:
         assert errors == []
@@ -883,9 +905,8 @@ def test_the_own_rss_is_read() -> None:
 # a child OOM there restarts the pod, so raising the child's limit or the API's allowance means
 # raising that limit with it.
 def test_the_memory_budget_fits_the_pod() -> None:
-    assert photos.API_ALLOWANCE + photo_child.MEMORY + photos.OUTPUT_CAP + photos.BUDGET_MARGIN <= (
-        384 * MIB
-    )
+    child = photo_child.MEMORY + photos.OUTPUT_COPIES * photos.OUTPUT_CAP
+    assert photos.API_ALLOWANCE + child + photos.BUDGET_MARGIN <= 384 * MIB
 
 
 HARDENED = """
