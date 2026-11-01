@@ -3,14 +3,15 @@ empty environment and only stdin, stdout and stderr open, once per decode. stdin
 stdout a pipe. A decoder fault or a decompression bomb then ends this process, never the API.
 
 The order is the point:
+0. an alarm that ends it after ALARM seconds whatever happens next;
 1. the resource limits and the syscall filter, before anything reads the upload or imports Pillow;
 2. the upload, at most MAX_BYTES + 1 bytes, then no longer dumpable;
 3. the decoder (photo_decode.py, by path: -I leaves the app off sys.path), then the READY byte;
 4. the record photo_decode writes, then exit 0.
 
 Imports only the standard library, and nothing from the app: photos.py imports it for the limits
-and the exit codes. Exit codes before READY are the start failures photos.py answers 503 for; a
-code after it is the decode's fault."""
+and the exit codes. Any end before READY is a start failure, which photos.py answers 503 for; an
+end after it is the decode's fault."""
 
 import ctypes
 import errno
