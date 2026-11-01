@@ -2301,4 +2301,6 @@ def test_0076_round_trips_the_history_sections(
 def test_0076_sections_keep_0075s_rows_and_session_rules() -> None:
     m = migration("0076_history_sections.py")
     assert m.ROWS.strip() in migration("0075_history_time_zone.py").NEW
+    # Both sections select through ROWS, its booked_as filter included.
+    assert m.FUNCTION.count(m.ROWS) == 2
     assert m.USABLE == migration("0057_account_sessions.py").USABLE

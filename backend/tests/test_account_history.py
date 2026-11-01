@@ -583,3 +583,55 @@ def test_a_cursor_from_one_section_is_refused_in_another(
         history(mine, section="upcoming", cursor=newest_first),
     ):
         assert (wrong.status_code, wrong.json()) == (422, {"code": "invalid_request"})
+
+
+def copy_own_booking(
+    migrate_engine: Engine, tenant: uuid.UUID, who: uuid.UUID, starts_at: str
+) -> None:
+    """A copy of one of `who`'s bookings at the tenant, at another time, confirmed, as migrate."""
+    with migrate_engine.begin() as conn:
+        conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(tenant)})
+        conn.execute(
+            text("""
+            INSERT INTO bookings (tenant_id, client_id, worker_id, service_id, starts_at, ends_at,
+              status, expires_at, source, service_name, price_amount_minor, price_currency,
+              duration_minutes, auto_confirm_at_booking, free_cancellation_hours,
+              reschedule_cutoff_hours, booked_as)
+            SELECT tenant_id, client_id, worker_id, service_id, CAST(:s AS timestamptz),
+              CAST(:s AS timestamptz) + interval '30 minutes', 'confirmed',
+              now() + interval '1 hour', source, service_name, price_amount_minor,
+              price_currency, duration_minutes, auto_confirm_at_booking,
+              free_cancellation_hours, reschedule_cutoff_hours, booked_as
+            FROM bookings WHERE booked_as = :who LIMIT 1
+            """),
+            {"s": starts_at, "who": who},
+        )
+
+
+# FENCE (PR 6 re-verify N1). Wrong impl: a section of own_bookings_in without the booked_as filter
+# (each branch has its own query), which lists every booking at every business to anyone with an
+# account session.
+def test_each_section_lists_only_the_session_persons_own_bookings(
+    app: FastAPI,
+    people: People,
+    services: dict[uuid.UUID, str],
+    migrate_engine: Engine,
+    person: uuid.UUID,
+) -> None:
+    other = add_user(migrate_engine, name="Other Person")
+    mine = account_client(app, migrate_engine, person)
+    theirs = account_client(app, migrate_engine, other)
+    book(mine, people.a, services[people.a], "09:00", email_of(person))
+    book(theirs, people.a, services[people.a], "11:00", email_of(other))
+    copy_own_booking(migrate_engine, people.a, person, instant(-2 * 24 * 60))
+    copy_own_booking(migrate_engine, people.a, other, instant(-3 * 24 * 60))
+
+    def listed(client: TestClient, which: str) -> list[str]:
+        response = history(client, section=which)
+        assert response.status_code == 200, response.json()
+        return [b["starts_at"] for b in response.json()["bookings"]]
+
+    assert listed(mine, "upcoming") == [at("09:00")]
+    assert listed(theirs, "upcoming") == [at("11:00")]
+    assert listed(mine, "past") == [instant(-2 * 24 * 60)]
+    assert listed(theirs, "past") == [instant(-3 * 24 * 60)]
