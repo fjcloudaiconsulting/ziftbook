@@ -199,7 +199,9 @@ that person's platform account (ZIF-99).
   an erasure waits for it.
   Only the erase function writes `erased_at`: the app role's `INSERT` and `UPDATE` on `clients` are column lists
   without it (0063), so a column added later that the app writes needs its own `GRANT INSERT (column)` or
-  `GRANT UPDATE (column)`, or every client write fails.
+  `GRANT UPDATE (column)`, or every client write fails. A backfill `UPDATE` of `clients` (a migration or a runbook)
+  filters `erased_at IS NULL`: the trigger refuses the first erased row, and CI has none, so it would fail in
+  production.
 - Marketing consent (`consents`) is per business. Nothing writes a platform-level consent, and one business's consent
   never grants another anything.
 - `consents` is append-only: one row per grant or withdrawal per purpose, holding the exact text shown and its policy

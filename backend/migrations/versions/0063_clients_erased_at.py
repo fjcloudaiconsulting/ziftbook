@@ -17,8 +17,12 @@ and UPDATE on clients become column lists, so the running release keeps every wr
 gains none of erased_at. INSERT keeps every column it held; UPDATE drops id and tenant_id, which no
 statement of any release changes.
 
-MAINTENANCE TRAP, as bookings' (0047): a column added to clients later that the app writes needs
-its own GRANT INSERT (column) or GRANT UPDATE (column) in its migration.
+MAINTENANCE TRAPS:
+* as bookings' (0047): a column added to clients later that the app writes needs its own
+  GRANT INSERT (column) or GRANT UPDATE (column) in its migration;
+* a backfill UPDATE of clients (a migration, a runbook) filters erased_at IS NULL: the final
+  trigger refuses the first erased row it reaches, and CI has none, so the failure would come in
+  production. ALTER TABLE ... ADD COLUMN ... DEFAULT fires no trigger.
 
 Downgrade: refuses while an erased row exists ('' fails the old CHECK), which is right: the old
 schema cannot hold an erased client.
