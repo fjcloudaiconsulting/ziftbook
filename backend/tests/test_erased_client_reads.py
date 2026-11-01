@@ -1,7 +1,7 @@
-"""The console no longer shows an erased client (ZIF-58, spec 2.3): the client list skips it,
-PATCH and consents answer 404, it cannot be booked, the booking lists mark it with client_erased,
-and the team gets no booking mail naming it. Erased rows are written here as the erase function
-will write them, as the migrate role: the app role cannot write erased_at (0063)."""
+"""The console no longer shows an erased client (ZIF-58): the client list skips it, PATCH and
+consents answer 404, it cannot be booked or its bookings moved, the booking lists mark it with
+client_erased, and the team gets no booking mail naming it. Erased rows are written here as the
+erase function will write them, as the migrate role: the app role cannot write erased_at (0063)."""
 
 import json
 import threading
@@ -36,7 +36,7 @@ from tests.test_bookings_db import insert_booking
 from tests.test_clients_db import seed_client
 from tests.test_working_hours import seed
 
-# What the erase function blanks of a client and of its bookings (spec 1.1, 1.3).
+# What the erase function blanks of a client and of its bookings, and the links it deletes.
 ERASE_BOOKINGS = text("""
 UPDATE bookings SET client_name = NULL, client_phone = NULL, client_message = NULL,
                     decline_message = NULL, checkout_hash = NULL
@@ -142,7 +142,7 @@ def test_an_erased_client_cannot_be_edited_or_given_a_consent(
     assert len(events(migrate_engine, tenant_id=people.a, action="consent_recorded")) == recorded
 
 
-# ZIF-58 F9 FENCE (review finding 9). Wrong impl: the consents select without FOR SHARE. The
+# ZIF-58 F9 FENCE. Wrong impl: the consents select without FOR SHARE. The
 # consent's foreign key takes only KEY SHARE on the client, which an erasure's NO KEY UPDATE does
 # not block, so without FOR SHARE the consent is written on a row being erased and lands on the
 # tombstone. With it, the POST waits for the erasure, re-reads the row and answers 404.
@@ -274,9 +274,9 @@ def schema(spec: dict[str, Any], name: str) -> dict[str, Any]:
     return found
 
 
-# ZIF-58 F11 FENCE, the contract (review finding 5): client_name stays a required, non-nullable
-# string, client_erased a required boolean, and the field description says that "" goes with
-# client_erased true. Wrong impl: client_name: str | None, or client_erased optional or absent.
+# ZIF-58 F11 FENCE, the contract: client_name stays a required, non-nullable string, client_erased
+# a required boolean, and the field description says that "" goes with client_erased true. Wrong
+# impl: client_name: str | None, or client_erased optional or absent.
 @pytest.mark.parametrize("name", ["PendingOut", "AgendaOut", "BookingDetailOut", "InTheWay"])
 def test_the_erased_client_pair_is_a_pinned_contract(name: str) -> None:
     # The app's own document: tests/test_openapi.py holds backend/openapi.json to it.
