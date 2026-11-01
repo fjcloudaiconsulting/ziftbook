@@ -74,9 +74,10 @@ def create(session: Session, user_id: UUID, *, ip: str | None, user_agent: str |
     )
     if inserted is None:
         raise ValueError("the user is not a member of this tenant")
-    # ponytail: purges on every sign-in; move to the ZIF-5 sweeper. Rows that went idle stay until
-    # their absolute expiry. After the insert and SKIP LOCKED: waiting on rows another transaction
-    # holds (a membership being removed) would queue sign-ins or deadlock.
+    # Purges on every sign-in; the worker's retention sweep (app.retention) also removes idle and
+    # expired rows, so this is a convenience, not the retention. After the insert and SKIP LOCKED:
+    # waiting on rows another transaction holds (a membership being removed) would queue sign-ins
+    # or deadlock.
     session.execute(
         text("""
         DELETE FROM sessions WHERE id_hash IN (

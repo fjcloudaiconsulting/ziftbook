@@ -598,7 +598,9 @@ we can show which businesses were not affected.
 - A new column on `audit_events` needs its own `GRANT INSERT (column) ON audit_events TO ziftbook_app`, because the
   table's INSERT grant lists columns. Its migration must be applied **before** the app that writes it: `record`
   names every column, so a new app against the old schema fails on every event, not only the new one.
-- Nothing purges events yet. The ZIF-5 sweeper will remove failed sign-ins after 30 days and the rest after a year.
+- The worker's retention sweep (`app/retention.py`, ZIF-235) deletes failed sign-ins after 30 days and every other
+  event after a year, here and in `platform_audit_events` (its three failure actions after 30 days). Rows past their
+  period are gone for good: the owner's audit page shows a year at most.
 
 ### Platform admin
 
@@ -787,6 +789,15 @@ Deferred and scheduled work goes through the `jobs` table (`app/jobs.py`); there
   (`booking.reminder:<tenant>:<booking>:<starts_at>`).
 - Removing a job kind needs a migration that deletes its rows: the prune only removes finished jobs, and no worker
   finishes a kind it no longer registers.
+- **Retention (ZIF-235).** The worker runs `retention.sweep()` hourly, after the booking sweep and in its own try (a
+  failure withholds the ping), within a 20-second budget and stopping between batches when the worker stops; a run
+  that leaves a backlog comes back after 5 minutes. It deletes `rate_limits` rows an hour after the longest window
+  (`limits.MAX_WINDOW`, one day: no limit may use a longer window, `limits` refuses one), sessions and admin sessions
+  an hour after they stop being live, audit events past their period (see "Audit log"), and clears `ip` and
+  `user_agent` of a booking event once the event and its booking's end are both 18 months old (the row stays as
+  evidence). The hour is a margin for readers whose transaction began before the sweep. Every table that stores an
+  address or a browser is listed in `retention.COVERED` with its rule; a test compares it with the catalog, so a new
+  one needs a rule (or a reasoned exemption, as `consents` has until ZIF-156) before it ships.
 - Payloads hold ids only; the handler loads what it needs inside `tenant_context(job.tenant_id)`. A job with no tenant
   (such as `email.token`, for sign-up and reset links) touches only global tables, through `SessionLocal.begin()`.
 - Handlers may run more than once for a job (a crash after the work but before it is recorded, or a timeout that
