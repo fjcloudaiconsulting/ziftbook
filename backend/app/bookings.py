@@ -246,6 +246,15 @@ class BookingStatusOut(BaseModel):
     status: Target
 
 
+# ZIF-58: the permanent wire contract for an erased client, pinned in
+# tests/test_erased_client_reads.py. client_name stays a string, never null.
+CLIENT_NAME = (
+    'The client\'s name. "" exactly when client_erased is true: an erased client has no name, '
+    "and the console shows it as an erased client."
+)
+CLIENT_ERASED = 'True when the client was erased; client_name is then "".'
+
+
 class BookingRow(BaseModel):
     """What the pending queue and the agenda both say about a booking. No client email or phone:
     a list never carries them (the detail does)."""
@@ -259,7 +268,8 @@ class BookingRow(BaseModel):
     worker_id: UUID
     worker_display_name: str | None
     client_id: UUID
-    client_name: str
+    client_name: str = Field(description=CLIENT_NAME)
+    client_erased: bool = Field(description=CLIENT_ERASED)
     created_at: datetime  # "booked online 2 hours ago"
 
 
@@ -407,12 +417,14 @@ VALUES (current_setting('app.tenant_id')::uuid, :booking_id, :event, CAST(:ip AS
         CAST(:details AS jsonb))
 """)
 
-# The columns QUEUE and RANGE share, so the two lists can never drift apart.
+# The columns QUEUE and RANGE share, so the two lists can never drift apart. An erased client's
+# name is '' and the erasure blanks its bookings' snapshot (ZIF-58), so client_name is '' exactly
+# when client_erased is true, with no CASE.
 LIST_COLUMNS = """
 b.id, b.starts_at, b.ends_at, b.service_id, b.service_name,
 jsonb_build_object('amount_minor', b.price_amount_minor, 'currency', b.price_currency) AS price,
 b.worker_id, b.worker_display_name, b.client_id, coalesce(b.client_name, c.name) AS client_name,
-b.created_at
+c.erased_at IS NOT NULL AS client_erased, b.created_at
 """
 
 # A booking's payment `p` as PaymentFact reads it, for the detail and the queue alike.

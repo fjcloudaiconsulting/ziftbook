@@ -3,6 +3,7 @@ PATCH and consents answer 404, it cannot be booked, the booking lists mark it wi
 and the team gets no booking mail naming it. Erased rows are written here as the erase function
 will write them, as the migrate role: the app role cannot write erased_at (0063)."""
 
+import json
 import threading
 import uuid
 from collections.abc import Iterator
@@ -14,7 +15,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Connection, Engine, text
 
 from app.db import tenant_context
-from app.main import create_app
+from app.main import create_app, openapi_document
 from tests.conftest import (
     People,
     events,
@@ -219,3 +220,53 @@ def test_a_merchant_cannot_book_an_erased_client(
         )
     # The same booking for a live client goes through: the refusal is the tombstone's alone.
     assert owner.post("/api/bookings", json={**body, "client_id": kept}).status_code == 201
+
+
+def window() -> dict[str, str]:
+    return {"from": at("00:00"), "to": at("23:59")}
+
+
+# ZIF-58 F11 FENCE. Wrong impl: a reader that gives the name without client_erased (the console
+# cannot tell an erased client from a blank name), or one that gives client_name null. The queue,
+# the agenda and the detail each say client_name "" exactly when client_erased is true, and the
+# detail carries nothing about the person.
+def test_the_booking_lists_mark_an_erased_client(
+    people: People, owner: TestClient, migrate_engine: Engine, booked: dict[str, str]
+) -> None:
+    erase_by_hand(migrate_engine, people.a, client_of(people.a, booked["pending"]))
+
+    queue = {row["id"]: row for row in owner.get("/api/bookings/pending").json()}
+    agenda = {row["id"]: row for row in owner.get("/api/bookings", params=window()).json()}
+    detail = owner.get(f"/api/bookings/{booked['pending']}").json()
+    live = owner.get(f"/api/bookings/{booked['live']}").json()
+
+    for row in (queue[booked["pending"]], agenda[booked["confirmed"]], detail):
+        assert (row["client_name"], row["client_erased"]) == ("", True)
+    for row in (queue[booked["live"]], agenda[booked["live"]], live):
+        assert (row["client_name"], row["client_erased"]) == ("Live Booker", False)
+    assert {
+        key: detail[key]
+        for key in ("client_email", "client_phone", "client_message", "client_note")
+    } == dict.fromkeys(("client_email", "client_phone", "client_message", "client_note"))
+
+
+def schema(spec: dict[str, Any], name: str) -> dict[str, Any]:
+    found: dict[str, Any] = spec["components"]["schemas"][name]
+    return found
+
+
+# ZIF-58 F11 FENCE, the contract (review finding 5): client_name stays a required, non-nullable
+# string, client_erased a required boolean, and the field description says that "" goes with
+# client_erased true. Wrong impl: client_name: str | None, or client_erased optional or absent.
+@pytest.mark.parametrize("name", ["PendingOut", "AgendaOut", "BookingDetailOut"])
+def test_the_erased_client_pair_is_a_pinned_contract(name: str) -> None:
+    # The app's own document: tests/test_openapi.py holds backend/openapi.json to it.
+    spec = json.loads(openapi_document())
+    found = schema(spec, name)
+    client_name = found["properties"]["client_name"]
+    assert client_name["type"] == "string"
+    assert "anyOf" not in client_name
+    assert found["properties"]["client_erased"]["type"] == "boolean"
+    assert {"client_name", "client_erased"} <= set(found["required"])
+    assert '""' in client_name["description"]
+    assert "client_erased" in client_name["description"]
