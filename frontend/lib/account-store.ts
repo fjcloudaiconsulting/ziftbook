@@ -35,3 +35,11 @@ export function accountStore<A extends Account = Account>() {
     },
   };
 }
+
+/** Signs the account out with `call` (DELETE /api/account/session) and ends it on the page only on a 204: any other
+ * answer leaves the session alive on the server, so the page must keep showing it. */
+export async function signOutWith<T extends { status: number }>(call: () => Promise<T>, store: { signedOut(): void }): Promise<T> {
+  const answer = await call();
+  if (answer.status === 204) store.signedOut();
+  return answer;
+}

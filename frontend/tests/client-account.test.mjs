@@ -39,7 +39,7 @@ import {
   statusPill,
   takeReturn,
 } from "../lib/client-account.ts";
-import { accountStore } from "../lib/account-store.ts";
+import { accountStore, signOutWith } from "../lib/account-store.ts";
 
 describe("account sign-in", () => {
   test("a wrong password is the console's own generic answer, never a hint that the email has an account", () => {
@@ -794,5 +794,30 @@ describe("the account sign-in says whose sign-in it is (security review 7, owner
       assert.ok(strings.accountLede, locale);
       assert.match(strings.businessInstead, /<business>.+<\/business>/, locale);
     }
+  });
+});
+
+describe("a failed sign-out keeps the account shown (PR 6 review, correctness 11, M13)", () => {
+  const ana = { email: "ana@example.com", name: "Ana Silva" };
+
+  test("only a 204 ends it on the page: anything else leaves the session alive, and the page says so", async () => {
+    // Wrong implementation killed: clearing on any answer, which shows signed out while the session lives on and the
+    // next booking with that email is still proven by it.
+    for (const status of [0, 415, 500, 503]) {
+      const store = accountStore();
+      store.show(ana);
+      const answer = await signOutWith(async () => ({ status }), store);
+      assert.equal(answer.status, status);
+      assert.equal(store.get(), ana, String(status));
+    }
+    const store = accountStore();
+    store.show(ana);
+    await signOutWith(async () => ({ status: 204 }), store);
+    assert.equal(store.get(), null);
+  });
+
+  test("fence: the account button signs out through it", () => {
+    const button = readFileSync(new URL("../app/[locale]/_ui/account-button.tsx", import.meta.url), "utf8");
+    assert.match(button, /return signOutWith\(\(\) => send\(platformAccountSignOut\(\{ \.\.\.JSON_WRITE \}\)\), shownAccount\);/);
   });
 });

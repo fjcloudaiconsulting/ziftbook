@@ -5,7 +5,7 @@ import { useId, useState, useSyncExternalStore } from "react";
 
 import { type AccountOut, platformAccountSignOut } from "@/api-client";
 import { Link, useRouter } from "@/i18n/navigation";
-import { accountStore } from "@/lib/account-store";
+import { accountStore, signOutWith } from "@/lib/account-store";
 
 import { JSON_WRITE, type Outcome, problem, send } from "./parts";
 import styles from "./ui.module.css";
@@ -16,9 +16,7 @@ export const shownAccount = accountStore<AccountOut>();
 /** Ends this browser's account session (DELETE /api/account/session, which ends its console session too); on success
  * the button goes and every page listening empties what the account filled in. */
 export async function signOutAccount(): Promise<Outcome<unknown>> {
-  const answer = await send(platformAccountSignOut({ ...JSON_WRITE }));
-  if (answer.status === 204) shownAccount.signedOut();
-  return answer;
+  return signOutWith(() => send(platformAccountSignOut({ ...JSON_WRITE })), shownAccount);
 }
 
 /**
