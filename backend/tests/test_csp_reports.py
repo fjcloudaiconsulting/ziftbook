@@ -24,6 +24,7 @@ from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 from sqlalchemy import Engine, text
 
 from app import csp_reports, limits, logs
+from app.db import SessionLocal
 from app.main import MAX_BODY, create_app
 from tests.conftest import fresh_address, new_client, points
 
@@ -789,6 +790,30 @@ def test_the_api_lifespan_runs_the_drop_timer_and_flushes_at_shutdown(
         assert events == ["timer started"]
 
     assert events == ["timer started", "timer stopped", "flushed"]
+
+
+# 16f. Re-verify N1: a timer that died anyway never stops the shutdown: the final flush and the
+# engine's dispose still run.
+def test_a_dead_timer_never_takes_the_shutdown_down(
+    migrated: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    events: list[str] = []
+
+    async def dead(interval: float = csp_reports.DROP_EVERY) -> None:
+        raise RuntimeError("timer died")
+
+    monkeypatch.setattr(csp_reports, "flush_drops_every", dead)
+    monkeypatch.setattr(csp_reports, "flush_drops_now", lambda: events.append("flushed"))
+    monkeypatch.setattr(
+        SessionLocal,
+        "configure",
+        lambda **kw: events.append("unbound" if kw.get("bind") is None else "bound"),
+    )
+
+    with TestClient(create_app()):
+        pass
+
+    assert events == ["bound", "flushed", "unbound"]
 
 
 # 16e. Re-verify N1: a tick that raises is logged once, as an ERROR, and the timer keeps ticking.

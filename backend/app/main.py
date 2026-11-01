@@ -271,7 +271,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         yield
     finally:
         drop_timer.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
+        # Whatever ended the timer, the final flush and the engine's dispose below still run.
+        with contextlib.suppress(asyncio.CancelledError, Exception):
             await drop_timer
         csp_reports.flush_drops_now()
         try:
