@@ -282,3 +282,22 @@ export function afterAccountSignOut<A>(state: AccountState<A>, held: boolean): {
 export function afterUnlock<A>(state: AccountState<A>): { state: AccountState<A>; clear: Fill | null } {
   return { state: { ...state, pending: null }, clear: state.pending };
 }
+
+type FormFields = Details & { errors: { name?: string; email?: string; phone?: string; message?: string }; suggest: string | null };
+
+/** The form after a fill, computed from the form as it is now (a functional update): the errors of the fields it
+ * wrote go, and the others stay. */
+export function filledForm<F extends FormFields>(form: F, fill: Fill): F {
+  const errors = {
+    ...form.errors,
+    email: undefined,
+    ...(fill.name !== null ? { name: undefined } : {}),
+    ...(fill.phone !== null ? { phone: undefined } : {}),
+  };
+  return { ...form, ...applyFill(form, fill), errors, suggest: null };
+}
+
+/** The form after a sign-out's clear (afterSignOut), from the form as it is now. */
+export function signedOutForm<F extends FormFields>(form: F, clear: Fill, businessRegion: string): F {
+  return { ...form, ...afterSignOut(form, clear, businessRegion), suggest: null };
+}

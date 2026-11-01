@@ -35,7 +35,7 @@ import {
   weekFor,
   withName,
 } from "@/lib/booking-page";
-import { accountHeld, afterAccountSignOut, afterFill, afterSignOut, afterUnlock, type AccountState, applyFill, emailNotSaved, fillFrom, offerNext, SIGNED_OUT } from "@/lib/client-account";
+import { accountHeld, afterAccountSignOut, afterFill, afterUnlock, type AccountState, emailNotSaved, filledForm, fillFrom, offerNext, SIGNED_OUT, signedOutForm } from "@/lib/client-account";
 import { dateLocale } from "@/lib/console";
 import { defaultDial, dialOptions } from "@/lib/dial-codes";
 import { formatMoney } from "@/lib/money";
@@ -94,7 +94,7 @@ function setBookingParam(id: string | null, dropAt = false) {
 
 type End = "processing" | "expired" | "expiredPaid" | "expiredProcessing" | "stale" | "checkEmail";
 
-const INITIAL: Omit<Flow, "name" | "email" | "phone" | "service" | "worker" | "weekStart"> = {
+const INITIAL: Omit<Flow, "name" | "email" | "phone" | "region" | "service" | "worker" | "weekStart"> = {
   step: 2,
   day: null,
   slot: null,
@@ -144,11 +144,10 @@ export function BookingPage({
     const worker = memberId ?? (service?.workers.length === 1 ? service.workers[0].id : "any");
     // The week of the picked time (jumpTo's rule), so a pick weeks out comes back on screen.
     const weekStart = at ? weekFor(localDay(at, zone), today) : today;
-    return { ...INITIAL, name: "", email: "", phone: "", service, worker, weekStart };
+    return { ...INITIAL, name: "", email: "", phone: "", region: page.country, service, worker, weekStart };
   });
   const dials = useMemo(() => dialOptions(page.country, locale), [page.country, locale]);
   const [done, setDone] = useState<Done | null>(null);
-  const [region, setRegion] = useState<string>(page.country);
   const [marketing, setMarketing] = useState(false);
   const [message, setMessage] = useState("");
   const [messageOpen, setMessageOpen] = useState(false);
@@ -195,6 +194,10 @@ export function BookingPage({
   const [signOutBusy, setSignOutBusy] = useState(false);
   const [signOutError, setSignOutError] = useState<string | null>(null);
   const [signInOpen, setSignInOpen] = useState(false);
+  const signInOpenRef = useRef(false);
+  useEffect(() => {
+    signInOpenRef.current = signInOpen;
+  });
   const [offerBusy, setOfferBusy] = useState(false);
   const [offerError, setOfferError] = useState<string | null>(null);
   const noteRef = useRef<HTMLDivElement>(null);
@@ -272,11 +275,7 @@ export function BookingPage({
   useEffect(() => {
     signedOutRef.current = () => {
       const { state, clear } = afterAccountSignOut(acct, heldNow());
-      if (clear) {
-        const next = afterSignOut({ name: flow.name, email: flow.email, phone: flow.phone, region }, clear, page.country);
-        setFlow((f) => ({ ...f, name: next.name, email: next.email, phone: next.phone, suggest: null }));
-        setRegion(next.region);
-      }
+      if (clear) setFlow((f) => signedOutForm(f, clear, page.country));
       setAcct(state);
     };
   });
@@ -626,11 +625,7 @@ export function BookingPage({
   /** The form unlocks: a sign-out that came while it was held now empties what the account filled in. */
   function unlockAccount() {
     const { state, clear } = afterUnlock(acct);
-    if (clear) {
-      const next = afterSignOut({ name: flow.name, email: flow.email, phone: flow.phone, region }, clear, page.country);
-      setFlow((f) => ({ ...f, name: next.name, email: next.email, phone: next.phone, suggest: null }));
-      setRegion(next.region);
-    }
+    if (clear) setFlow((f) => signedOutForm(f, clear, page.country));
     setAcct(state);
   }
 
@@ -745,7 +740,7 @@ export function BookingPage({
       memberId: member,
       name: f.name,
       email: f.email,
-      phone: phoneValue(defaultDial(region), defaultDial(page.country), f.phone),
+      phone: phoneValue(defaultDial(f.region), defaultDial(page.country), f.phone),
       locale,
       policyVersion: page.consent[loc].policy_version,
       turnstileToken: token,
@@ -942,14 +937,19 @@ export function BookingPage({
     // A request on its way keeps the details it was sent with.
     if (heldNow()) return;
     const filled = fillFrom(signedIn, page.country);
-    const next = applyFill({ name: flow.name, email: flow.email, phone: flow.phone, region }, filled);
-    setFlow((f) => ({ ...f, name: next.name, email: next.email, phone: next.phone, suggest: null, errors: { ...f.errors, name: undefined, email: undefined, phone: undefined } }));
-    setRegion(next.region);
+    setFlow((f) => filledForm(f, filled));
     setAcct((state) => afterFill(state, signedIn, filled, false));
     shownAccount.show(signedIn);
     setSignInOpen(false);
     setOfferError(null);
     setNoteFocus((n) => n + 1);
+  }
+
+  /** The dialog's sign-in. One that finishes after the dialog was closed fills nothing in: the form is the person's
+   * again by then (PR 6 review, correctness 6). */
+  function fillFromDialog(signedIn: AccountOut) {
+    // Read through a ref: this runs after an await, when the render's own value may be old.
+    if (signInOpenRef.current) fill(signedIn);
   }
 
   /** The offer's click: the account signed in on this browser fills the form, or the dialog asks to sign in. The
@@ -1171,7 +1171,7 @@ export function BookingPage({
                 ) : (
                   !held && <AccountOffer t={t} busy={offerBusy} error={offerError} onOpen={() => void fillFromAccount()} />
                 )}
-                <SignInDialog open={signInOpen} t={t} turnstileSiteKey={turnstileSiteKey} onClose={() => setSignInOpen(false)} onSignedIn={fill} />
+                <SignInDialog open={signInOpen} t={t} turnstileSiteKey={turnstileSiteKey} onClose={() => setSignInOpen(false)} onSignedIn={fillFromDialog} />
                 <WhoAt s2={s2} locked={locked} banner={flow.banner?.where === 3 ? flow.banner : null} zone={zone} dLocale={dLocale} t={t} onPick={(pick) => setFlow((f) => ({ ...f, pick }))} />
                 <form
                   className={styles.form}
@@ -1245,7 +1245,7 @@ export function BookingPage({
                         {t("phone")}
                       </label>
                       <div className={styles.phonePair}>
-                        <DialPicker options={dials} value={region} onChange={setRegion} />
+                        <DialPicker options={dials} value={flow.region} onChange={(region) => setFlow((f) => ({ ...f, region }))} />
                         <div className={styles.input}>
                           <input
                             ref={phoneRef}

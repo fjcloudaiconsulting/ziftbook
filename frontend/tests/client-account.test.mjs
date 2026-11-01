@@ -19,6 +19,7 @@ import {
   dialRegion,
   emailNotSaved,
   fillFrom,
+  filledForm,
   historyOutcome,
   historySections,
   historyServiceName,
@@ -29,6 +30,7 @@ import {
   RETURN_KEY,
   splitPhone,
   SIGNED_OUT,
+  signedOutForm,
   statusPill,
   takeReturn,
 } from "../lib/client-account.ts";
@@ -254,7 +256,7 @@ describe("Not you? Sign out", () => {
   test("fence: the checkout signs out with DELETE /api/account/session and clears through afterSignOut", () => {
     const text = readFileSync(new URL("../app/[locale]/[slug]/booking-page.tsx", import.meta.url), "utf8");
     assert.match(text, /await signOutAccount\(\)/);
-    assert.match(text, /afterSignOut\(/);
+    assert.match(text, /signedOutForm\(/);
     const button = readFileSync(new URL("../app/[locale]/_ui/account-button.tsx", import.meta.url), "utf8");
     assert.match(button, /platformAccountSignOut\(/);
   });
@@ -263,7 +265,7 @@ describe("Not you? Sign out", () => {
     // Wrong implementation killed: emptying the locked fields of a request waiting for its payment, whose resend
     // and done screen read them.
     const text = readFileSync(new URL("../app/[locale]/[slug]/booking-page.tsx", import.meta.url), "utf8");
-    assert.match(text, /const \{ state, clear \} = afterAccountSignOut\(acct, heldNow\(\)\);\s*if \(clear\) \{\s*const next = afterSignOut\(/);
+    assert.match(text, /const \{ state, clear \} = afterAccountSignOut\(acct, heldNow\(\)\);\s*if \(clear\) setFlow\(\(f\) => signedOutForm\(/);
   });
 });
 
@@ -510,5 +512,41 @@ describe("a sign-out while held empties the form once it unlocks (PR 6 review, c
     assert.ok(reset);
     assert.match(reset[1], /unlockAccount\(\);/);
     assert.match(text, /function unlockAccount\(\) \{\s*const \{ state, clear \} = afterUnlock\(acct\);/);
+  });
+});
+
+describe("a fill lands on the form as it is now (PR 6 review, correctness 6)", () => {
+  const form = (over = {}) => ({ name: "", email: "", phone: "", region: "NL", errors: {}, suggest: null, step: 3, ...over });
+
+  test("what the account has no value for keeps what was typed meanwhile", () => {
+    // Wrong implementation killed: a fill computed from the form as it was when the offer was clicked, which puts
+    // back an empty phone over the one typed while the account was being read.
+    const typedMeanwhile = form({ phone: "699123456", region: "BE" });
+    const fill = { name: "Ana Silva", email: "ana@example.com", phone: null, region: null };
+    const next = filledForm(typedMeanwhile, fill);
+    assert.deepEqual([next.name, next.email, next.phone, next.region, next.step], ["Ana Silva", "ana@example.com", "699123456", "BE", 3]);
+  });
+
+  test("only the errors of the fields it wrote are cleared", () => {
+    const withErrors = form({ errors: { name: "x", email: "y", phone: "z", message: "m" } });
+    const noPhone = filledForm(withErrors, { name: "Ana", email: "ana@example.com", phone: null, region: null });
+    assert.deepEqual(noPhone.errors, { name: undefined, email: undefined, phone: "z", message: "m" });
+    const noName = filledForm(withErrors, { name: null, email: "ana@example.com", phone: "612", region: "NL" });
+    assert.deepEqual(noName.errors, { name: "x", email: undefined, phone: undefined, message: "m" });
+  });
+
+  test("a sign-out's clear also works on the form as it is now", () => {
+    const fill = { name: "Ana Silva", email: "ana@example.com", phone: "612", region: "NL" };
+    const next = signedOutForm(form({ name: "Ana Silva", email: "typed@example.com", phone: "612", region: "NL", suggest: "x" }), fill, "PT");
+    assert.deepEqual([next.name, next.email, next.phone, next.region, next.suggest], ["", "typed@example.com", "", "PT", null]);
+  });
+
+  test("fence: fill and the clears update the form through its current state; a sign-in after the dialog closed fills nothing", () => {
+    const text = readFileSync(new URL("../app/[locale]/[slug]/booking-page.tsx", import.meta.url), "utf8");
+    assert.match(text, /setFlow\(\(f\) => filledForm\(f, filled\)\)/);
+    assert.equal([...text.matchAll(/setFlow\(\(f\) => signedOutForm\(f, clear, page\.country\)\)/g)].length, 2);
+    assert.doesNotMatch(text, /setRegion|useState<string>\(page\.country\)/);
+    assert.match(text, /onSignedIn=\{fillFromDialog\}/);
+    assert.match(text, /function fillFromDialog\(signedIn: AccountOut\) \{\s*\/\/[^\n]*\n\s*if \(signInOpenRef\.current\) fill\(signedIn\);/);
   });
 });
