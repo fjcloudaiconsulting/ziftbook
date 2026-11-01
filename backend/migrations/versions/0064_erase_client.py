@@ -1,24 +1,28 @@
 """The erase core blanks a client of this business only (ZIF-58).
 
-erase_client_core(p_client) erases one client of the current business (app.tenant_id), in one
-place: it marks the clients row erased and blanks every personal field of it (0063's CHECK), the
-client's personal data on its bookings (the name, phone and message the booker typed, the
+erase_client_core(p_client, p_announce) erases one client of the current business (app.tenant_id),
+in one place: it marks the clients row erased and blanks every personal field of it (0063's CHECK),
+the client's personal data on its bookings (the name, phone and message the booker typed, the
 merchant's decline message, the checkout cookie's hash), the client's address and browser on the
 booking events the client made (the team's own events keep theirs), and deletes the client's
 consent rows and its bookings' manage links. Booking evidence (dates, prices, services, status,
-payments) is kept. It changes no booking's status: the caller ends live bookings first, in the
-same transaction. It returns when the client was erased, the first erasure's time on a repeat
-(which writes nothing), or NULL for a client this business does not have.
+payments) is kept. It changes no booking's status: the caller ends live bookings first, in the same
+transaction. It returns when the client was erased, the first erasure's time on a repeat (which
+writes nothing), or NULL for a client this business does not have.
 
 Every statement names the business explicitly, besides row-level security, so the scope holds even
 if a policy for ziftbook_migrate (the function's owner) is ever widened. A SECURITY DEFINER rather
 than column grants: booking_events and consents stay append-only for the app role, and the booking
 snapshot stays write-once (0047).
 
-client_erasure_holds keeps an erased client's email and locale for at most 31 days, and only when
-the erasure ended one of its bookings or money is still owed to it: the only way to tell the client
-that a booking was cancelled or a refund failed. Only the core writes it; the app role can neither
-read nor write it; the worker reads and deletes it.
+client_erasure_holds keeps an erased client's email and locale, its purge date at most 31 days
+after it is written: the only way to tell the client that a booking was cancelled or a refund
+failed. The core writes it when the client has an address and either p_announce is true and this
+erasure ended one of its bookings (the cancellation mails), or money is still owed an answer on
+one of its bookings, whatever p_announce says. An owner's erasure and an account deletion pass
+true; re-applying an erasure after a backup restore passes false, because the cancellations were
+announced the first time, while a refund that fails later must still reach the client. Only the
+core writes a hold; the app role can neither read nor write it; the worker reads and deletes it.
 
 erase_client(p_session_hash, p_client) is the app role's way in: it refuses unless the hash is a
 live owner session of the current business (not past its absolute expiry, seen within the idle
@@ -44,12 +48,12 @@ SEARCH_PATH = "SET search_path = pg_catalog, public, pg_temp"
 # because a migration must not change when the code does. With payments.UNSETTLED's predicate
 # below, "money still owed an answer".
 REFUNDING = "'declined', 'expired', 'cancelled_by_merchant', 'cancelled_by_client'"
-# The reasons an erasure records on the bookings it ends (spec 3.1). A re-applied erasure's
-# (erasure_reapplied) is not one: the client's contact window has passed by then.
-ERASURE_REASONS = "'client_erased', 'account_erased'"
+# The reasons an erasure records on the bookings it ends (ZIF-58): an owner's erasure, an account
+# deletion, and a re-applied erasure. Whether the client hears of them is p_announce's.
+ERASURE_REASONS = "'client_erased', 'account_erased', 'erasure_reapplied'"
 
 ERASE_CLIENT_CORE = f"""
-CREATE FUNCTION erase_client_core(p_client uuid) RETURNS timestamptz
+CREATE FUNCTION erase_client_core(p_client uuid, p_announce boolean) RETURNS timestamptz
   LANGUAGE plpgsql SECURITY DEFINER {SEARCH_PATH} AS $$
 DECLARE
   v_tenant uuid;
@@ -74,17 +78,19 @@ BEGIN
       RETURN NULL;  -- not a client of this business
     END IF;
   END IF;
-  -- The contact hold, only for an erasure that ended a booking of this client (its event, with an
-  -- erasure's reason, written in this transaction) or that leaves money owed to it. On a repeat
-  -- v_email is NULL: nothing is written.
+  -- The contact hold: when this erasure ended a booking the client is to be told about (p_announce,
+  -- and its event, with an erasure's reason, written in this transaction), or when money is still
+  -- owed an answer on one of the client's bookings, announced or not. On a repeat v_email is NULL:
+  -- nothing is written.
   INSERT INTO client_erasure_holds (tenant_id, client_id, email, locale, purge_after)
   SELECT v_tenant, p_client, v_email, v_locale, now() + interval '30 days'
    WHERE v_email IS NOT NULL
-     AND (EXISTS (SELECT 1 FROM booking_events e
+     AND ((p_announce
+          AND EXISTS (SELECT 1 FROM booking_events e
                   JOIN bookings b ON b.tenant_id = e.tenant_id AND b.id = e.booking_id
                   WHERE e.tenant_id = v_tenant AND b.tenant_id = v_tenant
                     AND b.client_id = p_client AND e.created_at >= now()
-                    AND e.details ->> 'reason' IN ({ERASURE_REASONS}))
+                    AND e.details ->> 'reason' IN ({ERASURE_REASONS})))
           OR EXISTS (SELECT 1 FROM booking_payments p
                      JOIN bookings b ON b.tenant_id = p.tenant_id AND b.id = p.booking_id
                      WHERE p.tenant_id = v_tenant AND b.tenant_id = v_tenant
@@ -130,7 +136,7 @@ BEGIN
     RAISE EXCEPTION 'erase_client needs a live owner session of this business'
       USING ERRCODE = 'insufficient_privilege';
   END IF;
-  RETURN erase_client_core(p_client);
+  RETURN erase_client_core(p_client, true);  -- an owner's erasure: the client is told
 END $$"""
 
 
@@ -161,12 +167,12 @@ def upgrade() -> None:
     op.execute(ERASE_CLIENT)
     # 0048's default privileges give EXECUTE to no other role; revoked from PUBLIC all the same,
     # as every definer is. Only erase_client is the app role's.
-    op.execute("REVOKE EXECUTE ON FUNCTION erase_client_core(uuid) FROM PUBLIC")
+    op.execute("REVOKE EXECUTE ON FUNCTION erase_client_core(uuid, boolean) FROM PUBLIC")
     op.execute("REVOKE EXECUTE ON FUNCTION erase_client(bytea, uuid) FROM PUBLIC")
     op.execute("GRANT EXECUTE ON FUNCTION erase_client(bytea, uuid) TO ziftbook_app")
 
 
 def downgrade() -> None:
     op.execute("DROP FUNCTION erase_client(bytea, uuid)")
-    op.execute("DROP FUNCTION erase_client_core(uuid)")
+    op.execute("DROP FUNCTION erase_client_core(uuid, boolean)")
     op.execute("DROP TABLE client_erasure_holds")

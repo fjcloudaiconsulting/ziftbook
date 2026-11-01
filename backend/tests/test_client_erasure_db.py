@@ -133,7 +133,7 @@ CLASSIFICATION: dict[str, dict[str, str]] = {
     ),
 }
 KEY = {"booking_links": "token_hash"}  # every other table's key is id
-CORE = text("SELECT erase_client_core(:id)")
+CORE = text("SELECT erase_client_core(:id, true)")
 ERASE_CLIENT = text("SELECT erase_client(:h, :id)")
 THIS_TENANT = "current_setting('app.tenant_id')::uuid"
 SET_TENANT = text("SELECT set_config('app.tenant_id', :t, true)")
@@ -549,7 +549,8 @@ SELECT p.proname, p.prosecdef, p.proconfig, p.proowner::regrole::text,
        has_function_privilege('public', p.oid, 'EXECUTE'),
        has_function_privilege('ziftbook_app', p.oid, 'EXECUTE')
 FROM pg_proc p
-WHERE p.oid IN ('erase_client_core(uuid)'::regprocedure, 'erase_client(bytea,uuid)'::regprocedure)
+WHERE p.oid IN ('erase_client_core(uuid,boolean)'::regprocedure,
+                'erase_client(bytea,uuid)'::regprocedure)
 ORDER BY 1
 """)
 APPEND_ONLY = text("""
@@ -617,7 +618,12 @@ VALUES (current_setting('app.tenant_id')::uuid, :booking, 'cancelled_by_merchant
 
 
 def hold_after(
-    migrate_engine: Engine, seeded: Seeded, actor: uuid.UUID, *, reason: str | None
+    migrate_engine: Engine,
+    seeded: Seeded,
+    actor: uuid.UUID,
+    *,
+    reason: str | None,
+    announce: bool,
 ) -> list[Any]:
     """Erase the client, first writing (in the same transaction) an event that ends one of its
     bookings with this reason, when one is given; the holds of that business after."""
@@ -631,28 +637,37 @@ def hold_after(
                     "details": json.dumps({"reason": reason}),
                 },
             )
-        assert conn.scalar(CORE, {"id": seeded.client_id}) is not None
+        erased = conn.scalar(
+            text("SELECT erase_client_core(:id, :announce)"),
+            {"id": seeded.client_id, "announce": announce},
+        )
+        assert erased is not None
         return [tuple(row) for row in conn.execute(HOLDS)]
 
 
-# ZIF-58 F22 FENCE (H1). Wrong impl: a core that writes a hold for every erased client with an
-# address. A hold is written only when this erasure ended a booking of the client (an event with
-# an erasure's reason in its own transaction) or money is still owed an answer on one of its
-# bookings, and holds the address and locale only, for at most a month.
+# ZIF-58 F22 FENCE (H1). The hold is written when the client has an address and either this
+# erasure ended a booking the client is to be told about (p_announce, and an event with an
+# erasure's reason in its own transaction) or money is still owed an answer on one of its bookings,
+# whatever p_announce says: a re-applied erasure (p_announce false) announces no cancellation
+# again, but a refund that fails later must still reach the client. It holds the address and
+# locale only, for at most a month. Wrong impl: a core that writes a hold for every erased client
+# with an address; one that ignores p_announce; one that lets p_announce gate the money too.
 @pytest.mark.parametrize(
-    ("case", "held"),
+    ("case", "announce", "held"),
     [
-        ("ended_now", True),
-        ("money_owed", True),
-        ("settled_long_ago", False),  # a paid completed booking: nothing owed
-        ("paid_unsettled_but_kept", False),  # paid and kept: settle never touches it
-        ("ended_earlier", False),  # an erasure reason, but not this transaction's
-        ("reapplied", False),  # a re-applied erasure's reason: the contact window has passed
-        ("no_address", False),
+        ("ended_now", True, True),
+        ("ended_now", False, False),  # a re-apply: the cancellation was announced the first time
+        ("money_owed", True, True),
+        ("money_owed", False, True),  # a re-apply with money owed: a failed refund needs a channel
+        ("nothing_owed", False, False),
+        ("settled_long_ago", True, False),  # a paid completed booking: nothing owed
+        ("paid_unsettled_but_kept", True, False),  # paid and kept: settle never touches it
+        ("ended_earlier", True, False),  # an erasure reason, but not this transaction's
+        ("no_address", True, False),
     ],
 )
 def test_the_contact_hold_is_written_only_when_the_client_must_be_told(
-    people: People, migrate_engine: Engine, case: str, held: bool
+    people: People, migrate_engine: Engine, case: str, announce: bool, held: bool
 ) -> None:
     worker = member_id(people.a, people.only_a)
     payment = {"money_owed": ("open", False), "paid_unsettled_but_kept": ("paid", False)}
@@ -681,10 +696,8 @@ def test_the_contact_hold_is_written_only_when_the_client_must_be_told(
                     "details": json.dumps({"reason": "client_erased"}),
                 },
             )
-    reason = {"ended_now": "client_erased", "no_address": "client_erased"}.get(case)
-    if case == "reapplied":
-        reason = "erasure_reapplied"
-    holds = hold_after(migrate_engine, seeded, people.both, reason=reason)
+    reason = "client_erased" if case in ("ended_now", "no_address") else None
+    holds = hold_after(migrate_engine, seeded, people.both, reason=reason, announce=announce)
 
     assert holds == ([(seeded.client_id, seeded.email, "nl", True, True)] if held else [])
     with migrate_engine.connect() as conn:
