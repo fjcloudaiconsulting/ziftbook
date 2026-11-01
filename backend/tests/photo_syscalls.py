@@ -72,6 +72,9 @@ DENIED: dict[str, tuple[int | None, int | None]] = {
     "lchown": (None, 94),
     "memfd_create": (279, 319),
     "ioctl": (29, 16),
+    "setxattrat": (463, 463),
+    "removexattrat": (466, 466),
+    "file_setattr": (469, 469),
 }
 # Arguments other than all zeros, where zeros would be refused by the kernel anyway: a chown to
 # uid 0. -1 changes no owner.

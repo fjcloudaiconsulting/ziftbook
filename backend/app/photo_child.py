@@ -81,6 +81,7 @@ DENY = {
         **{"removexattr": 14, "lremovexattr": 15, "fremovexattr": 16},
         **{"utimensat": 88, "fchown": 55, "fchownat": 54},
         "ioctl": 29,
+        **{"setxattrat": 463, "removexattrat": 466, "file_setattr": 469},
     },
     "x86_64": {
         **{"socket": 41, "socketpair": 53, "io_uring_setup": 425},
@@ -97,6 +98,7 @@ DENY = {
         **{"utimensat": 280, "utime": 132, "utimes": 235, "futimesat": 261},
         **{"fchown": 93, "fchownat": 260, "chown": 92, "lchown": 94},
         "ioctl": 16,
+        **{"setxattrat": 463, "removexattrat": 466, "file_setattr": 469},
     },
 }
 # Syscalls that name a process, allowed only on the child itself: its pid as the first argument
@@ -132,6 +134,12 @@ OPENS = {"aarch64": {56: 2}, "x86_64": {2: 1, 257: 2}}  # open(at): the index of
 AUDIT_ARCH = {"aarch64": 0xC00000B7, "x86_64": 0xC000003E}
 WRITE_FLAGS = 0o1 | 0o2 | 0o100 | 0o1000  # O_WRONLY, O_RDWR, O_CREAT, O_TRUNC (both architectures)
 X32 = 0x40000000
+# The highest syscall number these tables were written against (file_setattr, Linux 6.17; both
+# architectures number new syscalls alike). Anything above answers ENOSYS, as on a kernel that
+# lacks it, so a syscall a later kernel adds cannot slip past the deny-list, and a library that
+# tries a new call first still falls back. The decode's own calls are far below it.
+CEILING = 469
+ENOSYS = 38  # Linux's (errno.ENOSYS is the host's: the tests build the program on macOS too)
 PR_SET_DUMPABLE = 4
 PR_SET_NO_NEW_PRIVS = 38
 PR_SET_SECCOMP = 22
@@ -151,6 +159,7 @@ def program(machine: str, pid: int) -> bytes:
     code.append(_bpf(ld, 0, 0, 0))
     if machine == "x86_64":
         code += [_bpf(jge, 0, 1, X32), _bpf(ret, 0, 0, kill)]
+    code += [_bpf(jge, 0, 1, CEILING + 1), _bpf(ret, 0, 0, 0x00050000 | ENOSYS)]
     for nr in sorted(DENY[machine].values()):
         code += [_bpf(jeq, 0, 1, nr), _bpf(ret, 0, 0, eperm)]
     # A pid is an int: its argument's low 32 bits (a negative one, as -1 for all, differs).
