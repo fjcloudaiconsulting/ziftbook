@@ -19,11 +19,12 @@ import pytest
 import sqlalchemy.exc
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 from sqlalchemy import Engine, text
 
 from app import csp_reports, limits, logs
 from app.main import MAX_BODY, create_app
-from tests.conftest import fresh_address, new_client
+from tests.conftest import fresh_address, new_client, points
 
 Lines = Callable[[], list[dict[str, Any]]]
 APP = "http://localhost:3000"  # ZIF_APP_URL's default, the origin "self" means here
@@ -752,6 +753,27 @@ def test_past_the_line_budget_no_violation_is_logged_and_one_drop_line_says_so(
     assert len(violations(log_lines)) == 3
     [drop] = dropped(log_lines)
     assert drop["global_cap"] == 1
+
+
+# 20. N6: every violation is counted, including those the line budget drops; foreign ones never.
+def test_every_violation_is_counted_in_the_metric(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, metric_reader: InMemoryMetricReader
+) -> None:
+    monkeypatch.setattr(csp_reports, "LINE_BUDGET", 0)
+    body = batch(entry(), entry(), entry(documentURL="https://evil.example/en"))
+
+    assert post(client, body, BATCH).status_code == 204
+
+    [point] = points(metric_reader, "ziftbook.csp.violations")
+    assert point.value == 2
+    assert dict(point.attributes) == {
+        "csp.report_format": "reports+json",
+        "csp.directive": "style-src-attr",
+        "csp.disposition": "report",
+        "csp.page": "/[locale]/sign-in",
+        "csp.blocked": "inline",
+        "csp.source": "self",
+    }
 
 
 # 21.

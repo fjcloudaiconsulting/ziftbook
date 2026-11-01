@@ -25,7 +25,7 @@ from fastapi import APIRouter, Request, Response
 from sqlalchemy.exc import SQLAlchemyError
 from starlette.concurrency import run_in_threadpool
 
-from app import limits, logs
+from app import limits, logs, tracing
 from app.booking_page import SLUG
 from app.business_settings import Locale
 from app.config import MailSettings, StorageSettings
@@ -482,6 +482,8 @@ async def report(request: Request) -> Response:
     for violation, count in sorted(found.items()):
         if violation.page == "foreign":
             continue
+        # Counted whether or not the line budget lets it be logged.
+        tracing.CSP_VIOLATIONS.add(count, {f"csp.{k}": v for k, v in violation._asdict().items()})
         if not _spend_line():
             _drops["global_cap"] += count
             continue
