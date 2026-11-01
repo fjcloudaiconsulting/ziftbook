@@ -190,6 +190,13 @@ that person's platform account (ZIF-99).
   carries no foreign key and no index on purpose: a foreign key check bypasses row-level security, so the constraint
   alone would tell a business whether an account id exists. A pointer left dangling by a platform erasure is correct.
 - Name and contact only: never a postal address.
+- An erased client (ZIF-58) is a tombstone: `erased_at` is set, `name` is `''` (it stays `NOT NULL`, so no release
+  ever reads NULL), and `user_id`, `email`, `phone`, `locale` and both notes are NULL (`ck_clients_name_or_erased`).
+  The row stays, so its bookings and payments keep their foreign key. The `clients_erased_final` trigger refuses any
+  UPDATE of an erased row, `ziftbook_migrate`'s included: an erasure is never undone and its time never rewritten.
+  Only the erase function writes `erased_at`: the app role's `INSERT` and `UPDATE` on `clients` are column lists
+  without it (0063), so a column added later that the app writes needs its own `GRANT INSERT (column)` or
+  `GRANT UPDATE (column)`, or every client write fails.
 - Marketing consent (`consents`) is per business. Nothing writes a platform-level consent, and one business's consent
   never grants another anything.
 - `consents` is append-only: one row per grant or withdrawal per purpose, holding the exact text shown and its policy
