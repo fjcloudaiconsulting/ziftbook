@@ -17,7 +17,7 @@ from psycopg.errors import InsufficientPrivilege
 from sqlalchemy import Connection, Engine, TextClause, text
 from sqlalchemy.exc import DBAPIError
 
-from app import auth
+from app import auth, bookings
 from app.db import tenant_context
 from tests.conftest import People, fresh_email, member_id, migrate_tenant_context, set_role
 from tests.test_bookings_db import seed_service
@@ -183,10 +183,25 @@ VALUES (:hash, current_setting('app.tenant_id')::uuid, :booking)
 """)
 INSERT_PAYMENT = text("""
 INSERT INTO booking_payments (tenant_id, booking_id, kind, intent_id, amount_minor, currency,
-                              fee_mode, status, settled_at)
-VALUES (current_setting('app.tenant_id')::uuid, :booking, 'pay', :intent, 2500, 'EUR',
-        'business_pays', :status, :settled)
+                              fee_mode, status, settled_at, refund_failed_at)
+VALUES (current_setting('app.tenant_id')::uuid, :booking, :kind, :intent, 2500, 'EUR',
+        'business_pays', :status, :settled, :refund_failed)
 """)
+
+
+@dataclass(frozen=True)
+class Pay:
+    """The payment on the seeded client's second booking, and that booking's status."""
+
+    kind: str = "pay"
+    status: str = "paid"
+    settled: bool = True
+    refund_failed: bool = False
+    booking: str = "completed"
+    live_checkout: bool = False  # an awaiting_payment booking whose checkout is still running
+
+
+PAID_AND_KEPT = Pay()
 
 
 def seed_person(
@@ -197,18 +212,23 @@ def seed_person(
     *,
     days_ago: int,
     email: str | None = "fresh",
-    payment: tuple[str, bool] = ("paid", True),
+    payment: Pay = PAID_AND_KEPT,
 ) -> Seeded:
-    """A client with every personal field set, a declined and a completed booking in the past
-    (each with a client's and a team member's event and a manage link), two consents, and a payment
-    on the completed booking: (status, settled)."""
+    """A client with every personal field set, a declined and a second booking in the past (each
+    with a client's and a team member's event and a manage link), two consents, and a payment on
+    the second booking, which is completed and paid and settled unless `payment` says otherwise."""
     service_id = seed_service(tenant_id)
     address = fresh_email() if email == "fresh" else email
     starts = datetime.now().astimezone() - timedelta(days=days_ago)
     with migrate_tenant_context(migrate_engine, tenant_id) as conn:
         client_id = conn.scalar(INSERT_CLIENT, {"email": address, "user_id": uuid.uuid7()})
         bookings = []
-        for offset, status, decline in ((0, "declined", "Fully booked"), (1, "completed", None)):
+        for offset, status, decline in (
+            (0, "declined", "Fully booked"),
+            (1, payment.booking, None),
+        ):
+            expiring = status in ("pending", "awaiting_payment")
+            live = timedelta(minutes=30 if payment.live_checkout else -30)
             bookings.append(
                 conn.scalar(
                     INSERT_BOOKING,
@@ -218,7 +238,7 @@ def seed_person(
                         "service": service_id,
                         "starts": starts + timedelta(hours=offset),
                         "status": status,
-                        "expires": None,
+                        "expires": datetime.now().astimezone() + live if expiring else None,
                         "decline": decline,
                         "checkout": os.urandom(32),
                     },
@@ -254,14 +274,16 @@ def seed_person(
             conn.execute(INSERT_LINK, {"hash": os.urandom(32), "booking": booking})
         for purpose in ("marketing_email", "sms"):
             conn.execute(INSERT_CONSENT, {"client": client_id, "purpose": purpose})
-        status, settled = payment
+        now = datetime.now().astimezone()
         conn.execute(
             INSERT_PAYMENT,
             {
                 "booking": bookings[1],
+                "kind": payment.kind,
                 "intent": f"pi_{uuid.uuid4().hex}",
-                "status": status,
-                "settled": datetime.now().astimezone() if settled else None,
+                "status": payment.status,
+                "settled": now if payment.settled else None,
+                "refund_failed": now if payment.refund_failed else None,
             },
         )
     return Seeded(tenant_id, client_id, tuple(bookings), address or "")
@@ -670,7 +692,10 @@ def test_the_contact_hold_is_written_only_when_the_client_must_be_told(
     people: People, migrate_engine: Engine, case: str, announce: bool, held: bool
 ) -> None:
     worker = member_id(people.a, people.only_a)
-    payment = {"money_owed": ("open", False), "paid_unsettled_but_kept": ("paid", False)}
+    payment = {
+        "money_owed": Pay(status="open", settled=False, booking="cancelled_by_merchant"),
+        "paid_unsettled_but_kept": Pay(settled=False),
+    }
     seeded = seed_person(
         migrate_engine,
         people.a,
@@ -678,14 +703,8 @@ def test_the_contact_hold_is_written_only_when_the_client_must_be_told(
         people.both,
         days_ago=10,
         email=None if case == "no_address" else "fresh",
-        payment=payment.get(case, ("paid", True)),
+        payment=payment.get(case, PAID_AND_KEPT),
     )
-    if case == "money_owed":  # an open checkout on a booking that has ended
-        with migrate_tenant_context(migrate_engine, people.a) as conn:
-            conn.execute(
-                text("UPDATE bookings SET status = 'cancelled_by_merchant' WHERE id = :id"),
-                {"id": seeded.bookings[1]},
-            )
     if case == "ended_earlier":
         with migrate_tenant_context(migrate_engine, people.a) as conn:
             conn.execute(
@@ -709,3 +728,45 @@ def test_the_contact_hold_is_written_only_when_the_client_must_be_told(
             "purge_after",
             "tenant_id",
         ]
+
+
+OWED = text("SELECT client_money_owed(CAST(:t AS uuid), :c)")
+
+
+# ZIF-58 F22 FENCE, money still owed an answer: one rule, the SQL function client_money_owed, which
+# the core's hold uses and the hold's purge will use, so the two cannot drift. A payment is owed an
+# answer while it is unsettled and the settle pass still has work on it (payments.UNSETTLED: an
+# open checkout that is no longer running, a card hold, a paid booking that ended with a refund),
+# or when its refund failed. A paid booking that is kept is never owed. With p_announce false, so
+# only the money decides the hold. Wrong impl: any arm left out (paid on each refunding ending,
+# checked, open, a failed refund), or an open checkout still running counted as owed.
+@pytest.mark.parametrize(
+    ("payment", "owed"),
+    [
+        *[(Pay(settled=False, booking=ending), True) for ending in bookings.REFUNDING],
+        (Pay(kind="check", status="checked", settled=False), True),
+        (Pay(status="open", settled=False, booking="awaiting_payment"), True),
+        (Pay(status="open", settled=False, booking="awaiting_payment", live_checkout=True), False),
+        (Pay(booking="cancelled_by_merchant", refund_failed=True), True),
+        (Pay(booking="cancelled_by_merchant"), False),  # refunded and settled
+        (Pay(settled=False), False),  # paid and kept
+    ],
+    ids=lambda value: repr(value) if isinstance(value, Pay) else str(value),
+)
+def test_money_still_owed_is_one_rule_and_decides_the_hold(
+    people: People, migrate_engine: Engine, payment: Pay, owed: bool
+) -> None:
+    seeded = seed_person(
+        migrate_engine,
+        people.a,
+        member_id(people.a, people.only_a),
+        people.both,
+        days_ago=10,
+        payment=payment,
+    )
+    with migrate_tenant_context(migrate_engine, people.a) as conn:
+        assert conn.scalar(OWED, {"t": str(people.a), "c": seeded.client_id}) is owed
+
+    holds = hold_after(migrate_engine, seeded, people.both, reason=None, announce=False)
+
+    assert holds == ([(seeded.client_id, seeded.email, "nl", True, True)] if owed else [])

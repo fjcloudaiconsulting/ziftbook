@@ -2296,7 +2296,8 @@ def test_0063_round_trips_the_client_tombstone(
 ERASE_FUNCTIONS = text("""
 SELECT to_regprocedure('erase_client_core(uuid,boolean)') IS NOT NULL,
        to_regprocedure('erase_client(bytea,uuid)') IS NOT NULL,
-       to_regclass('client_erasure_holds') IS NOT NULL
+       to_regclass('client_erasure_holds') IS NOT NULL,
+       to_regprocedure('client_money_owed(uuid,uuid)') IS NOT NULL
 """)
 ERASE_ACCESS = text("""
 SELECT has_function_privilege('ziftbook_app', 'erase_client(bytea,uuid)', 'EXECUTE'),
@@ -2319,11 +2320,11 @@ def test_0064_round_trips_the_erase_functions(
     try:
         command.downgrade(cfg, "0063")
         with migrate_engine.connect() as conn:
-            assert tuple(conn.execute(ERASE_FUNCTIONS).one()) == (False, False, False)
+            assert tuple(conn.execute(ERASE_FUNCTIONS).one()) == (False, False, False, False)
     finally:
         command.upgrade(cfg, "head")
     with migrate_engine.connect() as conn:
-        assert tuple(conn.execute(ERASE_FUNCTIONS).one()) == (True, True, True)
+        assert tuple(conn.execute(ERASE_FUNCTIONS).one()) == (True, True, True, True)
         assert tuple(conn.execute(ERASE_ACCESS).one()) == (
             True,
             False,
