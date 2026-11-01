@@ -13,7 +13,18 @@ from opentelemetry import metrics
 from opentelemetry.metrics import CallbackOptions, Observation
 from sqlalchemy import create_engine, event
 
-from app import bookings, erasure_holds, jobs, limits, logs, mail, payments, photos, tracing
+from app import (
+    bookings,
+    erasure_holds,
+    jobs,
+    limits,
+    logs,
+    mail,
+    payments,
+    photos,
+    retention,
+    tracing,
+)
 from app.config import MailSettings, StripeSettings, WorkerSettings
 from app.db import SessionLocal, database_role, reset_session
 from app.jobs import JobKind, run_once
@@ -77,6 +88,9 @@ POLL_SECONDS = 30
 # ZIF-122: settle expired pending bookings (housekeeping) and, ZIF-58, purge the contact holds no
 # longer needed: on a timer, not every poll.
 SWEEP_SECONDS = 300
+# ZIF-235: the retention sweep, hourly; sooner while a run leaves a backlog (its budget is spent).
+RETENTION_SECONDS = 3600
+RETENTION_BACKLOG_SECONDS = 300
 
 logger = logging.getLogger("app.worker")
 
@@ -89,7 +103,9 @@ async def work(kinds: dict[str, JobKind], healthcheck_url: str | None, stop: asy
     """Run due jobs until nothing is due, sweep when due, ping, then wait POLL_SECONDS or until
     stopped."""
     swept: float | None = None  # monotonic time of the last SUCCESSFUL sweep
+    retention_due: float | None = None  # when the next retention run is due; None: now
     while not stop.is_set():
+        healthy = True
         try:
             while await run_once(kinds) and not stop.is_set():
                 pass
@@ -116,14 +132,25 @@ async def work(kinds: dict[str, JobKind], healthcheck_url: str | None, stop: asy
         except Exception:
             # No ping: an iteration that keeps failing (e.g. the database is down) raises the alert.
             logger.exception("worker iteration failed")
-        else:
-            if healthcheck_url:
-                try:
-                    await asyncio.to_thread(ping, healthcheck_url)
-                except Exception as error:
-                    # Any class: a ping never stops the worker (ZIF-21; a URL with no scheme raises
-                    # ValueError). The URL is a secret-ish check id.
-                    logger.warning("healthcheck ping failed", extra={"error": type(error).__name__})
+            healthy = False
+        # ZIF-235. After the booking sweep, which frees slots, and in its own try: neither is
+        # hostage to the other. A failure withholds the ping and retries next poll. The sweep
+        # bounds its own run (a time budget, and stop checked between batches).
+        if not stop.is_set() and (retention_due is None or time.monotonic() >= retention_due):
+            try:
+                result = await asyncio.to_thread(retention.sweep, stop.is_set)
+                wait = RETENTION_SECONDS if result.complete else RETENTION_BACKLOG_SECONDS
+                retention_due = time.monotonic() + wait
+            except Exception:
+                logger.exception("retention sweep failed")
+                healthy = False
+        if healthy and healthcheck_url:
+            try:
+                await asyncio.to_thread(ping, healthcheck_url)
+            except Exception as error:
+                # Any class: a ping never stops the worker (ZIF-21; a URL with no scheme raises
+                # ValueError). The URL is a secret-ish check id.
+                logger.warning("healthcheck ping failed", extra={"error": type(error).__name__})
         try:
             await asyncio.wait_for(stop.wait(), POLL_SECONDS)
         except TimeoutError:
