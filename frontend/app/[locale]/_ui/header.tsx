@@ -6,7 +6,7 @@ import { type MouseEvent, useEffect, useId, useRef, useState, useSyncExternalSto
 import { accountSetLocale, sessionRead } from "@/api-client";
 import { Link, usePathname, useRouter } from "@/i18n/navigation";
 import { routing } from "@/i18n/routing";
-import { isAdminPath, pickedHere, recordPick, resolveLocale, savePickedLanguage, subscribePick, takeUnsavedNotice } from "@/lib/locale";
+import { isAdminPath, movesOnPick, pickedHere, recordPick, resolveLocale, savePickedLanguage, subscribePick, takeUnsavedNotice } from "@/lib/locale";
 
 import { send } from "./parts";
 import styles from "./ui.module.css";
@@ -60,7 +60,12 @@ function Flag({ locale }: { locale: Locale }) {
 
 /** ZIF-102: the signed-in person the language button is for, and how to save a pick to their
  * account (true once it holds it). */
-export type OwnLanguage = { user: string; save(locale: Locale): Promise<boolean> };
+export type OwnLanguage = {
+  user: string;
+  save(locale: Locale): Promise<boolean>;
+  /** The console: its shell moves the page once the saved language changes (movesOnPick). */
+  shellMoves?: boolean;
+};
 
 /** The language list, shared by the signed-out header's popover and the console's. With `own`
  * (a signed-in person), a pick is saved to their account before the page changes language. */
@@ -79,7 +84,9 @@ export function LanguageLinks({ own }: { own?: OwnLanguage }) {
     setBusy(false);
     // Not saved: it still applies here, for now (resolveLocale's `picked`), and the menu says so.
     recordPick(own.user, id, saved, { onScreen: id === locale });
-    if (id !== locale) router.replace(pathname, { locale: id });
+    if (movesOnPick({ current: locale, picked: id, saved, shellMoves: own.shellMoves ?? false })) {
+      router.replace(`${pathname}${window.location.search}`, { locale: id });
+    }
   }
 
   return (

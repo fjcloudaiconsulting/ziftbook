@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, test } from "node:test";
 
-import { browserLocale, forgetPick, isAdminPath, pickedHere, recordPick, resolveLocale, savePickedLanguage, subscribePick, takeUnsavedNotice } from "../lib/locale.ts";
+import { browserLocale, forgetPick, isAdminPath, movesOnPick, pickedHere, recordPick, resolveLocale, savePickedLanguage, subscribePick, takeUnsavedNotice } from "../lib/locale.ts";
 
 const base = { own: null, signedIn: true, surface: "console", browser: [], business: null, url: "en", picked: null };
 
@@ -162,5 +162,27 @@ describe("platform admin pages (isAdminPath)", () => {
   test("guard: the public language hook skips its viewer logic there", () => {
     const src = readFileSync(new URL("../app/[locale]/_ui/header.tsx", import.meta.url), "utf8");
     assert.match(src, /const admin = isAdminPath\(pathname\);[\s\S]*if \(admin\) return;[\s\S]*if \(admin \|\| !viewer\) return undefined;/);
+  });
+});
+
+describe("who moves the page after a pick (movesOnPick)", () => {
+  test("fence: in the console a saved pick is moved by the shell alone, so the page moves once", () => {
+    // Wrong implementation killed: the button and the shell both navigating (two fetches, and the
+    // last one decides whether the query survives).
+    assert.equal(movesOnPick({ current: "en", picked: "nl", saved: true, shellMoves: true }), false);
+    assert.equal(movesOnPick({ current: "en", picked: "nl", saved: false, shellMoves: true }), true);
+  });
+
+  test("guard: a public page moves itself; the language on screen never moves", () => {
+    assert.equal(movesOnPick({ current: "en", picked: "nl", saved: true, shellMoves: false }), true);
+    assert.equal(movesOnPick({ current: "nl", picked: "nl", saved: false, shellMoves: false }), false);
+  });
+
+  test("fence: the button's move keeps the address's query, as the redirects do", () => {
+    // Wrong implementation killed: router.replace(pathname, ...), which drops ?service=... on the
+    // checkout or Stripe's ?stripe=... on Settings.
+    const src = readFileSync(new URL("../app/[locale]/_ui/header.tsx", import.meta.url), "utf8");
+    const pick = src.slice(src.indexOf("async function pick("), src.indexOf("return (", src.indexOf("async function pick(")));
+    assert.match(pick, /router\.replace\(`\$\{pathname\}\$\{window\.location\.search\}`, \{ locale: id \}\)/);
   });
 });

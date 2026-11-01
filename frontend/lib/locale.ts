@@ -110,3 +110,10 @@ export async function savePickedLanguage(
 export function isAdminPath(pathname: string): boolean {
   return pathname === "/admin" || pathname.startsWith("/admin/");
 }
+
+/** Whether the language button moves the page itself after a pick. The console's shell moves it
+ * when the saved language changes (`shellMoves`), so a saved pick there is moved once, by the shell;
+ * an unsaved one, and any pick on a public page, the button moves. The language on screen never. */
+export function movesOnPick({ current, picked, saved, shellMoves }: { current: string; picked: string; saved: boolean; shellMoves: boolean }): boolean {
+  return picked !== current && !(saved && shellMoves);
+}

@@ -500,6 +500,7 @@ export function Shell({ children }: { children: ReactNode }) {
   const ownLanguage: OwnLanguage | undefined = session
     ? {
         user: session.user_id,
+        shellMoves: true, // the redirect below moves the page once the saved language changes
         async save(locale) {
           const outcome = await call(() => accountSetLocale({ body: { locale } }), { write: true });
           if (outcome.status !== 200 || !outcome.data) return false;
