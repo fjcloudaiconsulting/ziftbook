@@ -80,6 +80,7 @@ DENY = {
         **{"setxattr": 5, "lsetxattr": 6, "fsetxattr": 7},
         **{"removexattr": 14, "lremovexattr": 15, "fremovexattr": 16},
         **{"utimensat": 88, "fchown": 55, "fchownat": 54},
+        "ioctl": 29,
     },
     "x86_64": {
         **{"socket": 41, "socketpair": 53, "io_uring_setup": 425},
@@ -95,6 +96,7 @@ DENY = {
         **{"removexattr": 197, "lremovexattr": 198, "fremovexattr": 199},
         **{"utimensat": 280, "utime": 132, "utimes": 235, "futimesat": 261},
         **{"fchown": 93, "fchownat": 260, "chown": 92, "lchown": 94},
+        "ioctl": 16,
     },
 }
 # Syscalls that name a process, allowed only on the child itself: its pid as the first argument
@@ -117,6 +119,15 @@ SELF_OR_ZERO |= {
     "aarch64": SELF_OR_ZERO["aarch64"] | {"sched_setaffinity": 122, "sched_setattr": 274},
     "x86_64": SELF_OR_ZERO["x86_64"] | {"sched_setaffinity": 203, "sched_setattr": 314},
 }
+# fcntl, allowed but for the commands that make the kernel signal a process: an owner for a
+# descriptor's I/O signals (F_SETOWN, F_SETOWN_EX), the signal (F_SETSIG), a lease or a directory
+# notice (F_SETLEASE, F_NOTIFY), and F_SETFL with O_ASYNC. Pointed at the API, a SIGIO (which ends
+# a process by default) or a chosen signal would reach it. ioctl, which can do the same and which
+# the decode never needs, is denied outright.
+FCNTL = {"aarch64": 25, "x86_64": 72}
+FCNTL_DENIED = (8, 15, 10, 1024, 1026)  # F_SETOWN, F_SETOWN_EX, F_SETSIG, F_SETLEASE, F_NOTIFY
+F_SETFL = 4
+O_ASYNC = 0o20000  # both architectures
 OPENS = {"aarch64": {56: 2}, "x86_64": {2: 1, 257: 2}}  # open(at): the index of its flags argument
 AUDIT_ARCH = {"aarch64": 0xC00000B7, "x86_64": 0xC000003E}
 WRITE_FLAGS = 0o1 | 0o2 | 0o100 | 0o1000  # O_WRONLY, O_RDWR, O_CREAT, O_TRUNC (both architectures)
@@ -149,6 +160,12 @@ def program(machine: str, pid: int) -> bytes:
     for nr in sorted(SELF_OR_ZERO[machine].values()):
         code += [_bpf(jeq, 0, 5, nr), _bpf(ld, 0, 0, 16), _bpf(jeq, 2, 0, pid), _bpf(jeq, 1, 0, 0)]
         code += [_bpf(ret, 0, 0, eperm), _bpf(ret, 0, 0, allow)]
+    # fcntl(fd, cmd, arg): cmd is argument 1, arg argument 2.
+    denied = len(FCNTL_DENIED)
+    code += [_bpf(jeq, 0, denied + 6, FCNTL[machine]), _bpf(ld, 0, 0, 24)]
+    code += [_bpf(jeq, denied - i + 2, 0, cmd) for i, cmd in enumerate(FCNTL_DENIED)]
+    code += [_bpf(jeq, 0, 3, F_SETFL), _bpf(ld, 0, 0, 32), _bpf(jset, 0, 1, O_ASYNC)]
+    code += [_bpf(ret, 0, 0, eperm), _bpf(ret, 0, 0, allow)]
     for nr, flags in OPENS[machine].items():
         # Not this syscall: skip its four instructions, the number still loaded for the next.
         code += [_bpf(jeq, 0, 4, nr), _bpf(ld, 0, 0, 16 + 8 * flags)]

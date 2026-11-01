@@ -424,13 +424,25 @@ def own_state() -> dict[str, object]:
 # degrading the API by its pid: same-uid kill, prlimit64, setpriority, the scheduler calls and
 # ioprio need no capability, and non-dumpability does not cover them. Each is refused unless it
 # names the child itself; this process's limits, priority, affinity and policy stay as they were.
+#
+# Nor through the kernel's I/O signals (fcntl F_SETOWN/F_SETOWN_EX/F_SETSIG/F_SETLEASE/F_NOTIFY,
+# F_SETFL with O_ASYNC, ioctl): the child cannot point its pipe or upload at the API, so no SIGIO
+# (which ends a process by default) or chosen signal reaches it.
 @only_linux
 def test_the_child_cannot_reach_the_api_by_its_pid() -> None:
+    received: list[int] = []
+    watched = (signal.SIGIO, signal.SIGURG, signal.SIGTERM, signal.SIGUSR1)
+    previous = {n: signal.signal(n, lambda number, frame: received.append(number)) for n in watched}
     before = own_state()
     try:
         assert decode(probe("probe-parent", PNG)).width == 20
+        time.sleep(0.2)  # any signal the kernel would send
     except photos.Refusal as refusal:
         pytest.fail(f"check {refusal.fields.get('exit_code', 0) - 10} was not refused: {refusal}")
+    finally:
+        for number, handler in previous.items():
+            signal.signal(number, handler)
+    assert received == []
     assert own_state() == before
 
 
@@ -996,6 +1008,13 @@ def test_the_filter_program_decides_each_syscall(machine: str) -> None:
     assert run_filter(machine, nr["openat"], (0, 0, os.O_RDONLY)) == ALLOW
     for flag in (0o1, 0o2, 0o100, 0o1000):  # O_WRONLY, O_RDWR, O_CREAT, O_TRUNC on Linux
         assert run_filter(machine, nr["openat"], (0, 0, flag)) == EPERM
+    # fcntl: the commands that point I/O signals at a process, and async mode, are refused.
+    for cmd in (8, 15, 10, 1024, 1026):  # F_SETOWN, F_SETOWN_EX, F_SETSIG, F_SETLEASE, F_NOTIFY
+        assert run_filter(machine, nr["fcntl"], (1, cmd, 4242)) == EPERM, cmd
+    assert run_filter(machine, nr["fcntl"], (1, 4, 0o20000)) == EPERM  # F_SETFL O_ASYNC
+    assert run_filter(machine, nr["fcntl"], (1, 4, 0o4000)) == ALLOW  # F_SETFL O_NONBLOCK
+    for cmd in (0, 1, 2, 3, 9, 1030):  # F_DUPFD, F_GETFD, F_SETFD, F_GETFL, F_GETOWN, CLOEXEC
+        assert run_filter(machine, nr["fcntl"], (1, cmd, 0o20000)) == ALLOW, cmd
     other = photo_child.AUDIT_ARCH["x86_64" if machine == "aarch64" else "aarch64"]
     assert run_filter(machine, nr["read"], arch=other) == KILL
     assert run_filter(machine, nr["read"], arch=0x40000003) == KILL  # i386
