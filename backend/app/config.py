@@ -1,5 +1,4 @@
 import hashlib
-from datetime import date
 from typing import Literal
 from urllib.parse import urlsplit
 
@@ -35,11 +34,10 @@ class WorkerSettings(DatabaseSettings):
 
     # Pinged after every successful loop, so a dead or stuck worker raises an alert. Unset in dev.
     healthcheck_url: str | None = None
-    # ZIF-235: an incident's evidence hold. Until this date (UTC, exclusive) the retention sweep
-    # keeps audit events and booking-event addresses (sessions and rate limits are still swept).
-    # More than 90 days ahead holds 90 days from startup, with an ERROR; not a date: the worker
-    # stops.
-    retention_hold_until: date | None = None
+    # ZIF-235: an incident's evidence hold, a plain YYYY-MM-DD. Read as text and parsed by
+    # app.retention.parse_hold, never by pydantic (which reads `0` as 1970-01-01): no value stops
+    # the worker, and none turns the hold off silently.
+    retention_hold_until: str | None = None
 
 
 class LogSettings(Settings):

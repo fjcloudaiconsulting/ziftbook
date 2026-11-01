@@ -13,7 +13,6 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from pydantic import ValidationError
 from sqlalchemy import Engine, create_engine, event, text
 from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.orm import Session
@@ -388,62 +387,88 @@ def test_a_quiet_run_takes_one_batch(action: str) -> None:
 TODAY = date(2026, 11, 1)
 
 
-# 28a: FENCE. Wrong impl: a far-future (mistyped) date that turns the hold off, or one kept as is
-# (an indefinite hold is its own over-retention); a date within 90 days changed.
+# 28a: FENCE (build review, security #2 and the architect's ruling). Wrong impl: a value that
+# turns the hold off without a word: a past or mistyped year, `0` (pydantic reads it as 1970), a
+# datetime or a number; or a date far ahead that holds for years. Only a plain YYYY-MM-DD between
+# tomorrow and 90 days ahead is a hold that ends by itself; a past date that parsed is "past" (not
+# held, an ERROR at startup); anything else is "invalid": held until someone fixes it, loudly.
 @pytest.mark.parametrize(
-    ("requested", "effective", "clamped"),
+    ("raw", "state", "until"),
     [
-        (None, None, False),
-        (date(2026, 11, 20), date(2026, 11, 20), False),
-        (TODAY + timedelta(days=90), TODAY + timedelta(days=90), False),
-        (TODAY + timedelta(days=91), TODAY + timedelta(days=90), True),
-        (date(2062, 1, 1), TODAY + timedelta(days=90), True),
+        (None, "off", None),
+        ("2026-11-20", "on", date(2026, 11, 20)),
+        ("2027-01-30", "on", TODAY + timedelta(days=90)),
+        ("2027-01-31", "invalid", None),
+        ("2062-11-20", "invalid", None),
+        ("2026-11-01", "past", date(2026, 11, 1)),
+        ("2025-11-20", "past", date(2025, 11, 20)),
+        ("0", "invalid", None),
+        ("90", "invalid", None),
+        ("20261120", "invalid", None),
+        ("2026-11-20T00:00:00+05:00", "invalid", None),
+        (" 2026-11-20 ", "invalid", None),
+        ("2026-02-30", "invalid", None),
+        ("next tuesday", "invalid", None),
     ],
 )
-def test_a_hold_more_than_90_days_ahead_holds_90_days(
-    requested: date | None, effective: date | None, clamped: bool
+def test_only_a_plain_date_within_90_days_is_a_hold_that_ends_by_itself(
+    raw: str | None, state: str, until: date | None
 ) -> None:
-    assert retention.effective_hold(requested, TODAY) == (effective, clamped)
+    hold = retention.parse_hold(raw, TODAY)
+    assert (hold.state, hold.until) == (state, until)
+    assert hold.held(TODAY) is (state in ("on", "invalid"))
 
 
-def test_the_hold_date_must_be_a_date(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_an_on_hold_ends_on_its_date_and_an_invalid_one_never() -> None:
+    on = retention.parse_hold("2026-11-20", TODAY)
+    invalid = retention.parse_hold("0", TODAY)
+    assert on.held(date(2026, 11, 19)) and not on.held(date(2026, 11, 20))
+    assert invalid.held(date(2030, 1, 1))
+
+
+def test_the_worker_starts_with_any_hold_value(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A malformed hold must never stop the worker (emails would stop): it is held, loudly."""
     monkeypatch.setenv("ZIF_DATABASE_URL", "postgresql+psycopg://x@localhost/x")
-    monkeypatch.setenv("ZIF_RETENTION_HOLD_UNTIL", "next tuesday")
-    with pytest.raises(ValidationError):
-        WorkerSettings()
-    monkeypatch.setenv("ZIF_RETENTION_HOLD_UNTIL", "2026-11-20")
-    assert WorkerSettings().retention_hold_until == date(2026, 11, 20)
+    monkeypatch.setenv("ZIF_RETENTION_HOLD_UNTIL", "0")
+    assert WorkerSettings().retention_hold_until == "0"
 
 
 # 28b: FENCE. Wrong impl: a hold that is ignored, one that also stops sessions, rate limits or
 # admin sessions (live state, not evidence), or one said nowhere.
+@pytest.mark.parametrize("raw", ["tomorrow", "0"], ids=["on", "invalid"])
 def test_a_hold_keeps_the_evidence_and_says_so_every_run(
     action: str,
     app_engine: Engine,
     superuser: Engine,
     audit_marker: str,
     log_lines: Lines,
+    raw: str,
 ) -> None:
     seed_audit(superuser, f"{audit_marker}:old", "signed_out", "1 year 1 hour")
     seed_key(app_engine, f"{action}:old", 1, "3 days")
-    until = datetime.now(UTC).date() + timedelta(days=1)
+    today = datetime.now(UTC).date()
+    value = (today + timedelta(days=1)).isoformat() if raw == "tomorrow" else raw
+    hold = retention.parse_hold(value, today)
 
-    swept = retention.sweep(hold_until=until)
+    swept = retention.sweep(hold=hold)
 
     assert swept.held is True and swept.complete is True
     assert audit_targets(superuser, audit_marker) == {f"{audit_marker}:old"}
     assert keys(app_engine, action) == set()
     (line,) = [line for line in log_lines() if line.get("logger") == "app.retention"]
-    assert line["level"] == "WARNING" and line["hold_until"] == until.isoformat()
+    assert line["level"] == "WARNING" and line["hold_until"] == value
 
 
-# 28c: GUARD. A hold whose date has come is over by itself.
-def test_a_hold_ends_on_its_date(
-    action: str, superuser: Engine, audit_marker: str, worker_engine: Engine
+# 28c: GUARD. A hold whose date has come, or a past one, keeps nothing.
+@pytest.mark.parametrize("days", [0, -400])
+def test_a_past_hold_keeps_nothing(
+    action: str, superuser: Engine, audit_marker: str, days: int
 ) -> None:
     seed_audit(superuser, f"{audit_marker}:old", "signed_out", "1 year 1 hour")
+    today = datetime.now(UTC).date()
+    hold = retention.parse_hold((today + timedelta(days=days)).isoformat(), today)
 
-    swept = retention.sweep(hold_until=datetime.now(UTC).date())
+    swept = retention.sweep(hold=hold)
 
     assert swept.held is False
     assert audit_targets(superuser, audit_marker) == set()
