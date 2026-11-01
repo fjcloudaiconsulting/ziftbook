@@ -22,15 +22,14 @@ import {
   forgetStaleReturn,
   filledForm,
   historyOutcome,
-  historySections,
   historyServiceName,
   historyWhen,
   mergeHistory,
-  needsMore,
   linkRequestShape,
   offerNext,
   recheckOutcome,
   rememberReturn,
+  sectionAfterPage,
   saveDetailsOffer,
   RETURN_KEY,
   splitPhone,
@@ -86,36 +85,20 @@ describe("your bookings", () => {
     assert.equal(historyOutcome(0, undefined), "error");
   });
 
-  test("upcoming first, the next one at the top; then the past, newest first", () => {
-    // The API pages newest first; the screen answers "what is next" first.
-    const page = [
-      booking("2026-11-04T17:30:00Z", "pending"),
-      booking("2026-10-31T09:00:00Z"),
-      booking("2026-09-27T09:00:00Z", "completed"),
-      booking("2026-09-01T09:00:00Z", "cancelled_by_client"),
-    ];
-    const { upcoming, past } = historySections(page, now);
-    assert.deepEqual(upcoming.map((b) => b.starts_at), ["2026-10-31T09:00:00Z", "2026-11-04T17:30:00Z"]);
-    assert.deepEqual(past.map((b) => b.starts_at), ["2026-09-27T09:00:00Z", "2026-09-01T09:00:00Z"]);
+  test("the server decides the sections: what it answers is shown as it comes, in its order", () => {
+    // PR 6 fold, concern 3: the API's section=upcoming (soonest first) and section=past (newest first) replace
+    // the page's own split and its "keep loading" loop (backend tests pin the rule).
+    const one = { bookings: [booking("2026-11-04T09:00:00Z")], next: "c1" };
+    const after = sectionAfterPage({ bookings: [], next: null }, one, null);
+    assert.deepEqual(after, { bookings: one.bookings, next: "c1" });
+    const two = { bookings: [booking("2026-11-05T09:00:00Z")], next: null };
+    assert.deepEqual(sectionAfterPage(after, two, "c1"), { bookings: [...one.bookings, ...two.bookings], next: null });
   });
 
-  test("a booking in progress is still upcoming; one that has ended is past", () => {
-    // Wrong implementation killed: splitting on starts_at, which puts the appointment you are in under Past.
-    const inProgress = booking("2026-10-30T11:30:00Z");
-    const ended = booking("2026-10-30T11:00:00Z");
-    const { upcoming, past } = historySections([inProgress, ended], now);
-    assert.deepEqual(upcoming, [inProgress]);
-    assert.deepEqual(past, [ended]);
-  });
-
-  test("only what still stands is upcoming: cancelled, declined, expired go under Past, with Book again", () => {
-    // Owner may overrule (correctness 8): a cancelled booking next week is not "upcoming" to the person.
-    const later = ["cancelled_by_client", "cancelled_by_merchant", "declined", "expired", "no_show"].map((st) => booking("2026-11-06T09:00:00Z", st));
-    const standing = ["pending", "awaiting_payment", "confirmed"].map((st) => booking("2026-11-05T09:00:00Z", st));
-    const { upcoming, past } = historySections([...later, ...standing], now);
-    assert.deepEqual(upcoming.map((b) => b.status), ["pending", "awaiting_payment", "confirmed"]);
-    assert.deepEqual(past.map((b) => b.status), ["cancelled_by_client", "cancelled_by_merchant", "declined", "expired", "no_show"]);
-    for (const b of past) assert.equal(bookAgainSlug(b, false), "salon-bloom");
+  test("every past row offers Book again", () => {
+    for (const st of ["completed", "cancelled_by_client", "declined", "expired", "no_show"]) {
+      assert.equal(bookAgainSlug(booking("2026-09-06T09:00:00Z", st), false), "salon-bloom");
+    }
   });
 
   test("Show more appends the next page; a first page replaces what was shown", () => {
@@ -123,18 +106,6 @@ describe("your bookings", () => {
     const two = [booking("2026-09-01T09:00:00Z")];
     assert.deepEqual(mergeHistory(one, two, "cursor"), [...one, ...two]);
     assert.deepEqual(mergeHistory(one, two, null), two);
-  });
-
-  test("pages keep loading until every booking still to come is in: the next one is always shown first", () => {
-    // The API pages newest first: with more than a page of bookings ahead, the soonest is on a later page. Any
-    // booking not loaded yet starts no later than the last one loaded, and lasts at most 12 hours
-    // (backend/app/services.py, Duration).
-    const ahead = [booking("2026-11-20T09:00:00Z"), booking("2026-11-02T09:00:00Z")];
-    assert.equal(needsMore(ahead, "cursor", now), true);
-    assert.equal(needsMore(ahead, null, now), false);
-    assert.equal(needsMore([booking("2026-10-30T01:00:00Z")], "cursor", now), true);
-    assert.equal(needsMore([booking("2026-10-29T23:59:00Z")], "cursor", now), false);
-    assert.equal(needsMore([], "cursor", now), false);
   });
 
   test("the status pill: waiting and confirmed ahead; nothing on a kept past booking; what went otherwise, muted", () => {
@@ -721,11 +692,14 @@ describe("pt on the client's pages says reserva (PR 6 review, correctness 7)", (
   });
 });
 
-describe("the bookings page loads what it shows (PR 6 review, correctness 8 and 11)", () => {
-  test("fence: each page merges through mergeHistory, and loading goes on while needsMore", () => {
+describe("the bookings page loads each section from the server (PR 6 review 8, fold concern 3)", () => {
+  test("fence: one request per page of a section, merged through sectionAfterPage; no client split, no loop", () => {
     const text = readFileSync(new URL("../app/[locale]/account/your-bookings.tsx", import.meta.url), "utf8");
-    assert.match(text, /shown = mergeHistory\(shown, answer\.data\.bookings, at\);/);
-    assert.match(text, /if \(!needsMore\(shown, at, new Date\(\)\)\) break;/);
+    assert.match(text, /platformAccountHistory\(\{ query: \{ section: which, limit: PAGE, \.\.\.\(cursor \? \{ cursor \} : \{\}\) \} \}\)/);
+    assert.match(text, /setSections\(\(shown\) => \(\{ \.\.\.shown, \[which\]: sectionAfterPage\(shown\[which\], page, cursor\) \}\)\)/);
+    assert.doesNotMatch(text, /historySections|needsMore|for \(;;\)|while \(/);
+    assert.match(text, /loadSection\("upcoming", null\)/);
+    assert.match(text, /loadSection\("past", null\)/);
   });
 });
 
@@ -743,7 +717,7 @@ describe("the finish screen's country picker keeps its order (PR 6 review, corre
 describe("signing out empties the bookings at once (PR 6 review, correctness 10)", () => {
   test("fence: the list listens for the sign-out and empties itself, before the sign-in page loads", () => {
     const text = readFileSync(new URL("../app/[locale]/account/your-bookings.tsx", import.meta.url), "utf8");
-    assert.match(text, /useEffect\(\s*\(\) =>\s*shownAccount\.onSignedOut\(\(\) => \{\s*setBookings\(\[\]\);\s*setNext\(null\);\s*setAccount\(null\);/);
+    assert.match(text, /useEffect\(\s*\(\) =>\s*shownAccount\.onSignedOut\(\(\) => \{\s*setSections\(NOTHING\);\s*setAccount\(null\);/);
   });
 });
 
