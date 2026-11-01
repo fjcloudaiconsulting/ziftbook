@@ -21,7 +21,7 @@ export function accountSignInOutcome(
 // --- Your bookings (GET /api/account/history) ---
 
 /** The parts of a `HistoryBooking` these read. */
-type HistoryRow = { starts_at: string; business: { slug: string } };
+type HistoryRow = { starts_at: string; ends_at: string; status: string; business: { slug: string } };
 
 /** What an answer to the history means: the list, sign in (no live account session), the password again (the
  * session started more than a day ago: history needs a fresh one), too many reads for now, or a problem. */
@@ -33,12 +33,32 @@ export function historyOutcome(status: number, code: string | undefined): "ok" |
   return "error";
 }
 
-/** Upcoming (not started yet), the next one first; then the past, newest first. */
-export function historySections<T extends Pick<HistoryRow, "starts_at">>(bookings: readonly T[], now: Date): { upcoming: T[]; past: T[] } {
+/** What still stands: the statuses a booking ahead can be kept in. */
+const STANDING = new Set(["pending", "awaiting_payment", "confirmed"]);
+
+/** Upcoming: still standing and not over yet (one in progress included), the next one first. Past: everything else
+ * (what has ended, and what was cancelled, declined, expired or missed), newest first. */
+export function historySections<T extends HistoryRow>(bookings: readonly T[], now: Date): { upcoming: T[]; past: T[] } {
   const at = (b: T) => new Date(b.starts_at).getTime();
-  const upcoming = bookings.filter((b) => at(b) > now.getTime()).sort((a, b) => at(a) - at(b));
-  const past = bookings.filter((b) => at(b) <= now.getTime()).sort((a, b) => at(b) - at(a));
+  const ahead = (b: T) => STANDING.has(b.status) && new Date(b.ends_at).getTime() > now.getTime();
+  const upcoming = bookings.filter(ahead).sort((a, b) => at(a) - at(b));
+  const past = bookings.filter((b) => !ahead(b)).sort((a, b) => at(b) - at(a));
   return { upcoming, past };
+}
+
+/** The list after a page: Show more (`cursor` set) appends it; a first page replaces what was shown. */
+export function mergeHistory<T>(shown: readonly T[], page: readonly T[], cursor: string | null): T[] {
+  return cursor ? [...shown, ...page] : [...page];
+}
+
+/** The longest a booking lasts (backend/app/services.py, Duration: at most 720 minutes). */
+const LONGEST_MS = 720 * 60_000;
+
+/** Whether another page must load before the list is shown: the API pages newest first, so while the last booking
+ * loaded could still be followed by one in progress or ahead, the next one might not be loaded yet. */
+export function needsMore(loaded: readonly Pick<HistoryRow, "starts_at">[], next: string | null, now: Date): boolean {
+  const last = loaded.at(-1);
+  return next !== null && last !== undefined && new Date(last.starts_at).getTime() > now.getTime() - LONGEST_MS;
 }
 
 export type Pill = { label: "waiting" | "confirmed" | "cancelled" | "declined" | "expired" | "noShow"; tone: "ok" | "warn" | "muted" };

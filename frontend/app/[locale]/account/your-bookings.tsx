@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 
 import { type AccountOut, type HistoryBooking, platformAccountHistory, platformAccountRead } from "@/api-client";
 import { Link, useRouter } from "@/i18n/navigation";
-import { bookAgainSlug, historyOutcome, historySections, historyServiceName, historyWhen, type Pill, statusPill } from "@/lib/client-account";
+import { bookAgainSlug, historyOutcome, historySections, historyServiceName, historyWhen, mergeHistory, needsMore, type Pill, statusPill } from "@/lib/client-account";
 
 import { shownAccount } from "../_ui/account-button";
 import { AccountSignIn } from "../_ui/account-sign-in";
@@ -34,21 +34,32 @@ export function YourBookings({ turnstileSiteKey }: { turnstileSiteKey: string | 
   /** One page of the history; `cursor` null starts over. */
   async function loadPage(cursor: string | null) {
     setBusy(true);
-    const answer = await send(platformAccountHistory({ query: { limit: PAGE, ...(cursor ? { cursor } : {}) } }));
-    setBusy(false);
-    const meaning = historyOutcome(answer.status, answer.code);
-    if (meaning === "ok" && answer.data) {
-      const page = answer.data;
-      setBookings((shown) => (cursor ? [...shown, ...page.bookings] : page.bookings));
-      setNext(page.next);
-      setMessage(null);
-      setPhase("list");
-    } else if (meaning === "signIn") router.replace("/account/sign-in");
-    else if (meaning === "reauth") setPhase("reauth");
-    else {
-      setMessage({ tone: meaning === "tooMany" ? "note" : "error", text: meaning === "tooMany" ? t("tooMany") : form(problem(answer)) });
-      if (!cursor) setPhase("error");
+    // The API pages newest first: pages keep loading until the next booking to come is in (needsMore), so it is
+    // always at the top of Upcoming. Show more (`cursor`) adds the older pages after what is shown.
+    let shown: HistoryBooking[] = cursor ? bookings : [];
+    let at = cursor;
+    for (;;) {
+      const answer = await send(platformAccountHistory({ query: { limit: PAGE, ...(at ? { cursor: at } : {}) } }));
+      const meaning = historyOutcome(answer.status, answer.code);
+      if (meaning !== "ok" || !answer.data) {
+        setBusy(false);
+        if (meaning === "signIn") router.replace("/account/sign-in");
+        else if (meaning === "reauth") setPhase("reauth");
+        else {
+          setMessage({ tone: meaning === "tooMany" ? "note" : "error", text: meaning === "tooMany" ? t("tooMany") : form(problem(answer)) });
+          if (!cursor) setPhase("error");
+        }
+        return;
+      }
+      shown = mergeHistory(shown, answer.data.bookings, at);
+      at = answer.data.next;
+      if (!needsMore(shown, at, new Date())) break;
     }
+    setBusy(false);
+    setBookings(shown);
+    setNext(at);
+    setMessage(null);
+    setPhase("list");
   }
 
   /** Who is signed in, then the first page: a 401 on either is the sign-in page. */

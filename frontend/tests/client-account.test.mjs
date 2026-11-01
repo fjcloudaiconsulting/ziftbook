@@ -24,6 +24,8 @@ import {
   historySections,
   historyServiceName,
   historyWhen,
+  mergeHistory,
+  needsMore,
   linkRequestShape,
   offerNext,
   recheckOutcome,
@@ -60,10 +62,11 @@ describe("account sign-in", () => {
   });
 });
 
+// Forty-five minutes long, like the mock's haircut.
 const booking = (startsAt, status = "confirmed", slug = "salon-bloom") => ({
-  business: { name: "Salon Bloom", slug },
+  business: { name: "Salon Bloom", slug, timezone: "Europe/Amsterdam" },
   starts_at: startsAt,
-  ends_at: startsAt,
+  ends_at: new Date(new Date(startsAt).getTime() + 45 * 60_000).toISOString().replace(".000Z", "Z"),
   status,
   service_name: { en: "Haircut" },
   price: { amount_minor: 3500, currency: "EUR" },
@@ -95,9 +98,42 @@ describe("your bookings", () => {
     assert.deepEqual(past.map((b) => b.starts_at), ["2026-09-27T09:00:00Z", "2026-09-01T09:00:00Z"]);
   });
 
-  test("a booking that has started is past", () => {
-    const { upcoming, past } = historySections([booking("2026-10-30T12:00:00Z")], now);
-    assert.deepEqual([upcoming.length, past.length], [0, 1]);
+  test("a booking in progress is still upcoming; one that has ended is past", () => {
+    // Wrong implementation killed: splitting on starts_at, which puts the appointment you are in under Past.
+    const inProgress = booking("2026-10-30T11:30:00Z");
+    const ended = booking("2026-10-30T11:00:00Z");
+    const { upcoming, past } = historySections([inProgress, ended], now);
+    assert.deepEqual(upcoming, [inProgress]);
+    assert.deepEqual(past, [ended]);
+  });
+
+  test("only what still stands is upcoming: cancelled, declined, expired go under Past, with Book again", () => {
+    // Owner may overrule (correctness 8): a cancelled booking next week is not "upcoming" to the person.
+    const later = ["cancelled_by_client", "cancelled_by_merchant", "declined", "expired", "no_show"].map((st) => booking("2026-11-06T09:00:00Z", st));
+    const standing = ["pending", "awaiting_payment", "confirmed"].map((st) => booking("2026-11-05T09:00:00Z", st));
+    const { upcoming, past } = historySections([...later, ...standing], now);
+    assert.deepEqual(upcoming.map((b) => b.status), ["pending", "awaiting_payment", "confirmed"]);
+    assert.deepEqual(past.map((b) => b.status), ["cancelled_by_client", "cancelled_by_merchant", "declined", "expired", "no_show"]);
+    for (const b of past) assert.equal(bookAgainSlug(b, false), "salon-bloom");
+  });
+
+  test("Show more appends the next page; a first page replaces what was shown", () => {
+    const one = [booking("2026-11-04T09:00:00Z")];
+    const two = [booking("2026-09-01T09:00:00Z")];
+    assert.deepEqual(mergeHistory(one, two, "cursor"), [...one, ...two]);
+    assert.deepEqual(mergeHistory(one, two, null), two);
+  });
+
+  test("pages keep loading until every booking still to come is in: the next one is always shown first", () => {
+    // The API pages newest first: with more than a page of bookings ahead, the soonest is on a later page. Any
+    // booking not loaded yet starts no later than the last one loaded, and lasts at most 12 hours
+    // (backend/app/services.py, Duration).
+    const ahead = [booking("2026-11-20T09:00:00Z"), booking("2026-11-02T09:00:00Z")];
+    assert.equal(needsMore(ahead, "cursor", now), true);
+    assert.equal(needsMore(ahead, null, now), false);
+    assert.equal(needsMore([booking("2026-10-30T01:00:00Z")], "cursor", now), true);
+    assert.equal(needsMore([booking("2026-10-29T23:59:00Z")], "cursor", now), false);
+    assert.equal(needsMore([], "cursor", now), false);
   });
 
   test("the status pill: waiting and confirmed ahead; nothing on a kept past booking; what went otherwise, muted", () => {
@@ -645,5 +681,13 @@ describe("pt on the client's pages says reserva (PR 6 review, correctness 7)", (
       [pt.ClientHome.upcoming, pt.ClientHome.confirmed, pt.ClientHome.cancelled, pt.ClientHome.declined, pt.ClientHome.expired],
       ["Próximas", "Confirmada", "Cancelada", "Recusada", "Expirada"],
     );
+  });
+});
+
+describe("the bookings page loads what it shows (PR 6 review, correctness 8 and 11)", () => {
+  test("fence: each page merges through mergeHistory, and loading goes on while needsMore", () => {
+    const text = readFileSync(new URL("../app/[locale]/account/your-bookings.tsx", import.meta.url), "utf8");
+    assert.match(text, /shown = mergeHistory\(shown, answer\.data\.bookings, at\);/);
+    assert.match(text, /if \(!needsMore\(shown, at, new Date\(\)\)\) break;/);
   });
 });
