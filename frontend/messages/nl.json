@@ -124,7 +124,8 @@
     "newHere": "Nieuw bij ziftbook?",
     "accountUnavailable": "Met dit account kun je hier niet inloggen.",
     "createAccount": "Account aanmaken",
-    "newHereBoth": "Nieuw bij ziftbook? <account>Maak een account aan</account> of <business>maak je bedrijf aan</business>."
+    "newHereBoth": "Nieuw bij ziftbook? <account>Maak een account aan</account> of <business>maak je bedrijf aan</business>.",
+    "noTenant": "Dit account hoort niet bij een bedrijf. Om je eigen afspraken te zien, <account>log je in op je ziftbook-account</account>. Werk je bij een bedrijf? Vraag de eigenaar om je opnieuw toe te voegen."
   },
   "ClientSignUp": {
     "emailPlaceholder": "jij@voorbeeld.nl",

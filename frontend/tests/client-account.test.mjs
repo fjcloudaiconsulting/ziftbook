@@ -430,3 +430,19 @@ describe("your bookings, at each business's own time (PR 6 review, correctness 1
     assert.doesNotMatch(text, /new Intl\.DateTimeFormat/);
   });
 });
+
+describe("a client on the console's sign-in (PR 6 review, correctness 2)", () => {
+  test("fence: no business after a correct password points to the account sign-in, not to a dead end", () => {
+    // Wrong implementation killed: every 403 read as "isn't part of a business any more", which a client who
+    // reset their password then reads with no way on.
+    const text = readFileSync(new URL("../app/[locale]/sign-in/sign-in-form.tsx", import.meta.url), "utf8");
+    const branch = /\} else if \(outcome\.status === 403 && outcome\.code === "no_tenant"\) \{([\s\S]*?)\n {4}\}/.exec(text);
+    assert.ok(branch, "a no_tenant branch");
+    assert.match(branch[1], /t\.rich\("noTenant"/);
+    assert.match(branch[1], /href=\{`\/\$\{locale\}\/account\/sign-in`\}/);
+    for (const locale of ["en", "nl", "pt"]) {
+      const strings = JSON.parse(readFileSync(new URL(`../messages/${locale}.json`, import.meta.url))).SignIn;
+      assert.match(strings.noTenant, /<account>.+<\/account>/, locale);
+    }
+  });
+});

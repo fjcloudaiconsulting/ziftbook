@@ -124,7 +124,8 @@
     "newHere": "Novo no ziftbook?",
     "accountUnavailable": "Esta conta não pode entrar aqui.",
     "createAccount": "Criar uma conta",
-    "newHereBoth": "Novo no ziftbook? <account>Crie uma conta</account> ou <business>cadastre seu negócio</business>."
+    "newHereBoth": "Novo no ziftbook? <account>Crie uma conta</account> ou <business>cadastre seu negócio</business>.",
+    "noTenant": "Esta conta não faz parte de um negócio. Para ver suas reservas, <account>entre na sua conta ziftbook</account>. Se você trabalha em um negócio, peça ao responsável para adicionar você de novo."
   },
   "ClientSignUp": {
     "emailPlaceholder": "voce@exemplo.com.br",

@@ -124,7 +124,8 @@
     "newHere": "New to ziftbook?",
     "accountUnavailable": "This account can't sign in here.",
     "createAccount": "Create an account",
-    "newHereBoth": "New to ziftbook? <account>Create an account</account> or <business>create your business</business>."
+    "newHereBoth": "New to ziftbook? <account>Create an account</account> or <business>create your business</business>.",
+    "noTenant": "This account isn't part of a business. To see your own bookings, <account>sign in to your ziftbook account</account>. If you work at a business, ask its owner to add you again."
   },
   "ClientSignUp": {
     "emailPlaceholder": "you@example.com",
