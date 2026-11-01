@@ -938,6 +938,25 @@ def test_a_decoder_that_cannot_start_is_busy(
     assert line["msg"] == level
 
 
+# ZIF-230 fence (re-verify N2). Kills: a child the API killed at its deadline before the ready
+# marker answered by its CPU use (a 422 blaming the photo, or a WARNING): no upload byte was parsed,
+# so it is a start failure whatever the clock or its CPU say.
+@pytest.mark.parametrize("mode", ["probe-sleep-before", "probe-spin-before"])
+def test_a_child_killed_before_its_ready_marker_could_not_start(
+    mode: str,
+    monkeypatch: pytest.MonkeyPatch,
+    runs: list[photos.Run],
+    failed: Callable[[], list[dict[str, Any]]],
+) -> None:
+    monkeypatch.setattr(photos, "DECODE_TIMEOUT", 1.0)
+    monkeypatch.setattr(photos, "STARVED_CPU_MS", 300)
+    assert refused(probe(mode)) == (503, "busy")
+    assert [r.killed for r in runs] == ["timeout"]
+    assert [(f["msg"], f["decoder"]) for f in failed()] == [
+        ("photo decoder could not start", "start")
+    ]
+
+
 def test_a_child_that_cannot_be_spawned_is_busy(
     monkeypatch: pytest.MonkeyPatch, failed: Callable[[], list[dict[str, Any]]]
 ) -> None:

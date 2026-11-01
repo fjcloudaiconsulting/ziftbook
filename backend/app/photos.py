@@ -628,7 +628,8 @@ def _count(outcome: Outcome, span: Span) -> None:
 
 # How a child that ended before its ready marker could not start: these exit codes (2 is the
 # interpreter's own: no such script), or "start" for any other end (an exit, a signal: a filter
-# for the wrong architecture, a crash in the import). After the marker, an end is the decode's.
+# for the wrong architecture, a crash in the import; or this process killing it at its deadline).
+# After the marker, an end is the decode's.
 START_FAILURES: dict[int, Outcome] = {
     2: "import",
     photo_child.EXIT_LIMITS: "limits",
@@ -640,7 +641,9 @@ def _judge(run: Run) -> tuple[Outcome, Decoded | Refused | None, bytes, bytes]:
     """The outcome of a run (ok, refused, or why it failed) and the record when there is one."""
     output = memoryview(run.output)
     ready = output[: len(photo_child.READY)] == photo_child.READY
-    if not ready and run.killed is None:  # no upload byte parsed yet: never the photo's fault
+    if not ready:  # no upload byte parsed yet: never the photo's fault, however it ended
+        if run.killed is not None:
+            return "start", None, b"", b""
         return START_FAILURES.get(run.returncode or 0, "start"), None, b"", b""
     if run.killed == "output":
         return "output", None, b"", b""
