@@ -45,9 +45,31 @@ depends_on = None
 SEARCH_PATH = "SET search_path = pg_catalog, public, pg_temp"
 
 # The booking endings that send a paid booking's money back: app.bookings.REFUNDING, written out
-# because a migration must not change when the code does. With payments.UNSETTLED's predicate
-# below, "money still owed an answer".
+# because a migration must not change when the code does (tests/test_client_erasure_db.py runs
+# each of the code's against this one).
 REFUNDING = "'declined', 'expired', 'cancelled_by_merchant', 'cancelled_by_client'"
+
+# Money still owed an answer on one of a client's bookings: one rule, used by the core's hold and,
+# later, by the hold's purge, so the two cannot drift. A payment is owed while it is unsettled and
+# the settle pass still has work on it (app.payments.UNSETTLED: an open checkout that is no longer
+# running, a card hold, a paid booking that ended with a refund), or when its refund failed (the
+# client may still be refunded by hand). A paid booking that is kept is never owed. SECURITY
+# INVOKER: it reads with its caller's rights, under row-level security, and names the business
+# explicitly too.
+CLIENT_MONEY_OWED = f"""
+CREATE FUNCTION client_money_owed(p_tenant uuid, p_client uuid) RETURNS boolean
+  LANGUAGE sql STABLE SECURITY INVOKER {SEARCH_PATH} AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM booking_payments p
+    JOIN bookings b ON b.tenant_id = p.tenant_id AND b.id = p.booking_id
+    WHERE p.tenant_id = p_tenant AND b.tenant_id = p_tenant AND b.client_id = p_client
+      AND (p.refund_failed_at IS NOT NULL
+           OR (p.settled_at IS NULL
+               AND ((p.status = 'open'
+                     AND NOT (b.status = 'awaiting_payment' AND b.expires_at > now()))
+                    OR p.status = 'checked'
+                    OR (p.status = 'paid' AND b.status IN ({REFUNDING}))))))
+$$"""
 # The reasons an erasure records on the bookings it ends (ZIF-58): an owner's erasure, an account
 # deletion, and a re-applied erasure. Whether the client hears of them is p_announce's.
 ERASURE_REASONS = "'client_erased', 'account_erased', 'erasure_reapplied'"
@@ -91,14 +113,7 @@ BEGIN
                   WHERE e.tenant_id = v_tenant AND b.tenant_id = v_tenant
                     AND b.client_id = p_client AND e.created_at >= now()
                     AND e.details ->> 'reason' IN ({ERASURE_REASONS})))
-          OR EXISTS (SELECT 1 FROM booking_payments p
-                     JOIN bookings b ON b.tenant_id = p.tenant_id AND b.id = p.booking_id
-                     WHERE p.tenant_id = v_tenant AND b.tenant_id = v_tenant
-                       AND b.client_id = p_client AND p.settled_at IS NULL
-                       AND ((p.status = 'open'
-                             AND NOT (b.status = 'awaiting_payment' AND b.expires_at > now()))
-                            OR p.status = 'checked'
-                            OR (p.status = 'paid' AND b.status IN ({REFUNDING})))))
+          OR client_money_owed(v_tenant, p_client))
   ON CONFLICT DO NOTHING;
   -- ZIF-146's bookings.booked_as joins this list: whichever of its migration and this one merges
   -- second re-creates the function with it (tests/test_client_erasure_db.py fails until then).
@@ -163,6 +178,9 @@ def upgrade() -> None:
     # what it inherited too); only the core inserts.
     op.execute("REVOKE ALL ON client_erasure_holds FROM ziftbook_app")
     op.execute("GRANT SELECT, DELETE ON client_erasure_holds TO ziftbook_worker")
+    op.execute(CLIENT_MONEY_OWED)
+    # Executable by no other role yet (0048's default privileges); the purge's migration grants it.
+    op.execute("REVOKE EXECUTE ON FUNCTION client_money_owed(uuid, uuid) FROM PUBLIC")
     op.execute(ERASE_CLIENT_CORE)
     op.execute(ERASE_CLIENT)
     # 0048's default privileges give EXECUTE to no other role; revoked from PUBLIC all the same,
@@ -175,4 +193,5 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.execute("DROP FUNCTION erase_client(bytea, uuid)")
     op.execute("DROP FUNCTION erase_client_core(uuid, boolean)")
+    op.execute("DROP FUNCTION client_money_owed(uuid, uuid)")
     op.execute("DROP TABLE client_erasure_holds")

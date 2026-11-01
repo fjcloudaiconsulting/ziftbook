@@ -225,7 +225,9 @@ that person's platform account (ZIF-99).
   tables, and `client_erasure_holds`, have no policy but `tenant_isolation`.
 - `client_erasure_holds` keeps an erased client's email and locale: the only way to tell the client about a
   cancellation or a failed refund. The core writes one when the client has an address and either `announce` is true
-  and the erasure ended one of its bookings, or money is still owed an answer on one, whatever `announce` says. An
+  and the erasure ended one of its bookings, or money is still owed an answer on one (`client_money_owed`, the one
+  rule the hold's purge shares: unsettled with work left for the settle pass, or a failed refund), whatever
+  `announce` says. An
   owner's erasure and an account deletion pass true; re-applying an erasure after a restore passes false (the
   cancellations were announced the first time; a refund that fails later must still reach the client). A CHECK keeps
   `purge_after` at most 31 days after `created_at`; the worker deletes the hold by then. Only the core writes it; the
