@@ -991,6 +991,7 @@
   },
   "BookingPage": {
     "timesIn": "Times in {city} time",
+    "contactLabel": "Contact email: ",
     "step2": "Choose a day and time",
     "step3": "Your details",
     "change": "Change",

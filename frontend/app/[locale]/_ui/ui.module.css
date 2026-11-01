@@ -382,6 +382,9 @@ a.textButton, .textButton:has(> svg) { display: inline-flex; align-items: center
 .bizHeader h1 { margin: 0; font: 400 1.75rem/1.2 var(--font-display), Georgia, serif; }
 .bizMeta { margin: 0.35rem 0 0; display: flex; flex-wrap: wrap; align-items: center; gap: 0.15rem 0.4rem; color: var(--muted); font-size: 0.9375rem; }
 .bizMeta svg { flex: none; }
+.bizMeta + .bizMeta { margin-top: 0; }
+/* The business's contact email (ZIF-99): a long address wraps rather than widening the page. */
+.contactLine a { overflow-wrap: anywhere; }
 
 .bookingLayout { display: grid; gap: 0; container-type: inline-size; }
 .flowCol { min-width: 0; }

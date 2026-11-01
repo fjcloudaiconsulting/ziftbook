@@ -991,6 +991,7 @@
   },
   "BookingPage": {
     "timesIn": "Horários no fuso de {city}",
+    "contactLabel": "E-mail de contato: ",
     "step2": "Escolha o dia e o horário",
     "step3": "Seus dados",
     "change": "Alterar",
