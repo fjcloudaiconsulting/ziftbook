@@ -128,6 +128,7 @@ def test_the_page_answers_exactly_the_documented_fields(
         "services",
         "auto_confirm",
         "payment",
+        "contact_email",
     }
     assert body["payment"] is None  # the default business takes no card check
     assert (body["id"], body["slug"], body["name"]) == (str(people.a), slug, "a")
@@ -438,6 +439,23 @@ def test_the_cancellation_terms_are_the_saved_settings(
     }
     assert put_settings(owner, {"cancellation_policy_text": ""}).status_code == 200
     assert page(new_client(app), slug).json()["cancellation"]["text"] is None
+
+
+# ZIF-99 fence. The page shows the business's own contact email: the saved setting, normalised as
+# the settings PUT stores it, and null when there is none. Kills a page that reads another
+# business's settings, a hard-coded null, or a stale value after the owner unsets it.
+def test_the_contact_email_is_the_saved_setting_and_null_without_one(
+    people: People, app: FastAPI, owner: TestClient, slug: str
+) -> None:
+    assert page(new_client(app), slug).json()["contact_email"] is None
+    save_setting(people.b, "contact_email", "other@example.com")  # another business's address
+    assert page(new_client(app), slug).json()["contact_email"] is None
+
+    assert put_settings(owner, {"contact_email": " Shop@Example.COM "}).status_code == 200
+    assert page(new_client(app), slug).json()["contact_email"] == "shop@example.com"
+
+    assert put_settings(owner, {"contact_email": None}).status_code == 200
+    assert page(new_client(app), slug).json()["contact_email"] is None
 
 
 # 23. fence. Every locale's offered version is one a booking accepts; the page has no top-level one.
