@@ -135,6 +135,9 @@ class BookingOut(BaseModel):
     # Stripe's fee on it, once known, and only while a client's cancel keeps it (R6's flag): the
     # page never mentions a kept fee otherwise.
     card_fee: Price | None
+    # ZIF-99. Where the client can write to the business: its own setting, null when it has none.
+    # Not confirmed yet (ZIF-232).
+    contact_email: str | None
 
 
 class EngineOut(BaseModel):
@@ -155,7 +158,8 @@ class EngineOut(BaseModel):
 
 class LinkedBooking(BaseModel):
     """Never the client's name, email, phone or ids, nor the worker id, source or events: the
-    link is a bearer credential (spec S4, test 12)."""
+    link is a bearer credential (spec S4, test 12). The business's own contact email is included
+    on purpose (ZIF-99): it is the business's public address, not the client's."""
 
     booking: BookingOut
     engine: EngineOut
@@ -252,14 +256,16 @@ def _event(
     )
 
 
-def _view(row: Any, decision: Decision, zone: str, consents: list[Purpose]) -> LinkedBooking:
+def _view(
+    row: Any, decision: Decision, settings: BusinessSettings, consents: list[Purpose]
+) -> LinkedBooking:
     paid = row.paid_minor
     return LinkedBooking(
         booking=BookingOut(
             id=row.booking_id,
             status=row.status,
             business=row.business,
-            timezone=zone,
+            timezone=settings.timezone,
             starts_at=row.starts_at,
             ends_at=row.ends_at,
             original_starts_at=row.original_starts_at,
@@ -273,6 +279,7 @@ def _view(row: Any, decision: Decision, zone: str, consents: list[Purpose]) -> L
                 if payments.KEEP_CARD_FEE_ON_CLIENT_CANCEL and row.stripe_fee_minor is not None
                 else None
             ),
+            contact_email=settings.contact_email,
         ),
         engine=EngineOut(
             can_cancel=decision.can_cancel,
@@ -334,10 +341,10 @@ def read(request: Request) -> LinkedBooking:
     tenant_id, token_hash = _enter(request, "booking_link_read", READ_LIMIT, READ_WINDOW)
     with tenant_context(tenant_id) as db:
         row = resolve(db, token_hash)
-        zone = business_settings.read(db).timezone
+        settings = business_settings.read(db)
         decision = _decide(row, _policy(row))
         consents = pending_consents(db, row.booking_id, row.client_id)
-    return _view(row, decision, zone, consents)
+    return _view(row, decision, settings, consents)
 
 
 class AvailabilityOut(BaseModel):
@@ -463,7 +470,7 @@ def cancel(body: CancelIn, request: Request) -> LinkedBooking:
             bookings.email_merchants(
                 db, tenant_id, row.booking_id, row.worker_id, "booking_client_cancelled"
             )
-            zone = business_settings.read(db).timezone
+            settings = business_settings.read(db)
     except OperationalError:
         raise ApiError(503, "busy") from None
     logger.info("booking cancelled by client", extra={"booking_id": str(row.booking_id)})
@@ -471,7 +478,7 @@ def cancel(body: CancelIn, request: Request) -> LinkedBooking:
     # allowed -- the response carries what just happened, and every later call answers 404.
     final_row = SimpleNamespace(**{**dict(row._mapping), "status": changed.status})
     final = Decision(False, False, decision.refund_pct, 0, decision.copy_key, 0)
-    return _view(final_row, final, zone, [])
+    return _view(final_row, final, settings, [])
 
 
 class RescheduleIn(BaseModel):
@@ -593,7 +600,7 @@ def reschedule(body: RescheduleIn, request: Request) -> LinkedBooking:
     except OperationalError:
         raise ApiError(503, "busy") from None
     logger.info("booking rescheduled", extra={"booking_id": str(row.booking_id)})
-    return _view(new_row, new_decision, zone, consents)
+    return _view(new_row, new_decision, settings, consents)
 
 
 class ConsentsIn(BaseModel):
@@ -633,8 +640,8 @@ def confirm_consents(body: ConsentsIn, request: Request) -> LinkedBooking:
                 user_agent=user_agent,
             )
             _event(db, row.booking_id, "consent_confirmed", origin_ip, user_agent)
-            zone = business_settings.read(db).timezone
+            settings = business_settings.read(db)
             decision = _decide(row, _policy(row))
     except OperationalError:
         raise ApiError(503, "busy") from None
-    return _view(row, decision, zone, [])
+    return _view(row, decision, settings, [])
