@@ -839,3 +839,22 @@ describe("the wiring the review's mutations got through (PR 6 review, correctnes
     assert.match(read("../app/[locale]/_ui/account-sign-in.tsx"), /useState\(initialEmail\)/);
   });
 });
+
+describe("a sign-out during a send that is refused clears once the form is free (re-verify N2)", () => {
+  const page = () => readFileSync(new URL("../app/[locale]/[slug]/booking-page.tsx", import.meta.url), "utf8");
+
+  test("fence: whenever the form is free again with a pending clear, it is applied, never during a send", () => {
+    // Wrong implementation killed: applying the pending clear only on "Change time or details", so a header sign-out
+    // during a send that is then refused (slot taken, verification failed) leaves the previous person's details
+    // editable with no note and no "Not you?".
+    assert.match(
+      page(),
+      /useEffect\(\(\) => \{\s*if \(formHeld \|\| !acct\.pending\) return;\s*const timer = setTimeout\(\(\) => \{\s*if \(!heldNow\(\)\) unlockAccount\(\);\s*\}\);/,
+    );
+    assert.match(page(), /const formHeld = accountHeld\(\{ locked, busy: flow\.busy, verifying, working: false \}\);/);
+  });
+
+  test("fence: a resumed booking that is gone frees the form with the pending clear applied", () => {
+    assert.match(page(), /else if \(gone\) \{\s*unlockAccount\(\);\s*forget\(false\);/);
+  });
+});

@@ -273,6 +273,20 @@ export function BookingPage({
     heldRef.current = accountHeld({ locked, busy: flow.busy, verifying, working: false });
   });
   const heldNow = () => heldRef.current || working.current;
+  const formHeld = accountHeld({ locked, busy: flow.busy, verifying, working: false });
+
+  // A sign-out that came while the form was held left its clear pending. Whenever the form is free again (a refused
+  // request, a release, a resumed booking that is gone), it is applied, so the previous person's details never stay
+  // editable with no note (re-verify N2). Never during a send: heldNow() also sees the send lock.
+  useEffect(() => {
+    if (formHeld || !acct.pending) return;
+    const timer = setTimeout(() => {
+      if (!heldNow()) unlockAccount();
+    });
+    return () => clearTimeout(timer);
+    // unlockAccount and heldNow read the render's state and refs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formHeld, acct.pending]);
 
   // The account signed out on this browser ("Not you?" or the header's menu): the fields that still hold its values
   // empty out, and the offer is back. While held, the request keeps the details it went with.
