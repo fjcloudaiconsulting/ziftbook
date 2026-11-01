@@ -6,7 +6,7 @@ import { type MouseEvent, useEffect, useId, useRef, useState } from "react";
 import { accountSetLocale, sessionRead } from "@/api-client";
 import { Link, usePathname, useRouter } from "@/i18n/navigation";
 import { routing } from "@/i18n/routing";
-import { pickedHere, recordPick, takeUnsavedNotice } from "@/lib/locale";
+import { pickedHere, recordPick, resolveLocale, takeUnsavedNotice } from "@/lib/locale";
 
 import { send } from "./parts";
 import styles from "./ui.module.css";
@@ -150,16 +150,34 @@ async function savePublic(locale: Locale): Promise<boolean> {
 }
 
 export function Header() {
+  const locale = useLocale();
+  const pathname = usePathname();
+  const router = useRouter();
   const [signedIn, setSignedIn] = useState(false);
 
+  // ZIF-102, ruling 4: a signed-in viewer's own language wins over the link on every public page
+  // (CONTRIBUTING.md, "Which language a person sees"). A guest keeps the page's.
   useEffect(() => {
     let cancelled = false;
     void send(sessionRead()).then((outcome) => {
-      if (!cancelled && outcome.status === 200 && outcome.data) setSignedIn(true);
+      if (cancelled || outcome.status !== 200 || !outcome.data) return;
+      setSignedIn(true);
+      const own = resolveLocale({
+        own: outcome.data.locale,
+        signedIn: true,
+        surface: "public",
+        browser: [],
+        business: null,
+        url: locale as Locale,
+        picked: pickedHere(),
+      });
+      if (own !== locale) router.replace(`${pathname}${window.location.search}`, { locale: own });
     });
     return () => {
       cancelled = true;
     };
+    // Once per page: a pick made here afterwards is the person's (and saved, or `picked`).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (

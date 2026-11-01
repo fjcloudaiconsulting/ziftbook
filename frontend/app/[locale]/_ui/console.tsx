@@ -1,6 +1,6 @@
 "use client";
 
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { createContext, type Dispatch, type FormEvent, type ReactNode, type SetStateAction, useContext, useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
@@ -18,7 +18,7 @@ import {
 import { Link, usePathname, useRouter } from "@/i18n/navigation";
 import { trimmedName } from "@/lib/account";
 import { allowed, canAnswerRequests, guardedWrite, navFor, needsName, type Role, sectionOf, type Section, stickyHeight, writeOutcome } from "@/lib/console";
-import { forgetPick } from "@/lib/locale";
+import { forgetPick, type Locale, pickedHere, resolveLocale } from "@/lib/locale";
 import { badgeText } from "@/lib/today";
 import { type AppVersion, versionLabel } from "@/lib/version";
 
@@ -372,6 +372,7 @@ export function Shell({ children }: { children: ReactNode }) {
   const accountT = useTranslations("Console.account");
   const router = useRouter();
   const pathname = usePathname();
+  const locale = useLocale();
   const [session, setSession] = useState<SessionOut | null>(null);
   const [settings, setSettings] = useState<BusinessSettingsOutput | null>(null);
   const [failure, setFailure] = useState<ReturnType<typeof problem> | null>(null);
@@ -426,6 +427,24 @@ export function Shell({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (session && !allowed(session.role as Role, pathname)) router.replace("/");
   }, [session, pathname, router]);
+
+  // ZIF-102: the console opens in the person's own language, else their browser's, else the
+  // business's (CONTRIBUTING.md, "Which language a person sees"). Nothing renders until it does.
+  // The session is only ever set in the browser, so navigator is there to read.
+  const language = session
+    ? resolveLocale({
+        own: session.locale,
+        signedIn: true,
+        surface: "console",
+        browser: navigator.languages,
+        business: settings?.language,
+        url: locale as Locale,
+        picked: pickedHere(),
+      })
+    : locale;
+  useEffect(() => {
+    if (language !== locale) router.replace(`${pathname}${window.location.search}`, { locale: language });
+  }, [language, locale, pathname, router]);
 
   async function call<T>(
     request: () => Promise<{ data?: T; error?: unknown; response?: Response }>,
@@ -484,6 +503,9 @@ export function Shell({ children }: { children: ReactNode }) {
     updateSession({ locale: outcome.data.locale });
     return true;
   };
+
+  // On its way to the person's own language: nothing in this one.
+  if (language !== locale) return null;
 
   // Before the early return below and before any failure: a nameless person has no settings to wait for.
   if (session && needsName(session.name)) {
