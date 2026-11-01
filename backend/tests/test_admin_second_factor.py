@@ -483,3 +483,29 @@ def test_a_wrong_enrolment_code_warns_before_its_commit(
         ("WARNING", str(an_admin), 1),
         ("WARNING", str(an_admin), 1),
     ]
+
+
+# fence (ZIF-234, the regression over HTTP): the admin's own pass doesn't reopen the budget: after
+# 9 wrong codes and a pass, the next wrong code locks. Kills a pass that resets the count. Injected
+# by restoring 0039's `failed_attempts = 0` on a pass.
+def test_a_pass_does_not_reopen_the_budget(
+    app: FastAPI,
+    migrate_engine: Engine,
+    an_admin: uuid.UUID,
+    log_lines: Callable[[], list[dict[str, Any]]],
+) -> None:
+    v = verified_client(app, migrate_engine, an_admin)
+    half = sign_in(app, an_admin)
+    bad = wrong_code(v)
+    assert [half.post(PASS, json={"code": bad}).status_code for _ in range(9)] == [401] * 9
+    assert half.post(PASS, json={"code": totp.code(v.secret, v.t0 + 1)}).status_code == 200
+
+    locked = half.post(PASS, json={"code": bad})
+
+    assert answer(locked) == (403, {"code": "second_factor_locked"})
+    events = audit(migrate_engine, an_admin)
+    assert ("second_factor_passed", {"method": "totp", "failed_since_last": 9}) in events
+    assert [action for action, _ in events].count("second_factor_locked") == 1
+    assert [line["msg"] for line in log_lines() if line["level"] == "ERROR"] == [
+        "second factor locked"
+    ]

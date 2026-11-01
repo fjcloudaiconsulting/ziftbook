@@ -329,6 +329,15 @@ A platform admin runs the platform across businesses (ZIF-70). `platform_admins`
   the CLI in it with `kubectl exec -it`, and delete the pod. For local development
   `docker compose run --rm -it migrate python -m app.admin enrol <email> --reason "..."` is fine, with that
   caveat. Run it after `grant`, and again when an admin loses their authenticator and their recovery codes.
+- Wrong TOTP codes count per admin, across every session and address, in `second_factors.failed_attempts`
+  (ZIF-234, 0069). A pass never lowers the count; one failure leaks away every 8 hours. At 10, TOTP locks, and a
+  lock never leaks away: the only ways out are a recovery code or `python -m app.admin enrol`, never time and
+  never a password reset. A recovery code lifts the lock but leaves 9, so the next wrong code within 8 hours locks
+  again. The `failures` in a `second_factor_failed` audit event is that count; `failed_since_last` in
+  `second_factor_passed` is the failures since the last pass. A lock, or a lock again soon after a recovery code,
+  means someone is sending codes: a password holder (reset the password, then `enrol`), or someone who can run SQL
+  as the app role, which starts admin sessions from the stored hash (rotate the database credentials, `enrol`, and
+  handle it as a ZB-08 incident).
 - Never enable statement or parameter logging (`log_statement`, `log_min_duration_statement` with parameters,
   `auto_explain` with parameters) on the app database. Bind values include bearer proofs: a logged TOTP proof,
   recovery-code proof or ticket proof lets anyone who can read the log and run SQL pass an admin's second factor.
