@@ -19,8 +19,11 @@ import {
   historyServiceName,
   linkRequestShape,
   offerNext,
+  rememberReturn,
+  RETURN_KEY,
   splitPhone,
   statusPill,
+  takeReturn,
 } from "../lib/client-account.ts";
 
 describe("account sign-in", () => {
@@ -294,5 +297,64 @@ describe("finishing the account from the link", () => {
     assert.equal(dialRegion([], "nl"), "NL");
     assert.equal(dialRegion(["pt"], "pt"), "BR");
     assert.equal(dialRegion(["en-XX"], "en"), "GB");
+  });
+});
+
+describe("back to the booking page after an emailed sign-up (ruling 7: this browser only)", () => {
+  function memory() {
+    const items = new Map();
+    return {
+      items,
+      getItem: (key) => (items.has(key) ? items.get(key) : null),
+      setItem: (key, value) => items.set(key, String(value)),
+      removeItem: (key) => items.delete(key),
+    };
+  }
+  const t0 = 1_000_000;
+
+  test("the booking page's slug is kept, and only that: never an email or a path", () => {
+    const store = memory();
+    rememberReturn(() => store, "salon-bloom", t0);
+    assert.deepEqual(JSON.parse(store.items.get(RETURN_KEY)), { slug: "salon-bloom", at: t0 });
+  });
+
+  test("taken once, within the link's 24 hours", () => {
+    const store = memory();
+    rememberReturn(() => store, "salon-bloom", t0);
+    assert.equal(takeReturn(() => store, t0 + 23 * 3_600_000), "salon-bloom");
+    assert.equal(takeReturn(() => store, t0 + 23 * 3_600_000), null);
+    rememberReturn(() => store, "salon-bloom", t0);
+    assert.equal(takeReturn(() => store, t0 + 24 * 3_600_000 + 1), null);
+    assert.equal(store.items.size, 0);
+  });
+
+  test("anything else stored there leads nowhere: the way back is a same-origin booking page or nothing", () => {
+    for (const value of ['{"slug":"//evil.example","at":1000000}', '{"slug":"/x","at":1000000}', '{"slug":"javascript:alert(1)","at":1000000}', "junk", '{"at":1000000}']) {
+      const store = memory();
+      store.setItem(RETURN_KEY, value);
+      assert.equal(takeReturn(() => store, t0), null, value);
+    }
+    const store = memory();
+    rememberReturn(() => store, "../evil", t0);
+    assert.equal(store.items.size, 0);
+  });
+
+  test("a browser that refuses storage just has no way back", () => {
+    const refusing = { getItem() { throw new Error("denied"); }, setItem() { throw new Error("denied"); }, removeItem() { throw new Error("denied"); } };
+    assert.doesNotThrow(() => rememberReturn(() => refusing, "salon-bloom", t0));
+    assert.equal(takeReturn(() => refusing, t0), null);
+    // Reading window.localStorage itself throws where site data is blocked.
+    const blocked = () => {
+      throw new Error("SecurityError");
+    };
+    assert.doesNotThrow(() => rememberReturn(blocked, "salon-bloom", t0));
+    assert.equal(takeReturn(blocked, t0), null);
+  });
+
+  test("fence: the done screen offers the account only to someone not signed in, and remembers the way back", () => {
+    const page = readFileSync(new URL("../app/[locale]/[slug]/booking-page.tsx", import.meta.url), "utf8");
+    assert.match(page, /saveDetails=\{account === null\}/);
+    const done = readFileSync(new URL("../app/[locale]/[slug]/checkout.tsx", import.meta.url), "utf8");
+    assert.match(done, /rememberReturn\(\(\) => window\.localStorage, slug, Date\.now\(\)\)/);
   });
 });

@@ -6,7 +6,7 @@ import { type FormEvent, useId, useMemo, useState } from "react";
 import { platformAccountCompleteSignUp } from "@/api-client";
 import { Link } from "@/i18n/navigation";
 import { trimmedName } from "@/lib/account";
-import { accountPhone, completeOutcome, dialRegion } from "@/lib/client-account";
+import { accountPhone, completeOutcome, dialRegion, takeReturn } from "@/lib/client-account";
 import { dialOptions } from "@/lib/dial-codes";
 import { type OpenedLink } from "@/lib/link";
 
@@ -54,6 +54,8 @@ function AccountForm({ link, turnstileSiteKey }: { link: OpenedLink | null; turn
   const [ended, setEnded] = useState<"expired" | "exists" | null>(null);
   // G3: the address is shown once the account exists (the answer carries it); nothing before reads a token's email.
   const [created, setCreated] = useState<string | null>(null);
+  // The booking page the sign-up started from, when it started in this browser (owner ruling 7).
+  const [slug, setSlug] = useState<string | null>(null);
   const [nameError, setNameError] = useState<string>();
   const [phoneError, setPhoneError] = useState<string>();
   const [passwordError, setPasswordError] = useState<string>();
@@ -76,6 +78,7 @@ function AccountForm({ link, turnstileSiteKey }: { link: OpenedLink | null; turn
     if (meaning === "done" && outcome.data) {
       forgetLink(TOKEN_KEY, link);
       setPassword("");
+      setSlug(takeReturn(() => window.localStorage, Date.now()));
       setCreated(outcome.data.email);
     } else if (meaning === "expired" || meaning === "exists") {
       forgetLink(TOKEN_KEY, link);
@@ -92,7 +95,12 @@ function AccountForm({ link, turnstileSiteKey }: { link: OpenedLink | null; turn
   if (created !== null) {
     return (
       <Outcome icon="done" title={t("doneTitle")} lede={t.rich("doneLede", { email: created, chip: (chunks) => <span className={styles.chip}>{chunks}</span> })}>
-        <Link className={`${styles.button} ${styles.primary}`} href="/account">
+        {slug && (
+          <Link className={`${styles.button} ${styles.primary}`} href={`/${slug}`}>
+            {t("backToBooking")}
+          </Link>
+        )}
+        <Link className={`${styles.button} ${slug ? styles.secondary : styles.primary}`} href="/account">
           {t("yourBookings")}
         </Link>
       </Outcome>

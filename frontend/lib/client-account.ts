@@ -196,3 +196,40 @@ export function dialRegion(languages: readonly string[], locale: string): string
   }
   return LOCALE_REGION[locale] ?? "GB";
 }
+
+// --- Back to the booking page after an emailed sign-up (owner ruling 7: this browser only) ---
+
+type StorageLike = Pick<Storage, "getItem" | "setItem" | "removeItem">;
+
+/** Where the way back lives: this browser's own storage, so a link opened in another browser simply has none. */
+export const RETURN_KEY = "zif-account-return";
+/** As long as the sign-up link works. */
+const RETURN_FOR_MS = 24 * 3_600_000;
+
+/** The booking page the done screen's "Create an account" came from: only its slug (never an email or a path), so the
+ * way back can only be `/{locale}/{slug}`. `store` is a getter: reading window.localStorage itself can throw. */
+export function rememberReturn(store: () => StorageLike, slug: string, now: number): void {
+  if (!slugLooksValid(slug) || slug !== slug.toLowerCase()) return;
+  try {
+    store().setItem(RETURN_KEY, JSON.stringify({ slug, at: now }));
+  } catch {
+    // Storage refused (private mode, blocked site data): the account still works, with no way back.
+  }
+}
+
+/** The slug to go back to after the account is created, once: anything else stored there, or older than the link,
+ * leads nowhere. */
+export function takeReturn(store: () => StorageLike, now: number): string | null {
+  try {
+    const storage = store();
+    const raw = storage.getItem(RETURN_KEY);
+    storage.removeItem(RETURN_KEY);
+    const value: unknown = JSON.parse(raw ?? "null");
+    if (!value || typeof value !== "object") return null;
+    const { slug, at } = value as { slug?: unknown; at?: unknown };
+    if (typeof slug !== "string" || typeof at !== "number" || now - at > RETURN_FOR_MS) return null;
+    return slugLooksValid(slug) && slug === slug.toLowerCase() ? slug : null;
+  } catch {
+    return null;
+  }
+}

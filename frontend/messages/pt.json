@@ -143,7 +143,8 @@
     "doneTitle": "Sua conta está pronta",
     "doneLede": "Você entrou como <chip>{email}</chip>. Seus dados são preenchidos quando você reserva.",
     "yourBookings": "Ver seus agendamentos",
-    "existsLede": "Este e-mail já está cadastrado no ziftbook, então nada foi criado nem alterado. Entre para usá-lo."
+    "existsLede": "Este e-mail já está cadastrado no ziftbook, então nada foi criado nem alterado. Entre para usá-lo.",
+    "backToBooking": "Voltar para a página de reservas"
   },
   "ClientHome": {
     "title": "Seus agendamentos",
@@ -1136,6 +1137,9 @@
     "signedInAs": "Você entrou como {name}.",
     "filledIn": "Seus dados foram preenchidos. As alterações aqui valem só para esta reserva; com outro e-mail, ela não fica salva na sua conta.",
     "emailNotSaved": "Esta reserva não vai aparecer nos seus agendamentos.",
-    "notYou": "Não é você? Sair"
+    "notYou": "Não é você? Sair",
+    "saveDetailsTitle": "Salve seus dados para a próxima vez",
+    "saveDetailsBody": "Com uma conta ziftbook gratuita, seus dados são preenchidos quando você reserva em qualquer negócio.",
+    "saveDetailsAction": "Criar uma conta"
   }
 }

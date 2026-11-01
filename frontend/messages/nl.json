@@ -143,7 +143,8 @@
     "doneTitle": "Je account is klaar",
     "doneLede": "Je bent ingelogd als <chip>{email}</chip>. Je gegevens worden ingevuld als je boekt.",
     "yourBookings": "Bekijk je afspraken",
-    "existsLede": "Dit e-mailadres is al geregistreerd bij ziftbook, dus er is niets aangemaakt of gewijzigd. Log in om het te gebruiken."
+    "existsLede": "Dit e-mailadres is al geregistreerd bij ziftbook, dus er is niets aangemaakt of gewijzigd. Log in om het te gebruiken.",
+    "backToBooking": "Terug naar de boekingspagina"
   },
   "ClientHome": {
     "title": "Je afspraken",
@@ -1136,6 +1137,9 @@
     "signedInAs": "Ingelogd als {name}.",
     "filledIn": "Je gegevens zijn ingevuld. Wijzigingen hier gelden alleen voor deze afspraak; met een ander e-mailadres wordt hij niet in je account bewaard.",
     "emailNotSaved": "Deze afspraak komt niet bij je afspraken te staan.",
-    "notYou": "Ben jij dit niet? Uitloggen"
+    "notYou": "Ben jij dit niet? Uitloggen",
+    "saveDetailsTitle": "Bewaar je gegevens voor de volgende keer",
+    "saveDetailsBody": "Met een gratis ziftbook-account worden je gegevens ingevuld als je bij welk bedrijf dan ook boekt.",
+    "saveDetailsAction": "Account aanmaken"
   }
 }

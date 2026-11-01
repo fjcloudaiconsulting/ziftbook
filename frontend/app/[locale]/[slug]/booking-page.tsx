@@ -1052,7 +1052,7 @@ export function BookingPage({
       <>
         <main className={styles.screen}>
           <div className={`${styles.col} ${styles.bookingWide}`}>
-            <DoneScreen page={page} done={done} locale={loc} dLocale={dLocale} zone={zone} t={t} onAgain={() => router.push(`/${page.slug}`)} />
+            <DoneScreen page={page} done={done} locale={loc} dLocale={dLocale} zone={zone} t={t} saveDetails={account === null} onAgain={() => router.push(`/${page.slug}`)} />
           </div>
         </main>
         <BookingFooter version={version} />

@@ -143,7 +143,8 @@
     "doneTitle": "Your account is ready",
     "doneLede": "You're signed in as <chip>{email}</chip>. Your details fill in when you book.",
     "yourBookings": "See your bookings",
-    "existsLede": "This email is already registered with ziftbook, so nothing was created or changed. Sign in to use it."
+    "existsLede": "This email is already registered with ziftbook, so nothing was created or changed. Sign in to use it.",
+    "backToBooking": "Back to the booking page"
   },
   "ClientHome": {
     "title": "Your bookings",
@@ -1136,6 +1137,9 @@
     "signedInAs": "Signed in as {name}.",
     "filledIn": "Your details are filled in. Changes here are for this booking only; with a different email it won't be saved to your account.",
     "emailNotSaved": "This booking won't appear in your bookings.",
-    "notYou": "Not you? Sign out"
+    "notYou": "Not you? Sign out",
+    "saveDetailsTitle": "Save your details for next time",
+    "saveDetailsBody": "With a free ziftbook account, your details fill in when you book with any business.",
+    "saveDetailsAction": "Create an account"
   }
 }
