@@ -71,7 +71,9 @@ Specifics:
   it again once the lock is free. If it keeps failing, find the transaction holding the lock (`pg_locks` joined to
   `pg_stat_activity`), or split the migration so each step locks less (one table per migration; add a constraint
   `NOT VALID` and validate it in a later one). Waiting for another migration run to finish is not bounded:
-  concurrent runs take turns.
+  concurrent runs take turns. `migrations/env.py` polls its advisory lock (`pg_try_advisory_lock`, a commit
+  between tries) rather than waiting in `pg_advisory_lock`: a waiting statement holds a snapshot, and a
+  `CREATE INDEX CONCURRENTLY` in the run holding the lock would deadlock with it.
 - Validating a constraint on a table with FORCE row-level security (a `VALIDATE CONSTRAINT`, or an `ADD CONSTRAINT`
   that checks existing rows) scans as the owner under the tenant policy: with no `app.tenant_id` it fails (42704),
   and with one it checks that business's rows only and still marks the constraint valid. Use `app.db.lift_force`
