@@ -25,11 +25,12 @@ from typing import Any
 import pytest
 from mypy_boto3_s3 import S3Client
 from opentelemetry import trace
+from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 from PIL import Image
 
 from app import photo_child, photo_decode, photos
 from app.errors import ApiError
-from tests.conftest import API_DIR, image, upload
+from tests.conftest import API_DIR, closed, image, points, upload
 
 PROBE = Path(__file__).with_name("photo_child_probe.py")
 LINUX = sys.platform == "linux"
@@ -741,3 +742,28 @@ def test_decodes_are_refused_when_the_api_could_not_be_hardened(
     assert photos.harden("linux") == "on"
     assert photos.harden("darwin") == "unsupported"
     assert decode(PNG, photos.CHILD).width == 20
+
+
+# ZIF-230 fence (review finding 11). Kills: decoder failures noticed only by someone reading logs:
+# every decode counts once under its outcome, a closed set, so an alert can be built on it.
+def test_every_decode_is_counted_by_outcome(
+    metric_reader: InMemoryMetricReader, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    decode(PNG, photos.CHILD)
+    with pytest.raises(ApiError):
+        decode(b"hello", photos.CHILD)
+    with pytest.raises(ApiError):
+        decode(probe("probe-crash"))
+    monkeypatch.setattr(photos, "HARDENING", "failed")
+    with pytest.raises(ApiError):
+        decode(PNG, photos.CHILD)
+    counted = {
+        p.attributes["photo.outcome"]: p.value
+        for p in points(metric_reader, "ziftbook.photo.decodes")
+    }
+    assert counted == {"ok": 1, "refused": 1, "signal": 1, "hardening": 1}
+    assert set(photos.OUTCOMES) == {
+        *("ok", "refused", "cpu", "memory", "oom", "signal", "exit", "output", "protocol"),
+        *("timeout", "starved", "headroom", "spawn", "limits", "import", "hardening"),
+    }
+    closed(metric_reader)

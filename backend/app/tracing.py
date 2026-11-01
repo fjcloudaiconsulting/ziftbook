@@ -63,6 +63,8 @@ PAYMENT_OUTCOMES = _meter.create_counter("ziftbook.payment.outcomes", unit="{pay
 # csp_reports.CLOSED_VALUES; at most csp_reports.MAX_SERIES series a process, then one overflow
 # series (csp_reports._record). The page, source and format stay in the log line.
 CSP_VIOLATIONS = _meter.create_counter("ziftbook.csp.violations", unit="{violation}")
+# photo.outcome: photos.OUTCOMES (ZIF-230).
+PHOTO_DECODES = _meter.create_counter("ziftbook.photo.decodes", unit="{decode}")
 
 _configured = False
 

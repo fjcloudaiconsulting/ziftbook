@@ -512,6 +512,19 @@ def parse(body: bytes) -> tuple[Decoded | Refused, bytes, bytes] | None:
     return head, thumb, detail
 
 
+# Every outcome of a decode: the ziftbook.photo.decodes metric's closed set, the span's and the
+# logs' `decoder`. ok and refused are the photo's answer; the rest say why the child failed.
+OUTCOMES = (
+    *("ok", "refused", "cpu", "memory", "oom", "signal", "exit", "output", "protocol"),
+    *("timeout", "starved", "headroom", "spawn", "limits", "import", "hardening"),
+)
+
+
+def _count(outcome: str, span: Span) -> None:
+    span.set_attribute("decoder", outcome)
+    tracing.PHOTO_DECODES.add(1, {"photo.outcome": outcome})
+
+
 # Exit codes a child gives before its ready marker when it could not start (2 is the
 # interpreter's own: no such script). After the marker, a code is the decode's fault.
 START_FAILURES = {2: "import", photo_child.EXIT_LIMITS: "limits", photo_child.EXIT_IMPORT: "import"}
@@ -555,13 +568,13 @@ def variants(upload: IO[bytes], upload_id: UUID, span: Span) -> Variants:
     starved of CPU (the node's fault, not the photo's). Logs ids and closed sets only."""
     if HARDENING == "failed":  # a child could read this process's environment
         fields: dict[str, Any] = {"decoder": "hardening", "upload_id": str(upload_id)}
-        span.set_attribute("decoder", "hardening")
+        _count("hardening", span)
         logger.error("photo decoder could not start", extra=fields)
         raise Refusal(503, "busy", fields)
     short = _headroom()
     if short is not None:  # a child at its ceiling could OOM the whole pod
         fields = {"decoder": "headroom", "upload_id": str(upload_id), **short}
-        span.set_attribute("decoder", "headroom")
+        _count("headroom", span)
         logger.error("photo decoder could not start", extra=fields)
         raise Refusal(503, "busy", fields)
     try:
@@ -569,7 +582,7 @@ def variants(upload: IO[bytes], upload_id: UUID, span: Span) -> Variants:
     except OSError:  # no process: out of memory or pids, or no interpreter
         run = None
     outcome, head, thumb, detail = ("spawn", None, b"", b"") if run is None else _judge(run)
-    span.set_attribute("decoder", outcome)
+    _count(outcome, span)
     if head is not None:
         span.set_attributes({"format": str(head.format), "pixels": head.pixels or 0})
     fields = {"decoder": outcome, "upload_id": str(upload_id)}
