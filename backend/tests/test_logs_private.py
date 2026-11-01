@@ -463,6 +463,15 @@ def test_no_personal_data_ever_reaches_a_log(
         Job(uuid.uuid4(), "email.booking", people.a, {**team_mail, "user_id": str(people.both)})
     )
 
+    # 6l (ZIF-58): the 6d client, with its notes and consent, is erased by erase_client as the
+    # owner's live session, the database half of the erase route.
+    with tenant_context(people.a) as session:
+        assert session.scalar(
+            text("SELECT erase_client(:h, :id)"),
+            {"h": auth.hash_token(owner.cookies[auth.COOKIE]), "id": client_id},
+        )
+    assert client_id not in [c["id"] for c in owner.get("/api/clients").json()]
+
     # 7: invite flow — send, list, a wrong token, then accept with a brand-new account.
     invite_email = fresh_email()
     invite_password = "Invite-Pw7-55"

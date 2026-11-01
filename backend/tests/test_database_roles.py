@@ -240,7 +240,9 @@ def test_link_requests_queue_their_email_without_minting(
 
 # ZB-08 FENCE. Wrong impl: the worker reaches mint_email_token only through ziftbook_app, so taking
 # it from the app role (0051) leaves no role that can mint; or the worker gets grants of its own
-# beyond it.
+# beyond it. ZIF-58 (0064) adds, on purpose, reading and deleting the erased clients' contact
+# holds, which the app role can neither read nor write: the worker sends through them and purges
+# them.
 def test_worker_role_holds_only_mint_email_token_in_its_own_right(migrate_engine: Engine) -> None:
     with migrate_engine.connect() as conn:
         held = conn.scalars(
@@ -260,7 +262,11 @@ def test_worker_role_holds_only_mint_email_token_in_its_own_right(migrate_engine
             ORDER BY 1
             """)
         ).all()
-    assert list(held) == ["mint_email_token(p_id uuid, p_token_hash bytea) EXECUTE"]
+    assert list(held) == [
+        "client_erasure_holds DELETE",
+        "client_erasure_holds SELECT",
+        "mint_email_token(p_id uuid, p_token_hash bytea) EXECUTE",
+    ]
 
 
 # ZB-31 FENCE. Wrong impl: PUBLIC, or either role in its own right, keeps TEMPORARY on the
