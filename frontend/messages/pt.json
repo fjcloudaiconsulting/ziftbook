@@ -1109,6 +1109,13 @@
     "doneCheckedSetup": "Verificamos seu cartão. Nada foi cobrado.",
     "donePaid": "Você pagou {price}.",
     "okLedeNoEmail": "Enviamos uma confirmação com um link para alterar ou cancelar.",
-    "pendLedeNoEmail": "{biz} vai confirmar o seu pedido. Enviamos um link para consultá-lo ou cancelá-lo, e escreveremos de novo quando responderem."
+    "pendLedeNoEmail": "{biz} vai confirmar o seu pedido. Enviamos um link para consultá-lo ou cancelá-lo, e escreveremos de novo quando responderem.",
+    "signInOffer": "Tem uma conta ziftbook?",
+    "signInOfferAction": "Entre para preencher seus dados",
+    "signInTitle": "Entrar no ziftbook",
+    "signInLede": "Seu nome, e-mail e telefone são preenchidos. Você ainda pode alterá-los.",
+    "signInGuest": "Sem conta? Reserve como convidado e salve seus dados depois.",
+    "signedInAs": "Você entrou como {name}.",
+    "filledIn": "Seus dados foram preenchidos. As alterações aqui valem só para esta reserva."
   }
 }

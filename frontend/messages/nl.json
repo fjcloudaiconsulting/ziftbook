@@ -1109,6 +1109,13 @@
     "doneCheckedSetup": "We hebben je kaart gecontroleerd. Er is niets afgeschreven.",
     "donePaid": "Je hebt {price} betaald.",
     "okLedeNoEmail": "We hebben je een bevestiging gemaild met een link om te wijzigen of annuleren.",
-    "pendLedeNoEmail": "{biz} bevestigt je verzoek. We hebben je een link gemaild om het te bekijken of te annuleren, en mailen opnieuw zodra ze reageren."
+    "pendLedeNoEmail": "{biz} bevestigt je verzoek. We hebben je een link gemaild om het te bekijken of te annuleren, en mailen opnieuw zodra ze reageren.",
+    "signInOffer": "Heb je een ziftbook-account?",
+    "signInOfferAction": "Log in om je gegevens in te vullen",
+    "signInTitle": "Inloggen bij ziftbook",
+    "signInLede": "Je naam, e-mailadres en telefoon worden ingevuld. Je kunt ze nog aanpassen.",
+    "signInGuest": "Geen account? Boek als gast en bewaar je gegevens daarna.",
+    "signedInAs": "Ingelogd als {name}.",
+    "filledIn": "Je gegevens zijn ingevuld. Wijzigingen hier gelden alleen voor deze afspraak."
   }
 }

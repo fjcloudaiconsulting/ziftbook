@@ -2,8 +2,9 @@
 // and the way back to a booking page after an emailed sign-up.
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
+import { readFileSync } from "node:fs";
 
-import { accountSignInOutcome, bookAgainSlug, historyOutcome, historySections, historyServiceName, statusPill } from "../lib/client-account.ts";
+import { accountSignInOutcome, applyFill, bookAgainSlug, fillFrom, offerNext, splitPhone, historyOutcome, historySections, historyServiceName, statusPill } from "../lib/client-account.ts";
 
 describe("account sign-in", () => {
   test("a wrong password is the console's own generic answer, never a hint that the email has an account", () => {
@@ -93,5 +94,54 @@ describe("your bookings", () => {
     assert.deepEqual(historyServiceName({ en: "Haircut", nl: "Knippen" }, "nl"), { text: "Knippen", lang: null });
     assert.deepEqual(historyServiceName({ pt: "Corte" }, "en"), { text: "Corte", lang: "pt" });
     assert.deepEqual(historyServiceName({}, "en"), { text: "", lang: null });
+  });
+});
+
+describe("filling the checkout from the account", () => {
+  const ana = { email: "ana@example.com", name: "Ana Silva", phone: "+31612345678" };
+
+  test("the offer reads the account only when clicked: filled, or sign in first, or a problem", () => {
+    assert.equal(offerNext(200), "fill");
+    assert.equal(offerNext(401), "signIn");
+    assert.equal(offerNext(403), "error");
+    assert.equal(offerNext(0), "error");
+  });
+
+  test("a phone in the business's country fills in as a local number behind its own code", () => {
+    assert.deepEqual(splitPhone("+31612345678", "NL"), { region: "NL", local: "612345678" });
+  });
+
+  test("a phone from another country gets that country's code, when only one country has it", () => {
+    assert.deepEqual(splitPhone("+351912345678", "NL"), { region: "PT", local: "912345678" });
+    assert.deepEqual(splitPhone("+5511912345678", "PT"), { region: "BR", local: "11912345678" });
+  });
+
+  test("a code several countries share stays a whole international number: never a guessed country", () => {
+    assert.deepEqual(splitPhone("+12025550123", "NL"), { region: "NL", local: "+12025550123" });
+    assert.deepEqual(splitPhone("+12025550123", "US"), { region: "US", local: "2025550123" });
+  });
+
+  test("no phone fills in no phone", () => {
+    assert.equal(splitPhone(null, "NL"), null);
+  });
+
+  test("the account's name, email and phone; a field the account has no value for keeps what is typed", () => {
+    const fill = fillFrom(ana, "NL");
+    assert.deepEqual(fill, { name: "Ana Silva", email: "ana@example.com", phone: "612345678", region: "NL" });
+    const typed = { name: "A. S.", email: "typed@example.com", phone: "699", region: "PT" };
+    assert.deepEqual(applyFill(typed, fill), { name: "Ana Silva", email: "ana@example.com", phone: "612345678", region: "NL" });
+    const bare = fillFrom({ email: "ana@example.com", name: null, phone: null }, "NL");
+    assert.deepEqual(applyFill(typed, bare), { name: "A. S.", email: "ana@example.com", phone: "699", region: "PT" });
+  });
+
+  test("fence: the checkout reads the account only from the offer's click, never when it loads", () => {
+    // Wrong implementation killed: a GET /api/account in an effect, which puts a person's details into every
+    // booking page a staff member merely opens (security B3.4).
+    const text = readFileSync(new URL("../app/[locale]/[slug]/booking-page.tsx", import.meta.url), "utf8");
+    const calls = [...text.matchAll(/platformAccountRead\(/g)];
+    assert.equal(calls.length, 1);
+    const before = text.slice(0, calls[0].index);
+    const opened = before.lastIndexOf("async function fillFromAccount(");
+    assert.ok(opened > before.lastIndexOf("useEffect("), "inside the offer's click handler, not an effect");
   });
 });

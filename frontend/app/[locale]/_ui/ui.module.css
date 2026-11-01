@@ -608,3 +608,14 @@ a.textButton, .textButton:has(> svg) { display: inline-flex; align-items: center
 .subhead { margin: 0.5rem 0 0; font: 400 1.3125rem/1.25 var(--font-display), Georgia, serif; text-wrap: balance; }
 .pillOk { color: var(--ok); background: oklch(0.97 0.025 152); box-shadow: inset 0 0 0 1px oklch(0.85 0.06 152); }
 .pillMuted { color: var(--muted); }
+/* The checkout's account offer (the terms box's quiet shape), its dialog (the service dialog's), and the note after
+ * filling in. */
+.acctOffer { display: flex; flex-wrap: wrap; align-items: center; gap: 0.15rem 0.5rem; padding: 0.55rem 0.9rem; border: 1px solid var(--line); border-radius: 0.75rem; background: var(--nav); font-size: 0.9375rem; }
+.acctOffer > svg { flex: none; color: var(--muted); }
+.acctOffer .textButton { min-height: 2.25rem; align-self: center; }
+.acctOfferError { flex-basis: 100%; margin: 0; font-size: 0.875rem; font-weight: 600; color: var(--error); }
+.acctDialogBody { padding: 1.25rem; display: flex; flex-direction: column; gap: 1rem; }
+.acctDialogTitle { margin: 0; padding-right: 3rem; font: 400 1.3125rem/1.25 var(--font-display), Georgia, serif; }
+.acctNote { display: flex; flex-direction: column; gap: 0.25rem; }
+.acctNote .statusNote:focus { outline: none; }
+.acctNoteActs { margin: 0; }

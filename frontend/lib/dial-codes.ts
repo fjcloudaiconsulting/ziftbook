@@ -34,6 +34,11 @@ export function defaultDial(country: string): string {
   return DIAL[country] ?? "";
 }
 
+/** The regions whose numbers start with this dialling code (several share "+1", "+44", "+7"...). */
+export function regionsWithDial(dial: string): string[] {
+  return Object.keys(DIAL).filter((region) => DIAL[region] === dial);
+}
+
 export type DialOption = { region: string; name: string; dial: string; text: string };
 
 /** The country-code picker's options: the business country first, then the rest by their name in

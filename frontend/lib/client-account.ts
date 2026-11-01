@@ -3,6 +3,7 @@
 
 import { signInOutcome } from "./account.ts";
 import { slugLooksValid } from "./booking-page.ts";
+import { defaultDial, regionsWithDial } from "./dial-codes.ts";
 
 /** What an answer to `POST /api/account/session` means for the form. A wrong password is the console's generic
  * answer (`SignIn.invalid`); `account_unavailable` (a platform admin) only follows a correct password. */
@@ -69,4 +70,49 @@ export function historyServiceName(names: Record<string, string>, locale: string
   if (names[locale]) return { text: names[locale], lang: null };
   const other = LANGUAGES.find((l) => names[l]);
   return other ? { text: names[other], lang: other } : { text: "", lang: null };
+}
+
+// --- Filling the checkout (security B3.4: only on the person's own click) ---
+
+/** What the offer's click does with `GET /api/account`'s answer: fill in, sign in first (no account session on this
+ * browser), or say it failed. */
+export function offerNext(status: number): "fill" | "signIn" | "error" {
+  if (status === 200) return "fill";
+  if (status === 401) return "signIn";
+  return "error";
+}
+
+/** The account's international phone as the checkout types one: a local number behind its country's code. A code
+ * several countries share (+1, +44, +7...) stays the whole international number unless the business's own country
+ * is one of them: the picker never shows a guessed country. */
+export function splitPhone(phone: string | null, preferred: string): { region: string; local: string } | null {
+  if (!phone) return null;
+  const digits = phone.replace(/^\+/, "");
+  const own = defaultDial(preferred);
+  if (own && digits.startsWith(own)) return { region: preferred, local: digits.slice(own.length) };
+  for (let length = 1; length <= 3; length++) {
+    const regions = regionsWithDial(digits.slice(0, length));
+    if (regions.length === 1) return { region: regions[0], local: digits.slice(length) };
+    if (regions.length > 1) break;
+  }
+  return { region: preferred, local: phone };
+}
+
+export type Details = { name: string; email: string; phone: string; region: string };
+export type Fill = { name: string | null; email: string; phone: string | null; region: string | null };
+
+/** What the account fills in: its name, email and phone (as splitPhone types it). */
+export function fillFrom(account: { email: string; name: string | null; phone: string | null }, preferred: string): Fill {
+  const phone = splitPhone(account.phone, preferred);
+  return { name: account.name, email: account.email, phone: phone?.local ?? null, region: phone?.region ?? null };
+}
+
+/** The form after filling: every value the account has replaces what is typed; the rest stays as typed. */
+export function applyFill(current: Details, fill: Fill): Details {
+  return {
+    name: fill.name ?? current.name,
+    email: fill.email,
+    phone: fill.phone ?? current.phone,
+    region: fill.phone !== null && fill.region ? fill.region : current.region,
+  };
 }

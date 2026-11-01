@@ -4,7 +4,7 @@ import Script from "next/script";
 import { useTranslations } from "next-intl";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 
-import { availabilityRead, bookingsAbandon, bookingsCreate, bookingsResume, bookingsSync, type BookingPageOut, type PaymentStart, type SyncOut } from "@/api-client";
+import { type AccountOut, availabilityRead, bookingsAbandon, bookingsCreate, bookingsResume, bookingsSync, type BookingPageOut, type PaymentStart, platformAccountRead, type SyncOut } from "@/api-client";
 import { Link, useRouter } from "@/i18n/navigation";
 import { addDays, localDay, localWhen, slotsByDay, weekDays } from "@/lib/booking-link";
 import {
@@ -35,6 +35,7 @@ import {
   weekFor,
   withName,
 } from "@/lib/booking-page";
+import { applyFill, fillFrom, offerNext } from "@/lib/client-account";
 import { dateLocale } from "@/lib/console";
 import { defaultDial, dialOptions } from "@/lib/dial-codes";
 import { formatMoney } from "@/lib/money";
@@ -43,9 +44,10 @@ import type { AppVersion } from "@/lib/version";
 import { zoneCity } from "@/lib/week";
 
 import { useNonce } from "../_ui/nonce";
-import { Banner, FieldError, JSON_WRITE, send, Submit } from "../_ui/parts";
+import { Banner, FieldError, JSON_WRITE, problem, send, Submit } from "../_ui/parts";
 import { CheckIcon } from "../_ui/picker";
 import styles from "../_ui/ui.module.css";
+import { AccountOffer, SignedInNote, SignInDialog } from "./account-fill";
 import { type Done, DoneScreen, PayEnd, Picker, Processing, ResumeView, WhoAt } from "./checkout";
 import { DialPicker } from "./dial-picker";
 import { BookingFooter, NewTab } from "./footer";
@@ -128,6 +130,7 @@ export function BookingPage({
   booking: string | null;
 }) {
   const t = useTranslations("BookingPage");
+  const form = useTranslations("Form");
   const router = useRouter();
   const nonce = useNonce();
   const loc = locale as Locale;
@@ -183,6 +186,14 @@ export function BookingPage({
   // by onTurnstileLoad and would otherwise close over the render's doBook from that moment (stale).
   const doBookRef = useRef<(token: string | null) => Promise<void>>(async () => {});
 
+  // --- ZIF-146: the details filled in from the person's own account, only on their click (security B3.4) ---
+  const [account, setAccount] = useState<AccountOut | null>(null);
+  const [signInOpen, setSignInOpen] = useState(false);
+  const [offerBusy, setOfferBusy] = useState(false);
+  const [offerError, setOfferError] = useState<string | null>(null);
+  const noteRef = useRef<HTMLDivElement>(null);
+  const [noteFocus, setNoteFocus] = useState(0);
+
   // --- ZIF-158: the payment step ---
   const liveService = page.services.find((svc) => svc.id === serviceId);
   const stepOn = Boolean(page.payment && liveService?.payment);
@@ -233,6 +244,11 @@ export function BookingPage({
   useEffect(() => {
     if (focusStep !== null) headingRefs.current[focusStep]?.focus();
   }, [focusStep]);
+
+  // After filling in (the dialog closed, or the offer's own click): to the note that says so.
+  useEffect(() => {
+    if (noteFocus) noteRef.current?.focus();
+  }, [noteFocus]);
 
   // Runs after the details have (re)rendered with their inputs mounted, so a field targeted before
   // they were open still gets focused once they are.
@@ -876,6 +892,31 @@ export function BookingPage({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [end, bookingId]);
 
+  /** The account's name, email and phone into the form; anything it has no value for stays as typed. */
+  function fill(signedIn: AccountOut) {
+    const next = applyFill({ name: flow.name, email: flow.email, phone: flow.phone, region }, fillFrom(signedIn, page.country));
+    setFlow((f) => ({ ...f, name: next.name, email: next.email, phone: next.phone, suggest: null, errors: { ...f.errors, name: undefined, email: undefined, phone: undefined } }));
+    setRegion(next.region);
+    setAccount(signedIn);
+    setSignInOpen(false);
+    setOfferError(null);
+    setNoteFocus((n) => n + 1);
+  }
+
+  /** The offer's click: the account signed in on this browser fills the form, or the dialog asks to sign in. The
+   * only read of the person's details on this page. */
+  async function fillFromAccount() {
+    if (offerBusy) return;
+    setOfferBusy(true);
+    setOfferError(null);
+    const answer = await send(platformAccountRead());
+    setOfferBusy(false);
+    const nextStep = offerNext(answer.status);
+    if (nextStep === "fill" && answer.data) fill(answer.data);
+    else if (nextStep === "signIn") setSignInOpen(true);
+    else setOfferError(form(problem(answer)));
+  }
+
   const s2 = flow.service ? (flow as Step2Plus) : null;
   if (!s2) return null;
   const s2With = withName(s2.service.workers, s2.worker, s2.pick, t("anyone"));
@@ -1063,6 +1104,12 @@ export function BookingPage({
             </div>
             {detailsOpen && (
               <div className={styles.stepBody}>
+                {account ? (
+                  <SignedInNote account={account} t={t} noteRef={noteRef} />
+                ) : (
+                  !locked && <AccountOffer t={t} busy={offerBusy} error={offerError} onOpen={() => void fillFromAccount()} />
+                )}
+                <SignInDialog open={signInOpen} t={t} turnstileSiteKey={turnstileSiteKey} onClose={() => setSignInOpen(false)} onSignedIn={fill} />
                 <WhoAt s2={s2} locked={locked} banner={flow.banner?.where === 3 ? flow.banner : null} zone={zone} dLocale={dLocale} t={t} onPick={(pick) => setFlow((f) => ({ ...f, pick }))} />
                 <form
                   className={styles.form}
