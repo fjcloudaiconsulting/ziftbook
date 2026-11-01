@@ -7,7 +7,7 @@ import time
 import urllib.request
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from opentelemetry import metrics
 from opentelemetry.metrics import CallbackOptions, Observation
@@ -110,14 +110,17 @@ async def work(
     kinds: dict[str, JobKind],
     healthcheck_url: str | None,
     stop: asyncio.Event,
-    hold_until: date | None = None,
+    hold: retention.Hold | None = None,
 ) -> None:
     """Run due jobs until nothing is due, sweep when due, ping, then wait POLL_SECONDS or until
-    stopped. hold_until: the retention hold in force (ZIF-235), if any."""
+    stopped. hold: the retention hold as configured (ZIF-235), if any."""
     swept: float | None = None  # monotonic time of the last SUCCESSFUL sweep
     retention_due: float | None = None  # when the next retention run is due; None: now
+    # The architect's ruling (ZIF-235 D6): an invalid hold value holds, and withholds the ping on
+    # every iteration until someone fixes it, so the owner is alerted for as long as it lasts.
+    invalid_hold = hold is not None and hold.state == "invalid"
     while not stop.is_set():
-        healthy = True
+        healthy = not invalid_hold
         try:
             while await run_once(kinds) and not stop.is_set():
                 pass
@@ -149,8 +152,14 @@ async def work(
         # hostage to the other. A failure withholds the ping and retries next poll. The sweep
         # bounds its own run (a time budget, and stop checked between batches).
         if not stop.is_set() and (retention_due is None or time.monotonic() >= retention_due):
+            if invalid_hold:
+                assert hold is not None
+                logger.error(
+                    "retention hold value invalid: holding until it is fixed",
+                    extra={"hold_until": (hold.raw or "")[:40]},
+                )
             try:
-                result = await asyncio.to_thread(retention.sweep, stop.is_set, hold_until)
+                result = await asyncio.to_thread(retention.sweep, stop.is_set, hold)
                 wait = RETENTION_SECONDS if result.complete else RETENTION_BACKLOG_SECONDS
                 retention_due = time.monotonic() + wait
             except Exception:
@@ -200,6 +209,8 @@ async def serve(settings: WorkerSettings) -> None:
             "rate_limit_key": rate_limit_key,
             # ZB-08. The role the worker's queries run as: ziftbook_worker.
             "database_role": role,
+            # ZIF-235: the evidence hold as set (left out when unset).
+            "retention_hold_until": (settings.retention_hold_until or "")[:40] or None,
         },
     )
     # ZB-08: a WARNING, not an ERROR, while ziftbook_app may still mint email tokens (until the
@@ -221,24 +232,22 @@ async def serve(settings: WorkerSettings) -> None:
         )
     if rate_limit_key != "set":
         logger.warning("rate limit key unset: rate-limit keys are not peppered")
-    # ZIF-235 D6. Never silent: a date too far ahead (a typo) holds 90 days, with an ERROR.
-    today = datetime.now(UTC).date()
-    hold_until, clamped = retention.effective_hold(settings.retention_hold_until, today)
-    if clamped:
-        assert hold_until is not None and settings.retention_hold_until is not None
+    # ZIF-235 D6. Never silent, never a refusal to start: see retention.Hold.
+    hold = retention.parse_hold(settings.retention_hold_until, datetime.now(UTC).date())
+    shown = {"hold_until": (hold.raw or "")[:40]}
+    if hold.state == "invalid":
         logger.error(
-            "retention hold more than 90 days ahead: holding 90 days from now instead",
-            extra={
-                "hold_until": hold_until.isoformat(),
-                "requested": settings.retention_hold_until.isoformat(),
-            },
+            "retention hold value invalid: holding until it is fixed"
+            " (a plain YYYY-MM-DD at most 90 days ahead)",
+            extra=shown,
         )
-    elif hold_until is not None and today < hold_until:
+    elif hold.state == "past":
+        logger.error("retention hold date has passed: not holding", extra=shown)
+    elif hold.state == "on":
         logger.warning(
-            "retention hold on: audit events and booking addresses are kept",
-            extra={"hold_until": hold_until.isoformat()},
+            "retention hold on: audit events and booking addresses are kept", extra=shown
         )
-    await work(KINDS, settings.healthcheck_url, stop, hold_until)
+    await work(KINDS, settings.healthcheck_url, stop, hold)
     logger.info("worker stopped")
 
 
