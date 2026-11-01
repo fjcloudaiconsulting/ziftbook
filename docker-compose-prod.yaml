@@ -127,7 +127,8 @@ services:
       ZIF_LOG_FORMAT: ${ZIF_LOG_FORMAT:-json}
       ZIF_LOG_SQL: ${ZIF_LOG_SQL:-false}
       ZIF_HEALTHCHECK_URL: ${ZIF_HEALTHCHECK_URL:-}
-      # An incident's evidence hold (ZIF-235): a date, at most 90 days ahead. Unset normally.
+      # An incident's evidence hold (ZIF-235): YYYY-MM-DD, exclusive (it holds until 00:00 UTC on that
+      # date), from tomorrow to at most 90 days ahead. Unset normally.
       ZIF_RETENTION_HOLD_UNTIL: ${ZIF_RETENTION_HOLD_UNTIL:-}
       ZIF_STRIPE_SECRET_KEY: ${ZIF_STRIPE_SECRET_KEY:-}
       # The recipient limits' keys hold a client's address: peppered like the API's (ZB-25).
