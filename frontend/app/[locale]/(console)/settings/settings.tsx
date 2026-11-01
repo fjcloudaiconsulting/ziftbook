@@ -19,6 +19,7 @@ import {
   noticeOptions,
   noticeUnit,
   pickFields,
+  refusedKeys,
   SLOT_STEPS,
   settingsBody,
   slotExamples,
@@ -225,6 +226,7 @@ export function Settings() {
       } catch {
         outcome = { status: 0 } as Awaited<ReturnType<typeof call<BusinessSettingsOutput>>>;
       }
+      const refused = refusedKeys(outcome.status, outcome.code);
       if (outcome.status === 200 && outcome.data) {
         const data = outcome.data;
         // Only the form's own keys: never `published`, which the switch above owns.
@@ -235,11 +237,10 @@ export function Settings() {
       } else if (outcome.status === 401) {
         setSignedOut(true);
         setSaveFailed(true);
-      } else if (outcome.status === 422 && sent.includes("contact_email")) {
-        // Every other key is checked before sending; the API refuses a few address shapes the browser does not.
-        setInvalid(["contact_email"]);
+      } else if (refused.length > 0) {
+        setInvalid(refused);
         setSaveFailed(true);
-        document.getElementById(`${formId}-contact_email`)?.focus();
+        document.getElementById(`${formId}-${refused[0]}`)?.focus();
       } else if (outcome.status === 403 && outcome.code === "owner_only") {
         setMessage({ tone: "error", text: errorsT("ownerOnly") });
         setSaveFailed(true);

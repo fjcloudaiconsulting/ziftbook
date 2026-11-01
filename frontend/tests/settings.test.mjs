@@ -15,6 +15,7 @@ import {
   noticeUnit,
   parseWhole,
   paymentsAction,
+  refusedKeys,
   settingsBody,
   slotExamples,
   SLOT_STEPS,
@@ -291,5 +292,26 @@ describe("ZIF-99 the contact email for clients", () => {
     assert.equal(desc("en"), "Your time zone, the default language for client emails, and where clients can reach you.");
     assert.equal(desc("nl"), "Je tijdzone, de standaardtaal voor e-mails aan klanten en waar klanten je kunnen bereiken.");
     assert.equal(desc("pt"), "Seu fuso horário, o idioma padrão dos e-mails para clientes e onde os clientes podem falar com você.");
+  });
+});
+
+describe("ZIF-99 which field a refused save marks", () => {
+  test("fence: only the API's contact_email_invalid marks the address; any other refusal marks no field", () => {
+    // Wrong implementation killed: every 422 of a save that included the address blamed on it (a refused
+    // time zone would then point at the address, and every retry fail the same way).
+    assert.deepEqual(refusedKeys(422, "contact_email_invalid"), ["contact_email"]);
+    assert.deepEqual(refusedKeys(422, "invalid_request"), []);
+    assert.deepEqual(refusedKeys(422, undefined), []);
+    assert.deepEqual(refusedKeys(400, "contact_email_invalid"), []);
+    assert.deepEqual(refusedKeys(200, undefined), []);
+  });
+
+  test("fence: the page marks, focuses and keeps the bar for exactly those keys", () => {
+    // Wrong implementation killed: the branch dropped (the address shows only the generic banner) or the old
+    // "any 422 with the address in the body" rule kept.
+    const src = readFileSync(new URL("../app/[locale]/(console)/settings/settings.tsx", import.meta.url), "utf8");
+    assert.match(src, /const refused = refusedKeys\(outcome\.status, outcome\.code\);/);
+    assert.match(src, /\} else if \(refused\.length > 0\) \{\s*setInvalid\(refused\);\s*setSaveFailed\(true\);\s*document\.getElementById\(`\$\{formId\}-\$\{refused\[0\]\}`\)\?\.focus\(\);/);
+    assert.doesNotMatch(src, /sent\.includes\("contact_email"\)/);
   });
 });
