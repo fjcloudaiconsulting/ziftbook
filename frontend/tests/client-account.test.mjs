@@ -7,7 +7,10 @@ import { describe, test } from "node:test";
 
 import {
   accountPhone,
+  accountHeld,
   accountSignInOutcome,
+  afterAccountSignOut,
+  afterFill,
   afterSignOut,
   applyFill,
   bookAgainSlug,
@@ -24,6 +27,7 @@ import {
   rememberReturn,
   RETURN_KEY,
   splitPhone,
+  SIGNED_OUT,
   statusPill,
   takeReturn,
 } from "../lib/client-account.ts";
@@ -258,7 +262,7 @@ describe("Not you? Sign out", () => {
     // Wrong implementation killed: emptying the locked fields of a request waiting for its payment, whose resend
     // and done screen read them.
     const text = readFileSync(new URL("../app/[locale]/[slug]/booking-page.tsx", import.meta.url), "utf8");
-    assert.match(text, /if \(written && !locked\) \{\s*const next = afterSignOut\(/);
+    assert.match(text, /const \{ state, clear \} = afterAccountSignOut\(acct, heldNow\(\)\);\s*if \(clear\) \{\s*const next = afterSignOut\(/);
   });
 });
 
@@ -444,5 +448,37 @@ describe("a client on the console's sign-in (PR 6 review, correctness 2)", () =>
       const strings = JSON.parse(readFileSync(new URL(`../messages/${locale}.json`, import.meta.url))).SignIn;
       assert.match(strings.noTenant, /<account>.+<\/account>/, locale);
     }
+  });
+});
+
+describe("the account controls wait while a booking is on its way (PR 6 review, correctness 3)", () => {
+  const ana = { email: "ana@example.com", name: "Ana Silva", phone: "+31612345678" };
+  const fill = { name: "Ana Silva", email: "ana@example.com", phone: "612345678", region: "NL" };
+  const free = { locked: false, busy: false, verifying: false, working: false };
+
+  test("held from Send to the answer: verifying, sending, working, or locked waiting for its payment", () => {
+    assert.equal(accountHeld(free), false);
+    for (const key of ["locked", "busy", "verifying", "working"]) assert.equal(accountHeld({ ...free, [key]: true }), true, key);
+  });
+
+  test("a fill while held changes nothing: the request goes with the details it was sent with", () => {
+    assert.equal(afterFill(SIGNED_OUT, ana, fill, true), SIGNED_OUT);
+    assert.deepEqual(afterFill(SIGNED_OUT, ana, fill, false), { account: ana, written: fill, pending: null });
+  });
+
+  test("a sign-out while free empties what the account wrote; while held it empties nothing yet", () => {
+    const filled = { account: ana, written: fill, pending: null };
+    assert.deepEqual(afterAccountSignOut(filled, false), { state: SIGNED_OUT, clear: fill });
+    assert.equal(afterAccountSignOut(filled, true).clear, null);
+    assert.equal(afterAccountSignOut(filled, true).state.account, null);
+  });
+
+  test("fence: the offer and \"Not you?\" wait while held, and fill and the sign-out listener ask heldNow()", () => {
+    const text = readFileSync(new URL("../app/[locale]/[slug]/booking-page.tsx", import.meta.url), "utf8");
+    assert.match(text, /const held = accountHeld\(\{ locked, busy: flow\.busy, verifying, working: false \}\);/);
+    assert.match(text, /!held && <AccountOffer /);
+    assert.match(text, /<SignedInNote [^>]*busy=\{signOutBusy \|\| held\}/);
+    assert.match(text, /function fill\(signedIn: AccountOut\) \{\s*\/\/[^\n]*\n\s*if \(heldNow\(\)\) return;/);
+    assert.match(text, /afterAccountSignOut\(acct, heldNow\(\)\)/);
   });
 });

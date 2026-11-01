@@ -35,7 +35,7 @@ import {
   weekFor,
   withName,
 } from "@/lib/booking-page";
-import { afterSignOut, applyFill, emailNotSaved, type Fill, fillFrom, offerNext } from "@/lib/client-account";
+import { accountHeld, afterAccountSignOut, afterFill, afterSignOut, type AccountState, applyFill, emailNotSaved, fillFrom, offerNext, SIGNED_OUT } from "@/lib/client-account";
 import { dateLocale } from "@/lib/console";
 import { defaultDial, dialOptions } from "@/lib/dial-codes";
 import { formatMoney } from "@/lib/money";
@@ -188,9 +188,10 @@ export function BookingPage({
   const doBookRef = useRef<(token: string | null) => Promise<void>>(async () => {});
 
   // --- ZIF-146: the details filled in from the person's own account, only on their click (security B3.4) ---
-  const [account, setAccount] = useState<AccountOut | null>(null);
-  // What the account wrote into the form: "Not you? Sign out" empties only the fields that still hold it.
-  const [written, setWritten] = useState<Fill | null>(null);
+  // The account that filled the form in, and what it wrote: "Not you? Sign out" empties only the fields that still
+  // hold it (lib/client-account.ts).
+  const [acct, setAcct] = useState<AccountState<AccountOut>>(SIGNED_OUT);
+  const account = acct.account;
   const [signOutBusy, setSignOutBusy] = useState(false);
   const [signOutError, setSignOutError] = useState<string | null>(null);
   const [signInOpen, setSignInOpen] = useState(false);
@@ -255,19 +256,28 @@ export function BookingPage({
     if (noteFocus) noteRef.current?.focus();
   }, [noteFocus]);
 
+  // From Send to the answer, and while a sent request waits for its payment, the form's details are the request's:
+  // the account controls wait (PR 6 review, correctness 3). `heldNow()` for handlers and late answers, which also
+  // see the send lock taken before any state changes.
+  const heldRef = useRef(false);
+  useEffect(() => {
+    heldRef.current = accountHeld({ locked, busy: flow.busy, verifying, working: false });
+  });
+  const heldNow = () => heldRef.current || working.current;
+
   // The account signed out on this browser ("Not you?" or the header's menu): the fields that still hold its values
-  // empty out, and the offer is back. A request already sent keeps the details it went with (its fields are locked).
+  // empty out, and the offer is back. While held, the request keeps the details it went with.
   // A ref, always current: the store's listener is registered once.
   const signedOutRef = useRef<() => void>(() => {});
   useEffect(() => {
     signedOutRef.current = () => {
-      if (written && !locked) {
-        const next = afterSignOut({ name: flow.name, email: flow.email, phone: flow.phone, region }, written, page.country);
+      const { state, clear } = afterAccountSignOut(acct, heldNow());
+      if (clear) {
+        const next = afterSignOut({ name: flow.name, email: flow.email, phone: flow.phone, region }, clear, page.country);
         setFlow((f) => ({ ...f, name: next.name, email: next.email, phone: next.phone, suggest: null }));
         setRegion(next.region);
       }
-      setAccount(null);
-      setWritten(null);
+      setAcct(state);
     };
   });
   useEffect(() => shownAccount.onSignedOut(() => signedOutRef.current()), []);
@@ -916,13 +926,14 @@ export function BookingPage({
 
   /** The account's name, email and phone into the form; anything it has no value for stays as typed. */
   function fill(signedIn: AccountOut) {
+    // A request on its way keeps the details it was sent with.
+    if (heldNow()) return;
     const filled = fillFrom(signedIn, page.country);
     const next = applyFill({ name: flow.name, email: flow.email, phone: flow.phone, region }, filled);
     setFlow((f) => ({ ...f, name: next.name, email: next.email, phone: next.phone, suggest: null, errors: { ...f.errors, name: undefined, email: undefined, phone: undefined } }));
     setRegion(next.region);
-    setAccount(signedIn);
+    setAcct((state) => afterFill(state, signedIn, filled, false));
     shownAccount.show(signedIn);
-    setWritten(filled);
     setSignInOpen(false);
     setOfferError(null);
     setNoteFocus((n) => n + 1);
@@ -931,7 +942,7 @@ export function BookingPage({
   /** The offer's click: the account signed in on this browser fills the form, or the dialog asks to sign in. The
    * only read of the person's details on this page. */
   async function fillFromAccount() {
-    if (offerBusy) return;
+    if (offerBusy || heldNow()) return;
     setOfferBusy(true);
     setOfferError(null);
     const answer = await send(platformAccountRead());
@@ -945,7 +956,7 @@ export function BookingPage({
   /** "Not you? Sign out": this browser's account session ends (and its console session, spec section 1.4); the
    * store's listener above then empties what the account filled in (afterSignOut). */
   async function signOut() {
-    if (signOutBusy) return;
+    if (signOutBusy || heldNow()) return;
     setSignOutBusy(true);
     setSignOutError(null);
     const answer = await signOutAccount();
@@ -964,6 +975,7 @@ export function BookingPage({
   const shown = start === null && sync ? sync.payment.kind : choice;
   const sendText = flow.busy ? (auto ? t("booking") : t("sending")) : t(sendLabel(stepOn ? shown : null, auto), { price });
   const notSaved = emailNotSaved(account, flow.email);
+  const held = accountHeld({ locked, busy: flow.busy, verifying, working: false });
   const extraTerms = termsLines(stepOn ? shown : null, Boolean(page.payment?.keeps_card_fee));
 
   // The page's frame: heading and business line, and (unless the booking is no longer open) the way back.
@@ -1142,9 +1154,9 @@ export function BookingPage({
             {detailsOpen && (
               <div className={styles.stepBody}>
                 {account ? (
-                  <SignedInNote account={account} t={t} noteRef={noteRef} busy={signOutBusy} error={signOutError} onSignOut={() => void signOut()} />
+                  <SignedInNote account={account} t={t} noteRef={noteRef} busy={signOutBusy || held} error={signOutError} onSignOut={() => void signOut()} />
                 ) : (
-                  !locked && <AccountOffer t={t} busy={offerBusy} error={offerError} onOpen={() => void fillFromAccount()} />
+                  !held && <AccountOffer t={t} busy={offerBusy} error={offerError} onOpen={() => void fillFromAccount()} />
                 )}
                 <SignInDialog open={signInOpen} t={t} turnstileSiteKey={turnstileSiteKey} onClose={() => setSignInOpen(false)} onSignedIn={fill} />
                 <WhoAt s2={s2} locked={locked} banner={flow.banner?.where === 3 ? flow.banner : null} zone={zone} dLocale={dLocale} t={t} onPick={(pick) => setFlow((f) => ({ ...f, pick }))} />

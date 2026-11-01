@@ -251,3 +251,27 @@ export function takeReturn(store: () => StorageLike, now: number): string | null
     return null;
   }
 }
+
+// --- The checkout's account state: what filled the form in, and when it may change ---
+
+/** The account that filled this page's form in (`written`: what it wrote), and a sign-out's clear still to apply
+ * once the form unlocks (`pending`). */
+export type AccountState<A> = { account: A | null; written: Fill | null; pending: Fill | null };
+export const SIGNED_OUT: AccountState<never> = { account: null, written: null, pending: null };
+
+/** From Send to the answer, and while a sent request waits for its payment, the form's details are the request's:
+ * no fill, sign-out clear or offer may change them (PR 6 review, correctness 3). */
+export function accountHeld(s: { locked: boolean; busy: boolean; verifying: boolean; working: boolean }): boolean {
+  return s.locked || s.busy || s.verifying || s.working;
+}
+
+/** After the account filled the form in; while held, nothing changes. */
+export function afterFill<A>(state: AccountState<A>, account: A, fill: Fill, held: boolean): AccountState<A> {
+  return held ? state : { account, written: fill, pending: null };
+}
+
+/** After the account signed out on this browser: free, `clear` is what to empty from the form (afterSignOut); held,
+ * nothing is emptied now. */
+export function afterAccountSignOut<A>(state: AccountState<A>, held: boolean): { state: AccountState<A>; clear: Fill | null } {
+  return held ? { state: SIGNED_OUT, clear: null } : { state: SIGNED_OUT, clear: state.written };
+}
