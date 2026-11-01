@@ -58,6 +58,13 @@ MAX_PIXELS = 100_000_000  # photo_decode.JPEG_CAP: the largest photo it accepts
 # Pillow report a failed allocation as an ordinary encoding error.
 MEMORY_NEAR = 0.9
 CHUNK = 64 * 1024
+# The pod's memory has to hold the API and a child at its ceiling: where the container's cgroup
+# has memory.oom.group (the kubelet sets it on cgroup v2), a child OOM restarts the whole pod,
+# whatever its oom_score_adj. API_ALLOWANCE is the API's own share (measured 142 MiB after startup
+# on arm64; the pod manifests note 152 MB). See budget() and _headroom().
+API_ALLOWANCE = 160 * 1024 * 1024
+BUDGET_MARGIN = 16 * 1024 * 1024
+CGROUP = Path("/sys/fs/cgroup")
 UUID_RE = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["photos"])
@@ -235,6 +242,56 @@ class Run:
 
 # Children killed but not yet reaped; each later run tries again (photo decoder not reaped).
 _UNREAPED: list[subprocess.Popen[bytes]] = []
+
+
+def _cgroup_int(name: str) -> int | None:
+    """An integer from this container's cgroup v2 file; None if it is absent, "max" or unreadable
+    (compose without a limit, cgroup v1, macOS)."""
+    try:
+        value = (CGROUP / name).read_text().strip()
+    except OSError:
+        return None
+    return int(value) if value.isdigit() else None
+
+
+def budget() -> Literal["ok", "tight", "unlimited"]:
+    """At startup (main.py): whether the container's memory limit holds the API, a child at its
+    ceiling and its output. Too small is logged as an ERROR, never a refusal to start; _headroom
+    then turns each decode it cannot hold into a 503."""
+    memory_max = _cgroup_int("memory.max")
+    if memory_max is None:
+        return "unlimited"
+    required = API_ALLOWANCE + photo_child.MEMORY + OUTPUT_CAP + BUDGET_MARGIN
+    if memory_max >= required:
+        return "ok"
+    oom_group = _cgroup_int("memory.oom.group")
+    logger.error(
+        "photo decoder memory budget too small",
+        extra={"memory_max": memory_max, "required": required, "oom_group": oom_group},
+    )
+    return "tight"
+
+
+def _rss() -> int:
+    """This process's resident memory in bytes (0 where there is no /proc). statm stays readable
+    when the process is not dumpable."""
+    try:
+        with open("/proc/self/statm") as statm:
+            return int(statm.read().split()[1]) * os.sysconf("SC_PAGE_SIZE")
+    except OSError:
+        return 0
+
+
+def _headroom() -> dict[str, int] | None:
+    """None when a child at its ceiling fits in the container's memory beside this process now;
+    otherwise the numbers, for the log."""
+    memory_max = _cgroup_int("memory.max")
+    if memory_max is None:
+        return None
+    rss = _rss()
+    if memory_max - rss >= photo_child.MEMORY + OUTPUT_CAP + BUDGET_MARGIN:
+        return None
+    return {"memory_max": memory_max, "rss": rss}
 
 
 def _spawn(upload: IO[bytes]) -> subprocess.Popen[bytes]:
@@ -464,6 +521,12 @@ def variants(upload: IO[bytes], upload_id: UUID, span: Span) -> Variants:
     variants, the child's own refusal (422), 422 photo_unreadable when the child failed (killed by a
     limit, crashed, wrote too much or nothing usable), 503 busy when it could not start or was
     starved of CPU (the node's fault, not the photo's). Logs ids and closed sets only."""
+    short = _headroom()
+    if short is not None:  # a child at its ceiling could OOM the whole pod
+        fields: dict[str, Any] = {"decoder": "headroom", "upload_id": str(upload_id), **short}
+        span.set_attribute("decoder", "headroom")
+        logger.error("photo decoder could not start", extra=fields)
+        raise Refusal(503, "busy", fields)
     try:
         run = _run(upload)
     except OSError:  # no process: out of memory or pids, or no interpreter
@@ -472,7 +535,7 @@ def variants(upload: IO[bytes], upload_id: UUID, span: Span) -> Variants:
     span.set_attribute("decoder", outcome)
     if head is not None:
         span.set_attributes({"format": str(head.format), "pixels": head.pixels or 0})
-    fields: dict[str, Any] = {"decoder": outcome, "upload_id": str(upload_id)}
+    fields = {"decoder": outcome, "upload_id": str(upload_id)}
     if run is not None:
         fields["cpu_ms"] = run.cpu_ms
         if run.returncode is not None and run.returncode < 0:

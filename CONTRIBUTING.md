@@ -931,8 +931,13 @@ loggers (`web.*`); Next's own stderr output (banners, SSR error traces) is not i
   `exit`, `output`, `protocol`, `timeout`, `starved`, with `cpu_ms`, `signal` or `exit_code`, `upload_id`:
   a limit ended the child, it crashed, wrote too much or nothing usable, or passed its deadline; the
   photo answers 422 `photo_unreadable`, or 503 `busy` when `starved`); `photo decoder could not start`
-  (ERROR, `decoder` `spawn`, `limits` or `import`: every photo answers 503 `busy` until it is fixed);
-  `photo decoder not reaped` (ERROR: a killed child did not exit).
+  (ERROR, `decoder` `spawn`, `limits` or `import`: every photo answers 503 `busy` until it is fixed;
+  `headroom`, with `memory_max` and `rss`: the container's memory could not hold a child at its
+  ceiling beside the API, so none was started); `photo decoder not reaped` (ERROR: a killed child
+  did not exit). At startup, `api started` carries `photo_budget` (`ok`, `tight` or `unlimited`, from
+  the cgroup's `memory.max`), and `photo decoder memory budget too small` (ERROR, `memory_max`,
+  `required`, `oom_group`) says the pod cannot hold the API and a decode: with `memory.oom.group`, as
+  the kubelet sets on cgroup v2, a child's OOM restarts the whole pod. Never a refusal to start.
 - `ZIF_LOG_SQL=true` logs SQL statements, never their values, when `ZIF_LOG_LEVEL` is `DEBUG`; off by
   default.
 - Ids only: never a password, token or its hash, cookie, email address, name, business or service name,

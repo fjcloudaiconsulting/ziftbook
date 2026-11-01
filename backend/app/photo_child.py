@@ -25,7 +25,7 @@ from types import ModuleType
 MIB = 1024 * 1024
 MAX_BYTES = 10 * MIB  # an upload's cap (photos.MAX_BYTES)
 # The child's address space. The heaviest legitimate decode measured (tests/test_photo_isolation.py)
-# must stay under 80% of it.
+# must stay under 80% of it, and the pod's memory must hold it beside the API (photos.budget).
 MEMORY = 192 * MIB
 CPU = (5, 6)  # seconds of CPU: SIGXCPU at the first, SIGKILL at the second
 LIMITS: dict[int, tuple[int, int]] = {
