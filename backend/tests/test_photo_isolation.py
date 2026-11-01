@@ -1253,3 +1253,10 @@ def test_the_error_names_are_a_closed_set() -> None:
     assert photo_decode.error_name(UnicodeDecodeError("utf-8", b"", 0, 1, "x")) == "ValueError"
     assert photo_decode.error_name(FileNotFoundError()) == "OSError"
     assert photo_decode.error_name(struct.error()) == "error"
+
+
+# ZIF-230 fence (build review, correctness 10a). Kills: a typo minting a new value of the metric's
+# closed attribute: an outcome outside OUTCOMES is refused where it is counted.
+def test_only_a_known_outcome_is_counted() -> None:
+    with pytest.raises(ValueError):
+        photos._count("timeuot", trace.INVALID_SPAN)  # type: ignore[arg-type]
