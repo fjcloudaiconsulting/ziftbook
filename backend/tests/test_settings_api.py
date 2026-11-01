@@ -344,7 +344,38 @@ def test_max_reschedules_default_and_bound(people: People, app: FastAPI) -> None
 def test_a_contact_email_must_be_one_address(people: People, app: FastAPI, value: str) -> None:
     response = put_settings(signed_in(app, people.a, people.both), {"contact_email": value})
 
-    assert (response.status_code, response.json()) == (422, {"code": "invalid_request"})
+    assert (response.status_code, response.json()) == (422, {"code": "contact_email_invalid"})
+    assert saved_settings(people.a) == {}
+
+
+# ZIF-99 fence: a refused contact email has its own code, so the console marks that field and no
+# other; any other refusal, or one that also involves another key, stays the generic code. Kills
+# blaming the address for every 422 of a save that included it, and a code keyed on the field
+# alone that would also blame it when another key is wrong too.
+@pytest.mark.parametrize(
+    ("body", "code"),
+    [
+        pytest.param({"contact_email": 5}, "contact_email_invalid", id="not a string"),
+        pytest.param({"timezone": "Mars/Base"}, "invalid_request", id="another key"),
+        pytest.param(
+            {"contact_email": "a@café.nl", "timezone": "Mars/Base"},
+            "invalid_request",
+            id="the address and another key",
+        ),
+        pytest.param(
+            {"contact_email": "a@b.nl", "max_reschedules": -1},
+            "invalid_request",
+            id="a valid address and another key",
+        ),
+        pytest.param({"contact_email": "a@b.nl", "nope": 1}, "invalid_request", id="unknown key"),
+    ],
+)
+def test_only_a_refused_contact_email_alone_has_its_own_code(
+    people: People, app: FastAPI, body: dict[str, object], code: str
+) -> None:
+    response = put_settings(signed_in(app, people.a, people.both), body)
+
+    assert (response.status_code, response.json()) == (422, {"code": code})
     assert saved_settings(people.a) == {}
 
 
@@ -361,7 +392,7 @@ ENCODED_WORDS = [
 def test_an_encoded_word_is_not_a_contact_email(people: People, app: FastAPI, value: str) -> None:
     response = put_settings(signed_in(app, people.a, people.both), {"contact_email": value})
 
-    assert (response.status_code, response.json()) == (422, {"code": "invalid_request"})
+    assert (response.status_code, response.json()) == (422, {"code": "contact_email_invalid"})
     assert saved_settings(people.a) == {}
     with pytest.raises(ValueError, match="not an email address"):
         normalise_email(value)
