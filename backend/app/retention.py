@@ -145,7 +145,12 @@ def _audit_events(swept: Swept) -> bool:
 
 
 class _Walk:
-    """One pass over the businesses for the booking-event addresses, resumed call by call."""
+    """The pass over the businesses for the booking-event addresses, resumed call by call and run
+    by run: a run that stops before the pass ends (budget, MAX_BATCHES) leaves its place here, and
+    the next run goes on from it, so no business is starved. Back to the first business only once
+    a call says the pass is complete. Per worker process: a restart starts a new pass (a full pass
+    fits in one run up to MAX_BATCHES x 200 = 10,000 businesses), and each replica keeps its own
+    place (SKIP LOCKED splits the rows)."""
 
     def __init__(self) -> None:
         self.start: UUID | None = None
@@ -156,6 +161,9 @@ class _Walk:
         swept.booking_origins += row.cleared
         self.start = row.next_tenant
         return self.start is None
+
+
+WALK = _Walk()
 
 
 def effective_hold(requested: date | None, today: date) -> tuple[date | None, bool]:
@@ -173,7 +181,7 @@ def sweep(should_stop: Callable[[], bool] = lambda: False, hold_until: date | No
     swept = Swept(held=held)
     steps: list[Callable[[Swept], bool]] = [_rate_limits, _sessions, _admin_sessions]
     if not held:
-        steps += [_audit_events, _Walk()]
+        steps += [_audit_events, WALK]
     started = time.monotonic()
     with tracing.span("retention.sweep", SpanKind.INTERNAL, {}) as span:
         while steps:
