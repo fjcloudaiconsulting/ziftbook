@@ -80,4 +80,12 @@ describe("the console's own language, where it is wired", () => {
     const src = read("../app/[locale]/_ui/console.tsx");
     assert.match(src, /const ownLanguage: OwnLanguage \| undefined = session\s*\? \{\s*user: session\.user_id,\s*shellMoves: true,/);
   });
+
+  test("fence: the console reads, and records, an unsaved pick for the signed-in person", () => {
+    // Wrong implementation killed: the shell asking for another id's pick, so one person's unsaved
+    // pick keeps (or never keeps) the console's language for another.
+    const src = read("../app/[locale]/_ui/console.tsx");
+    assert.match(src, /surface: "console",[\s\S]*?picked: pickedHere\(session\.user_id\),/);
+    assert.match(src, /= session\s*\? \{\s*user: session\.user_id,/);
+  });
 });
