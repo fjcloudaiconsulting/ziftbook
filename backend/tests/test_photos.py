@@ -489,7 +489,7 @@ def test_the_read_stops_at_the_cap_whatever_the_head_said(
     monkeypatch.setattr(storage, "size", lambda key: 10)
     seen = count_body_reads(monkeypatch)
     assert refusal(t, upload_id) == (422, "photo_too_large")
-    assert sum(seen) <= photos.MAX_BYTES + 1
+    assert sum(seen) == 0  # refused on the store's total, before a byte of the body
 
 
 # ZIF-230 fence. Kills: a cap taken from the response's length alone (a store or proxy that sends
