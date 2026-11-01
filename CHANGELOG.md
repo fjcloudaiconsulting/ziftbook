@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.32.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.31.1...v0.32.0) (2026-11-01)
+
+
+### Features
+
+* the API accepts CSP violation reports and pages send them there (ZIF-236) ([#368](https://github.com/fjcloudaiconsulting/ziftbook/issues/368)) ([ffe63eb](https://github.com/fjcloudaiconsulting/ziftbook/commit/ffe63ebf0e15dfe5428e7c77bf6d6540e8ab2aef))
+
+
+### Bug Fixes
+
+* **db:** contract steps of the database privilege hardening (ZB-08, ZB-10, ZB-15) ([#336](https://github.com/fjcloudaiconsulting/ziftbook/issues/336)) ([b249823](https://github.com/fjcloudaiconsulting/ziftbook/commit/b249823e04fdb325935dde6821aa54978e5a5a29))
+
 ## [0.31.1](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.31.0...v0.31.1) (2026-11-01)
 
 
