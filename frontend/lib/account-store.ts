@@ -23,6 +23,11 @@ export function accountStore<A extends Account = Account>() {
       signedOut.add(listener);
       return () => void signedOut.delete(listener);
     },
+    /** The account's session ended elsewhere (another tab, a reset): the button goes; no page empties what the
+     * person typed, as it is still theirs. */
+    ended() {
+      this.show(null);
+    },
     /** The account signed out on this browser: the button goes, and every page that listens is told. */
     signedOut() {
       this.show(null);

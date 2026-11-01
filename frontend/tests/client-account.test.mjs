@@ -26,6 +26,7 @@ import {
   historyWhen,
   linkRequestShape,
   offerNext,
+  recheckOutcome,
   rememberReturn,
   RETURN_KEY,
   splitPhone,
@@ -168,11 +169,18 @@ describe("filling the checkout from the account", () => {
     // Wrong implementation killed: a GET /api/account in an effect, which puts a person's details into every
     // booking page a staff member merely opens (security B3.4).
     const text = readFileSync(new URL("../app/[locale]/[slug]/booking-page.tsx", import.meta.url), "utf8");
+    // Two reads, each inside its own handler: the offer's click, and the re-check of an account the person already
+    // filled in from (security review 6), which returns at once when nothing was filled in.
     const calls = [...text.matchAll(/platformAccountRead\(/g)];
-    assert.equal(calls.length, 1);
-    const before = text.slice(0, calls[0].index);
-    const opened = before.lastIndexOf("async function fillFromAccount(");
-    assert.ok(opened > before.lastIndexOf("useEffect("), "inside the offer's click handler, not an effect");
+    assert.equal(calls.length, 2);
+    const handlers = ["async function fillFromAccount(", "async function recheckAccount("];
+    calls.forEach((call, i) => {
+      const before = text.slice(0, call.index);
+      const opened = before.lastIndexOf(handlers[i]);
+      assert.ok(opened > before.lastIndexOf("useEffect("), `${handlers[i]}: not an effect`);
+      assert.doesNotMatch(before.slice(opened + handlers[i].length), /\n {2}(?:async )?function /, `${handlers[i]}: inside it`);
+    });
+    assert.match(text, /async function recheckAccount\(\): Promise<boolean> \{\s*if \(!account\) return true;/);
   });
 });
 
@@ -573,5 +581,34 @@ describe("an account already signed in is confirmed, never filled silently (secu
       const strings = JSON.parse(readFileSync(new URL(`../messages/${locale}.json`, import.meta.url))).BookingPage;
       for (const key of ["continueTitle", "continueAction", "someoneElse"]) assert.ok(strings[key], `${locale} ${key}`);
     }
+  });
+});
+
+describe("an account that ended elsewhere is noticed (security review 6)", () => {
+  const ana = { email: "ana@example.com", name: "Ana Silva", phone: null };
+
+  test("still the same account; ended (signed out, or someone else now); or not known (no answer): kept", () => {
+    assert.equal(recheckOutcome(200, { ...ana, email: " ANA@example.com" }, ana), "same");
+    assert.equal(recheckOutcome(401, undefined, ana), "ended");
+    assert.equal(recheckOutcome(200, { ...ana, email: "bo@example.com" }, ana), "ended");
+    assert.equal(recheckOutcome(0, undefined, ana), "unknown");
+    assert.equal(recheckOutcome(503, undefined, ana), "unknown");
+  });
+
+  test("ended: the account goes from the header, and no page empties the person's own fields", () => {
+    const store = accountStore();
+    let told = 0;
+    store.onSignedOut(() => (told += 1));
+    store.show(ana);
+    store.ended();
+    assert.equal(store.get(), null);
+    assert.equal(told, 0);
+  });
+
+  test("fence: re-checked when the page regains focus and before a booking is sent", () => {
+    const text = readFileSync(new URL("../app/[locale]/[slug]/booking-page.tsx", import.meta.url), "utf8");
+    assert.match(text, /window\.addEventListener\("focus", onFocus\)/);
+    assert.match(text, /if \(account && !\(await recheckAccount\(\)\)\) \{/);
+    assert.match(text, /text: t\("accountEnded"\)/);
   });
 });

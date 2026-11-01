@@ -35,7 +35,7 @@ import {
   weekFor,
   withName,
 } from "@/lib/booking-page";
-import { accountHeld, afterAccountSignOut, afterFill, afterUnlock, type AccountState, emailNotSaved, filledForm, fillFrom, offerNext, SIGNED_OUT, signedOutForm } from "@/lib/client-account";
+import { accountHeld, afterAccountSignOut, afterFill, afterUnlock, type AccountState, emailNotSaved, filledForm, fillFrom, offerNext, recheckOutcome, SIGNED_OUT, signedOutForm } from "@/lib/client-account";
 import { dateLocale } from "@/lib/console";
 import { defaultDial, dialOptions } from "@/lib/dial-codes";
 import { formatMoney } from "@/lib/money";
@@ -282,6 +282,18 @@ export function BookingPage({
     };
   });
   useEffect(() => shownAccount.onSignedOut(() => signedOutRef.current()), []);
+
+  // Back on the page (another tab, another app): the account that filled this in may have ended meanwhile
+  // (security review 6). Only once the person filled in from it: recheckAccount returns at once otherwise.
+  const recheckRef = useRef<() => Promise<boolean>>(async () => true);
+  useEffect(() => {
+    recheckRef.current = recheckAccount;
+  });
+  useEffect(() => {
+    const onFocus = () => void recheckRef.current();
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, []);
 
   // Runs after the details have (re)rendered with their inputs mounted, so a field targeted before
   // they were open still gets focused once they are.
@@ -735,6 +747,13 @@ export function BookingPage({
     }
     working.current = true;
     setFlow((f) => ({ ...f, busy: true, banner: null }));
+    // The account that filled this in may have ended elsewhere: the note said the booking would be saved to it, so
+    // say it won't and let the person send it again, as a guest or after signing in (security review 6).
+    if (account && !(await recheckAccount())) {
+      working.current = false;
+      setFlow((f) => ({ ...f, busy: false, banner: { where: "c", tone: "note", text: t("accountEnded") } }));
+      return;
+    }
     const f = flow as Step2Plus;
     const member = f.pick ?? (f.worker === "any" ? null : f.worker);
     const body = bookingBody({
@@ -969,6 +988,18 @@ export function BookingPage({
       setSignInOpen(true);
     } else if (nextStep === "signIn") setSignInOpen(true);
     else setOfferError(form(problem(answer)));
+  }
+
+  /** Whether the account that filled this page in is still the one signed in on this browser; when it ended
+   * (signed out elsewhere, a reset, another person signed in), its note and header button go and the person's
+   * fields stay. True when nothing was filled in, or when there is no answer. */
+  async function recheckAccount(): Promise<boolean> {
+    if (!account) return true;
+    const answer = await send(platformAccountRead());
+    if (recheckOutcome(answer.status, answer.data, account) !== "ended") return true;
+    setAcct(SIGNED_OUT);
+    shownAccount.ended();
+    return false;
   }
 
   /** "Not you? Sign out": this browser's account session ends (and its console session, spec section 1.4); the

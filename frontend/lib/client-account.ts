@@ -301,3 +301,11 @@ export function filledForm<F extends FormFields>(form: F, fill: Fill): F {
 export function signedOutForm<F extends FormFields>(form: F, clear: Fill, businessRegion: string): F {
   return { ...form, ...afterSignOut(form, clear, businessRegion), suggest: null };
 }
+
+/** A re-check of the account that filled this page in (security review 6): still the same, ended (signed out, or
+ * another person signed in on this browser), or not known (no answer: nothing changes). */
+export function recheckOutcome(status: number, data: { email: string } | undefined, account: { email: string }): "same" | "ended" | "unknown" {
+  if (status === 401) return "ended";
+  if (status !== 200 || !data) return "unknown";
+  return normalEmail(data.email) === normalEmail(account.email) ? "same" : "ended";
+}
