@@ -385,6 +385,8 @@ a.textButton, .textButton:has(> svg) { display: inline-flex; align-items: center
 .bizMeta + .bizMeta { margin-top: 0; }
 /* The business's contact email (ZIF-99): a long address wraps rather than widening the page. */
 .contactLine a { overflow-wrap: anywhere; }
+/* Right under a page heading rather than in a bizHeader (the manage page): pulled up like .lede. */
+.metaTight { margin-top: -0.75rem; }
 
 .bookingLayout { display: grid; gap: 0; container-type: inline-size; }
 .flowCol { min-width: 0; }
