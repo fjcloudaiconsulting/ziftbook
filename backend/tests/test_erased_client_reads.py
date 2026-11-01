@@ -19,10 +19,16 @@ from tests.conftest import (
     People,
     events,
     fresh_email,
+    member_id,
     migrate_tenant_context,
+    save_setting,
     signed_in,
     wait_until_blocked,
 )
+from tests.test_availability_api import assign, new_service, weekdays
+from tests.test_bookings_api import at
+from tests.test_bookings_approval_api import make_pending
+from tests.test_working_hours import seed
 
 # What the erase function blanks of a client and of its bookings (spec 1.1, 1.3).
 ERASE_BOOKINGS = text("""
@@ -159,3 +165,57 @@ def test_a_write_waits_for_an_erasure_in_flight_then_finds_nothing(
 
     assert (answered["r"].status_code, answered["r"].json()["code"]) == (404, "not_found")
     assert consent_rows(people.a, gone) == 0
+
+
+@pytest.fixture
+def ready(people: People, owner: TestClient) -> str:
+    """A 30-minute service performed by the owner, who works 09:00-17:00 every day, on a published
+    page (make_pending books through the public route)."""
+    save_setting(people.a, "published", True)
+    service_id = new_service(owner)
+    seed(people.a, people.both, weekdays("09:00", "17:00"))
+    assign(people.a, service_id, member_id(people.a, people.both))
+    return service_id
+
+
+@pytest.fixture
+def booked(app: FastAPI, people: People, owner: TestClient, ready: str) -> dict[str, str]:
+    """Bookings two days out: a pending one and a confirmed one of a client then erased, and a
+    pending one of a client that stays."""
+    gone_email = fresh_email()
+    gone = {"name": "Gone Booker", "email": gone_email, "message": "Gone message"}
+    pending = make_pending(app, people.a, ready, starts_at=at("09:00"), **gone)
+    confirmed = make_pending(app, people.a, ready, starts_at=at("10:00"), **gone)
+    assert (
+        owner.patch(f"/api/bookings/{confirmed}", json={"status": "confirmed"}).status_code == 200
+    )
+    live = make_pending(app, people.a, ready, starts_at=at("11:00"), name="Live Booker")
+    assert client_of(people.a, pending) == client_of(people.a, confirmed)
+    return {"pending": pending, "confirmed": confirmed, "live": live}
+
+
+# ZIF-58 F10 FENCE. Wrong impl: the merchant booking's existence check without the erased_at filter
+# (the tombstone is booked again).
+def test_a_merchant_cannot_book_an_erased_client(
+    people: People, owner: TestClient, migrate_engine: Engine, ready: str, added: tuple[str, str]
+) -> None:
+    gone, kept = added
+    erase_by_hand(migrate_engine, people.a, gone)
+    body = {
+        "service_id": ready,
+        "member_id": str(member_id(people.a, people.both)),
+        "starts_at": at("12:00"),
+    }
+
+    refused = owner.post("/api/bookings", json={**body, "client_id": gone})
+
+    assert (refused.status_code, refused.json()["code"]) == (422, "unknown_client")
+    with tenant_context(people.a) as session:
+        assert (
+            session.scalar(
+                text("SELECT count(*) FROM bookings WHERE client_id = :id"), {"id": gone}
+            )
+            == 0
+        )
+    # The same booking for a live client goes through: the refusal is the tombstone's alone.
+    assert owner.post("/api/bookings", json={**body, "client_id": kept}).status_code == 201
