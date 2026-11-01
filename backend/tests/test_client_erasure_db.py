@@ -33,7 +33,7 @@ from tests.conftest import (
 from tests.test_bookings_db import seed_service
 
 # Every column of the six tables that hold a client's personal data or point at it, classified
-# (spec 1). A column added to any of them fails test_every_column_is_classified until it is
+# (ZIF-58). A column added to any of them fails test_every_column_is_classified until it is
 # classified here and, if it is "blank" or "delete", the core handles it.
 #   blank: the core sets it to NULL ('' for clients.name); on booking_events only on the
 #          client's own events (no actor), the team's keep the member's.
@@ -100,7 +100,7 @@ CLASSIFICATION: dict[str, dict[str, str]] = {
         "actor_user_id": "keep",
         "details": "keep",
     },
-    # C-DEL (owner ruling 5): a consent on a blank tombstone proves nothing about any person.
+    # Deleted (ZIF-58): a consent on a blank tombstone proves nothing about any person.
     "consents": dict.fromkeys(
         (
             "id",
@@ -469,9 +469,13 @@ def test_another_businesss_client_is_unknown(world: World, migrate_engine: Engin
 
 # ZIF-58 F17b FENCE. Wrong impl: the core without its explicit tenant predicates, relying on
 # row-level security alone. A policy for ziftbook_migrate that sees every business is created in
-# the test's own transaction on clients and on each table in turn (the dependent rows are reached
-# only through a client of this business, composite foreign keys, so clients is the gate), and B
-# must still be untouched when A erases B's client id.
+# the test's own transaction, on clients and on each table in turn, and B must still be untouched
+# when A erases B's client id. What this can and cannot tell apart: a client id is a global
+# primary key, every dependent row reaches its client through a composite foreign key, and the
+# core returns at the clients gate when the id is not this business's. So the clients
+# statements' predicates are the guarantee, and the five cases go red only without them; the
+# predicates on the dependent statements are defence in depth that no test can tell apart, and
+# removing one of them alone stays green.
 @pytest.mark.parametrize(
     "table", ["clients", "bookings", "booking_events", "consents", "booking_links"]
 )
@@ -699,7 +703,7 @@ def hold_after(
         return [tuple(row) for row in conn.execute(HOLDS)]
 
 
-# ZIF-58 F22 FENCE (H1). The hold is written when the client has an address and either this
+# ZIF-58 F22 FENCE. The hold is written when the client has an address and either this
 # erasure ended a booking the client is to be told about (p_announce, and an event with an
 # erasure's reason in its own transaction) or money is still owed an answer on one of its bookings,
 # whatever p_announce says: a re-applied erasure (p_announce false) announces no cancellation
