@@ -1,3 +1,5 @@
+import asyncio
+import contextlib
 import ipaddress
 import json
 import logging
@@ -35,6 +37,7 @@ from app import (
     bookings,
     business_settings,
     clients,
+    csp_reports,
     invites,
     limits,
     logs,
@@ -262,9 +265,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.warning("storage unset: photo uploads refused")
     if not payments_on:
         logger.warning("stripe unset: payments off")
+    # ZIF-236: report drop counts are written within two minutes even if no report follows them.
+    drop_timer = asyncio.create_task(csp_reports.flush_drops_every())
     try:
         yield
     finally:
+        drop_timer.cancel()
+        # Whatever ended the timer, the final flush and the engine's dispose below still run.
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await drop_timer
+        csp_reports.flush_drops_now()
         try:
             SessionLocal.configure(bind=None)
             engine.dispose()
@@ -382,6 +392,7 @@ def create_app() -> FastAPI:
         admin_auth.admin_router,
         admin_auth.admin_write_router,
         setup.router,
+        csp_reports.router,
     ):
         for route in each.routes:
             if isinstance(route, APIRoute) and WRITE & set(route.methods or ()):
@@ -399,7 +410,7 @@ def create_app() -> FastAPI:
     ) -> Response:
         # CSRF defence: browsers send JSON cross-origin only after a CORS preflight, never granted.
         # Parse the media type: "text/plain; application/json" is still a plain form type.
-        media_type = request.headers.get("content-type", "").split(";")[0].strip().lower()
+        media_type = csp_reports.media_type(request.headers.get("content-type"))
         declared = request.headers.get("content-length", "")
         # Every method, before the handler: a write that takes no body (DELETE /api/sessions) is
         # stopped only here, not by the byte counter. A non-numeric length counts as absent.
@@ -410,7 +421,15 @@ def create_app() -> FastAPI:
             len(digits) > len(str(cap)) or int(digits or "0") > cap
         ):
             response: Response = JSONResponse({"code": "content_too_large"}, status_code=413)
-        elif request.method not in ("GET", "HEAD", "OPTIONS") and media_type != "application/json":
+        elif (
+            request.method not in ("GET", "HEAD", "OPTIONS")
+            and media_type != "application/json"
+            # ZIF-236: the CSP report route alone takes the two report types. This is no CSRF
+            # defence there: a browser delivers a report cross-site with no preflight (it is not
+            # fetch()). It needs none: a cross-site report carries no cookie, the route reads none,
+            # and its only state is its own rate-limit row.
+            and not (request.url.path == csp_reports.PATH and media_type in csp_reports.MEDIA_TYPES)
+        ):
             response = JSONResponse({"code": "unsupported_media_type"}, status_code=415)
         else:
             response = await call_next(request)

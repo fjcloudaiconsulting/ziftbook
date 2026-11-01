@@ -70,6 +70,19 @@ def test_openapi_document_is_stable_json() -> None:
     assert json.loads(document)["info"]["title"] == "ziftbook"
 
 
+def test_the_report_route_declares_both_report_media_types_and_a_204() -> None:
+    # ZIF-236: the one write whose body is not application/json.
+    operation = create_app().openapi()["paths"]["/api/csp-reports"]["post"]
+
+    assert operation["operationId"] == "csp-report"
+    assert set(operation["requestBody"]["content"]) == {
+        "application/csp-report",
+        "application/reports+json",
+    }
+    assert {"204", "413", "415"} <= set(operation["responses"])
+    assert "content" not in operation["responses"]["204"]
+
+
 def test_healthz_response_is_a_named_schema_with_required_fields() -> None:
     spec = create_app().openapi()
     response = spec["paths"]["/api/healthz"]["get"]["responses"]["200"]

@@ -455,7 +455,11 @@ loggers (`web.*`); Next's own stderr output (banners, SSR error traces) is not i
   not localhost); `rate limit key unset: rate-limit keys are not peppered` (WARNING, API and worker,
   while their `rate_limit_key` is `unset`, `weak` or `dev`); `api database role: not ziftbook_app, ...`
   (ERROR, API, `database_role`: the API's `current_user` is another role, as when the worker's
-  connection string sits in the API's secret; never a refusal to start) and
+  connection string sits in the API's secret; never a refusal to start);
+  `csp report url refused: violations are not reported` (WARNING, web: `ZIF_CSP_REPORT_URL` is set but not
+  this API's report route; the web's `started` line carries `csp` and `csp_reports`, never the URL);
+  `csp report url is not this page's host: violations are not reported` (WARNING, web, once per process: a page
+  was served on a host other than `ZIF_CSP_REPORT_URL`'s, and names no report endpoint) and
   `worker database role: not ziftbook_worker; ...` (WARNING, worker, `database_role`: sign-up, reset
   and invite emails fail once the contract migration revokes token minting from `ziftbook_app`).
   Both startup lines carry `database_role` (`current_user`, never `session_user`; left out when the
@@ -469,6 +473,20 @@ loggers (`web.*`); Next's own stderr output (banners, SSR error traces) is not i
   address limits counted); `booking flood`
   (WARNING, `tenant_id`, at most once an hour: a business's unproven guest bookings reached their cap
   and its owners are emailed) and `booking flood alert failed` (WARNING, with `exc`).
+- CSP violations (ZIF-236, `app/csp_reports.py`): `csp violation` (INFO) with `report_format`, `directive`,
+  `disposition`, `page` (the route template, `/[locale]/[slug]/book`, or `other`), `blocked` and `source` (a
+  category: a CSP keyword, `self`, `media`, `upload`, a provider such as `stripe` or `cloudflare`, `extension`,
+  `external`, `ip-address`, `other`, `none`) and `count` (identical violations in one request share a line). Every
+  value is from a closed set: never the page's path, query or fragment (a checkout's query holds Stripe's client
+  secret), a host, the referrer, the policy (its nonce), the sample or the user agent. At most 600 such lines a
+  minute per process. `csp reports dropped` (INFO; WARNING when it holds `limiter_unavailable`, with `error`) at most
+  once a minute per process (a timer writes counts no report follows within two minutes, and shutdown writes what is
+  left), with `seconds` (the time its counts cover) and a count per reason: `cross_site` (sent by another site's page),
+  `busy` (two limiter calls already running), `rate_limited` (30 a minute per address, IPv6 per /48),
+  `limiter_unavailable` (the database could not count), `disconnected` (the client hung up mid-report), `foreign`
+  (a page on another origin), `batch_cap` (past 10 violations in one request) and `global_cap` (past the line
+  budget). `csp drop timer failed` (ERROR, with `exc`, once per process): the timer's write failed; it keeps
+  ticking.
 - `ZIF_LOG_SQL=true` logs SQL statements, never their values, when `ZIF_LOG_LEVEL` is `DEBUG`; off by
   default.
 - Ids only: never a password, token or its hash, cookie, email address, name, business or service name,
@@ -530,7 +548,7 @@ from `.env`; it fixes the log settings at `DEBUG`/`text`, passes no `ZIF_LOG_SQL
 |---|---|---|---|---|
 | Logs | JSON lines on stdout (`ZIF_LOG_FORMAT=json`, the default; `text` in dev). The API, worker, migrations and web app never send logs over OTLP: a log collector reads their stdout (none is set up yet). | always (stdout) | stdout cannot be turned off; raise `ZIF_LOG_LEVEL` to `ERROR` for the least | `ZIF_LOG_LEVEL` (default `INFO`), `ZIF_LOG_SQL` (see Logging) |
 | Traces | OTLP/HTTP to `ZIF_OTEL_EXPORTER_OTLP_ENDPOINT` | set the endpoint (plus `ZIF_OTEL_EXPORTER_OTLP_HEADERS` if the collector wants auth) | leave the endpoint unset: no spans are exported and no connection is attempted. `ZIF_OTEL_TRACES_EXPORTER=none` turns traces off with the endpoint still set. In prod you can also set `ZIF_OTEL_TRACES_SAMPLER=always_off` | prod: `ZIF_OTEL_TRACES_SAMPLER` / `_ARG` (default 10% of new traces, following the caller's decision); dev: 100% |
-| Metrics | API: `http.server.*`, `db.client.connection.*`, business counters (`ziftbook.sign_up.*`, `ziftbook.invite.*`, `ziftbook.booking.created`); worker: `ziftbook.job.*`, `ziftbook.email.deliveries`, `db.client.connection.*`; web: `http.server.request.duration` for `/api` only, `ziftbook.web.request.errors` for pages; over OTLP/HTTP to `ZIF_OTEL_EXPORTER_OTLP_ENDPOINT` every 60s | set the endpoint | leave the endpoint unset: no reader, no connection. `ZIF_OTEL_METRICS_EXPORTER=none` turns metrics off with the endpoint still set | every 60s (the Python SDK's `OTEL_METRIC_EXPORT_INTERVAL`, which compose does not pass; the web app is fixed at 60s) |
+| Metrics | API: `http.server.*`, `db.client.connection.*`, business counters (`ziftbook.sign_up.*`, `ziftbook.invite.*`, `ziftbook.booking.created`), `ziftbook.csp.violations`; worker: `ziftbook.job.*`, `ziftbook.email.deliveries`, `db.client.connection.*`; web: `http.server.request.duration` for `/api` only, `ziftbook.web.request.errors` for pages; over OTLP/HTTP to `ZIF_OTEL_EXPORTER_OTLP_ENDPOINT` every 60s | set the endpoint | leave the endpoint unset: no reader, no connection. `ZIF_OTEL_METRICS_EXPORTER=none` turns metrics off with the endpoint still set | every 60s (the Python SDK's `OTEL_METRIC_EXPORT_INTERVAL`, which compose does not pass; the web app is fixed at 60s) |
 
 - Next's own startup banner (standalone `server.js`) is plain text and ignores `ZIF_LOG_*`;
   every other web server line follows them.
@@ -551,6 +569,7 @@ from `.env`; it fixes the log settings at `DEBUG`/`text`, passes no `ZIF_LOG_SQL
   | `db.client.connection.pending_requests` | observable up-down counter | `db.client.connection.pool.name` | api, worker |
   | `ziftbook.sign_up.completed`, `ziftbook.invite.sent`, `ziftbook.invite.accepted` | counters | none | api |
   | `ziftbook.booking.created` | counter | `booking.source` (booking_page, merchant) | api |
+  | `ziftbook.csp.violations` | counter | `csp.directive`, `csp.disposition`, `csp.blocked`: the `csp violation` line's closed sets (Logging), so at most 26 × 3 × 21 = 1,638 series; and at most 500 distinct ones per process, past which every violation is counted in one overflow series (all three `other`), whatever a client sends. Counted whether or not the line budget logs it, never for another origin's page; the page, source and format stay in the log line | api |
   | `ziftbook.web.request.errors` | counter | `http.route` (the template) | web |
 
   The queue series come from every worker, so aggregate them with `max`, not `sum`. `job.running`
@@ -611,6 +630,14 @@ web app.
   answer 404 for anything the business doesn't own, and return no personal data beyond what a client must see.
   A route named by a slug instead (the booking page) resolves the tenant from it first, then calls `join_tenant`
   inside the same `SessionLocal.begin()`, rather than opening `tenant_context` directly.
+- `POST /api/csp-reports` (ZIF-236) is the one write whose body is not `application/json`: browsers send their
+  Content-Security-Policy violation reports there as `application/csp-report` (`report-uri`) or
+  `application/reports+json` (`report-to`), and `json_only` lets those two types through on that path alone. That
+  is no CSRF defence there, as a browser delivers a report cross-site with no preflight; the route needs none: a
+  cross-site report carries no cookie, the route reads none, and its only state is its own rate-limit row. It answers
+  204 to everything it accepts (rate limited, malformed or dropped included), because Chrome retries any other
+  answer. It drops, before any database work, a report whose `Sec-Fetch-Site` is present and not `same-origin`, and
+  one arriving while two limiter calls are already running.
 
 ## Translations
 
@@ -674,7 +701,8 @@ ZIF-38). An empty variable means the default: `env_ignore_empty=True` on the bas
 | `ZIF_TOTP_KEY` | api | `""` | yes, once an admin exists | yes | Encrypts every platform admin's TOTP secret (ZIF-71): base64 of exactly 32 bytes (`openssl rand -base64 32`), AES-256-GCM. Unset or invalid: the API logs an ERROR at startup and admin TOTP answers 503 `second_factor_unavailable`, while recovery codes still work. Back it up with the database credentials: losing or changing it makes every stored secret unreadable, and each admin then re-enrols with `python -m app.admin enrol`. The development key from `docker-compose.yaml` counts as unset when `ZIF_APP_URL` is not localhost. |
 | `ZIF_RATE_LIMIT_KEY` | api, worker | `""` | recommended | yes | Pepper for rate-limit keys (ZB-25): the email or IP in every key becomes its HMAC-SHA256 under this key, so `rate_limits` holds no addresses and nothing a guess can be checked against (the worker's per-recipient email limits too). At least 32 characters (`openssl rand -base64 32`). Unset or shorter keeps the plain form and the API and worker log a WARNING at startup. Setting or changing it changes every key, so counters start again once. The development key from `docker-compose.yaml` counts as unset when `ZIF_APP_URL` is not localhost. |
 | `ZIF_TESTS_ALLOW_DB` | tests | unset | no | no | Test suite only. The suite refuses a database host other than `localhost`, `127.0.0.1`, `::1` or `postgres`, because it drops and recreates databases; set this to the exact database name to allow one remote database. Never point it at a shared or production database. |
-| `ZIF_CSP_ENFORCE` | frontend | `false` | no | no | `true` enforces the pages' Content-Security-Policy (ZB-12: scripts only with the page's nonce). Anything else sends it as `Content-Security-Policy-Report-Only`: browsers report what it would block and block nothing. Read when the web server starts. Turn it on in staging first, once a booking with a card and Turnstile and an admin sign-in show no violations in the browser console, then in production. |
+| `ZIF_CSP_ENFORCE` | frontend | `false` | no | no | `true` enforces the pages' Content-Security-Policy (ZB-12: scripts only with the page's nonce). Anything else sends it as `Content-Security-Policy-Report-Only`: browsers report what it would block and block nothing. Read when the web server starts. Turn it on in staging first, once a booking with a card and Turnstile and an admin sign-in show no violations (the API's `csp violation` lines and `ziftbook.csp.violations`, with `ZIF_CSP_REPORT_URL` set; else the browser console), then in production. No violations is only evidence when reports are arriving (ZIF-236): while those pages are exercised, the `csp reports dropped` lines must show no `cross_site` count (the API drops a report whose `Sec-Fetch-Site` is not `same-origin`, so a browser that labelled its own reports otherwise would look clean), and in each of Chrome, Firefox and Safari a deliberate violation (`document.body.setAttribute("style", "color: red")` in the console on a staging page) must have produced its `csp violation` line (`style-src-attr`, `inline`). |
+| `ZIF_CSP_REPORT_URL` | frontend | unset | no | no | Where browsers send Content-Security-Policy violation reports (ZIF-236): this deployment's own web origin plus `/api/csp-reports` (production `https://app.ziftbook.com/api/csp-reports`, staging `https://dev.ziftbook.com/api/csp-reports`), named in every page's policy (`report-uri`, and `report-to` through a `Reporting-Endpoints` header). The API logs only route templates and categories of what it receives (Logging). Anything but `https://<host>[:port]/api/csp-reports` written exactly so (no credentials, query, fragment, trailing slash or upper case) is refused: reports carry a page's full URL, a checkout's with Stripe's client secret, so they must never reach a collector that keeps it. A page names the URL only when it was served on the URL's own host (the request's `Host`, which Cloudflare's tunnel keeps by default), so a typo'd or another environment's host is never sent reports: such pages name none, and the web logs `csp report url is not this page's host: violations are not reported` (WARNING, once per process, never a host). Unset or refused: no policy names one; the web's `started` line says `csp_reports: "off"`, and a refused value also logs `csp report url refused: violations are not reported` (WARNING). Unsetting it turns reporting off without a build. Read when the web server starts. |
 | `ZIF_TRUSTED_PROXIES` | api | `""` | yes | no | Addresses whose `X-Forwarded-For` the API believes (production and staging: the pod network `10.42.0.0/16`; compose: the web app's `172.28.0.10`). Empty trusts nobody. |
 | `ZIF_CLIENT_IP_HEADER` | frontend | none | yes, behind a proxy | no | Header the web app trusts for the visitor's address (production and staging: `cf-connecting-ip`). Set only behind a proxy that overwrites it; unset there, every visitor shares the proxy's address and its per-IP limits. |
 | **Logging** | | | | | |

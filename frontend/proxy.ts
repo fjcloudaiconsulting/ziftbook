@@ -2,7 +2,7 @@ import createMiddleware from "next-intl/middleware";
 import { NextRequest, NextResponse } from "next/server";
 
 import { routing } from "./i18n/routing";
-import { CSP_HEADER, cspFor, newNonce, originOf } from "./lib/csp";
+import { CSP_HEADER, CSP_REPORT_URL, cspFor, newNonce, originOf, REPORT_GROUP, reportUrlFor } from "./lib/csp";
 import { clientRequestId, errorFields, logger, requestId } from "./lib/log";
 import { readNeedsSetup, setupGate, setupRedirect } from "./lib/setup-gate";
 import { endProxySpan, startProxySpan, traceparent } from "./lib/trace";
@@ -11,6 +11,8 @@ import { apiUrl, clientIp, MAX_BODY_BYTES, WEBHOOK_MAX_BODY_BYTES } from "./lib/
 const localize = createMiddleware(routing);
 const log = logger("web.proxy");
 const needsSetup = setupGate(readNeedsSetup);
+// ZIF-236: said once per process, when a page is served on a host the report URL does not name.
+let reportHostWarned = false;
 
 // Headers that name the visitor. Only the one this deployment trusts is forwarded, as
 // X-Forwarded-For.
@@ -102,7 +104,9 @@ async function forwardApi(request: NextRequest): Promise<Response> {
     const limit = pathname === "/api/stripe/webhook" ? WEBHOOK_MAX_BODY_BYTES : MAX_BODY_BYTES;
     const body = request.method === "GET" || request.method === "HEAD" ? undefined : await readBody(request, limit);
     if (body === null) {
-      log.info("body too large", { request_id: id, method: request.method, ...spanIds });
+      // ZIF-236: a dropped CSP report batch is told apart from any other oversize body (browsers retry it).
+      const route = pathname === "/api/csp-reports" ? { api_route: "csp-reports" } : {};
+      log.info("body too large", { request_id: id, method: request.method, ...route, ...spanIds });
       endProxySpan(span, 413);
       return NextResponse.json(
         { code: "content_too_large" },
@@ -162,10 +166,17 @@ export default async function proxy(request: NextRequest) {
   const nonce = newNonce();
   // Read per request, like ZIF_API_URL: one build serves every deployment. The upload origin is the
   // one the API presigns photo uploads for (backend/app/storage.py: the public endpoint, else the endpoint).
+  // ZIF-236: reports go only to the host this page was served on (lib/csp.ts reportUrlFor).
+  const reportUrl = reportUrlFor(request.headers.get("host"));
+  if (CSP_REPORT_URL && !reportUrl && !reportHostWarned) {
+    reportHostWarned = true;
+    log.warning("csp report url is not this page's host: violations are not reported");
+  }
   const policy = cspFor(
     nonce,
     originOf(process.env.ZIF_MEDIA_URL),
     originOf(process.env.ZIF_S3_PUBLIC_ENDPOINT || process.env.ZIF_S3_ENDPOINT),
+    reportUrl,
   );
   const headers = new Headers(request.headers);
   for (const name of ["x-nonce", "content-security-policy", "content-security-policy-report-only"]) headers.delete(name);
@@ -175,6 +186,8 @@ export default async function proxy(request: NextRequest) {
   // Enforced, this replaces next.config.ts's frame-ancestors-only header (Next sends the proxy's value);
   // report-only, that header stays the one enforced policy, as a report-only policy enforces nothing.
   response.headers.set(CSP_HEADER, policy);
+  // Where the policy's report-to sends violations (ZIF-236).
+  if (reportUrl) response.headers.set("Reporting-Endpoints", `${REPORT_GROUP}="${reportUrl}"`);
   return response;
 }
 

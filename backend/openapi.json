@@ -6047,6 +6047,59 @@
           }
         }
       }
+    },
+    "/api/csp-reports": {
+      "post": {
+        "tags": [
+          "csp"
+        ],
+        "summary": "Report",
+        "description": "A browser's violation reports, either format. 204 for everything it accepts.",
+        "operationId": "csp-report",
+        "requestBody": {
+          "content": {
+            "application/csp-report": {
+              "schema": {
+                "type": "object"
+              }
+            },
+            "application/reports+json": {
+              "schema": {
+                "items": {
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "415": {
+            "description": "Unsupported Media Type",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Content Too Large",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {

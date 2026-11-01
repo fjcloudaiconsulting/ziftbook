@@ -841,6 +841,18 @@ describe("proxy log lines carry the span's ids (W4)", () => {
 const policyNonce = (policy) => /'nonce-([^']+)'/.exec(policy ?? "")?.[1];
 
 // Every header of that name, as sent: fetch() joins repeats into one value.
+// A page as a browser on `host` would load it: http.request, as fetch() never sends a chosen Host.
+function pageOn(port, path, host, headers = {}) {
+  return new Promise((resolve, reject) => {
+    httpRequest({ host: "127.0.0.1", port, path, headers: { ...headers, host } }, (res) => {
+      res.resume();
+      res.on("end", () => resolve({ status: res.statusCode, headers: res.headers }));
+    })
+      .on("error", reject)
+      .end();
+  });
+}
+
 function rawHeaders(port, path, name) {
   return new Promise((resolve, reject) => {
     httpRequest({ host: "127.0.0.1", port, path }, (res) => {
@@ -970,5 +982,96 @@ describe("page Content-Security-Policy, enforced (ZB-12)", () => {
 
   test("an /api answer still gets no page policy", async () => {
     assert.deepEqual(await rawHeaders(port, "/api/healthz", "content-security-policy"), []);
+  });
+});
+
+describe("CSP violation reports (ZIF-236)", () => {
+  let echo, web, refused;
+  const port = 3240;
+  const reports = `https://app.example.test/api/csp-reports`;
+  before(async () => {
+    echo = await stubEcho();
+    web = await startWeb(`http://127.0.0.1:${echo.address().port}`, port, { ZIF_CSP_ENFORCE: undefined, ZIF_CSP_REPORT_URL: reports });
+    refused = await startWeb(`http://127.0.0.1:${echo.address().port}`, port + 1, {
+      ZIF_CSP_ENFORCE: undefined,
+      ZIF_CSP_REPORT_URL: "https://Zzyzx-collector.example.test/csp",
+    });
+  });
+  after(async () => {
+    await stop(web);
+    await stop(refused);
+    echo.close();
+  });
+
+  test("fence: with ZIF_CSP_REPORT_URL set, every page served on its host reports there, in both forms", async () => {
+    // Wrong implementation killed: report-to without the Reporting-Endpoints header that names its group.
+    const response = await pageOn(port, "/en/sign-in", "app.example.test");
+    const policy = response.headers["content-security-policy-report-only"] ?? "";
+    assert.match(policy, /report-uri https:\/\/app\.example\.test\/api\/csp-reports(;|$)/);
+    assert.match(policy, /report-to csp(;|$)/);
+    assert.equal(response.headers["reporting-endpoints"], `csp="${reports}"`);
+    assert.deepEqual(await rawHeaders(port, "/en/sign-in", "content-security-policy"), ["frame-ancestors 'none'"]);
+    const started = parsedLogLines(web.logs.stdout, "started");
+    assert.deepEqual([started[0]?.csp, started[0]?.csp_reports], ["report-only", "on"]);
+  });
+
+  test("fence: a page served on another host names no report endpoint, and says so once", async () => {
+    // Wrong implementation killed: a typo'd or another environment's URL that ships every visitor's raw reports
+    // (a checkout's client secret in them) cross-origin to a host nobody chose.
+    for (const host of [`127.0.0.1:${port}`, "dev.example.test", `app.example.test:8443`]) {
+      const response = await pageOn(port, "/en/sign-in", host);
+      assert.doesNotMatch(response.headers["content-security-policy-report-only"] ?? "", /report-(uri|to)/, host);
+      assert.equal(response.headers["reporting-endpoints"], undefined, host);
+    }
+    // Only the Host the page was served on counts: an X-Forwarded-Host naming the URL's host changes nothing.
+    const forwarded = await pageOn(port, "/en/sign-in", "evil.example.test", { "x-forwarded-host": "app.example.test" });
+    assert.doesNotMatch(forwarded.headers["content-security-policy-report-only"] ?? "", /report-(uri|to)/);
+    assert.equal(forwarded.headers["reporting-endpoints"], undefined);
+    const warnings = await waitForLog(web.logs.stdout, "csp report url is not this page's host: violations are not reported");
+    assert.equal(warnings.length, 1);
+    assert.equal(warnings[0].level, "WARNING");
+    assert.doesNotMatch(JSON.stringify(warnings[0]), /example|127\.0\.0\.1/);
+  });
+
+  test("fence: a refused ZIF_CSP_REPORT_URL names no endpoint, and the startup line says so without the URL", async () => {
+    const response = await fetch(`http://127.0.0.1:${port + 1}/en/sign-in`);
+    assert.doesNotMatch(response.headers.get("content-security-policy-report-only") ?? "", /report-/);
+    assert.equal(response.headers.get("reporting-endpoints"), null);
+    const [warning] = await waitForLog(refused.logs.stdout, "csp report url refused: violations are not reported");
+    assert.equal(warning?.level, "WARNING");
+    assert.equal(parsedLogLines(refused.logs.stdout, "started")[0]?.csp_reports, "off");
+    assert.doesNotMatch(refused.logs.stdout() + refused.logs.stderr(), /Zzyzx/i);
+  });
+
+  test("a report reaches the API with its own content type, body and Sec-Fetch-Site, in either format", async () => {
+    // Wrong implementation killed: a proxy that drops Sec-Fetch-Site, so the API's cross-site filter (ZIF-236 B3)
+    // sees every report as unlabelled and lets another site's reports through to its database.
+    for (const type of ["application/csp-report", "application/reports+json"]) {
+      const body = type === "application/csp-report" ? '{"csp-report":{}}' : '[{"type":"csp-violation","body":{}}]';
+      for (const site of ["cross-site", "same-origin"]) {
+        const response = await fetch(`http://127.0.0.1:${port}/api/csp-reports`, {
+          method: "POST",
+          headers: { "content-type": type, "sec-fetch-site": site },
+          body,
+        });
+        assert.equal(response.status, 200, type);
+        assert.deepEqual(await response.json(), { method: "POST", body });
+        assert.equal(echo.requests.at(-1)["content-type"], type);
+        assert.equal(echo.requests.at(-1)["sec-fetch-site"], site);
+      }
+    }
+  });
+
+  test("an oversize report batch is named in the proxy's line, and only a report batch", async () => {
+    // Wrong implementation killed: a 413 on the report route indistinguishable from any other oversize body.
+    const before = echo.requests.length;
+    const big = "x".repeat(MAX_BODY_BYTES + 1);
+    for (const path of ["/api/csp-reports", "/api/sign-up"]) {
+      const response = await fetch(`http://127.0.0.1:${port}${path}`, { method: "POST", headers: { "content-type": "application/csp-report" }, body: big });
+      assert.equal(response.status, 413, path);
+    }
+    assert.equal(echo.requests.length, before, "neither reached the API");
+    const lines = await waitForLog(web.logs.stdout, "body too large");
+    assert.deepEqual(lines.map((line) => line.api_route), ["csp-reports", undefined]);
   });
 });
