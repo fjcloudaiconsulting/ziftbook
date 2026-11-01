@@ -2396,3 +2396,85 @@ def test_the_message_is_the_booking_s_not_the_client_s(
     blank = post_booking(client, people.a, ready, email=email, message="   ", starts_at=at("11:00"))
     assert blank.status_code == 201, blank.json()
     assert owner.get(f"/api/bookings/{blank.json()['id']}").json()["client_message"] is None
+
+
+# ZIF-102, the accepted mid-booking currency race, closed. The booking page shows a price in the
+# business's currency; the owner may change that currency until the first booking. The page sends
+# the currency it showed (a query parameter, so either release reads the request during a rolling
+# deploy), and a booking against a currency that changed meanwhile is refused.
+
+
+def post_shown(
+    client: TestClient, tenant_id: object, service_id: object, shown: str | None, **overrides: Any
+) -> Response:
+    params = {} if shown is None else {"shown_currency": shown}
+    return client.post(
+        booking_url(tenant_id, service_id), params=params, json=guest_body(**overrides)
+    )
+
+
+def change_currency_to(owner: TestClient, currency: str) -> None:
+    body = {"currency": currency, "confirmed_prices": 1}
+    changed = owner.put("/api/settings/currency", json=body)
+    assert changed.status_code == 200, changed.json()
+
+
+# FENCE. Wrong impl: today's code, which books the client at the number they saw in a currency
+# they never saw.
+def test_a_booking_from_a_page_that_showed_another_currency_is_refused(
+    people: People, app: FastAPI, owner: TestClient, ready: str
+) -> None:
+    change_currency_to(owner, "USD")
+    email = fresh_email()
+
+    refused = post_shown(new_client(app), people.a, ready, "EUR", email=email)
+
+    assert (refused.status_code, refused.json()) == (409, {"code": "currency_changed"})
+    with tenant_context(people.a) as session:
+        assert session.scalar(text("SELECT count(*) FROM bookings")) == 0
+    assert placements(people.a, email) == (0, 0)  # given back: nothing was placed
+
+
+# FENCE. Wrong impl: comparing with anything but the service's own price, read under its lock.
+def test_a_booking_from_a_page_that_showed_the_current_currency_is_placed(
+    people: People, app: FastAPI, owner: TestClient, ready: str
+) -> None:
+    change_currency_to(owner, "USD")
+
+    placed = post_shown(new_client(app), people.a, ready, "USD")
+
+    assert placed.status_code == 201, placed.json()
+    assert placed.json()["price"]["currency"] == "USD"
+
+
+# GUARD (rolling deploy). A page from the previous release sends no currency, and still books.
+def test_a_page_that_sends_no_currency_still_books(
+    people: People, app: FastAPI, ready: str
+) -> None:
+    placed = post_shown(new_client(app), people.a, ready, None)
+
+    assert placed.status_code == 201, placed.json()
+
+
+# FENCE. Wrong impl: a free-form string, compared or not.
+@pytest.mark.parametrize("shown", ["JPY", "eur", "", "EURO"])
+def test_a_shown_currency_outside_the_list_is_a_422(
+    people: People, app: FastAPI, ready: str, shown: str
+) -> None:
+    refused = post_shown(new_client(app), people.a, ready, shown)
+
+    assert refused.status_code == 422
+    with tenant_context(people.a) as session:
+        assert session.scalar(text("SELECT count(*) FROM bookings")) == 0
+
+
+# GUARD (rolling deploy). The shown currency is a query parameter, never a body key: the previous
+# release's strict body refuses an unknown key with a 422, but ignores an unknown query parameter,
+# so a page from this release still books through an API still on the previous one.
+def test_the_shown_currency_is_a_query_parameter_not_a_body_key() -> None:
+    assert "shown_currency" not in bookings.BookingIn.model_fields
+    operation = create_app().openapi()["paths"][
+        "/api/public/businesses/{tenant_id}/services/{service_id}/bookings"
+    ]["post"]
+    (param,) = [p for p in operation["parameters"] if p["name"] == "shown_currency"]
+    assert (param["in"], param["required"]) == ("query", False)

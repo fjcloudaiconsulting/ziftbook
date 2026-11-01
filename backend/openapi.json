@@ -4553,6 +4553,28 @@
               "format": "uuid",
               "title": "Service Id"
             }
+          },
+          {
+            "name": "shown_currency",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "BRL",
+                    "EUR",
+                    "GBP",
+                    "USD"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Shown Currency"
+            }
           }
         ],
         "requestBody": {
