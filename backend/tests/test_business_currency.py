@@ -9,7 +9,9 @@ from typing import Any
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from psycopg import OperationalError as PsycopgOperationalError
 from psycopg.errors import (
+    AdminShutdown,
     CheckViolation,
     DeadlockDetected,
     FeatureNotSupported,
@@ -748,3 +750,25 @@ def test_a_currency_change_aborted_by_the_database_answers_busy(
     response = owner.put("/api/settings/currency", json={"currency": "USD"})
 
     assert (response.status_code, response.json()) == (503, {"code": "busy"})
+
+
+# FENCE. Wrong impl: every OperationalError from the change answered 503 busy. A lost connection or
+# a server shutting down is no lock contention: it must stay an unexpected error (500, logged as
+# unhandled), never "busy, try again".
+@pytest.mark.parametrize("failure", [AdminShutdown, PsycopgOperationalError])
+def test_a_currency_change_failing_otherwise_is_not_answered_busy(
+    people: People, owner: TestClient, monkeypatch: pytest.MonkeyPatch, failure: type[Exception]
+) -> None:
+    real = Session.execute
+
+    def broken(self: Session, statement: Any, *args: Any, **kwargs: Any) -> Any:
+        if "change_currency(" in str(statement):
+            raise OperationalError(str(statement), {}, failure("gone"))
+        return real(self, statement, *args, **kwargs)
+
+    monkeypatch.setattr(Session, "execute", broken)
+
+    response = owner.put("/api/settings/currency", json={"currency": "USD"})
+
+    assert response.status_code == 500
+    assert response.json() != {"code": "busy"}
