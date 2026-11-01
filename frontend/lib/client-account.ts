@@ -132,3 +132,18 @@ export function emailNotSaved(account: { email: string } | null, typed: string):
   if (!account || !typed.trim()) return false;
   return normalEmail(typed) !== normalEmail(account.email);
 }
+
+/**
+ * The form after "Not you? Sign out": every field still holding what the account filled in empties out (the phone's
+ * code goes back to the business's country); anything the account never filled in, or the person changed since,
+ * stays as they typed it.
+ */
+export function afterSignOut(current: Details, written: Fill, businessRegion: string): Details {
+  const phoneKept = written.phone === null || current.phone !== written.phone || current.region !== written.region;
+  return {
+    name: written.name !== null && current.name === written.name ? "" : current.name,
+    email: current.email === written.email ? "" : current.email,
+    phone: phoneKept ? current.phone : "",
+    region: phoneKept ? current.region : businessRegion,
+  };
+}

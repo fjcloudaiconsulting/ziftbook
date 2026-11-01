@@ -1117,6 +1117,7 @@
     "signInGuest": "Sem conta? Reserve como convidado e salve seus dados depois.",
     "signedInAs": "Você entrou como {name}.",
     "filledIn": "Seus dados foram preenchidos. As alterações aqui valem só para esta reserva; com outro e-mail, ela não fica salva na sua conta.",
-    "emailNotSaved": "Esta reserva não vai aparecer nos seus agendamentos."
+    "emailNotSaved": "Esta reserva não vai aparecer nos seus agendamentos.",
+    "notYou": "Não é você? Sair"
   }
 }

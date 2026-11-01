@@ -4,7 +4,7 @@ import Script from "next/script";
 import { useTranslations } from "next-intl";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 
-import { type AccountOut, availabilityRead, bookingsAbandon, bookingsCreate, bookingsResume, bookingsSync, type BookingPageOut, type PaymentStart, platformAccountRead, type SyncOut } from "@/api-client";
+import { type AccountOut, availabilityRead, bookingsAbandon, bookingsCreate, bookingsResume, bookingsSync, type BookingPageOut, type PaymentStart, platformAccountRead, platformAccountSignOut, type SyncOut } from "@/api-client";
 import { Link, useRouter } from "@/i18n/navigation";
 import { addDays, localDay, localWhen, slotsByDay, weekDays } from "@/lib/booking-link";
 import {
@@ -35,7 +35,7 @@ import {
   weekFor,
   withName,
 } from "@/lib/booking-page";
-import { applyFill, emailNotSaved, fillFrom, offerNext } from "@/lib/client-account";
+import { afterSignOut, applyFill, emailNotSaved, type Fill, fillFrom, offerNext } from "@/lib/client-account";
 import { dateLocale } from "@/lib/console";
 import { defaultDial, dialOptions } from "@/lib/dial-codes";
 import { formatMoney } from "@/lib/money";
@@ -188,6 +188,10 @@ export function BookingPage({
 
   // --- ZIF-146: the details filled in from the person's own account, only on their click (security B3.4) ---
   const [account, setAccount] = useState<AccountOut | null>(null);
+  // What the account wrote into the form: "Not you? Sign out" empties only the fields that still hold it.
+  const [written, setWritten] = useState<Fill | null>(null);
+  const [signOutBusy, setSignOutBusy] = useState(false);
+  const [signOutError, setSignOutError] = useState<string | null>(null);
   const [signInOpen, setSignInOpen] = useState(false);
   const [offerBusy, setOfferBusy] = useState(false);
   const [offerError, setOfferError] = useState<string | null>(null);
@@ -894,10 +898,12 @@ export function BookingPage({
 
   /** The account's name, email and phone into the form; anything it has no value for stays as typed. */
   function fill(signedIn: AccountOut) {
-    const next = applyFill({ name: flow.name, email: flow.email, phone: flow.phone, region }, fillFrom(signedIn, page.country));
+    const filled = fillFrom(signedIn, page.country);
+    const next = applyFill({ name: flow.name, email: flow.email, phone: flow.phone, region }, filled);
     setFlow((f) => ({ ...f, name: next.name, email: next.email, phone: next.phone, suggest: null, errors: { ...f.errors, name: undefined, email: undefined, phone: undefined } }));
     setRegion(next.region);
     setAccount(signedIn);
+    setWritten(filled);
     setSignInOpen(false);
     setOfferError(null);
     setNoteFocus((n) => n + 1);
@@ -915,6 +921,25 @@ export function BookingPage({
     if (nextStep === "fill" && answer.data) fill(answer.data);
     else if (nextStep === "signIn") setSignInOpen(true);
     else setOfferError(form(problem(answer)));
+  }
+
+  /** "Not you? Sign out": this browser's account session ends (and its console session, spec section 1.4); the
+   * fields that still hold the account's values empty out, and the offer is back. */
+  async function signOut() {
+    if (signOutBusy || !written) return;
+    setSignOutBusy(true);
+    setSignOutError(null);
+    const answer = await send(platformAccountSignOut({ ...JSON_WRITE }));
+    setSignOutBusy(false);
+    if (answer.status !== 204) {
+      setSignOutError(form(problem(answer)));
+      return;
+    }
+    const next = afterSignOut({ name: flow.name, email: flow.email, phone: flow.phone, region }, written, page.country);
+    setFlow((f) => ({ ...f, name: next.name, email: next.email, phone: next.phone, suggest: null }));
+    setRegion(next.region);
+    setAccount(null);
+    setWritten(null);
   }
 
   const s2 = flow.service ? (flow as Step2Plus) : null;
@@ -1106,7 +1131,7 @@ export function BookingPage({
             {detailsOpen && (
               <div className={styles.stepBody}>
                 {account ? (
-                  <SignedInNote account={account} t={t} noteRef={noteRef} />
+                  <SignedInNote account={account} t={t} noteRef={noteRef} busy={signOutBusy} error={signOutError} onSignOut={() => void signOut()} />
                 ) : (
                   !locked && <AccountOffer t={t} busy={offerBusy} error={offerError} onOpen={() => void fillFromAccount()} />
                 )}

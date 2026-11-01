@@ -6,6 +6,7 @@ import { describe, test } from "node:test";
 
 import {
   accountSignInOutcome,
+  afterSignOut,
   applyFill,
   bookAgainSlug,
   emailNotSaved,
@@ -209,5 +210,35 @@ describe("a different email books as a guest (ZIF-146 G1)", () => {
     const en = JSON.parse(readFileSync(new URL("../messages/en.json", import.meta.url))).BookingPage;
     assert.match(en.filledIn, /with a different email it won't be saved to your account/);
     assert.equal(en.emailNotSaved, "This booking won't appear in your bookings.");
+  });
+});
+
+describe("Not you? Sign out", () => {
+  const written = { name: "Ana Silva", email: "ana@example.com", phone: "612345678", region: "NL" };
+
+  test("fields still holding the account's values empty out; the phone's code goes back to the business's", () => {
+    assert.deepEqual(afterSignOut({ ...written }, written, "PT"), { name: "", email: "", phone: "", region: "PT" });
+  });
+
+  test("whatever the person changed since stays as they typed it", () => {
+    const current = { name: "Ana S.", email: "ana@example.com", phone: "699999999", region: "NL" };
+    assert.deepEqual(afterSignOut(current, written, "PT"), { name: "Ana S.", email: "", phone: "699999999", region: "NL" });
+  });
+
+  test("a phone whose country code was changed is the person's own number now: kept", () => {
+    const current = { ...written, region: "BE" };
+    assert.deepEqual(afterSignOut(current, written, "PT"), { name: "", email: "", phone: "612345678", region: "BE" });
+  });
+
+  test("a field the account never filled in is never touched", () => {
+    const partial = { name: null, email: "ana@example.com", phone: null, region: null };
+    const current = { name: "Typed Name", email: "ana@example.com", phone: "612", region: "NL" };
+    assert.deepEqual(afterSignOut(current, partial, "PT"), { name: "Typed Name", email: "", phone: "612", region: "NL" });
+  });
+
+  test("fence: the checkout signs out with DELETE /api/account/session and clears through afterSignOut", () => {
+    const text = readFileSync(new URL("../app/[locale]/[slug]/booking-page.tsx", import.meta.url), "utf8");
+    assert.match(text, /platformAccountSignOut\(/);
+    assert.match(text, /afterSignOut\(/);
   });
 });

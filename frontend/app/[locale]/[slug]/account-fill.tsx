@@ -96,8 +96,22 @@ export function SignInDialog({
   );
 }
 
-/** After filling: who is signed in, and that the details are filled in and still editable. */
-export function SignedInNote({ account, t, noteRef }: { account: AccountOut; t: T; noteRef: Ref<HTMLDivElement> }) {
+/** After filling: who is signed in, that the details are filled in and still editable, and "Not you? Sign out". */
+export function SignedInNote({
+  account,
+  t,
+  noteRef,
+  busy,
+  error,
+  onSignOut,
+}: {
+  account: AccountOut;
+  t: T;
+  noteRef: Ref<HTMLDivElement>;
+  busy: boolean;
+  error: string | null;
+  onSignOut(): void;
+}) {
   return (
     <div className={styles.acctNote}>
       <div className={styles.statusNote} ref={noteRef} tabIndex={-1} role="status">
@@ -106,6 +120,16 @@ export function SignedInNote({ account, t, noteRef }: { account: AccountOut; t: 
           <b>{t("signedInAs", { name: account.name || account.email })}</b> {t("filledIn")}
         </p>
       </div>
+      <p className={styles.acctNoteActs}>
+        <button className={styles.textButton} type="button" aria-disabled={busy || undefined} onClick={onSignOut}>
+          {t("notYou")}
+        </button>
+      </p>
+      {error && (
+        <p className={styles.acctOfferError} role="alert">
+          {error}
+        </p>
+      )}
     </div>
   );
 }

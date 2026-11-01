@@ -1117,6 +1117,7 @@
     "signInGuest": "Geen account? Boek als gast en bewaar je gegevens daarna.",
     "signedInAs": "Ingelogd als {name}.",
     "filledIn": "Je gegevens zijn ingevuld. Wijzigingen hier gelden alleen voor deze afspraak; met een ander e-mailadres wordt hij niet in je account bewaard.",
-    "emailNotSaved": "Deze afspraak komt niet bij je afspraken te staan."
+    "emailNotSaved": "Deze afspraak komt niet bij je afspraken te staan.",
+    "notYou": "Ben jij dit niet? Uitloggen"
   }
 }
