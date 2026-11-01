@@ -1,6 +1,7 @@
 // ZIF-102: the business's currency on the settings screen. The owner's ruling: it changes only until
 // the business's first booking and before it connects Stripe; saved prices keep their numbers.
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { describe, test } from "node:test";
 
 import { changeBody, changeExample, currencyChangeError, currencyChoices, currencyLabel, currencyName, losesPayments } from "../lib/currency.ts";
@@ -65,5 +66,19 @@ describe("currencyChangeError", () => {
   test("guard: anything else is the generic failure", () => {
     assert.equal(currencyChangeError({ status: 503 }), null);
     assert.equal(currencyChangeError({ status: 409, code: "other" }), null);
+  });
+});
+
+describe("the copy about payments in a currency", () => {
+  test("fence: it states the platform's own limit, never a claim about what Stripe pays out", () => {
+    // Wrong implementation killed: "Stripe doesn't pay out in {currency}", which is untrue (Stripe
+    // pays out with conversion); the refusal is ziftbook's default (countries.STRIPE_CURRENCIES).
+    for (const locale of ["en", "nl", "pt"]) {
+      const settings = JSON.parse(readFileSync(new URL(`../messages/${locale}.json`, import.meta.url), "utf8")).Console.settings;
+      for (const key of ["paymentsCurrency", "currencyStripeWarning"]) {
+        assert.doesNotMatch(settings[key], /pays? out|betaalt|uitbetaal|\bpaga\b/i, `${locale} ${key}`);
+        assert.match(settings[key], /\{currency\}/, `${locale} ${key}`);
+      }
+    }
   });
 });
