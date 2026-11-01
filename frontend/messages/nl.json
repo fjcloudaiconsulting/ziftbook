@@ -121,7 +121,11 @@
     "tryLater": "Te veel pogingen. Probeer het later opnieuw, of stel je wachtwoord opnieuw in.",
     "noBusiness": "Dit account hoort niet meer bij een bedrijf. Vraag de eigenaar om je opnieuw toe te voegen.",
     "newHere": "Nieuw bij ziftbook?",
-    "createBusiness": "Maak je bedrijf aan"
+    "createBusiness": "Maak je bedrijf aan",
+    "accountUnavailable": "Met dit account kun je hier niet inloggen."
+  },
+  "ClientSignUp": {
+    "emailPlaceholder": "jij@voorbeeld.nl"
   },
   "Admin": {
     "title": "Inloggen als beheerder",

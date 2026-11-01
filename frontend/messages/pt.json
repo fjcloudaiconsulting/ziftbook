@@ -121,7 +121,11 @@
     "tryLater": "Tentativas demais por agora. Tente de novo mais tarde, ou redefina sua senha.",
     "noBusiness": "Esta conta não faz mais parte de um negócio. Peça ao responsável para adicionar você de novo.",
     "newHere": "Novo no ziftbook?",
-    "createBusiness": "Cadastre seu negócio"
+    "createBusiness": "Cadastre seu negócio",
+    "accountUnavailable": "Esta conta não pode entrar aqui."
+  },
+  "ClientSignUp": {
+    "emailPlaceholder": "voce@exemplo.com.br"
   },
   "Admin": {
     "title": "Entrar como administrador",

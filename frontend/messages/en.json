@@ -121,7 +121,11 @@
     "tryLater": "Too many attempts for now. Try again later, or reset your password.",
     "noBusiness": "This account isn't part of a business any more. Ask the owner to add you again.",
     "newHere": "New to ziftbook?",
-    "createBusiness": "Create your business"
+    "createBusiness": "Create your business",
+    "accountUnavailable": "This account can't sign in here."
+  },
+  "ClientSignUp": {
+    "emailPlaceholder": "you@example.com"
   },
   "Admin": {
     "title": "Admin sign-in",
