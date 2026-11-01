@@ -423,6 +423,10 @@ describe("back to the booking page after an emailed sign-up (ruling 7: this brow
   });
 });
 
+// What the console may never contain: a link to the account pages (quoted, or after an interpolated locale), a
+// read of a person's own account or history, or the account's own parts.
+const CONSOLE_REFUSES = /(?:["'`]|\})\/account\b|\bplatformAccount(?:Read|History)\b|\bshownAccount\b|\bAccountSignIn\b|\bAccountButton\b/;
+
 describe("the account button", () => {
   const ana = { email: "ana@example.com", name: "Ana Silva", phone: null };
 
@@ -454,8 +458,25 @@ describe("the account button", () => {
     const root = new URL("../app/[locale]/", import.meta.url).pathname;
     const walk = (dir) => readdirSync(dir).flatMap((n) => (statSync(join(dir, n)).isDirectory() ? walk(join(dir, n)) : [join(dir, n)]));
     for (const file of [...walk(join(root, "(console)")), join(root, "_ui", "console.tsx")]) {
-      assert.doesNotMatch(readFileSync(file, "utf8"), /["'`]\/account\b|AccountButton/, file);
+      assert.doesNotMatch(readFileSync(file, "utf8"), CONSOLE_REFUSES, file);
     }
+  });
+
+  test("the console check catches every way in (security review 2)", () => {
+    // A link built with the locale, as the sign-in page's own link is, and the account's reads and parts.
+    for (const probe of [
+      "<a href={`/${locale}/account`}>x</a>",
+      '<Link href="/account">x</Link>',
+      "router.push('/account/sign-in')",
+      "send(platformAccountRead())",
+      "send(platformAccountHistory({ query: {} }))",
+      "shownAccount.show(me)",
+      "<AccountSignIn />",
+      "<AccountButton />",
+    ]) {
+      assert.match(probe, CONSOLE_REFUSES, probe);
+    }
+    for (const fine of ['fetch("/api/account-settings")', "const accountName = 1;", "<AccountPopover />"]) assert.doesNotMatch(fine, CONSOLE_REFUSES, fine);
   });
 });
 
