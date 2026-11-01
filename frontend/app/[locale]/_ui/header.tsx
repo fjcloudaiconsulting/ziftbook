@@ -149,19 +149,25 @@ async function savePublic(locale: Locale): Promise<boolean> {
   return outcome.status === 200;
 }
 
-export function Header() {
+/**
+ * ZIF-102, ruling 4: on a public page, the booking page included, a signed-in viewer's own language
+ * wins over the link (CONTRIBUTING.md, "Which language a person sees"); a guest keeps the page's.
+ * Reads GET /api/session once per page, moves the page when needed, and answers the save for the
+ * language button (undefined for a guest). `hold`: the page must not move now (the checkout
+ * resuming a booking from its address, where a move would remount it mid-check).
+ */
+export function useOwnLanguage({ hold = false }: { hold?: boolean } = {}): SaveLanguage | undefined {
   const locale = useLocale();
   const pathname = usePathname();
   const router = useRouter();
   const [signedIn, setSignedIn] = useState(false);
 
-  // ZIF-102, ruling 4: a signed-in viewer's own language wins over the link on every public page
-  // (CONTRIBUTING.md, "Which language a person sees"). A guest keeps the page's.
   useEffect(() => {
     let cancelled = false;
     void send(sessionRead()).then((outcome) => {
       if (cancelled || outcome.status !== 200 || !outcome.data) return;
       setSignedIn(true);
+      if (hold) return;
       const own = resolveLocale({
         own: outcome.data.locale,
         signedIn: true,
@@ -180,12 +186,21 @@ export function Header() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  return signedIn ? savePublic : undefined;
+}
+
+/** The language button of a public page, for a signed-in viewer their own language (useOwnLanguage). */
+export function OwnLanguageSwitcher({ hold = false }: { hold?: boolean }) {
+  return <LanguageSwitcher save={useOwnLanguage({ hold })} />;
+}
+
+export function Header() {
   return (
     <header className={styles.top}>
       <Link className={styles.wordmark} href="/">
         ziftbook
       </Link>
-      <LanguageSwitcher save={signedIn ? savePublic : undefined} />
+      <OwnLanguageSwitcher />
     </header>
   );
 }
