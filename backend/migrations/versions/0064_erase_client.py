@@ -6,9 +6,10 @@ the client's personal data on its bookings (the name, phone and message the book
 merchant's decline message, the checkout cookie's hash), the client's address and browser on the
 booking events the client made (the team's own events keep theirs), and deletes the client's
 consent rows and its bookings' manage links. Booking evidence (dates, prices, services, status,
-payments) is kept. It changes no booking's status: the caller ends live bookings first, in the same
-transaction. It returns when the client was erased, the first erasure's time on a repeat (which
-writes nothing), or NULL for a client this business does not have.
+payments) is kept. It changes no booking's status: the caller holds the tenant booking lock and
+ends the client's live bookings first, in the same transaction, and the core refuses otherwise. It
+returns when the client was erased, the first erasure's time on a repeat (which writes nothing), or
+NULL for a client this business does not have.
 
 Every statement names the business explicitly, besides row-level security, so the scope holds even
 if a policy for ziftbook_migrate (the function's owner) is ever widened. A SECURITY DEFINER rather
@@ -101,6 +102,17 @@ BEGIN
   SELECT email, locale INTO v_email, v_locale FROM clients
    WHERE tenant_id = v_tenant AND id = p_client AND erased_at IS NULL
    FOR NO KEY UPDATE;
+  -- The caller ends the client's live bookings first, in this transaction: one still to come on a
+  -- tombstone would have no address to be told at and no manage link, and no later erasure could
+  -- end it. Live: confirmed and still to come, or pending or in checkout with its hold running.
+  -- One under way, or a pending whose hold has lapsed (the sweep expires it), is not.
+  IF EXISTS (SELECT 1 FROM bookings
+             WHERE tenant_id = v_tenant AND client_id = p_client
+               AND ((status = 'confirmed' AND starts_at > now())
+                    OR (status IN ('pending', 'awaiting_payment') AND expires_at > now()))) THEN
+    RAISE EXCEPTION 'erase_client_core: the client has live bookings'
+      USING ERRCODE = 'object_not_in_prerequisite_state';
+  END IF;
   UPDATE clients SET erased_at = now(), user_id = NULL, name = '', email = NULL, phone = NULL,
                      locale = NULL, client_note = NULL, internal_note = NULL
    WHERE tenant_id = v_tenant AND id = p_client AND erased_at IS NULL

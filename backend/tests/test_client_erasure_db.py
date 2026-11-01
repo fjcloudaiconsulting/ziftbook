@@ -785,6 +785,8 @@ def test_money_still_owed_is_one_rule_and_decides_the_hold(
     with migrate_tenant_context(migrate_engine, people.a) as conn:
         assert conn.scalar(OWED, {"t": str(people.a), "c": seeded.client_id}) is owed
 
+    if payment.live_checkout:
+        return  # a live booking: the core refuses to erase until the caller ends it
     holds = hold_after(migrate_engine, seeded, people.both, reason=None, announce=False)
 
     assert holds == ([(seeded.client_id, seeded.email, "nl", True, True)] if owed else [])
@@ -828,3 +830,53 @@ def test_the_core_needs_the_booking_lock(migrate_engine: Engine, negative: bool)
         with migrate_engine.begin() as conn:
             delete_clients(conn, [tenant_id])
             conn.execute(text("DELETE FROM tenants WHERE id = :t"), {"t": tenant_id})
+
+
+LIVE = {
+    "confirmed, to come": ("confirmed", timedelta(days=2), None),
+    "pending, waiting": ("pending", timedelta(days=2), timedelta(hours=1)),
+    "checkout, running": ("awaiting_payment", timedelta(days=2), timedelta(minutes=10)),
+}
+NOT_LIVE = {
+    "confirmed, under way": ("confirmed", timedelta(minutes=-10), None),
+    "pending, lapsed": ("pending", timedelta(days=2), timedelta(hours=-1)),
+}
+
+
+# ZIF-58 FENCE. Wrong impl: a core that trusts its caller to end the client's live bookings first.
+# A booking still to come on a tombstone has no address to be told at, no manage link, and no
+# later erasure can end it. A booking already under way, or a pending one whose hold has lapsed,
+# is not live: an erasure keeps the first and the sweep ends the second.
+@pytest.mark.parametrize("kind", [*LIVE, *NOT_LIVE])
+def test_the_core_refuses_a_client_with_a_live_booking(
+    people: People, migrate_engine: Engine, kind: str
+) -> None:
+    status, starts_in, expires_in = {**LIVE, **NOT_LIVE}[kind]
+    worker = member_id(people.a, people.only_a)
+    service_id = seed_service(people.a)
+    now = datetime.now().astimezone()
+    with migrate_tenant_context(migrate_engine, people.a) as conn:
+        client_id = conn.scalar(INSERT_CLIENT, {"email": fresh_email(), "user_id": None})
+        conn.execute(
+            INSERT_BOOKING,
+            {
+                "client": client_id,
+                "worker": worker,
+                "service": service_id,
+                "starts": now + starts_in,
+                "status": status,
+                "expires": now + expires_in if expires_in is not None else None,
+                "decline": None,
+                "checkout": None,
+            },
+        )
+    before = take(migrate_engine, people.a)
+
+    if kind in LIVE:
+        with pytest.raises(DBAPIError) as error:
+            erase(migrate_engine, people.a, client_id)
+        assert isinstance(error.value.orig, ObjectNotInPrerequisiteState)
+        assert "live bookings" in str(error.value.orig)
+        assert take(migrate_engine, people.a) == before
+    else:
+        assert erase(migrate_engine, people.a, client_id) is not None
