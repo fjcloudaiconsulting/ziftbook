@@ -12,6 +12,7 @@ import { type Locale } from "@/lib/services";
 import type { AppVersion } from "@/lib/version";
 import { zoneCity } from "@/lib/week";
 
+import { ContactLine } from "../_ui/contact-line";
 import { Banner, Outcome } from "../_ui/parts";
 import { ServiceTile } from "../_ui/service-tile";
 import styles from "../_ui/ui.module.css";
@@ -137,6 +138,7 @@ export function ServicesPage({ page, locale, version }: { page: BookingPageOut; 
               <span aria-hidden="true">·</span>
               <span>{t("timesIn", { city: zoneCity(page.timezone) })}</span>
             </p>
+            {page.contact_email && <ContactLine email={page.contact_email} label={t("contactLabel")} />}
           </div>
           {gone && <Banner tone="note">{t("serviceGone")}</Banner>}
           {page.services.length === 0 ? (

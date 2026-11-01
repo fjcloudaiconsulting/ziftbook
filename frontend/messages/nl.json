@@ -991,6 +991,7 @@
   },
   "BookingPage": {
     "timesIn": "Tijden in {city}",
+    "contactLabel": "Contactadres: ",
     "step2": "Kies een dag en tijd",
     "step3": "Jouw gegevens",
     "change": "Wijzigen",
