@@ -584,14 +584,32 @@ def parse(
 
 # Every outcome of a decode: the ziftbook.photo.decodes metric's closed set, the span's and the
 # logs' `decoder`. ok and refused are the photo's answer; the rest say why the child failed.
-OUTCOMES = (
-    *("ok", "refused", "cpu", "memory", "oom", "signal", "exit", "output", "protocol"),
-    *("timeout", "starved", "headroom", "scratch", "spawn", "limits", "import", "start"),
+Outcome = Literal[
+    "ok",
+    "refused",
+    "cpu",
+    "memory",
+    "oom",
+    "signal",
+    "exit",
+    "output",
+    "protocol",
+    "timeout",
+    "starved",
+    "headroom",
+    "scratch",
+    "spawn",
+    "limits",
+    "import",
+    "start",
     "hardening",
-)
+]
+OUTCOMES: tuple[str, ...] = get_args(Outcome)
 
 
-def _count(outcome: str, span: Span) -> None:
+def _count(outcome: Outcome, span: Span) -> None:
+    if outcome not in OUTCOMES:  # never a new metric value from a typo
+        raise ValueError(outcome)
     span.set_attribute("decoder", outcome)
     tracing.PHOTO_DECODES.add(1, {"photo.outcome": outcome})
 
@@ -599,10 +617,14 @@ def _count(outcome: str, span: Span) -> None:
 # How a child that ended before its ready marker could not start: these exit codes (2 is the
 # interpreter's own: no such script), or "start" for any other end (an exit, a signal: a filter
 # for the wrong architecture, a crash in the import). After the marker, an end is the decode's.
-START_FAILURES = {2: "import", photo_child.EXIT_LIMITS: "limits", photo_child.EXIT_IMPORT: "import"}
+START_FAILURES: dict[int, Outcome] = {
+    2: "import",
+    photo_child.EXIT_LIMITS: "limits",
+    photo_child.EXIT_IMPORT: "import",
+}
 
 
-def _judge(run: Run) -> tuple[str, Decoded | Refused | None, bytes, bytes]:
+def _judge(run: Run) -> tuple[Outcome, Decoded | Refused | None, bytes, bytes]:
     """The outcome of a run (ok, refused, or why it failed) and the record when there is one."""
     output = memoryview(run.output)
     ready = output[: len(photo_child.READY)] == photo_child.READY
@@ -655,7 +677,9 @@ def variants(upload: IO[bytes], upload_id: UUID, span: Span) -> Variants:
         run = _run(upload)
     except OSError:  # no process: out of memory or pids, or no interpreter
         run = None
-    outcome, head, thumb, detail = ("spawn", None, b"", b"") if run is None else _judge(run)
+    judged: tuple[Outcome, Decoded | Refused | None, bytes, bytes]
+    judged = ("spawn", None, b"", b"") if run is None else _judge(run)
+    outcome, head, thumb, detail = judged
     _count(outcome, span)
     if head is not None:
         span.set_attributes({"format": str(head.format), "pixels": head.pixels or 0})
