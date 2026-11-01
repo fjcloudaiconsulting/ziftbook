@@ -967,3 +967,31 @@ def test_an_erasure_waits_for_its_session_being_ended(
     assert isinstance(error, DBAPIError)
     assert isinstance(error.orig, InsufficientPrivilege)
     assert erased_at(people.a, world.a.client_id) is None
+
+
+# ZIF-58 FENCE. Wrong impl: erase_client passes p_announce false to the core, so an owner's
+# erasure that cancels a client's booking and owes nothing writes no hold, and the client is
+# never told of the cancellation. Through erase_client as the app role, with an owner's session.
+def test_an_owners_erasure_announces_the_cancellations(
+    people: People, migrate_engine: Engine
+) -> None:
+    seeded = seed_person(
+        migrate_engine, people.a, member_id(people.a, people.only_a), people.both, days_ago=10
+    )
+    owner = session_hash(people.a, people.both)
+    with tenant_context(people.a) as session:
+        booking_lock(session)
+        # The ending the erase route writes for a booking it cancels, in the same transaction.
+        session.execute(
+            ENDED_BY_ERASURE,
+            {
+                "booking": seeded.bookings[0],
+                "actor": people.both,
+                "details": json.dumps({"reason": "client_erased"}),
+            },
+        )
+        assert session.scalar(ERASE_CLIENT, {"h": owner, "id": seeded.client_id}) is not None
+    with migrate_tenant_context(migrate_engine, people.a) as conn:
+        assert conn.scalar(OWED, {"t": str(people.a), "c": seeded.client_id}) is False
+        holds = [tuple(row) for row in conn.execute(HOLDS)]
+    assert holds == [(seeded.client_id, seeded.email, "nl", True, True)]
