@@ -17,6 +17,7 @@ NR: dict[str, tuple[int, int]] = {
     "openat": (56, 257),
     "kill": (129, 62),
     "prlimit64": (261, 302),
+    "fcntl": (25, 72),
 }
 # Every syscall the filter denies outright. Each is called with arguments that fail some other way
 # (EFAULT, EINVAL, ENOENT...) or change nothing, so only the filter answers EPERM.
@@ -70,6 +71,7 @@ DENIED: dict[str, tuple[int | None, int | None]] = {
     "chown": (None, 92),
     "lchown": (None, 94),
     "memfd_create": (279, 319),
+    "ioctl": (29, 16),
 }
 # Arguments other than all zeros, where zeros would be refused by the kernel anyway: a chown to
 # uid 0. -1 changes no owner.

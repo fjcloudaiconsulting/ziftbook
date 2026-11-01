@@ -5,6 +5,7 @@ for one that misbehaves as the upload's first line says. The child has no enviro
 arguments, so the upload is the only way to tell it what to do."""
 
 import ctypes
+import fcntl
 import importlib.util
 import json
 import os
@@ -13,6 +14,7 @@ import signal
 import socket
 import struct
 import sys
+import termios
 import threading
 import time
 from pathlib import Path
@@ -96,6 +98,11 @@ def deny_checks() -> list[tuple[Any, int | None]]:
     ]
 
 
+# fcntl commands the module does not name on every platform (Linux values).
+F_SETOWN_EX, F_SETSIG, F_SETLEASE, F_NOTIFY = 15, 10, 1024, 1026
+FIOSETOWN, SIOCSPGRP = 0x8901, 0x8902  # nor these ioctls
+
+
 def siginfo() -> Any:
     """A siginfo for sig 0 with si_code SI_QUEUE (-1), as a user process may send."""
     info = ctypes.create_string_buffer(128)
@@ -131,6 +138,23 @@ def parent_checks() -> list[tuple[Any, int | None]]:
         (lambda: syscall("process_vm_writev", me, None, 0, None, 0, 0), eperm),
         (lambda: syscall("kcmp", me, me, 0, 0, 0), eperm),
         (lambda: os.setpriority(os.PRIO_PROCESS, 0, os.getpriority(os.PRIO_PROCESS, 0)), eperm),
+        # I/O signals sent to the API by the kernel: an owner for its pipe or upload, a signal for
+        # it, async mode, a lease or a directory notice. Owners first: were one allowed, the probe
+        # stops before async mode could make the kernel signal the API.
+        (lambda: fcntl.fcntl(1, fcntl.F_SETOWN, api), eperm),
+        (lambda: fcntl.fcntl(1, F_SETOWN_EX, struct.pack("=ii", 1, api)), eperm),  # F_OWNER_PID
+        (lambda: fcntl.fcntl(0, F_SETOWN_EX, struct.pack("=ii", 2, api)), eperm),  # F_OWNER_PGRP
+        (lambda: fcntl.ioctl(1, FIOSETOWN, struct.pack("=i", api)), eperm),
+        (lambda: fcntl.ioctl(1, SIOCSPGRP, struct.pack("=i", api)), eperm),
+        (lambda: fcntl.fcntl(1, F_SETSIG, signal.SIGTERM), eperm),
+        (lambda: fcntl.fcntl(1, fcntl.F_SETFL, os.O_ASYNC), eperm),
+        (lambda: fcntl.fcntl(0, fcntl.F_SETFL, os.O_ASYNC | os.O_NONBLOCK), eperm),
+        (lambda: fcntl.ioctl(1, termios.FIOASYNC, struct.pack("=i", 1)), eperm),
+        (lambda: fcntl.fcntl(0, F_SETLEASE, fcntl.F_RDLCK), eperm),
+        (lambda: fcntl.fcntl(0, F_NOTIFY, 1), eperm),  # DN_ACCESS: ENOTDIR without the filter
+        (lambda: fcntl.ioctl(1, termios.TIOCSPGRP, struct.pack("=i", api)), eperm),
+        (lambda: fcntl.ioctl(1, termios.TIOCSCTTY, 0), eperm),
+        (lambda: fcntl.ioctl(1, termios.TIOCSTI, b"x"), eperm),
         # Still allowed: the same calls on itself (glibc's raise and setrlimit use them).
         (lambda: os.kill(me, 0), None),
         (lambda: syscall("tgkill", me, me, 0), None),
@@ -138,6 +162,9 @@ def parent_checks() -> list[tuple[Any, int | None]]:
         (lambda: resource.prlimit(me, resource.RLIMIT_NOFILE), None),
         (lambda: os.sched_setaffinity(0, os.sched_getaffinity(0)), None),
         (lambda: os.sched_setscheduler(me, os.SCHED_OTHER, os.sched_param(0)), None),
+        (lambda: fcntl.fcntl(1, fcntl.F_GETFL), None),
+        (lambda: fcntl.fcntl(1, fcntl.F_SETFL, os.O_NONBLOCK), None),
+        (lambda: fcntl.fcntl(1, fcntl.F_SETFL, 0), None),
     ]
 
 
