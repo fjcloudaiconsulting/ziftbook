@@ -15,6 +15,7 @@ import {
   afterSignOut,
   applyFill,
   bookAgainSlug,
+  continueTitle,
   completeOutcome,
   dialRegion,
   emailNotSaved,
@@ -610,11 +611,14 @@ describe("an account already signed in is confirmed, never filled silently (secu
 
   test("the confirm step names only the person; the strings exist in every locale", () => {
     const parts = readFileSync(new URL("../app/[locale]/[slug]/account-fill.tsx", import.meta.url), "utf8");
-    assert.match(parts, /t\("continueTitle", \{ name: confirm\.name \|\| confirm\.email \}\)/);
+    assert.match(parts, /const title = confirm \? continueTitle\(confirm\) : null;/);
+    assert.match(parts, /\{t\(title\.key, title\.values\)\}/);
     assert.doesNotMatch(parts, /confirm\.phone/);
     for (const locale of ["en", "nl", "pt"]) {
       const strings = JSON.parse(readFileSync(new URL(`../messages/${locale}.json`, import.meta.url))).BookingPage;
-      for (const key of ["continueTitle", "continueAction", "someoneElse"]) assert.ok(strings[key], `${locale} ${key}`);
+      for (const key of ["continueTitle", "continueTitleEmail", "continueAction", "someoneElse"]) assert.ok(strings[key], `${locale} ${key}`);
+      assert.match(strings.continueTitle, /\{name\}/, locale);
+      assert.match(strings.continueTitleEmail, /\{email\}/, locale);
     }
   });
 });
@@ -869,5 +873,13 @@ describe("a booking sent while the offer was being answered closes the offer (re
 
   test("fence: Continue during a send closes the dialog instead of doing nothing", () => {
     assert.match(page(), /function continueAsAccount\(\) \{\s*\/\/[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*if \(heldNow\(\) \|\| !confirming\) \{\s*setSignInOpen\(false\);\s*setConfirming\(null\);\s*return;\s*\}\s*fillFromDialog\(confirming\);/);
+  });
+});
+
+describe("\"Continue as\" names the person, or their email when the account has no name (re-verify N6)", () => {
+  test("a name reads \"Continue as {name}?\"; no name reads \"Continue with {email}?\"", () => {
+    assert.deepEqual(continueTitle({ name: "Ana Silva", email: "ana@example.com" }), { key: "continueTitle", values: { name: "Ana Silva" } });
+    assert.deepEqual(continueTitle({ name: null, email: "ana@example.com" }), { key: "continueTitleEmail", values: { email: "ana@example.com" } });
+    assert.deepEqual(continueTitle({ name: "  ", email: "ana@example.com" }), { key: "continueTitleEmail", values: { email: "ana@example.com" } });
   });
 });

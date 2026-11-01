@@ -4,6 +4,7 @@ import { type useTranslations } from "next-intl";
 import { type Ref, useEffect, useRef } from "react";
 
 import type { AccountOut } from "@/api-client";
+import { continueTitle } from "@/lib/client-account";
 
 import { AccountSignIn } from "../_ui/account-sign-in";
 import styles from "../_ui/ui.module.css";
@@ -56,6 +57,7 @@ export function SignInDialog({
   onSignedIn(account: AccountOut): void;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
+  const title = confirm ? continueTitle(confirm) : null;
   useEffect(() => {
     const dialog = ref.current;
     if (!dialog) return;
@@ -82,10 +84,10 @@ export function SignInDialog({
             <CloseIcon />
           </button>
           <div className={styles.acctDialogBody}>
-            {confirm ? (
+            {confirm && title ? (
               <>
                 <h2 id="acct-dialog-h" className={styles.acctDialogTitle}>
-                  {t("continueTitle", { name: confirm.name || confirm.email })}
+                  {t(title.key, title.values)}
                 </h2>
                 <p className={styles.hint}>{t("signInLede")}</p>
                 <button className={`${styles.button} ${styles.primary}`} type="button" onClick={onContinue}>

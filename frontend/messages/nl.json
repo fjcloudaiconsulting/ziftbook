@@ -1150,6 +1150,7 @@
     "continueTitle": "Doorgaan als {name}?",
     "continueAction": "Doorgaan",
     "someoneElse": "Ben jij dit niet? Log in als iemand anders",
-    "accountEnded": "Je bent niet meer ingelogd, dus deze afspraak zou niet in je account worden bewaard. Verstuur hem opnieuw om als gast te boeken, of log hierboven in."
+    "accountEnded": "Je bent niet meer ingelogd, dus deze afspraak zou niet in je account worden bewaard. Verstuur hem opnieuw om als gast te boeken, of log hierboven in.",
+    "continueTitleEmail": "Doorgaan met {email}?"
   }
 }

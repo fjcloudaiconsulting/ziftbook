@@ -1150,6 +1150,7 @@
     "continueTitle": "Continuar como {name}?",
     "continueAction": "Continuar",
     "someoneElse": "Não é você? Entre com outra conta",
-    "accountEnded": "Você não está mais conectado, então esta reserva não ficaria salva na sua conta. Envie de novo para reservar como convidado, ou entre acima."
+    "accountEnded": "Você não está mais conectado, então esta reserva não ficaria salva na sua conta. Envie de novo para reservar como convidado, ou entre acima.",
+    "continueTitleEmail": "Continuar com {email}?"
   }
 }

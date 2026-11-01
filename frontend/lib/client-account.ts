@@ -346,3 +346,12 @@ export function recheckOutcome(status: number, data: { email: string } | undefin
 export function saveDetailsOffer(s: { placedHere: boolean; placedByAccount: boolean; signedInOnPage: boolean }): boolean {
   return s.placedHere && !s.placedByAccount && !s.signedInOnPage;
 }
+
+/** The "Continue as …?" heading for an account already signed in on this browser: its name, or, when the account
+ * has no name, "Continue with {email}?", which reads as the account in every language. */
+export function continueTitle(account: { name: string | null; email: string }):
+  | { key: "continueTitle"; values: { name: string } }
+  | { key: "continueTitleEmail"; values: { email: string } } {
+  const name = account.name?.trim();
+  return name ? { key: "continueTitle", values: { name } } : { key: "continueTitleEmail", values: { email: account.email } };
+}
