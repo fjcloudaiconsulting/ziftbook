@@ -35,7 +35,7 @@ import {
   weekFor,
   withName,
 } from "@/lib/booking-page";
-import { accountHeld, afterAccountSignOut, afterFill, afterUnlock, type AccountState, emailNotSaved, filledForm, fillFrom, offerNext, recheckOutcome, SIGNED_OUT, signedOutForm } from "@/lib/client-account";
+import { accountHeld, afterAccountSignOut, afterFill, afterUnlock, type AccountState, emailNotSaved, filledForm, fillFrom, offerNext, recheckOutcome, saveDetailsOffer, SIGNED_OUT, signedOutForm } from "@/lib/client-account";
 import { dateLocale } from "@/lib/console";
 import { defaultDial, dialOptions } from "@/lib/dial-codes";
 import { formatMoney } from "@/lib/money";
@@ -148,6 +148,8 @@ export function BookingPage({
   });
   const dials = useMemo(() => dialOptions(page.country, locale), [page.country, locale]);
   const [done, setDone] = useState<Done | null>(null);
+  // ZIF-146: the done screen's "Save your details for next time" (saveDetailsOffer).
+  const [offerAccount, setOfferAccount] = useState(false);
   const [marketing, setMarketing] = useState(false);
   const [message, setMessage] = useState("");
   const [messageOpen, setMessageOpen] = useState(false);
@@ -160,7 +162,8 @@ export function BookingPage({
   const ensureWeekToken = useRef(new Map<string, number>());
   const working = useRef(false);
   // The address this page load placed its checkout with: shown when it ends, never stored.
-  const placed = useRef<{ bookingId: string; email: string } | null>(null);
+  // `signedIn`: an account had filled this page in when it was placed (the done screen then offers no account).
+  const placed = useRef<{ bookingId: string; email: string; signedIn: boolean } | null>(null);
   const nameRef = useRef<HTMLInputElement>(null);
   const emailRef = useRef<HTMLInputElement>(null);
   const phoneRef = useRef<HTMLInputElement>(null);
@@ -556,6 +559,7 @@ export function BookingPage({
     setSync(s);
     setBookingId(s.id);
     if (view.kind === "done") {
+      setOfferAccount(saveDetailsOffer(placed.current?.bookingId === s.id, placed.current?.signedIn ?? true));
       forget(true);
       setEnd(null);
       setOffer(null);
@@ -777,7 +781,7 @@ export function BookingPage({
 
     if (outcome.kind === "done" && answer.data?.status === "awaiting_payment" && answer.data.payment) {
       const { id, payment } = answer.data;
-      placed.current = { bookingId: id, email: f.email };
+      placed.current = { bookingId: id, email: f.email, signedIn: account !== null };
       writeStored({ bookingId: id, serviceId: f.service.id });
       setBookingParam(id);
       setBookingId(id);
@@ -786,6 +790,7 @@ export function BookingPage({
       return;
     }
     if (outcome.kind === "done" && answer.data) {
+      setOfferAccount(saveDetailsOffer(true, account !== null));
       setDone({
         status: answer.data.status,
         service: f.service,
@@ -1124,7 +1129,7 @@ export function BookingPage({
       <>
         <main className={styles.screen}>
           <div className={`${styles.col} ${styles.bookingWide}`}>
-            <DoneScreen page={page} done={done} locale={loc} dLocale={dLocale} zone={zone} t={t} saveDetails={account === null} onAgain={() => router.push(`/${page.slug}`)} />
+            <DoneScreen page={page} done={done} locale={loc} dLocale={dLocale} zone={zone} t={t} saveDetails={offerAccount} onAgain={() => router.push(`/${page.slug}`)} />
           </div>
         </main>
         <BookingFooter version={version} />

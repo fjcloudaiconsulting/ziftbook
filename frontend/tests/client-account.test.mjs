@@ -28,6 +28,7 @@ import {
   offerNext,
   recheckOutcome,
   rememberReturn,
+  saveDetailsOffer,
   RETURN_KEY,
   splitPhone,
   SIGNED_OUT,
@@ -378,9 +379,9 @@ describe("back to the booking page after an emailed sign-up (ruling 7: this brow
     assert.equal(takeReturn(blocked, t0), null);
   });
 
-  test("fence: the done screen offers the account only to someone not signed in, and remembers the way back", () => {
+  test("fence: the done screen offers the account only for a guest booking this page placed, and remembers the way back", () => {
     const page = readFileSync(new URL("../app/[locale]/[slug]/booking-page.tsx", import.meta.url), "utf8");
-    assert.match(page, /saveDetails=\{account === null\}/);
+    assert.match(page, /saveDetails=\{offerAccount\}/);
     const done = readFileSync(new URL("../app/[locale]/[slug]/checkout.tsx", import.meta.url), "utf8");
     assert.match(done, /rememberReturn\(\(\) => window\.localStorage, slug, Date\.now\(\)\)/);
   });
@@ -610,5 +611,22 @@ describe("an account that ended elsewhere is noticed (security review 6)", () =>
     assert.match(text, /window\.addEventListener\("focus", onFocus\)/);
     assert.match(text, /if \(account && !\(await recheckAccount\(\)\)\) \{/);
     assert.match(text, /text: t\("accountEnded"\)/);
+  });
+});
+
+describe("the done screen never asks someone signed in to create an account (PR 6 review, correctness 5)", () => {
+  test("offered only for a booking this page placed with no account signed in on it", () => {
+    assert.equal(saveDetailsOffer(true, false), true);
+    assert.equal(saveDetailsOffer(true, true), false);
+    // A redirect payment (3-D Secure, iDEAL) comes back in a new page load: it may have been placed signed in, and
+    // nothing about the person is kept to tell, so it is not offered.
+    assert.equal(saveDetailsOffer(false, false), false);
+  });
+
+  test("fence: both ways to the done screen decide it from how this page placed the booking", () => {
+    const page = readFileSync(new URL("../app/[locale]/[slug]/booking-page.tsx", import.meta.url), "utf8");
+    assert.match(page, /placed\.current = \{ bookingId: id, email: f\.email, signedIn: account !== null \};/);
+    assert.match(page, /setOfferAccount\(saveDetailsOffer\(placed\.current\?\.bookingId === s\.id, placed\.current\?\.signedIn \?\? true\)\);/);
+    assert.match(page, /setOfferAccount\(saveDetailsOffer\(true, account !== null\)\);/);
   });
 });

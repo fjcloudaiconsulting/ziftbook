@@ -309,3 +309,10 @@ export function recheckOutcome(status: number, data: { email: string } | undefin
   if (status !== 200 || !data) return "unknown";
   return normalEmail(data.email) === normalEmail(account.email) ? "same" : "ended";
 }
+
+/** Whether the done screen offers "Save your details for next time": only for a booking this page load placed
+ * (`placedHere`) with no account signed in on the page. A booking that comes back from a redirect payment is a new
+ * page load that may have been placed signed in, and nothing about the person is kept to tell: not offered. */
+export function saveDetailsOffer(placedHere: boolean, signedInOnPage: boolean): boolean {
+  return placedHere && !signedInOnPage;
+}
