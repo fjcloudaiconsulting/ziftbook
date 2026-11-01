@@ -5,7 +5,10 @@
   },
   "Header": {
     "language": "Taal",
-    "languageName": "Nederlands"
+    "languageName": "Nederlands",
+    "yourLanguage": "Jouw taal",
+    "languageSaved": "Opgeslagen in je account. Ook je e-mails gebruiken deze taal.",
+    "languageNotSaved": "Je taal kon niet worden opgeslagen. Voorlopig geldt hij alleen op dit apparaat."
   },
   "NotFound": {
     "title": "Pagina niet gevonden",

@@ -5,7 +5,10 @@
   },
   "Header": {
     "language": "Language",
-    "languageName": "English"
+    "languageName": "English",
+    "yourLanguage": "Your language",
+    "languageSaved": "Saved to your account. Your emails use it too.",
+    "languageNotSaved": "Your language couldn't be saved. It applies on this device only for now."
   },
   "NotFound": {
     "title": "Page not found",

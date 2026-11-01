@@ -1,11 +1,14 @@
 "use client";
 
 import { useLocale, useTranslations } from "next-intl";
-import { useId } from "react";
+import { type MouseEvent, useEffect, useId, useRef, useState } from "react";
 
-import { Link, usePathname } from "@/i18n/navigation";
+import { accountSetLocale, sessionRead } from "@/api-client";
+import { Link, usePathname, useRouter } from "@/i18n/navigation";
 import { routing } from "@/i18n/routing";
+import { pickedHere, recordPick, takeUnsavedNotice } from "@/lib/locale";
 
+import { send } from "./parts";
 import styles from "./ui.module.css";
 
 type Locale = (typeof routing.locales)[number];
@@ -55,16 +58,42 @@ function Flag({ locale }: { locale: Locale }) {
   );
 }
 
-/** The language list, shared by the signed-out header's popover and the console's account popover. */
-export function LanguageLinks() {
+/** ZIF-102: saves a language to the signed-in person; true once their account holds it. */
+export type SaveLanguage = (locale: Locale) => Promise<boolean>;
+
+/** The language list, shared by the signed-out header's popover and the console's. With `save`
+ * (a signed-in person), a pick is saved to their account before the page changes language. */
+export function LanguageLinks({ save }: { save?: SaveLanguage }) {
   const locale = useLocale();
   const pathname = usePathname();
+  const router = useRouter();
+  const [busy, setBusy] = useState(false);
+
+  async function pick(event: MouseEvent, id: Locale) {
+    if (!save) return; // signed out: the link only changes this view, as before
+    event.preventDefault();
+    if (busy) return;
+    setBusy(true);
+    const saved = await save(id);
+    setBusy(false);
+    // Not saved: it still applies here, for now (resolveLocale's `picked`), and the menu says so.
+    recordPick(id, saved);
+    if (id !== locale) router.replace(pathname, { locale: id });
+  }
+
   return (
-    <ul>
+    <ul aria-busy={busy || undefined}>
       {routing.locales.map((id) => (
         <li key={id}>
           {/* The fragment of an emailed link was already taken out of the address bar. */}
-          <Link href={pathname} locale={id} hrefLang={id} lang={id} aria-current={id === locale ? "page" : undefined}>
+          <Link
+            href={pathname}
+            locale={id}
+            hrefLang={id}
+            lang={id}
+            aria-current={id === locale ? "page" : undefined}
+            onClick={save ? (event) => void pick(event, id) : undefined}
+          >
             <span className={styles.languageRow}>
               <Flag locale={id} />
               {NAMES[id]}
@@ -80,32 +109,65 @@ export function LanguageLinks() {
  * The language button and its popover: one component for the signed-out header and the console
  * top bar, so there is only ever one switcher to keep in sync. Closed, it shows only the current
  * language's flag; its accessible name (e.g. "Language: English") still names the language, for
- * anyone not reading the flag.
+ * anyone not reading the flag. With `save` (ZIF-102), the menu is the person's own language: a
+ * pick is saved to their account, and the menu says so.
  */
-export function LanguageSwitcher() {
+export function LanguageSwitcher({ save }: { save?: SaveLanguage }) {
   const t = useTranslations("Header");
   const locale = useLocale() as Locale;
   const id = useId();
+  const menu = useRef<HTMLElement>(null);
+  const unsaved = Boolean(save) && pickedHere() === locale;
+
+  // The page a pick that could not be saved led to: open the menu once, where its note says so.
+  useEffect(() => {
+    if (save && takeUnsavedNotice(locale)) menu.current?.showPopover?.();
+  }, [save, locale]);
 
   return (
     <>
       <button className={styles.languageButton} type="button" popoverTarget={id} aria-label={`${t("language")}: ${t("languageName")}`}>
         <Flag locale={locale} />
       </button>
-      <nav id={id} className={styles.languageMenu} popover="auto" aria-label={t("language")}>
-        <LanguageLinks />
+      <nav ref={menu} id={id} className={styles.languageMenu} popover="auto" aria-label={save ? t("yourLanguage") : t("language")}>
+        {save && <p className={styles.languageHead}>{t("yourLanguage")}</p>}
+        <LanguageLinks save={save} />
+        {save && (
+          <p className={styles.languageFoot} role="status">
+            {unsaved ? t("languageNotSaved") : t("languageSaved")}
+          </p>
+        )}
       </nav>
     </>
   );
 }
 
+/** ZIF-102: on a public page, a signed-in viewer's language button saves to their account (signed
+ * out, it changes only this view). GET /api/session tells them apart: a 401 is a guest. */
+async function savePublic(locale: Locale): Promise<boolean> {
+  const outcome = await send(accountSetLocale({ body: { locale } }));
+  return outcome.status === 200;
+}
+
 export function Header() {
+  const [signedIn, setSignedIn] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void send(sessionRead()).then((outcome) => {
+      if (!cancelled && outcome.status === 200 && outcome.data) setSignedIn(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   return (
     <header className={styles.top}>
       <Link className={styles.wordmark} href="/">
         ziftbook
       </Link>
-      <LanguageSwitcher />
+      <LanguageSwitcher save={signedIn ? savePublic : undefined} />
     </header>
   );
 }

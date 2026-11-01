@@ -5,7 +5,10 @@
   },
   "Header": {
     "language": "Idioma",
-    "languageName": "Português"
+    "languageName": "Português",
+    "yourLanguage": "Seu idioma",
+    "languageSaved": "Salvo na sua conta. Seus e-mails também usam este idioma.",
+    "languageNotSaved": "Não foi possível salvar seu idioma. Por enquanto, ele vale só neste aparelho."
   },
   "NotFound": {
     "title": "Página não encontrada",
