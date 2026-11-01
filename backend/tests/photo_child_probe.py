@@ -186,7 +186,7 @@ def record(data: bytes) -> bytes:
         spin()
     if MODE == "probe-spin":  # busy past the parent's deadline
         spin()
-    if MODE == "probe-sleep":
+    if MODE in ("probe-sleep", "probe-alarm"):
         time.sleep(60)
     if MODE == "probe-close-then-sleep":
         sys.stdout.flush()
@@ -268,4 +268,6 @@ def fake_load() -> Any:
 
 
 child.load = fake_load  # type: ignore[attr-defined]
+if MODE == "probe-alarm":  # the backstop alarm, sooner than the parent's deadline
+    child.ALARM = 1  # type: ignore[attr-defined]
 sys.exit(child.main())

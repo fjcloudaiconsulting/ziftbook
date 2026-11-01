@@ -202,6 +202,16 @@ def test_a_child_past_its_deadline_is_killed_and_reaped(
     assert [f["decoder"] for f in failed()] == [outcome]
 
 
+# ZIF-230 fence (build review ruling). Kills: no backstop for a child its parent no longer watches
+# (the API died mid-decode under a dev reloader, where it is not PID 1): the child's own alarm ends
+# it. The probe brings the alarm forward to 1 s; the parent's deadline is 10 s.
+def test_the_child_ends_itself_at_its_alarm(runs: list[photos.Run]) -> None:
+    started = time.monotonic()
+    refused(probe("probe-alarm"))
+    assert time.monotonic() - started < 5
+    assert [(r.killed, r.returncode) for r in runs] == [(None, -signal.SIGALRM)]
+
+
 # ZIF-230 fence. Kills: the child's output read without a cap into the API's memory.
 def test_decoder_output_is_capped(
     runs: list[photos.Run], failed: Callable[[], list[dict[str, Any]]]
@@ -619,6 +629,7 @@ def test_the_decoder_limits_are_pinned() -> None:
         resource.RLIMIT_CORE: (0, 0),
     }
     assert (photos.DECODE_TIMEOUT, photos.STARVED_CPU_MS) == (10.0, 2500)
+    assert photo_child.ALARM == 20 > photos.DECODE_TIMEOUT + photos.REAP_GRACE
     assert (photos.OUTPUT_CAP, photo_decode.ICC_CAP) == (4 * mib, mib)
     assert photos.MAX_PIXELS == photo_decode.JPEG_CAP
     assert photos.MAX_BYTES == photo_child.MAX_BYTES == 10 * mib
@@ -682,6 +693,7 @@ def test_the_decoder_modules_import_nothing_from_the_app() -> None:
         "os",
         "platform",
         "resource",
+        "signal",
         "struct",
         "sys",
         "pathlib",
