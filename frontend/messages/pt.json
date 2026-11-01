@@ -129,7 +129,21 @@
   "ClientSignUp": {
     "emailPlaceholder": "voce@exemplo.com.br",
     "title": "Crie sua conta ziftbook",
-    "lede": "Seus dados se preenchem sozinhos quando você reserva. Comece pelo seu e-mail: enviamos um link para confirmar que é seu."
+    "lede": "Seus dados se preenchem sozinhos quando você reserva. Comece pelo seu e-mail: enviamos um link para confirmar que é seu.",
+    "completeTitle": "Conclua sua conta",
+    "completeLede": "Seu e-mail está confirmado. Informe seus dados e uma senha.",
+    "name": "Seu nome",
+    "nameHint": "Os negócios onde você reserva veem isto.",
+    "nameRequired": "Informe seu nome.",
+    "phone": "Telefone",
+    "phoneOptional": "· opcional",
+    "phoneHint": "É preenchido quando você reserva. Cada negócio só recebe quando você reserva com ele.",
+    "phoneInvalid": "Isto não parece um número de telefone. Confira o código do país e o número.",
+    "submit": "Criar conta",
+    "doneTitle": "Sua conta está pronta",
+    "doneLede": "Você entrou como <chip>{email}</chip>. Seus dados são preenchidos quando você reserva.",
+    "yourBookings": "Ver seus agendamentos",
+    "existsLede": "Este e-mail já está cadastrado no ziftbook, então nada foi criado nem alterado. Entre para usá-lo."
   },
   "ClientHome": {
     "title": "Seus agendamentos",

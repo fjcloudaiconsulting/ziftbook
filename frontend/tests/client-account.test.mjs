@@ -5,10 +5,13 @@ import { readFileSync } from "node:fs";
 import { describe, test } from "node:test";
 
 import {
+  accountPhone,
   accountSignInOutcome,
   afterSignOut,
   applyFill,
   bookAgainSlug,
+  completeOutcome,
+  dialRegion,
   emailNotSaved,
   fillFrom,
   historyOutcome,
@@ -259,5 +262,37 @@ describe("client sign-up, email first", () => {
     const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
     assert.match(read("../app/[locale]/sign-in/sign-in-form.tsx"), /\/account\/sign-up/);
     assert.match(read("../app/[locale]/account/sign-in/account-sign-in-page.tsx"), /href="\/account\/sign-up"/);
+  });
+});
+
+describe("finishing the account from the link", () => {
+  test("its answers: done, the link spent or expired, the email already has an account, or a field to fix", () => {
+    assert.equal(completeOutcome(201, undefined), "done");
+    assert.equal(completeOutcome(400, "invalid_token"), "expired");
+    assert.equal(completeOutcome(409, "account_exists"), "exists");
+    assert.equal(completeOutcome(422, "password_too_short"), "password");
+    assert.equal(completeOutcome(422, "password_too_long"), "password");
+    assert.equal(completeOutcome(422, "password_too_common"), "password");
+    assert.equal(completeOutcome(422, "phone_invalid"), "phone");
+    assert.equal(completeOutcome(422, "invalid_request"), "error");
+    assert.equal(completeOutcome(409, "setup_required"), "error");
+    assert.equal(completeOutcome(503, "busy"), "error");
+  });
+
+  test("the phone is optional and always goes out international: the account has no country to read it in", () => {
+    assert.equal(accountPhone("NL", ""), null);
+    assert.equal(accountPhone("NL", "   "), null);
+    assert.equal(accountPhone("NL", "6 1234 5678"), "+316 1234 5678");
+    assert.equal(accountPhone("PT", "+351 912 345 678"), "+351 912 345 678");
+    assert.equal(accountPhone("BR", "0055 11 91234 5678"), "+55 11 91234 5678");
+  });
+
+  test("the country code starts at the browser's own country, else the page language's", () => {
+    assert.equal(dialRegion(["en-US", "en"], "en"), "US");
+    assert.equal(dialRegion(["pt-PT"], "pt"), "PT");
+    assert.equal(dialRegion(["en"], "en"), "GB");
+    assert.equal(dialRegion([], "nl"), "NL");
+    assert.equal(dialRegion(["pt"], "pt"), "BR");
+    assert.equal(dialRegion(["en-XX"], "en"), "GB");
   });
 });

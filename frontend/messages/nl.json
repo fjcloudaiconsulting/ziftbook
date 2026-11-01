@@ -129,7 +129,21 @@
   "ClientSignUp": {
     "emailPlaceholder": "jij@voorbeeld.nl",
     "title": "Maak je ziftbook-account aan",
-    "lede": "Je gegevens vullen zichzelf in als je boekt. Begin met je e-mailadres: we sturen een link om te bevestigen dat het van jou is."
+    "lede": "Je gegevens vullen zichzelf in als je boekt. Begin met je e-mailadres: we sturen een link om te bevestigen dat het van jou is.",
+    "completeTitle": "Maak je account af",
+    "completeLede": "Je e-mailadres is bevestigd. Vul je gegevens en een wachtwoord in.",
+    "name": "Je naam",
+    "nameHint": "Bedrijven waar je boekt zien dit.",
+    "nameRequired": "Vul je naam in.",
+    "phone": "Telefoon",
+    "phoneOptional": "· optioneel",
+    "phoneHint": "Wordt ingevuld als je boekt. Een bedrijf krijgt het alleen als je daar boekt.",
+    "phoneInvalid": "Dit lijkt geen telefoonnummer. Controleer de landcode en het nummer.",
+    "submit": "Account aanmaken",
+    "doneTitle": "Je account is klaar",
+    "doneLede": "Je bent ingelogd als <chip>{email}</chip>. Je gegevens worden ingevuld als je boekt.",
+    "yourBookings": "Bekijk je afspraken",
+    "existsLede": "Dit e-mailadres is al geregistreerd bij ziftbook, dus er is niets aangemaakt of gewijzigd. Log in om het te gebruiken."
   },
   "ClientHome": {
     "title": "Je afspraken",

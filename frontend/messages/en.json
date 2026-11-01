@@ -129,7 +129,21 @@
   "ClientSignUp": {
     "emailPlaceholder": "you@example.com",
     "title": "Create your ziftbook account",
-    "lede": "Your details fill themselves in when you book. Start with your email: we send a link to confirm it's yours."
+    "lede": "Your details fill themselves in when you book. Start with your email: we send a link to confirm it's yours.",
+    "completeTitle": "Finish your account",
+    "completeLede": "Your email is confirmed. Add your details and a password.",
+    "name": "Your name",
+    "nameHint": "Businesses you book with see this.",
+    "nameRequired": "Enter your name.",
+    "phone": "Phone",
+    "phoneOptional": "· optional",
+    "phoneHint": "Fills in when you book. Each business gets it only when you book with them.",
+    "phoneInvalid": "This doesn't look like a phone number. Check the country code and the number.",
+    "submit": "Create account",
+    "doneTitle": "Your account is ready",
+    "doneLede": "You're signed in as <chip>{email}</chip>. Your details fill in when you book.",
+    "yourBookings": "See your bookings",
+    "existsLede": "This email is already registered with ziftbook, so nothing was created or changed. Sign in to use it."
   },
   "ClientHome": {
     "title": "Your bookings",

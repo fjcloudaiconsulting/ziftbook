@@ -619,3 +619,5 @@ a.textButton, .textButton:has(> svg) { display: inline-flex; align-items: center
 .acctNote { display: flex; flex-direction: column; gap: 0.25rem; }
 .acctNote .statusNote:focus { outline: none; }
 .acctNoteActs { margin: 0; }
+/* An optional field's label suffix (the console's .optional). */
+.optional { font-size: 0.875rem; color: var(--muted); font-weight: 400; }

@@ -2,7 +2,7 @@
 // run it. Nothing here looks anyone up: every answer is about the person signed in on this browser.
 
 import { signInOutcome } from "./account.ts";
-import { slugLooksValid } from "./booking-page.ts";
+import { phoneValue, slugLooksValid } from "./booking-page.ts";
 import { defaultDial, regionsWithDial } from "./dial-codes.ts";
 
 /** What an answer to `POST /api/account/session` means for the form. A wrong password is the console's generic
@@ -162,4 +162,37 @@ export function linkRequestShape(purpose: LinkPurpose): {
 } {
   if (purpose === "password_reset") return { action: "password_reset", lede: "resetLede", tooMany: "ForgotPassword" };
   return { action: "sign_up", lede: purpose === "account_sign_up" ? "clientLede" : "signUpLede", tooMany: "SignUp" };
+}
+
+// --- Finishing the account (POST /api/account/sign-up/complete) ---
+
+const PASSWORD_CODES = new Set(["password_too_short", "password_too_long", "password_too_common"]);
+
+/** What the completion's answer means for the screen. */
+export function completeOutcome(status: number, code: string | undefined): "done" | "expired" | "exists" | "password" | "phone" | "error" {
+  if (status === 201) return "done";
+  if (status === 400) return "expired";
+  if (status === 409 && code === "account_exists") return "exists";
+  if (status === 422 && code && PASSWORD_CODES.has(code)) return "password";
+  if (status === 422 && code === "phone_invalid") return "phone";
+  return "error";
+}
+
+/** The optional phone as the account route reads it: international only (an account has no country), so a local
+ * number goes out behind its picked code, as the checkout sends one for another country. Empty is no phone. */
+export function accountPhone(region: string, local: string): string | null {
+  if (!local.trim()) return null;
+  return phoneValue(defaultDial(region), "", local);
+}
+
+const LOCALE_REGION: Record<string, string> = { en: "GB", nl: "NL", pt: "BR" };
+
+/** Where the country-code picker starts: the browser's own country when its languages name one we can dial, else
+ * the page language's (pt is Brazilian, as the app's copy). */
+export function dialRegion(languages: readonly string[], locale: string): string {
+  for (const tag of languages) {
+    const region = /^[a-z]{2,3}-([A-Z]{2})\b/i.exec(tag)?.[1]?.toUpperCase();
+    if (region && defaultDial(region)) return region;
+  }
+  return LOCALE_REGION[locale] ?? "GB";
 }
