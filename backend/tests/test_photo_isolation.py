@@ -165,6 +165,33 @@ def test_a_decode_past_its_cpu_limit_is_killed(
     assert (line["decoder"], line["signal"]) == ("cpu", signal.SIGXCPU)
 
 
+# ZIF-230 fence (build review, correctness 2). Kills: an unsent SIGKILL classed wrong. A child past
+# its soft CPU limit got SIGXCPU and ran on, so a SIGKILL then is the hard limit's (cpu); one with
+# little CPU is the OOM killer's (oom). The line is the soft limit, not a hair under the hard one.
+def test_an_unsent_sigkill_is_cpu_or_oom_by_the_childs_cpu() -> None:
+    soft = photo_child.CPU[0] * 1000
+
+    def outcome(code: int, cpu_ms: int) -> str:
+        return photos._judge(photos.Run(code, photo_child.READY, None, cpu_ms))[0]
+
+    assert outcome(-signal.SIGKILL, soft) == "cpu"
+    assert outcome(-signal.SIGKILL, soft + 500) == "cpu"
+    assert outcome(-signal.SIGKILL, soft - 1) == "oom"
+    assert outcome(-signal.SIGKILL, 100) == "oom"
+    assert outcome(-signal.SIGXCPU, 100) == "cpu"
+
+
+@only_linux  # macOS sends no SIGKILL at the hard limit
+def test_a_child_that_ignores_sigxcpu_is_killed_at_the_hard_limit(
+    monkeypatch: pytest.MonkeyPatch, runs: list[photos.Run]
+) -> None:
+    monkeypatch.setattr(photo_child, "CPU", (1, 2))  # as the probe sets its own
+    refused(probe("probe-ignore-xcpu"))
+    [run] = runs
+    assert (run.killed, run.returncode) == (None, -signal.SIGKILL)
+    assert photos._judge(run)[0] == "cpu"
+
+
 # ZIF-230 fence (ruling D2). Kills: an unbounded wait, a leaked child, or the wall clock answered
 # without asking whose fault it was: a child that used its time is the photo's (422), one that
 # got no CPU is the node's (503 busy). Closing stdout first does not escape the deadline.

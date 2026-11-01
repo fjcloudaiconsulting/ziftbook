@@ -608,7 +608,8 @@ def _judge(run: Run) -> tuple[str, Decoded | Refused | None, bytes, bytes]:
     if code == -signal.SIGXCPU:
         return "cpu", None, b"", b""
     if code == -signal.SIGKILL:  # not this process's: the CPU hard limit, or the OOM killer
-        return ("cpu" if run.cpu_ms >= photo_child.CPU[1] * 1000 - 100 else "oom"), None, b"", b""
+        # Past the soft limit it got SIGXCPU and ran on: the hard limit's kill.
+        return ("cpu" if run.cpu_ms >= photo_child.CPU[0] * 1000 else "oom"), None, b"", b""
     if code is not None and code < 0:
         return "signal", None, b"", b""
     if code == photo_child.EXIT_MEMORY:
