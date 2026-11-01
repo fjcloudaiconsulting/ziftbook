@@ -5,7 +5,7 @@ import os
 import threading
 import uuid
 from collections.abc import Callable, Iterator
-from datetime import timedelta
+from datetime import UTC, date, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from types import SimpleNamespace
 from typing import Any
@@ -554,7 +554,7 @@ def test_the_worker_sweeps_retention_hourly_and_retries_a_failure(
     pings: list[str] = []
     clock = [1000.0]
 
-    def sweep(should_stop: Callable[[], bool]) -> retention.Swept:
+    def sweep(should_stop: Callable[[], bool], hold_until: date | None = None) -> retention.Swept:
         assert should_stop() is False
         runs.append(1)
         order.append("retention")
@@ -601,7 +601,7 @@ def test_a_retention_backlog_is_taken_up_again_sooner(
     runs: list[int] = []
     clock = [1000.0]
 
-    def sweep(should_stop: Callable[[], bool]) -> retention.Swept:
+    def sweep(should_stop: Callable[[], bool], hold_until: date | None = None) -> retention.Swept:
         runs.append(1)
         return retention.Swept(complete=False)
 
@@ -642,7 +642,9 @@ def test_a_failing_housekeeping_step_does_not_stop_the_other(
             raise RuntimeError("bookings boom")
         return 0
 
-    def retention_sweep(should_stop: Callable[[], bool]) -> retention.Swept:
+    def retention_sweep(
+        should_stop: Callable[[], bool], hold_until: date | None = None
+    ) -> retention.Swept:
         calls["retention"] += 1
         if failing == "retention":
             raise RuntimeError("retention boom")
@@ -664,3 +666,57 @@ def test_a_failing_housekeeping_step_does_not_stop_the_other(
     other = "retention" if failing == "bookings" else "bookings"
     assert calls[other] >= 1
     assert pings == []  # every iteration failed somewhere: no ping
+
+
+# ZIF-235 D6. A far-future hold date (a typo) is never a silent "off": the worker logs an ERROR at
+# startup and holds for 90 days from then; a hold in force is a WARNING at startup. The date
+# reaches the loop either way.
+@pytest.mark.parametrize(
+    ("days", "level"), [(None, None), (10, "WARNING"), (400, "ERROR")], ids=["unset", "held", "far"]
+)
+def test_the_worker_passes_the_retention_hold_on_and_says_so_at_startup(
+    log_lines: Lines, monkeypatch: pytest.MonkeyPatch, days: int | None, level: str | None
+) -> None:
+    today = datetime.now(UTC).date()
+    if days is not None:
+        monkeypatch.setenv("ZIF_RETENTION_HOLD_UNTIL", (today + timedelta(days=days)).isoformat())
+    seen: list[object] = []
+
+    async def work(*args: object) -> None:
+        seen.append(args[3])
+
+    monkeypatch.setattr(worker, "work", work)
+    asyncio.run(worker.serve(WorkerSettings()))
+
+    expected = None if days is None else today + timedelta(days=min(days, 90))
+    assert seen == [expected]
+    held = [line for line in log_lines() if line["msg"].startswith("retention hold")]
+    assert [line["level"] for line in held] == ([] if level is None else [level])
+    if level is not None:
+        assert held[0]["hold_until"] == expected.isoformat()  # type: ignore[union-attr]
+
+
+# ZIF-235 D6: the loop hands the hold date to every run.
+def test_the_loop_hands_the_hold_to_the_sweep(
+    bound_session: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    holds: list[object] = []
+    hold = date(2026, 12, 1)
+
+    def sweep(should_stop: Callable[[], bool], hold_until: date | None = None) -> retention.Swept:
+        holds.append(hold_until)
+        return retention.Swept(complete=True)
+
+    monkeypatch.setattr(retention, "sweep", sweep)
+    monkeypatch.setattr(bookings, "sweep", lambda: 0)
+    monkeypatch.setattr(worker, "POLL_SECONDS", 0.05)
+
+    async def scenario() -> None:
+        stop = asyncio.Event()
+        task = asyncio.create_task(work({}, None, stop, hold))
+        await until(lambda: len(holds) >= 1)
+        stop.set()
+        await asyncio.wait_for(task, 5)
+
+    asyncio.run(scenario())
+    assert holds[0] == hold

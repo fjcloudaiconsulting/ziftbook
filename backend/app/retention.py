@@ -14,6 +14,9 @@ MARGIN: a reader whose transaction began before the sweep's reads with an earlie
 is longer than any runtime transaction lives (30 s statement timeout, 60 s idle in transaction),
 so no reader can still see a swept row as live.
 
+During a hold (ZIF_RETENTION_HOLD_UNTIL, an incident's evidence) audit events and booking-event
+addresses are kept; sessions, rate limits and admin sessions, which are live state, are still swept.
+
 A run stops between batches when the budget is spent, after MAX_BATCHES, or when the worker is
 stopping; whatever is left goes on the next run. Every statement is time-based, so a repeated,
 interrupted or concurrent run (two replicas) converges, and a restored backup is swept again.
@@ -23,7 +26,7 @@ import logging
 import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
-from datetime import timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -39,6 +42,7 @@ BATCH = 1000  # rows per statement; the 0074 functions use the same
 MAX_BATCHES = 50
 BUDGET_SECONDS = 20.0  # wall clock per run: jobs (reset links, payments) wait while it runs
 MARGIN = timedelta(hours=1)
+MAX_HOLD = timedelta(days=90)  # the longest a retention hold can run (ZIF_RETENTION_HOLD_UNTIL)
 
 # platform_audit_events' failure actions, kept 30 days like failed sign-ins (owner ruling D3);
 # migrations 0072 and 0074 repeat the list, and a test compares them.
@@ -154,16 +158,22 @@ class _Walk:
         return self.start is None
 
 
-def sweep(should_stop: Callable[[], bool] = lambda: False) -> Swept:
-    """One run: batches until nothing is left, the budget is spent or the worker stops."""
-    swept = Swept()
-    steps: list[Callable[[Swept], bool]] = [
-        _rate_limits,
-        _sessions,
-        _admin_sessions,
-        _audit_events,
-        _Walk(),
-    ]
+def effective_hold(requested: date | None, today: date) -> tuple[date | None, bool]:
+    """The hold date to apply, and whether the requested one was more than MAX_HOLD ahead: then
+    MAX_HOLD from today. A mistyped year must never turn the hold off, nor keep data for years."""
+    if requested is not None and requested > today + MAX_HOLD:
+        return today + MAX_HOLD, True
+    return requested, False
+
+
+def sweep(should_stop: Callable[[], bool] = lambda: False, hold_until: date | None = None) -> Swept:
+    """One run: batches until nothing is left, the budget is spent or the worker stops. Until
+    hold_until (exclusive, UTC) the evidence is kept."""
+    held = hold_until is not None and datetime.now(UTC).date() < hold_until
+    swept = Swept(held=held)
+    steps: list[Callable[[Swept], bool]] = [_rate_limits, _sessions, _admin_sessions]
+    if not held:
+        steps += [_audit_events, _Walk()]
     started = time.monotonic()
     with tracing.span("retention.sweep", SpanKind.INTERNAL, {}) as span:
         while steps:
@@ -180,5 +190,8 @@ def sweep(should_stop: Callable[[], bool] = lambda: False) -> Swept:
         for name, value in fields.items():
             span.set_attribute(name, value)
     level = logging.INFO if swept.complete and not swept.held else logging.WARNING
+    if held:
+        assert hold_until is not None
+        fields["hold_until"] = hold_until.isoformat()
     logger.log(level, "retention swept", extra=fields)
     return swept
