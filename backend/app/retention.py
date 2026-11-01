@@ -41,7 +41,7 @@ logger = logging.getLogger("app.retention")
 BATCH = 1000  # rows per statement; the 0074 functions use the same
 MAX_BATCHES = 50
 BUDGET_SECONDS = 20.0  # wall clock per run: jobs (reset links, payments) wait while it runs
-MARGIN = timedelta(hours=1)
+MARGIN = limits.MARGIN  # one value with limits' own purge
 MAX_HOLD = timedelta(days=90)  # the longest a retention hold can run (ZIF_RETENTION_HOLD_UNTIL)
 
 # platform_audit_events' failure actions, kept 30 days like failed sign-ins (owner ruling D3);
