@@ -63,4 +63,12 @@ describe("the public hook's own safeguards, where they are wired", () => {
     // back from Stripe is moved mid-resume and the checkout remounts and checks again.
     assert.match(hook(), /setViewer\([^;]*\);\s*if \(hold\) return;\s*const own = resolveLocale\(/);
   });
+
+  test("fence: the hook's save goes through the same-session check, never a direct PUT", () => {
+    // Wrong implementation killed: the hook calling accountSetLocale itself, which saves a pick to
+    // whoever's cookie the browser holds after a sign-in as someone else in another tab.
+    const src = hook();
+    assert.match(src, /await savePickedLanguage\(viewer, \(\) => send\(sessionRead\(\)\), \(\) => send\(accountSetLocale\(/);
+    assert.equal(src.match(/accountSetLocale\(/g)?.length, 1);
+  });
 });
