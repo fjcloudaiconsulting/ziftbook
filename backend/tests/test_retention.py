@@ -480,3 +480,14 @@ def test_the_origin_walk_resumes_where_the_last_run_stopped(
     finally:
         with migrate_engine.begin() as conn:
             conn.execute(text("DELETE FROM tenants WHERE id = ANY(:i)"), {"i": list(ahead)})
+
+
+# Build review (security #3) FENCE. Wrong impl: a busy run logged at INFO. Production runs one
+# worker, so a lasting busy means something else holds the sweep's advisory lock (the app role can
+# take any advisory lock), and audit retention has stopped: that must show.
+def test_a_busy_run_is_a_warning(action: str, migrate_engine: Engine, log_lines: Lines) -> None:
+    with migrate_engine.connect() as holder, holder.begin():
+        holder.execute(text("SELECT pg_advisory_xact_lock(235, 0)"))
+        retention.sweep()
+    (line,) = [line for line in log_lines() if line.get("logger") == "app.retention"]
+    assert line["busy"] is True and line["level"] == "WARNING"
