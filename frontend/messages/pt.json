@@ -46,7 +46,8 @@
     "resendIn": "Enviar de novo em {time}",
     "resend": "Enviar o link de novo",
     "resendReady": "Você já pode enviar o link de novo.",
-    "differentEmail": "Usar outro e-mail"
+    "differentEmail": "Usar outro e-mail",
+    "clientLede": "Enviamos um link para <chip>{email}</chip>. Abra em até 24 horas para concluir sua conta."
   },
   "SignUp": {
     "title": "Cadastrar seu negócio",
@@ -121,11 +122,14 @@
     "tryLater": "Tentativas demais por agora. Tente de novo mais tarde, ou redefina sua senha.",
     "noBusiness": "Esta conta não faz mais parte de um negócio. Peça ao responsável para adicionar você de novo.",
     "newHere": "Novo no ziftbook?",
-    "createBusiness": "Cadastre seu negócio",
-    "accountUnavailable": "Esta conta não pode entrar aqui."
+    "accountUnavailable": "Esta conta não pode entrar aqui.",
+    "createAccount": "Criar uma conta",
+    "newHereBoth": "Novo no ziftbook? <account>Crie uma conta</account> ou <business>cadastre seu negócio</business>."
   },
   "ClientSignUp": {
-    "emailPlaceholder": "voce@exemplo.com.br"
+    "emailPlaceholder": "voce@exemplo.com.br",
+    "title": "Crie sua conta ziftbook",
+    "lede": "Seus dados se preenchem sozinhos quando você reserva. Comece pelo seu e-mail: enviamos um link para confirmar que é seu."
   },
   "ClientHome": {
     "title": "Seus agendamentos",

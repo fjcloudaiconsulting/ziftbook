@@ -354,7 +354,7 @@ function useSecondsLeft(sentAt: number): number {
 
 type CheckInboxProps = {
   email: string;
-  lede: "signUpLede" | "resetLede";
+  lede: "signUpLede" | "clientLede" | "resetLede";
   /** Sends the link again; resolves with when it was sent, or null if it wasn't. */
   resend(): Promise<number | null>;
   differentEmail(): void;

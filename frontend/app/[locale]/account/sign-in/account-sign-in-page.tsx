@@ -2,7 +2,7 @@
 
 import { useTranslations } from "next-intl";
 
-import { useRouter } from "@/i18n/navigation";
+import { Link, useRouter } from "@/i18n/navigation";
 
 import { AccountSignIn } from "../../_ui/account-sign-in";
 import { NoScript } from "../../_ui/parts";
@@ -16,6 +16,11 @@ export function AccountSignInPage({ turnstileSiteKey }: { turnstileSiteKey: stri
     <AccountSignIn
       turnstileSiteKey={turnstileSiteKey}
       onSignedIn={() => router.replace("/account")}
+      aside={
+        <p className={styles.aside}>
+          {t("newHere")} <Link href="/account/sign-up">{t("createAccount")}</Link>
+        </p>
+      }
       intro={
         <>
           <h1 className={styles.heading}>{t("title")}</h1>

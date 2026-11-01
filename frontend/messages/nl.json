@@ -46,7 +46,8 @@
     "resendIn": "Opnieuw sturen over {time}",
     "resend": "Stuur de link opnieuw",
     "resendReady": "Je kunt de link opnieuw sturen.",
-    "differentEmail": "Een ander e-mailadres gebruiken"
+    "differentEmail": "Een ander e-mailadres gebruiken",
+    "clientLede": "We hebben een link gestuurd naar <chip>{email}</chip>. Open hem binnen 24 uur om je account af te maken."
   },
   "SignUp": {
     "title": "Je bedrijf aanmaken",
@@ -121,11 +122,14 @@
     "tryLater": "Te veel pogingen. Probeer het later opnieuw, of stel je wachtwoord opnieuw in.",
     "noBusiness": "Dit account hoort niet meer bij een bedrijf. Vraag de eigenaar om je opnieuw toe te voegen.",
     "newHere": "Nieuw bij ziftbook?",
-    "createBusiness": "Maak je bedrijf aan",
-    "accountUnavailable": "Met dit account kun je hier niet inloggen."
+    "accountUnavailable": "Met dit account kun je hier niet inloggen.",
+    "createAccount": "Account aanmaken",
+    "newHereBoth": "Nieuw bij ziftbook? <account>Maak een account aan</account> of <business>maak je bedrijf aan</business>."
   },
   "ClientSignUp": {
-    "emailPlaceholder": "jij@voorbeeld.nl"
+    "emailPlaceholder": "jij@voorbeeld.nl",
+    "title": "Maak je ziftbook-account aan",
+    "lede": "Je gegevens vullen zichzelf in als je boekt. Begin met je e-mailadres: we sturen een link om te bevestigen dat het van jou is."
   },
   "ClientHome": {
     "title": "Je afspraken",

@@ -46,7 +46,8 @@
     "resendIn": "Send again in {time}",
     "resend": "Send the link again",
     "resendReady": "You can send the link again.",
-    "differentEmail": "Use a different email"
+    "differentEmail": "Use a different email",
+    "clientLede": "We sent a link to <chip>{email}</chip>. Open it within 24 hours to finish your account."
   },
   "SignUp": {
     "title": "Create your business",
@@ -121,11 +122,14 @@
     "tryLater": "Too many attempts for now. Try again later, or reset your password.",
     "noBusiness": "This account isn't part of a business any more. Ask the owner to add you again.",
     "newHere": "New to ziftbook?",
-    "createBusiness": "Create your business",
-    "accountUnavailable": "This account can't sign in here."
+    "accountUnavailable": "This account can't sign in here.",
+    "createAccount": "Create an account",
+    "newHereBoth": "New to ziftbook? <account>Create an account</account> or <business>create your business</business>."
   },
   "ClientSignUp": {
-    "emailPlaceholder": "you@example.com"
+    "emailPlaceholder": "you@example.com",
+    "title": "Create your ziftbook account",
+    "lede": "Your details fill themselves in when you book. Start with your email: we send a link to confirm it's yours."
   },
   "ClientHome": {
     "title": "Your bookings",

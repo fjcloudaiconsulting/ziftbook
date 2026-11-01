@@ -95,6 +95,8 @@ const ALLOWED = new Map([
   ["_ui/header.tsx", new Set(["pathname"])],
   // A service's photo thumb URL on an <img>, as on the services page: never runs script, img-src limits it.
   ["_ui/service-tile.tsx", new Set(["photo"])],
+  // Turnstile's action name, not a URL: one of two literals from linkRequestShape (lib/client-account.ts).
+  ["_ui/link-request.tsx", new Set(["shape.action"])],
 ]);
 
 /** Every JSX expression given to one of these attributes, braces balanced. */

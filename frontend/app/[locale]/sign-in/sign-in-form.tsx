@@ -1,6 +1,6 @@
 "use client";
 
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { type FormEvent, useRef, useState } from "react";
 
 import { sessionSignIn } from "@/api-client";
@@ -16,6 +16,7 @@ type Message = { tone: "error" | "note"; text: string };
 export function SignInForm({ turnstileSiteKey }: { turnstileSiteKey: string | null }) {
   const t = useTranslations("SignIn");
   const form = useTranslations("Form");
+  const locale = useLocale();
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -83,7 +84,11 @@ export function SignInForm({ turnstileSiteKey }: { turnstileSiteKey: string | nu
         </Submit>
       </form>
       <p className={styles.aside}>
-        {t("newHere")} <Link href="/sign-up">{t("createBusiness")}</Link>
+        {t.rich("newHereBoth", {
+          // A plain link, a full page load: the account pages enforce their own policy (ZIF-146).
+          account: (chunks) => <a href={`/${locale}/account/sign-up`}>{chunks}</a>,
+          business: (chunks) => <Link href="/sign-up">{chunks}</Link>,
+        })}
       </p>
     </Screen>
   );

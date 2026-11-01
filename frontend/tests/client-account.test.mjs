@@ -14,6 +14,7 @@ import {
   historyOutcome,
   historySections,
   historyServiceName,
+  linkRequestShape,
   offerNext,
   splitPhone,
   statusPill,
@@ -240,5 +241,23 @@ describe("Not you? Sign out", () => {
     const text = readFileSync(new URL("../app/[locale]/[slug]/booking-page.tsx", import.meta.url), "utf8");
     assert.match(text, /platformAccountSignOut\(/);
     assert.match(text, /afterSignOut\(/);
+  });
+});
+
+describe("client sign-up, email first", () => {
+  test("an account sign-up link: business sign-up's challenge and limits, and an inbox screen of its own", () => {
+    // The backend shares the Turnstile action, the IP key and the per-address key with business sign-up.
+    assert.deepEqual(linkRequestShape("account_sign_up"), { action: "sign_up", lede: "clientLede", tooMany: "SignUp" });
+  });
+
+  test("the business sign-up and the reset link are unchanged", () => {
+    assert.deepEqual(linkRequestShape("sign_up"), { action: "sign_up", lede: "signUpLede", tooMany: "SignUp" });
+    assert.deepEqual(linkRequestShape("password_reset"), { action: "password_reset", lede: "resetLede", tooMany: "ForgotPassword" });
+  });
+
+  test("both sign-in pages offer to create an account", () => {
+    const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
+    assert.match(read("../app/[locale]/sign-in/sign-in-form.tsx"), /\/account\/sign-up/);
+    assert.match(read("../app/[locale]/account/sign-in/account-sign-in-page.tsx"), /href="\/account\/sign-up"/);
   });
 });
