@@ -105,6 +105,12 @@ function parse(field: Field, value: string | boolean): string | number | boolean
   return Number.isInteger(n) ? n : undefined;
 }
 
+/** The keys a refused save marks: only those the API names with their own code (ZIF-99). Its other
+ * refusals (invalid_request) do not say which key was wrong, so they mark none. */
+export function refusedKeys(status: number, code: string | undefined): Key[] {
+  return status === 422 && code === "contact_email_invalid" ? ["contact_email"] : [];
+}
+
 /** Keys whose parsed draft value differs from the saved one (unparsable counts as changed), in page order. */
 export function changedKeys(saved: Settings, draft: Draft): Key[] {
   return FIELDS.filter((f) => parse(f, draft[f.key]) !== saved[f.key]).map((f) => f.key);
