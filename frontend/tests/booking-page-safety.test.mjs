@@ -202,6 +202,14 @@ describe("what the enforced policy needs", () => {
   });
 });
 
+describe("fill only on an explicit action (security B3.4)", () => {
+  test("fence: no personal page reads the console session's details", () => {
+    // Wrong implementation killed: the checkout's old on-load GET /api/session, which put a signed-in staff
+    // member's name and email into every booking page they merely opened.
+    for (const file of FILES) assert.doesNotMatch(readFileSync(file, "utf8"), /\bsessionRead\b/, name(file));
+  });
+});
+
 describe("no account data on the server", () => {
   test("fence: these pages read no cookie, and forward no request headers, when they render", () => {
     // Wrong implementation killed: a server-rendered prefill (cookies() in page.tsx, or the loader forwarding

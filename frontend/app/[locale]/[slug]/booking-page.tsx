@@ -4,7 +4,7 @@ import Script from "next/script";
 import { useTranslations } from "next-intl";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 
-import { availabilityRead, bookingsAbandon, bookingsCreate, bookingsResume, bookingsSync, type BookingPageOut, type PaymentStart, sessionRead, type SyncOut } from "@/api-client";
+import { availabilityRead, bookingsAbandon, bookingsCreate, bookingsResume, bookingsSync, type BookingPageOut, type PaymentStart, type SyncOut } from "@/api-client";
 import { Link, useRouter } from "@/i18n/navigation";
 import { addDays, localDay, localWhen, slotsByDay, weekDays } from "@/lib/booking-link";
 import {
@@ -199,21 +199,6 @@ export function BookingPage({
   // The request is sent and waits for payment: its fields stay as they were (a retry must never confirm
   // the old intent for a changed time or address).
   const locked = bookingId !== null && sync === null && !checking;
-
-  // Autofill: GET /api/session once (the person's own name, not their name in some business); fill
-  // name/email ONLY if still empty. Any other answer (no session, network, whatever) is ignored
-  // silently.
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      const answer = await send(sessionRead());
-      if (cancelled || answer.status !== 200 || !answer.data) return;
-      setFlow((f) => ({ ...f, name: f.name || answer.data!.name || f.name, email: f.email || answer.data!.email || f.email }));
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   // Once mounted, a tick later (never a state update in the effect's own body): the week's times
   // load, and a time from the URL is kept only if that window still offers it (else `at` is dropped).
