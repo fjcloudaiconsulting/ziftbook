@@ -691,3 +691,14 @@ describe("the bookings page loads what it shows (PR 6 review, correctness 8 and 
     assert.match(text, /if \(!needsMore\(shown, at, new Date\(\)\)\) break;/);
   });
 });
+
+describe("the finish screen's country picker keeps its order (PR 6 review, correctness 9)", () => {
+  test("fence: the list is ordered from the starting country, not from each pick", () => {
+    // Wrong implementation killed: dialOptions(region, ...) with the picked region, which moves each pick to the top
+    // of the list, under the cursor.
+    const text = readFileSync(new URL("../app/[locale]/account/complete/complete-account.tsx", import.meta.url), "utf8");
+    assert.match(text, /const \[startRegion\] = useState\(\(\) => dialRegion\(navigator\.languages \?\? \[\], locale\)\);/);
+    assert.match(text, /const \[region, setRegion\] = useState\(startRegion\);/);
+    assert.match(text, /useMemo\(\(\) => dialOptions\(startRegion, locale\), \[startRegion, locale\]\)/);
+  });
+});

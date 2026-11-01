@@ -47,8 +47,10 @@ function AccountForm({ link, turnstileSiteKey }: { link: OpenedLink | null; turn
   const phoneId = useId();
   const [name, setName] = useState("");
   // Only ever rendered in the browser (the link is read there), so the browser's own languages are safe to read.
-  const [region, setRegion] = useState(() => dialRegion(navigator.languages ?? [], locale));
-  const dials = useMemo(() => dialOptions(region, locale), [region, locale]);
+  const [startRegion] = useState(() => dialRegion(navigator.languages ?? [], locale));
+  const [region, setRegion] = useState(startRegion);
+  // Ordered from where the picker started, so a pick never moves under the cursor.
+  const dials = useMemo(() => dialOptions(startRegion, locale), [startRegion, locale]);
   const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
