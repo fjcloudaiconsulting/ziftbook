@@ -378,11 +378,13 @@ def test_the_child_gets_no_environment_and_no_descriptors(
         os.close(write)
 
 
-# ZIF-230 fence (ruling D3; build review, correctness 5). Kills: any syscall dropped from the
-# filter's deny-list. A child that a decoder bug took over needs no network, so it gets none (nor
-# io_uring, which would bypass the filter), and it changes nothing on the filesystem: no
-# directory, file, link, rename, truncation or permission (RLIMIT_FSIZE stops none of these), no
-# open to write, create or truncate. Each call is one that fails some other way without the filter.
+# ZIF-230 fence (ruling D3; build review, correctness 5, security 2). Kills: any syscall dropped
+# from the filter's deny-list. A child that a decoder bug took over needs no network, so it gets
+# none (nor io_uring, which would bypass the filter); it changes nothing on the filesystem: no
+# directory, file, link, rename, truncation, permission, owner, time, extended attribute, hole or
+# memfd (RLIMIT_FSIZE stops none of these), no open to write, create or truncate; and it runs no
+# other program (an exec would make it dumpable again). Each call fails some other way without
+# the filter.
 @only_linux
 def test_every_denied_syscall_is_refused() -> None:
     try:

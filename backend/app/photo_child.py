@@ -63,8 +63,9 @@ def limit() -> None:
 
 
 # A seccomp filter of syscalls the child never needs and a decoder bug could use (ZIF-230): the
-# network (egress is open), io_uring (it would bypass the filter), and any change to the
-# filesystem; open(at) with a write, create or truncate flag too. It stacks on the container
+# network, io_uring (it would bypass the filter), any change to the filesystem (owners, times,
+# extended attributes, holes and memfds included), open(at) with a write, create or truncate flag,
+# and exec (which would make the child dumpable again). It stacks on the container
 # runtime's own filter. Per architecture: aarch64 (production) and x86_64 (CI); another kills
 # nothing and is refused (exit 3). A syscall from a foreign ABI (x32, a 32-bit one) is killed.
 DENY = {
@@ -75,6 +76,10 @@ DENY = {
         **{"fchmod": 52, "fchmodat": 53, "fchmodat2": 452, "openat2": 437},
         **{"setpriority": 140, "ioprio_set": 30, "pidfd_open": 434, "pidfd_send_signal": 424},
         **{"process_vm_writev": 271, "kcmp": 272},
+        **{"execve": 221, "execveat": 281, "fallocate": 47, "memfd_create": 279},
+        **{"setxattr": 5, "lsetxattr": 6, "fsetxattr": 7},
+        **{"removexattr": 14, "lremovexattr": 15, "fremovexattr": 16},
+        **{"utimensat": 88, "fchown": 55, "fchownat": 54},
     },
     "x86_64": {
         **{"socket": 41, "socketpair": 53, "io_uring_setup": 425},
@@ -85,6 +90,11 @@ DENY = {
         **{"chmod": 90, "fchmod": 91, "fchmodat": 268, "fchmodat2": 452},
         **{"setpriority": 141, "ioprio_set": 251, "pidfd_open": 434, "pidfd_send_signal": 424},
         **{"process_vm_writev": 311, "kcmp": 312},
+        **{"execve": 59, "execveat": 322, "fallocate": 285, "memfd_create": 319},
+        **{"setxattr": 188, "lsetxattr": 189, "fsetxattr": 190},
+        **{"removexattr": 197, "lremovexattr": 198, "fremovexattr": 199},
+        **{"utimensat": 280, "utime": 132, "utimes": 235, "futimesat": 261},
+        **{"fchown": 93, "fchownat": 260, "chown": 92, "lchown": 94},
     },
 }
 # Syscalls that name a process, allowed only on the child itself: its pid as the first argument
