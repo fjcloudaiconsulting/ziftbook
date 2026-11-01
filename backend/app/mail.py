@@ -346,6 +346,10 @@ STATUS_FOR = {
 # ZIF-54 D1: the client templates whose $link is the guest booking link, minted here at send time.
 LINKED = frozenset({"booking_received", "booking_confirmed", "booking_reminder"})
 
+# FOR SHARE OF c (ZIF-58): a job that read the client while an erasure was in flight would mint a
+# manage link after the erasure deleted them, and mail what it read before; a link's foreign key
+# takes only KEY SHARE, which the erasure does not block. This waits for the erasure, then re-reads
+# the client (no address, erased) and sends nothing. The job takes no other lock first.
 BOOKING = text("""
 SELECT c.email AS client_email, c.locale AS client_locale,
        coalesce(b.client_name, c.name) AS client_name, c.erased_at IS NOT NULL AS client_erased,
@@ -356,6 +360,7 @@ FROM bookings b
 JOIN clients c ON c.tenant_id = b.tenant_id AND c.id = b.client_id
 JOIN tenants t ON t.id = b.tenant_id
 WHERE b.id = :id
+FOR SHARE OF c
 """)
 
 # ZIF-158. The booking's checked or paid payment, with the refund percentage its cancel was shown
