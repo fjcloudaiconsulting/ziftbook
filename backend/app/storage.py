@@ -1,9 +1,10 @@
 """Thin boto3 wrapper for ZIF-133 photos and the ZIF-58 erasure ledger. The only module importing
 boto3."""
 
+import re
 from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import TYPE_CHECKING
+from typing import IO, TYPE_CHECKING
 
 import boto3
 from botocore.config import Config
@@ -18,6 +19,11 @@ if TYPE_CHECKING:  # stubs from the dev group, absent from the prod image (annot
 
 CACHE_CONTROL = "public, max-age=31536000, s-maxage=86400, immutable"
 MISSING = {"404", "NoSuchKey", "NotFound"}
+CHUNK = 64 * 1024  # read_into's step: the upload never sits in memory whole
+
+
+class TooLarge(Exception):
+    """The uploaded object is larger than the caller's limit."""
 
 
 class StorageError(Exception):
@@ -90,19 +96,37 @@ def size(key: str) -> int | None:
     return head["ContentLength"]
 
 
-def read(key: str) -> bytes | None:
-    """The uploaded object, None if there is none (it can vanish between size() and this)."""
+def read_into(key: str, sink: IO[bytes], limit: int) -> int | None:
+    """Copy the uploaded object into sink and return its size: None if there is none, TooLarge
+    once it passes limit. The cap holds whatever the HEAD before it said (ZIF-230): the GET asks
+    for limit + 1 bytes at most, the store's total refuses a larger object before a byte is read,
+    and the read itself stops one byte past limit whatever length the response claims."""
     with _failures():
         try:
-            return (
-                client()
-                .get_object(Bucket=StorageSettings().s3_uploads_bucket, Key=key)["Body"]
-                .read()
+            got = client().get_object(
+                Bucket=StorageSettings().s3_uploads_bucket, Key=key, Range=f"bytes=0-{limit}"
             )
         except ClientError as error:
-            if error.response.get("Error", {}).get("Code") in MISSING:
+            code = error.response.get("Error", {}).get("Code")
+            if code in MISSING:
                 return None
+            if code == "InvalidRange":  # an empty object has no byte 0
+                return 0
             raise
+        body = got["Body"]
+        try:
+            total = re.fullmatch(r"bytes \d+-\d+/(\d+)", got.get("ContentRange") or "")
+            if int(total.group(1) if total else got.get("ContentLength") or 0) > limit:
+                raise TooLarge
+            n = 0
+            while chunk := body.read(min(CHUNK, limit + 1 - n)):
+                n += len(chunk)
+                if n > limit:
+                    raise TooLarge
+                sink.write(chunk)
+            return n
+        finally:
+            body.close()
 
 
 def put_media(key: str, body: bytes) -> None:

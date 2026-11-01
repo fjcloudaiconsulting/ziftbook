@@ -6,6 +6,7 @@ import io
 import logging
 import re
 import struct
+import tempfile
 import threading
 import uuid
 from collections.abc import Iterator
@@ -164,6 +165,7 @@ def process(tenant_id: UUID, upload_id: UUID) -> Variants:
     with tracing.span("service.photo.process", SpanKind.INTERNAL, {}) as span:
         try:
             # Held from the HEAD to the end of the decode, so a waiter never holds a 10 MiB body.
+            # The HEAD answers early; the read after it is capped on its own (ZIF-230).
             if not _LOCK.acquire(timeout=LOCK_WAIT):
                 raise ApiError(503, "busy")
             try:
@@ -174,10 +176,15 @@ def process(tenant_id: UUID, upload_id: UUID) -> Variants:
                 span.set_attribute("bytes", n)
                 if n > MAX_BYTES:
                     raise ApiError(422, "photo_too_large")
-                data = storage.read(key)
-                if data is None:
-                    raise ApiError(409, "photo_missing")
-                found = variants(data)
+                with tempfile.TemporaryFile() as upload:
+                    try:
+                        got = storage.read_into(key, upload, MAX_BYTES)
+                    except storage.TooLarge:
+                        raise ApiError(422, "photo_too_large") from None
+                    if got is None:
+                        raise ApiError(409, "photo_missing")
+                    upload.seek(0)
+                    found = variants(upload.read())
             finally:
                 _LOCK.release()
             span.set_attribute("outcome", "ok")
