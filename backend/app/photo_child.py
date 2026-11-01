@@ -17,6 +17,7 @@ import errno
 import importlib.util
 import os
 import resource
+import signal
 import struct
 import sys
 from pathlib import Path
@@ -36,6 +37,10 @@ LIMITS: dict[int, tuple[int, int]] = {
     resource.RLIMIT_NPROC: (0, 0),  # no fork and no thread (not enforced for root)
     resource.RLIMIT_CORE: (0, 0),
 }
+# Seconds after which the child ends itself (SIGALRM's default action): a backstop past the
+# parent's deadline and its grace (photos.DECODE_TIMEOUT, REAP_GRACE), for a child the parent no
+# longer watches. Not PR_SET_PDEATHSIG, which fires when the forking thread exits.
+ALARM = 20
 READY = b"R"
 EXIT_LIMITS = 3
 EXIT_IMPORT = 4
@@ -181,6 +186,7 @@ def load() -> ModuleType:
 
 
 def main() -> int:
+    signal.alarm(ALARM)
     try:
         limit()
         confine()
