@@ -578,9 +578,11 @@ def test_interleaved_passes_do_not_refill_the_budget(
     assert pass_(app_engine, session, wrong(), None) == ("failed", 10)
 
 
-# fence (ZIF-234): one failure leaks away per 8 hours since the anchor, none before. Kills a longer
-# interval or none; the boundary (and test_the_leak_keeps_its_remainder) kills a shorter one.
-# Injected by '8 hours' -> '16 hours', then -> '6 hours', then by deleting the leak.
+# fence (ZIF-234): one failure leaks away per 8 hours since the anchor, none before, and a bucket
+# that empties starts its leak again from now. Kills a longer interval or none; the boundary (and
+# test_the_leak_keeps_its_remainder) kills a shorter one; the last case kills an emptied bucket
+# that keeps its part interval. Injected by '8 hours' -> '16 hours', then -> '6 hours', then by
+# deleting the leak, then by `v_anchor := v_anchor + v_leaked * LEAK` for an emptied bucket too.
 def test_one_failure_leaks_away_per_eight_hours(app_engine: Engine, migrate_engine: Engine) -> None:
     e = enrolled(app_engine, migrate_engine)
     session = half_session(app_engine, migrate_engine, e.user_id)
@@ -593,7 +595,7 @@ def test_one_failure_leaks_away_per_eight_hours(app_engine: Engine, migrate_engi
     assert after(9, LEAK) == ("failed", 9)
     assert after(9, 2 * LEAK) == ("failed", 8)
     assert after(9, 5 * LEAK) == ("failed", 5)
-    assert after(9, 20 * LEAK) == ("failed", 1)
+    assert after(9, 20 * LEAK + timedelta(hours=3)) == ("failed", 1)
     age = anchor_age(migrate_engine, e.user_id)
     assert age is not None and age < ABOUT  # emptied: the anchor starts again now
 
