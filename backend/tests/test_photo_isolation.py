@@ -418,6 +418,12 @@ def test_the_child_cannot_reach_the_api_by_its_pid() -> None:
     assert own_state() == before
 
 
+# ZIF-230 fence (build review, security 1). Kills: the child in the API's process group, where a
+# kill(0, ...) that any rule missed would reach the API too.
+def test_the_child_has_a_process_group_of_its_own() -> None:
+    assert decode(probe("probe-group", PNG)).width == 20
+
+
 def status(pid: int | str) -> dict[str, str]:
     with open(f"/proc/{pid}/status") as lines:
         return {k: v.strip() for k, v in (line.split(":", 1) for line in lines)}
