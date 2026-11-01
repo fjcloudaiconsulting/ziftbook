@@ -53,6 +53,9 @@ STARVED_CPU_MS = 2500
 # The record's cap (header and both variants). The largest legitimate output measured is 2.6 MB
 # (an RGBA noise photo).
 OUTPUT_CAP = 4 * 1024 * 1024
+# The API holds up to this many OUTPUT_CAPs of a decode at once: the output buffer and the copy of
+# the two variants made from it (every other step reads through a memoryview).
+OUTPUT_COPIES = 2
 HEADER_CAP = 1024
 MAX_PIXELS = 100_000_000  # photo_decode.JPEG_CAP: the largest photo it accepts
 # A refusal from a child this close to its address-space limit is counted as memory: libwebp and
@@ -257,7 +260,8 @@ class Run:
     """One child, ended and reaped (or given up on)."""
 
     returncode: int | None  # None: never reaped
-    output: bytes  # all of stdout, the ready marker included, at most OUTPUT_CAP + 1 + CHUNK
+    # All of stdout, the ready marker included: at most OUTPUT_CAP + 1 + CHUNK bytes.
+    output: bytes | bytearray
     killed: Literal["timeout", "output"] | None  # why this process ended it, if it did
     cpu_ms: int  # the child's own CPU time, from its rusage (0 if never reaped)
 
@@ -319,7 +323,7 @@ def budget() -> Literal["ok", "tight", "unlimited"]:
     memory_max = _cgroup_int("memory.max")
     if memory_max is None:
         return "unlimited"
-    required = API_ALLOWANCE + photo_child.MEMORY + OUTPUT_CAP + BUDGET_MARGIN
+    required = API_ALLOWANCE + photo_child.MEMORY + OUTPUT_COPIES * OUTPUT_CAP + BUDGET_MARGIN
     if memory_max >= required:
         return "ok"
     oom_group = _cgroup_int("memory.oom.group")
@@ -347,7 +351,7 @@ def _headroom() -> dict[str, int] | None:
     if memory_max is None:
         return None
     rss = _rss()
-    if memory_max - rss >= photo_child.MEMORY + OUTPUT_CAP + BUDGET_MARGIN:
+    if memory_max - rss >= photo_child.MEMORY + OUTPUT_COPIES * OUTPUT_CAP + BUDGET_MARGIN:
         return None
     return {"memory_max": memory_max, "rss": rss}
 
@@ -391,10 +395,10 @@ def _reap(proc: subprocess.Popen[bytes], deadline: float) -> resource.struct_rus
 
 def _collect(
     proc: subprocess.Popen[bytes], deadline: float
-) -> tuple[bytes, Literal["timeout", "output"] | None]:
-    """stdout until EOF, the deadline ("timeout") or the cap ("output"): never more than
-    OUTPUT_CAP + 1 + CHUNK bytes in memory. The child never reads from this process (its stdin
-    is a file), so reading one pipe cannot deadlock."""
+) -> tuple[bytearray, Literal["timeout", "output"] | None]:
+    """stdout until EOF, the deadline ("timeout") or the cap ("output"), in one buffer of at most
+    OUTPUT_CAP + 1 + CHUNK bytes, returned as it is (no copy; see OUTPUT_COPIES). The child never
+    reads from this process (its stdin is a file), so reading one pipe cannot deadlock."""
     assert proc.stdout is not None
     fd, out = proc.stdout.fileno(), bytearray()
     with selectors.DefaultSelector() as selector:
@@ -402,15 +406,15 @@ def _collect(
         while True:
             left = deadline - time.monotonic()
             if left <= 0:
-                return bytes(out), "timeout"
+                return out, "timeout"
             if not selector.select(left):
                 continue
             chunk = os.read(fd, CHUNK)
             if not chunk:
-                return bytes(out), None
+                return out, None
             out += chunk
             if len(out) > len(photo_child.READY) + OUTPUT_CAP:
-                return bytes(out), "output"
+                return out, "output"
 
 
 def _run(upload: IO[bytes]) -> Run:
@@ -421,7 +425,7 @@ def _run(upload: IO[bytes]) -> Run:
             _UNREAPED.remove(left)
     deadline = time.monotonic() + DECODE_TIMEOUT
     proc = _spawn(upload)
-    output, used = b"", None
+    output, used = bytearray(), None
     killed: Literal["timeout", "output"] | None = None
     try:
         output, killed = _collect(proc, deadline)
@@ -510,7 +514,7 @@ WEBP_LAYOUTS = {
 VP8X_ALPHA = 0x10
 
 
-def webp_size(blob: bytes) -> tuple[int, int] | None:
+def webp_size(blob: bytes | memoryview) -> tuple[int, int] | None:
     """The size a still WebP with no metadata declares, read from its structure and never decoded;
     None for anything else: a RIFF size that is not the blob's, a chunk outside WEBP_LAYOUTS (so
     no EXIF, XMP, ICCP or animation), a VP8X flag other than alpha, or a canvas that is not the
@@ -524,7 +528,7 @@ def webp_size(blob: bytes) -> tuple[int, int] | None:
         n = int.from_bytes(blob[i + 4 : i + 8], "little")
         if i + 8 + n > len(blob):
             return None
-        chunks.append((blob[i : i + 4], blob[i + 8 : i + 8 + n]))
+        chunks.append((bytes(blob[i : i + 4]), blob[i + 8 : i + 8 + n]))
         i += 8 + n + (n & 1)
     if i != len(blob) or tuple(kind for kind, _ in chunks) not in WEBP_LAYOUTS:
         return None
@@ -554,18 +558,22 @@ def webp_size(blob: bytes) -> tuple[int, int] | None:
     return frame
 
 
-def parse(body: bytes) -> tuple[Decoded | Refused, bytes, bytes] | None:
-    """The child's record (after the ready marker): None unless every part checks out."""
+def parse(
+    record: bytes | bytearray | memoryview,
+) -> tuple[Decoded | Refused, memoryview, memoryview] | None:
+    """The child's record (after the ready marker): None unless every part checks out. The
+    variants come back as views into it, not copies."""
+    body = memoryview(record)
     n = int.from_bytes(body[:4])
     if len(body) < 4 or n > HEADER_CAP or len(body) < 4 + n:
         return None
     try:
-        head = _RECORD.validate_json(body[4 : 4 + n])
+        head = _RECORD.validate_json(bytes(body[4 : 4 + n]))
     except ValidationError:
         return None
     blobs = body[4 + n :]
     if isinstance(head, Refused):
-        return (head, b"", b"") if not blobs else None
+        return (head, blobs, blobs) if not blobs else None
     if len(blobs) != head.thumb + head.detail:
         return None
     thumb, detail = blobs[: head.thumb], blobs[head.thumb :]
@@ -596,7 +604,8 @@ START_FAILURES = {2: "import", photo_child.EXIT_LIMITS: "limits", photo_child.EX
 
 def _judge(run: Run) -> tuple[str, Decoded | Refused | None, bytes, bytes]:
     """The outcome of a run (ok, refused, or why it failed) and the record when there is one."""
-    ready = run.output[: len(photo_child.READY)] == photo_child.READY
+    output = memoryview(run.output)
+    ready = output[: len(photo_child.READY)] == photo_child.READY
     if not ready and run.killed is None:  # no upload byte parsed yet: never the photo's fault
         return START_FAILURES.get(run.returncode or 0, "start"), None, b"", b""
     if run.killed == "output":
@@ -605,13 +614,15 @@ def _judge(run: Run) -> tuple[str, Decoded | Refused | None, bytes, bytes]:
         return ("timeout" if run.cpu_ms >= STARVED_CPU_MS else "starved"), None, b"", b""
     code = run.returncode
     if code == 0 and ready:
-        parsed = parse(run.output[len(photo_child.READY) :])
+        parsed = parse(output[len(photo_child.READY) :])
         if parsed is None:
             return "protocol", None, b"", b""
         head, thumb, detail = parsed
         if isinstance(head, Refused) and head.peak_kb * 1024 >= MEMORY_NEAR * photo_child.MEMORY:
             return "memory", head, b"", b""
-        return ("ok" if isinstance(head, Decoded) else "refused"), head, thumb, detail
+        if isinstance(head, Refused):
+            return "refused", head, b"", b""
+        return "ok", head, bytes(thumb), bytes(detail)  # the one copy (OUTPUT_COPIES)
     if code == -signal.SIGXCPU:
         return "cpu", None, b"", b""
     if code == -signal.SIGKILL:  # not this process's: the CPU hard limit, or the OOM killer
