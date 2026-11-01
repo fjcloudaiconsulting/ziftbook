@@ -339,7 +339,8 @@ A platform admin runs the platform across businesses (ZIF-70). `platform_admins`
   as the app role, which starts admin sessions from the stored hash (rotate the database credentials, `enrol`, and
   handle it as a ZB-08 incident). That second kind can keep a wrong code from being counted at all (ZIF-261), so
   look at the log too: `second factor failed` lines for an admin with no matching `second_factor_failed` audit
-  event, or whose `failures` stays the same from line to line, mean requests are being cut off before they commit.
+  event, or whose `failures` stays the same between lines less than 8 hours apart, mean requests are being cut off
+  before they commit.
   Handle that as the same ZB-08 incident.
 - Never enable statement or parameter logging (`log_statement`, `log_min_duration_statement` with parameters,
   `auto_explain` with parameters) on the app database. Bind values include bearer proofs: a logged TOTP proof,
