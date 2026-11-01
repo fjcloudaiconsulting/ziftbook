@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { describe, test } from "node:test";
 
 import {
+  asciiEmail,
   breakMinutes,
   changedKeys,
   draftFrom,
@@ -270,15 +271,15 @@ describe("ZIF-99 the contact email for clients", () => {
   test("fence: an address with accents is refused with its own message; a malformed one with the usual one", () => {
     // Wrong implementation killed: sending an address the API refuses (non-ASCII cannot go in a mail header),
     // or one generic message that never says why an accented address is refused.
-    assert.equal(emailProblem("hello@café.nl"), "accents");
     assert.equal(emailProblem("josé@salon.nl"), "accents");
+    assert.equal(emailProblem("josé@café.nl"), "accents");
     for (const text of ["hello", "hello@salon", "@salon.nl", "a@b@c.nl", "a b@c.nl", "a@b.nl, c@d.nl", "<a@b.nl>", "a@b.nl\nBcc: c@d.nl", "=?utf-8?q?x?=@b.nl", `${"a".repeat(250)}@b.nl`]) {
       assert.equal(emailProblem(text), "invalid", JSON.stringify(text));
     }
     for (const text of ["", "  ", "hello@salonbloom.nl", " Hello@SalonBloom.NL ", "first.last+shop@xn--caf-dma.nl"]) {
       assert.equal(emailProblem(text), null, JSON.stringify(text));
     }
-    const { body, invalid } = settingsBody(saved, { ...draftFrom(saved), contact_email: "hello@café.nl", buffer_pct: "20" });
+    const { body, invalid } = settingsBody(saved, { ...draftFrom(saved), contact_email: "josé@salon.nl", buffer_pct: "20" });
     assert.deepEqual([body, invalid], [{ buffer_pct: 20 }, ["contact_email"]]);
   });
 
@@ -313,5 +314,40 @@ describe("ZIF-99 which field a refused save marks", () => {
     assert.match(src, /const refused = refusedKeys\(outcome\.status, outcome\.code\);/);
     assert.match(src, /\} else if \(refused\.length > 0\) \{\s*setInvalid\(refused\);\s*setSaveFailed\(true\);\s*document\.getElementById\(`\$\{formId\}-\$\{refused\[0\]\}`\)\?\.focus\(\);/);
     assert.doesNotMatch(src, /sent\.includes\("contact_email"\)/);
+  });
+});
+
+describe("ZIF-99 an international domain", () => {
+  test("fence: the domain is sent in its ASCII (xn--) form in every browser", () => {
+    // Wrong implementation killed: relying on the browser. Chromium's type=email converts the domain, Firefox
+    // and Safari do not, so the same address was saved in one browser and refused in another.
+    assert.equal(asciiEmail(" Hello@Café.NL "), "hello@xn--caf-dma.nl");
+    assert.equal(asciiEmail("info@bücher.de"), "info@xn--bcher-kva.de");
+    assert.equal(asciiEmail("hello@xn--caf-dma.nl"), "hello@xn--caf-dma.nl");
+    assert.equal(asciiEmail("hello@salonbloom.nl"), "hello@salonbloom.nl");
+    assert.equal(asciiEmail(""), "");
+    assert.equal(emailProblem("hello@café.nl"), null);
+    assert.deepEqual(settingsBody(saved, { ...draftFrom(saved), contact_email: "hello@café.nl" }), {
+      body: { contact_email: "hello@xn--caf-dma.nl" },
+      invalid: [],
+    });
+    // The saved xn-- form typed with its accents is no change.
+    const withIdn = { ...saved, contact_email: "hello@xn--caf-dma.nl" };
+    assert.deepEqual(changedKeys(withIdn, { ...draftFrom(withIdn), contact_email: "hello@café.nl" }), []);
+  });
+
+  test("fence: only the domain is converted; an accented name before the @ is still refused", () => {
+    // Wrong implementation killed: converting the whole address, or the local part, which has no ASCII form.
+    assert.equal(asciiEmail("josé@café.nl"), "josé@xn--caf-dma.nl");
+    assert.equal(emailProblem("josé@café.nl"), "accents");
+  });
+
+  test("fence: a domain the URL parser would rewrite is left alone and refused", () => {
+    // Wrong implementation killed: handing the URL parser a domain it silently changes (it drops tabs and
+    // line breaks, and reads /, ?, #, % and : as URL syntax), which would save a different address.
+    for (const text of ["a@caf\né.nl", "a@caf\té.nl", "a@café.nl/x", "a@café.nl?x", "a@café.nl#x", "a@café%20.nl", "a@café.nl:80", "a@ café.nl"]) {
+      assert.equal(asciiEmail(text), text.trim().toLowerCase(), JSON.stringify(text));
+      assert.notEqual(emailProblem(text), null, JSON.stringify(text));
+    }
   });
 });

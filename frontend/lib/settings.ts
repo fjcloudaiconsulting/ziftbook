@@ -80,15 +80,36 @@ function normaliseEmail(text: string): string {
   return text.trim().toLowerCase();
 }
 
-/** Why the API would refuse this contact email, or null (an empty box is fine: it means none).
- * "accents": any non-ASCII character, which a mail header cannot carry as a plain address
- * (backend/app/business_settings.py header_address). The API also refuses a few odd shapes the
- * browser does not check (it answers 422, shown as "invalid"). */
-export function emailProblem(text: string): "accents" | "invalid" | null {
+// Characters the URL parser would drop or read as URL syntax rather than as part of a host name.
+const NOT_A_HOST = /[\s\x00-\x1f\x7f/?#%:@\\[\]]/;
+
+/** The address with an international domain in its ASCII (xn--) form, which is how a mail header
+ * carries it and what the API accepts. The same in every browser: Chromium's type=email converts the
+ * domain itself, Firefox and Safari do not. Only the domain: the part before the @ has no ASCII
+ * form. A domain the URL parser would rewrite (a line break, a slash, a %) is left as typed. */
+export function asciiEmail(text: string): string {
   const email = normaliseEmail(text);
+  const at = email.lastIndexOf("@");
+  const domain = email.slice(at + 1);
+  if (at === -1 || !/[^\x00-\x7f]/.test(domain) || NOT_A_HOST.test(domain)) return email;
+  try {
+    const host = new URL(`http://${domain}`).hostname;
+    return /^[\x21-\x7e]+$/.test(host) ? `${email.slice(0, at)}@${host}` : email;
+  } catch {
+    return email;
+  }
+}
+
+/** Why the API would refuse this contact email, or null (an empty box is fine: it means none).
+ * "accents": a non-ASCII character before the @, which a mail header cannot carry as a plain address
+ * (backend/app/business_settings.py header_address); an accented domain is converted (asciiEmail).
+ * The API also refuses a few odd shapes the browser does not check (contact_email_invalid). */
+export function emailProblem(text: string): "accents" | "invalid" | null {
+  const email = asciiEmail(text);
   if (email === "") return null;
-  if (/[^\x00-\x7f]/.test(email)) return "accents";
-  if (email.length > 254 || email.includes("=?") || !EMAIL.test(email)) return "invalid";
+  const at = email.lastIndexOf("@");
+  if (/[^\x00-\x7f]/.test(at === -1 ? email : email.slice(0, at))) return "accents";
+  if (/[^\x00-\x7f]/.test(email) || email.length > 254 || email.includes("=?") || !EMAIL.test(email)) return "invalid";
   return null;
 }
 
@@ -96,7 +117,7 @@ export function emailProblem(text: string): "accents" | "invalid" | null {
 function parse(field: Field, value: string | boolean): string | number | boolean | null | undefined {
   if (field.kind === "bool" || field.kind === "text") return value;
   if (field.kind === "email") {
-    const email = normaliseEmail(String(value ?? ""));
+    const email = asciiEmail(String(value ?? ""));
     if (email === "") return null;
     return emailProblem(email) ? undefined : email;
   }
