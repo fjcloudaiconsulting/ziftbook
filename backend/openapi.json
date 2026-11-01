@@ -8972,12 +8972,17 @@
           "minor_units": {
             "type": "integer",
             "title": "Minor Units"
+          },
+          "stripe_settles": {
+            "type": "boolean",
+            "title": "Stripe Settles"
           }
         },
         "type": "object",
         "required": [
           "code",
-          "minor_units"
+          "minor_units",
+          "stripe_settles"
         ],
         "title": "CurrencyOption"
       },

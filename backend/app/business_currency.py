@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from app import auth
 from app.auth import CurrentOwner, CurrentSession
+from app.countries import STRIPE_CURRENCIES
 from app.currencies import Currency, minor_units
 from app.errors import ApiError, Error
 
@@ -24,6 +25,9 @@ Lock = Literal["bookings", "payment_account"]
 class CurrencyOption(BaseModel):
     code: Currency
     minor_units: int
+    # Stripe pays out in it for the business's country (countries.STRIPE_CURRENCIES): connecting
+    # Stripe is refused in any other, so the settings screen warns before a change to one.
+    stripe_settles: bool
 
 
 class CurrencyState(BaseModel):
@@ -44,7 +48,7 @@ class CurrencyChange(BaseModel):
 
 
 STATE = text("""
-SELECT t.currency,
+SELECT t.currency, t.country,
        EXISTS (SELECT FROM bookings) AS bookings,
        EXISTS (SELECT FROM payment_accounts) AS payment_account,
        (SELECT count(*) FROM services) AS prices
@@ -60,10 +64,14 @@ def state(db: Session) -> CurrencyState:
     row = db.execute(STATE).one()
     held: dict[Lock, bool] = {"bookings": row.bookings, "payment_account": row.payment_account}
     locked_by = [lock for lock, is_held in held.items() if is_held]
+    settles = STRIPE_CURRENCIES.get(row.country, frozenset())
     return CurrencyState(
         currency=row.currency,
         minor_units=minor_units(row.currency),
-        options=[CurrencyOption(code=c, minor_units=minor_units(c)) for c in get_args(Currency)],
+        options=[
+            CurrencyOption(code=c, minor_units=minor_units(c), stripe_settles=c in settles)
+            for c in get_args(Currency)
+        ],
         change="locked" if locked_by else "open",
         locked_by=locked_by,
         prices=row.prices,
