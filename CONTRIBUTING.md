@@ -585,7 +585,11 @@ we can show which businesses were not affected.
 - Operators read every event as `ziftbook_migrate`, in a transaction:
   `BEGIN; SET LOCAL app.audit_review = 'on'; SELECT DISTINCT tenant_id FROM audit_events WHERE created_at > ...;`
 - The app role can set `app.audit_review` too. A definer function owned by `ziftbook_migrate` that reads
-  `audit_events` must clear it first, or it shows the caller every business's events.
+  `audit_events` must clear it first, or it shows the caller every business's events. The same holds for
+  `app.retention_sweep` (0073), which opens the events past their retention to `ziftbook_migrate` for the worker's
+  sweep: any other such definer sets it to `''` before its first read, and no `SECURITY INVOKER` function owned by
+  `ziftbook_migrate` reads `audit_events` (a definer calling one would inherit the flag). `tests/test_retention_db.py`
+  checks both.
 - A new column on `audit_events` needs its own `GRANT INSERT (column) ON audit_events TO ziftbook_app`, because the
   table's INSERT grant lists columns. Its migration must be applied **before** the app that writes it: `record`
   names every column, so a new app against the old schema fails on every event, not only the new one.
