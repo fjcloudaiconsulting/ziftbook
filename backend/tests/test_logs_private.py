@@ -449,6 +449,14 @@ def test_no_personal_data_ever_reaches_a_log(
     agenda = owner.get("/api/bookings", params={"from": slots[0], "to": slots[-1]})
     assert agenda.status_code == 200
     assert owner.get(f"/api/bookings/{booked.json()['id']}").json()["client_erased"] is True
+    erased_block = owner.post(
+        f"/api/members/{target}/time-off",
+        json={
+            "starts_at": in_the_way.isoformat(),
+            "ends_at": (in_the_way + timedelta(minutes=30)).isoformat(),
+        },
+    )
+    assert erased_block.json()["bookings"][0]["client_erased"] is True
 
     # 7: invite flow — send, list, a wrong token, then accept with a brand-new account.
     invite_email = fresh_email()

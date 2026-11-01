@@ -1489,6 +1489,7 @@ def test_a_block_over_an_appointment_is_refused_and_names_it(people: People, app
                 "starts_at": iso(soon(1)),
                 "ends_at": iso(soon(1.5)),
                 "client_name": "Sofia Almeida",
+                "client_erased": False,
                 "service_name": {"en": "Gel manicure", "nl": "Gel"},
                 "status": "confirmed",
             }
