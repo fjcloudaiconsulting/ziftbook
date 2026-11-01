@@ -13,6 +13,10 @@ from app.config import RateLimitSettings, is_dev_value_on_public_url
 from app.db import SessionLocal
 
 MIN_KEY = 32  # characters; a shorter key counts as unset
+# The longest window any limit may use. The worker's retention sweep (app.retention) deletes rows
+# whose window started longer ago than this (plus a margin), so a longer window would be cut short:
+# every function here refuses one.
+MAX_WINDOW = timedelta(days=1)
 # SHA-256 of docker-compose.yaml's development ZIF_RATE_LIMIT_KEY.
 DEV_KEY_SHA256 = "1a77674c6e51c52ee4710b01c38678b88ab6c007d4e874a962b0caf258430ca5"
 
@@ -28,20 +32,26 @@ ON CONFLICT (key) DO UPDATE SET
 RETURNING key, hits
 """)
 
-# ponytail: purged opportunistically, 100 rows per attempt, so after a quiet spell old rows (hashed
-# emails) outlive the one-day retention; the ZIF-5 sweeper enforces it.
+# Purged opportunistically, 100 rows per attempt; after a quiet spell the worker's retention sweep
+# (app.retention, ZIF-235) is what enforces MAX_WINDOW.
 PURGE = text("""
 DELETE FROM rate_limits WHERE key IN (
-  SELECT key FROM rate_limits WHERE window_start < now() - interval '1 day'
+  SELECT key FROM rate_limits WHERE window_start < now() - CAST(:max_window AS interval)
   LIMIT 100 FOR UPDATE SKIP LOCKED)
 """)
 
 
+def _check(window: timedelta) -> None:
+    if window > MAX_WINDOW:
+        raise ValueError(f"a rate-limit window longer than MAX_WINDOW ({MAX_WINDOW}): {window}")
+
+
 def _charge(keys: list[str], window: timedelta) -> dict[str, int]:
     """Count one attempt against each key; the hits each key has now, read under its row lock."""
+    _check(window)
     with SessionLocal.begin() as session:
         rows = session.execute(HIT, {"keys": sorted(keys), "window": window}).all()
-        session.execute(PURGE)
+        session.execute(PURGE, {"max_window": MAX_WINDOW})
     return {key: hits for key, hits in rows}
 
 
@@ -59,6 +69,7 @@ def hit(limits: dict[str, int], window: timedelta, *, db: Session | None = None)
     contends for belong here (a tenant's own, under its booking lock), and a rollback uncounts the
     attempt. No purge there: the deleted rows would stay locked as long, and every other hit purges.
     """
+    _check(window)
     if db is not None:
         rows = db.execute(HIT, {"keys": sorted(limits), "window": window}).all()
         counted = {key: hits for key, hits in rows}
@@ -89,6 +100,7 @@ WHERE key = ANY(CAST(:keys AS text[])) AND hits > 0
 def refund(keys: list[str], window: timedelta) -> None:
     """Give back one hit on each key, for an attempt hit() counted that is not to count after all.
     Only in the live window, never below zero, in its own transaction like hit()."""
+    _check(window)
     with SessionLocal.begin() as session:
         session.execute(LOCK_KEYS, {"keys": sorted(keys)})
         session.execute(REFUND, {"keys": sorted(keys), "window": window})
@@ -102,6 +114,7 @@ SELECT hits FROM rate_limits WHERE key = :key AND window_start > now() - CAST(:w
 def count(key: str, window: timedelta) -> int:
     """The attempts counted against key in its live window: the window hit() would add to, so a
     window hit() would start again counts 0. Reads only, so it charges nothing."""
+    _check(window)
     with SessionLocal.begin() as session:
         hits: int | None = session.scalar(COUNT, {"key": key, "window": window})
     return hits or 0
@@ -115,6 +128,7 @@ WHERE key = ANY(CAST(:keys AS text[])) AND window_start > now() - CAST(:window A
 
 def count_all(keys: list[str], window: timedelta) -> int:
     """count() of each key, added up, in one statement."""
+    _check(window)
     with SessionLocal.begin() as session:
         hits: int = session.scalar(COUNT_ALL, {"keys": keys, "window": window})
     return hits
