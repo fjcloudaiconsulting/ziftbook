@@ -271,6 +271,40 @@ def test_a_child_that_exits_before_the_kill_keeps_its_outcome(
     assert proc.stdout is not None and proc.stdout.closed
 
 
+# ZIF-230 fence (build review, correctness 8). Kills: a killed child that does not exit within the
+# grace dropped (a zombie for good) or holding up the request: it is logged, kept, its pipe
+# closed, and the next decode reaps it.
+def test_a_child_not_reaped_in_time_is_kept_and_reaped_later(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setattr(photos, "DECODE_TIMEOUT", 0.5)
+    spawned: list[subprocess.Popen[bytes]] = []
+    real_spawn, real_reap = photos._spawn, photos._reap
+    calls = 0
+
+    def spawn(upload_file: Any) -> subprocess.Popen[bytes]:
+        spawned.append(real_spawn(upload_file))
+        return spawned[-1]
+
+    def slow_reap(proc: Any, deadline: float) -> Any:
+        nonlocal calls
+        calls += 1
+        return None if calls == 1 else real_reap(proc, deadline)
+
+    monkeypatch.setattr(photos, "_spawn", spawn)
+    monkeypatch.setattr(photos, "_reap", slow_reap)
+    monkeypatch.setattr(photos, "_UNREAPED", [])
+    with caplog.at_level(logging.ERROR, logger="app.photos"):
+        refused(probe("probe-sleep"))
+    assert "photo decoder not reaped" in [r.getMessage() for r in caplog.records]
+    first = spawned[0]
+    assert photos._UNREAPED == [first]
+    assert first.stdout is not None and first.stdout.closed
+    time.sleep(0.2)  # killed: it exits
+    assert decode(PNG, photos.CHILD).width == 20
+    assert photos._UNREAPED == [] and first.returncode == -signal.SIGKILL
+
+
 # ZIF-230 guard: the pipe is closed on every path, a failing reap included.
 def test_the_pipe_is_closed_when_the_reap_fails(monkeypatch: pytest.MonkeyPatch) -> None:
     spawned: list[subprocess.Popen[bytes]] = []
