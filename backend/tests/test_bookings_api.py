@@ -2435,7 +2435,8 @@ def test_a_booking_from_a_page_that_showed_another_currency_is_refused(
     assert placements(people.a, email) == (0, 0)  # given back: nothing was placed
 
 
-# FENCE. Wrong impl: comparing with anything but the service's own price, read under its lock.
+# GUARD. The page showed the current currency: booked. (The lock is fenced by the concurrent test
+# below, test_a_booking_that_waits_on_a_currency_change_is_refused_once_it_commits.)
 def test_a_booking_from_a_page_that_showed_the_current_currency_is_placed(
     people: People, app: FastAPI, owner: TestClient, ready: str
 ) -> None:
@@ -2478,3 +2479,31 @@ def test_the_shown_currency_is_a_query_parameter_not_a_body_key() -> None:
     ]["post"]
     (param,) = [p for p in operation["parameters"] if p["name"] == "shown_currency"]
     assert (param["in"], param["required"]) == ("query", False)
+
+
+# FENCE (concurrency). Wrong impl: comparing with a currency read before the service's FOR SHARE
+# (say tenants.currency): it reads EUR while the change is uncommitted, then books the relabelled
+# service at $35 after the client saw EUR 35. The booking must wait on the service row the change
+# relabels, and compare with what it reads once the change commits.
+def test_a_booking_that_waits_on_a_currency_change_is_refused_once_it_commits(
+    people: People, app: FastAPI, ready: str, app_engine: Engine
+) -> None:
+    results: dict[str, Response] = {}
+
+    def book() -> None:
+        results["response"] = post_shown(new_client(app), people.a, ready, "EUR")
+
+    with tenant_context(people.a) as db:
+        changed = db.execute(text("SELECT outcome FROM change_currency('USD', 1)")).scalar()
+        assert changed == "changed"
+        thread = threading.Thread(target=book)
+        thread.start()
+        wait_until_blocked(app_engine, 1)  # on the service row the change relabelled
+        assert thread.is_alive()
+    thread.join(timeout=30)
+    assert not thread.is_alive()
+
+    response = results["response"]
+    assert (response.status_code, response.json()) == (409, {"code": "currency_changed"})
+    with tenant_context(people.a) as session:
+        assert session.scalar(text("SELECT count(*) FROM bookings")) == 0
