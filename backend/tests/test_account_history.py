@@ -4,6 +4,7 @@ never reachable with a business session; paginated with no cap."""
 
 import secrets
 import uuid
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -69,6 +70,9 @@ def book(
     assert response.status_code == 201, response.json()
     body: dict[str, Any] = response.json()
     return body
+
+
+SECTION = text("SELECT * FROM own_bookings_in(:h, :up, NULL, NULL, 10)")
 
 
 def history(client: TestClient, **params: Any) -> Any:
@@ -221,10 +225,14 @@ def test_a_business_session_gets_no_history(
     token = business.cookies.get(auth.COOKIE)
     assert token is not None
     with app_engine.begin() as conn:
-        rows = conn.execute(
-            text("SELECT * FROM own_bookings(:h, NULL, NULL, 100)"),
-            {"h": auth.hash_token(token)},
-        ).all()
+        rows = list(
+            conn.execute(
+                text("SELECT * FROM own_bookings(:h, NULL, NULL, 100)"),
+                {"h": auth.hash_token(token)},
+            ).all()
+        )
+        rows += conn.execute(SECTION, {"h": auth.hash_token(token), "up": True}).all()
+        rows += conn.execute(SECTION, {"h": auth.hash_token(token), "up": False}).all()
     assert rows == []
 
 
@@ -319,6 +327,11 @@ def test_the_walk_restores_the_callers_tenant(
             text("SELECT * FROM own_bookings(:h, NULL, NULL, 10)"), {"h": auth.hash_token(token)}
         ).all()
         assert conn.scalar(text("SELECT current_setting('app.tenant_id')")) == str(CALLER_TENANT)
+        for upcoming in (True, False):
+            conn.execute(SECTION, {"h": auth.hash_token(token), "up": upcoming}).all()
+            assert conn.scalar(text("SELECT current_setting('app.tenant_id')")) == str(
+                CALLER_TENANT
+            )
 
 
 @pytest.mark.parametrize("cursor", ["x", "e30", "bm90LWpzb24", "eyJzIjogIjIwMjYiLCAiayI6ICIwMCJ9"])
@@ -429,9 +442,14 @@ def test_the_definer_itself_needs_a_session_started_within_a_day(
             {"h": auth.hash_token(token)},
         )
     with app_engine.begin() as conn:
-        rows = conn.execute(
-            text("SELECT * FROM own_bookings(:h, NULL, NULL, 10)"), {"h": auth.hash_token(token)}
-        ).all()
+        rows = list(
+            conn.execute(
+                text("SELECT * FROM own_bookings(:h, NULL, NULL, 10)"),
+                {"h": auth.hash_token(token)},
+            ).all()
+        )
+        for upcoming in (True, False):
+            rows += conn.execute(SECTION, {"h": auth.hash_token(token), "up": upcoming}).all()
     assert rows == []
 
 
@@ -452,3 +470,116 @@ def test_history_is_rate_limited_per_address_across_accounts(
     statuses += [history(second_from).status_code for _ in range(11)]
 
     assert statuses == [200] * 30 + [429]
+
+
+# One "now" for a whole test, so a time written and the same time asserted are equal.
+NOW = datetime.now(UTC).replace(microsecond=0)
+
+
+def instant(minutes_from_now: int) -> str:
+    """NOW plus the minutes, as the API writes an instant. NOW is set when the module is imported,
+    at most a few minutes before a test runs; every boundary these tests use is 20 or more minutes
+    away (a 30-minute booking that began 10 minutes before NOW is still in progress)."""
+    return (NOW + timedelta(minutes=minutes_from_now)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def section(client: TestClient, which: str, **params: Any) -> list[dict[str, Any]]:
+    """Every booking of one section, page by page, in the order the pages give them."""
+    seen: list[dict[str, Any]] = []
+    cursor = None
+    while True:
+        page = history(client, section=which, **params, **({"cursor": cursor} if cursor else {}))
+        assert page.status_code == 200, page.json()
+        seen += page.json()["bookings"]
+        cursor = page.json()["next"]
+        if cursor is None:
+            return seen
+
+
+# FENCE (PR 6 fold, concern 3). Wrong impl: upcoming in the history's newest-first order, where
+# with more than a page of bookings ahead the next one is on a later page.
+def test_upcoming_comes_soonest_first_from_its_first_page(
+    app: FastAPI,
+    people: People,
+    services: dict[uuid.UUID, str],
+    migrate_engine: Engine,
+    person: uuid.UUID,
+) -> None:
+    mine = account_client(app, migrate_engine, person)
+    email = email_of(person)
+    for tenant, clock in ((people.a, "11:00"), (people.b, "09:30"), (people.a, "09:00")):
+        book(mine, tenant, services[tenant], clock, email)
+    # More ahead at one business than a page and one (the walk asks each for limit + 1): its own
+    # soonest must come first from the walk itself.
+    for clock in ("10:00", "12:00"):
+        copy_booking(migrate_engine, people.a, at(clock), status="pending", checkout_hash=None)
+    copy_booking(
+        migrate_engine, people.a, instant(-24 * 60), status="confirmed", checkout_hash=None
+    )
+
+    first = history(mine, section="upcoming", limit=2).json()
+
+    assert [b["starts_at"] for b in first["bookings"]] == [at("09:00"), at("09:30")]
+    every = [b["starts_at"] for b in section(mine, "upcoming", limit=2)]
+    assert every == [at(c) for c in ("09:00", "09:30", "10:00", "11:00", "12:00")]
+    assert [b["starts_at"] for b in section(mine, "past", limit=2)] == [instant(-24 * 60)]
+
+
+# FENCE (PR 6 fold, concern 3; architect's ruling 8). Wrong impl: sections split on starts_at, or on
+# time alone: a booking in progress is still to come, and a cancelled one next week is not.
+def test_the_server_decides_what_is_still_to_come(
+    app: FastAPI,
+    people: People,
+    services: dict[uuid.UUID, str],
+    migrate_engine: Engine,
+    person: uuid.UUID,
+) -> None:
+    mine = account_client(app, migrate_engine, person)
+    book(mine, people.a, services[people.a], "09:00", email_of(person))
+    ahead = {"pending": 60, "confirmed": 120}
+    gone_ahead = {"cancelled_by_client": 180, "cancelled_by_merchant": 240, "declined": 300}
+    gone_ahead |= {"expired": 360, "no_show": 420}
+    for status, minutes in (ahead | gone_ahead).items():
+        copy_booking(migrate_engine, people.a, instant(minutes), status=status, checkout_hash=None)
+    copy_booking(migrate_engine, people.a, instant(-10), status="confirmed", checkout_hash=None)
+    copy_booking(migrate_engine, people.a, instant(-60), status="confirmed", checkout_hash=None)
+
+    upcoming = [(b["status"], b["starts_at"]) for b in section(mine, "upcoming")]
+    past = [(b["status"], b["starts_at"]) for b in section(mine, "past")]
+
+    # Still standing and not ended (one in progress included), soonest first.
+    assert upcoming == [
+        ("confirmed", instant(-10)),
+        ("pending", instant(60)),
+        ("confirmed", instant(120)),
+        ("pending", at("09:00")),  # placed on the page: the business confirms it
+    ]
+    # Everything else, newest first.
+    assert past == [
+        *[(status, instant(minutes)) for status, minutes in reversed(gone_ahead.items())],
+        ("confirmed", instant(-60)),
+    ]
+
+
+# FENCE. Wrong impl: a cursor read the same way in both sections, which turns "after" into "before"
+# and repeats or skips bookings.
+def test_a_cursor_from_one_section_is_refused_in_another(
+    app: FastAPI,
+    people: People,
+    services: dict[uuid.UUID, str],
+    migrate_engine: Engine,
+    person: uuid.UUID,
+) -> None:
+    mine = account_client(app, migrate_engine, person)
+    email = email_of(person)
+    book(mine, people.a, services[people.a], "09:00", email)
+    book(mine, people.a, services[people.a], "10:00", email)
+    upcoming = history(mine, section="upcoming", limit=1).json()["next"]
+    newest_first = history(mine, limit=1).json()["next"]
+
+    for wrong in (
+        history(mine, section="past", cursor=upcoming),
+        history(mine, cursor=upcoming),
+        history(mine, section="upcoming", cursor=newest_first),
+    ):
+        assert (wrong.status_code, wrong.json()) == (422, {"code": "invalid_request"})

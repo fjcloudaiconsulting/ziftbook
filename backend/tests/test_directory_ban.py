@@ -231,6 +231,10 @@ DEFINERS = [
     "public.hold_account_session(p_id_hash bytea)",
     "public.needs_setup()",
     "public.own_bookings(p_id_hash bytea, p_before_starts_at timestamp with time zone, p_before_key bytea, p_limit integer)",  # noqa: E501
+    # 0076 (PR 6 fold): the same walk, one section of it: what is still to come, soonest first,
+    # or the rest, newest first. Keyed by the same fresh account session hash; answers only for
+    # its holder.
+    "public.own_bookings_in(p_id_hash bytea, p_upcoming boolean, p_after_starts_at timestamp with time zone, p_after_key bytea, p_limit integer)",  # noqa: E501
     "public.pass_second_factor(p_id_hash bytea, p_proof bytea, p_step bigint)",
     "public.password_unchanged(p_user_id uuid, p_hash text)",
     "public.reset_password(p_token_hash bytea, p_password_hash text)",

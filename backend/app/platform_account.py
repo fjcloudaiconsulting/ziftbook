@@ -12,7 +12,7 @@ import binascii
 import json
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request, Response
@@ -281,6 +281,11 @@ class HistoryPage(BaseModel):
 
 
 HISTORY = text("SELECT * FROM own_bookings(:h, :before_starts_at, :before_key, :limit)")
+# One section (0076): upcoming soonest first after the cursor, or past newest first before it.
+HISTORY_SECTION = text(
+    "SELECT * FROM own_bookings_in(:h, :upcoming, :after_starts_at, :after_key, :limit)"
+)
+Section = Literal["upcoming", "past"]
 HISTORY_WINDOW = timedelta(minutes=1)
 # Every call walks every business: about 6 ms at 1,000 businesses and 58 ms at 10,000 (measured on
 # the dev database, no bookings; ZIF-257 tracks walking only the person's own businesses). Per
@@ -289,20 +294,25 @@ HISTORY_LIMIT = 30
 HISTORY_IP_LIMIT = 30
 
 
-def cursor_of(starts_at: datetime, key: bytes) -> str:
-    raw = json.dumps({"s": starts_at.isoformat(), "k": key.hex()}).encode()
+def cursor_of(starts_at: datetime, key: bytes, section: Section | None = None) -> str:
+    """An opaque cursor. A section's names its section: read in another, "after" would become
+    "before" and the pages would repeat or skip bookings."""
+    fields = {"s": starts_at.isoformat(), "k": key.hex()}
+    raw = json.dumps(fields | ({"q": section} if section else {})).encode()
     return base64.urlsafe_b64encode(raw).decode().rstrip("=")
 
 
-def parse_cursor(cursor: str) -> tuple[datetime, bytes]:
-    """The (starts_at, key) a cursor carries, or 422: it is opaque, and never a booking id."""
+def parse_cursor(cursor: str, section: Section | None = None) -> tuple[datetime, bytes]:
+    """The (starts_at, key) a cursor carries, or 422: it is opaque, never a booking id, and good
+    only in the section (or the whole list, None) that made it."""
     try:
         raw = json.loads(base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4)))
         starts_at = datetime.fromisoformat(raw["s"])
         key = bytes.fromhex(raw["k"])
-    except ValueError, KeyError, TypeError, binascii.Error:
+        made_in = raw.get("q")
+    except ValueError, KeyError, TypeError, AttributeError, binascii.Error:
         raise ApiError(422, "invalid_request") from None
-    if starts_at.tzinfo is None or len(key) != 32:
+    if starts_at.tzinfo is None or len(key) != 32 or made_in != section:
         raise ApiError(422, "invalid_request")
     return starts_at, key
 
@@ -319,11 +329,16 @@ def history(
     response: Response,
     cursor: Annotated[str | None, Query(max_length=200)] = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    section: Section | None = None,
 ) -> HistoryPage:
     """Every booking this account placed, at every business, past and upcoming, newest first. Only
     bookings the person placed while signed in: a guest booking made with their address, by anyone,
     never shows. Needs a session started within the last 24 hours (403
-    reauthentication_required: sign in again)."""
+    reauthentication_required: sign in again).
+
+    section=upcoming: only what is still to come (pending or confirmed, not ended yet: one in
+    progress too), soonest first. section=past: everything else, newest first. Without it, the
+    whole list, newest first, as before."""
     private(response)
     if not current.fresh:
         raise ApiError(403, "reauthentication_required")
@@ -335,19 +350,21 @@ def history(
         {limits.email_key("account_history", current.email): HISTORY_LIMIT}, HISTORY_WINDOW
     ):
         raise ApiError(429, "rate_limited")
-    before_starts_at, before_key = parse_cursor(cursor) if cursor else (None, None)
+    from_starts_at, from_key = parse_cursor(cursor, section) if cursor else (None, None)
     with SessionLocal.begin() as session:
-        # Up to limit + 1 from each business: the newest limit + 1 overall are among them.
-        rows = session.execute(
-            HISTORY,
-            {
-                "h": current.id_hash,
-                "before_starts_at": before_starts_at,
-                "before_key": before_key,
-                "limit": limit + 1,
-            },
-        ).all()
-    rows = sorted(rows, key=lambda r: (r.starts_at, r.sort_key), reverse=True)
+        # Up to limit + 1 from each business: the first limit + 1 overall are among them.
+        params: dict[str, object]
+        if section is None:
+            query, params = HISTORY, {"before_starts_at": from_starts_at, "before_key": from_key}
+        else:
+            query = HISTORY_SECTION
+            params = {
+                "upcoming": section == "upcoming",
+                "after_starts_at": from_starts_at,
+                "after_key": from_key,
+            }
+        rows = session.execute(query, {"h": current.id_hash, "limit": limit + 1} | params).all()
+    rows = sorted(rows, key=lambda r: (r.starts_at, r.sort_key), reverse=section != "upcoming")
     page = rows[:limit]
     return HistoryPage(
         bookings=[
@@ -366,7 +383,9 @@ def history(
             )
             for r in page
         ],
-        next=cursor_of(page[-1].starts_at, page[-1].sort_key) if len(rows) > limit else None,
+        next=(
+            cursor_of(page[-1].starts_at, page[-1].sort_key, section) if len(rows) > limit else None
+        ),
     )
 
 

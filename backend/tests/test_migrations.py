@@ -2270,3 +2270,35 @@ def test_0075_own_bookings_is_0058s_with_the_time_zone() -> None:
     )
     assert m.USABLE == migration("0057_account_sessions.py").USABLE
     assert m.NEW.replace("CREATE FUNCTION", "") != m.OLD.replace("CREATE FUNCTION", "")
+
+
+SECTIONS_EXIST = text(
+    "SELECT to_regprocedure('own_bookings_in(bytea,boolean,timestamptz,bytea,integer)') IS NOT NULL"
+)
+
+
+# ZIF-146 FENCE (PR 6 fold, concern 3). Wrong impl: changing 0075's own_bookings (the running
+# release's history route calls it), or a downgrade that leaves the section function.
+def test_0076_round_trips_the_history_sections(
+    migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = lock_timeout_config(monkeypatch)
+    with migrate_engine.connect() as conn:
+        assert conn.scalar(SECTIONS_EXIST) is True
+        at_head = list(conn.execute(HISTORY_COLUMNS).keys())
+    try:
+        command.downgrade(cfg, "0075")
+        with migrate_engine.connect() as conn:
+            assert conn.scalar(SECTIONS_EXIST) is False
+            assert list(conn.execute(HISTORY_COLUMNS).keys()) == at_head
+    finally:
+        command.upgrade(cfg, "head")
+    with migrate_engine.connect() as conn:
+        assert conn.scalar(SECTIONS_EXIST) is True
+
+
+# ZIF-146 guard: the sections select, hide and key exactly as 0075's own_bookings does.
+def test_0076_sections_keep_0075s_rows_and_session_rules() -> None:
+    m = migration("0076_history_sections.py")
+    assert m.ROWS.strip() in migration("0075_history_time_zone.py").NEW
+    assert m.USABLE == migration("0057_account_sessions.py").USABLE
