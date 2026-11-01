@@ -249,35 +249,54 @@ def multi_scan(data: bytes) -> bool:
 LOSSLESS_FRAMES = frozenset((0xC3, 0xC7, 0xCB, 0xCF))
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 EXIF_CAP = 65_536  # bytes of EXIF: parsing it costs more than linear time
+# Bytes of colour profile (ZIF-230): Pillow's own ceiling for a PNG's inflated iCCP, for every
+# format. Camera and phone profiles are a few KB.
+ICC_CAP = 1024 * 1024
+ICC_HEADER = b"ICC_PROFILE\x00"  # then a sequence number and a count, then the profile's bytes
 
 
 def unsafe_container(data: bytes) -> bool:
-    """Whether an upload must not reach the decoder (ZB-33): a lossless JPEG, an animated PNG, or
-    EXIF over 64 KiB in a JPEG's APP1 segments or a PNG's eXIf chunk. Read from the structure
-    before Image.open (which already parses a JPEG's EXIF, for its dpi); never raises. A JPEG is
-    also unsafe when its markers do not walk to the first scan, or pass an FF00 (no marker) on the
-    way: a decoder skips such bytes and reads on, so the walk cannot vouch for the frame. A PNG is
-    read up to IEND, as Pillow reads it (an eXIf after the image data is parsed too). Anything else
-    is False: Image.open refuses junk. variants() checks EXIF again once the image is loaded."""
+    """Whether an upload must not reach the decoder (ZB-33): a lossless JPEG, an animated PNG,
+    EXIF over 64 KiB in a JPEG's APP1 segments or a PNG's eXIf chunk, or a colour profile over
+    ICC_CAP in a JPEG's APP2 segments, a PNG's iCCP chunk (compressed) or a WebP's ICCP chunk.
+    Read from the structure before Image.open (which already parses a JPEG's EXIF, for its dpi, and
+    joins its profile); never raises. A JPEG is also unsafe when its markers do not walk to the
+    first scan, or pass an FF00 (no marker) on the way: a decoder skips such bytes and reads on, so
+    the walk cannot vouch for the frame. A PNG is read up to IEND, as Pillow reads it (an eXIf
+    after the image data is parsed too). Anything else is False: Image.open refuses junk.
+    variants() checks EXIF and the profile again once the image is open."""
     if data[:2] == b"\xff\xd8":
-        last, exif = None, 0
+        last, exif, icc = None, 0, 0
         for i, marker in _markers(data):
             if marker == 0x00 or marker in LOSSLESS_FRAMES:
                 return True
             # Pillow joins every APP1 EXIF segment before the scan into one.
             if marker == 0xE1 and data[i + 4 : i + 10] == b"Exif\x00\x00":
                 exif += max(int.from_bytes(data[i + 2 : i + 4]) - 2, 0)
+            # And every APP2 profile segment (it reads them up to the frame; counting to the scan
+            # is a superset).
+            if marker == 0xE2 and data[i + 4 : i + 16] == ICC_HEADER:
+                icc += max(int.from_bytes(data[i + 2 : i + 4]) - 2 - len(ICC_HEADER) - 2, 0)
             last = marker
-        return last != 0xDA or exif > EXIF_CAP
+        return last != 0xDA or exif > EXIF_CAP or icc > ICC_CAP
     if data[:8] == PNG_SIGNATURE:
         i = 8
         while i + 8 <= len(data):
             length, kind = int.from_bytes(data[i : i + 4]), data[i + 4 : i + 8]
             if kind == b"acTL" or (kind == b"eXIf" and length > EXIF_CAP):
                 return True
+            if kind == b"iCCP" and length > ICC_CAP:
+                return True
             if kind == b"IEND":
                 break
             i += 12 + length
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        i = 12
+        while i + 8 <= len(data):
+            kind, length = data[i : i + 4], int.from_bytes(data[i + 4 : i + 8], "little")
+            if kind == b"ICCP" and length > ICC_CAP:
+                return True
+            i += 8 + length + (length & 1)  # a chunk's payload is padded to an even length
     return False
 
 
@@ -313,6 +332,8 @@ def variants(data: bytes) -> Variants:
         if im.width * im.height > OTHER_CAP:  # what load() would decode, after draft
             raise ApiError(422, "photo_unreadable")
         icc = im.info.get("icc_profile")
+        if icc is not None and len(icc) > ICC_CAP:  # before LittleCMS parses it (_srgb)
+            raise ApiError(422, "photo_unreadable")
         if im.mode in ("I", "I;16", "I;16L", "I;16B"):  # 16-bit grey: scaled to 8 bits, not clipped
             im = im.convert("I").point(lambda v: v / 257).convert("L")
         elif im.mode not in ("L", "RGB", "RGBA"):  # palette, bilevel, LA, CMYK...

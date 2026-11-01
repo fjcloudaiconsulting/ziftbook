@@ -35,7 +35,7 @@ from tests.conftest import (
     signed_in,
     upload,
 )
-from tests.test_photos import exif_of, jpeg_header, png_with_chunk
+from tests.test_photos import ICC_AT_CAP, exif_of, jpeg_header, jpeg_with_icc, png_with_chunk
 from tests.test_services import service, stored
 
 MEDIA = "https://img.example.test"
@@ -254,6 +254,15 @@ def test_a_chunk_that_inflates_past_pillows_limit_is_photo_unreadable(
     assert (checked.status_code, checked.json()) == (422, {"code": "photo_unreadable"})
     refused = [r for r in caplog.records if r.getMessage() == "photo refused"]
     assert [r.__dict__["code"] for r in refused] == ["photo_unreadable"]
+
+
+# ZIF-230 guard: a profile over the cap answers the code the console already explains.
+def test_a_jpeg_with_an_oversized_profile_is_photo_unreadable(
+    s3: S3Client, people: People, owner: TestClient
+) -> None:
+    upload_id = upload(s3, people.a, jpeg_with_icc(*ICC_AT_CAP, 1))
+    checked = owner.post(f"/api/photo-uploads/{upload_id}/check", json={})
+    assert (checked.status_code, checked.json()) == (422, {"code": "photo_unreadable"})
 
 
 # ZIF-133 F7. fence. Kills: a rate limit missing from the presign, the check or a Save carrying a

@@ -3,6 +3,7 @@
 import io
 import logging
 import os
+import random
 import struct
 import subprocess
 import sys
@@ -608,6 +609,13 @@ def test_variants_refuses_an_unsafe_container_before_opening(
     assert (refused.value.status_code, refused.value.code) == (422, "photo_unreadable")
 
 
+def riff_chunk(kind: bytes, payload: bytes) -> bytes:
+    """One RIFF chunk: its type, little-endian length, payload and a pad byte to an even length."""
+    return kind + struct.pack("<I", len(payload)) + payload + b"\0" * (len(payload) & 1)
+
+
+WEBP_HEAD = b"RIFF\0\0\0\0WEBP"  # the walk does not read the RIFF size
+ICC_OVER = 1024 * 1024 + 1
 LOSSLESS = jpeg_header(10, 10, 1, 1, sof=0xC3)
 BASELINE = jpeg_header(10, 10, 3, 3)
 PNG_IHDR = image_of("PNG", "RGB", (4, 4))[:33]
@@ -645,6 +653,12 @@ PNG_IHDR = image_of("PNG", "RGB", (4, 4))[:33]
         (png_with_chunk(b"eXIf", b"\0" * 65_536), False),
         (png_with_chunk(b"eXIf", b"\0" * 65_537), True),
         (image_of("PNG", "RGB", (4, 4)) + png_chunk(b"eXIf", b"\0" * 65_537), False),
+        (PNG_IHDR + struct.pack(">I", photos.ICC_CAP + 1) + b"iCCP", True),
+        (b"RIFF\0\0\0\0WEBP", False),
+        (b"RIFF\0\0\0\0WEBPICC", False),
+        (b"RIFF\0\0\0\0WEBPVP8 " + struct.pack("<I", 0x7FFFFFFF) + b"\0" * 10, False),
+        (b"RIFF\0\0\0\0WEBPICCP" + struct.pack("<I", 0xFFFFFFFF), True),
+        (WEBP_HEAD + riff_chunk(b"XMP ", b"abc") + b"ICCP" + struct.pack("<I", ICC_OVER), True),
     ],
     ids=[
         "empty",
@@ -672,6 +686,12 @@ PNG_IHDR = image_of("PNG", "RGB", (4, 4))[:33]
         "png-exif-at-64k",
         "png-exif-over-64k",
         "png-exif-after-iend",
+        "png-iccp-over-cap",
+        "webp-riff-only",
+        "webp-cut-in-chunk-header",
+        "webp-chunk-longer-than-data",
+        "webp-huge-iccp-length",
+        "webp-odd-chunk-padded",
     ],
 )
 def test_unsafe_container_answers_malformed_input(data: bytes, unsafe: bool) -> None:
@@ -794,4 +814,78 @@ def malformed_exif(tag: int, value: object, typ: int, count: int | None = None) 
 def test_exif_pillow_cannot_read_is_unreadable(data: bytes) -> None:
     with pytest.raises(ApiError) as refused:
         photos.variants(data)
+    assert (refused.value.status_code, refused.value.code) == (422, "photo_unreadable")
+
+
+def jpeg_with_icc(*sizes: int) -> bytes:
+    """A JPEG with one APP2 profile segment per size (that many profile bytes), numbered as Pillow
+    expects, so it joins them into one profile."""
+    jpeg = image_of("JPEG", "RGB", (40, 30))
+    app2 = b"".join(
+        b"\xff\xe2"
+        + struct.pack(">H", 2 + len(photos.ICC_HEADER) + 2 + n)
+        + photos.ICC_HEADER
+        + bytes([k + 1, len(sizes)])
+        + b"\0" * n
+        for k, n in enumerate(sizes)
+    )
+    return jpeg[:2] + app2 + jpeg[2:]
+
+
+# The most one APP2 segment holds, so a profile of exactly ICC_CAP needs 17.
+ICC_AT_CAP = [65_519] * 16 + [1024 * 1024 - 16 * 65_519]
+
+
+# ZIF-230 fence. Kills: a JPEG's profile left uncapped. Pillow joins its APP2 profile segments in
+# Image.open (6.5 MB measured), so the cap must come before it.
+def test_a_jpeg_whose_profile_segments_add_up_over_the_cap_is_unsafe() -> None:
+    assert photos.ICC_CAP == 1024 * 1024
+    assert not photos.unsafe_container(jpeg_with_icc(*ICC_AT_CAP))
+    assert photos.unsafe_container(jpeg_with_icc(*ICC_AT_CAP[:-1], ICC_AT_CAP[-1] + 1))
+
+
+# ZIF-230 fence. Kills: a WebP's ICCP chunk left uncapped (Pillow copies it out at open).
+def test_a_webp_with_a_big_iccp_chunk_is_unsafe() -> None:
+    small = image("WEBP", (8, 8), icc_profile=b"\0" * 1000)
+    big = image("WEBP", (8, 8), icc_profile=b"\0" * ICC_OVER)
+    assert b"ICCP" in small and not photos.unsafe_container(small)
+    assert photos.unsafe_container(big)
+
+
+def big_profile_carriers() -> list[bytes]:
+    """A 40x30 photo carrying a profile over ICC_CAP in each place Pillow reads one from."""
+    noise = random.Random(230).randbytes(ICC_OVER)  # incompressible: the iCCP stays over the cap
+    png = png_with_chunk(b"iCCP", b"p\0\0" + zlib.compress(noise), (40, 30))
+    return [
+        jpeg_with_icc(*ICC_AT_CAP[:-1], ICC_AT_CAP[-1] + 1),
+        png,
+        image("WEBP", (40, 30), icc_profile=b"\0" * ICC_OVER),
+    ]
+
+
+def no_profile_parse(monkeypatch: pytest.MonkeyPatch) -> None:
+    def never(*args: object, **kw: object) -> None:
+        raise AssertionError("parsed")
+
+    monkeypatch.setattr(ImageCms, "ImageCmsProfile", never)
+
+
+# ZIF-230 fence. Kills: a profile over the cap handed to LittleCMS, from any format.
+@pytest.mark.parametrize("data", big_profile_carriers(), ids=["jpeg", "png", "webp"])
+def test_a_profile_over_the_cap_never_reaches_the_colour_engine(
+    data: bytes, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    no_profile_parse(monkeypatch)
+    with pytest.raises(ApiError) as refused:
+        photos.variants(data)
+    assert (refused.value.status_code, refused.value.code) == (422, "photo_unreadable")
+
+
+# ZIF-230 fence. Kills: the check on the opened image (the backstop if Pillow ever joins or
+# inflates more than the structure walk counts) missing or after the colour conversion.
+def test_the_open_image_profile_is_capped_too(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(photos, "unsafe_container", lambda data: False)
+    no_profile_parse(monkeypatch)
+    with pytest.raises(ApiError) as refused:
+        photos.variants(jpeg_with_icc(*ICC_AT_CAP[:-1], ICC_AT_CAP[-1] + 1))
     assert (refused.value.status_code, refused.value.code) == (422, "photo_unreadable")
