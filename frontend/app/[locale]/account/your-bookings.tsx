@@ -8,6 +8,7 @@ import { Link, useRouter } from "@/i18n/navigation";
 import { bookAgainSlug, historyOutcome, historySections, historyServiceName, type Pill, statusPill } from "@/lib/client-account";
 import { dateLocale } from "@/lib/console";
 
+import { shownAccount } from "../_ui/account-button";
 import { AccountSignIn } from "../_ui/account-sign-in";
 import { Banner, NoScript, problem, send, Submit } from "../_ui/parts";
 import styles from "../_ui/ui.module.css";
@@ -61,6 +62,7 @@ export function YourBookings({ turnstileSiteKey }: { turnstileSiteKey: string | 
       return setPhase("error");
     }
     setAccount(me.data);
+    shownAccount.show(me.data);
     await loadPage(null);
   }
 
@@ -95,6 +97,7 @@ export function YourBookings({ turnstileSiteKey }: { turnstileSiteKey: string | 
           intro={<Banner tone="info">{t("reauth")}</Banner>}
           onSignedIn={(signedIn) => {
             setAccount(signedIn);
+            shownAccount.show(signedIn);
             void loadPage(null);
           }}
         />

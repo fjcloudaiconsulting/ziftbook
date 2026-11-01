@@ -5,6 +5,7 @@ import { Link } from "@/i18n/navigation";
 import { siteKeyFrom } from "@/lib/account";
 
 import { LinkRequest } from "../../_ui/link-request";
+import { AccountButton } from "../../_ui/account-button";
 import { Screen } from "../../_ui/parts";
 import styles from "../../_ui/ui.module.css";
 
@@ -21,7 +22,7 @@ export default async function ClientSignUpPage() {
   const t = await getTranslations("ClientSignUp");
   const signUp = await getTranslations("SignUp");
   return (
-    <Screen>
+    <Screen headerEnd={<AccountButton signInAfter />}>
       <LinkRequest
         purpose="account_sign_up"
         intro={

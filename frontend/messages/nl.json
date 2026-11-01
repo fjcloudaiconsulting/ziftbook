@@ -163,7 +163,9 @@
     "more": "Meer tonen",
     "loadingMore": "Laden…",
     "reauth": "Voor je privacy: vul je wachtwoord opnieuw in om je afspraken te zien.",
-    "tooMany": "Even te veel verzoeken. Probeer het over een minuut opnieuw."
+    "tooMany": "Even te veel verzoeken. Probeer het over een minuut opnieuw.",
+    "menu": "Je account",
+    "signOut": "Uitloggen"
   },
   "Admin": {
     "title": "Inloggen als beheerder",

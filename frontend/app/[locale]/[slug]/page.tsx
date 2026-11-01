@@ -3,6 +3,7 @@ import { getTranslations } from "next-intl/server";
 
 import { appVersion } from "@/lib/version";
 
+import { AccountButton } from "../_ui/account-button";
 import { LanguageSwitcher } from "../_ui/header";
 import { Outcome } from "../_ui/parts";
 import styles from "../_ui/ui.module.css";
@@ -36,7 +37,7 @@ export default async function PublicBookingPage({
     const t = await getTranslations("BookingPage");
     return (
       <>
-        <header className={styles.minimalHeader}><LanguageSwitcher /></header>
+        <header className={styles.minimalHeader}><AccountButton /><LanguageSwitcher /></header>
         <main className={styles.screen}>
           <div className={styles.col}>
             <Outcome icon="calendar" title={t("loadErrorTitle")} lede={t("loadErrorLede")}>
@@ -52,7 +53,7 @@ export default async function PublicBookingPage({
 
   return (
     <>
-      <header className={styles.minimalHeader}><LanguageSwitcher /></header>
+      <header className={styles.minimalHeader}><AccountButton /><LanguageSwitcher /></header>
       <ServicesPage page={loaded.data} locale={locale} version={appVersion()} />
     </>
   );

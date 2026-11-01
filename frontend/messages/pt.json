@@ -163,7 +163,9 @@
     "more": "Mostrar mais",
     "loadingMore": "Carregando…",
     "reauth": "Para sua privacidade, digite sua senha de novo para ver seus agendamentos.",
-    "tooMany": "Muitas solicitações por agora. Tente de novo em um minuto."
+    "tooMany": "Muitas solicitações por agora. Tente de novo em um minuto.",
+    "menu": "Sua conta",
+    "signOut": "Sair"
   },
   "Admin": {
     "title": "Entrar como administrador",

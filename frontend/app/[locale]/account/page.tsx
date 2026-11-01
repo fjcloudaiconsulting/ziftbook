@@ -3,6 +3,7 @@ import { getTranslations } from "next-intl/server";
 
 import { siteKeyFrom } from "@/lib/account";
 
+import { AccountButton } from "../_ui/account-button";
 import { Header } from "../_ui/header";
 import styles from "../_ui/ui.module.css";
 import { YourBookings } from "./your-bookings";
@@ -19,7 +20,7 @@ export default async function AccountPage() {
   await connection();
   return (
     <>
-      <Header />
+      <Header end={<AccountButton signInAfter />} />
       <main className={styles.screen}>
         <div className={`${styles.col} ${styles.colWide}`}>
           <YourBookings turnstileSiteKey={siteKeyFrom(process.env.ZIF_TURNSTILE_SITE_KEY)} />

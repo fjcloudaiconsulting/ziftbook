@@ -99,13 +99,21 @@ export function LanguageSwitcher() {
   );
 }
 
-export function Header() {
+/** `end`: what sits after the language button (the account pages' account button, ZIF-146). */
+export function Header({ end }: { end?: React.ReactNode }) {
   return (
     <header className={styles.top}>
       <Link className={styles.wordmark} href="/">
         ziftbook
       </Link>
-      <LanguageSwitcher />
+      {end ? (
+        <span className={styles.headerActions}>
+          <LanguageSwitcher />
+          {end}
+        </span>
+      ) : (
+        <LanguageSwitcher />
+      )}
     </header>
   );
 }

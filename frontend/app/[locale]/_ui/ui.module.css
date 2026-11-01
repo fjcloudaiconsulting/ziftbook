@@ -373,7 +373,7 @@ a.textButton, .textButton:has(> svg) { display: inline-flex; align-items: center
 /* The public booking page (ZIF-56): its own minimal header (language switcher only — "ziftbook"
  * is the minimal footer's, not repeated here), numbered steps, and a summary column that sits
  * beside the flow at desktop widths (container query on .bookingLayout). */
-.minimalHeader { display: flex; justify-content: flex-end; padding: 1rem var(--gutter); }
+.minimalHeader { display: flex; justify-content: flex-end; gap: 0.5rem; padding: 1rem var(--gutter); }
 /* Wide enough for the flow column plus a 22rem sticky checkout side by side (colWide's 34rem,
  * shared with plain single-column forms elsewhere, is too narrow for this page). */
 .bookingWide { max-width: 68rem; }
@@ -621,3 +621,22 @@ a.textButton, .textButton:has(> svg) { display: inline-flex; align-items: center
 .acctNoteActs { margin: 0; }
 /* An optional field's label suffix (the console's .optional). */
 .optional { font-size: 0.875rem; color: var(--muted); font-weight: 400; }
+/* The account button and its menu on the booking and account pages: the language button's shape beside it. */
+.accountButton {
+  display: inline-flex; align-items: center; justify-content: center; width: 2.75rem; height: 2.75rem; flex: none; padding: 0;
+  border: 1px solid var(--line); border-radius: 50%; background: var(--bg); color: var(--ink); cursor: pointer; anchor-name: --client-account-button;
+}
+.accountButton:hover { border-color: var(--muted); }
+.accountButton:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
+.accountMenu {
+  margin: 0; padding: 0.85rem; min-inline-size: 15rem; border: 1px solid var(--line); border-radius: 1rem; background: var(--bg); color: var(--ink);
+  box-shadow: 0 1rem 2.5rem -1rem oklch(0.23 0.025 28 / 0.25); position: fixed; inset: 4.5rem var(--gutter) auto auto;
+}
+@supports (anchor-name: --a) {
+  .accountMenu { position-anchor: --client-account-button; inset: auto; position-area: bottom span-left; position-try-fallbacks: flip-block; margin-block: 0.5rem; }
+}
+.accountMenu :focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
+.accountMenuName { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
+.accountMenuMeta { margin: 0.15rem 0 0; color: var(--muted); font-size: 0.875rem; overflow-wrap: anywhere; }
+.accountMenuDivider { height: 1px; background: var(--line); margin: 0.75rem 0; }
+.headerActions { display: flex; align-items: center; gap: 0.5rem; }

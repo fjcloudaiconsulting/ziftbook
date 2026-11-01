@@ -4,7 +4,7 @@ import Script from "next/script";
 import { useTranslations } from "next-intl";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 
-import { type AccountOut, availabilityRead, bookingsAbandon, bookingsCreate, bookingsResume, bookingsSync, type BookingPageOut, type PaymentStart, platformAccountRead, platformAccountSignOut, type SyncOut } from "@/api-client";
+import { type AccountOut, availabilityRead, bookingsAbandon, bookingsCreate, bookingsResume, bookingsSync, type BookingPageOut, type PaymentStart, platformAccountRead, type SyncOut } from "@/api-client";
 import { Link, useRouter } from "@/i18n/navigation";
 import { addDays, localDay, localWhen, slotsByDay, weekDays } from "@/lib/booking-link";
 import {
@@ -43,6 +43,7 @@ import { type Locale } from "@/lib/services";
 import type { AppVersion } from "@/lib/version";
 import { zoneCity } from "@/lib/week";
 
+import { shownAccount, signOutAccount } from "../_ui/account-button";
 import { useNonce } from "../_ui/nonce";
 import { Banner, FieldError, JSON_WRITE, problem, send, Submit } from "../_ui/parts";
 import { CheckIcon } from "../_ui/picker";
@@ -253,6 +254,22 @@ export function BookingPage({
   useEffect(() => {
     if (noteFocus) noteRef.current?.focus();
   }, [noteFocus]);
+
+  // The account signed out on this browser ("Not you?" or the header's menu): the fields that still hold its values
+  // empty out, and the offer is back. A ref, always current: the store's listener is registered once.
+  const signedOutRef = useRef<() => void>(() => {});
+  useEffect(() => {
+    signedOutRef.current = () => {
+      if (written) {
+        const next = afterSignOut({ name: flow.name, email: flow.email, phone: flow.phone, region }, written, page.country);
+        setFlow((f) => ({ ...f, name: next.name, email: next.email, phone: next.phone, suggest: null }));
+        setRegion(next.region);
+      }
+      setAccount(null);
+      setWritten(null);
+    };
+  });
+  useEffect(() => shownAccount.onSignedOut(() => signedOutRef.current()), []);
 
   // Runs after the details have (re)rendered with their inputs mounted, so a field targeted before
   // they were open still gets focused once they are.
@@ -903,6 +920,7 @@ export function BookingPage({
     setFlow((f) => ({ ...f, name: next.name, email: next.email, phone: next.phone, suggest: null, errors: { ...f.errors, name: undefined, email: undefined, phone: undefined } }));
     setRegion(next.region);
     setAccount(signedIn);
+    shownAccount.show(signedIn);
     setWritten(filled);
     setSignInOpen(false);
     setOfferError(null);
@@ -924,22 +942,14 @@ export function BookingPage({
   }
 
   /** "Not you? Sign out": this browser's account session ends (and its console session, spec section 1.4); the
-   * fields that still hold the account's values empty out, and the offer is back. */
+   * store's listener above then empties what the account filled in (afterSignOut). */
   async function signOut() {
-    if (signOutBusy || !written) return;
+    if (signOutBusy) return;
     setSignOutBusy(true);
     setSignOutError(null);
-    const answer = await send(platformAccountSignOut({ ...JSON_WRITE }));
+    const answer = await signOutAccount();
     setSignOutBusy(false);
-    if (answer.status !== 204) {
-      setSignOutError(form(problem(answer)));
-      return;
-    }
-    const next = afterSignOut({ name: flow.name, email: flow.email, phone: flow.phone, region }, written, page.country);
-    setFlow((f) => ({ ...f, name: next.name, email: next.email, phone: next.phone, suggest: null }));
-    setRegion(next.region);
-    setAccount(null);
-    setWritten(null);
+    if (answer.status !== 204) setSignOutError(form(problem(answer)));
   }
 
   const s2 = flow.service ? (flow as Step2Plus) : null;

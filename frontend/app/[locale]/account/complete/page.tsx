@@ -3,6 +3,7 @@ import { getTranslations } from "next-intl/server";
 
 import { siteKeyFrom } from "@/lib/account";
 
+import { AccountButton } from "../../_ui/account-button";
 import { Screen } from "../../_ui/parts";
 import { CompleteAccount } from "./complete-account";
 
@@ -17,7 +18,7 @@ export default async function CompleteAccountPage() {
   // Read per request: the site key is runtime configuration, not part of the build.
   await connection();
   return (
-    <Screen>
+    <Screen headerEnd={<AccountButton signInAfter />}>
       <CompleteAccount turnstileSiteKey={siteKeyFrom(process.env.ZIF_TURNSTILE_SITE_KEY)} />
     </Screen>
   );

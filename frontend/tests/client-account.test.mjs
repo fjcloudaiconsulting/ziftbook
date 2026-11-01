@@ -1,7 +1,8 @@
 // ZIF-146: the logic behind a client's own account: signing in to it, filling the checkout from it, its bookings
 // and the way back to a booking page after an emailed sign-up.
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { describe, test } from "node:test";
 
 import {
@@ -25,6 +26,7 @@ import {
   statusPill,
   takeReturn,
 } from "../lib/client-account.ts";
+import { accountStore } from "../lib/account-store.ts";
 
 describe("account sign-in", () => {
   test("a wrong password is the console's own generic answer, never a hint that the email has an account", () => {
@@ -245,8 +247,10 @@ describe("Not you? Sign out", () => {
 
   test("fence: the checkout signs out with DELETE /api/account/session and clears through afterSignOut", () => {
     const text = readFileSync(new URL("../app/[locale]/[slug]/booking-page.tsx", import.meta.url), "utf8");
-    assert.match(text, /platformAccountSignOut\(/);
+    assert.match(text, /await signOutAccount\(\)/);
     assert.match(text, /afterSignOut\(/);
+    const button = readFileSync(new URL("../app/[locale]/_ui/account-button.tsx", import.meta.url), "utf8");
+    assert.match(button, /platformAccountSignOut\(/);
   });
 });
 
@@ -356,5 +360,41 @@ describe("back to the booking page after an emailed sign-up (ruling 7: this brow
     assert.match(page, /saveDetails=\{account === null\}/);
     const done = readFileSync(new URL("../app/[locale]/[slug]/checkout.tsx", import.meta.url), "utf8");
     assert.match(done, /rememberReturn\(\(\) => window\.localStorage, slug, Date\.now\(\)\)/);
+  });
+});
+
+describe("the account button", () => {
+  const ana = { email: "ana@example.com", name: "Ana Silva", phone: null };
+
+  test("it shows the account this page signed in or filled in from, and nothing before", () => {
+    const store = accountStore();
+    const seen = [];
+    store.subscribe(() => seen.push(store.get()));
+    assert.equal(store.get(), null);
+    store.show(ana);
+    assert.deepEqual(seen, [ana]);
+  });
+
+  test("a sign-out from the menu empties it and tells the page, which empties what the account filled in", () => {
+    const store = accountStore();
+    let told = 0;
+    const stop = store.onSignedOut(() => (told += 1));
+    store.show(ana);
+    store.signedOut();
+    assert.equal(store.get(), null);
+    assert.equal(told, 1);
+    stop();
+    store.signedOut();
+    assert.equal(told, 1);
+  });
+
+  test("fence: the console never links to the account pages", () => {
+    // Personal pages are never reachable from the console (ZIF-146 handover): the account button lives on the
+    // booking and account pages only.
+    const root = new URL("../app/[locale]/", import.meta.url).pathname;
+    const walk = (dir) => readdirSync(dir).flatMap((n) => (statSync(join(dir, n)).isDirectory() ? walk(join(dir, n)) : [join(dir, n)]));
+    for (const file of [...walk(join(root, "(console)")), join(root, "_ui", "console.tsx")]) {
+      assert.doesNotMatch(readFileSync(file, "utf8"), /["'`]\/account\b|AccountButton/, file);
+    }
   });
 });

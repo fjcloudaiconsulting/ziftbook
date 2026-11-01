@@ -10,6 +10,7 @@ import { accountPhone, completeOutcome, dialRegion, takeReturn } from "@/lib/cli
 import { dialOptions } from "@/lib/dial-codes";
 import { type OpenedLink } from "@/lib/link";
 
+import { shownAccount } from "../../_ui/account-button";
 import { LinkRequest } from "../../_ui/link-request";
 import { Banner, FieldError, forgetLink, Heading, Mark, NoScript, Outcome, PasswordField, problem, send, Submit, useLink } from "../../_ui/parts";
 import styles from "../../_ui/ui.module.css";
@@ -79,6 +80,7 @@ function AccountForm({ link, turnstileSiteKey }: { link: OpenedLink | null; turn
       forgetLink(TOKEN_KEY, link);
       setPassword("");
       setSlug(takeReturn(() => window.localStorage, Date.now()));
+      shownAccount.show(outcome.data);
       setCreated(outcome.data.email);
     } else if (meaning === "expired" || meaning === "exists") {
       forgetLink(TOKEN_KEY, link);
