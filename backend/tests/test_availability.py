@@ -508,11 +508,12 @@ def test_day_span_at_a_skipped_midnight_starts_at_the_day_s_first_instant() -> N
     assert havana[1] - havana[0] == timedelta(hours=23)
 
 
-# 4. fence: repeated midnight starts at the first occurrence (fold=0). Kills fold=1.
+# 4. fence: repeated midnight starts at the first occurrence (fold=0). Kills fold=1. A past
+# transition, so a tzdata release that changes Cuba's future rules cannot move it.
 def test_day_span_at_a_repeated_midnight_starts_at_the_first_occurrence() -> None:
-    assert day_span(date(2026, 11, 1), date(2026, 11, 1), "America/Havana") == (
-        utc("2026-11-01T04:00"),
-        utc("2026-11-02T05:00"),
+    assert day_span(date(2025, 11, 2), date(2025, 11, 2), "America/Havana") == (
+        utc("2025-11-02T04:00"),
+        utc("2025-11-03T05:00"),
     )
 
 
