@@ -89,3 +89,14 @@ describe("the console's own language, where it is wired", () => {
     assert.match(src, /= session\s*\? \{\s*user: session\.user_id,/);
   });
 });
+
+describe("the language menu's note, where it is wired", () => {
+  test("fence: a pick of the language on screen is recorded as such, and the menu follows the store", () => {
+    // Wrong implementations killed: onScreen not passed (the note pops up on a later page instead),
+    // and the menu reading the store once at render (it keeps saying "Saved" after a failed save).
+    const src = read("../app/[locale]/_ui/header.tsx");
+    assert.match(src, /recordPick\(own\.user, id, saved, \{ onScreen: id === locale \}\);/);
+    assert.match(src, /const picked = useSyncExternalStore\(subscribePick, \(\) => \(user === undefined \? null : pickedHere\(user\)\), \(\) => null\);\s*const unsaved = picked !== null && picked === locale;/);
+    assert.match(src, /\{unsaved \? t\("languageNotSaved"\) : t\("languageSaved"\)\}/);
+  });
+});
