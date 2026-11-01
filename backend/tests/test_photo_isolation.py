@@ -28,7 +28,7 @@ from opentelemetry import trace
 from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 from PIL import Image
 
-from app import photo_child, photo_decode, photos
+from app import photo_child, photo_decode, photos, storage
 from app.errors import ApiError
 from tests.conftest import API_DIR, closed, image, points, upload
 
@@ -764,6 +764,40 @@ def test_every_decode_is_counted_by_outcome(
     assert counted == {"ok": 1, "refused": 1, "signal": 1, "hardening": 1}
     assert set(photos.OUTCOMES) == {
         *("ok", "refused", "cpu", "memory", "oom", "signal", "exit", "output", "protocol"),
-        *("timeout", "starved", "headroom", "spawn", "limits", "import", "hardening"),
+        *("timeout", "starved", "headroom", "scratch", "spawn", "limits", "import", "hardening"),
     }
     closed(metric_reader)
+
+
+# ZIF-230 fence. Kills: a full or unwritable /tmp (the upload's scratch file) answering 500: it is
+# the server's fault, 503 busy and an ERROR, and no child is started.
+@pytest.mark.parametrize("where", ["create", "write"])
+def test_no_scratch_space_for_the_upload_is_busy(
+    where: str,
+    s3: S3Client,
+    monkeypatch: pytest.MonkeyPatch,
+    runs: list[photos.Run],
+    failed: Callable[[], list[dict[str, Any]]],
+) -> None:
+    t = uuid.uuid4()
+    upload_id = upload(s3, t, PNG)
+    full = OSError(28, "No space left on device")
+    if where == "create":
+
+        def no_file() -> None:
+            raise full
+
+        monkeypatch.setattr(tempfile, "TemporaryFile", no_file)
+    else:
+
+        def no_space(key: str, sink: object, limit: int) -> None:
+            raise full
+
+        monkeypatch.setattr(storage, "read_into", no_space)
+    with pytest.raises(ApiError) as error:
+        photos.process(t, upload_id)
+    assert (error.value.status_code, error.value.code) == (503, "busy")
+    assert runs == []
+    assert [(f["msg"], f["decoder"]) for f in failed()] == [
+        ("photo decoder could not start", "scratch")
+    ]
