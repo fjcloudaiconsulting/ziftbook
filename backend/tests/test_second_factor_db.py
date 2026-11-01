@@ -744,19 +744,21 @@ def test_a_recovery_code_off_a_lock_restarts_the_leak(
 
 
 # fence (ZIF-234): a recovery code with no lock leaves the count and its anchor, and clears only
-# the report. Kills a recovery code that lowers the count or restarts the leak. Injected by
-# `failed_attempts = 0`, then separately by `failures_leaked_at = now()` for every use.
+# the report, up to the count one short of the lock. Kills a recovery code that lowers the count or
+# restarts the leak, also at 9. Injected by `failed_attempts = 0`, then separately by
+# `failures_leaked_at = now()` for every use, then by the anchor's `>= 10` -> `>= 9`.
+@pytest.mark.parametrize("count", [4, 9])
 def test_a_recovery_code_off_lock_leaves_the_count(
-    app_engine: Engine, migrate_engine: Engine
+    app_engine: Engine, migrate_engine: Engine, count: int
 ) -> None:
     e = enrolled(app_engine, migrate_engine)
     session = half_session(app_engine, migrate_engine, e.user_id)
-    set_failures(migrate_engine, e.user_id, 4, timedelta(hours=3), since_pass=4)
+    set_failures(migrate_engine, e.user_id, count, timedelta(hours=3), since_pass=count)
 
     assert recover(app_engine, session, code_proofs(e.codes)[0]) == (9, False)
 
     stored = factor(migrate_engine, e.user_id)
-    assert (stored["failed_attempts"], stored["failures_since_pass"]) == (4, 0)
+    assert (stored["failed_attempts"], stored["failures_since_pass"]) == (count, 0)
     age = anchor_age(migrate_engine, e.user_id)
     assert age is not None and abs(age - timedelta(hours=3)) < ABOUT
 
