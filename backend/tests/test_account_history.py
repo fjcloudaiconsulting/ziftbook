@@ -113,7 +113,11 @@ def test_only_the_bookings_this_account_placed_are_listed(
     assert starts(page) == [("b", placed_b["starts_at"]), ("a", placed_a["starts_at"])]
     assert page["next"] is None
     assert page["bookings"][0] == {
-        "business": {"name": "b", "slug": page["bookings"][0]["business"]["slug"]},
+        "business": {
+            "name": "b",
+            "slug": page["bookings"][0]["business"]["slug"],
+            "timezone": "Europe/Amsterdam",
+        },
         "starts_at": placed_b["starts_at"],
         "ends_at": placed_b["ends_at"],
         "status": placed_b["status"],
@@ -121,6 +125,48 @@ def test_only_the_bookings_this_account_placed_are_listed(
         "price": placed_b["price"],
         "worker_display_name": placed_b["worker_display_name"],
     }
+
+
+# FENCE (ZIF-146 PR 6 review, correctness 1). Wrong impl: a history with no time zone, or one
+# zone for every business: the page would show a booking at another hour than its booking page,
+# its emails and its manage page, which all use the business's own zone.
+def test_each_booking_names_its_business_time_zone(
+    app: FastAPI,
+    people: People,
+    services: dict[uuid.UUID, str],
+    migrate_engine: Engine,
+    person: uuid.UUID,
+) -> None:
+    # Lisbon is an hour behind: 11:00 in Amsterdam is 10:00 there, inside its working hours.
+    save_setting(people.b, "timezone", "Europe/Lisbon")
+    mine = account_client(app, migrate_engine, person)
+    email = email_of(person)
+    book(mine, people.a, services[people.a], "09:00", email)
+    book(mine, people.b, services[people.b], "11:00", email)
+
+    bookings = history(mine).json()["bookings"]
+    zones = {b["business"]["name"]: b["business"]["timezone"] for b in bookings}
+
+    # A saved nothing: the business's default zone, as its booking page shows.
+    assert zones == {"a": "Europe/Amsterdam", "b": "Europe/Lisbon"}
+
+
+# GUARD. Wrong impl: passing a saved zone through unchecked. One the registry no longer knows
+# (only a hand edit could save it) reads as the default: a browser could not format with it.
+def test_a_zone_the_registry_does_not_know_reads_as_the_default(
+    app: FastAPI,
+    people: People,
+    services: dict[uuid.UUID, str],
+    migrate_engine: Engine,
+    person: uuid.UUID,
+) -> None:
+    mine = account_client(app, migrate_engine, person)
+    book(mine, people.a, services[people.a], "09:00", email_of(person))
+    save_setting(people.a, "timezone", "Mars/Olympus_Mons")
+
+    [booking] = history(mine).json()["bookings"]
+
+    assert booking["business"]["timezone"] == "Europe/Amsterdam"
 
 
 # FENCE. Wrong impl: a per-business cap without the merge (each business's newest `limit`, pasted

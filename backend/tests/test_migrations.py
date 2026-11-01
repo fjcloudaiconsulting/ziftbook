@@ -2208,3 +2208,65 @@ def test_0059_round_trips_account_sign_up(
         assert conn.scalar(MINT_DEF) == at_head
         assert tuple(conn.execute(SIGN_UP_OBJECTS).one()) == (True, True)
         assert list(conn.scalars(MINT_HOLDERS)) == ["ziftbook_migrate", "ziftbook_worker"]
+
+
+HISTORY_COLUMNS = text("SELECT * FROM own_bookings(NULL, NULL, NULL, 1)")
+HISTORY_HOLDERS = text("""
+SELECT x.grantee::regrole::text FROM pg_proc p, aclexplode(p.proacl) x
+WHERE p.oid = 'own_bookings(bytea,timestamptz,bytea,integer)'::regprocedure
+  AND x.privilege_type = 'EXECUTE'
+ORDER BY 1
+""")
+# What the history route of the release still running reads, by name, from SELECT *.
+HISTORY_COLUMNS_0058 = [
+    "business_name",
+    "business_slug",
+    "starts_at",
+    "ends_at",
+    "status",
+    "service_name",
+    "price_amount_minor",
+    "price_currency",
+    "worker_display_name",
+    "sort_key",
+]
+
+
+# ZIF-146 FENCE (PR 6 review, correctness 1). Wrong impl: a signature break the running release
+# cannot read (a renamed or reordered column), a downgrade that leaves 0075's function, or a lost
+# grant.
+def test_0075_round_trips_the_history_time_zone(
+    migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = lock_timeout_config(monkeypatch)
+    holders = ["ziftbook_app", "ziftbook_migrate"]
+    with migrate_engine.connect() as conn:
+        assert list(conn.execute(HISTORY_COLUMNS).keys()) == [
+            *HISTORY_COLUMNS_0058,
+            "business_timezone",
+        ]
+        assert list(conn.scalars(HISTORY_HOLDERS)) == holders
+    try:
+        command.downgrade(cfg, "0059")
+        with migrate_engine.connect() as conn:
+            assert list(conn.execute(HISTORY_COLUMNS).keys()) == HISTORY_COLUMNS_0058
+            assert list(conn.scalars(HISTORY_HOLDERS)) == holders
+    finally:
+        command.upgrade(cfg, "head")
+    with migrate_engine.connect() as conn:
+        assert list(conn.execute(HISTORY_COLUMNS).keys())[-1] == "business_timezone"
+        assert list(conn.scalars(HISTORY_HOLDERS)) == holders
+
+
+# ZIF-146 guard: 0075 keeps 0058's history rules. Its OLD is 0058's own_bookings verbatim (the
+# downgrade restores it byte for byte), and it applies 0057's account-session rules.
+def test_0075_own_bookings_is_0058s_with_the_time_zone() -> None:
+    m = migration("0075_history_time_zone.py")
+    assert (
+        m.OLD
+        == migration("0058_booking_provenance.py").FUNCTIONS[
+            "own_bookings(bytea,timestamptz,bytea,integer)"
+        ]
+    )
+    assert m.USABLE == migration("0057_account_sessions.py").USABLE
+    assert m.NEW.replace("CREATE FUNCTION", "") != m.OLD.replace("CREATE FUNCTION", "")

@@ -7539,12 +7539,17 @@
           "slug": {
             "type": "string",
             "title": "Slug"
+          },
+          "timezone": {
+            "type": "string",
+            "title": "Timezone"
           }
         },
         "type": "object",
         "required": [
           "name",
-          "slug"
+          "slug",
+          "timezone"
         ],
         "title": "Business"
       },

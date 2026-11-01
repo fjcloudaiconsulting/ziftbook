@@ -378,7 +378,9 @@ def test_the_account_answers_only_its_own_three_fields() -> None:
 def test_the_history_carries_only_its_pinned_fields() -> None:
     schemas = json.loads(CONTRACT.read_text())["components"]["schemas"]
     assert set(schemas["HistoryPage"]["properties"]) == {"bookings", "next"}
-    assert set(schemas["Business"]["properties"]) == {"name", "slug"}
+    # The time zone (ZIF-146 PR 6) is the business's, public on its booking page, not the
+    # person's: the history shows each booking at its business's local time, as the emails do.
+    assert set(schemas["Business"]["properties"]) == {"name", "slug", "timezone"}
     assert set(schemas["HistoryBooking"]["properties"]) == {
         "business",
         "starts_at",

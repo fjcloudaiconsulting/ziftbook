@@ -20,7 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app import accounts, auth, clients, limits, passwords
+from app import accounts, auth, business_settings, clients, limits, passwords
 from app.accounts import DisplayNameText, LinkRequest
 from app.db import SessionLocal
 from app.errors import ApiError, Error
@@ -248,6 +248,18 @@ def update(
 class Business(BaseModel):
     name: str
     slug: str  # the booking page's address: /{locale}/{slug}
+    # The business's own time zone (public on its booking page): each booking shows at its local
+    # time, as its booking page, emails and manage page do.
+    timezone: str
+
+
+DEFAULT_ZONE: str = business_settings.BusinessSettings.model_fields["timezone"].default
+
+
+def zone_of(saved: str | None) -> str:
+    """The business's saved zone, else the settings default (as its booking page reads it). A saved
+    name the registry does not know (only a hand edit could store one) reads as the default too."""
+    return saved if saved in business_settings.ZONES else DEFAULT_ZONE
 
 
 class HistoryBooking(BaseModel):
@@ -340,7 +352,11 @@ def history(
     return HistoryPage(
         bookings=[
             HistoryBooking(
-                business=Business(name=r.business_name, slug=r.business_slug),
+                business=Business(
+                    name=r.business_name,
+                    slug=r.business_slug,
+                    timezone=zone_of(r.business_timezone),
+                ),
                 starts_at=r.starts_at,
                 ends_at=r.ends_at,
                 status=r.status,
