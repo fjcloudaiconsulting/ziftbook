@@ -604,7 +604,7 @@ describe("an account already signed in is confirmed, never filled silently (secu
     assert.ok(handler);
     assert.doesNotMatch(handler[1], /\bfill\(/);
     assert.match(handler[1], /if \(nextStep === "confirm" && answer\.data\) \{\s*setConfirming\(answer\.data\);\s*setSignInOpen\(true\);/);
-    assert.match(text(), /onContinue=\{\(\) => confirming && fillFromDialog\(confirming\)\}/);
+    assert.match(text(), /onContinue=\{continueAsAccount\}/);
     assert.match(text(), /onSomeoneElse=\{\(\) => setConfirming\(null\)\}/);
   });
 
@@ -856,5 +856,18 @@ describe("a sign-out during a send that is refused clears once the form is free 
 
   test("fence: a resumed booking that is gone frees the form with the pending clear applied", () => {
     assert.match(page(), /else if \(gone\) \{\s*unlockAccount\(\);\s*forget\(false\);/);
+  });
+});
+
+describe("a booking sent while the offer was being answered closes the offer (re-verify N3)", () => {
+  const page = () => readFileSync(new URL("../app/[locale]/[slug]/booking-page.tsx", import.meta.url), "utf8");
+
+  test("fence: the offer's answer opens nothing once a booking is on its way", () => {
+    // Wrong implementation killed: the "Continue as" dialog opening over a send, with a Continue that does nothing.
+    assert.match(page(), /const answer = await send\(platformAccountRead\(\)\);\s*setOfferBusy\(false\);\s*\/\/[^\n]*\n\s*if \(heldNow\(\)\) return;/);
+  });
+
+  test("fence: Continue during a send closes the dialog instead of doing nothing", () => {
+    assert.match(page(), /function continueAsAccount\(\) \{\s*\/\/[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*if \(heldNow\(\) \|\| !confirming\) \{\s*setSignInOpen\(false\);\s*setConfirming\(null\);\s*return;\s*\}\s*fillFromDialog\(confirming\);/);
   });
 });

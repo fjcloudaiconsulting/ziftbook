@@ -1000,6 +1000,19 @@ export function BookingPage({
     if (signInOpenRef.current) fill(signedIn);
   }
 
+  /** "Continue" on "Continue as …?": fills the form in, unless a booking went on its way while the dialog was open,
+   * which keeps its details; then the dialog closes instead of leaving a Continue that does nothing. */
+  function continueAsAccount() {
+    // A send that was waiting on its verification went on while the dialog was open, or the account went away:
+    // close, with nothing filled in.
+    if (heldNow() || !confirming) {
+      setSignInOpen(false);
+      setConfirming(null);
+      return;
+    }
+    fillFromDialog(confirming);
+  }
+
   /** The offer's click: an account signed in on this browser is confirmed in the dialog ("Continue as {name}?"),
    * else the dialog asks to sign in. The only read of the person's details on this page until they filled in. */
   async function fillFromAccount() {
@@ -1008,6 +1021,8 @@ export function BookingPage({
     setOfferError(null);
     const answer = await send(platformAccountRead());
     setOfferBusy(false);
+    // A booking went on its way meanwhile: it keeps its details, and no dialog opens over it.
+    if (heldNow()) return;
     const nextStep = offerNext(answer.status);
     if (nextStep === "confirm" && answer.data) {
       setConfirming(answer.data);
@@ -1242,7 +1257,7 @@ export function BookingPage({
                     setSignInOpen(false);
                     setConfirming(null);
                   }}
-                  onContinue={() => confirming && fillFromDialog(confirming)}
+                  onContinue={continueAsAccount}
                   onSomeoneElse={() => setConfirming(null)}
                   onSignedIn={fillFromDialog}
                 />
