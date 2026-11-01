@@ -360,17 +360,29 @@ def _spawn(upload: IO[bytes]) -> subprocess.Popen[bytes]:
     """The child: no environment (the API's secrets stay here), no descriptor but the upload, a
     pipe and /dev/null, a process group of its own, -I so no PYTHON* variable, user site or
     working directory reaches it, -B so it writes no bytecode. No preexec_fn: nothing runs
-    between fork and exec in a threaded API."""
-    return subprocess.Popen(
-        [sys.executable, "-I", "-B", str(CHILD)],
-        stdin=upload,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        env={},
-        cwd="/",
-        close_fds=True,
-        process_group=0,  # its own: a kill(0, ...) from it never reaches the API
+    between fork and exec in a threaded API. On Linux the upload is handed over read-only: the
+    scratch file is open for writing here, and a shared writable mapping of it would need no
+    syscall the filter could refuse."""
+    # The same file through its descriptor's /proc link, so no name is involved: no race.
+    readonly = (
+        os.open(f"/proc/self/fd/{upload.fileno()}", os.O_RDONLY | os.O_CLOEXEC)
+        if sys.platform == "linux"
+        else None
     )
+    try:
+        return subprocess.Popen(
+            [sys.executable, "-I", "-B", str(CHILD)],
+            stdin=upload if readonly is None else readonly,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            env={},
+            cwd="/",
+            close_fds=True,
+            process_group=0,  # its own: a kill(0, ...) from it never reaches the API
+        )
+    finally:
+        if readonly is not None:
+            os.close(readonly)  # the child has its own copy
 
 
 # The rusage of a child something else reaped: none to read.

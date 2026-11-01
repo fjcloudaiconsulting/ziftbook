@@ -8,6 +8,7 @@ import ctypes
 import fcntl
 import importlib.util
 import json
+import mmap
 import os
 import resource
 import signal
@@ -280,6 +281,20 @@ def record(data: bytes) -> bytes:
         expect(deny_checks())
         denied: bytes = real_load().record(rest)
         return denied
+    if MODE == "probe-mmap-write":  # a shared writable mapping of the upload: refused (EACCES)
+        if sys.platform == "linux":
+            if fcntl.fcntl(0, fcntl.F_GETFL) & os.O_ACCMODE != os.O_RDONLY:
+                os._exit(9)
+            try:
+                size = os.fstat(0).st_size
+                mapped = mmap.mmap(0, size, mmap.MAP_SHARED, mmap.PROT_READ | mmap.PROT_WRITE)
+                mapped[0:8] = b"MMAPWRIT"
+                mapped.flush()
+                os._exit(10)
+            except PermissionError:
+                pass
+        mapless: bytes = real_load().record(rest)
+        return mapless
     if MODE == "probe-group":  # a process group of its own, apart from the API's
         if os.getpgrp() != os.getpid():
             os._exit(9)
