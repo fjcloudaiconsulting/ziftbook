@@ -70,7 +70,9 @@ Specifics:
   `NOT VALID` and validate it in a later one). Waiting for another migration run to finish is not bounded:
   concurrent runs take turns. `migrations/env.py` polls its advisory lock (`pg_try_advisory_lock`, a commit
   between tries) rather than waiting in `pg_advisory_lock`: a waiting statement holds a snapshot, and a
-  `CREATE INDEX CONCURRENTLY` in the run holding the lock would deadlock with it.
+  `CREATE INDEX CONCURRENTLY` in the run holding the lock would deadlock with it. A waiting run therefore shows as idle
+  (last query `COMMIT`), not as a lock waiter: it logs `migration lock held by another run` (WARNING,
+  `holder_pid`, `waited_seconds`) after 30 seconds and every 5 minutes after, so a stuck holder can be found.
 - Validating a constraint on a table with FORCE row-level security (a `VALIDATE CONSTRAINT`, or an `ADD CONSTRAINT`
   that checks existing rows) scans as the owner under the tenant policy: with no `app.tenant_id` it fails (42704),
   and with one it checks that business's rows only and still marks the constraint valid. Use `app.db.lift_force`
