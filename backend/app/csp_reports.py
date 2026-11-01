@@ -24,6 +24,7 @@ from urllib.parse import SplitResult, urlsplit
 from fastapi import APIRouter, Request, Response
 from sqlalchemy.exc import SQLAlchemyError
 from starlette.concurrency import run_in_threadpool
+from starlette.requests import ClientDisconnect
 
 from app import limits, logs, tracing
 from app.booking_page import SLUG
@@ -163,6 +164,7 @@ CLOSED_VALUES: dict[str, frozenset[str]] = {
 }
 DROP_REASONS = (
     "busy",
+    "disconnected",
     "cross_site",
     "rate_limited",
     "limiter_unavailable",
@@ -470,7 +472,11 @@ async def report(request: Request) -> Response:
     if hits > LIMIT:
         return _drop("rate_limited")
 
-    body = await request.body()  # capped while read: PathBodyLimit, MAX_BODY
+    try:
+        body = await request.body()  # capped while read: PathBodyLimit, MAX_BODY
+    except ClientDisconnect:
+        # Hung up halfway: nothing to read and nobody to answer. Counted, never an error line.
+        return _drop("disconnected")
     reports = _reports(media, body)
     if len(reports) > MAX_REPORTS:
         _drops["batch_cap"] += len(reports) - MAX_REPORTS

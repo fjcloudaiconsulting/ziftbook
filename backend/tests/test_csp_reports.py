@@ -945,6 +945,50 @@ def test_every_violation_is_counted_in_the_metric(
     }
 
 
+# 20b. Build review 6: a client that hangs up halfway through its report is a quiet 204, never an
+# ERROR line with a traceback (the route reads its body by hand, so FastAPI's own handling of a
+# disconnect does not apply).
+def test_a_client_that_disconnects_mid_report_is_a_204_with_no_error(
+    app: FastAPI, log_lines: Lines
+) -> None:
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "https",
+        "path": "/api/csp-reports",
+        "raw_path": b"/api/csp-reports",
+        "root_path": "",
+        "query_string": b"",
+        "headers": [(b"host", b"testserver"), (b"content-type", b"application/csp-report")],
+        "client": (fresh_address(), 1),
+        "server": ("testserver", 443),
+    }
+    incoming: list[dict[str, Any]] = [
+        {"type": "http.request", "body": legacy()[:20], "more_body": True},
+        {"type": "http.disconnect"},
+    ]
+    sent: list[dict[str, Any]] = []
+
+    async def receive() -> dict[str, Any]:
+        if incoming:
+            return incoming.pop(0)
+        await asyncio.sleep(3600)  # never: the app has seen the disconnect
+        raise AssertionError
+
+    async def send(message: dict[str, Any]) -> None:
+        sent.append(message)
+
+    asyncio.run(app(scope, receive, send))  # type: ignore[arg-type]
+
+    starts = [m["status"] for m in sent if m["type"] == "http.response.start"]
+    assert starts == [204]
+    assert not [line for line in log_lines() if line["level"] in ("ERROR", "CRITICAL")]
+    assert violations(log_lines) == []
+    assert dropped(log_lines)[0]["disconnected"] == 1
+
+
 # 21.
 def test_no_session_is_needed_and_a_cookie_changes_nothing(
     client: TestClient, log_lines: Lines
