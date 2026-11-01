@@ -348,7 +348,8 @@ LINKED = frozenset({"booking_received", "booking_confirmed", "booking_reminder"}
 
 BOOKING = text("""
 SELECT c.email AS client_email, c.locale AS client_locale,
-       coalesce(b.client_name, c.name) AS client_name, b.client_message,
+       coalesce(b.client_name, c.name) AS client_name, c.erased_at IS NOT NULL AS client_erased,
+       b.client_message,
        t.name AS business, b.client_id, b.status, b.starts_at, b.ends_at, b.expires_at,
        b.service_name, b.reschedule_count, b.decline_message, b.worker_display_name, now() AS now
 FROM bookings b
@@ -607,6 +608,10 @@ def send_booking(job: Job) -> None:
                 return
             recipient_email, recipient_locale = row.client_email, row.client_locale
         else:
+            # ZIF-58: the team hears nothing more about an erased client's booking; the erasure
+            # tells the owners itself.
+            if row.client_erased:
+                return
             merchant = session.execute(MERCHANT, {"id": user_id}).first()
             if merchant is None:  # RLS and the filter: a live member of THIS tenant only
                 return

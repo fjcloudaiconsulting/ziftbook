@@ -8,6 +8,7 @@ import asyncio
 import base64
 import hashlib
 import json
+import uuid
 from collections.abc import Callable, Iterator
 from datetime import datetime, timedelta
 from typing import Any
@@ -22,8 +23,8 @@ from sqlalchemy import Engine, text
 from app import admin_auth, auth, bookings, clients, csp_reports, payments, totp
 from app.config import MailSettings
 from app.db import tenant_context
-from app.jobs import run_once
-from app.mail import render
+from app.jobs import Job, run_once
+from app.mail import render, send_booking
 from app.main import create_app
 from app.worker import KINDS
 from tests.conftest import (
@@ -457,6 +458,10 @@ def test_no_personal_data_ever_reaches_a_log(
         },
     )
     assert erased_block.json()["bookings"][0]["client_erased"] is True
+    team_mail = {"booking_id": booked.json()["id"], "template": "booking_new"}
+    send_booking(
+        Job(uuid.uuid4(), "email.booking", people.a, {**team_mail, "user_id": str(people.both)})
+    )
 
     # 7: invite flow — send, list, a wrong token, then accept with a brand-new account.
     invite_email = fresh_email()

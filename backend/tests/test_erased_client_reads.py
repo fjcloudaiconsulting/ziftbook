@@ -27,6 +27,7 @@ from tests.conftest import (
     wait_until_blocked,
 )
 from tests.test_availability_api import assign, new_service, weekdays
+from tests.test_booking_email import outbox_for, run_send_booking
 from tests.test_bookings_api import at
 from tests.test_bookings_approval_api import make_pending
 from tests.test_working_hours import seed
@@ -169,6 +170,14 @@ def test_a_write_waits_for_an_erasure_in_flight_then_finds_nothing(
 
 
 @pytest.fixture
+def clean_outbox(people: People, migrate_engine: Engine) -> Iterator[None]:
+    yield
+    # As the migrate role: the app role has no DELETE on email_outbox (ZB-10).
+    with migrate_tenant_context(migrate_engine, people.a) as conn:
+        conn.execute(text("DELETE FROM email_outbox"))
+
+
+@pytest.fixture
 def ready(people: People, owner: TestClient) -> str:
     """A 30-minute service performed by the owner, who works 09:00-17:00 every day, on a published
     page (make_pending books through the public route)."""
@@ -293,3 +302,29 @@ def test_a_refused_block_marks_an_erased_client(
         booked["confirmed"]: ("", True),
         booked["live"]: ("Live Booker", False),
     }
+
+
+# ZIF-58 F13 FENCE. Wrong impl: no gate, so the team's mail about an erased client's booking is
+# rendered with a blank $client and recorded in the outbox. The same mail for a live client is
+# written, so the gate is the erasure's alone.
+@pytest.mark.parametrize("template", ["booking_request", "booking_client_cancelled"])
+def test_the_team_gets_no_booking_mail_for_an_erased_client(
+    people: People,
+    migrate_engine: Engine,
+    booked: dict[str, str],
+    clean_outbox: None,
+    template: str,
+) -> None:
+    erase_by_hand(migrate_engine, people.a, client_of(people.a, booked["pending"]))
+    status = "pending" if template == "booking_request" else "cancelled_by_client"
+    with migrate_tenant_context(migrate_engine, people.a) as conn:
+        conn.execute(
+            text("UPDATE bookings SET status = :s WHERE id = ANY(:ids)"),
+            {"s": status, "ids": [booked["pending"], booked["live"]]},
+        )
+
+    erased = run_send_booking(people.a, booked["pending"], template, user_id=str(people.both))
+    live = run_send_booking(people.a, booked["live"], template, user_id=str(people.both))
+
+    assert outbox_for(people.a, erased.id) is None
+    assert outbox_for(people.a, live.id) is not None
