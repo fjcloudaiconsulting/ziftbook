@@ -2117,7 +2117,7 @@ def test_0069_round_trips_the_failure_budget(
     e = enrolled(app_engine, migrate_engine)
     old_conn = app_engine.connect()
     try:
-        command.downgrade(cfg, "0056")
+        command.downgrade(cfg, migration("0069_second_factor_failures_leak.py").down_revision)
         with migrate_engine.connect() as conn:
             assert conn.scalar(FAILURE_COLUMNS) == 0
             for sig in FAILURE_DEFINERS:
