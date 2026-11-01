@@ -5,8 +5,9 @@ import os
 import re
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 from alembic import command
@@ -167,3 +168,37 @@ def test_a_run_waiting_its_turn_never_blocks_a_concurrent_index_build(
             text("SELECT indisvalid FROM pg_index WHERE indexrelid = 'ix_probe_id'::regclass")
         )
     assert valid is True
+
+
+# ZIF-235 (re-verify N1). Polling, a run waiting its turn shows in neither pg_locks nor
+# pg_stat_activity (it is idle between tries), so a stuck holder would hang the deploy unseen.
+# Kills: a waiting run that never logs, logs once only, or names no holder. Thresholds come from the
+# Alembic config's attributes (30 s and 300 s when unset), shortened here.
+def test_a_run_waiting_its_turn_says_who_holds_the_lock(
+    scratch: tuple[Config, Engine], log_lines: Callable[[], list[dict[str, Any]]]
+) -> None:
+    cfg, engine = scratch
+    cfg.attributes["lock_wait_warning_seconds"] = 1
+    cfg.attributes["lock_wait_repeat_seconds"] = 1
+    errors: list[BaseException] = []
+
+    def upgrade() -> None:
+        try:
+            command.upgrade(cfg, "head")
+        except BaseException as error:
+            errors.append(error)
+
+    with engine.connect() as other_run:
+        holder = other_run.scalar(text("SELECT pg_backend_pid()"))
+        other_run.execute(text("SELECT pg_advisory_lock(:id)"), {"id": MIGRATION_LOCK_ID})
+        waiting = threading.Thread(target=upgrade)
+        waiting.start()
+        try:
+            time.sleep(4)
+        finally:
+            other_run.execute(text("SELECT pg_advisory_unlock(:id)"), {"id": MIGRATION_LOCK_ID})
+            waiting.join(timeout=30)
+    assert not errors, errors
+    warned = [line for line in log_lines() if line["msg"] == "migration lock held by another run"]
+    assert len(warned) >= 2  # and again while it waits
+    assert all(line["level"] == "WARNING" and line["holder_pid"] == holder for line in warned)
