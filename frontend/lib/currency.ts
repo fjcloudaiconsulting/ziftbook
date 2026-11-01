@@ -42,6 +42,17 @@ export function losesPayments(state: Pick<CurrencyState, "currency" | "options">
   return settles(state.currency) && !settles(next);
 }
 
+/** What the ask shows for the chosen currency, `next` (null: none chosen yet; the ask opens that
+ * way, so no currency is ever confirmed by default). */
+export function askView(
+  state: Pick<CurrencyState, "currency" | "options">,
+  next: string | null,
+  locale: string,
+): { canConfirm: boolean; example: { from: string; to: string } | null; warn: boolean } {
+  if (next === null) return { canConfirm: false, example: null, warn: false };
+  return { canConfirm: true, example: changeExample(state.currency, next, locale), warn: losesPayments(state, next) };
+}
+
 /** What a refused change means for the screen; null for the generic failure. */
 export function currencyChangeError(outcome: { status: number; code?: string }): "signedOut" | "ownerOnly" | "recount" | "locked" | null {
   if (outcome.status === 401) return "signedOut";

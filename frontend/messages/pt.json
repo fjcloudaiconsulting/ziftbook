@@ -708,6 +708,7 @@
       "currencyChange": "Alterar",
       "currencyAskTitle": "Alterar a moeda?",
       "currencyNew": "Nova moeda",
+      "currencyPick": "Escolha uma moeda",
       "currencyAskBody": "{count, plural, one {Seu # preço salvo mantém o número} other {Seus # preços salvos mantêm os números}}: {from} vira {to}. Confira seus preços depois.",
       "currencyAskNoPrices": "Você ainda não tem preços salvos, então nada mais muda.",
       "currencyAskOnce": "Você pode alterar a moeda até o seu primeiro agendamento e antes de conectar o Stripe.",

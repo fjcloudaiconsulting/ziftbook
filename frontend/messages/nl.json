@@ -708,6 +708,7 @@
       "currencyChange": "Wijzigen",
       "currencyAskTitle": "Valuta wijzigen?",
       "currencyNew": "Nieuwe valuta",
+      "currencyPick": "Kies een valuta",
       "currencyAskBody": "{count, plural, one {Je # opgeslagen prijs houdt zijn bedrag} other {Je # opgeslagen prijzen houden hun bedrag}}: {from} wordt {to}. Controleer daarna je prijzen.",
       "currencyAskNoPrices": "Je hebt nog geen opgeslagen prijzen, dus verder verandert er niets.",
       "currencyAskOnce": "Je kunt de valuta wijzigen tot je eerste afspraak, en zolang je Stripe nog niet hebt gekoppeld.",

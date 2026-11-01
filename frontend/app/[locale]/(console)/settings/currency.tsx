@@ -4,7 +4,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { useEffect, useId, useRef, useState } from "react";
 
 import { type CurrencyState, settingsChangeCurrency, settingsReadCurrency } from "@/api-client";
-import { changeBody, changeExample, currencyChangeError, currencyChoices, currencyLabel, currencyName, losesPayments } from "@/lib/currency";
+import { askView, changeBody, currencyChangeError, currencyChoices, currencyLabel, currencyName } from "@/lib/currency";
 
 import { SignedOutBanner, useConsole } from "../../_ui/console";
 import styles from "../../_ui/console.module.css";
@@ -44,7 +44,7 @@ export function CurrencyField({ disabled }: { disabled: boolean }) {
   const [signedOut, setSignedOut] = useState(false);
   const submitting = useRef(false);
   const changeButton = useRef<HTMLButtonElement>(null);
-  const yesButton = useRef<HTMLButtonElement>(null);
+  const nextSelect = useRef<HTMLSelectElement>(null);
   const owner = session.role === "owner";
 
   async function load(): Promise<void> {
@@ -70,12 +70,12 @@ export function CurrencyField({ disabled }: { disabled: boolean }) {
   }, []);
 
   useEffect(() => {
-    if (asking) yesButton.current?.focus();
+    if (asking) nextSelect.current?.focus();
   }, [asking]);
 
   function open() {
     if (!state) return;
-    setNext(currencyChoices(state)[0]?.code ?? null);
+    setNext(null); // nothing chosen until the owner picks one
     setMessage(null);
     setSignedOut(false);
     setAsking(true);
@@ -131,7 +131,7 @@ export function CurrencyField({ disabled }: { disabled: boolean }) {
     : locks.length > 0
       ? locks.map((lock) => t(lock === "bookings" ? "currencyLockedBookings" : "currencyLockedStripe", { currency: name })).join(" ")
       : t("currencyHint");
-  const example = state && next ? changeExample(current, next, locale) : null;
+  const ask = state ? askView(state, next, locale) : null;
 
   return (
     <>
@@ -157,7 +157,7 @@ export function CurrencyField({ disabled }: { disabled: boolean }) {
         </p>
       </div>
 
-      {asking && state && next && example && (
+      {asking && state && ask && (
         <div className={uiStyles.confirm} role="group" aria-labelledby={`${id}-ask`}>
           <strong id={`${id}-ask`}>{t("currencyAskTitle")}</strong>
           <div className={uiStyles.field}>
@@ -165,7 +165,10 @@ export function CurrencyField({ disabled }: { disabled: boolean }) {
               {t("currencyNew")}
             </label>
             <div className={uiStyles.input}>
-              <select id={`${id}-next`} value={next} disabled={busy} onChange={(e) => setNext(e.target.value as Code)}>
+              <select ref={nextSelect} id={`${id}-next`} value={next ?? ""} disabled={busy} onChange={(e) => setNext((e.target.value || null) as Code | null)}>
+                <option value="" disabled>
+                  {t("currencyPick")}
+                </option>
                 {currencyChoices(state).map((o) => (
                   <option key={o.code} value={o.code}>
                     {currencyLabel(o.code, locale)}
@@ -175,15 +178,20 @@ export function CurrencyField({ disabled }: { disabled: boolean }) {
               <Chevron select />
             </div>
           </div>
-          <p>{state.prices > 0 ? t("currencyAskBody", { count: state.prices, ...example }) : t("currencyAskNoPrices")}</p>
-          {losesPayments(state, next) && <p>{t("currencyStripeWarning", { currency: currencyName(next, locale) })}</p>}
+          {ask.example && <p>{state.prices > 0 ? t("currencyAskBody", { count: state.prices, ...ask.example }) : t("currencyAskNoPrices")}</p>}
+          {ask.warn && next && <p>{t("currencyStripeWarning", { currency: currencyName(next, locale) })}</p>}
           <p>{t("currencyAskOnce")}</p>
           {signedOut && <SignedOutBanner />}
           {message && <Banner tone={message.tone}>{message.text}</Banner>}
           <div className={uiStyles.actions}>
-            <button ref={yesButton} className={`${uiStyles.button} ${uiStyles.primary}`} type="button" aria-disabled={busy || undefined} onClick={change}>
+            <button
+              className={`${uiStyles.button} ${uiStyles.primary}`}
+              type="button"
+              aria-disabled={busy || !ask.canConfirm || undefined}
+              onClick={change}
+            >
               {busy && <span className={uiStyles.spinner} aria-hidden="true" />}
-              {t("currencyYes", { currency: currencyName(next, locale) })}
+              {next ? t("currencyYes", { currency: currencyName(next, locale) }) : t("currencyChange")}
             </button>
             <button
               className={`${uiStyles.button} ${uiStyles.secondary}`}

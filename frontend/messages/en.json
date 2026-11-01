@@ -708,6 +708,7 @@
       "currencyChange": "Change",
       "currencyAskTitle": "Change the currency?",
       "currencyNew": "New currency",
+      "currencyPick": "Choose a currency",
       "currencyAskBody": "{count, plural, one {Your # saved price keeps its number} other {Your # saved prices keep their numbers}}: {from} becomes {to}. Check your prices after.",
       "currencyAskNoPrices": "You have no saved prices yet, so nothing else changes.",
       "currencyAskOnce": "You can change it until your first booking, and before you connect Stripe.",

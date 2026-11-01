@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, test } from "node:test";
 
-import { changeBody, changeExample, currencyChangeError, currencyChoices, currencyLabel, currencyName, losesPayments } from "../lib/currency.ts";
+import { askView, changeBody, changeExample, currencyChangeError, currencyChoices, currencyLabel, currencyName, losesPayments } from "../lib/currency.ts";
 
 const option = (code, stripe_settles = false) => ({ code, minor_units: 2, stripe_settles });
 const state = {
@@ -51,6 +51,18 @@ describe("the change", () => {
     assert.equal(losesPayments({ ...state, currency: "USD" }, "EUR"), false);
     // Already outside it (a country Stripe is not offered in): nothing to lose.
     assert.equal(losesPayments({ ...state, currency: "BRL" }, "USD"), false);
+  });
+});
+
+describe("the ask (askView)", () => {
+  test("fence: it opens with no currency chosen, and nothing can be confirmed until one is", () => {
+    // Wrong implementation killed: preselecting the first other option, so an EUR business opens on
+    // Real brasileiro and one click relabels every price.
+    assert.deepEqual(askView(state, null, "en"), { canConfirm: false, example: null, warn: false });
+  });
+
+  test("guard: once chosen, the example and the payments warning follow the choice", () => {
+    assert.deepEqual(askView(state, "USD", "en"), { canConfirm: true, example: { from: "€35.00", to: "$35.00" }, warn: true });
   });
 });
 
