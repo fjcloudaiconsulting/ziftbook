@@ -182,6 +182,14 @@ def _unavailable(error: storage.StorageError) -> ApiError:
     return ApiError(503, "photos_unavailable")
 
 
+def _no_scratch(upload_id: UUID, span: Span) -> ApiError:
+    """The upload's scratch file in /tmp could not be made or written: the server's fault."""
+    fields = {"decoder": "scratch", "upload_id": str(upload_id)}
+    _count("scratch", span)
+    logger.error("photo decoder could not start", extra=fields)
+    return Refusal(503, "busy", fields)
+
+
 def process(tenant_id: UUID, upload_id: UUID) -> Variants:
     """The two variants of an upload, or a 409/422/503 ApiError. The key is rebuilt from the
     session's business, never taken from the client."""
@@ -200,11 +208,17 @@ def process(tenant_id: UUID, upload_id: UUID) -> Variants:
                 span.set_attribute("bytes", n)
                 if n > MAX_BYTES:
                     raise ApiError(422, "photo_too_large")
-                with tempfile.TemporaryFile() as upload:
+                try:
+                    scratch = tempfile.TemporaryFile()
+                except OSError:
+                    raise _no_scratch(upload_id, span) from None
+                with scratch as upload:
                     try:
                         got = storage.read_into(key, upload, MAX_BYTES)
                     except storage.TooLarge:
                         raise ApiError(422, "photo_too_large") from None
+                    except OSError:  # writing the scratch file
+                        raise _no_scratch(upload_id, span) from None
                     if got is None:
                         raise ApiError(409, "photo_missing")
                     upload.seek(0)
@@ -516,7 +530,7 @@ def parse(body: bytes) -> tuple[Decoded | Refused, bytes, bytes] | None:
 # logs' `decoder`. ok and refused are the photo's answer; the rest say why the child failed.
 OUTCOMES = (
     *("ok", "refused", "cpu", "memory", "oom", "signal", "exit", "output", "protocol"),
-    *("timeout", "starved", "headroom", "spawn", "limits", "import", "hardening"),
+    *("timeout", "starved", "headroom", "scratch", "spawn", "limits", "import", "hardening"),
 )
 
 
