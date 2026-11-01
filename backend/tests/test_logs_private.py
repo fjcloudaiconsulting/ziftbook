@@ -435,6 +435,16 @@ def test_no_personal_data_ever_reaches_a_log(
         ).status_code
         == 404
     )
+    rebooked = owner.post(
+        "/api/bookings",
+        json={
+            "service_id": created.json()["id"],
+            "member_id": str(target),
+            "client_id": str(gone),
+            "starts_at": slots[1],
+        },
+    )
+    assert rebooked.status_code == 422
 
     # 7: invite flow — send, list, a wrong token, then accept with a brand-new account.
     invite_email = fresh_email()

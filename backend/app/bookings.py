@@ -1668,9 +1668,16 @@ def book(
     # 4. An off-grid "anyone" would pick by load and could land on someone on holiday.
     if new.override and new.member_id is None:
         raise ApiError(422, "member_required")
-    # 5. Checked, not left to the foreign key (a 500); RLS makes another business's id unknown.
+    # 5. Checked, not left to the foreign key (a 500); RLS makes another business's id unknown,
+    # and an erased client is unknown too (ZIF-58). Under the lock, so no erasure lands between.
     if new.client_id is not None:
-        if db.scalar(text("SELECT 1 FROM clients WHERE id = :id"), {"id": new.client_id}) is None:
+        if (
+            db.scalar(
+                text("SELECT 1 FROM clients WHERE id = :id AND erased_at IS NULL"),
+                {"id": new.client_id},
+            )
+            is None
+        ):
             raise ApiError(422, "unknown_client")
         client_id = new.client_id
     else:
