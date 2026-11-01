@@ -212,17 +212,24 @@ def process(tenant_id: UUID, upload_id: UUID) -> Variants:
                     scratch = tempfile.TemporaryFile()
                 except OSError:
                     raise _no_scratch(upload_id, span) from None
-                with scratch as upload:
+                try:
                     try:
-                        got = storage.read_into(key, upload, MAX_BYTES)
+                        got = storage.read_into(key, scratch, MAX_BYTES)
+                        if got is not None:
+                            scratch.flush()  # a full /tmp may fail only here (the buffer's tail)
+                            scratch.seek(0)
                     except storage.TooLarge:
                         raise ApiError(422, "photo_too_large") from None
                     except OSError:  # writing the scratch file
                         raise _no_scratch(upload_id, span) from None
                     if got is None:
                         raise ApiError(409, "photo_missing")
-                    upload.seek(0)
-                    found = variants(upload, upload_id, span)
+                    found = variants(scratch, upload_id, span)
+                finally:
+                    try:
+                        scratch.close()
+                    except OSError:  # a tail that could not be written: already answered
+                        pass
             finally:
                 _LOCK.release()
             span.set_attribute("outcome", "ok")
