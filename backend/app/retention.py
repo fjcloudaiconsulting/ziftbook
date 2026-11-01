@@ -23,11 +23,12 @@ interrupted or concurrent run (two replicas) converges, and a restored backup is
 """
 
 import logging
+import re
 import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from datetime import UTC, date, datetime, timedelta
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from opentelemetry.trace import SpanKind
@@ -42,7 +43,9 @@ BATCH = 1000  # rows per statement; the 0074 functions use the same
 MAX_BATCHES = 50
 BUDGET_SECONDS = 20.0  # wall clock per run: jobs (reset links, payments) wait while it runs
 MARGIN = limits.MARGIN  # one value with limits' own purge
-MAX_HOLD = timedelta(days=90)  # the longest a retention hold can run (ZIF_RETENTION_HOLD_UNTIL)
+MAX_HOLD = timedelta(
+    days=90
+)  # the furthest ahead a retention hold may end (ZIF_RETENTION_HOLD_UNTIL)
 
 # platform_audit_events' failure actions, kept 30 days like failed sign-ins (owner ruling D3);
 # migrations 0072 and 0074 repeat the list, and a test compares them.
@@ -166,18 +169,49 @@ class _Walk:
 WALK = _Walk()
 
 
-def effective_hold(requested: date | None, today: date) -> tuple[date | None, bool]:
-    """The hold date to apply, and whether the requested one was more than MAX_HOLD ahead: then
-    MAX_HOLD from today. A mistyped year must never turn the hold off, nor keep data for years."""
-    if requested is not None and requested > today + MAX_HOLD:
-        return today + MAX_HOLD, True
-    return requested, False
+@dataclass(frozen=True)
+class Hold:
+    """ZIF_RETENTION_HOLD_UNTIL, parsed (owner ruling D6, the architect's ruling on the review).
+
+    on: a plain YYYY-MM-DD from tomorrow to MAX_HOLD ahead; held until that day (UTC), then over
+    by itself. past: a date that parsed and has come; not held (the worker logs an ERROR at
+    startup: a mistyped year must show). invalid: anything else (`0`, a datetime, a number, more
+    than MAX_HOLD ahead); held until someone fixes it, with an ERROR every run and no healthcheck
+    ping, so it can neither turn the protection off nor keep data quietly for years."""
+
+    raw: str | None
+    state: Literal["off", "on", "past", "invalid"]
+    until: date | None = None
+
+    def held(self, today: date) -> bool:
+        if self.state == "invalid":
+            return True
+        return self.state == "on" and self.until is not None and today < self.until
 
 
-def sweep(should_stop: Callable[[], bool] = lambda: False, hold_until: date | None = None) -> Swept:
-    """One run: batches until nothing is left, the budget is spent or the worker stops. Until
-    hold_until (exclusive, UTC) the evidence is kept."""
-    held = hold_until is not None and datetime.now(UTC).date() < hold_until
+PLAIN_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
+def parse_hold(raw: str | None, today: date) -> Hold:
+    if raw is None:
+        return Hold(raw, "off")
+    if not PLAIN_DATE.fullmatch(raw):
+        return Hold(raw, "invalid")
+    try:
+        until = date.fromisoformat(raw)
+    except ValueError:
+        return Hold(raw, "invalid")
+    if until <= today:
+        return Hold(raw, "past", until)
+    if until > today + MAX_HOLD:
+        return Hold(raw, "invalid")
+    return Hold(raw, "on", until)
+
+
+def sweep(should_stop: Callable[[], bool] = lambda: False, hold: Hold | None = None) -> Swept:
+    """One run: batches until nothing is left, the budget is spent or the worker stops. While the
+    hold holds, the evidence is kept."""
+    held = hold is not None and hold.held(datetime.now(UTC).date())
     swept = Swept(held=held)
     steps: list[Callable[[Swept], bool]] = [_rate_limits, _sessions, _admin_sessions]
     if not held:
@@ -202,7 +236,7 @@ def sweep(should_stop: Callable[[], bool] = lambda: False, hold_until: date | No
     quiet = swept.complete and not swept.held and not swept.busy
     level = logging.INFO if quiet else logging.WARNING
     if held:
-        assert hold_until is not None
-        fields["hold_until"] = hold_until.isoformat()
+        assert hold is not None
+        fields["hold_until"] = (hold.raw or "")[:40]  # as set, so an invalid value shows
     logger.log(level, "retention swept", extra=fields)
     return swept
