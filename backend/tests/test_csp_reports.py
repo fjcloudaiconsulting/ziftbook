@@ -678,6 +678,30 @@ def test_the_slot_is_given_back_when_the_limiter_fails(
     assert csp_reports._in_flight == 0
 
 
+# 16c. Build review 5: building the limiter key (it reads the pepper's settings) can fail too; that
+# never keeps a slot either.
+def test_a_failure_building_the_limiter_key_never_keeps_a_slot(
+    client: TestClient, log_lines: Lines, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real = limits.ip_key
+    failing = [True]
+
+    def ip_key(*args: Any, **kwargs: Any) -> str:
+        if failing[0]:
+            raise RuntimeError("settings unreadable")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(limits, "ip_key", ip_key)
+    for _ in range(csp_reports.MAX_IN_FLIGHT + 1):
+        assert post(client, legacy()).status_code == 500
+    failing[0] = False
+
+    assert post(client, legacy()).status_code == 204
+
+    assert len(violations(log_lines)) == 1
+    assert csp_reports._in_flight == 0
+
+
 # 16b. B4: the drop line is at most one a minute, and carries what accumulated since.
 def test_drops_are_one_line_a_minute_with_a_count_per_reason(
     client: TestClient, log_lines: Lines, monkeypatch: pytest.MonkeyPatch

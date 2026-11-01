@@ -451,12 +451,13 @@ async def report(request: Request) -> Response:
     site = request.headers.get("sec-fetch-site")
     if site is not None and site.strip().lower() != "same-origin":
         return _drop("cross_site")
+    # Built before the slot is taken: nothing between the take and the try may raise.
+    ip = request.client.host if request.client else None
+    key = limits.ip_key("csp_report", ip, v6_prefix=limits.AUTH_V6_PREFIX)
     # Checked and taken with no await in between, on the event loop: never more than MAX_IN_FLIGHT.
     if _in_flight >= MAX_IN_FLIGHT:
         return _drop("busy")
     _in_flight += 1
-    ip = request.client.host if request.client else None
-    key = limits.ip_key("csp_report", ip, v6_prefix=limits.AUTH_V6_PREFIX)
     try:
         hits = await run_in_threadpool(limits.charge, key, LIMIT_WINDOW)
     except SQLAlchemyError as error:
