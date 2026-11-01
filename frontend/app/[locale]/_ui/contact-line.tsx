@@ -11,12 +11,12 @@ function MailIcon() {
   );
 }
 
-/** The business's contact email (ZIF-99) under its name: text the owner typed, so only ever text,
+/** The business's contact email (ZIF-99) under its name (`tight` right under a page heading): text the owner typed, so only ever text,
  * linked through mailtoHref. Callers render nothing when the business has no address. Not confirmed
  * yet (ZIF-232). */
-export function ContactLine({ email, label }: { email: string; label: string }) {
+export function ContactLine({ email, label, tight = false }: { email: string; label: string; tight?: boolean }) {
   return (
-    <p className={`${styles.bizMeta} ${styles.contactLine}`}>
+    <p className={`${styles.bizMeta} ${styles.contactLine} ${tight ? styles.metaTight : ""}`}>
       <MailIcon />
       <span className={styles.srOnly}>{label}</span>
       <a href={mailtoHref(email)}>{email}</a>

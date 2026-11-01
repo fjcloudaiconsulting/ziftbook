@@ -63,3 +63,38 @@ describe("the contact line", () => {
     );
   });
 });
+
+describe("the manage page", () => {
+  const page = read("../app/[locale]/booking/manage-booking.tsx");
+
+  test("fence: the line sits under the business name only when there is an address", () => {
+    // Wrong implementation killed: an empty line when the setting is empty.
+    assert.match(page, /const contact = booking\.contact_email;/);
+    assert.match(page, /\{contact && <ContactLine email=\{contact\} label=\{t\("contactLabel"\)\} tight \/>\}/);
+    assert.doesNotMatch(page, /dangerouslySetInnerHTML/);
+  });
+
+  test("fence: a booking that can no longer be changed names the address, linked through mailtoHref", () => {
+    // Wrong implementation killed: "Contact {business}." with no way to reach them, or the address
+    // spliced into the message as markup.
+    assert.match(
+      page,
+      /\{contact\s*\?\s*t\.rich\("noChangesEmail", \{ business: booking\.business, email: contact, link: \(chunks\) => <a href=\{mailtoHref\(contact\)\}>\{chunks\}<\/a> \}\)\s*:\s*t\("noChanges", \{ business: booking\.business \}\)\}/,
+    );
+  });
+
+  test("every language has the manage page's words, the address inside the link", () => {
+    assert.deepEqual(
+      ["en", "nl", "pt"].map((l) => catalog(l).BookingLink.contactLabel),
+      ["Contact email: ", "Contactadres: ", "E-mail de contato: "],
+    );
+    assert.deepEqual(
+      ["en", "nl", "pt"].map((l) => catalog(l).BookingLink.noChangesEmail),
+      [
+        "This booking can no longer be changed online. Contact {business} at <link>{email}</link>.",
+        "Deze afspraak kan niet meer online worden gewijzigd. Neem contact op met {business} via <link>{email}</link>.",
+        "Este agendamento não pode mais ser alterado on-line. Entre em contato com {business} pelo e-mail <link>{email}</link>.",
+      ],
+    );
+  });
+});

@@ -954,6 +954,8 @@
     "cancel": "Cancel booking",
     "reschedule": "Change date or time ({n, plural, one {# change left} other {# changes left}})",
     "noChanges": "This booking can no longer be changed online. Contact {business}.",
+    "noChangesEmail": "This booking can no longer be changed online. Contact {business} at <link>{email}</link>.",
+    "contactLabel": "Contact email: ",
     "consentAsk": "When you booked, you asked {business} to keep in touch by: {purposes}. Confirm?",
     "purposes": {
       "marketing_email": "email",
