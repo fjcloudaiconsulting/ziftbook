@@ -17,6 +17,7 @@ import {
   noticeOptions,
   noticeUnit,
   parseWhole,
+  connectError,
   paymentsAction,
   refusedKeys,
   saveRefusal,
@@ -223,11 +224,34 @@ describe("guards", () => {
 
 describe("F1 the payments panel offers only actions the API can serve", () => {
   test("none and onboarding connect, ready opens the dashboard, off or an unsupported country offers nothing", () => {
-    assert.equal(paymentsAction("none", true), "connect");
-    assert.equal(paymentsAction("onboarding", true), "continue");
-    assert.equal(paymentsAction("ready", true), "dashboard");
-    assert.equal(paymentsAction("off", true), null);
-    for (const state of ["none", "onboarding", "ready", "off"]) assert.equal(paymentsAction(state, false), null);
+    assert.equal(paymentsAction("none", true, true), "connect");
+    assert.equal(paymentsAction("onboarding", true, true), "continue");
+    assert.equal(paymentsAction("ready", true, true), "dashboard");
+    assert.equal(paymentsAction("off", true, true), null);
+    for (const state of ["none", "onboarding", "ready", "off"]) assert.equal(paymentsAction(state, false, true), null);
+  });
+
+  test("ZIF-102 fence: no Connect in a currency Stripe does not pay out in for the country", () => {
+    // Wrong implementation killed: offering Connect, which the API refuses (409
+    // payments_unavailable_currency) after the owner has clicked through.
+    assert.equal(paymentsAction("none", true, false), null);
+  });
+
+  test("ZIF-102 guard: an account that already exists is still finished or opened", () => {
+    // The API still onboards an account it holds, whatever its currency (fold N1).
+    assert.equal(paymentsAction("onboarding", true, false), "continue");
+    assert.equal(paymentsAction("ready", true, false), "dashboard");
+  });
+});
+
+describe("F1b what a refused Connect means (ZIF-102)", () => {
+  test("fence: the currency refusals are told apart from Stripe not answering", () => {
+    // Wrong implementation killed: "Stripe didn't answer" for a refusal trying again cannot fix.
+    assert.equal(connectError({ status: 409, code: "payments_unavailable_currency" }), "currency");
+    assert.equal(connectError({ status: 409, code: "currency_changed" }), "currencyChanged");
+    assert.equal(connectError({ status: 401 }), "signedOut");
+    assert.equal(connectError({ status: 503 }), "failed");
+    assert.equal(connectError({ status: 409, code: "other" }), "failed");
   });
 });
 

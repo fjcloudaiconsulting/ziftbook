@@ -688,6 +688,8 @@
       "paymentsDesc": "Kaartcontroles en vooruitbetalingen, via Stripe.",
       "paymentsOff": "Online betalen is nog niet beschikbaar.",
       "paymentsCountry": "Online betalen is in jouw land nog niet beschikbaar.",
+      "paymentsCurrency": "Stripe betaalt bedrijven in jouw land niet uit in {currency}, dus online betalingen zijn in deze valuta niet beschikbaar.",
+      "paymentsCurrencyChanged": "De valuta van je bedrijf is intussen gewijzigd. Laad de pagina opnieuw en koppel daarna opnieuw.",
       "paymentsNone": "Koppel je bedrijf aan Stripe om de kaart van klanten te controleren bij het boeken, of laat ze vooraf betalen. Stripe betaalt uit op je bankrekening.",
       "paymentsConnect": "Koppelen met Stripe",
       "paymentsOnboarding": "Stripe heeft nog een paar gegevens nodig voordat je betalingen kunt ontvangen.",

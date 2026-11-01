@@ -232,10 +232,22 @@ export function effective(saved: Settings, draft: Draft, key: IntKey): number {
 export type PaymentsState = "off" | "none" | "onboarding" | "ready";
 
 /** The one button the payments panel shows, or none. `off` (the platform's Stripe keys are unset) and an
- * unsupported country would both answer a click with an error, so they get text only. */
-export function paymentsAction(state: PaymentsState, countrySupported: boolean): "connect" | "continue" | "dashboard" | null {
+ * unsupported country would both answer a click with an error, so they get text only. So would a new
+ * account in a currency Stripe does not pay out in for the country (ZIF-102); an account that already
+ * exists is still finished or opened, as the API allows. */
+export function paymentsAction(state: PaymentsState, countrySupported: boolean, currencySupported: boolean): "connect" | "continue" | "dashboard" | null {
   if (state === "off" || !countrySupported) return null;
-  return state === "none" ? "connect" : state === "onboarding" ? "continue" : "dashboard";
+  if (state === "none") return currencySupported ? "connect" : null;
+  return state === "onboarding" ? "continue" : "dashboard";
+}
+
+/** What a refused Connect means (ZIF-102): a currency Stripe does not pay out in for the country, a
+ * currency changed while connecting (in another tab), or Stripe not answering. */
+export function connectError(outcome: { status: number; code?: string }): "signedOut" | "currency" | "currencyChanged" | "failed" {
+  if (outcome.status === 401) return "signedOut";
+  if (outcome.status === 409 && outcome.code === "payments_unavailable_currency") return "currency";
+  if (outcome.status === 409 && outcome.code === "currency_changed") return "currencyChanged";
+  return "failed";
 }
 
 /** GET /api/settings/contact-email (ZIF-232), as the generated client types it. */

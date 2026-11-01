@@ -688,6 +688,8 @@
       "paymentsDesc": "Verificações de cartão e pagamentos antecipados, pelo Stripe.",
       "paymentsOff": "Os pagamentos online ainda não estão disponíveis.",
       "paymentsCountry": "Os pagamentos online ainda não estão disponíveis no seu país.",
+      "paymentsCurrency": "O Stripe não paga em {currency} para negócios no seu país, então pagamentos online não estão disponíveis nesta moeda.",
+      "paymentsCurrencyChanged": "A moeda do seu negócio mudou enquanto isso. Recarregue a página e conecte de novo.",
       "paymentsNone": "Conecte seu negócio ao Stripe para verificar o cartão dos clientes ao agendar, ou deixe que paguem antecipadamente. O Stripe repassa o valor para a sua conta bancária.",
       "paymentsConnect": "Conectar com o Stripe",
       "paymentsOnboarding": "O Stripe ainda precisa de alguns dados antes que você possa receber pagamentos.",
