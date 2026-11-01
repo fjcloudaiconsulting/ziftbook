@@ -6,7 +6,7 @@ import { type MouseEvent, useEffect, useId, useRef, useState } from "react";
 import { accountSetLocale, sessionRead } from "@/api-client";
 import { Link, usePathname, useRouter } from "@/i18n/navigation";
 import { routing } from "@/i18n/routing";
-import { pickedHere, recordPick, resolveLocale, savePickedLanguage, takeUnsavedNotice } from "@/lib/locale";
+import { isAdminPath, pickedHere, recordPick, resolveLocale, savePickedLanguage, takeUnsavedNotice } from "@/lib/locale";
 
 import { send } from "./parts";
 import styles from "./ui.module.css";
@@ -147,16 +147,19 @@ export function LanguageSwitcher({ save }: { save?: SaveLanguage }) {
  * wins over the link (CONTRIBUTING.md, "Which language a person sees"); a guest keeps the page's.
  * Reads GET /api/session once per page, moves the page when needed, and answers the save for the
  * language button (undefined for a guest). `hold`: the page must not move now (the checkout
- * resuming a booking from its address, where a move would remount it mid-check).
+ * resuming a booking from its address, where a move would remount it mid-check). Never on the
+ * platform admin's pages (isAdminPath).
  */
 export function useOwnLanguage({ hold = false }: { hold?: boolean } = {}): SaveLanguage | undefined {
   const locale = useLocale();
   const pathname = usePathname();
   const router = useRouter();
+  const admin = isAdminPath(pathname);
   // The person the page was read for: a pick saves to them only (savePickedLanguage).
   const [viewer, setViewer] = useState<{ user_id: string; tenant_id: string } | null>(null);
 
   useEffect(() => {
+    if (admin) return;
     let cancelled = false;
     void send(sessionRead()).then((outcome) => {
       if (cancelled || outcome.status !== 200 || !outcome.data) return;
@@ -180,7 +183,7 @@ export function useOwnLanguage({ hold = false }: { hold?: boolean } = {}): SaveL
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  if (!viewer) return undefined;
+  if (admin || !viewer) return undefined;
   return async (picked) => {
     const result = await savePickedLanguage(viewer, () => send(sessionRead()), () => send(accountSetLocale({ body: { locale: picked } })));
     // Someone else signed in in another tab: start over as them, as the console does.

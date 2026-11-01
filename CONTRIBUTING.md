@@ -1105,7 +1105,8 @@ they belong to. NULL means they chose none. The business's `language` setting is
 No cookie carries the language (`localeCookie: false`); the stored preference lives on the account. The web app
 applies these rules in one function, `resolveLocale` (`frontend/lib/locale.ts`): the console's shell, and on every
 public page the language button (`OwnLanguageSwitcher`, the booking page's included), read `GET /api/session` and
-move the page to the language it gives. The checkout does not move while it resumes a booking from its address. The language button saves a
+move the page to the language it gives. The checkout does not move while it resumes a booking from its address.
+The platform admin's pages (`/admin`) keep the URL's language and never read or write a business person's. The language button saves a
 signed-in person's pick to their account; a pick that could not be saved applies in that tab until the page is
 loaded again.
 

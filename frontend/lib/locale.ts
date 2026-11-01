@@ -92,3 +92,11 @@ export async function savePickedLanguage(
   if (result.kind === "mismatch" || result.kind === "signedOut") return result.kind;
   return result.kind === "sent" && result.outcome.status === 200 ? "saved" : "failed";
 }
+
+/** The platform admin's pages (next-intl's pathname, without the locale). They hold their own
+ * session (/api/admin/session), never a business person's, so the language there is the URL's: no
+ * member session is read, and a pick changes only the view (ZIF-102; the admin's own saved language
+ * is a follow-up for the owner). */
+export function isAdminPath(pathname: string): boolean {
+  return pathname === "/admin" || pathname.startsWith("/admin/");
+}

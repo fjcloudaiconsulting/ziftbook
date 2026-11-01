@@ -2,9 +2,10 @@
 // owner's rulings: a saved language always wins, on every surface (4); a guest whose browser speaks
 // none of ours gets English (5), and there is one language list (routing.locales).
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { describe, test } from "node:test";
 
-import { browserLocale, forgetPick, pickedHere, recordPick, resolveLocale, savePickedLanguage, takeUnsavedNotice } from "../lib/locale.ts";
+import { browserLocale, forgetPick, isAdminPath, pickedHere, recordPick, resolveLocale, savePickedLanguage, takeUnsavedNotice } from "../lib/locale.ts";
 
 describe("a language picked with the language button", () => {
   test("fence: a pick that could not be saved is remembered for this tab", () => {
@@ -118,5 +119,21 @@ describe("saving a public page's language pick (savePickedLanguage)", () => {
     assert.equal(await savePickedLanguage(ana, same, async () => ({ status: 200 })), "saved");
     assert.equal(await savePickedLanguage(ana, same, async () => ({ status: 503 })), "failed");
     assert.equal(await savePickedLanguage(ana, async () => ({ status: 401 }), async () => ({ status: 200 })), "signedOut");
+  });
+});
+
+describe("platform admin pages (isAdminPath)", () => {
+  test("fence: the admin pages are told apart, so they never read or write a business person's language", () => {
+    // Wrong implementation killed: the member session read on /admin, which moves the admin console
+    // to a business person's language and saves the admin's pick to that person.
+    assert.equal(isAdminPath("/admin"), true);
+    assert.equal(isAdminPath("/admin/sign-in"), true);
+    assert.equal(isAdminPath("/administrator-salon"), false); // a business's slug, not the admin
+    assert.equal(isAdminPath("/sign-in"), false);
+  });
+
+  test("guard: the public language hook skips its viewer logic there", () => {
+    const src = readFileSync(new URL("../app/[locale]/_ui/header.tsx", import.meta.url), "utf8");
+    assert.match(src, /const admin = isAdminPath\(pathname\);[\s\S]*if \(admin\) return;[\s\S]*if \(admin \|\| !viewer\) return undefined;/);
   });
 });
