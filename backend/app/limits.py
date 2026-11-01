@@ -17,6 +17,10 @@ MIN_KEY = 32  # characters; a shorter key counts as unset
 # whose window started longer ago than this (plus a margin), so a longer window would be cut short:
 # every function here refuses one.
 MAX_WINDOW = timedelta(days=1)
+# How long after MAX_WINDOW a row is deleted, here and by the retention sweep: a reader whose
+# transaction began before the deleting one reads with an earlier now(), and an hour is longer than
+# any runtime transaction lives (30 s statement timeout, 60 s idle in transaction).
+MARGIN = timedelta(hours=1)
 # SHA-256 of docker-compose.yaml's development ZIF_RATE_LIMIT_KEY.
 DEV_KEY_SHA256 = "1a77674c6e51c52ee4710b01c38678b88ab6c007d4e874a962b0caf258430ca5"
 
@@ -32,8 +36,8 @@ ON CONFLICT (key) DO UPDATE SET
 RETURNING key, hits
 """)
 
-# Purged opportunistically, 100 rows per attempt; after a quiet spell the worker's retention sweep
-# (app.retention, ZIF-235) is what enforces MAX_WINDOW.
+# Purged opportunistically, 100 rows per attempt, an hour (MARGIN) after the longest window; after a
+# quiet spell the worker's retention sweep (app.retention, ZIF-235) is what enforces it.
 PURGE = text("""
 DELETE FROM rate_limits WHERE key IN (
   SELECT key FROM rate_limits WHERE window_start < now() - CAST(:max_window AS interval)
@@ -51,7 +55,7 @@ def _charge(keys: list[str], window: timedelta) -> dict[str, int]:
     _check(window)
     with SessionLocal.begin() as session:
         rows = session.execute(HIT, {"keys": sorted(keys), "window": window}).all()
-        session.execute(PURGE, {"max_window": MAX_WINDOW})
+        session.execute(PURGE, {"max_window": MAX_WINDOW + MARGIN})
     return {key: hits for key, hits in rows}
 
 

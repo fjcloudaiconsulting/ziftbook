@@ -435,3 +435,31 @@ def test_a_window_longer_than_the_sweep_keeps_is_refused(action: str, call: str)
 @pytest.mark.parametrize("call", ["hit", "charge", "refund", "count", "count_all"])
 def test_the_longest_window_is_accepted(action: str, call: str) -> None:
     CALLS[call](f"{action}:k", limits.MAX_WINDOW)
+
+
+# ZIF-235 (build review, correctness #4) FENCE. Wrong impl: the opportunistic purge at MAX_WINDOW
+# with no margin. A hit on a one-day key whose transaction began just before the purging one reads
+# with an earlier now(): the row is still live to it, and a purge with no margin restarts its window
+# at 1. The purge waits the same hour as the retention sweep.
+def test_the_purge_keeps_a_row_within_the_margin_after_the_longest_window(
+    action: str, app_engine: Engine
+) -> None:
+    margin, gone = f"{action}:margin", f"{action}:gone"
+    limits.hit({margin: 3, gone: 3}, WINDOW)
+    with app_engine.begin() as conn:
+        for key, age in (
+            (margin, limits.MAX_WINDOW + timedelta(minutes=30)),
+            (gone, limits.MAX_WINDOW + limits.MARGIN + timedelta(minutes=1)),
+        ):
+            conn.execute(
+                text("UPDATE rate_limits SET window_start = now() - :a WHERE key = :k"),
+                {"a": age, "k": key},
+            )
+
+    limits.hit({f"{action}:trigger": 3}, WINDOW)
+
+    with app_engine.connect() as conn:
+        kept = set(
+            conn.scalars(text("SELECT key FROM rate_limits WHERE key LIKE :p"), {"p": f"{action}%"})
+        )
+    assert kept == {margin, f"{action}:trigger"}
