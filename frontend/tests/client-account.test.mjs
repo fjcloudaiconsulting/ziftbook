@@ -11,6 +11,7 @@ import {
   accountSignInOutcome,
   afterAccountSignOut,
   afterFill,
+  afterUnlock,
   afterSignOut,
   applyFill,
   bookAgainSlug,
@@ -480,5 +481,34 @@ describe("the account controls wait while a booking is on its way (PR 6 review, 
     assert.match(text, /<SignedInNote [^>]*busy=\{signOutBusy \|\| held\}/);
     assert.match(text, /function fill\(signedIn: AccountOut\) \{\s*\/\/[^\n]*\n\s*if \(heldNow\(\)\) return;/);
     assert.match(text, /afterAccountSignOut\(acct, heldNow\(\)\)/);
+  });
+});
+
+describe("a sign-out while held empties the form once it unlocks (PR 6 review, correctness 4)", () => {
+  const ana = { email: "ana@example.com", name: "Ana Silva", phone: null };
+  const fill = { name: "Ana Silva", email: "ana@example.com", phone: null, region: null };
+
+  test("held: the clear waits; unlocked (Change time or details): it is applied, once", () => {
+    // Wrong implementation killed: forgetting what the account wrote, so the next person on a shared device gets
+    // the previous one's details back, editable, when the request is released.
+    const { state } = afterAccountSignOut({ account: ana, written: fill, pending: null }, true);
+    assert.deepEqual(state, { account: null, written: null, pending: fill });
+    const unlocked = afterUnlock(state);
+    assert.deepEqual(unlocked, { state: SIGNED_OUT, clear: fill });
+    assert.deepEqual(afterUnlock(unlocked.state), { state: SIGNED_OUT, clear: null });
+  });
+
+  test("a fill after it replaces the pending clear: the new account's values are the ones to empty", () => {
+    const pending = { account: null, written: null, pending: fill };
+    const other = { name: "Bo", email: "bo@example.com", phone: null, region: null };
+    assert.deepEqual(afterFill(pending, ana, other, false), { account: ana, written: other, pending: null });
+  });
+
+  test("fence: every way the checkout unlocks applies the pending clear", () => {
+    const text = readFileSync(new URL("../app/[locale]/[slug]/booking-page.tsx", import.meta.url), "utf8");
+    const reset = /function reset\(\) \{([\s\S]*?)\n {2}\}/.exec(text);
+    assert.ok(reset);
+    assert.match(reset[1], /unlockAccount\(\);/);
+    assert.match(text, /function unlockAccount\(\) \{\s*const \{ state, clear \} = afterUnlock\(acct\);/);
   });
 });

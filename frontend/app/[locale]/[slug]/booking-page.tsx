@@ -35,7 +35,7 @@ import {
   weekFor,
   withName,
 } from "@/lib/booking-page";
-import { accountHeld, afterAccountSignOut, afterFill, afterSignOut, type AccountState, applyFill, emailNotSaved, fillFrom, offerNext, SIGNED_OUT } from "@/lib/client-account";
+import { accountHeld, afterAccountSignOut, afterFill, afterSignOut, afterUnlock, type AccountState, applyFill, emailNotSaved, fillFrom, offerNext, SIGNED_OUT } from "@/lib/client-account";
 import { dateLocale } from "@/lib/console";
 import { defaultDial, dialOptions } from "@/lib/dial-codes";
 import { formatMoney } from "@/lib/money";
@@ -623,8 +623,20 @@ export function BookingPage({
     return false;
   }
 
+  /** The form unlocks: a sign-out that came while it was held now empties what the account filled in. */
+  function unlockAccount() {
+    const { state, clear } = afterUnlock(acct);
+    if (clear) {
+      const next = afterSignOut({ name: flow.name, email: flow.email, phone: flow.phone, region }, clear, page.country);
+      setFlow((f) => ({ ...f, name: next.name, email: next.email, phone: next.phone, suggest: null }));
+      setRegion(next.region);
+    }
+    setAcct(state);
+  }
+
   /** Back to a plain checkout: no booking in the address, nothing stored, the form open again. */
   function reset() {
+    unlockAccount();
     forget(false);
     setBookingId(null);
     setStart(null);
@@ -887,6 +899,7 @@ export function BookingPage({
         setChecking(false);
         if (known) apply(answer.data!, null);
         else if (gone) {
+          unlockAccount();
           forget(false);
           setBookingId(null);
           void ensureWeek(flow.service!, flow.worker, flow.weekStart);

@@ -271,7 +271,14 @@ export function afterFill<A>(state: AccountState<A>, account: A, fill: Fill, hel
 }
 
 /** After the account signed out on this browser: free, `clear` is what to empty from the form (afterSignOut); held,
- * nothing is emptied now. */
+ * nothing is emptied now (afterUnlock applies it). */
 export function afterAccountSignOut<A>(state: AccountState<A>, held: boolean): { state: AccountState<A>; clear: Fill | null } {
-  return held ? { state: SIGNED_OUT, clear: null } : { state: SIGNED_OUT, clear: state.written };
+  // Held, what the account wrote is kept as a clear still to apply: once the form unlocks ("Change time or details"),
+  // the next person must not get the previous one's details back, editable.
+  return held ? { state: { ...SIGNED_OUT, pending: state.written ?? state.pending }, clear: null } : { state: SIGNED_OUT, clear: state.written };
+}
+
+/** When the form unlocks: the clear a sign-out left pending, applied once. */
+export function afterUnlock<A>(state: AccountState<A>): { state: AccountState<A>; clear: Fill | null } {
+  return { state: { ...state, pending: null }, clear: state.pending };
 }
