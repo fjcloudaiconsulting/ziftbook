@@ -5,8 +5,7 @@ import { useEffect, useState } from "react";
 
 import { type AccountOut, type HistoryBooking, platformAccountHistory, platformAccountRead } from "@/api-client";
 import { Link, useRouter } from "@/i18n/navigation";
-import { bookAgainSlug, historyOutcome, historySections, historyServiceName, type Pill, statusPill } from "@/lib/client-account";
-import { dateLocale } from "@/lib/console";
+import { bookAgainSlug, historyOutcome, historySections, historyServiceName, historyWhen, type Pill, statusPill } from "@/lib/client-account";
 
 import { shownAccount } from "../_ui/account-button";
 import { AccountSignIn } from "../_ui/account-sign-in";
@@ -117,12 +116,12 @@ export function YourBookings({ turnstileSiteKey }: { turnstileSiteKey: string | 
   }
 
   const { upcoming, past } = historySections(bookings, new Date());
-  const day = new Intl.DateTimeFormat(dateLocale(locale), { weekday: "short", day: "numeric", month: "short" });
-  const time = new Intl.DateTimeFormat(dateLocale(locale), { hour: "2-digit", minute: "2-digit" });
+  // Each row at its business's own time; the city is named when that is not the reader's zone.
+  const readerZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const row = (b: HistoryBooking, ahead: boolean, i: number) => {
     const service = historyServiceName(b.service_name, locale);
-    const start = new Date(b.starts_at);
-    const when = ahead ? `${day.format(start)}, ${time.format(start)}` : day.format(start);
+    const at = historyWhen(b.starts_at, b.business.timezone, readerZone, locale, ahead);
+    const when = at.city ? t("whenIn", { when: at.text, city: at.city }) : at.text;
     const pill = statusPill(b.status, ahead);
     const slug = bookAgainSlug(b, ahead);
     return (

@@ -3,7 +3,9 @@
 
 import { signInOutcome } from "./account.ts";
 import { phoneValue, slugLooksValid } from "./booking-page.ts";
+import { dateLocale } from "./console.ts";
 import { defaultDial, regionsWithDial } from "./dial-codes.ts";
+import { zoneCity } from "./week.ts";
 
 /** What an answer to `POST /api/account/session` means for the form. A wrong password is the console's generic
  * answer (`SignIn.invalid`); `account_unavailable` (a platform admin) only follows a correct password. */
@@ -60,6 +62,22 @@ export function bookAgainSlug(booking: Pick<HistoryRow, "business">, upcoming: b
   if (upcoming) return null;
   const slug = booking.business.slug;
   return slugLooksValid(slug) && slug === slug.toLowerCase() ? slug : null;
+}
+
+/** When a booking is, at its business's own time, as its booking page, emails and manage page show it: day and
+ * time for what is ahead, the day for the past. `city` names the business's zone when it is not the reader's. */
+export function historyWhen(
+  startsAt: string,
+  zone: string,
+  readerZone: string,
+  locale: string,
+  upcoming: boolean,
+): { text: string; city: string | null } {
+  const at = new Date(startsAt);
+  const lang = dateLocale(locale);
+  const day = new Intl.DateTimeFormat(lang, { weekday: "short", day: "numeric", month: "short", timeZone: zone }).format(at);
+  const time = new Intl.DateTimeFormat(lang, { hour: "2-digit", minute: "2-digit", timeZone: zone }).format(at);
+  return { text: upcoming ? `${day}, ${time}` : day, city: zone === readerZone ? null : zoneCity(zone) };
 }
 
 const LANGUAGES = ["en", "nl", "pt"] as const;

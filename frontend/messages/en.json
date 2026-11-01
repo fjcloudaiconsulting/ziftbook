@@ -165,7 +165,8 @@
     "reauth": "For your privacy, enter your password again to see your bookings.",
     "tooMany": "Too many requests for now. Try again in a minute.",
     "menu": "Your account",
-    "signOut": "Sign out"
+    "signOut": "Sign out",
+    "whenIn": "{when} ({city} time)"
   },
   "Admin": {
     "title": "Admin sign-in",

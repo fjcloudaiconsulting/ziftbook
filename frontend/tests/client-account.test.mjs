@@ -18,6 +18,7 @@ import {
   historyOutcome,
   historySections,
   historyServiceName,
+  historyWhen,
   linkRequestShape,
   offerNext,
   rememberReturn,
@@ -403,5 +404,29 @@ describe("the account button", () => {
     for (const file of [...walk(join(root, "(console)")), join(root, "_ui", "console.tsx")]) {
       assert.doesNotMatch(readFileSync(file, "utf8"), /["'`]\/account\b|AccountButton/, file);
     }
+  });
+});
+
+describe("your bookings, at each business's own time (PR 6 review, correctness 1)", () => {
+  test("a time at the business's own zone, as its booking page, emails and manage page show it", () => {
+    // 09:00 UTC is 10:00 in Amsterdam and 09:00 in Lisbon.
+    assert.deepEqual(historyWhen("2026-10-31T09:00:00Z", "Europe/Amsterdam", "Europe/Amsterdam", "en", true), { text: "Sat 31 Oct, 10:00", city: null });
+    assert.deepEqual(historyWhen("2026-10-31T09:00:00Z", "Europe/Lisbon", "Europe/Amsterdam", "en", true), { text: "Sat 31 Oct, 09:00", city: "Lisbon" });
+  });
+
+  test("the city is named only when the business's zone is not the reader's", () => {
+    assert.equal(historyWhen("2026-10-31T09:00:00Z", "Europe/Lisbon", "Europe/Lisbon", "en", true).city, null);
+    assert.equal(historyWhen("2026-10-31T09:00:00Z", "America/Sao_Paulo", "Europe/Lisbon", "pt", true).city, "Sao Paulo");
+  });
+
+  test("a past row's day is the business's day, near midnight too", () => {
+    // 23:30 UTC on 31 Oct is still the 31st in Lisbon and already 1 Nov in Amsterdam.
+    assert.deepEqual(historyWhen("2026-10-31T23:30:00Z", "Europe/Lisbon", "Europe/Amsterdam", "en", false), { text: "Sat 31 Oct", city: "Lisbon" });
+  });
+
+  test("fence: the page formats each row with its business's zone and the reader's", () => {
+    const text = readFileSync(new URL("../app/[locale]/account/your-bookings.tsx", import.meta.url), "utf8");
+    assert.match(text, /historyWhen\(b\.starts_at, b\.business\.timezone, readerZone, locale, ahead\)/);
+    assert.doesNotMatch(text, /new Intl\.DateTimeFormat/);
   });
 });

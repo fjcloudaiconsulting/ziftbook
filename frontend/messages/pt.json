@@ -165,7 +165,8 @@
     "reauth": "Para sua privacidade, digite sua senha de novo para ver seus agendamentos.",
     "tooMany": "Muitas solicitações por agora. Tente de novo em um minuto.",
     "menu": "Sua conta",
-    "signOut": "Sair"
+    "signOut": "Sair",
+    "whenIn": "{when} (horário de {city})"
   },
   "Admin": {
     "title": "Entrar como administrador",
