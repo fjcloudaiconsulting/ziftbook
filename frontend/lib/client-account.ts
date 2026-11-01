@@ -92,10 +92,10 @@ export function historyServiceName(names: Record<string, string>, locale: string
 
 // --- Filling the checkout (security B3.4: only on the person's own click) ---
 
-/** What the offer's click does with `GET /api/account`'s answer: fill in, sign in first (no account session on this
- * browser), or say it failed. */
-export function offerNext(status: number): "fill" | "signIn" | "error" {
-  if (status === 200) return "fill";
+/** What the offer's click does with `GET /api/account`'s answer: ask "Continue as {name}?" (an account is already
+ * signed in on this browser, maybe someone else's: never a silent fill), sign in first, or say it failed. */
+export function offerNext(status: number): "confirm" | "signIn" | "error" {
+  if (status === 200) return "confirm";
   if (status === 401) return "signIn";
   return "error";
 }

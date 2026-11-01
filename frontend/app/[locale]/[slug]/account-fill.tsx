@@ -34,18 +34,25 @@ export function AccountOffer({ t, busy, error, onOpen }: { t: T; busy: boolean; 
 }
 
 /** The sign-in dialog: the service dialog's shape, a card on desktop and full screen on a phone. It closes on the
- * same step, with nothing typed so far lost (the message and the marketing tick stay). */
+ * same step, with nothing typed so far lost (the message and the marketing tick stay). `confirm`: an account already
+ * signed in on this browser, shown by name only until the person continues (security review 4). */
 export function SignInDialog({
   open,
+  confirm,
   t,
   turnstileSiteKey,
   onClose,
+  onContinue,
+  onSomeoneElse,
   onSignedIn,
 }: {
   open: boolean;
+  confirm: AccountOut | null;
   t: T;
   turnstileSiteKey: string | null;
   onClose(): void;
+  onContinue(): void;
+  onSomeoneElse(): void;
   onSignedIn(account: AccountOut): void;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
@@ -75,20 +82,37 @@ export function SignInDialog({
             <CloseIcon />
           </button>
           <div className={styles.acctDialogBody}>
-            <AccountSignIn
-              turnstileSiteKey={turnstileSiteKey}
-              forgotNewTab
-              onSignedIn={onSignedIn}
-              intro={
-                <>
-                  <h2 id="acct-dialog-h" className={styles.acctDialogTitle}>
-                    {t("signInTitle")}
-                  </h2>
-                  <p className={styles.hint}>{t("signInLede")}</p>
-                </>
-              }
-              aside={<p className={styles.aside}>{t("signInGuest")}</p>}
-            />
+            {confirm ? (
+              <>
+                <h2 id="acct-dialog-h" className={styles.acctDialogTitle}>
+                  {t("continueTitle", { name: confirm.name || confirm.email })}
+                </h2>
+                <p className={styles.hint}>{t("signInLede")}</p>
+                <button className={`${styles.button} ${styles.primary}`} type="button" onClick={onContinue}>
+                  {t("continueAction")}
+                </button>
+                <p className={styles.aside}>
+                  <button className={styles.textButton} type="button" onClick={onSomeoneElse}>
+                    {t("someoneElse")}
+                  </button>
+                </p>
+              </>
+            ) : (
+              <AccountSignIn
+                turnstileSiteKey={turnstileSiteKey}
+                forgotNewTab
+                onSignedIn={onSignedIn}
+                intro={
+                  <>
+                    <h2 id="acct-dialog-h" className={styles.acctDialogTitle}>
+                      {t("signInTitle")}
+                    </h2>
+                    <p className={styles.hint}>{t("signInLede")}</p>
+                  </>
+                }
+                aside={<p className={styles.aside}>{t("signInGuest")}</p>}
+              />
+            )}
           </div>
         </>
       )}

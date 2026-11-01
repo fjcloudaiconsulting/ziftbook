@@ -1144,6 +1144,9 @@
     "notYou": "Ben jij dit niet? Uitloggen",
     "saveDetailsTitle": "Bewaar je gegevens voor de volgende keer",
     "saveDetailsBody": "Met een gratis ziftbook-account worden je gegevens ingevuld als je bij welk bedrijf dan ook boekt.",
-    "saveDetailsAction": "Account aanmaken"
+    "saveDetailsAction": "Account aanmaken",
+    "continueTitle": "Doorgaan als {name}?",
+    "continueAction": "Doorgaan",
+    "someoneElse": "Ben jij dit niet? Log in als iemand anders"
   }
 }

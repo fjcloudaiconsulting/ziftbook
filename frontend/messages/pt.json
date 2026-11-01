@@ -1144,6 +1144,9 @@
     "notYou": "Não é você? Sair",
     "saveDetailsTitle": "Salve seus dados para a próxima vez",
     "saveDetailsBody": "Com uma conta ziftbook gratuita, seus dados são preenchidos quando você reserva em qualquer negócio.",
-    "saveDetailsAction": "Criar uma conta"
+    "saveDetailsAction": "Criar uma conta",
+    "continueTitle": "Continuar como {name}?",
+    "continueAction": "Continuar",
+    "someoneElse": "Não é você? Entre com outra conta"
   }
 }

@@ -1144,6 +1144,9 @@
     "notYou": "Not you? Sign out",
     "saveDetailsTitle": "Save your details for next time",
     "saveDetailsBody": "With a free ziftbook account, your details fill in when you book with any business.",
-    "saveDetailsAction": "Create an account"
+    "saveDetailsAction": "Create an account",
+    "continueTitle": "Continue as {name}?",
+    "continueAction": "Continue",
+    "someoneElse": "Not you? Sign in as someone else"
   }
 }

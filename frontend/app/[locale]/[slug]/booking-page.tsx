@@ -194,6 +194,8 @@ export function BookingPage({
   const [signOutBusy, setSignOutBusy] = useState(false);
   const [signOutError, setSignOutError] = useState<string | null>(null);
   const [signInOpen, setSignInOpen] = useState(false);
+  // An account already signed in on this browser, waiting for "Continue as {name}?" (security review 4).
+  const [confirming, setConfirming] = useState<AccountOut | null>(null);
   const signInOpenRef = useRef(false);
   useEffect(() => {
     signInOpenRef.current = signInOpen;
@@ -941,6 +943,7 @@ export function BookingPage({
     setAcct((state) => afterFill(state, signedIn, filled, false));
     shownAccount.show(signedIn);
     setSignInOpen(false);
+    setConfirming(null);
     setOfferError(null);
     setNoteFocus((n) => n + 1);
   }
@@ -952,8 +955,8 @@ export function BookingPage({
     if (signInOpenRef.current) fill(signedIn);
   }
 
-  /** The offer's click: the account signed in on this browser fills the form, or the dialog asks to sign in. The
-   * only read of the person's details on this page. */
+  /** The offer's click: an account signed in on this browser is confirmed in the dialog ("Continue as {name}?"),
+   * else the dialog asks to sign in. The only read of the person's details on this page until they filled in. */
   async function fillFromAccount() {
     if (offerBusy || heldNow()) return;
     setOfferBusy(true);
@@ -961,8 +964,10 @@ export function BookingPage({
     const answer = await send(platformAccountRead());
     setOfferBusy(false);
     const nextStep = offerNext(answer.status);
-    if (nextStep === "fill" && answer.data) fill(answer.data);
-    else if (nextStep === "signIn") setSignInOpen(true);
+    if (nextStep === "confirm" && answer.data) {
+      setConfirming(answer.data);
+      setSignInOpen(true);
+    } else if (nextStep === "signIn") setSignInOpen(true);
     else setOfferError(form(problem(answer)));
   }
 
@@ -1171,7 +1176,19 @@ export function BookingPage({
                 ) : (
                   !held && <AccountOffer t={t} busy={offerBusy} error={offerError} onOpen={() => void fillFromAccount()} />
                 )}
-                <SignInDialog open={signInOpen} t={t} turnstileSiteKey={turnstileSiteKey} onClose={() => setSignInOpen(false)} onSignedIn={fillFromDialog} />
+                <SignInDialog
+                  open={signInOpen}
+                  confirm={confirming}
+                  t={t}
+                  turnstileSiteKey={turnstileSiteKey}
+                  onClose={() => {
+                    setSignInOpen(false);
+                    setConfirming(null);
+                  }}
+                  onContinue={() => confirming && fillFromDialog(confirming)}
+                  onSomeoneElse={() => setConfirming(null)}
+                  onSignedIn={fillFromDialog}
+                />
                 <WhoAt s2={s2} locked={locked} banner={flow.banner?.where === 3 ? flow.banner : null} zone={zone} dLocale={dLocale} t={t} onPick={(pick) => setFlow((f) => ({ ...f, pick }))} />
                 <form
                   className={styles.form}

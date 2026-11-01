@@ -130,8 +130,8 @@ describe("your bookings", () => {
 describe("filling the checkout from the account", () => {
   const ana = { email: "ana@example.com", name: "Ana Silva", phone: "+31612345678" };
 
-  test("the offer reads the account only when clicked: filled, or sign in first, or a problem", () => {
-    assert.equal(offerNext(200), "fill");
+  test("the offer reads the account only when clicked: confirm who, or sign in first, or a problem", () => {
+    assert.equal(offerNext(200), "confirm");
     assert.equal(offerNext(401), "signIn");
     assert.equal(offerNext(403), "error");
     assert.equal(offerNext(0), "error");
@@ -548,5 +548,30 @@ describe("a fill lands on the form as it is now (PR 6 review, correctness 6)", (
     assert.doesNotMatch(text, /setRegion|useState<string>\(page\.country\)/);
     assert.match(text, /onSignedIn=\{fillFromDialog\}/);
     assert.match(text, /function fillFromDialog\(signedIn: AccountOut\) \{\s*\/\/[^\n]*\n\s*if \(signInOpenRef\.current\) fill\(signedIn\);/);
+  });
+});
+
+describe("an account already signed in is confirmed, never filled silently (security review 4, owner may overrule)", () => {
+  const text = () => readFileSync(new URL("../app/[locale]/[slug]/booking-page.tsx", import.meta.url), "utf8");
+
+  test("fence: the offer's click only asks \"Continue as {name}?\"; the form fills on Continue", () => {
+    // Wrong implementation killed: a click on "Sign in to fill in your details" that fills the details of whoever
+    // is signed in on a shared device, with no step between.
+    const handler = /async function fillFromAccount\(\) \{([\s\S]*?)\n {2}\}/.exec(text());
+    assert.ok(handler);
+    assert.doesNotMatch(handler[1], /\bfill\(/);
+    assert.match(handler[1], /if \(nextStep === "confirm" && answer\.data\) \{\s*setConfirming\(answer\.data\);\s*setSignInOpen\(true\);/);
+    assert.match(text(), /onContinue=\{\(\) => confirming && fillFromDialog\(confirming\)\}/);
+    assert.match(text(), /onSomeoneElse=\{\(\) => setConfirming\(null\)\}/);
+  });
+
+  test("the confirm step names only the person; the strings exist in every locale", () => {
+    const parts = readFileSync(new URL("../app/[locale]/[slug]/account-fill.tsx", import.meta.url), "utf8");
+    assert.match(parts, /t\("continueTitle", \{ name: confirm\.name \|\| confirm\.email \}\)/);
+    assert.doesNotMatch(parts, /confirm\.phone/);
+    for (const locale of ["en", "nl", "pt"]) {
+      const strings = JSON.parse(readFileSync(new URL(`../messages/${locale}.json`, import.meta.url))).BookingPage;
+      for (const key of ["continueTitle", "continueAction", "someoneElse"]) assert.ok(strings[key], `${locale} ${key}`);
+    }
   });
 });
