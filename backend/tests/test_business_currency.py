@@ -11,12 +11,15 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from psycopg.errors import (
     CheckViolation,
+    DeadlockDetected,
     FeatureNotSupported,
     ForeignKeyViolation,
     InsufficientPrivilege,
+    SerializationFailure,
 )
 from sqlalchemy import Engine, text
-from sqlalchemy.exc import DBAPIError, IntegrityError
+from sqlalchemy.exc import DBAPIError, IntegrityError, OperationalError
+from sqlalchemy.orm import Session
 
 from app import countries
 from app.db import lift_force, tenant_context
@@ -723,3 +726,25 @@ def test_each_option_says_whether_stripe_pays_out_in_it_for_the_business_s_count
                 text("UPDATE tenants SET country = :c WHERE id = :t"), {"c": country, "t": people.a}
             )
         assert settled(owner) == {c: c == expected for c in ("BRL", "EUR", "GBP", "USD")}
+
+
+# FENCE. Wrong impl: the change left to the global handler, which answers a deadlock or a
+# serialization failure with a 500. A booking racing the change can deadlock it (the booking holds
+# the service row and waits on tenants; the change holds tenants and waits on the service row's
+# cascade); the owner should read "busy, try again", as the booking does.
+@pytest.mark.parametrize("failure", [DeadlockDetected, SerializationFailure])
+def test_a_currency_change_aborted_by_the_database_answers_busy(
+    people: People, owner: TestClient, monkeypatch: pytest.MonkeyPatch, failure: type[Exception]
+) -> None:
+    real = Session.execute
+
+    def aborted(self: Session, statement: Any, *args: Any, **kwargs: Any) -> Any:
+        if "change_currency(" in str(statement):
+            raise OperationalError(str(statement), {}, failure("aborted"))
+        return real(self, statement, *args, **kwargs)
+
+    monkeypatch.setattr(Session, "execute", aborted)
+
+    response = owner.put("/api/settings/currency", json={"currency": "USD"})
+
+    assert (response.status_code, response.json()) == (503, {"code": "busy"})

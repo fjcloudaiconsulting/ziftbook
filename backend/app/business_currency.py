@@ -9,6 +9,7 @@ from typing import Annotated, Literal, get_args
 from fastapi import APIRouter, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import text
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app import auth
@@ -54,6 +55,10 @@ SELECT t.currency, t.country,
        (SELECT count(*) FROM services) AS prices
 FROM tenants t WHERE t.id = current_setting('app.tenant_id')::uuid
 """)
+# A deadlock (a booking racing the change: it holds the service row and waits on tenants, while the
+# change holds tenants and waits on the cascade to that row) or a serialization failure: the
+# database aborted the change, nothing was written, and trying again can succeed.
+ABORTED = {"40P01", "40001"}
 REFUSED = {
     "locked_bookings": "currency_locked_bookings",
     "locked_payments": "currency_locked_payments",
@@ -89,7 +94,7 @@ def read_currency(current: CurrentSession, response: Response) -> CurrencyState:
 @router.put(
     "/settings/currency",
     name="change_currency",
-    responses={s: {"model": Error} for s in (401, 403, 409, 415, 422)},
+    responses={s: {"model": Error} for s in (401, 403, 409, 415, 422, 503)},
 )
 def change_currency(
     body: CurrencyChange, current: CurrentOwner, request: Request, response: Response
@@ -97,10 +102,15 @@ def change_currency(
     """Change the business's currency. Saved prices keep their numbers in the new currency, so the
     owner first confirms how many there are (a 409 currency_prices_exist says, in total)."""
     response.headers["Cache-Control"] = "no-store"
-    row = current.db.execute(
-        text("SELECT outcome, prices, previous FROM change_currency(:currency, :confirmed)"),
-        {"currency": body.currency, "confirmed": body.confirmed_prices},
-    ).one()
+    try:
+        row = current.db.execute(
+            text("SELECT outcome, prices, previous FROM change_currency(:currency, :confirmed)"),
+            {"currency": body.currency, "confirmed": body.confirmed_prices},
+        ).one()
+    except OperationalError as error:
+        if getattr(error.orig, "sqlstate", None) in ABORTED:
+            raise ApiError(503, "busy") from None
+        raise
     if row.outcome in REFUSED:
         raise ApiError(409, REFUSED[row.outcome])
     if row.outcome == "prices_exist":

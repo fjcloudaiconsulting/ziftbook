@@ -1101,8 +1101,11 @@ def book_online(
         raise ApiError(404, "not_found")
     # ZIF-102. The owner changed the currency after the page showed the price: the client has not
     # seen this price, so nothing is booked and the page reloads its prices. Under the service's
-    # FOR SHARE: a change committed before it is read here, and one after it waits for this
-    # transaction (and then finds this booking).
+    # FOR SHARE: a change committed before it is read here. A change that starts after it either
+    # waits for this transaction and then finds this booking (locked_bookings), or, when it took
+    # tenants before this booking's foreign key check does, deadlocks with it; Postgres then aborts
+    # one of the two (this booking answers 503 busy, the change 503 busy). Neither books a price the
+    # client did not see.
     if shown_currency is not None and shown_currency != row.price_currency:
         raise ApiError(409, "currency_changed")
     opening = schedule.envelope(db)  # 4: once, never per worker or per day
