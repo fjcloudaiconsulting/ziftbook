@@ -63,6 +63,10 @@ def inspect(rest: bytes) -> bytes:
         os._exit(9)
     if not sys.flags.dont_write_bytecode or os.getcwd() != "/":
         os._exit(9)
+    # Not dumpable by the time it decodes: no core file of the upload, whatever the host's
+    # core_pattern (a piped one ignores RLIMIT_CORE).
+    if sys.platform == "linux" and ctypes.CDLL(None).prctl(3, 0, 0, 0, 0) != 0:  # PR_GET_DUMPABLE
+        os._exit(9)
     data: bytes = real_load().record(rest)
     return data
 
