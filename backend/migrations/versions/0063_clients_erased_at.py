@@ -11,8 +11,9 @@ time is never rewritten. The CHECK alone cannot say that, because an UPDATE that
 back to NULL and a new name passes it.
 
 Only the erase function (0064, owned by ziftbook_migrate) writes erased_at. The app role's INSERT
-and UPDATE on clients become column lists naming exactly the columns it held before, so the
-running release keeps every write it makes and gains none of erased_at.
+and UPDATE on clients become column lists, so the running release keeps every write it makes and
+gains none of erased_at. INSERT keeps every column it held; UPDATE drops id and tenant_id, which no
+statement of any release changes.
 
 MAINTENANCE TRAP, as bookings' (0047): a column added to clients later that the app writes needs
 its own GRANT INSERT (column) or GRANT UPDATE (column) in its migration.
@@ -33,9 +34,12 @@ depends_on = None
 
 SEARCH_PATH = "SET search_path = pg_catalog, public, pg_temp"
 
-# The app role's writable columns: every column before this migration, so nothing it writes today
-# is refused, and not erased_at.
-WRITABLE = "id, tenant_id, user_id, name, email, phone, locale, client_note, internal_note"
+# The app role's writable columns: every column it writes today, so nothing it writes is refused,
+# and not erased_at. INSERT names every column before this migration; UPDATE leaves out id and
+# tenant_id, which no statement changes: an id rewritten would orphan its client:<id> audit targets
+# and outbox rows, and the policy already keeps tenant_id. user_id stays for ZIF-146's linking.
+INSERTABLE = "id, tenant_id, user_id, name, email, phone, locale, client_note, internal_note"
+UPDATABLE = "user_id, name, email, phone, locale, client_note, internal_note"
 
 
 def upgrade() -> None:
@@ -68,8 +72,8 @@ def upgrade() -> None:
     # takes every column grant of it, so the other order would leave nothing. SELECT stays
     # table-level, and DELETE stays revoked (0024).
     op.execute("REVOKE INSERT, UPDATE ON clients FROM ziftbook_app")
-    op.execute(f"GRANT INSERT ({WRITABLE}) ON clients TO ziftbook_app")
-    op.execute(f"GRANT UPDATE ({WRITABLE}) ON clients TO ziftbook_app")
+    op.execute(f"GRANT INSERT ({INSERTABLE}) ON clients TO ziftbook_app")
+    op.execute(f"GRANT UPDATE ({UPDATABLE}) ON clients TO ziftbook_app")
 
 
 def downgrade() -> None:

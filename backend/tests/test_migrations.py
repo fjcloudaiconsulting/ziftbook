@@ -2218,30 +2218,34 @@ TOMBSTONE_GUARD_TRIGGER = (
     "CREATE TRIGGER clients_erased_final BEFORE UPDATE ON public.clients FOR EACH ROW"
     " WHEN ((old.erased_at IS NOT NULL)) EXECUTE FUNCTION clients_erased_final()"
 )
+# INSERT on every column the app writes; UPDATE on the same less id and tenant_id, which no
+# statement changes (an id rewritten would orphan its client:<id> audit targets and outbox rows).
+CLIENT_INSERTABLE = (
+    "client_note",
+    "email",
+    "id",
+    "internal_note",
+    "locale",
+    "name",
+    "phone",
+    "tenant_id",
+    "user_id",
+)
+CLIENT_UPDATABLE = {"client_note", "email", "internal_note", "locale", "name", "phone", "user_id"}
 CLIENT_COLUMN_GRANTS = ", ".join(
     f"{column} {privilege}"
-    for column in sorted(
-        (
-            "id",
-            "tenant_id",
-            "user_id",
-            "name",
-            "email",
-            "phone",
-            "locale",
-            "client_note",
-            "internal_note",
-        )
-    )
+    for column in CLIENT_INSERTABLE
     for privilege in ("INSERT", "UPDATE")
+    if privilege == "INSERT" or column in CLIENT_UPDATABLE
 )
 
 
 # ZIF-58 F1 FENCE (0063). Wrong impl: a downgrade that leaves the column, the trigger, its function
 # or the column grants behind, or does not put back ck_clients_name_length and the table-level
 # INSERT and UPDATE; an upgrade that GRANTs the column lists without the REVOKE (the table-level
-# INSERT and UPDATE stay, erased_at with them), names a column more or less, or whose trigger fires
-# on live rows, runs as its owner, searches a caller's schema first, or is PUBLIC's.
+# INSERT and UPDATE stay, erased_at with them), names a column more or less (UPDATE of id or
+# tenant_id included), or whose trigger fires on live rows, runs as its owner, searches a caller's
+# schema first, or is PUBLIC's.
 def test_0063_round_trips_the_client_tombstone(
     migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
