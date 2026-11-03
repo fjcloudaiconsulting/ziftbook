@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 from app import limits, passwords, turnstile
 from app.db import SessionLocal, join_tenant, tenant_context
 from app.errors import ApiError, Error
+from app.locales import Locale
 
 IDLE = timedelta(days=7)
 ABSOLUTE = timedelta(days=30)
@@ -287,6 +288,7 @@ class SessionOut(BaseModel):
     email: str
     display_name: str | None
     name: str | None  # the person's own; None until they give it (ZIF-131)
+    locale: Locale | None  # the person's own language (ZIF-102); None: they chose none
     business_name: str
     currency: str
     slug: str  # ZIF-145: the console builds the public booking-page address from this
@@ -297,7 +299,7 @@ def describe(db: Session, user_id: UUID) -> SessionOut:
     row = db.execute(
         text("""
         SELECT m.user_id, m.tenant_id, m.id AS member_id, m.role, m.display_name, u.email, u.name,
-               t.name AS business_name, t.currency, t.slug
+               u.locale, t.name AS business_name, t.currency, t.slug
         FROM memberships m JOIN users u ON u.id = m.user_id JOIN tenants t ON t.id = m.tenant_id
         WHERE m.user_id = :user_id AND m.role <> 'removed'
         """),

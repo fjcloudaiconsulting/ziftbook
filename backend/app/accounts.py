@@ -215,6 +215,27 @@ def give_name(
     return auth.describe(current.db, current.user_id)
 
 
+class LocaleIn(BaseModel):
+    # Field by field, as NameIn: no target user, and null must be sent, not implied.
+    model_config = ConfigDict(strict=True, extra="forbid")
+    locale: Locale | None  # None: no language of their own; emails use the business's
+
+
+@router.put(
+    "/session/locale",
+    responses={s: {"model": Error} for s in (401, 403, 415, 422)},
+)
+def set_locale(body: LocaleIn, current: auth.CurrentSession, response: Response) -> auth.SessionOut:
+    """The person's own language, kept on their account, so it is theirs in every business
+    (ZIF-102). Not an audit event: a personal preference, not something the business did."""
+    response.headers["Cache-Control"] = "no-store"
+    if not current.db.scalar(
+        text("SELECT set_own_locale(:u, :locale)"), {"u": current.user_id, "locale": body.locale}
+    ):
+        raise ApiError(401, "unauthenticated")  # the membership ended while this request ran
+    return auth.describe(current.db, current.user_id)
+
+
 @router.post(
     "/password-reset",
     status_code=202,
