@@ -221,7 +221,7 @@ DEFINERS = [
     "public.accept_invite(p_token_hash bytea, p_password_hash text, p_name text)",
     "public.account_by_email(p_email text)",
     "public.begin_totp_enrolment(p_id_hash bytea, p_ticket_proof bytea, p_secret_ct bytea, p_proof bytea)",  # noqa: E501
-    "public.change_contact_email(p_email text, p_send boolean)",
+    "public.change_contact_email(p_email text, p_send boolean, p_requester uuid)",
     # ZIF-102: changes only the caller's business's currency; reads and writes nothing of a user.
     "public.change_currency(p_currency text, p_confirmed_prices integer)",
     "public.charge_second_factor(p_id_hash bytea)",
@@ -246,7 +246,7 @@ DEFINERS = [
     "public.own_bookings(p_id_hash bytea, p_before_starts_at timestamp with time zone, p_before_key bytea, p_limit integer)",  # noqa: E501
     "public.pass_second_factor(p_id_hash bytea, p_proof bytea, p_step bigint)",
     "public.password_unchanged(p_user_id uuid, p_hash text)",
-    "public.resend_contact_email()",
+    "public.resend_contact_email(p_requester uuid)",
     "public.reset_password(p_token_hash bytea, p_password_hash text)",
     "public.resolve_account_session(p_id_hash bytea)",
     "public.resolve_admin_session(p_id_hash bytea)",

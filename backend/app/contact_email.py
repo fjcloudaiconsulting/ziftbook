@@ -17,7 +17,8 @@ def change(current: SignedIn, request: Request, email: str | None) -> None:
     """An owner's PUT of contact_email: a new address waits for its confirmation, the one in effect
     stays until then; None clears both."""
     row = current.db.execute(
-        text("SELECT * FROM change_contact_email(:e, false)"), {"e": email}
+        text("SELECT * FROM change_contact_email(:e, false, :u)"),
+        {"e": email, "u": current.user_id},
     ).one()
     if row.outcome == "requested":
         # No details: nobody has confirmed the address, and it may be a third party's.

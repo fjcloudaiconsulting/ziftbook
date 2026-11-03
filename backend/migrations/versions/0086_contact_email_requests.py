@@ -49,13 +49,14 @@ SEARCH_PATH = "SET search_path = pg_catalog, public, pg_temp"
 LIFETIME = "interval '24 hours'"
 
 CHANGE = f"""
-CREATE FUNCTION change_contact_email(p_email text, p_send boolean)
+CREATE FUNCTION change_contact_email(p_email text, p_send boolean, p_requester uuid DEFAULT NULL)
 RETURNS TABLE (outcome text, request_id uuid, previous text)
 LANGUAGE plpgsql SECURITY DEFINER {SEARCH_PATH} AS $$
 -- p_email NULL: no contact email at all (cleared). The address in effect: nothing waits (kept).
 -- The waiting address: left as it is, so a save of other keys keeps a sent link (unchanged),
 -- unless p_send and its link is dead. Any other: it waits, with a link due when p_send
--- (requested). previous is the address in effect before the call.
+-- (requested). previous is the address in effect before the call. p_requester: the owner asking,
+-- recorded on a new request; its link confirms only while they are an owner.
 DECLARE
   v_email text := lower(p_email);
   v_request contact_email_requests;
@@ -77,23 +78,24 @@ BEGIN
     RETURN QUERY SELECT 'unchanged', v_request.id, v_confirmed;
   ELSE
     -- A new id and no hash: a queued job for the old id sends nothing, the old link is dead.
-    INSERT INTO contact_email_requests AS r (tenant_id, email, expires_at)
+    INSERT INTO contact_email_requests AS r (tenant_id, email, expires_at, requested_by)
     VALUES (current_setting('app.tenant_id')::uuid, v_email,
-            CASE WHEN p_send THEN now() + {LIFETIME} END)
+            CASE WHEN p_send THEN now() + {LIFETIME} END, p_requester)
     ON CONFLICT (tenant_id) DO UPDATE
-      SET id = uuidv7(), email = excluded.email, token_hash = NULL, expires_at = excluded.expires_at
+      SET id = uuidv7(), email = excluded.email, token_hash = NULL,
+          expires_at = excluded.expires_at, requested_by = excluded.requested_by
     RETURNING r.id INTO v_id;
     RETURN QUERY SELECT 'requested', v_id, v_confirmed;
   END IF;
 END $$"""
 
 RESEND = f"""
-CREATE FUNCTION resend_contact_email() RETURNS uuid
+CREATE FUNCTION resend_contact_email(p_requester uuid DEFAULT NULL) RETURNS uuid
 LANGUAGE sql SECURITY DEFINER {SEARCH_PATH} AS $$
   -- A new link for the waiting address: a new id and no hash, so the old link dies now. NULL when
-  -- nothing waits.
+  -- nothing waits. The owner sending it becomes the requester.
   UPDATE contact_email_requests
-  SET id = uuidv7(), token_hash = NULL, expires_at = now() + {LIFETIME}
+  SET id = uuidv7(), token_hash = NULL, expires_at = now() + {LIFETIME}, requested_by = p_requester
   RETURNING id
 $$"""
 
@@ -115,14 +117,21 @@ CREATE FUNCTION confirm_contact_email(p_token_hash bytea)
 RETURNS TABLE (confirmed text, previous text)
 LANGUAGE plpgsql SECURITY DEFINER {SEARCH_PATH} AS $$
 -- A live link's address becomes the business's contact email; the link is used up. No row for a
--- dead one. previous is the address in effect before.
+-- dead one, nor while the owner who asked for it is no longer an owner (the request stays, for
+-- another owner to resend). previous is the address in effect before.
 DECLARE
   v_email text;
+  v_requester uuid;
   v_previous text;
 BEGIN
+  -- It reads memberships: only this business's (app.sign_in would widen the migrate role's view).
+  PERFORM set_config('app.sign_in', '', true);
   DELETE FROM contact_email_requests r
   WHERE r.token_hash = p_token_hash AND r.expires_at > now()
-  RETURNING r.email INTO v_email;
+    AND (r.requested_by IS NULL
+         OR EXISTS (SELECT FROM memberships m
+                    WHERE m.user_id = r.requested_by AND m.role = 'owner'))
+  RETURNING r.email, r.requested_by INTO v_email, v_requester;
   IF v_email IS NULL THEN
     RETURN;
   END IF;
@@ -131,14 +140,14 @@ BEGIN
   ON CONFLICT (tenant_id, key) DO UPDATE SET value = excluded.value
   RETURNING old.value #>> '{{}}' INTO v_previous;
   -- Written here, not by the API: a compromised API cannot confirm an address and erase the trace.
-  INSERT INTO contact_email_confirmations (tenant_id, email, previous)
-  VALUES (current_setting('app.tenant_id')::uuid, v_email, v_previous);
+  INSERT INTO contact_email_confirmations (tenant_id, email, previous, requested_by)
+  VALUES (current_setting('app.tenant_id')::uuid, v_email, v_previous, v_requester);
   RETURN QUERY SELECT v_email, v_previous;
 END $$"""
 
 FUNCTIONS = {
-    "change_contact_email(text, boolean)": ("ziftbook_app", CHANGE),
-    "resend_contact_email()": ("ziftbook_app", RESEND),
+    "change_contact_email(text, boolean, uuid)": ("ziftbook_app", CHANGE),
+    "resend_contact_email(uuid)": ("ziftbook_app", RESEND),
     "confirm_contact_email(bytea)": ("ziftbook_app", CONFIRM),
     "mint_contact_email_token(uuid, bytea)": ("ziftbook_worker", MINT),
 }
@@ -160,6 +169,9 @@ def upgrade() -> None:
           CHECK (octet_length(token_hash) = 32),
       -- NULL: no link is due. Set when a link is queued, and again when it is minted.
       expires_at timestamptz,
+      -- The owner who asked; NULL only for 0088's moved addresses, which get no link until a resend
+      -- records its owner. No foreign key: confirm checks the membership itself.
+      requested_by uuid,
       CONSTRAINT uq_contact_email_requests_tenant_id UNIQUE (tenant_id)
     )""")
     enable_tenant_isolation("contact_email_requests")
@@ -176,6 +188,7 @@ def upgrade() -> None:
         REFERENCES tenants (id) ON DELETE CASCADE,
       email text NOT NULL,
       previous text,
+      requested_by uuid,
       confirmed_at timestamptz NOT NULL DEFAULT clock_timestamp()
     )""")
     enable_tenant_isolation("contact_email_confirmations")

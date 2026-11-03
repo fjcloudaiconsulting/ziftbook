@@ -21,6 +21,7 @@ from tests.conftest import (
     migrate_tenant_context,
     save_setting,
     saved_settings,
+    set_role,
     wait_until_blocked,
 )
 
@@ -29,10 +30,12 @@ def digest(secret: str) -> bytes:
     return hashlib.sha256(secret.encode()).digest()
 
 
-def change(tenant_id: uuid.UUID, email: str | None, send: bool = False) -> Row[Any]:
+def change(
+    tenant_id: uuid.UUID, email: str | None, send: bool = False, by: uuid.UUID | None = None
+) -> Row[Any]:
     with tenant_context(tenant_id) as session:
         return session.execute(
-            text("SELECT * FROM change_contact_email(:e, :s)"), {"e": email, "s": send}
+            text("SELECT * FROM change_contact_email(:e, :s, :u)"), {"e": email, "s": send, "u": by}
         ).one()
 
 
@@ -242,6 +245,40 @@ def test_every_confirmation_is_recorded_where_the_api_cannot_erase_it(
     with migrate_engine.connect() as conn:
         held = [tuple(row) for row in conn.execute(CONFIRMATIONS_PRIVILEGES)]
     assert held == [("ziftbook_app", "SELECT"), ("ziftbook_worker", "SELECT")]
+
+
+# Security review NIT 5 FENCE. Wrong impl: a link that still confirms after the owner who asked for
+# it stopped being an owner (a removed owner would set the business's contact address).
+def test_a_link_confirms_only_while_its_requester_is_an_owner(
+    people: People, migrate_engine: Engine, worker_engine: Engine
+) -> None:
+    set_role(people.a, people.only_a, "owner")  # so the requester can stop being one
+    request = change(people.a, "shop@x.nl", send=True, by=people.both)
+    secret = mint(worker_engine, people.a, request.request_id)
+    assert secret is not None
+    set_role(people.a, people.both, "worker")
+
+    assert confirm(people.a, digest(secret)) is None
+    assert request_of(migrate_engine, people.a) is not None  # an owner can still send a new link
+
+    set_role(people.a, people.both, "owner")
+    assert confirm(people.a, digest(secret)) is not None
+    with tenant_context(people.a) as session:
+        assert session.scalar(text("SELECT requested_by FROM contact_email_confirmations")) == (
+            people.both
+        )
+
+
+def test_a_resend_makes_its_owner_the_requester(
+    people: People, migrate_engine: Engine, worker_engine: Engine
+) -> None:
+    set_role(people.a, people.only_a, "owner")
+    change(people.a, "shop@x.nl", send=True, by=people.both)
+    set_role(people.a, people.both, "worker")
+    with tenant_context(people.a) as session:
+        fresh = session.scalar(text("SELECT resend_contact_email(:u)"), {"u": people.only_a})
+    secret = mint(worker_engine, people.a, fresh)
+    assert secret is not None and confirm(people.a, digest(secret)) is not None
 
 
 # F1.8 FENCE. Wrong impl: requesting again on every call (a save of other keys kills a sent link),
