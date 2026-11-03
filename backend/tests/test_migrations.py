@@ -1,6 +1,7 @@
 """A migration's downgrade must undo exactly what its upgrade did, grants included."""
 
 import importlib.util
+import json
 import os
 import re
 import uuid
@@ -21,7 +22,7 @@ from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import NullPool
 
-from app import auth
+from app import auth, business_settings
 from app.db import tenant_context
 from tests.conftest import (
     ADMIN_DATABASE_URL,
@@ -31,6 +32,7 @@ from tests.conftest import (
     delete_bookings,
     end_membership,
     member_id,
+    migrate_tenant_context,
 )
 from tests.test_bookings_db import insert_booking, seed_service
 from tests.test_second_factor_db import PASS, enrolled, half_session, wrong
@@ -2852,3 +2854,66 @@ def test_0087_round_trips_the_contact_email_guard(
             ["search_path=pg_catalog, public, pg_temp"],
             False,
         )
+
+
+SAVED_CONTACT = text("""
+INSERT INTO settings (tenant_id, key, value)
+VALUES (current_setting('app.tenant_id')::uuid, 'contact_email', CAST(:v AS jsonb))
+""")
+REQUEST_OF = text("SELECT email, token_hash, expires_at FROM contact_email_requests")
+AUDIT_ROWS = text("SELECT count(*) FROM audit_events")
+
+
+# ZIF-232 FENCE (0088). Wrong impl: the move leaves the setting (the unconfirmed address still in
+# use), skips set_config (one business moved, or none), loses or keeps the case of the address,
+# aborts on a value the request table refuses (the deploy stops), or tries to write audit_events
+# as the migrate role (refused by its policy: the deploy stops). The downgrade puts nothing back.
+def test_0088_moves_every_saved_contact_email_out_of_use(
+    people: People, migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = lock_timeout_config(monkeypatch)
+    with migrate_engine.begin() as conn:
+        odd = [
+            conn.scalar(text("INSERT INTO tenants (name) VALUES ('odd') RETURNING id"))
+            for _ in range(2)
+        ]
+    tenants = [people.a, people.b, *odd]
+    try:
+        command.downgrade(cfg, "0087")
+        for tenant_id, value in zip(
+            tenants,
+            ['"Shop@Example.COM"', None, '{"a": 1}', json.dumps("a" * 250 + "@x.nl")],
+            strict=True,
+        ):
+            if value is not None:
+                with migrate_tenant_context(migrate_engine, tenant_id) as conn:
+                    conn.execute(SAVED_CONTACT, {"v": value})
+        with migrate_engine.begin() as conn:
+            conn.execute(text("SET LOCAL app.audit_review = 'on'"))
+            audited = conn.scalar(AUDIT_ROWS)
+        command.upgrade(cfg, "0088")
+        moved = {}
+        for tenant_id in tenants:
+            with migrate_tenant_context(migrate_engine, tenant_id) as conn:
+                moved[tenant_id] = (
+                    conn.scalar(text("SELECT value FROM settings WHERE key = 'contact_email'")),
+                    conn.execute(REQUEST_OF).first(),
+                )
+        with migrate_engine.begin() as conn:
+            conn.execute(text("SET LOCAL app.audit_review = 'on'"))
+            assert conn.scalar(AUDIT_ROWS) == audited
+        assert moved[people.a][0] is None
+        assert tuple(moved[people.a][1] or ()) == ("shop@example.com", None, None)
+        assert all(moved[t] == (None, None) for t in tenants[1:])
+        with tenant_context(people.a) as session:
+            assert business_settings.read(session).contact_email is None  # what the mailer reads
+
+        command.downgrade(cfg, "0087")
+        with migrate_tenant_context(migrate_engine, people.a) as conn:
+            assert conn.scalar(text("SELECT count(*) FROM settings")) == 0
+    finally:
+        command.upgrade(cfg, "head")
+        for tenant_id in odd:
+            with migrate_tenant_context(migrate_engine, tenant_id) as conn:
+                conn.execute(text("DELETE FROM settings"))
+                conn.execute(text("DELETE FROM tenants WHERE id = :t"), {"t": tenant_id})
