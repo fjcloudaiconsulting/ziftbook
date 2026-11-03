@@ -15,6 +15,7 @@ from sqlalchemy import create_engine, event
 
 from app import (
     bookings,
+    contact_email,
     erasure_holds,
     jobs,
     ledger,
@@ -139,6 +140,7 @@ async def work(
                     except Exception:
                         logger.exception("sweep failed", extra={"sweep": name})
                         failed = True
+                await asyncio.to_thread(contact_email.sweep_senders)
                 if failed:
                     # On purpose: swept stays unstamped, so both sweeps run again next poll (30 s),
                     # for every business, until the failure clears; the withheld ping alerts.

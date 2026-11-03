@@ -46,28 +46,44 @@ def sent_key(tenant_id: UUID, address: str) -> str:
     return limits.email_key("contact_email_sent", f"{tenant_id}:{address}")
 
 
-def address_key(address: str) -> str:
+def inbox_key(address: str) -> str:
     return limits.email_key("contact_email_to", address)
 
 
 # A business counts toward an inbox's day once a link from it was queued, and for a few minutes
 # while a claim's request runs, so a request that fails takes back nothing and holds nothing long.
 LIVE = "(linked_at > now() - interval '1 day' OR claimed_at > now() - interval '5 minutes')"
+# Rows past their day plus an hour (longer than any runtime transaction lives, so no reader still
+# counts one), in batches; claims skip rows another holds. claim() purges as it goes, and the
+# worker's timer (sweep_senders) takes the rest, so an inbox nobody mails again keeps nothing.
 PURGE_SENDERS = text("""
 DELETE FROM contact_email_senders WHERE ctid IN (
   SELECT ctid FROM contact_email_senders
-  WHERE claimed_at < now() - interval '1 day'
-    AND coalesce(linked_at < now() - interval '1 day', true)
-  LIMIT 100 FOR UPDATE SKIP LOCKED)
+  WHERE claimed_at < now() - interval '25 hours'
+    AND coalesce(linked_at < now() - interval '25 hours', true)
+  LIMIT :batch FOR UPDATE SKIP LOCKED)
+RETURNING 1
 """)
+SWEEP_BATCH = 1000
+
+
+def sweep_senders() -> None:
+    """The worker's sweep of contact_email_senders: every row past its day, batch by batch."""
+    while True:
+        with SessionLocal.begin() as session:
+            gone = len(session.execute(PURGE_SENDERS, {"batch": SWEEP_BATCH}).all())
+        if gone < SWEEP_BATCH:
+            return
+
+
 SENDERS = text(f"""
 SELECT count(*) FILTER (WHERE tenant_id <> :t) AS others,
        coalesce(bool_or(tenant_id = :t), false) AS mine
-FROM contact_email_senders WHERE address_key = :k AND {LIVE}
+FROM contact_email_senders WHERE inbox_key = :k AND {LIVE}
 """)
 CLAIM = text("""
-INSERT INTO contact_email_senders (address_key, tenant_id, claimed_at) VALUES (:k, :t, now())
-ON CONFLICT (address_key, tenant_id) DO UPDATE SET claimed_at = now()
+INSERT INTO contact_email_senders (inbox_key, tenant_id, claimed_at) VALUES (:k, :t, now())
+ON CONFLICT (inbox_key, tenant_id) DO UPDATE SET claimed_at = now()
 """)
 # The proof the inbox's holder gave: a confirm is the one setting_changed of the key with no actor
 # (the link's holder need not be a member).
@@ -122,7 +138,7 @@ def claim(current: SignedIn, email: str, host: str | None) -> None:
 
 def _claim(current: SignedIn, email: str) -> None:
     address = limits.address_for_limits(email)
-    key = address_key(address)
+    key = inbox_key(address)
     # A business already at its own limits takes no place: send_link would refuse it after the
     # lock, and its claim would keep others from the inbox meanwhile. Reads only, charged later.
     if any(
@@ -139,7 +155,7 @@ def _claim(current: SignedIn, email: str) -> None:
         session.execute(
             text("SELECT pg_advisory_xact_lock(:c, hashtext(:k))"), {"c": SENDERS_LOCK, "k": key}
         )
-        session.execute(PURGE_SENDERS)
+        session.execute(PURGE_SENDERS, {"batch": 100})
         senders = session.execute(SENDERS, {"k": key, "t": current.tenant_id}).one()
         if not (senders.mine or exempt) and senders.others >= BUSINESSES_PER_ADDRESS_A_DAY:
             raise ApiError(429, "contact_email_requests_today")
@@ -174,9 +190,9 @@ def send_link(current: SignedIn, request_id: UUID, email: str) -> None:
     linked = current.db.scalar(
         text(
             "UPDATE contact_email_senders SET linked_at = now()"
-            " WHERE address_key = :k AND tenant_id = :t RETURNING true"
+            " WHERE inbox_key = :k AND tenant_id = :t RETURNING true"
         ),
-        {"k": address_key(address), "t": tenant},
+        {"k": inbox_key(address), "t": tenant},
     )
     if not linked:  # claim() leaves the row, and nothing deletes it within a day
         raise ApiError(503, "busy")
