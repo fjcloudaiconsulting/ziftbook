@@ -20,6 +20,7 @@ from app.jobs import Job
 from app.main import create_app
 from tests.conftest import (
     People,
+    confirm_contact_email,
     member_id,
     new_client,
     points,
@@ -301,7 +302,7 @@ def test_a_payment_after_the_time_ran_out_is_refunded_in_full(
     migrate_engine: Engine,
 ) -> None:
     # ZIF-99 F2: neither expired email carries a manage link, so both reply to the business.
-    assert put_settings(owner, {"contact_email": " Shop@Example.COM "}).status_code == 200
+    confirm_contact_email(people.a, "shop@example.com")
     client = new_client(app)
     late = place(app, people, ready, payment="pay", client=client).json()["id"]
     fake_stripe.confirm(fake_stripe.latest(late))  # paid, but the hold has ended
