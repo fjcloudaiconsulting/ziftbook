@@ -11,7 +11,8 @@ import styles from "../../_ui/ui.module.css";
 import admin from "../admin.module.css";
 import { CodeField, CopyButton, EnrolCommand } from "../parts";
 
-type Message = { tone: "error" | "note"; text: string };
+// sticky: shown again when a ticket is refused (why setup stopped, ZIF-262); any other message is not.
+type Message = { tone: "error" | "note"; text: string; sticky?: boolean };
 
 /** No confirmed factor yet: a ticket from the operator's CLI starts enrolment (ZIF-71 T1). */
 export function TicketStep({
@@ -60,7 +61,7 @@ export function TicketStep({
     if (outcome.status === 200 && outcome.data) {
       onBegun(outcome.data);
     } else if (state === "wrong") {
-      setMessage(initial ?? null); // e.g. why setup stopped: the same ticket is refused now (ZIF-262)
+      setMessage(initial?.sticky ? initial : null);
       setWrong(true);
       input.current?.focus();
     } else if (state === "expired") {
@@ -194,7 +195,7 @@ export function ScanStep({
         <Heading focus>{t("enrolLockedTitle")}</Heading>
         <Banner tone="error">{t("enrolLocked")}</Banner>
         <EnrolCommand email={who.email} />
-        <button className={`${styles.button} ${styles.secondary}`} type="button" onClick={() => onRestart({ tone: "error", text: t("enrolLocked") })}>
+        <button className={`${styles.button} ${styles.secondary}`} type="button" onClick={() => onRestart({ tone: "error", text: t("enrolLocked"), sticky: true })}>
           {t("newTicket")}
         </button>
       </>
