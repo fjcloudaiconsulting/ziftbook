@@ -831,3 +831,30 @@ def test_reapply_without_the_ledger_settings_is_a_usage_error(
     with pytest.raises(SystemExit) as exit_:
         ledger.main(["reapply", "--reason", "restore drill"])
     assert exit_.value.code == 2
+
+
+# ZIF-58. FENCE. Wrong impl: a reapply that runs whatever else is connected. With the API or the
+# worker up (runbook step 1 skipped), restored jobs could mail an erased client before the run,
+# and live requests would wait on its booking locks; a second run beside it could deadlock with
+# it. Each is refused (exit 1) before anything is applied.
+@pytest.mark.parametrize("beside", ["the api", "another reapply"])
+def test_reapply_runs_alone(
+    people: People,
+    migrate_engine: Engine,
+    app_engine: Engine,
+    ledger_bucket: S3Client,
+    beside: str,
+) -> None:
+    _, _, erased_at = seed_ledgered(people, migrate_engine, timedelta(days=2), timedelta(minutes=5))
+    before = take(migrate_engine, people.a)
+    engine = app_engine if beside == "the api" else migrate_engine
+    with engine.connect() as other:
+        if beside == "another reapply":
+            other.execute(text("SELECT pg_advisory_lock(:key)"), {"key": ledger.RUN_LOCK})
+        else:
+            other.execute(text("SELECT 1"))
+        assert reapply(erased_at - timedelta(hours=1)) == 1
+        other.rollback()
+        if beside == "another reapply":
+            other.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": ledger.RUN_LOCK})
+    assert take(migrate_engine, people.a) == before

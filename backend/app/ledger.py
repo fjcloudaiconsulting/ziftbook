@@ -245,6 +245,16 @@ CLIENT = text("""
 SELECT erased_at FROM clients WHERE tenant_id = :tenant_id AND id = :id FOR NO KEY UPDATE
 """)
 CORE = text("SELECT erase_client_core(:id, false)")
+# One reapply at a time (two would take the business locks in different orders), and none while
+# the API or the worker is connected (runbook step 1). A one-key advisory lock: a space of its
+# own, apart from the two-key booking locks.
+RUN_LOCK = 5800
+ALONE = text("SELECT pg_try_advisory_xact_lock(:key)")
+OTHERS = text("""
+SELECT count(*) FROM pg_stat_activity a JOIN pg_roles r ON r.rolname = a.usename
+WHERE a.datname = current_database() AND a.pid <> pg_backend_pid() AND NOT r.rolsuper
+  AND pg_has_role(a.usename, 'ziftbook_app', 'MEMBER')
+""")
 PAID_OF = text("""
 SELECT DISTINCT booking_id FROM booking_payments
 WHERE tenant_id = :tenant_id AND booking_id = ANY(CAST(:ids AS uuid[]))
@@ -265,7 +275,18 @@ def reapply(
     counts = {"entries": len(entries), "reapplied": 0, "already_erased": 0, "absent": 0}
     cancelled = 0
     paid_ended: list[str] = []  # settle pays these no more than Stripe shows (payments._refund)
+    # shortcut: one transaction holds one booking lock per business it touches; past roughly
+    # max_locks_per_transaction x max_connections businesses (thousands) it fails every time, and
+    # per-business commits are the upgrade (the skip on erased clients keeps a rerun safe).
     with Session(engine) as session, session.begin():
+        if not session.scalar(ALONE, {"key": RUN_LOCK}):
+            raise Refused("reapply refused: another reapply is running", 1)
+        if connected := session.scalar(OTHERS):
+            raise Refused(
+                "reapply refused: the API or the worker is connected; scale both to zero first",
+                1,
+                sessions=connected,
+            )
         for entry in entries:
             join_tenant(session, entry.tenant_id)
             session.execute(bookings.LOCK, {"key": bookings.LOCK_KEY})  # first, as every writer
