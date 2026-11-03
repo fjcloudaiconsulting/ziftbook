@@ -620,11 +620,14 @@ WHERE pg_get_expr(p.polqual, p.polrelid) ~ 'current_setting\(''app\.'
   AND pg_get_expr(p.polqual, p.polrelid) !~ 'app\.tenant_id'
 ORDER BY 1
 """)
-# Definers owned by ziftbook_migrate that mention the table but never its flag.
+# Definers owned by ziftbook_migrate that mention the table but never its flag. The body from
+# pg_get_functiondef, never prosrc: a SQL-standard body (BEGIN ATOMIC) leaves prosrc empty.
 FLAG_UNHANDLED = text(r"""
 SELECT p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
 WHERE p.prosecdef AND pg_get_userbyid(p.proowner) = 'ziftbook_migrate' AND n.nspname = 'public'
-  AND p.prosrc ~ ('\m' || :table || '\M') AND p.prosrc !~ replace(:flag, '.', '\.')
+  AND p.prokind IN ('f', 'p')
+  AND pg_get_functiondef(p.oid) ~ ('\m' || :table || '\M')
+  AND pg_get_functiondef(p.oid) !~ replace(:flag, '.', '\.')
 ORDER BY 1
 """)
 # The flags in force, pinned: a new one is a deliberate change here, with its allow-list.
@@ -663,16 +666,26 @@ def test_every_definer_reading_a_flag_gated_table_handles_its_flag(migrate_engin
             assert found == allowed, (table, flag)
 
 
+# The positive control, in both body forms: a quoted body (prosrc holds it) and a SQL-standard one
+# (BEGIN ATOMIC: prosrc is empty and the body is in prosqlbody, so the check reads
+# pg_get_functiondef; ZIF-235's review reproduced the gap).
+LEAKY_BODIES = {
+    "quoted": "AS 'SELECT count(*) FROM {table}'",
+    "begin atomic": "BEGIN ATOMIC SELECT count(*) FROM {table}; END",
+}
+
+
+@pytest.mark.parametrize("form", sorted(LEAKY_BODIES))
 @pytest.mark.parametrize(("table", "flag"), sorted(FLAGS))
 def test_the_flag_check_catches_a_definer_that_forgets_it(
-    migrate_engine: Engine, table: str, flag: str
+    migrate_engine: Engine, table: str, flag: str, form: str
 ) -> None:
     with migrate_engine.connect() as conn, conn.begin() as transaction:
         conn.execute(
             text(f"""
             CREATE FUNCTION leaky_reader() RETURNS bigint LANGUAGE sql SECURITY DEFINER
               SET search_path = pg_catalog, public, pg_temp
-              AS 'SELECT count(*) FROM {table}';
+              {LEAKY_BODIES[form].format(table=table)};
             """)
         )
         found = set(conn.scalars(FLAG_UNHANDLED, {"table": table, "flag": flag}))
