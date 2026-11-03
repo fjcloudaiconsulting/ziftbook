@@ -2790,7 +2790,8 @@ def test_0078_and_0058_edit_the_erase_core_without_overlapping() -> None:
 
 # ZIF-232 (0086): the request table and its four functions.
 CONTACT_EMAIL_OBJECTS = text("""
-SELECT to_regclass('contact_email_requests') IS NOT NULL,
+SELECT to_regclass('contact_email_requests') IS NOT NULL
+         AND to_regclass('contact_email_confirmations') IS NOT NULL,
        (SELECT count(*) FROM pg_proc
         WHERE proname IN ('change_contact_email', 'resend_contact_email', 'confirm_contact_email',
                           'mint_contact_email_token')

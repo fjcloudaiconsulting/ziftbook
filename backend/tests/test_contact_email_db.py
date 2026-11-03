@@ -211,6 +211,39 @@ def test_a_live_link_makes_its_address_the_one_in_effect_once(
     assert confirm(people.a, digest(secret)) is None
 
 
+CONFIRMATIONS_PRIVILEGES = text("""
+SELECT r.role, p.privilege
+FROM unnest(ARRAY['ziftbook_app', 'ziftbook_worker']) r(role),
+     unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'])
+       p(privilege)
+WHERE has_table_privilege(r.role, 'contact_email_confirmations', p.privilege)
+ORDER BY 1, 2
+""")
+
+
+# Security review S1 FENCE. Wrong impl: a confirmation recorded only by the API (a compromised
+# API confirms an inbox it controls and leaves no trace), or a record the API can change or erase.
+def test_every_confirmation_is_recorded_where_the_api_cannot_erase_it(
+    people: People, migrate_engine: Engine, worker_engine: Engine
+) -> None:
+    set_in_effect(migrate_engine, people.a, "old@x.nl")
+    _, secret = sent(worker_engine, people.a, "new@x.nl")
+
+    assert confirm(people.a, digest(secret)) is not None
+
+    with tenant_context(people.a) as session:
+        recorded = session.execute(
+            text(
+                "SELECT email, previous, confirmed_at <= clock_timestamp() AS stamped"
+                " FROM contact_email_confirmations"
+            )
+        ).all()
+    assert [tuple(row) for row in recorded] == [("new@x.nl", "old@x.nl", True)]
+    with migrate_engine.connect() as conn:
+        held = [tuple(row) for row in conn.execute(CONFIRMATIONS_PRIVILEGES)]
+    assert held == [("ziftbook_app", "SELECT"), ("ziftbook_worker", "SELECT")]
+
+
 # F1.8 FENCE. Wrong impl: requesting again on every call (a save of other keys kills a sent link),
 # or a clear that leaves the address in effect.
 def test_what_a_change_does(people: People, migrate_engine: Engine, worker_engine: Engine) -> None:
