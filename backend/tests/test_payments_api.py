@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Engine, text
 
 from app import limits, payments
+from app.errors import ApiError
 from app.main import create_app
 from tests.conftest import (
     People,
@@ -356,6 +357,22 @@ def test_a_read_with_the_address_at_its_cap_answers_from_the_row(
     assert fake_stripe.count("retrieve_account") == 0
     with_cap_full = owner.post("/api/payments/dashboard", headers=JSON)
     assert (with_cap_full.status_code, with_cap_full.json()) == (429, {"code": "rate_limited"})
+
+
+# ZIF-264 review. fence. Kills: the read taking any refusal from the limiter for its cap.
+def test_only_the_cap_counts_as_limited_on_the_read(
+    people: People, owner: TestClient, fake_stripe: FakeGateway, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    connect(fake_stripe, people.a)
+
+    def other_refusal(*args: object, **kwargs: object) -> bool:
+        raise ApiError(503, "busy")
+
+    monkeypatch.setattr(limits, "hit", other_refusal)
+
+    response = owner.get("/api/payments/account")
+
+    assert (response.status_code, response.json()) == (503, {"code": "busy"})
 
 
 # ZIF-158 F23. fence. Kills: unlimited Stripe-calling POSTs.
