@@ -353,52 +353,87 @@ object per erasure in a dedicated bucket (`ZIF_ERASURE_LEDGER_*`), keyed
   exists only for an erasure that committed). The worker's `erasure.ledger` job writes the entry. The key is
   deterministic and the write is conditional, so a repeat, a racing run, or the bucket lock refusing an overwrite is
   success when the entry is there.
+- Only the worker holds the writing key (object read and write: it looks before it writes). The operator's `reapply`
+  pod holds a read-only key, and `backfill` none.
 - No synchronous write: it would hold an outbound call under the tenant booking lock. The residual window is an
   erasure committed but not yet ledgered (normally seconds) followed by the loss of the database.
-- Retention: the bucket lock keeps every entry for at least the longest backup or point-in-time window plus a margin
-  (35 days of backups means 42 days of ledger), and a lifecycle rule deletes it after that (storage limitation).
+- Retention: **14 days**, a bucket lock rule of 14 days on `erasures/` and a lifecycle rule that deletes an entry after
+  15. The ledger has to outlive the oldest backup that can still be restored, by the one-hour `--since` margin and
+  some slack. The production backups (cloud-infra `terraform/tbd-backups`, `clusters/hetzner/data/db-backup.yaml`) are
+  a nightly logical dump, kept 8 days, with a replaced version kept 1 more day and no point-in-time recovery, so the
+  oldest restorable backup is at most 9 days old: 14 days covers it with 5 days of slack, and matches the privacy
+  notice's "backups are deleted within two weeks". Change the backup retention and you change this one first: never
+  restore from a backup older than the ledger's retention minus an hour, or erasures come back with no error. The
+  ledger is personal data itself (pseudonymous ids), so it is kept no longer than that (storage limitation).
 - An `erasure.ledger` job that gave up (ERROR `job gave up`, alerted) leaves its erasure out of the ledger. Re-write
   the missing entries with `python -m app.ledger backfill --since <the job's erasure time, or earlier>`, run like
   `reapply` below but with **no** ledger key: it reads every business's `clients.erased_at` (never the audit events)
-  and queues one `erasure.ledger` job per client erased since, keyed for that run, so the worker, the only holder of
-  the writing key, writes what is missing (`written: false` for an entry already there). It logs
-  `ledger backfill queued` (`queued`).
+  and queues one `erasure.ledger` job per client erased since, keyed for that run, so the worker writes what is
+  missing (`written: false` for an entry already there). It logs `ledger backfill queued` (`queued`). After a
+  reapply, a backfill also writes a second entry for each re-erased client (the core stamped a new time): harmless, a
+  later reapply counts it `already_erased`.
+
+### Before deploy (each environment, staging first)
+
+Record the results in the deploy ticket. All of it lives outside the code, which cannot check it (R2's bucket lock is
+not visible through the S3 API).
+
+1. With the worker's key, one ledger write lands (`erasure ledgered`, `written: true`), and a second PUT to the same
+   key with `If-None-Match: *` is refused (412): R2 honours the conditional write.
+2. A plain PUT over that key, and a `DeleteObject` of it, with the worker's key, are both refused while the lock
+   applies.
+3. With the operator's read-only key, a list and a GET work and a PUT is refused.
+4. With the photo buckets' key, any request on the ledger bucket is refused (AccessDenied).
+5. The worker's startup line says `erasure_ledger: "on"`, and the API's too.
 
 ### Restoring the database
 
-Mandatory for every restore of the production or staging database, from a backup or to a point in time. Skipping
-step 3 brings erased clients back.
+Mandatory for every restore of the production or staging database. Skipping step 3 brings erased clients back.
 
 1. Scale the API and the worker to zero. The worker must not run before step 3: restored reminder and booking mail
-   jobs would mail clients who were erased after the restore point.
-2. Restore, and run the migrations if the release needs them.
-3. Re-apply the erasures the restore undid: `python -m app.ledger reapply --reason "<incident or ticket id>"`. It reads
-   the whole ledger by default (an entry already applied is counted and left alone). `--since <restore point - 1h,
-   ISO 8601 with its offset>` narrows it; a `--since` later than everything the restored database holds is refused
-   (exit 2), and so is an empty listing for a window in which the restored database itself records erasures (exit 1:
-   a wrong bucket or key).
-   Run it as `app.admin` runs: from the migrations image, in a short-lived pod with `ZIF_MIGRATE_DATABASE_URL`,
-   `ZIF_S3_ENDPOINT`, `ZIF_ERASURE_LEDGER_BUCKET` and the ledger's **read-only** key
-   (`ZIF_ERASURE_LEDGER_ACCESS_KEY_ID`, `ZIF_ERASURE_LEDGER_SECRET_ACCESS_KEY`), never the worker's. For each entry,
-   in erasure order, it takes the business's booking lock, ends the client's bookings that the erasure ended (live at
-   the erasure's time: they are cancelled by the merchant, a checkout expires, each with an event whose reason is
-   `erasure_reapplied` and no actor), queues a settle job for each that holds money (settle reads what Stripe already
-   refunded, so nothing is refunded twice), and runs `erase_client_core(client, false)` (the cancellations were
-   announced the first time; a contact hold is kept only while money is still owed). A client already erased, or one
-   the restored database never had, is counted and left alone, so running it again changes nothing. Everything goes in
-   one transaction with one `erasure_reapplied` platform audit event: on exit 1 (any error, logged CRITICAL) nothing
-   was applied; fix the cause and run it again. Check its `erasures reapplied` line: `entries` must equal the number
-   of ledger objects erased from `--since` on (`aws s3 ls --recursive s3://<bucket>/erasures/<yyyy>/<mm>/` for each
-   month since, counting the keys whose time is at or after it), and `reapplied + already_erased + absent` must equal
-   `entries`.
+   jobs would mail clients who were erased after the restore point. `reapply` refuses to run while either is
+   connected, or while another `reapply` runs.
+2. Restore, and run the migrations if the release needs them. Never restore from a backup older than the ledger's
+   retention (14 days) minus an hour.
+3. Re-apply the erasures the restore undid: `python -m app.ledger reapply --reason "<incident or ticket id>"` (an id,
+   never a person's name: it is kept in `platform_audit_events`). Run it as `app.admin` runs: from the migrations
+   image, in a short-lived pod with `ZIF_MIGRATE_DATABASE_URL`, `ZIF_S3_ENDPOINT`, `ZIF_ERASURE_LEDGER_BUCKET` and
+   the ledger's **read-only** key (`ZIF_ERASURE_LEDGER_ACCESS_KEY_ID`, `ZIF_ERASURE_LEDGER_SECRET_ACCESS_KEY`), never
+   the worker's; without them it exits 2 and names them.
+   - It reads the whole ledger by default (an entry already applied is counted and left alone). `--since <restore
+     point - 1h, ISO 8601 with its offset>` narrows it. A `--since` later than everything the restored database holds
+     is refused (exit 2), and so is an empty listing for a window in which the restored database itself records
+     erasures (exit 1: a wrong bucket or key).
+   - An entry it cannot apply (unreadable, of an unknown version or kind, a body that is not the erasure its key
+     names, or dated in the future) stops the run before anything is applied, each logged as ERROR `ledger entry
+     refused` with its `key` (or `sha256:<hash>` of a key that holds more than ids). The bucket lock keeps it, so
+     inspect it (`aws s3api get-object --endpoint-url https://<account>.eu.r2.cloudflarestorage.com --profile
+     <read-only> --bucket <bucket> --key <key> -`) and, when it is not an erasure, run again with `--skip-key <the
+     logged key>` (repeatable; recorded in the audit event).
+   - After a security incident, list the entries since the suspected compromise first, and skip those the incident
+     made: a restore cannot undo an erasure an attacker made, and a forged entry would erase a real client.
+   - For each entry, in erasure order, it takes the business's booking lock, ends the client's bookings that the
+     erasure ended (live at the erasure's time, so one that has started since ends too: cancelled by the merchant, a
+     checkout expired, each with an event whose reason is `erasure_reapplied` and no actor), queues a settle job for
+     each that holds money, and runs `erase_client_core(client, false)` (the cancellations were announced the first
+     time; a contact hold is kept only while money is still owed). No owner is mailed: the owners were told at the
+     erasure, and the restore is the operator's to announce. Every statement names the business, and a core that
+     erases nothing stops the run. A restored server whose clock is behind the ledger's erasure times by more than a
+     moment can make the core refuse a booking as still live: fix the clock and run again.
+   - Everything goes in one transaction with one `erasure_reapplied` platform audit event: on exit 1 nothing was
+     applied; fix the cause and run it again. Its `erasures reapplied` line names the `bucket` and gives `entries`,
+     `reapplied`, `already_erased`, `absent`, `cancelled`, `skipped` and `paid_ended`. Check that the bucket is the
+     environment's, and that `entries` is the number of objects the ledger holds (`aws s3 ls --recursive
+     --endpoint-url https://<account>.eu.r2.cloudflarestorage.com --profile <read-only> s3://<bucket>/erasures/`,
+     from `--since`'s day on when given) less the skipped.
 4. Start the worker (settle runs the refunds and releases), then the API.
-5. Check each booking in the `erasures reapplied` line's `paid_ended` (ids) in Stripe. A restore can lose how a
-   paid booking really ended (the client's own cancellation with less back, or none), and the re-apply cannot tell
-   that from an erasure whose refund never ran, so settle never pays a re-applied ending more than Stripe already
-   shows: it flags the shortfall (`refund_failed_at`, "refund failed" in the console), logs ERROR `refund held after
-   a reapply` (`booking_id`, `intent`, `amount_minor`), and mails nobody. Where the money is owed, refund it in Stripe
-   (the refund event clears the flag). Where it is not (the client's own cancellation shows in Stripe), clear the
-   flag as `ziftbook_migrate` in that business:
+5. Check each booking in the line's `paid_ended` (ids) in Stripe. A restore can lose how a paid booking really ended
+   (the client's own cancellation with less back, or none), and the re-apply cannot tell that from an erasure whose
+   refund never ran, so settle never pays a re-applied ending more than Stripe already shows: it flags the shortfall
+   (`refund_failed_at`, "refund failed" in the console), logs ERROR `refund held after a reapply` (`booking_id`,
+   `intent`, `amount_minor`), and mails nobody. Where the money is owed, refund it in Stripe (the refund event clears
+   the flag). Where it is not (the client's own cancellation shows in Stripe), clear the flag as `ziftbook_migrate` in
+   that business:
    `UPDATE booking_payments SET refunded_minor = <what Stripe refunded>, refund_failed_at = NULL WHERE booking_id = '<id>'`.
 
 What it cannot bring back: an erasure committed but not yet ledgered when the database was lost (normally seconds;
@@ -567,7 +602,8 @@ A platform admin runs the platform across businesses (ZIF-70). `platform_admins`
 - The app role may only append, naming its columns: never `id` or `created_at`, never read, change or delete. A
   `write` event without a non-blank `reason` is refused by the database. Operators read it as `ziftbook_migrate`.
 - `erasure_reapplied` (ZIF-58, a `write` with the operator's `--reason`): one per `python -m app.ledger reapply` run,
-  its details counts only (`entries`, `reapplied`, `already_erased`, `absent`, `cancelled`).
+  its details counts (`entries`, `reapplied`, `already_erased`, `absent`, `cancelled`, `paid_ended`) and the
+  `skipped` entries' names (ledger keys, which hold ids only, or their hashes).
 
 ## Client IP
 
@@ -714,7 +750,7 @@ loggers (`web.*`); Next's own stderr output (banners, SSR error traces) is not i
   `sweep failed` (ERROR, `sweep` `holds` or `bookings`, with `exc`: the worker's two sweeps run whatever the other
   did, and either failing withholds the ping); `business sweep failed` (ERROR, `sweep`, `tenant_id`, with `exc`: one
   business failed in a sweep, which went on to the next and then raised); `erasure ledgered` (INFO, `client_id`, `written`: false when the
-  entry was there already); `erasures reapplied` (INFO, the run's counts, from `python -m app.ledger reapply`); `ledger backfill queued` (INFO, `queued`, from `python -m app.ledger backfill`); `email sent` (INFO) and
+  entry was there already); `erasures reapplied` (INFO, the run's counts, from `python -m app.ledger reapply`); `ledger backfill queued` (INFO, `queued`, from `python -m app.ledger backfill`); `ledger entry refused` (ERROR, `key`) and the `reapply refused: ...` lines (ERROR, ids and counts only); `refund held after a reapply` (ERROR, `booking_id`, `intent`, `amount_minor`, from settle); `email sent` (INFO) and
   `email failed` (WARNING) with `template` (and `error` on failure) plus the job context, and
   `email skipped` (INFO, `template`, `reason` `recipient_quota`, or `no_hold` for an erased client's
   `booking_refund_failed` whose hold is gone, from the worker's send);
@@ -999,7 +1035,7 @@ ZIF-38). An empty variable means the default: `env_ignore_empty=True` on the bas
 | `ZIF_MEDIA_URL` | api, frontend | `""` | for photos | no | Where the media bucket is served from (a custom domain origin, no trailing slash needed); photo URLs start with it. Unset: services list no photo. The web app allows images from its origin in the pages' Content-Security-Policy (ZB-12), read per request; give it the API's value. |
 | `ZIF_S3_PUBLIC_ENDPOINT` | api, frontend | `""` | no (development only) | no | The host the browser reaches the store on, when `ZIF_S3_ENDPOINT` is a compose service name; presigned upload URLs use it, and the web app's Content-Security-Policy allows uploads to it. Never set in a deployment. |
 | **Erasure ledger** | | | | | |
-| `ZIF_ERASURE_LEDGER_BUCKET` | api (presence only), worker, ledger CLI | `""` | yes | no | The dedicated bucket of the erasure ledger (ZIF-58, "Erasure operations"), on `ZIF_S3_ENDPOINT`. Give it a bucket lock rule for the ledger's retention (at least the longest backup or point-in-time window, plus a margin) and a lifecycle rule that deletes entries after it. Unset outside localhost (`ZIF_APP_URL`): erasure answers 503 `erasure_unavailable`, and the API logs a WARNING at startup (`erasure_ledger: "off"`). The worker logs `erasure_ledger: "off"` when any of it, `ZIF_S3_ENDPOINT` and the key below is unset, with an ERROR outside localhost: erasures still commit and their ledger jobs give up until it is set. A forgotten `ZIF_APP_URL` defaults to localhost and lifts both the 503 and the ERROR (as it does for the other development-only allowances): set it everywhere. |
+| `ZIF_ERASURE_LEDGER_BUCKET` | api (presence only), worker, ledger CLI | `""` | yes | no | The dedicated bucket of the erasure ledger (ZIF-58, "Erasure operations"), on `ZIF_S3_ENDPOINT`. Give it a 14-day bucket lock rule on `erasures/` and a lifecycle rule that deletes entries after 15 days ("Erasure operations": the retention and its reasons, and the checks before deploy). Unset outside localhost (`ZIF_APP_URL`): erasure answers 503 `erasure_unavailable`, and the API logs a WARNING at startup (`erasure_ledger: "off"`). The worker logs `erasure_ledger: "off"` when any of it, `ZIF_S3_ENDPOINT` and the key below is unset, with an ERROR outside localhost: erasures still commit and their ledger jobs give up until it is set. A forgotten `ZIF_APP_URL` defaults to localhost and lifts both the 503 and the ERROR (as it does for the other development-only allowances): set it everywhere. |
 | `ZIF_ERASURE_LEDGER_ACCESS_KEY_ID` | worker, ledger CLI | `""` | yes | no | Access key id for the ledger bucket only: the worker's has object read and write (it looks before it writes, so a write-only key fails every job), the operator's `reapply` pod's object read only; `backfill` needs none. Never the photo buckets' key. |
 | `ZIF_ERASURE_LEDGER_SECRET_ACCESS_KEY` | worker, ledger CLI | `""` | yes | yes | Its secret. |
 | **Payments** | | | | | |
