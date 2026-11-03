@@ -524,3 +524,35 @@ def test_a_resend_counts_toward_the_same_limits(
 
     assert (over.status_code, over.json()) == (429, {"code": "rate_limited"})
     assert waiting(migrate_engine, people.a) == before
+
+
+def notices(migrate_engine: Engine, tenant_id: uuid.UUID) -> list[str]:
+    with migrate_engine.connect() as conn:
+        return list(
+            conn.scalars(
+                text(
+                    "SELECT payload ->> 'recipient_id' FROM jobs WHERE tenant_id = :t"
+                    " AND kind = 'email.send' AND payload ->> 'template' = 'contact_email_changed'"
+                ),
+                {"t": tenant_id},
+            )
+        )
+
+
+# S2 FENCE. Wrong impl: no notice (an inbox an attacker confirmed keeps client replies unseen), a
+# notice to a worker member, or one for a change that is not in effect.
+def test_the_owners_are_told_when_the_address_in_effect_changes(
+    people: People, app: FastAPI, migrate_engine: Engine, worker_engine: Engine
+) -> None:
+    owner = signed_in(app, people.a, people.both)
+    assert put_settings(owner, {"contact_email": None}).status_code == 200
+    assert put_settings(owner, {"contact_email": "typed@example.com"}).status_code == 200
+    assert notices(migrate_engine, people.a) == []
+
+    token = link(worker_engine, people.a, "shop@example.com")
+    assert new_client(app).post(CONFIRM, json={"token": token}).status_code == 204
+    assert notices(migrate_engine, people.a) == [str(people.both)]
+
+    assert put_settings(owner, {"contact_email": None}).status_code == 200
+    assert notices(migrate_engine, people.a) == [str(people.both)] * 2
+    assert notices(migrate_engine, people.b) == []
