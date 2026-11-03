@@ -500,6 +500,9 @@ SELECT p.id, p.intent_id, p.kind, p.status, p.booking_id, p.amount_minor, p.curr
         ORDER BY e.id DESC LIMIT 1) AS client_pct,
        EXISTS (SELECT 1 FROM booking_events e
                WHERE e.booking_id = p.booking_id AND e.event = 'paid') AS was_booked,
+       EXISTS (SELECT 1 FROM booking_events e
+               WHERE e.tenant_id = p.tenant_id AND e.booking_id = p.booking_id
+                 AND e.details ->> 'reason' = 'erasure_reapplied') AS reapplied,
        (SELECT CAST(e.details ->> 'erased_at' AS timestamptz) FROM booking_events e
         WHERE e.tenant_id = p.tenant_id AND e.booking_id = p.booking_id
           AND e.details ->> 'reason' = 'erasure_reapplied'
@@ -963,11 +966,16 @@ def _refund(tenant_id: UUID, row: Row[Any]) -> None:
     # refund, and the two look the same from here. The shortfall is flagged for the business to
     # resolve in Stripe, and told to the operator; nothing is mailed. A charge made after the
     # erasure (a checkout the reapply expired, completed at the bank anyway) is nothing a restore
-    # lost: it is owed in full, as any late payment. No charge time known: held.
+    # lost: it is owed in full, as any late payment. Fail closed: the reason alone holds it, and
+    # only a known erasure time and a known, later charge time let it go.
     held = (
-        row.reapplied_at is not None
+        row.reapplied
         and due > state.amount_refunded
-        and (state.charged_at is None or state.charged_at < row.reapplied_at)
+        and (
+            row.reapplied_at is None
+            or state.charged_at is None
+            or state.charged_at < row.reapplied_at
+        )
     )
     if due > state.amount_refunded and not held:
         try:
