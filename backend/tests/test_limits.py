@@ -575,3 +575,22 @@ def test_an_ipv4_mapped_address_shares_its_ipv4_slots(action: str, app_engine: E
     for thread in threads:
         thread.join(timeout=10)
     assert held == [False, False]
+
+
+def test_an_address_shares_its_slots_across_all_its_keys(action: str, app_engine: Engine) -> None:
+    locked, other = f"{action}:locked", f"{action}:other"
+    limits.hit({locked: 100}, WINDOW)
+    address = fresh_address()
+    held: list[object] = []
+    with app_engine.begin() as holder:
+        holder.execute(text("SELECT FROM rate_limits WHERE key = :k FOR UPDATE"), {"k": locked})
+        threads = hold([address], locked, held)
+        wait_until_blocked(app_engine, 2)
+        # Another key, not locked: refused all the same, before its row is written.
+        assert refused(answer_from(address, lambda: limits.hit({other: 100}, WINDOW)))
+    for thread in threads:
+        thread.join(timeout=10)
+    assert held == [False, False]
+    with app_engine.connect() as conn:
+        written = conn.scalar(text("SELECT count(*) FROM rate_limits WHERE key = :k"), {"k": other})
+    assert written == 0
