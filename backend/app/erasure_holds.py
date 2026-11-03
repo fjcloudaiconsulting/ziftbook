@@ -18,8 +18,9 @@ from app import bookings, jobs, logs, tracing
 from app.db import SessionLocal, tenant_context
 from app.jobs import Job
 
-# The core's purge date: when it erased the client plus 30 days (0064's INSERT).
-HOLD_LIFETIME = timedelta(days=30)
+# The core's purge date, computed as the core computes it (0064's INSERT: now() + 30 days, in the
+# session's time zone), so a DST change in between cannot move the job an hour off the hold.
+DUE = text("SELECT CAST(:at AS timestamptz) + interval '30 days'")
 
 # The backstop job runs within a poll of the purge date and the sweep within five minutes of it: a
 # hold found this long past it means the worker was down or the purge kept failing, and the 31-day
@@ -80,7 +81,7 @@ def enqueue_purge(db: Session, tenant_id: UUID, client_id: UUID, erased_at: date
     transaction, with the time the core returned. The caller cannot read the hold (the API role
     may not), so it is enqueued whether or not one was written; with none, it purges nothing. The
     key carries the date: a re-applied erasure after a restore writes a new hold with a new one."""
-    due_at = erased_at + HOLD_LIFETIME
+    due_at: datetime = db.scalar(DUE, {"at": erased_at})
     jobs.enqueue(
         db,
         "erasure.hold_purge",
