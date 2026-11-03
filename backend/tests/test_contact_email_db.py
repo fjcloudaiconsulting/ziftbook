@@ -361,6 +361,62 @@ def test_a_change_and_a_confirm_take_turns(
     assert request_of(migrate_engine, people.a).email == "second@x.nl"  # type: ignore[union-attr]
 
 
+# F1.9 FENCE (lock order). Wrong impl: change_contact_email locking the setting before the request
+# row, which deadlocks against a confirm (request row, then setting). With the setting held, the
+# change must already hold the request row while it waits.
+def test_a_change_locks_the_request_before_the_setting(
+    people: People, migrate_engine: Engine, app_engine: Engine
+) -> None:
+    set_in_effect(migrate_engine, people.a, "a@x.nl")
+    change(people.a, "b@x.nl")
+    done: list[object] = []
+
+    def change_meanwhile() -> None:
+        try:
+            done.append(change(people.a, "c@x.nl").outcome)
+        except Exception as error:
+            done.append(error)
+
+    with migrate_tenant_context(migrate_engine, people.a) as holder:
+        holder.execute(text("SELECT 1 FROM settings WHERE key = 'contact_email' FOR UPDATE"))
+        thread = threading.Thread(target=change_meanwhile)
+        thread.start()
+        wait_until_blocked(app_engine, 1)
+        with (
+            pytest.raises(DBAPIError) as raised,
+            migrate_tenant_context(migrate_engine, people.a) as probe,
+        ):
+            probe.execute(text("SELECT 1 FROM contact_email_requests FOR UPDATE NOWAIT"))
+        assert getattr(raised.value.orig, "sqlstate", None) == "55P03"
+    thread.join()
+    assert done == ["requested"]
+
+
+# N7 FENCE. Wrong impl: the setting read without its lock, so two clears both report the address
+# they removed (both audited, every owner told twice).
+def test_two_clears_report_the_address_once(
+    people: People, migrate_engine: Engine, app_engine: Engine
+) -> None:
+    set_in_effect(migrate_engine, people.a, "a@x.nl")
+    previous: list[object] = []
+
+    def clear() -> None:
+        try:
+            previous.append(change(people.a, None).previous)
+        except Exception as error:
+            previous.append(error)
+
+    with migrate_tenant_context(migrate_engine, people.a) as holder:
+        holder.execute(text("SELECT 1 FROM settings WHERE key = 'contact_email' FOR UPDATE"))
+        threads = [threading.Thread(target=clear) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        wait_until_blocked(app_engine, 2)
+    for thread in threads:
+        thread.join()
+    assert sorted(previous, key=str) == sorted(["a@x.nl", None], key=str)
+
+
 def test_a_definer_sees_only_the_callers_business(people: People, migrate_engine: Engine) -> None:
     change(people.b, "b@x.nl")
     assert change(people.a, None).outcome == "cleared"
