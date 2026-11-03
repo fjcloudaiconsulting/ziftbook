@@ -214,11 +214,17 @@ export function contactEmailView(s: ContactEmailState, owner: boolean): ContactE
 export function contactActionOutcome(
   status: number,
   code?: string,
-): "done" | "contactTooMany" | "contactTooManyToday" | "contactFailed" | "signedOut" | "reload" {
+): "done" | "contactTooMany" | "contactTooManyToday" | "contactOwnerOnly" | "contactFailed" | "signedOut" | "reload" {
   if (status === 200) return "done";
   if (status === 429) return code === "contact_email_requests_today" ? "contactTooManyToday" : "contactTooMany";
   if (status === 401) return "signedOut";
+  if (status === 403 && code === "owner_only") return "contactOwnerOnly"; // no longer an owner
   if (status === 409) return "reload";
   return "contactFailed";
 }
 
+/** Whether the block shows after reading the state: an API from before the route (404) shows nothing. */
+export function contactLoadOutcome(status: number): "show" | "hide" | "failed" {
+  if (status === 200) return "show";
+  return status === 404 ? "hide" : "failed";
+}
