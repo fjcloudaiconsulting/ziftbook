@@ -515,3 +515,93 @@ def test_a_pass_does_not_reopen_the_budget(
     assert [line["msg"] for line in log_lines() if line["level"] == "ERROR"] == [
         "second factor locked"
     ]
+
+
+def set_count(migrate_engine: Engine, user_id: uuid.UUID, count: int) -> None:
+    """As migrate: that many wrong codes, just now."""
+    with migrate_engine.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE second_factors SET failed_attempts = :n, failures_leaked_at = now() "
+                "WHERE user_id = :u"
+            ),
+            {"n": count, "u": user_id},
+        )
+
+
+def charge_another_mid_request(
+    monkeypatch: pytest.MonkeyPatch, app_engine: Engine, other: TestClient, function: str
+) -> None:
+    """Between this request's charge and its check (the step is computed in between), another
+    session of the same admin charges a code of its own, still in flight when the check runs."""
+    matching_step = totp.matching_step
+    id_hash = auth.hash_token(other.cookies[ADMIN_COOKIE])
+
+    def step_with_another_in_flight(*args: Any, **kwargs: Any) -> int | None:
+        with app_engine.begin() as conn:
+            outcome = conn.scalar(text(f"SELECT outcome FROM {function}(:id)"), {"id": id_hash})
+        assert outcome == "charged"
+        return matching_step(*args, **kwargs)
+
+    monkeypatch.setattr(totp, "matching_step", step_with_another_in_flight)
+
+
+# fence (ZIF-261): a wrong code is reported at its own charge's count, never at the count other
+# codes still in flight have added since: no phantom lock (403, audit event, ERROR line) and no
+# value missing from the audit trail. Kills the failed branch taking check_second_factor's current
+# count. Injected by reporting the check's `failures` again.
+def test_a_wrong_code_reports_its_own_count(
+    app: FastAPI,
+    app_engine: Engine,
+    migrate_engine: Engine,
+    an_admin: uuid.UUID,
+    monkeypatch: pytest.MonkeyPatch,
+    log_lines: Callable[[], list[dict[str, Any]]],
+) -> None:
+    v = verified_client(app, migrate_engine, an_admin)
+    half = sign_in(app, an_admin)
+    other = sign_in(app, an_admin)
+    set_count(migrate_engine, an_admin, 8)
+    charge_another_mid_request(monkeypatch, app_engine, other, "charge_second_factor")
+
+    refused = half.post(PASS, json={"code": wrong_code(v)})
+
+    assert answer(refused) == (401, {"code": "invalid_code"})
+    assert failed_attempts(migrate_engine, an_admin) == 10  # the other one is still in flight
+    events = audit(migrate_engine, an_admin)
+    assert [d for a, d in events if a == "second_factor_failed"] == [
+        {"method": "totp", "failures": 9}
+    ]
+    assert "second_factor_locked" not in [action for action, _ in events]
+    assert warned(log_lines, "second factor failed") == [("WARNING", str(an_admin), 9)]
+    assert [line["msg"] for line in log_lines() if line["level"] == "ERROR"] == []
+
+
+# fence (ZIF-261): the same at enrolment confirm. Injected by reporting check_totp_enrolment's
+# `failures` again.
+def test_a_wrong_enrolment_code_reports_its_own_count(
+    app: FastAPI,
+    app_engine: Engine,
+    migrate_engine: Engine,
+    an_admin: uuid.UUID,
+    monkeypatch: pytest.MonkeyPatch,
+    log_lines: Callable[[], list[dict[str, Any]]],
+) -> None:
+    ticket = issue_ticket(an_admin)
+    client = sign_in(app, an_admin)
+    other = sign_in(app, an_admin)
+    begun = client.post(BEGIN, json={"ticket": ticket})
+    assert begun.status_code == 200, begun.content
+    s = base64.b32decode(begun.json()["secret"])
+    taken = {totp.code(s, step) for step in range(step_now() - 2, step_now() + 3)}
+    bad = next(c for c in (f"{i:06d}" for i in range(1_000_000)) if c not in taken)
+    set_count(migrate_engine, an_admin, 8)
+    charge_another_mid_request(monkeypatch, app_engine, other, "charge_totp_enrolment")
+
+    refused = client.post(CONFIRM, json={"code": bad})
+
+    assert answer(refused) == (401, {"code": "invalid_code"})
+    assert [d for a, d in audit(migrate_engine, an_admin) if a == "totp_enrolment_failed"] == [
+        {"failures": 9}
+    ]
+    assert warned(log_lines, "totp enrolment failed") == [("WARNING", str(an_admin), 9)]
