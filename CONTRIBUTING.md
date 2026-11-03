@@ -87,9 +87,9 @@ Specifics:
   nothing: never grant it ownership, `BYPASSRLS` or DDL rights.
 - The worker connects as `ziftbook_worker` (ZB-08): a member of `ziftbook_app`, so it has every privilege the app
   role has, plus what only background jobs may do: `mint_email_token`, which the app role does not have (0051),
-  setting an invite's `token_hash` (0053), and reading and deleting an erased client's contact hold (0064) with
-  `client_money_owed` (0077). A worker still on `ziftbook_app` fails every sign-up, reset and invite
-  email. The same never-list applies to it.
+  setting an invite's `token_hash` (0053), reading and deleting an erased client's contact hold (0064) with
+  `client_money_owed` (0077), and `mint_contact_email_token` (ZIF-232, 0086). A worker still on `ziftbook_app` fails
+  every sign-up, reset, invite and contact email confirmation email. The same never-list applies to it.
 - Neither runtime role can create temporary tables, and both search `public` before `pg_temp` (ZB-31;
   `bootstrap.sql`, plus 0050 where `ziftbook_migrate` owns the database; elsewhere 0050 changes nothing and logs
   `temporary tables left to bootstrap.sql` at WARNING). Where the admin role does not own the database either

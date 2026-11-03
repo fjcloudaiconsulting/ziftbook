@@ -1,0 +1,16 @@
+Bevestig dit e-mailadres voor ziftbook
+Hallo,
+
+Dit bedrijf op ziftbook wil dat zijn klanten het via dit e-mailadres kunnen bereiken:
+
+„$business”
+
+Na je bevestiging zien klanten dit adres op de boekingspagina, en komen hun antwoorden op sommige e-mails over afspraken hier binnen.
+
+Open deze link en klik op Bevestigen:
+
+$link
+
+De link werkt één keer, 24 uur lang. Ken je dit bedrijf niet? Dan kun je deze e-mail negeren. Het adres wordt pas gebruikt als het is bevestigd.
+
+ziftbook
