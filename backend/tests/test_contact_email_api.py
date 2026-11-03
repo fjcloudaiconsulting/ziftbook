@@ -945,3 +945,32 @@ def test_concurrent_saves_cannot_drain_the_pool(
     for thread in threads:
         thread.join()
     assert set(results) <= {200, 429, 503} and 200 in results  # the two let through finish
+
+
+CANCEL = "/api/settings/contact-email/request"
+
+
+# Review S6 FENCE. Wrong impl: cancelling a change through a clear, which also removes the address
+# clients see; a cancel a worker member can make; or one that leaves the waiting link working.
+def test_an_owner_cancels_a_change_and_keeps_the_address_in_effect(
+    people: People, app: FastAPI, migrate_engine: Engine, worker_engine: Engine
+) -> None:
+    confirm_contact_email(people.a, "old@example.com")
+    token = link(worker_engine, people.a, "new@example.com")
+    owner = signed_in(app, people.a, people.both)
+
+    refused = signed_in(app, people.a, people.only_a).request("DELETE", CANCEL, json={})
+    cancelled = owner.request("DELETE", CANCEL, json={})
+    nothing = owner.request("DELETE", CANCEL, json={})
+
+    assert (refused.status_code, refused.json()) == (403, {"code": "owner_only"})
+    assert cancelled.status_code == 200
+    assert state_of(cancelled.json()) == ("confirmed", "old@example.com", None, False)
+    assert (nothing.status_code, nothing.json()) == (409, {"code": "no_contact_email_request"})
+    assert saved_settings(people.a)["contact_email"] == "old@example.com"
+    assert new_client(app).post(CONFIRM, json={"token": token}).status_code == 400
+    assert contact_events(migrate_engine, people.a)[-1] == (
+        "contact_email_request_cancelled",
+        people.both,
+        None,
+    )
