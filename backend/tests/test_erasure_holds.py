@@ -8,7 +8,7 @@ and never later than its purge date, at most 31 days after the erasure."""
 import uuid
 
 import pytest
-from psycopg.errors import InsufficientPrivilege
+from psycopg.errors import CheckViolation, InsufficientPrivilege
 from sqlalchemy import Engine, text
 from sqlalchemy.exc import DBAPIError
 
@@ -70,3 +70,60 @@ def test_the_api_role_can_neither_read_nor_write_a_hold(
 
     assert isinstance(error.value.orig, InsufficientPrivilege)
     assert hold_address(migrate_engine, seeded) == seeded.email
+
+
+WRITE_HOLD = text("""
+INSERT INTO client_erasure_holds (tenant_id, client_id, email, created_at, purge_after)
+VALUES (current_setting('app.tenant_id')::uuid, :c, 'held@example.com',
+        now() - CAST(:age AS interval), now() + CAST(:left AS interval))
+""")
+
+
+# ZIF-58 F33 FENCE. Wrong impl: no CHECK on the hold's purge date, so a hold written (or moved) by
+# anything but the core could keep an erased client's address past the one-month answer window.
+# As ziftbook_migrate, the only role that may write one: a purge date more than 31 days after the
+# hold was written is refused, on INSERT and on UPDATE; exactly 31 days is the limit.
+@pytest.mark.parametrize(
+    ("age", "left", "refused"),
+    [
+        ("0 days", "32 days", True),
+        ("10 days", "22 days", True),  # backdated: 32 days after it was written
+        ("10 days", "21 days", False),  # exactly 31 days after
+        ("0 days", "30 days", False),  # the core's own
+    ],
+)
+def test_a_hold_cannot_outlive_31_days(
+    people: People, migrate_engine: Engine, age: str, left: str, refused: bool
+) -> None:
+    seeded = seed_person(
+        migrate_engine, people.a, member_id(people.a, people.only_a), people.both, days_ago=10
+    )
+    write = {"c": seeded.client_id, "age": age, "left": left}
+    if not refused:
+        with migrate_tenant_context(migrate_engine, people.a) as conn:
+            conn.execute(WRITE_HOLD, write)
+        assert hold_address(migrate_engine, seeded) == "held@example.com"
+        return
+    with (
+        pytest.raises(DBAPIError) as error,
+        migrate_tenant_context(migrate_engine, people.a) as conn,
+    ):
+        conn.execute(WRITE_HOLD, write)
+    assert isinstance(error.value.orig, CheckViolation)
+    assert error.value.orig.diag.constraint_name == "ck_client_erasure_holds_purge_after"
+
+    with migrate_tenant_context(migrate_engine, people.a) as conn:
+        conn.execute(WRITE_HOLD, {**write, "left": "1 day"})
+    with (
+        pytest.raises(DBAPIError) as error,
+        migrate_tenant_context(migrate_engine, people.a) as conn,
+    ):
+        conn.execute(
+            text(
+                "UPDATE client_erasure_holds SET purge_after = now() + CAST(:left AS interval)"
+                " WHERE client_id = :c"
+            ),
+            write,
+        )
+    assert isinstance(error.value.orig, CheckViolation)
+    assert error.value.orig.diag.constraint_name == "ck_client_erasure_holds_purge_after"
