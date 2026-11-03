@@ -1,10 +1,10 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type ReactNode, useRef, useState } from "react";
 
-import { type ContactEmailOut, contactEmailCancel, contactEmailRead, contactEmailResend } from "@/api-client";
-import { contactActionOutcome, contactEmailView, contactLoadOutcome } from "@/lib/settings";
+import { type ContactEmailOut, contactEmailCancel, contactEmailResend } from "@/api-client";
+import { contactActionOutcome, contactEmailView } from "@/lib/settings";
 
 import { JSON_WRITE, SignedOutBanner, useConsole } from "../../_ui/console";
 import styles from "../../_ui/console.module.css";
@@ -14,35 +14,27 @@ import uiStyles from "../../_ui/ui.module.css";
 type Problem = "contactTooMany" | "contactTooManyToday" | "contactOwnerOnly" | "contactFailed";
 
 /** Whether the business's contact email is confirmed (ZIF-232): the address clients see, the one waiting for its
- * inbox to confirm it, and (owners only) the button that mails it a link. Nothing when there is no address. */
-export function ContactEmail() {
+ * inbox to confirm it, and (owners only) the button that mails it a link. Nothing when there is no address.
+ * Settings reads the state (the contact email box starts from it too) and passes it here; onState takes an
+ * answer's new state, reload asks Settings to read it again. */
+export function ContactEmail({
+  state,
+  loaded,
+  onState,
+  reload,
+}: {
+  state: ContactEmailOut | null;
+  loaded: "show" | "hide" | "failed" | null;
+  onState: (state: ContactEmailOut) => void;
+  reload: () => void;
+}) {
   const { session, call } = useConsole();
   const t = useTranslations("Console.settings");
-  const [state, setState] = useState<ContactEmailOut | null>(null);
-  const [loaded, setLoaded] = useState<"show" | "hide" | "failed" | null>(null);
   const [busy, setBusy] = useState<"send" | "cancel" | null>(null);
   const [problem, setProblem] = useState<Problem | null>(null);
   const [announced, setAnnounced] = useState("");
   const [signedOut, setSignedOut] = useState(false);
   const busyRef = useRef(false);
-
-  // Bumped to read the state again (a send found nothing waiting any more).
-  const [reads, setReads] = useState(0);
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const outcome = await call(() => contactEmailRead());
-      if (cancelled) return;
-      const shown = contactLoadOutcome(outcome.status === 200 && !outcome.data ? 0 : outcome.status);
-      if (shown === "show") setState(outcome.data!);
-      setLoaded(shown);
-    })();
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- on load, and when asked to read again
-  }, [reads]);
 
   async function act(kind: "send" | "cancel") {
     if (busyRef.current) return;
@@ -59,10 +51,10 @@ export function ContactEmail() {
     setBusy(null);
     const meaning = contactActionOutcome(outcome.status, outcome.code);
     if (meaning === "done" && outcome.data) {
-      setState(outcome.data);
+      onState(outcome.data);
       setAnnounced(t(kind === "send" ? "contactLinkSent" : "contactCancelled"));
     } else if (meaning === "signedOut") setSignedOut(true);
-    else if (meaning === "reload") setReads((n) => n + 1);
+    else if (meaning === "reload") reload();
     else if (meaning !== "done") setProblem(meaning);
   }
 

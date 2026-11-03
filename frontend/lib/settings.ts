@@ -135,6 +135,13 @@ function parse(field: Field, value: string | boolean): string | number | boolean
   return Number.isInteger(n) ? n : undefined;
 }
 
+/** The saved settings as the form compares with them (ZIF-232 x ZIF-99): contact_email is the address waiting for
+ * its link, else the confirmed one, else none, from the block's state. settings.contact_email is only ever the
+ * confirmed address, so it stands in only before the state is read, or when the API has no such route. */
+export function formSaved(settings: Settings, contact: ContactEmailState | null): Settings {
+  return contact ? { ...settings, contact_email: contact.requested ?? contact.confirmed ?? null } : settings;
+}
+
 /** The keys a refused save marks: only those the API names with their own code (ZIF-99). Its other
  * refusals (invalid_request) do not say which key was wrong, so they mark none. */
 export function refusedKeys(status: number, code: string | undefined): Key[] {
