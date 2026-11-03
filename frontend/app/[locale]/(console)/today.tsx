@@ -14,7 +14,7 @@ import {
 } from "@/api-client";
 import { Link } from "@/i18n/navigation";
 import { isPaid, mayDecline } from "@/lib/calendar";
-import { canAnswerRequests, dateLocale, type Role, showPublishStep, todayLabel } from "@/lib/console";
+import { canAnswerRequests, clientLabel, dateLocale, type Role, showPublishStep, todayLabel } from "@/lib/console";
 import { formatMoney } from "@/lib/money";
 import { type NameMap, type Locale, serviceName } from "@/lib/services";
 import { listWindow, localTime } from "@/lib/time-off";
@@ -22,7 +22,7 @@ import { type Answer, acceptBody, agendaPhase, answerAfter409, applyAnswers, blo
 
 import { SignedOutBanner, useConsole } from "../_ui/console";
 import styles from "../_ui/console.module.css";
-import { Banner, FieldError, Heading, Mark, problem } from "../_ui/parts";
+import { Banner, ClientName, FieldError, Heading, Mark, problem } from "../_ui/parts";
 import uiStyles from "../_ui/ui.module.css";
 
 /** Icon, catalog key and style of a status chip: shape, icon and word together, never colour alone.
@@ -143,6 +143,7 @@ export function Today() {
   const calendarT = useTranslations("Console.calendar");
   const nav = useTranslations("Console.nav");
   const person = useTranslations("Console.person");
+  const clients = useTranslations("Console.clients");
   const errorsT = useTranslations("Console.errors");
   const form = useTranslations("Form");
   const locale = useLocale();
@@ -256,7 +257,7 @@ export function Today() {
       const outcome = await call(() => bookingApprovalsUpdate({ path: { booking_id: booking.id }, body }), { write: true });
       if (outcome.status === 200) {
         leave(booking, to);
-        setStatus(t(to === "confirmed" ? "accepted" : "declined", { client: booking.client_name, when: whenLabel(booking.starts_at) }));
+        setStatus(t(to === "confirmed" ? "accepted" : "declined", { client: clientLabel(booking, clients("erased")), when: whenLabel(booking.starts_at) }));
       } else if (outcome.status === 401) {
         setSignedOut(true);
       } else if (outcome.status === 409) {
@@ -398,6 +399,7 @@ export function Today() {
                   // ZB-02: a paid request says so in place of the price, and declining it (a full refund) is the owner's.
                   const paid = booking.payment && isPaid(booking.payment) ? formatMoney(booking.payment.amount_minor, booking.payment.currency, locale) : null;
                   const canDecline = mayDecline(booking.payment, session.role as Role);
+                  const name = clientLabel(booking, clients("erased"));
                   const meta = [
                     isOwner ? worker(booking.worker_display_name) : null,
                     paid ? calendarT("paymentPaid", { amount: paid }) : formatMoney(booking.price.amount_minor, booking.price.currency, locale),
@@ -409,7 +411,7 @@ export function Today() {
                         <small>{minutes(booking.starts_at, booking.ends_at)}</small>
                       </div>
                       <div className={styles.what}>
-                        <b>{serviceOf(booking)}</b> · {booking.client_name}
+                        <b>{serviceOf(booking)}</b> · <ClientName booking={booking} />
                         <span>
                           {meta.join(" · ")}
                           <span className={styles.desktopOnly}> · {t("bookedOnline", { relative: relative.format(created.value, created.unit) })}</span>
@@ -455,7 +457,7 @@ export function Today() {
                         <div className={styles.declining}>
                           <div className={uiStyles.field}>
                             <label className={uiStyles.label} htmlFor={`message-${booking.id}`}>
-                              {t("declineLabel", { client: booking.client_name })}
+                              {t("declineLabel", { client: name })}
                             </label>
                             <div className={uiStyles.input}>
                               <textarea
@@ -467,10 +469,10 @@ export function Today() {
                               />
                             </div>
                             <p className={uiStyles.hint} id={`message-${booking.id}-hint`}>
-                              {t("declineHint", { client: booking.client_name })}
+                              {t("declineHint", { client: name })}
                             </p>
                           </div>
-                          {paid && <p className={uiStyles.hint}>{t("declineRefund", { client: booking.client_name, amount: paid })}</p>}
+                          {paid && <p className={uiStyles.hint}>{t("declineRefund", { client: name, amount: paid })}</p>}
                           <div className={styles.acts}>
                             <button
                               className={`${uiStyles.button} ${uiStyles.primary} ${uiStyles.small}`}
@@ -565,7 +567,7 @@ export function Today() {
                     <small>{minutes(booking.starts_at, booking.ends_at)}</small>
                   </div>
                   <div className={styles.agendaWhat}>
-                    {serviceOf(booking)} · {booking.client_name}
+                    {serviceOf(booking)} · <ClientName booking={booking} />
                     {meta.length > 0 && <span>{meta.join(" · ")}</span>}
                   </div>
                   {chip ? (

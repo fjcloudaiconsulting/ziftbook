@@ -17,7 +17,7 @@ import {
   type WorkerOut,
 } from "@/api-client";
 import { Link } from "@/i18n/navigation";
-import { dateLocale } from "@/lib/console";
+import { clientLabel, dateLocale } from "@/lib/console";
 import { formatMoney } from "@/lib/money";
 import {
   availabilityDays,
@@ -124,6 +124,7 @@ function Fields({ prefill, team, todayISO, date, onDone, services, booking }: Pr
   const { session, settings, call } = useConsole();
   const t = useTranslations("Console.calendar");
   const person = useTranslations("Console.person");
+  const clients = useTranslations("Console.clients");
   const errorsT = useTranslations("Console.errors");
   const form = useTranslations("Form");
   const locale = useLocale();
@@ -255,7 +256,7 @@ function Fields({ prefill, team, todayISO, date, onDone, services, booking }: Pr
   const withName = (id: string) => memberName(id) ?? person("nameNotSet");
   const noServiceFor = initialWith ? withName(initialWith) : "";
   const offered = isOwner ? services : services.filter((s) => s.worker_ids.includes(session.member_id));
-  const clientName = moving ? booking.client_name : (client?.name ?? newName.trim());
+  const clientName = moving ? clientLabel(booking, clients("erased")) : (client?.name ?? newName.trim());
   const clientEmail = moving ? booking.client_email : client ? client.email : newEmail.trim();
   const instant = pickInstant(pick, tz);
   const needsPerson = pick.kind === "other" && !withId;
@@ -459,7 +460,7 @@ function Fields({ prefill, team, todayISO, date, onDone, services, booking }: Pr
   return (
     <form className={uiStyles.stack} noValidate onSubmit={submit}>
       {signedOut && <SignedOutBanner />}
-      {moving && <p className={uiStyles.hint}>{t("moveFor", { client: booking.client_name, service: serviceLabel })}</p>}
+      {moving && <p className={uiStyles.hint}>{t("moveFor", { client: clientName, service: serviceLabel })}</p>}
       {!moving && clientField}
 
       {!moving && (

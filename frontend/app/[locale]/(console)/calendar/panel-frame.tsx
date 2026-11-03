@@ -20,7 +20,7 @@ export function PanelFrame({
   children,
 }: {
   id: string;
-  title: string;
+  title: ReactNode;
   /** Shown under the title (the booking's status chip). */
   meta?: ReactNode;
   /** The caller's handle on the heading, to move focus back to it later. */

@@ -103,6 +103,7 @@
 }
 .lede { margin: -0.75rem 0 0; color: var(--muted); text-wrap: pretty; }
 .hint { margin: 0; font-size: 0.875rem; color: var(--muted); }
+.erased { font-style: normal; color: var(--muted); }
 .aside { margin: 0; font-size: 0.9375rem; color: var(--muted); text-align: center; }
 .stack { display: flex; flex-direction: column; gap: 0.75rem; }
 .chip { font-weight: 600; color: var(--ink); overflow-wrap: anywhere; }

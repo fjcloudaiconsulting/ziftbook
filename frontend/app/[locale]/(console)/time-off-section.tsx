@@ -6,13 +6,13 @@ import { type FormEvent, useEffect, useRef, useState } from "react";
 import { type InTheWay, timeOffCreate, timeOffDelete, timeOffList, timeOffUpdate, type TimeOffOut } from "@/api-client";
 import { Link } from "@/i18n/navigation";
 import { bookingHref, hrefFor } from "@/lib/calendar";
-import { dateLocale } from "@/lib/console";
+import { clientLabel, dateLocale } from "@/lib/console";
 import { type Locale, type NameMap, serviceName } from "@/lib/services";
 import { beyondHorizon, canEditBlock, clientProblem, dateOrTimeChanged, listWindow, localDateISO, localTime, patchBody, requestBody } from "@/lib/time-off";
 import { zoneCity } from "@/lib/week";
 import { JSON_WRITE, SignedOutBanner, useConsole } from "../_ui/console";
 import styles from "../_ui/console.module.css";
-import { Banner, Chevron, FieldError, Heading, Mark, problem, Submit } from "../_ui/parts";
+import { Banner, Chevron, ClientName, FieldError, Heading, Mark, problem, Submit } from "../_ui/parts";
 import uiStyles from "../_ui/ui.module.css";
 import { blockMeta, blockTitle } from "./time-off-labels";
 import { chipOf } from "./today";
@@ -537,6 +537,7 @@ function InTheWayList({ bookings, total, member, tz, compact }: { bookings: InTh
   const locale = useLocale();
   const t = useTranslations("Console.timeOff");
   const tToday = useTranslations("Console.today");
+  const clients = useTranslations("Console.clients");
   const day = new Intl.DateTimeFormat(dateLocale(locale), { weekday: "short", day: "numeric", month: "short", timeZone: tz });
   // Inside the calendar's panel the booking replaces the panel, kept in history so Back returns.
   const scroll = !compact;
@@ -549,7 +550,9 @@ function InTheWayList({ bookings, total, member, tz, compact }: { bookings: InTh
             <li key={booking.id}>
               <Link className={styles.rowLink} href={bookingHref(booking, member, tz)} scroll={scroll}>
                 <span className={styles.rowMain}>
-                  <span className={styles.rowTitle}>{booking.client_name}</span>
+                  <span className={styles.rowTitle}>
+                    <ClientName booking={booking} />
+                  </span>
                   <span className={styles.rowMeta}>
                     {t("inTheWayMeta", {
                       date: day.format(new Date(booking.starts_at)),
@@ -568,7 +571,7 @@ function InTheWayList({ bookings, total, member, tz, compact }: { bookings: InTh
                   )}
                   <Chevron />
                 </span>
-                <span className={uiStyles.srOnly}>{t("inTheWayOpen", { client: booking.client_name })}</span>
+                <span className={uiStyles.srOnly}>{t("inTheWayOpen", { client: clientLabel(booking, clients("erased")) })}</span>
               </Link>
             </li>
           );

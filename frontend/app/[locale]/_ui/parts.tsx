@@ -5,6 +5,7 @@ import { type ReactNode, type Ref, useEffect, useId, useRef, useState, useSyncEx
 
 import type { Error as ApiError, InTheWay } from "@/api-client";
 import { clock, RESEND_AFTER_MS, secondsLeft, takeToken } from "@/lib/account";
+import { clientLabel } from "@/lib/console";
 import { linkStore, type OpenedLink } from "@/lib/link";
 
 import { Header } from "./header";
@@ -35,6 +36,14 @@ export async function send<T>(request: Promise<{ data?: T; error?: unknown; resp
   } catch {
     return { status: 0 };
   }
+}
+
+/** A booking's client where the console shows it: an erased client (ZIF-58) reads "Erased client" in
+ * muted text, so it never looks like a blank name or like a real client's. */
+export function ClientName({ booking }: { booking: { client_name: string; client_erased: boolean } }) {
+  const t = useTranslations("Console.clients");
+  const label = clientLabel(booking, t("erased"));
+  return booking.client_erased ? <i className={styles.erased}>{label}</i> : label;
 }
 
 /** The message for an answer no screen handles itself. */

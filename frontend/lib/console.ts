@@ -179,3 +179,9 @@ export function writeOutcome<T>(result: GuardedWriteResult<T>): SendOutcome<T> {
   if (result.kind === "mismatch") return { status: 0 };
   return { status: result.outcome.status === 200 ? 0 : result.outcome.status };
 }
+
+/** The client a booking names (ZIF-58): an erased client has no name (`client_name` is "" exactly
+ * when `client_erased`), so it reads as `erased`, the localized label, never as a blank. */
+export function clientLabel(booking: { client_name: string; client_erased: boolean }, erased: string): string {
+  return booking.client_erased ? erased : booking.client_name;
+}

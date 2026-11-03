@@ -6,7 +6,7 @@ import { type MouseEvent, type ReactNode, useEffect, useRef, useState } from "re
 import { type BookingDetailOut, bookingApprovalsRead, bookingApprovalsUpdate } from "@/api-client";
 import { Link } from "@/i18n/navigation";
 import { type Action, actionsFor, historyLabel, isPaid, isWaiting, mayDecline, paymentFact, telHref, whenParts } from "@/lib/calendar";
-import { canAnswerRequests, dateLocale } from "@/lib/console";
+import { canAnswerRequests, clientLabel, dateLocale } from "@/lib/console";
 import { formatMoney } from "@/lib/money";
 import { type Locale, type NameMap, serviceName } from "@/lib/services";
 import { localTime } from "@/lib/time-off";
@@ -15,7 +15,7 @@ import { acceptBody, declineBody, expiryLabel } from "@/lib/today";
 import { SignedOutBanner, useConsole } from "../../_ui/console";
 import styles from "../../_ui/console.module.css";
 import { openStripeDashboard } from "../../_ui/stripe-dashboard";
-import { Banner, FieldError, problem } from "../../_ui/parts";
+import { Banner, ClientName, FieldError, problem } from "../../_ui/parts";
 import uiStyles from "../../_ui/ui.module.css";
 import { CHIPS, chipOf, LoadFailure, Skeleton } from "../today";
 import css from "./calendar.module.css";
@@ -59,6 +59,7 @@ export function BookingDetail({
   const t = useTranslations("Console.calendar");
   const today = useTranslations("Console.today");
   const person = useTranslations("Console.person");
+  const clients = useTranslations("Console.clients");
   const errorsT = useTranslations("Console.errors");
   const form = useTranslations("Form");
   const settingsT = useTranslations("Console.settings");
@@ -185,7 +186,7 @@ export function BookingDetail({
     const moved = key === "historyMoved" || key === "historyMovedTeam";
     const text = t(key, {
       actor: (params.actor as string | null) ?? t("aTeamMember"),
-      client: d.client_name,
+      client: clientLabel(d, clients("erased")),
       from: moved ? (params.sameDay ? `${params.fromTime}` : `${dayOf(params.from)} ${params.fromTime}`) : "",
       to: moved ? (params.sameDay ? `${params.toTime}` : `${dayOf(params.to)} ${params.toTime}`) : "",
     });
@@ -280,7 +281,7 @@ export function BookingDetail({
     }
     if (list.length === 0) return null;
     const has = (a: Action) => list.includes(a);
-    const name = d.client_name;
+    const name = clientLabel(d, clients("erased"));
     // ZB-02: declining a paid request refunds it in full, so only an owner is offered it, and is told so.
     const paid = d.payment && isPaid(d.payment) ? formatMoney(d.payment.amount_minor, d.payment.currency, locale) : null;
     return (
@@ -340,7 +341,7 @@ export function BookingDetail({
             <h3 id="detail-cancel-title" tabIndex={-1}>
               {t("cancelTitle")}
             </h3>
-            <p className={uiStyles.hint}>{d.status === "pending" || d.status === "confirmed" ? t("cancelHint", { client: d.client_name }) : t("cancelHintPlain")}</p>
+            <p className={uiStyles.hint}>{d.status === "pending" || d.status === "confirmed" ? t("cancelHint", { client: name }) : t("cancelHintPlain")}</p>
             <div className={css.split}>
               {button("cancel", t("cancelAction"), "primary")}
               {button("cancel", today("keepIt"), "secondary", "", keepBooking)}
@@ -356,7 +357,7 @@ export function BookingDetail({
   return (
     <PanelFrame
       id="detail-title"
-      title={ready ? ready.client_name : t("detailTitle")}
+      title={ready ? <ClientName booking={ready} /> : t("detailTitle")}
       meta={
         chip && (
           <span className={`${styles.chip} ${chip.style}`}>
