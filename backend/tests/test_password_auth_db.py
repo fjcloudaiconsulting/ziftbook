@@ -630,6 +630,10 @@ ORDER BY 1
 # The flags in force, pinned: a new one is a deliberate change here, with its allow-list.
 FLAGS: dict[tuple[str, str], set[str]] = {
     ("audit_events", "app.audit_review"): set(),
+    # ZIF-235 (0073, 0074). sweep_audit_events, the one definer that reads audit_events, sets the
+    # flag and restores the caller's value, so it names it and is not listed; that it clears or
+    # sets the flag before its first read is test_retention_db's T14.
+    ("audit_events", "app.retention_sweep"): set(),
     ("memberships", "app.sign_in"): {
         # Inserts this business's membership; its ON CONFLICT arbiter is (v.tenant_id, user_id), so
         # only that business's row can conflict, and the UPDATE stays under tenant_isolation (0045).
@@ -647,8 +651,8 @@ FLAGS: dict[tuple[str, str], set[str]] = {
 
 # ZIF-146 FENCE (security B4 "while there", code review N-5). Wrong impl: a new definer that selects
 # from a flag-gated table without touching its flag, so a caller who set the flag reads every
-# business's rows: members (app.sign_in), audit events (app.audit_review), payment accounts
-# (app.stripe_webhook).
+# business's rows: members (app.sign_in), audit events (app.audit_review, app.retention_sweep),
+# payment accounts (app.stripe_webhook).
 def test_every_definer_reading_a_flag_gated_table_handles_its_flag(migrate_engine: Engine) -> None:
     with migrate_engine.connect() as conn:
         flags = {tuple(row) for row in conn.execute(FLAGGED_TABLES)}
