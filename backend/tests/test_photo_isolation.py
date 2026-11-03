@@ -698,7 +698,9 @@ def encoded(im: Image.Image, fmt: str, **kw: Any) -> bytes:
 
 
 def heaviest() -> Iterator[tuple[str, Callable[[], bytes]]]:
-    """The costliest photos the caps let through, measured (design review, finding 2)."""
+    """The costliest photos the caps let through, measured (design review, finding 2). The upload's
+    own bytes stay in the child while it decodes (a WebP's twice), so the heaviest are near
+    MAX_BYTES."""
     yield "8 MP RGBA PNG", lambda: encoded(noise("RGBA", (3200, 2590), 0x01, 1), "PNG")
     yield "100 MP baseline JPEG", lambda: encoded(Image.new("RGB", (12500, 8000), "red"), "JPEG")
     yield "4 MP lossy RGBA WebP", lambda: encoded(noise("RGBA", (2000, 2000), 0x0F, 2), "WEBP")
@@ -749,6 +751,20 @@ def heaviest() -> Iterator[tuple[str, Callable[[], bytes]]]:
     yield (
         "1200 px RGBA noise (largest output)",
         lambda: encoded(noise("RGBA", (1200, 1200), 0xFF, 8), "PNG"),
+    )
+    yield (
+        "4 MP lossless WebP near the upload cap",
+        lambda: encoded(noise("RGBA", (1999, 1999), 0x1F, 3), "WEBP", lossless=True),
+    )
+    yield (
+        "8.3 MP CMYK progressive 4:4:4 JPEG near the upload cap",
+        lambda: encoded(
+            noise("CMYK", (3840, 2160), 0x0F, 9),
+            "JPEG",
+            progressive=True,
+            subsampling=0,
+            quality=94,
+        ),
     )
 
 
