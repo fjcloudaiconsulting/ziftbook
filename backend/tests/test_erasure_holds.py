@@ -6,6 +6,7 @@ sends the cancellation and refund emails through it and deletes it once nothing 
 and never later than its purge date, at most 31 days after the erasure."""
 
 import asyncio
+import importlib.util
 import json
 import re
 import threading
@@ -1094,3 +1095,31 @@ def test_a_reapplied_erasure_never_mails_its_cancellations_again(
         run("email.booking")
 
     assert sent_to(address) == []
+
+
+VERSIONS = Path(__file__).parents[1] / "migrations" / "versions"
+
+
+def migration(name: str) -> Any:
+    spec = importlib.util.spec_from_file_location(f"pinned_{name}", VERSIONS / f"{name}.py")
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def quoted(literal: str) -> set[str]:
+    return set(re.findall(r"'([a-z_]+)'", literal))
+
+
+# ZIF-58 FENCE (re-check NIT-b). The migrations write the code's lists out as literals, since a
+# migration must not change when the code does; these pin them exactly, both ways. Wrong impl: a
+# template added to or removed from mail.HOLD_TEMPLATES, a new jobs.MAX_ATTEMPTS, or an erasure
+# reason mailed that no erasure writes, without the migration that carries it.
+def test_the_migrations_literals_are_the_codes() -> None:
+    rule = migration("0078_client_hold_needed")
+    core = migration("0064_erase_client")
+    assert quoted(rule.HOLD_TEMPLATES) == set(mail.HOLD_TEMPLATES)
+    assert rule.MAX_ATTEMPTS == jobs.MAX_ATTEMPTS
+    # Every erasure's reason (0064), less the re-apply's, which is never mailed.
+    assert quoted(core.ERASURE_REASONS) - {"erasure_reapplied"} == set(mail.ERASURE_REASONS)
