@@ -927,11 +927,14 @@ def test_an_owner_is_never_kept_from_their_own_sign_in_inbox(
 ) -> None:
     a, b, c, d = owners
     own = f"{people.both}@example.com"
-    alias = f"{people.both}+shop@Example.com"
     for owner in (b, c, d):
         send_and_clear(owner, own, 1)
+        send_and_clear(owner, f"{people.both}+shop@example.com", 1)
 
-    assert put_settings(a, {"contact_email": alias}).status_code == 200
+    # Re-check NIT 5: only the exact address the owner proved. A +tag may be another mailbox at a
+    # domain without subaddressing, so it is not exempt (the limit keys still fold it).
+    assert put_settings(a, {"contact_email": f"{people.both}+shop@example.com"}).json() == TODAY
+    assert put_settings(a, {"contact_email": f" {people.both}@Example.COM "}).status_code == 200
     assert saved_settings(people.a).get("contact_email") is None  # not confirmed by this
     assert len(queued(migrate_engine, people.a)) == 1
 
