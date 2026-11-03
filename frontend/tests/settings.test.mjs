@@ -295,6 +295,14 @@ describe("ZIF-99 the contact email for clients", () => {
     assert.equal(desc("nl"), "Je tijdzone, de standaardtaal voor e-mails aan klanten en waar klanten je kunnen bereiken.");
     assert.equal(desc("pt"), "Seu fuso horário, o idioma padrão dos e-mails para clientes e onde os clientes podem falar com você.");
   });
+
+  test("fence: the hint says clients see the address once it is confirmed (ZIF-232)", () => {
+    // Wrong implementation killed: the pre-ZIF-232 hint, which promised clients see whatever is typed.
+    const hint = (l) => JSON.parse(readFileSync(new URL(`../messages/${l}.json`, import.meta.url), "utf8")).Console.settings.contactEmailHint;
+    assert.match(hint("en"), /^Once you confirm it, clients see it on your booking page/);
+    assert.match(hint("nl"), /^Na je bevestiging zien klanten het op je boekingspagina/);
+    assert.match(hint("pt"), /^Depois que você confirmar, os clientes veem este e-mail/);
+  });
 });
 
 describe("ZIF-99 which field a refused save marks", () => {
