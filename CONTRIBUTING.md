@@ -372,8 +372,11 @@ step 3 brings erased clients back.
 1. Scale the API and the worker to zero. The worker must not run before step 3: restored reminder and booking mail
    jobs would mail clients who were erased after the restore point.
 2. Restore, and run the migrations if the release needs them.
-3. Re-apply the erasures the restore undid, from the restore point minus one hour:
-   `python -m app.ledger reapply --since <restore point - 1h, ISO 8601 with its offset> --reason "<incident or ticket>"`.
+3. Re-apply the erasures the restore undid: `python -m app.ledger reapply --reason "<incident or ticket id>"`. It reads
+   the whole ledger by default (an entry already applied is counted and left alone). `--since <restore point - 1h,
+   ISO 8601 with its offset>` narrows it; a `--since` later than everything the restored database holds is refused
+   (exit 2), and so is an empty listing for a window in which the restored database itself records erasures (exit 1:
+   a wrong bucket or key).
    Run it as `app.admin` runs: from the migrations image, in a short-lived pod with `ZIF_MIGRATE_DATABASE_URL`,
    `ZIF_S3_ENDPOINT`, `ZIF_ERASURE_LEDGER_BUCKET` and the ledger's **read-only** key
    (`ZIF_ERASURE_LEDGER_ACCESS_KEY_ID`, `ZIF_ERASURE_LEDGER_SECRET_ACCESS_KEY`), never the worker's. For each entry,
