@@ -85,7 +85,14 @@ def claim(current: SignedIn, email: str) -> None:
     afterwards, as a claim whose request fails lapses within minutes. Counted from rows, one per
     inbox and business, so concurrent requests can neither count a business twice nor take it back.
     """
-    key = address_key(limits.address_for_limits(email))
+    address = limits.address_for_limits(email)
+    key = address_key(address)
+    # A business already at its own limits takes no place: send_link would refuse it after the
+    # lock, and its claim would keep others from the inbox meanwhile. Reads only, charged later.
+    if any(
+        limits.count(k, window) >= cap for k, window, cap in own_limits(current.tenant_id, address)
+    ):
+        raise ApiError(429, "rate_limited")
     exempt = bool(current.db.scalar(EVER_CONFIRMED, {"e": email}))  # a read: no lock taken
     with SessionLocal.begin() as session:
         session.execute(
@@ -98,6 +105,15 @@ def claim(current: SignedIn, email: str) -> None:
         session.execute(CLAIM, {"k": key, "t": current.tenant_id})
 
 
+def own_limits(tenant_id: UUID, address: str) -> list[tuple[str, timedelta, int]]:
+    """This business's own limits on links to address: key, window and cap."""
+    return [
+        (limits.email_key("contact_email", f"{tenant_id}:{address}"), timedelta(hours=1), 3),
+        (f"contact_email:tenant:{tenant_id}", DAY, 10),
+        (sent_key(tenant_id, address), DAY, LINKS_PER_ADDRESS_A_DAY),
+    ]
+
+
 def send_link(current: SignedIn, request_id: UUID, email: str) -> None:
     """Queue the link for a request, or 429 when this business has sent too many.
 
@@ -107,18 +123,12 @@ def send_link(current: SignedIn, request_id: UUID, email: str) -> None:
     """
     tenant = current.tenant_id
     address = limits.address_for_limits(email)
-    # Two calls: hit() takes one window. Every key counts, whichever is over.
-    hourly = limits.hit(
-        {limits.email_key("contact_email", f"{tenant}:{address}"): 3},
-        timedelta(hours=1),
-        db=current.db,
-    )
-    daily = limits.hit(
-        {f"contact_email:tenant:{tenant}": 10, sent_key(tenant, address): LINKS_PER_ADDRESS_A_DAY},
-        DAY,
-        db=current.db,
-    )
-    if hourly or daily:
+    # One call per key: hit() takes one window. Every key counts, whichever is over.
+    over = [
+        limits.hit({key: cap}, window, db=current.db)
+        for key, window, cap in own_limits(tenant, address)
+    ]
+    if any(over):
         raise ApiError(429, "rate_limited")
     linked = current.db.scalar(
         text(
