@@ -303,6 +303,17 @@ that person's platform account (ZIF-99).
   once `client_hold_needed` is false, and at `purge_after` whatever is left. Every caller of the erase core also calls `erasure_holds.enqueue_purge` in its transaction, with
   the time the core returned: an `erasure.hold_purge` job due at the purge date, never skipped however late the worker
   runs it, so the date holds even while the sweep fails for another business.
+- The hold's legal basis. The business is the controller of its client records and ziftbook its processor. While money
+  is owed, a refund settled in the last 7 days or a refund failed, the address is kept under Art. 17(3)(b): erasure
+  does not apply where the data is needed to comply with a legal obligation, here to refund the person and tell them
+  when the refund fails. For a cancellation with nothing owed, Art. 17(3)(b) does not apply. There the basis is the
+  controller's documented instruction to ziftbook (Art. 28(3)(a)) to carry out the erasure in full, telling the
+  person their appointments are cancelled as its last step, on the controller's legitimate interest (Art. 6(1)(f))
+  in not leaving someone to come to an appointment that no longer exists. That covers minutes, until the
+  cancellation emails are out. `[OWNER: legal basis to confirm]` Purpose limitation: the address serves only
+  `mail.HOLD_TEMPLATES`, a `booking_cancelled` only for the erasure's own cancellations, and nothing else reads it.
+  The erasure warning, the privacy notice and the DPA say what is kept (email and locale), for what (these notices),
+  for how long (until nothing is left to tell, at most 31 days), and that a reply reaches the business.
 - A client row links to an account (`clients.user_id`) only through that person's own proven booking at that
   business (ZIF-146): `find_or_create`'s REFRESH fills a NULL `user_id`, never relinks, and nothing links by email.
 - Marketing consent (`consents`) is per business. Nothing writes a platform-level consent, and one business's consent
