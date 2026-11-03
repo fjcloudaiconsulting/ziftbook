@@ -1087,7 +1087,9 @@ def test_a_reapplied_erasure_never_mails_its_cancellations_again(
     address = fresh_email()  # the client's alone: the booking helper made its first one a member's
     set_client(people.a, client_id, email=address)
     with tenant_context(people.a) as session:
-        bookings.email(session, people.a, booked["pending"], "booking_cancelled", merchant=True)
+        bookings.email(
+            session, people.a, uuid.UUID(booked["pending"]), "booking_cancelled", merchant=True
+        )
     erase_announcing(migrate_engine, people, client_id, announce=False, reason="erasure_reapplied")
     assert hold_address(migrate_engine, Seeded(people.a, client_id, (), address)) == address
 
