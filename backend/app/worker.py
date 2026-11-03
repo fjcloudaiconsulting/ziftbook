@@ -98,10 +98,18 @@ async def work(kinds: dict[str, JobKind], healthcheck_url: str | None, stop: asy
             if swept is None or time.monotonic() - swept >= SWEEP_SECONDS:
                 # Global and one statement, so before the sweep: never hostage to a failing tenant.
                 await asyncio.to_thread(jobs.prune)
-                # ZIF-58. Before the booking sweep, which is housekeeping: a hold's purge date is a
-                # bound, never hostage to it.
-                await asyncio.to_thread(erasure_holds.sweep)
-                await asyncio.to_thread(bookings.sweep)
+                # ZIF-58. Each sweep runs whatever the other did: the booking sweep re-arms refunds
+                # and card releases, and a hold's purge date is a bound. A failure still fails the
+                # iteration (no ping) once both have run; each failure is logged on its own.
+                failed = False
+                for name, sweep in (("holds", erasure_holds.sweep), ("bookings", bookings.sweep)):
+                    try:
+                        await asyncio.to_thread(sweep)
+                    except Exception:
+                        logger.exception("sweep failed", extra={"sweep": name})
+                        failed = True
+                if failed:
+                    raise RuntimeError("a sweep failed")
                 swept = time.monotonic()
         except Exception:
             # No ping: an iteration that keeps failing (e.g. the database is down) raises the alert.

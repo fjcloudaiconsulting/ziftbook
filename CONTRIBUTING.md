@@ -627,7 +627,9 @@ loggers (`web.*`); Next's own stderr output (banners, SSR error traces) is not i
   `bookings expired` (INFO, `count`, `tenant_id`, from the worker's sweep); `jobs pruned` (INFO, `count`, only when
   something was deleted, from the same sweep); `contact holds purged` (INFO, `count`, `tenant_id`, only when
   something was deleted) and `contact hold purged late` (ERROR, `client_id`, `tenant_id`: an erased client's hold
-  found more than an hour past its purge date, so the worker was down or the purge kept failing); `email sent` (INFO) and
+  found more than an hour past its purge date, so the worker was down or the purge kept failing);
+  `sweep failed` (ERROR, `sweep` `holds` or `bookings`, with `exc`: the worker's two sweeps run whatever the other
+  did, and either failing withholds the ping); `email sent` (INFO) and
   `email failed` (WARNING) with `template` (and `error` on failure) plus the job context, and
   `email skipped` (INFO, `template`, `reason` `recipient_quota`, from the worker's send);
   `client mail over quota` (WARNING, `template`, `source` `merchant` or `public`, when a business's
