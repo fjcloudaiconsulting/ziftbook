@@ -282,9 +282,11 @@ that person's platform account (ZIF-99).
   predicates on the dependent statements are defence in depth.
 - `client_erasure_holds` keeps an erased client's email and locale: the only way to tell the client about a
   cancellation or a failed refund. The core writes one when the client has an address and either `announce` is true
-  and the erasure ended one of its bookings, or money is still owed an answer on one (`client_money_owed`, the one
-  rule the hold's purge shares: unsettled with work left for the settle pass, or a failed refund), whatever
-  `announce` says. An
+  and the erasure ended one of its bookings, or `client_hold_needed` is true, whatever `announce` says. That rule
+  lives in 0078 (which replaces 0064's core, changing only this condition), and the hold's purge calls the same
+  function: money still owed an answer (`client_money_owed`: unsettled with work left for the settle pass, or a failed
+  refund), a refund settled in the last 7 days (one can still fail at the bank), or one of the client's
+  `mail.HOLD_TEMPLATES` emails still to be sent (given up only once its last lease has run out). An
   owner's erasure and an account deletion pass true; re-applying an erasure after a restore passes false (the
   cancellations were announced the first time; a refund that fails later must still reach the client). A CHECK keeps
   `purge_after` at most 31 days after `created_at`; the worker deletes the hold by then. Only the core writes it; the
@@ -294,9 +296,7 @@ that person's platform account (ZIF-99).
   is gone, is skipped. A refund Stripe refuses or fails enqueues `booking_refund_failed` once per failure told (keyed
   on its `refund_failed` event), only when the client is erased: it goes through a hold or not at all. The worker's
   sweep timer (`erasure_holds.sweep`, before the booking sweep, under each business's booking lock) deletes a hold
-  once nothing is left to tell: no money owed (`client_money_owed`), no refund settled in the last 7 days (one can
-  still fail at the bank), and none of the client's `HOLD_TEMPLATES` emails still to be sent; and at `purge_after`
-  whatever is left. Every caller of the erase core also calls `erasure_holds.enqueue_purge` in its transaction, with
+  once `client_hold_needed` is false, and at `purge_after` whatever is left. Every caller of the erase core also calls `erasure_holds.enqueue_purge` in its transaction, with
   the time the core returned: an `erasure.hold_purge` job due at the purge date, never skipped however late the worker
   runs it, so the date holds even while the sweep fails for another business.
 - A client row links to an account (`clients.user_id`) only through that person's own proven booking at that

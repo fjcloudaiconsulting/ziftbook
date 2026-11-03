@@ -21,7 +21,7 @@ from psycopg.errors import CheckViolation, InsufficientPrivilege
 from sqlalchemy import Engine, text
 from sqlalchemy.exc import DBAPIError
 
-from app import bookings, erasure_holds, jobs, payments, worker
+from app import bookings, erasure_holds, jobs, mail, payments, worker
 from app.db import tenant_context
 from app.mail import render
 from app.main import create_app, openapi_document
@@ -652,3 +652,111 @@ def _properties(spec: Any) -> list[str]:
         return []
     found = list(spec["properties"]) if isinstance(spec.get("properties"), dict) else []
     return found + [name for value in spec.values() for name in _properties(value)]
+
+
+NEEDED = text("SELECT client_hold_needed(CAST(:t AS uuid), :c)")
+NEEDED_CASES = {
+    "refund settled 2 days ago": True,
+    "refund settled 8 days ago": False,
+    **{f"queued {template}": True for template in sorted(mail.HOLD_TEMPLATES)},
+    "queued booking_reminder": False,  # not sent through a hold
+    "booking_cancelled on its last attempt": True,
+    "booking_cancelled given up": False,
+    "nothing": False,
+}
+
+
+# ZIF-58 FENCE (0078). Wrong impl: the core writing a hold on money owed alone (0064), so a client
+# erased days after a refund settled, or with a hold email still queued from just before, gets no
+# hold and is never told; or the purge with its own copy of the rule. client_hold_needed is the one
+# rule: money owed (F22), a refund settled in the last 7 days, or a mail.HOLD_TEMPLATES email still
+# to be sent (given up only once its last lease ran out, jobs.MAX_ATTEMPTS). The core writes a
+# hold exactly when it is true (here with nothing announced), and the purge keeps it.
+@pytest.mark.parametrize("case", list(NEEDED_CASES))
+def test_the_core_and_the_purge_share_when_a_hold_is_needed(
+    people: People, migrate_engine: Engine, no_jobs: None, case: str
+) -> None:
+    needed = NEEDED_CASES[case]
+    refunded = case.startswith("refund")
+    seeded = seed_person(
+        migrate_engine,
+        people.a,
+        member_id(people.a, people.only_a),
+        people.both,
+        days_ago=10,
+        payment=Pay(booking="cancelled_by_merchant") if refunded else PAID_AND_KEPT,
+    )
+    if refunded:
+        days = case.split()[2]
+        change_payment(
+            migrate_engine,
+            seeded,
+            f"refunded_minor = amount_minor, settled_at = now() - interval '{days} days'",
+        )
+    elif case != "nothing":
+        template = case.split()[-1] if case.startswith("queued") else "booking_cancelled"
+        booking_mail(seeded, seeded.bookings[0], template)
+        if not case.startswith("queued"):
+            finish_mails(migrate_engine, seeded, " ".join(case.split()[-2:]).removeprefix("its "))
+    with migrate_tenant_context(migrate_engine, people.a) as conn:
+        assert conn.scalar(NEEDED, {"t": str(people.a), "c": seeded.client_id}) is needed
+
+    holds = hold_after(migrate_engine, seeded, people.both, reason=None, announce=False)
+
+    assert len(holds) == (1 if needed else 0)
+    purge()
+    assert hold_address(migrate_engine, seeded) == (seeded.email if needed else None)
+
+
+# ZIF-58 FENCE (0078). The purge has no copy of the rule: it calls the function the core calls.
+def test_the_purge_calls_the_cores_hold_rule() -> None:
+    purge_sql = str(erasure_holds.PURGE)
+    assert "client_hold_needed(h.tenant_id, h.client_id)" in purge_sql
+    assert "7 days" not in purge_sql
+    assert "jobs" not in purge_sql
+
+
+# ZIF-58 FENCE (0078), the reviewers' case. Wrong impl: 0064's hold rule (money owed alone). A
+# paid booking the team cancelled, refunded two days before its client's erasure: nothing is live
+# or owed, yet the refund can still fail. The erasure keeps a hold, so when the refund then fails
+# at the bank the client is told, once, at the held address.
+def test_a_refund_failing_after_an_erasure_still_reaches_the_client(
+    people: People,
+    app: FastAPI,  # noqa: F811
+    owner: TestClient,  # noqa: F811
+    migrate_engine: Engine,
+    fake_stripe: FakeGateway,
+    shop: str,
+    clean_outbox: None,  # noqa: F811
+) -> None:
+    _, booking_id, _ = paid_booking(app, people, fake_stripe, shop)
+    client_id = client_of(people.a, booking_id)
+    address = fresh_email()  # the client's alone: the booking helper made its first one a member's
+    set_client(people.a, client_id, email=address)
+    cancelled = owner.patch(f"/api/bookings/{booking_id}", json={"status": "cancelled_by_merchant"})
+    assert cancelled.status_code == 200
+    payments.settle(settle_job(people, booking_id))
+    (refund_id,) = fake_stripe.refunds
+    with migrate_tenant_context(migrate_engine, people.a) as conn:
+        conn.execute(
+            text(
+                "UPDATE booking_payments SET settled_at = now() - interval '2 days'"
+                " WHERE booking_id = :b"
+            ),
+            {"b": booking_id},
+        )
+    with jobs_as_the_worker():
+        run("email.booking")  # the team's cancellation mail, before the erasure
+
+    erase_announcing(migrate_engine, people, client_id)
+    assert hold_address(migrate_engine, Seeded(people.a, client_id, (), address)) == address
+    fake_stripe.fail_refund(refund_id)
+    assert (
+        webhook(new_client(app), "refund.failed", account_of(people), refund_id).status_code == 200
+    )
+    run("stripe.event")
+    with jobs_as_the_worker():
+        run("email.booking")
+
+    subject = render("booking_refund_failed", "en")[0]
+    assert [message["Subject"] for message in sent_to(address)].count(subject) == 1
