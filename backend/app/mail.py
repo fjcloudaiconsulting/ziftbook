@@ -308,8 +308,9 @@ def send(job: Job) -> None:
     """The email.send job. Payload: recipient_id (a user), template.
 
     The address and language come from users, inside the job's tenant: someone who isn't a member of
-    that tenant (any more) gets nothing. Delivery is at least once: a crash between the Mailgun
-    handoff and recording it sends again.
+    that tenant (any more) gets nothing. A template may name the business ($business) and its
+    Settings page ($link). Delivery is at least once: a crash between the Mailgun handoff and
+    recording it sends again.
     """
     if job.tenant_id is None:
         raise ValueError("email.send needs a tenant")
@@ -330,7 +331,15 @@ def send(job: Job) -> None:
             return
         # The person's own language, else their business's.
         locale = recipient.locale or business_settings.read(session).language
-        subject, body = render(payload["template"], locale)
+        business = session.scalar(
+            text("SELECT name FROM tenants WHERE id = :id"), {"id": job.tenant_id}
+        )
+        app_url = MailSettings().app_url.rstrip("/")
+        subject, body = render(
+            payload["template"],
+            locale,
+            {"business": business, "link": f"{app_url}/{locale}/settings"},
+        )
         status = _outbox(session, job, payload["recipient_id"], payload["template"], subject)
     if status == "sent":
         return
