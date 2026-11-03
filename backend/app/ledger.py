@@ -7,14 +7,17 @@ a dedicated bucket with a bucket lock (LedgerSettings), ids and a time only.
 An erasure enqueues an erasure.ledger job in its own transaction (enqueue), so the entry exists
 only for an erasure that committed; the worker writes it (record).
 
-    python -m app.ledger reapply [--since <ISO time>] --reason "<why>"
+    python -m app.ledger reapply [--since <ISO time>] --reason "<ticket id>" [--skip-key <key>]...
     python -m app.ledger backfill --since <ISO time>
 
 reapply erases again, after a restore, every client the ledger lists (from --since on, the restore
 point minus an hour, when given), with the ledger's read-only credentials. It connects as
 ziftbook_migrate (ZIF_MIGRATE_DATABASE_URL), from the migrations image, as app.admin does, before
 the API and the worker start (CONTRIBUTING "Restoring the database"). Exit 0 when done or nothing
-was to do, 1 on any error (logged CRITICAL; nothing was applied), 2 on a usage error.
+was to do; 1 when nothing was applied: a refusal (an entry it cannot apply, a listing that holds
+none of the database's erasures, another run or the API connected), logged ERROR, or any other
+error, logged CRITICAL; 2 on a usage error (a --since after the restored data, a --skip-key that
+names nothing, missing settings).
 
 backfill queues the worker to write the entries the ledger is missing (an erasure.ledger job that
 gave up), from the live database; it needs no ledger key. Same connection and exit codes.

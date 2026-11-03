@@ -425,17 +425,53 @@ Mandatory for every restore of the production or staging database. Skipping step
      applied; fix the cause and run it again. Its `erasures reapplied` line names the `bucket` and gives `entries`,
      `reapplied`, `already_erased`, `absent`, `cancelled`, `skipped` and `paid_ended`. Check that the bucket is the
      environment's, and that `entries` is the number of objects the ledger holds (`aws s3 ls --recursive
-     --endpoint-url https://<account>.eu.r2.cloudflarestorage.com --profile <read-only> s3://<bucket>/erasures/`,
-     from `--since`'s day on when given) less the skipped.
+     --endpoint-url https://<account>.eu.r2.cloudflarestorage.com --profile <read-only> s3://<bucket>/erasures/`)
+     whose time, in the key, is at or after `--since` (all of them without it), less the skipped among those.
 4. Start the worker (settle runs the refunds and releases), then the API.
-5. Check each booking in the line's `paid_ended` (ids) in Stripe. A restore can lose how a paid booking really ended
-   (the client's own cancellation with less back, or none), and the re-apply cannot tell that from an erasure whose
-   refund never ran, so settle never pays a re-applied ending more than Stripe already shows: it flags the shortfall
-   (`refund_failed_at`, "refund failed" in the console), logs ERROR `refund held after a reapply` (`booking_id`,
-   `intent`, `amount_minor`), and mails nobody. Where the money is owed, refund it in Stripe (the refund event clears
-   the flag). Where it is not (the client's own cancellation shows in Stripe), clear the flag as `ziftbook_migrate` in
-   that business:
-   `UPDATE booking_payments SET refunded_minor = <what Stripe refunded>, refund_failed_at = NULL WHERE booking_id = '<id>'`.
+5. Resolve every held refund. Settle never pays a booking that a reapply ended, and that was charged before the
+   erasure, more than Stripe already shows, because a restore can lose how it really ended: the client's own
+   cancellation with less back (or nothing back, which Stripe never shows) looks the same from the restored rows,
+   and in Stripe, as an erasure whose 100% refund had not run when the database was lost. It flags the shortfall
+   (`refund_failed_at`, "refund failed" in the console), logs ERROR `refund held after a reapply` (`tenant_id`,
+   `booking_id`, `intent`, `amount_minor`), and mails nobody; the code makes no choice either way. A payment
+   charged after the erasure (a checkout the reapply expired, completed at the bank anyway) is not held: it is
+   refunded in full. `paid_ended` in the `erasures reapplied` line lists the bookings that may be held (paid, or
+   with an open payment that may have been paid before the erasure); a held refund can appear days later for a
+   slow payment method, so the ERROR lines are the list, and in each business the flagged ones are:
+
+   ```sql
+   BEGIN;
+   SELECT set_config('app.tenant_id', '<tenant id>', true);
+   SELECT p.booking_id, p.intent_id, p.amount_minor, p.refunded_minor FROM booking_payments p
+   WHERE p.tenant_id = '<tenant id>' AND p.refund_failed_at IS NOT NULL
+     AND EXISTS (SELECT 1 FROM booking_events e WHERE e.tenant_id = p.tenant_id
+                 AND e.booking_id = p.booking_id AND e.details ->> 'reason' = 'erasure_reapplied');
+   COMMIT;
+   ```
+
+   For each, decide from the evidence of what happened between the restore point and the loss, which the restored
+   database no longer holds:
+   - the platform's logs for that period: `payment refunded` for the intent (its `pct`: 100 is the erasure's refund,
+     less is the client's own cancellation), `client erased` for the client, the settle and email jobs' lines for the
+     booking;
+   - the pre-restore database's `booking_events` and `audit_events` for the booking, when that database still exists
+     (a `cancelled_by_client` event with its `refund_pct`, or a `cancelled_by_merchant` event with the reason
+     `client_erased`);
+   - Stripe's own history for the intent (a refund, its amount and time);
+   - the business's own record: its team's booking mails and what its owner knows of the booking.
+
+   Owed (the erasure's refund): refund the shortfall in Stripe; the refund event clears the flag. Not owed (the
+   client's own cancellation, shown by the evidence): clear the flag, in that business:
+
+   ```sql
+   BEGIN;
+   SELECT set_config('app.tenant_id', '<tenant id>', true);
+   UPDATE booking_payments SET refunded_minor = <what Stripe refunded>, refund_failed_at = NULL
+   WHERE tenant_id = '<tenant id>' AND booking_id = '<booking id>';
+   COMMIT;
+   ```
+
+   When the evidence does not decide: `[OWNER: default when the evidence does not decide; recommended: refund]`.
 
 What it cannot bring back: an erasure committed but not yet ledgered when the database was lost (normally seconds;
 an `erasure.ledger` job that gave up raised an ERROR alert at the time, and `backfill` queues it again while the
@@ -751,7 +787,7 @@ loggers (`web.*`); Next's own stderr output (banners, SSR error traces) is not i
   `sweep failed` (ERROR, `sweep` `holds` or `bookings`, with `exc`: the worker's two sweeps run whatever the other
   did, and either failing withholds the ping); `business sweep failed` (ERROR, `sweep`, `tenant_id`, with `exc`: one
   business failed in a sweep, which went on to the next and then raised); `erasure ledgered` (INFO, `client_id`, `written`: false when the
-  entry was there already); `erasures reapplied` (INFO, the run's counts, from `python -m app.ledger reapply`); `ledger backfill queued` (INFO, `queued`, from `python -m app.ledger backfill`); `ledger entry refused` (ERROR, `key`) and the `reapply refused: ...` lines (ERROR, ids and counts only); `refund held after a reapply` (ERROR, `booking_id`, `intent`, `amount_minor`, from settle); `email sent` (INFO) and
+  entry was there already); `erasures reapplied` (INFO, the run's counts, from `python -m app.ledger reapply`); `ledger backfill queued` (INFO, `queued`, from `python -m app.ledger backfill`); `ledger entry refused` (ERROR, `key`) and the `reapply refused: ...` lines (ERROR, ids and counts only); `refund held after a reapply` (ERROR, `tenant_id`, `booking_id`, `intent`, `amount_minor`, from settle); `email sent` (INFO) and
   `email failed` (WARNING) with `template` (and `error` on failure) plus the job context, and
   `email skipped` (INFO, `template`, `reason` `recipient_quota`, or `no_hold` for an erased client's
   `booking_refund_failed` whose hold is gone, from the worker's send);
