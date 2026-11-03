@@ -1,0 +1,11 @@
+Your refund could not be completed
+Hello,
+
+The refund of $amount from $business for this booking could not be completed:
+
+$service
+$date at $time ($zone)
+
+Please contact $business to get your money back.$contact
+
+ziftbook
