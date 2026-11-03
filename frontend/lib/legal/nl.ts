@@ -104,7 +104,7 @@ export const nl: Legal = {
   },
   privacy: {
     title: "Privacyverklaring",
-    updated: "Laatst bijgewerkt: 18 oktober 2026",
+    updated: "Laatst bijgewerkt: [OWNER: datum waarop deze verklaring ingaat, de dag dat de bewaaropruiming (#369) live gaat]",
     sections: [
       {
         heading: "Wie we zijn",
@@ -196,10 +196,16 @@ export const nl: Legal = {
           [
             "Boekingen en klantgegevens: zolang het bedrijf ziftbook gebruikt, tenzij jij of het bedrijf ons vraagt ze eerder te verwijderen. Heft een bedrijf zijn account op, dan verwijderen we zijn gegevens binnen 30 dagen.",
             "Accountgegevens: zolang het account bestaat. We verwijderen ze binnen 30 dagen nadat het account is opgeheven.",
+            "Inlogsessies: verwijderd zodra ze niet meer geldig zijn.",
+            "Tellingen van pogingen (hoe vaak een IP-adres of e-mailadres iets probeerde, om misbruik te stoppen): na ongeveer een dag verwijderd.",
+            "Het overzicht van wie wat deed in het account van een bedrijf, en ons eigen overzicht van wat onze medewerkers doen: mislukte inlogpogingen verwijderen we na 30 dagen, al het andere na 1 jaar.",
+            "Het IP-adres en browsertype bij een boeking, wijziging of annulering: we wissen ze zodra die handeling en de afspraak allebei 18 maanden geleden zijn. De rest van die vastlegging blijft bij de boeking.",
+            "Je antwoord over aanbiedingen en nieuws van een bedrijf, met het bewijs ervan: bewaard zolang je keuze geldt, daarna [OWNER: hoe lang het bewijs van een toestemming bewaard blijft nadat die is ingetrokken (ZIF-156)].",
             "Serverlogs: op onze servers tot 7 dagen, bij Grafana Labs tot 14 dagen. Ze bevatten alleen wat we nodig hebben om de dienst te laten werken, vooral id's in plaats van namen, en nooit de inhoud van je berichten.",
             "Back-ups: automatisch verwijderd binnen twee weken.",
           ],
-          "We bewaren iets alleen langer als de wet dat vereist.",
+          "Bij een beveiligingsincident kunnen we het verwijderen van de overzichten van wie wat deed, en van de IP-adressen en browsertypes bij boekingen, tijdelijk stopzetten, zodat we het incident kunnen onderzoeken. Zo'n pauze duurt telkens hooguit 90 dagen.",
+          "Verder bewaren we iets alleen langer als de wet dat vereist. [OWNER: laat deze sectie juridisch nalezen door iemand met Nederlands als moedertaal]",
         ],
       },
       {
