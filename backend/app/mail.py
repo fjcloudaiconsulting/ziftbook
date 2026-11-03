@@ -373,10 +373,19 @@ LINKED = frozenset({"booking_received", "booking_confirmed", "booking_reminder"}
 # owed, and a refund that failed (sent to no one else: a live client's is the business's to follow
 # up). None carries a manage link. Every other email to an erased client is skipped.
 HOLD_TEMPLATES = frozenset({"booking_cancelled", "booking_expired", "booking_refund_failed"})
+# The reasons an erasure gives the bookings it cancels (an owner's erasure, an account deletion, a
+# re-applied erasure; 0064's ERASURE_REASONS).
+ERASURE_REASONS = ("client_erased", "account_erased", "erasure_reapplied")
 # A hold past its purge date is no hold, purged or not; the business named as well as the policy.
-HOLD = text("""
+# A cancellation goes through it only when the erasure made it: the team cancelling a booking the
+# erasure kept is not what the hold is kept for.
+HOLD = text(f"""
 SELECT email, locale FROM client_erasure_holds
 WHERE tenant_id = current_setting('app.tenant_id')::uuid AND client_id = :id AND purge_after > now()
+  AND (:template <> 'booking_cancelled'
+       OR EXISTS (SELECT 1 FROM booking_events e
+                  WHERE e.booking_id = :booking AND e.event = 'cancelled_by_merchant'
+                    AND e.details ->> 'reason' IN ({", ".join(f"'{r}'" for r in ERASURE_REASONS)})))
 """)
 # The failure the job announces: its amount, from the event that told it.
 REFUND_FAILED = text("""
@@ -665,7 +674,14 @@ def send_booking(job: Job) -> None:
             recipient_email, recipient_locale = row.client_email, row.client_locale
             if row.client_erased:
                 held = (
-                    session.execute(HOLD, {"id": row.client_id}).first()
+                    session.execute(
+                        HOLD,
+                        {
+                            "id": row.client_id,
+                            "template": template,
+                            "booking": payload["booking_id"],
+                        },
+                    ).first()
                     if template in HOLD_TEMPLATES
                     else None
                 )
