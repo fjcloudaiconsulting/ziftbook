@@ -5,6 +5,7 @@ client must still be told something. The API role can neither read nor write a h
 sends the cancellation and refund emails through it and deletes it once nothing is left to tell,
 and never later than its purge date, at most 31 days after the erasure."""
 
+import asyncio
 import json
 import uuid
 from collections.abc import Callable
@@ -17,7 +18,7 @@ from psycopg.errors import CheckViolation, InsufficientPrivilege
 from sqlalchemy import Engine, text
 from sqlalchemy.exc import DBAPIError
 
-from app import bookings, payments
+from app import bookings, erasure_holds, jobs, payments, worker
 from app.db import tenant_context
 from app.mail import render
 from tests.conftest import (
@@ -321,3 +322,168 @@ def test_a_live_clients_failed_refund_is_never_mailed(
     job = run_send_booking(people.a, booked["live"], "booking_refund_failed", event_id=str(told))
 
     assert outbox_for(people.a, job.id) is None
+
+
+def purge() -> None:
+    """The worker's sweep of the holds, as ziftbook_worker."""
+    with jobs_as_the_worker():
+        erasure_holds.sweep()
+
+
+def booking_mail(seeded: Seeded, booking: uuid.UUID, template: str) -> None:
+    """An email.booking job for that booking, unfinished."""
+    with tenant_context(seeded.tenant_id) as session:
+        jobs.enqueue(
+            session,
+            "email.booking",
+            f"email.booking:{seeded.tenant_id}:{booking}:{template}:{uuid.uuid4()}",
+            {"booking_id": str(booking), "template": template},
+            tenant_id=seeded.tenant_id,
+        )
+
+
+def finish_mails(migrate_engine: Engine, seeded: Seeded, finish: str) -> None:
+    """Every email.booking job of that business done, or given up after its last attempt."""
+    change = "completed_at = now()" if finish == "done" else f"attempts = {jobs.MAX_ATTEMPTS}"
+    with migrate_engine.begin() as conn:
+        conn.execute(
+            text(f"UPDATE jobs SET {change} WHERE kind = 'email.booking' AND tenant_id = :t"),
+            {"t": seeded.tenant_id},
+        )
+
+
+def change_payment(migrate_engine: Engine, seeded: Seeded, change: str) -> None:
+    with migrate_tenant_context(migrate_engine, seeded.tenant_id) as conn:
+        conn.execute(
+            text(f"UPDATE booking_payments SET {change} WHERE booking_id = :b"),
+            {"b": seeded.bookings[1]},
+        )
+
+
+@pytest.fixture
+def no_jobs(people: People, migrate_engine: Engine) -> Any:
+    """The test's own jobs, deleted after: no later test's worker run picks them up."""
+    yield
+    with migrate_engine.begin() as conn:
+        conn.execute(text("DELETE FROM jobs WHERE tenant_id = :t"), {"t": people.a})
+
+
+# ZIF-58 F32 FENCE (1 of 4). Wrong impl: a purge on purge_after only, so an erasure with nothing
+# owed keeps the address a month instead of minutes. A hold is deleted as soon as nothing is owed
+# and none of the client's emails through it (mail.HOLD_TEMPLATES) is still to be sent; another
+# booking email still queued (a reminder) does not keep it, and a mail that gave up counts as out.
+@pytest.mark.parametrize("finish", ["done", "given up"])
+def test_a_hold_goes_once_nothing_is_owed_and_its_mails_are_out(
+    people: People, migrate_engine: Engine, no_jobs: None, finish: str
+) -> None:
+    seeded = held(people, migrate_engine)
+    booking_mail(seeded, seeded.bookings[0], "booking_cancelled")
+
+    purge()
+    assert hold_address(migrate_engine, seeded) == seeded.email
+
+    finish_mails(migrate_engine, seeded, finish)
+    booking_mail(seeded, seeded.bookings[1], "booking_reminder")
+    purge()
+    assert hold_address(migrate_engine, seeded) is None
+
+
+# ZIF-58 F32 FENCE (2 of 4). Wrong impl: a purge on purge_after only; or one that lets the hold go
+# the moment a refund settles, when a refund can still fail at the bank days later and the client
+# would then have no channel. A paid booking ended by the erasure keeps the hold while the refund
+# is owed, then for 7 days after it settled, and no longer.
+def test_a_hold_goes_7_days_after_a_refund_settled(people: People, migrate_engine: Engine) -> None:
+    seeded = held(
+        people,
+        migrate_engine,
+        payment=Pay(settled=False, booking="cancelled_by_merchant"),
+        reason=None,
+    )
+    purge()
+    assert hold_address(migrate_engine, seeded) == seeded.email  # the refund is owed
+
+    change_payment(migrate_engine, seeded, "settled_at = now(), refunded_minor = amount_minor")
+    purge()
+    assert hold_address(migrate_engine, seeded) == seeded.email  # settled today
+
+    change_payment(migrate_engine, seeded, "settled_at = now() - interval '7 days 1 minute'")
+    purge()
+    assert hold_address(migrate_engine, seeded) is None
+
+
+def due(migrate_engine: Engine, seeded: Seeded, ago: str) -> None:
+    """The hold written long enough ago that its purge date was that long ago (as if the clock had
+    moved: created_at goes back with it, so the CHECK still holds)."""
+    with migrate_tenant_context(migrate_engine, seeded.tenant_id) as conn:
+        conn.execute(
+            text(
+                "UPDATE client_erasure_holds SET purge_after = now() - CAST(:ago AS interval),"
+                " created_at = now() - CAST(:ago AS interval) - interval '30 days'"
+                " WHERE client_id = :c"
+            ),
+            {"ago": ago, "c": seeded.client_id},
+        )
+
+
+def late_lines(lines: list[dict[str, Any]]) -> list[tuple[str, str, str]]:
+    return [
+        (line["level"], line["client_id"], line["tenant_id"])
+        for line in lines
+        if line["msg"] == "contact hold purged late"
+    ]
+
+
+# ZIF-58 F32 FENCE (3 of 4). Wrong impl: a purge that waits for the client's money to be settled
+# whatever the date, so a refund that failed for good keeps the address for ever. At its purge
+# date the hold goes regardless of what is owed, and on time it is no ERROR.
+def test_a_hold_goes_at_its_purge_date_whatever_is_owed(
+    people: People, migrate_engine: Engine, log_lines: Callable[[], list[dict[str, Any]]]
+) -> None:
+    seeded = held(
+        people,
+        migrate_engine,
+        payment=Pay(booking="cancelled_by_merchant", refund_failed=True),
+        reason=None,
+    )
+    purge()
+    assert hold_address(migrate_engine, seeded) == seeded.email  # the failed refund is owed
+
+    due(migrate_engine, seeded, "1 second")
+    purge()
+    assert hold_address(migrate_engine, seeded) is None
+    assert late_lines(log_lines()) == []
+
+
+async def first_iteration(kinds: dict[str, Any]) -> None:
+    """The worker's first loop after it starts (drain, prune, sweeps), then stop."""
+    stop = asyncio.Event()
+
+    def sweep() -> int:
+        stop.set()  # the booking sweep comes last: the loop ends after this iteration
+        return 0
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(bookings, "sweep", sweep)
+        await worker.work(kinds, None, stop)
+
+
+# ZIF-58 F32 FENCE (4 of 4). Wrong impl: no purge on the worker's timer, or none at start, so a
+# worker that was down past a hold's purge date leaves the address there until something else
+# runs. Its first iteration after it starts deletes the hold, and logs one ERROR naming the client
+# (ids only): a hold found past its purge date means the time box was at risk.
+def test_a_worker_started_after_a_holds_purge_date_purges_it_and_says_so(
+    people: People, migrate_engine: Engine, log_lines: Callable[[], list[dict[str, Any]]]
+) -> None:
+    seeded = held(
+        people,
+        migrate_engine,
+        payment=Pay(booking="cancelled_by_merchant", refund_failed=True),
+        reason=None,
+    )
+    due(migrate_engine, seeded, "2 days")
+
+    with jobs_as_the_worker():
+        asyncio.run(first_iteration({}))
+
+    assert hold_address(migrate_engine, seeded) is None
+    assert late_lines(log_lines()) == [("ERROR", str(seeded.client_id), str(people.a))]
