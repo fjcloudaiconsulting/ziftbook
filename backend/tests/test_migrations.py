@@ -2591,7 +2591,7 @@ def test_0077_round_trips_the_workers_money_owed(
 ) -> None:
     cfg = lock_timeout_config(monkeypatch)
     try:
-        command.downgrade(cfg, "0064")
+        command.downgrade(cfg, migration("0077_worker_reads_money_owed.py").down_revision)
         with migrate_engine.connect() as conn:
             assert tuple(conn.execute(WORKER_OWED).one()) == (False, False)
     finally:

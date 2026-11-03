@@ -7,13 +7,13 @@ worker reads through it with its own rights, under row-level security, in the jo
 the worker gets it: the API never purges a hold.
 
 Revision ID: 0077
-Revises: 0064
+Revises: 0059
 """
 
 from alembic import op
 
 revision = "0077"
-down_revision = "0064"
+down_revision = "0059"
 branch_labels = None
 depends_on = None
 
