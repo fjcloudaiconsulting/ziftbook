@@ -745,9 +745,13 @@ value needs a redeploy it is an environment variable; otherwise it is a setting.
   confirms: it is kept, visible to owners only, until an owner changes or clears it, it is confirmed, or the business
   is deleted (one row per business; no sweep). An operator who sets one by hand runs
   `SET ROLE ziftbook_migrate` first; a data-only restore of `settings` needs `--disable-triggers`.
-  Links are limited per business and address (3 an hour, 5 a day), per business (10 a day) and to 3 businesses a
-  day per address; the counts other businesses share are charged before the request row is locked, and this
-  business's own inside its transaction (`limits.hit(..., db=...)`), so no second connection waits on a held lock.
+  Links are limited per business and address (3 an hour, 5 a day) and per business (10 a day), all counted inside
+  the request's transaction (`limits.hit(..., db=...)`), and to 3 businesses a day per inbox, counted as rows in
+  `contact_email_senders` (0094) by `contact_email.claim` in a short transaction of its own before the request locks
+  any row (so the PUT handles `contact_email` before any other key). A business already counted that day, or one
+  that ever had the address confirmed, is never refused by that cap (`contact_email_requests_today`); a business
+  that never had it confirmed can be kept from it for a day by three others, the accepted price of an inbox no
+  ring of businesses can flood. No limiter call takes a second connection while the request holds a row lock.
 - Incident (contact email diverted, for example after an API compromise): the API can request and confirm an inbox
   it controls, but every confirmation is recorded by `confirm_contact_email` itself in
   `contact_email_confirmations`, which no runtime role can change (kept while the business exists and deleted with

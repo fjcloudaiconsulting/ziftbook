@@ -671,3 +671,30 @@ def test_a_runtime_role_still_deletes_it(people: People, migrate_engine: Engine)
     with tenant_context(people.a) as session:
         session.execute(text("DELETE FROM settings WHERE key = 'contact_email'"))
     assert in_effect(people.a) is None
+
+
+SENDERS_PRIVILEGES = text("""
+SELECT p.privilege FROM unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE',
+                                     'REFERENCES', 'TRIGGER']) p(privilege)
+WHERE has_table_privilege('ziftbook_app', 'contact_email_senders', p.privilege)
+ORDER BY 1
+""")
+
+
+# 0094 FENCE. Wrong impl: 0001's default privileges left in place (TRUNCATE would let the app
+# role wipe every business's count), or a table the app cannot write.
+def test_the_app_role_keeps_the_senders_count_and_nothing_more(migrate_engine: Engine) -> None:
+    with migrate_engine.connect() as conn:
+        held = list(conn.scalars(SENDERS_PRIVILEGES))
+    assert held == ["DELETE", "INSERT", "SELECT", "UPDATE"]
+
+
+def test_a_business_counts_once_per_inbox(people: People, app_engine: Engine) -> None:
+    insert = text(
+        "INSERT INTO contact_email_senders (address_key, tenant_id, claimed_at)"
+        " VALUES ('k', :t, now())"
+    )
+    with pytest.raises(IntegrityError) as raised, app_engine.begin() as conn:
+        conn.execute(insert, {"t": people.a})
+        conn.execute(insert, {"t": people.a})
+    assert isinstance(raised.value.orig, UniqueViolation)

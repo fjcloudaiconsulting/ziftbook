@@ -478,11 +478,28 @@ def test_other_businesses_cannot_use_up_a_business_links_to_an_address(
     assert put_settings(a, {"contact_email": address}).status_code == 200
 
 
-# Security review 1 FENCE. Wrong impl: no cap on how many businesses mail one inbox (a ring of
-# them floods it), a cap that blocks a business that already mailed it today, or a refusal that
-# is still counted (a refused business would then pass the cap as one that already mailed it).
+def senders(migrate_engine: Engine, address: str) -> int:
+    """The businesses counted today toward the inbox of address."""
+    key = contact_email.address_key(limits.address_for_limits(address))
+    with migrate_engine.connect() as conn:
+        found: int = conn.scalar(
+            text(
+                "SELECT count(*) FROM contact_email_senders"
+                f" WHERE address_key = :k AND {contact_email.LIVE}"
+            ),
+            {"k": key},
+        )
+    return found
+
+
+TODAY = {"code": "contact_email_requests_today"}
+
+
+# Security review FENCE. Wrong impl: no cap on how many businesses mail one inbox (a ring of them
+# floods it), a cap that blocks a business that already mailed it today, or a refusal that is
+# still counted (a refused business would then pass the cap as one that already mailed it).
 def test_a_fourth_business_mailing_one_address_in_a_day_is_refused(
-    people: People, owners: list[TestClient]
+    migrate_engine: Engine, owners: list[TestClient]
 ) -> None:
     address = f"{uuid.uuid4().hex[:12]}@example.com"
     a, b, c, d = owners
@@ -492,9 +509,98 @@ def test_a_fourth_business_mailing_one_address_in_a_day_is_refused(
     refused = put_settings(d, {"contact_email": address})
     again = put_settings(d, {"contact_email": address})
 
-    assert [refused.status_code, again.status_code] == [429, 429]
-    assert hits(contact_email.businesses_key(limits.address_for_limits(address))) == 3
+    assert [refused.json(), again.json()] == [TODAY, TODAY]
+    assert refused.status_code == 429
+    assert senders(migrate_engine, address) == 3
     assert put_settings(c, {"contact_email": address}).status_code == 200
+
+
+# Security review FENCE (targeted lockout). Wrong impl: other businesses able to keep a business
+# from an address it once had confirmed, by mailing it first.
+def test_a_business_that_had_the_address_confirmed_is_never_kept_from_it(
+    people: People,
+    app: FastAPI,
+    migrate_engine: Engine,
+    worker_engine: Engine,
+    owners: list[TestClient],
+) -> None:
+    address = f"{uuid.uuid4().hex[:12]}@example.com"
+    a, b, c, d = owners
+    token = link(worker_engine, people.a, address)
+    assert new_client(app).post(CONFIRM, json={"token": token}).status_code == 204
+    assert put_settings(a, {"contact_email": None}).status_code == 200
+    with migrate_engine.begin() as conn:  # a's link of the day lapsed: only the confirm is left
+        conn.execute(
+            text("DELETE FROM contact_email_senders WHERE tenant_id = :t"), {"t": people.a}
+        )
+    for owner in (b, c, d):
+        send_and_clear(owner, address, 1)
+
+    assert put_settings(a, {"contact_email": address}).status_code == 200
+
+
+# Security review FENCE (race). Wrong impl: "first link of the day" inferred from a counter, which
+# two businesses racing can both pass.
+def test_two_businesses_racing_for_the_last_place_get_one(
+    app_engine: Engine, migrate_engine: Engine, owners: list[TestClient]
+) -> None:
+    address = f"{uuid.uuid4().hex[:12]}@example.com"
+    a, b, c, d = owners
+    for owner in (a, b):
+        send_and_clear(owner, address, 1)
+    results: list[int] = []
+
+    def put(owner: TestClient) -> None:
+        results.append(put_settings(owner, {"contact_email": address}).status_code)
+
+    key = contact_email.address_key(limits.address_for_limits(address))
+    with app_engine.begin() as conn:
+        conn.execute(
+            text("SELECT pg_advisory_xact_lock(:c, hashtext(:k))"),
+            {"c": contact_email.SENDERS_LOCK, "k": key},
+        )
+        threads = [threading.Thread(target=put, args=(owner,)) for owner in (c, d)]
+        for thread in threads:
+            thread.start()
+        wait_until_blocked(app_engine, 2)
+    for thread in threads:
+        thread.join()
+
+    assert sorted(results) == [200, 429]
+    assert senders(migrate_engine, address) == 3
+
+
+# Security review FENCE (race, a request undone mid-race). Wrong impl: a failed request that gives
+# back its business's place while a link from that business stands, so a fourth business passes.
+def test_a_failed_request_gives_back_nothing_and_holds_its_place_briefly(
+    people: People, migrate_engine: Engine, owners: list[TestClient]
+) -> None:
+    address = f"{uuid.uuid4().hex[:12]}@example.com"
+    a, b, c, d = owners
+    send_and_clear(b, address, 1)
+    send_and_clear(c, address, 3)
+    assert put_settings(c, {"contact_email": address}).status_code == 429  # c's own hourly limit
+    assert senders(migrate_engine, address) == 2  # c still counts: its links stand
+    send_and_clear(a, address, 1)
+    assert put_settings(d, {"contact_email": address}).json() == TODAY
+
+    other = f"{uuid.uuid4().hex[:12]}@example.com"
+    for owner in (b, c):
+        send_and_clear(owner, other, 1)
+    sent = contact_email.sent_key(people.a, limits.address_for_limits(other))
+    for _ in range(5):
+        limits.charge(sent, timedelta(days=1))
+    assert put_settings(a, {"contact_email": other}).status_code == 429  # a's own daily limit
+    assert put_settings(d, {"contact_email": other}).json() == TODAY  # a's claim holds its place
+    with migrate_engine.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE contact_email_senders SET claimed_at = now() - interval '6 minutes'"
+                " WHERE tenant_id = :t AND linked_at IS NULL"
+            ),
+            {"t": people.a},
+        )
+    assert put_settings(d, {"contact_email": other}).status_code == 200  # and lets it go
 
 
 def test_a_business_sends_one_address_five_links_a_day(people: People, app: FastAPI) -> None:
@@ -505,13 +611,13 @@ def test_a_business_sends_one_address_five_links_a_day(people: People, app: Fast
 
     over = put_settings(signed_in(app, people.a, people.both), {"contact_email": address})
 
-    assert over.status_code == 429
-    assert hits(sent) == 5  # the refused one is given back
+    assert (over.status_code, over.json()) == (429, {"code": "rate_limited"})
+    assert hits(sent) == 5  # rolled back with the request
 
 
-# Security review 1 FENCE. Wrong impl: the shared counts charged for a link that is refused by
-# this business's own limit, or for a save that queues no link.
-def test_a_save_that_queues_no_link_counts_nothing_shared(people: People, app: FastAPI) -> None:
+# Wrong impl: a count kept for a link refused by this business's own limit, or for a save that
+# queues no link.
+def test_a_save_that_queues_no_link_counts_nothing(people: People, app: FastAPI) -> None:
     owner = signed_in(app, people.a, people.both)
     address = f"{uuid.uuid4().hex[:12]}@example.com"
     sent = contact_email.sent_key(people.a, limits.address_for_limits(address))
@@ -523,43 +629,44 @@ def test_a_save_that_queues_no_link_counts_nothing_shared(people: People, app: F
     assert hits(sent) == 3
 
 
-# Security review 2 FENCE. Wrong impl: a limit charged on a second pooled connection while the
-# request's row locks are held (a flood then fills the pool with requests waiting on each other).
-def test_no_limit_takes_a_second_connection_once_the_rows_are_locked(
+# Security review FENCE (pool). Wrong impl: any limiter work on a second pooled connection once the
+# request holds a row lock (a flood then fills the pool with requests each waiting on another),
+# including a refund in a finally, or a key saved before the contact email's claim.
+def test_nothing_takes_a_second_connection_once_a_row_is_locked(
     people: People, app: FastAPI, app_engine: Engine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     calls: list[str] = []
 
-    def spy(name: str) -> Any:
-        real = getattr(limits, name)
+    def spy(module: Any, name: str) -> None:
+        real = getattr(module, name)
 
         def call(*args: Any, **kwargs: Any) -> Any:
-            calls.append(f"{name} own" if kwargs.get("db") is None else f"{name} in request")
+            calls.append(f"{name} in request" if kwargs.get("db") is not None else f"{name} own")
             return real(*args, **kwargs)
 
-        return call
+        monkeypatch.setattr(module, name, call)
 
     for name in ("hit", "charge", "refund"):
-        monkeypatch.setattr(limits, name, spy(name))
+        spy(limits, name)
+    spy(contact_email, "claim")
+    locking = ("change_contact_email", "resend_contact_email", "INSERT INTO settings")
 
     def seen(conn: Any, cursor: Any, statement: str, *rest: Any) -> None:
-        for name in ("change_contact_email", "resend_contact_email"):
-            if name in statement:
-                calls.append(name)
+        calls.extend(name for name in locking if name in statement)
 
     owner = signed_in(app, people.a, people.both)
     event.listen(app_engine, "before_cursor_execute", seen)
     try:
-        for locked in ("change_contact_email", "resend_contact_email"):
+        for resend in (False, True):
             calls.clear()
-            if locked == "change_contact_email":
-                answer = put_settings(owner, {"contact_email": "a@x.nl"})
-            else:
+            if resend:
                 answer = owner.post(RESEND, json={})
+            else:
+                answer = put_settings(owner, {"language": "nl", "contact_email": "a@x.nl"})
             assert answer.status_code == 200
-            after = calls[calls.index(locked) :]
-            assert [call for call in after if " " in call] == ["hit in request"] * 2, calls
-            assert "charge own" in calls[: calls.index(locked)], calls
+            first = min(calls.index(name) for name in locking if name in calls)
+            assert calls[:first] == ["claim own"], calls
+            assert [c for c in calls[first:] if c.endswith(" own")] == [], calls
     finally:
         event.remove(app_engine, "before_cursor_execute", seen)
 

@@ -195,11 +195,13 @@ def update_settings(
     A new contact_email is mailed a link that confirms it; 429 when that address or this business
     has had too many links, and then nothing in the request is saved."""
     defaults = BusinessSettings()
+    sent = changes.model_dump(exclude_unset=True)
+    # First: it counts a link in a transaction of its own, which must come before this one holds
+    # any row lock (ZIF-232).
+    if "contact_email" in sent:
+        contact_email.change(current, request, sent.pop("contact_email"))
     # Field order, not the set of sent keys: two saves must lock rows in the same order.
-    for key, value in changes.model_dump(exclude_unset=True).items():
-        if key == "contact_email":
-            contact_email.change(current, request, value)
-            continue
+    for key, value in sent.items():
         replaced = save(current.db, key, value)
         old = getattr(defaults, key) if replaced is None else replaced
         if old != value:
