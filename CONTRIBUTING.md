@@ -334,6 +334,14 @@ migration 0026), not any code path. A race in a route somebody forgets to guard 
   (`idle_in_transaction_session_timeout`), so slow work runs outside a transaction: outbound calls, and a service
   photo's decode and store (`app/services.py`). Keep new slow work there too.
   Raising the pool means checking it against Postgres' `max_connections` together with the worker's 21.
+- **One address has at most 2 rate-limiter calls in flight per API process, and one IPv6 /48 at most 8**
+  (`limits.hit()`, ZIF-264): a flood from one address no longer queues on its rate-limit row until the pool is
+  full. Past that, `hit()` answers 429 `rate_limited` with no database work (counted in
+  `ziftbook.limiter.at_cap`). It bounds calls inside `hit()`, not connections: a route that already holds a
+  transaction (`invites.create`) holds two while its call runs, and work before a route's first limit (the
+  public booking's session lookup) is not capped. **Residual:** many addresses together can still fill a
+  process's pool (8 IPv4 addresses, or two /48s, waiting on locks are 16 calls). That bound lives at the edge,
+  in Cloudflare's rate-limit rules (ZIF-219), not here.
 - `booking_holds` (migration 0034) is unused since ZIF-158: nothing reads or writes it, and a later owner-gated
   migration drops it.
 - The constraint's predicate is the four **occupying** statuses. That set lives in three places — the predicate,
@@ -491,7 +499,8 @@ Where each deployment gets it:
   opt-out), so it leaves `ZIF_CLIENT_IP_HEADER` unset (any client could forge the header) and the API trusts only
   the web app's fixed `172.28.0.10`. Every
   visitor then shares that one address and its per-IP limits: after ZIF-54's 10 booking-link exchanges in 15
-  minutes, every further one is refused, for every client of every business. Use it to try a release, never
+  minutes, every further one is refused, for every client of every business, and at most two limiter calls run at
+  once per API process for all of them together (ZIF-264). Use it to try a release, never
   for public traffic as it stands.
 - **Pod-network risk (k3s):** the trusted CIDR is the whole pod network, so anything that reaches the
   backend from inside it is trusted, including traffic SNATed to a node's cluster-internal address
@@ -711,7 +720,7 @@ from `.env`; it fixes the log settings at `DEBUG`/`text`, passes no `ZIF_LOG_SQL
 |---|---|---|---|---|
 | Logs | JSON lines on stdout (`ZIF_LOG_FORMAT=json`, the default; `text` in dev). The API, worker, migrations and web app never send logs over OTLP: a log collector reads their stdout (none is set up yet). | always (stdout) | stdout cannot be turned off; raise `ZIF_LOG_LEVEL` to `ERROR` for the least, except the API's, which stays at `WARNING` or below until ZIF-261 is done (the `second factor failed` lines, see Logging) | `ZIF_LOG_LEVEL` (default `INFO`), `ZIF_LOG_SQL` (see Logging) |
 | Traces | OTLP/HTTP to `ZIF_OTEL_EXPORTER_OTLP_ENDPOINT` | set the endpoint (plus `ZIF_OTEL_EXPORTER_OTLP_HEADERS` if the collector wants auth) | leave the endpoint unset: no spans are exported and no connection is attempted. `ZIF_OTEL_TRACES_EXPORTER=none` turns traces off with the endpoint still set. In prod you can also set `ZIF_OTEL_TRACES_SAMPLER=always_off` | prod: `ZIF_OTEL_TRACES_SAMPLER` / `_ARG` (default 10% of new traces, following the caller's decision); dev: 100% |
-| Metrics | API: `http.server.*`, `db.client.connection.*`, business counters (`ziftbook.sign_up.*`, `ziftbook.invite.*`, `ziftbook.booking.created`), `ziftbook.csp.violations`; worker: `ziftbook.job.*`, `ziftbook.email.deliveries`, `db.client.connection.*`; web: `http.server.request.duration` for `/api` only, `ziftbook.web.request.errors` for pages; over OTLP/HTTP to `ZIF_OTEL_EXPORTER_OTLP_ENDPOINT` every 60s | set the endpoint | leave the endpoint unset: no reader, no connection. `ZIF_OTEL_METRICS_EXPORTER=none` turns metrics off with the endpoint still set | every 60s (the Python SDK's `OTEL_METRIC_EXPORT_INTERVAL`, which compose does not pass; the web app is fixed at 60s) |
+| Metrics | API: `http.server.*`, `db.client.connection.*`, business counters (`ziftbook.sign_up.*`, `ziftbook.invite.*`, `ziftbook.booking.created`), `ziftbook.csp.violations`, `ziftbook.limiter.at_cap`; worker: `ziftbook.job.*`, `ziftbook.email.deliveries`, `db.client.connection.*`; web: `http.server.request.duration` for `/api` only, `ziftbook.web.request.errors` for pages; over OTLP/HTTP to `ZIF_OTEL_EXPORTER_OTLP_ENDPOINT` every 60s | set the endpoint | leave the endpoint unset: no reader, no connection. `ZIF_OTEL_METRICS_EXPORTER=none` turns metrics off with the endpoint still set | every 60s (the Python SDK's `OTEL_METRIC_EXPORT_INTERVAL`, which compose does not pass; the web app is fixed at 60s) |
 
 - Next's own startup banner (standalone `server.js`) is plain text and ignores `ZIF_LOG_*`;
   every other web server line follows them.
@@ -733,6 +742,7 @@ from `.env`; it fixes the log settings at `DEBUG`/`text`, passes no `ZIF_LOG_SQL
   | `ziftbook.sign_up.completed`, `ziftbook.invite.sent`, `ziftbook.invite.accepted` | counters | none | api |
   | `ziftbook.booking.created` | counter | `booking.source` (booking_page, merchant) | api |
   | `ziftbook.csp.violations` | counter | `csp.directive`, `csp.disposition`, `csp.blocked`: the `csp violation` line's closed sets (Logging), so at most 26 × 3 × 21 = 1,638 series; and at most 500 distinct ones per process, past which every violation is counted in one overflow series (all three `other`), whatever a client sends. Counted whether or not the line budget logs it, never for another origin's page; the page, source and format stay in the log line | api |
+  | `ziftbook.limiter.at_cap` | counter | `limiter.tier` (address: its IPv4 or IPv6 /64 had its 2 limiter calls in flight; network: its /48 had its 8), never the address. Each is a 429 `rate_limited` answered with no database work (ZIF-264) | api |
   | `ziftbook.web.request.errors` | counter | `http.route` (the template) | web |
 
   The queue series come from every worker, so aggregate them with `max`, not `sum`. `job.running`

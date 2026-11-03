@@ -212,7 +212,12 @@ Owner = Annotated[Seen, Depends(_owner)]
 
 def _limited(seen: Seen, kind: Literal["read", "write"]) -> bool:
     # Separate budgets: a member polling the read cannot push the owner's POSTs into 429.
-    return limits.hit({f"payments:{kind}:{seen.tenant_id}": STRIPE_LIMIT}, STRIPE_WINDOW)
+    try:
+        return limits.hit({f"payments:{kind}:{seen.tenant_id}": STRIPE_LIMIT}, STRIPE_WINDOW)
+    except limits.AtCap:
+        # The caller's address has all its limiter calls in flight (ZIF-264): limited like any
+        # other, so the read still answers from the row and never 429s.
+        return True
 
 
 @router.get(

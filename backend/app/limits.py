@@ -3,14 +3,20 @@
 import hashlib
 import hmac
 import ipaddress
+import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import timedelta
 from typing import Literal
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app import tracing
 from app.config import RateLimitSettings, is_dev_value_on_public_url
 from app.db import SessionLocal
+from app.errors import ApiError
 
 MIN_KEY = 32  # characters; a shorter key counts as unset
 # SHA-256 of docker-compose.yaml's development ZIF_RATE_LIMIT_KEY.
@@ -45,6 +51,62 @@ def _charge(keys: list[str], window: timedelta) -> dict[str, int]:
     return {key: hits for key, hits in rows}
 
 
+# ZIF-264. The address of the request being served (request.client.host, "" without one), set by the
+# API's middleware; None outside a request (the worker, scripts). hit() is capped by it.
+CLIENT: ContextVar[str | None] = ContextVar("limits_client", default=None)
+# hit() calls one address (IPv4, or IPv6 /64) may have in flight in this process, and at most
+# MAX_IN_FLIGHT_PER_48 for all the /64s of one IPv6 /48 together: per /64 like every key but the
+# IP-only auth ones (ZB-04), and a /48 holder still cannot multiply its slots by rotating /64s. Each
+# call waits on its keys' row locks holding a pooled connection and a thread: past this, one
+# address's flood would queue on one row until every other visitor's request found the pool full.
+# Two carry far more than any per-IP limit admits; the frontend never has more than two such
+# requests open for a visitor.
+MAX_IN_FLIGHT = 2
+MAX_IN_FLIGHT_PER_48 = 8
+# Entries only while held: never more than two per call in flight, however many addresses arrive.
+_in_flight: dict[str, int] = {}
+# Needed, unlike ZIF-236's cap on the event loop: hit() runs on up to 40 pool threads at once.
+_in_flight_lock = threading.Lock()
+
+
+class AtCap(ApiError):
+    """hit() refused because the caller's address or /48 has all its calls in flight: the 429
+    rate_limited every limited route answers, a class of its own for a caller that answers
+    otherwise when limited (payments._limited)."""
+
+    def __init__(self) -> None:
+        super().__init__(429, "rate_limited")
+
+
+@contextmanager
+def _slot(host: str) -> Iterator[None]:
+    """A slot of host's address and of its /48 for the block, or 429 rate_limited at once with no
+    database work when either is full. Keyed by the caller's own address, never by a key other
+    addresses share: a refusal tells an address only how many calls it and its /48 have open. An
+    IPv4 address's /48 bucket is the address again, under its own name, so it never binds first."""
+    buckets = (
+        (ip_key("in_flight", host), MAX_IN_FLIGHT, "address"),
+        (ip_key("in_flight_48", host, v6_prefix=AUTH_V6_PREFIX), MAX_IN_FLIGHT_PER_48, "network"),
+    )
+    with _in_flight_lock:
+        full = next((tier for b, cap, tier in buckets if _in_flight.get(b, 0) >= cap), None)
+        if full is None:
+            for bucket, _, _ in buckets:
+                _in_flight[bucket] = _in_flight.get(bucket, 0) + 1
+    if full is not None:
+        tracing.LIMITER_AT_CAP.add(1, {"limiter.tier": full})
+        raise AtCap
+    try:
+        yield
+    finally:
+        with _in_flight_lock:
+            for bucket, _, _ in buckets:
+                if _in_flight[bucket] == 1:
+                    del _in_flight[bucket]
+                else:
+                    _in_flight[bucket] -= 1
+
+
 def hit(limits: dict[str, int], window: timedelta, *, db: Session | None = None) -> bool:
     """Count one attempt against each key; True if any key is now over its limit.
 
@@ -58,10 +120,18 @@ def hit(limits: dict[str, int], window: timedelta, *, db: Session | None = None)
     bookings.accounts). The rows stay locked until the caller's commit, so only keys nobody else
     contends for belong here (a tenant's own, under its booking lock), and a rollback uncounts the
     attempt. No purge there: the deleted rows would stay locked as long, and every other hit purges.
+
+    In a request, and without db, it takes one of the requester's MAX_IN_FLIGHT slots, and raises
+    429 rate_limited without counting anything when they are all taken (ZIF-264). It raises rather
+    than returning True: a caller that undoes its charge when this is True (bookings.give_back)
+    must never refund one that was not made.
     """
     if db is not None:
         rows = db.execute(HIT, {"keys": sorted(limits), "window": window}).all()
         counted = {key: hits for key, hits in rows}
+    elif (host := CLIENT.get()) is not None:
+        with _slot(host):
+            counted = _charge(list(limits), window)
     else:
         counted = _charge(list(limits), window)
     return any(hits > limits[key] for key, hits in counted.items())
