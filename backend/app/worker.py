@@ -13,7 +13,7 @@ from opentelemetry import metrics
 from opentelemetry.metrics import CallbackOptions, Observation
 from sqlalchemy import create_engine, event
 
-from app import bookings, erasure_holds, jobs, limits, logs, mail, payments, photos, tracing
+from app import bookings, erasure_holds, jobs, ledger, limits, logs, mail, payments, photos, tracing
 from app.config import MailSettings, StripeSettings, WorkerSettings
 from app.db import SessionLocal, database_role, reset_session
 from app.jobs import JobKind, run_once
@@ -44,6 +44,9 @@ KINDS: dict[str, JobKind] = {
     # to run (a hold must not outlive it), so the job is never skipped, however long the worker
     # was down.
     "erasure.hold_purge": JobKind(erasure_holds.purge_job, timeout=30, grace=timedelta.max),
+    # ZIF-58. An erasure's record outside the database. Long grace: a late entry still protects a
+    # later restore, and a given-up one is an ERROR (python -m app.ledger backfill re-writes it).
+    "erasure.ledger": JobKind(ledger.record, timeout=30, grace=timedelta(days=30)),
 }
 
 
