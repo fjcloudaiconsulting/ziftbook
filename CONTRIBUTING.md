@@ -89,9 +89,9 @@ Specifics:
 - The worker connects as `ziftbook_worker` (ZB-08): a member of `ziftbook_app`, so it has every privilege the app
   role has, plus what only background jobs may do: `mint_email_token`, which the app role does not have (0051),
   setting an invite's `token_hash` (0053), reading and deleting an erased client's contact hold (0064) with
-  `client_money_owed` (0077), and the retention functions `sweep_audit_events`, `sweep_admin_sessions` and
-  `sweep_booking_origins` (0074, ZIF-235). A worker still on `ziftbook_app` fails every sign-up, reset and invite
-  email. The same never-list applies to it.
+  `client_money_owed` (0077), and the retention functions `sweep_audit_events`, `sweep_admin_sessions`,
+  `sweep_account_sessions` and `sweep_booking_origins` (0074, ZIF-235). A worker still on `ziftbook_app` fails every
+  sign-up, reset and invite email. The same never-list applies to it.
 - Neither runtime role can create temporary tables, and both search `public` before `pg_temp` (ZB-31;
   `bootstrap.sql`, plus 0050 where `ziftbook_migrate` owns the database; elsewhere 0050 changes nothing and logs
   `temporary tables left to bootstrap.sql` at WARNING). Where the admin role does not own the database either
@@ -780,8 +780,8 @@ Deferred and scheduled work goes through the `jobs` table (`app/jobs.py`); there
 - **Retention (ZIF-235).** The worker runs `retention.sweep()` hourly, after the booking sweep and in its own try (a
   failure withholds the ping), within a 20-second budget and stopping between batches when the worker stops; a run
   that leaves a backlog comes back after 5 minutes. It deletes `rate_limits` rows an hour after the longest window
-  (`limits.MAX_WINDOW`, one day: no limit may use a longer window, `limits` refuses one), sessions and admin sessions
-  an hour after they stop being live, audit events past their period (see "Audit log"), and clears `ip` and
+  (`limits.MAX_WINDOW`, one day: no limit may use a longer window, `limits` refuses one), sessions, admin sessions
+  and account sessions an hour after they stop being live, audit events past their period (see "Audit log"), and clears `ip` and
   `user_agent` of a booking event once the event and its booking's end are both 18 months old (the row stays as
   evidence), walking the businesses in id order; a run that stops before the end leaves its place, and the next
   run goes on from it (a worker restart starts the pass again). The hour is a margin for readers whose transaction began before the sweep. Every table that stores an
@@ -1148,7 +1148,7 @@ ZIF-38). An empty variable means the default: `env_ignore_empty=True` on the bas
 | `ZIF_APP_REVISION` | api, frontend | `dev` | no | no | Git sha of the build, baked into the backend and frontend images. |
 | `ZIF_SHOW_VERSION` | frontend | none | no | no | `true` shows the version line (`v0.27.1 · 315a9c5`) at the bottom of the console sidebar and More sheet and in the booking pages' footer. Only staging sets it. Read server-side per request, never `NEXT_PUBLIC_*`. |
 | `ZIF_HEALTHCHECK_URL` | worker | none | no | no | Pinged after every successful loop. |
-| `ZIF_RETENTION_HOLD_UNTIL` | worker | none | no | no | An incident's evidence hold (ZIF-235): a plain date, `YYYY-MM-DD`, from tomorrow to 90 days ahead, exclusive: the hold lasts until 00:00 UTC on that date. Until then the retention sweep keeps audit events, platform audit events and booking-event addresses; sessions, rate limits and admin sessions are still swept. It shows in the `worker started` line, the worker logs a WARNING at startup, and every sweep line is a WARNING while it holds; at 00:00 UTC on its date it ends by itself. Today's date or an earlier one holds nothing and logs an ERROR at startup (a mistyped year shows). Any other value (`0`, a datetime, a number, more than 90 days ahead) never turns the hold off and never stops the worker: it holds until fixed, logs an ERROR at startup and on every sweep, and the worker withholds its healthcheck ping, so the alert fires until someone corrects it. Set it in the worker's environment (production and staging: the worker's ConfigMap in cloud-infra `clusters/hetzner/ziftbook-{prod,staging}`, then restart the worker; compose: `.env`), and remove it once the evidence is exported. |
+| `ZIF_RETENTION_HOLD_UNTIL` | worker | none | no | no | An incident's evidence hold (ZIF-235): a plain date, `YYYY-MM-DD`, from tomorrow to 90 days ahead, exclusive: the hold lasts until 00:00 UTC on that date. Until then the retention sweep keeps audit events, platform audit events and booking-event addresses; sessions, rate limits, admin sessions and account sessions are still swept. It shows in the `worker started` line, the worker logs a WARNING at startup, and every sweep line is a WARNING while it holds; at 00:00 UTC on its date it ends by itself. Today's date or an earlier one holds nothing and logs an ERROR at startup (a mistyped year shows). Any other value (`0`, a datetime, a number, more than 90 days ahead) never turns the hold off and never stops the worker: it holds until fixed, logs an ERROR at startup and on every sweep, and the worker withholds its healthcheck ping, so the alert fires until someone corrects it. Set it in the worker's environment (production and staging: the worker's ConfigMap in cloud-infra `clusters/hetzner/ziftbook-{prod,staging}`, then restart the worker; compose: `.env`), and remove it once the evidence is exported. |
 | `ZIF_IMAGE_TAG` | compose | none | yes | no | Release tag (`vX.Y.Z`) for the three GHCR images. |
 | `ZIF_API_URL` | frontend | none | yes | no | Backend base URL the web app proxies `/api` to. |
 | **Telemetry** | | | | | |
