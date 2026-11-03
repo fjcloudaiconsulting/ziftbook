@@ -1,13 +1,14 @@
 We hebben je boekingsaanvraag ontvangen
+# We hebben je boekingsaanvraag ontvangen
+
 Hallo,
 
 $business heeft je boekingsaanvraag ontvangen:
 
-$service
-$date om $time ($zone)$payment
+| $service
+| $date om $time ($zone)
+| $payment
 
 Het bedrijf moet de aanvraag nog accepteren. We mailen je zodra ze antwoorden.
 
-Bekijk, wijzig of annuleer je afspraak: $link
-
-ziftbook
+[Bekijk, wijzig of annuleer je afspraak]($link)

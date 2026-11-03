@@ -1,12 +1,12 @@
 A client moved their booking
+# A client moved their booking
+
 Hello,
 
 $client has moved their booking:
 
-$service
-Originally $old_date at $old_time
-Now $date at $time ($zone)
+| $service
+| Originally $old_date at $old_time
+| Now $date at $time ($zone)
 
-$link
-
-ziftbook
+[Open the link]($link)

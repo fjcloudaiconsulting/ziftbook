@@ -1,15 +1,18 @@
 New booking
+# New booking
+
 Hello,
 
 You have a new booking:
 
-Client: $client$message
+Client: $client
 
-$service
-$date at $time ($zone)$payment
+> $message
+
+| $service
+| $date at $time ($zone)
+| $payment
 
 It's confirmed.
 
-$link
-
-ziftbook
+[Open the link]($link)

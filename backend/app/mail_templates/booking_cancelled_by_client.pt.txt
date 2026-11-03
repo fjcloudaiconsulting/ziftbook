@@ -1,9 +1,10 @@
 Seu agendamento foi cancelado
+# Seu agendamento foi cancelado
+
 Olá,
 
 Conforme solicitado, seu agendamento em $business foi cancelado:
 
-$service
-$date às $time ($zone)$payment
-
-ziftbook
+| $service
+| $date às $time ($zone)
+| $payment

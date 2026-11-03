@@ -1,15 +1,18 @@
 Novo pedido de agendamento
+# Novo pedido de agendamento
+
 Olá,
 
 Um cliente pediu um agendamento:
 
-Cliente: $client$message
+Cliente: $client
 
-$service
-$date às $time ($zone)$payment
+> $message
+
+| $service
+| $date às $time ($zone)
+| $payment
 
 Aceite ou recuse o pedido até $expires. Sem resposta a tempo, o pedido expira.
 
-$link
-
-ziftbook
+[Abrir o link]($link)

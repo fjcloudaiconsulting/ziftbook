@@ -1,10 +1,10 @@
 Set up your business on ziftbook
+# Set up your business on ziftbook
+
 Hello,
 
 Open this link to confirm your email and set up your business:
 
-$link
+[Open the link]($link)
 
 The link works once, for 24 hours. If you didn't ask to join ziftbook, you can ignore this email.
-
-ziftbook

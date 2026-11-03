@@ -1,11 +1,12 @@
 Your booking was cancelled
+# Your booking was cancelled
+
 Hello,
 
 $business has cancelled your booking:
 
-$service
-$date at $time ($zone)$payment
+| $service
+| $date at $time ($zone)
+| $payment
 
 If you have questions, please contact the business.
-
-ziftbook
