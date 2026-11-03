@@ -1,5 +1,5 @@
 Você recebeu um convite para um negócio no ziftbook
-# Um convite para “$business”
+# Você recebeu um convite para uma equipe
 
 Você recebeu um convite para fazer parte de “$business” no ziftbook.
 

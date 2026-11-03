@@ -1,5 +1,5 @@
 You're invited to join a business on ziftbook
-# You're invited to join “$business”
+# You're invited to join a team
 
 You've been invited to join “$business” on ziftbook.
 
