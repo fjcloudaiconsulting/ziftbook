@@ -1325,3 +1325,34 @@ def test_parallel_charges_stop_at_ten(app_engine: Engine, migrate_engine: Engine
     assert sorted(outcomes) == ["charged"] * 10 + ["locked"] * 10
     stored = factor(migrate_engine, e.user_id)
     assert (stored["failed_attempts"], len(stored["charges"])) == (10, 10)
+
+
+# fence (ZIF-262): beginning an enrolment again keeps its count of wrong confirm codes, so entering
+# the ticket again refills no guesses and lifts no lock: only the CLI's new ticket does. Kills the
+# reset in begin_totp_enrolment. Injected by restoring `failed_attempts = 0` in begin.
+def test_beginning_again_keeps_the_confirm_count(
+    app_engine: Engine, migrate_engine: Engine
+) -> None:
+    user_id = new_admin(migrate_engine)
+    ticket = issue_ticket(user_id)
+    session = half_session(app_engine, migrate_engine, user_id)
+    s = totp.new_secret()
+    assert begin(app_engine, session, ticket_proof(ticket), user_id, s) == "begun"
+    for n in range(1, 4):
+        assert confirm(app_engine, session, wrong(), TEN) == ("failed", n)
+
+    s = totp.new_secret()
+    assert begin(app_engine, session, ticket_proof(ticket), user_id, s) == "begun"
+
+    assert factor(migrate_engine, user_id)["failed_attempts"] == 3
+    for n in range(4, 11):
+        assert confirm(app_engine, session, wrong(), TEN) == ("failed", n)
+    s = totp.new_secret()
+    assert begin(app_engine, session, ticket_proof(ticket), user_id, s) == "begun"
+    assert confirm(app_engine, session, totp.proof(s), TEN) == ("locked", 10)
+
+    # The way out: a new ticket from the CLI.
+    ticket = issue_ticket(user_id)
+    session = half_session(app_engine, migrate_engine, user_id)
+    assert begin(app_engine, session, ticket_proof(ticket), user_id, s) == "begun"
+    assert confirm(app_engine, session, totp.proof(s), TEN) == ("enrolled", 0)

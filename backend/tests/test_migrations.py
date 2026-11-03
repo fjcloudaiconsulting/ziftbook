@@ -2283,6 +2283,38 @@ def test_0083_downgrade_restores_the_replaced_functions() -> None:
     assert migration("0083_count_second_factor_first.py").REPLACED_BEFORE == before
 
 
+BEGIN_ENROLMENT = "begin_totp_enrolment(bytea,bytea,bytea,bytea)"
+
+
+# ZIF-262: 0084's downgrade body is 0083's, verbatim.
+def test_0084_downgrade_restores_0083s_begin() -> None:
+    assert migration("0084_enrolment_begin_keeps_count.py").FUNCTIONS_0083 == {
+        BEGIN_ENROLMENT: migration("0083_count_second_factor_first.py").REPLACED[BEGIN_ENROLMENT]
+    }
+
+
+# ZIF-262 FENCE (0084). Wrong impl: a downgrade that keeps 0084's body, or a CREATE OR REPLACE that
+# changes the owner, a grant, SECURITY DEFINER or search_path. Injected by deleting the downgrade's
+# install, then `SECURITY DEFINER` from 0084's header.
+def test_0084_round_trips_begin(migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = lock_timeout_config(monkeypatch)
+    old = migration("0083_count_second_factor_first.py").REPLACED[BEGIN_ENROLMENT]
+    with migrate_engine.connect() as conn:
+        at_head = conn.execute(DEFINER_STATE, {"signature": BEGIN_ENROLMENT}).one()
+    try:
+        command.downgrade(cfg, "0083")
+        with migrate_engine.connect() as conn:
+            row = conn.execute(DEFINER_STATE, {"signature": BEGIN_ENROLMENT}).one()
+        assert row.prosrc == dollar_body(old)
+        assert tuple(row)[3:] == DEFINER_ACCESS
+    finally:
+        command.upgrade(cfg, "head")
+    with migrate_engine.connect() as conn:
+        row = conn.execute(DEFINER_STATE, {"signature": BEGIN_ENROLMENT}).one()
+    assert row.definition == at_head.definition
+    assert tuple(row)[3:] == DEFINER_ACCESS
+
+
 # ZIF-58 (0063): the name checks on clients, erased_at, the tombstone trigger and its function,
 # and the app role's table and column privileges on clients.
 CLIENT_NAME_CHECKS = text("""
