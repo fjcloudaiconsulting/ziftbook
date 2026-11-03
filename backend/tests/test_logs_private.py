@@ -548,7 +548,8 @@ def test_no_personal_data_ever_reaches_a_log(
 
     # 6n (ZIF-58): the ledger. The 6l erasure's entry is written by its job; a client whose
     # erasure a restore undid (its entry in the ledger, the client back in the database, with
-    # its name, address and notes) is erased again by reapply; backfill finds nothing missing.
+    # its name, address and notes) is erased again by reapply; backfill queues the worker, which
+    # writes the reapplied tombstone's entry (the core stamped a new time) and skips the rest.
     restored_name = "Client Restored-4"
     restored_email = fresh_email()
     restored_note = "Note Rst-4"
@@ -573,6 +574,7 @@ def test_no_personal_data_ever_reaches_a_log(
         since = (lost.erased_at - timedelta(hours=1)).isoformat()
         assert ledger.main(["reapply", "--since", since, "--reason", "restore drill"]) == 0
         assert ledger.main(["backfill", "--since", since]) == 0
+        run_jobs_once()
     assert str(restored_id) not in [c["id"] for c in owner.get("/api/clients").json()]
 
     # 7: invite flow — send, list, a wrong token, then accept with a brand-new account.
@@ -805,7 +807,7 @@ def test_no_personal_data_ever_reaches_a_log(
     ledgered = {line["msg"] for line in lines} & {
         "erasure ledgered",
         "erasures reapplied",
-        "ledger backfilled",
+        "ledger backfill queued",
     }
     assert len(ledgered) == 3
     flood = [line for line in lines if line["msg"] == "booking flood"]

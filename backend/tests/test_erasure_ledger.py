@@ -439,30 +439,84 @@ def key_of(migrate_engine: Engine, tenant_id: uuid.UUID, client_id: uuid.UUID) -
     return ledger.Entry(tenant_id, client_id, erased_at.astimezone(UTC)).key
 
 
-# ZIF-58 F27. FENCE. Wrong impl: a backfill from the client_erased audit events (a restore rewinds
-# them with the erasure, and an erasure is the tombstone, not its event: these have none). It
-# writes exactly the entries the ledger lacks, in every business, and leaves the present one be.
-def test_backfill_writes_exactly_the_missing_entries(
-    people: People, migrate_engine: Engine, ledger_bucket: S3Client
+LEDGER_VARIABLES = (
+    "ZIF_ERASURE_LEDGER_BUCKET",
+    "ZIF_ERASURE_LEDGER_ACCESS_KEY_ID",
+    "ZIF_ERASURE_LEDGER_SECRET_ACCESS_KEY",
+)
+
+
+# ZIF-58 F27. FENCE. Wrong impls: a backfill that writes the ledger from the CLI (the operator's
+# pod would need the worker's writing key, against owner decision 8: it fails here, where it has
+# no ledger key at all), and one from the client_erased audit events (a restore rewinds them with
+# the erasure, and an erasure is the tombstone, not its event: these have none). It queues one job
+# per client erased from --since on, in every business, and the worker writes exactly the entries
+# the ledger lacks, leaving the present one be.
+def test_backfill_queues_the_worker_to_write_exactly_the_missing_entries(
+    people: People, migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     before_since = erase_now(migrate_engine, people.a)
     with migrate_engine.begin() as conn:
         since = conn.scalar(text("SELECT clock_timestamp()"))
     ledgered = erase_now(migrate_engine, people.a)
     missing = [erase_now(migrate_engine, people.a), erase_now(migrate_engine, people.b)]
-    present = key_of(migrate_engine, people.a, ledgered)
-    ledger_bucket.put_object(Bucket=BUCKET, Key=present, Body=b"as the job wrote it")
-
+    ours = {str(c) for c in (before_since, ledgered, *missing)}
+    for name in LEDGER_VARIABLES:
+        monkeypatch.delenv(name, raising=False)
     assert ledger.main(["backfill", "--since", since.isoformat()]) == 0
-    entries = stored(ledger_bucket)
+    with migrate_engine.begin() as conn:
+        queued = conn.scalars(
+            text("""
+            SELECT payload ->> 'client_id' FROM jobs
+            WHERE kind = 'erasure.ledger' AND completed_at IS NULL
+              AND payload ->> 'client_id' = ANY(:ours)
+            """),
+            {"ours": list(ours)},
+        ).all()
+    assert sorted(queued) == sorted(str(c) for c in (ledgered, *missing))
+
+    with ledger_store(monkeypatch) as admin:
+        present = key_of(migrate_engine, people.a, ledgered)
+        admin.put_object(Bucket=BUCKET, Key=present, Body=b"as the job wrote it")
+        run("erasure.ledger")  # the worker
+        entries = {k: v for k, v in stored(admin).items() if k.split("-client-")[1][:-5] in ours}
     assert set(entries) == {present} | {
         key_of(migrate_engine, tenant, client)
         for tenant, client in zip((people.a, people.b), missing, strict=True)
     }
     assert entries[present] == b"as the job wrote it"
-    assert key_of(migrate_engine, people.a, before_since) not in entries
     for key in set(entries) - {present}:
         assert json.loads(entries[key])["v"] == 1
+
+
+# ZIF-58 F27. FENCE. Wrong impl: a backfill job keyed as the erasure's own (a given-up job is kept
+# 30 days, and enqueue skips a key a kept job holds: the backfill would queue nothing). A second
+# run queues again, so a backfill job that gave up is re-armed by the next run.
+def test_each_backfill_run_queues_its_own_jobs(
+    people: People, migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with migrate_engine.begin() as conn:
+        since = conn.scalar(text("SELECT clock_timestamp()"))
+    client_id = erase_now(migrate_engine, people.a)
+    with Session(migrate_engine) as db, db.begin():
+        join_tenant(db, people.a)
+        erased_at = db.scalar(
+            text("SELECT erased_at FROM clients WHERE id = :id"), {"id": client_id}
+        )
+        ledger.enqueue(db, people.a, client_id, erased_at)  # the erasure's own job, given up
+    for name in LEDGER_VARIABLES:
+        monkeypatch.delenv(name, raising=False)
+    assert ledger.main(["backfill", "--since", since.isoformat()]) == 0
+    assert ledger.main(["backfill", "--since", since.isoformat()]) == 0
+    with migrate_engine.begin() as conn:
+        keys = conn.scalars(
+            text("SELECT dedupe_key FROM jobs WHERE payload ->> 'client_id' = :id"),
+            {"id": str(client_id)},
+        ).all()
+        conn.execute(
+            text("DELETE FROM jobs WHERE payload ->> 'client_id' = :id"), {"id": str(client_id)}
+        )
+    assert len(set(keys)) == 3
 
 
 # ZIF-58. GUARD. reapply needs a reason (the platform audit event's), backfill none; a time
