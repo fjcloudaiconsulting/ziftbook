@@ -96,7 +96,7 @@ def test_a_sign_up_link_carries_its_token_only_in_the_fragment(
     assert page == f"{APP_URL}/pt/sign-up/complete" and "?" not in link
     assert sent["Subject"] == "Configure seu negócio no ziftbook"
     assert hashlib.sha256(token.encode()).digest() == stored_hash(migrate_engine, email)
-    assert options["o:tracking-clicks"] == "no"
+    assert (options["o:tracking-clicks"], options["o:tracking-opens"]) == ("no", "no")
 
 
 def test_a_reset_link_uses_the_users_own_language(
@@ -108,7 +108,7 @@ def test_a_reset_link_uses_the_users_own_language(
     (sent,) = inbox(email)
     body, options = message(sent["ID"])
     page, token = link_in(body).split("#")
-    assert options["o:tracking-clicks"] == "no"
+    assert (options["o:tracking-clicks"], options["o:tracking-opens"]) == ("no", "no")
     assert sent["Subject"] == "Stel je ziftbook-wachtwoord opnieuw in"
     assert page == f"{APP_URL}/nl/reset-password"
     assert hashlib.sha256(token.encode()).digest() == stored_hash(migrate_engine, email)

@@ -235,7 +235,8 @@ def test_a_failed_email_logs_the_error_class_and_the_job_retries(
 
 # ZIF-151 fence: the request the SDK sends. Kills the messages route (the calendar part would be
 # retyped by Mailgun), the US host for an EU account, a dropped domain, the SDK's 60s default
-# timeout, the click-tracking option going missing (links carry secrets), and a From off the
+# timeout, the click-tracking option going missing (links carry secrets), the open-tracking option
+# going missing (ZIF-175: a pixel in the HTML part would report every open), and a From off the
 # sending domain (fails DMARC alignment).
 def test_mail_goes_to_mailguns_eu_mime_route_with_the_message_as_built() -> None:
     address = f"{uuid.uuid4()}@example.com"
@@ -246,7 +247,7 @@ def test_mail_goes_to_mailguns_eu_mime_route_with_the_message_as_built() -> None
     assert sent["URL"] == "https://api.eu.mailgun.net/v3/test.ziftbook.invalid/messages.mime"
     assert sent["Auth"] == ("api", "test-key")
     assert sent["Timeout"] == (10.0, 10.0)
-    assert sent["Form"] == {"to": address, "o:tracking-clicks": "no"}
+    assert sent["Form"] == {"to": address, "o:tracking-clicks": "no", "o:tracking-opens": "no"}
     assert sent["Headers"]["From"] == ["ziftbook <no-reply@test.ziftbook.invalid>"]
     assert sent["Headers"]["To"] == [address]
     assert (sent["Subject"], sent["Text"], sent["Html"]) == ("Subject", "Body\n", "<p>Body</p>\n")

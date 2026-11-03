@@ -75,7 +75,7 @@ def test_send_invite_mints_and_mails_a_link(
     )
     assert token_hash == hashlib.sha256(secret.encode()).digest()
     assert timedelta(days=6, hours=23, minutes=59) < lifetime <= timedelta(days=7)
-    assert options["o:tracking-clicks"] == "no"
+    assert (options["o:tracking-clicks"], options["o:tracking-opens"]) == ("no", "no")
     assert sent["Subject"] == "You're invited to join a business on ziftbook"
 
 

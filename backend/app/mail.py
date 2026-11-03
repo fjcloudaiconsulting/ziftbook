@@ -280,10 +280,11 @@ def deliver(
 ) -> None:
     """Hand one message for one address to Mailgun (Mailpit in development), and log it by template.
 
-    Click tracking is always off: Mailgun would otherwise rewrite every link through its tracking
-    domain, and most carry a secret. The message is multipart/alternative, the plain-text body
-    first and the HTML after it; with ics, that goes inside multipart/mixed with a calendar part
-    (text/calendar; method=PUBLISH) beside it.
+    Click and open tracking are always off, whatever the domain's own setting: Mailgun would
+    otherwise rewrite every link through its tracking domain (most carry a secret), and put a
+    remote pixel in the HTML part that reports every open, with the reader's IP. The message is
+    multipart/alternative, the plain-text body first and the HTML after it; with ics, that goes
+    inside multipart/mixed with a calendar part (text/calendar; method=PUBLISH) beside it.
 
     The job's id comes from its bound context. Never the address, subject or body, and on failure
     the error's class only, plus the HTTP status when there was one (a 401 is a bad key, a 400 a bad
@@ -358,7 +359,7 @@ def _send(
             ) as client:
                 # The MIME as built above, so the calendar part goes out exactly as typed.
                 response = client.mimemessage.create(
-                    data={"to": to, "o:tracking-clicks": "no"},
+                    data={"to": to, "o:tracking-clicks": "no", "o:tracking-opens": "no"},
                     files={"message": ("message.mime", message.as_bytes())},
                     domain=settings.mailgun_domain,
                 )
