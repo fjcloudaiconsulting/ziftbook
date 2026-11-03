@@ -24,6 +24,7 @@ from tests.conftest import (
     new_client,
     put_settings,
     saved_settings,
+    set_role,
     signed_in,
 )
 
@@ -192,10 +193,15 @@ CONFIRM = "/api/contact-email/confirm"
 
 
 def link(worker_engine: Engine, tenant_id: uuid.UUID, email: str) -> str:
-    """The fragment of a freshly mailed link for email, as the job mints it."""
+    """The fragment of a freshly mailed link for email, as the job mints it, asked for by one of
+    the business's owners."""
     with tenant_context(tenant_id) as session:
         request_id = session.execute(
-            text("SELECT request_id FROM change_contact_email(:e, true)"), {"e": email}
+            text(
+                "SELECT request_id FROM change_contact_email(:e, true,"
+                " (SELECT user_id FROM memberships WHERE role = 'owner' ORDER BY id LIMIT 1))"
+            ),
+            {"e": email},
         ).scalar_one()
     secret = secrets.token_urlsafe(32)
     with worker_engine.begin() as conn:
@@ -233,6 +239,7 @@ def test_a_live_link_confirms_the_address(
 def test_every_dead_link_gets_the_same_answer(
     people: People, app: FastAPI, migrate_engine: Engine, worker_engine: Engine
 ) -> None:
+    set_role(people.b, people.only_b, "owner")  # b's link needs an owner who asked for it
     used = link(worker_engine, people.b, "used@example.com")
     assert new_client(app).post(CONFIRM, json={"token": used}).status_code == 204
     resent = link(worker_engine, people.a, "resent@example.com")

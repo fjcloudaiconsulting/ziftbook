@@ -36,7 +36,11 @@ from tests.test_invite_email import run_jobs
 def requested(tenant_id: uuid.UUID, email: str, send: bool = True) -> uuid.UUID:
     with tenant_context(tenant_id) as session:
         request_id: uuid.UUID = session.execute(
-            text("SELECT request_id FROM change_contact_email(:e, :s)"), {"e": email, "s": send}
+            text(
+                "SELECT request_id FROM change_contact_email(:e, :s,"
+                " (SELECT user_id FROM memberships WHERE role = 'owner' ORDER BY id LIMIT 1))"
+            ),
+            {"e": email, "s": send},
         ).scalar_one()
     return request_id
 
