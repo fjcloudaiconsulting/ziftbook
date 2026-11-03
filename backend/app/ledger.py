@@ -28,6 +28,7 @@ import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import urlsplit
 from uuid import UUID
 
 from sqlalchemy import Engine, create_engine, text
@@ -35,7 +36,9 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import NullPool
 
 from app import admin, bookings, jobs, logs, payments, storage
+from app.config import LOCAL_HOSTS, LedgerSettings, MailSettings
 from app.db import join_tenant
+from app.errors import ApiError
 from app.jobs import Job
 
 logger = logging.getLogger("app.ledger")  # not __name__: "__main__" under python -m
@@ -79,6 +82,16 @@ class Entry:
                 "erased_at": self.erased_at.isoformat(),
             }
         ).encode()
+
+
+def require() -> None:
+    """503 erasure_unavailable while the ledger bucket is unset, outside localhost (ZIF_APP_URL):
+    no deployment erases what a restore would bring back unrecorded. Every erasure route calls it
+    first. Development may erase without one; its ledger jobs fail until a bucket is set."""
+    if LedgerSettings().erasure_ledger_bucket:
+        return
+    if urlsplit(MailSettings().app_url).hostname not in LOCAL_HOSTS:
+        raise ApiError(503, "erasure_unavailable")
 
 
 def enqueue(db: Session, tenant_id: UUID, client_id: UUID, erased_at: datetime) -> None:
