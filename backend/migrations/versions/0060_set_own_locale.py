@@ -18,13 +18,13 @@ ck_users_locale (0005) is the database's rule.
 Executable by ziftbook_app (and so by ziftbook_worker, its member), nobody else.
 
 Revision ID: 0060
-Revises: 0056
+Revises: 0064
 """
 
 from alembic import op
 
 revision = "0060"
-down_revision = "0056"
+down_revision = "0064"
 branch_labels = None
 depends_on = None
 
