@@ -37,7 +37,7 @@ from tests.stripe_fake import FakeGateway
 from tests.test_booking_payments_api import make_shop, run
 from tests.test_booking_refunds import booked
 from tests.test_bookings_db import seed_service
-from tests.test_client_erasure_db import INSERT_BOOKING, INSERT_CLIENT, take
+from tests.test_client_erasure_db import INSERT_BOOKING, INSERT_CLIENT, INSERT_PAYMENT, take
 from tests.test_erased_client_reads import client_of
 
 BUCKET = "ziftbook-erasures"
@@ -207,7 +207,9 @@ def erase_as_an_owner(
     with Session(migrate_engine) as db, db.begin():
         join_tenant(db, tenant_id)
         db.execute(bookings.LOCK, {"key": bookings.LOCK_KEY})
-        ended = bookings.end_for_erasure(db, client_id, reason="client_erased", actor_user_id=actor)
+        ended = bookings.end_for_erasure(
+            db, tenant_id, client_id, reason="client_erased", actor_user_id=actor
+        )
         payments.settle_ended(db, tenant_id, ended)
         erased_at: datetime = db.scalar(
             text("SELECT erase_client_core(:id, true)"), {"id": client_id}
@@ -561,3 +563,124 @@ def test_erasure_is_unavailable_without_the_ledger_outside_localhost(
     assert answer.status_code == status
     if status == 503:
         assert answer.json() == {"code": "erasure_unavailable"}
+
+
+PROBED = ("clients", "bookings", "booking_events", "booking_payments")
+
+
+@contextmanager
+def a_widened_policy(migrate_engine: Engine) -> Iterator[None]:
+    """A policy that lets ziftbook_migrate see every business, committed (the CLI has its own
+    connection) and dropped after: the widening the explicit tenant predicates are for (spec 7.3,
+    PR 4's F17b)."""
+    with migrate_engine.begin() as conn:
+        for table in PROBED:
+            conn.execute(
+                text(
+                    f"CREATE POLICY probe_widened ON {table} FOR ALL TO ziftbook_migrate "
+                    "USING (true) WITH CHECK (true)"
+                )
+            )
+    try:
+        yield
+    finally:
+        with migrate_engine.begin() as conn:
+            for table in PROBED:
+                conn.execute(text(f"DROP POLICY IF EXISTS probe_widened ON {table}"))
+
+
+def seed_in_b(people: People, migrate_engine: Engine) -> tuple[uuid.UUID, uuid.UUID]:
+    """A client of business B with a confirmed, paid booking still to come."""
+    service_id = seed_service(people.b)
+    with migrate_tenant_context(migrate_engine, people.b) as conn:
+        client_id = conn.scalar(INSERT_CLIENT, {"email": fresh_email(), "user_id": None})
+        booking_id = conn.scalar(
+            INSERT_BOOKING,
+            {
+                "client": client_id,
+                "worker": member_id(people.b, people.only_b),
+                "service": service_id,
+                "starts": datetime.now(UTC) + timedelta(days=2),
+                "status": "confirmed",
+                "expires": None,
+                "decline": None,
+                "checkout": None,
+            },
+        )
+        conn.execute(
+            INSERT_PAYMENT,
+            {
+                "booking": booking_id,
+                "kind": "pay",
+                "intent": f"pi_{uuid.uuid4().hex}",
+                "status": "paid",
+                "settled": None,
+                "refund_failed": None,
+            },
+        )
+    return client_id, booking_id
+
+
+def status_in_b(migrate_engine: Engine, people: People, client_id: uuid.UUID) -> tuple[Any, ...]:
+    with migrate_tenant_context(migrate_engine, people.b) as conn:
+        row = conn.execute(
+            text("""
+            SELECT c.erased_at, b.status FROM clients c JOIN bookings b ON b.client_id = c.id
+            WHERE c.id = :id
+            """),
+            {"id": client_id},
+        ).one()
+    return tuple(row)
+
+
+# ZIF-58. FENCE (hostile policy). Wrong impl: the reapply's statements scoped by row-level security
+# alone. Under a widened migrate-role policy, an entry naming business A with B's client cancelled
+# B's booking and counted it reapplied (the core, scoped to A, erased nothing), and B's money was
+# never answered. Every new statement names the business, so the entry is absent and B untouched.
+def test_a_widened_policy_never_lets_an_entry_reach_another_business(
+    people: People, migrate_engine: Engine, ledger_bucket: S3Client
+) -> None:
+    client_b, booking_b = seed_in_b(people, migrate_engine)
+    entry = ledger.Entry(people.a, client_b, datetime.now(UTC) - timedelta(minutes=5))
+    storage.ledger_write(entry.key, entry.body())
+    with a_widened_policy(migrate_engine):
+        assert reapply(entry.erased_at - timedelta(hours=1)) == 0
+        with Session(migrate_engine) as db, db.begin():
+            join_tenant(db, people.a)
+            db.execute(bookings.LOCK, {"key": bookings.LOCK_KEY})
+            assert bookings.end_for_erasure(db, people.a, client_b, reason="client_erased") == []
+            payments.settle_ended(db, people.a, [booking_b])
+            erased = erase_now(migrate_engine, people.b)
+            since = db.scalar(text("SELECT now() - interval '1 minute'"))
+        assert ledger.main(["backfill", "--since", since.isoformat()]) == 0
+        details = last_reapply(migrate_engine)
+    assert (details["absent"], details["reapplied"]) == (1, 0)
+    assert status_in_b(migrate_engine, people, client_b) == (None, "confirmed")
+    with migrate_engine.begin() as conn:
+        queued = conn.execute(
+            text("""
+            SELECT kind, tenant_id FROM jobs
+            WHERE payload ->> 'booking_id' = :booking OR payload ->> 'client_id' = :erased
+            """),
+            {"booking": str(booking_b), "erased": str(erased)},
+        ).all()
+        conn.execute(
+            text("DELETE FROM jobs WHERE payload ->> 'client_id' = :erased"),
+            {"erased": str(erased)},
+        )
+    assert [tuple(row) for row in queued] == [("erasure.ledger", people.b)]
+
+
+# ZIF-58. GUARD. The core finding no client after the reapply found it would mean the two disagree
+# on the business: the run stops, and nothing is applied.
+def test_a_core_that_erases_nothing_stops_the_run(
+    people: People, migrate_engine: Engine, ledger_bucket: S3Client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, _, erased_at = seed_ledgered(people, migrate_engine, timedelta(days=2), timedelta(minutes=5))
+    monkeypatch.setattr(
+        ledger, "CORE", text("SELECT CAST(NULL AS timestamptz) WHERE CAST(:id AS uuid) IS NOT NULL")
+    )
+    before = take(migrate_engine, people.a)
+    with pytest.raises(RuntimeError):
+        reapply(erased_at - timedelta(hours=1))
+    assert take(migrate_engine, people.a) == before

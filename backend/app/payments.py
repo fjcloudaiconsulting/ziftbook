@@ -872,17 +872,17 @@ def enqueue_unsettled(db: Session, tenant_id: UUID) -> None:
         )
 
 
-# ZIF-58. The bookings an erasure just ended that still hold money.
+# ZIF-58. The bookings an erasure just ended that still hold money, in the business named.
 UNSETTLED_OF = text("""
 SELECT DISTINCT booking_id FROM booking_payments
-WHERE booking_id = ANY(CAST(:ids AS uuid[])) AND settled_at IS NULL
+WHERE tenant_id = :tenant_id AND booking_id = ANY(CAST(:ids AS uuid[])) AND settled_at IS NULL
 """)
 
 
 def settle_ended(db: Session, tenant_id: UUID, booking_ids: list[UUID]) -> None:
     """A settle job for each booking an erasure ended that holds money, in the erasure's
     transaction: settle refunds, releases or cancels it, at most once (_refund)."""
-    for booking_id in db.scalars(UNSETTLED_OF, {"ids": booking_ids}):
+    for booking_id in db.scalars(UNSETTLED_OF, {"tenant_id": tenant_id, "ids": booking_ids}):
         jobs.enqueue(
             db,
             "payment.settle",

@@ -136,7 +136,11 @@ def read(since: datetime) -> list[Entry]:
     return sorted(entries, key=lambda entry: entry.erased_at)
 
 
-CLIENT = text("SELECT erased_at FROM clients WHERE id = :id FOR NO KEY UPDATE")
+# Every statement names the business, besides row-level security: the entry's business comes from
+# outside the database, and a widened migrate-role policy must not let it reach another one.
+CLIENT = text("""
+SELECT erased_at FROM clients WHERE tenant_id = :tenant_id AND id = :id FOR NO KEY UPDATE
+""")
 CORE = text("SELECT erase_client_core(:id, false)")
 
 
@@ -152,7 +156,9 @@ def reapply(engine: Engine, since: datetime, reason: str) -> int:
         for entry in entries:
             join_tenant(session, entry.tenant_id)
             session.execute(bookings.LOCK, {"key": bookings.LOCK_KEY})  # first, as every writer
-            row = session.execute(CLIENT, {"id": entry.client_id}).first()
+            row = session.execute(
+                CLIENT, {"tenant_id": entry.tenant_id, "id": entry.client_id}
+            ).first()
             if row is None:
                 counts["absent"] += 1
                 continue
@@ -160,12 +166,18 @@ def reapply(engine: Engine, since: datetime, reason: str) -> int:
                 counts["already_erased"] += 1
                 continue
             ended = bookings.end_for_erasure(
-                session, entry.client_id, reason="erasure_reapplied", at=entry.erased_at
+                session,
+                entry.tenant_id,
+                entry.client_id,
+                reason="erasure_reapplied",
+                at=entry.erased_at,
             )
             # Stripe is safe to ask again: settle reads what was refunded already.
             payments.settle_ended(session, entry.tenant_id, ended)
             # false: the cancellations were announced the first time.
-            session.execute(CORE, {"id": entry.client_id})
+            if session.scalar(CORE, {"id": entry.client_id}) is None:
+                # The core and the lookup above disagree on the business: nothing is applied.
+                raise RuntimeError("the erase core found no client")
             counts["reapplied"] += 1
             cancelled += len(ended)
         admin.record(
@@ -180,7 +192,9 @@ def reapply(engine: Engine, since: datetime, reason: str) -> int:
     return 0
 
 
-ERASED_SINCE = text("SELECT id, erased_at FROM clients WHERE erased_at >= :since")
+ERASED_SINCE = text("""
+SELECT id, erased_at FROM clients WHERE tenant_id = :tenant_id AND erased_at >= :since
+""")
 
 
 def backfill(engine: Engine, since: datetime) -> int:
@@ -195,7 +209,8 @@ def backfill(engine: Engine, since: datetime) -> int:
     with Session(engine) as session, session.begin():
         for tenant_id in session.scalars(text("SELECT id FROM tenants")).all():
             join_tenant(session, tenant_id)
-            for row in session.execute(ERASED_SINCE, {"since": since}).all():
+            rows = session.execute(ERASED_SINCE, {"tenant_id": tenant_id, "since": since}).all()
+            for row in rows:
                 queued += enqueue(session, tenant_id, row.id, row.erased_at, backfill=run)
     logger.info("ledger backfill queued", extra={"queued": queued})
     return 0
