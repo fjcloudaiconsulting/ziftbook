@@ -157,3 +157,53 @@ export function paymentsAction(state: PaymentsState, countrySupported: boolean):
   if (state === "off" || !countrySupported) return null;
   return state === "none" ? "connect" : state === "onboarding" ? "continue" : "dashboard";
 }
+
+/** GET /api/settings/contact-email (ZIF-232), as the generated client types it. */
+export type ContactEmailState = {
+  state: "none" | "unconfirmed" | "sent" | "confirmed";
+  confirmed: string | null;
+  requested: string | null;
+  link_expired: boolean;
+  expires_at: string | null;
+};
+type CopyKey =
+  | "contactUnconfirmed"
+  | "contactExpired"
+  | "contactSent"
+  | "contactConfirmed"
+  | "contactWaiting"
+  | "contactUntilThen"
+  | "contactUntilThenNone";
+type Copy = [key: CopyKey, values: Record<string, string>];
+export type ContactEmailView = {
+  pill: "unconfirmed" | "sent" | "confirmed";
+  body: Copy;
+  untilThen: Copy | null;
+  action: "contactSend" | "contactSendNew" | "contactSendAgain" | null;
+  ownerOnly?: true;
+};
+
+/** What the Settings block says about the contact email, or null when there is none. `requested` waits for its
+ * inbox to confirm it and is used for nothing: only `confirmed` is what clients see. Only owners are told the
+ * waiting address, and only they may send its link. */
+export function contactEmailView(s: ContactEmailState, owner: boolean): ContactEmailView | null {
+  if (s.state === "none") return null;
+  if (s.state === "confirmed") {
+    return { pill: "confirmed", body: ["contactConfirmed", { email: s.confirmed ?? "" }], untilThen: null, action: null };
+  }
+  const sent = s.state === "sent";
+  const untilThen: Copy | null = s.confirmed
+    ? ["contactUntilThen", { email: s.confirmed }]
+    : sent
+      ? ["contactUntilThenNone", {}]
+      : null;
+  if (!owner || s.requested === null) {
+    return { pill: sent ? "sent" : "unconfirmed", body: ["contactWaiting", {}], untilThen, action: null, ownerOnly: true };
+  }
+  const email = { email: s.requested };
+  if (sent) return { pill: "sent", body: ["contactSent", email], untilThen, action: "contactSendAgain" };
+  return s.link_expired
+    ? { pill: "unconfirmed", body: ["contactExpired", email], untilThen, action: "contactSendNew" }
+    : { pill: "unconfirmed", body: ["contactUnconfirmed", email], untilThen, action: "contactSend" };
+}
+
