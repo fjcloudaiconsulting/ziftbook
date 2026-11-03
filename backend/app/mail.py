@@ -377,15 +377,20 @@ HOLD_TEMPLATES = frozenset({"booking_cancelled", "booking_expired", "booking_ref
 # re-applied erasure; 0064's ERASURE_REASONS).
 ERASURE_REASONS = ("client_erased", "account_erased", "erasure_reapplied")
 # A hold past its purge date is no hold, purged or not; the business named as well as the policy.
-# A cancellation goes through it only when the erasure made it: the team cancelling a booking the
-# erasure kept is not what the hold is kept for.
+# A cancellation goes through it when the erasure made it, or when it was made before the erasure
+# (the team's, while the client was live, its mail still queued): the person's to hear of. The team
+# cancelling a booking the erasure kept, afterwards, is not what the hold is kept for.
 HOLD = text(f"""
-SELECT email, locale FROM client_erasure_holds
-WHERE tenant_id = current_setting('app.tenant_id')::uuid AND client_id = :id AND purge_after > now()
+SELECT h.email, h.locale FROM client_erasure_holds h
+WHERE h.tenant_id = current_setting('app.tenant_id')::uuid AND h.client_id = :id
+  AND h.purge_after > now()
   AND (:template <> 'booking_cancelled'
        OR EXISTS (SELECT 1 FROM booking_events e
-                  WHERE e.booking_id = :booking AND e.event = 'cancelled_by_merchant'
-                    AND e.details ->> 'reason' IN ({", ".join(f"'{r}'" for r in ERASURE_REASONS)})))
+                  JOIN clients c ON c.tenant_id = e.tenant_id AND c.id = h.client_id
+                  WHERE e.tenant_id = h.tenant_id AND e.booking_id = :booking
+                    AND e.event = 'cancelled_by_merchant'
+                    AND (e.details ->> 'reason' IN ({", ".join(f"'{r}'" for r in ERASURE_REASONS)})
+                         OR e.created_at < c.erased_at)))
 """)
 # The failure the job announces: its amount, from the event that told it.
 REFUND_FAILED = text("""
