@@ -634,7 +634,11 @@ FLAGS: dict[tuple[str, str], set[str]] = {
         # Inserts the new business's first membership; reads none.
         "complete_sign_up",
     },
-    ("payment_accounts", "app.stripe_webhook"): set(),
+    ("payment_accounts", "app.stripe_webhook"): {
+        # Asks only whether the caller's own business (app.tenant_id) holds an account, by its own
+        # tenant predicate, and returns no row of it (ZIF-102, 0066).
+        "change_currency",
+    },
 }
 
 
