@@ -104,7 +104,7 @@ export const pt: Legal = {
   },
   privacy: {
     title: "Aviso de privacidade",
-    updated: "Última atualização: 18 de outubro de 2026",
+    updated: "Última atualização: [OWNER: data em que este aviso entra em vigor, o dia em que a limpeza de retenção (#369) for ao ar]",
     sections: [
       {
         heading: "Quem somos",
@@ -196,10 +196,16 @@ export const pt: Legal = {
           [
             "Reservas e dados de clientes: enquanto o estabelecimento usar o ziftbook, a menos que você ou o estabelecimento peçam a exclusão antes. Quando um estabelecimento encerra a sua conta, apagamos os dados dele em até 30 dias.",
             "Dados da conta: enquanto a conta existir. Apagamos esses dados em até 30 dias após o encerramento da conta.",
+            "Sessões de acesso: apagadas assim que deixam de ser válidas.",
+            "Contagens de tentativas (quantas vezes um endereço IP ou e-mail tentou fazer algo, para evitar abusos): apagadas depois de cerca de um dia.",
+            "O registro de quem fez o quê na conta de um negócio, e o nosso próprio registro do que a nossa equipe faz: as tentativas de acesso que falharam são apagadas depois de 30 dias, e todo o resto depois de 1 ano.",
+            "O seu endereço IP e o tipo de navegador registrados em uma reserva, alteração ou cancelamento: apagados 18 meses depois desse evento ou do horário agendado, o que vier por último. O restante do registro continua com a reserva.",
+            "A sua resposta sobre ofertas e novidades de um estabelecimento, com a prova dela: guardada enquanto a sua escolha valer, e depois [OWNER: por quanto tempo a prova de um consentimento é guardada depois de retirado (ZIF-156)].",
             "Logs do servidor: até 7 dias nos nossos servidores e até 14 dias na Grafana Labs. Eles guardam só o necessário para operar o serviço, principalmente identificadores no lugar de nomes, e nunca o conteúdo das suas mensagens.",
             "Backups: apagados automaticamente em até duas semanas.",
           ],
-          "Só guardamos algo por mais tempo quando a lei exige.",
+          "Se houver um incidente de segurança, podemos suspender a exclusão dos registros de quem fez o quê e dos endereços IP e tipos de navegador das reservas, para investigar. Essa suspensão dura no máximo 90 dias de cada vez.",
+          "Fora isso, só guardamos algo por mais tempo quando a lei exige. [OWNER: revisão jurídica desta seção por alguém que tenha o português como língua materna]",
         ],
       },
       {
