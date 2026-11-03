@@ -64,7 +64,17 @@ MAX_IN_FLIGHT = 2
 MAX_IN_FLIGHT_PER_48 = 8
 # Entries only while held: never more than two per call in flight, however many addresses arrive.
 _in_flight: dict[str, int] = {}
+# Needed, unlike ZIF-236's cap on the event loop: hit() runs on up to 40 pool threads at once.
 _in_flight_lock = threading.Lock()
+
+
+class AtCap(ApiError):
+    """hit() refused because the caller's address or /48 has all its calls in flight: the 429
+    rate_limited every limited route answers, a class of its own for a caller that answers
+    otherwise when limited (payments._limited)."""
+
+    def __init__(self) -> None:
+        super().__init__(429, "rate_limited")
 
 
 @contextmanager
@@ -79,7 +89,7 @@ def _slot(host: str) -> Iterator[None]:
     )
     with _in_flight_lock:
         if any(_in_flight.get(bucket, 0) >= cap for bucket, cap in buckets):
-            raise ApiError(429, "rate_limited")
+            raise AtCap
         for bucket, _ in buckets:
             _in_flight[bucket] = _in_flight.get(bucket, 0) + 1
     try:
