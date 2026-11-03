@@ -1,7 +1,7 @@
 Your booking was cancelled
 # Your booking was cancelled
 
-We're sorry: $business had to cancel your booking.
+We're sorry to tell you that $business has cancelled your booking.
 
 | $service
 | $date at $time ($zone)

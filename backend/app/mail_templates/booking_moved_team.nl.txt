@@ -1,7 +1,7 @@
 Boeking verzet
 # Een afspraak is verzet
 
-Deze afspraak is naar een ander moment verzet.
+Deze afspraak is verzet.
 
 | $service
 | Nu $date om $time ($zone)

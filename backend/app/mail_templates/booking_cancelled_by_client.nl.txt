@@ -1,7 +1,7 @@
 Je boeking is geannuleerd
 # Je boeking is geannuleerd
 
-Zoals je vroeg, hebben we je boeking bij $business geannuleerd.
+Zoals je vroeg, is je boeking bij $business geannuleerd.
 
 | $service
 | $date om $time ($zone)

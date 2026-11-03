@@ -1,7 +1,7 @@
 A client moved their booking
 # A booking was moved
 
-$client moved their booking to a new time.
+$client moved their booking.
 
 | $service
 | Now $date at $time ($zone)

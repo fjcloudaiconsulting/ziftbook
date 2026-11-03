@@ -1,7 +1,7 @@
 Seu agendamento foi cancelado
 # Seu agendamento foi cancelado
 
-Conforme você pediu, cancelamos seu agendamento em $business.
+Conforme você pediu, seu agendamento em $business foi cancelado.
 
 | $service
 | $date às $time ($zone)

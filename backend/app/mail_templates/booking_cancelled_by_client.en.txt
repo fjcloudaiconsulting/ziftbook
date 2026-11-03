@@ -1,7 +1,7 @@
 Your booking is cancelled
 # Your booking is cancelled
 
-As you asked, we've cancelled your booking at $business.
+As you asked, your booking at $business is cancelled.
 
 | $service
 | $date at $time ($zone)

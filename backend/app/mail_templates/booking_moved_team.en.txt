@@ -1,7 +1,7 @@
 Booking moved
 # A booking was moved
 
-This booking was moved to a new time.
+This booking was moved.
 
 | $service
 | Now $date at $time ($zone)

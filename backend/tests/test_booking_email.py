@@ -1812,3 +1812,60 @@ def test_the_clients_card_says_who_the_booking_is_with(
     sent = mail_for(_client_email(people.a, booking_id))
     assert said + "\n" in sent["Text"]
     assert said in sent["Html"]
+
+
+# ZIF-175 fence: an opening sentence must be true on every path that sends it. booking_new goes to
+# every owner and the worker for an online booking, to the worker for a booking a colleague made in
+# the console, and to the new worker when a booking moves to them; booking_moved_team also goes out
+# when only the member changed; booking_cancelled says nothing about why. Kills "$client booked
+# with you", "moved to a new time" and "had to cancel" coming back.
+# shortcut: only the templates whose openings were ever path-dependent; add one when a template
+# gains a send path that makes its opening untrue.
+OPENINGS = {
+    "booking_new": {
+        "en": "The booking for Sofia is confirmed.",
+        "nl": "De boeking voor Sofia is bevestigd.",
+        "pt": "O agendamento de Sofia está confirmado.",
+    },
+    "booking_moved_team": {
+        "en": "This booking was moved.",
+        "nl": "Deze afspraak is verzet.",
+        "pt": "Este agendamento foi remarcado.",
+    },
+    "booking_cancelled": {
+        "en": "We're sorry to tell you that Studio has cancelled your booking.",
+        "nl": "Het spijt ons: Studio heeft je boeking geannuleerd.",
+        "pt": "Sentimos muito: Studio cancelou seu agendamento.",
+    },
+    "booking_client_rescheduled": {
+        "en": "Sofia moved their booking.",
+        "nl": "Sofia heeft de afspraak verzet.",
+        "pt": "Sofia remarcou o agendamento.",
+    },
+    "booking_cancelled_by_client": {
+        "en": "As you asked, your booking at Studio is cancelled.",
+        "nl": "Zoals je vroeg, is je boeking bij Studio geannuleerd.",
+        "pt": "Conforme você pediu, seu agendamento em Studio foi cancelado.",
+    },
+}
+
+
+@pytest.mark.parametrize("template", OPENINGS)
+def test_the_opening_sentence_holds_on_every_path_that_sends_it(template: str) -> None:
+    values = {
+        "business": "Studio",
+        "client": "Sofia",
+        "service": "SVC",
+        "date": "DATE",
+        "time": "TIME",
+        "zone": "ZONE",
+        "old_date": "OLD-DATE",
+        "old_time": "OLD-TIME",
+        "message": "",
+        "payment": "",
+        "with": "With Ana",
+        "link": "https://app.test/en",
+    }
+    for locale, opening in OPENINGS[template].items():
+        _, body = mail.render(template, locale, values)
+        assert body.split("\n\n")[1] == opening, (template, locale)
