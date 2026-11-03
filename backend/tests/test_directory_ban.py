@@ -221,6 +221,7 @@ DEFINERS = [
     "public.accept_invite(p_token_hash bytea, p_password_hash text, p_name text)",
     "public.account_by_email(p_email text)",
     "public.begin_totp_enrolment(p_id_hash bytea, p_ticket_proof bytea, p_secret_ct bytea, p_proof bytea)",  # noqa: E501
+    "public.cancel_contact_email()",
     "public.change_contact_email(p_email text, p_send boolean, p_requester uuid)",
     # ZIF-102: changes only the caller's business's currency; reads and writes nothing of a user.
     "public.change_currency(p_currency text, p_confirmed_prices integer)",
