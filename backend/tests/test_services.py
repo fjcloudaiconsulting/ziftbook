@@ -250,21 +250,21 @@ def test_a_client_cannot_set_currency_tenant_or_id_on_update(
     assert (len(rows), rows[0]["duration_minutes"]) == (1, 30)
 
 
-# a business's currency is fixed once it has services
+# A business's saved prices follow its currency until its first booking (ZIF-102, 0066): the
+# services key cascades, so a change relabels every price and keeps its amount. Bookings still hold
+# the currency (tests/test_business_currency.py).
 
 
-def test_a_businesss_currency_cannot_change_while_it_has_services(
+def test_a_businesss_saved_prices_follow_its_currency(
     people: People, owner: TestClient, migrate_engine: Engine
 ) -> None:
-    service(owner)
+    created = service(owner).json()
 
-    with pytest.raises(IntegrityError) as error, migrate_engine.begin() as conn:
+    with migrate_engine.begin() as conn:
         conn.execute(text("UPDATE tenants SET currency = 'USD' WHERE id = :a"), {"a": people.a})
-    assert isinstance(error.value.orig, ForeignKeyViolation)
 
-    with migrate_engine.connect() as conn:
-        conn.execute(text("UPDATE tenants SET currency = 'USD' WHERE id = :b"), {"b": people.b})
-        conn.rollback()
+    (listed,) = owner.get("/api/services").json()
+    assert listed["price"] == {"amount_minor": created["price"]["amount_minor"], "currency": "USD"}
 
 
 # archiving

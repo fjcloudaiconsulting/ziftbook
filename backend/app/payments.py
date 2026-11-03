@@ -19,6 +19,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import JSONResponse
 from opentelemetry.trace import SpanKind
+from psycopg.errors import ForeignKeyViolation
 from pydantic import BaseModel
 from sqlalchemy import Row, text
 from sqlalchemy.exc import DBAPIError, IntegrityError, OperationalError
@@ -28,6 +29,7 @@ from sqlalchemy.orm import Session
 from app import auth, bookings, business_settings, jobs, limits, logs, stripe_gateway, tracing
 from app.business_settings import BusinessSettings, Locale
 from app.config import MailSettings, StripeSettings
+from app.countries import STRIPE_CURRENCIES
 from app.db import SessionLocal, count_after_commit, tenant_context
 from app.errors import ApiError, Error
 from app.jobs import Job
@@ -43,8 +45,6 @@ WEBHOOK_PATH = "/api/stripe/webhook"
 
 # D6 (ZIF-158): who pays Stripe's fees on an account created now. Stripe fixes it at creation.
 NEW_ACCOUNT_FEE_MODE = "business_pays"
-# ZIF-59: Stripe Connect is not offered to Brazilian businesses.
-UNSUPPORTED_COUNTRIES = {"BR"}
 # Stripe's smallest charge, in minor units, per currency it publishes one for.
 MIN_CHARGE = {"EUR": 50, "USD": 50, "GBP": 30}
 # How a card is checked (decisions: the authorisation is the default, the SetupIntent the fallback
@@ -74,13 +74,17 @@ HANDLED = {"account.updated"} | INTENT_EVENTS | REFUND_EVENTS
 PAYMENT_LIMIT, PAYMENT_TOTAL_LIMIT, PAYMENT_WINDOW = 60, 600, timedelta(hours=1)
 
 ACCOUNT = text("SELECT stripe_account_id, charges_enabled FROM payment_accounts")
+# ZIF-102 (0062): a Stripe account holds its business's currency.
+ACCOUNT_CURRENCY = "fk_payment_accounts_tenant_id_currency_tenants"
 # Stripe rate-limits the platform: each business gets this many Stripe-calling requests a minute.
 STRIPE_LIMIT, STRIPE_WINDOW = 20, timedelta(minutes=1)
 
 
 class PaymentAccountOut(BaseModel):
     state: Literal["off", "none", "onboarding", "ready"]
-    country_supported: bool
+    country_supported: bool  # Stripe Connect is offered in the business's country
+    # ...and settles the business's currency there (app/countries.py STRIPE_CURRENCIES, ZIF-102)
+    currency_supported: bool
     min_amount_minor: int | None
     currency: str
 
@@ -245,7 +249,8 @@ def read_account(seen: AnyMember, response: Response) -> PaymentAccountOut:
             state = "ready" if enabled else "onboarding"
         return PaymentAccountOut(
             state=state,
-            country_supported=seen.country not in UNSUPPORTED_COUNTRIES,
+            country_supported=bool(STRIPE_CURRENCIES.get(seen.country)),
+            currency_supported=seen.currency in STRIPE_CURRENCIES.get(seen.country, frozenset()),
             min_amount_minor=MIN_CHARGE.get(seen.currency),
             currency=seen.currency,
         )
@@ -261,16 +266,23 @@ def connect(body: ConnectIn, seen: Owner, request: Request, response: Response) 
         response.headers["Cache-Control"] = "no-store"
         if not StripeSettings().configured():
             raise _unavailable()
-        if seen.country in UNSUPPORTED_COUNTRIES:
+        settles = STRIPE_CURRENCIES.get(seen.country, frozenset())
+        if not settles:
             raise ApiError(409, "payments_unavailable_country")
+        # ZIF-102: never create an account in a currency its country does not settle; it would then
+        # hold the business's currency for good (0062). An account already held is still onboarded.
+        if seen.account is None and seen.currency not in settles:
+            raise ApiError(409, "payments_unavailable_currency")
         if _limited(seen, "write"):
             raise ApiError(429, "rate_limited")
         gateway = stripe_gateway.gateway
         account = seen.account
         try:
             if account is None:
+                # The currency is in the key (ZIF-102): a double click gets the same account, and a
+                # retry after a currency change gets a new one in the new currency.
                 made = gateway.create_account(
-                    key=f"account:{seen.tenant_id}",
+                    key=f"account:{seen.tenant_id}:{seen.currency}",
                     tenant_id=str(seen.tenant_id),
                     country=seen.country,
                     currency=seen.currency,
@@ -280,29 +292,55 @@ def connect(body: ConnectIn, seen: Owner, request: Request, response: Response) 
                 )
                 account = made.id
                 # The row is written before anything else can fail, so Stripe's events for the
-                # account always find their business. A double click returns the same account
-                # through the idempotency key, so a conflict here is the same account twice.
-                with tenant_context(seen.tenant_id) as db:
-                    created = (
-                        db.execute(
-                            text(
-                                "INSERT INTO payment_accounts "
-                                "(tenant_id, stripe_account_id, fee_mode) "
-                                "VALUES (current_setting('app.tenant_id')::uuid, :account, :mode) "
-                                "ON CONFLICT (tenant_id) DO NOTHING RETURNING 1"
-                            ),
-                            {"account": account, "mode": NEW_ACCOUNT_FEE_MODE},
-                        ).first()
-                        is not None
-                    )
-                    if created:
-                        auth.record(
-                            db,
-                            request,
-                            "payment_account_created",
-                            actor_user_id=seen.user_id,
-                            target=f"payment_account:{account}",
+                # account always find their business. With the currency the account was made in:
+                # the foreign key to tenants (0062) refuses it if the business's currency changed
+                # while Stripe was called. A conflict means another request stored the business's
+                # account first: the same one for a double click (one idempotency key), another
+                # for a stale connect or a click split across releases, so the stored one is read
+                # back and onboarded, never the one made here.
+                try:
+                    with tenant_context(seen.tenant_id) as db:
+                        created = (
+                            db.execute(
+                                text(
+                                    "INSERT INTO payment_accounts "
+                                    "(tenant_id, stripe_account_id, fee_mode, currency) "
+                                    "VALUES (current_setting('app.tenant_id')::uuid, :account, "
+                                    ":mode, :currency) "
+                                    "ON CONFLICT (tenant_id) DO NOTHING RETURNING 1"
+                                ),
+                                {
+                                    "account": account,
+                                    "mode": NEW_ACCOUNT_FEE_MODE,
+                                    "currency": seen.currency,
+                                },
+                            ).first()
+                            is not None
                         )
+                        if created:
+                            auth.record(
+                                db,
+                                request,
+                                "payment_account_created",
+                                actor_user_id=seen.user_id,
+                                target=f"payment_account:{account}",
+                            )
+                        else:
+                            made_here = account
+                            account = db.execute(ACCOUNT).one().stripe_account_id
+                            if account != made_here:
+                                logger.info(
+                                    "payment account already held",
+                                    extra={"account": account, "unused": made_here},
+                                )
+                except IntegrityError as error:
+                    if (
+                        isinstance(error.orig, ForeignKeyViolation)
+                        and error.orig.diag.constraint_name == ACCOUNT_CURRENCY
+                    ):
+                        logger.info("payment account currency changed", extra={"account": account})
+                        raise ApiError(409, "currency_changed") from None
+                    raise
                 if created:
                     logger.info("payment account created", extra={"account": account})
             app_url = MailSettings().app_url.rstrip("/")

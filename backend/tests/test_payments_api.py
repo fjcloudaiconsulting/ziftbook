@@ -60,7 +60,13 @@ def test_the_account_state_walks_off_none_onboarding_ready(
     none = worker.get("/api/payments/account")
     assert (none.status_code, none.json()) == (
         200,
-        {"state": "none", "country_supported": True, "min_amount_minor": 50, "currency": "EUR"},
+        {
+            "state": "none",
+            "country_supported": True,
+            "currency_supported": True,
+            "min_amount_minor": 50,
+            "currency": "EUR",
+        },
     )
     assert none.headers["Cache-Control"] == "no-store"
 
@@ -169,7 +175,9 @@ def test_connecting_twice_keeps_one_account(
     domains = [(p["account"], p["host"]) for op, p in fake_stripe.calls if op == "register_domain"]
     assert domains and all(d == (acct, "localhost") for d in domains)
     keys = [p["key"] for op, p in fake_stripe.calls if op == "create_account"]
-    assert set(keys) == {f"account:{people.a}"}
+    # ZIF-102: the currency is part of the key, so a retry after a currency change gets an account
+    # in the new one (tests/test_business_currency.py).
+    assert set(keys) == {f"account:{people.a}:EUR"}
 
 
 KEYS = ["ZIF_STRIPE_SECRET_KEY", "ZIF_STRIPE_WEBHOOK_SECRET", "ZIF_STRIPE_PUBLISHABLE_KEY"]

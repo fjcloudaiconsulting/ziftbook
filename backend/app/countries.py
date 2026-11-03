@@ -23,5 +23,18 @@ COUNTRIES: dict[Country, CountryDefaults] = {
     "US": CountryDefaults("USD", "America/New_York", "en"),
 }
 
+# The currencies Stripe Connect settles a business's account in, by its country: the one place the
+# platform's payment support per country lives (app/payments.py reads it). A country with none is
+# one Connect is not offered in (BR, ZIF-59). Each serves only its own currency, the safe default:
+# a currency the account cannot settle is converted at every payout (ZIF-102; the owner may widen
+# it).
+STRIPE_CURRENCIES: dict[str, frozenset[str]] = {  # keyed by Country
+    "NL": frozenset({"EUR"}),
+    "PT": frozenset({"EUR"}),
+    "BR": frozenset(),
+    "GB": frozenset({"GBP"}),
+    "US": frozenset({"USD"}),
+}
+
 # A country's starting currency is one a business can hold (app/currencies.py).
 assert {defaults.currency for defaults in COUNTRIES.values()} <= MINOR_UNITS.keys()
