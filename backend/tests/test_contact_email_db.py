@@ -733,11 +733,3 @@ def test_the_worker_sweeps_senders_a_day_after_their_last_claim_or_link(
             )
         )
     assert left == {"sweep-fresh", "sweep-linked today"}
-
-
-def test_the_worker_sweep_runs_on_its_timer() -> None:
-    from pathlib import Path
-
-    from app import worker
-
-    assert "contact_email.sweep_senders" in Path(worker.__file__).read_text()

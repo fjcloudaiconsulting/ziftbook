@@ -776,3 +776,28 @@ def test_an_invalid_hold_withholds_the_ping_and_errs_every_run(
         assert len(errors) == len(holds) >= 2  # one ERROR per run
     else:
         assert pings and errors == []
+
+
+# Re-check NIT 9 FENCE. Wrong impl: the contact email senders sweep after the per-tenant booking
+# sweep, so a business whose sweep keeps failing also stops the global senders sweep.
+def test_the_senders_sweep_runs_even_when_a_tenant_sweep_fails(
+    bound_session: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    senders: list[int] = []
+
+    def failing_sweep() -> int:
+        raise RuntimeError("one business's sweep failed")
+
+    monkeypatch.setattr(jobs, "prune", lambda: 0)
+    monkeypatch.setattr(bookings, "sweep", failing_sweep)
+    monkeypatch.setattr(contact_email, "sweep_senders", lambda: senders.append(1))
+    monkeypatch.setattr(worker, "POLL_SECONDS", 0.05)
+
+    async def scenario() -> None:
+        stop = asyncio.Event()
+        task = asyncio.create_task(work({}, None, stop))
+        await until(lambda: len(senders) >= 2)  # every poll retries, the senders sweep included
+        stop.set()
+        await asyncio.wait_for(task, 5)
+
+    asyncio.run(scenario())
