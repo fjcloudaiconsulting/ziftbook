@@ -2465,27 +2465,59 @@ SELECT has_column_privilege('ziftbook_app', 'bookings', 'booked_as', 'INSERT'),
 """)
 
 
+ERASE_CORE_STATE = text("""
+SELECT pg_get_functiondef(p.oid), p.proowner::regrole::text, p.prosecdef, p.proconfig,
+       has_function_privilege('public', p.oid, 'EXECUTE'), p.proacl::text
+FROM pg_proc p WHERE p.oid = to_regprocedure('erase_client_core(uuid,boolean)')
+""")
+
+
 # ZIF-146 FENCE. Wrong impl: GRANT UPDATE (booked_as) (an app-role bug could re-attribute a
-# booking to another person's history), or a downgrade that leaves the column or its index.
+# booking to another person's history), or a downgrade that leaves the column or its index; an
+# erase core (ZIF-58, 0064) that keeps booked_as, or a downgrade that leaves the core naming a
+# dropped column or puts back anything but 0064's body, or a re-creation that changes its grants.
 def test_0058_round_trips_booking_provenance(
     migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     cfg = lock_timeout_config(monkeypatch)
+    m = migration("0058_booking_provenance.py")
     with migrate_engine.connect() as conn:
         assert tuple(conn.execute(PROVENANCE_OBJECTS).one()) == (True,) * 4
         assert tuple(conn.execute(BOOKED_AS_PRIVILEGES).one()) == (True, False)
         assert conn.scalar(
             text("SELECT pg_get_indexdef('ix_bookings_booked_as'::regclass)")
         ).endswith("(booked_as) WHERE (booked_as IS NOT NULL)")
+        core_at_head = conn.execute(ERASE_CORE_STATE).one()
+    assert m.BLANK_BOOKINGS in core_at_head[0]
     try:
-        command.downgrade(cfg, "0057")
+        command.downgrade(cfg, m.down_revision)
         with migrate_engine.connect() as conn:
             assert tuple(conn.execute(PROVENANCE_OBJECTS).one()) == (False,) * 4
+            core = conn.execute(ERASE_CORE_STATE).one()
+        assert "booked_as = NULL" not in core[0]
+        assert core[0] == core_at_head[0].replace(m.BLANK_BOOKINGS, m.BLANK_BOOKINGS_0064)
+        assert tuple(core)[1:] == tuple(core_at_head)[1:]
     finally:
         command.upgrade(cfg, "head")
     with migrate_engine.connect() as conn:
         assert tuple(conn.execute(PROVENANCE_OBJECTS).one()) == (True,) * 4
         assert tuple(conn.execute(BOOKED_AS_PRIVILEGES).one()) == (True, False)
+        assert tuple(conn.execute(ERASE_CORE_STATE).one()) == tuple(core_at_head)
+    assert tuple(core_at_head)[1:] == (
+        "ziftbook_migrate",
+        True,
+        ["search_path=pg_catalog, public, pg_temp"],
+        False,
+        "{ziftbook_migrate=X/ziftbook_migrate}",
+    )
+
+
+# ZIF-146 guard: the part of the erase core 0058 replaces is 0064's text verbatim, so 0058's
+# upgrade finds it and its downgrade restores what 0064 wrote.
+def test_0058_replaces_0064s_bookings_blank_verbatim() -> None:
+    m = migration("0058_booking_provenance.py")
+    core = migration("0064_erase_client.py").ERASE_CLIENT_CORE
+    assert core.count(m.BLANK_BOOKINGS_0064) == 1
 
 
 # ZIF-146 guard (code review N-1, N-2): the booking re-check and the history (0058) apply exactly
