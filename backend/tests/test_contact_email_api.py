@@ -754,6 +754,8 @@ def test_a_resend_kills_the_old_link_and_queues_a_new_one(
         people.both,
         None,
     )
+    with migrate_tenant_context(migrate_engine, people.a) as conn:  # the resender now asks
+        assert conn.scalar(text("SELECT requested_by FROM contact_email_requests")) == people.both
 
 
 def test_a_resend_counts_toward_the_same_limits(

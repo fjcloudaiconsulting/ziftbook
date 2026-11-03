@@ -317,7 +317,7 @@ def resend(current: CurrentOwner, request: Request, response: Response) -> Conta
     if email is None:
         raise ApiError(409, "no_contact_email_request")
     claim(current, email)  # before the lock, as for the PUT
-    request_id = current.db.scalar(text("SELECT resend_contact_email()"))
+    request_id = current.db.scalar(text("SELECT resend_contact_email(:u)"), {"u": current.user_id})
     if request_id is None:  # cleared or confirmed meanwhile
         raise ApiError(409, "no_contact_email_request")
     if current.db.scalar(read) != email:  # changed meanwhile: the claim was for another address
