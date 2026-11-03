@@ -131,6 +131,9 @@ def claim(current: SignedIn, email: str, host: str | None) -> None:
     businesses); nothing to give back afterwards, as a claim whose request fails lapses within
     minutes. Counted from rows, one per
     inbox and business, so concurrent requests can neither count a business twice nor take it back.
+
+    Accepted: the refusal tells an owner that three other businesses mailed that inbox in the past
+    day, a small oracle that costs each probe a link to the inbox itself.
     """
     with _claim_slot(host, current.tenant_id):
         _claim(current, email)
@@ -194,7 +197,8 @@ def send_link(current: SignedIn, request_id: UUID, email: str) -> None:
         ),
         {"k": inbox_key(address), "t": tenant},
     )
-    if not linked:  # claim() leaves the row, and nothing deletes it within a day
+    # Defensive, unreachable today: claim() left the row and nothing deletes it within a day.
+    if not linked:
         raise ApiError(503, "busy")
     enqueue(
         current.db,
