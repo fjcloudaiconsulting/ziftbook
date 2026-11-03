@@ -334,6 +334,14 @@ migration 0026), not any code path. A race in a route somebody forgets to guard 
   (`idle_in_transaction_session_timeout`), so slow work runs outside a transaction: outbound calls, and a service
   photo's decode and store (`app/services.py`). Keep new slow work there too.
   Raising the pool means checking it against Postgres' `max_connections` together with the worker's 21.
+- **One address has at most 2 rate-limiter calls in flight per API process, and one IPv6 /48 at most 8**
+  (`limits.hit()`, ZIF-264): a flood from one address no longer queues on its rate-limit row until the pool is
+  full. Past that, `hit()` answers 429 `rate_limited` with no database work (counted in
+  `ziftbook.limiter.at_cap`). It bounds calls inside `hit()`, not connections: a route that already holds a
+  transaction (`invites.create`) holds two while its call runs, and work before a route's first limit (the
+  public booking's session lookup) is not capped. **Residual:** many addresses together can still fill a
+  process's pool (8 IPv4 addresses, or two /48s, waiting on locks are 16 calls). That bound lives at the edge,
+  in Cloudflare's rate-limit rules (ZIF-219), not here.
 - `booking_holds` (migration 0034) is unused since ZIF-158: nothing reads or writes it, and a later owner-gated
   migration drops it.
 - The constraint's predicate is the four **occupying** statuses. That set lives in three places — the predicate,
