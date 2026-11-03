@@ -79,3 +79,11 @@ test("no catalog holds a key twice", async () => {
     }
   }
 });
+
+// Re-check NIT 7 FENCE. Wrong impl: a string scan with no end check, which loops for ever on an
+// unterminated string and hangs CI instead of failing.
+test("an unterminated string fails at once instead of hanging", async () => {
+  const { duplicateKeys } = await import("./check-catalogs.mjs");
+  assert.throws(() => duplicateKeys('{"a": "x}'), /unterminated string/);
+  assert.throws(() => duplicateKeys('{"a": "x\\'), /unterminated string/);
+});

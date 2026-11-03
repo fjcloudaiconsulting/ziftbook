@@ -63,7 +63,8 @@ export function duplicateKeys(text) {
   let i = 0;
   const readString = () => {
     let end = i + 1;
-    while (text[end] !== '"') end += text[end] === "\\" ? 2 : 1;
+    while (end < text.length && text[end] !== '"') end += text[end] === "\\" ? 2 : 1;
+    if (end >= text.length) throw new Error(`unterminated string at offset ${i}`);
     const value = JSON.parse(text.slice(i, end + 1));
     i = end + 1;
     return value;
