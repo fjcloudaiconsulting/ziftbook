@@ -728,3 +728,25 @@ def test_a_locked_attempt_is_audited(
         (a, d) for a, d in audit(migrate_engine, an_admin) if a.startswith("second_factor")
     ] == [("second_factor_failed", {"method": "totp", "failures": 10, "locked": True})]
     assert failed_attempts(migrate_engine, an_admin) == 10
+
+
+# guard (ZIF-262): over HTTP, a stopped enrolment's ticket answers 401 invalid_ticket, audited as a
+# refused ticket, with no new secret and so no QR code; a new ticket from the CLI starts again.
+def test_a_stopped_enrolment_refuses_its_ticket(
+    app: FastAPI, migrate_engine: Engine, an_admin: uuid.UUID
+) -> None:
+    ticket = issue_ticket(an_admin)
+    client = sign_in(app, an_admin)
+    assert client.post(BEGIN, json={"ticket": ticket}).status_code == 200
+    set_count(migrate_engine, an_admin, 10)
+    stopped = factor(migrate_engine, an_admin)["secret_ct"]
+
+    refused = client.post(BEGIN, json={"ticket": ticket})
+
+    assert answer(refused) == (401, {"code": "invalid_ticket"})
+    assert factor(migrate_engine, an_admin)["secret_ct"] == stopped
+    assert audit(migrate_engine, an_admin)[-1] == ("totp_enrolment_failed", None)
+    ticket = issue_ticket(an_admin)  # signs the admin out
+    again = sign_in(app, an_admin).post(BEGIN, json={"ticket": ticket})
+    assert again.status_code == 200
+    assert "secret" in again.json()
