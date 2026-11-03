@@ -241,6 +241,18 @@
     "memberTitle": "You're already part of {business}",
     "memberLede": "You already work there, so nothing changed. Sign in to see your appointments."
   },
+  "ContactEmail": {
+    "title": "Confirm your email address",
+    "intro": "A business on ziftbook asked to use this address as its contact email for clients. Confirm only if it is yours and you agree.",
+    "confirm": "Confirm",
+    "confirming": "Confirming…",
+    "doneTitle": "Address confirmed",
+    "done": "Clients of the business can now see this address and reply to it. You can close this page.",
+    "invalidTitle": "This link no longer works",
+    "invalid": "This link has expired or was already used. Ask the business to send a new one.",
+    "missing": "This page needs the link from the email. Open it again from the email.",
+    "tooMany": "Too many attempts. Try again in a few minutes."
+  },
   "Console": {
     "nav": {
       "today": "Today",

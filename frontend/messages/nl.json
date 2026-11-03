@@ -241,6 +241,18 @@
     "memberTitle": "Je hoort al bij {business}",
     "memberLede": "Je werkt er al, dus er is niets gewijzigd. Log in om je afspraken te zien."
   },
+  "ContactEmail": {
+    "title": "Bevestig je e-mailadres",
+    "intro": "Een bedrijf op ziftbook wil dit adres gebruiken als contactadres voor klanten. Bevestig alleen als het jouw adres is en je ermee instemt.",
+    "confirm": "Bevestigen",
+    "confirming": "Bevestigen…",
+    "doneTitle": "Adres bevestigd",
+    "done": "Klanten van het bedrijf zien dit adres nu en kunnen ernaar antwoorden. Je kunt deze pagina sluiten.",
+    "invalidTitle": "Deze link werkt niet meer",
+    "invalid": "Deze link is verlopen of al gebruikt. Vraag het bedrijf om een nieuwe te sturen.",
+    "missing": "Voor deze pagina heb je de link uit de e-mail nodig. Open die opnieuw vanuit de e-mail.",
+    "tooMany": "Te veel pogingen. Probeer het over een paar minuten opnieuw."
+  },
   "Console": {
     "nav": {
       "today": "Vandaag",

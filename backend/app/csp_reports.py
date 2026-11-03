@@ -66,6 +66,7 @@ OVERFLOW = {"csp.directive": "other", "csp.disposition": "other", "csp.blocked":
 # segment names). scripts/check-csp-pages.test.mjs fails when this and the app's pages differ.
 PAGES = (
     "/[locale]",
+    "/[locale]/account/contact-email",
     "/[locale]/admin",
     "/[locale]/admin/sign-in",
     "/[locale]/booking",
