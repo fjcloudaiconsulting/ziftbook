@@ -4,14 +4,14 @@ import { useTranslations } from "next-intl";
 import { useEffect, useRef, useState } from "react";
 
 import { type ContactEmailOut, contactEmailCancel, contactEmailRead, contactEmailResend } from "@/api-client";
-import { contactActionOutcome, contactEmailView } from "@/lib/settings";
+import { contactActionOutcome, contactEmailView, contactLoadOutcome } from "@/lib/settings";
 
 import { JSON_WRITE, SignedOutBanner, useConsole } from "../../_ui/console";
 import styles from "../../_ui/console.module.css";
 import { Banner } from "../../_ui/parts";
 import uiStyles from "../../_ui/ui.module.css";
 
-type Problem = "contactTooMany" | "contactTooManyToday" | "contactFailed";
+type Problem = "contactTooMany" | "contactTooManyToday" | "contactOwnerOnly" | "contactFailed";
 
 /** Whether the business's contact email is confirmed (ZIF-232): the address clients see, the one waiting for its
  * inbox to confirm it, and (owners only) the button that mails it a link. Nothing when there is no address. */
@@ -19,7 +19,7 @@ export function ContactEmail() {
   const { session, call } = useConsole();
   const t = useTranslations("Console.settings");
   const [state, setState] = useState<ContactEmailOut | null>(null);
-  const [loadFailed, setLoadFailed] = useState(false);
+  const [loaded, setLoaded] = useState<"show" | "hide" | "failed" | null>(null);
   const [busy, setBusy] = useState<"send" | "cancel" | null>(null);
   const [problem, setProblem] = useState<Problem | null>(null);
   const [announced, setAnnounced] = useState("");
@@ -34,8 +34,9 @@ export function ContactEmail() {
     (async () => {
       const outcome = await call(() => contactEmailRead());
       if (cancelled) return;
-      if (outcome.status === 200 && outcome.data) setState(outcome.data);
-      else setLoadFailed(true);
+      const shown = contactLoadOutcome(outcome.status === 200 && !outcome.data ? 0 : outcome.status);
+      if (shown === "show") setState(outcome.data!);
+      setLoaded(shown);
     })();
     return () => {
       cancelled = true;
@@ -65,7 +66,7 @@ export function ContactEmail() {
     else if (meaning !== "done") setProblem(meaning);
   }
 
-  if (!state) return loadFailed ? <Banner tone="error">{t("contactLoadFailed")}</Banner> : null;
+  if (!state) return loaded === "failed" ? <Banner tone="error">{t("contactLoadFailed")}</Banner> : null;
   const view = contactEmailView(state, session.role === "owner");
   if (!view) return null;
   const [bodyKey, bodyValues] = view.body;

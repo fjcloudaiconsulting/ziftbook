@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, test } from "node:test";
 
-import { contactActionOutcome, contactEmailView } from "../lib/settings.ts";
+import { contactActionOutcome, contactEmailView, contactLoadOutcome } from "../lib/settings.ts";
 
 const none = { state: "none", confirmed: null, requested: null, link_expired: false, expires_at: null };
 const unconfirmed = { ...none, state: "unconfirmed", requested: "new@x.nl" };
@@ -77,8 +77,19 @@ describe("F8.3 what a send or cancel answer means", () => {
     assert.equal(contactActionOutcome(429, "rate_limited"), "contactTooMany");
     assert.equal(contactActionOutcome(429, "contact_email_requests_today"), "contactTooManyToday");
     assert.equal(contactActionOutcome(401), "signedOut");
+    assert.equal(contactActionOutcome(403, "owner_only"), "contactOwnerOnly"); // demoted meanwhile
     assert.equal(contactActionOutcome(409, "no_contact_email_request"), "reload");
-    for (const status of [0, 403, 422, 500, 503]) assert.equal(contactActionOutcome(status), "contactFailed");
+    for (const status of [0, 422, 500, 503]) assert.equal(contactActionOutcome(status), "contactFailed");
+  });
+});
+
+// Review NIT 4 FENCE. Wrong impl: every Settings view showing an error while the web runs ahead of
+// an API that has no state route yet (a deploy, or the API alone rolled back).
+describe("F8.3 reading the state", () => {
+  test("an API without the route hides the block; a failure says so", () => {
+    assert.equal(contactLoadOutcome(200), "show");
+    assert.equal(contactLoadOutcome(404), "hide");
+    for (const status of [0, 401, 500, 503]) assert.equal(contactLoadOutcome(status), "failed");
   });
 });
 
@@ -90,6 +101,11 @@ describe("F8.3 the copy", () => {
     "contactFailed", "contactCancel", "contactCancelled",
     "contactLoadFailed", "contactOwnerOnly",
   ];
+  test("the owner-only line says who sends the link, not who confirms it (review NIT 5)", () => {
+    const copy = JSON.parse(readFileSync(new URL("../messages/en.json", import.meta.url), "utf8")).Console.settings;
+    assert.equal(copy.contactOwnerOnly, "Only an owner can send its confirmation link.");
+    assert.doesNotMatch(copy.contactUnconfirmed, /until you confirm/);
+  });
   for (const locale of ["en", "nl", "pt"]) {
     test(`${locale} has every key and no em dash`, () => {
       const copy = JSON.parse(readFileSync(new URL(`../messages/${locale}.json`, import.meta.url), "utf8")).Console.settings;
