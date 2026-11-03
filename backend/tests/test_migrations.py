@@ -2264,7 +2264,7 @@ def test_0063_round_trips_the_client_tombstone(
 ) -> None:
     cfg = lock_timeout_config(monkeypatch)
     try:
-        command.downgrade(cfg, "0056")
+        command.downgrade(cfg, migration("0063_clients_erased_at.py").down_revision)
         with migrate_engine.connect() as conn:
             assert conn.scalar(CLIENT_NAME_CHECKS) == ["ck_clients_name_length"]
             assert conn.scalar(ERASED_AT_COLUMN) == 0
