@@ -35,6 +35,7 @@ from app import (
     clients,
     jobs,
     limits,
+    mail,
     members,
     passwords,
     schedule,
@@ -594,6 +595,14 @@ CLIENT_MAIL_PER_TENANT_HOUR = 300
 CLIENT_MAIL_PUBLIC_PER_TENANT_HOUR = 300
 
 
+# Whether the booking's client is erased (ZIF-58).
+ERASED_CLIENT = text("""
+SELECT c.erased_at IS NOT NULL FROM bookings b
+JOIN clients c ON c.tenant_id = b.tenant_id AND c.id = b.client_id
+WHERE b.id = :id
+""")
+
+
 def email(
     db: Session,
     tenant_id: UUID,
@@ -621,7 +630,12 @@ def email(
     counted. Counted in the caller's transaction (every caller holds the tenant's booking lock, so
     no one else waits on these keys): no second connection, and a rolled-back booking uncounts.
     """
-    if user_id is None:
+    # ZIF-58: a mail to an erased client goes through its contact hold, bounded by the hold's
+    # lifetime and by real events (an erasure, a refund's outcome); a quota that dropped it would
+    # leave the person no channel, and nothing would enqueue it again.
+    if user_id is None and not (
+        template in mail.HOLD_TEMPLATES and db.scalar(ERASED_CLIENT, {"id": booking_id})
+    ):
         source = "merchant" if merchant else "public"
         key = f"mail_tenant:{tenant_id}" if merchant else f"mail_tenant_public:{tenant_id}"
         limit = CLIENT_MAIL_PER_TENANT_HOUR if merchant else CLIENT_MAIL_PUBLIC_PER_TENANT_HOUR

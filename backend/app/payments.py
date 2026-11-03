@@ -532,12 +532,6 @@ WHERE NOT EXISTS (SELECT 1 FROM booking_events
                     AND details ->> 'refund' = :refund_id)
 RETURNING id
 """)
-# ZIF-58: an erased client has no one else to hear a failed refund from (mail.HOLD_TEMPLATES).
-ERASED_CLIENT = text("""
-SELECT c.erased_at IS NOT NULL FROM bookings b
-JOIN clients c ON c.tenant_id = b.tenant_id AND c.id = b.client_id
-WHERE b.id = :id
-""")
 SET_REFUND_ID = text("""
 UPDATE booking_payments SET refund_id = coalesce(refund_id, :refund_id) WHERE intent_id = :intent
 """)
@@ -1073,7 +1067,8 @@ def refund_changed(tenant_id: UUID, refund_id: str) -> None:
 def _mail_refund_failed(db: Session, tenant_id: UUID, booking_id: UUID, event_id: UUID) -> None:
     """Enqueue the client's email about the failure just told (once: keyed on its event), when the
     client was erased; the team sees the flag in the console either way."""
-    if db.scalar(ERASED_CLIENT, {"id": booking_id}):
+    # ZIF-58: an erased client has no one else to hear it from (mail.HOLD_TEMPLATES).
+    if db.scalar(bookings.ERASED_CLIENT, {"id": booking_id}):
         bookings.email(
             db,
             tenant_id,

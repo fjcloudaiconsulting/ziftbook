@@ -809,3 +809,47 @@ def test_a_teams_cancellation_after_the_erasure_mails_nobody(
     assert outbox_for(people.a, team.id) is None
     assert outbox_for(people.a, erasure.id) is not None
     assert len(sent_to(address)) == 1
+
+
+# ZIF-58 FENCE. Wrong impl: hold mails counted against the business's public client-mail quota at
+# enqueue (anonymous bookings fill it, and a dropped refund-failed job is never retried) or the
+# per-recipient quota at send (an erasure that cancels many bookings uses it up), so the one notice
+# the hold exists for is lost and the purge then lets the hold go. Hold mails are bounded by the
+# hold's lifetime and by real events instead. With every quota at zero, the erased client still
+# gets the erasure's cancellation and the refund that Stripe refused; a live client's mail is still
+# held back (the quotas are on).
+def test_a_full_quota_still_delivers_the_hold_mails(
+    people: People,
+    app: FastAPI,  # noqa: F811
+    owner: TestClient,  # noqa: F811
+    migrate_engine: Engine,
+    fake_stripe: FakeGateway,
+    shop: str,
+    clean_outbox: None,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, booking_id, _ = paid_booking(app, people, fake_stripe, shop)
+    _, live_id, _ = paid_booking(app, people, fake_stripe, shop, starts_at=at("11:00"))
+    client_id = client_of(people.a, booking_id)
+    address = fresh_email()  # the client's alone: the booking helper made its first one a member's
+    set_client(people.a, client_id, email=address)
+    erase_announcing(migrate_engine, people, client_id)
+    for quota in ("CLIENT_MAIL_PUBLIC_PER_TENANT_HOUR", "CLIENT_MAIL_PER_TENANT_HOUR"):
+        monkeypatch.setattr(bookings, quota, 0)
+    for quota in ("CLIENT_MAIL_PER_RECIPIENT_HOUR", "CLIENT_MAIL_PER_RECIPIENT_ANY_HOUR"):
+        monkeypatch.setattr(mail, quota, 0)
+    fake_stripe.fail_next("refund", "invalid")
+    payments.settle(settle_job(people, booking_id))
+    cancelled = owner.patch(f"/api/bookings/{live_id}", json={"status": "cancelled_by_merchant"})
+    assert cancelled.status_code == 200
+
+    with jobs_as_the_worker():
+        run_send_booking(people.a, booking_id, "booking_cancelled")
+        run("email.booking")
+        live = run_send_booking(people.a, live_id, "booking_cancelled")
+
+    subjects = [message["Subject"] for message in sent_to(address)]
+    assert sorted(subjects) == sorted(
+        render(template, "en")[0] for template in ("booking_cancelled", "booking_refund_failed")
+    )
+    assert outbox_for(people.a, live.id)["status"] == "pending"  # held back by the quota
