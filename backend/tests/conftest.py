@@ -889,15 +889,6 @@ def save_setting(tenant_id: uuid.UUID, key: str, value: Any) -> None:
         )
 
 
-@pytest.fixture
-def fresh_contact_limits(migrate_engine: Engine) -> Iterator[None]:
-    """Contact email link limits counted afresh: some are shared by every business (ZIF-232), and
-    each test's businesses are new, so tests reusing an address would otherwise reach them."""
-    yield
-    with migrate_engine.begin() as conn:
-        conn.execute(text("DELETE FROM rate_limits WHERE key LIKE 'contact_email%'"))
-
-
 def confirm_contact_email(tenant_id: uuid.UUID, email: str) -> None:
     """Make email the business's contact email, and drop any waiting address, as a confirmed link
     leaves them. As the migrate role: the settings guard lets no other role write the key (ZIF-232,
