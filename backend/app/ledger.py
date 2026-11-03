@@ -16,8 +16,8 @@ ziftbook_migrate (ZIF_MIGRATE_DATABASE_URL), from the migrations image, as app.a
 the API and the worker start (CONTRIBUTING "Restoring the database"). Exit 0 when done or nothing
 was to do, 1 on any error (logged CRITICAL; nothing was applied), 2 on a usage error.
 
-backfill writes the entries the ledger is missing (an erasure.ledger job that gave up) from the
-live database, with the worker's writing credentials; same connection and exit codes.
+backfill queues the worker to write the entries the ledger is missing (an erasure.ledger job that
+gave up), from the live database; it needs no ledger key. Same connection and exit codes.
 """
 
 import argparse
@@ -94,14 +94,18 @@ def require() -> None:
         raise ApiError(503, "erasure_unavailable")
 
 
-def enqueue(db: Session, tenant_id: UUID, client_id: UUID, erased_at: datetime) -> None:
+def enqueue(
+    db: Session, tenant_id: UUID, client_id: UUID, erased_at: datetime, *, backfill: str = ""
+) -> bool:
     """Add the erasure's ledger job in the erasure's own transaction: a rollback drops it with
-    the erasure."""
+    the erasure. backfill names a backfill run, whose jobs get keys of their own: the erasure's
+    job, given up, is kept 30 days and would hold its key. Returns whether it was added."""
     entry = Entry(tenant_id, client_id, erased_at.astimezone(UTC))
-    jobs.enqueue(
+    again = f":backfill:{backfill}" if backfill else ""
+    return jobs.enqueue(
         db,
         "erasure.ledger",
-        f"erasure.ledger:{tenant_id}:client:{client_id}",
+        f"erasure.ledger:{tenant_id}:client:{client_id}{again}",
         {
             "kind": "client",
             "tenant_id": str(entry.tenant_id),
@@ -180,22 +184,20 @@ ERASED_SINCE = text("SELECT id, erased_at FROM clients WHERE erased_at >= :since
 
 
 def backfill(engine: Engine, since: datetime) -> int:
-    """Write the ledger entry of every client erased from since on that the ledger lacks, from
-    the database's own record of the erasure, clients.erased_at, in every business. Never from
-    the audit events: an erasure's is not its record (a restore rewinds both alike, and only the
-    tombstone says the erasure happened). Account deletions' entries come with them (ZIF-58 PR 8).
-    """
-    found = []
+    """Queue an erasure.ledger job for every client erased from since on, in every business: the
+    worker writes the entries the ledger lacks (one already there is a no-op, written: false).
+    The CLI holds no ledger key: only the worker writes (owner decision 8). From the database's
+    own record of an erasure, clients.erased_at, never the audit events: the tombstone is the
+    erasure, its event is the route's. Each run's jobs have keys of their own, so a run re-arms a
+    backfill job that gave up. Account deletions' entries come with them (ZIF-58 PR 8)."""
+    run = datetime.now(UTC).strftime("%Y%m%dT%H%M%S.%fZ")
+    queued = 0
     with Session(engine) as session, session.begin():
         for tenant_id in session.scalars(text("SELECT id FROM tenants")).all():
             join_tenant(session, tenant_id)
-            found += [
-                Entry(tenant_id, row.id, row.erased_at.astimezone(UTC))
-                for row in session.execute(ERASED_SINCE, {"since": since})
-            ]
-    # After the transaction: no outbound call while it is open.
-    written = sum(storage.ledger_write(entry.key, entry.body()) for entry in found)
-    logger.info("ledger backfilled", extra={"erased": len(found), "written": written})
+            for row in session.execute(ERASED_SINCE, {"since": since}).all():
+                queued += enqueue(session, tenant_id, row.id, row.erased_at, backfill=run)
+    logger.info("ledger backfill queued", extra={"queued": queued})
     return 0
 
 
