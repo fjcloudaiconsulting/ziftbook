@@ -14,7 +14,7 @@ from opentelemetry.trace import SpanKind
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app import bookings, jobs, tracing
+from app import bookings, jobs, logs, tracing
 from app.db import SessionLocal, tenant_context
 from app.jobs import Job
 
@@ -58,12 +58,20 @@ def sweep() -> int:
     # The ids in their own short session, closed before the loop, as bookings.sweep does.
     with SessionLocal() as session:
         tenant_ids = session.scalars(text("SELECT id FROM tenants")).all()
-    purged = 0
+    purged = failed = 0
     with tracing.span("erasure_holds.sweep", SpanKind.INTERNAL, {"tenants": len(tenant_ids)}):
         for tenant_id in tenant_ids:
-            with tenant_context(tenant_id) as db:
-                db.execute(bookings.LOCK, {"key": bookings.LOCK_KEY})  # first, as every writer
-                purged += purge(db)
+            # One business that fails never holds back the others' purges.
+            try:
+                with tenant_context(tenant_id) as db:
+                    db.execute(bookings.LOCK, {"key": bookings.LOCK_KEY})  # first, as every writer
+                    purged += purge(db)
+            except Exception:
+                failed += 1
+                with logs.bound(tenant_id=str(tenant_id)):
+                    logger.exception("business sweep failed", extra={"sweep": "holds"})
+    if failed:
+        raise RuntimeError(f"the hold sweep failed for {failed} businesses")
     return purged
 
 

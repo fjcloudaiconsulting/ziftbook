@@ -853,3 +853,66 @@ def test_a_full_quota_still_delivers_the_hold_mails(
         render(template, "en")[0] for template in ("booking_cancelled", "booking_refund_failed")
     )
     assert outbox_for(people.a, live.id)["status"] == "pending"  # held back by the quota
+
+
+STATUS_OF = text("SELECT status FROM bookings WHERE id = :id")
+
+
+def failing_except(keep: uuid.UUID) -> Callable[..., Any]:
+    """A stand-in that raises in every business but `keep`, where it calls through."""
+
+    def wrap(real: Callable[..., Any]) -> Callable[..., Any]:
+        def call(db: Any, *args: Any) -> Any:
+            if db.scalar(text("SELECT current_setting('app.tenant_id')")) != str(keep):
+                raise RuntimeError("business boom")
+            return real(db, *args)
+
+        return call
+
+    return wrap
+
+
+# ZIF-58 FENCE. Wrong impl: a sweep that stops at the first business that raises, so one failing
+# business holds back every other's purge (or, in the booking sweep, its expiries and the re-arm of
+# its refunds). Each sweep goes on to the next business, logs the failure with its business (ids
+# only), and raises at the end so the worker withholds its ping.
+@pytest.mark.parametrize("sweep", ["holds", "bookings"])
+def test_a_failing_business_never_stops_a_sweep_for_the_others(
+    people: People,
+    migrate_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+    log_lines: Callable[[], list[dict[str, Any]]],
+    sweep: str,
+) -> None:
+    for tenant_id, user_id in ((people.a, people.only_a), (people.b, people.only_b)):
+        seeded = seed_person(
+            migrate_engine,
+            tenant_id,
+            member_id(tenant_id, user_id),
+            user_id,
+            days_ago=10,
+            # A lapsed request for the booking sweep to expire; for the hold sweep, nothing owed.
+            payment=PAID_AND_KEPT if sweep == "holds" else Pay(booking="pending", settled=False),
+        )
+        if sweep == "holds":
+            assert hold_after(
+                migrate_engine, seeded, user_id, reason="client_erased", announce=True
+            )
+    wrap = failing_except(people.b)
+    if sweep == "holds":
+        monkeypatch.setattr(erasure_holds, "purge", wrap(erasure_holds.purge))
+    else:
+        monkeypatch.setattr(payments, "enqueue_unsettled", wrap(payments.enqueue_unsettled))
+
+    with jobs_as_the_worker(), pytest.raises(RuntimeError):
+        erasure_holds.sweep() if sweep == "holds" else bookings.sweep()
+
+    with migrate_tenant_context(migrate_engine, people.b) as conn:
+        if sweep == "holds":
+            assert conn.scalar(HOLD_OF, {"c": seeded.client_id}) is None
+        else:
+            assert conn.scalar(STATUS_OF, {"id": seeded.bookings[1]}) == "expired"
+    failed = [line for line in log_lines() if line["msg"] == "business sweep failed"]
+    assert str(people.a) in {line["tenant_id"] for line in failed}
+    assert str(people.b) not in {line["tenant_id"] for line in failed}
+    assert {line["sweep"] for line in failed} == {sweep}

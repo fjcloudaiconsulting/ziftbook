@@ -35,6 +35,7 @@ from app import (
     clients,
     jobs,
     limits,
+    logs,
     mail,
     members,
     passwords,
@@ -2033,22 +2034,30 @@ def sweep() -> int:
     # The ids in their own short session, closed before the loop: the worker's pool is exactly 21.
     with SessionLocal() as session:
         tenant_ids = session.scalars(text("SELECT id FROM tenants")).all()
-    expired = 0
+    expired = failed = 0
     with tracing.span("bookings.sweep", SpanKind.INTERNAL, {"tenants": len(tenant_ids)}) as span:
         # ponytail: one transaction per tenant per sweep; upgrade to a SECURITY DEFINER "tenants
-        # with due expiry" once the tenant count matters. A failure raises: the worker retries the
-        # whole sweep next poll, so a tenant that always fails blocks the ones after it (and pings).
+        # with due expiry" once the tenant count matters. A tenant that fails is logged and the
+        # sweep goes on to the next (ZIF-58: its refunds' re-arm must not wait on another's
+        # failure); it raises at the end, so the worker withholds its ping and retries next poll.
         for tenant_id in tenant_ids:
-            with tenant_context(tenant_id) as db:
-                db.execute(LOCK, {"key": LOCK_KEY})  # 1: first, like every booking writer
-                # RETURNING, not rowcount: Session.execute gives a Result, which has none (mypy).
-                count = len(db.execute(EXPIRE, {"expiring": list(availability.EXPIRING)}).all())
-                if count:
-                    logger.info("bookings expired", extra={"count": count})
-                expired += count
-                # After EXPIRE, so a hold that just lapsed is seen as lapsed (ZIF-158).
-                payments.enqueue_unsettled(db, tenant_id)
-                # until the booking_holds drop: unproven addresses are kept at most ~24h
-                db.execute(SWEEP_HOLDS)
+            try:
+                with tenant_context(tenant_id) as db:
+                    db.execute(LOCK, {"key": LOCK_KEY})  # 1: first, like every booking writer
+                    # RETURNING, not rowcount: Session.execute gives a Result, which has none.
+                    count = len(db.execute(EXPIRE, {"expiring": list(availability.EXPIRING)}).all())
+                    if count:
+                        logger.info("bookings expired", extra={"count": count})
+                    expired += count
+                    # After EXPIRE, so a hold that just lapsed is seen as lapsed (ZIF-158).
+                    payments.enqueue_unsettled(db, tenant_id)
+                    # until the booking_holds drop: unproven addresses are kept at most ~24h
+                    db.execute(SWEEP_HOLDS)
+            except Exception:
+                failed += 1
+                with logs.bound(tenant_id=str(tenant_id)):
+                    logger.exception("business sweep failed", extra={"sweep": "bookings"})
         span.set_attribute("expired", expired)
+    if failed:
+        raise RuntimeError(f"the booking sweep failed for {failed} businesses")
     return expired
