@@ -630,7 +630,8 @@ A platform admin runs the platform across businesses (ZIF-70). `platform_admins`
   a `second_factor_failed` with the same n (`totp_enrolled` or `totp_enrolment_failed` at enrolment). An attempt
   event with neither after it is a check cut off before its commit. It leaves only the attempt event, the count,
   a 5xx on the route, and, if it was cut off after the check answered, a `second factor failed` line. Handle that
-  as the same ZB-08 incident. An attempt event with `failures` 10 means that code locked TOTP, whatever follows.
+  as the same ZB-08 incident. A lock shows as a `second_factor_locked` event, not as `failures` 10 on an attempt
+  event: a pass still in flight can give its attempt back, so a 10 then locks nothing.
 - Never enable statement or parameter logging (`log_statement`, `log_min_duration_statement` with parameters,
   `auto_explain` with parameters) on the app database. Bind values include bearer proofs: a logged TOTP proof,
   recovery-code proof or ticket proof lets anyone who can read the log and run SQL pass an admin's second factor.
