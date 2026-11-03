@@ -23,13 +23,13 @@ after the block.
 The downgrade drops the five indexes, also concurrently. Nothing else changes.
 
 Revision ID: 0072
-Revises: 0056
+Revises: 0059
 """
 
 from alembic import op
 
 revision = "0072"
-down_revision = "0056"
+down_revision = "0059"
 branch_labels = None
 depends_on = None
 
