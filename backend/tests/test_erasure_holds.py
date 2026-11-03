@@ -1019,3 +1019,34 @@ def test_no_function_the_api_can_run_names_the_hold_table(migrate_engine: Engine
         assert [tuple(row) for row in conn.execute(HOLD_FUNCTIONS)] == [
             ("erase_client_core", False)
         ]
+
+
+# ZIF-58 FENCE (re-check SHOULD-A). Wrong impl: a booking_cancelled reaches a hold only when the
+# erasure made the cancellation, so a cancellation the team made while the client was still live,
+# whose mail was still queued when the client was erased minutes later, is refused: the erasure
+# keeps a hold for that mail (client_hold_needed's mail arm) and nothing is ever sent through it.
+# A cancellation from before the erasure is the person's to hear of; one after it is not.
+def test_a_cancellation_queued_before_the_erasure_is_still_mailed(
+    people: People,
+    owner: TestClient,  # noqa: F811
+    migrate_engine: Engine,
+    booked: dict[str, str],  # noqa: F811
+    clean_outbox: None,  # noqa: F811
+    no_jobs: None,
+) -> None:
+    client_id = uuid.UUID(booked["client"])
+    address = fresh_email()  # the client's alone: the booking helper made its first one a member's
+    set_client(people.a, client_id, email=address)
+    before = owner.patch(
+        f"/api/bookings/{booked['started']}", json={"status": "cancelled_by_merchant"}
+    )
+    assert before.status_code == 200  # its booking_cancelled is queued, not yet sent
+
+    erase_announcing(migrate_engine, people, client_id, announce=False)  # nothing ended by it
+    assert hold_address(migrate_engine, Seeded(people.a, client_id, (), address)) == address
+    with jobs_as_the_worker():
+        run("email.booking")
+
+    assert [message["Subject"] for message in sent_to(address)] == [
+        render("booking_cancelled", "en")[0]
+    ]
