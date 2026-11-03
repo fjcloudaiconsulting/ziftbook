@@ -1053,3 +1053,44 @@ def test_a_reapplied_ending_without_its_erasure_time_is_held(
     assert fake_stripe.count("refund") == 0
     with migrate_tenant_context(migrate_engine, people.a) as conn:
         assert conn.execute(BOOKING, {"id": booking_id}).one().refund_failed_at is not None
+
+
+BACKSTOP = text("""
+SELECT j.due_at = h.purge_after FROM jobs j
+JOIN client_erasure_holds h ON h.tenant_id = j.tenant_id
+                           AND h.client_id = (j.payload ->> 'client_id')::uuid
+WHERE j.kind = 'erasure.hold_purge' AND j.tenant_id = :t AND h.client_id = :c
+""")
+
+
+def reapplied_with_money_owed(
+    people: People, fake_stripe: FakeGateway, migrate_engine: Engine
+) -> tuple[uuid.UUID, str]:
+    """A paid client the ledger lists and the database holds unerased, re-applied: the core writes
+    a contact hold (its money is still owed an answer). Returns the client and its booking."""
+    app = create_app()
+    owner = signed_in(app, people.a, people.both)
+    save_setting(people.a, "published", True)
+    service_id = make_shop(people, owner, fake_stripe, price=4000)
+    _, booking_id, _ = booked(app, people, fake_stripe, service_id, "pay")
+    client_id = client_of(people.a, booking_id)
+    entry = ledger.Entry(people.a, client_id, datetime.now(UTC) + timedelta(seconds=1))
+    storage.ledger_write(entry.key, entry.body())
+    assert reapply(entry.erased_at - timedelta(hours=1)) == 0
+    return client_id, booking_id
+
+
+# ZIF-58 x PR 6 FENCE (the backstop). Wrong impl: a reapply that calls the erase core but not
+# erasure_holds.enqueue_purge, so the hold the re-applied erasure writes outlives its purge date
+# while the sweep is failing. The job is due exactly at the hold's purge_after.
+def test_a_reapply_queues_the_hold_s_backstop_purge(
+    people: People, fake_stripe: FakeGateway, migrate_engine: Engine, ledger_bucket: S3Client
+) -> None:
+    client_id, _ = reapplied_with_money_owed(people, fake_stripe, migrate_engine)
+    with migrate_tenant_context(migrate_engine, people.a) as conn:
+        holds = conn.scalar(
+            text("SELECT count(*) FROM client_erasure_holds WHERE client_id = :c"), {"c": client_id}
+        )
+        due = conn.scalars(BACKSTOP, {"t": people.a, "c": client_id}).all()
+    assert holds == 1  # not vacuous: the re-applied erasure wrote a hold
+    assert due == [True]
