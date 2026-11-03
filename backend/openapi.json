@@ -6773,6 +6773,37 @@
           }
         }
       }
+    },
+    "/api/settings/contact-email": {
+      "get": {
+        "tags": [
+          "contact-email"
+        ],
+        "summary": "Read",
+        "operationId": "contact-email-read",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContactEmailOut"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -8353,6 +8384,68 @@
           "booking_id"
         ],
         "title": "ConsentsIn"
+      },
+      "ContactEmailOut": {
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": [
+              "none",
+              "unconfirmed",
+              "sent",
+              "confirmed"
+            ],
+            "title": "State"
+          },
+          "confirmed": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confirmed"
+          },
+          "requested": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested"
+          },
+          "link_expired": {
+            "type": "boolean",
+            "title": "Link Expired"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "state",
+          "confirmed",
+          "requested",
+          "link_expired",
+          "expires_at"
+        ],
+        "title": "ContactEmailOut",
+        "description": "Which address clients see, and which waits for its inbox to confirm it."
       },
       "ContactEmailToken": {
         "properties": {
