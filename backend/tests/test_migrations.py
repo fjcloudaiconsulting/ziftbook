@@ -2215,7 +2215,12 @@ def test_0069_downgrade_restores_0039s_functions() -> None:
 
 
 # ZIF-261 (0083): the attempt is charged by one definer and checked by another.
-CHARGE_DEFINERS = ("charge_second_factor(bytea)", "check_second_factor(bytea,uuid,bytea,bigint)")
+CHARGE_DEFINERS = (
+    "charge_second_factor(bytea)",
+    "check_second_factor(bytea,uuid,bytea,bigint)",
+    "charge_totp_enrolment(bytea)",
+    "check_totp_enrolment(bytea,uuid,bytea,bigint,bytea[])",
+)
 CHARGES_COLUMN = text("""
 SELECT count(*) FROM information_schema.columns
 WHERE table_name = 'second_factors' AND column_name = 'charges'

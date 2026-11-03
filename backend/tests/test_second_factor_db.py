@@ -38,7 +38,12 @@ PASS = text("SELECT outcome, failures FROM pass_second_factor(:id, :p, :step)")
 CHARGE = text("SELECT outcome, failures, charge FROM charge_second_factor(:id)")
 CHECK = text("SELECT outcome, failures FROM check_second_factor(:id, :charge, :p, :step)")
 BEGIN = text("SELECT begin_totp_enrolment(:id, :ticket, :ct, :p)")
+# 0069's one-transaction confirm, which the release before ZIF-261 calls.
 CONFIRM = text(f"SELECT outcome, failures FROM confirm_totp_enrolment(:id, :p, {NOW_STEP}, :codes)")
+CHARGE_ENROLMENT = text("SELECT outcome, failures, charge FROM charge_totp_enrolment(:id)")
+CHECK_ENROLMENT = text(
+    f"SELECT outcome, failures FROM check_totp_enrolment(:id, :charge, :p, {NOW_STEP}, :codes)"
+)
 RECOVER = text("SELECT codes_left, was_locked FROM use_recovery_code(:id, :p)")
 TICKET = re.compile(r"[A-Z2-7]{4}(?:-[A-Z2-7]{4}){3}")
 
@@ -125,6 +130,18 @@ def recover(app_engine: Engine, id_hash: bytes, proof: bytes) -> tuple[int, bool
     return None if row is None else (row[0], row[1])
 
 
+def confirm(
+    app_engine: Engine, id_hash: bytes, proof: bytes, codes: list[bytes]
+) -> tuple[str, int]:
+    """An enrolment confirm code at the database's current step, as the API sends it: charged and
+    committed, then checked. A charge that answers locked or none is the answer."""
+    outcome, failures, charged = call(app_engine, CHARGE_ENROLMENT, id=id_hash)
+    if outcome != "charged":
+        return (outcome, failures)
+    row = call(app_engine, CHECK_ENROLMENT, id=id_hash, charge=charged, p=proof, codes=codes)
+    return (row[0], row[1])
+
+
 def factor(migrate_engine: Engine, user_id: uuid.UUID) -> dict[str, Any]:
     """The second_factors row, read as migrate (a dump)."""
     with migrate_engine.connect() as conn:
@@ -184,8 +201,7 @@ def enrolled(app_engine: Engine, migrate_engine: Engine) -> Enrolled:
     s = totp.new_secret()
     assert begin(app_engine, session, ticket_proof(ticket), user_id, s) == "begun"
     codes = [totp.new_code() for _ in range(10)]
-    row = call(app_engine, CONFIRM, id=session, p=totp.proof(s), codes=code_proofs(codes))
-    assert tuple(row) == ("enrolled", 0)
+    assert confirm(app_engine, session, totp.proof(s), code_proofs(codes)) == ("enrolled", 0)
     return Enrolled(user_id, session, s, codes)
 
 
@@ -525,7 +541,7 @@ def test_confirm_uses_up_the_ticket_and_ends_other_sessions(
     assert begin(app_engine, session, ticket_proof(ticket), user_id, s) == "begun"
     codes = code_proofs([totp.new_code() for _ in range(10)])
 
-    row = call(app_engine, CONFIRM, id=session, p=totp.proof(s), codes=codes)
+    row = confirm(app_engine, session, totp.proof(s), codes)
 
     assert tuple(row) == ("enrolled", 0)
     stored = factor(migrate_engine, user_id)
@@ -547,10 +563,10 @@ def test_confirm_counts_failures(app_engine: Engine, migrate_engine: Engine) -> 
     assert begin(app_engine, session, ticket_proof(ticket), user_id, s) == "begun"
     codes = code_proofs([totp.new_code() for _ in range(10)])
     for n in range(1, 11):
-        row = call(app_engine, CONFIRM, id=session, p=wrong(), codes=codes)
+        row = confirm(app_engine, session, wrong(), codes)
         assert tuple(row) == ("failed", n)
 
-    row = call(app_engine, CONFIRM, id=session, p=totp.proof(s), codes=codes)
+    row = confirm(app_engine, session, totp.proof(s), codes)
 
     assert tuple(row) == ("locked", 10)
     assert factor(migrate_engine, user_id)["confirmed_at"] is None
@@ -819,7 +835,7 @@ def test_a_new_enrolment_starts_with_no_failures(
     assert begin(app_engine, session, ticket_proof(ticket), e.user_id, s) == "begun"
     codes = code_proofs([totp.new_code() for _ in range(10)])
 
-    row = call(app_engine, CONFIRM, id=session, p=totp.proof(s), codes=codes)
+    row = confirm(app_engine, session, totp.proof(s), codes)
 
     assert tuple(row) == ("enrolled", 0)
     stored = factor(migrate_engine, e.user_id)
@@ -1085,8 +1101,9 @@ def plant_charge(migrate_engine: Engine, user_id: uuid.UUID) -> uuid.UUID:
 # new ticket, beginning an enrolment and confirming one. A charge made before must never be checked
 # after: against the new secret, or as a failure the reset already forgot (an uncounted attempt).
 # Kills a reset that keeps the charges. Injected by deleting `charges = '{}'` from ISSUE_TICKET,
-# then from begin_totp_enrolment, then from confirm_totp_enrolment.
-@pytest.mark.parametrize("reset", ["cli", "begin", "confirm"])
+# then from begin_totp_enrolment, then from check_totp_enrolment, then from 0069's
+# confirm_totp_enrolment (the release before ZIF-261 still confirms with it).
+@pytest.mark.parametrize("reset", ["cli", "begin", "confirm", "confirm_0069"])
 def test_a_reset_voids_the_charges(app_engine: Engine, migrate_engine: Engine, reset: str) -> None:
     if reset == "cli":
         e = enrolled(app_engine, migrate_engine)
@@ -1098,10 +1115,7 @@ def test_a_reset_voids_the_charges(app_engine: Engine, migrate_engine: Engine, r
         s = totp.new_secret()
         assert begin(app_engine, session, ticket_proof(ticket), e.user_id, s) == "begun"
         codes = code_proofs([totp.new_code() for _ in range(10)])
-        assert tuple(call(app_engine, CONFIRM, id=session, p=totp.proof(s), codes=codes)) == (
-            "enrolled",
-            0,
-        )
+        assert confirm(app_engine, session, totp.proof(s), codes) == ("enrolled", 0)
         assert check(app_engine, session, before, wrong(), None) == ("none", 0)
         return
     user_id = new_admin(migrate_engine)
@@ -1115,6 +1129,111 @@ def test_a_reset_voids_the_charges(app_engine: Engine, migrate_engine: Engine, r
         assert begin(app_engine, session, ticket_proof(ticket), user_id, s) == "begun"
         plant_charge(migrate_engine, user_id)
         codes = code_proofs([totp.new_code() for _ in range(10)])
-        row = call(app_engine, CONFIRM, id=session, p=totp.proof(s), codes=codes)
-        assert tuple(row) == ("enrolled", 0)
+        if reset == "confirm":
+            assert confirm(app_engine, session, totp.proof(s), codes) == ("enrolled", 0)
+        else:
+            row = call(app_engine, CONFIRM, id=session, p=totp.proof(s), codes=codes)
+            assert tuple(row) == ("enrolled", 0)
     assert charges_of(migrate_engine, user_id) == []
+
+
+def pending(app_engine: Engine, migrate_engine: Engine) -> tuple[uuid.UUID, bytes, bytes]:
+    """An admin with an enrolment begun and not confirmed: (user, session, secret)."""
+    user_id = new_admin(migrate_engine)
+    ticket = issue_ticket(user_id)
+    session = half_session(app_engine, migrate_engine, user_id)
+    s = totp.new_secret()
+    assert begin(app_engine, session, ticket_proof(ticket), user_id, s) == "begun"
+    return user_id, session, s
+
+
+TEN = [secrets.token_bytes(32) for _ in range(10)]
+
+
+# fence (ZIF-261, the attack at enrolment): a confirm code is counted in a transaction of its own
+# before it is checked, so a check cut off before its commit still leaves it counted, and ten of
+# them lock the enrolment. Kills the count taken in check_totp_enrolment. Injected by moving the
+# `+ 1` from charge_totp_enrolment into check_totp_enrolment's failure branch.
+@pytest.mark.parametrize("cut", ["rollback", "terminate"])
+def test_a_confirm_cut_off_before_its_commit_still_counts(
+    app_engine: Engine, migrate_engine: Engine, cut: str
+) -> None:
+    user_id, session, s = pending(app_engine, migrate_engine)
+    for n in range(1, 11):
+        outcome, failures, charged = call(app_engine, CHARGE_ENROLMENT, id=session)
+        assert (outcome, failures) == ("charged", n)
+        conn = app_engine.connect()
+        try:
+            conn.begin()
+            pid = conn.scalar(text("SELECT pg_backend_pid()"))
+            row = conn.execute(
+                CHECK_ENROLMENT, {"id": session, "charge": charged, "p": wrong(), "codes": TEN}
+            ).one()
+            assert tuple(row) == ("failed", n)
+            if cut == "rollback":
+                conn.rollback()
+            else:
+                with app_engine.connect() as killer:
+                    assert killer.scalar(
+                        text("SELECT pg_terminate_backend(:pid, 5000)"), {"pid": pid}
+                    )
+                conn.invalidate()
+        finally:
+            conn.close()
+        assert factor(migrate_engine, user_id)["failed_attempts"] == n
+
+    assert confirm(app_engine, session, totp.proof(s), TEN) == ("locked", 10)
+    assert factor(migrate_engine, user_id)["confirmed_at"] is None
+
+
+# fence (ZIF-261): an enrolment check needs a live charge of this admin, or it looks at nothing,
+# the right code included. Kills a check that confirms without a charge, with another admin's, or
+# after it expired. Injected by deleting the charge test from check_totp_enrolment, then its
+# coalesce, then its age test.
+@pytest.mark.parametrize("which", ["none", "made_up", "expired", "other_admin"])
+def test_a_confirm_needs_its_own_live_charge(
+    app_engine: Engine, migrate_engine: Engine, which: str
+) -> None:
+    user_id, session, s = pending(app_engine, migrate_engine)
+    call(app_engine, CHARGE_ENROLMENT, id=session)  # another attempt in flight
+    charged: uuid.UUID | None = None
+    if which == "made_up":
+        charged = uuid.uuid4()
+    elif which == "expired":
+        with migrate_engine.begin() as conn:
+            charged = conn.scalar(
+                text(
+                    "UPDATE second_factors SET charges = charges || uuidv7(- interval '121 s') "
+                    "WHERE user_id = :u RETURNING charges[2]"
+                ),
+                {"u": user_id},
+            )
+    elif which == "other_admin":
+        _, other, _ = pending(app_engine, migrate_engine)
+        charged = call(app_engine, CHARGE_ENROLMENT, id=other)[2]
+
+    row = call(app_engine, CHECK_ENROLMENT, id=session, charge=charged, p=totp.proof(s), codes=TEN)
+
+    assert tuple(row) == ("none", 0)
+    assert factor(migrate_engine, user_id)["confirmed_at"] is None
+    assert factor(migrate_engine, user_id)["failed_attempts"] == 1
+    assert confirm(app_engine, session, totp.proof(s), TEN) == ("enrolled", 0)  # the control
+
+
+# fence (ZIF-261): at enrolment too the lock is decided at the charge, and the attempt that made it
+# 10 is still checked. Kills a charge past the lock. Injected by deleting the `>= 10` test in
+# charge_totp_enrolment.
+def test_the_enrolment_lock_is_decided_at_the_charge(
+    app_engine: Engine, migrate_engine: Engine
+) -> None:
+    user_id, session, s = pending(app_engine, migrate_engine)
+    with migrate_engine.begin() as conn:
+        conn.execute(
+            text("UPDATE second_factors SET failed_attempts = 9 WHERE user_id = :u"), {"u": user_id}
+        )
+    _, failures, tenth = call(app_engine, CHARGE_ENROLMENT, id=session)
+    assert failures == 10
+
+    assert tuple(call(app_engine, CHARGE_ENROLMENT, id=session)) == ("locked", 10, None)
+    row = call(app_engine, CHECK_ENROLMENT, id=session, charge=tenth, p=totp.proof(s), codes=TEN)
+    assert tuple(row) == ("enrolled", 0)
