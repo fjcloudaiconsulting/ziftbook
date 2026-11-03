@@ -41,8 +41,8 @@ from tests.test_bookings_db import seed_service
 #   keep: the core leaves it byte-identical (the financial and evidence line, and ids).
 #   status: the erasure changes it: clients.erased_at (the core), bookings.status (the route ends
 #           the live bookings before the core runs; the core changes no status).
-# ZIF-146 adds bookings.booked_as, a key back to the account: "blank", and whichever of ZIF-58's
-# 0064 and its migration merges second makes the core NULL it.
+# bookings.booked_as (ZIF-146, 0058), the account that placed the booking, is "blank": 0058
+# re-creates the core to NULL it.
 CLASSIFICATION: dict[str, dict[str, str]] = {
     "clients": {
         "id": "keep",
@@ -86,6 +86,7 @@ CLASSIFICATION: dict[str, dict[str, str]] = {
         "client_phone": "blank",
         "client_message": "blank",
         "checkout_hash": "blank",
+        "booked_as": "blank",
     },
     "booking_events": {
         "id": "keep",
@@ -168,11 +169,12 @@ INSERT INTO bookings (tenant_id, client_id, worker_id, service_id, starts_at, en
                       expires_at, source, service_name, price_amount_minor, price_currency,
                       duration_minutes, auto_confirm_at_booking, free_cancellation_hours,
                       reschedule_cutoff_hours, worker_display_name, cancellation_policy_text,
-                      client_name, client_phone, client_message, decline_message, checkout_hash)
+                      client_name, client_phone, client_message, decline_message, checkout_hash,
+                      booked_as)
 VALUES (current_setting('app.tenant_id')::uuid, :client, :worker, :service, :starts,
         :starts + interval '30 minutes', :status, :expires, 'booking_page',
         '{"en": "Cut"}'::jsonb, 2500, 'EUR', 30, false, 48, 24, 'Worker Name', 'Policy text',
-        'Typed Name', '+31611111111', 'Typed message', :decline, :checkout)
+        'Typed Name', '+31611111111', 'Typed message', :decline, :checkout, :booked_as)
 RETURNING id
 """)
 INSERT_EVENT = text("""
@@ -231,7 +233,8 @@ def seed_person(
     address = fresh_email() if email == "fresh" else email
     starts = datetime.now().astimezone() - timedelta(days=days_ago)
     with migrate_tenant_context(migrate_engine, tenant_id) as conn:
-        client_id = conn.scalar(INSERT_CLIENT, {"email": address, "user_id": uuid.uuid7()})
+        account = uuid.uuid7()
+        client_id = conn.scalar(INSERT_CLIENT, {"email": address, "user_id": account})
         bookings = []
         for offset, status, decline in (
             (0, "declined", "Fully booked"),
@@ -251,6 +254,7 @@ def seed_person(
                         "expires": datetime.now().astimezone() + live if expiring else None,
                         "decline": decline,
                         "checkout": os.urandom(32),
+                        "booked_as": account,
                     },
                 )
             )
@@ -935,6 +939,7 @@ def test_the_core_refuses_a_client_with_a_live_booking(
                 "expires": now + expires_in if expires_in is not None else None,
                 "decline": None,
                 "checkout": None,
+                "booked_as": None,
             },
         )
     before = take(migrate_engine, people.a)

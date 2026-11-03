@@ -27,6 +27,12 @@ each one's bookings under its own tenant isolation, so no policy widens what any
 returns no booking id (a capability on older payment routes): the page key is sha256 of the id.
 Hidden: a checkout still open, and an expired checkout that never completed.
 
+ZIF-58's erase core (0064) blanks booked_as too: the column keys a booking to a person. 0064
+precedes this migration in the chain, so this migration re-creates the core with the column, by
+replacing the one statement in its stored body; a body without that statement exactly once fails
+the upgrade instead of being overwritten. The downgrade puts 0064's statement back before it drops
+the column. CREATE OR REPLACE keeps the owner, the grants, SECURITY DEFINER and the search_path.
+
 Trust, stated: an app role that runs SQL of its own can insert a booking with booked_as set to
 anyone, and it then shows in that person's history. It could already insert bookings in any
 business; showing one in a person's own history is what is new.
@@ -35,6 +41,7 @@ Revision ID: 0058
 Revises: 0057
 """
 
+import sqlalchemy as sa
 from alembic import op
 
 revision = "0058"
@@ -105,6 +112,35 @@ END $$""",
 }
 
 
+# 0064's bookings statement in erase_client_core, verbatim (tests/test_migrations.py), and the same
+# statement with booked_as.
+BLANK_BOOKINGS_0064 = """\
+  -- ZIF-146's bookings.booked_as joins this list: whichever of its migration and this one merges
+  -- second re-creates the function with it (tests/test_client_erasure_db.py fails until then).
+  UPDATE bookings SET client_name = NULL, client_phone = NULL, client_message = NULL,
+                      decline_message = NULL, checkout_hash = NULL
+   WHERE tenant_id = v_tenant AND client_id = p_client
+     AND num_nonnulls(client_name, client_phone, client_message, decline_message,
+                      checkout_hash) > 0;"""
+BLANK_BOOKINGS = """\
+  UPDATE bookings SET client_name = NULL, client_phone = NULL, client_message = NULL,
+                      decline_message = NULL, checkout_hash = NULL, booked_as = NULL
+   WHERE tenant_id = v_tenant AND client_id = p_client
+     AND num_nonnulls(client_name, client_phone, client_message, decline_message,
+                      checkout_hash, booked_as) > 0;"""
+ERASE_CORE_DEFINITION = sa.text(
+    "SELECT pg_get_functiondef(to_regprocedure('erase_client_core(uuid,boolean)'))"
+)
+
+
+def replace_in_erase_core(old: str, new: str) -> None:
+    definition = op.get_bind().scalar(ERASE_CORE_DEFINITION)
+    if definition is None or definition.count(old) != 1:
+        raise RuntimeError("erase_client_core is not the body this migration expects")
+    # SQL read back from the catalog, run as it is: no bind-parameter parsing of its text.
+    op.get_bind().exec_driver_sql(definition.replace(old, new))
+
+
 def upgrade() -> None:
     op.execute("ALTER TABLE bookings ADD COLUMN booked_as uuid")
     op.execute("GRANT INSERT (booked_as) ON bookings TO ziftbook_app")
@@ -115,9 +151,11 @@ def upgrade() -> None:
         op.execute(definition)
         op.execute(f"REVOKE EXECUTE ON FUNCTION {signature} FROM PUBLIC")
         op.execute(f"GRANT EXECUTE ON FUNCTION {signature} TO ziftbook_app")
+    replace_in_erase_core(BLANK_BOOKINGS_0064, BLANK_BOOKINGS)
 
 
 def downgrade() -> None:
+    replace_in_erase_core(BLANK_BOOKINGS, BLANK_BOOKINGS_0064)
     for signature in FUNCTIONS:
         op.execute(f"DROP FUNCTION {signature}")
     op.execute("DROP INDEX ix_bookings_booked_as")
