@@ -915,8 +915,9 @@ def test_a_check_cut_off_before_its_commit_still_counts(
 # fence (ZIF-261): a check needs a live charge of this admin, made and not yet checked, or it looks
 # at nothing, the right code included. Kills a check that passes without a charge (an uncounted
 # attempt), with another admin's, or after it expired. Injected by deleting the charge test, then by
-# dropping its NULL guard (coalesce), then by deleting the age test.
-@pytest.mark.parametrize("which", ["none", "made_up", "expired", "other_admin"])
+# dropping its NULL guard (coalesce), then by deleting the age test. "forged": a live uuidv7 the
+# app role minted itself.
+@pytest.mark.parametrize("which", ["none", "made_up", "forged", "expired", "other_admin"])
 def test_a_check_needs_its_own_live_charge(
     app_engine: Engine, migrate_engine: Engine, which: str
 ) -> None:
@@ -927,6 +928,9 @@ def test_a_check_needs_its_own_live_charge(
     charged: uuid.UUID | None = None
     if which == "made_up":
         charged = uuid.uuid4()
+    elif which == "forged":
+        with app_engine.begin() as conn:
+            charged = conn.scalar(text("SELECT uuidv7()"))
     elif which == "expired":
         with migrate_engine.begin() as conn:
             charged = conn.scalar(
@@ -1191,7 +1195,7 @@ def test_a_confirm_cut_off_before_its_commit_still_counts(
 # the right code included. Kills a check that confirms without a charge, with another admin's, or
 # after it expired. Injected by deleting the charge test from check_totp_enrolment, then its
 # coalesce, then its age test.
-@pytest.mark.parametrize("which", ["none", "made_up", "expired", "other_admin"])
+@pytest.mark.parametrize("which", ["none", "made_up", "forged", "expired", "other_admin"])
 def test_a_confirm_needs_its_own_live_charge(
     app_engine: Engine, migrate_engine: Engine, which: str
 ) -> None:
@@ -1200,6 +1204,9 @@ def test_a_confirm_needs_its_own_live_charge(
     charged: uuid.UUID | None = None
     if which == "made_up":
         charged = uuid.uuid4()
+    elif which == "forged":
+        with app_engine.begin() as conn:
+            charged = conn.scalar(text("SELECT uuidv7()"))
     elif which == "expired":
         with migrate_engine.begin() as conn:
             charged = conn.scalar(
@@ -1294,3 +1301,27 @@ def test_an_enrolment_charge_drops_expired_charges(
     _, _, made = call(app_engine, CHARGE_ENROLMENT, id=session)
 
     assert charges_of(migrate_engine, user_id) == [young, made]
+
+
+# fence (ZIF-261): twenty codes at once charge exactly ten, and the rest answer locked. Kills a
+# charge that reads the count without the row lock, or charges past 10. Injected by deleting FOR
+# UPDATE from charge_second_factor, then its `>= 10` test. (From the security review's probe.)
+def test_parallel_charges_stop_at_ten(app_engine: Engine, migrate_engine: Engine) -> None:
+    e = enrolled(app_engine, migrate_engine)
+    session = half_session(app_engine, migrate_engine, e.user_id)
+    outcomes: list[str] = []
+    barrier = threading.Barrier(20)
+
+    def submit() -> None:
+        barrier.wait()
+        outcomes.append(charge(app_engine, session)[0])
+
+    threads = [threading.Thread(target=submit) for _ in range(20)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(30)
+
+    assert sorted(outcomes) == ["charged"] * 10 + ["locked"] * 10
+    stored = factor(migrate_engine, e.user_id)
+    assert (stored["failed_attempts"], len(stored["charges"])) == (10, 10)
