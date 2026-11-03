@@ -85,13 +85,9 @@ CLAIM = text("""
 INSERT INTO contact_email_senders (inbox_key, tenant_id, claimed_at) VALUES (:k, :t, now())
 ON CONFLICT (inbox_key, tenant_id) DO UPDATE SET claimed_at = now()
 """)
-# The proof the inbox's holder gave: a confirm is the one setting_changed of the key with no actor
-# (the link's holder need not be a member).
-EVER_CONFIRMED = text("""
-SELECT EXISTS (SELECT FROM audit_events WHERE action = 'setting_changed'
-               AND target = 'setting:contact_email' AND actor_user_id IS NULL
-               AND details ->> 'new' = :e)
-""")
+# The proof the inbox's holder gave: the confirmation record, which only confirm_contact_email
+# writes and which lasts as long as the business (0086); the API can neither write nor forge it.
+EVER_CONFIRMED = text("SELECT EXISTS (SELECT FROM contact_email_confirmations WHERE email = :e)")
 
 
 # claim() holds a second pooled connection while it may wait on the inbox's lock, so how many one

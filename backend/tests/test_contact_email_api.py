@@ -881,6 +881,28 @@ def test_typing_an_address_once_is_no_proof_it_was_confirmed(
     assert put_settings(a, {"contact_email": address}).json() == TODAY
 
 
+# Re-check SHOULD 2 FENCE. Wrong impl: the exemption read from audit_events, which the API writes
+# itself (an audit row with no actor proves nothing) and which is swept after a year. Only the
+# confirmation record, written by the confirm alone, exempts.
+def test_an_audit_row_alone_does_not_exempt_from_the_inbox_cap(
+    people: People, owners: list[TestClient]
+) -> None:
+    address = f"{uuid.uuid4().hex[:12]}@example.com"
+    a, b, c, d = owners
+    with tenant_context(people.a) as session:
+        session.execute(
+            text(
+                "INSERT INTO audit_events (actor_user_id, action, target, details)"
+                " VALUES (NULL, 'setting_changed', 'setting:contact_email', CAST(:d AS jsonb))"
+            ),
+            {"d": f'{{"old": null, "new": "{address}"}}'},
+        )
+    for owner in (b, c, d):
+        send_and_clear(owner, address, 1)
+
+    assert put_settings(a, {"contact_email": address}).json() == TODAY
+
+
 # Correctness review N8 FENCE. Wrong impl: a business already counted today refused once three
 # others are counted too (possible when an exempt business joined).
 def test_a_counted_business_keeps_its_place_whoever_else_mails_the_inbox(
