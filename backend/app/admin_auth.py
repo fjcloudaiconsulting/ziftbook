@@ -461,16 +461,31 @@ def confirm_enrolment(body: CodeIn, current: HalfAdmin, request: Request) -> Rec
     _key_needed()
     id_hash = _id_hash(request)
     codes = [totp.new_code() for _ in range(10)]
+    # Counted first, in a transaction of its own, as pass_second_factor's code (ZIF-261).
     with SessionLocal.begin() as session:
         s = _secret(session, id_hash, current.user_id)
         if s is None:
             raise ApiError(409, "no_pending_enrolment")
+        charged, _, charge = session.execute(
+            text("SELECT outcome, failures, charge FROM charge_totp_enrolment(:id)"),
+            {"id": id_hash},
+        ).one()
+    if charged == "locked":
+        raise ApiError(403, "second_factor_locked")
+    if charged == "none":  # nothing begun, or the ticket expired
+        raise ApiError(409, "no_pending_enrolment")
+    step = totp.matching_step(s, totp.normalise(body.code), datetime.now(UTC))
+    with SessionLocal.begin() as session:
         outcome, failures = session.execute(
-            text("SELECT outcome, failures FROM confirm_totp_enrolment(:id, :p, :step, :codes)"),
+            text(
+                "SELECT outcome, failures "
+                "FROM check_totp_enrolment(:id, :charge, :p, :step, :codes)"
+            ),
             {
                 "id": id_hash,
+                "charge": charge,
                 "p": totp.proof(s),
-                "step": totp.matching_step(s, totp.normalise(body.code), datetime.now(UTC)),
+                "step": step,
                 "codes": [totp.proof(totp.normalise(c)) for c in codes],
             },
         ).one()
@@ -493,9 +508,7 @@ def confirm_enrolment(body: CodeIn, current: HalfAdmin, request: Request) -> Rec
         raise ApiError(
             *((403, "second_factor_locked") if failures >= 10 else (401, "invalid_code"))
         )
-    if outcome == "locked":
-        raise ApiError(403, "second_factor_locked")
-    if outcome == "none":  # nothing begun, or the ticket expired
+    if outcome == "none":  # the ticket expired, or the charge was voided, since the charge
         raise ApiError(409, "no_pending_enrolment")
     return RecoveryCodesOut(recovery_codes=codes)
 

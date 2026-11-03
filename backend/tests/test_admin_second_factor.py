@@ -453,11 +453,14 @@ def test_a_wrong_code_cut_off_before_its_commit_still_counts(
     ]
 
 
-# fence: a wrong code at enrolment confirm warns the same way, before its commit. Kills the line
-# missing from confirm or logged after its commit. Injected by deleting it, then separately by
-# moving it after the `with` block.
-def test_a_wrong_enrolment_code_warns_before_its_commit(
+# fence (ZIF-261): a wrong code at enrolment confirm is counted before it is checked, so a request
+# cut off before its commit still counts, and it warns the same way, before that commit. Kills the
+# charge made in the check's transaction, the line missing from confirm or logged after its commit.
+# Injected by moving the charge into the check's `with` block, then by deleting the line, then
+# separately by moving it after the `with` block.
+def test_a_wrong_enrolment_code_cut_off_before_its_commit_still_counts(
     app: FastAPI,
+    migrate_engine: Engine,
     an_admin: uuid.UUID,
     log_lines: Callable[[], list[dict[str, Any]]],
     monkeypatch: pytest.MonkeyPatch,
@@ -478,12 +481,13 @@ def test_a_wrong_enrolment_code_warns_before_its_commit(
 
     monkeypatch.setattr(admin, "record", record_or_die)
     assert client.post(CONFIRM, json={"code": bad}).status_code == 500
+    assert failed_attempts(migrate_engine, an_admin) == 1  # counted all the same
     monkeypatch.setattr(admin, "record", record)
     assert answer(client.post(CONFIRM, json={"code": bad})) == (401, {"code": "invalid_code"})
 
     assert warned(log_lines, "totp enrolment failed") == [
         ("WARNING", str(an_admin), 1),
-        ("WARNING", str(an_admin), 1),
+        ("WARNING", str(an_admin), 2),
     ]
 
 
