@@ -344,6 +344,7 @@ def seed_ledgered(
                 "expires": None,
                 "decline": None,
                 "checkout": None,
+                "booked_as": None,
             },
         )
     entry = ledger.Entry(people.a, client_id, now - erased_ago)
@@ -652,6 +653,7 @@ def seed_in_b(people: People, migrate_engine: Engine) -> tuple[uuid.UUID, uuid.U
                 "expires": None,
                 "decline": None,
                 "checkout": None,
+                "booked_as": None,
             },
         )
         conn.execute(
