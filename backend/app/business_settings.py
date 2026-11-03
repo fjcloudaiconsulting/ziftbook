@@ -182,7 +182,7 @@ def read_settings(current: CurrentSession, response: Response) -> BusinessSettin
 @router.put(
     "/settings",
     name="update",
-    responses={s: {"model": Error} for s in (401, 403, 415, 422, 429)},
+    responses={s: {"model": Error} for s in (401, 403, 415, 422, 429, 503)},
 )
 def update_settings(
     changes: BusinessSettings,
