@@ -12,6 +12,7 @@ import {
   emailMessageKey,
   emailProblem,
   FIELDS,
+  formSaved,
   mergeSaved,
   noticeOptions,
   noticeUnit,
@@ -237,8 +238,11 @@ describe("F2 the payment switch", () => {
   });
 });
 
+// The block's state (GET /api/settings/contact-email, ZIF-232), which the box starts from.
+const contactState = (fields) => ({ state: "none", confirmed: null, requested: null, link_expired: false, expires_at: null, ...fields });
+
 describe("ZIF-99 the contact email for clients", () => {
-  const withEmail = { ...saved, contact_email: "hello@salonbloom.nl" };
+  const withEmail = formSaved(saved, contactState({ state: "confirmed", confirmed: "hello@salonbloom.nl" }));
 
   test("fence: it sits in Your business, right after the email language", () => {
     // Wrong implementation killed: the key missing from FIELDS (never sent, never dirty) or listed out of page order.
@@ -305,6 +309,40 @@ describe("ZIF-99 the contact email for clients", () => {
   });
 });
 
+describe("ZIF-232 x ZIF-99 what the contact email box starts from", () => {
+  test("fence: the waiting address, else the confirmed one, never the settings echo", () => {
+    // Wrong implementation killed: the box seeded from settings.contact_email (only ever the confirmed address),
+    // so an owner whose change waits sees the old address and re-saving the page re-sends it.
+    const echoed = { ...saved, contact_email: "old@x.nl" };
+    assert.equal(formSaved(echoed, contactState({ state: "sent", confirmed: "old@x.nl", requested: "new@x.nl" })).contact_email, "new@x.nl");
+    assert.equal(formSaved(echoed, contactState({ state: "confirmed", confirmed: "old@x.nl" })).contact_email, "old@x.nl");
+    assert.equal(formSaved(echoed, contactState({ state: "unconfirmed", requested: "new@x.nl" })).contact_email, "new@x.nl");
+    assert.equal(formSaved(echoed, contactState({})).contact_email, null);
+    // Before the state is read, or from an API without the route: the settings answer, as before.
+    assert.equal(formSaved(echoed, null).contact_email, "old@x.nl");
+    // The rest is the settings answer, untouched.
+    assert.equal(formSaved(echoed, contactState({})).timezone, saved.timezone);
+  });
+
+  test("fence: a waiting address in the box is no change", () => {
+    // Wrong implementation killed: a page that is dirty as soon as it loads while a change waits.
+    const base = formSaved(saved, contactState({ state: "sent", confirmed: "old@x.nl", requested: "new@x.nl" }));
+    assert.equal(draftFrom(base).contact_email, "new@x.nl");
+    assert.deepEqual(changedKeys(base, draftFrom(base)), []);
+  });
+
+  test("fence: Settings reads the state once for the box and the block, and again after a save that sent it", () => {
+    // Wrong implementation killed: the block reading the state on its own (the box never learns the waiting
+    // address), or a save of the address that leaves the box on the echo (the confirmed address).
+    const src = readFileSync(new URL("../app/[locale]/(console)/settings/settings.tsx", import.meta.url), "utf8");
+    const block = readFileSync(new URL("../app/[locale]/(console)/settings/contact-email.tsx", import.meta.url), "utf8");
+    assert.match(src, /contactEmailRead\(\)/);
+    assert.doesNotMatch(block, /contactEmailRead/);
+    assert.match(src, /const base = formSaved\(settings, contact\);/);
+    assert.match(src, /if \("contact_email" in body\) setContactReads\(\(n\) => n \+ 1\);/);
+  });
+});
+
 describe("ZIF-99 which field a refused save marks", () => {
   test("fence: only the API's contact_email_invalid marks the address; any other refusal marks no field", () => {
     // Wrong implementation killed: every 422 of a save that included the address blamed on it (a refused
@@ -341,7 +379,7 @@ describe("ZIF-99 an international domain", () => {
       invalid: [],
     });
     // The saved xn-- form typed with its accents is no change.
-    const withIdn = { ...saved, contact_email: "hello@xn--caf-dma.nl" };
+    const withIdn = formSaved(saved, contactState({ state: "confirmed", confirmed: "hello@xn--caf-dma.nl" }));
     assert.deepEqual(changedKeys(withIdn, { ...draftFrom(withIdn), contact_email: "hello@café.nl" }), []);
   });
 

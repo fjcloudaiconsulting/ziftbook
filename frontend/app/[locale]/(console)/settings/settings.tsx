@@ -3,16 +3,18 @@
 import { useLocale, useTranslations } from "next-intl";
 import { type FormEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
 
-import { type BusinessSettingsOutput, settingsUpdate } from "@/api-client";
+import { type BusinessSettingsOutput, type ContactEmailOut, contactEmailRead, settingsUpdate } from "@/api-client";
 import { bookingPageAddress, dateLocale } from "@/lib/console";
 import {
   breakMinutes,
   changedKeys,
+  contactLoadOutcome,
   type Draft,
   draftFrom,
   effective,
   emailMessageKey,
   FIELDS,
+  formSaved,
   type IntKey,
   type Key,
   mergeSaved,
@@ -100,6 +102,30 @@ export function Settings() {
   const locale = useLocale();
   const formId = useId();
   const [draft, setDraft] = useState<Draft>(() => draftFrom(settings));
+  // The contact email's state (ZIF-232), read here for the box and the block below it: the box starts from the
+  // address waiting for its link, else the confirmed one (formSaved). Read again after a save that sent it.
+  const [contact, setContact] = useState<ContactEmailOut | null>(null);
+  const [contactLoaded, setContactLoaded] = useState<"show" | "hide" | "failed" | null>(null);
+  const [contactReads, setContactReads] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const outcome = await call(() => contactEmailRead());
+      if (cancelled) return;
+      const shown = contactLoadOutcome(outcome.status === 200 && !outcome.data ? 0 : outcome.status);
+      if (shown === "show") takeContact(outcome.data!);
+      setContactLoaded(shown);
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- on load, and when asked to read again
+  }, [contactReads]);
+  /** A new contact email state: the box follows it, as the page's baseline does. */
+  function takeContact(state: ContactEmailOut) {
+    setContact(state);
+    setDraft((d) => ({ ...d, contact_email: state.requested ?? state.confirmed ?? "" }));
+  }
   const [invalid, setInvalid] = useState<Key[]>([]);
   const [saving, setSaving] = useState(false);
   const [saveFailed, setSaveFailed] = useState(false);
@@ -130,7 +156,8 @@ export function Settings() {
     return () => clearTimeout(timer);
   }, [copyState]);
 
-  const changed = changedKeys(settings, draft);
+  const base = formSaved(settings, contact);
+  const changed = changedKeys(base, draft);
   const dirty = changed.length > 0;
   const list = (keys: Key[]) => new Intl.ListFormat(locale, { type: "unit" }).format(keys.map((k) => t(`changed.${k}`)));
   const unit = (n: number, u: string) => new Intl.NumberFormat(locale, { style: "unit", unit: u, unitDisplay: "long" }).format(n);
@@ -195,7 +222,7 @@ export function Settings() {
   }
 
   function undo() {
-    setDraft(draftFrom(settings));
+    setDraft(draftFrom(base));
     setInvalid([]);
     setSaveFailed(false);
     setMessage(null);
@@ -206,7 +233,7 @@ export function Settings() {
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
     if (submitting.current) return;
-    const { body, invalid: bad } = settingsBody(settings, draft);
+    const { body, invalid: bad } = settingsBody(base, draft);
     setMessage(null);
     setSignedOut(false);
     setSaveFailed(false);
@@ -231,7 +258,10 @@ export function Settings() {
         const data = outcome.data;
         // Only the form's own keys: never `published`, which the switch above owns.
         updateSettings(pickFields(data) as Partial<BusinessSettingsOutput>);
-        setDraft((d) => mergeSaved(d, data, sent));
+        // Not the contact email: the answer carries only the confirmed address, and the box follows the state,
+        // read again here (a new address now waits for its link).
+        setDraft((d) => mergeSaved(d, data, sent.filter((k) => k !== "contact_email")));
+        if ("contact_email" in body) setContactReads((n) => n + 1);
         setMessage({ tone: "info", text: t("savedList", { list: list(sent) }) });
         setFocusMessage((n) => n + 1);
       } else if (outcome.status === 401) {
@@ -408,7 +438,7 @@ export function Settings() {
               />
             )}
           </Field>
-          <ContactEmail />
+          <ContactEmail state={contact} loaded={contactLoaded} onState={takeContact} reload={() => setContactReads((n) => n + 1)} />
           </div>
         </fieldset>
 
