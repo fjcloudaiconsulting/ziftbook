@@ -278,11 +278,13 @@ def test_a_jpeg_with_an_oversized_profile_is_photo_unreadable(
 def test_a_decode_over_the_memory_limit_kills_only_the_child(
     s3: S3Client, people: People, owner: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(photos, "CHILD", PROBE)
-    bomb = upload(s3, people.a, probe("probe-memory"))
-    checked = owner.post(f"/api/photo-uploads/{bomb}/check", json={})
-    assert (checked.status_code, checked.json()) == (422, {"code": "photo_unreadable"})
-    monkeypatch.undo()
+    # Only this patch is undone after the bomb: monkeypatch.undo() would also drop the s3
+    # fixture's storage settings.
+    with monkeypatch.context() as patched:
+        patched.setattr(photos, "CHILD", PROBE)
+        bomb = upload(s3, people.a, probe("probe-memory"))
+        checked = owner.post(f"/api/photo-uploads/{bomb}/check", json={})
+        assert (checked.status_code, checked.json()) == (422, {"code": "photo_unreadable"})
     good = upload(s3, people.a, image("PNG", (20, 10)))
     assert owner.post(f"/api/photo-uploads/{good}/check", json={}).json() == {
         "width": 20,
