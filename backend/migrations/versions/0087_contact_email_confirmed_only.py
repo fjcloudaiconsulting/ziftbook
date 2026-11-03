@@ -23,7 +23,8 @@ refuse, never make an unconfirmed address the one in effect. No first-party clie
 before this release.
 
 Lock: CREATE TRIGGER takes SHARE ROW EXCLUSIVE on settings for an instant, within the 5 s
-lock_timeout.
+lock_timeout; the downgrade's DROP TRIGGER takes ACCESS EXCLUSIVE, so reads of settings wait that
+long.
 
 Revision ID: 0087
 Revises: 0086
