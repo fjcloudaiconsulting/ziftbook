@@ -830,3 +830,70 @@ def test_a_save_raced_by_another_is_refused_as_busy(
 
     assert (raced.status_code, raced.json()) == (503, {"code": "busy"})
     assert (waiting(migrate_engine, people.a), hits(sent)) == (before, counted)
+
+
+# Correctness review S2 FENCE. Wrong impl: a resend that mails whatever address waits by the time
+# it locks the row, after claiming the inbox cap for the one it read first (the new address would
+# then be mailed without its own claim).
+def test_a_resend_raced_by_a_change_is_refused_as_busy(
+    people: People, app: FastAPI, migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    owner = signed_in(app, people.a, people.both)
+    first = f"{uuid.uuid4().hex[:12]}@example.com"
+    other = f"{uuid.uuid4().hex[:12]}@example.com"
+    queue_link(people.a, first)
+    real = contact_email.claim
+
+    def claim_then_change(current: Any, email: str) -> None:
+        real(current, email)
+        with tenant_context(people.a) as session:  # another owner's save, meanwhile
+            session.execute(text("SELECT change_contact_email(:e, false)"), {"e": other})
+
+    monkeypatch.setattr(contact_email, "claim", claim_then_change)
+    sent = contact_email.sent_key(people.a, limits.address_for_limits(first))
+
+    raced = owner.post(RESEND, json={})
+
+    assert (raced.status_code, raced.json()) == (503, {"code": "busy"})
+    assert queued(migrate_engine, people.a) == []
+    assert hits(sent) == 0
+    assert waiting(migrate_engine, people.a).email == other  # type: ignore[union-attr]
+
+
+# Correctness review S3 FENCE. Wrong impl: the exemption read from any setting_changed of the key,
+# so a business that once typed the address (an owner as actor, from before ZIF-232) passes the
+# inbox cap: a ring could seed that history.
+def test_typing_an_address_once_is_no_proof_it_was_confirmed(
+    people: People, owners: list[TestClient]
+) -> None:
+    address = f"{uuid.uuid4().hex[:12]}@example.com"
+    a, b, c, d = owners
+    with tenant_context(people.a) as session:
+        session.execute(
+            text(
+                "INSERT INTO audit_events (actor_user_id, action, target, details)"
+                " VALUES (:u, 'setting_changed', 'setting:contact_email', CAST(:d AS jsonb))"
+            ),
+            {"u": people.both, "d": f'{{"old": null, "new": "{address}"}}'},
+        )
+    for owner in (b, c, d):
+        send_and_clear(owner, address, 1)
+
+    assert put_settings(a, {"contact_email": address}).json() == TODAY
+
+
+# Correctness review N8 FENCE. Wrong impl: a business already counted today refused once three
+# others are counted too (possible when an exempt business joined).
+def test_a_counted_business_keeps_its_place_whoever_else_mails_the_inbox(
+    people: People, app: FastAPI, worker_engine: Engine, owners: list[TestClient]
+) -> None:
+    address = f"{uuid.uuid4().hex[:12]}@example.com"
+    a, b, c, d = owners
+    token = link(worker_engine, people.a, address)
+    assert new_client(app).post(CONFIRM, json={"token": token}).status_code == 204
+    assert put_settings(a, {"contact_email": None}).status_code == 200
+    for owner in (b, c, d):
+        send_and_clear(owner, address, 1)
+    send_and_clear(a, address, 1)  # exempt: four businesses now counted
+
+    assert put_settings(b, {"contact_email": address}).status_code == 200
