@@ -26,11 +26,13 @@ from tests.conftest import (
     ADMIN_DATABASE_URL,
     API_DIR,
     People,
+    add_user,
     delete_bookings,
     end_membership,
     member_id,
 )
 from tests.test_bookings_db import insert_booking, seed_service
+from tests.test_second_factor_db import PASS, enrolled, half_session, wrong
 
 COLUMNS = text("SELECT column_name FROM information_schema.columns WHERE table_name = 'tenants'")
 TABLE_PRIVILEGE = "SELECT has_table_privilege('ziftbook_app', 'tenants', :priv)"
@@ -2020,3 +2022,160 @@ def test_0053_round_trips_the_invite_token_guard(
             ["search_path=pg_catalog, public, pg_temp"],
             False,
         )
+
+
+# ZIF-234 (0069): the three second-factor definers 0069 replaces, and what a failure count is.
+FAILURE_DEFINERS = (
+    "pass_second_factor(bytea,bytea,bigint)",
+    "use_recovery_code(bytea,bytea)",
+    "confirm_totp_enrolment(bytea,bytea,bigint,bytea[])",
+)
+DEFINER_STATE = text("""
+SELECT pg_get_functiondef(p.oid) AS definition, p.prosrc, pg_get_function_result(p.oid) AS result,
+       p.proowner::regrole::text AS owner,
+       has_function_privilege('ziftbook_app', p.oid, 'EXECUTE') AS app,
+       has_function_privilege('public', p.oid, 'EXECUTE') AS public, p.prosecdef, p.proconfig
+FROM pg_proc p WHERE p.oid = to_regprocedure(:signature)
+""")
+DEFINER_ACCESS = (
+    "ziftbook_migrate",
+    True,
+    False,
+    True,
+    ["search_path=pg_catalog, public, pg_temp"],
+)
+FAILURE_COLUMNS = text("""
+SELECT count(*) FROM information_schema.columns
+WHERE table_name = 'second_factors' AND column_name IN ('failures_leaked_at', 'failures_since_pass')
+""")
+FAILURE_STATE = text("""
+SELECT failed_attempts, failures_since_pass,
+       failures_leaked_at > now() - interval '1 minute' AS anchored_now,
+       failures_leaked_at IS NULL AS unanchored
+FROM second_factors WHERE user_id = :u
+""")
+
+
+def dollar_body(definition: str) -> str:
+    """What Postgres stores as prosrc: the text between `AS $$` and the last `$$`."""
+    return definition.split("AS $$", 1)[1].rsplit("$$", 1)[0]
+
+
+def seed_failures(
+    migrate_engine: Engine, columns: str, values: str, *, confirmed: bool
+) -> uuid.UUID:
+    """A second_factors row with those columns; confirmed (an enrolled factor, the rows
+    pass_second_factor reads) or an enrolment begun and not confirmed."""
+    if confirmed:
+        columns += ", confirmed_at, secret_ct, proof_hash"
+        values += ", now(), decode('00', 'hex'), sha256(decode('00', 'hex'))"
+    user_id = add_user(migrate_engine)
+    with migrate_engine.begin() as conn:
+        conn.execute(
+            text(f"INSERT INTO second_factors (user_id, {columns}) VALUES (:u, {values})"),
+            {"u": user_id},
+        )
+    return user_id
+
+
+# ZIF-234 FENCE (0069). Wrong impl: a downgrade that leaves a column, restores a drifted body,
+# keeps a leaky count the old functions would read as consecutive failures, or lowers a pending
+# enrolment's count of wrong confirm codes; an upgrade whose backfill starts no leak or loses the
+# report; a CREATE OR REPLACE that changes an owner, a grant, SECURITY DEFINER or search_path; or
+# new bodies an API connection that already ran the old ones cannot use. Injected by deleting the
+# downgrade's count UPDATE, then its `confirmed_at IS NOT NULL`, then the backfill, then
+# `SECURITY DEFINER` from one new header, then by restoring 0039's text with one character changed.
+def test_0069_round_trips_the_failure_budget(
+    app_engine: Engine, migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = lock_timeout_config(monkeypatch)
+    old_bodies = migration("0039_admin_second_factor.py").FUNCTIONS
+    with migrate_engine.connect() as conn:
+        at_head = {
+            sig: conn.execute(DEFINER_STATE, {"signature": sig}).one() for sig in FAILURE_DEFINERS
+        }
+    for row in at_head.values():
+        assert tuple(row)[3:] == DEFINER_ACCESS
+    # (count, since the last pass, confirmed) at head -> the count 0039's functions get after the
+    # downgrade. Unconfirmed: a pending enrolment's wrong confirm codes, which stay counted.
+    downgraded = {
+        (6, 2, True): 2,
+        (3, 5, True): 3,
+        (10, 3, True): 10,
+        (0, 0, True): 0,
+        (7, 0, False): 7,
+    }
+    seeded = {
+        key: seed_failures(
+            migrate_engine,
+            "failed_attempts, failures_since_pass, failures_leaked_at",
+            f"{key[0]}, {key[1]}, now()",
+            confirmed=key[2],
+        )
+        for key in downgraded
+    }
+    e = enrolled(app_engine, migrate_engine)
+    old_conn = app_engine.connect()
+    try:
+        command.downgrade(cfg, migration("0069_second_factor_failures_leak.py").down_revision)
+        with migrate_engine.connect() as conn:
+            assert conn.scalar(FAILURE_COLUMNS) == 0
+            for sig in FAILURE_DEFINERS:
+                row = conn.execute(DEFINER_STATE, {"signature": sig}).one()
+                assert row.prosrc == dollar_body(old_bodies[sig]), sig
+                assert (row.result, *tuple(row)[3:]) == (at_head[sig].result, *DEFINER_ACCESS)
+            counts = {
+                key: conn.scalar(
+                    text("SELECT failed_attempts FROM second_factors WHERE user_id = :u"),
+                    {"u": user_id},
+                )
+                for key, user_id in seeded.items()
+            }
+        assert counts == downgraded
+        counted = seed_failures(migrate_engine, "failed_attempts", "4", confirmed=True)
+        locked = seed_failures(migrate_engine, "failed_attempts", "10", confirmed=True)
+        session = half_session(app_engine, migrate_engine, e.user_id)
+        # An API connection runs 0039's body before the upgrade, and keeps running afterwards.
+        first = old_conn.execute(PASS, {"id": session, "p": wrong(), "step": None}).one()
+        old_conn.commit()
+        assert tuple(first) == ("failed", 1)
+    finally:
+        command.upgrade(cfg, "head")
+    try:
+        second = old_conn.execute(PASS, {"id": session, "p": wrong(), "step": None}).one()
+        old_conn.commit()
+    finally:
+        old_conn.close()
+    assert tuple(second) == ("failed", 2)
+    with migrate_engine.connect() as conn:
+        for sig in FAILURE_DEFINERS:
+            row = conn.execute(DEFINER_STATE, {"signature": sig}).one()
+            assert row.definition == at_head[sig].definition, sig
+            assert tuple(row)[3:] == DEFINER_ACCESS
+        assert conn.scalar(FAILURE_COLUMNS) == 2
+        state = {
+            name: tuple(conn.execute(FAILURE_STATE, {"u": user_id}).one())
+            for name, user_id in (("counted", counted), ("locked", locked), ("e", e.user_id))
+        }
+    assert state == {
+        "counted": (4, 4, True, False),
+        "locked": (10, 10, True, False),
+        "e": (
+            2,
+            2,
+            True,
+            False,
+        ),  # backfilled at 1, then the new body counted on the old connection
+    }
+
+
+# ZIF-234: 0069's downgrade bodies are 0039's text verbatim, as CREATE OR REPLACE, so the downgrade
+# restores what 0039 wrote, not a drifted copy.
+def test_0069_downgrade_restores_0039s_functions() -> None:
+    old = migration("0039_admin_second_factor.py").FUNCTIONS
+    new = migration("0069_second_factor_failures_leak.py")
+
+    assert new.FUNCTIONS_0039 == {
+        sig: old[sig].replace("CREATE FUNCTION", "CREATE OR REPLACE FUNCTION", 1)
+        for sig in FAILURE_DEFINERS
+    }

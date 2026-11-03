@@ -5,6 +5,7 @@ name, business or service name, IP address, user agent, request body, query stri
 """
 
 import asyncio
+import base64
 import hashlib
 import json
 from collections.abc import Callable, Iterator
@@ -18,7 +19,7 @@ from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 from opentelemetry.sdk.trace import ReadableSpan
 from sqlalchemy import Engine, text
 
-from app import auth, bookings, clients, csp_reports, payments
+from app import admin_auth, auth, bookings, clients, csp_reports, payments, totp
 from app.config import MailSettings
 from app.db import tenant_context
 from app.jobs import run_once
@@ -28,6 +29,7 @@ from app.worker import KINDS
 from tests.conftest import (
     People,
     add_password,
+    add_user,
     email_of,
     fresh_email,
     jobs_as_the_worker,
@@ -43,6 +45,7 @@ from tests.conftest import (
 from tests.stripe_fake import FakeGateway
 from tests.test_booking_payments_api import make_shop, resume, run, sync
 from tests.test_bookings_api import post_booking, sign_in_as
+from tests.test_second_factor_db import issue_ticket
 from tests.test_working_hours import seed
 
 UA = {"User-Agent": "zif-never-log-agent/7"}
@@ -489,6 +492,45 @@ def test_no_personal_data_ever_reaches_a_log(
     forced = client_for(app).post("/api/test/duplicate-email", json={})
     assert forced.status_code == 500
 
+    # 8b (ZIF-234): a platform admin enrols, then sends a wrong code: "totp enrolment failed" and
+    # "second factor failed" carry the user id and the count, never the email, code or secret.
+    admin_id = add_user(migrate_engine)
+    admin_password = "Admin-Zzyzx-Pw-5"
+    secret(email_of(admin_id))
+    secret(admin_password)
+    add_password(migrate_engine, admin_id, admin_password)
+    with migrate_engine.begin() as conn:
+        conn.execute(text("INSERT INTO platform_admins (user_id) VALUES (:u)"), {"u": admin_id})
+    ticket = issue_ticket(admin_id)
+    secret(ticket)
+    console = client_for(app)
+    started_admin = console.post(
+        "/api/admin/session", json={"email": email_of(admin_id), "password": admin_password}
+    )
+    assert started_admin.status_code == 200
+    admin_cookie = console.cookies[admin_auth.ADMIN_COOKIE]
+    secret(admin_cookie)
+    secret(hashlib.sha256(admin_cookie.encode()).hexdigest())
+    begun = console.post("/api/admin/totp/enrolment", json={"ticket": ticket})
+    assert begun.status_code == 200
+    totp_secret = base64.b32decode(begun.json()["secret"])
+    secret(begun.json()["secret"])
+    secret(totp_secret.hex())
+    now_step = int(datetime.now().timestamp()) // totp.STEP
+    taken = {totp.code(totp_secret, step) for step in range(now_step - 2, now_step + 4)}
+    wrong_code = next(c for c in (f"{i:06d}" for i in range(1_000_000)) if c not in taken)
+    secret(f'"{wrong_code}"')
+    refused_setup = console.post("/api/admin/totp/enrolment/confirm", json={"code": wrong_code})
+    assert refused_setup.status_code == 401
+    confirmed = console.post(
+        "/api/admin/totp/enrolment/confirm", json={"code": totp.code(totp_secret, now_step)}
+    )
+    assert confirmed.status_code == 200
+    for code in confirmed.json()["recovery_codes"]:
+        secret(code)
+    refused_code = console.post("/api/admin/session/second-factor", json={"code": wrong_code})
+    assert refused_code.status_code == 401
+
     # 9: Mailgun refuses a fresh sign-up link, its reply quoting the address; run directly.
     fail_email = fresh_email()
     secret(fail_email)
@@ -601,6 +643,11 @@ def test_no_personal_data_ever_reaches_a_log(
     assert "booking_flood" in sent
     flood = [line for line in lines if line["msg"] == "booking flood"]
     assert [(line["level"], line["tenant_id"]) for line in flood] == [("WARNING", str(people.a))]
+    for msg in ("totp enrolment failed", "second factor failed"):
+        failed_codes = [line for line in lines if line["msg"] == msg]
+        assert [(line["level"], line["user_id"], line["failures"]) for line in failed_codes] == [
+            ("WARNING", str(admin_id), 1)
+        ], msg
     email_failed = [line for line in lines if line["msg"] == "email failed"]
     assert [(line["template"], line["error"]) for line in email_failed] == [
         ("sign_up", "HTTPError")

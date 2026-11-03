@@ -329,6 +329,13 @@ def pass_second_factor(body: CodeIn, current: HalfAdmin, request: Request) -> Ad
                         "second factor passed after failures", extra={"failures": failures}
                     )
             elif outcome == "failed":
+                # Logged inside the transaction, before its commit: a failure whose transaction
+                # never commits is not counted, but still leaves this line. Counting first, in a
+                # transaction of its own, is ZIF-261.
+                logger.warning(
+                    "second factor failed",
+                    extra={"user_id": str(current.user_id), "failures": failures},
+                )
                 admin.record(
                     session,
                     request,
@@ -461,6 +468,11 @@ def confirm_enrolment(body: CodeIn, current: HalfAdmin, request: Request) -> Rec
         if outcome == "enrolled":
             admin.record(session, request, "totp_enrolled", actor_user_id=current.user_id)
         elif outcome == "failed":
+            # Before the commit, as pass_second_factor's failure line.
+            logger.warning(
+                "totp enrolment failed",
+                extra={"user_id": str(current.user_id), "failures": failures},
+            )
             admin.record(
                 session,
                 request,

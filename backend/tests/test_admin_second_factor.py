@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 from httpx2 import Response
 from sqlalchemy import Engine, text
 
-from app import admin_auth, auth, totp
+from app import admin, admin_auth, auth, totp
 from app.admin_auth import ADMIN_COOKIE
 from app.main import create_app
 from tests.conftest import PASSWORD, add_password, add_user, email_of, fresh_address, new_client
@@ -402,3 +402,110 @@ def test_out_of_order_steps_answer_409(
     v = verified_client(app, migrate_engine, an_admin)
     again = v.client.post(BEGIN, json={"ticket": totp.new_code()})
     assert answer(again) == (409, {"code": "already_enrolled"})
+
+
+def warned(log_lines: Callable[[], list[dict[str, Any]]], msg: str) -> list[tuple[str, str, int]]:
+    """The (level, user_id, failures) of each `msg` line, oldest first."""
+    lines = [line for line in log_lines() if line["msg"] == msg]
+    return [(line["level"], line["user_id"], line["failures"]) for line in lines]
+
+
+# fence: every wrong code logs a WARNING inside its transaction, before the commit, so a failure
+# whose count never commits (a request cut off before COMMIT) still leaves a trace; a locked
+# attempt logs none, since nothing bounds those. Kills the line logged after the commit, only at a
+# threshold, or for locked attempts too. Injected by moving the line after the `with` block, then
+# separately by logging it only when failures >= 10, then by logging it in the locked branch too.
+# Counting before checking, so an abort can't uncount a failure, is ZIF-261.
+def test_every_wrong_code_warns_before_its_commit(
+    app: FastAPI,
+    migrate_engine: Engine,
+    an_admin: uuid.UUID,
+    log_lines: Callable[[], list[dict[str, Any]]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    v = verified_client(app, migrate_engine, an_admin)
+    half = sign_in(app, an_admin)
+    bad = wrong_code(v)
+    cut_off: list[bool] = [True]
+    record = admin.record
+
+    def record_or_die(*args: Any, **kwargs: Any) -> None:
+        # The audit insert after the failure is counted: the request dies before its COMMIT.
+        if cut_off[0] and args[2] == "second_factor_failed":
+            raise RuntimeError("cut off before commit")
+        record(*args, **kwargs)
+
+    monkeypatch.setattr(admin, "record", record_or_die)
+    assert half.post(PASS, json={"code": bad}).status_code == 500
+    assert failed_attempts(migrate_engine, an_admin) == 0  # rolled back, uncounted
+    assert warned(log_lines, "second factor failed") == [("WARNING", str(an_admin), 1)]
+
+    cut_off[0] = False
+    tries = [half.post(PASS, json={"code": bad}).status_code for _ in range(10)]
+    locked = half.post(PASS, json={"code": bad})
+
+    assert tries == [401] * 9 + [403]
+    assert answer(locked) == (403, {"code": "second_factor_locked"})
+    assert warned(log_lines, "second factor failed") == [("WARNING", str(an_admin), 1)] + [
+        ("WARNING", str(an_admin), n) for n in range(1, 11)
+    ]
+
+
+# fence: a wrong code at enrolment confirm warns the same way, before its commit. Kills the line
+# missing from confirm or logged after its commit. Injected by deleting it, then separately by
+# moving it after the `with` block.
+def test_a_wrong_enrolment_code_warns_before_its_commit(
+    app: FastAPI,
+    an_admin: uuid.UUID,
+    log_lines: Callable[[], list[dict[str, Any]]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ticket = issue_ticket(an_admin)
+    client = sign_in(app, an_admin)
+    begun = client.post(BEGIN, json={"ticket": ticket})
+    assert begun.status_code == 200, begun.content
+    s = base64.b32decode(begun.json()["secret"])
+    taken = {totp.code(s, step) for step in range(step_now() - 2, step_now() + 3)}
+    bad = next(c for c in (f"{i:06d}" for i in range(1_000_000)) if c not in taken)
+    record = admin.record
+
+    def record_or_die(*args: Any, **kwargs: Any) -> None:
+        if args[2] == "totp_enrolment_failed":
+            raise RuntimeError("cut off before commit")
+        record(*args, **kwargs)
+
+    monkeypatch.setattr(admin, "record", record_or_die)
+    assert client.post(CONFIRM, json={"code": bad}).status_code == 500
+    monkeypatch.setattr(admin, "record", record)
+    assert answer(client.post(CONFIRM, json={"code": bad})) == (401, {"code": "invalid_code"})
+
+    assert warned(log_lines, "totp enrolment failed") == [
+        ("WARNING", str(an_admin), 1),
+        ("WARNING", str(an_admin), 1),
+    ]
+
+
+# fence (ZIF-234, the regression over HTTP): the admin's own pass doesn't reopen the budget: after
+# 9 wrong codes and a pass, the next wrong code locks. Kills a pass that resets the count. Injected
+# by restoring 0039's `failed_attempts = 0` on a pass.
+def test_a_pass_does_not_reopen_the_budget(
+    app: FastAPI,
+    migrate_engine: Engine,
+    an_admin: uuid.UUID,
+    log_lines: Callable[[], list[dict[str, Any]]],
+) -> None:
+    v = verified_client(app, migrate_engine, an_admin)
+    half = sign_in(app, an_admin)
+    bad = wrong_code(v)
+    assert [half.post(PASS, json={"code": bad}).status_code for _ in range(9)] == [401] * 9
+    assert half.post(PASS, json={"code": totp.code(v.secret, v.t0 + 1)}).status_code == 200
+
+    locked = half.post(PASS, json={"code": bad})
+
+    assert answer(locked) == (403, {"code": "second_factor_locked"})
+    events = audit(migrate_engine, an_admin)
+    assert ("second_factor_passed", {"method": "totp", "failed_since_last": 9}) in events
+    assert [action for action, _ in events].count("second_factor_locked") == 1
+    assert [line["msg"] for line in log_lines() if line["level"] == "ERROR"] == [
+        "second factor locked"
+    ]
