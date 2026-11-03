@@ -289,6 +289,19 @@ def send_contact_email(job: Job) -> None:
     token = secrets.token_urlsafe(32)
     app_url = MailSettings().app_url.rstrip("/")
     with tenant_context(job.tenant_id) as session:
+        # The PUT's own rule, again: a row written around it (0088 moved any string) must not reach
+        # a list or a header. Checked before minting, so such a request gets no link at all.
+        email = session.scalar(
+            text("SELECT email FROM contact_email_requests WHERE id = :id"),
+            {"id": job.payload["request_id"]},
+        )
+        if email is None:
+            return
+        try:
+            business_settings.header_address(passwords.normalise_email(email))
+        except ValueError:
+            logger.warning("contact email link skipped", extra={"reason": "invalid_address"})
+            return
         request = session.execute(
             text("SELECT email, business FROM mint_contact_email_token(:id, :hash)"),
             {"id": job.payload["request_id"], "hash": hashlib.sha256(token.encode()).digest()},

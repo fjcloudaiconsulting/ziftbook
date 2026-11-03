@@ -862,7 +862,8 @@ loggers (`web.*`); Next's own stderr output (banners, SSR error traces) is not i
   (WARNING, `tenant_id`, at most once an hour: a business's unproven guest bookings reached their cap
   and its owners are emailed) and `booking flood alert failed` (WARNING, with `exc`).
 - `contact email confirmed` (INFO, `tenant_id`, ZIF-232): a business's contact email was confirmed from its link;
-  never the address or the link.
+  never the address or the link. `contact email link skipped` (WARNING, `reason` `invalid_address`, with the job's
+  ids): a waiting address the PUT would refuse (one written around the API) is sent no link.
 - CSP violations (ZIF-236, `app/csp_reports.py`): `csp violation` (INFO) with `report_format`, `directive`,
   `disposition`, `page` (the route template, `/[locale]/[slug]/book`, or `other`), `blocked` and `source` (a
   category: a CSP keyword, `self`, `media`, `upload`, a provider such as `stripe` or `cloudflare`, `extension`,
