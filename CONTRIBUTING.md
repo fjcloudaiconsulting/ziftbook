@@ -726,7 +726,9 @@ value needs a redeploy it is an environment variable; otherwise it is a setting.
 - Every member can read settings, so never make a secret or personal data a setting.
 - `contact_email` holds only an address its inbox confirmed (ZIF-232): a trigger refuses any write of the key by a
   role other than `ziftbook_migrate` (0087), and an owner's PUT goes through `app/contact_email.py`, never `save()`.
-  A typed address waits in `contact_email_requests` and is used for nothing. An operator who sets one by hand runs
+  A typed address waits in `contact_email_requests` and is used for nothing. It may be a third party's who never
+  confirms: it is kept, visible to owners only, until an owner changes or clears it, it is confirmed, or the business
+  is deleted (one row per business; no sweep). An operator who sets one by hand runs
   `SET ROLE ziftbook_migrate` first; a data-only restore of `settings` needs `--disable-triggers`.
 - Incident (contact email diverted, for example after an API compromise): the API can request and confirm an inbox
   it controls, but every confirmation is recorded by `confirm_contact_email` itself in
