@@ -15,6 +15,7 @@ from tests.conftest import (
     People,
     add_membership,
     add_user,
+    confirm_contact_email,
     email_of,
     events,
     fresh_address,
@@ -441,21 +442,30 @@ def test_the_cancellation_terms_are_the_saved_settings(
     assert page(new_client(app), slug).json()["cancellation"]["text"] is None
 
 
-# ZIF-99 fence. The page shows the business's own contact email: the saved setting, normalised as
-# the settings PUT stores it, and null when there is none. Kills a page that reads another
-# business's settings, a hard-coded null, or a stale value after the owner unsets it.
-def test_the_contact_email_is_the_saved_setting_and_null_without_one(
+# ZIF-99 fence. The page shows the business's own contact email: its confirmed address, and null
+# when there is none. Kills a page that reads another business's settings, a hard-coded null, or a
+# stale value after the owner unsets it. ZIF-232 x ZIF-99 fences (F-PR3.1, F-PR3.2): an address
+# still waiting for its link is never shown, whether or not one is confirmed.
+def test_the_contact_email_is_the_confirmed_address_and_null_without_one(
     people: People, app: FastAPI, owner: TestClient, slug: str
 ) -> None:
-    assert page(new_client(app), slug).json()["contact_email"] is None
-    save_setting(people.b, "contact_email", "other@example.com")  # another business's address
-    assert page(new_client(app), slug).json()["contact_email"] is None
+    def shown() -> object:
+        return page(new_client(app), slug).json()["contact_email"]
 
-    assert put_settings(owner, {"contact_email": " Shop@Example.COM "}).status_code == 200
-    assert page(new_client(app), slug).json()["contact_email"] == "shop@example.com"
+    assert shown() is None
+    confirm_contact_email(people.b, "other@example.com")  # another business's address
+    assert shown() is None
+
+    assert put_settings(owner, {"contact_email": "waiting@example.com"}).status_code == 200
+    assert shown() is None  # F-PR3.1: waiting, nothing confirmed
+
+    confirm_contact_email(people.a, "shop@example.com")
+    assert shown() == "shop@example.com"
+    assert put_settings(owner, {"contact_email": "next@example.com"}).status_code == 200
+    assert shown() == "shop@example.com"  # F-PR3.2: the confirmed one, while the next waits
 
     assert put_settings(owner, {"contact_email": None}).status_code == 200
-    assert page(new_client(app), slug).json()["contact_email"] is None
+    assert shown() is None
 
 
 # 23. fence. Every locale's offered version is one a booking accepts; the page has no top-level one.

@@ -31,6 +31,7 @@ from app.db import tenant_context
 from app.jobs import Job
 from tests.conftest import (
     People,
+    confirm_contact_email,
     fresh_address,
     fresh_email,
     member_id,
@@ -389,7 +390,7 @@ def test_linked_booking_carries_no_client_identity(
     owner = signed_in(app, people.a, people.both)
     assert patch(owner, booking_id, "confirmed").status_code == 200
     # ZIF-99: the business's own contact email is in the payload on purpose; the client's is not.
-    assert put_settings(owner, {"contact_email": "shop@example.com"}).status_code == 200
+    confirm_contact_email(people.a, "shop@example.com")
     client = linked(app, people.a, booking_id)
 
     body = get(client).json()
@@ -446,12 +447,15 @@ def test_the_manage_page_shows_the_business_s_contact_email(
     )
     owner = signed_in(app, people.a, people.both)
     assert patch(owner, booking_id, "confirmed").status_code == 200
-    save_setting(people.b, "contact_email", "other@example.com")  # another business's address
+    confirm_contact_email(people.b, "other@example.com")  # another business's address
     client = linked(app, people.a, booking_id)
 
     assert get(client).json()["booking"]["contact_email"] is None
+    # ZIF-232 x ZIF-99 (F-PR3.1): an address waiting for its link is not the business's yet.
+    assert put_settings(owner, {"contact_email": "waiting@example.com"}).status_code == 200
+    assert get(client).json()["booking"]["contact_email"] is None
 
-    assert put_settings(owner, {"contact_email": " Shop@Example.COM "}).status_code == 200
+    confirm_contact_email(people.a, "shop@example.com")
     body = get(client).json()
     assert body["booking"]["contact_email"] == "shop@example.com"
     assert "other@example.com" not in str(body)
