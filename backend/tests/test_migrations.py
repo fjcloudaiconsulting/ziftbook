@@ -2490,12 +2490,18 @@ def test_0058_round_trips_booking_provenance(
         core_at_head = conn.execute(ERASE_CORE_STATE).one()
     assert m.BLANK_BOOKINGS in core_at_head[0]
     try:
+        # The core as 0058 left it: a later migration (ZIF-58's 0078) edits it too, and undoes that
+        # on its own way down.
+        command.downgrade(cfg, m.revision)
+        with migrate_engine.connect() as conn:
+            core_at_0058 = conn.execute(ERASE_CORE_STATE).one()
+        assert m.BLANK_BOOKINGS in core_at_0058[0]
         command.downgrade(cfg, m.down_revision)
         with migrate_engine.connect() as conn:
             assert tuple(conn.execute(PROVENANCE_OBJECTS).one()) == (False,) * 4
             core = conn.execute(ERASE_CORE_STATE).one()
         assert "booked_as = NULL" not in core[0]
-        assert core[0] == core_at_head[0].replace(m.BLANK_BOOKINGS, m.BLANK_BOOKINGS_0064)
+        assert core[0] == core_at_0058[0].replace(m.BLANK_BOOKINGS, m.BLANK_BOOKINGS_0064)
         assert tuple(core)[1:] == tuple(core_at_head)[1:]
     finally:
         command.upgrade(cfg, "head")
@@ -2613,29 +2619,69 @@ SELECT has_function_privilege('ziftbook_worker', 'client_hold_needed(uuid,uuid)'
 """)
 CORE_POSTURE = text("""
 SELECT prosecdef, proconfig, proowner::regrole::text,
-       has_function_privilege('ziftbook_app', oid, 'EXECUTE')
+       has_function_privilege('ziftbook_app', oid, 'EXECUTE'), proacl::text
 FROM pg_proc WHERE oid = 'erase_client_core(uuid,boolean)'::regprocedure
 """)
+CORE_DEFINITION = text("SELECT pg_get_functiondef('erase_client_core(uuid,boolean)'::regprocedure)")
+
+
+def apply_edits(definition: str, edits: tuple[tuple[str, str], ...]) -> str:
+    """Each (old, new) applied once, as a migration's anchored replacement does."""
+    for old, new in edits:
+        assert definition.count(old) == 1, old
+        definition = definition.replace(old, new)
+    return definition
+
+
+def reversed_edits(edits: tuple[tuple[str, str], ...]) -> tuple[tuple[str, str], ...]:
+    return tuple((new, old) for old, new in reversed(edits))
 
 
 # ZIF-58 FENCE (0078). Wrong impl: a downgrade that leaves the function or the 0078 core behind;
 # an upgrade that grants the function to the app role or PUBLIC, or that loses the core's posture
-# (definer, pinned search_path, owner, no app EXECUTE) when it replaces it.
+# (definer, pinned search_path, owner, grants) when it replaces it; a core rebuilt from another
+# migration's text (it drops 0058's booked_as, and its downgrade is not the stored core it found).
 def test_0078_round_trips_the_hold_rule(
     migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     cfg = lock_timeout_config(monkeypatch)
+    m = migration("0078_client_hold_needed.py")
     with migrate_engine.connect() as conn:
         posture = tuple(conn.execute(CORE_POSTURE).one())
+        core_at_head = conn.scalar(CORE_DEFINITION)
+    assert migration("0058_booking_provenance.py").BLANK_BOOKINGS in core_at_head
     try:
-        command.downgrade(cfg, "0077")
+        command.downgrade(cfg, m.down_revision)
         with migrate_engine.connect() as conn:
             assert tuple(conn.execute(HOLD_NEEDED).one()) == (False, False, True)
             assert tuple(conn.execute(CORE_POSTURE).one()) == posture
+            assert conn.scalar(CORE_DEFINITION) == apply_edits(
+                core_at_head, reversed_edits(m.CORE_EDITS)
+            )
     finally:
         command.upgrade(cfg, "head")
     with migrate_engine.connect() as conn:
         assert tuple(conn.execute(HOLD_NEEDED).one()) == (True, True, False)
         assert tuple(conn.execute(HOLD_NEEDED_ACCESS).one()) == (True, False, False)
         assert tuple(conn.execute(CORE_POSTURE).one()) == posture
-    assert posture == (True, ["search_path=pg_catalog, public, pg_temp"], "ziftbook_migrate", False)
+        assert conn.scalar(CORE_DEFINITION) == core_at_head
+    assert posture == (
+        True,
+        ["search_path=pg_catalog, public, pg_temp"],
+        "ziftbook_migrate",
+        False,
+        "{ziftbook_migrate=X/ziftbook_migrate}",
+    )
+
+
+# ZIF-58 x ZIF-146 guard: 0078's anchors are each in 0064's core once, and they do not overlap
+# 0058's: the two edits give the same core in either order, and it keeps both.
+def test_0078_and_0058_edit_the_erase_core_without_overlapping() -> None:
+    core = migration("0064_erase_client.py").ERASE_CLIENT_CORE
+    m58 = migration("0058_booking_provenance.py")
+    edits_58 = ((m58.BLANK_BOOKINGS_0064, m58.BLANK_BOOKINGS),)
+    edits_78 = migration("0078_client_hold_needed.py").CORE_EDITS
+    first = apply_edits(apply_edits(core, edits_58), edits_78)
+    second = apply_edits(apply_edits(core, edits_78), edits_58)
+    assert first == second
+    assert "booked_as = NULL" in first and "client_hold_needed(v_tenant, p_client)" in first

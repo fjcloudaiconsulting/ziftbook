@@ -283,7 +283,7 @@ that person's platform account (ZIF-99).
 - `client_erasure_holds` keeps an erased client's email and locale: the only way to tell the client about a
   cancellation or a failed refund. The core writes one when the client has an address and either `announce` is true
   and the erasure ended one of its bookings, or `client_hold_needed` is true, whatever `announce` says. That rule
-  lives in 0078 (which replaces 0064's core, changing only this condition), and the hold's purge calls the same
+  lives in 0078 (which edits only this condition in the stored core), and the hold's purge calls the same
   function: money still owed an answer (`client_money_owed`: unsettled with work left for the settle pass, or a failed
   refund), a refund settled in the last 7 days (one can still fail at the bank), or one of the client's
   `mail.HOLD_TEMPLATES` emails still to be sent (given up only once its last lease has run out). An
