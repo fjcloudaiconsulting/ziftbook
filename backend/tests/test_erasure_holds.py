@@ -7,12 +7,15 @@ and never later than its purge date, at most 31 days after the erasure."""
 
 import asyncio
 import json
+import re
 import uuid
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import pytest
 from fastapi import FastAPI
+from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 from psycopg.errors import CheckViolation, InsufficientPrivilege
 from sqlalchemy import Engine, text
@@ -21,9 +24,11 @@ from sqlalchemy.exc import DBAPIError
 from app import bookings, erasure_holds, jobs, payments, worker
 from app.db import tenant_context
 from app.mail import render
+from app.main import create_app, openapi_document
 from tests.conftest import (
     MAILGUN_CALLS,
     People,
+    fresh_email,
     jobs_as_the_worker,
     member_id,
     migrate_tenant_context,
@@ -36,6 +41,7 @@ from tests.test_booking_email import REPLY_TO, outbox_for, run_send_booking, set
 from tests.test_booking_payments_api import account_of, make_shop, run, webhook
 from tests.test_booking_refunds import booked as paid_booking
 from tests.test_booking_refunds import settle_job
+from tests.test_bookings_api import at
 from tests.test_client_erasure_db import (
     ENDED_BY_ERASURE,
     ERASE_CLIENT,
@@ -566,3 +572,73 @@ def test_the_backstop_job_purges_a_hold_even_when_the_worker_starts_late(
         str(seeded.client_id),
         "erasure.hold_purge",
     )
+
+
+APP = Path(__file__).parents[1] / "app"
+# The only code that may name the hold table: the worker's. Each entry says why.
+HOLD_READERS = {
+    "mail.py": "the booking mail job sends an erased client's mail through it",
+    "erasure_holds.py": "the worker's purge deletes it",
+}
+
+
+# ZIF-58 F34 FENCE. Wrong impl: a debug or convenience field that shows a merchant the address an
+# erasure kept (a console route reading the hold, a field in the API naming it). Three looks:
+# only the worker's modules name the table, and no route is served from them; the API document
+# has no field or path about a hold; and as the owner, every GET route of the console, given the
+# erased client's bookings, answers without the held address anywhere in its body.
+def test_no_console_route_can_read_a_hold_address(
+    people: People,
+    owner: TestClient,  # noqa: F811
+    migrate_engine: Engine,
+    ready: str,  # noqa: F811
+    booked: dict[str, str],  # noqa: F811
+) -> None:
+    naming = {path.name for path in APP.glob("*.py") if "client_erasure_holds" in path.read_text()}
+    assert naming == set(HOLD_READERS)
+    workers_only = {f"app.{name.removesuffix('.py')}" for name in HOLD_READERS}
+    served = {
+        route.endpoint.__module__ for route in create_app().routes if isinstance(route, APIRoute)
+    }
+    assert not served & workers_only
+
+    spec = json.loads(openapi_document())
+    words = set()
+    for name in [*spec["paths"], *_properties(spec)]:
+        words.update(re.split(r"[^a-z]+", name.lower()))
+    assert not words & {"hold", "holds", "held"}
+
+    client_id = uuid.UUID(booked["client"])
+    address = fresh_email()  # the client's alone: the booking helper made its first one a member's
+    set_client(people.a, client_id, email=address)
+    erase_announcing(migrate_engine, people, client_id)
+    assert hold_address(migrate_engine, Seeded(people.a, client_id, (), address)) == address
+    values = {
+        "booking_id": booked["pending"],
+        "service_id": ready,
+        "member_id": str(member_id(people.a, people.both)),
+        "tenant_id": str(people.a),
+        "slug": "none",
+    }
+    window = {"from": at("00:00")[:10], "to": at("23:59")[:10]}
+    seen = 0
+    for path, operations in spec["paths"].items():
+        if "get" not in operations:
+            continue
+        for booking in ("started", "pending"):
+            values["booking_id"] = booked[booking]
+            answered = owner.get(path.format(**values), params=window)
+            assert address not in answered.text, path
+            seen += answered.status_code == 200
+    assert seen > 10
+    assert owner.get(f"/api/bookings/{booked['pending']}").json()["client_erased"] is True
+
+
+def _properties(spec: Any) -> list[str]:
+    """Every property name anywhere in the document."""
+    if isinstance(spec, list):
+        return [name for item in spec for name in _properties(item)]
+    if not isinstance(spec, dict):
+        return []
+    found = list(spec["properties"]) if isinstance(spec.get("properties"), dict) else []
+    return found + [name for value in spec.values() for name in _properties(value)]
