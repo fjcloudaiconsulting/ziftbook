@@ -222,6 +222,10 @@ def test_no_personal_data_ever_reaches_a_log(
     owner.headers.update(UA)
     # published too: step 6c below hits the public availability route (ZIF-145 gate).
     assert put_settings(owner, {"timezone": timezone, "published": True}).status_code == 200
+    # 4b: ZIF-232, a typed contact email (it waits for its inbox to confirm it).
+    contact = "zzyzx-contact@example.net"
+    secret(contact)
+    assert put_settings(owner, {"contact_email": contact}).status_code == 200
 
     # 5: PATCH /api/members/{id} role change, as the owner.
     target = member_id(people.a, people.only_a)
