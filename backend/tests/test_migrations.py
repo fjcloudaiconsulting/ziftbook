@@ -2919,6 +2919,22 @@ def test_0088_moves_every_saved_contact_email_out_of_use(
                 conn.execute(text("DELETE FROM tenants WHERE id = :t"), {"t": tenant_id})
 
 
+# ZIF-232 FENCE (0094). Wrong impl: a downgrade that leaves the table behind.
+def test_0094_round_trips_contact_email_senders(
+    migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    exists = text("SELECT to_regclass('contact_email_senders') IS NOT NULL")
+    cfg = lock_timeout_config(monkeypatch)
+    try:
+        command.downgrade(cfg, "0088")
+        with migrate_engine.connect() as conn:
+            assert conn.scalar(exists) is False
+    finally:
+        command.upgrade(cfg, "head")
+    with migrate_engine.connect() as conn:
+        assert conn.scalar(exists) is True
+
+
 # ZIF-235 (0072): the retention sweep's indexes, built CONCURRENTLY in the repository's first
 # autocommit_block.
 RETENTION_INDEXES = text("""

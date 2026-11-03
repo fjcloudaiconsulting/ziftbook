@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 
 from app import auth, limits
 from app.auth import CurrentOwner, CurrentSession, SignedIn
-from app.db import tenant_context
+from app.db import SessionLocal, tenant_context
 from app.errors import ApiError, Error
 from app.jobs import enqueue
 
@@ -31,65 +31,104 @@ SECRET = re.compile(r"[A-Za-z0-9_-]{43}")  # what secrets.token_urlsafe(32) make
 
 
 DAY = timedelta(days=1)
-# Links one business may send one inbox in a day, and how many businesses may mail one inbox in a
-# day: at most 15 a day reach an inbox, however many businesses join in.
-LINKS_PER_ADDRESS_A_DAY = 5
+# How many businesses may mail one inbox a link in a day, so a ring of them cannot flood it; with
+# LINKS_PER_ADDRESS_A_DAY each, at most 15 links a day reach an inbox from businesses that never had
+# it confirmed.
 BUSINESSES_PER_ADDRESS_A_DAY = 3
+LINKS_PER_ADDRESS_A_DAY = 5
+SENDERS_LOCK = 232  # advisory lock class: claims for one inbox take turns
 
 
 def sent_key(tenant_id: UUID, address: str) -> str:
     return limits.email_key("contact_email_sent", f"{tenant_id}:{address}")
 
 
-def businesses_key(address: str) -> str:
-    return limits.email_key("contact_email_businesses", address)
+def address_key(address: str) -> str:
+    return limits.email_key("contact_email_to", address)
 
 
-def charge_shared(tenant_id: UUID, email: str) -> list[str]:
-    """Count a link to email against what businesses share, or 429; the keys counted, to give back
-    with limits.refund when no link is queued after all.
+# A business counts toward an inbox's day once a link from it was queued, and for a few minutes
+# while a claim's request runs, so a request that fails takes back nothing and holds nothing long.
+LIVE = "(linked_at > now() - interval '1 day' OR claimed_at > now() - interval '5 minutes')"
+PURGE_SENDERS = text("""
+DELETE FROM contact_email_senders WHERE ctid IN (
+  SELECT ctid FROM contact_email_senders
+  WHERE claimed_at < now() - interval '1 day'
+    AND coalesce(linked_at < now() - interval '1 day', true)
+  LIMIT 100 FOR UPDATE SKIP LOCKED)
+""")
+SENDERS = text(f"""
+SELECT count(*) FILTER (WHERE tenant_id <> :t) AS others,
+       coalesce(bool_or(tenant_id = :t), false) AS mine
+FROM contact_email_senders WHERE address_key = :k AND {LIVE}
+""")
+CLAIM = text("""
+INSERT INTO contact_email_senders (address_key, tenant_id, claimed_at) VALUES (:k, :t, now())
+ON CONFLICT (address_key, tenant_id) DO UPDATE SET claimed_at = now()
+""")
+# The proof the inbox's holder gave: a confirm is the one setting_changed of the key with no actor
+# (the link's holder need not be a member).
+EVER_CONFIRMED = text("""
+SELECT EXISTS (SELECT FROM audit_events WHERE action = 'setting_changed'
+               AND target = 'setting:contact_email' AND actor_user_id IS NULL
+               AND details ->> 'new' = :e)
+""")
 
-    Before the request row is locked, in limits' own transactions: other businesses contend for
-    these rows, and a request holding its locks must not wait for a second connection. Counted per
-    business, so other businesses never use up this one's links to an inbox; a business's first
-    link of the day to it also counts toward the businesses that mail it. A refusal counts nothing.
+
+def claim(current: SignedIn, email: str) -> None:
+    """Make this business one of those mailing email's inbox today, or 429
+    contact_email_requests_today when BUSINESSES_PER_ADDRESS_A_DAY others already are.
+
+    Exempt, so others cannot keep a business from an inbox that is its own: a business already
+    counted today, and one that ever had this address confirmed. Before the request holds any row
+    lock, in a short transaction of its own (the count spans businesses); nothing to give back
+    afterwards, as a claim whose request fails lapses within minutes. Counted from rows, one per
+    inbox and business, so concurrent requests can neither count a business twice nor take it back.
     """
-    address = limits.address_for_limits(email)
-    sent = sent_key(tenant_id, address)
-    counted = [sent]
-    try:
-        links = limits.charge(sent, DAY)  # exact, so exactly one call sees the first link
-        if links > LINKS_PER_ADDRESS_A_DAY:
-            raise ApiError(429, "rate_limited")
-        if links == 1:
-            over = limits.hit({businesses_key(address): BUSINESSES_PER_ADDRESS_A_DAY}, DAY)
-            counted.append(businesses_key(address))
-            if over:
-                raise ApiError(429, "rate_limited")
-    except Exception:
-        limits.refund(counted, DAY)
-        raise
-    return counted
+    key = address_key(limits.address_for_limits(email))
+    exempt = bool(current.db.scalar(EVER_CONFIRMED, {"e": email}))  # a read: no lock taken
+    with SessionLocal.begin() as session:
+        session.execute(
+            text("SELECT pg_advisory_xact_lock(:c, hashtext(:k))"), {"c": SENDERS_LOCK, "k": key}
+        )
+        session.execute(PURGE_SENDERS)
+        senders = session.execute(SENDERS, {"k": key, "t": current.tenant_id}).one()
+        if not (senders.mine or exempt) and senders.others >= BUSINESSES_PER_ADDRESS_A_DAY:
+            raise ApiError(429, "contact_email_requests_today")
+        session.execute(CLAIM, {"k": key, "t": current.tenant_id})
 
 
 def send_link(current: SignedIn, request_id: UUID, email: str) -> None:
     """Queue the link for a request, or 429 when this business has sent too many.
 
-    Called with the request row locked and changed. These keys are this business's alone, so they
-    are counted in the request's own transaction: no second connection while the row is locked,
-    and a 429 rolls the count back with the change and the rest of the request.
+    Called with the request row locked and changed, after claim(). Every key and row here is this
+    business's alone, so all of it runs in the request's own transaction: no second connection
+    while its rows are locked, and a 429 rolls it back with the change and the rest of the request.
     """
     tenant = current.tenant_id
     address = limits.address_for_limits(email)
-    # Two calls: hit() takes one window. Both count, whichever is over.
+    # Two calls: hit() takes one window. Every key counts, whichever is over.
     hourly = limits.hit(
         {limits.email_key("contact_email", f"{tenant}:{address}"): 3},
         timedelta(hours=1),
         db=current.db,
     )
-    daily = limits.hit({f"contact_email:tenant:{tenant}": 10}, DAY, db=current.db)
+    daily = limits.hit(
+        {f"contact_email:tenant:{tenant}": 10, sent_key(tenant, address): LINKS_PER_ADDRESS_A_DAY},
+        DAY,
+        db=current.db,
+    )
     if hourly or daily:
         raise ApiError(429, "rate_limited")
+    linked = current.db.scalar(
+        text(
+            "UPDATE contact_email_senders SET linked_at = now()"
+            " WHERE address_key = :k AND tenant_id = :t RETURNING true"
+        ),
+        {"k": address_key(address), "t": tenant},
+    )
+    if not linked:  # claim() leaves the row, and nothing deletes it within a day
+        raise ApiError(503, "busy")
     enqueue(
         current.db,
         "email.contact_email",
@@ -122,33 +161,32 @@ def tell_owners(session: Session, tenant_id: UUID) -> None:
 
 def change(current: SignedIn, request: Request, email: str | None) -> None:
     """An owner's PUT of contact_email: a new address waits for its confirmation, and is sent the
-    link that confirms it; the one in effect stays until then. None clears both."""
-    counted = []
-    if email is not None and current.db.scalar(WILL_SEND, {"e": email}):
-        counted = charge_shared(current.tenant_id, email)
-    try:
-        row = current.db.execute(
-            text("SELECT * FROM change_contact_email(:e, true, :u)"),
-            {"e": email, "u": current.user_id},
-        ).one()
-        if (row.outcome == "requested") != bool(counted):
-            # Another save changed the address between the read and the lock: try again.
-            raise ApiError(503, "busy")
-        if row.outcome == "requested":
-            assert email is not None  # only a clear has none
-            send_link(current, row.request_id, email)
-            # No details: nobody has confirmed the address, and it may be a third party's.
-            auth.record(
-                current.db,
-                request,
-                "contact_email_requested",
-                actor_user_id=current.user_id,
-                target="setting:contact_email",
-            )
-            counted = []  # queued: the link counts
-    finally:
-        if counted:
-            limits.refund(counted, DAY)
+    link that confirms it; the one in effect stays until then. None clears both.
+
+    Called before any other key of the PUT is saved: claim() must run before the request holds a
+    row lock."""
+    claimed = email is not None and bool(current.db.scalar(WILL_SEND, {"e": email}))
+    if claimed:
+        assert email is not None
+        claim(current, email)
+    row = current.db.execute(
+        text("SELECT * FROM change_contact_email(:e, true, :u)"),
+        {"e": email, "u": current.user_id},
+    ).one()
+    if (row.outcome == "requested") != claimed:
+        # Another save changed the address between the read and the lock: try again.
+        raise ApiError(503, "busy")
+    if row.outcome == "requested":
+        assert email is not None  # only a clear has none
+        send_link(current, row.request_id, email)
+        # No details: nobody has confirmed the address, and it may be a third party's.
+        auth.record(
+            current.db,
+            request,
+            "contact_email_requested",
+            actor_user_id=current.user_id,
+            target="setting:contact_email",
+        )
     if row.outcome == "cleared" and row.previous is not None:
         auth.record(
             current.db,
@@ -265,27 +303,22 @@ def read_state(current: CurrentSession, response: Response) -> ContactEmailOut:
 def resend(current: CurrentOwner, request: Request, response: Response) -> ContactEmailOut:
     """Mail the waiting address a new link: the old one stops working at once."""
     read = text("SELECT email FROM contact_email_requests")
-    email = current.db.scalar(read)
+    email = current.db.scalar(read)  # a read: no lock taken
     if email is None:
         raise ApiError(409, "no_contact_email_request")
-    counted = charge_shared(current.tenant_id, email)  # before the lock, as for the PUT
-    try:
-        request_id = current.db.scalar(text("SELECT resend_contact_email()"))
-        if request_id is None:  # cleared or confirmed meanwhile
-            raise ApiError(409, "no_contact_email_request")
-        if current.db.scalar(read) != email:  # changed meanwhile: its link was counted for another
-            raise ApiError(503, "busy")
-        send_link(current, request_id, email)
-        auth.record(
-            current.db,
-            request,
-            "contact_email_requested",
-            actor_user_id=current.user_id,
-            target="setting:contact_email",
-        )
-        counted = []
-    finally:
-        if counted:
-            limits.refund(counted, DAY)
+    claim(current, email)  # before the lock, as for the PUT
+    request_id = current.db.scalar(text("SELECT resend_contact_email()"))
+    if request_id is None:  # cleared or confirmed meanwhile
+        raise ApiError(409, "no_contact_email_request")
+    if current.db.scalar(read) != email:  # changed meanwhile: the claim was for another address
+        raise ApiError(503, "busy")
+    send_link(current, request_id, email)
+    auth.record(
+        current.db,
+        request,
+        "contact_email_requested",
+        actor_user_id=current.user_id,
+        target="setting:contact_email",
+    )
     response.headers["Cache-Control"] = "no-store"
     return state(current)
