@@ -2,6 +2,7 @@ import asyncio
 import base64
 import io
 import json
+import string
 import urllib.request
 import uuid
 from collections.abc import Callable, Iterator
@@ -239,7 +240,7 @@ def test_a_failed_email_logs_the_error_class_and_the_job_retries(
 def test_mail_goes_to_mailguns_eu_mime_route_with_the_message_as_built() -> None:
     address = f"{uuid.uuid4()}@example.com"
 
-    mail.deliver("hello", address, "Subject", "Body\n")
+    mail.deliver("hello", address, "Subject", "Body\n", "<p>Body</p>")
 
     (sent,) = sent_to(address)
     assert sent["URL"] == "https://api.eu.mailgun.net/v3/test.ziftbook.invalid/messages.mime"
@@ -248,14 +249,14 @@ def test_mail_goes_to_mailguns_eu_mime_route_with_the_message_as_built() -> None
     assert sent["Form"] == {"to": address, "o:tracking-clicks": "no"}
     assert sent["Headers"]["From"] == ["ziftbook <no-reply@test.ziftbook.invalid>"]
     assert sent["Headers"]["To"] == [address]
-    assert (sent["Subject"], sent["Text"]) == ("Subject", "Body\n")
+    assert (sent["Subject"], sent["Text"], sent["Html"]) == ("Subject", "Body\n", "<p>Body</p>\n")
 
 
 def test_a_us_account_uses_mailguns_us_host(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ZIF_MAILGUN_REGION", "us")
     address = f"{uuid.uuid4()}@example.com"
 
-    mail.deliver("hello", address, "Subject", "Body\n")
+    mail.deliver("hello", address, "Subject", "Body\n", "<p>Body</p>")
 
     (sent,) = sent_to(address)
     assert sent["URL"] == "https://api.mailgun.net/v3/test.ziftbook.invalid/messages.mime"
@@ -269,7 +270,7 @@ def test_with_no_mail_transport_the_send_fails(monkeypatch: pytest.MonkeyPatch, 
     address = f"{uuid.uuid4()}@example.com"
 
     with pytest.raises(mail.MailNotConfigured):
-        mail.deliver("hello", address, "Subject", "Body\n")
+        mail.deliver("hello", address, "Subject", "Body\n", "<p>Body</p>")
 
     assert [c for c in MAILGUN_CALLS if c["To"] == address] == []
 
@@ -281,7 +282,7 @@ def test_a_redirect_is_not_a_sent_email(mailgun_replies: dict[str, int | Excepti
     mailgun_replies[address] = 302
 
     with pytest.raises(requests.HTTPError):
-        mail.deliver("hello", address, "Subject", "Body\n")
+        mail.deliver("hello", address, "Subject", "Body\n", "<p>Body</p>")
 
 
 # ZIF-151 fence: a dropped connection fails the send too (the SDK wraps it in its ApiError), so the
@@ -293,7 +294,7 @@ def test_a_dropped_connection_is_not_a_sent_email(
     mailgun_replies[address] = requests.ConnectionError()
 
     with pytest.raises(ApiError):
-        mail.deliver("hello", address, "Subject", "Body\n")
+        mail.deliver("hello", address, "Subject", "Body\n", "<p>Body</p>")
 
     assert sent_to(address) == []
 
@@ -304,10 +305,12 @@ def test_a_reply_to_is_normalised_and_a_list_is_refused(monkeypatch: pytest.Monk
     address = f"{uuid.uuid4()}@example.com"
 
     with pytest.raises(ValueError, match="not an email address"):
-        mail.deliver("hello", address, "Subject", "Body\n", reply_to="a@x.com, victim@y.com")
+        mail.deliver(
+            "hello", address, "Subject", "Body\n", "<p>Body</p>", reply_to="a@x.com, victim@y.com"
+        )
     assert sent_to(address) == []
 
-    mail.deliver("hello", address, "Subject", "Body\n", reply_to=" Shop@X.com ")
+    mail.deliver("hello", address, "Subject", "Body\n", "<p>Body</p>", reply_to=" Shop@X.com ")
     (sent,) = sent_to(address)
     assert sent["Headers"]["Reply-To"] == ["shop@x.com"]
 
@@ -320,7 +323,7 @@ def test_a_reply_to_is_normalised_and_a_list_is_refused(monkeypatch: pytest.Monk
     monkeypatch.setattr(urllib.request, "urlopen", capture)
     monkeypatch.setenv("ZIF_MAILPIT_URL", "http://mailpit.test:8025/")
     monkeypatch.delenv("ZIF_MAILGUN_API_KEY")
-    mail.deliver("hello", address, "Subject", "Body\n", reply_to=" Shop@X.com ")
+    mail.deliver("hello", address, "Subject", "Body\n", "<p>Body</p>", reply_to=" Shop@X.com ")
     (request,) = requests
     assert isinstance(request.data, bytes)
     assert json.loads(request.data)["ReplyTo"] == [{"Email": "shop@x.com"}]
@@ -340,11 +343,13 @@ def test_development_mail_goes_to_mailpits_http_api(monkeypatch: pytest.MonkeyPa
     monkeypatch.setenv("ZIF_MAILPIT_URL", "http://mailpit.test:8025/")
     address = f"{uuid.uuid4()}@example.com"
 
-    mail.deliver("hello", address, "Subject", "Body\n")  # the key is still set: Mailgun
+    mail.deliver(
+        "hello", address, "Subject", "Body\n", "<p>Body</p>"
+    )  # the key is still set: Mailgun
     assert requests == [] and len(sent_to(address)) == 1
 
     monkeypatch.delenv("ZIF_MAILGUN_API_KEY")
-    mail.deliver("hello", address, "Subject", "Body\n", ics=b"BEGIN:VCALENDAR\r\n")
+    mail.deliver("hello", address, "Subject", "Body\n", "<p>Body</p>", ics=b"BEGIN:VCALENDAR\r\n")
 
     (request,) = requests
     assert (request.full_url, request.get_method()) == (
@@ -358,6 +363,7 @@ def test_development_mail_goes_to_mailpits_http_api(monkeypatch: pytest.MonkeyPa
         "To": [{"Email": address}],
         "Subject": "Subject",
         "Text": "Body\n",
+        "HTML": "<p>Body</p>",
         "Attachments": [
             {
                 "Content": base64.b64encode(b"BEGIN:VCALENDAR\r\n").decode(),
@@ -377,9 +383,9 @@ def test_a_delivery_counts_as_sent_or_failed_by_template(
     mailgun_replies[sent] = 200
     mailgun_replies[refused] = 503
 
-    mail.deliver("hello", sent, "Subject", "Body\n")
+    mail.deliver("hello", sent, "Subject", "Body\n", "<p>Body</p>")
     with pytest.raises(requests.HTTPError):
-        mail.deliver("hello", refused, "Subject", "Body\n")
+        mail.deliver("hello", refused, "Subject", "Body\n", "<p>Body</p>")
 
     assert {
         (p.attributes["email.template"], p.attributes["email.outcome"]): p.value
@@ -431,3 +437,78 @@ def test_the_owners_hear_when_the_contact_email_changes(
 @pytest.mark.parametrize("template", ["contact_email_changed", "contact_email_confirm"])
 def test_the_contact_email_templates_have_no_em_dash(template: str, locale: str) -> None:
     assert "—" not in (TEMPLATES / f"{template}.{locale}.txt").read_text()
+
+
+def _every(template: str, locale: str, **values: str) -> dict[str, str]:
+    """Every placeholder the template names, as a value that says which one it is."""
+    names = string.Template((TEMPLATES / f"{template}.{locale}.txt").read_text()).get_identifiers()
+    link = "https://app.test/x#t"
+    return {n: link if n in ("link", "sign_in") else f"{n.upper()}-VALUE" for n in names} | values
+
+
+def _parts(raw: bytes) -> list[str]:
+    """The content types of a message, depth first."""
+    from email import message_from_bytes, policy
+
+    return [
+        part.get_content_type() for part in message_from_bytes(raw, policy=policy.default).walk()
+    ]
+
+
+# ZIF-175 guard. Kills: a template that renders only a text part, or HTML that leaves a placeholder.
+def test_every_template_renders_a_text_and_an_html_part_in_every_locale() -> None:
+    for template in {path.name.split(".")[0] for path in TEMPLATES.glob("*.txt")}:
+        for locale in LOCALES:
+            subject, body, html = mail.compose(template, locale, _every(template, locale))
+            assert subject and body.strip(), (template, locale)
+            assert html.startswith("<!doctype html>"), (template, locale)
+            assert f'<html lang="{locale}"' in html, (template, locale)
+            assert "$" not in body and "$" not in html, (template, locale)
+
+
+HOSTILE = '<script>alert("x")</script> O\'Brien & Co'
+
+
+# ZIF-175 fence: every value is untrusted in HTML (client names, messages and business names come
+# from strangers). Kills: a value substituted unescaped, a value parsed as markup (a button or a
+# heading from a client's message), and the text part losing the value as typed.
+def test_values_are_escaped_in_html_and_kept_as_typed_in_text() -> None:
+    hostile = {
+        "business": HOSTILE,
+        "client": HOSTILE,
+        "service": HOSTILE,
+        "message": f"{HOSTILE}\n[Pay here](https://evil.test)\n# Heading",
+    }
+    for template in ("booking_new", "booking_declined_message", "invite"):
+        values = {k: v for k, v in hostile.items() if k in _every(template, "en")}
+        subject, body, html = mail.compose(template, "en", _every(template, "en", **values))
+        assert "<script>" not in html and 'href="https://evil.test"' not in html, template
+        assert html.count("<h1") == 1, template
+        assert "&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt; O&#x27;Brien &amp; Co" in html
+        assert HOSTILE in body, template
+
+
+# ZIF-175 fence. Kills: a button whose link is not a web address (javascript: in an href).
+def test_a_button_link_must_be_a_web_address() -> None:
+    with pytest.raises(ValueError, match="link"):
+        mail.compose("sign_up", "en", {"link": "javascript:alert(1)"})
+
+
+# ZIF-175 fence: the HTML is an alternative to the text, and the calendar file stays an attachment
+# beside both. Kills: HTML replacing the text part, HTML first (text-only clients then show the
+# markup), and the .ics inside the alternative (clients would show it instead of the body).
+def test_the_message_is_text_and_html_alternatives_with_the_calendar_beside_them() -> None:
+    address = f"{uuid.uuid4()}@example.com"
+
+    mail.deliver("hello", address, "Subject", "Body\n", "<p>Body</p>")
+    mail.deliver("hello", address, "Subject", "Body\n", "<p>Body</p>", ics=b"BEGIN:VCALENDAR\r\n")
+
+    with_ics, plain = (call["Raw"].encode() for call in sent_to(address))
+    assert _parts(plain) == ["multipart/alternative", "text/plain", "text/html"]
+    assert _parts(with_ics) == [
+        "multipart/mixed",
+        "multipart/alternative",
+        "text/plain",
+        "text/html",
+        "text/calendar",
+    ]

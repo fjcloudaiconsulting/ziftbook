@@ -1,15 +1,18 @@
 Novo agendamento
+# Novo agendamento
+
 Olá,
 
 Você tem um novo agendamento:
 
-Cliente: $client$message
+Cliente: $client
 
-$service
-$date às $time ($zone)$payment
+> $message
+
+| $service
+| $date às $time ($zone)
+| $payment
 
 O agendamento está confirmado.
 
-$link
-
-ziftbook
+[Abrir o link]($link)

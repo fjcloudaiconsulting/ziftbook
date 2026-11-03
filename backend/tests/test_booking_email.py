@@ -441,6 +441,7 @@ def test_confirmed_mail_carries_an_ics_attachment_received_does_not(
     message = mail_for(confirmed_email)
     assert message["Text"].strip() != ""
     assert "The attached calendar file" in message["Text"]
+    assert message["Html"].startswith("<!doctype html>")  # ZIF-175: through the job, too
 
     received_id = make_pending(app, people.a, ready, starts_at=at("11:00"))
     received_email = _client_email(people.a, received_id)

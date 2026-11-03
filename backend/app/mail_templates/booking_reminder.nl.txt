@@ -1,13 +1,13 @@
 Herinnering: je afspraak komt eraan
+# Herinnering: je afspraak komt eraan
+
 Hallo,
 
 Een herinnering aan je afspraak bij $business:
 
-$service
-$date om $time ($zone)
+| $service
+| $date om $time ($zone)
 
 Tot dan!
 
-Bekijk, wijzig of annuleer je afspraak: $link
-
-ziftbook
+[Bekijk, wijzig of annuleer je afspraak]($link)

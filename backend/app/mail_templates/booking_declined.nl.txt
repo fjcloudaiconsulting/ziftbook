@@ -1,11 +1,12 @@
 Je boekingsaanvraag is afgewezen
+# Je boekingsaanvraag is afgewezen
+
 Hallo,
 
 $business kan je boekingsaanvraag niet aannemen:
 
-$service
-$date om $time ($zone)$payment
+| $service
+| $date om $time ($zone)
+| $payment
 
 Er is niets geboekt. Je kunt gerust een ander moment kiezen.
-
-ziftbook

@@ -1,8 +1,8 @@
 Booking moved
+# Booking moved
+
 Hello,
 
 $client, $service: moved from $old_date at $old_time to $date at $time ($zone).
 
-$link
-
-ziftbook
+[Open the link]($link)

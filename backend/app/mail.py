@@ -7,8 +7,10 @@ import logging
 import re
 import secrets
 import urllib.request
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from email.message import EmailMessage
+from html import escape
 from pathlib import Path
 from string import Template
 from typing import Any, Literal, get_args
@@ -48,18 +50,207 @@ CLIENT_MAIL_PER_RECIPIENT_ANY_HOUR = 30
 logger = logging.getLogger(__name__)
 
 
+# A template body is blocks split by a blank line: "# " opens the heading, "| " lines are the
+# booking card, "> $value" a quoted message, "[Label]($link)" the one button, anything else a
+# paragraph. The structure comes from the file alone: values are filled in after, never parsed.
+_BUTTON = re.compile(r"\[([^\]\n]+)\]\((\$\w+)\)")
+Block = tuple[Literal["heading", "card", "quote", "button", "paragraph"], list[str]]
+
+# The layout's own words: the footer under every email, and the fallback under its button.
+FOOTER = {"en": "Sent by ziftbook", "nl": "Verstuurd door ziftbook", "pt": "Enviado pelo ziftbook"}
+LINK_FALLBACK = {
+    "en": "If the button doesn't work, paste this link into your browser:",
+    "nl": "Werkt de knop niet? Plak deze link in je browser:",
+    "pt": "Se o botão não funcionar, cole este link no seu navegador:",
+}
+
+
+def _parse(template: str, locale: str) -> tuple[str, list[Block]]:
+    if not re.fullmatch(r"[a-z_]+", template):
+        raise ValueError(f"invalid template name {template!r}")
+    subject, *lines = (TEMPLATES / f"{template}.{locale}.txt").read_text().splitlines()
+    blocks: list[Block] = []
+    for chunk in re.split(r"\n\s*\n", "\n".join(lines).strip()):
+        rows = chunk.split("\n")
+        if button := _BUTTON.fullmatch(chunk):
+            blocks.append(("button", [button[1], button[2]]))
+        elif chunk.startswith("# "):
+            blocks.append(("heading", [chunk[2:]]))
+        elif all(row.startswith("| ") for row in rows):
+            blocks.append(("card", [row[2:] for row in rows]))
+        elif chunk.startswith("> "):
+            blocks.append(("quote", [chunk[2:]]))
+        else:
+            blocks.append(("paragraph", rows))
+    return subject, blocks
+
+
+def _text(blocks: list[Block], locale: str, fill: Callable[[str], str]) -> str:
+    """The text part: a card or paragraph line that fills in empty is left out, and so is a block
+    left with nothing; the button is its label and the link on a line of its own."""
+    said: list[str] = []
+    for kind, parts in blocks:
+        if kind == "button":
+            said.append(f"{fill(parts[0])}:\n{fill(parts[1])}")
+        elif kind == "quote":
+            quoted = fill(parts[0])
+            if quoted.strip():
+                said.append(_quoted(quoted))
+        elif lines := [line for line in map(fill, parts) if line.strip()]:
+            said.append("\n".join(lines))
+    return "\n\n".join([*said, FOOTER[locale]]) + "\n"
+
+
 def render(template: str, locale: str, values: dict[str, str] | None = None) -> tuple[str, str]:
     """A template is one text file per locale: the first line is the subject, the rest the body.
 
-    With values, $placeholders in the subject and the body are filled in; a missing one raises.
+    Returns the subject and the text part. With values, $placeholders in the subject and the body
+    are filled in; a missing one raises.
     """
-    if not re.fullmatch(r"[a-z_]+", template):
-        raise ValueError(f"invalid template name {template!r}")
-    lines = (TEMPLATES / f"{template}.{locale}.txt").read_text().splitlines()
-    body = "\n".join(lines[1:]).strip() + "\n"
+    subject, blocks = _parse(template, locale)
     if values is None:
-        return lines[0], body
-    return Template(lines[0]).substitute(values), Template(body).substitute(values)
+        return subject, _text(blocks, locale, lambda part: part)
+    return Template(subject).substitute(values), _text(
+        blocks, locale, lambda part: Template(part).substitute(values)
+    )
+
+
+def compose(template: str, locale: str, values: dict[str, str]) -> tuple[str, str, str]:
+    """The subject, the text part and the HTML part of one email."""
+    subject, body = render(template, locale, values)
+    return subject, body, _html(template, locale, subject, values)
+
+
+# Brand colours from frontend/app/tokens.css, as hex: mail clients know no oklch().
+INK, MUTED, PRIMARY, SURFACE, LINE = "#281816", "#665755", "#b31513", "#f7f2f1", "#e6dbda"
+SANS = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif"
+SERIF = "Georgia,'Times New Roman',serif"  # the landing wordmark's own fallback
+
+# Inline styles carry the light design (Gmail drops <style> in places); clients that honour
+# prefers-color-scheme (Apple Mail, iOS, Outlook for Mac) get the dark one from here.
+_HEAD = f"""<style>
+body{{margin:0;padding:0;-webkit-text-size-adjust:100%}}
+a{{color:{PRIMARY}}}
+@media (max-width:520px){{.zb-pad{{padding-left:20px!important;padding-right:20px!important}}
+.zb-outer{{padding:16px 8px!important}}.zb-h1{{font-size:24px!important}}}}
+@media (prefers-color-scheme:dark){{
+.zb-bg{{background:#17100f!important}}.zb-panel{{background:#241a19!important}}
+.zb-card{{background:#2f2322!important;border-color:#423432 #423432 #423432 {PRIMARY}!important}}
+.zb-ink{{color:#f4edeb!important}}.zb-muted{{color:#baaeac!important}}
+.zb-link{{color:#f08f83!important}}.zb-quote{{border-color:#f08f83!important}}}}
+</style>"""
+
+
+def _html(template: str, locale: str, subject: str, values: dict[str, str]) -> str:
+    """The HTML part: a table layout with inline styles, no web fonts and no images. Every value is
+    escaped (client names, messages and business names come from strangers), and so is the file's
+    own text, so nothing a value holds can become markup."""
+    safe = {key: escape(value) for key, value in values.items()}
+
+    def fill(part: str) -> str:
+        return Template(escape(part)).substitute(safe)
+
+    prose = f"font-family:{SANS};font-size:16px;line-height:1.55;color:{INK}"
+    small = f"font-family:{SANS};font-size:13px;line-height:1.5;color:{MUTED}"
+    _, blocks = _parse(template, locale)
+    heading, preview, body = "", "", []
+    for kind, parts in blocks:
+        if kind == "heading":
+            heading = fill(parts[0])
+        elif kind == "button":
+            link = Template(parts[1]).substitute(values)
+            if not link.startswith(("https://", "http://")):
+                raise ValueError("a button's link must be a web address")
+            href = escape(link)
+            body.append(
+                '<table role="presentation" cellpadding="0" cellspacing="0" border="0"'
+                ' style="margin:28px 0 12px"><tr><td style="border-radius:8px"'
+                f' bgcolor="{PRIMARY}"><a href="{href}" style="display:inline-block;'
+                f"background:{PRIMARY};border:14px solid {PRIMARY};border-left-width:28px;"
+                f"border-right-width:28px;border-radius:8px;font-family:{SANS};font-size:16px;"
+                'font-weight:600;line-height:1.2;color:#ffffff;text-decoration:none">'
+                f"{fill(parts[0])}</a></td></tr></table>"
+                f'<p class="zb-muted" style="margin:0 0 24px;{small}">'
+                f"{escape(LINK_FALLBACK[locale])}<br>"
+                f'<a class="zb-link" href="{href}" style="color:{PRIMARY};word-break:break-all">'
+                f"{href}</a></p>"
+            )
+        elif kind == "quote":
+            quoted = fill(parts[0])
+            if quoted.strip():  # the text part's quoting, so both keep the same lines
+                lines = [line[2:] for line in _quoted(quoted).split("\n")]
+                body.append(
+                    f'<p class="zb-ink zb-quote" style="margin:0 0 16px;padding:4px 0 4px 16px;'
+                    f'border-left:3px solid {PRIMARY};{prose};font-style:italic">'
+                    + "<br>".join(lines)
+                    + "</p>"
+                )
+        elif rows := [row for row in map(fill, parts) if row.strip()]:
+            if kind == "card":
+                first, *rest = rows
+                body.append(
+                    '<table role="presentation" width="100%" cellpadding="0" cellspacing="0"'
+                    f' border="0" class="zb-card" style="margin:8px 0 24px;background:{SURFACE};'
+                    f'border:1px solid {LINE};border-left:4px solid {PRIMARY};border-radius:8px">'
+                    '<tr><td style="padding:16px 20px">'
+                    f'<p class="zb-ink" style="margin:0 0 4px;{prose};font-size:17px;'
+                    f'font-weight:600">{first}</p>'
+                    + "".join(
+                        f'<p class="zb-ink" style="margin:0;{prose}">{row}</p>' for row in rest
+                    )
+                    + "</td></tr></table>"
+                )
+            else:
+                preview = preview or " ".join(rows)
+                body.append(
+                    f'<p class="zb-ink" style="margin:0 0 16px;{prose}">'
+                    + "<br>".join(rows)
+                    + "</p>"
+                )
+    business = safe.get("business")
+    eyebrow = (
+        f'<p class="zb-muted" style="margin:0 0 8px;{small};font-weight:600;letter-spacing:.02em">'
+        f"{business}</p>"
+        if business
+        else ""
+    )
+    return f"""<!doctype html>
+<html lang="{locale}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="supported-color-schemes" content="light dark">
+<title>{escape(subject)}</title>
+{_HEAD}
+</head>
+<body class="zb-bg" style="margin:0;padding:0;background:{SURFACE}">
+<div style="display:none;max-height:0;overflow:hidden;mso-hide:all">{preview}</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="zb-bg"
+ style="background:{SURFACE}"><tr><td align="center" class="zb-outer" style="padding:32px 16px">
+<!--[if mso]><table role="presentation" width="560" align="center"><tr><td><![endif]-->
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+ style="max-width:560px">
+<tr><td class="zb-pad" style="padding:0 36px 16px">
+<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+<td width="28" height="28" align="center" bgcolor="{PRIMARY}" style="width:28px;height:28px;
+background:{PRIMARY};border-radius:7px;font-family:{SERIF};font-size:18px;line-height:28px;
+color:#ffffff">z</td>
+<td class="zb-ink" style="padding-left:10px;font-family:{SERIF};font-size:22px;line-height:28px;
+color:{INK}">ziftbook</td></tr></table>
+</td></tr>
+<tr><td class="zb-panel zb-pad" style="background:#ffffff;border-radius:12px;padding:32px 36px">
+{eyebrow}<h1 class="zb-ink zb-h1" style="margin:0 0 20px;font-family:{SERIF};font-size:28px;
+font-weight:400;line-height:1.2;color:{INK}">{heading}</h1>
+{"\n".join(body)}
+</td></tr>
+<tr><td class="zb-pad zb-muted" style="padding:20px 36px;{small}">{escape(FOOTER[locale])}</td></tr>
+</table>
+<!--[if mso]></td></tr></table><![endif]-->
+</td></tr></table>
+</body>
+</html>
+"""
 
 
 class MailNotConfigured(RuntimeError):
@@ -82,6 +273,7 @@ def deliver(
     to: str,
     subject: str,
     body: str,
+    html: str,
     *,
     ics: bytes | None = None,
     reply_to: str | None = None,
@@ -89,8 +281,9 @@ def deliver(
     """Hand one message for one address to Mailgun (Mailpit in development), and log it by template.
 
     Click tracking is always off: Mailgun would otherwise rewrite every link through its tracking
-    domain, and most carry a secret. With ics, the message becomes multipart/mixed with the
-    plain-text body first, and a calendar part (text/calendar; method=PUBLISH).
+    domain, and most carry a secret. The message is multipart/alternative, the plain-text body
+    first and the HTML after it; with ics, that goes inside multipart/mixed with a calendar part
+    (text/calendar; method=PUBLISH) beside it.
 
     The job's id comes from its bound context. Never the address, subject or body, and on failure
     the error's class only, plus the HTTP status when there was one (a 401 is a bad key, a 400 a bad
@@ -99,7 +292,7 @@ def deliver(
     reply_to is where the recipient's reply goes instead of the sending address.
     """
     try:
-        _send(to, subject, body, ics, reply_to)
+        _send(to, subject, body, html, ics, reply_to)
     except Exception as error:
         status = getattr(getattr(error, "response", None), "status_code", None)
         logger.warning(
@@ -114,7 +307,9 @@ def deliver(
     tracing.EMAIL_DELIVERIES.add(1, {"email.template": template, "email.outcome": "sent"})
 
 
-def _send(to: str, subject: str, body: str, ics: bytes | None, reply_to: str | None) -> None:
+def _send(
+    to: str, subject: str, body: str, html: str, ics: bytes | None, reply_to: str | None
+) -> None:
     settings = MailSettings()
     way = transport(settings)
     if way == "off":
@@ -132,6 +327,7 @@ def _send(to: str, subject: str, body: str, ics: bytes | None, reply_to: str | N
         reply_to = passwords.normalise_email(reply_to)
         message["Reply-To"] = reply_to
     message.set_content(body)
+    message.add_alternative(html, subtype="html")
     if ics is not None:
         message.add_attachment(
             ics,
@@ -177,6 +373,7 @@ def _send(to: str, subject: str, body: str, ics: bytes | None, reply_to: str | N
                 "To": [{"Email": to}],
                 "Subject": subject,
                 "Text": body,
+                "HTML": html,
             }
             if reply_to is not None:
                 payload["ReplyTo"] = [{"Email": reply_to}]
@@ -228,14 +425,14 @@ def send_token(job: Job) -> None:
             return
         if row.registered:
             template, page = REGISTERED[row.purpose]
-            subject, body = render(
+            subject, body, html = compose(
                 template, row.locale, {"sign_in": f"{app_url}/{row.locale}/{page}"}
             )
         else:
             template = row.purpose
             link = f"{app_url}/{row.locale}/{PAGES[row.purpose]}#{token}"
-            subject, body = render(template, row.locale, {"link": link})
-        deliver(template, row.email, subject, body)
+            subject, body, html = compose(template, row.locale, {"link": link})
+        deliver(template, row.email, subject, body, html)
 
 
 def send_invite(job: Job) -> None:
@@ -267,8 +464,10 @@ def send_invite(job: Job) -> None:
             or business_settings.read(session).language
         )
         link = f"{app_url}/{language}/invite#{job.tenant_id}.{token}"
-        subject, body = render("invite", language, {"link": link, "business": invite.business})
-        deliver("invite", invite.email, subject, body)
+        subject, body, html = compose(
+            "invite", language, {"link": link, "business": invite.business}
+        )
+        deliver("invite", invite.email, subject, body, html)
 
 
 # The confirm page, under a segment no business slug can take (0035's reserved list).
@@ -310,10 +509,10 @@ def send_contact_email(job: Job) -> None:
             return
         language = business_settings.read(session).language
         link = f"{app_url}/{language}/{CONTACT_EMAIL_PAGE}#{job.tenant_id}.{token}"
-        subject, body = render(
+        subject, body, html = compose(
             "contact_email_confirm", language, {"link": link, "business": request.business}
         )
-        deliver("contact_email_confirm", request.email, subject, body)
+        deliver("contact_email_confirm", request.email, subject, body, html)
 
 
 # The app role may UPDATE only email_outbox's status, sent_at and subject, and never DELETE (0048):
@@ -380,7 +579,7 @@ def send(job: Job) -> None:
             text("SELECT name FROM tenants WHERE id = :id"), {"id": job.tenant_id}
         )
         app_url = MailSettings().app_url.rstrip("/")
-        subject, body = render(
+        subject, body, html = compose(
             payload["template"],
             locale,
             {"business": business, "link": f"{app_url}/{locale}/settings"},
@@ -389,7 +588,7 @@ def send(job: Job) -> None:
     if status == "sent":
         return
 
-    deliver(payload["template"], recipient.email, subject, body)
+    deliver(payload["template"], recipient.email, subject, body, html)
     _mark_sent(job)
 
 
@@ -563,7 +762,7 @@ def _money(amount_minor: int, currency: str, locale: str) -> str:
 
 
 def _line(key: str, locale: str, amount_minor: int, currency: str) -> str:
-    return "\n\n" + Template(PAYMENT_LINES[key][locale]).substitute(
+    return Template(PAYMENT_LINES[key][locale]).substitute(
         amount=_money(amount_minor, currency, locale)
     )
 
@@ -571,7 +770,7 @@ def _line(key: str, locale: str, amount_minor: int, currency: str) -> str:
 def payment_line(
     session: Session, template: str, booking_id: str, status: str, locale: str, team: bool
 ) -> str:
-    """The sentence about the money that `$payment` fills in, with its blank line, else ""."""
+    """The sentence about the money that `$payment` fills in, else ""."""
     from app import payments  # here: payments pulls in far more than a mail job needs
 
     if template not in ARRIVAL | ENDED:
@@ -593,7 +792,7 @@ def payment_line(
     said = _line("refund", locale, due, paid.currency)
     kept = paid.amount_minor * pct // 100 - due
     if kept > 0:  # only with R6's flag on: refund_due deducts nothing otherwise
-        said += " " + _line("fee_kept", locale, kept, paid.currency).strip()
+        said += " " + _line("fee_kept", locale, kept, paid.currency)
     return said
 
 
@@ -787,9 +986,7 @@ def send_booking(job: Job) -> None:
             # Merchant emails keep the console link, never the manage link (D10): a manage link
             # reaching staff is a threat the console link cannot be.
             values["client"] = row.client_name
-            values["message"] = (
-                "" if row.client_message is None else "\n\n" + _quoted(row.client_message)
-            )
+            values["message"] = row.client_message or ""  # the template's "> " block quotes it
             values["link"] = f"{app_url}/{locale}"
             if "previous_starts_at" in payload:
                 previous_local = datetime.fromisoformat(payload["previous_starts_at"]).astimezone(
@@ -832,9 +1029,10 @@ def send_booking(job: Job) -> None:
         if template == "booking_declined" and row.decline_message is not None:
             # ZIF-121: only the file rendered differs. `template` stays booking_declined for
             # STATUS_FOR, the outbox row and the log. The text is a value, never rescanned, and
-            # quoted so a merchant cannot pass their words off as the platform's own footer.
+            # quoted (the template's "> " block) so a merchant cannot pass their words off as the
+            # platform's own footer.
             file = "booking_declined_message"
-            values["message"] = _quoted(row.decline_message)
+            values["message"] = row.decline_message
         if template == "booking_expired":
             # Only the file differs: a payment that landed after the checkout hold never was a
             # booking for the business, so its text must not blame it.
@@ -859,7 +1057,7 @@ def send_booking(job: Job) -> None:
                     email=passwords.normalise_email(settings.contact_email)
                 )
             )
-        subject, body = render(file, locale, values)
+        subject, body, html = compose(file, locale, values)
         status = _outbox(session, job, recipient_id, template, subject)
         if status == "pending" and token is not None:
             session.execute(
@@ -901,7 +1099,7 @@ def send_booking(job: Job) -> None:
             datetime.now(UTC),
             sequence=row.reschedule_count,
         )
-    deliver(template, recipient_email, subject, body, ics=booking_ics, reply_to=reply_to)
+    deliver(template, recipient_email, subject, body, html, ics=booking_ics, reply_to=reply_to)
     _mark_sent(job)
 
 
@@ -922,11 +1120,11 @@ def send_booking_flood(job: Job) -> None:
         business = session.scalar(
             text("SELECT name FROM tenants WHERE id = :id"), {"id": job.tenant_id}
         )
-        subject, body = render(
+        subject, body, html = compose(
             "booking_flood", locale, {"business": business, "link": f"{app_url}/{locale}/calendar"}
         )
         status = _outbox(session, job, user_id, "booking_flood", subject)
     if status == "sent":
         return
-    deliver("booking_flood", owner.email, subject, body)
+    deliver("booking_flood", owner.email, subject, body, html)
     _mark_sent(job)
