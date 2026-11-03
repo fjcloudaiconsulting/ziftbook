@@ -82,6 +82,12 @@ def _parse(template: str, locale: str) -> tuple[str, list[Block]]:
             blocks.append(("quote", [chunk[2:]]))
         else:
             blocks.append(("paragraph", rows))
+    # The HTML has one heading and one button, so another count would lose words the text keeps.
+    kinds = [kind for kind, _ in blocks]
+    if kinds.count("heading") != 1:
+        raise ValueError(f"{template}.{locale} needs exactly one heading")
+    if kinds.count("button") > 1:
+        raise ValueError(f"{template}.{locale} has more than one button")
     return subject, blocks
 
 
