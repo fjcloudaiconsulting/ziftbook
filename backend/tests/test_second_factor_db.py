@@ -1258,3 +1258,19 @@ def test_no_app_code_calls_the_one_transaction_functions(name: str) -> None:
         if pattern.search(path.read_text())
     ]
     assert callers == []
+
+
+# fence (ZIF-261): at enrolment too a charge is checked once: a failed check uses it up, so the
+# right code cannot ride on it afterwards. Kills check_totp_enrolment's failure branch keeping its
+# charge. Injected by deleting that branch's array_remove.
+def test_an_enrolment_charge_is_checked_once(app_engine: Engine, migrate_engine: Engine) -> None:
+    user_id, session, s = pending(app_engine, migrate_engine)
+    _, _, charged = call(app_engine, CHARGE_ENROLMENT, id=session)
+
+    row = call(app_engine, CHECK_ENROLMENT, id=session, charge=charged, p=wrong(), codes=TEN)
+    assert tuple(row) == ("failed", 1)
+    row = call(app_engine, CHECK_ENROLMENT, id=session, charge=charged, p=totp.proof(s), codes=TEN)
+
+    assert tuple(row) == ("none", 0)
+    stored = factor(migrate_engine, user_id)
+    assert (stored["confirmed_at"], stored["failed_attempts"], stored["charges"]) == (None, 1, [])
