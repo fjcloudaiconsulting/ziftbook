@@ -5,17 +5,18 @@ Run hourly by the worker (app.worker), as ziftbook_worker, in batches of short t
 - rate_limits rows (counters, the failed-sign-in ones included; their keys can hold an address):
   deleted once their window started longer ago than limits.MAX_WINDOW plus MARGIN;
 - sessions: deleted MARGIN after they stop being live (expired, or idle past auth.IDLE);
-- admin sessions, audit events, platform audit events and booking-event addresses: through the
-  migrate-owned functions of migration 0074, which fix the periods themselves (failed sign-ins 30
-  days, other audit events a year, booking-event addresses 18 months after both the event and the
-  appointment) and which only ziftbook_worker may call.
+- admin sessions, account sessions (ZIF-146), audit events, platform audit events and
+  booking-event addresses: through the migrate-owned functions of migration 0074, which fix the
+  periods themselves (failed sign-ins 30 days, other audit events a year, booking-event addresses
+  18 months after both the event and the appointment) and which only ziftbook_worker may call.
 
 MARGIN: a reader whose transaction began before the sweep's reads with an earlier now(); an hour
 is longer than any runtime transaction lives (30 s statement timeout, 60 s idle in transaction),
 so no reader can still see a swept row as live.
 
 During a hold (ZIF_RETENTION_HOLD_UNTIL, an incident's evidence) audit events and booking-event
-addresses are kept; sessions, rate limits and admin sessions, which are live state, are still swept.
+addresses are kept; sessions, rate limits and admin and account sessions, which are live state, are
+still swept.
 
 A run stops between batches when the budget is spent, after MAX_BATCHES, or when the worker is
 stopping; whatever is left goes on the next run. Every statement is time-based, so a repeated,
@@ -56,6 +57,7 @@ PLATFORM_FAILURES = ("admin_sign_in_failed", "second_factor_failed", "totp_enrol
 COVERED = {
     "sessions": "deleted an hour after it stops being live (SESSIONS below)",
     "admin_sessions": "deleted an hour after it stops being live (sweep_admin_sessions, 0074)",
+    "account_sessions": "deleted an hour after it stops being live (sweep_account_sessions, 0074)",
     "audit_events": "failed sign-ins deleted after 30 days, the rest after a year (0073, 0074)",
     "platform_audit_events": "failures deleted after 30 days, the rest after a year (0074)",
     "booking_events": (
@@ -86,6 +88,7 @@ RETURNING 1
 """)
 
 ADMIN_SESSIONS = text("SELECT deleted FROM sweep_admin_sessions()")
+ACCOUNT_SESSIONS = text("SELECT deleted FROM sweep_account_sessions()")
 AUDIT_EVENTS = text("SELECT * FROM sweep_audit_events()")
 BOOKING_ORIGINS = text("SELECT cleared, next_tenant FROM sweep_booking_origins(:start)")
 
@@ -97,6 +100,7 @@ class Swept:
     rate_limits: int = 0
     sessions: int = 0
     admin_sessions: int = 0
+    account_sessions: int = 0
     failed_sign_ins: int = 0
     older_events: int = 0
     platform_failures: int = 0
@@ -130,6 +134,13 @@ def _admin_sessions(swept: Swept) -> bool:
     with SessionLocal.begin() as session:
         count: int = session.scalar(ADMIN_SESSIONS)
     swept.admin_sessions += count
+    return count < BATCH
+
+
+def _account_sessions(swept: Swept) -> bool:
+    with SessionLocal.begin() as session:
+        count: int = session.scalar(ACCOUNT_SESSIONS)
+    swept.account_sessions += count
     return count < BATCH
 
 
@@ -214,7 +225,12 @@ def sweep(should_stop: Callable[[], bool] = lambda: False, hold: Hold | None = N
     hold holds, the evidence is kept."""
     held = hold is not None and hold.held(datetime.now(UTC).date())
     swept = Swept(held=held)
-    steps: list[Callable[[Swept], bool]] = [_rate_limits, _sessions, _admin_sessions]
+    steps: list[Callable[[Swept], bool]] = [
+        _rate_limits,
+        _sessions,
+        _admin_sessions,
+        _account_sessions,
+    ]
     if not held:
         steps += [_audit_events, WALK]
     started = time.monotonic()

@@ -235,6 +235,7 @@ COUNTS = {
     "rate_limits",
     "sessions",
     "admin_sessions",
+    "account_sessions",
     "failed_sign_ins",
     "older_events",
     "platform_failures",
@@ -346,8 +347,8 @@ def test_a_busy_audit_sweep_still_lets_the_rest_be_swept(
 
 # 17: FENCE (review question 1, #8). Wrong impl: a table that stores an address or a browser and
 # that no retention rule covers. Matched by type (inet) and by name, so a text-typed address is
-# caught too. A new one fails here until it is swept or exempted with a reason; when ZIF-146 merges
-# account_sessions lands here (its rule: the negation of USABLE's liveness plus the margin).
+# caught too. A new one fails here until it is swept or exempted with a reason (account_sessions,
+# ZIF-146: the negation of 0057's liveness plus the margin, sweep_account_sessions).
 ADDRESS_COLUMNS = text(r"""
 SELECT DISTINCT table_name FROM information_schema.columns
 WHERE table_schema = 'public'
