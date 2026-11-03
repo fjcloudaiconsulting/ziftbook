@@ -5,10 +5,11 @@ types waits here, one row per business, and is used for nothing until someone op
 mailed to it. The link carries <tenant_id>.<secret>; only sha256(secret) is stored, and only the
 email.contact_email job, running as ziftbook_worker, sets it (ZB-08, as invites).
 
-The app role reads every column but token_hash and writes none: it changes the table only through
-the definer functions below, which run in the caller's tenant_context (FORCE row-level security
-binds their owner too, so they see only that business's row). None reads memberships or
-audit_events, so no GUC needs clearing.
+The app role reads every column but token_hash and requested_by, and writes none: it changes the
+table only through the definer functions below, which run in the caller's tenant_context (FORCE
+row-level security binds their owner too, so they see only that business's row). Only
+confirm_contact_email reads memberships; it clears app.sign_in for that read and restores the
+caller's value. None reads audit_events.
 
 - change_contact_email (app): the owner's PUT.
 - resend_contact_email (app): a new link for the waiting address; the old one dies at once.
@@ -27,7 +28,8 @@ sign-up or a rename for that long, within the 5 s lock_timeout.
 Every confirmation is also recorded in contact_email_confirmations (address, the one it replaced,
 clock_timestamp), written only by confirm_contact_email and readable, never writable, by the runtime
 roles: after an API compromise, the confirmations made in the window can be listed from it
-(CONTRIBUTING, Business settings). It is kept as evidence for the business's life.
+(CONTRIBUTING, Business settings). Retention: kept while the business exists, as evidence, and
+deleted with it (ON DELETE CASCADE); it holds no IP address or browser.
 
 Downgrading drops both tables, and with them the only copy of the addresses 0088 moved out of use
 and the confirmation record. It takes ACCESS EXCLUSIVE on tenants for an instant (the foreign keys),

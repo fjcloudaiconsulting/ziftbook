@@ -732,7 +732,8 @@ value needs a redeploy it is an environment variable; otherwise it is a setting.
   `SET ROLE ziftbook_migrate` first; a data-only restore of `settings` needs `--disable-triggers`.
 - Incident (contact email diverted, for example after an API compromise): the API can request and confirm an inbox
   it controls, but every confirmation is recorded by `confirm_contact_email` itself in
-  `contact_email_confirmations`, which no runtime role can change. As a superuser (row-level security binds the
+  `contact_email_confirmations`, which no runtime role can change (kept while the business exists and deleted with
+  it; addresses only, no IP address or browser). As a superuser (row-level security binds the
   migrate role), list `tenant_id, email, previous, confirmed_at` confirmed in the window. For each suspect one: as
   `ziftbook_migrate` under that tenant, delete its `contact_email` setting (or put `previous` back) and its
   `contact_email_requests` row, and tell the business's owners. Then revoke what the attacker held: rotate the API's
