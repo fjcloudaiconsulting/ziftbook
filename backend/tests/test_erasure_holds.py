@@ -8,13 +8,31 @@ and never later than its purge date, at most 31 days after the erasure."""
 import uuid
 
 import pytest
+from fastapi.testclient import TestClient
 from psycopg.errors import CheckViolation, InsufficientPrivilege
 from sqlalchemy import Engine, text
 from sqlalchemy.exc import DBAPIError
 
+from app import bookings
 from app.db import tenant_context
-from tests.conftest import People, member_id, migrate_tenant_context
+from app.mail import render
+from tests.conftest import (
+    People,
+    jobs_as_the_worker,
+    member_id,
+    migrate_tenant_context,
+    sent_to,
+)
+from tests.test_booking_email import REPLY_TO, outbox_for, run_send_booking, set_client, set_contact
 from tests.test_client_erasure_db import PAID_AND_KEPT, Pay, Seeded, hold_after, seed_person
+from tests.test_erased_client_reads import (  # noqa: F401 -- fixtures
+    app,
+    booked,
+    clean_outbox,
+    links_of,
+    owner,
+    ready,
+)
 
 HOLD_OF = text("SELECT email FROM client_erasure_holds WHERE client_id = :c")
 
@@ -127,3 +145,79 @@ def test_a_hold_cannot_outlive_31_days(
         )
     assert isinstance(error.value.orig, CheckViolation)
     assert error.value.orig.diag.constraint_name == "ck_client_erasure_holds_purge_after"
+
+
+# The erase route's work before the core, as PR 7 will do it: the client's live bookings ended by
+# the owner, each with an event that gives the erasure as its reason.
+END_ANNOUNCED = text("""
+WITH ended AS (
+  UPDATE bookings SET status = 'cancelled_by_merchant'
+  WHERE client_id = :id
+    AND ((status = 'confirmed' AND starts_at > now())
+         OR (status = 'pending' AND expires_at > now()))
+  RETURNING id)
+INSERT INTO booking_events (tenant_id, booking_id, event, actor_user_id, details)
+SELECT current_setting('app.tenant_id')::uuid, id, 'cancelled_by_merchant', :actor,
+       '{"reason": "client_erased"}'::jsonb
+FROM ended
+""")
+
+
+def erase_announcing(
+    migrate_engine: Engine, people: People, client_id: object, *, announce: bool = True
+) -> None:
+    """Erase a client of business A as its owner does: the booking lock, the live bookings ended
+    with the erasure's reason, then the core (announce false: a re-applied erasure)."""
+    with migrate_tenant_context(migrate_engine, people.a) as conn:
+        conn.execute(bookings.LOCK, {"key": bookings.LOCK_KEY})
+        conn.execute(END_ANNOUNCED, {"id": client_id, "actor": people.both})
+        erased = conn.scalar(
+            text("SELECT erase_client_core(:id, :announce)"),
+            {"id": client_id, "announce": announce},
+        )
+    assert erased is not None
+
+
+def address_of(tenant_id: uuid.UUID, client_id: object) -> str:
+    with tenant_context(tenant_id) as session:
+        found: str = session.scalar(
+            text("SELECT email FROM clients WHERE id = :id"), {"id": client_id}
+        )
+    return found
+
+
+# ZIF-58 F30 FENCE. Wrong impl: a send that uses the hold for every template, so a confirmation
+# (with a freshly minted manage link) reaches an erased client; or one that reads the business's
+# language instead of the hold's locale. Only booking_cancelled, booking_expired and
+# booking_refund_failed go to an erased client, at the address its erasure kept, in its locale,
+# replying to the business; nothing at all goes when the erasure kept no hold (a re-applied
+# erasure with nothing owed).
+@pytest.mark.parametrize("announce", [True, False], ids=["held", "no hold"])
+def test_an_erased_client_hears_of_a_cancellation_at_the_held_address_only(
+    people: People,
+    owner: TestClient,  # noqa: F811
+    migrate_engine: Engine,
+    booked: dict[str, str],  # noqa: F811
+    clean_outbox: None,  # noqa: F811
+    announce: bool,
+) -> None:
+    set_contact(owner)
+    client_id = uuid.UUID(booked["client"])
+    address = address_of(people.a, client_id)
+    set_client(people.a, client_id, locale="pt")  # not the business's language
+    erase_announcing(migrate_engine, people, client_id, announce=announce)
+
+    with jobs_as_the_worker():
+        cancelled = run_send_booking(people.a, booked["pending"], "booking_cancelled")
+        confirmed = run_send_booking(people.a, booked["started"], "booking_confirmed")
+
+    assert outbox_for(people.a, confirmed.id) is None
+    assert links_of(people.a, booked["started"]) == 0
+    if not announce:
+        assert sent_to(address) == []
+        assert outbox_for(people.a, cancelled.id) is None
+        return
+    (sent,) = sent_to(address)
+    assert sent["Subject"] == render("booking_cancelled", "pt")[0]
+    assert sent["Headers"]["Reply-To"] == [REPLY_TO]
+    assert outbox_for(people.a, cancelled.id)["recipient_id"] == client_id

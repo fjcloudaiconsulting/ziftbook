@@ -361,6 +361,12 @@ STATUS_FOR = {
 # ZIF-54 D1: the client templates whose $link is the guest booking link, minted here at send time.
 LINKED = frozenset({"booking_received", "booking_confirmed", "booking_reminder"})
 
+# ZIF-58: the only client emails an erased client still gets, at the address and in the locale its
+# erasure kept (client_erasure_holds, which only the worker reads): a booking ended and the money
+# owed. None carries a manage link. Every other email to an erased client is skipped.
+HOLD_TEMPLATES = frozenset({"booking_cancelled", "booking_expired"})
+HOLD = text("SELECT email, locale FROM client_erasure_holds WHERE client_id = :id")
+
 # FOR SHARE OF c (ZIF-58): a job that read the client while an erasure was in flight would mint a
 # manage link after the erasure deleted them, and mail what it read before; a link's foreign key
 # takes only KEY SHARE, which the erasure does not block. This waits for the erasure, then re-reads
@@ -633,9 +639,18 @@ def send_booking(job: Job) -> None:
         role = None  # the merchant recipient's, ZIF-143
         if user_id is None:
             recipient_id = row.client_id
-            if row.client_email is None:  # erased, or merchant-created with no address
-                return
             recipient_email, recipient_locale = row.client_email, row.client_locale
+            if row.client_erased:
+                held = (
+                    session.execute(HOLD, {"id": row.client_id}).first()
+                    if template in HOLD_TEMPLATES
+                    else None
+                )
+                if held is None:  # no longer to be told anything, or not this
+                    return
+                recipient_email, recipient_locale = held.email, held.locale
+            if recipient_email is None:  # merchant-created with no address
+                return
         else:
             # ZIF-58: the team hears nothing more about an erased client's booking; the erasure
             # tells the owners itself.
