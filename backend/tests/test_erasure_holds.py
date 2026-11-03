@@ -193,19 +193,24 @@ WITH ended AS (
   RETURNING id)
 INSERT INTO booking_events (tenant_id, booking_id, event, actor_user_id, details)
 SELECT current_setting('app.tenant_id')::uuid, id, 'cancelled_by_merchant', :actor,
-       '{"reason": "client_erased"}'::jsonb
+       jsonb_build_object('reason', CAST(:reason AS text))
 FROM ended
 """)
 
 
 def erase_announcing(
-    migrate_engine: Engine, people: People, client_id: object, *, announce: bool = True
+    migrate_engine: Engine,
+    people: People,
+    client_id: object,
+    *,
+    announce: bool = True,
+    reason: str = "client_erased",
 ) -> None:
     """Erase a client of business A as its owner does: the booking lock, the live bookings ended
     with the erasure's reason, then the core (announce false: a re-applied erasure)."""
     with migrate_tenant_context(migrate_engine, people.a) as conn:
         conn.execute(bookings.LOCK, {"key": bookings.LOCK_KEY})
-        conn.execute(END_ANNOUNCED, {"id": client_id, "actor": people.both})
+        conn.execute(END_ANNOUNCED, {"id": client_id, "actor": people.both, "reason": reason})
         erased = conn.scalar(
             text("SELECT erase_client_core(:id, :announce)"),
             {"id": client_id, "announce": announce},
@@ -1050,3 +1055,28 @@ def test_a_cancellation_queued_before_the_erasure_is_still_mailed(
     assert [message["Subject"] for message in sent_to(address)] == [
         render("booking_cancelled", "en")[0]
     ]
+
+
+# ZIF-58 FENCE (re-check SHOULD-C). Wrong impl: a re-applied erasure's cancellations (reason
+# erasure_reapplied) mailed through a hold. After a restore the client was already told at the
+# original erasure; with 0078 a cancellation mail queued in the re-apply would also write a hold,
+# so the person would be told twice. A re-apply's cancellation is never mailed.
+def test_a_reapplied_erasure_never_mails_its_cancellations_again(
+    people: People,
+    migrate_engine: Engine,
+    booked: dict[str, str],  # noqa: F811
+    clean_outbox: None,  # noqa: F811
+    no_jobs: None,
+) -> None:
+    client_id = uuid.UUID(booked["client"])
+    address = fresh_email()  # the client's alone: the booking helper made its first one a member's
+    set_client(people.a, client_id, email=address)
+    with tenant_context(people.a) as session:
+        bookings.email(session, people.a, booked["pending"], "booking_cancelled", merchant=True)
+    erase_announcing(migrate_engine, people, client_id, announce=False, reason="erasure_reapplied")
+    assert hold_address(migrate_engine, Seeded(people.a, client_id, (), address)) == address
+
+    with jobs_as_the_worker():
+        run("email.booking")
+
+    assert sent_to(address) == []

@@ -373,9 +373,10 @@ LINKED = frozenset({"booking_received", "booking_confirmed", "booking_reminder"}
 # owed, and a refund that failed (sent to no one else: a live client's is the business's to follow
 # up). None carries a manage link. Every other email to an erased client is skipped.
 HOLD_TEMPLATES = frozenset({"booking_cancelled", "booking_expired", "booking_refund_failed"})
-# The reasons an erasure gives the bookings it cancels (an owner's erasure, an account deletion, a
-# re-applied erasure; 0064's ERASURE_REASONS).
-ERASURE_REASONS = ("client_erased", "account_erased", "erasure_reapplied")
+# The reasons of the erasures whose cancellations the client is told of: an owner's erasure and an
+# account deletion (0064's ERASURE_REASONS but erasure_reapplied: after a restore the client was
+# told at the original erasure, so a re-apply never mails again).
+ERASURE_REASONS = ("client_erased", "account_erased")
 # A hold past its purge date is no hold, purged or not; the business named as well as the policy.
 # A cancellation goes through it when the erasure made it, or when it was made before the erasure
 # (the team's, while the client was live, its mail still queued): the person's to hear of. The team
