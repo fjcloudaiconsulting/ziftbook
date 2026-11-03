@@ -340,7 +340,8 @@ def pass_second_factor(body: CodeIn, current: HalfAdmin, request: Request) -> Ad
             raise ApiError(401, "unauthenticated")
         step = totp.matching_step(s, typed, datetime.now(UTC))
         with SessionLocal.begin() as session:
-            outcome, since_pass = session.execute(
+            # reported: the failures since the last pass when it passed, the count now when not.
+            outcome, reported = session.execute(
                 text("SELECT outcome, failures FROM check_second_factor(:id, :charge, :p, :step)"),
                 {"id": id_hash, "charge": charge, "p": totp.proof(s), "step": step},
             ).one()
@@ -350,15 +351,16 @@ def pass_second_factor(body: CodeIn, current: HalfAdmin, request: Request) -> Ad
                     request,
                     "second_factor_passed",
                     actor_user_id=current.user_id,
-                    details={"method": "totp", "failed_since_last": since_pass},
+                    details={"method": "totp", "failed_since_last": reported},
                 )
-                if since_pass:
+                if reported:
                     logger.warning(
-                        "second factor passed after failures", extra={"failures": since_pass}
+                        "second factor passed after failures", extra={"failures": reported}
                     )
             elif outcome == "failed":
-                # failures: this attempt's own count, from its charge. The check's is the count now,
-                # which other attempts still in flight may have raised.
+                # failures: this attempt's own count, from its charge, for the audit and the line.
+                # The count now differs when other attempts are in flight: their charges raise it,
+                # their passes lower it.
                 # The charge already counted it, and its attempt event is committed. Logged before
                 # the commit: a check cut off after it answered still leaves this line.
                 logger.warning(
@@ -373,7 +375,9 @@ def pass_second_factor(body: CodeIn, current: HalfAdmin, request: Request) -> Ad
                     details={"method": "totp", "failures": failures},
                 )
                 error = ApiError(401, "invalid_code")
-                if failures >= 10:
+                # Locked only when this attempt made it 10 and no pass has given one back since:
+                # past 10 no charge succeeds, so both at 10 means this code locked it.
+                if failures >= 10 and reported >= 10:
                     admin.record(
                         session,
                         request,
