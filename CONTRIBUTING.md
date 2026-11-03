@@ -339,6 +339,25 @@ that person's platform account (ZIF-99).
   DEFINER function the app role can execute, and the views over `users`, so widening any of them is a deliberate
   test change.
 
+## Erasure operations
+
+### The erasure ledger
+
+A restore rewinds the database, so every erasure made after the restore point would come back, its `client_erased`
+audit event with it. The erasure ledger (`app/ledger.py`, ZIF-58) keeps the record where a restore cannot reach: one
+object per erasure in a dedicated bucket (`ZIF_ERASURE_LEDGER_*`), keyed
+`erasures/<yyyy>/<mm>/<dd>/<erased_at>-client-<client id>.json`, holding `v`, `kind`, `tenant_id`, `client_id` and
+`erased_at` and nothing else: never a name, an address or anything a person typed.
+
+- An erasure calls `ledger.enqueue(db, tenant_id, client_id, erased_at)` in its own transaction (an outbox: the entry
+  exists only for an erasure that committed). The worker's `erasure.ledger` job writes the entry. The key is
+  deterministic and the write is conditional, so a repeat, a racing run, or the bucket lock refusing an overwrite is
+  success when the entry is there.
+- No synchronous write: it would hold an outbound call under the tenant booking lock. The residual window is an
+  erasure committed but not yet ledgered (normally seconds) followed by the loss of the database.
+- Retention: the bucket lock keeps every entry for at least the longest backup or point-in-time window plus a margin
+  (35 days of backups means 42 days of ledger), and a lifecycle rule deletes it after that (storage limitation).
+
 ## Bookings
 
 A booking holds one worker for one interval, and **the database is what makes that exclusive** (`ex_bookings_worker_overlap`,
@@ -611,6 +630,8 @@ Deferred and scheduled work goes through the `jobs` table (`app/jobs.py`); there
 - Register a kind as `JobKind(handler, timeout, grace)`: `timeout` in seconds under 60 (the claim lease), `grace`
   longer than the retry backoff (about 15 minutes, five attempts), after which an overdue job is skipped.
 - A new kind ships in one release and is enqueued from the next, so workers that don't know it yet never see it.
+- `erasure.ledger` (ZIF-58) writes an erasure's ledger entry ("Erasure operations"); a given-up one is an ERROR
+  (`job gave up`, alerted), and the entry is re-written by `python -m app.ledger backfill`.
 - Booking emails (`email.booking`) are gated by the booking's status at SEND time, not at enqueue time: the handler
   re-reads the booking and skips silently if its status no longer matches the template (ZIF-53).
 - Enqueue a booking email in the same transaction as the status change it announces, so a rollback drops the job with
@@ -643,7 +664,8 @@ loggers (`web.*`); Next's own stderr output (banners, SSR error traces) is not i
   found more than an hour past its purge date, so the worker was down or the purge kept failing);
   `sweep failed` (ERROR, `sweep` `holds` or `bookings`, with `exc`: the worker's two sweeps run whatever the other
   did, and either failing withholds the ping); `business sweep failed` (ERROR, `sweep`, `tenant_id`, with `exc`: one
-  business failed in a sweep, which went on to the next and then raised); `email sent` (INFO) and
+  business failed in a sweep, which went on to the next and then raised); `erasure ledgered` (INFO, `client_id`,
+  `written`: false when the entry was there already); `email sent` (INFO) and
   `email failed` (WARNING) with `template` (and `error` on failure) plus the job context, and
   `email skipped` (INFO, `template`, `reason` `recipient_quota`, or `no_hold` for an erased client's
   `booking_refund_failed` whose hold is gone, from the worker's send);
@@ -918,13 +940,17 @@ ZIF-38). An empty variable means the default: `env_ignore_empty=True` on the bas
 | `ZIF_MAILPIT_URL` | worker | none | no (development only) | no | Mailpit's base URL; with no Mailgun key, mail goes to its HTTP send API. Never SMTP. |
 | `ZIF_APP_URL` | api, worker | `http://localhost:3000` | yes | no | The public web URL: where links in emails point (worker) and where Stripe sends an owner back after onboarding, and the Apple Pay domain (api). Must be the public web URL in production, on both. |
 | **Photo storage** | | | | | |
-| `ZIF_S3_ENDPOINT` | api, worker, frontend | `""` | for photos | no | The S3-compatible API (production and staging: the R2 account endpoint, `https://<account>.eu.r2.cloudflarestorage.com`; compose: SeaweedFS). No default in code. While any of the first six variables here is unset the API logs a WARNING at startup (`storage: "off"`) and answers 503 `photos_unavailable` to a photo; startup never fails over it. The web app allows uploads to its origin in the pages' Content-Security-Policy (ZB-12) unless `ZIF_S3_PUBLIC_ENDPOINT` is set: give it the API's value. |
+| `ZIF_S3_ENDPOINT` | api, worker, frontend, ledger CLI | `""` | for photos | no | The S3-compatible API (production and staging: the R2 account endpoint, `https://<account>.eu.r2.cloudflarestorage.com`; compose: SeaweedFS). No default in code. While any of the first six variables here is unset the API logs a WARNING at startup (`storage: "off"`) and answers 503 `photos_unavailable` to a photo; startup never fails over it. The web app allows uploads to its origin in the pages' Content-Security-Policy (ZB-12) unless `ZIF_S3_PUBLIC_ENDPOINT` is set: give it the API's value. |
 | `ZIF_S3_UPLOADS_BUCKET` | api | `""` | for photos | no | Where the browser PUTs the original (presigned, 5 minutes). Nothing deletes from it: give it a 1-day lifecycle rule and a CORS rule allowing PUT with `content-type` from the web app's origin. |
 | `ZIF_S3_MEDIA_BUCKET` | api, worker | `""` | for photos | no | Where the resized variants are written, served publicly from `ZIF_MEDIA_URL`. |
 | `ZIF_S3_ACCESS_KEY_ID` | api, worker | `""` | for photos | no | Access key id for both buckets. |
 | `ZIF_S3_SECRET_ACCESS_KEY` | api, worker | `""` | for photos | yes | Its secret. |
 | `ZIF_MEDIA_URL` | api, frontend | `""` | for photos | no | Where the media bucket is served from (a custom domain origin, no trailing slash needed); photo URLs start with it. Unset: services list no photo. The web app allows images from its origin in the pages' Content-Security-Policy (ZB-12), read per request; give it the API's value. |
 | `ZIF_S3_PUBLIC_ENDPOINT` | api, frontend | `""` | no (development only) | no | The host the browser reaches the store on, when `ZIF_S3_ENDPOINT` is a compose service name; presigned upload URLs use it, and the web app's Content-Security-Policy allows uploads to it. Never set in a deployment. |
+| **Erasure ledger** | | | | | |
+| `ZIF_ERASURE_LEDGER_BUCKET` | api (presence only), worker, ledger CLI | `""` | yes | no | The dedicated bucket of the erasure ledger (ZIF-58, "Erasure operations"), on `ZIF_S3_ENDPOINT`. Give it a bucket lock rule for the ledger's retention (at least the longest backup or point-in-time window, plus a margin) and a lifecycle rule that deletes entries after it. Unset outside localhost (`ZIF_APP_URL`): erasure answers 503 `erasure_unavailable`, so no deployment erases without a ledger. |
+| `ZIF_ERASURE_LEDGER_ACCESS_KEY_ID` | worker, ledger CLI | `""` | yes | no | Access key id for the ledger bucket only: the worker's may write objects (and `backfill`'s), the operator's `reapply` pod's may only read them. Never the photo buckets' key. |
+| `ZIF_ERASURE_LEDGER_SECRET_ACCESS_KEY` | worker, ledger CLI | `""` | yes | yes | Its secret. |
 | **Payments** | | | | | |
 | `ZIF_STRIPE_SECRET_KEY` | api, worker | `""` | for payments | yes | Stripe secret key (`sk_...`), for the platform account that owns the Connect accounts. The worker needs only this one (events, and later releases and refunds). Unset (any of the three): payments off, booking pages book without a payment step, WARNING at startup (`payments: "off"`). |
 | `ZIF_STRIPE_WEBHOOK_SECRET` | api | `""` | for payments | yes | Signing secret (`whsec_...`) of the Connect webhook endpoint `/api/stripe/webhook`. Unset (any of the three): payments off, booking pages book without a payment step, WARNING at startup (`payments: "off"`). |
