@@ -221,6 +221,10 @@ DEFINERS = [
     "public.begin_totp_enrolment(p_id_hash bytea, p_ticket_proof bytea, p_secret_ct bytea, p_proof bytea)",  # noqa: E501
     # ZIF-102: changes only the caller's business's currency; reads and writes nothing of a user.
     "public.change_currency(p_currency text, p_confirmed_prices integer)",
+    "public.charge_second_factor(p_id_hash bytea)",
+    "public.charge_totp_enrolment(p_id_hash bytea)",
+    "public.check_second_factor(p_id_hash bytea, p_charge uuid, p_proof bytea, p_step bigint)",
+    "public.check_totp_enrolment(p_id_hash bytea, p_charge uuid, p_proof bytea, p_step bigint, p_code_proofs bytea[])",  # noqa: E501
     "public.complete_account_sign_up(p_token_hash bytea, p_password_hash text, p_name text, p_phone text)",  # noqa: E501
     "public.complete_password_reset(p_token_hash bytea, p_password_hash text)",
     "public.complete_setup(p_email text, p_password_hash text, p_name text, p_locale text)",

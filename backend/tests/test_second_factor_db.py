@@ -1,6 +1,8 @@
 """ZIF-71: second_factors and its definer functions (migration 0039), at the database level.
 
-Calls run as the app role unless noted. "As migrate" reads stand for a dump or an operator.
+Calls run as the app role unless noted. "As migrate" reads stand for a dump or an operator. A TOTP
+code is sent as the API sends it since ZIF-261 (0083): charged in a transaction of its own, then
+checked in another.
 """
 
 import hashlib
@@ -10,6 +12,7 @@ import threading
 import uuid
 from dataclasses import dataclass
 from datetime import timedelta
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -31,9 +34,17 @@ from tests.conftest import (
 # A fixed argon2 string: start_admin_session only compares it with the stored one.
 HASH = "$argon2id$v=19$m=19456,t=2,p=1$c2FsdHNhbHQ$aGFzaGhhc2hoYXNoaGFzaA"
 NOW_STEP = "floor(extract(epoch FROM now()) / 30)::bigint"
+# 0069's one-transaction pass, which the release before ZIF-261 calls.
 PASS = text("SELECT outcome, failures FROM pass_second_factor(:id, :p, :step)")
+CHARGE = text("SELECT outcome, failures, charge FROM charge_second_factor(:id)")
+CHECK = text("SELECT outcome, failures FROM check_second_factor(:id, :charge, :p, :step)")
 BEGIN = text("SELECT begin_totp_enrolment(:id, :ticket, :ct, :p)")
+# 0069's one-transaction confirm, which the release before ZIF-261 calls.
 CONFIRM = text(f"SELECT outcome, failures FROM confirm_totp_enrolment(:id, :p, {NOW_STEP}, :codes)")
+CHARGE_ENROLMENT = text("SELECT outcome, failures, charge FROM charge_totp_enrolment(:id)")
+CHECK_ENROLMENT = text(
+    f"SELECT outcome, failures FROM check_totp_enrolment(:id, :charge, :p, {NOW_STEP}, :codes)"
+)
 RECOVER = text("SELECT codes_left, was_locked FROM use_recovery_code(:id, :p)")
 TICKET = re.compile(r"[A-Z2-7]{4}(?:-[A-Z2-7]{4}){3}")
 
@@ -93,14 +104,43 @@ def begin(app_engine: Engine, id_hash: bytes, proof: bytes, user_id: uuid.UUID, 
     return str(row[0])
 
 
-def pass_(app_engine: Engine, id_hash: bytes, proof: bytes, step: int | None) -> tuple[str, int]:
-    row = call(app_engine, PASS, id=id_hash, p=proof, step=step)
+def charge(app_engine: Engine, id_hash: bytes) -> tuple[str, int, uuid.UUID | None]:
+    """charge_second_factor, committed: (outcome, failures, the charge)."""
+    row = call(app_engine, CHARGE, id=id_hash)
+    return (row[0], row[1], row[2])
+
+
+def check(
+    app_engine: Engine, id_hash: bytes, charged: uuid.UUID | None, proof: bytes, step: int | None
+) -> tuple[str, int]:
+    row = call(app_engine, CHECK, id=id_hash, charge=charged, p=proof, step=step)
     return (row[0], row[1])
+
+
+def pass_(app_engine: Engine, id_hash: bytes, proof: bytes, step: int | None) -> tuple[str, int]:
+    """One code, as the API sends it: charged and committed, then checked. A charge that answers
+    locked or none is the answer."""
+    outcome, failures, charged = charge(app_engine, id_hash)
+    if outcome != "charged":
+        return (outcome, failures)
+    return check(app_engine, id_hash, charged, proof, step)
 
 
 def recover(app_engine: Engine, id_hash: bytes, proof: bytes) -> tuple[int, bool] | None:
     row = call(app_engine, RECOVER, id=id_hash, p=proof)
     return None if row is None else (row[0], row[1])
+
+
+def confirm(
+    app_engine: Engine, id_hash: bytes, proof: bytes, codes: list[bytes]
+) -> tuple[str, int]:
+    """An enrolment confirm code at the database's current step, as the API sends it: charged and
+    committed, then checked. A charge that answers locked or none is the answer."""
+    outcome, failures, charged = call(app_engine, CHARGE_ENROLMENT, id=id_hash)
+    if outcome != "charged":
+        return (outcome, failures)
+    row = call(app_engine, CHECK_ENROLMENT, id=id_hash, charge=charged, p=proof, codes=codes)
+    return (row[0], row[1])
 
 
 def factor(migrate_engine: Engine, user_id: uuid.UUID) -> dict[str, Any]:
@@ -162,8 +202,7 @@ def enrolled(app_engine: Engine, migrate_engine: Engine) -> Enrolled:
     s = totp.new_secret()
     assert begin(app_engine, session, ticket_proof(ticket), user_id, s) == "begun"
     codes = [totp.new_code() for _ in range(10)]
-    row = call(app_engine, CONFIRM, id=session, p=totp.proof(s), codes=code_proofs(codes))
-    assert tuple(row) == ("enrolled", 0)
+    assert confirm(app_engine, session, totp.proof(s), code_proofs(codes)) == ("enrolled", 0)
     return Enrolled(user_id, session, s, codes)
 
 
@@ -349,8 +388,9 @@ def test_a_step_is_accepted_once(app_engine: Engine, migrate_engine: Engine) -> 
     assert session_factor(migrate_engine, second) is None
 
 
-# fence: two submissions of one code at once pass once. Kills a read without FOR UPDATE (both see
-# the old last_step). Injected by deleting FOR UPDATE.
+# fence: two submissions of one code at once pass once. Kills a check that reads without FOR UPDATE
+# (both see the old last_step). Injected by deleting FOR UPDATE from check_second_factor. Both are
+# charged before either is checked, so the pass reports the other, still in flight (ZIF-261).
 def test_concurrent_submissions_of_one_code_pass_once(
     app_engine: Engine, migrate_engine: Engine
 ) -> None:
@@ -359,17 +399,16 @@ def test_concurrent_submissions_of_one_code_pass_once(
     step = next_step(migrate_engine, e.user_id)
     first = half_session(app_engine, migrate_engine, e.user_id)
     second = half_session(app_engine, migrate_engine, e.user_id)
+    charges = [charge(app_engine, session)[2] for session in (first, second)]
     results: list[Any] = []
 
     def submit() -> None:
-        results.append(pass_(app_engine, second, proof, step))
+        results.append(check(app_engine, second, charges[1], proof, step))
 
     with app_engine.connect() as conn1:
         tx = conn1.begin()
-        assert tuple(conn1.execute(PASS, {"id": first, "p": proof, "step": step}).one()) == (
-            "passed",
-            0,
-        )
+        row = conn1.execute(CHECK, {"id": first, "charge": charges[0], "p": proof, "step": step})
+        assert tuple(row.one()) == ("passed", 1)
         thread = threading.Thread(target=submit)
         thread.start()
         wait_until_blocked(migrate_engine, 1)
@@ -392,9 +431,10 @@ def test_steps_outside_the_window_are_refused(
             text("UPDATE second_factors SET last_step = 0 WHERE user_id = :u"), {"u": e.user_id}
         )
     before = factor(migrate_engine, e.user_id)["last_step"]
-    sql = text(f"SELECT outcome FROM pass_second_factor(:id, :p, {NOW_STEP} + :ahead)")
+    sql = text(f"SELECT outcome FROM check_second_factor(:id, :c, :p, {NOW_STEP} + :ahead)")
+    charged = charge(app_engine, session)[2]
 
-    row = call(app_engine, sql, id=session, p=totp.proof(e.secret), ahead=ahead)
+    row = call(app_engine, sql, id=session, c=charged, p=totp.proof(e.secret), ahead=ahead)
 
     assert row[0] == "failed"
     assert factor(migrate_engine, e.user_id)["last_step"] == before
@@ -502,7 +542,7 @@ def test_confirm_uses_up_the_ticket_and_ends_other_sessions(
     assert begin(app_engine, session, ticket_proof(ticket), user_id, s) == "begun"
     codes = code_proofs([totp.new_code() for _ in range(10)])
 
-    row = call(app_engine, CONFIRM, id=session, p=totp.proof(s), codes=codes)
+    row = confirm(app_engine, session, totp.proof(s), codes)
 
     assert tuple(row) == ("enrolled", 0)
     stored = factor(migrate_engine, user_id)
@@ -524,10 +564,10 @@ def test_confirm_counts_failures(app_engine: Engine, migrate_engine: Engine) -> 
     assert begin(app_engine, session, ticket_proof(ticket), user_id, s) == "begun"
     codes = code_proofs([totp.new_code() for _ in range(10)])
     for n in range(1, 11):
-        row = call(app_engine, CONFIRM, id=session, p=wrong(), codes=codes)
+        row = confirm(app_engine, session, wrong(), codes)
         assert tuple(row) == ("failed", n)
 
-    row = call(app_engine, CONFIRM, id=session, p=totp.proof(s), codes=codes)
+    row = confirm(app_engine, session, totp.proof(s), codes)
 
     assert tuple(row) == ("locked", 10)
     assert factor(migrate_engine, user_id)["confirmed_at"] is None
@@ -674,9 +714,9 @@ def test_an_anchor_ahead_of_now_leaks_nothing(app_engine: Engine, migrate_engine
     assert pass_(app_engine, session, wrong(), None) == ("failed", 4)
 
 
-# fence (ZIF-234): two wrong codes at once both count. Kills a read of the count without the row
+# fence (ZIF-234): two codes at once both count. Kills a charge that reads the count without the row
 # lock (the second writes the count it read before the first committed: a lost update). Injected
-# by deleting FOR UPDATE.
+# by deleting FOR UPDATE from charge_second_factor.
 def test_concurrent_wrong_codes_both_count(app_engine: Engine, migrate_engine: Engine) -> None:
     e = enrolled(app_engine, migrate_engine)
     first = half_session(app_engine, migrate_engine, e.user_id)
@@ -684,19 +724,19 @@ def test_concurrent_wrong_codes_both_count(app_engine: Engine, migrate_engine: E
     results: list[Any] = []
 
     def submit() -> None:
-        results.append(pass_(app_engine, second, wrong(), None))
+        results.append(charge(app_engine, second)[:2])
 
     with app_engine.connect() as conn1:
         tx = conn1.begin()
-        row = conn1.execute(PASS, {"id": first, "p": wrong(), "step": None}).one()
-        assert tuple(row) == ("failed", 1)
+        row = conn1.execute(CHARGE, {"id": first}).one()
+        assert tuple(row)[:2] == ("charged", 1)
         thread = threading.Thread(target=submit)
         thread.start()
         wait_until_blocked(migrate_engine, 1)
         tx.commit()
     thread.join(10)
 
-    assert results == [("failed", 2)]
+    assert results == [("charged", 2)]
     stored = factor(migrate_engine, e.user_id)
     assert (stored["failed_attempts"], stored["failures_since_pass"]) == (2, 2)
 
@@ -726,7 +766,8 @@ def test_passed_reports_the_failures_since_the_last_pass(
 
 # fence (ZIF-234): a pass leaves the leak anchor alone. Kills a pass that restarts the leak (a
 # slower leak for an admin who passes often). Injected by adding `failures_leaked_at = now()` to
-# the pass's UPDATE.
+# the pass's UPDATE. Counted first (ZIF-261), the attempt's charge takes the leak due by now, which
+# the pass then keeps: the whole interval gone, its remainder still running.
 def test_a_pass_leaves_the_leak_alone(app_engine: Engine, migrate_engine: Engine) -> None:
     e = enrolled(app_engine, migrate_engine)
     session = half_session(app_engine, migrate_engine, e.user_id)
@@ -736,8 +777,8 @@ def test_a_pass_leaves_the_leak_alone(app_engine: Engine, migrate_engine: Engine
     assert pass_(app_engine, session, totp.proof(e.secret), step) == ("passed", 5)
 
     age = anchor_age(migrate_engine, e.user_id)
-    assert age is not None and abs(age - (LEAK + timedelta(hours=7))) < ABOUT
-    assert factor(migrate_engine, e.user_id)["failed_attempts"] == 5
+    assert age is not None and abs(age - timedelta(hours=7)) < ABOUT
+    assert factor(migrate_engine, e.user_id)["failed_attempts"] == 4
     assert pass_(app_engine, session, wrong(), None) == ("failed", 5)
 
 
@@ -795,7 +836,7 @@ def test_a_new_enrolment_starts_with_no_failures(
     assert begin(app_engine, session, ticket_proof(ticket), e.user_id, s) == "begun"
     codes = code_proofs([totp.new_code() for _ in range(10)])
 
-    row = call(app_engine, CONFIRM, id=session, p=totp.proof(s), codes=codes)
+    row = confirm(app_engine, session, totp.proof(s), codes)
 
     assert tuple(row) == ("enrolled", 0)
     stored = factor(migrate_engine, e.user_id)
@@ -825,3 +866,462 @@ def test_the_failure_columns_hold_sane_values(
             text(f"UPDATE second_factors SET {assignment} WHERE user_id = :u"), {"u": e.user_id}
         )
     assert isinstance(error.value.orig, CheckViolation)
+
+
+def charges_of(migrate_engine: Engine, user_id: uuid.UUID) -> list[uuid.UUID]:
+    found: list[uuid.UUID] = factor(migrate_engine, user_id)["charges"]
+    return found
+
+
+# fence (ZIF-261, the attack): an attempt is counted in a transaction of its own before its code is
+# looked at, so a check cut off before its commit, rolled back or its backend terminated (which the
+# app role can do to its own backends), still leaves the count, and ten of them lock. Kills a count
+# taken inside the check's transaction. Injected by moving the `+ 1` from charge_second_factor into
+# check_second_factor's failure branch.
+@pytest.mark.parametrize("cut", ["rollback", "terminate"])
+def test_a_check_cut_off_before_its_commit_still_counts(
+    app_engine: Engine, migrate_engine: Engine, cut: str
+) -> None:
+    e = enrolled(app_engine, migrate_engine)
+    session = half_session(app_engine, migrate_engine, e.user_id)
+    for n in range(1, 11):
+        outcome, failures, charged = charge(app_engine, session)
+        assert (outcome, failures) == ("charged", n)
+        conn = app_engine.connect()
+        try:
+            conn.begin()
+            pid = conn.scalar(text("SELECT pg_backend_pid()"))
+            row = conn.execute(
+                CHECK, {"id": session, "charge": charged, "p": wrong(), "step": None}
+            ).one()
+            assert tuple(row) == ("failed", n)
+            if cut == "rollback":
+                conn.rollback()
+            else:
+                with app_engine.connect() as killer:
+                    assert killer.scalar(
+                        text("SELECT pg_terminate_backend(:pid, 5000)"), {"pid": pid}
+                    )
+                conn.invalidate()
+        finally:
+            conn.close()
+        assert factor(migrate_engine, e.user_id)["failed_attempts"] == n
+
+    assert charge(app_engine, session)[:2] == ("locked", 10)
+    step = reopen_steps(migrate_engine, e.user_id)
+    assert pass_(app_engine, session, totp.proof(e.secret), step) == ("locked", 10)
+
+
+# fence (ZIF-261): a check needs a live charge of this admin, made and not yet checked, or it looks
+# at nothing, the right code included. Kills a check that passes without a charge (an uncounted
+# attempt), with another admin's, or after it expired. Injected by deleting the charge test, then by
+# dropping its NULL guard (coalesce), then by deleting the age test. "forged": a live uuidv7 the
+# app role minted itself.
+@pytest.mark.parametrize("which", ["none", "made_up", "forged", "expired", "other_admin"])
+def test_a_check_needs_its_own_live_charge(
+    app_engine: Engine, migrate_engine: Engine, which: str
+) -> None:
+    e = enrolled(app_engine, migrate_engine)
+    session = half_session(app_engine, migrate_engine, e.user_id)
+    set_failures(migrate_engine, e.user_id, 3, timedelta(hours=1))
+    charge(app_engine, session)  # another attempt in flight: there is a live charge to confuse
+    charged: uuid.UUID | None = None
+    if which == "made_up":
+        charged = uuid.uuid4()
+    elif which == "forged":
+        with app_engine.begin() as conn:
+            charged = conn.scalar(text("SELECT uuidv7()"))
+    elif which == "expired":
+        with migrate_engine.begin() as conn:
+            charged = conn.scalar(
+                text(
+                    "UPDATE second_factors SET charges = charges || uuidv7(- interval '121 s') "
+                    "WHERE user_id = :u RETURNING charges[2]"
+                ),
+                {"u": e.user_id},
+            )
+    elif which == "other_admin":
+        other = enrolled(app_engine, migrate_engine)
+        charged = charge(app_engine, half_session(app_engine, migrate_engine, other.user_id))[2]
+    step = next_step(migrate_engine, e.user_id)
+
+    assert check(app_engine, session, charged, totp.proof(e.secret), step) == ("none", 0)
+
+    assert session_factor(migrate_engine, session) is None
+    assert factor(migrate_engine, e.user_id)["failed_attempts"] == 4
+    assert pass_(app_engine, session, totp.proof(e.secret), step) == ("passed", 1)  # the control
+
+
+# fence (ZIF-261): a charge lives 2 minutes. Kills a longer or shorter life. Injected by
+# '2 minutes' -> '3 minutes', then -> '1 minute'.
+def test_a_charge_lives_two_minutes(app_engine: Engine, migrate_engine: Engine) -> None:
+    e = enrolled(app_engine, migrate_engine)
+    session = half_session(app_engine, migrate_engine, e.user_id)
+    with migrate_engine.begin() as conn:
+        young, old = conn.execute(
+            text(
+                "UPDATE second_factors SET charges = ARRAY[uuidv7(- interval '110 seconds'), "
+                "uuidv7(- interval '130 seconds')] WHERE user_id = :u "
+                "RETURNING charges[1], charges[2]"
+            ),
+            {"u": e.user_id},
+        ).one()
+
+    assert check(app_engine, session, old, wrong(), None) == ("none", 0)
+    assert check(app_engine, session, young, wrong(), None) == ("failed", 0)
+
+
+# fence (ZIF-261): a charge is checked once, so a pass gives back one attempt, once. Kills a check
+# that leaves its charge behind (a second pass with it refunds again). Injected by deleting the
+# array_remove from the pass branch, then from the failure branch.
+def test_a_charge_is_checked_once(app_engine: Engine, migrate_engine: Engine) -> None:
+    e = enrolled(app_engine, migrate_engine)
+    proof = totp.proof(e.secret)
+    session = half_session(app_engine, migrate_engine, e.user_id)
+    set_failures(migrate_engine, e.user_id, 5, timedelta(hours=1))
+    _, _, passed = charge(app_engine, session)
+    _, _, failed = charge(app_engine, session)
+
+    # 1: the other attempt, still in flight, counts as a failure since the last pass.
+    assert check(app_engine, session, passed, proof, next_step(migrate_engine, e.user_id)) == (
+        "passed",
+        1,
+    )
+    assert check(app_engine, session, failed, wrong(), None) == ("failed", 6)
+    for used in (passed, failed):
+        step = reopen_steps(migrate_engine, e.user_id)
+        assert check(app_engine, session, used, proof, step) == ("none", 0)
+
+    assert factor(migrate_engine, e.user_id)["failed_attempts"] == 6
+    assert charges_of(migrate_engine, e.user_id) == []
+
+
+# fence (ZIF-261): a pass gives back its own charge only; attempts cut off before their check stay
+# counted. Kills a pass that clears every charge or the whole count. Injected by `charges = '{}'`
+# with `failed_attempts - cardinality(charges)` in the pass branch.
+def test_a_pass_gives_back_only_its_own_charge(app_engine: Engine, migrate_engine: Engine) -> None:
+    e = enrolled(app_engine, migrate_engine)
+    session = half_session(app_engine, migrate_engine, e.user_id)
+    cut_off = [charge(app_engine, session)[2] for _ in range(3)]  # never checked
+    _, failures, own = charge(app_engine, session)
+    assert failures == 4
+
+    step = next_step(migrate_engine, e.user_id)
+    assert check(app_engine, session, own, totp.proof(e.secret), step) == ("passed", 3)
+
+    assert factor(migrate_engine, e.user_id)["failed_attempts"] == 3
+    assert charges_of(migrate_engine, e.user_id) == cut_off
+
+
+# fence (ZIF-261): the lock is decided at the charge: at 10 a charge counts nothing and answers
+# locked, while the attempt that made it 10 is still checked, as the 10th code always was. Kills a
+# charge past the lock, or a check that refuses its own 10th. Injected by deleting the `>= 10` test
+# in charge_second_factor, then by adding it to check_second_factor.
+def test_the_lock_is_decided_at_the_charge(app_engine: Engine, migrate_engine: Engine) -> None:
+    e = enrolled(app_engine, migrate_engine)
+    session = half_session(app_engine, migrate_engine, e.user_id)
+    set_failures(migrate_engine, e.user_id, 9, timedelta(hours=1))
+    _, failures, tenth = charge(app_engine, session)
+    assert failures == 10
+
+    assert charge(app_engine, session) == ("locked", 10, None)
+    assert len(charges_of(migrate_engine, e.user_id)) == 1
+
+    step = next_step(migrate_engine, e.user_id)
+    assert check(app_engine, session, tenth, totp.proof(e.secret), step) == ("passed", 0)
+    assert factor(migrate_engine, e.user_id)["failed_attempts"] == 9
+
+
+# fence (ZIF-261): a charge drops the expired ones, so charges of checks that never came do not
+# pile up. Kills a list that only grows. Injected by deleting the filter on the kept charges.
+def test_a_charge_drops_expired_charges(app_engine: Engine, migrate_engine: Engine) -> None:
+    e = enrolled(app_engine, migrate_engine)
+    session = half_session(app_engine, migrate_engine, e.user_id)
+    with migrate_engine.begin() as conn:
+        young = conn.scalar(
+            text(
+                "UPDATE second_factors SET charges = ARRAY[uuidv7(- interval '1 hour'), "
+                "uuidv7(- interval '10 seconds')] WHERE user_id = :u RETURNING charges[2]"
+            ),
+            {"u": e.user_id},
+        )
+
+    _, _, made = charge(app_engine, session)
+
+    assert charges_of(migrate_engine, e.user_id) == [young, made]
+
+
+# fence (ZIF-261): a recovery code that lifts a lock leaves 9 and voids the attempts in flight, so
+# none of their passes gives back an attempt the 9 already forgot. Kills charges kept across the
+# lift (a pass then refunds below 9: one more guess). Injected by deleting the CASE on charges in
+# use_recovery_code.
+def test_a_recovery_code_off_a_lock_voids_the_charges(
+    app_engine: Engine, migrate_engine: Engine
+) -> None:
+    e = enrolled(app_engine, migrate_engine)
+    session = half_session(app_engine, migrate_engine, e.user_id)
+    set_failures(migrate_engine, e.user_id, 9, timedelta(hours=1))
+    _, failures, in_flight = charge(app_engine, session)
+    assert failures == 10
+
+    assert recover(app_engine, session, code_proofs(e.codes)[0]) == (9, True)
+
+    step = next_step(migrate_engine, e.user_id)
+    assert check(app_engine, session, in_flight, totp.proof(e.secret), step) == ("none", 0)
+    assert factor(migrate_engine, e.user_id)["failed_attempts"] == 9
+    assert charges_of(migrate_engine, e.user_id) == []
+
+
+# guard (ZIF-261): a recovery code with no lock leaves the count, so the attempts in flight keep
+# their charges and a pass gives back its own, exactly.
+def test_a_recovery_code_off_lock_keeps_the_charges(
+    app_engine: Engine, migrate_engine: Engine
+) -> None:
+    e = enrolled(app_engine, migrate_engine)
+    session = half_session(app_engine, migrate_engine, e.user_id)
+    set_failures(migrate_engine, e.user_id, 3, timedelta(hours=1))
+    _, _, in_flight = charge(app_engine, session)
+
+    assert recover(app_engine, session, code_proofs(e.codes)[0]) == (9, False)
+
+    step = next_step(migrate_engine, e.user_id)
+    assert check(app_engine, session, in_flight, totp.proof(e.secret), step) == ("passed", 0)
+    assert factor(migrate_engine, e.user_id)["failed_attempts"] == 3
+
+
+def plant_charge(migrate_engine: Engine, user_id: uuid.UUID) -> uuid.UUID:
+    """As migrate: a live charge on the row, as an attempt in flight leaves one."""
+    with migrate_engine.begin() as conn:
+        planted: uuid.UUID = conn.scalar(
+            text(
+                "UPDATE second_factors SET charges = charges || uuidv7() WHERE user_id = :u "
+                "RETURNING charges[cardinality(charges)]"
+            ),
+            {"u": user_id},
+        )
+    return planted
+
+
+# fence (ZIF-261): every reset of the secret or the count voids the attempts in flight: the CLI's
+# new ticket, beginning an enrolment and confirming one. A charge made before must never be checked
+# after: against the new secret, or as a failure the reset already forgot (an uncounted attempt).
+# Kills a reset that keeps the charges. Injected by deleting `charges = '{}'` from ISSUE_TICKET,
+# then from begin_totp_enrolment, then from check_totp_enrolment, then from 0069's
+# confirm_totp_enrolment (the release before ZIF-261 still confirms with it).
+@pytest.mark.parametrize("reset", ["cli", "begin", "confirm", "confirm_0069"])
+def test_a_reset_voids_the_charges(app_engine: Engine, migrate_engine: Engine, reset: str) -> None:
+    if reset == "cli":
+        e = enrolled(app_engine, migrate_engine)
+        _, _, before = charge(app_engine, half_session(app_engine, migrate_engine, e.user_id))
+        ticket = issue_ticket(e.user_id)
+        assert charges_of(migrate_engine, e.user_id) == []
+        # The whole way back, within the charge's 2 minutes: it is refused, never a check.
+        session = half_session(app_engine, migrate_engine, e.user_id)
+        s = totp.new_secret()
+        assert begin(app_engine, session, ticket_proof(ticket), e.user_id, s) == "begun"
+        codes = code_proofs([totp.new_code() for _ in range(10)])
+        assert confirm(app_engine, session, totp.proof(s), codes) == ("enrolled", 0)
+        assert check(app_engine, session, before, wrong(), None) == ("none", 0)
+        return
+    user_id = new_admin(migrate_engine)
+    ticket = issue_ticket(user_id)
+    session = half_session(app_engine, migrate_engine, user_id)
+    s = totp.new_secret()
+    if reset == "begin":
+        plant_charge(migrate_engine, user_id)
+        assert begin(app_engine, session, ticket_proof(ticket), user_id, s) == "begun"
+    else:
+        assert begin(app_engine, session, ticket_proof(ticket), user_id, s) == "begun"
+        plant_charge(migrate_engine, user_id)
+        codes = code_proofs([totp.new_code() for _ in range(10)])
+        if reset == "confirm":
+            assert confirm(app_engine, session, totp.proof(s), codes) == ("enrolled", 0)
+        else:
+            row = call(app_engine, CONFIRM, id=session, p=totp.proof(s), codes=codes)
+            assert tuple(row) == ("enrolled", 0)
+    assert charges_of(migrate_engine, user_id) == []
+
+
+def pending(app_engine: Engine, migrate_engine: Engine) -> tuple[uuid.UUID, bytes, bytes]:
+    """An admin with an enrolment begun and not confirmed: (user, session, secret)."""
+    user_id = new_admin(migrate_engine)
+    ticket = issue_ticket(user_id)
+    session = half_session(app_engine, migrate_engine, user_id)
+    s = totp.new_secret()
+    assert begin(app_engine, session, ticket_proof(ticket), user_id, s) == "begun"
+    return user_id, session, s
+
+
+TEN = [secrets.token_bytes(32) for _ in range(10)]
+
+
+# fence (ZIF-261, the attack at enrolment): a confirm code is counted in a transaction of its own
+# before it is checked, so a check cut off before its commit still leaves it counted, and ten of
+# them lock the enrolment. Kills the count taken in check_totp_enrolment. Injected by moving the
+# `+ 1` from charge_totp_enrolment into check_totp_enrolment's failure branch.
+@pytest.mark.parametrize("cut", ["rollback", "terminate"])
+def test_a_confirm_cut_off_before_its_commit_still_counts(
+    app_engine: Engine, migrate_engine: Engine, cut: str
+) -> None:
+    user_id, session, s = pending(app_engine, migrate_engine)
+    for n in range(1, 11):
+        outcome, failures, charged = call(app_engine, CHARGE_ENROLMENT, id=session)
+        assert (outcome, failures) == ("charged", n)
+        conn = app_engine.connect()
+        try:
+            conn.begin()
+            pid = conn.scalar(text("SELECT pg_backend_pid()"))
+            row = conn.execute(
+                CHECK_ENROLMENT, {"id": session, "charge": charged, "p": wrong(), "codes": TEN}
+            ).one()
+            assert tuple(row) == ("failed", n)
+            if cut == "rollback":
+                conn.rollback()
+            else:
+                with app_engine.connect() as killer:
+                    assert killer.scalar(
+                        text("SELECT pg_terminate_backend(:pid, 5000)"), {"pid": pid}
+                    )
+                conn.invalidate()
+        finally:
+            conn.close()
+        assert factor(migrate_engine, user_id)["failed_attempts"] == n
+
+    assert confirm(app_engine, session, totp.proof(s), TEN) == ("locked", 10)
+    assert factor(migrate_engine, user_id)["confirmed_at"] is None
+
+
+# fence (ZIF-261): an enrolment check needs a live charge of this admin, or it looks at nothing,
+# the right code included. Kills a check that confirms without a charge, with another admin's, or
+# after it expired. Injected by deleting the charge test from check_totp_enrolment, then its
+# coalesce, then its age test.
+@pytest.mark.parametrize("which", ["none", "made_up", "forged", "expired", "other_admin"])
+def test_a_confirm_needs_its_own_live_charge(
+    app_engine: Engine, migrate_engine: Engine, which: str
+) -> None:
+    user_id, session, s = pending(app_engine, migrate_engine)
+    call(app_engine, CHARGE_ENROLMENT, id=session)  # another attempt in flight
+    charged: uuid.UUID | None = None
+    if which == "made_up":
+        charged = uuid.uuid4()
+    elif which == "forged":
+        with app_engine.begin() as conn:
+            charged = conn.scalar(text("SELECT uuidv7()"))
+    elif which == "expired":
+        with migrate_engine.begin() as conn:
+            charged = conn.scalar(
+                text(
+                    "UPDATE second_factors SET charges = charges || uuidv7(- interval '121 s') "
+                    "WHERE user_id = :u RETURNING charges[2]"
+                ),
+                {"u": user_id},
+            )
+    elif which == "other_admin":
+        _, other, _ = pending(app_engine, migrate_engine)
+        charged = call(app_engine, CHARGE_ENROLMENT, id=other)[2]
+
+    row = call(app_engine, CHECK_ENROLMENT, id=session, charge=charged, p=totp.proof(s), codes=TEN)
+
+    assert tuple(row) == ("none", 0)
+    assert factor(migrate_engine, user_id)["confirmed_at"] is None
+    assert factor(migrate_engine, user_id)["failed_attempts"] == 1
+    assert confirm(app_engine, session, totp.proof(s), TEN) == ("enrolled", 0)  # the control
+
+
+# fence (ZIF-261): at enrolment too the lock is decided at the charge, and the attempt that made it
+# 10 is still checked. Kills a charge past the lock. Injected by deleting the `>= 10` test in
+# charge_totp_enrolment.
+def test_the_enrolment_lock_is_decided_at_the_charge(
+    app_engine: Engine, migrate_engine: Engine
+) -> None:
+    user_id, session, s = pending(app_engine, migrate_engine)
+    with migrate_engine.begin() as conn:
+        conn.execute(
+            text("UPDATE second_factors SET failed_attempts = 9 WHERE user_id = :u"), {"u": user_id}
+        )
+    _, failures, tenth = call(app_engine, CHARGE_ENROLMENT, id=session)
+    assert failures == 10
+
+    assert tuple(call(app_engine, CHARGE_ENROLMENT, id=session)) == ("locked", 10, None)
+    row = call(app_engine, CHECK_ENROLMENT, id=session, charge=tenth, p=totp.proof(s), codes=TEN)
+    assert tuple(row) == ("enrolled", 0)
+
+
+# The SQL call of a function by name: `FROM f(`, `SELECT f(` or `f(:param`.
+CALLS = r"(?:\b(?:FROM|SELECT)\s+(?:public\.)?{name}\s*\(|\b{name}\s*\(\s*:)"
+
+
+# fence (ZIF-261): no app code calls the one-transaction functions 0069 left, which count inside the
+# check, until the contract step drops them (ZIF-274). Kills a route that goes back to them.
+# Injected by restoring `FROM pass_second_factor(:id, :p, :step)` in the route, then
+# `FROM confirm_totp_enrolment(:id, :p, :step, :codes)`.
+@pytest.mark.parametrize("name", ["pass_second_factor", "confirm_totp_enrolment"])
+def test_no_app_code_calls_the_one_transaction_functions(name: str) -> None:
+    app_dir = Path(__file__).resolve().parents[1] / "app"
+    pattern = re.compile(CALLS.format(name=name), re.IGNORECASE)
+    callers = [
+        str(path.relative_to(app_dir))
+        for path in sorted(app_dir.rglob("*.py"))
+        if pattern.search(path.read_text())
+    ]
+    assert callers == []
+
+
+# fence (ZIF-261): at enrolment too a charge is checked once: a failed check uses it up, so the
+# right code cannot ride on it afterwards. Kills check_totp_enrolment's failure branch keeping its
+# charge. Injected by deleting that branch's array_remove.
+def test_an_enrolment_charge_is_checked_once(app_engine: Engine, migrate_engine: Engine) -> None:
+    user_id, session, s = pending(app_engine, migrate_engine)
+    _, _, charged = call(app_engine, CHARGE_ENROLMENT, id=session)
+
+    row = call(app_engine, CHECK_ENROLMENT, id=session, charge=charged, p=wrong(), codes=TEN)
+    assert tuple(row) == ("failed", 1)
+    row = call(app_engine, CHECK_ENROLMENT, id=session, charge=charged, p=totp.proof(s), codes=TEN)
+
+    assert tuple(row) == ("none", 0)
+    stored = factor(migrate_engine, user_id)
+    assert (stored["confirmed_at"], stored["failed_attempts"], stored["charges"]) == (None, 1, [])
+
+
+# fence (ZIF-261): an enrolment charge drops the expired ones, as a sign-in charge does. Kills a
+# list that only grows. Injected by deleting the filter in charge_totp_enrolment.
+def test_an_enrolment_charge_drops_expired_charges(
+    app_engine: Engine, migrate_engine: Engine
+) -> None:
+    user_id, session, _ = pending(app_engine, migrate_engine)
+    with migrate_engine.begin() as conn:
+        young = conn.scalar(
+            text(
+                "UPDATE second_factors SET charges = ARRAY[uuidv7(- interval '1 hour'), "
+                "uuidv7(- interval '10 seconds')] WHERE user_id = :u RETURNING charges[2]"
+            ),
+            {"u": user_id},
+        )
+
+    _, _, made = call(app_engine, CHARGE_ENROLMENT, id=session)
+
+    assert charges_of(migrate_engine, user_id) == [young, made]
+
+
+# fence (ZIF-261): twenty codes at once charge exactly ten, and the rest answer locked. Kills a
+# charge that reads the count without the row lock, or charges past 10. Injected by deleting FOR
+# UPDATE from charge_second_factor, then its `>= 10` test. (From the security review's probe.)
+def test_parallel_charges_stop_at_ten(app_engine: Engine, migrate_engine: Engine) -> None:
+    e = enrolled(app_engine, migrate_engine)
+    session = half_session(app_engine, migrate_engine, e.user_id)
+    outcomes: list[str] = []
+    barrier = threading.Barrier(20)
+
+    def submit() -> None:
+        barrier.wait()
+        outcomes.append(charge(app_engine, session)[0])
+
+    threads = [threading.Thread(target=submit) for _ in range(20)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(30)
+
+    assert sorted(outcomes) == ["charged"] * 10 + ["locked"] * 10
+    stored = factor(migrate_engine, e.user_id)
+    assert (stored["failed_attempts"], len(stored["charges"])) == (10, 10)

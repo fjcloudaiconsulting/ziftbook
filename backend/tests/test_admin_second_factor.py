@@ -18,7 +18,7 @@ from app import admin, admin_auth, auth, totp
 from app.admin_auth import ADMIN_COOKIE
 from app.main import create_app
 from tests.conftest import PASSWORD, add_password, add_user, email_of, fresh_address, new_client
-from tests.test_second_factor_db import factor, issue_ticket
+from tests.test_second_factor_db import CHARGE, CHECK, call, factor, issue_ticket
 
 PASS = "/api/admin/session/second-factor"
 BEGIN = "/api/admin/totp/enrolment"
@@ -410,13 +410,14 @@ def warned(log_lines: Callable[[], list[dict[str, Any]]], msg: str) -> list[tupl
     return [(line["level"], line["user_id"], line["failures"]) for line in lines]
 
 
-# fence: every wrong code logs a WARNING inside its transaction, before the commit, so a failure
-# whose count never commits (a request cut off before COMMIT) still leaves a trace; a locked
-# attempt logs none, since nothing bounds those. Kills the line logged after the commit, only at a
-# threshold, or for locked attempts too. Injected by moving the line after the `with` block, then
-# separately by logging it only when failures >= 10, then by logging it in the locked branch too.
-# Counting before checking, so an abort can't uncount a failure, is ZIF-261.
-def test_every_wrong_code_warns_before_its_commit(
+# fence (ZIF-261, the attack over HTTP): the API commits an attempt's charge before it checks the
+# code, so a request cut off after the check and before its commit still counts. Every wrong code
+# also logs a WARNING before that commit, so the cut-off attempt, whose audit row rolled back, still
+# leaves a trace; a locked attempt logs none, since nothing bounds those. Kills the charge made in
+# the check's transaction, the line logged after the commit, only at a threshold, or for locked
+# attempts too. Injected by moving the charge into the check's `with` block, then by moving the line
+# after it, then separately by logging it only when failures >= 10, then in the locked branch too.
+def test_a_wrong_code_cut_off_before_its_commit_still_counts(
     app: FastAPI,
     migrate_engine: Engine,
     an_admin: uuid.UUID,
@@ -430,32 +431,39 @@ def test_every_wrong_code_warns_before_its_commit(
     record = admin.record
 
     def record_or_die(*args: Any, **kwargs: Any) -> None:
-        # The audit insert after the failure is counted: the request dies before its COMMIT.
+        # The audit insert after the code was checked: the request dies before its COMMIT.
         if cut_off[0] and args[2] == "second_factor_failed":
             raise RuntimeError("cut off before commit")
         record(*args, **kwargs)
 
     monkeypatch.setattr(admin, "record", record_or_die)
     assert half.post(PASS, json={"code": bad}).status_code == 500
-    assert failed_attempts(migrate_engine, an_admin) == 0  # rolled back, uncounted
+    assert failed_attempts(migrate_engine, an_admin) == 1  # counted all the same
+    events = audit(migrate_engine, an_admin)
+    assert "second_factor_failed" not in [action for action, _ in events]
+    # The attempt's own event committed with its charge, so the trail still shows it.
+    assert ("second_factor_attempted", {"method": "totp", "failures": 1}) in events
     assert warned(log_lines, "second factor failed") == [("WARNING", str(an_admin), 1)]
 
     cut_off[0] = False
-    tries = [half.post(PASS, json={"code": bad}).status_code for _ in range(10)]
+    tries = [half.post(PASS, json={"code": bad}).status_code for _ in range(9)]
     locked = half.post(PASS, json={"code": bad})
 
-    assert tries == [401] * 9 + [403]
+    assert tries == [401] * 8 + [403]
     assert answer(locked) == (403, {"code": "second_factor_locked"})
-    assert warned(log_lines, "second factor failed") == [("WARNING", str(an_admin), 1)] + [
+    assert warned(log_lines, "second factor failed") == [
         ("WARNING", str(an_admin), n) for n in range(1, 11)
     ]
 
 
-# fence: a wrong code at enrolment confirm warns the same way, before its commit. Kills the line
-# missing from confirm or logged after its commit. Injected by deleting it, then separately by
-# moving it after the `with` block.
-def test_a_wrong_enrolment_code_warns_before_its_commit(
+# fence (ZIF-261): a wrong code at enrolment confirm is counted before it is checked, so a request
+# cut off before its commit still counts, and it warns the same way, before that commit. Kills the
+# charge made in the check's transaction, the line missing from confirm or logged after its commit.
+# Injected by moving the charge into the check's `with` block, then by deleting the line, then
+# separately by moving it after the `with` block.
+def test_a_wrong_enrolment_code_cut_off_before_its_commit_still_counts(
     app: FastAPI,
+    migrate_engine: Engine,
     an_admin: uuid.UUID,
     log_lines: Callable[[], list[dict[str, Any]]],
     monkeypatch: pytest.MonkeyPatch,
@@ -476,12 +484,16 @@ def test_a_wrong_enrolment_code_warns_before_its_commit(
 
     monkeypatch.setattr(admin, "record", record_or_die)
     assert client.post(CONFIRM, json={"code": bad}).status_code == 500
+    assert failed_attempts(migrate_engine, an_admin) == 1  # counted all the same
+    events = audit(migrate_engine, an_admin)
+    assert "totp_enrolment_failed" not in [action for action, _ in events]
+    assert ("totp_enrolment_attempted", {"failures": 1}) in events
     monkeypatch.setattr(admin, "record", record)
     assert answer(client.post(CONFIRM, json={"code": bad})) == (401, {"code": "invalid_code"})
 
     assert warned(log_lines, "totp enrolment failed") == [
         ("WARNING", str(an_admin), 1),
-        ("WARNING", str(an_admin), 1),
+        ("WARNING", str(an_admin), 2),
     ]
 
 
@@ -509,3 +521,210 @@ def test_a_pass_does_not_reopen_the_budget(
     assert [line["msg"] for line in log_lines() if line["level"] == "ERROR"] == [
         "second factor locked"
     ]
+
+
+def set_count(migrate_engine: Engine, user_id: uuid.UUID, count: int) -> None:
+    """As migrate: that many wrong codes, just now."""
+    with migrate_engine.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE second_factors SET failed_attempts = :n, failures_leaked_at = now() "
+                "WHERE user_id = :u"
+            ),
+            {"n": count, "u": user_id},
+        )
+
+
+def charge_another_mid_request(
+    monkeypatch: pytest.MonkeyPatch, app_engine: Engine, other: TestClient, function: str
+) -> None:
+    """Between this request's charge and its check (the step is computed in between), another
+    session of the same admin charges a code of its own, still in flight when the check runs."""
+    matching_step = totp.matching_step
+    id_hash = auth.hash_token(other.cookies[ADMIN_COOKIE])
+
+    def step_with_another_in_flight(*args: Any, **kwargs: Any) -> int | None:
+        with app_engine.begin() as conn:
+            outcome = conn.scalar(text(f"SELECT outcome FROM {function}(:id)"), {"id": id_hash})
+        assert outcome == "charged"
+        return matching_step(*args, **kwargs)
+
+    monkeypatch.setattr(totp, "matching_step", step_with_another_in_flight)
+
+
+# fence (ZIF-261): a wrong code is reported at its own charge's count, never at the count other
+# codes still in flight have added since: no phantom lock (403, audit event, ERROR line) and no
+# value missing from the audit trail. Kills the failed branch taking check_second_factor's current
+# count. Injected by reporting the check's `failures` again.
+def test_a_wrong_code_reports_its_own_count(
+    app: FastAPI,
+    app_engine: Engine,
+    migrate_engine: Engine,
+    an_admin: uuid.UUID,
+    monkeypatch: pytest.MonkeyPatch,
+    log_lines: Callable[[], list[dict[str, Any]]],
+) -> None:
+    v = verified_client(app, migrate_engine, an_admin)
+    half = sign_in(app, an_admin)
+    other = sign_in(app, an_admin)
+    set_count(migrate_engine, an_admin, 8)
+    charge_another_mid_request(monkeypatch, app_engine, other, "charge_second_factor")
+
+    refused = half.post(PASS, json={"code": wrong_code(v)})
+
+    assert answer(refused) == (401, {"code": "invalid_code"})
+    assert failed_attempts(migrate_engine, an_admin) == 10  # the other one is still in flight
+    events = audit(migrate_engine, an_admin)
+    assert [d for a, d in events if a == "second_factor_failed"] == [
+        {"method": "totp", "failures": 9}
+    ]
+    assert "second_factor_locked" not in [action for action, _ in events]
+    assert warned(log_lines, "second factor failed") == [("WARNING", str(an_admin), 9)]
+    assert [line["msg"] for line in log_lines() if line["level"] == "ERROR"] == []
+
+
+# fence (ZIF-261): the other order. Another session's code is charged first (9), this one second
+# (10), and the other passes, giving its attempt back (9), before this check. This wrong code is
+# reported at its own count, 10, but locks nothing: no 403, no lock event, no ERROR line, and the
+# next code is charged. Kills a lock decided on the charge's count alone. Injected by deleting the
+# check's current count from the lock test. (From the re-check's probe.)
+def test_a_wrong_code_locks_nothing_a_pass_gave_back(
+    app: FastAPI,
+    app_engine: Engine,
+    migrate_engine: Engine,
+    an_admin: uuid.UUID,
+    monkeypatch: pytest.MonkeyPatch,
+    log_lines: Callable[[], list[dict[str, Any]]],
+) -> None:
+    v = verified_client(app, migrate_engine, an_admin)
+    half = sign_in(app, an_admin)
+    other_id = auth.hash_token(sign_in(app, an_admin).cookies[ADMIN_COOKIE])
+    set_count(migrate_engine, an_admin, 8)
+    outcome, _, other_charge = call(app_engine, CHARGE, id=other_id)
+    assert outcome == "charged"
+    matching_step = totp.matching_step
+
+    def step_then_the_other_passes(*args: Any, **kwargs: Any) -> int | None:
+        row = call(
+            app_engine,
+            CHECK,
+            id=other_id,
+            charge=other_charge,
+            p=totp.proof(v.secret),
+            step=v.t0 + 1,
+        )
+        assert row[0] == "passed"
+        return matching_step(*args, **kwargs)
+
+    monkeypatch.setattr(totp, "matching_step", step_then_the_other_passes)
+    refused = half.post(PASS, json={"code": wrong_code(v)})
+
+    assert answer(refused) == (401, {"code": "invalid_code"})
+    assert failed_attempts(migrate_engine, an_admin) == 9
+    events = audit(migrate_engine, an_admin)
+    assert [d for a, d in events if a == "second_factor_failed"] == [
+        {"method": "totp", "failures": 10}
+    ]
+    assert "second_factor_locked" not in [action for action, _ in events]
+    assert [line["msg"] for line in log_lines() if line["level"] == "ERROR"] == []
+    monkeypatch.setattr(totp, "matching_step", matching_step)
+    assert half.post(PASS, json={"code": wrong_code(v)}).status_code == 403  # this one locks
+
+
+# fence (ZIF-261): the same at enrolment confirm. Injected by reporting check_totp_enrolment's
+# `failures` again.
+def test_a_wrong_enrolment_code_reports_its_own_count(
+    app: FastAPI,
+    app_engine: Engine,
+    migrate_engine: Engine,
+    an_admin: uuid.UUID,
+    monkeypatch: pytest.MonkeyPatch,
+    log_lines: Callable[[], list[dict[str, Any]]],
+) -> None:
+    ticket = issue_ticket(an_admin)
+    client = sign_in(app, an_admin)
+    other = sign_in(app, an_admin)
+    begun = client.post(BEGIN, json={"ticket": ticket})
+    assert begun.status_code == 200, begun.content
+    s = base64.b32decode(begun.json()["secret"])
+    taken = {totp.code(s, step) for step in range(step_now() - 2, step_now() + 3)}
+    bad = next(c for c in (f"{i:06d}" for i in range(1_000_000)) if c not in taken)
+    set_count(migrate_engine, an_admin, 8)
+    charge_another_mid_request(monkeypatch, app_engine, other, "charge_totp_enrolment")
+
+    refused = client.post(CONFIRM, json={"code": bad})
+
+    assert answer(refused) == (401, {"code": "invalid_code"})
+    assert [d for a, d in audit(migrate_engine, an_admin) if a == "totp_enrolment_failed"] == [
+        {"failures": 9}
+    ]
+    assert warned(log_lines, "totp enrolment failed") == [("WARNING", str(an_admin), 9)]
+
+
+# fence (ZIF-261): every code's attempt event commits with its charge, and one whose charge
+# transaction never commits leaves neither, and is never checked. Kills the event written after the
+# charge's commit (with the check, or alone). Injected by moving the record into the check's `with`
+# block, then after the charge's block.
+@pytest.mark.parametrize("route", ["sign_in", "enrolment"])
+def test_an_attempt_event_commits_with_its_charge(
+    app: FastAPI,
+    migrate_engine: Engine,
+    an_admin: uuid.UUID,
+    monkeypatch: pytest.MonkeyPatch,
+    route: str,
+) -> None:
+    if route == "sign_in":
+        v = verified_client(app, migrate_engine, an_admin)
+        client, path, code = sign_in(app, an_admin), PASS, totp.code(v.secret, v.t0 + 1)
+        attempted = "second_factor_attempted"
+    else:
+        ticket = issue_ticket(an_admin)
+        client = sign_in(app, an_admin)
+        begun = client.post(BEGIN, json={"ticket": ticket})
+        assert begun.status_code == 200, begun.content
+        s = base64.b32decode(begun.json()["secret"])
+        path, code, attempted = CONFIRM, totp.code(s, step_now()), "totp_enrolment_attempted"
+    record = admin.record
+    checked: list[bool] = []
+    matching_step = totp.matching_step
+
+    def record_or_die(*args: Any, **kwargs: Any) -> None:
+        if args[2] == attempted:
+            raise RuntimeError("cut off before the charge commits")
+        record(*args, **kwargs)
+
+    def step(*args: Any, **kwargs: Any) -> int | None:
+        checked.append(True)
+        return matching_step(*args, **kwargs)
+
+    monkeypatch.setattr(admin, "record", record_or_die)
+    monkeypatch.setattr(totp, "matching_step", step)
+    assert client.post(path, json={"code": code}).status_code == 500
+    assert failed_attempts(migrate_engine, an_admin) == 0
+    assert attempted not in [action for action, _ in audit(migrate_engine, an_admin)]
+    assert checked == []  # the code was never looked at
+
+    monkeypatch.setattr(admin, "record", record)
+    assert client.post(path, json={"code": code}).status_code == 200  # the right code, now
+    events = [(a, d) for a, d in audit(migrate_engine, an_admin) if a == attempted]
+    assert events == [
+        (attempted, {"method": "totp", "failures": 1} if route == "sign_in" else {"failures": 1})
+    ]
+
+
+# guard (ZIF-261): a code refused as locked is audited in the charge's transaction, which charged
+# nothing and checked nothing.
+def test_a_locked_attempt_is_audited(
+    app: FastAPI, migrate_engine: Engine, an_admin: uuid.UUID
+) -> None:
+    v = verified_client(app, migrate_engine, an_admin)
+    half = sign_in(app, an_admin)
+    set_count(migrate_engine, an_admin, 10)
+
+    refused = half.post(PASS, json={"code": totp.code(v.secret, v.t0 + 1)})
+
+    assert answer(refused) == (403, {"code": "second_factor_locked"})
+    assert [
+        (a, d) for a, d in audit(migrate_engine, an_admin) if a.startswith("second_factor")
+    ] == [("second_factor_failed", {"method": "totp", "failures": 10, "locked": True})]
+    assert failed_attempts(migrate_engine, an_admin) == 10

@@ -306,32 +306,63 @@ def pass_second_factor(body: CodeIn, current: HalfAdmin, request: Request) -> Ad
     if TOTP_CODE.fullmatch(typed):
         _limited(request, "admin_2fa", 20)
         _key_needed()
+        # Counted first, committed in a transaction of its own that never sees the code (ZIF-261),
+        # as limits.hit counts a limit: a check cut off before its commit leaves the attempt
+        # counted. The secret is opened first: a key that can't open it counts nothing.
         with SessionLocal.begin() as session:
             s = _secret(session, id_hash, current.user_id)
             if s is None:  # the session died or the factor was wiped since the guard
                 raise ApiError(401, "unauthenticated")
-            step = totp.matching_step(s, typed, datetime.now(UTC))
-            outcome, failures = session.execute(
-                text("SELECT outcome, failures FROM pass_second_factor(:id, :p, :step)"),
-                {"id": id_hash, "p": totp.proof(s), "step": step},
+            charged, failures, charge = session.execute(
+                text("SELECT outcome, failures, charge FROM charge_second_factor(:id)"),
+                {"id": id_hash},
             ).one()
-            # Recorded in this transaction: a failure's count and its audit row commit together.
+            if charged == "locked":
+                admin.record(
+                    session,
+                    request,
+                    "second_factor_failed",
+                    actor_user_id=current.user_id,
+                    details={"method": "totp", "failures": failures, "locked": True},
+                )
+            elif charged == "charged":
+                # Commits with the charge: a check cut off later cannot erase that a code was tried.
+                admin.record(
+                    session,
+                    request,
+                    "second_factor_attempted",
+                    actor_user_id=current.user_id,
+                    details={"method": "totp", "failures": failures},
+                )
+        if charged == "locked":
+            raise ApiError(403, "second_factor_locked")
+        if charged == "none":  # the session died or the factor was wiped since the guard
+            raise ApiError(401, "unauthenticated")
+        step = totp.matching_step(s, typed, datetime.now(UTC))
+        with SessionLocal.begin() as session:
+            # reported: the failures since the last pass when it passed, the count now when not.
+            outcome, reported = session.execute(
+                text("SELECT outcome, failures FROM check_second_factor(:id, :charge, :p, :step)"),
+                {"id": id_hash, "charge": charge, "p": totp.proof(s), "step": step},
+            ).one()
             if outcome == "passed":
                 admin.record(
                     session,
                     request,
                     "second_factor_passed",
                     actor_user_id=current.user_id,
-                    details={"method": "totp", "failed_since_last": failures},
+                    details={"method": "totp", "failed_since_last": reported},
                 )
-                if failures:
+                if reported:
                     logger.warning(
-                        "second factor passed after failures", extra={"failures": failures}
+                        "second factor passed after failures", extra={"failures": reported}
                     )
             elif outcome == "failed":
-                # Logged inside the transaction, before its commit: a failure whose transaction
-                # never commits is not counted, but still leaves this line. Counting first, in a
-                # transaction of its own, is ZIF-261.
+                # failures: this attempt's own count, from its charge, for the audit and the line.
+                # The count now differs when other attempts are in flight: their charges raise it,
+                # their passes lower it.
+                # The charge already counted it, and its attempt event is committed. Logged before
+                # the commit: a check cut off after it answered still leaves this line.
                 logger.warning(
                     "second factor failed",
                     extra={"user_id": str(current.user_id), "failures": failures},
@@ -344,7 +375,9 @@ def pass_second_factor(body: CodeIn, current: HalfAdmin, request: Request) -> Ad
                     details={"method": "totp", "failures": failures},
                 )
                 error = ApiError(401, "invalid_code")
-                if failures >= 10:
+                # Locked only when this attempt made it 10 and no pass has given one back since:
+                # past 10 no charge succeeds, so both at 10 means this code locked it.
+                if failures >= 10 and reported >= 10:
                     admin.record(
                         session,
                         request,
@@ -354,16 +387,7 @@ def pass_second_factor(body: CodeIn, current: HalfAdmin, request: Request) -> Ad
                     )
                     logger.error("second factor locked")
                     error = ApiError(403, "second_factor_locked")
-            elif outcome == "locked":
-                admin.record(
-                    session,
-                    request,
-                    "second_factor_failed",
-                    actor_user_id=current.user_id,
-                    details={"method": "totp", "failures": failures, "locked": True},
-                )
-                error = ApiError(403, "second_factor_locked")
-            else:  # none: the session died or the factor was wiped since the guard
+            else:  # none: the session died, the factor was wiped or the charge voided since
                 error = ApiError(401, "unauthenticated")
             passed_as = None if error else session.execute(RESOLVE, {"id_hash": id_hash}).first()
     else:
@@ -452,16 +476,41 @@ def confirm_enrolment(body: CodeIn, current: HalfAdmin, request: Request) -> Rec
     _key_needed()
     id_hash = _id_hash(request)
     codes = [totp.new_code() for _ in range(10)]
+    # Counted first, in a transaction of its own, as pass_second_factor's code (ZIF-261).
     with SessionLocal.begin() as session:
         s = _secret(session, id_hash, current.user_id)
         if s is None:
             raise ApiError(409, "no_pending_enrolment")
-        outcome, failures = session.execute(
-            text("SELECT outcome, failures FROM confirm_totp_enrolment(:id, :p, :step, :codes)"),
+        charged, failures, charge = session.execute(
+            text("SELECT outcome, failures, charge FROM charge_totp_enrolment(:id)"),
+            {"id": id_hash},
+        ).one()
+        if charged == "charged":
+            # Commits with the charge, as at sign-in.
+            admin.record(
+                session,
+                request,
+                "totp_enrolment_attempted",
+                actor_user_id=current.user_id,
+                details={"failures": failures},
+            )
+    if charged == "locked":
+        raise ApiError(403, "second_factor_locked")
+    if charged == "none":  # nothing begun, or the ticket expired
+        raise ApiError(409, "no_pending_enrolment")
+    step = totp.matching_step(s, totp.normalise(body.code), datetime.now(UTC))
+    with SessionLocal.begin() as session:
+        # failures stays the charge's: this attempt's own count, as at sign-in.
+        outcome, _ = session.execute(
+            text(
+                "SELECT outcome, failures "
+                "FROM check_totp_enrolment(:id, :charge, :p, :step, :codes)"
+            ),
             {
                 "id": id_hash,
+                "charge": charge,
                 "p": totp.proof(s),
-                "step": totp.matching_step(s, totp.normalise(body.code), datetime.now(UTC)),
+                "step": step,
                 "codes": [totp.proof(totp.normalise(c)) for c in codes],
             },
         ).one()
@@ -484,9 +533,7 @@ def confirm_enrolment(body: CodeIn, current: HalfAdmin, request: Request) -> Rec
         raise ApiError(
             *((403, "second_factor_locked") if failures >= 10 else (401, "invalid_code"))
         )
-    if outcome == "locked":
-        raise ApiError(403, "second_factor_locked")
-    if outcome == "none":  # nothing begun, or the ticket expired
+    if outcome == "none":  # the ticket expired, or the charge was voided, since the charge
         raise ApiError(409, "no_pending_enrolment")
     return RecoveryCodesOut(recovery_codes=codes)
 
