@@ -687,6 +687,10 @@ def send_booking(job: Job) -> None:
                     else None
                 )
                 if held is None:  # no longer to be told anything, or not this
+                    if template == "booking_refund_failed":  # money a person may never hear of
+                        logger.info(
+                            "email skipped", extra={"template": template, "reason": "no_hold"}
+                        )
                     return
                 recipient_email, recipient_locale = held.email, held.locale
             elif template == "booking_refund_failed":  # through a hold only

@@ -643,7 +643,8 @@ loggers (`web.*`); Next's own stderr output (banners, SSR error traces) is not i
   did, and either failing withholds the ping); `business sweep failed` (ERROR, `sweep`, `tenant_id`, with `exc`: one
   business failed in a sweep, which went on to the next and then raised); `email sent` (INFO) and
   `email failed` (WARNING) with `template` (and `error` on failure) plus the job context, and
-  `email skipped` (INFO, `template`, `reason` `recipient_quota`, from the worker's send);
+  `email skipped` (INFO, `template`, `reason` `recipient_quota`, or `no_hold` for an erased client's
+  `booking_refund_failed` whose hold is gone, from the worker's send);
   `client mail over quota` (WARNING, `template`, `source` `merchant` or `public`, when a business's
   hourly client email quota holds an email back at enqueue); never the
   address, subject or body. Each process logs one startup line (`api started`, `worker started`, `migrations started`) with its
