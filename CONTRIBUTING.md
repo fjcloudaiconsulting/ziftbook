@@ -211,6 +211,33 @@ that person's platform account (ZIF-99).
   SHARE` or stronger, with the filter, as the consents route and the booking mail job do), or holds the tenant booking
   lock, which every erasure takes first (as the merchant booking does): a foreign key's `KEY SHARE` does not wait for
   an erasure in flight. The team gets no booking mail about an erased client's booking.
+- Erasure is one function, `erase_client_core(client, announce)` (0064, owned by `ziftbook_migrate`, executable by no
+  other role): in the current business only, with the business named in every statement besides row-level security, it
+  marks the client erased and blanks its fields, blanks what the client typed on its bookings (`client_name`,
+  `client_phone`, `client_message`), the merchant's `decline_message` and the `checkout_hash`, blanks the address and
+  browser on the client's own booking events (the team's keep theirs), and deletes the client's consents and its
+  bookings' manage links. Its caller holds the tenant booking lock first, as every booking writer does; the core reads
+  `pg_locks` and refuses otherwise. It changes no booking status: the caller ends live bookings first, in the same
+  transaction, and the core refuses a client that still has one. The app role reaches it only through
+  `erase_client(session hash, client id)`, which refuses unless the hash is a live owner session of this business.
+  `tests/test_client_erasure_db.py` classifies every column of `clients`, `bookings`, `booking_events`, `consents`,
+  `booking_links` and `booking_payments` (blank, delete, keep, status), so a new column of those tables fails it until
+  it is classified there and, if it holds the person, erased by the core. The same file lists every table that reaches
+  `clients` or `bookings` by foreign key, directly or through another such table, and every `client_id`, `booking_id`
+  or `recipient_id` column, keyed or not, so a new table that points at a client fails it too until it is classified
+  or allowed there with its reason. Those tables, and `client_erasure_holds`, have no policy but `tenant_isolation`.
+  What keeps the core in one business is the clients lookup's tenant predicate: a client id is global, every dependent
+  row reaches its client through a composite foreign key, and the core stops when the id is not this business's; the
+  predicates on the dependent statements are defence in depth.
+- `client_erasure_holds` keeps an erased client's email and locale: the only way to tell the client about a
+  cancellation or a failed refund. The core writes one when the client has an address and either `announce` is true
+  and the erasure ended one of its bookings, or money is still owed an answer on one (`client_money_owed`, the one
+  rule the hold's purge shares: unsettled with work left for the settle pass, or a failed refund), whatever
+  `announce` says. An
+  owner's erasure and an account deletion pass true; re-applying an erasure after a restore passes false (the
+  cancellations were announced the first time; a refund that fails later must still reach the client). A CHECK keeps
+  `purge_after` at most 31 days after `created_at`; the worker deletes the hold by then. Only the core writes it; the
+  app role can neither read nor write it; the worker reads and deletes it.
 - Marketing consent (`consents`) is per business. Nothing writes a platform-level consent, and one business's consent
   never grants another anything.
 - `consents` is append-only: one row per grant or withdrawal per purpose, holding the exact text shown and its policy
@@ -279,9 +306,11 @@ migration 0026), not any code path. A race in a route somebody forgets to guard 
   `max_pending_per_email` exact.
 - The evidence snapshot (service name in every language, price, duration, the cancellation policy **text**, source,
   the auto-confirm setting, the worker's display name) is on the booking. **Client personal data is not**: it stays
-  in `clients`, reached by `client_id`, so ZIF-58 keeps one tombstone. The one exception is
-  `decline_message`, the merchant's free text to a client they declined: ZIF-58 must set it to NULL on erasure (the
-  CHECK allows NULL on a declined row). The service's buffer is **not** snapshotted —
+  in `clients`, reached by `client_id`, so ZIF-58 keeps one tombstone. The exceptions are what the booker typed
+  (`client_name`, `client_phone`, `client_message`, 0041), the merchant's `decline_message` to a client they declined,
+  and the `checkout_hash` that maps the client's browser to the booking: the erase core sets each to NULL (0064), and
+  a new column of that kind joins its list and the catalog in `tests/test_client_erasure_db.py`, as ZIF-146's
+  `booked_as`, a key back to the account, will. The service's buffer is **not** snapshotted —
   a buffer is a scheduling rule, not evidence. The cancellation policy is snapshotted as text and carries **no
   version**: a version is only useful for re-reading a policy at cancellation time, which ZIF-5 rejects. The
   `policy_version` on `booking_events` is a different key — the consent wording version, into

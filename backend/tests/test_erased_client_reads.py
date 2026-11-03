@@ -1,7 +1,8 @@
 """The console no longer shows an erased client (ZIF-58): the client list skips it, PATCH and
 consents answer 404, it cannot be booked or its bookings moved, the booking lists mark it with
-client_erased, and the team gets no booking mail naming it. Erased rows are written here as the
-erase function will write them, as the migrate role: the app role cannot write erased_at (0063)."""
+client_erased, and the team gets no booking mail naming it. Clients are erased here as the erase
+route will erase them: under the booking lock, its live bookings ended, then the erase function
+(as the migrate role, its owner)."""
 
 import json
 import threading
@@ -36,34 +37,37 @@ from tests.test_bookings_db import insert_booking
 from tests.test_clients_db import seed_client
 from tests.test_working_hours import seed
 
-# What the erase function blanks of a client and of its bookings, and the links it deletes.
-ERASE_BOOKINGS = text("""
-UPDATE bookings SET client_name = NULL, client_phone = NULL, client_message = NULL,
-                    decline_message = NULL, checkout_hash = NULL
+# A client's live bookings, ended as the erase route ends them before the erase function runs.
+END_LIVE = text("""
+UPDATE bookings SET status = 'cancelled_by_merchant'
 WHERE client_id = :id
+  AND ((status = 'confirmed' AND starts_at > now()) OR (status = 'pending' AND expires_at > now()))
 """)
-ERASE_CLIENT = text("""
+ERASE = text("SELECT erase_client_core(:id, true)")
+
+
+def erase_in(conn: Connection, client_id: object) -> None:
+    """Erase a client in this transaction, as the erase route will: the booking lock first, the
+    live bookings ended, then the erase function, which takes the client's row lock."""
+    conn.execute(bookings.LOCK, {"key": bookings.LOCK_KEY})
+    conn.execute(END_LIVE, {"id": client_id})
+    assert conn.scalar(ERASE, {"id": client_id}) is not None
+
+
+def erase_by_hand(migrate_engine: Engine, tenant_id: uuid.UUID, client_id: object) -> None:
+    """Erase a client as the erase route will, as the migrate role, committed."""
+    with migrate_tenant_context(migrate_engine, tenant_id) as conn:
+        erase_in(conn, client_id)
+
+
+# A tombstone written straight into the table, its bookings left as they were: a state no erasure
+# leaves (the erase function refuses a client with a live booking), for the guards that hold
+# whatever state they meet.
+MARK_ERASED = text("""
 UPDATE clients SET erased_at = now(), name = '', user_id = NULL, email = NULL, phone = NULL,
                    locale = NULL, client_note = NULL, internal_note = NULL
 WHERE id = :id
 """)
-
-
-ERASE_LINKS = text("""
-DELETE FROM booking_links WHERE booking_id IN (SELECT id FROM bookings WHERE client_id = :id)
-""")
-
-
-def erase_in(conn: Connection, client_id: object) -> None:
-    conn.execute(ERASE_CLIENT, {"id": client_id})  # first: the client's row lock, as the core
-    conn.execute(ERASE_BOOKINGS, {"id": client_id})
-    conn.execute(ERASE_LINKS, {"id": client_id})
-
-
-def erase_by_hand(migrate_engine: Engine, tenant_id: uuid.UUID, client_id: object) -> None:
-    """Erase a client as the erase function will, as the migrate role, committed."""
-    with migrate_tenant_context(migrate_engine, tenant_id) as conn:
-        erase_in(conn, client_id)
 
 
 def client_of(tenant_id: uuid.UUID, booking_id: str) -> uuid.UUID:
@@ -198,20 +202,38 @@ def ready(people: People, owner: TestClient) -> str:
     return service_id
 
 
+def started_booking(
+    people: People, service_id: str, client_name: str, minutes_ago: int = 10
+) -> tuple[str, uuid.UUID]:
+    """A confirmed booking that started minutes ago, for a new client: what an erasure keeps."""
+    client_id = seed_client(people.a, name=client_name, email=fresh_email())
+    starts = datetime.now(UTC) - timedelta(minutes=minutes_ago)
+    with tenant_context(people.a) as session:
+        booking_id = insert_booking(
+            session,
+            client_id=client_id,
+            worker_id=member_id(people.a, people.both),
+            service_id=uuid.UUID(service_id),
+            starts_at=starts,
+            ends_at=starts + timedelta(minutes=30),
+        )
+    return str(booking_id), client_id
+
+
 @pytest.fixture
-def booked(app: FastAPI, people: People, owner: TestClient, ready: str) -> dict[str, str]:
-    """Bookings two days out: a pending one and a confirmed one of a client then erased, and a
-    pending one of a client that stays."""
-    gone_email = fresh_email()
-    gone = {"name": "Gone Booker", "email": gone_email, "message": "Gone message"}
-    pending = make_pending(app, people.a, ready, starts_at=at("09:00"), **gone)
-    confirmed = make_pending(app, people.a, ready, starts_at=at("10:00"), **gone)
-    assert (
-        owner.patch(f"/api/bookings/{confirmed}", json={"status": "confirmed"}).status_code == 200
+def booked(app: FastAPI, people: People, ready: str) -> dict[str, str]:
+    """The client to erase, with a confirmed booking under way (an erasure keeps it) and a pending
+    one two days out (an erasure ends it); and a client that stays, with a pending booking two days
+    out."""
+    started, gone = started_booking(people, ready, "Gone Booker")
+    with tenant_context(people.a) as session:
+        email = session.scalar(text("SELECT email FROM clients WHERE id = :id"), {"id": gone})
+    pending = make_pending(
+        app, people.a, ready, starts_at=at("09:00"), name="Gone Booker", email=email
     )
     live = make_pending(app, people.a, ready, starts_at=at("11:00"), name="Live Booker")
-    assert client_of(people.a, pending) == client_of(people.a, confirmed)
-    return {"pending": pending, "confirmed": confirmed, "live": live}
+    assert client_of(people.a, pending) == gone
+    return {"started": started, "pending": pending, "live": live, "client": str(gone)}
 
 
 # ZIF-58 F10 FENCE. Wrong impl: the merchant booking's existence check without the erased_at filter
@@ -242,31 +264,36 @@ def test_a_merchant_cannot_book_an_erased_client(
 
 
 def window() -> dict[str, str]:
-    return {"from": at("00:00"), "to": at("23:59")}
+    """From an hour ago to the end of the day two days out: the started booking and the live one."""
+    since = (datetime.now(UTC) - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return {"from": since, "to": at("23:59")}
 
 
 # ZIF-58 F11 FENCE. Wrong impl: a reader that gives the name without client_erased (the console
-# cannot tell an erased client from a blank name), or one that gives client_name null. The queue,
-# the agenda and the detail each say client_name "" exactly when client_erased is true, and the
-# detail carries nothing about the person.
+# cannot tell an erased client from a blank name), or one that gives client_name null. The agenda
+# and the detail say client_name "" exactly when client_erased is true, and the detail carries
+# nothing about the person; the queue no longer holds the erased client's request (it was ended)
+# and marks the live one false.
 def test_the_booking_lists_mark_an_erased_client(
     people: People, owner: TestClient, migrate_engine: Engine, booked: dict[str, str]
 ) -> None:
-    erase_by_hand(migrate_engine, people.a, client_of(people.a, booked["pending"]))
+    erase_by_hand(migrate_engine, people.a, booked["client"])
 
     queue = {row["id"]: row for row in owner.get("/api/bookings/pending").json()}
     agenda = {row["id"]: row for row in owner.get("/api/bookings", params=window()).json()}
-    detail = owner.get(f"/api/bookings/{booked['pending']}").json()
+    details = [owner.get(f"/api/bookings/{booked[key]}").json() for key in ("started", "pending")]
     live = owner.get(f"/api/bookings/{booked['live']}").json()
 
-    for row in (queue[booked["pending"]], agenda[booked["confirmed"]], detail):
+    assert booked["pending"] not in queue
+    for row in (agenda[booked["started"]], *details):
         assert (row["client_name"], row["client_erased"]) == ("", True)
     for row in (queue[booked["live"]], agenda[booked["live"]], live):
         assert (row["client_name"], row["client_erased"]) == ("Live Booker", False)
-    assert {
-        key: detail[key]
-        for key in ("client_email", "client_phone", "client_message", "client_note")
-    } == dict.fromkeys(("client_email", "client_phone", "client_message", "client_note"))
+    for detail in details:
+        assert {
+            key: detail[key]
+            for key in ("client_email", "client_phone", "client_message", "client_note")
+        } == dict.fromkeys(("client_email", "client_phone", "client_message", "client_note"))
 
 
 def schema(spec: dict[str, Any], name: str) -> dict[str, Any]:
@@ -296,11 +323,11 @@ def test_the_erased_client_pair_is_a_pinned_contract(name: str) -> None:
 def test_a_refused_block_marks_an_erased_client(
     people: People, owner: TestClient, migrate_engine: Engine, booked: dict[str, str]
 ) -> None:
-    erase_by_hand(migrate_engine, people.a, client_of(people.a, booked["pending"]))
+    erase_by_hand(migrate_engine, people.a, booked["client"])
 
     refused = owner.post(
         f"/api/members/{member_id(people.a, people.both)}/time-off",
-        json={"starts_at": at("08:00"), "ends_at": at("12:00")},
+        json={"starts_at": window()["from"], "ends_at": at("12:00")},
     )
 
     assert (refused.status_code, refused.json()["code"]) == (409, "overlaps_bookings")
@@ -308,8 +335,7 @@ def test_a_refused_block_marks_an_erased_client(
         row["id"]: (row["client_name"], row["client_erased"]) for row in refused.json()["bookings"]
     }
     assert named == {
-        booked["pending"]: ("", True),
-        booked["confirmed"]: ("", True),
+        booked["started"]: ("", True),  # the ended pending one is no longer in the way
         booked["live"]: ("Live Booker", False),
     }
 
@@ -317,45 +343,29 @@ def test_a_refused_block_marks_an_erased_client(
 # ZIF-58 F13 FENCE. Wrong impl: no gate, so the team's mail about an erased client's booking is
 # rendered with a blank $client and recorded in the outbox. The same mail for a live client is
 # written, so the gate is the erasure's alone.
-@pytest.mark.parametrize("template", ["booking_request", "booking_client_cancelled"])
+@pytest.mark.parametrize("template", ["booking_new", "booking_moved_team"])
 def test_the_team_gets_no_booking_mail_for_an_erased_client(
     people: People,
+    owner: TestClient,
     migrate_engine: Engine,
     booked: dict[str, str],
     clean_outbox: None,
     template: str,
 ) -> None:
-    erase_by_hand(migrate_engine, people.a, client_of(people.a, booked["pending"]))
-    status = "pending" if template == "booking_request" else "cancelled_by_client"
-    with migrate_tenant_context(migrate_engine, people.a) as conn:
-        conn.execute(
-            text("UPDATE bookings SET status = :s WHERE id = ANY(:ids)"),
-            {"s": status, "ids": [booked["pending"], booked["live"]]},
-        )
+    erase_by_hand(migrate_engine, people.a, booked["client"])
+    assert (
+        owner.patch(f"/api/bookings/{booked['live']}", json={"status": "confirmed"}).status_code
+        == 200
+    )
 
-    erased = run_send_booking(people.a, booked["pending"], template, user_id=str(people.both))
-    live = run_send_booking(people.a, booked["live"], template, user_id=str(people.both))
+    extra = {"user_id": str(people.both)}
+    if template == "booking_moved_team":
+        extra["previous_starts_at"] = at("08:00")
+    erased = run_send_booking(people.a, booked["started"], template, **extra)
+    live = run_send_booking(people.a, booked["live"], template, **extra)
 
     assert outbox_for(people.a, erased.id) is None
     assert outbox_for(people.a, live.id) is not None
-
-
-def started_booking(
-    people: People, service_id: str, client_name: str, minutes_ago: int = 10
-) -> tuple[str, uuid.UUID]:
-    """A confirmed booking that started minutes ago, for a new client: what an erasure keeps."""
-    client_id = seed_client(people.a, name=client_name, email=fresh_email())
-    starts = datetime.now(UTC) - timedelta(minutes=minutes_ago)
-    with tenant_context(people.a) as session:
-        booking_id = insert_booking(
-            session,
-            client_id=client_id,
-            worker_id=member_id(people.a, people.both),
-            service_id=uuid.UUID(service_id),
-            starts_at=starts,
-            ends_at=starts + timedelta(minutes=30),
-        )
-    return str(booking_id), client_id
 
 
 def starts_of(tenant_id: uuid.UUID, booking_id: str) -> datetime:
@@ -393,8 +403,10 @@ def test_an_erased_clients_booking_cannot_be_moved(
 
 
 # ZIF-58 FENCE. Wrong impl: any of the three moving statements (the console's MOVE, the client's
-# RESCHEDULE and PENDING_MOVE) without the erased-client qualifier. The client's routes need a
-# manage link, which an erasure deletes; the statements refuse on their own all the same.
+# RESCHEDULE and PENDING_MOVE) without the erased-client qualifier. No erasure leaves a booking
+# still to come (the erase function refuses one), and the client's routes need a manage link,
+# which an erasure deletes; the statements refuse on their own all the same, here on a tombstone
+# written straight into the table.
 @pytest.mark.parametrize("statement", ["MOVE", "RESCHEDULE", "PENDING_MOVE"])
 def test_no_moving_statement_moves_an_erased_clients_booking(
     people: People, migrate_engine: Engine, ready: str, statement: str
@@ -415,7 +427,8 @@ def test_no_moving_statement_moves_an_erased_clients_booking(
             original_starts_at=starts,
             earliest_starts_at=starts,
         )
-    erase_by_hand(migrate_engine, people.a, client_id)
+    with migrate_tenant_context(migrate_engine, people.a) as conn:
+        conn.execute(MARK_ERASED, {"id": client_id})
     params = {
         "id": booking_id,
         "new": starts + timedelta(days=1),
@@ -451,7 +464,7 @@ def test_a_booking_mail_waits_for_an_erasure_in_flight_then_sends_nothing(
     clean_outbox: None,
     template: str,
 ) -> None:
-    booking_id = booked["confirmed"]
+    booking_id = booked["started"]
     team = {"user_id": str(people.both)} if template == "booking_new" else {}
     sent: dict[str, Any] = {}
 
@@ -460,7 +473,7 @@ def test_a_booking_mail_waits_for_an_erasure_in_flight_then_sends_nothing(
 
     writer = threading.Thread(target=mail)
     with migrate_tenant_context(migrate_engine, people.a) as conn:
-        erase_in(conn, client_of(people.a, booking_id))  # holds the client's row lock
+        erase_in(conn, booked["client"])  # holds the client's row lock
         writer.start()
         wait_until_blocked(app_engine, 1)
     writer.join(timeout=10)

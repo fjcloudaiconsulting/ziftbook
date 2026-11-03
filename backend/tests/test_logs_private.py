@@ -419,12 +419,18 @@ def test_no_personal_data_ever_reaches_a_log(
     assert paused.status_code == 429
     run_jobs_once()
 
-    # 6k (ZIF-58): the booker's client is erased, as the erase function will erase it, and the
-    # console reads around it.
+    # 6k (ZIF-58): the booker's client is erased as the erase route will erase it (its confirmed
+    # booking cancelled by the owner first, then the erase function), and the console reads around
+    # it.
     with tenant_context(people.a) as session:
         gone = session.scalar(
             text("SELECT client_id FROM bookings WHERE id = :id"), {"id": booked.json()["id"]}
         )
+    cancelled = owner.patch(
+        f"/api/bookings/{booked.json()['id']}", json={"status": "cancelled_by_merchant"}
+    )
+    assert cancelled.status_code == 200
+    run_jobs_once()
     with migrate_tenant_context(migrate_engine, people.a) as conn:
         erase_in(conn, gone)
     assert str(gone) not in [c["id"] for c in owner.get("/api/clients").json()]
@@ -450,18 +456,20 @@ def test_no_personal_data_ever_reaches_a_log(
     agenda = owner.get("/api/bookings", params={"from": slots[0], "to": slots[-1]})
     assert agenda.status_code == 200
     assert owner.get(f"/api/bookings/{booked.json()['id']}").json()["client_erased"] is True
-    erased_block = owner.post(
-        f"/api/members/{target}/time-off",
-        json={
-            "starts_at": in_the_way.isoformat(),
-            "ends_at": (in_the_way + timedelta(minutes=30)).isoformat(),
-        },
-    )
-    assert erased_block.json()["bookings"][0]["client_erased"] is True
     team_mail = {"booking_id": booked.json()["id"], "template": "booking_new"}
     send_booking(
         Job(uuid.uuid4(), "email.booking", people.a, {**team_mail, "user_id": str(people.both)})
     )
+
+    # 6l (ZIF-58): the 6d client, with its notes and consent, is erased by erase_client as the
+    # owner's live session, the database half of the erase route.
+    with tenant_context(people.a) as session:
+        session.execute(bookings.LOCK, {"key": bookings.LOCK_KEY})
+        assert session.scalar(
+            text("SELECT erase_client(:h, :id)"),
+            {"h": auth.hash_token(owner.cookies[auth.COOKIE]), "id": client_id},
+        )
+    assert client_id not in [c["id"] for c in owner.get("/api/clients").json()]
 
     # 7: invite flow — send, list, a wrong token, then accept with a brand-new account.
     invite_email = fresh_email()

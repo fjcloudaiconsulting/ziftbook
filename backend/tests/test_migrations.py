@@ -2290,3 +2290,47 @@ def test_0063_round_trips_the_client_tombstone(
             False,
         )
         assert tuple(conn.execute(CLIENT_GRANTS).one()) == ("SELECT", CLIENT_COLUMN_GRANTS)
+
+
+# ZIF-58 (0064): the erase functions, the contact hold table, and who may use them.
+ERASE_FUNCTIONS = text("""
+SELECT to_regprocedure('erase_client_core(uuid,boolean)') IS NOT NULL,
+       to_regprocedure('erase_client(bytea,uuid)') IS NOT NULL,
+       to_regclass('client_erasure_holds') IS NOT NULL,
+       to_regprocedure('client_money_owed(uuid,uuid)') IS NOT NULL
+""")
+ERASE_ACCESS = text("""
+SELECT has_function_privilege('ziftbook_app', 'erase_client(bytea,uuid)', 'EXECUTE'),
+       has_function_privilege('ziftbook_app', 'erase_client_core(uuid,boolean)', 'EXECUTE'),
+       has_function_privilege('ziftbook_worker', 'erase_client_core(uuid,boolean)', 'EXECUTE'),
+       has_any_column_privilege('ziftbook_app', 'client_erasure_holds', 'SELECT'),
+       has_table_privilege('ziftbook_worker', 'client_erasure_holds', 'SELECT'),
+       has_table_privilege('ziftbook_worker', 'client_erasure_holds', 'DELETE'),
+       has_any_column_privilege('ziftbook_worker', 'client_erasure_holds', 'INSERT')
+""")
+
+
+# ZIF-58 FENCE (0064). Wrong impl: a downgrade that leaves either function or the hold table behind;
+# an upgrade that loses the app role's EXECUTE on erase_client, gives it or the worker the core, or
+# lets the API read a hold or the worker insert one.
+def test_0064_round_trips_the_erase_functions(
+    migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = lock_timeout_config(monkeypatch)
+    try:
+        command.downgrade(cfg, "0063")
+        with migrate_engine.connect() as conn:
+            assert tuple(conn.execute(ERASE_FUNCTIONS).one()) == (False, False, False, False)
+    finally:
+        command.upgrade(cfg, "head")
+    with migrate_engine.connect() as conn:
+        assert tuple(conn.execute(ERASE_FUNCTIONS).one()) == (True, True, True, True)
+        assert tuple(conn.execute(ERASE_ACCESS).one()) == (
+            True,
+            False,
+            False,
+            False,
+            True,
+            True,
+            False,
+        )
