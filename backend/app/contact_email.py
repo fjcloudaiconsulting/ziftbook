@@ -20,6 +20,7 @@ from app import auth, limits
 from app.auth import CurrentSession, SignedIn
 from app.db import tenant_context
 from app.errors import ApiError, Error
+from app.jobs import enqueue
 
 router = APIRouter(prefix="/api", tags=["contact-email"])
 logger = logging.getLogger(__name__)
@@ -28,14 +29,47 @@ LINK_WINDOW = timedelta(minutes=15)
 SECRET = re.compile(r"[A-Za-z0-9_-]{43}")  # what secrets.token_urlsafe(32) makes
 
 
+def send_link(current: SignedIn, request_id: UUID, email: str) -> None:
+    """Queue the link for a request, or 429 when one address or business has had too many.
+
+    Called after the request row is locked and changed, so the count is exactly the links queued;
+    a 429 rolls the change back with the rest of the request. Aliases of one inbox share a count,
+    and so do all businesses, so a ring of them cannot flood one inbox.
+    """
+    tenant = current.tenant_id
+    address = limits.address_for_limits(email)
+    # Two calls: hit() takes one window. Both count, whichever is over.
+    hourly = limits.hit(
+        {limits.email_key("contact_email", f"{tenant}:{address}"): 3}, timedelta(hours=1)
+    )
+    daily = limits.hit(
+        {
+            f"contact_email:tenant:{tenant}": 10,
+            limits.email_key("contact_email_any", address): 5,
+        },
+        timedelta(days=1),
+    )
+    if hourly or daily:
+        raise ApiError(429, "rate_limited")
+    enqueue(
+        current.db,
+        "email.contact_email",
+        f"email.contact_email:{tenant}:{request_id}",
+        {"request_id": str(request_id)},
+        tenant_id=tenant,
+    )
+
+
 def change(current: SignedIn, request: Request, email: str | None) -> None:
-    """An owner's PUT of contact_email: a new address waits for its confirmation, the one in effect
-    stays until then; None clears both."""
+    """An owner's PUT of contact_email: a new address waits for its confirmation, and is sent the
+    link that confirms it; the one in effect stays until then. None clears both."""
     row = current.db.execute(
-        text("SELECT * FROM change_contact_email(:e, false, :u)"),
+        text("SELECT * FROM change_contact_email(:e, true, :u)"),
         {"e": email, "u": current.user_id},
     ).one()
     if row.outcome == "requested":
+        assert email is not None  # only a clear has none
+        send_link(current, row.request_id, email)
         # No details: nobody has confirmed the address, and it may be a third party's.
         auth.record(
             current.db,
