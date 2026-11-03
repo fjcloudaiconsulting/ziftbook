@@ -116,3 +116,14 @@ describe("F8.3 the copy", () => {
     });
   }
 });
+
+// Re-check NIT 4 FENCE. Wrong impl: the polite live region inside the block, which unmounts with it
+// when a cancel leaves no address, so "Change cancelled." is never announced.
+describe("the block's live region", () => {
+  const src = readFileSync(new URL("../app/[locale]/(console)/settings/contact-email.tsx", import.meta.url), "utf8");
+  test("stays mounted whatever the block shows", () => {
+    assert.equal(src.match(/role="status"/g)?.length, 1);
+    assert.doesNotMatch(src, /return null;/);
+    assert.match(src, /return \(\s*<>\s*\{content\}\s*\{live\}\s*<\/>\s*\);/);
+  });
+});
