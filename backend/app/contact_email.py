@@ -10,7 +10,7 @@ import logging
 import re
 import threading
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from datetime import datetime, timedelta
 from typing import Literal
 from uuid import UUID, uuid4
@@ -91,30 +91,37 @@ EVER_CONFIRMED = text("SELECT EXISTS (SELECT FROM contact_email_confirmations WH
 
 
 # claim() holds a second pooled connection while it may wait on the inbox's lock, so how many one
-# requester may have in flight is capped, per address and per business: concurrent saves for one
-# inbox cannot drain the API's pool. The shape of ZIF-264's limiter slots (limits._slot, #381);
-# once #381 is in the base, the claim takes its slot instead (a merge gate of this PR).
-MAX_CLAIMS_IN_FLIGHT = 2
+# requester may have in flight is capped: per address and /48 by the limiter's own slots
+# (limits._slot, ZIF-264), which every limiter call of that address shares, and per business here,
+# so one business cannot hold claims from many addresses at once. Concurrent saves for one inbox
+# cannot drain the API's pool.
 _claims: dict[str, int] = {}
 _claims_lock = threading.Lock()
 
 
 @contextmanager
-def _claim_slot(host: str | None, tenant_id: UUID) -> Iterator[None]:
-    buckets = (limits.ip_key("contact_email_claim", host), f"contact_email_claim:{tenant_id}")
+def _business_slot(tenant_id: UUID) -> Iterator[None]:
+    """One of the business's limits.MAX_IN_FLIGHT claim slots for the block, or 429 rate_limited."""
+    bucket = f"contact_email_claim:{tenant_id}"
     with _claims_lock:
-        if any(_claims.get(bucket, 0) >= MAX_CLAIMS_IN_FLIGHT for bucket in buckets):
+        if _claims.get(bucket, 0) >= limits.MAX_IN_FLIGHT:
             raise ApiError(429, "rate_limited")
-        for bucket in buckets:
-            _claims[bucket] = _claims.get(bucket, 0) + 1
+        _claims[bucket] = _claims.get(bucket, 0) + 1
     try:
         yield
     finally:
         with _claims_lock:
-            for bucket in buckets:
-                _claims[bucket] -= 1
-                if not _claims[bucket]:
-                    del _claims[bucket]
+            _claims[bucket] -= 1
+            if not _claims[bucket]:
+                del _claims[bucket]
+
+
+@contextmanager
+def _claim_slot(host: str | None, tenant_id: UUID) -> Iterator[None]:
+    # No address (a request without a client): the business's slot alone, as limits.hit() then
+    # takes none either.
+    with limits._slot(host) if host else nullcontext(), _business_slot(tenant_id):
+        yield
 
 
 def claim(current: SignedIn, email: str, host: str | None) -> None:

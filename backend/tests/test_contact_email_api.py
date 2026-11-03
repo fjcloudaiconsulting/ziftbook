@@ -961,12 +961,12 @@ def test_concurrent_saves_cannot_drain_the_pool(
         threads = [threading.Thread(target=put) for _ in range(4)]
         for thread in threads:
             thread.start()
-        wait_until_blocked(app_engine, contact_email.MAX_CLAIMS_IN_FLIGHT)
+        wait_until_blocked(app_engine, limits.MAX_IN_FLIGHT)
         for _ in range(200):  # the others are refused at once, holding nothing
-            if results.count(429) == 4 - contact_email.MAX_CLAIMS_IN_FLIGHT:
+            if results.count(429) == 4 - limits.MAX_IN_FLIGHT:
                 break
             time.sleep(0.05)
-        assert sorted(results) == [429] * (4 - contact_email.MAX_CLAIMS_IN_FLIGHT)
+        assert sorted(results) == [429] * (4 - limits.MAX_IN_FLIGHT)
     for thread in threads:
         thread.join()
     assert set(results) <= {200, 429, 503} and 200 in results  # the two let through finish
@@ -1037,6 +1037,30 @@ def test_one_business_holds_two_claims_whatever_the_address(
         )
         == 429
     )
+
+
+# ZIF-264 x ZIF-232 FENCE (merge gate). Wrong impl: a claim cap of its own beside the limiter's, so
+# an address with both of its limiter slots taken (limits._slot) still holds claims on top: each a
+# second pooled connection. The claim takes the address's limiter slot, so it is refused at once,
+# having claimed nothing.
+def test_a_claim_takes_the_address_s_limiter_slot(
+    people: People, app: FastAPI, migrate_engine: Engine
+) -> None:
+    ip = fresh_address()
+    owner = client_at(app, people.a, people.both, ip)
+    address = f"{uuid.uuid4().hex[:12]}@example.com"
+    key = contact_email.inbox_key(limits.address_for_limits(address))
+
+    with limits._slot(ip), limits._slot(ip):
+        response = put_settings(owner, {"contact_email": address})
+
+    assert (response.status_code, response.json()) == (429, {"code": "rate_limited"})
+    with migrate_engine.connect() as conn:
+        claimed = conn.scalar(
+            text("SELECT count(*) FROM contact_email_senders WHERE inbox_key = :k"), {"k": key}
+        )
+    assert claimed == 0
+    assert limits._in_flight == {}
 
 
 CANCEL = "/api/settings/contact-email/request"
