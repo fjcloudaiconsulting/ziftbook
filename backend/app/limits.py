@@ -53,35 +53,44 @@ def _charge(keys: list[str], window: timedelta) -> dict[str, int]:
 # ZIF-264. The address of the request being served (request.client.host, "" without one), set by the
 # API's middleware; None outside a request (the worker, scripts). hit() is capped by it.
 CLIENT: ContextVar[str | None] = ContextVar("limits_client", default=None)
-# hit() calls one address (IPv4, or IPv6 /48) may have in flight in this process. Each waits on its
-# keys' row locks holding a pooled connection and a thread: past this, one address's flood would
-# queue on one row until every other visitor's request found the pool full. Two carry far more than
-# any per-IP limit admits; the frontend never has more than two such requests open for a visitor.
+# hit() calls one address (IPv4, or IPv6 /64) may have in flight in this process, and at most
+# MAX_IN_FLIGHT_PER_48 for all the /64s of one IPv6 /48 together: per /64 like every key but the
+# IP-only auth ones (ZB-04), and a /48 holder still cannot multiply its slots by rotating /64s. Each
+# call waits on its keys' row locks holding a pooled connection and a thread: past this, one
+# address's flood would queue on one row until every other visitor's request found the pool full.
+# Two carry far more than any per-IP limit admits; the frontend never has more than two such
+# requests open for a visitor.
 MAX_IN_FLIGHT = 2
-# Entries only while held: never more than the calls in flight, however many addresses arrive.
+MAX_IN_FLIGHT_PER_48 = 8
+# Entries only while held: never more than two per call in flight, however many addresses arrive.
 _in_flight: dict[str, int] = {}
 _in_flight_lock = threading.Lock()
 
 
 @contextmanager
 def _slot(host: str) -> Iterator[None]:
-    """One of host's MAX_IN_FLIGHT slots for the block, or 429 rate_limited at once with no database
-    work. Keyed by the caller's own address, never by a key other addresses share: a refusal tells
-    an address only how many calls it has open itself."""
-    bucket = ip_key("in_flight", host, v6_prefix=AUTH_V6_PREFIX)
+    """A slot of host's address and of its /48 for the block, or 429 rate_limited at once with no
+    database work when either is full. Keyed by the caller's own address, never by a key other
+    addresses share: a refusal tells an address only how many calls it and its /48 have open. An
+    IPv4 address's /48 bucket is the address again, under its own name, so it never binds first."""
+    buckets = (
+        (ip_key("in_flight", host), MAX_IN_FLIGHT),
+        (ip_key("in_flight_48", host, v6_prefix=AUTH_V6_PREFIX), MAX_IN_FLIGHT_PER_48),
+    )
     with _in_flight_lock:
-        held = _in_flight.get(bucket, 0)
-        if held >= MAX_IN_FLIGHT:
+        if any(_in_flight.get(bucket, 0) >= cap for bucket, cap in buckets):
             raise ApiError(429, "rate_limited")
-        _in_flight[bucket] = held + 1
+        for bucket, _ in buckets:
+            _in_flight[bucket] = _in_flight.get(bucket, 0) + 1
     try:
         yield
     finally:
         with _in_flight_lock:
-            if _in_flight[bucket] == 1:
-                del _in_flight[bucket]
-            else:
-                _in_flight[bucket] -= 1
+            for bucket, _ in buckets:
+                if _in_flight[bucket] == 1:
+                    del _in_flight[bucket]
+                else:
+                    _in_flight[bucket] -= 1
 
 
 def hit(limits: dict[str, int], window: timedelta, *, db: Session | None = None) -> bool:
