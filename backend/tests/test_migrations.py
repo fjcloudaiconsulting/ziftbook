@@ -2214,6 +2214,40 @@ def test_0069_downgrade_restores_0039s_functions() -> None:
     }
 
 
+# ZIF-261 (0083): the attempt is charged by one definer and checked by another.
+CHARGE_DEFINERS = ("charge_second_factor(bytea)", "check_second_factor(bytea,uuid,bytea,bigint)")
+CHARGES_COLUMN = text("""
+SELECT count(*) FROM information_schema.columns
+WHERE table_name = 'second_factors' AND column_name = 'charges'
+""")
+
+
+# ZIF-261 FENCE (0083). Wrong impl: a downgrade that leaves the column or a function behind; an
+# upgrade whose functions run as the caller, search a caller's schema first, are PUBLIC's, or are
+# not the app's to call. Injected by deleting the downgrade's DROP COLUMN, then `SECURITY DEFINER`
+# from one header, then one REVOKE.
+def test_0083_round_trips_the_charges(
+    migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = lock_timeout_config(monkeypatch)
+    try:
+        command.downgrade(cfg, "0069")
+        with migrate_engine.connect() as conn:
+            assert conn.scalar(CHARGES_COLUMN) == 0
+            gone = [
+                conn.scalar(text("SELECT to_regprocedure(:s)"), {"s": sig})
+                for sig in CHARGE_DEFINERS
+            ]
+        assert gone == [None] * len(CHARGE_DEFINERS)
+    finally:
+        command.upgrade(cfg, "head")
+    with migrate_engine.connect() as conn:
+        assert conn.scalar(CHARGES_COLUMN) == 1
+        for sig in CHARGE_DEFINERS:
+            row = conn.execute(DEFINER_STATE, {"signature": sig}).one()
+            assert tuple(row)[3:] == DEFINER_ACCESS, sig
+
+
 # ZIF-58 (0063): the name checks on clients, erased_at, the tombstone trigger and its function,
 # and the app role's table and column privileges on clients.
 CLIENT_NAME_CHECKS = text("""
