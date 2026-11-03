@@ -977,7 +977,10 @@ def test_a_linked_client_email_carries_a_fragment_token_that_hashes_into_booking
             default=str,
         )
     assert token not in outbox_blob
-    assert message["Form"]["o:tracking-clicks"] == "no"
+    assert (message["Form"]["o:tracking-clicks"], message["Form"]["o:tracking-opens"]) == (
+        "no",
+        "no",
+    )
 
 
 # fence (D1). A job already sent, run again, stores no second booking_links row: the token it
