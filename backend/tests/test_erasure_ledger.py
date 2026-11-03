@@ -245,6 +245,7 @@ FROM clients c WHERE c.id = :id
 """)
 BOOKING = text("""
 SELECT b.status, b.client_name, b.checkout_hash, p.settled_at, p.refunded_minor,
+       p.refund_failed_at,
        (SELECT details ->> 'reason' FROM booking_events
         WHERE booking_id = b.id AND event = b.status ORDER BY id DESC LIMIT 1) AS reason
 FROM bookings b LEFT JOIN booking_payments p ON p.booking_id = b.id
@@ -307,6 +308,7 @@ def test_a_restored_backup_is_erased_again_and_refunds_nothing_twice(
         assert (booking.client_name, booking.checkout_hash) == (None, None)
         assert booking.settled_at is not None
         assert booking.refunded_minor == 4000
+        assert booking.refund_failed_at is None
         assert fake_stripe.count("refund") == 1
         assert last_reapply(restored_migrate) == {
             "via": "cli",
@@ -315,6 +317,7 @@ def test_a_restored_backup_is_erased_again_and_refunds_nothing_twice(
             "already_erased": 0,
             "absent": 0,
             "cancelled": 1,
+            "paid_ended": 1,
         }
         restored_migrate.dispose()
 
@@ -371,6 +374,7 @@ def test_a_second_reapply_changes_nothing(
         "already_erased": 1,
         "absent": 0,
         "cancelled": 0,
+        "paid_ended": 0,
     }
 
 
@@ -684,3 +688,47 @@ def test_a_core_that_erases_nothing_stops_the_run(
     with pytest.raises(RuntimeError):
         reapply(erased_at - timedelta(hours=1))
     assert take(migrate_engine, people.a) == before
+
+
+# ZIF-58. FENCE (money). Wrong impl: settle tops a re-applied ending up to its full refund. A
+# restore can lose how a paid booking really ended: the client cancelled it themselves with half
+# or nothing back (Stripe shows that refund, the restored row still says confirmed), or the first
+# erasure's refund never ran. The re-apply cannot tell these apart, so it never pays a refund that
+# Stripe does not already show: settle records what is owed, flags the shortfall for the business
+# (refund_failed_at, resolved in Stripe), tells the operator (ERROR), and mails nobody.
+@pytest.mark.parametrize("refunded", [2000, 0])
+def test_a_reapplied_ending_never_pays_more_than_stripe_shows(
+    people: People,
+    fake_stripe: FakeGateway,
+    migrate_engine: Engine,
+    ledger_bucket: S3Client,
+    log_lines: Any,
+    refunded: int,
+) -> None:
+    app = create_app()
+    owner = signed_in(app, people.a, people.both)
+    save_setting(people.a, "published", True)
+    service_id = make_shop(people, owner, fake_stripe, price=4000)
+    _, booking_id, intent = booked(app, people, fake_stripe, service_id, "pay")
+    client_id = client_of(people.a, booking_id)
+    if refunded:  # the client's own cancellation, which the restore lost
+        fake_stripe.add_refund(intent, refunded, "succeeded")
+    entry = ledger.Entry(people.a, client_id, datetime.now(UTC) - timedelta(minutes=5))
+    storage.ledger_write(entry.key, entry.body())
+    assert reapply(entry.erased_at - timedelta(hours=1)) == 0
+    run("payment.settle")
+
+    assert fake_stripe.count("refund") == 0
+    with migrate_tenant_context(migrate_engine, people.a) as conn:
+        booking = conn.execute(BOOKING, {"id": booking_id}).one()
+        events = conn.scalars(
+            text("SELECT event FROM booking_events WHERE booking_id = :id"), {"id": booking_id}
+        ).all()
+    assert booking.status == "cancelled_by_merchant"
+    assert booking.settled_at is not None
+    assert booking.refund_failed_at is not None
+    assert "refund_failed" not in events and "refunded" not in events
+    held = [line for line in log_lines() if line["msg"] == "refund held after a reapply"]
+    assert [(line["level"], line["booking_id"], line["amount_minor"]) for line in held] == [
+        ("ERROR", booking_id, 4000 - refunded)
+    ]

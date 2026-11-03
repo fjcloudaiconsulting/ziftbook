@@ -389,6 +389,14 @@ step 3 brings erased clients back.
    month since, counting the keys whose time is at or after it), and `reapplied + already_erased + absent` must equal
    `entries`.
 4. Start the worker (settle runs the refunds and releases), then the API.
+5. Check each booking in the `erasures reapplied` line's `paid_ended` (ids) in Stripe. A restore can lose how a
+   paid booking really ended (the client's own cancellation with less back, or none), and the re-apply cannot tell
+   that from an erasure whose refund never ran, so settle never pays a re-applied ending more than Stripe already
+   shows: it flags the shortfall (`refund_failed_at`, "refund failed" in the console), logs ERROR `refund held after
+   a reapply` (`booking_id`, `intent`, `amount_minor`), and mails nobody. Where the money is owed, refund it in Stripe
+   (the refund event clears the flag). Where it is not (the client's own cancellation shows in Stripe), clear the
+   flag as `ziftbook_migrate` in that business:
+   `UPDATE booking_payments SET refunded_minor = <what Stripe refunded>, refund_failed_at = NULL WHERE booking_id = '<id>'`.
 
 What it cannot bring back: an erasure committed but not yet ledgered when the database was lost (normally seconds;
 an `erasure.ledger` job that gave up raised an ERROR alert at the time, and `backfill` queues it again while the
