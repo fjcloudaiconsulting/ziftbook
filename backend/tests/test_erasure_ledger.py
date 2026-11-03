@@ -19,7 +19,7 @@ from sqlalchemy import URL, Engine, create_engine, make_url, text
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import NullPool
 
-from app import bookings, ledger, payments, storage
+from app import bookings, config, ledger, payments, storage
 from app.db import SessionLocal, join_tenant
 from app.jobs import Job
 from app.main import create_app
@@ -934,3 +934,88 @@ def test_a_listing_with_none_of_the_database_s_erasures_is_refused(
     storage.ledger_write(foreign.key, foreign.body())
     assert reapply(since) == 1
     assert ledger.main(["reapply", "--reason", "restore drill"]) == 1  # the whole ledger too
+
+
+# ZIF-58. FENCE (hostile policy, settle). Wrong impl: settle's re-applied-ending check scoped by
+# row-level security alone. Under a widened app-role policy, an event of another business naming
+# this booking (a state only a corrupted table could hold: the foreign key ties an event to its
+# booking's business) would hold this booking's refund back. Named, the check sees this
+# business's events only, and an owner's cancellation is refunded as always.
+def test_settle_reads_only_this_business_s_reapplied_events(
+    people: People,
+    fake_stripe: FakeGateway,
+    migrate_engine: Engine,
+) -> None:
+    app = create_app()
+    owner = signed_in(app, people.a, people.both)
+    save_setting(people.a, "published", True)
+    service_id = make_shop(people, owner, fake_stripe, price=4000)
+    _, booking_id, _ = booked(app, people, fake_stripe, service_id, "pay")
+    cancelled = owner.patch(f"/api/bookings/{booking_id}", json={"status": "cancelled_by_merchant"})
+    assert cancelled.status_code == 200
+    database = make_url(os.environ["ZIF_MIGRATE_DATABASE_URL"]).database
+    admin = create_engine(make_url(ADMIN_DATABASE_URL).set(database=database), poolclass=NullPool)
+    with admin.begin() as conn:
+        conn.execute(text("SET LOCAL session_replication_role = replica"))  # past the foreign key
+        conn.execute(
+            text("""
+            INSERT INTO booking_events (tenant_id, booking_id, event, details)
+            VALUES (:other, :booking, 'expired',
+                    jsonb_build_object('reason', 'erasure_reapplied',
+                                       'erased_at', now() + interval '1 day'))
+            """),
+            {"other": people.b, "booking": booking_id},
+        )
+        conn.execute(
+            text(
+                "CREATE POLICY probe_widened ON booking_events FOR SELECT TO ziftbook_app"
+                " USING (true)"
+            )
+        )
+    try:
+        payments.settle(Job(uuid.uuid4(), "payment.settle", people.a, {"booking_id": booking_id}))
+    finally:
+        with admin.begin() as conn:
+            conn.execute(text("DROP POLICY IF EXISTS probe_widened ON booking_events"))
+            conn.execute(
+                text(
+                    "DELETE FROM booking_events WHERE tenant_id = :other AND booking_id = :booking"
+                ),
+                {"other": people.b, "booking": booking_id},
+            )
+        admin.dispose()
+    assert fake_stripe.count("refund") == 1
+
+
+# ZIF-58. FENCE (security N2). Wrong impl: the API reading the ledger's full settings, so a key
+# misplaced in its environment would be loaded into it. The API's startup and the erasure gate
+# read the bucket alone.
+def test_the_api_never_reads_the_ledger_s_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    def refused(self: object, *args: object, **kwargs: object) -> None:
+        raise AssertionError("the API read the ledger's key")
+
+    monkeypatch.setattr(config.LedgerSettings, "__init__", refused)
+    monkeypatch.setenv("ZIF_ERASURE_LEDGER_BUCKET", BUCKET)
+    monkeypatch.setenv("ZIF_ERASURE_LEDGER_SECRET_ACCESS_KEY", "misplaced-secret")
+    monkeypatch.setenv("ZIF_APP_URL", "https://app.ziftbook.example")
+    app = create_app()
+    app.add_api_route("/api/test/erasure", ledger.require, methods=["POST"], tags=["test"])
+    with new_client(app) as client:  # the lifespan: the startup line
+        assert client.post("/api/test/erasure", json={}).status_code == 200
+
+
+# ZIF-58. GUARD (PR 6's merge note). A re-apply tells no client of the cancellations: they were
+# announced at the first erasure. No booking mail of any kind is queued for what it ended.
+def test_a_reapply_queues_no_booking_mail(
+    people: People, migrate_engine: Engine, ledger_bucket: S3Client
+) -> None:
+    _, booking_id, erased_at = seed_ledgered(
+        people, migrate_engine, timedelta(days=2), timedelta(minutes=5)
+    )
+    assert reapply(erased_at - timedelta(hours=1)) == 0
+    with migrate_engine.begin() as conn:
+        mail = conn.scalars(
+            text("SELECT kind FROM jobs WHERE payload ->> 'booking_id' = :id"),
+            {"id": str(booking_id)},
+        ).all()
+    assert mail == []
