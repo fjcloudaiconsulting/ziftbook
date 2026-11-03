@@ -1,5 +1,6 @@
 import secrets
 import threading
+import time
 import unicodedata
 import uuid
 from collections.abc import Iterator
@@ -10,7 +11,7 @@ from fastapi.testclient import TestClient
 from httpx2 import Response
 from sqlalchemy import Engine, text
 
-from app import auth, passwords, turnstile
+from app import auth, limits, passwords, turnstile
 from app.db import SessionLocal, tenant_context
 from app.errors import ApiError
 from app.main import create_app
@@ -511,9 +512,12 @@ def test_a_rush_of_sign_ins_is_turned_away_without_stalling_the_api(
     turned_away = threading.Event()
 
     # One client for everything, so every request shares the same event loop and thread pool,
-    # as they do in one server process.
+    # as they do in one server process. Behind a trusted proxy, each from its own address: one
+    # address's rush is turned away earlier, by the limiter's per-address cap (ZIF-264).
+    proxy = fresh_address()
+    monkeypatch.setenv("ZIF_TRUSTED_PROXIES", proxy)
     try:
-        with new_client(app) as shared:
+        with new_client(create_app(), proxy) as shared:
             SessionLocal.configure(bind=app_engine)  # the lifespan bound its own engine
 
             def attempt() -> None:
@@ -521,6 +525,7 @@ def test_a_rush_of_sign_ins_is_turned_away_without_stalling_the_api(
                 response = shared.post(
                     "/api/session",
                     json={"email": f"{uuid.uuid4()}@example.com", "password": PASSWORD},
+                    headers={"x-forwarded-for": fresh_address()},
                 )
                 with lock:
                     statuses.append(response.status_code)
@@ -544,6 +549,46 @@ def test_a_rush_of_sign_ins_is_turned_away_without_stalling_the_api(
     assert reader.status_code == 200 and held == [True] * 4
     assert (statuses.count(503), statuses.count(401)) == (44, 4)
     assert waits == [False] * 48 and slots._value == 4  # nobody waited, and every slot came back
+
+
+def test_a_flood_from_one_address_holds_two_connections_and_leaves_others_alone(
+    people: People, app: FastAPI, app_engine: Engine
+) -> None:
+    flooder = fresh_address()
+    gate = limits.ip_key("sign_in", flooder, v6_prefix=limits.AUTH_V6_PREFIX)
+    limits.hit({gate: 50}, auth.SIGN_IN_WINDOW)  # the row, so the holder below can lock it
+    answers: list[Response] = []
+
+    def attempt() -> None:
+        answers.append(sign_in(new_client(app, flooder), fresh_email(), "wrong-password!"))
+
+    with app_engine.begin() as holder:
+        holder.execute(text("SELECT FROM rate_limits WHERE key = :k FOR UPDATE"), {"k": gate})
+        threads = [threading.Thread(target=attempt) for _ in range(6)]
+        for thread in threads:
+            thread.start()
+        wait_until_blocked(app_engine, 2)
+        for _ in range(100):  # the other four are answered without waiting for the lock
+            if len(answers) == 4:
+                break
+            time.sleep(0.05)
+        with app_engine.connect() as conn:
+            blocked = conn.scalar(
+                text(
+                    "SELECT count(DISTINCT l.pid) FROM pg_locks l "
+                    "JOIN pg_stat_activity a ON a.pid = l.pid "
+                    "WHERE NOT l.granted AND a.datname = current_database()"
+                )
+            )
+        assert blocked == 2
+        assert [(a.status_code, a.json()) for a in answers] == [(429, {"code": "rate_limited"})] * 4
+        # Another address signs in while the flood still holds its two.
+        assert sign_in(new_client(app, fresh_address()), email_of(people.only_a)).status_code == 200
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert [a.status_code for a in answers[4:]] == [401, 401]
+    assert limits._in_flight == {}
 
 
 def test_the_decoy_hash_costs_what_a_real_one_does() -> None:

@@ -491,7 +491,8 @@ Where each deployment gets it:
   opt-out), so it leaves `ZIF_CLIENT_IP_HEADER` unset (any client could forge the header) and the API trusts only
   the web app's fixed `172.28.0.10`. Every
   visitor then shares that one address and its per-IP limits: after ZIF-54's 10 booking-link exchanges in 15
-  minutes, every further one is refused, for every client of every business. Use it to try a release, never
+  minutes, every further one is refused, for every client of every business, and at most two limiter calls run at
+  once per API process for all of them together (ZIF-264). Use it to try a release, never
   for public traffic as it stands.
 - **Pod-network risk (k3s):** the trusted CIDR is the whole pod network, so anything that reaches the
   backend from inside it is trusted, including traffic SNATed to a node's cluster-internal address
