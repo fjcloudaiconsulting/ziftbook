@@ -38,6 +38,11 @@ SEARCH_PATH = "SET search_path = pg_catalog, public, pg_temp"
 HOLD_TEMPLATES = "'booking_cancelled', 'booking_expired', 'booking_refund_failed'"
 MAX_ATTEMPTS = 5
 
+# shortcut: the jobs arm seq-scans jobs (global, every kind, 30 days of finished jobs: no index
+# fits an unfinished email.booking job by its booking), once per hold per sweep and once per erasure
+# under that business's booking lock; when jobs passes ~100k rows or this shows in slow logs, add in
+# its own migration CREATE INDEX CONCURRENTLY ON jobs ((payload ->> 'booking_id')) WHERE
+# kind = 'email.booking' AND completed_at IS NULL.
 CLIENT_HOLD_NEEDED = f"""
 CREATE FUNCTION client_hold_needed(p_tenant uuid, p_client uuid) RETURNS boolean
   LANGUAGE sql STABLE SECURITY INVOKER {SEARCH_PATH} AS $$
@@ -57,6 +62,7 @@ $$"""
 
 def _core_0064() -> str:
     """0064's erase_client_core, as CREATE OR REPLACE."""
+    # By file name: the merge train re-chains down_revision only, never a migration's number.
     spec = importlib.util.spec_from_file_location(
         "migration_0064", Path(__file__).with_name("0064_erase_client.py")
     )
