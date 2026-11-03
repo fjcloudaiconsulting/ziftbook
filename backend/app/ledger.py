@@ -7,11 +7,11 @@ a dedicated bucket with a bucket lock (LedgerSettings), ids and a time only.
 An erasure enqueues an erasure.ledger job in its own transaction (enqueue), so the entry exists
 only for an erasure that committed; the worker writes it (record).
 
-    python -m app.ledger reapply --since <ISO time> --reason "<why>"
+    python -m app.ledger reapply [--since <ISO time>] --reason "<why>"
     python -m app.ledger backfill --since <ISO time>
 
-reapply erases again, after a restore, every client the ledger lists from that time on (the
-restore point minus an hour), with the ledger's read-only credentials. It connects as
+reapply erases again, after a restore, every client the ledger lists (from --since on, the restore
+point minus an hour, when given), with the ledger's read-only credentials. It connects as
 ziftbook_migrate (ZIF_MIGRATE_DATABASE_URL), from the migrations image, as app.admin does, before
 the API and the worker start (CONTRIBUTING "Restoring the database"). Exit 0 when done or nothing
 was to do, 1 on any error (logged CRITICAL; nothing was applied), 2 on a usage error.
@@ -123,21 +123,80 @@ def record(job: Job) -> None:
     logger.info("erasure ledgered", extra={"client_id": str(entry.client_id), "written": written})
 
 
-def read(since: datetime) -> list[Entry]:
-    """The ledger's entries from since on, oldest first. Raises on an entry it cannot read."""
+def read(since: datetime | None) -> list[Entry]:
+    """The ledger's entries from since on (all of them without), oldest first. Raises on an entry
+    it cannot read."""
+    start = "erasures/" if since is None else f"erasures/{since.astimezone(UTC):%Y/%m/%d}/"
     entries = []
-    for raw in storage.ledger_entries(f"erasures/{since.astimezone(UTC):%Y/%m/%d}/"):
+    for raw in storage.ledger_entries(start):
         data = json.loads(raw)
         if data.get("v") != 1:
             raise ValueError("a ledger entry of an unknown version")
         entry = Entry.parse(data)
-        if entry.erased_at >= since:
+        if since is None or entry.erased_at >= since:
             entries.append(entry)
     return sorted(entries, key=lambda entry: entry.erased_at)
 
 
-# Every statement names the business, besides row-level security: the entry's business comes from
-# outside the database, and a widened migrate-role policy must not let it reach another one.
+class Refused(Exception):
+    """A run that cannot be right, refused before anything is applied: exit with code."""
+
+    def __init__(self, message: str, code: int, **fields: object) -> None:
+        super().__init__(message)
+        self.code = code
+        self.fields = fields
+
+
+# What the restored database holds: its newest record of anything (a restore point is no later),
+# and how many clients it records erased from since on, in every business.
+NEWEST_GLOBAL = text("""
+SELECT greatest((SELECT max(created_at) FROM audit_events),
+                (SELECT max(created_at) FROM platform_audit_events),
+                (SELECT max(completed_at) FROM jobs))
+""")
+NEWEST_IN_BUSINESS = text("""
+SELECT greatest((SELECT max(created_at) FROM bookings WHERE tenant_id = :tenant_id),
+                (SELECT max(created_at) FROM booking_events WHERE tenant_id = :tenant_id),
+                (SELECT max(erased_at) FROM clients WHERE tenant_id = :tenant_id)),
+       (SELECT count(*) FROM clients
+        WHERE tenant_id = :tenant_id AND erased_at >= coalesce(CAST(:since AS timestamptz),
+                                                              '-infinity'))
+""")
+
+
+def check_window(engine: Engine, since: datetime | None, entries: list[Entry]) -> None:
+    """Refuse a --since later than everything the restored database holds (it would skip the
+    erasures between the real restore point and it), and an empty listing for a window in which
+    the database itself records erasures (a wrong bucket or key)."""
+    with Session(engine) as session, session.begin():
+        session.execute(text("SET LOCAL app.audit_review = 'on'"))
+        newest = [session.scalar(NEWEST_GLOBAL)]
+        erased = 0
+        for tenant_id in session.scalars(text("SELECT id FROM tenants")).all():
+            join_tenant(session, tenant_id)
+            row = session.execute(
+                NEWEST_IN_BUSINESS, {"tenant_id": tenant_id, "since": since}
+            ).one()
+            newest.append(row[0])
+            erased += row[1]
+    latest = max((at for at in newest if at is not None), default=None)
+    if since is not None and (latest is None or since > latest):
+        raise Refused(
+            "reapply refused: --since is after the restored database's newest record;"
+            " leave it out to read the whole ledger",
+            2,
+            newest=latest.isoformat() if latest else None,
+        )
+    if not entries and erased:
+        raise Refused(
+            "reapply refused: the ledger lists no erasure where the database records some;"
+            " check the bucket and its key",
+            1,
+            erased=erased,
+            bucket=LedgerSettings().erasure_ledger_bucket,
+        )
+
+
 CLIENT = text("""
 SELECT erased_at FROM clients WHERE tenant_id = :tenant_id AND id = :id FOR NO KEY UPDATE
 """)
@@ -149,12 +208,13 @@ WHERE tenant_id = :tenant_id AND booking_id = ANY(CAST(:ids AS uuid[]))
 """)
 
 
-def reapply(engine: Engine, since: datetime, reason: str) -> int:
+def reapply(engine: Engine, since: datetime | None, reason: str) -> int:
     """Erase again every client the ledger lists from since on that the restored database still
     has unerased, in erasure order, in one transaction with its platform audit event: all of it
     or, on any error, none. A client already erased, or one the restored database never had, is
     counted and left alone, so a second run changes nothing."""
     entries = read(since)  # before the transaction: no outbound call under a booking lock
+    check_window(engine, since, entries)
     counts = {"entries": len(entries), "reapplied": 0, "already_erased": 0, "absent": 0}
     cancelled = 0
     paid_ended: list[str] = []  # settle pays these no more than Stripe shows (payments._refund)
@@ -208,7 +268,12 @@ def reapply(engine: Engine, since: datetime, reason: str) -> int:
     # The paid bookings it ended, by id: the operator checks each in Stripe (runbook step 3).
     logger.info(
         "erasures reapplied",
-        extra={"cancelled": cancelled, "paid_ended": paid_ended, **counts},
+        extra={
+            "bucket": LedgerSettings().erasure_ledger_bucket,
+            "cancelled": cancelled,
+            "paid_ended": paid_ended,
+            **counts,
+        },
     )
     return 0
 
@@ -251,12 +316,16 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m app.ledger", description=__doc__)
     parser.add_argument("command", choices=("reapply", "backfill"))
     parser.add_argument(
-        "--since", required=True, type=_since, help="reapply: the restore point - 1h"
+        "--since",
+        type=_since,
+        help="reapply: the restore point - 1h (default: the whole ledger); backfill: required",
     )
     parser.add_argument("--reason", type=admin._reason, help="reapply: why, for the audit log")
     args = parser.parse_args(argv)
     if args.command == "reapply" and args.reason is None:
         parser.error("reapply needs --reason")
+    if args.command == "backfill" and args.since is None:
+        parser.error("backfill needs --since")
     engine = create_engine(
         os.environ["ZIF_MIGRATE_DATABASE_URL"], poolclass=NullPool, hide_parameters=True
     )
@@ -264,6 +333,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "backfill":
             return backfill(engine, args.since)
         return reapply(engine, args.since, args.reason)
+    except Refused as refused:
+        logger.error(str(refused), extra=refused.fields)
+        return refused.code
     finally:
         engine.dispose()
 

@@ -732,3 +732,48 @@ def test_a_reapplied_ending_never_pays_more_than_stripe_shows(
     assert [(line["level"], line["booking_id"], line["amount_minor"]) for line in held] == [
         ("ERROR", booking_id, 4000 - refunded)
     ]
+
+
+# ZIF-58. FENCE. Wrong impl: --since required, the operator's most dangerous input. Without it
+# the run reads the whole ledger (an entry already applied is counted and left alone).
+def test_reapply_reads_the_whole_ledger_by_default(
+    people: People, migrate_engine: Engine, ledger_bucket: S3Client
+) -> None:
+    client_id, _, _ = seed_ledgered(people, migrate_engine, timedelta(days=2), timedelta(days=6))
+    assert ledger.main(["reapply", "--reason", "restore drill"]) == 0
+    with migrate_tenant_context(migrate_engine, people.a) as conn:
+        assert conn.execute(CLIENT_ROWS, {"id": client_id}).one().erased_at is not None
+
+
+# ZIF-58. FENCE. Wrong impl: any --since taken as given. One later than everything the restored
+# database holds would skip the erasures between the real restore point and it, and exit 0.
+def test_a_since_after_the_restored_data_is_refused(
+    people: People, migrate_engine: Engine, ledger_bucket: S3Client
+) -> None:
+    client_id, _, erased_at = seed_ledgered(
+        people, migrate_engine, timedelta(days=2), timedelta(minutes=5)
+    )
+    before = take(migrate_engine, people.a)
+    assert reapply(datetime.now(UTC) + timedelta(hours=1)) == 2
+    assert take(migrate_engine, people.a) == before
+    assert reapply(erased_at - timedelta(hours=1)) == 0  # the right one is taken
+
+
+# ZIF-58. FENCE. Wrong impl: an empty listing taken as "nothing to do". A wrong bucket or key lists
+# nothing, while the restored database itself records erasures in the window: refused, exit 1.
+def test_an_empty_listing_where_the_database_records_erasures_is_refused(
+    people: People, migrate_engine: Engine, ledger_bucket: S3Client
+) -> None:
+    with migrate_engine.begin() as conn:
+        since = conn.scalar(text("SELECT clock_timestamp()"))
+    erase_now(migrate_engine, people.a)  # recorded by the database, absent from this bucket
+    assert reapply(since) == 1
+    with migrate_engine.begin() as conn:
+        recorded = conn.scalar(
+            text("""
+            SELECT count(*) FROM platform_audit_events
+            WHERE created_at >= :s AND action = 'erasure_reapplied'
+            """),
+            {"s": since},
+        )
+    assert recorded == 0
