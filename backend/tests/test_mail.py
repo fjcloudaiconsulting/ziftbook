@@ -7,6 +7,7 @@ import urllib.request
 import uuid
 from collections.abc import Callable, Iterator
 from datetime import timedelta
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -484,7 +485,7 @@ def test_values_are_escaped_in_html_and_kept_as_typed_in_text() -> None:
         values = {k: v for k, v in hostile.items() if k in _every(template, "en")}
         subject, body, html = mail.compose(template, "en", _every(template, "en", **values))
         assert "<script>" not in html and 'href="https://evil.test"' not in html, template
-        assert html.count("<h1") == 1, template
+        assert html.count("<h1") == 1, template  # the message's "# Heading" stays text
         assert "&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt; O&#x27;Brien &amp; Co" in html
         assert HOSTILE in body, template
 
@@ -504,7 +505,7 @@ def test_the_message_is_text_and_html_alternatives_with_the_calendar_beside_them
     mail.deliver("hello", address, "Subject", "Body\n", "<p>Body</p>")
     mail.deliver("hello", address, "Subject", "Body\n", "<p>Body</p>", ics=b"BEGIN:VCALENDAR\r\n")
 
-    with_ics, plain = (call["Raw"].encode() for call in sent_to(address))
+    with_ics, plain = (call["Raw"].encode() for call in sent_to(address))  # sent_to: newest first
     assert _parts(plain) == ["multipart/alternative", "text/plain", "text/html"]
     assert _parts(with_ics) == [
         "multipart/mixed",
@@ -515,22 +516,32 @@ def test_the_message_is_text_and_html_alternatives_with_the_calendar_beside_them
     ]
 
 
-# ZIF-175 guard: every email has one heading and at most one button, and no dash punctuation the
-# copy style rules out (em or en dashes), in any template or in the layout's own words.
-def test_every_template_has_one_heading_one_button_at_most_and_no_dashes() -> None:
+# ZIF-175 guard: no dash punctuation the copy style rules out (em or en dashes), in any template
+# or in the layout's own words.
+def test_no_template_or_layout_word_has_a_dash() -> None:
     for path in TEMPLATES.glob("*.txt"):
-        template, locale, _ = path.name.split(".")
-        html = mail.compose(template, locale, _every(template, locale))[2]
-        assert html.count("<h1") == 1, path.name
-        assert (
-            html.count(
-                'role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:28px'
-            )
-            <= 1
-        ), path.name
         assert not {"\N{EM DASH}", "\N{EN DASH}"} & set(path.read_text()), path.name
     for words in (mail.FOOTER, mail.LINK_FALLBACK):
         assert not {"\N{EM DASH}", "\N{EN DASH}"} & set("".join(words.values()))
+
+
+@pytest.mark.parametrize(
+    ("body", "error"),
+    [
+        ("Hello,\n\nA paragraph.", "one heading"),
+        ("# One\n\n# Two", "one heading"),
+        ("# One\n\n[A]($link)\n\n[B]($link)", "one button"),
+    ],
+)
+def test_a_template_needs_one_heading_and_at_most_one_button(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, body: str, error: str
+) -> None:
+    # ZIF-175 fence: the HTML shows one heading and one button, so a file with another count would
+    # drop words the text part keeps. Kills _parse accepting zero or two headings, or two buttons.
+    (tmp_path / "odd.en.txt").write_text(f"Subject\n{body}\n")
+    monkeypatch.setattr(mail, "TEMPLATES", tmp_path)
+    with pytest.raises(ValueError, match=error):
+        mail.render("odd", "en")
 
 
 # ZIF-175 fence (security review S1): no heading carries a value. A heading is the platform's own
