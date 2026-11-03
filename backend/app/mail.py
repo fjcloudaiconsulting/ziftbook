@@ -207,7 +207,8 @@ def _html(template: str, locale: str, subject: str, values: dict[str, str]) -> s
                     + "<br>".join(rows)
                     + "</p>"
                 )
-    business = safe.get("business")
+    # Only a booking email's reader already deals with the business; an invite's is a stranger's.
+    business = safe.get("business") if template.startswith("booking_") else None
     eyebrow = (
         f'<p class="zb-muted" style="margin:0 0 8px;{small};font-weight:600;letter-spacing:.02em">'
         f"{business}</p>"

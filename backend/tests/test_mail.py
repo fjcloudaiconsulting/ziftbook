@@ -531,3 +531,25 @@ def test_every_template_has_one_heading_one_button_at_most_and_no_dashes() -> No
         assert not {"\N{EM DASH}", "\N{EN DASH}"} & set(path.read_text()), path.name
     for words in (mail.FOOTER, mail.LINK_FALLBACK):
         assert not {"\N{EM DASH}", "\N{EN DASH}"} & set("".join(words.values()))
+
+
+# ZIF-175 fence (security review S1): no heading carries a value. A heading is the platform's own
+# voice, right under its mark, and mail clients turn a domain inside it into a link; a business
+# name is chosen by whoever signs up. Kills a $placeholder in any template's heading.
+def test_no_heading_carries_a_value() -> None:
+    for path in TEMPLATES.glob("*.txt"):
+        template, locale, _ = path.name.split(".")
+        headings = [parts for kind, parts in mail._parse(template, locale)[1] if kind == "heading"]
+        assert not any("$" in line for parts in headings for line in parts), path.name
+
+
+# ZIF-175 fence: only a booking email names the business above its heading; its reader already
+# deals with that business. An invite goes to anyone a stranger names, so the name stays in its
+# sentence. Kills the eyebrow on the invite.
+def test_only_booking_emails_name_the_business_above_the_heading() -> None:
+    name = "ziftbook Security: verify at ziftbook-help.example"
+    invite = mail.compose("invite", "en", {"business": name, "link": "https://app.test/x"})[2]
+    flood = mail.compose("booking_flood", "en", {"business": name, "link": "https://app.test/x"})[2]
+    eyebrow = f'letter-spacing:.02em">{name}</p>'
+    assert name in invite and eyebrow not in invite
+    assert eyebrow in flood

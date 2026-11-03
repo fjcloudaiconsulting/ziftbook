@@ -1,5 +1,5 @@
 Je bent uitgenodigd voor een bedrijf op ziftbook
-# Je bent uitgenodigd voor „$business”
+# Je bent uitgenodigd voor een team
 
 Je bent uitgenodigd om lid te worden van „$business” op ziftbook.
 
