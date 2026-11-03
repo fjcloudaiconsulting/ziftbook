@@ -8,12 +8,13 @@ from collections.abc import Callable, Iterator
 from datetime import timedelta
 
 import pytest
+from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 from sqlalchemy import Engine, text
 
 from app import limits
 from app.db import SessionLocal, tenant_context
 from app.errors import ApiError
-from tests.conftest import People, fresh_address, wait_until_blocked
+from tests.conftest import People, fresh_address, points, wait_until_blocked
 
 WINDOW = timedelta(minutes=15)
 
@@ -617,3 +618,21 @@ def test_charge_refund_and_a_callers_transaction_are_never_capped(
     assert answer_from(address, in_transaction) is False
     with app_engine.connect() as conn:
         assert conn.scalar(text("SELECT hits FROM rate_limits WHERE key = :k"), {"k": key}) == 2
+
+
+def test_each_refusal_is_counted_by_its_tier_and_never_by_address(
+    action: str, monkeypatch: pytest.MonkeyPatch, metric_reader: InMemoryMetricReader
+) -> None:
+    call = lambda: limits.hit({f"{action}:k": 9}, WINDOW)  # noqa: E731
+    monkeypatch.setattr(limits, "MAX_IN_FLIGHT", 0)
+    assert refused(answer_from(fresh_address(), call))
+    assert refused(answer_from(fresh_address(), call))
+    monkeypatch.setattr(limits, "MAX_IN_FLIGHT", 2)
+    monkeypatch.setattr(limits, "MAX_IN_FLIGHT_PER_48", 0)
+    assert refused(answer_from(fresh_address(), call))
+
+    found = {
+        tuple(sorted(point.attributes.items())): point.value
+        for point in points(metric_reader, "ziftbook.limiter.at_cap")
+    }
+    assert found == {(("limiter.tier", "address"),): 2, (("limiter.tier", "network"),): 1}
