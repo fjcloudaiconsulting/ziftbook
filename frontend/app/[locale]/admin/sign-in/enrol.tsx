@@ -60,6 +60,7 @@ export function TicketStep({
     if (outcome.status === 200 && outcome.data) {
       onBegun(outcome.data);
     } else if (state === "wrong") {
+      setMessage(initial ?? null); // e.g. why setup stopped: the same ticket is refused now (ZIF-262)
       setWrong(true);
       input.current?.focus();
     } else if (state === "expired") {
@@ -193,7 +194,7 @@ export function ScanStep({
         <Heading focus>{t("enrolLockedTitle")}</Heading>
         <Banner tone="error">{t("enrolLocked")}</Banner>
         <EnrolCommand email={who.email} />
-        <button className={`${styles.button} ${styles.secondary}`} type="button" onClick={() => onRestart()}>
+        <button className={`${styles.button} ${styles.secondary}`} type="button" onClick={() => onRestart({ tone: "error", text: t("enrolLocked") })}>
           {t("newTicket")}
         </button>
       </>
