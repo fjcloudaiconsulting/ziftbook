@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine, text
 
-from app import payments
+from app import limits, payments
 from app.main import create_app
 from tests.conftest import (
     People,
@@ -341,6 +341,21 @@ def test_reads_stop_calling_stripe_past_the_limit(
 
     assert {(r.status_code, r.json()["state"]) for r in states} == {(200, "onboarding")}
     assert fake_stripe.count("retrieve_account") == payments.STRIPE_LIMIT
+
+
+# ZIF-264. fence. Kills: the per-address cap on limiter calls turning the read into a 429.
+def test_a_read_with_the_address_at_its_cap_answers_from_the_row(
+    people: People, owner: TestClient, fake_stripe: FakeGateway, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    connect(fake_stripe, people.a)
+    monkeypatch.setattr(limits, "MAX_IN_FLIGHT", 0)  # every limiter call finds its address full
+
+    response = owner.get("/api/payments/account")
+
+    assert (response.status_code, response.json()["state"]) == (200, "onboarding")
+    assert fake_stripe.count("retrieve_account") == 0
+    with_cap_full = owner.post("/api/payments/dashboard", headers=JSON)
+    assert (with_cap_full.status_code, with_cap_full.json()) == (429, {"code": "rate_limited"})
 
 
 # ZIF-158 F23. fence. Kills: unlimited Stripe-calling POSTs.
