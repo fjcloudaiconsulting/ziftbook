@@ -472,6 +472,9 @@ def create_app() -> FastAPI:
             }
         )
         request.state.request_id = request_id
+        # ZIF-264: the address limits.hit() caps this request's limiter calls by. Set, never reset,
+        # like the context above; a sync route's thread gets a copy.
+        limits.CLIENT.set(request.client.host if request.client else "")
         started = time.perf_counter()
         status = 500  # if call_next raises, the 500 handler answers
 
