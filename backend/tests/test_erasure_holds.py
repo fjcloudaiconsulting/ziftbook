@@ -113,9 +113,13 @@ def test_the_api_role_can_neither_read_nor_write_a_hold(
     people: People, migrate_engine: Engine, statement: str
 ) -> None:
     seeded = held(people, migrate_engine)
+    # A live client of the same business: the INSERT would succeed if the role were allowed it.
+    live = seed_person(
+        migrate_engine, people.a, member_id(people.a, people.only_a), people.both, days_ago=20
+    )
 
     with pytest.raises(DBAPIError) as error, tenant_context(people.a) as session:
-        session.execute(text(HOLD_STATEMENTS[statement]), {"c": uuid.uuid7()})
+        session.execute(text(HOLD_STATEMENTS[statement]), {"c": live.client_id})
 
     assert isinstance(error.value.orig, InsufficientPrivilege)
     assert hold_address(migrate_engine, seeded) == seeded.email
