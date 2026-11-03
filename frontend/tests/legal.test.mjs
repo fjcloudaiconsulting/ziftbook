@@ -19,6 +19,48 @@ describe("legal pages", () => {
     for (const locale of ["nl", "pt"]) assert.deepEqual(shape(LEGAL[locale]), shape(LEGAL.en), locale);
   });
 
+  // GDPR Art. 13(2)(a), ZIF-263: each period the retention sweep (ZIF-235) enforces is stated, next
+  // to what it applies to, in every language. Each pair must share one paragraph or bullet.
+  const PERIODS = {
+    en: [
+      ["Sign-in sessions", "no longer valid"],
+      ["attempts", "about a day"],
+      ["failed sign-ins", "30 days"],
+      ["everything else", "1 year"],
+      ["IP address and browser type", "18 months"],
+      ["offers and news", "as long as your choice stands"],
+      ["security incident", "90 days"],
+    ],
+    nl: [
+      ["Inlogsessies", "niet meer geldig"],
+      ["pogingen", "ongeveer een dag"],
+      ["mislukte inlogpogingen", "30 dagen"],
+      ["al het andere", "1 jaar"],
+      ["IP-adres en browsertype", "18 maanden"],
+      ["aanbiedingen en nieuws", "zolang je keuze geldt"],
+      ["beveiligingsincident", "90 dagen"],
+    ],
+    pt: [
+      ["Sessões de acesso", "deixam de ser válidas"],
+      ["tentativas", "cerca de um dia"],
+      ["tentativas de acesso que falharam", "30 dias"],
+      ["todo o resto", "1 ano"],
+      ["endereço IP e o tipo de navegador", "18 meses"],
+      ["ofertas e novidades", "enquanto a sua escolha valer"],
+      ["incidente de segurança", "90 dias"],
+    ],
+  };
+
+  test("the privacy notice states how long each kind of data is kept, in every language", () => {
+    const at = LEGAL.en.privacy.sections.findIndex((s) => s.heading === "How long we keep data");
+    assert.notEqual(at, -1);
+    for (const [locale, pairs] of Object.entries(PERIODS)) {
+      const blocks = LEGAL[locale].privacy.sections[at].body.flat();
+      for (const [what, period] of pairs)
+        assert.ok(blocks.some((b) => b.includes(what) && b.includes(period)), `${locale}: ${what} / ${period}`);
+    }
+  });
+
   test("no em dash, and no list repeats an item (each is its own React key)", () => {
     assert.ok(!JSON.stringify(LEGAL).includes("—"));
     const lists = Object.values(LEGAL).flatMap((docs) => Object.values(docs).flatMap((doc) => doc.sections.flatMap((s) => s.body.filter(Array.isArray))));
