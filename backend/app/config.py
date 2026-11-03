@@ -138,6 +138,35 @@ class StorageSettings(Settings):
         )
 
 
+class LedgerBucketSettings(Settings):
+    """The erasure ledger's bucket alone: what the API reads, so it never loads the ledger's key.
+    Unset outside localhost, erasure answers 503 erasure_unavailable (ledger.require)."""
+
+    erasure_ledger_bucket: str = ""
+
+
+class LedgerSettings(LedgerBucketSettings):
+    """The erasure ledger (ZIF-58): a record of every erasure kept outside the database, so a
+    restored backup can be erased again (python -m app.ledger). A dedicated bucket on the photo
+    store's endpoint, with a bucket lock and its own credentials: the worker's may read and write
+    objects (it looks before it writes), the operator's may only read them."""
+
+    s3_endpoint: str = ""
+    erasure_ledger_access_key_id: str = ""
+    # Resolved at runtime from a secret, never committed (as turnstile_secret).
+    erasure_ledger_secret_access_key: SecretStr = SecretStr("")
+
+    def configured(self) -> bool:
+        return all(
+            (
+                self.s3_endpoint,
+                self.erasure_ledger_bucket,
+                self.erasure_ledger_access_key_id,
+                self.erasure_ledger_secret_access_key.get_secret_value(),
+            )
+        )
+
+
 class StripeSettings(Settings):
     """Stripe Connect (ZIF-158). While any of the three is unset the API and worker log a WARNING at
     startup, owner routes answer 503 payments_unavailable, and every booking page books with no

@@ -760,6 +760,59 @@ NOT EXISTS (SELECT 1 FROM clients c
             WHERE c.tenant_id = bookings.tenant_id AND c.id = bookings.client_id
               AND c.erased_at IS NOT NULL)"""
 
+# ZIF-58. An erasure ends the client's live bookings before the erase core runs, which refuses a
+# client that still has one. Live is the core's own test, at :at: confirmed and still to come, or
+# pending or in checkout with its hold running. A checkout expires (as EXPIRE_ONE gives it back);
+# the rest are cancelled by the merchant, a full refund. Each gets its event, with the erasure's
+# reason and the acting member, if any (and :at, so settle knows when the erasure was). At the
+# erasure's own time unless :at says otherwise: a
+# re-applied erasure passes the first one's, so what it ended ends again, even a booking that has
+# started since. The business is named, besides row-level security, as the erase core names it.
+END_FOR_ERASURE = text("""
+WITH ended AS (
+  UPDATE bookings
+  SET status = CASE WHEN status = 'awaiting_payment' THEN 'expired'
+                    ELSE 'cancelled_by_merchant' END
+  WHERE tenant_id = :tenant_id AND client_id = :client_id
+    AND ((status = 'confirmed' AND starts_at > coalesce(CAST(:at AS timestamptz), now()))
+         OR (status IN ('pending', 'awaiting_payment')
+             AND expires_at > coalesce(CAST(:at AS timestamptz), now())))
+  RETURNING tenant_id, id, status)
+INSERT INTO booking_events (tenant_id, booking_id, event, actor_user_id, details)
+SELECT tenant_id, id, status, :actor_user_id,
+       jsonb_strip_nulls(jsonb_build_object('reason', CAST(:reason AS text),
+                                            'erased_at', CAST(:at AS timestamptz)))
+FROM ended
+RETURNING booking_id
+""")
+
+
+def end_for_erasure(
+    db: Session,
+    tenant_id: UUID,
+    client_id: UUID,
+    *,
+    reason: Literal["client_erased", "account_erased", "erasure_reapplied"],
+    at: datetime | None = None,
+    actor_user_id: UUID | None = None,
+) -> list[UUID]:
+    """End the client's live bookings for its erasure, in the erasure's transaction, which holds
+    LOCK. Returns the ended bookings' ids; settling their money is the caller's
+    (payments.settle_ended)."""
+    return list(
+        db.scalars(
+            END_FOR_ERASURE,
+            {
+                "tenant_id": tenant_id,
+                "client_id": client_id,
+                "reason": reason,
+                "at": at,
+                "actor_user_id": actor_user_id,
+            },
+        )
+    )
+
+
 # earliest_starts_at = LEAST(earliest_starts_at, :new): it only ever goes down (D7/D8), and the
 # CHECK pair (ck_bookings_earliest_starts_at, ck_bookings_earliest_starts_at_current) is the
 # database's own backstop on that guarantee. `status = 'confirmed'` (never 'pending': D7, a

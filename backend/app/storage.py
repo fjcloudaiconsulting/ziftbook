@@ -1,4 +1,5 @@
-"""Thin boto3 wrapper for ZIF-133 photos. The only module importing boto3."""
+"""Thin boto3 wrapper for ZIF-133 photos and the ZIF-58 erasure ledger. The only module importing
+boto3."""
 
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -7,8 +8,9 @@ from typing import TYPE_CHECKING
 import boto3
 from botocore.config import Config
 from botocore.exceptions import BotoCoreError, ClientError
+from pydantic import SecretStr
 
-from app.config import StorageSettings
+from app.config import LedgerSettings, StorageSettings
 
 if TYPE_CHECKING:  # stubs from the dev group, absent from the prod image (annotations are lazy)
     from mypy_boto3_s3 import S3Client
@@ -34,13 +36,17 @@ def _failures() -> Iterator[None]:
 def client(*, public: bool = False) -> S3Client:
     settings = StorageSettings()
     endpoint = (public and settings.s3_public_endpoint) or settings.s3_endpoint
+    return _connect(endpoint, settings.s3_access_key_id, settings.s3_secret_access_key)
+
+
+def _connect(endpoint: str, key_id: str, secret: SecretStr) -> S3Client:
     # A Session of its own: the default one is shared by every thread and is not thread-safe.
     return boto3.session.Session().client(
         "s3",
         endpoint_url=endpoint,
         region_name="auto",
-        aws_access_key_id=settings.s3_access_key_id,
-        aws_secret_access_key=settings.s3_secret_access_key.get_secret_value(),
+        aws_access_key_id=key_id,
+        aws_secret_access_key=secret.get_secret_value(),
         config=Config(
             signature_version="s3v4",
             s3={"addressing_style": "path"},
@@ -120,3 +126,65 @@ def delete_prefix(prefix: str) -> None:
             refused = s3.delete_objects(Bucket=bucket, Delete={"Objects": keys, "Quiet": True})
             if refused.get("Errors"):  # a 200 can still carry per-object failures
                 raise RuntimeError(f"media delete failed for {len(refused['Errors'])} objects")
+
+
+def _ledger() -> tuple[S3Client, str]:
+    settings = LedgerSettings()
+    return (
+        _connect(
+            settings.s3_endpoint,
+            settings.erasure_ledger_access_key_id,
+            settings.erasure_ledger_secret_access_key,
+        ),
+        settings.erasure_ledger_bucket,
+    )
+
+
+def _present(s3: S3Client, bucket: str, key: str) -> bool:
+    try:
+        s3.head_object(Bucket=bucket, Key=key)
+    except ClientError as error:
+        if error.response.get("Error", {}).get("Code") in MISSING:
+            return False
+        raise
+    return True
+
+
+def ledger_write(key: str, body: bytes) -> bool:
+    """Write an erasure ledger entry once. True when this call wrote it, False when it was there
+    already. The bucket's lock refuses to overwrite an entry, and the PUT is conditional
+    (If-None-Match), so a PUT refused for an entry that is there after all (a racing writer, or the
+    lock) is success too: the key says everything the body does."""
+    s3, bucket = _ledger()
+    with _failures():
+        if _present(s3, bucket, key):
+            return False
+        try:
+            s3.put_object(
+                Bucket=bucket,
+                Key=key,
+                Body=body,
+                ContentType="application/json",
+                IfNoneMatch="*",
+            )
+        except ClientError:
+            if _present(s3, bucket, key):
+                return False
+            raise
+    return True
+
+
+def ledger_entries(start_after: str) -> list[tuple[str, bytes]]:
+    """Every ledger entry whose key sorts after start_after, with its key, in key order."""
+    s3, bucket = _ledger()
+    with _failures():
+        keys = [
+            o["Key"]
+            for page in s3.get_paginator("list_objects_v2").paginate(
+                Bucket=bucket, Prefix="erasures/", StartAfter=start_after
+            )
+            for o in page.get("Contents", [])
+        ]
+        # shortcut: one GET per key, in turn, before the reapply's transaction (minutes for 10k
+        # entries); a bounded thread pool is the upgrade if a restore ever waits on it.
+        return [(key, s3.get_object(Bucket=bucket, Key=key)["Body"].read()) for key in keys]

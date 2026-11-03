@@ -500,6 +500,13 @@ SELECT p.id, p.intent_id, p.kind, p.status, p.booking_id, p.amount_minor, p.curr
         ORDER BY e.id DESC LIMIT 1) AS client_pct,
        EXISTS (SELECT 1 FROM booking_events e
                WHERE e.booking_id = p.booking_id AND e.event = 'paid') AS was_booked,
+       EXISTS (SELECT 1 FROM booking_events e
+               WHERE e.tenant_id = p.tenant_id AND e.booking_id = p.booking_id
+                 AND e.details ->> 'reason' = 'erasure_reapplied') AS reapplied,
+       (SELECT CAST(e.details ->> 'erased_at' AS timestamptz) FROM booking_events e
+        WHERE e.tenant_id = p.tenant_id AND e.booking_id = p.booking_id
+          AND e.details ->> 'reason' = 'erasure_reapplied'
+        ORDER BY e.id DESC LIMIT 1) AS reapplied_at,
        (SELECT stripe_account_id FROM payment_accounts) AS account
 FROM booking_payments p
 JOIN bookings b ON b.tenant_id = p.tenant_id AND b.id = p.booking_id
@@ -872,6 +879,26 @@ def enqueue_unsettled(db: Session, tenant_id: UUID) -> None:
         )
 
 
+# ZIF-58. The bookings an erasure just ended that still hold money, in the business named.
+UNSETTLED_OF = text("""
+SELECT DISTINCT booking_id FROM booking_payments
+WHERE tenant_id = :tenant_id AND booking_id = ANY(CAST(:ids AS uuid[])) AND settled_at IS NULL
+""")
+
+
+def settle_ended(db: Session, tenant_id: UUID, booking_ids: list[UUID]) -> None:
+    """A settle job for each booking an erasure ended that holds money, in the erasure's
+    transaction: settle refunds, releases or cancels it, at most once (_refund)."""
+    for booking_id in db.scalars(UNSETTLED_OF, {"tenant_id": tenant_id, "ids": booking_ids}):
+        jobs.enqueue(
+            db,
+            "payment.settle",
+            f"payment.settle:{tenant_id}:{booking_id}:erased",
+            {"booking_id": str(booking_id)},
+            tenant_id=tenant_id,
+        )
+
+
 def settle(job: Job) -> None:
     """Cancel what nobody will finish, release what was only checked, and send back what an ended
     booking owes. Repeatable: every write is qualified, so a second run finds nothing to do. A late
@@ -933,7 +960,24 @@ def _refund(tenant_id: UUID, row: Row[Any]) -> None:
         raise RuntimeError("the card fee is not reported yet")
     refund_id = None
     refused: stripe_gateway.Failed | None = None
-    if due > state.amount_refunded:
+    # ZIF-58. A booking a re-applied erasure ended (after a restore), charged before that erasure,
+    # is never paid more than Stripe shows already: the restore may have lost how it really ended
+    # (the client's own cancellation, with less back, or none) as well as the first erasure's
+    # refund, and the two look the same from here. The shortfall is flagged for the business to
+    # resolve in Stripe, and told to the operator; nothing is mailed. A charge made after the
+    # erasure (a checkout the reapply expired, completed at the bank anyway) is nothing a restore
+    # lost: it is owed in full, as any late payment. Fail closed: the reason alone holds it, and
+    # only a known erasure time and a known, later charge time let it go.
+    held = (
+        row.reapplied
+        and due > state.amount_refunded
+        and (
+            row.reapplied_at is None
+            or state.charged_at is None
+            or state.charged_at < row.reapplied_at
+        )
+    )
+    if due > state.amount_refunded and not held:
         try:
             refund_id = gateway.refund(
                 row.account,
@@ -964,7 +1008,11 @@ def _refund(tenant_id: UUID, row: Row[Any]) -> None:
             return
         if row.booking_status == "awaiting_payment":  # a hold that ran out, not yet swept
             db.execute(bookings.EXPIRE_ONE, {"id": row.booking_id})
-        if refused is not None:  # nothing went back: no "refunded" event, no "in full" mail
+        if held:
+            db.execute(
+                SET_REFUND_FLAG, {"intent": row.intent_id, "refunded": state.amount_refunded}
+            )
+        elif refused is not None:  # nothing went back: no "refunded" event, no "in full" mail
             owed = due - state.amount_refunded
             db.execute(
                 SET_REFUND_FLAG,
@@ -1000,6 +1048,16 @@ def _refund(tenant_id: UUID, row: Row[Any]) -> None:
                 tracing.PAYMENT_OUTCOMES,
                 {"payment.kind": row.kind, "payment.outcome": "refunded"},
             )
+    if held:
+        logger.error(
+            "refund held after a reapply",
+            extra={
+                "intent": row.intent_id,
+                "booking_id": str(row.booking_id),
+                "amount_minor": due - state.amount_refunded,
+            },
+        )
+        return
     if refused is not None:
         logger.error(
             "refund refused",

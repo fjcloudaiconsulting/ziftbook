@@ -2,6 +2,7 @@
 
 import json
 from collections.abc import Mapping
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import unquote
 
@@ -328,6 +329,7 @@ def test_a_refund_is_read_back_and_the_processing_fee_is_the_stripe_one() -> Non
             "latest_charge": {
                 "id": "ch_1",
                 "object": "charge",
+                "created": 1793700000,
                 "amount_refunded": 0,
                 "balance_transaction": {
                     "id": "txn_1",
@@ -344,4 +346,6 @@ def test_a_refund_is_read_back_and_the_processing_fee_is_the_stripe_one() -> Non
     got = Gateway(http_client=charged).retrieve_intent("acct_1RecordedAccount", "pi_1Recorded")
 
     assert got.stripe_fee == 162
+    # ZIF-58: when the charge happened, which a re-applied erasure's settle compares with.
+    assert got.charged_at == datetime.fromtimestamp(1793700000, UTC)
     assert "latest_charge.balance_transaction" in charged.wire(0)

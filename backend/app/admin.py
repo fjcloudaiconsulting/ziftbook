@@ -42,6 +42,7 @@ Action = Literal[
     "second_factor_locked",
     "second_factor_unlocked",
     "recovery_code_used",
+    "erasure_reapplied",
 ]
 # A write needs a reason: the database refuses one without (platform_audit_events.reason_on_write).
 KIND: dict[Action, Literal["auth", "read", "write"]] = {
@@ -60,6 +61,8 @@ KIND: dict[Action, Literal["auth", "read", "write"]] = {
     "second_factor_locked": "auth",
     "second_factor_unlocked": "auth",
     "recovery_code_used": "auth",
+    # ZIF-58: python -m app.ledger reapply, after a restore; details hold counts only.
+    "erasure_reapplied": "write",
 }
 
 

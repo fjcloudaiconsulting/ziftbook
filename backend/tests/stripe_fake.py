@@ -14,6 +14,7 @@ import time
 import uuid
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
@@ -284,6 +285,7 @@ class FakeGateway(Gateway):
             got["failed"],
             got["client_secret"],
             got["fee"],
+            got.get("charged_at"),
         )
 
     def cancel_intent(self, account: str, intent_id: str) -> str:
@@ -300,6 +302,7 @@ class FakeGateway(Gateway):
         held = got["type"] == "payment" and got["capture"] == "manual"
         got["status"] = "requires_capture" if held else "succeeded"
         got["failed"] = False
+        got["charged_at"] = datetime.now(UTC)
 
     def refund(
         self,
