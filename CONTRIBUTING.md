@@ -296,7 +296,9 @@ that person's platform account (ZIF-99).
   sweep timer (`erasure_holds.sweep`, before the booking sweep, under each business's booking lock) deletes a hold
   once nothing is left to tell: no money owed (`client_money_owed`), no refund settled in the last 7 days (one can
   still fail at the bank), and none of the client's `HOLD_TEMPLATES` emails still to be sent; and at `purge_after`
-  whatever is left.
+  whatever is left. Every caller of the erase core also calls `erasure_holds.enqueue_purge` in its transaction, with
+  the time the core returned: an `erasure.hold_purge` job due at the purge date, never skipped however late the worker
+  runs it, so the date holds even while the sweep fails for another business.
 - A client row links to an account (`clients.user_id`) only through that person's own proven booking at that
   business (ZIF-146): `find_or_create`'s REFRESH fills a NULL `user_id`, never relinks, and nothing links by email.
 - Marketing consent (`consents`) is per business. Nothing writes a platform-level consent, and one business's consent

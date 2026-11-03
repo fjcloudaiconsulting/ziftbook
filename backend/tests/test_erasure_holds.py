@@ -36,7 +36,17 @@ from tests.test_booking_email import REPLY_TO, outbox_for, run_send_booking, set
 from tests.test_booking_payments_api import account_of, make_shop, run, webhook
 from tests.test_booking_refunds import booked as paid_booking
 from tests.test_booking_refunds import settle_job
-from tests.test_client_erasure_db import PAID_AND_KEPT, Pay, Seeded, hold_after, seed_person
+from tests.test_client_erasure_db import (
+    ENDED_BY_ERASURE,
+    ERASE_CLIENT,
+    PAID_AND_KEPT,
+    Pay,
+    Seeded,
+    booking_lock,
+    hold_after,
+    seed_person,
+    session_hash,
+)
 from tests.test_erased_client_reads import (  # noqa: F401 -- fixtures
     app,
     booked,
@@ -368,7 +378,7 @@ def no_jobs(people: People, migrate_engine: Engine) -> Any:
         conn.execute(text("DELETE FROM jobs WHERE tenant_id = :t"), {"t": people.a})
 
 
-# ZIF-58 F32 FENCE (1 of 4). Wrong impl: a purge on purge_after only, so an erasure with nothing
+# ZIF-58 F32 FENCE (1 of 5). Wrong impl: a purge on purge_after only, so an erasure with nothing
 # owed keeps the address a month instead of minutes. A hold is deleted as soon as nothing is owed
 # and none of the client's emails through it (mail.HOLD_TEMPLATES) is still to be sent; another
 # booking email still queued (a reminder) does not keep it, and a mail that gave up counts as out.
@@ -388,7 +398,7 @@ def test_a_hold_goes_once_nothing_is_owed_and_its_mails_are_out(
     assert hold_address(migrate_engine, seeded) is None
 
 
-# ZIF-58 F32 FENCE (2 of 4). Wrong impl: a purge on purge_after only; or one that lets the hold go
+# ZIF-58 F32 FENCE (2 of 5). Wrong impl: a purge on purge_after only; or one that lets the hold go
 # the moment a refund settles, when a refund can still fail at the bank days later and the client
 # would then have no channel. A paid booking ended by the erasure keeps the hold while the refund
 # is owed, then for 7 days after it settled, and no longer.
@@ -433,7 +443,7 @@ def late_lines(lines: list[dict[str, Any]]) -> list[tuple[str, str, str]]:
     ]
 
 
-# ZIF-58 F32 FENCE (3 of 4). Wrong impl: a purge that waits for the client's money to be settled
+# ZIF-58 F32 FENCE (3 of 5). Wrong impl: a purge that waits for the client's money to be settled
 # whatever the date, so a refund that failed for good keeps the address for ever. At its purge
 # date the hold goes regardless of what is owed, and on time it is no ERROR.
 def test_a_hold_goes_at_its_purge_date_whatever_is_owed(
@@ -467,7 +477,7 @@ async def first_iteration(kinds: dict[str, Any]) -> None:
         await worker.work(kinds, None, stop)
 
 
-# ZIF-58 F32 FENCE (4 of 4). Wrong impl: no purge on the worker's timer, or none at start, so a
+# ZIF-58 F32 FENCE (4 of 5). Wrong impl: no purge on the worker's timer, or none at start, so a
 # worker that was down past a hold's purge date leaves the address there until something else
 # runs. Its first iteration after it starts deletes the hold, and logs one ERROR naming the client
 # (ids only): a hold found past its purge date means the time box was at risk.
@@ -487,3 +497,72 @@ def test_a_worker_started_after_a_holds_purge_date_purges_it_and_says_so(
 
     assert hold_address(migrate_engine, seeded) is None
     assert late_lines(log_lines()) == [("ERROR", str(seeded.client_id), str(people.a))]
+
+
+BACKSTOP = text("""
+SELECT j.due_at = h.purge_after FROM jobs j
+JOIN client_erasure_holds h ON h.client_id = (j.payload ->> 'client_id')::uuid
+WHERE j.kind = 'erasure.hold_purge' AND j.tenant_id = :t
+""")
+JOB_OUTCOME = text("""
+SELECT completed_at IS NOT NULL, skipped FROM jobs
+WHERE kind = 'erasure.hold_purge' AND tenant_id = :t
+""")
+
+
+# ZIF-58 F32 FENCE (5 of 5, the backstop). Wrong impl: an erasure.hold_purge kind with the usual
+# grace, so a worker down past the purge date skips the job when it starts; or no such kind. The
+# erase route's call (as the app role, through erase_client) enqueues it due exactly at the hold's
+# purge date; a worker started two days later runs it, which purges the hold and logs the ERROR.
+def test_the_backstop_job_purges_a_hold_even_when_the_worker_starts_late(
+    people: People,
+    migrate_engine: Engine,
+    no_jobs: None,
+    log_lines: Callable[[], list[dict[str, Any]]],
+) -> None:
+    seeded = seed_person(
+        migrate_engine,
+        people.a,
+        member_id(people.a, people.only_a),
+        people.both,
+        days_ago=10,
+        payment=Pay(booking="cancelled_by_merchant", refund_failed=True),
+    )
+    with tenant_context(people.a) as session:
+        booking_lock(session)
+        session.execute(
+            ENDED_BY_ERASURE,
+            {
+                "booking": seeded.bookings[0],
+                "actor": people.both,
+                "details": json.dumps({"reason": "client_erased"}),
+            },
+        )
+        erased = session.scalar(
+            ERASE_CLIENT, {"h": session_hash(people.a, people.both), "id": seeded.client_id}
+        )
+        erasure_holds.enqueue_purge(session, people.a, seeded.client_id, erased)
+    with migrate_tenant_context(migrate_engine, people.a) as conn:
+        assert conn.scalars(BACKSTOP, {"t": people.a}).all() == [True]
+    due(migrate_engine, seeded, "2 days")
+    with migrate_engine.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE jobs SET due_at = now() - interval '2 days', next_attempt_at = now()"
+                " WHERE kind = 'erasure.hold_purge' AND tenant_id = :t"
+            ),
+            {"t": people.a},
+        )
+
+    with jobs_as_the_worker():
+        asyncio.run(first_iteration({"erasure.hold_purge": worker.KINDS["erasure.hold_purge"]}))
+
+    assert hold_address(migrate_engine, seeded) is None
+    with migrate_engine.connect() as conn:
+        assert tuple(conn.execute(JOB_OUTCOME, {"t": people.a}).one()) == (True, False)
+    (line,) = [line for line in log_lines() if line["msg"] == "contact hold purged late"]
+    assert (line["level"], line["client_id"], line["job_kind"]) == (
+        "ERROR",
+        str(seeded.client_id),
+        "erasure.hold_purge",
+    )
