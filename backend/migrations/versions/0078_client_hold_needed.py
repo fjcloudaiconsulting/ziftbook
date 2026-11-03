@@ -12,21 +12,21 @@ it is true. Before this, the core wrote one on money owed alone, so a client era
 refund settled had no channel if that refund then failed, and an email queued just before the
 erasure found no hold.
 
-The core is the one 0064 creates with only its hold condition changed: it is built from 0064's own
-text, so the two cannot differ anywhere else, and the downgrade puts 0064's back. SECURITY INVOKER:
-the core runs it as its owner; the worker, which is granted it, with its own rights under row-level
-security. The two lists below are the code's (app.mail.HOLD_TEMPLATES, app.jobs.MAX_ATTEMPTS),
-written out because a migration must not change when the code does;
+The core changes in its stored definition only (pg_get_functiondef): two anchored fragments, the
+hold condition and a comment above the hold's INSERT, each found exactly once or the migration
+refuses, so another migration's edit to the core (0058's booked_as) stays, and the downgrade
+reverses exactly those two on the stored definition (CONTRIBUTING, "Database migrations"). CREATE
+OR REPLACE keeps the core's owner, grants, SECURITY DEFINER and search_path. client_hold_needed is
+SECURITY INVOKER: the core runs it as its owner; the worker, which is granted it, with its own
+rights under row-level security. The two lists below are the code's (app.mail.HOLD_TEMPLATES,
+app.jobs.MAX_ATTEMPTS), written out because a migration must not change when the code does;
 tests/test_erasure_holds.py runs the code's against them.
 
 Revision ID: 0078
 Revises: 0077
 """
 
-import importlib.util
-from pathlib import Path
-from types import ModuleType
-
+import sqlalchemy as sa
 from alembic import op
 
 revision = "0078"
@@ -60,40 +60,32 @@ CREATE FUNCTION client_hold_needed(p_tenant uuid, p_client uuid) RETURNS boolean
 $$"""
 
 
-def _core_0064() -> str:
-    """0064's erase_client_core, as CREATE OR REPLACE."""
-    # By file name: the merge train re-chains down_revision only, never a migration's number.
-    spec = importlib.util.spec_from_file_location(
-        "migration_0064", Path(__file__).with_name("0064_erase_client.py")
-    )
-    assert spec is not None and spec.loader is not None
-    module: ModuleType = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    core: str = module.ERASE_CLIENT_CORE
-    return _once(
-        core, "CREATE FUNCTION erase_client_core", "CREATE OR REPLACE FUNCTION erase_client_core"
-    )
-
-
-def _once(text: str, old: str, new: str) -> str:
-    # Loud, not silent: a 0064 rewritten around these anchors must fail here.
-    if text.count(old) != 1:
-        raise RuntimeError(f"0078: expected {old!r} once in 0064's erase_client_core")
-    return text.replace(old, new)
-
-
-def _core_0078() -> str:
-    core = _once(
-        _core_0064(),
-        "OR client_money_owed(v_tenant, p_client))",
-        "OR client_hold_needed(v_tenant, p_client))",
-    )
-    return _once(
-        core,
+# 0078's anchored fragments in erase_client_core, as (before, after).
+CORE_EDITS = (
+    ("OR client_money_owed(v_tenant, p_client))", "OR client_hold_needed(v_tenant, p_client))"),
+    (
         "  INSERT INTO client_erasure_holds",
         "  -- 0078: or whenever client_hold_needed says the client may still have to be told.\n"
         "  INSERT INTO client_erasure_holds",
-    )
+    ),
+)
+CORE_DEFINITION = sa.text(
+    "SELECT pg_get_functiondef(to_regprocedure('erase_client_core(uuid,boolean)'))"
+)
+
+
+def edit_core(edits: tuple[tuple[str, str], ...]) -> None:
+    """Applies each (old, new) to the stored erase_client_core; refuses unless old is there once."""
+    bind = op.get_bind()
+    definition = bind.scalar(CORE_DEFINITION)
+    if definition is None:
+        raise RuntimeError("0078: erase_client_core is missing")
+    for old, new in edits:
+        if definition.count(old) != 1:
+            raise RuntimeError(f"0078: expected {old!r} once in erase_client_core")
+        definition = definition.replace(old, new)
+    # SQL read back from the catalog, run as it is: no bind-parameter parsing of its text.
+    bind.exec_driver_sql(definition)
 
 
 def upgrade() -> None:
@@ -101,9 +93,9 @@ def upgrade() -> None:
     op.execute("REVOKE EXECUTE ON FUNCTION client_hold_needed(uuid, uuid) FROM PUBLIC")
     # The worker's purge calls it (and, through it, client_money_owed, which 0077 granted).
     op.execute("GRANT EXECUTE ON FUNCTION client_hold_needed(uuid, uuid) TO ziftbook_worker")
-    op.execute(_core_0078())
+    edit_core(CORE_EDITS)
 
 
 def downgrade() -> None:
-    op.execute(_core_0064())
+    edit_core(tuple((new, old) for old, new in reversed(CORE_EDITS)))
     op.execute("DROP FUNCTION client_hold_needed(uuid, uuid)")
