@@ -3,6 +3,7 @@
 import io
 import logging
 import os
+import random
 import struct
 import subprocess
 import sys
@@ -16,12 +17,13 @@ from urllib.parse import parse_qs, urlparse
 import boto3
 import PIL
 import pytest
-from botocore.exceptions import EndpointConnectionError
+from botocore.exceptions import EndpointConnectionError, ReadTimeoutError
+from botocore.response import StreamingBody
 from mypy_boto3_s3 import S3Client
 from PIL import Image, ImageCms, ImageFile, ImageOps
 from sqlalchemy import text
 
-from app import photos, storage, worker
+from app import photo_decode, photos, storage, worker
 from app.db import tenant_context
 from app.errors import ApiError
 from app.jobs import Job
@@ -118,6 +120,14 @@ def test_sniff(s3: S3Client) -> None:
     assert refusal(t, upload(s3, t, jpeg[: len(jpeg) // 2])) == (422, "photo_unreadable")
 
 
+def decode_refusal(data: bytes) -> str:
+    """The code photo_decode refuses data with, decoded in this process: the patches below reach
+    no child (ZIF-230)."""
+    with pytest.raises(photo_decode.Refused) as refused:
+        photo_decode.decode(data)
+    return refused.value.code
+
+
 def no_load(monkeypatch: pytest.MonkeyPatch) -> None:
     def load(self: ImageFile.ImageFile) -> None:
         raise AssertionError("decoded")
@@ -126,24 +136,19 @@ def no_load(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 # ZIF-133 F10. fence. Kills: the pixel cap checked after load() instead of from the header.
-def test_png_over_cap_refused_before_decode(s3: S3Client, monkeypatch: pytest.MonkeyPatch) -> None:
-    t = uuid.uuid4()
+def test_png_over_cap_refused_before_decode(monkeypatch: pytest.MonkeyPatch) -> None:
     buf = io.BytesIO()
     Image.new("1", (5000, 5000)).save(buf, "PNG")
-    upload_id = upload(s3, t, buf.getvalue())
     no_load(monkeypatch)
-    assert refusal(t, upload_id) == (422, "photo_unreadable")
+    assert decode_refusal(buf.getvalue()) == "photo_unreadable"
 
 
 # ZIF-133 F10. fence. Kills: the cap checked on the header size only (JPEG draft() scales by
 # min(w//1200, h//1200), so 20000x900 decodes at full size).
-def test_jpeg_over_cap_after_draft_refused_before_decode(
-    s3: S3Client, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    t = uuid.uuid4()
-    upload_id = upload(s3, t, image("JPEG", (20000, 900)))
+def test_jpeg_over_cap_after_draft_refused_before_decode(monkeypatch: pytest.MonkeyPatch) -> None:
+    data = image("JPEG", (20000, 900))
     no_load(monkeypatch)
-    assert refusal(t, upload_id) == (422, "photo_unreadable")
+    assert decode_refusal(data) == "photo_unreadable"
 
 
 # ZIF-133 F11. fence. Kills: saving with exif=im.info["exif"]; the orientation not applied.
@@ -241,7 +246,7 @@ def test_a_busy_decoder_is_a_503(s3: S3Client, monkeypatch: pytest.MonkeyPatch) 
     upload_id = upload(s3, t, image("PNG", (10, 10)))
     monkeypatch.setattr(photos, "LOCK_WAIT", 0.01)
     read: list[str] = []
-    monkeypatch.setattr(storage, "read", lambda key: read.append(key))
+    monkeypatch.setattr(storage, "read_into", lambda key, sink, limit: read.append(key))
     with photos._LOCK:
         assert refusal(t, upload_id) == (503, "busy")
     assert read == []  # a waiter never holds the body it has not decoded yet
@@ -333,12 +338,11 @@ def test_media_delete_is_a_registered_job_kind() -> None:
 # ZIF-133 F10. fence. Kills: a progressive JPEG held to the baseline cap (it has no cheap draft, so
 # 20 MP decodes whole and needs ~80 MB: two reviewers saw the 256Mi pod OOM on it).
 def test_progressive_jpeg_over_the_common_cap_refused_before_decode(
-    s3: S3Client, monkeypatch: pytest.MonkeyPatch
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    t = uuid.uuid4()
-    upload_id = upload(s3, t, image("JPEG", (5000, 4000), progressive=True))
+    data = image("JPEG", (5000, 4000), progressive=True)
     no_load(monkeypatch)
-    assert refusal(t, upload_id) == (422, "photo_unreadable")
+    assert decode_refusal(data) == "photo_unreadable"
 
 
 # ZIF-133 F10. fence. Kills: a 16-bit grey PNG clipped to white instead of scaled to 8 bits.
@@ -363,14 +367,14 @@ def test_a_corrupt_icc_profile_keeps_the_pixels(s3: S3Client) -> None:
 
 MEASURE = """
 import sys
-from app import photos
+from app import photo_decode
 data = open(sys.argv[1], "rb").read()
-photos.variants(open(sys.argv[2], "rb").read())  # warm up: imports, codecs
+photo_decode.decode(open(sys.argv[2], "rb").read())  # warm up: imports, codecs
 if sys.platform == "darwin":
     import resource
     rss = lambda: resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     before = rss()
-    photos.variants(data)
+    photo_decode.decode(data)
     print(rss() - before)
 else:
     # ru_maxrss survives fork and exec, so a child of a big pytest worker starts at its peak.
@@ -384,7 +388,7 @@ else:
         print("unsupported")
         sys.exit(0)
     before = status("VmRSS:")
-    photos.variants(data)
+    photo_decode.decode(data)
     print(status("VmHWM:") - before)
 """
 
@@ -461,6 +465,95 @@ def test_an_upload_gone_after_the_head_is_missing(
     assert refusal(t, uuid.uuid4()) == (409, "photo_missing")
 
 
+def count_body_reads(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """The bytes every StreamingBody.read in this test returned, one entry per call."""
+    seen: list[int] = []
+    real = StreamingBody.read
+
+    def read(self: StreamingBody, amt: int | None = None) -> bytes:
+        chunk: bytes = real(self, amt)
+        seen.append(len(chunk))
+        return chunk
+
+    monkeypatch.setattr(StreamingBody, "read", read)
+    return seen
+
+
+# ZIF-230 fence. Kills: trusting the HEAD (an object replaced after it). The store's own length
+# for the ranged GET refuses it before a byte is read.
+def test_the_read_stops_at_the_cap_whatever_the_head_said(
+    s3: S3Client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    t = uuid.uuid4()
+    upload_id = upload(s3, t, b"\0" * (2 * photos.MAX_BYTES))
+    monkeypatch.setattr(storage, "size", lambda key: 10)
+    seen = count_body_reads(monkeypatch)
+    assert refusal(t, upload_id) == (422, "photo_too_large")
+    assert sum(seen) == 0  # refused on the store's total, before a byte of the body
+
+
+# ZIF-230 fence. Kills: a cap taken from the response's length alone (a store or proxy that sends
+# a chunked body, a wrong length or none): the read itself stops one byte past the cap, and the
+# GET asks for no more than that.
+@pytest.mark.parametrize("length", [{"ContentLength": 10}, {}], ids=["lying-length", "no-length"])
+def test_the_streamed_read_is_capped(
+    s3: S3Client, monkeypatch: pytest.MonkeyPatch, length: dict[str, int]
+) -> None:
+    t = uuid.uuid4()
+    upload_id = upload(s3, t, image("PNG", (10, 10)))
+    asked: list[dict[str, object]] = []
+    real = storage.client
+
+    def lying(**kw: bool) -> S3Client:
+        c = real(**kw)
+
+        def get_object(**params: object) -> dict[str, object]:
+            asked.append(params)
+            # No length to check against: the stream just keeps sending.
+            body = StreamingBody(io.BytesIO(b"\0" * (2 * photos.MAX_BYTES)), None)  # type: ignore[arg-type]
+            return {"Body": body, **length}
+
+        c.get_object = get_object  # type: ignore[method-assign,assignment]
+        return c
+
+    monkeypatch.setattr(storage, "client", lying)
+    seen = count_body_reads(monkeypatch)
+    assert refusal(t, upload_id) == (422, "photo_too_large")
+    assert sum(seen) <= photos.MAX_BYTES + 1
+    assert [a["Range"] for a in asked] == [f"bytes=0-{photos.MAX_BYTES}"]
+
+
+# ZIF-230 guard: an upload of exactly the cap is read whole and reaches the decoder.
+def test_an_upload_exactly_at_the_cap_is_read(s3: S3Client) -> None:
+    t = uuid.uuid4()
+    assert refusal(t, upload(s3, t, b"\0" * photos.MAX_BYTES)) == (422, "photo_type")
+
+
+# ZIF-230 guard: read_into copies the object exactly, None when there is none, 0 for an empty one
+# (a ranged GET of it is refused as InvalidRange), and a failure mid-stream is a StorageError
+# carrying the class only.
+def test_read_into_copies_and_misses(s3: S3Client, monkeypatch: pytest.MonkeyPatch) -> None:
+    t = uuid.uuid4()
+    data = random.Random(230).randbytes(300_000)
+    upload_id = upload(s3, t, data)
+    sink = io.BytesIO()
+    assert storage.read_into(f"{t}/{upload_id}", sink, photos.MAX_BYTES) == len(data)
+    assert sink.getvalue() == data
+    assert storage.read_into(f"{t}/{uuid.uuid4()}", io.BytesIO(), photos.MAX_BYTES) is None
+    empty = upload(s3, t, b"")
+    assert storage.read_into(f"{t}/{empty}", io.BytesIO(), photos.MAX_BYTES) == 0
+    with pytest.raises(storage.TooLarge):
+        storage.read_into(f"{t}/{upload_id}", io.BytesIO(), len(data) - 1)
+
+    def stalled(self: StreamingBody, amt: int | None = None) -> bytes:
+        raise ReadTimeoutError(endpoint_url=f"https://secret.example/{t}/{upload_id}")
+
+    monkeypatch.setattr(StreamingBody, "read", stalled)
+    with pytest.raises(storage.StorageError) as failed:
+        storage.read_into(f"{t}/{upload_id}", io.BytesIO(), photos.MAX_BYTES)
+    assert str(failed.value) == "ReadTimeoutError"
+
+
 # ZIF-133 G1. guard: each client has a session of its own (the default one is not thread-safe).
 def test_clients_do_not_use_the_default_session(
     s3: S3Client, monkeypatch: pytest.MonkeyPatch
@@ -520,16 +613,14 @@ def jpeg_header(width: int, height: int, components: int, scan: int, sof: int = 
     ids=["single", "multi", "truncated", "bare-soi", "no-marker", "pillow", "progressive"],
 )
 def test_multi_scan_detection(data: bytes, multi: bool) -> None:
-    assert photos.multi_scan(data) is multi
+    assert photo_decode.multi_scan(data) is multi
 
 
 def test_a_multi_scan_jpeg_over_the_common_cap_is_refused_before_decode(
-    s3: S3Client, monkeypatch: pytest.MonkeyPatch
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    t = uuid.uuid4()
-    upload_id = upload(s3, t, jpeg_header(3000, 2800, 3, 1) + b"\0" * 100)
     no_load(monkeypatch)
-    assert refusal(t, upload_id) == (422, "photo_unreadable")
+    assert decode_refusal(jpeg_header(3000, 2800, 3, 1) + b"\0" * 100) == "photo_unreadable"
 
 
 # ZIF-133 F10. fence. Kills: WebP held to the common cap (libwebp keeps ~4 full-size buffers: an
@@ -537,10 +628,9 @@ def test_a_multi_scan_jpeg_over_the_common_cap_is_refused_before_decode(
 def test_webp_has_its_own_cap(s3: S3Client, monkeypatch: pytest.MonkeyPatch) -> None:
     t = uuid.uuid4()
     ok = upload(s3, t, image("WEBP", (2000, 1950)))
-    over = upload(s3, t, image("WEBP", (2500, 2000)))
     assert photos.process(t, ok).width == 1200
     no_load(monkeypatch)
-    assert refusal(t, over) == (422, "photo_unreadable")
+    assert decode_refusal(image("WEBP", (2500, 2000))) == "photo_unreadable"
 
 
 def test_pillow_carries_the_decoder_fixes() -> None:
@@ -565,26 +655,28 @@ def png_with_chunk(kind: bytes, payload: bytes, size: tuple[int, int] = (4, 4)) 
 # decodes it at full width whatever draft() asked for).
 @pytest.mark.parametrize("sof", [0xC3, 0xC7, 0xCB, 0xCF])
 def test_a_lossless_or_arithmetic_jpeg_is_unsafe(sof: int) -> None:
-    assert photos.unsafe_container(jpeg_header(9600, 16, 1, 1, sof=sof))
+    assert photo_decode.unsafe_container(jpeg_header(9600, 16, 1, 1, sof=sof))
 
 
 def test_a_baseline_jpeg_is_safe() -> None:
-    assert not photos.unsafe_container(image_of("JPEG", "RGB", (40, 30)))
+    assert not photo_decode.unsafe_container(image_of("JPEG", "RGB", (40, 30)))
 
 
 # ZB-33 fence. Kills: an animated PNG reaching Image.open, which allocates its whole canvas.
 def test_an_animated_png_is_unsafe() -> None:
     # An acTL chunk before IDAT marks an APNG (CVE-2026-112399 allocates on open).
-    assert photos.unsafe_container(png_with_chunk(b"acTL", b"\x00\x00\x00\x02\x00\x00\x00\x00"))
+    assert photo_decode.unsafe_container(
+        png_with_chunk(b"acTL", b"\x00\x00\x00\x02\x00\x00\x00\x00")
+    )
 
 
 # ZB-33 fence. Kills: a large eXIf chunk reaching exif_transpose (its cost grows with the chunk).
 def test_a_png_with_a_big_exif_chunk_is_unsafe() -> None:
-    assert photos.unsafe_container(png_with_chunk(b"eXIf", b"Exif\x00\x00" * 11_000))
+    assert photo_decode.unsafe_container(png_with_chunk(b"eXIf", b"Exif\x00\x00" * 11_000))
 
 
 def test_a_png_with_a_small_exif_chunk_is_safe() -> None:
-    assert not photos.unsafe_container(png_with_chunk(b"eXIf", b"Exif\x00\x00II*\x00"))
+    assert not photo_decode.unsafe_container(png_with_chunk(b"eXIf", b"Exif\x00\x00II*\x00"))
 
 
 # ZB-33 fence. Kills: the chunk walk stopping at IDAT. Pillow reads an eXIf chunk that follows the
@@ -592,7 +684,7 @@ def test_a_png_with_a_small_exif_chunk_is_safe() -> None:
 def test_a_big_exif_chunk_after_the_image_data_is_unsafe() -> None:
     png = image_of("PNG", "RGB", (4, 4))  # its last 12 bytes are IEND
     late = png[:-12] + png_chunk(b"eXIf", b"Exif\x00\x00" * 11_000) + png[-12:]
-    assert photos.unsafe_container(late)
+    assert photo_decode.unsafe_container(late)
 
 
 # ZB-33 fence. Kills: a refused container still opened (the check must come first in variants).
@@ -603,11 +695,18 @@ def test_variants_refuses_an_unsafe_container_before_opening(
         raise AssertionError("opened")
 
     monkeypatch.setattr(Image, "open", never)
-    with pytest.raises(ApiError) as refused:
-        photos.variants(jpeg_header(9600, 16, 1, 1, sof=0xC3))
-    assert (refused.value.status_code, refused.value.code) == (422, "photo_unreadable")
+    with pytest.raises(photo_decode.Refused) as refused:
+        photo_decode.decode(jpeg_header(9600, 16, 1, 1, sof=0xC3))
+    assert refused.value.code == "photo_unreadable"
 
 
+def riff_chunk(kind: bytes, payload: bytes) -> bytes:
+    """One RIFF chunk: its type, little-endian length, payload and a pad byte to an even length."""
+    return kind + struct.pack("<I", len(payload)) + payload + b"\0" * (len(payload) & 1)
+
+
+WEBP_HEAD = b"RIFF\0\0\0\0WEBP"  # the walk does not read the RIFF size
+ICC_OVER = 1024 * 1024 + 1
 LOSSLESS = jpeg_header(10, 10, 1, 1, sof=0xC3)
 BASELINE = jpeg_header(10, 10, 3, 3)
 PNG_IHDR = image_of("PNG", "RGB", (4, 4))[:33]
@@ -645,6 +744,12 @@ PNG_IHDR = image_of("PNG", "RGB", (4, 4))[:33]
         (png_with_chunk(b"eXIf", b"\0" * 65_536), False),
         (png_with_chunk(b"eXIf", b"\0" * 65_537), True),
         (image_of("PNG", "RGB", (4, 4)) + png_chunk(b"eXIf", b"\0" * 65_537), False),
+        (PNG_IHDR + struct.pack(">I", photo_decode.ICC_CAP + 1) + b"iCCP", True),
+        (b"RIFF\0\0\0\0WEBP", False),
+        (b"RIFF\0\0\0\0WEBPICC", False),
+        (b"RIFF\0\0\0\0WEBPVP8 " + struct.pack("<I", 0x7FFFFFFF) + b"\0" * 10, False),
+        (b"RIFF\0\0\0\0WEBPICCP" + struct.pack("<I", 0xFFFFFFFF), True),
+        (WEBP_HEAD + riff_chunk(b"XMP ", b"abc") + b"ICCP" + struct.pack("<I", ICC_OVER), True),
     ],
     ids=[
         "empty",
@@ -672,10 +777,16 @@ PNG_IHDR = image_of("PNG", "RGB", (4, 4))[:33]
         "png-exif-at-64k",
         "png-exif-over-64k",
         "png-exif-after-iend",
+        "png-iccp-over-cap",
+        "webp-riff-only",
+        "webp-cut-in-chunk-header",
+        "webp-chunk-longer-than-data",
+        "webp-huge-iccp-length",
+        "webp-odd-chunk-padded",
     ],
 )
 def test_unsafe_container_answers_malformed_input(data: bytes, unsafe: bool) -> None:
-    assert photos.unsafe_container(data) is unsafe
+    assert photo_decode.unsafe_container(data) is unsafe
 
 
 def exif_of(orientation: int, pad: int = 0) -> bytes:
@@ -726,15 +837,15 @@ def test_exif_over_the_cap_is_refused_before_it_is_parsed(
         raise AssertionError("parsed")
 
     monkeypatch.setattr(ImageOps, "exif_transpose", never)
-    with pytest.raises(ApiError) as refused:
-        photos.variants(data)
-    assert (refused.value.status_code, refused.value.code) == (422, "photo_unreadable")
+    with pytest.raises(photo_decode.Refused) as refused:
+        photo_decode.decode(data)
+    assert refused.value.code == "photo_unreadable"
 
 
 # ZB-33 guard: EXIF under the cap still turns the photo, wherever Pillow read it from.
 @pytest.mark.parametrize("data", exif_carriers(exif_of(6)), ids=CARRIERS)
 def test_small_exif_still_turns_the_photo(data: bytes) -> None:
-    v = photos.variants(data)
+    v = photo_decode.decode(data)
     assert (v.width, v.height) == (20, 40)
 
 
@@ -750,8 +861,8 @@ def jpeg_with_exif(*sizes: int) -> bytes:
 # ZB-33 fence. Kills: a JPEG's EXIF left uncapped. Pillow joins its APP1 EXIF segments and parses
 # them inside Image.open (for the dpi), so the cap must come before it.
 def test_a_jpeg_whose_exif_segments_add_up_over_the_cap_is_unsafe() -> None:
-    assert not photos.unsafe_container(jpeg_with_exif(65_533))  # the most one segment holds
-    assert photos.unsafe_container(jpeg_with_exif(40_000, 40_000))
+    assert not photo_decode.unsafe_container(jpeg_with_exif(65_533))  # the most one segment holds
+    assert photo_decode.unsafe_container(jpeg_with_exif(40_000, 40_000))
 
 
 def malformed_exif(tag: int, value: object, typ: int, count: int | None = None) -> bytes:
@@ -792,6 +903,80 @@ def malformed_exif(tag: int, value: object, typ: int, count: int | None = None) 
     ],
 )
 def test_exif_pillow_cannot_read_is_unreadable(data: bytes) -> None:
-    with pytest.raises(ApiError) as refused:
-        photos.variants(data)
-    assert (refused.value.status_code, refused.value.code) == (422, "photo_unreadable")
+    with pytest.raises(photo_decode.Refused) as refused:
+        photo_decode.decode(data)
+    assert refused.value.code == "photo_unreadable"
+
+
+def jpeg_with_icc(*sizes: int) -> bytes:
+    """A JPEG with one APP2 profile segment per size (that many profile bytes), numbered as Pillow
+    expects, so it joins them into one profile."""
+    jpeg = image_of("JPEG", "RGB", (40, 30))
+    app2 = b"".join(
+        b"\xff\xe2"
+        + struct.pack(">H", 2 + len(photo_decode.ICC_HEADER) + 2 + n)
+        + photo_decode.ICC_HEADER
+        + bytes([k + 1, len(sizes)])
+        + b"\0" * n
+        for k, n in enumerate(sizes)
+    )
+    return jpeg[:2] + app2 + jpeg[2:]
+
+
+# The most one APP2 segment holds, so a profile of exactly ICC_CAP needs 17.
+ICC_AT_CAP = [65_519] * 16 + [1024 * 1024 - 16 * 65_519]
+
+
+# ZIF-230 fence. Kills: a JPEG's profile left uncapped. Pillow joins its APP2 profile segments in
+# Image.open (6.5 MB measured), so the cap must come before it.
+def test_a_jpeg_whose_profile_segments_add_up_over_the_cap_is_unsafe() -> None:
+    assert photo_decode.ICC_CAP == 1024 * 1024
+    assert not photo_decode.unsafe_container(jpeg_with_icc(*ICC_AT_CAP))
+    assert photo_decode.unsafe_container(jpeg_with_icc(*ICC_AT_CAP[:-1], ICC_AT_CAP[-1] + 1))
+
+
+# ZIF-230 fence. Kills: a WebP's ICCP chunk left uncapped (Pillow copies it out at open).
+def test_a_webp_with_a_big_iccp_chunk_is_unsafe() -> None:
+    small = image("WEBP", (8, 8), icc_profile=b"\0" * 1000)
+    big = image("WEBP", (8, 8), icc_profile=b"\0" * ICC_OVER)
+    assert b"ICCP" in small and not photo_decode.unsafe_container(small)
+    assert photo_decode.unsafe_container(big)
+
+
+def big_profile_carriers() -> list[bytes]:
+    """A 40x30 photo carrying a profile over ICC_CAP in each place Pillow reads one from."""
+    noise = random.Random(230).randbytes(ICC_OVER)  # incompressible: the iCCP stays over the cap
+    png = png_with_chunk(b"iCCP", b"p\0\0" + zlib.compress(noise), (40, 30))
+    return [
+        jpeg_with_icc(*ICC_AT_CAP[:-1], ICC_AT_CAP[-1] + 1),
+        png,
+        image("WEBP", (40, 30), icc_profile=b"\0" * ICC_OVER),
+    ]
+
+
+def no_profile_parse(monkeypatch: pytest.MonkeyPatch) -> None:
+    def never(*args: object, **kw: object) -> None:
+        raise AssertionError("parsed")
+
+    monkeypatch.setattr(ImageCms, "ImageCmsProfile", never)
+
+
+# ZIF-230 fence. Kills: a profile over the cap handed to LittleCMS, from any format.
+@pytest.mark.parametrize("data", big_profile_carriers(), ids=["jpeg", "png", "webp"])
+def test_a_profile_over_the_cap_never_reaches_the_colour_engine(
+    data: bytes, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    no_profile_parse(monkeypatch)
+    with pytest.raises(photo_decode.Refused) as refused:
+        photo_decode.decode(data)
+    assert refused.value.code == "photo_unreadable"
+
+
+# ZIF-230 fence. Kills: the check on the opened image (the backstop if Pillow ever joins or
+# inflates more than the structure walk counts) missing or after the colour conversion.
+def test_the_open_image_profile_is_capped_too(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(photo_decode, "unsafe_container", lambda data: False)
+    no_profile_parse(monkeypatch)
+    with pytest.raises(photo_decode.Refused) as refused:
+        photo_decode.decode(jpeg_with_icc(*ICC_AT_CAP[:-1], ICC_AT_CAP[-1] + 1))
+    assert refused.value.code == "photo_unreadable"

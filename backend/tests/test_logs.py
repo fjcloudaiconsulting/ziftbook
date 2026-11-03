@@ -21,7 +21,7 @@ from fastapi import FastAPI
 from sqlalchemy import Engine, text
 from sqlalchemy.exc import IntegrityError
 
-from app import jobs, logs, tracing
+from app import jobs, logs, photos, tracing
 from app.db import SessionLocal, tenant_context
 from app.jobs import Job, JobKind, enqueue, run_once
 from app.main import create_app
@@ -738,6 +738,9 @@ def test_the_api_logs_its_settings_once_at_startup(
             "totp_key": "set",
             "rate_limit_key": "unset",
             "storage": "off",
+            # ZIF-230: from this machine's cgroup ("unlimited" without one).
+            "photo_budget": photos.budget(),
+            "proc_hardening": "on" if sys.platform == "linux" else "unsupported",
             "payments": "off",
             "database_role": "ziftbook_app",
         }
