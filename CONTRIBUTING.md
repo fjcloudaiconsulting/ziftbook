@@ -618,7 +618,9 @@ A platform admin runs the platform across businesses (ZIF-70). `platform_admins`
   (ZIF-234, 0069). A pass never lowers the count; one failure leaks away every 8 hours. At 10, TOTP locks, and a
   lock never leaks away: the only ways out are a recovery code or `python -m app.admin enrol`, never time and
   never a password reset. A recovery code lifts the lock but leaves 9, so the next wrong code within 8 hours locks
-  again. The `failures` in a `second_factor_failed` audit event is that count; `failed_since_last` in
+  again. Wrong codes at enrolment confirm count the same way, without the leak: 10 stop the enrolment, and entering
+  the same ticket again keeps the count (ZIF-262), so the way out is a new ticket from `enrol`. The `failures` in a
+  `second_factor_failed` audit event is that count; `failed_since_last` in
   `second_factor_passed` is the failures since the last pass. A lock, or a lock again soon after a recovery code,
   means someone is sending codes: a password holder (reset the password, then `enrol`), or someone who can run SQL
   as the app role, which starts admin sessions from the stored hash (rotate the database credentials, `enrol`, and
