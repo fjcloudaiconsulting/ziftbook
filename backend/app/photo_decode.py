@@ -225,6 +225,9 @@ def _decode(data: bytes, seen: dict[str, Any]) -> Decoded:
         except (TypeError, AttributeError, struct.error, SyntaxError, ValueError) as error:
             raise Refused("photo_unreadable", error_name(error)) from None
         rgb = _srgb(im.convert("RGBA" if im.mode == "RGBA" else "RGB"), icc)
+        # The opened file goes before the encodes: it keeps its decoder's buffers (a WebP's canvas
+        # twice and its frame, 48 MB at 4 MP), which would otherwise add to the encoder's peak.
+        del im, opened
         thumb, detail = _webp(ImageOps.fit(rgb, (320, 320))), _webp(rgb)
         return Decoded(thumb, detail, rgb.width, rgb.height, str(seen["format"]), seen["pixels"])
     except (OSError, ValueError, SyntaxError, Image.DecompressionBombError) as error:
