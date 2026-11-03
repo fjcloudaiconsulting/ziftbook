@@ -255,10 +255,12 @@ SELECT count(*) FROM pg_stat_activity a JOIN pg_roles r ON r.rolname = a.usename
 WHERE a.datname = current_database() AND a.pid <> pg_backend_pid() AND NOT r.rolsuper
   AND pg_has_role(a.usename, 'ziftbook_app', 'MEMBER')
 """)
+# The ended bookings whose money settle may hold back (payments._refund): paid, or a payment still
+# open, which may have been paid before the erasure with the restore losing its record.
 PAID_OF = text("""
 SELECT DISTINCT booking_id FROM booking_payments
 WHERE tenant_id = :tenant_id AND booking_id = ANY(CAST(:ids AS uuid[]))
-  AND status = 'paid' AND settled_at IS NULL
+  AND status IN ('paid', 'open') AND settled_at IS NULL AND kind = 'pay'
 """)
 
 

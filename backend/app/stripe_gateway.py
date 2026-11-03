@@ -6,6 +6,7 @@ import json
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Literal, TypeVar
 
 import stripe
@@ -79,6 +80,9 @@ class IntentState:
     # Stripe's processing fee on the charge (not the application fee), None until its balance
     # transaction exists (an authorisation has none).
     stripe_fee: int | None = None
+    # When the charge was made (ZIF-58: a re-applied erasure's settle compares it with the erasure's
+    # time). None while there is no charge.
+    charged_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -377,10 +381,13 @@ class Gateway:
                 intent_id, {"expand": ["latest_charge.balance_transaction"]}, options
             )
             charge = payment.latest_charge
+            charged_at = None
             if charge is None or isinstance(charge, str):
                 refunded, fee = 0, None
             else:
                 refunded, fee = charge.amount_refunded, _processing_fee(charge)
+                created = getattr(charge, "created", None)
+                charged_at = None if created is None else datetime.fromtimestamp(created, UTC)
             return IntentState(
                 payment.id,
                 "payment",
@@ -391,6 +398,7 @@ class Gateway:
                 payment.last_payment_error is not None,
                 payment.client_secret or "",
                 fee,
+                charged_at,
             )
 
         return self._call("retrieve_intent", call, account)

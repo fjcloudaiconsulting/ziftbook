@@ -764,7 +764,8 @@ NOT EXISTS (SELECT 1 FROM clients c
 # client that still has one. Live is the core's own test, at :at: confirmed and still to come, or
 # pending or in checkout with its hold running. A checkout expires (as EXPIRE_ONE gives it back);
 # the rest are cancelled by the merchant, a full refund. Each gets its event, with the erasure's
-# reason and the acting member, if any. At the erasure's own time unless :at says otherwise: a
+# reason and the acting member, if any (and :at, so settle knows when the erasure was). At the
+# erasure's own time unless :at says otherwise: a
 # re-applied erasure passes the first one's, so what it ended ends again, even a booking that has
 # started since. The business is named, besides row-level security, as the erase core names it.
 END_FOR_ERASURE = text("""
@@ -778,7 +779,9 @@ WITH ended AS (
              AND expires_at > coalesce(CAST(:at AS timestamptz), now())))
   RETURNING tenant_id, id, status)
 INSERT INTO booking_events (tenant_id, booking_id, event, actor_user_id, details)
-SELECT tenant_id, id, status, :actor_user_id, jsonb_build_object('reason', CAST(:reason AS text))
+SELECT tenant_id, id, status, :actor_user_id,
+       jsonb_strip_nulls(jsonb_build_object('reason', CAST(:reason AS text),
+                                            'erased_at', CAST(:at AS timestamptz)))
 FROM ended
 RETURNING booking_id
 """)
