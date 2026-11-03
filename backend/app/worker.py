@@ -109,6 +109,8 @@ async def work(kinds: dict[str, JobKind], healthcheck_url: str | None, stop: asy
                         logger.exception("sweep failed", extra={"sweep": name})
                         failed = True
                 if failed:
+                    # On purpose: swept stays unstamped, so both sweeps run again next poll (30 s),
+                    # for every business, until the failure clears; the withheld ping alerts.
                     raise RuntimeError("a sweep failed")
                 swept = time.monotonic()
         except Exception:
