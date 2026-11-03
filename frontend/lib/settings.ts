@@ -303,6 +303,14 @@ export function contactActionOutcome(
   return "contactFailed";
 }
 
+/** Why a save that sent the contact email was refused as a whole (ZIF-232): its link limits (429) or a
+ * change that raced it (503); nothing was saved, no other key either. null: not such a refusal. */
+export function saveRefusal(status: number, code: string | undefined, sentContact: boolean): "contactTooMany" | "contactTooManyToday" | "busy" | null {
+  if (!sentContact) return null;
+  if (status === 429) return code === "contact_email_requests_today" ? "contactTooManyToday" : "contactTooMany";
+  return status === 503 ? "busy" : null;
+}
+
 /** Whether the block shows after reading the state: an API from before the route (404) shows nothing. */
 export function contactLoadOutcome(status: number): "show" | "hide" | "failed" {
   if (status === 200) return "show";
