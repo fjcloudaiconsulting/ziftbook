@@ -2794,7 +2794,7 @@ SELECT to_regclass('contact_email_requests') IS NOT NULL
          AND to_regclass('contact_email_confirmations') IS NOT NULL,
        (SELECT count(*) FROM pg_proc
         WHERE proname IN ('change_contact_email', 'resend_contact_email', 'confirm_contact_email',
-                          'mint_contact_email_token')
+                          'mint_contact_email_token', 'cancel_contact_email')
           AND pronamespace = 'public'::regnamespace)
 """)
 
@@ -2812,7 +2812,7 @@ def test_0086_round_trips_contact_email_requests(
     finally:
         command.upgrade(cfg, "head")
     with migrate_engine.connect() as conn:
-        assert tuple(conn.execute(CONTACT_EMAIL_OBJECTS).one()) == (True, 4)
+        assert tuple(conn.execute(CONTACT_EMAIL_OBJECTS).one()) == (True, 5)
 
 
 CONTACT_EMAIL_GUARD = text("""

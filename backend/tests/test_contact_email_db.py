@@ -346,6 +346,23 @@ def test_a_resend_kills_the_old_link(
     assert new_secret is not None and confirm(people.a, digest(new_secret)) is not None
 
 
+# Correctness review S6 FENCE. Wrong impl: cancelling a waiting address through a clear (which
+# also removes the address clients see), or a cancel that leaves the old link working.
+def test_a_cancel_drops_only_the_waiting_address(
+    people: People, migrate_engine: Engine, worker_engine: Engine
+) -> None:
+    set_in_effect(migrate_engine, people.a, "old@x.nl")
+    _, secret = sent(worker_engine, people.a, "new@x.nl")
+
+    with tenant_context(people.a) as session:
+        cancelled = session.scalar(text("SELECT cancel_contact_email()"))
+        again = session.scalar(text("SELECT cancel_contact_email()"))
+
+    assert (cancelled, again) == (True, False)
+    assert (in_effect(people.a), request_of(migrate_engine, people.a)) == ("old@x.nl", None)
+    assert confirm(people.a, digest(secret)) is None
+
+
 # F1.10 FENCE. Wrong impl: a mint that ignores expires_at, or keeps several hashes.
 def test_the_mint_gives_a_link_only_to_a_request_due_one(
     people: People, migrate_engine: Engine, worker_engine: Engine

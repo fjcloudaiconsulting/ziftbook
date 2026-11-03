@@ -12,6 +12,7 @@ audit_events, so no GUC needs clearing.
 
 - change_contact_email (app): the owner's PUT.
 - resend_contact_email (app): a new link for the waiting address; the old one dies at once.
+- cancel_contact_email (app): drop the waiting address, keeping the one in effect.
 - confirm_contact_email (app): the link's hash makes the address the one in effect, once.
 - mint_contact_email_token (worker only): store the hash of the link the job is about to mail.
 
@@ -99,6 +100,14 @@ LANGUAGE sql SECURITY DEFINER {SEARCH_PATH} AS $$
   RETURNING id
 $$"""
 
+CANCEL = f"""
+CREATE FUNCTION cancel_contact_email() RETURNS boolean
+LANGUAGE sql SECURITY DEFINER {SEARCH_PATH} AS $$
+  -- Drop the waiting address only: the one in effect stays, and the waiting link dies.
+  WITH gone AS (DELETE FROM contact_email_requests RETURNING 1)
+  SELECT EXISTS (SELECT FROM gone)
+$$"""
+
 MINT = f"""
 CREATE FUNCTION mint_contact_email_token(p_id uuid, p_token_hash bytea)
 RETURNS TABLE (email text, business text)
@@ -148,6 +157,7 @@ END $$"""
 FUNCTIONS = {
     "change_contact_email(text, boolean, uuid)": ("ziftbook_app", CHANGE),
     "resend_contact_email(uuid)": ("ziftbook_app", RESEND),
+    "cancel_contact_email()": ("ziftbook_app", CANCEL),
     "confirm_contact_email(bytea)": ("ziftbook_app", CONFIRM),
     "mint_contact_email_token(uuid, bytea)": ("ziftbook_worker", MINT),
 }

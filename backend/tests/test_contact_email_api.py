@@ -166,6 +166,7 @@ NAMES = (
     "resend_contact_email",
     "confirm_contact_email",
     "mint_contact_email_token",
+    "cancel_contact_email",
 )
 
 
