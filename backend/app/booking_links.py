@@ -136,7 +136,7 @@ class BookingOut(BaseModel):
     # page never mentions a kept fee otherwise.
     card_fee: Price | None
     # ZIF-99. Where the client can write to the business: its own setting, null when it has none.
-    # Not confirmed yet (ZIF-232).
+    # Only ever a confirmed address: the database refuses any other (ZIF-232, 0087).
     contact_email: str | None
 
 

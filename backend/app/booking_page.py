@@ -87,8 +87,8 @@ class BookingPageOut(BaseModel):
     services: list[PublicServiceOut]
     auto_confirm: bool
     payment: PagePaymentOut | None  # null while the business takes no card check
-    # ZIF-99. Where clients can write to the business: its own setting, null when it has none. Not
-    # confirmed yet (ZIF-232).
+    # ZIF-99. Where clients can write to the business: its own setting, null when it has none. Only
+    # ever a confirmed address: the database refuses any other (ZIF-232, 0087).
     contact_email: str | None
 
 
