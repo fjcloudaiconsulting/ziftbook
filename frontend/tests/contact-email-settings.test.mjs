@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, test } from "node:test";
 
-import { contactEmailView, contactSendOutcome } from "../lib/settings.ts";
+import { contactActionOutcome, contactEmailView } from "../lib/settings.ts";
 
 const none = { state: "none", confirmed: null, requested: null, link_expired: false, expires_at: null };
 const unconfirmed = { ...none, state: "unconfirmed", requested: "new@x.nl" };
@@ -21,18 +21,21 @@ describe("F8.1 each state has its pill, words and action", () => {
       body: ["contactUnconfirmed", { email: "new@x.nl" }],
       untilThen: null,
       action: "contactSend",
+      cancel: true,
     });
     assert.deepEqual(contactEmailView(expired, true), {
       pill: "unconfirmed",
       body: ["contactExpired", { email: "new@x.nl" }],
       untilThen: null,
       action: "contactSendNew",
+      cancel: true,
     });
     assert.deepEqual(contactEmailView(sent, true), {
       pill: "sent",
       body: ["contactSent", { email: "new@x.nl" }],
       untilThen: ["contactUntilThenNone", {}],
       action: "contactSendAgain",
+      cancel: true,
     });
     assert.deepEqual(contactEmailView(confirmed, true), {
       pill: "confirmed",
@@ -55,6 +58,7 @@ describe("F8.1 each state has its pill, words and action", () => {
       assert.equal(view.action, null);
       assert.deepEqual(view.body, ["contactWaiting", {}]);
       assert.equal(view.ownerOnly, true);
+      assert.equal(view.cancel, undefined);
     }
     assert.deepEqual(contactEmailView(confirmed, false), {
       pill: "confirmed",
@@ -67,14 +71,14 @@ describe("F8.1 each state has its pill, words and action", () => {
 
 // F8.3 FENCE. Wrong impl: a silent failure, or one message for every refusal (an owner kept from an
 // address for the day by other businesses must be told that, not "try later").
-describe("F8.3 what a send answer means", () => {
+describe("F8.3 what a send or cancel answer means", () => {
   test("each answer has its words", () => {
-    assert.equal(contactSendOutcome(200), "sent");
-    assert.equal(contactSendOutcome(429, "rate_limited"), "contactTooMany");
-    assert.equal(contactSendOutcome(429, "contact_email_requests_today"), "contactTooManyToday");
-    assert.equal(contactSendOutcome(401), "signedOut");
-    assert.equal(contactSendOutcome(409, "no_contact_email_request"), "reload");
-    for (const status of [0, 403, 422, 500, 503]) assert.equal(contactSendOutcome(status), "contactFailed");
+    assert.equal(contactActionOutcome(200), "done");
+    assert.equal(contactActionOutcome(429, "rate_limited"), "contactTooMany");
+    assert.equal(contactActionOutcome(429, "contact_email_requests_today"), "contactTooManyToday");
+    assert.equal(contactActionOutcome(401), "signedOut");
+    assert.equal(contactActionOutcome(409, "no_contact_email_request"), "reload");
+    for (const status of [0, 403, 422, 500, 503]) assert.equal(contactActionOutcome(status), "contactFailed");
   });
 });
 
@@ -83,7 +87,7 @@ describe("F8.3 the copy", () => {
     "contactEmailLabel", "contactUnconfirmedPill", "contactSentPill", "contactConfirmedPill", "contactUnconfirmed",
     "contactExpired", "contactSent", "contactConfirmed", "contactUntilThen", "contactUntilThenNone", "contactWaiting",
     "contactSend", "contactSendNew", "contactSendAgain", "contactLinkSent", "contactTooMany", "contactTooManyToday",
-    "contactFailed",
+    "contactFailed", "contactCancel", "contactCancelled",
     "contactLoadFailed", "contactOwnerOnly",
   ];
   for (const locale of ["en", "nl", "pt"]) {
