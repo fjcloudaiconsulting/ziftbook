@@ -8,12 +8,16 @@ An erasure enqueues an erasure.ledger job in its own transaction (enqueue), so t
 only for an erasure that committed; the worker writes it (record).
 
     python -m app.ledger reapply --since <ISO time> --reason "<why>"
+    python -m app.ledger backfill --since <ISO time>
 
 reapply erases again, after a restore, every client the ledger lists from that time on (the
 restore point minus an hour), with the ledger's read-only credentials. It connects as
 ziftbook_migrate (ZIF_MIGRATE_DATABASE_URL), from the migrations image, as app.admin does, before
 the API and the worker start (CONTRIBUTING "Restoring the database"). Exit 0 when done or nothing
 was to do, 1 on any error (logged CRITICAL; nothing was applied), 2 on a usage error.
+
+backfill writes the entries the ledger is missing (an erasure.ledger job that gave up) from the
+live database, with the worker's writing credentials; same connection and exit codes.
 """
 
 import argparse
@@ -159,6 +163,29 @@ def reapply(engine: Engine, since: datetime, reason: str) -> int:
     return 0
 
 
+ERASED_SINCE = text("SELECT id, erased_at FROM clients WHERE erased_at >= :since")
+
+
+def backfill(engine: Engine, since: datetime) -> int:
+    """Write the ledger entry of every client erased from since on that the ledger lacks, from
+    the database's own record of the erasure, clients.erased_at, in every business. Never from
+    the audit events: an erasure's is not its record (a restore rewinds both alike, and only the
+    tombstone says the erasure happened). Account deletions' entries come with them (ZIF-58 PR 8).
+    """
+    found = []
+    with Session(engine) as session, session.begin():
+        for tenant_id in session.scalars(text("SELECT id FROM tenants")).all():
+            join_tenant(session, tenant_id)
+            found += [
+                Entry(tenant_id, row.id, row.erased_at.astimezone(UTC))
+                for row in session.execute(ERASED_SINCE, {"since": since})
+            ]
+    # After the transaction: no outbound call while it is open.
+    written = sum(storage.ledger_write(entry.key, entry.body()) for entry in found)
+    logger.info("ledger backfilled", extra={"erased": len(found), "written": written})
+    return 0
+
+
 def _since(value: str) -> datetime:
     try:
         at = datetime.fromisoformat(value)
@@ -171,14 +198,20 @@ def _since(value: str) -> datetime:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m app.ledger", description=__doc__)
-    parser.add_argument("command", choices=("reapply",))
-    parser.add_argument("--since", required=True, type=_since, help="the restore point - 1h")
-    parser.add_argument("--reason", required=True, type=admin._reason, help="for the audit log")
+    parser.add_argument("command", choices=("reapply", "backfill"))
+    parser.add_argument(
+        "--since", required=True, type=_since, help="reapply: the restore point - 1h"
+    )
+    parser.add_argument("--reason", type=admin._reason, help="reapply: why, for the audit log")
     args = parser.parse_args(argv)
+    if args.command == "reapply" and args.reason is None:
+        parser.error("reapply needs --reason")
     engine = create_engine(
         os.environ["ZIF_MIGRATE_DATABASE_URL"], poolclass=NullPool, hide_parameters=True
     )
     try:
+        if args.command == "backfill":
+            return backfill(engine, args.since)
         return reapply(engine, args.since, args.reason)
     finally:
         engine.dispose()

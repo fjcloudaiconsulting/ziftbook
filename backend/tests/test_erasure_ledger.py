@@ -413,3 +413,63 @@ def test_an_unreadable_entry_applies_nothing(
         reapply(erased_at - timedelta(hours=1))
     assert take(migrate_engine, people.a) == before
     assert client_id in before["clients"]
+
+
+def erase_now(migrate_engine: Engine, tenant_id: uuid.UUID) -> uuid.UUID:
+    """A client with no bookings, erased by the core alone: no audit event, no ledger job."""
+    with migrate_tenant_context(migrate_engine, tenant_id) as conn:
+        client_id: uuid.UUID = conn.scalar(INSERT_CLIENT, {"email": fresh_email(), "user_id": None})
+        conn.execute(bookings.LOCK, {"key": bookings.LOCK_KEY})
+        conn.execute(text("SELECT erase_client_core(:id, true)"), {"id": client_id})
+    return client_id
+
+
+def key_of(migrate_engine: Engine, tenant_id: uuid.UUID, client_id: uuid.UUID) -> str:
+    with migrate_tenant_context(migrate_engine, tenant_id) as conn:
+        erased_at = conn.scalar(
+            text("SELECT erased_at FROM clients WHERE id = :id"), {"id": client_id}
+        )
+    return ledger.Entry(tenant_id, client_id, erased_at.astimezone(UTC)).key
+
+
+# ZIF-58 F27. FENCE. Wrong impl: a backfill from the client_erased audit events (a restore rewinds
+# them with the erasure, and an erasure is the tombstone, not its event: these have none). It
+# writes exactly the entries the ledger lacks, in every business, and leaves the present one be.
+def test_backfill_writes_exactly_the_missing_entries(
+    people: People, migrate_engine: Engine, ledger_bucket: S3Client
+) -> None:
+    before_since = erase_now(migrate_engine, people.a)
+    with migrate_engine.begin() as conn:
+        since = conn.scalar(text("SELECT clock_timestamp()"))
+    ledgered = erase_now(migrate_engine, people.a)
+    missing = [erase_now(migrate_engine, people.a), erase_now(migrate_engine, people.b)]
+    present = key_of(migrate_engine, people.a, ledgered)
+    ledger_bucket.put_object(Bucket=BUCKET, Key=present, Body=b"as the job wrote it")
+
+    assert ledger.main(["backfill", "--since", since.isoformat()]) == 0
+    entries = stored(ledger_bucket)
+    assert set(entries) == {present} | {
+        key_of(migrate_engine, tenant, client)
+        for tenant, client in zip((people.a, people.b), missing, strict=True)
+    }
+    assert entries[present] == b"as the job wrote it"
+    assert key_of(migrate_engine, people.a, before_since) not in entries
+    for key in set(entries) - {present}:
+        assert json.loads(entries[key])["v"] == 1
+
+
+# ZIF-58. GUARD. reapply needs a reason (the platform audit event's), backfill none; a time
+# without its offset is a usage error, not a guess at the zone.
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["reapply", "--since", "2026-11-03T09:00:00+00:00"],
+        ["reapply", "--since", "2026-11-03T09:00:00+00:00", "--reason", " "],
+        ["backfill", "--since", "2026-11-03T09:00:00"],
+        ["backfill"],
+    ],
+)
+def test_usage_errors_exit_2(argv: list[str]) -> None:
+    with pytest.raises(SystemExit) as exit_:
+        ledger.main(argv)
+    assert exit_.value.code == 2
