@@ -564,3 +564,59 @@ def test_only_booking_emails_name_the_business_above_the_heading() -> None:
     eyebrow = f'letter-spacing:.02em">{name}</p>'
     assert name in invite and eyebrow not in invite
     assert eyebrow in flood
+
+
+def _old_format(template: str, locale: str) -> list[str]:
+    """What still reads as the pre-ZIF-175 plain format in a template file: no single heading, a
+    link outside the button (so no button in HTML), the greeting, or the bare sign-off."""
+    try:
+        _, blocks = mail._parse(template, locale)
+    except ValueError as error:
+        return [str(error)]
+    problems = []
+    for kind, parts in blocks:
+        text = "\n".join(parts)
+        if kind != "button" and ("$link" in text or "$sign_in" in text):
+            problems.append(f"a link outside a button: {text!r}")
+        if text in ("Hello,", "Hallo,", "Olá,", "ziftbook"):
+            problems.append(f"the old greeting or sign-off: {text!r}")
+    return problems
+
+
+# ZIF-175 guard: every template file is in the block format. Other branches add templates in the
+# old one (zif146: account_registered, account_sign_up); whichever merges second converts them, and
+# this fails until it does.
+def test_every_template_is_in_the_block_format() -> None:
+    for path in TEMPLATES.glob("*.txt"):
+        template, locale, _ = path.name.split(".")
+        assert _old_format(template, locale) == [], path.name
+
+
+OLD_SIGN_UP = """Create your ziftbook account
+Hello,
+
+Open this link to confirm your email and create your ziftbook account.
+
+$link
+
+The link works once, for 24 hours.
+
+ziftbook
+"""
+
+
+# The guard's own check: it fails on a file as zif146 writes it, and on one half converted.
+@pytest.mark.parametrize(
+    "content",
+    [
+        OLD_SIGN_UP,
+        OLD_SIGN_UP.replace("Hello,", "# Create your account"),
+        "Sign in\n# Sign in\n\nSign in here: $sign_in\nForgot your password?\n",
+    ],
+)
+def test_the_block_format_guard_fails_on_an_old_format_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, content: str
+) -> None:
+    (tmp_path / "account_sign_up.en.txt").write_text(content)
+    monkeypatch.setattr(mail, "TEMPLATES", tmp_path)
+    assert _old_format("account_sign_up", "en") != []
