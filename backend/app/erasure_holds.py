@@ -57,8 +57,9 @@ logger = logging.getLogger(__name__)
 
 def purge(db: Session) -> int:
     """Delete this business's holds that are no longer needed or past their date, in the caller's
-    tenant transaction after the booking lock (every writer of a refund or an erasure holds it, so
-    none changes what the purge decides on while it runs). Returns how many."""
+    tenant transaction after the booking lock. Every writer that can make a hold needed again (an
+    erasure, a refund and its failure, each of which enqueues the client's email) holds that lock,
+    so none can between the purge's look and its delete. Returns how many."""
     purged = db.execute(PURGE, {"late": LATE}).all()
     for row in purged:
         if row.late:

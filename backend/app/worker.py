@@ -74,8 +74,8 @@ _meter.create_observable_gauge(
 )
 
 POLL_SECONDS = 30
-# ZIF-122: settle expired pending bookings, and (ZIF-58) purge the contact holds no longer needed;
-# housekeeping, so it runs on a timer, not every poll.
+# ZIF-122: settle expired pending bookings (housekeeping) and, ZIF-58, purge the contact holds no
+# longer needed: on a timer, not every poll.
 SWEEP_SECONDS = 300
 
 logger = logging.getLogger("app.worker")
