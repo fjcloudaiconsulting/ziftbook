@@ -1,11 +1,10 @@
 Um cliente cancelou o agendamento
-# Um cliente cancelou o agendamento
+# Um agendamento foi cancelado
 
-Olá,
-
-$client cancelou o agendamento:
+$client cancelou o agendamento.
 
 | $service
 | $date às $time ($zone)
+| Cliente: $client
 
-[Abrir o link]($link)
+[Abrir o ziftbook]($link)

@@ -512,3 +512,21 @@ def test_the_message_is_text_and_html_alternatives_with_the_calendar_beside_them
         "text/html",
         "text/calendar",
     ]
+
+
+# ZIF-175 guard: every email has one heading and at most one button, and no dash punctuation the
+# copy style rules out (em or en dashes), in any template or in the layout's own words.
+def test_every_template_has_one_heading_one_button_at_most_and_no_dashes() -> None:
+    for path in TEMPLATES.glob("*.txt"):
+        template, locale, _ = path.name.split(".")
+        html = mail.compose(template, locale, _every(template, locale))[2]
+        assert html.count("<h1") == 1, path.name
+        assert (
+            html.count(
+                'role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:28px'
+            )
+            <= 1
+        ), path.name
+        assert not {"\N{EM DASH}", "\N{EN DASH}"} & set(path.read_text()), path.name
+    for words in (mail.FOOTER, mail.LINK_FALLBACK):
+        assert not {"\N{EM DASH}", "\N{EN DASH}"} & set("".join(words.values()))

@@ -1,13 +1,9 @@
 Herinnering: je afspraak komt eraan
-# Herinnering: je afspraak komt eraan
+# Je afspraak komt eraan
 
-Hallo,
-
-Een herinnering aan je afspraak bij $business:
+Een vriendelijke herinnering aan je afspraak bij $business. Ze kijken ernaar uit je te zien.
 
 | $service
 | $date om $time ($zone)
-
-Tot dan!
 
 [Bekijk, wijzig of annuleer je afspraak]($link)

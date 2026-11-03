@@ -1,17 +1,14 @@
 Nieuwe boekingsaanvraag
 # Nieuwe boekingsaanvraag
 
-Hallo,
-
-Een klant wil boeken:
-
-Klant: $client
-
-> $message
+$client wil graag boeken.
 
 | $service
 | $date om $time ($zone)
+| Klant: $client
+
+> $message
 
 De eigenaar van de zaak accepteert of wijst de aanvraag af. Antwoordt niemand vóór $expires, dan vervalt de aanvraag.
 
-[Open de link]($link)
+[Open ziftbook]($link)

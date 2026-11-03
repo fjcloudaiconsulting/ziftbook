@@ -1,8 +1,11 @@
 Agendamento remarcado
-# Agendamento remarcado
+# Um agendamento foi remarcado
 
-Olá,
+Este agendamento foi remarcado para outro horário.
 
-$client, $service: remarcado de $old_date às $old_time para $date às $time ($zone).
+| $service
+| Agora $date às $time ($zone)
+| Antes $old_date às $old_time
+| Cliente: $client
 
-[Abrir o link]($link)
+[Abrir o ziftbook]($link)

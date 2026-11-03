@@ -1,12 +1,11 @@
 Een klant heeft de afspraak verzet
-# Een klant heeft de afspraak verzet
+# Een afspraak is verzet
 
-Hallo,
-
-$client heeft de afspraak verzet:
+$client heeft de afspraak naar een ander moment verzet.
 
 | $service
-| Was $old_date om $old_time
 | Nu $date om $time ($zone)
+| Was $old_date om $old_time
+| Klant: $client
 
-[Open de link]($link)
+[Open ziftbook]($link)

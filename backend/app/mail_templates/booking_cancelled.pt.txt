@@ -1,12 +1,10 @@
 Seu agendamento foi cancelado
 # Seu agendamento foi cancelado
 
-Olá,
-
-$business cancelou seu agendamento:
+Sentimos muito: $business precisou cancelar seu agendamento.
 
 | $service
 | $date às $time ($zone)
 | $payment
 
-Em caso de dúvidas, entre em contato com o negócio.
+Se tiver dúvidas, entre em contato com $business.

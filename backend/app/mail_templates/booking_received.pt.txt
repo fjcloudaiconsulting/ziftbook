@@ -1,14 +1,10 @@
 Recebemos seu pedido de agendamento
-# Recebemos seu pedido de agendamento
+# Obrigado, recebemos seu pedido
 
-Olá,
-
-$business recebeu seu pedido de agendamento:
+$business recebeu seu pedido de agendamento. O negócio ainda precisa aceitar o pedido, e enviaremos um e-mail assim que houver resposta.
 
 | $service
 | $date às $time ($zone)
 | $payment
-
-O negócio ainda precisa aceitar o pedido. Enviaremos um e-mail assim que houver resposta.
 
 [Veja, altere ou cancele seu agendamento]($link)

@@ -1,12 +1,10 @@
 Your booking was cancelled
 # Your booking was cancelled
 
-Hello,
-
-$business has cancelled your booking:
+We're sorry: $business had to cancel your booking.
 
 | $service
 | $date at $time ($zone)
 | $payment
 
-If you have questions, please contact the business.
+If you have any questions, please get in touch with $business.

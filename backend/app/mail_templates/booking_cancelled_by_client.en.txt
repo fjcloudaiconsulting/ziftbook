@@ -1,10 +1,10 @@
 Your booking is cancelled
 # Your booking is cancelled
 
-Hello,
-
-As you asked, your booking at $business is cancelled:
+As you asked, we've cancelled your booking at $business.
 
 | $service
 | $date at $time ($zone)
 | $payment
+
+Changed your mind? You're always welcome to book a new time.

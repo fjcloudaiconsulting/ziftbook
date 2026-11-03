@@ -1,13 +1,9 @@
 Lembrete: seu agendamento está chegando
-# Lembrete: seu agendamento está chegando
+# Seu agendamento está chegando
 
-Olá,
-
-Este é um lembrete do seu agendamento em $business:
+Um lembrete do seu agendamento em $business. Estão esperando por você.
 
 | $service
 | $date às $time ($zone)
-
-Até lá!
 
 [Veja, altere ou cancele seu agendamento]($link)

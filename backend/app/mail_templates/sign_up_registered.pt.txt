@@ -1,14 +1,12 @@
 Você já tem uma conta no ziftbook
-# Você já tem uma conta no ziftbook
-
-Olá,
+# Você já tem uma conta
 
 Alguém pediu para criar uma conta no ziftbook com este e-mail, mas ele já tem uma, então nada foi alterado.
 
-[Entre aqui]($sign_in)
+[Entrar]($sign_in)
 
 Esqueceu a senha? Você pode redefini-la na página de login.
 
 Se esta conta ainda não tem um negócio, por enquanto não é possível adicionar um a ela: para configurar um, cadastre-se com outro e-mail.
 
-Se não foi você, pode ignorar este e-mail.
+Se não foi você, pode simplesmente ignorar este e-mail.

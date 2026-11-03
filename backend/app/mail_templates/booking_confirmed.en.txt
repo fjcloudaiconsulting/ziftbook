@@ -1,9 +1,7 @@
 Your booking is confirmed
-# Your booking is confirmed
+# You're booked in
 
-Hello,
-
-Your booking at $business is confirmed:
+Your booking at $business is confirmed. They look forward to seeing you.
 
 | $service
 | $date at $time ($zone)

@@ -1,11 +1,11 @@
 Seu pedido de agendamento foi encerrado
 # Seu pedido de agendamento foi encerrado
 
-Olá,
-
-$business não confirmou seu pedido de agendamento a tempo, então ele foi encerrado:
+$business não confirmou seu pedido de agendamento a tempo, então ele foi encerrado e nada foi agendado.
 
 | $service
 | $date às $time ($zone)
 
 Seu pagamento de $amount será reembolsado integralmente na sua forma de pagamento. Seu banco pode levar alguns dias para mostrar o valor.
+
+Você pode escolher outro horário.
