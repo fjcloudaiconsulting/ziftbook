@@ -13,6 +13,7 @@ from typing import Literal
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app import tracing
 from app.config import RateLimitSettings, is_dev_value_on_public_url
 from app.db import SessionLocal
 from app.errors import ApiError
@@ -84,19 +85,22 @@ def _slot(host: str) -> Iterator[None]:
     addresses share: a refusal tells an address only how many calls it and its /48 have open. An
     IPv4 address's /48 bucket is the address again, under its own name, so it never binds first."""
     buckets = (
-        (ip_key("in_flight", host), MAX_IN_FLIGHT),
-        (ip_key("in_flight_48", host, v6_prefix=AUTH_V6_PREFIX), MAX_IN_FLIGHT_PER_48),
+        (ip_key("in_flight", host), MAX_IN_FLIGHT, "address"),
+        (ip_key("in_flight_48", host, v6_prefix=AUTH_V6_PREFIX), MAX_IN_FLIGHT_PER_48, "network"),
     )
     with _in_flight_lock:
-        if any(_in_flight.get(bucket, 0) >= cap for bucket, cap in buckets):
-            raise AtCap
-        for bucket, _ in buckets:
-            _in_flight[bucket] = _in_flight.get(bucket, 0) + 1
+        full = next((tier for b, cap, tier in buckets if _in_flight.get(b, 0) >= cap), None)
+        if full is None:
+            for bucket, _, _ in buckets:
+                _in_flight[bucket] = _in_flight.get(bucket, 0) + 1
+    if full is not None:
+        tracing.LIMITER_AT_CAP.add(1, {"limiter.tier": full})
+        raise AtCap
     try:
         yield
     finally:
         with _in_flight_lock:
-            for bucket, _ in buckets:
+            for bucket, _, _ in buckets:
                 if _in_flight[bucket] == 1:
                     del _in_flight[bucket]
                 else:
