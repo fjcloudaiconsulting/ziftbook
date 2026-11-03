@@ -59,3 +59,23 @@ test("prose like 'one {service}' outside a plural block still reports a dropped 
   const nl2 = { book: "Boek nu." };
   assert.equal(compareCatalogs(en2, nl2).length, 1);
 });
+
+// ZIF-232 review: git merges a key added on two branches into a catalog twice without a conflict,
+// and JSON.parse keeps the last copy. Wrong impl: duplicates left to JSON.parse.
+test("reports a key twice in one object, not the same key in two objects", async () => {
+  const { duplicateKeys } = await import("./check-catalogs.mjs");
+  assert.deepEqual(duplicateKeys('{"a": {"x": 1, "y": 2, "x": 3}, "b": {"x": 1}}'), ["a.x"]);
+  assert.deepEqual(duplicateKeys('{"a": "x: \\"y\\"", "b": {"a": 1}}'), []);
+  assert.deepEqual(duplicateKeys('{"a": 1, "a": 2}'), ["a"]);
+});
+
+test("no catalog holds a key twice", async () => {
+  const { duplicateKeys } = await import("./check-catalogs.mjs");
+  const { readFileSync } = await import("node:fs");
+  for (const dir of ["frontend/messages", "landing/strings"]) {
+    for (const locale of ["en", "nl", "pt"]) {
+      const text = readFileSync(new URL(`../${dir}/${locale}.json`, import.meta.url), "utf8");
+      assert.deepEqual(duplicateKeys(text), [], `${dir}/${locale}.json`);
+    }
+  }
+});
