@@ -286,6 +286,27 @@ def test_a_replacing_change_makes_its_owner_the_requester(
     assert confirm(people.a, digest(secret)) is None
 
 
+# Re-check NIT 3 FENCE. Wrong impl: confirm reading memberships with the caller's app.sign_in on,
+# which shows the migrate role every business's members, so an owner of another business passes the
+# requester check; or a confirm that leaves the caller's app.sign_in changed.
+def test_the_requester_must_own_this_business_whatever_the_callers_settings(
+    people: People, worker_engine: Engine
+) -> None:
+    set_role(people.b, people.only_b, "owner")  # owns b, is no member of a
+    request = change(people.a, "shop@x.nl", send=True, by=people.only_b)
+    secret = mint(worker_engine, people.a, request.request_id)
+    assert secret is not None
+
+    with tenant_context(people.a) as session:
+        session.execute(text("SELECT set_config('app.sign_in', 'on', true)"))
+        confirmed = session.execute(
+            text("SELECT * FROM confirm_contact_email(:h)"), {"h": digest(secret)}
+        ).first()
+        after = session.scalar(text("SELECT current_setting('app.sign_in', true)"))
+
+    assert (confirmed, after) == (None, "on")
+
+
 def test_a_resend_makes_its_owner_the_requester(
     people: People, migrate_engine: Engine, worker_engine: Engine
 ) -> None:

@@ -132,8 +132,10 @@ DECLARE
   v_email text;
   v_requester uuid;
   v_previous text;
+  v_sign_in text := current_setting('app.sign_in', true);
 BEGIN
   -- It reads memberships: only this business's (app.sign_in would widen the migrate role's view).
+  -- The caller's value comes back right after, as in 0032.
   PERFORM set_config('app.sign_in', '', true);
   DELETE FROM contact_email_requests r
   WHERE r.token_hash = p_token_hash AND r.expires_at > now()
@@ -141,6 +143,7 @@ BEGIN
          OR EXISTS (SELECT FROM memberships m
                     WHERE m.user_id = r.requested_by AND m.role = 'owner'))
   RETURNING r.email, r.requested_by INTO v_email, v_requester;
+  PERFORM set_config('app.sign_in', coalesce(v_sign_in, ''), true);
   IF v_email IS NULL THEN
     RETURN;
   END IF;
