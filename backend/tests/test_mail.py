@@ -428,6 +428,6 @@ def test_the_owners_hear_when_the_contact_email_changes(
 
 
 @pytest.mark.parametrize("locale", LOCALES)
-@pytest.mark.parametrize("template", ["contact_email_changed"])
+@pytest.mark.parametrize("template", ["contact_email_changed", "contact_email_confirm"])
 def test_the_contact_email_templates_have_no_em_dash(template: str, locale: str) -> None:
     assert "—" not in (TEMPLATES / f"{template}.{locale}.txt").read_text()

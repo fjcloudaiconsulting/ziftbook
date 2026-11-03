@@ -271,6 +271,38 @@ def send_invite(job: Job) -> None:
         deliver("invite", invite.email, subject, body)
 
 
+# The confirm page, under a segment no business slug can take (0035's reserved list).
+CONTACT_EMAIL_PAGE = "account/contact-email"
+
+
+def send_contact_email(job: Job) -> None:
+    """The email.contact_email job (ZIF-232): mail the link that confirms a business's contact email
+    to that address. Payload: request_id.
+
+    Runs in the request's business. A changed, resent, cleared or confirmed request has another id
+    or none, so a queued job for the old one sends nothing. Minting and sending share a transaction,
+    as in send_invite: a failed send leaves no hash, and the retry mints a new one. No Reply-To and
+    no outbox row, as for an invite.
+    """
+    if job.tenant_id is None:
+        raise ValueError("email.contact_email needs a tenant")
+    token = secrets.token_urlsafe(32)
+    app_url = MailSettings().app_url.rstrip("/")
+    with tenant_context(job.tenant_id) as session:
+        request = session.execute(
+            text("SELECT email, business FROM mint_contact_email_token(:id, :hash)"),
+            {"id": job.payload["request_id"], "hash": hashlib.sha256(token.encode()).digest()},
+        ).first()
+        if request is None:  # changed, resent, cleared, confirmed, or queued too long ago
+            return
+        language = business_settings.read(session).language
+        link = f"{app_url}/{language}/{CONTACT_EMAIL_PAGE}#{job.tenant_id}.{token}"
+        subject, body = render(
+            "contact_email_confirm", language, {"link": link, "business": request.business}
+        )
+        deliver("contact_email_confirm", request.email, subject, body)
+
+
 # The app role may UPDATE only email_outbox's status, sent_at and subject, and never DELETE (0048):
 # a new column these write needs its own GRANT UPDATE in a migration.
 def _outbox(
