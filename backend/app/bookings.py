@@ -766,13 +766,13 @@ NOT EXISTS (SELECT 1 FROM clients c
 # the rest are cancelled by the merchant, a full refund. Each gets its event, with the erasure's
 # reason and the acting member, if any. At the erasure's own time unless :at says otherwise: a
 # re-applied erasure passes the first one's, so what it ended ends again, even a booking that has
-# started since.
+# started since. The business is named, besides row-level security, as the erase core names it.
 END_FOR_ERASURE = text("""
 WITH ended AS (
   UPDATE bookings
   SET status = CASE WHEN status = 'awaiting_payment' THEN 'expired'
                     ELSE 'cancelled_by_merchant' END
-  WHERE client_id = :client_id
+  WHERE tenant_id = :tenant_id AND client_id = :client_id
     AND ((status = 'confirmed' AND starts_at > coalesce(CAST(:at AS timestamptz), now()))
          OR (status IN ('pending', 'awaiting_payment')
              AND expires_at > coalesce(CAST(:at AS timestamptz), now())))
@@ -786,6 +786,7 @@ RETURNING booking_id
 
 def end_for_erasure(
     db: Session,
+    tenant_id: UUID,
     client_id: UUID,
     *,
     reason: Literal["client_erased", "account_erased", "erasure_reapplied"],
@@ -798,7 +799,13 @@ def end_for_erasure(
     return list(
         db.scalars(
             END_FOR_ERASURE,
-            {"client_id": client_id, "reason": reason, "at": at, "actor_user_id": actor_user_id},
+            {
+                "tenant_id": tenant_id,
+                "client_id": client_id,
+                "reason": reason,
+                "at": at,
+                "actor_user_id": actor_user_id,
+            },
         )
     )
 
