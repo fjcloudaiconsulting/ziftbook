@@ -10,11 +10,12 @@ import logging
 import re
 from datetime import datetime, timedelta
 from typing import Literal
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import text
+from sqlalchemy.orm import Session
 
 from app import auth, limits
 from app.auth import CurrentOwner, CurrentSession, SignedIn
@@ -60,6 +61,19 @@ def send_link(current: SignedIn, request_id: UUID, email: str) -> None:
     )
 
 
+def tell_owners(session: Session, tenant_id: UUID) -> None:
+    """Mail every owner that the address clients see changed, in the change's transaction: an
+    inbox someone else confirmed would otherwise keep client replies from them unnoticed."""
+    for user_id in session.scalars(text("SELECT user_id FROM memberships WHERE role = 'owner'")):
+        enqueue(
+            session,
+            "email.send",
+            f"email.send:{tenant_id}:contact_email_changed:{user_id}:{uuid4()}",
+            {"recipient_id": str(user_id), "template": "contact_email_changed"},
+            tenant_id=tenant_id,
+        )
+
+
 def change(current: SignedIn, request: Request, email: str | None) -> None:
     """An owner's PUT of contact_email: a new address waits for its confirmation, and is sent the
     link that confirms it; the one in effect stays until then. None clears both."""
@@ -87,6 +101,7 @@ def change(current: SignedIn, request: Request, email: str | None) -> None:
             target="setting:contact_email",
             details={"old": row.previous, "new": None},
         )
+        tell_owners(current.db, current.tenant_id)
 
 
 class ContactEmailToken(BaseModel):
@@ -136,6 +151,7 @@ def confirm(body: ContactEmailToken, request: Request, response: Response) -> No
             target="setting:contact_email",
             details={"old": row.previous, "new": row.confirmed},
         )
+        tell_owners(session, tenant_id)
     # After the commit: a confirm that failed to commit is not logged as done.
     logger.info("contact email confirmed", extra={"tenant_id": str(tenant_id)})
     response.headers["Cache-Control"] = "no-store"
