@@ -2975,7 +2975,7 @@ def test_0072_round_trips_the_retention_indexes_and_replaces_an_invalid_leftover
         make_url(ADMIN_DATABASE_URL).set(database=migrate_engine.url.database), poolclass=NullPool
     )
     try:
-        command.downgrade(cfg, "0056")
+        command.downgrade(cfg, migration("0072_retention_indexes.py").down_revision)
         with migrate_engine.connect() as conn:
             assert conn.execute(RETENTION_INDEXES).all() == []
         # What a run that timed out mid-build leaves: an index of the same name, not valid.
