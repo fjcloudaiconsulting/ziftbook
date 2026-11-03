@@ -255,11 +255,12 @@ GMAIL_DOMAINS = frozenset({"gmail.com", "googlemail.com"})
 
 
 def address_for_limits(email: str) -> str:
-    """The address as a limit key sees it: lowercase, without a `+tag`, and for Gmail without dots
-    and under one domain, so aliases of one mailbox share a key. Used only to build limit keys;
-    storage and delivery keep the address as entered."""
+    """The address as a limit key sees it: lowercase, without a `+tag` or a trailing dot on the
+    domain, and for Gmail without dots and under one domain, so aliases of one mailbox share a key.
+    Used only to build limit keys; storage and delivery keep the address as entered."""
     local, _, domain = email.lower().rpartition("@")
     local = local.split("+", 1)[0]
+    domain = domain.rstrip(".")  # "x.com." is the same mailbox's domain, fully qualified
     if domain in GMAIL_DOMAINS:
         local, domain = local.replace(".", ""), "gmail.com"
     return f"{local}@{domain}"
