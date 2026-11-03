@@ -20,7 +20,7 @@ from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 from opentelemetry.sdk.trace import ReadableSpan
 from sqlalchemy import Engine, text
 
-from app import admin_auth, auth, bookings, clients, csp_reports, payments, totp
+from app import admin_auth, auth, bookings, clients, csp_reports, erasure_holds, payments, totp
 from app.config import MailSettings
 from app.db import tenant_context
 from app.jobs import Job, run_once
@@ -40,6 +40,7 @@ from tests.conftest import (
     new_client,
     put_settings,
     save_setting,
+    sent_to,
     signed_in,
     token_in,
 )
@@ -47,6 +48,7 @@ from tests.stripe_fake import FakeGateway
 from tests.test_booking_payments_api import make_shop, resume, run, sync
 from tests.test_bookings_api import post_booking, sign_in_as
 from tests.test_erased_client_reads import erase_in
+from tests.test_erasure_holds import erase_announcing
 from tests.test_second_factor_db import issue_ticket
 from tests.test_working_hours import seed
 
@@ -478,6 +480,60 @@ def test_no_personal_data_ever_reaches_a_log(
         )
     assert client_id not in [c["id"] for c in owner.get("/api/clients").json()]
 
+    # 6m (ZIF-58): a client erased by its owner, its booking still to come cancelled by the
+    # erasure, keeps a contact hold. Its cancellation and a failed refund are mailed through the
+    # hold; then the hold, found two days past its purge date, is purged by the backstop job and
+    # the sweep, with the ERROR that says so.
+    held_email = fresh_email()
+    held_name = "Held Client Zqh-4"
+    secret(held_email)
+    secret(held_name)
+    held_booking = owner.post(
+        "/api/bookings",
+        json={
+            "service_id": created.json()["id"],
+            "member_id": str(target),
+            "new_client": {"name": held_name, "email": held_email},
+            "starts_at": slots[1],
+        },
+    )
+    assert held_booking.status_code == 201, held_booking.text
+    held_id = held_booking.json()["id"]
+    with tenant_context(people.a) as session:
+        held_client = session.scalar(
+            text("SELECT client_id FROM bookings WHERE id = :id"), {"id": held_id}
+        )
+    erase_announcing(migrate_engine, people, held_client)
+    with tenant_context(people.a) as session:
+        session.execute(bookings.LOCK, {"key": bookings.LOCK_KEY})
+        bookings.email(session, people.a, held_id, "booking_cancelled", merchant=True)
+        told = session.scalar(
+            payments.TELL_REFUND_FAILED,
+            {
+                "booking_id": held_id,
+                "refund_id": None,
+                "details": json.dumps({"amount_minor": 1000, "refund": None}),
+            },
+        )
+        payments._mail_refund_failed(session, people.a, held_id, told)
+    run_jobs_once()  # the two emails, through the hold
+    assert len(sent_to(held_email)) == 2
+    with tenant_context(people.a) as session:
+        erasure_holds.enqueue_purge(
+            session, people.a, held_client, datetime.now().astimezone() - timedelta(days=32)
+        )
+    with migrate_tenant_context(migrate_engine, people.a) as conn:
+        conn.execute(
+            text(
+                "UPDATE client_erasure_holds SET purge_after = now() - interval '2 days',"
+                " created_at = now() - interval '32 days' WHERE client_id = :c"
+            ),
+            {"c": held_client},
+        )
+    run_jobs_once()  # the overdue backstop purge
+    with jobs_as_the_worker():
+        erasure_holds.sweep()
+
     # 7: invite flow — send, list, a wrong token, then accept with a brand-new account.
     invite_email = fresh_email()
     invite_password = "Invite-Pw7-55"
@@ -702,6 +758,9 @@ def test_no_personal_data_ever_reaches_a_log(
     assert {"sign_up", "sign_up_registered", "password_reset", "invite"} <= sent
     assert {"booking_received", "booking_request", "booking_confirmed", "booking_declined"} <= sent
     assert "booking_flood" in sent
+    assert {"booking_cancelled", "booking_refund_failed"} <= sent
+    late = [line for line in lines if line["msg"] == "contact hold purged late"]
+    assert [(line["level"], line["client_id"]) for line in late] == [("ERROR", str(held_client))]
     flood = [line for line in lines if line["msg"] == "booking flood"]
     assert [(line["level"], line["tenant_id"]) for line in flood] == [("WARNING", str(people.a))]
     for msg in ("totp enrolment failed", "second factor failed"):

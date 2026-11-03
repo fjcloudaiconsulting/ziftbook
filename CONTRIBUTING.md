@@ -83,8 +83,9 @@ Specifics:
 - Migrations run as `ziftbook_migrate`, never on app startup. The API connects as `ziftbook_app`, which owns
   nothing: never grant it ownership, `BYPASSRLS` or DDL rights.
 - The worker connects as `ziftbook_worker` (ZB-08): a member of `ziftbook_app`, so it has every privilege the app
-  role has, plus what only background jobs may do: `mint_email_token`, which the app role does not have (0051), and
-  setting an invite's `token_hash` (0053). A worker still on `ziftbook_app` fails every sign-up, reset and invite
+  role has, plus what only background jobs may do: `mint_email_token`, which the app role does not have (0051),
+  setting an invite's `token_hash` (0053), and reading and deleting an erased client's contact hold (0064) with
+  `client_money_owed` (0077). A worker still on `ziftbook_app` fails every sign-up, reset and invite
   email. The same never-list applies to it.
 - Neither runtime role can create temporary tables, and both search `public` before `pg_temp` (ZB-31;
   `bootstrap.sql`, plus 0050 where `ziftbook_migrate` owns the database; elsewhere 0050 changes nothing and logs
@@ -281,13 +282,40 @@ that person's platform account (ZIF-99).
   predicates on the dependent statements are defence in depth.
 - `client_erasure_holds` keeps an erased client's email and locale: the only way to tell the client about a
   cancellation or a failed refund. The core writes one when the client has an address and either `announce` is true
-  and the erasure ended one of its bookings, or money is still owed an answer on one (`client_money_owed`, the one
-  rule the hold's purge shares: unsettled with work left for the settle pass, or a failed refund), whatever
-  `announce` says. An
+  and the erasure ended one of its bookings, or `client_hold_needed` is true, whatever `announce` says. That rule
+  lives in 0078 (which edits only this condition in the stored core), and the hold's purge calls the same
+  function: money still owed an answer (`client_money_owed`: unsettled with work left for the settle pass, or a failed
+  refund), a refund settled in the last 7 days (one can still fail at the bank), or one of the client's
+  `mail.HOLD_TEMPLATES` emails still to be sent (given up only once its last lease has run out). An
   owner's erasure and an account deletion pass true; re-applying an erasure after a restore passes false (the
   cancellations were announced the first time; a refund that fails later must still reach the client). A CHECK keeps
   `purge_after` at most 31 days after `created_at`; the worker deletes the hold by then. Only the core writes it; the
-  app role can neither read nor write it; the worker reads and deletes it.
+  app role can neither read nor write it; the worker reads and deletes it. The booking mail job sends an erased client
+  only the templates in `mail.HOLD_TEMPLATES`, none of which carries a manage link, to the hold's address in its
+  locale, replying to the business's `contact_email`; anything else to an erased client, and everything once its hold
+  is gone or past `purge_after`, is skipped. A `booking_cancelled` goes through a hold only when the erasure made the
+  cancellation (its event gives `client_erased` or `account_erased`; never `erasure_reapplied`, since after a restore
+  the client was told the first time) or the team made it before the erasure (its mail still queued):
+  the team cancelling a booking the erasure kept, afterwards, mails nobody. Hold
+  mails count against no quota, neither the business's client-mail quota at enqueue nor the per-recipient one at
+  send: they are bounded by the hold's lifetime and by real events, and a dropped one would be the person's only
+  notice. A refund Stripe refuses or fails enqueues `booking_refund_failed` once per failure told (keyed
+  on its `refund_failed` event), only when the client is erased: it goes through a hold or not at all. The worker's
+  sweep timer (`erasure_holds.sweep`, before the booking sweep, under each business's booking lock) deletes a hold
+  once `client_hold_needed` is false, and at `purge_after` whatever is left. Every caller of the erase core also calls `erasure_holds.enqueue_purge` in its transaction, with
+  the time the core returned: an `erasure.hold_purge` job due at the purge date, never skipped however late the worker
+  runs it, so the date holds even while the sweep fails for another business.
+- The hold's legal basis. The business is the controller of its client records and ziftbook its processor. While money
+  is owed, a refund settled in the last 7 days or a refund failed, the address is kept under Art. 17(3)(b): erasure
+  does not apply where the data is needed to comply with a legal obligation, here to refund the person and tell them
+  when the refund fails. For a cancellation with nothing owed, Art. 17(3)(b) does not apply. There the basis is the
+  controller's documented instruction to ziftbook (Art. 28(3)(a)) to carry out the erasure in full, telling the
+  person their appointments are cancelled as its last step, on the controller's legitimate interest (Art. 6(1)(f))
+  in not leaving someone to come to an appointment that no longer exists. That covers minutes, until the
+  cancellation emails are out. `[OWNER: legal basis to confirm]` Purpose limitation: the address serves only
+  `mail.HOLD_TEMPLATES`, a `booking_cancelled` only for the erasure's own cancellations, and nothing else reads it.
+  The erasure warning, the privacy notice and the DPA say what is kept (email and locale), for what (these notices),
+  for how long (until nothing is left to tell, at most 31 days), and that a reply reaches the business.
 - A client row links to an account (`clients.user_id`) only through that person's own proven booking at that
   business (ZIF-146): `find_or_create`'s REFRESH fills a NULL `user_id`, never relinks, and nothing links by email.
 - Marketing consent (`consents`) is per business. Nothing writes a platform-level consent, and one business's consent
@@ -610,9 +638,15 @@ loggers (`web.*`); Next's own stderr output (banners, SSR error traces) is not i
 - Events: `job claimed` (DEBUG), `job done` and `job skipped` (INFO, past its grace), `job failed`
   (WARNING, retried) and `job gave up` (ERROR, last attempt), with `attempts`;
   `bookings expired` (INFO, `count`, `tenant_id`, from the worker's sweep); `jobs pruned` (INFO, `count`, only when
-  something was deleted, from the same sweep); `email sent` (INFO) and
+  something was deleted, from the same sweep); `contact holds purged` (INFO, `count`, `tenant_id`, only when
+  something was deleted) and `contact hold purged late` (ERROR, `client_id`, `tenant_id`: an erased client's hold
+  found more than an hour past its purge date, so the worker was down or the purge kept failing);
+  `sweep failed` (ERROR, `sweep` `holds` or `bookings`, with `exc`: the worker's two sweeps run whatever the other
+  did, and either failing withholds the ping); `business sweep failed` (ERROR, `sweep`, `tenant_id`, with `exc`: one
+  business failed in a sweep, which went on to the next and then raised); `email sent` (INFO) and
   `email failed` (WARNING) with `template` (and `error` on failure) plus the job context, and
-  `email skipped` (INFO, `template`, `reason` `recipient_quota`, from the worker's send);
+  `email skipped` (INFO, `template`, `reason` `recipient_quota`, or `no_hold` for an erased client's
+  `booking_refund_failed` whose hold is gone, from the worker's send);
   `client mail over quota` (WARNING, `template`, `source` `merchant` or `public`, when a business's
   hourly client email quota holds an email back at enqueue); never the
   address, subject or body. Each process logs one startup line (`api started`, `worker started`, `migrations started`) with its

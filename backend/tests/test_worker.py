@@ -11,15 +11,14 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from sqlalchemy import Engine, create_engine, text
-from sqlalchemy.pool import NullPool
+from sqlalchemy import Engine, make_url, text
 
-from app import bookings, jobs, logs, worker
+from app import bookings, erasure_holds, jobs, logs, worker
 from app.config import WorkerSettings
 from app.db import SessionLocal, tenant_context
 from app.jobs import Job, JobKind, enqueue, run_once
 from app.worker import work
-from tests.conftest import People, jobs_as_the_worker
+from tests.conftest import People, engine_as_worker, jobs_as_the_worker
 from tests.stripe_fake import FakeGateway, connect
 
 Lines = Callable[[], list[dict[str, Any]]]
@@ -49,11 +48,12 @@ def healthcheck() -> Iterator[tuple[str, threading.Event]]:
 
 @pytest.fixture
 def bound_session(migrated: None, app_engine: Engine) -> Iterator[None]:
-    engine = create_engine(os.environ["ZIF_DATABASE_URL"], poolclass=NullPool)
-    SessionLocal.configure(bind=engine)
-    yield
-    SessionLocal.configure(bind=None)
-    engine.dispose()
+    # As ziftbook_worker, the role the worker process connects as: its timer purges contact holds,
+    # which the app role cannot read (ZIF-58).
+    with engine_as_worker(make_url(os.environ["ZIF_DATABASE_URL"])) as engine:
+        SessionLocal.configure(bind=engine)
+        yield
+        SessionLocal.configure(bind=None)
     with app_engine.begin() as conn:
         conn.execute(text("DELETE FROM jobs WHERE kind LIKE 'test.%'"))
 
@@ -445,3 +445,41 @@ def test_the_worker_hands_out_a_pooled_connection_without_the_last_jobs_settings
             engine.dispose()
     [(used, pid, review, statement_timeout, idle_timeout)] = seen
     assert (pid, review, statement_timeout, idle_timeout) == (used, "", "30s", "1min")
+
+
+# ZIF-58: the hold sweep and the booking sweep run independently. The booking sweep re-arms refunds
+# and card releases; a hold's purge date is a bound: neither may wait on the other's failure. The
+# failing one still withholds the ping. Kills: both in one try (the second never runs).
+@pytest.mark.parametrize("failing", ["holds", "bookings"])
+def test_one_failing_sweep_never_stops_the_other(
+    bound_session: None, monkeypatch: pytest.MonkeyPatch, log_lines: Lines, failing: str
+) -> None:
+    ran: list[str] = []
+    pings: list[str] = []
+
+    def sweep_of(name: str) -> Callable[[], int]:
+        def sweep() -> int:
+            ran.append(name)
+            if name == failing:
+                raise RuntimeError("sweep boom")
+            return 0
+
+        return sweep
+
+    monkeypatch.setattr(erasure_holds, "sweep", sweep_of("holds"))
+    monkeypatch.setattr(bookings, "sweep", sweep_of("bookings"))
+    monkeypatch.setattr(worker, "ping", pings.append)
+    monkeypatch.setattr(worker, "POLL_SECONDS", 0.05)
+
+    async def scenario() -> None:
+        stop = asyncio.Event()
+        task = asyncio.create_task(work({}, "http://ping.invalid/x", stop))
+        await until(lambda: len(ran) >= 2)
+        stop.set()
+        await asyncio.wait_for(task, 5)
+
+    asyncio.run(scenario())
+    assert ran[:2] == ["holds", "bookings"]
+    assert pings == []
+    failures = [line for line in log_lines() if line["msg"] == "sweep failed"]
+    assert {line["sweep"] for line in failures} == {failing}

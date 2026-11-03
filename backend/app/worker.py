@@ -13,7 +13,7 @@ from opentelemetry import metrics
 from opentelemetry.metrics import CallbackOptions, Observation
 from sqlalchemy import create_engine, event
 
-from app import bookings, jobs, limits, logs, mail, payments, photos, tracing
+from app import bookings, erasure_holds, jobs, limits, logs, mail, payments, photos, tracing
 from app.config import MailSettings, StripeSettings, WorkerSettings
 from app.db import SessionLocal, database_role, reset_session
 from app.jobs import JobKind, run_once
@@ -40,6 +40,10 @@ KINDS: dict[str, JobKind] = {
     # ZIF-158. Cancels an intent nobody will finish and releases a checked card. Stripe is called,
     # so 50 stays under the 60 s lease; the grace is long because the hourly sweep re-arms it.
     "payment.settle": JobKind(payments.settle, timeout=50, grace=timedelta(days=7)),
+    # ZIF-58. Purges an erased client's contact hold at its purge date. A purge is never too late
+    # to run (a hold must not outlive it), so the job is never skipped, however long the worker
+    # was down.
+    "erasure.hold_purge": JobKind(erasure_holds.purge_job, timeout=30, grace=timedelta.max),
 }
 
 
@@ -70,7 +74,8 @@ _meter.create_observable_gauge(
 )
 
 POLL_SECONDS = 30
-# ZIF-122: settle expired pending bookings; housekeeping, so it runs on a timer, not every poll.
+# ZIF-122: settle expired pending bookings (housekeeping) and, ZIF-58, purge the contact holds no
+# longer needed: on a timer, not every poll.
 SWEEP_SECONDS = 300
 
 logger = logging.getLogger("app.worker")
@@ -93,7 +98,20 @@ async def work(kinds: dict[str, JobKind], healthcheck_url: str | None, stop: asy
             if swept is None or time.monotonic() - swept >= SWEEP_SECONDS:
                 # Global and one statement, so before the sweep: never hostage to a failing tenant.
                 await asyncio.to_thread(jobs.prune)
-                await asyncio.to_thread(bookings.sweep)
+                # ZIF-58. Each sweep runs whatever the other did: the booking sweep re-arms refunds
+                # and card releases, and a hold's purge date is a bound. A failure still fails the
+                # iteration (no ping) once both have run; each failure is logged on its own.
+                failed = False
+                for name, sweep in (("holds", erasure_holds.sweep), ("bookings", bookings.sweep)):
+                    try:
+                        await asyncio.to_thread(sweep)
+                    except Exception:
+                        logger.exception("sweep failed", extra={"sweep": name})
+                        failed = True
+                if failed:
+                    # On purpose: swept stays unstamped, so both sweeps run again next poll (30 s),
+                    # for every business, until the failure clears; the withheld ping alerts.
+                    raise RuntimeError("a sweep failed")
                 swept = time.monotonic()
         except Exception:
             # No ping: an iteration that keeps failing (e.g. the database is down) raises the alert.

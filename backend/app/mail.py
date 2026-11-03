@@ -356,10 +356,54 @@ STATUS_FOR = {
     "booking_client_rescheduled": {"confirmed", "pending"},
     # ZIF-57: the team is told when a colleague moves a booking of theirs.
     "booking_moved_team": {"confirmed"},
+    # ZIF-58: a refund Stripe refused or failed, on any ending that refunds (bookings.REFUNDING).
+    "booking_refund_failed": {
+        "declined",
+        "expired",
+        "cancelled_by_merchant",
+        "cancelled_by_client",
+    },
 }
 
 # ZIF-54 D1: the client templates whose $link is the guest booking link, minted here at send time.
 LINKED = frozenset({"booking_received", "booking_confirmed", "booking_reminder"})
+
+# ZIF-58: the only client emails an erased client still gets, at the address and in the locale its
+# erasure kept (client_erasure_holds, which only the worker reads): a booking ended and the money
+# owed, and a refund that failed (sent to no one else: a live client's is the business's to follow
+# up). None carries a manage link. Every other email to an erased client is skipped.
+HOLD_TEMPLATES = frozenset({"booking_cancelled", "booking_expired", "booking_refund_failed"})
+# The reasons of the erasures whose cancellations the client is told of: an owner's erasure and an
+# account deletion (0064's ERASURE_REASONS but erasure_reapplied: after a restore the client was
+# told at the original erasure, so a re-apply never mails again).
+ERASURE_REASONS = ("client_erased", "account_erased")
+# A hold past its purge date is no hold, purged or not; the business named as well as the policy.
+# A cancellation goes through it when the erasure made it, or when it was made before the erasure
+# (the team's, while the client was live, its mail still queued): the person's to hear of. The team
+# cancelling a booking the erasure kept, afterwards, is not what the hold is kept for.
+HOLD = text(f"""
+SELECT h.email, h.locale FROM client_erasure_holds h
+WHERE h.tenant_id = current_setting('app.tenant_id')::uuid AND h.client_id = :id
+  AND h.purge_after > now()
+  AND (:template <> 'booking_cancelled'
+       OR EXISTS (SELECT 1 FROM booking_events e
+                  JOIN clients c ON c.tenant_id = e.tenant_id AND c.id = h.client_id
+                  WHERE e.tenant_id = h.tenant_id AND e.booking_id = :booking
+                    AND e.event = 'cancelled_by_merchant'
+                    AND (e.details ->> 'reason' IN ({", ".join(f"'{r}'" for r in ERASURE_REASONS)})
+                         OR e.created_at < c.erased_at)))
+""")
+# The failure the job announces: its amount, from the event that told it.
+REFUND_FAILED = text("""
+SELECT (e.details ->> 'amount_minor')::int AS amount_minor, b.price_currency AS currency
+FROM booking_events e JOIN bookings b ON b.tenant_id = e.tenant_id AND b.id = e.booking_id
+WHERE e.id = :event AND e.booking_id = :booking AND e.event = 'refund_failed'
+""")
+CONTACT_LINE = {
+    "en": "You can reach them at $email.",
+    "nl": "Het e-mailadres van het bedrijf is $email.",
+    "pt": "O e-mail do negócio é $email.",
+}
 
 # FOR SHARE OF c (ZIF-58): a job that read the client while an erasure was in flight would mint a
 # manage link after the erasure deleted them, and mail what it read before; a link's foreign key
@@ -631,11 +675,34 @@ def send_booking(job: Job) -> None:
 
         user_id = payload.get("user_id")
         role = None  # the merchant recipient's, ZIF-143
+        held = None  # the erased client's contact hold, ZIF-58
         if user_id is None:
             recipient_id = row.client_id
-            if row.client_email is None:  # erased, or merchant-created with no address
-                return
             recipient_email, recipient_locale = row.client_email, row.client_locale
+            if row.client_erased:
+                held = (
+                    session.execute(
+                        HOLD,
+                        {
+                            "id": row.client_id,
+                            "template": template,
+                            "booking": payload["booking_id"],
+                        },
+                    ).first()
+                    if template in HOLD_TEMPLATES
+                    else None
+                )
+                if held is None:  # no longer to be told anything, or not this
+                    if template == "booking_refund_failed":  # money a person may never hear of
+                        logger.info(
+                            "email skipped", extra={"template": template, "reason": "no_hold"}
+                        )
+                    return
+                recipient_email, recipient_locale = held.email, held.locale
+            elif template == "booking_refund_failed":  # through a hold only
+                return
+            if recipient_email is None:  # merchant-created with no address
+                return
         else:
             # ZIF-58: the team hears nothing more about an erased client's booking; the erasure
             # tells the owners itself.
@@ -723,6 +790,21 @@ def send_booking(job: Job) -> None:
             values["amount"] = _money(paid.amount_minor, paid.currency, locale)
             if payload.get("late"):
                 file = "booking_expired_late"
+        if template == "booking_refund_failed":
+            failed = session.execute(
+                REFUND_FAILED, {"event": payload["event_id"], "booking": payload["booking_id"]}
+            ).first()
+            if failed is None:
+                return
+            values["amount"] = _money(failed.amount_minor, failed.currency, locale)
+            values["contact"] = (
+                ""
+                if settings.contact_email is None
+                else "\n\n"
+                + Template(CONTACT_LINE[locale]).substitute(
+                    email=passwords.normalise_email(settings.contact_email)
+                )
+            )
         subject, body = render(file, locale, values)
         status = _outbox(session, job, recipient_id, template, subject)
         if status == "pending" and token is not None:
@@ -735,16 +817,21 @@ def send_booking(job: Job) -> None:
             )
     if status == "sent":
         return
-    if user_id is None and limits.hit(
-        {
-            limits.email_key(
-                "mail_rcpt", f"{job.tenant_id}|{recipient_email.lower()}"
-            ): CLIENT_MAIL_PER_RECIPIENT_HOUR,
-            limits.email_key(
-                "mail_rcpt_any", recipient_email.lower()
-            ): CLIENT_MAIL_PER_RECIPIENT_ANY_HOUR,
-        },
-        timedelta(hours=1),
+    # ZIF-58: never a hold's mail (see bookings.email): the only channel to an erased client.
+    if (
+        user_id is None
+        and held is None
+        and limits.hit(
+            {
+                limits.email_key(
+                    "mail_rcpt", f"{job.tenant_id}|{recipient_email.lower()}"
+                ): CLIENT_MAIL_PER_RECIPIENT_HOUR,
+                limits.email_key(
+                    "mail_rcpt_any", recipient_email.lower()
+                ): CLIENT_MAIL_PER_RECIPIENT_ANY_HOUR,
+            },
+            timedelta(hours=1),
+        )
     ):
         logger.info("email skipped", extra={"template": template, "reason": "recipient_quota"})
         return

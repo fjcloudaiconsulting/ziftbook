@@ -1,0 +1,11 @@
+Je terugbetaling kon niet worden voltooid
+Hallo,
+
+De terugbetaling van $amount door $business voor deze boeking kon niet worden voltooid:
+
+$service
+$date om $time ($zone)
+
+Neem contact op met $business om je geld terug te krijgen.$contact
+
+ziftbook

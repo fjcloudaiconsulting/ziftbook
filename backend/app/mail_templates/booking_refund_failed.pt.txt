@@ -1,0 +1,11 @@
+Seu reembolso não pôde ser concluído
+Olá,
+
+O reembolso de $amount de $business referente a este agendamento não pôde ser concluído:
+
+$service
+$date às $time ($zone)
+
+Entre em contato com $business para receber seu dinheiro de volta.$contact
+
+ziftbook
