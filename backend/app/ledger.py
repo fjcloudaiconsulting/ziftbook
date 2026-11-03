@@ -201,28 +201,28 @@ SELECT greatest((SELECT max(created_at) FROM audit_events),
 NEWEST_IN_BUSINESS = text("""
 SELECT greatest((SELECT max(created_at) FROM bookings WHERE tenant_id = :tenant_id),
                 (SELECT max(created_at) FROM booking_events WHERE tenant_id = :tenant_id),
-                (SELECT max(erased_at) FROM clients WHERE tenant_id = :tenant_id)),
-       (SELECT count(*) FROM clients
-        WHERE tenant_id = :tenant_id AND erased_at >= coalesce(CAST(:since AS timestamptz),
-                                                              '-infinity'))
+                (SELECT max(erased_at) FROM clients WHERE tenant_id = :tenant_id))
 """)
+ERASED_FROM = text("SELECT id FROM clients WHERE tenant_id = :tenant_id AND erased_at >= :since")
+# The ledger's retention (CONTRIBUTING "The erasure ledger": the bucket lock): every erasure the
+# restored database records from this long ago on is still in a right ledger.
+RETENTION = timedelta(days=14)
 
 
 def check_window(engine: Engine, since: datetime | None, entries: list[Entry]) -> None:
     """Refuse a --since later than everything the restored database holds (it would skip the
-    erasures between the real restore point and it), and an empty listing for a window in which
-    the database itself records erasures (a wrong bucket or key)."""
+    erasures between the real restore point and it), and a listing that holds none of the
+    erasures the database itself records in the window (from --since, or over the ledger's
+    retention without it): a wrong bucket or key, another environment's included."""
+    window = since or datetime.now(UTC) - RETENTION
     with Session(engine) as session, session.begin():
         session.execute(text("SET LOCAL app.audit_review = 'on'"))
         newest = [session.scalar(NEWEST_GLOBAL)]
-        erased = 0
+        erased: set[UUID] = set()
         for tenant_id in session.scalars(text("SELECT id FROM tenants")).all():
             join_tenant(session, tenant_id)
-            row = session.execute(
-                NEWEST_IN_BUSINESS, {"tenant_id": tenant_id, "since": since}
-            ).one()
-            newest.append(row[0])
-            erased += row[1]
+            newest.append(session.scalar(NEWEST_IN_BUSINESS, {"tenant_id": tenant_id}))
+            erased |= set(session.scalars(ERASED_FROM, {"tenant_id": tenant_id, "since": window}))
     latest = max((at for at in newest if at is not None), default=None)
     if since is not None and (latest is None or since > latest):
         raise Refused(
@@ -231,12 +231,12 @@ def check_window(engine: Engine, since: datetime | None, entries: list[Entry]) -
             2,
             newest=latest.isoformat() if latest else None,
         )
-    if not entries and erased:
+    if erased and not erased & {entry.client_id for entry in entries}:
         raise Refused(
-            "reapply refused: the ledger lists no erasure where the database records some;"
-            " check the bucket and its key",
+            "reapply refused: the ledger lists none of the erasures the database records in the"
+            " window; check the bucket and its key",
             1,
-            erased=erased,
+            erased=len(erased),
             bucket=LedgerSettings().erasure_ledger_bucket,
         )
 

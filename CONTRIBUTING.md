@@ -402,8 +402,9 @@ Mandatory for every restore of the production or staging database. Skipping step
    the worker's; without them it exits 2 and names them.
    - It reads the whole ledger by default (an entry already applied is counted and left alone). `--since <restore
      point - 1h, ISO 8601 with its offset>` narrows it. A `--since` later than everything the restored database holds
-     is refused (exit 2), and so is an empty listing for a window in which the restored database itself records
-     erasures (exit 1: a wrong bucket or key).
+     is refused (exit 2), and so is a listing that holds none of the erasures the restored database itself records
+     in the window (from `--since`, or over the last 14 days without it; exit 1: a wrong bucket or key, another
+     environment's included).
    - An entry it cannot apply (unreadable, of an unknown version or kind, a body that is not the erasure its key
      names, or dated in the future) stops the run before anything is applied, each logged as ERROR `ledger entry
      refused` with its `key` (or `sha256:<hash>` of a key that holds more than ids). The bucket lock keeps it, so
