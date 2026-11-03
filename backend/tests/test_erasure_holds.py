@@ -1007,11 +1007,19 @@ def test_the_hold_sweep_skips_a_business_with_no_hold_without_its_lock(
     assert finished
 
 
+# Bodies through pg_get_functiondef, never prosrc: a BEGIN ATOMIC body is not in prosrc.
 HOLD_FUNCTIONS = text("""
 SELECT p.proname, has_function_privilege('ziftbook_app', p.oid, 'EXECUTE')
 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-WHERE n.nspname = 'public' AND p.prosrc LIKE '%client_erasure_holds%'
+WHERE n.nspname = 'public' AND p.prokind IN ('f', 'p')
+  AND pg_get_functiondef(p.oid) LIKE '%client_erasure_holds%'
 ORDER BY 1
+""")
+ATOMIC_PEEK = text("""
+CREATE FUNCTION zif58_atomic_peek(p uuid) RETURNS bigint LANGUAGE sql SECURITY DEFINER
+BEGIN ATOMIC
+  SELECT count(*) FROM client_erasure_holds WHERE client_id = p;
+END
 """)
 
 
@@ -1024,6 +1032,12 @@ def test_no_function_the_api_can_run_names_the_hold_table(migrate_engine: Engine
         assert [tuple(row) for row in conn.execute(HOLD_FUNCTIONS)] == [
             ("erase_client_core", False)
         ]
+        # The positive control, rolled back: a BEGIN ATOMIC reader the app role may run is caught.
+        conn.execute(ATOMIC_PEEK)
+        conn.execute(text("GRANT EXECUTE ON FUNCTION zif58_atomic_peek(uuid) TO ziftbook_app"))
+        caught = [tuple(row) for row in conn.execute(HOLD_FUNCTIONS)]
+        conn.rollback()
+    assert caught == [("erase_client_core", False), ("zif58_atomic_peek", True)]
 
 
 # ZIF-58 FENCE (re-check SHOULD-A). Wrong impl: a booking_cancelled reaches a hold only when the
