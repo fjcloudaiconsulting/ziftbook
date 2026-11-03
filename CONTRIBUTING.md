@@ -358,6 +358,36 @@ object per erasure in a dedicated bucket (`ZIF_ERASURE_LEDGER_*`), keyed
 - Retention: the bucket lock keeps every entry for at least the longest backup or point-in-time window plus a margin
   (35 days of backups means 42 days of ledger), and a lifecycle rule deletes it after that (storage limitation).
 
+### Restoring the database
+
+Mandatory for every restore of the production or staging database, from a backup or to a point in time. Skipping
+step 3 brings erased clients back.
+
+1. Scale the API and the worker to zero. The worker must not run before step 3: restored reminder and booking mail
+   jobs would mail clients who were erased after the restore point.
+2. Restore, and run the migrations if the release needs them.
+3. Re-apply the erasures the restore undid, from the restore point minus one hour:
+   `python -m app.ledger reapply --since <restore point - 1h, ISO 8601 with its offset> --reason "<incident or ticket>"`.
+   Run it as `app.admin` runs: from the migrations image, in a short-lived pod with `ZIF_MIGRATE_DATABASE_URL`,
+   `ZIF_S3_ENDPOINT`, `ZIF_ERASURE_LEDGER_BUCKET` and the ledger's **read-only** key
+   (`ZIF_ERASURE_LEDGER_ACCESS_KEY_ID`, `ZIF_ERASURE_LEDGER_SECRET_ACCESS_KEY`), never the worker's. For each entry,
+   in erasure order, it takes the business's booking lock, ends the client's bookings that the erasure ended (live at
+   the erasure's time: they are cancelled by the merchant, a checkout expires, each with an event whose reason is
+   `erasure_reapplied` and no actor), queues a settle job for each that holds money (settle reads what Stripe already
+   refunded, so nothing is refunded twice), and runs `erase_client_core(client, false)` (the cancellations were
+   announced the first time; a contact hold is kept only while money is still owed). A client already erased, or one
+   the restored database never had, is counted and left alone, so running it again changes nothing. Everything goes in
+   one transaction with one `erasure_reapplied` platform audit event: on exit 1 (any error, logged CRITICAL) nothing
+   was applied; fix the cause and run it again. Check its `erasures reapplied` line: `entries` must equal the number
+   of ledger objects erased from `--since` on (`aws s3 ls --recursive s3://<bucket>/erasures/<yyyy>/<mm>/` for each
+   month since, counting the keys whose time is at or after it), and `reapplied + already_erased + absent` must equal
+   `entries`.
+4. Start the worker (settle runs the refunds and releases), then the API.
+
+What it cannot bring back: an erasure committed but not yet ledgered when the database was lost (normally seconds;
+an `erasure.ledger` job that gave up raised an ERROR alert at the time, and `backfill` re-writes it while the database
+that holds the erasure is still there).
+
 ## Bookings
 
 A booking holds one worker for one interval, and **the database is what makes that exclusive** (`ex_bookings_worker_overlap`,
@@ -519,6 +549,8 @@ A platform admin runs the platform across businesses (ZIF-70). `platform_admins`
   token, cookie, email or personal data.
 - The app role may only append, naming its columns: never `id` or `created_at`, never read, change or delete. A
   `write` event without a non-blank `reason` is refused by the database. Operators read it as `ziftbook_migrate`.
+- `erasure_reapplied` (ZIF-58, a `write` with the operator's `--reason`): one per `python -m app.ledger reapply` run,
+  its details counts only (`entries`, `reapplied`, `already_erased`, `absent`, `cancelled`).
 
 ## Client IP
 
@@ -664,8 +696,8 @@ loggers (`web.*`); Next's own stderr output (banners, SSR error traces) is not i
   found more than an hour past its purge date, so the worker was down or the purge kept failing);
   `sweep failed` (ERROR, `sweep` `holds` or `bookings`, with `exc`: the worker's two sweeps run whatever the other
   did, and either failing withholds the ping); `business sweep failed` (ERROR, `sweep`, `tenant_id`, with `exc`: one
-  business failed in a sweep, which went on to the next and then raised); `erasure ledgered` (INFO, `client_id`,
-  `written`: false when the entry was there already); `email sent` (INFO) and
+  business failed in a sweep, which went on to the next and then raised); `erasure ledgered` (INFO, `client_id`, `written`: false when the
+  entry was there already); `erasures reapplied` (INFO, the run's counts, from `python -m app.ledger reapply`); `email sent` (INFO) and
   `email failed` (WARNING) with `template` (and `error` on failure) plus the job context, and
   `email skipped` (INFO, `template`, `reason` `recipient_quota`, or `no_hold` for an erased client's
   `booking_refund_failed` whose hold is gone, from the worker's send);

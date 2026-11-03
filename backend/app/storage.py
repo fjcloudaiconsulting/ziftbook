@@ -172,3 +172,17 @@ def ledger_write(key: str, body: bytes) -> bool:
                 return False
             raise
     return True
+
+
+def ledger_entries(start_after: str) -> list[bytes]:
+    """Every ledger entry whose key sorts after start_after, in key order."""
+    s3, bucket = _ledger()
+    with _failures():
+        keys = [
+            o["Key"]
+            for page in s3.get_paginator("list_objects_v2").paginate(
+                Bucket=bucket, Prefix="erasures/", StartAfter=start_after
+            )
+            for o in page.get("Contents", [])
+        ]
+        return [s3.get_object(Bucket=bucket, Key=key)["Body"].read() for key in keys]

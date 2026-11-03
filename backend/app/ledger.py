@@ -6,18 +6,32 @@ a dedicated bucket with a bucket lock (LedgerSettings), ids and a time only.
 
 An erasure enqueues an erasure.ledger job in its own transaction (enqueue), so the entry exists
 only for an erasure that committed; the worker writes it (record).
+
+    python -m app.ledger reapply --since <ISO time> --reason "<why>"
+
+reapply erases again, after a restore, every client the ledger lists from that time on (the
+restore point minus an hour), with the ledger's read-only credentials. It connects as
+ziftbook_migrate (ZIF_MIGRATE_DATABASE_URL), from the migrations image, as app.admin does, before
+the API and the worker start (CONTRIBUTING "Restoring the database"). Exit 0 when done or nothing
+was to do, 1 on any error (logged CRITICAL; nothing was applied), 2 on a usage error.
 """
 
+import argparse
 import json
 import logging
+import os
+import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
+from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.orm import Session
+from sqlalchemy.pool import NullPool
 
-from app import jobs, storage
+from app import admin, bookings, jobs, logs, payments, storage
+from app.db import join_tenant
 from app.jobs import Job
 
 logger = logging.getLogger("app.ledger")  # not __name__: "__main__" under python -m
@@ -86,3 +100,90 @@ def record(job: Job) -> None:
     entry = Entry.parse(job.payload)
     written = storage.ledger_write(entry.key, entry.body())
     logger.info("erasure ledgered", extra={"client_id": str(entry.client_id), "written": written})
+
+
+def read(since: datetime) -> list[Entry]:
+    """The ledger's entries from since on, oldest first. Raises on an entry it cannot read."""
+    entries = []
+    for raw in storage.ledger_entries(f"erasures/{since.astimezone(UTC):%Y/%m/%d}/"):
+        data = json.loads(raw)
+        if data.get("v") != 1:
+            raise ValueError("a ledger entry of an unknown version")
+        entry = Entry.parse(data)
+        if entry.erased_at >= since:
+            entries.append(entry)
+    return sorted(entries, key=lambda entry: entry.erased_at)
+
+
+CLIENT = text("SELECT erased_at FROM clients WHERE id = :id FOR NO KEY UPDATE")
+CORE = text("SELECT erase_client_core(:id, false)")
+
+
+def reapply(engine: Engine, since: datetime, reason: str) -> int:
+    """Erase again every client the ledger lists from since on that the restored database still
+    has unerased, in erasure order, in one transaction with its platform audit event: all of it
+    or, on any error, none. A client already erased, or one the restored database never had, is
+    counted and left alone, so a second run changes nothing."""
+    entries = read(since)  # before the transaction: no outbound call under a booking lock
+    counts = {"entries": len(entries), "reapplied": 0, "already_erased": 0, "absent": 0}
+    cancelled = 0
+    with Session(engine) as session, session.begin():
+        for entry in entries:
+            join_tenant(session, entry.tenant_id)
+            session.execute(bookings.LOCK, {"key": bookings.LOCK_KEY})  # first, as every writer
+            row = session.execute(CLIENT, {"id": entry.client_id}).first()
+            if row is None:
+                counts["absent"] += 1
+                continue
+            if row.erased_at is not None:
+                counts["already_erased"] += 1
+                continue
+            ended = bookings.end_for_erasure(
+                session, entry.client_id, reason="erasure_reapplied", at=entry.erased_at
+            )
+            # Stripe is safe to ask again: settle reads what was refunded already.
+            payments.settle_ended(session, entry.tenant_id, ended)
+            # false: the cancellations were announced the first time.
+            session.execute(CORE, {"id": entry.client_id})
+            counts["reapplied"] += 1
+            cancelled += len(ended)
+        admin.record(
+            session,
+            None,
+            "erasure_reapplied",
+            actor_user_id=None,
+            reason=reason,
+            details={"via": "cli", "cancelled": cancelled, **counts},
+        )
+    logger.info("erasures reapplied", extra={"cancelled": cancelled, **counts})
+    return 0
+
+
+def _since(value: str) -> datetime:
+    try:
+        at = datetime.fromisoformat(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError("give an ISO 8601 time") from None
+    if at.tzinfo is None:
+        raise argparse.ArgumentTypeError("give the time with its offset (Z or +00:00)")
+    return at
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="python -m app.ledger", description=__doc__)
+    parser.add_argument("command", choices=("reapply",))
+    parser.add_argument("--since", required=True, type=_since, help="the restore point - 1h")
+    parser.add_argument("--reason", required=True, type=admin._reason, help="for the audit log")
+    args = parser.parse_args(argv)
+    engine = create_engine(
+        os.environ["ZIF_MIGRATE_DATABASE_URL"], poolclass=NullPool, hide_parameters=True
+    )
+    try:
+        return reapply(engine, args.since, args.reason)
+    finally:
+        engine.dispose()
+
+
+if __name__ == "__main__":
+    logs.configure()
+    sys.exit(main())
