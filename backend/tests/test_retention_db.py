@@ -312,11 +312,12 @@ def test_the_invoker_check_catches_one_and_ignores_comments(migrate_engine: Engi
     assert found == {"invoker_audit_reader", "atomic_audit_reader", "trigger_audit_reader"}
 
 
-# ---- 0074: the worker's three retention functions ----
+# ---- 0074: the worker's four retention functions ----
 
 FUNCTIONS_0074 = {
     "sweep_audit_events()": "SELECT * FROM sweep_audit_events()",
     "sweep_admin_sessions()": "SELECT * FROM sweep_admin_sessions()",
+    "sweep_account_sessions()": "SELECT * FROM sweep_account_sessions()",
     "sweep_booking_origins(uuid)": "SELECT * FROM sweep_booking_origins(NULL)",
 }
 
@@ -356,6 +357,7 @@ FROM pg_proc p WHERE p.oid = CAST(:f AS regprocedure)
     [
         ("sweep_audit_events()", ""),
         ("sweep_admin_sessions()", ""),
+        ("sweep_account_sessions()", ""),
         ("sweep_booking_origins(uuid)", "uuid"),
     ],
 )
@@ -639,6 +641,82 @@ def test_admin_sessions_go_an_hour_after_they_die_and_a_live_one_still_resolves(
             text("SELECT user_id FROM resolve_admin_session(:h)"), {"h": sessions["live"]}
         ).all()
     assert [row.user_id for row in resolved] == [platform_admin]
+
+
+def seed_account_session(superuser: Engine, user_id: uuid.UUID, expires: str, seen: str) -> bytes:
+    id_hash = secrets.token_bytes(32)
+    with superuser.begin() as conn:
+        conn.execute(
+            text("""
+            INSERT INTO account_sessions (id_hash, user_id, expires_at, last_seen_at, ip,
+                                          user_agent)
+            VALUES (:h, :u, now() + CAST(:e AS interval), now() - CAST(:s AS interval),
+                    '192.0.2.4', 'Agent')
+            """),
+            {"h": id_hash, "u": user_id, "e": expires, "s": seen},
+        )
+    return id_hash
+
+
+def account_sessions_of(superuser: Engine, user_id: uuid.UUID) -> set[bytes]:
+    with superuser.connect() as conn:
+        return set(
+            conn.scalars(
+                text("SELECT id_hash FROM account_sessions WHERE user_id = :u"), {"u": user_id}
+            )
+        )
+
+
+# ZIF-146 x ZIF-235 FENCE (T17's account_sessions rule). Wrong impl: a live account session
+# deleted; a cutoff with no margin (a reader whose transaction began before the sweep would still
+# see the row as live: idle 7 days, expired at now()); dead sessions kept with their address.
+def test_account_sessions_go_an_hour_after_they_die_and_a_live_one_still_resolves(
+    superuser: Engine, app_engine: Engine, worker_engine: Engine, migrate_engine: Engine
+) -> None:
+    user_id = add_user(migrate_engine)
+    sessions = {
+        "live": seed_account_session(superuser, user_id, "1 hour", "1 minute"),
+        "expired_in_margin": seed_account_session(superuser, user_id, "-59 minutes", "1 minute"),
+        "expired": seed_account_session(superuser, user_id, "-61 minutes", "1 minute"),
+        "idle_in_margin": seed_account_session(superuser, user_id, "1 hour", "7 days 59 minutes"),
+        "idle": seed_account_session(superuser, user_id, "1 hour", "7 days 61 minutes"),
+    }
+
+    with worker_engine.begin() as conn:
+        deleted = conn.scalar(text("SELECT deleted FROM sweep_account_sessions()"))
+
+    left = account_sessions_of(superuser, user_id)
+    assert left == {sessions[k] for k in ("live", "expired_in_margin", "idle_in_margin")}
+    assert deleted is not None and deleted >= 2
+    with app_engine.begin() as conn:
+        resolved = conn.execute(
+            text("SELECT user_id FROM resolve_account_session(:h)"), {"h": sessions["live"]}
+        ).all()
+    assert [row.user_id for row in resolved] == [user_id]
+
+
+# ZIF-146 x ZIF-235 FENCE (M7, the held account session). Wrong impl: no SKIP LOCKED, so the sweep
+# waits on (or deadlocks with) another writer holding a dead session's row: start_account_session's
+# own purge, a sign-out, sign-out everywhere, a password reset, an erasure or the admin CLI's grant.
+# (A booking's FOR KEY SHARE holds only a live one, which the sweep never selects; any conflicting
+# lock stands in for them here.) The held row is skipped, never waited on, and goes on a later run.
+def test_the_account_session_sweep_skips_a_session_another_transaction_holds(
+    superuser: Engine, worker_engine: Engine, migrate_engine: Engine
+) -> None:
+    user_id = add_user(migrate_engine)
+    held = seed_account_session(superuser, user_id, "-2 hours", "1 minute")
+    seed_account_session(superuser, user_id, "-2 hours", "1 minute")  # dead and free: deleted
+    with superuser.connect() as holder, holder.begin():
+        holder.execute(
+            text("SELECT FROM account_sessions WHERE id_hash = :h FOR KEY SHARE"), {"h": held}
+        )
+        with worker_engine.begin() as conn:
+            conn.execute(text("SET LOCAL lock_timeout = '2s'"))  # a wait fails instead of hanging
+            conn.execute(text("SELECT deleted FROM sweep_account_sessions()"))
+        assert account_sessions_of(superuser, user_id) == {held}
+    with worker_engine.begin() as conn:
+        conn.execute(text("SELECT deleted FROM sweep_account_sessions()"))
+    assert account_sessions_of(superuser, user_id) == set()
 
 
 # ---- booking origins ----
@@ -999,6 +1077,7 @@ EXPECTED_WRITES = {
         ("delete", "platform_audit_events"),
     ],
     "sweep_admin_sessions": [("delete", "admin_sessions")],
+    "sweep_account_sessions": [("delete", "account_sessions")],
     "sweep_booking_origins": [("update", "booking_events")],
 }
 DEFINITIONS = text("""
