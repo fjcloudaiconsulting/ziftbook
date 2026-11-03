@@ -594,3 +594,26 @@ def test_an_address_shares_its_slots_across_all_its_keys(action: str, app_engine
     with app_engine.connect() as conn:
         written = conn.scalar(text("SELECT count(*) FROM rate_limits WHERE key = :k"), {"k": other})
     assert written == 0
+
+
+def test_charge_refund_and_a_callers_transaction_are_never_capped(
+    action: str, app_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Each counts after the fact (a wrong password, a reservation, its refund): refusing one would
+    # drop a count, not refuse a request. hit() itself is refused here, so the cap is on.
+    monkeypatch.setattr(limits, "MAX_IN_FLIGHT", 0)
+    key = f"{action}:k"
+    address = fresh_address()
+    assert refused(answer_from(address, lambda: limits.hit({key: 9}, WINDOW)))
+
+    assert answer_from(address, lambda: limits.charge(key, WINDOW)) == 1
+    assert answer_from(address, lambda: limits.charge(key, WINDOW)) == 2
+    assert answer_from(address, lambda: limits.refund([key], WINDOW)) is None
+
+    def in_transaction() -> bool:
+        with SessionLocal.begin() as db:
+            return limits.hit({key: 9}, WINDOW, db=db)
+
+    assert answer_from(address, in_transaction) is False
+    with app_engine.connect() as conn:
+        assert conn.scalar(text("SELECT hits FROM rate_limits WHERE key = :k"), {"k": key}) == 2
