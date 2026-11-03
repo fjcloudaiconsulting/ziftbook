@@ -10,6 +10,7 @@ import json
 import re
 import uuid
 from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -916,3 +917,23 @@ def test_a_failing_business_never_stops_a_sweep_for_the_others(
     assert str(people.a) in {line["tenant_id"] for line in failed}
     assert str(people.b) not in {line["tenant_id"] for line in failed}
     assert {line["sweep"] for line in failed} == {sweep}
+
+
+# ZIF-58 FENCE (review N2). Wrong impl: the backstop's due date computed in Python (erased_at plus
+# 30 days of 24 hours) while the core dates the hold in SQL (now() + interval '30 days', in the
+# session's time zone): across a DST change they differ by an hour, so the job runs early and
+# purges nothing, or late. The job is due exactly when the core's arithmetic says.
+def test_the_backstop_is_due_as_the_core_dates_the_hold(people: People, no_jobs: None) -> None:
+    erased = datetime(2026, 3, 10, 12, tzinfo=UTC)  # 30 days on crosses Europe's DST start
+    with tenant_context(people.a) as session:
+        session.execute(text("SET LOCAL TimeZone = 'Europe/Amsterdam'"))
+        erasure_holds.enqueue_purge(session, people.a, uuid.uuid7(), erased)
+        expected = session.scalar(
+            text("SELECT CAST(:at AS timestamptz) + interval '30 days'"), {"at": erased}
+        )
+        due = session.scalar(
+            text("SELECT due_at FROM jobs WHERE kind = 'erasure.hold_purge' AND tenant_id = :t"),
+            {"t": people.a},
+        )
+    assert expected != erased + timedelta(days=30)
+    assert due == expected
