@@ -2926,7 +2926,7 @@ def test_0094_round_trips_contact_email_senders(
     exists = text("SELECT to_regclass('contact_email_senders') IS NOT NULL")
     cfg = lock_timeout_config(monkeypatch)
     try:
-        command.downgrade(cfg, "0088")
+        command.downgrade(cfg, migration("0094_contact_email_senders.py").down_revision)
         with migrate_engine.connect() as conn:
             assert conn.scalar(exists) is False
     finally:
