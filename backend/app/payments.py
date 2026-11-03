@@ -872,6 +872,26 @@ def enqueue_unsettled(db: Session, tenant_id: UUID) -> None:
         )
 
 
+# ZIF-58. The bookings an erasure just ended that still hold money.
+UNSETTLED_OF = text("""
+SELECT DISTINCT booking_id FROM booking_payments
+WHERE booking_id = ANY(CAST(:ids AS uuid[])) AND settled_at IS NULL
+""")
+
+
+def settle_ended(db: Session, tenant_id: UUID, booking_ids: list[UUID]) -> None:
+    """A settle job for each booking an erasure ended that holds money, in the erasure's
+    transaction: settle refunds, releases or cancels it, at most once (_refund)."""
+    for booking_id in db.scalars(UNSETTLED_OF, {"ids": booking_ids}):
+        jobs.enqueue(
+            db,
+            "payment.settle",
+            f"payment.settle:{tenant_id}:{booking_id}:erased",
+            {"booking_id": str(booking_id)},
+            tenant_id=tenant_id,
+        )
+
+
 def settle(job: Job) -> None:
     """Cancel what nobody will finish, release what was only checked, and send back what an ended
     booking owes. Repeatable: every write is qualified, so a second run finds nothing to do. A late
