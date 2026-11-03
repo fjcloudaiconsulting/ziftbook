@@ -749,10 +749,15 @@ value needs a redeploy it is an environment variable; otherwise it is a setting.
   Links are limited per business and address (3 an hour, 5 a day) and per business (10 a day), all counted inside
   the request's transaction (`limits.hit(..., db=...)`), and to 3 businesses a day per inbox, counted as rows in
   `contact_email_senders` (0094) by `contact_email.claim` in a short transaction of its own before the request locks
-  any row (so the PUT handles `contact_email` before any other key). A business already counted that day, or one
-  that ever had the address confirmed, is never refused by that cap (`contact_email_requests_today`); a business
-  that never had it confirmed can be kept from it for a day by three others, the accepted price of an inbox no
-  ring of businesses can flood. No limiter call takes a second connection while the request holds a row lock.
+  any row (so the PUT handles `contact_email` before any other key), at most 2 claims in flight per client address
+  and per business. A business already counted that day, one that ever had the address confirmed, and an owner
+  typing their own sign-in inbox are never refused by that cap (`contact_email_requests_today`); any other business
+  can be kept from an address for a day by three others, the accepted price of an inbox no ring of businesses can
+  flood. Aliases (`+tag`, Gmail dots, a trailing dot) share counts; a catch-all domain or subdomain addressing gives
+  each name its own inbox key, so only the 10 a day per business bounds mail to such a mailbox (a per-domain cap
+  was refused: anyone could use it to block a whole provider). No limiter call takes a second connection while the
+  request holds a row lock. Owners can cancel a waiting address (`DELETE /api/settings/contact-email/request`),
+  which keeps the one in effect; a clear removes both.
 - Incident (contact email diverted, for example after an API compromise): the API can request and confirm an inbox
   it controls, but every confirmation is recorded by `confirm_contact_email` itself in
   `contact_email_confirmations`, which no runtime role can change (kept while the business exists and deleted with
