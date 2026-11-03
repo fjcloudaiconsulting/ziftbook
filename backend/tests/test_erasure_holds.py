@@ -1000,3 +1000,22 @@ def test_the_hold_sweep_skips_a_business_with_no_hold_without_its_lock(
         finished = done.wait(timeout=10)
     sweeper.join(timeout=10)
     assert finished
+
+
+HOLD_FUNCTIONS = text("""
+SELECT p.proname, has_function_privilege('ziftbook_app', p.oid, 'EXECUTE')
+FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+WHERE n.nspname = 'public' AND p.prosrc LIKE '%client_erasure_holds%'
+ORDER BY 1
+""")
+
+
+# ZIF-58 FENCE (security review NIT-4), the database's side of F34. Wrong impl: a function that
+# reads the hold table and that the app role can run (a definer reads past the table's grants). The
+# only function naming the table is the erase core, which writes it and which the app role cannot
+# run.
+def test_no_function_the_api_can_run_names_the_hold_table(migrate_engine: Engine) -> None:
+    with migrate_engine.connect() as conn:
+        assert [tuple(row) for row in conn.execute(HOLD_FUNCTIONS)] == [
+            ("erase_client_core", False)
+        ]
