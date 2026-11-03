@@ -128,8 +128,8 @@ CREATE FUNCTION confirm_contact_email(p_token_hash bytea)
 RETURNS TABLE (confirmed text, previous text)
 LANGUAGE plpgsql SECURITY DEFINER {SEARCH_PATH} AS $$
 -- A live link's address becomes the business's contact email; the link is used up. No row for a
--- dead one, nor while the owner who asked for it is no longer an owner (the request stays, for
--- another owner to resend). previous is the address in effect before.
+-- dead one, nor while the owner who asked for it is no longer an owner or none was recorded (the
+-- request stays, for another owner to resend). previous is the address in effect before.
 DECLARE
   v_email text;
   v_requester uuid;
@@ -141,9 +141,7 @@ BEGIN
   PERFORM set_config('app.sign_in', '', true);
   DELETE FROM contact_email_requests r
   WHERE r.token_hash = p_token_hash AND r.expires_at > now()
-    AND (r.requested_by IS NULL
-         OR EXISTS (SELECT FROM memberships m
-                    WHERE m.user_id = r.requested_by AND m.role = 'owner'))
+    AND EXISTS (SELECT FROM memberships m WHERE m.user_id = r.requested_by AND m.role = 'owner')
   RETURNING r.email, r.requested_by INTO v_email, v_requester;
   PERFORM set_config('app.sign_in', coalesce(v_sign_in, ''), true);
   IF v_email IS NULL THEN
@@ -185,7 +183,8 @@ def upgrade() -> None:
       -- NULL: no link is due. Set when a link is queued, and again when it is minted.
       expires_at timestamptz,
       -- The owner who asked; NULL only for 0088's moved addresses, which get no link until a resend
-      -- records its owner. No foreign key: confirm checks the membership itself.
+      -- records its owner. A link with none confirms nothing. No foreign key: confirm checks the
+      -- membership itself.
       requested_by uuid,
       CONSTRAINT uq_contact_email_requests_tenant_id UNIQUE (tenant_id)
     )""")

@@ -5,7 +5,7 @@ import hashlib
 import secrets
 import threading
 import uuid
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 from psycopg.errors import CheckViolation, InsufficientPrivilege, UniqueViolation
@@ -30,18 +30,30 @@ def digest(secret: str) -> bytes:
     return hashlib.sha256(secret.encode()).digest()
 
 
+OWNER = text("SELECT user_id FROM memberships WHERE role = 'owner' ORDER BY id LIMIT 1")
+
+
 def change(
-    tenant_id: uuid.UUID, email: str | None, send: bool = False, by: uuid.UUID | None = None
+    tenant_id: uuid.UUID,
+    email: str | None,
+    send: bool = False,
+    by: uuid.UUID | None | Literal["an owner"] = "an owner",
 ) -> Row[Any]:
+    """change_contact_email as the PUT calls it: by default as one of the business's owners."""
     with tenant_context(tenant_id) as session:
+        requester = session.scalar(OWNER) if by == "an owner" else by
         return session.execute(
-            text("SELECT * FROM change_contact_email(:e, :s, :u)"), {"e": email, "s": send, "u": by}
+            text("SELECT * FROM change_contact_email(:e, :s, :u)"),
+            {"e": email, "s": send, "u": requester},
         ).one()
 
 
 def resend(tenant_id: uuid.UUID) -> uuid.UUID | None:
+    """resend_contact_email as the endpoint calls it, as one of the business's owners."""
     with tenant_context(tenant_id) as session:
-        found: uuid.UUID | None = session.scalar(text("SELECT resend_contact_email()"))
+        found: uuid.UUID | None = session.scalar(
+            text("SELECT resend_contact_email(:u)"), {"u": session.scalar(OWNER)}
+        )
         return found
 
 
@@ -305,6 +317,19 @@ def test_the_requester_must_own_this_business_whatever_the_callers_settings(
         after = session.scalar(text("SELECT current_setting('app.sign_in', true)"))
 
     assert (confirmed, after) == (None, "on")
+
+
+# Re-check NIT 6 FENCE. Wrong impl: a link with no recorded requester confirms (only a compromised
+# API could make one due a link; 0088's moved rows get a requester through a resend first).
+def test_a_link_with_no_requester_confirms_nothing(
+    people: People, migrate_engine: Engine, worker_engine: Engine
+) -> None:
+    request = change(people.a, "shop@x.nl", send=True, by=None)
+    secret = mint(worker_engine, people.a, request.request_id)
+    assert secret is not None
+
+    assert confirm(people.a, digest(secret)) is None
+    assert request_of(migrate_engine, people.a) is not None
 
 
 def test_a_resend_makes_its_owner_the_requester(
