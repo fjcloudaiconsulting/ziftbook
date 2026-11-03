@@ -7742,7 +7742,8 @@
                 "type": "null"
               }
             ],
-            "title": "Contact Email"
+            "title": "Contact Email",
+            "description": "The confirmed address clients see. A new address sent here waits for its inbox to confirm it and reads back only once it is confirmed; null removes it."
           }
         },
         "additionalProperties": false,
@@ -7875,7 +7876,8 @@
                 "type": "null"
               }
             ],
-            "title": "Contact Email"
+            "title": "Contact Email",
+            "description": "The confirmed address clients see. A new address sent here waits for its inbox to confirm it and reads back only once it is confirmed; null removes it."
           }
         },
         "additionalProperties": false,

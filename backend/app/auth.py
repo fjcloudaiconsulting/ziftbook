@@ -131,6 +131,8 @@ Action = Literal[
     "account_signed_in",
     "account_signed_out",
     "account_details_changed",
+    # ZIF-232: an owner typed a new contact email; it waits for its inbox to confirm it.
+    "contact_email_requested",
 ]
 
 

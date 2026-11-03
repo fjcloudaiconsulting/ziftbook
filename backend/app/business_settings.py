@@ -15,7 +15,7 @@ from pydantic import AfterValidator, BaseModel, BeforeValidator, ConfigDict, Fie
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app import auth, passwords
+from app import auth, contact_email, passwords
 from app.auth import CurrentOwner, CurrentSession
 from app.errors import Error
 from app.locales import Locale as Locale  # re-exported: most modules import it from here
@@ -136,9 +136,13 @@ class BusinessSettings(BaseModel):
     # owner's login.
     # Public by design (every member reads it, and the booking page will show it), so a private
     # address does not belong here; it is kept in the settings audit log.
-    # shortcut: the address is not confirmed, so an owner can point client replies at any inbox; add
-    # a confirm link if one is ever abused.
-    contact_email: Annotated[passwords.Email, AfterValidator(header_address)] | None = None
+    # ZIF-232: only ever a confirmed address, the database refuses any other (0087). A PUT goes
+    # through app/contact_email.py, never save().
+    contact_email: Annotated[passwords.Email, AfterValidator(header_address)] | None = Field(
+        None,
+        description="The confirmed address clients see. A new address sent here waits for its"
+        " inbox to confirm it and reads back only once it is confirmed; null removes it.",
+    )
 
 
 def read(db: Session) -> BusinessSettings:
@@ -188,6 +192,9 @@ def update_settings(
     defaults = BusinessSettings()
     # Field order, not the set of sent keys: two saves must lock rows in the same order.
     for key, value in changes.model_dump(exclude_unset=True).items():
+        if key == "contact_email":
+            contact_email.change(current, request, value)
+            continue
         replaced = save(current.db, key, value)
         old = getattr(defaults, key) if replaced is None else replaced
         if old != value:
