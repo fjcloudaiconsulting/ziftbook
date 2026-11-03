@@ -13,7 +13,7 @@ from typing import Any
 import pytest
 from sqlalchemy import Engine, make_url, text
 
-from app import bookings, erasure_holds, jobs, logs, retention, worker
+from app import bookings, contact_email, erasure_holds, jobs, logs, retention, worker
 from app.config import WorkerSettings
 from app.db import SessionLocal, tenant_context
 from app.jobs import Job, JobKind, enqueue, run_once
@@ -52,6 +52,14 @@ def _no_retention_sweep(monkeypatch: pytest.MonkeyPatch) -> None:
     the retention functions (ZIF-235): the sweep is stubbed, on purpose, except where a test
     replaces it itself."""
     monkeypatch.setattr(retention, "sweep", lambda *args, **kwargs: retention.Swept(complete=True))
+
+
+@pytest.fixture(autouse=True)
+def no_senders_sweep(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The sweep timer also sweeps contact_email_senders (ZIF-232); its own tests are in
+    test_contact_email_db.py. Stubbed here, as these tests stub the timer's other sweeps, so a real
+    database call adds no wait to their timing."""
+    monkeypatch.setattr(contact_email, "sweep_senders", lambda: None)
 
 
 @pytest.fixture
