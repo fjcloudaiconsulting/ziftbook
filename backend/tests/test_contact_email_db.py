@@ -498,6 +498,24 @@ def test_the_confirm_writes_the_setting_through_the_guard(
     assert in_effect(people.a) == "shop@x.nl"
 
 
+# NIT 7 FENCE. The guard is a BEFORE trigger with WHEN on NEW.key: a later BEFORE trigger could
+# rewrite the key after it passed. Wrong impl: either runtime role able to add one (TRIGGER on
+# settings, or CREATE on a schema for a function to run).
+@pytest.mark.parametrize("role", ["ziftbook_app", "ziftbook_worker"])
+def test_no_runtime_role_can_add_a_trigger_to_settings(migrate_engine: Engine, role: str) -> None:
+    with migrate_engine.connect() as conn:
+        held = conn.execute(
+            text("""
+            SELECT has_table_privilege(:r, 'settings', 'TRIGGER'),
+                   (SELECT coalesce(bool_or(has_schema_privilege(:r, n.oid, 'CREATE')), false)
+                    FROM pg_namespace n
+                    WHERE n.nspname NOT LIKE 'pg\\_%' AND n.nspname <> 'information_schema')
+            """),
+            {"r": role},
+        ).one()
+    assert tuple(held) == (False, False)
+
+
 def test_a_runtime_role_still_deletes_it(people: People, migrate_engine: Engine) -> None:
     set_in_effect(migrate_engine, people.a, "old@x.nl")
     with tenant_context(people.a) as session:
