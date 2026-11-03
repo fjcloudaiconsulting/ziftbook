@@ -781,3 +781,31 @@ def test_a_hold_past_its_purge_date_sends_nothing(
 
     assert outbox_for(people.a, cancelled.id) is None
     assert sent_to(address) == []
+
+
+# ZIF-58 FENCE. Wrong impl: every booking_cancelled job for an erased client goes to its hold, so
+# while a hold lives the team could mail the erased person by cancelling one of the bookings the
+# erasure kept (one under way or past), a use the hold was never kept for. Only a cancellation the
+# erasure itself made (its event gives an erasure's reason) is mailed; the team's later one is not.
+def test_a_teams_cancellation_after_the_erasure_mails_nobody(
+    people: People,
+    owner: TestClient,  # noqa: F811
+    migrate_engine: Engine,
+    booked: dict[str, str],  # noqa: F811
+    clean_outbox: None,  # noqa: F811
+) -> None:
+    client_id = uuid.UUID(booked["client"])
+    address = address_of(people.a, client_id)
+    erase_announcing(migrate_engine, people, client_id)
+    later = owner.patch(
+        f"/api/bookings/{booked['started']}", json={"status": "cancelled_by_merchant"}
+    )
+    assert later.status_code == 200
+
+    with jobs_as_the_worker():
+        team = run_send_booking(people.a, booked["started"], "booking_cancelled")
+        erasure = run_send_booking(people.a, booked["pending"], "booking_cancelled")
+
+    assert outbox_for(people.a, team.id) is None
+    assert outbox_for(people.a, erasure.id) is not None
+    assert len(sent_to(address)) == 1
