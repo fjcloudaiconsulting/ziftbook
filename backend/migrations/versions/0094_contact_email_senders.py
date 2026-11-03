@@ -23,13 +23,13 @@ Lock: the foreign key takes SHARE ROW EXCLUSIVE on tenants for an instant; the d
 TABLE takes ACCESS EXCLUSIVE on tenants, so queries on tenants wait that long.
 
 Revision ID: 0094
-Revises: 0088
+Revises: 0074
 """
 
 from alembic import op
 
 revision = "0094"
-down_revision = "0088"
+down_revision = "0074"
 branch_labels = None
 depends_on = None
 
