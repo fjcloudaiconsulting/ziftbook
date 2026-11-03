@@ -243,7 +243,7 @@ def test_link_requests_queue_their_email_without_minting(
 # beyond the job-only grants listed here. ZIF-58 (0064) adds, on purpose, reading and deleting the
 # erased clients' contact holds, which the app role can neither read nor write: the worker sends
 # through them and purges them. ZIF-102 adds invite_locale (0061), the invite job's. ZIF-235 (0074)
-# adds the three retention functions, on purpose: the API role must not run them, so they are the
+# adds the four retention functions, on purpose: the API role must not run them, so they are the
 # worker's own.
 def test_worker_role_holds_only_its_job_functions_in_its_own_right(
     migrate_engine: Engine,
@@ -271,6 +271,7 @@ def test_worker_role_holds_only_its_job_functions_in_its_own_right(
         "client_erasure_holds SELECT",
         "invite_locale(p_invite_id uuid) EXECUTE",
         "mint_email_token(p_id uuid, p_token_hash bytea) EXECUTE",
+        "sweep_account_sessions(OUT deleted integer) EXECUTE",
         "sweep_admin_sessions(OUT deleted integer) EXECUTE",
         "sweep_audit_events(OUT busy boolean, OUT failed_sign_ins integer,"
         " OUT older_events integer, OUT platform_failures integer,"

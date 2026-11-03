@@ -2682,7 +2682,7 @@ SELECT p.oid::regprocedure::text, pg_get_userbyid(p.proowner), p.prosecdef, p.pr
        has_function_privilege('ziftbook_app', p.oid, 'EXECUTE'),
        has_function_privilege('public', p.oid, 'EXECUTE')
 FROM pg_proc p WHERE p.proname IN ('sweep_audit_events', 'sweep_admin_sessions',
-                                   'sweep_booking_origins')
+                                   'sweep_account_sessions', 'sweep_booking_origins')
 ORDER BY 1
 """)
 
@@ -2705,6 +2705,7 @@ def test_0074_round_trips_the_retention_functions(
         assert [tuple(row) for row in conn.execute(RETENTION_FUNCTIONS)] == [
             (name, "ziftbook_migrate", True, pinned, True, False, False)
             for name in (
+                "sweep_account_sessions()",
                 "sweep_admin_sessions()",
                 "sweep_audit_events()",
                 "sweep_booking_origins(uuid)",

@@ -1,6 +1,6 @@
 """The worker's retention functions (ZIF-235).
 
-Three SECURITY DEFINER functions owned by ziftbook_migrate, executable by ziftbook_worker only
+Four SECURITY DEFINER functions owned by ziftbook_migrate, executable by ziftbook_worker only
 (never ziftbook_app, never PUBLIC). The caller chooses no period: each is fixed here, and the
 worker (app.retention) calls them in batches on its hourly sweep.
 
@@ -15,6 +15,10 @@ worker (app.retention) calls them in batches on its hourly sweep.
 - sweep_admin_sessions(): deletes admin sessions an hour after they died (expired, or idle past
   resolve_admin_session's 30 minutes). The hour is a margin: no reader whose transaction began
   before the sweep can still see a deleted session as live.
+- sweep_account_sessions(): deletes account sessions (ZIF-146, 0057) an hour after they died
+  (expired, or idle past 0057's 7 days), with the same margin. FOR UPDATE SKIP LOCKED: a booking
+  that holds its session FOR KEY SHARE (hold_account_session, 0058) is skipped, never waited on.
+  One a console sign-in started also goes with its business session (0057's foreign key).
 - sweep_booking_origins(p_from): sets ip and user_agent of a booking event to NULL once both the
   event and its booking's end are 18 months old (owner ruling D2). The row stays: it is evidence.
   Business by business under tenant_isolation, as 0058's own_bookings reads (no policy widens what
@@ -26,7 +30,7 @@ worker (app.retention) calls them in batches on its hourly sweep.
 
 No table is locked by this migration: CREATE FUNCTION, REVOKE and GRANT only.
 
-The downgrade drops the three functions. Deleted events and cleared addresses do not come back.
+The downgrade drops the four functions. Deleted events and cleared addresses do not come back.
 
 Revision ID: 0074
 Revises: 0073
@@ -92,6 +96,17 @@ BEGIN
     SELECT x.id_hash FROM admin_sessions x
     WHERE x.expires_at <= now() - interval '1 hour'
        OR x.last_seen_at <= now() - interval '90 minutes'
+    LIMIT 1000 FOR UPDATE SKIP LOCKED));
+  GET DIAGNOSTICS deleted = ROW_COUNT;
+END $$""",
+    "sweep_account_sessions()": f"""
+CREATE FUNCTION sweep_account_sessions(OUT deleted integer)
+LANGUAGE plpgsql SECURITY DEFINER {SEARCH_PATH} AS $$
+BEGIN
+  DELETE FROM account_sessions s WHERE s.id_hash = ANY(ARRAY(
+    SELECT x.id_hash FROM account_sessions x
+    WHERE x.expires_at <= now() - interval '1 hour'
+       OR x.last_seen_at <= now() - interval '7 days 1 hour'
     LIMIT 1000 FOR UPDATE SKIP LOCKED));
   GET DIAGNOSTICS deleted = ROW_COUNT;
 END $$""",
