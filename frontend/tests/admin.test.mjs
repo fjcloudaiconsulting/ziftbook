@@ -1,6 +1,7 @@
 // Logic behind the admin sign-in screens: routing on the session, the manual key, the recovery-codes file and the
 // error-code to state mapping.
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { describe, test } from "node:test";
 
 import { appCode, enrolCommand, factorState, recoveryFile, secretGroups, shellQuote, stepFor } from "../lib/admin.ts";
@@ -86,4 +87,32 @@ describe("shell quoting edge cases", () => {
     assert.equal(shellQuote(""), "''");
     assert.equal(shellQuote("a\nb"), "'a\nb'");
   });
+});
+
+describe("a stopped setup", () => {
+  // ZIF-262: entering the same ticket again keeps the wrong-code count, so the way out is a new ticket from the
+  // command, in every language.
+  const expected = {
+    en: {
+      enrolLocked:
+        "Too many wrong codes were entered, so this setup stopped, and this ticket can't start it again. Ask for a new ticket with:",
+      newTicket: "Enter a new ticket",
+    },
+    nl: {
+      enrolLocked:
+        "Er zijn te veel verkeerde codes ingevuld, dus het instellen is gestopt, en met dit ticket begin je niet opnieuw. Vraag een nieuw ticket aan met:",
+      newTicket: "Nieuw ticket invullen",
+    },
+    pt: {
+      enrolLocked:
+        "Foram digitados códigos errados demais, então a configuração foi interrompida, e este ticket não serve para recomeçar. Peça um ticket novo com:",
+      newTicket: "Digitar um ticket novo",
+    },
+  };
+  for (const [locale, texts] of Object.entries(expected)) {
+    test(`asks for a new ticket (${locale})`, () => {
+      const { Admin } = JSON.parse(readFileSync(new URL(`../messages/${locale}.json`, import.meta.url), "utf8"));
+      assert.deepEqual({ enrolLocked: Admin.enrolLocked, newTicket: Admin.newTicket }, texts);
+    });
+  }
 });
