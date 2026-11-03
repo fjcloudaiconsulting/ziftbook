@@ -29,6 +29,7 @@ from tests.conftest import (
     fresh_email,
     member_id,
     migrate_tenant_context,
+    new_client,
     save_setting,
     signed_in,
 )
@@ -473,3 +474,30 @@ def test_usage_errors_exit_2(argv: list[str]) -> None:
     with pytest.raises(SystemExit) as exit_:
         ledger.main(argv)
     assert exit_.value.code == 2
+
+
+# ZIF-58 F28. FENCE. Wrong impl: no check, so a deployment without the ledger erases what a
+# restore would bring back unrecorded. Through the API's own error handling, on a stand-in route
+# (the erase routes come with ZIF-58 PR 7 and call ledger.require first).
+@pytest.mark.parametrize(
+    ("app_url", "bucket", "status"),
+    [
+        ("https://app.ziftbook.example", None, 503),
+        ("https://app.ziftbook.example", BUCKET, 200),
+        ("http://localhost:3000", None, 200),
+    ],
+)
+def test_erasure_is_unavailable_without_the_ledger_outside_localhost(
+    monkeypatch: pytest.MonkeyPatch, app_url: str, bucket: str | None, status: int
+) -> None:
+    monkeypatch.setenv("ZIF_APP_URL", app_url)
+    if bucket is None:
+        monkeypatch.delenv("ZIF_ERASURE_LEDGER_BUCKET", raising=False)
+    else:
+        monkeypatch.setenv("ZIF_ERASURE_LEDGER_BUCKET", bucket)
+    app = create_app()
+    app.add_api_route("/api/test/erasure", ledger.require, methods=["POST"], tags=["test"])
+    answer = new_client(app).post("/api/test/erasure", json={})
+    assert answer.status_code == status
+    if status == 503:
+        assert answer.json() == {"code": "erasure_unavailable"}
