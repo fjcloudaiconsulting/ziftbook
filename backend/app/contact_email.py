@@ -147,7 +147,9 @@ def _claim(current: SignedIn, email: str) -> None:
     # Reads only, no lock taken. An owner's own sign-in inbox was proven at sign-up, so others
     # cannot keep them from it (it still needs its link confirmed).
     own = current.db.scalar(text("SELECT email FROM users WHERE id = :u"), {"u": current.user_id})
-    exempt = (own is not None and limits.address_for_limits(own) == address) or bool(
+    # The exact address, never folded: a +tag can be another mailbox where a domain has no
+    # subaddressing (the limit keys still fold it).
+    exempt = (own is not None and own.lower() == email.lower()) or bool(
         current.db.scalar(EVER_CONFIRMED, {"e": email})
     )
     with SessionLocal.begin() as session:
