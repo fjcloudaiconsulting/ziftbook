@@ -23,7 +23,14 @@ cannot, as it can neither read a hash, set one nor mint.
 Lock: the foreign key takes SHARE ROW EXCLUSIVE on tenants for an instant, which holds back a
 sign-up or a rename for that long, within the 5 s lock_timeout.
 
-Downgrading drops the table, and with it the only copy of the addresses 0088 moved out of use.
+Every confirmation is also recorded in contact_email_confirmations (address, the one it replaced,
+clock_timestamp), written only by confirm_contact_email and readable, never writable, by the runtime
+roles: after an API compromise, the confirmations made in the window can be listed from it
+(CONTRIBUTING, Business settings). It is kept as evidence for the business's life.
+
+Downgrading drops both tables, and with them the only copy of the addresses 0088 moved out of use
+and the confirmation record. It takes ACCESS EXCLUSIVE on tenants for an instant (the foreign keys),
+so queries on tenants wait that long.
 
 Revision ID: 0086
 Revises: 0056
@@ -123,6 +130,9 @@ BEGIN
   VALUES (current_setting('app.tenant_id')::uuid, 'contact_email', to_jsonb(v_email))
   ON CONFLICT (tenant_id, key) DO UPDATE SET value = excluded.value
   RETURNING old.value #>> '{{}}' INTO v_previous;
+  -- Written here, not by the API: a compromised API cannot confirm an address and erase the trace.
+  INSERT INTO contact_email_confirmations (tenant_id, email, previous)
+  VALUES (current_setting('app.tenant_id')::uuid, v_email, v_previous);
   RETURN QUERY SELECT v_email, v_previous;
 END $$"""
 
@@ -158,6 +168,19 @@ def upgrade() -> None:
     op.execute(
         "GRANT SELECT (id, tenant_id, email, expires_at) ON contact_email_requests TO ziftbook_app"
     )
+    # Every confirmation, as evidence: only confirm_contact_email writes it; runtime roles read it.
+    op.execute("""
+    CREATE TABLE contact_email_confirmations (
+      id uuid CONSTRAINT pk_contact_email_confirmations PRIMARY KEY DEFAULT uuidv7(),
+      tenant_id uuid NOT NULL CONSTRAINT fk_contact_email_confirmations_tenant_id_tenants
+        REFERENCES tenants (id) ON DELETE CASCADE,
+      email text NOT NULL,
+      previous text,
+      confirmed_at timestamptz NOT NULL DEFAULT clock_timestamp()
+    )""")
+    enable_tenant_isolation("contact_email_confirmations")
+    op.execute("REVOKE ALL ON contact_email_confirmations FROM ziftbook_app")
+    op.execute("GRANT SELECT ON contact_email_confirmations TO ziftbook_app")
     for signature, (role, body) in FUNCTIONS.items():
         op.execute(body)
         op.execute(f"REVOKE EXECUTE ON FUNCTION {signature} FROM PUBLIC")
@@ -167,4 +190,5 @@ def upgrade() -> None:
 def downgrade() -> None:
     for signature in FUNCTIONS:
         op.execute(f"DROP FUNCTION {signature}")
+    op.execute("DROP TABLE contact_email_confirmations")
     op.execute("DROP TABLE contact_email_requests")
