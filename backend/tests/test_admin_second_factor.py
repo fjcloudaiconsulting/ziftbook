@@ -410,13 +410,14 @@ def warned(log_lines: Callable[[], list[dict[str, Any]]], msg: str) -> list[tupl
     return [(line["level"], line["user_id"], line["failures"]) for line in lines]
 
 
-# fence: every wrong code logs a WARNING inside its transaction, before the commit, so a failure
-# whose count never commits (a request cut off before COMMIT) still leaves a trace; a locked
-# attempt logs none, since nothing bounds those. Kills the line logged after the commit, only at a
-# threshold, or for locked attempts too. Injected by moving the line after the `with` block, then
-# separately by logging it only when failures >= 10, then by logging it in the locked branch too.
-# Counting before checking, so an abort can't uncount a failure, is ZIF-261.
-def test_every_wrong_code_warns_before_its_commit(
+# fence (ZIF-261, the attack over HTTP): the API commits an attempt's charge before it checks the
+# code, so a request cut off after the check and before its commit still counts. Every wrong code
+# also logs a WARNING before that commit, so the cut-off attempt, whose audit row rolled back, still
+# leaves a trace; a locked attempt logs none, since nothing bounds those. Kills the charge made in
+# the check's transaction, the line logged after the commit, only at a threshold, or for locked
+# attempts too. Injected by moving the charge into the check's `with` block, then by moving the line
+# after it, then separately by logging it only when failures >= 10, then in the locked branch too.
+def test_a_wrong_code_cut_off_before_its_commit_still_counts(
     app: FastAPI,
     migrate_engine: Engine,
     an_admin: uuid.UUID,
@@ -430,23 +431,24 @@ def test_every_wrong_code_warns_before_its_commit(
     record = admin.record
 
     def record_or_die(*args: Any, **kwargs: Any) -> None:
-        # The audit insert after the failure is counted: the request dies before its COMMIT.
+        # The audit insert after the code was checked: the request dies before its COMMIT.
         if cut_off[0] and args[2] == "second_factor_failed":
             raise RuntimeError("cut off before commit")
         record(*args, **kwargs)
 
     monkeypatch.setattr(admin, "record", record_or_die)
     assert half.post(PASS, json={"code": bad}).status_code == 500
-    assert failed_attempts(migrate_engine, an_admin) == 0  # rolled back, uncounted
+    assert failed_attempts(migrate_engine, an_admin) == 1  # counted all the same
+    assert "second_factor_failed" not in [action for action, _ in audit(migrate_engine, an_admin)]
     assert warned(log_lines, "second factor failed") == [("WARNING", str(an_admin), 1)]
 
     cut_off[0] = False
-    tries = [half.post(PASS, json={"code": bad}).status_code for _ in range(10)]
+    tries = [half.post(PASS, json={"code": bad}).status_code for _ in range(9)]
     locked = half.post(PASS, json={"code": bad})
 
-    assert tries == [401] * 9 + [403]
+    assert tries == [401] * 8 + [403]
     assert answer(locked) == (403, {"code": "second_factor_locked"})
-    assert warned(log_lines, "second factor failed") == [("WARNING", str(an_admin), 1)] + [
+    assert warned(log_lines, "second factor failed") == [
         ("WARNING", str(an_admin), n) for n in range(1, 11)
     ]
 
