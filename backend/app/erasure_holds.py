@@ -29,8 +29,11 @@ LATE = timedelta(hours=1)
 
 # Nothing is left to tell when no money is owed an answer (client_money_owed, the rule the erase
 # core wrote the hold on), no refund settled in the last 7 days (one can still fail at the bank
-# days later), and none of the client's emails through the hold is still to be sent (an email
-# that gave up after its last attempt is out).
+# days later), and none of the client's emails through the hold is still to be sent. An email has
+# given up only once its last lease has run out, as jobs.PRUNE reads it: CLAIM counts an attempt
+# when it starts, so a last attempt still running has attempts = MAX_ATTEMPTS and must still find
+# the hold. That arm cannot use ix_jobs_claimable; it runs per hold, once the money arms are false,
+# and holds are few.
 PURGE = text(f"""
 DELETE FROM client_erasure_holds h
 WHERE h.tenant_id = current_setting('app.tenant_id')::uuid
@@ -46,7 +49,7 @@ WHERE h.tenant_id = current_setting('app.tenant_id')::uuid
                           WHERE j.tenant_id = h.tenant_id AND b.tenant_id = h.tenant_id
                             AND b.client_id = h.client_id
                             AND j.kind = 'email.booking' AND j.completed_at IS NULL
-                            AND j.attempts < {MAX_ATTEMPTS}
+                            AND (j.attempts < {MAX_ATTEMPTS} OR j.next_attempt_at > now())
                             AND j.payload ->> 'template' IN
                               ({", ".join(f"'{t}'" for t in sorted(HOLD_TEMPLATES))}))))
 RETURNING h.client_id, h.purge_after < now() - CAST(:late AS interval) AS late
