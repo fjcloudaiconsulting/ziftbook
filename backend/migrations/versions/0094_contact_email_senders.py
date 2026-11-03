@@ -11,9 +11,10 @@ of the address while that key is unset (which a dictionary reverses), so it is t
 address's own data. Global on purpose, like rate_limits: the count spans businesses, so there is no
 row-level security, and a business id is all it holds besides. Kept a day after its last claim or
 link plus an hour: claims purge as they go and the worker's timer sweeps the rest
-(contact_email.sweep_senders), like rate_limits. Named inbox_key, not address_key: ZIF-235's
-retention fence matches "addr" in a column name for network addresses and browsers; this holds a
-mail key, swept on its own rule, like rate_limits.key (see the ZIF-235 merge note in PR 5).
+(contact_email.sweep_senders), like rate_limits. Named inbox_key, not address_key, by an
+architect ruling: ZIF-235's retention fence matches "addr" in a column name to find network
+addresses and browsers, and this column holds neither: a peppered mail key, swept on its own fenced
+rule, like rate_limits.key, which that fence also leaves out (see the ZIF-235 merge note in PR 5).
 
 A fourth migration in ZIF-232's range: rate_limits keys cannot be counted by inbox, as the
 database collation keeps a prefix match off the key's index.
