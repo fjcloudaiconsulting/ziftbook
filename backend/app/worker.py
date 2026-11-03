@@ -13,7 +13,7 @@ from opentelemetry import metrics
 from opentelemetry.metrics import CallbackOptions, Observation
 from sqlalchemy import create_engine, event
 
-from app import bookings, jobs, limits, logs, mail, payments, photos, tracing
+from app import bookings, erasure_holds, jobs, limits, logs, mail, payments, photos, tracing
 from app.config import MailSettings, StripeSettings, WorkerSettings
 from app.db import SessionLocal, database_role, reset_session
 from app.jobs import JobKind, run_once
@@ -70,7 +70,8 @@ _meter.create_observable_gauge(
 )
 
 POLL_SECONDS = 30
-# ZIF-122: settle expired pending bookings; housekeeping, so it runs on a timer, not every poll.
+# ZIF-122: settle expired pending bookings, and (ZIF-58) purge the contact holds no longer needed;
+# housekeeping, so it runs on a timer, not every poll.
 SWEEP_SECONDS = 300
 
 logger = logging.getLogger("app.worker")
@@ -93,6 +94,9 @@ async def work(kinds: dict[str, JobKind], healthcheck_url: str | None, stop: asy
             if swept is None or time.monotonic() - swept >= SWEEP_SECONDS:
                 # Global and one statement, so before the sweep: never hostage to a failing tenant.
                 await asyncio.to_thread(jobs.prune)
+                # ZIF-58. Before the booking sweep, which is housekeeping: a hold's purge date is a
+                # bound, never hostage to it.
+                await asyncio.to_thread(erasure_holds.sweep)
                 await asyncio.to_thread(bookings.sweep)
                 swept = time.monotonic()
         except Exception:

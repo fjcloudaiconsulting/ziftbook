@@ -11,15 +11,14 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from sqlalchemy import Engine, create_engine, text
-from sqlalchemy.pool import NullPool
+from sqlalchemy import Engine, make_url, text
 
 from app import bookings, jobs, logs, worker
 from app.config import WorkerSettings
 from app.db import SessionLocal, tenant_context
 from app.jobs import Job, JobKind, enqueue, run_once
 from app.worker import work
-from tests.conftest import People, jobs_as_the_worker
+from tests.conftest import People, engine_as_worker, jobs_as_the_worker
 from tests.stripe_fake import FakeGateway, connect
 
 Lines = Callable[[], list[dict[str, Any]]]
@@ -49,11 +48,12 @@ def healthcheck() -> Iterator[tuple[str, threading.Event]]:
 
 @pytest.fixture
 def bound_session(migrated: None, app_engine: Engine) -> Iterator[None]:
-    engine = create_engine(os.environ["ZIF_DATABASE_URL"], poolclass=NullPool)
-    SessionLocal.configure(bind=engine)
-    yield
-    SessionLocal.configure(bind=None)
-    engine.dispose()
+    # As ziftbook_worker, the role the worker process connects as: its timer purges contact holds,
+    # which the app role cannot read (ZIF-58).
+    with engine_as_worker(make_url(os.environ["ZIF_DATABASE_URL"])) as engine:
+        SessionLocal.configure(bind=engine)
+        yield
+        SessionLocal.configure(bind=None)
     with app_engine.begin() as conn:
         conn.execute(text("DELETE FROM jobs WHERE kind LIKE 'test.%'"))
 

@@ -292,7 +292,11 @@ that person's platform account (ZIF-99).
   only the templates in `mail.HOLD_TEMPLATES`, none of which carries a manage link, to the hold's address in its
   locale, replying to the business's `contact_email`; anything else to an erased client, and everything once its hold
   is gone, is skipped. A refund Stripe refuses or fails enqueues `booking_refund_failed` once per failure told (keyed
-  on its `refund_failed` event), only when the client is erased: it goes through a hold or not at all.
+  on its `refund_failed` event), only when the client is erased: it goes through a hold or not at all. The worker's
+  sweep timer (`erasure_holds.sweep`, before the booking sweep, under each business's booking lock) deletes a hold
+  once nothing is left to tell: no money owed (`client_money_owed`), no refund settled in the last 7 days (one can
+  still fail at the bank), and none of the client's `HOLD_TEMPLATES` emails still to be sent; and at `purge_after`
+  whatever is left.
 - A client row links to an account (`clients.user_id`) only through that person's own proven booking at that
   business (ZIF-146): `find_or_create`'s REFRESH fills a NULL `user_id`, never relinks, and nothing links by email.
 - Marketing consent (`consents`) is per business. Nothing writes a platform-level consent, and one business's consent
@@ -615,7 +619,9 @@ loggers (`web.*`); Next's own stderr output (banners, SSR error traces) is not i
 - Events: `job claimed` (DEBUG), `job done` and `job skipped` (INFO, past its grace), `job failed`
   (WARNING, retried) and `job gave up` (ERROR, last attempt), with `attempts`;
   `bookings expired` (INFO, `count`, `tenant_id`, from the worker's sweep); `jobs pruned` (INFO, `count`, only when
-  something was deleted, from the same sweep); `email sent` (INFO) and
+  something was deleted, from the same sweep); `contact holds purged` (INFO, `count`, `tenant_id`, only when
+  something was deleted) and `contact hold purged late` (ERROR, `client_id`, `tenant_id`: an erased client's hold
+  found more than an hour past its purge date, so the worker was down or the purge kept failing); `email sent` (INFO) and
   `email failed` (WARNING) with `template` (and `error` on failure) plus the job context, and
   `email skipped` (INFO, `template`, `reason` `recipient_quota`, from the worker's send);
   `client mail over quota` (WARNING, `template`, `source` `merchant` or `public`, when a business's
