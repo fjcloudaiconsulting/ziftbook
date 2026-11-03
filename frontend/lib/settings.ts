@@ -117,8 +117,10 @@ export function emailProblem(text: string): "accents" | "invalid" | null {
 }
 
 /** Which message a refused contact email shows: an accented name its own (the API cannot put it in a
- * mail header), anything else the usual invalid-email one. */
-export function emailMessageKey(text: string): "contactEmailInvalid" | "invalidEmail" {
+ * mail header), an empty box while a change waits its own (Cancel change drops the waiting address),
+ * anything else the usual invalid-email one. */
+export function emailMessageKey(text: string, waiting = false): "contactEmailInvalid" | "contactClearWaiting" | "invalidEmail" {
+  if (waiting && asciiEmail(text) === "") return "contactClearWaiting";
   return emailProblem(text) === "accents" ? "contactEmailInvalid" : "invalidEmail";
 }
 
@@ -154,12 +156,18 @@ export function changedKeys(saved: Settings, draft: Draft): Key[] {
 }
 
 /** The PUT body (changed keys that parse) and the changed keys that don't. */
-export function settingsBody(saved: Settings, draft: Draft): { body: Partial<Settings>; invalid: Key[] } {
+export function settingsBody(
+  saved: Settings,
+  draft: Draft,
+  contact: ContactEmailState | null = null,
+): { body: Partial<Settings>; invalid: Key[] } {
   const body: Record<string, unknown> = {};
   const invalid: Key[] = [];
   for (const key of changedKeys(saved, draft)) {
     const value = parse(FIELDS.find((f) => f.key === key)!, draft[key]);
-    if (value === undefined) invalid.push(key);
+    // An empty box while a change waits is no removal: null would also drop the confirmed address
+    // clients see (ZIF-232). Cancel change drops the waiting one.
+    if (value === undefined || (key === "contact_email" && value === null && contact?.requested)) invalid.push(key);
     else body[key] = value;
   }
   return { body: body as Partial<Settings>, invalid };

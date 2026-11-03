@@ -651,6 +651,7 @@
       "contactTooMany": "Too many links were sent. Try again later.",
       "contactTooManyToday": "This address has had too many confirmation requests today. Try again tomorrow.",
       "contactCancel": "Cancel change",
+      "contactClearWaiting": "An address is waiting for confirmation. To drop it, use Cancel change.",
       "contactCancelled": "Change cancelled.",
       "contactFailed": "The link couldn't be sent. Try again.",
       "contactLoadFailed": "The contact email couldn't be loaded. Reload the page to try again.",
