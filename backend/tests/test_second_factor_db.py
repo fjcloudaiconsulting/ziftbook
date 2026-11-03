@@ -1274,3 +1274,23 @@ def test_an_enrolment_charge_is_checked_once(app_engine: Engine, migrate_engine:
     assert tuple(row) == ("none", 0)
     stored = factor(migrate_engine, user_id)
     assert (stored["confirmed_at"], stored["failed_attempts"], stored["charges"]) == (None, 1, [])
+
+
+# fence (ZIF-261): an enrolment charge drops the expired ones, as a sign-in charge does. Kills a
+# list that only grows. Injected by deleting the filter in charge_totp_enrolment.
+def test_an_enrolment_charge_drops_expired_charges(
+    app_engine: Engine, migrate_engine: Engine
+) -> None:
+    user_id, session, _ = pending(app_engine, migrate_engine)
+    with migrate_engine.begin() as conn:
+        young = conn.scalar(
+            text(
+                "UPDATE second_factors SET charges = ARRAY[uuidv7(- interval '1 hour'), "
+                "uuidv7(- interval '10 seconds')] WHERE user_id = :u RETURNING charges[2]"
+            ),
+            {"u": user_id},
+        )
+
+    _, _, made = call(app_engine, CHARGE_ENROLMENT, id=session)
+
+    assert charges_of(migrate_engine, user_id) == [young, made]
