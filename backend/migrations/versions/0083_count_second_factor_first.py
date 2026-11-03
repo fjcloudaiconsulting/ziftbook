@@ -29,13 +29,13 @@ the lock frees (see 0069). No charge exists yet at that moment, so the old bodie
 The downgrade restores the three replaced bodies and drops the column and the four functions.
 
 Revision ID: 0083
-Revises: 0069
+Revises: 0078
 """
 
 from alembic import op
 
 revision = "0083"
-down_revision = "0069"
+down_revision = "0078"
 branch_labels = None
 depends_on = None
 
