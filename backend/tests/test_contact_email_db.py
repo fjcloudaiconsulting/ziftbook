@@ -691,10 +691,53 @@ def test_the_app_role_keeps_the_senders_count_and_nothing_more(migrate_engine: E
 
 def test_a_business_counts_once_per_inbox(people: People, app_engine: Engine) -> None:
     insert = text(
-        "INSERT INTO contact_email_senders (address_key, tenant_id, claimed_at)"
+        "INSERT INTO contact_email_senders (inbox_key, tenant_id, claimed_at)"
         " VALUES ('k', :t, now())"
     )
     with pytest.raises(IntegrityError) as raised, app_engine.begin() as conn:
         conn.execute(insert, {"t": people.a})
         conn.execute(insert, {"t": people.a})
     assert isinstance(raised.value.orig, UniqueViolation)
+
+
+# Review S4 FENCE. Wrong impl: rows that go only when another claim for that inbox comes along, so
+# an inbox nobody mails again keeps its rows for ever.
+def test_the_worker_sweeps_senders_a_day_after_their_last_claim_or_link(
+    people: People, migrate_engine: Engine
+) -> None:
+    from app import contact_email
+
+    rows = {
+        "fresh": ("now()", "NULL"),
+        "linked today": ("now() - interval '2 days'", "now() - interval '20 hours'"),
+        "old claim": ("now() - interval '26 hours'", "NULL"),
+        "old link": ("now() - interval '3 days'", "now() - interval '26 hours'"),
+    }
+    with migrate_engine.begin() as conn:
+        for name, (claimed, linked) in rows.items():
+            conn.execute(
+                text(
+                    "INSERT INTO contact_email_senders"
+                    " (inbox_key, tenant_id, claimed_at, linked_at)"
+                    f" VALUES (:k, :t, {claimed}, {linked})"
+                ),
+                {"k": f"sweep-{name}", "t": people.a},
+            )
+
+    contact_email.sweep_senders()
+
+    with migrate_engine.connect() as conn:
+        left = set(
+            conn.scalars(
+                text("SELECT inbox_key FROM contact_email_senders WHERE inbox_key LIKE 'sweep-%'")
+            )
+        )
+    assert left == {"sweep-fresh", "sweep-linked today"}
+
+
+def test_the_worker_sweep_runs_on_its_timer() -> None:
+    from pathlib import Path
+
+    from app import worker
+
+    assert "contact_email.sweep_senders" in Path(worker.__file__).read_text()

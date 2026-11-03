@@ -167,8 +167,9 @@ every table that holds a tenant's data:
 
 `tests/test_tenant_schema.py` fails for a table with `tenant_id` that is not isolated (forced row-level security),
 and for a foreign key between tenant-owned tables that does not pair `tenant_id`. Exempt on purpose: `jobs` (global,
-claimed across tenants), `sessions` (how the tenant is found) and `platform_audit_events` (global; its `tenant_id`
-names the business a platform admin acted on).
+claimed across tenants), `sessions` (how the tenant is found), `platform_audit_events` (global; its `tenant_id`
+names the business a platform admin acted on) and `contact_email_senders` (ZIF-232; counts the businesses that
+mailed one inbox, across them, and is swept a day after use).
 
 `tenants` is the root table: it isn't isolated with `enable_tenant_isolation` and has no row-level security of its
 own.

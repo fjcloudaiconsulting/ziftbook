@@ -481,12 +481,12 @@ def test_other_businesses_cannot_use_up_a_business_links_to_an_address(
 
 def senders(migrate_engine: Engine, address: str) -> int:
     """The businesses counted today toward the inbox of address."""
-    key = contact_email.address_key(limits.address_for_limits(address))
+    key = contact_email.inbox_key(limits.address_for_limits(address))
     with migrate_engine.connect() as conn:
         found: int = conn.scalar(
             text(
                 "SELECT count(*) FROM contact_email_senders"
-                f" WHERE address_key = :k AND {contact_email.LIVE}"
+                f" WHERE inbox_key = :k AND {contact_email.LIVE}"
             ),
             {"k": key},
         )
@@ -554,7 +554,7 @@ def test_two_businesses_racing_for_the_last_place_get_one(
     def put(owner: TestClient) -> None:
         results.append(put_settings(owner, {"contact_email": address}).status_code)
 
-    key = contact_email.address_key(limits.address_for_limits(address))
+    key = contact_email.inbox_key(limits.address_for_limits(address))
     with app_engine.begin() as conn:
         conn.execute(
             text("SELECT pg_advisory_xact_lock(:c, hashtext(:k))"),
@@ -593,11 +593,11 @@ def test_a_failed_request_gives_back_nothing_and_holds_its_place_briefly(
         limits.charge(sent, timedelta(days=1))
     assert put_settings(a, {"contact_email": other}).json() == {"code": "rate_limited"}
     assert senders(migrate_engine, other) == 2  # over its own limit, a takes no place
-    key = contact_email.address_key(limits.address_for_limits(other))
+    key = contact_email.inbox_key(limits.address_for_limits(other))
     with migrate_engine.begin() as conn:  # a claim whose request then failed
         conn.execute(
             text(
-                "INSERT INTO contact_email_senders (address_key, tenant_id, claimed_at)"
+                "INSERT INTO contact_email_senders (inbox_key, tenant_id, claimed_at)"
                 " VALUES (:k, :t, now())"
             ),
             {"k": key, "t": people.a},
@@ -924,7 +924,7 @@ def test_concurrent_saves_cannot_drain_the_pool(
 ) -> None:
     owner = signed_in(app, people.a, people.both)
     address = f"{uuid.uuid4().hex[:12]}@example.com"
-    key = contact_email.address_key(limits.address_for_limits(address))
+    key = contact_email.inbox_key(limits.address_for_limits(address))
     results: list[int] = []
 
     def put() -> None:
