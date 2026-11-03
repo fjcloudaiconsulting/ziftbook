@@ -7,16 +7,20 @@ erasure request is answered in.
 """
 
 import logging
-from datetime import timedelta
+from datetime import datetime, timedelta
+from uuid import UUID
 
 from opentelemetry.trace import SpanKind
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app import bookings, tracing
+from app import bookings, jobs, tracing
 from app.db import SessionLocal, tenant_context
-from app.jobs import MAX_ATTEMPTS
+from app.jobs import MAX_ATTEMPTS, Job
 from app.mail import HOLD_TEMPLATES
+
+# The core's purge date: when it erased the client plus 30 days (0064's INSERT).
+HOLD_LIFETIME = timedelta(days=30)
 
 # The backstop job runs within a poll of the purge date and the sweep within five minutes of it: a
 # hold found this long past it means the worker was down or the purge kept failing, and the 31-day
@@ -76,3 +80,29 @@ def sweep() -> int:
                 db.execute(bookings.LOCK, {"key": bookings.LOCK_KEY})  # first, as every writer
                 purged += purge(db)
     return purged
+
+
+def enqueue_purge(db: Session, tenant_id: UUID, client_id: UUID, erased_at: datetime) -> None:
+    """The backstop job, due at the hold's purge date, for a caller of the erase core: in its
+    transaction, with the time the core returned. The caller cannot read the hold (the API role
+    may not), so it is enqueued whether or not one was written; with none, it purges nothing. The
+    key carries the date: a re-applied erasure after a restore writes a new hold with a new one."""
+    due_at = erased_at + HOLD_LIFETIME
+    jobs.enqueue(
+        db,
+        "erasure.hold_purge",
+        f"erasure.hold_purge:{tenant_id}:{client_id}:{due_at.isoformat()}",
+        {"client_id": str(client_id)},
+        tenant_id=tenant_id,
+        due_at=due_at,
+    )
+
+
+def purge_job(job: Job) -> None:
+    """The erasure.hold_purge job: the business's purge, run at a hold's purge date whatever the
+    sweep is doing (a business that keeps failing holds back the ones after it in the sweep)."""
+    if job.tenant_id is None:
+        raise ValueError("erasure.hold_purge needs a tenant")
+    with tenant_context(job.tenant_id) as db:
+        db.execute(bookings.LOCK, {"key": bookings.LOCK_KEY})
+        purge(db)

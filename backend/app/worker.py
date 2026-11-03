@@ -40,6 +40,10 @@ KINDS: dict[str, JobKind] = {
     # ZIF-158. Cancels an intent nobody will finish and releases a checked card. Stripe is called,
     # so 50 stays under the 60 s lease; the grace is long because the hourly sweep re-arms it.
     "payment.settle": JobKind(payments.settle, timeout=50, grace=timedelta(days=7)),
+    # ZIF-58. Purges an erased client's contact hold at its purge date. A purge is never too late
+    # to run (a hold must not outlive it), so the job is never skipped, however long the worker
+    # was down.
+    "erasure.hold_purge": JobKind(erasure_holds.purge_job, timeout=30, grace=timedelta.max),
 }
 
 
