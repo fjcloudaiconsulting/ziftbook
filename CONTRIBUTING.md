@@ -294,7 +294,8 @@ that person's platform account (ZIF-99).
   only the templates in `mail.HOLD_TEMPLATES`, none of which carries a manage link, to the hold's address in its
   locale, replying to the business's `contact_email`; anything else to an erased client, and everything once its hold
   is gone or past `purge_after`, is skipped. A `booking_cancelled` goes through a hold only when the erasure made the
-  cancellation (its event gives an erasure's reason) or the team made it before the erasure (its mail still queued):
+  cancellation (its event gives `client_erased` or `account_erased`; never `erasure_reapplied`, since after a restore
+  the client was told the first time) or the team made it before the erasure (its mail still queued):
   the team cancelling a booking the erasure kept, afterwards, mails nobody. Hold
   mails count against no quota, neither the business's client-mail quota at enqueue nor the per-recipient one at
   send: they are bounded by the hold's lifetime and by real events, and a dropped one would be the person's only
