@@ -1264,7 +1264,7 @@
           "settings"
         ],
         "summary": "Update",
-        "description": "Save the keys sent; keys left out keep their value. Every change goes in the audit log.",
+        "description": "Save the keys sent; keys left out keep their value. Every change goes in the audit log.\n\nA new contact_email is mailed a link that confirms it; 429 when that address or this business\nhas had too many links, and then nothing in the request is saved.",
         "operationId": "settings-update",
         "requestBody": {
           "content": {
@@ -1319,6 +1319,16 @@
           },
           "422": {
             "description": "Unprocessable Content",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests",
             "content": {
               "application/json": {
                 "schema": {
