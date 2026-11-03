@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 
 from app import auth, limits
-from app.auth import CurrentSession, SignedIn
+from app.auth import CurrentOwner, CurrentSession, SignedIn
 from app.db import tenant_context
 from app.errors import ApiError, Error
 from app.jobs import enqueue
@@ -180,5 +180,28 @@ def state(current: SignedIn) -> ContactEmailOut:
 
 @router.get("/settings/contact-email", name="read", responses={401: {"model": Error}})
 def read_state(current: CurrentSession, response: Response) -> ContactEmailOut:
+    response.headers["Cache-Control"] = "no-store"
+    return state(current)
+
+
+@router.post(
+    "/settings/contact-email/confirmation",
+    name="resend",
+    responses={s: {"model": Error} for s in (401, 403, 409, 415, 429)},
+)
+def resend(current: CurrentOwner, request: Request, response: Response) -> ContactEmailOut:
+    """Mail the waiting address a new link: the old one stops working at once."""
+    request_id = current.db.scalar(text("SELECT resend_contact_email()"))
+    if request_id is None:
+        raise ApiError(409, "no_contact_email_request")
+    email = current.db.scalar(text("SELECT email FROM contact_email_requests"))
+    send_link(current, request_id, email)
+    auth.record(
+        current.db,
+        request,
+        "contact_email_requested",
+        actor_user_id=current.user_id,
+        target="setting:contact_email",
+    )
     response.headers["Cache-Control"] = "no-store"
     return state(current)

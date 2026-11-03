@@ -466,3 +466,61 @@ def test_every_queued_link_is_counted(
             {"k": f"contact_email:tenant:{people.a}"},
         )
     assert hits == len(queued(migrate_engine, people.a)) == 3
+
+
+RESEND = "/api/settings/contact-email/confirmation"
+
+
+# F7.3 FENCE. Wrong impl: CurrentSession on the resend (a worker member mails a third party), or
+# a resend with nothing waiting that queues a job anyway.
+def test_only_an_owner_resends_and_only_a_waiting_address(
+    people: People, app: FastAPI, migrate_engine: Engine
+) -> None:
+    owner = signed_in(app, people.a, people.both)
+    worker = signed_in(app, people.a, people.only_a)
+
+    nothing = owner.post(RESEND, json={})
+    assert (nothing.status_code, nothing.json()) == (409, {"code": "no_contact_email_request"})
+    queue_link(people.a, "shop@example.com")
+    refused = worker.post(RESEND, json={})
+    assert (refused.status_code, refused.json()) == (403, {"code": "owner_only"})
+    assert queued(migrate_engine, people.a) == []
+
+
+# F7.4 FENCE. Wrong impl: a resend that keeps the id or the hash (the old link would still work,
+# or the new job would mint for a request that no longer has its id).
+def test_a_resend_kills_the_old_link_and_queues_a_new_one(
+    people: People, app: FastAPI, migrate_engine: Engine, worker_engine: Engine
+) -> None:
+    owner = signed_in(app, people.a, people.both)
+    old = link(worker_engine, people.a, "shop@example.com")
+
+    response = owner.post(RESEND, json={})
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert state_of(response.json()) == ("sent", None, "shop@example.com", False)
+    request = waiting(migrate_engine, people.a)
+    assert request is not None and request.token_hash is None
+    assert queued(migrate_engine, people.a) == [f"email.contact_email:{people.a}:{request.id}"]
+    assert new_client(app).post(CONFIRM, json={"token": old}).status_code == 400
+    assert contact_events(migrate_engine, people.a)[-1] == (
+        "contact_email_requested",
+        people.both,
+        None,
+    )
+
+
+def test_a_resend_counts_toward_the_same_limits(
+    people: People, app: FastAPI, migrate_engine: Engine
+) -> None:
+    owner = signed_in(app, people.a, people.both)
+    assert put_settings(owner, {"contact_email": "shop@example.com"}).status_code == 200
+    for _ in range(2):
+        assert owner.post(RESEND, json={}).status_code == 200
+    before = waiting(migrate_engine, people.a)
+
+    over = owner.post(RESEND, json={})
+
+    assert (over.status_code, over.json()) == (429, {"code": "rate_limited"})
+    assert waiting(migrate_engine, people.a) == before
