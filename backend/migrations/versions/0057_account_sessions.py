@@ -40,13 +40,13 @@ The downgrade drops the functions and the table (every account session ends), re
 SELECT on users and drops users.phone (stored phones are lost).
 
 Revision ID: 0057
-Revises: 0056
+Revises: 0068
 """
 
 from alembic import op
 
 revision = "0057"
-down_revision = "0056"
+down_revision = "0068"
 branch_labels = None
 depends_on = None
 
