@@ -56,6 +56,7 @@ from app import (
 )
 from app.config import (
     DatabaseSettings,
+    LedgerBucketSettings,
     MailSettings,
     Settings,
     StorageSettings,
@@ -211,6 +212,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     storage_on = StorageSettings().configured()
     role = database_role()  # ZB-08
     payments_on = StripeSettings().configured()
+    ledger_on = bool(LedgerBucketSettings().erasure_ledger_bucket)
     # Here, not at import: `python -m app.main` prints the OpenAPI document to stdout.
     logger.info(
         "api started",
@@ -230,6 +232,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             "storage": "on" if storage_on else "off",
             # "off": owner payment routes answer 503 and booking pages book with no payment step.
             "payments": "on" if payments_on else "off",
+            # ZIF-58. "off": erasure answers 503 erasure_unavailable outside localhost.
+            "erasure_ledger": "on" if ledger_on else "off",
             # ZB-08. The role the API's queries run as: ziftbook_app, never the worker's.
             "database_role": role,
         },
@@ -267,6 +271,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.warning("storage unset: photo uploads refused")
     if not payments_on:
         logger.warning("stripe unset: payments off")
+    if not ledger_on:
+        logger.warning("erasure ledger unset: erasure unavailable outside localhost")
     # ZIF-236: report drop counts are written within two minutes even if no report follows them.
     drop_timer = asyncio.create_task(csp_reports.flush_drops_every())
     try:

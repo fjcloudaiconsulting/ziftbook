@@ -38,7 +38,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import NullPool
 
 from app import admin, bookings, jobs, logs, payments, storage
-from app.config import LOCAL_HOSTS, LedgerSettings, MailSettings
+from app.config import LOCAL_HOSTS, LedgerBucketSettings, LedgerSettings, MailSettings
 from app.db import join_tenant
 from app.errors import ApiError
 from app.jobs import Job
@@ -90,10 +90,15 @@ def require() -> None:
     """503 erasure_unavailable while the ledger bucket is unset, outside localhost (ZIF_APP_URL):
     no deployment erases what a restore would bring back unrecorded. Every erasure route calls it
     first. Development may erase without one; its ledger jobs fail until a bucket is set."""
-    if LedgerSettings().erasure_ledger_bucket:
+    if LedgerBucketSettings().erasure_ledger_bucket:
         return
-    if urlsplit(MailSettings().app_url).hostname not in LOCAL_HOSTS:
+    if not local():
         raise ApiError(503, "erasure_unavailable")
+
+
+def local() -> bool:
+    """Whether this is development: ZIF_APP_URL on localhost."""
+    return urlsplit(MailSettings().app_url).hostname in LOCAL_HOSTS
 
 
 def enqueue(
@@ -384,6 +389,11 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("reapply needs --reason")
     if args.command == "backfill" and args.since is None:
         parser.error("backfill needs --since")
+    if args.command == "reapply" and not LedgerSettings().configured():
+        parser.error(
+            "reapply needs ZIF_S3_ENDPOINT, ZIF_ERASURE_LEDGER_BUCKET and the ledger's read-only"
+            " key (ZIF_ERASURE_LEDGER_ACCESS_KEY_ID, ZIF_ERASURE_LEDGER_SECRET_ACCESS_KEY)"
+        )
     engine = create_engine(
         os.environ["ZIF_MIGRATE_DATABASE_URL"], poolclass=NullPool, hide_parameters=True
     )

@@ -820,3 +820,14 @@ def test_an_empty_listing_where_the_database_records_erasures_is_refused(
             {"s": since},
         )
     assert recorded == 0
+
+
+# ZIF-58. GUARD. reapply without the ledger's settings is a usage error naming them (exit 2),
+# not a CRITICAL traceback; backfill needs none.
+def test_reapply_without_the_ledger_settings_is_a_usage_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("ZIF_ERASURE_LEDGER_BUCKET", raising=False)
+    with pytest.raises(SystemExit) as exit_:
+        ledger.main(["reapply", "--reason", "restore drill"])
+    assert exit_.value.code == 2

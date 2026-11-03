@@ -14,7 +14,7 @@ from opentelemetry.metrics import CallbackOptions, Observation
 from sqlalchemy import create_engine, event
 
 from app import bookings, erasure_holds, jobs, ledger, limits, logs, mail, payments, photos, tracing
-from app.config import MailSettings, StripeSettings, WorkerSettings
+from app.config import LedgerSettings, MailSettings, StripeSettings, WorkerSettings
 from app.db import SessionLocal, database_role, reset_session
 from app.jobs import JobKind, run_once
 
@@ -144,6 +144,7 @@ async def serve(settings: WorkerSettings) -> None:
     mail_settings = MailSettings()
     # The secret key alone: release, refund and event jobs need nothing else (ZIF-158).
     payments_on = StripeSettings().secret_ready()
+    ledger_on = LedgerSettings().configured()
     rate_limit_key = limits.key_state()
     role = database_role()  # ZB-08
     # Never the Mailgun key or the healthcheck URL. "off": email jobs fail until the key is set.
@@ -156,6 +157,8 @@ async def serve(settings: WorkerSettings) -> None:
             "mailgun_domain": mail_settings.mailgun_domain,
             "mailgun_region": mail_settings.mailgun_region,
             "payments": "on" if payments_on else "off",
+            # ZIF-58. Never the key. "off": erasure.ledger jobs fail and give up.
+            "erasure_ledger": "on" if ledger_on else "off",
             # Never the key. "unset"/"weak"/"dev": the recipient limits' keys are not peppered
             # (ZB-25), as the API's.
             "rate_limit_key": rate_limit_key,
@@ -173,6 +176,13 @@ async def serve(settings: WorkerSettings) -> None:
         )
     if not payments_on:
         logger.warning("stripe unset: payments off")
+    # ZIF-58: an ERROR where it matters, never a refusal to start: erasures still commit, and their
+    # ledger jobs give up until it is set (python -m app.ledger backfill queues them again).
+    if not ledger_on:
+        logger.log(
+            logging.WARNING if ledger.local() else logging.ERROR,
+            "erasure ledger unset: erasures are not recorded for a restore",
+        )
     if rate_limit_key != "set":
         logger.warning("rate limit key unset: rate-limit keys are not peppered")
     await work(KINDS, settings.healthcheck_url, stop)

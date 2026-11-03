@@ -146,6 +146,7 @@ def test_the_worker_logs_its_settings_once_at_startup(
             "mailgun_domain": "m.example.test",
             "mailgun_region": "us",
             "payments": "off",
+            "erasure_ledger": "off",
             "rate_limit_key": "unset",
         }
     ]
@@ -483,3 +484,50 @@ def test_one_failing_sweep_never_stops_the_other(
     assert pings == []
     failures = [line for line in log_lines() if line["msg"] == "sweep failed"]
     assert {line["sweep"] for line in failures} == {failing}
+
+
+LEDGER = {
+    "ZIF_S3_ENDPOINT": "https://r2.example.test",
+    "ZIF_ERASURE_LEDGER_BUCKET": "ziftbook-erasures",
+    "ZIF_ERASURE_LEDGER_ACCESS_KEY_ID": "worker-key",
+    "ZIF_ERASURE_LEDGER_SECRET_ACCESS_KEY": "worker-secret",
+}
+
+
+# ZIF-58. FENCE. Wrong impl: a worker that starts silently without the ledger (every erasure's
+# ledger job then gives up, and the night's backup is unprotected). Off when any of the four is
+# unset: an ERROR outside localhost, a WARNING in development; on: neither. Never the secret.
+@pytest.mark.parametrize(
+    ("unset", "app_url", "state", "level"),
+    [
+        (None, "https://app.example.com", "on", None),
+        ("ZIF_ERASURE_LEDGER_SECRET_ACCESS_KEY", "https://app.example.com", "off", "ERROR"),
+        ("ZIF_S3_ENDPOINT", "https://app.example.com", "off", "ERROR"),
+        ("ZIF_ERASURE_LEDGER_BUCKET", "http://localhost:3000", "off", "WARNING"),
+    ],
+)
+def test_the_worker_says_whether_erasures_reach_the_ledger(
+    log_lines: Lines,
+    monkeypatch: pytest.MonkeyPatch,
+    unset: str | None,
+    app_url: str,
+    state: str,
+    level: str | None,
+) -> None:
+    for name, value in LEDGER.items():
+        monkeypatch.setenv(name, value)
+    if unset:
+        monkeypatch.delenv(unset)
+    monkeypatch.setenv("ZIF_APP_URL", app_url)
+
+    async def work(*args: object) -> None:
+        return None
+
+    monkeypatch.setattr(worker, "work", work)
+    asyncio.run(worker.serve(WorkerSettings()))
+
+    lines = log_lines()
+    assert [line["erasure_ledger"] for line in lines if line["msg"] == "worker started"] == [state]
+    off = [line["level"] for line in lines if line["msg"].startswith("erasure ledger unset")]
+    assert off == ([level] if level else [])
+    assert "worker-secret" not in json.dumps(lines)
