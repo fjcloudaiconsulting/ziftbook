@@ -134,6 +134,8 @@ Action = Literal[
     "account_details_changed",
     # ZIF-232: an owner typed a new contact email; it waits for its inbox to confirm it.
     "contact_email_requested",
+    # ZIF-232: an owner dropped the waiting address; the one in effect stays.
+    "contact_email_request_cancelled",
 ]
 
 

@@ -390,3 +390,23 @@ def resend(current: CurrentOwner, request: Request, response: Response) -> Conta
     )
     response.headers["Cache-Control"] = "no-store"
     return state(current)
+
+
+@router.delete(
+    "/settings/contact-email/request",
+    name="cancel",
+    responses={s: {"model": Error} for s in (401, 403, 409, 415)},
+)
+def cancel(current: CurrentOwner, request: Request, response: Response) -> ContactEmailOut:
+    """Drop the waiting address: its link stops working, and the address clients see stays."""
+    if not current.db.scalar(text("SELECT cancel_contact_email()")):
+        raise ApiError(409, "no_contact_email_request")
+    auth.record(
+        current.db,
+        request,
+        "contact_email_request_cancelled",
+        actor_user_id=current.user_id,
+        target="setting:contact_email",
+    )
+    response.headers["Cache-Control"] = "no-store"
+    return state(current)
