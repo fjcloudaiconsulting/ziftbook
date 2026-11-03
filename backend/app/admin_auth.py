@@ -306,16 +306,35 @@ def pass_second_factor(body: CodeIn, current: HalfAdmin, request: Request) -> Ad
     if TOTP_CODE.fullmatch(typed):
         _limited(request, "admin_2fa", 20)
         _key_needed()
+        # Counted first, committed in a transaction of its own that never sees the code (ZIF-261),
+        # as limits.hit counts a limit: a check cut off before its commit leaves the attempt
+        # counted. The secret is opened first: a key that can't open it counts nothing.
         with SessionLocal.begin() as session:
             s = _secret(session, id_hash, current.user_id)
             if s is None:  # the session died or the factor was wiped since the guard
                 raise ApiError(401, "unauthenticated")
-            step = totp.matching_step(s, typed, datetime.now(UTC))
-            outcome, failures = session.execute(
-                text("SELECT outcome, failures FROM pass_second_factor(:id, :p, :step)"),
-                {"id": id_hash, "p": totp.proof(s), "step": step},
+            charged, failures, charge = session.execute(
+                text("SELECT outcome, failures, charge FROM charge_second_factor(:id)"),
+                {"id": id_hash},
             ).one()
-            # Recorded in this transaction: a failure's count and its audit row commit together.
+            if charged == "locked":
+                admin.record(
+                    session,
+                    request,
+                    "second_factor_failed",
+                    actor_user_id=current.user_id,
+                    details={"method": "totp", "failures": failures, "locked": True},
+                )
+        if charged == "locked":
+            raise ApiError(403, "second_factor_locked")
+        if charged == "none":  # the session died or the factor was wiped since the guard
+            raise ApiError(401, "unauthenticated")
+        step = totp.matching_step(s, typed, datetime.now(UTC))
+        with SessionLocal.begin() as session:
+            outcome, failures = session.execute(
+                text("SELECT outcome, failures FROM check_second_factor(:id, :charge, :p, :step)"),
+                {"id": id_hash, "charge": charge, "p": totp.proof(s), "step": step},
+            ).one()
             if outcome == "passed":
                 admin.record(
                     session,
@@ -329,9 +348,8 @@ def pass_second_factor(body: CodeIn, current: HalfAdmin, request: Request) -> Ad
                         "second factor passed after failures", extra={"failures": failures}
                     )
             elif outcome == "failed":
-                # Logged inside the transaction, before its commit: a failure whose transaction
-                # never commits is not counted, but still leaves this line. Counting first, in a
-                # transaction of its own, is ZIF-261.
+                # The charge already counted it. Logged before the commit: a check cut off before
+                # it loses its audit row, never its count, and still leaves this line.
                 logger.warning(
                     "second factor failed",
                     extra={"user_id": str(current.user_id), "failures": failures},
@@ -354,16 +372,7 @@ def pass_second_factor(body: CodeIn, current: HalfAdmin, request: Request) -> Ad
                     )
                     logger.error("second factor locked")
                     error = ApiError(403, "second_factor_locked")
-            elif outcome == "locked":
-                admin.record(
-                    session,
-                    request,
-                    "second_factor_failed",
-                    actor_user_id=current.user_id,
-                    details={"method": "totp", "failures": failures, "locked": True},
-                )
-                error = ApiError(403, "second_factor_locked")
-            else:  # none: the session died or the factor was wiped since the guard
+            else:  # none: the session died, the factor was wiped or the charge voided since
                 error = ApiError(401, "unauthenticated")
             passed_as = None if error else session.execute(RESOLVE, {"id_hash": id_hash}).first()
     else:
