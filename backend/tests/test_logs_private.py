@@ -20,7 +20,18 @@ from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 from opentelemetry.sdk.trace import ReadableSpan
 from sqlalchemy import Engine, text
 
-from app import admin_auth, auth, bookings, clients, csp_reports, erasure_holds, payments, totp
+from app import (
+    admin_auth,
+    auth,
+    bookings,
+    clients,
+    csp_reports,
+    erasure_holds,
+    ledger,
+    payments,
+    storage,
+    totp,
+)
 from app.config import MailSettings
 from app.db import tenant_context
 from app.jobs import Job, run_once
@@ -49,6 +60,7 @@ from tests.test_booking_payments_api import make_shop, resume, run, sync
 from tests.test_bookings_api import post_booking, sign_in_as
 from tests.test_erased_client_reads import erase_in
 from tests.test_erasure_holds import erase_announcing
+from tests.test_erasure_ledger import ledger_store
 from tests.test_second_factor_db import issue_ticket
 from tests.test_working_hours import seed
 
@@ -534,6 +546,35 @@ def test_no_personal_data_ever_reaches_a_log(
     with jobs_as_the_worker():
         erasure_holds.sweep()
 
+    # 6n (ZIF-58): the ledger. The 6l erasure's entry is written by its job; a client whose
+    # erasure a restore undid (its entry in the ledger, the client back in the database, with
+    # its name, address and notes) is erased again by reapply; backfill finds nothing missing.
+    restored_name = "Client Restored-4"
+    restored_email = fresh_email()
+    restored_note = "Note Rst-4"
+    for value in (restored_name, restored_email, restored_note):
+        secret(value)
+    restored = owner.post("/api/clients", json={"name": restored_name, "email": restored_email})
+    assert restored.status_code == 201
+    restored_id = uuid.UUID(restored.json()["id"])
+    assert (
+        owner.patch(f"/api/clients/{restored_id}", json={"client_note": restored_note}).status_code
+        == 200
+    )
+    with ledger_store(monkeypatch):
+        with tenant_context(people.a) as session:
+            erased_at = session.scalar(
+                text("SELECT erased_at FROM clients WHERE id = :id"), {"id": client_id}
+            )
+            ledger.enqueue(session, people.a, uuid.UUID(client_id), erased_at)
+        run_jobs_once()
+        lost = ledger.Entry(people.a, restored_id, datetime.now(ZoneInfo("UTC")))
+        storage.ledger_write(lost.key, lost.body())
+        since = (lost.erased_at - timedelta(hours=1)).isoformat()
+        assert ledger.main(["reapply", "--since", since, "--reason", "restore drill"]) == 0
+        assert ledger.main(["backfill", "--since", since]) == 0
+    assert str(restored_id) not in [c["id"] for c in owner.get("/api/clients").json()]
+
     # 7: invite flow — send, list, a wrong token, then accept with a brand-new account.
     invite_email = fresh_email()
     invite_password = "Invite-Pw7-55"
@@ -761,6 +802,12 @@ def test_no_personal_data_ever_reaches_a_log(
     assert {"booking_cancelled", "booking_refund_failed"} <= sent
     late = [line for line in lines if line["msg"] == "contact hold purged late"]
     assert [(line["level"], line["client_id"]) for line in late] == [("ERROR", str(held_client))]
+    ledgered = {line["msg"] for line in lines} & {
+        "erasure ledgered",
+        "erasures reapplied",
+        "ledger backfilled",
+    }
+    assert len(ledgered) == 3
     flood = [line for line in lines if line["msg"] == "booking flood"]
     assert [(line["level"], line["tenant_id"]) for line in flood] == [("WARNING", str(people.a))]
     for msg in ("totp enrolment failed", "second factor failed"):

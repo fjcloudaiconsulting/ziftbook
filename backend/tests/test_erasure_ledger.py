@@ -43,8 +43,8 @@ from tests.test_erased_client_reads import client_of
 BUCKET = "ziftbook-erasures"
 
 
-@pytest.fixture
-def ledger_bucket(monkeypatch: pytest.MonkeyPatch) -> Iterator[S3Client]:
+@contextmanager
+def ledger_store(monkeypatch: pytest.MonkeyPatch) -> Iterator[S3Client]:
     """The ledger bucket on moto, configured through its ZIF_* variables; yields an admin client."""
     for name, value in {
         "ZIF_S3_ENDPOINT": S3_ENDPOINT,
@@ -56,6 +56,12 @@ def ledger_bucket(monkeypatch: pytest.MonkeyPatch) -> Iterator[S3Client]:
     with mock_aws():
         admin = boto3.client("s3", endpoint_url=S3_ENDPOINT, region_name="us-east-1")
         admin.create_bucket(Bucket=BUCKET)
+        yield admin
+
+
+@pytest.fixture
+def ledger_bucket(monkeypatch: pytest.MonkeyPatch) -> Iterator[S3Client]:
+    with ledger_store(monkeypatch) as admin:
         yield admin
 
 
