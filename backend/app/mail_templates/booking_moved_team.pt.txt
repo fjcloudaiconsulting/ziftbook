@@ -1,7 +1,7 @@
 Agendamento remarcado
 # Um agendamento foi remarcado
 
-Este agendamento foi remarcado para outro horário.
+Este agendamento foi remarcado.
 
 | $service
 | Agora $date às $time ($zone)

@@ -1,7 +1,7 @@
 New booking
 # You have a new booking
 
-$client booked with you, and the booking is confirmed.
+The booking for $client is confirmed.
 
 | $service
 | $date at $time ($zone)

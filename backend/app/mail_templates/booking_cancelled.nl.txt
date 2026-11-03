@@ -1,7 +1,7 @@
 Je boeking is geannuleerd
 # Je boeking is geannuleerd
 
-Het spijt ons: $business heeft je boeking moeten annuleren.
+Het spijt ons: $business heeft je boeking geannuleerd.
 
 | $service
 | $date om $time ($zone)

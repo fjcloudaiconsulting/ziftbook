@@ -1,7 +1,7 @@
 Um cliente remarcou o agendamento
 # Um agendamento foi remarcado
 
-$client remarcou o agendamento para outro horário.
+$client remarcou o agendamento.
 
 | $service
 | Agora $date às $time ($zone)

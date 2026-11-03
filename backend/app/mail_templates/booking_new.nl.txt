@@ -1,7 +1,7 @@
 Nieuwe boeking
 # Je hebt een nieuwe boeking
 
-$client heeft bij je geboekt. De boeking is bevestigd.
+De boeking voor $client is bevestigd.
 
 | $service
 | $date om $time ($zone)

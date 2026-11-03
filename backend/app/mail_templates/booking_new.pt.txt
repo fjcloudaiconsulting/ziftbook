@@ -1,7 +1,7 @@
 Novo agendamento
 # Você tem um novo agendamento
 
-$client agendou com você. O agendamento está confirmado.
+O agendamento de $client está confirmado.
 
 | $service
 | $date às $time ($zone)

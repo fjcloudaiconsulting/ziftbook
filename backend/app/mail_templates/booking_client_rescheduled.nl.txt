@@ -1,7 +1,7 @@
 Een klant heeft de afspraak verzet
 # Een afspraak is verzet
 
-$client heeft de afspraak naar een ander moment verzet.
+$client heeft de afspraak verzet.
 
 | $service
 | Nu $date om $time ($zone)
