@@ -2812,3 +2812,42 @@ def test_0086_round_trips_contact_email_requests(
         command.upgrade(cfg, "head")
     with migrate_engine.connect() as conn:
         assert tuple(conn.execute(CONTACT_EMAIL_OBJECTS).one()) == (True, 4)
+
+
+CONTACT_EMAIL_GUARD = text("""
+SELECT (SELECT pg_get_triggerdef(t.oid) FROM pg_trigger t
+        WHERE t.tgname = 'settings_contact_email_confirmed_only'
+          AND t.tgrelid = 'settings'::regclass),
+       to_regprocedure('settings_contact_email_confirmed_only()') IS NOT NULL
+""")
+CONTACT_EMAIL_GUARD_FUNCTION = text("""
+SELECT p.prosecdef, p.proconfig, has_function_privilege('public', p.oid, 'EXECUTE')
+FROM pg_proc p WHERE p.oid = to_regprocedure('settings_contact_email_confirmed_only()')
+""")
+CONTACT_EMAIL_GUARD_TRIGGER = (
+    "CREATE TRIGGER settings_contact_email_confirmed_only BEFORE INSERT OR UPDATE"
+    " ON public.settings FOR EACH ROW WHEN ((new.key = 'contact_email'::text))"
+    " EXECUTE FUNCTION settings_contact_email_confirmed_only()"
+)
+
+
+# ZIF-232 FENCE (0087). Wrong impl: a downgrade that leaves the trigger or its function behind; an
+# upgrade whose trigger misses UPDATE or keys on OLD, or whose function runs as its owner (every
+# write would pass), searches a caller's schema first, or is PUBLIC's.
+def test_0087_round_trips_the_contact_email_guard(
+    migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = lock_timeout_config(monkeypatch)
+    try:
+        command.downgrade(cfg, "0086")
+        with migrate_engine.connect() as conn:
+            assert tuple(conn.execute(CONTACT_EMAIL_GUARD).one()) == (None, False)
+    finally:
+        command.upgrade(cfg, "head")
+    with migrate_engine.connect() as conn:
+        assert tuple(conn.execute(CONTACT_EMAIL_GUARD).one()) == (CONTACT_EMAIL_GUARD_TRIGGER, True)
+        assert tuple(conn.execute(CONTACT_EMAIL_GUARD_FUNCTION).one()) == (
+            False,
+            ["search_path=pg_catalog, public, pg_temp"],
+            False,
+        )

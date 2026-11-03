@@ -50,6 +50,9 @@ must never break the version that is still running.
 Specifics:
 
 - A new `NOT NULL` column needs a default, or is added nullable, backfilled, then tightened in a later release.
+- Ruled exception (ZIF-232, 0087): from 0087 on, the running older release's `PUT /api/settings` that carries
+  `contact_email` is refused (500, nothing in that PUT saved). It fails closed: it can only refuse, never publish an
+  unconfirmed address, and no first-party client sent the key before. Any other exception needs the same ruling.
 - Migrations form one chain, and their numbers are identifiers, not an order. Before merging a PR that adds a
   migration, rebase it onto `main` and set its `down_revision` to the current head; `alembic heads` must print one line.
   If both are already merged, add a merge revision (`down_revision = ("a", "b")`, empty upgrade and downgrade)
@@ -721,6 +724,10 @@ value needs a redeploy it is an environment variable; otherwise it is a setting.
 - A saved value equal to the default stays saved: changing a default later only reaches businesses that never saved
   that key.
 - Every member can read settings, so never make a secret or personal data a setting.
+- `contact_email` holds only an address its inbox confirmed (ZIF-232): a trigger refuses any write of the key by a
+  role other than `ziftbook_migrate` (0087), and an owner's PUT goes through `app/contact_email.py`, never `save()`.
+  A typed address waits in `contact_email_requests` and is used for nothing. An operator who sets one by hand runs
+  `SET ROLE ziftbook_migrate` first; a data-only restore of `settings` needs `--disable-triggers`.
 - Convert a business's local times with `zoneinfo`, never with SQL `AT TIME ZONE`: Postgres doesn't know every name
   the `tzdata` package accepts (`US/Pacific`, `Asia/Calcutta`).
 
@@ -777,7 +784,8 @@ Deferred and scheduled work goes through the `jobs` table (`app/jobs.py`); there
 - Enqueue a booking email in the same transaction as the status change it announces, so a rollback drops the job with
   it (ZIF-53).
 - Client booking emails carrying no manage link reply to the business's `contact_email` (Reply-To); never a token
-  email, and never staff, invite, sign-up or reset mail (ZIF-99).
+  email, and never staff, invite, sign-up or reset mail (ZIF-99). The key is only ever a confirmed address (ZIF-232),
+  read at send time, so an email that read it just before a change can still carry the old one.
 
 ## Logging
 
