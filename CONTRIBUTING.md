@@ -632,6 +632,16 @@ A platform admin runs the platform across businesses (ZIF-70). `platform_admins`
   a 5xx on the route, and, if it was cut off after the check answered, a `second factor failed` line. Handle that
   as the same ZB-08 incident. A lock shows as a `second_factor_locked` event, not as `failures` 10 on an attempt
   event: a pass still in flight can give its attempt back, so a 10 then locks nothing.
+  An attempt can also end with no outcome event for a legitimate reason: a reset voided it between its charge
+  and its check (a recovery code lifting the lock, a sign-out, `python -m app.admin enrol`, another begin or
+  confirm), or it waited past its charge's 2-minute life. The request then answered 401 or 409, not a 5xx. Look
+  for the reset's own event (`recovery_code_used`, `admin_signed_out`, `totp_enrolment_issued`, `totp_enrolled`)
+  next to it before calling it a cut-off check; alone, such an attempt is no ZB-08 incident. A
+  `totp_enrolment_failed` event without `failures` is a refused ticket, not a code: leave it out of the pairing.
+  The pairing is a hint, not proof: the app role can insert platform audit events (it cannot change, delete or
+  backdate one), so someone running SQL as it can add a matching outcome after cutting a check off, or plant
+  attempts. Against that attacker the signals are the ones it cannot undo: the attempt events, the count and the
+  lock.
 - Never enable statement or parameter logging (`log_statement`, `log_min_duration_statement` with parameters,
   `auto_explain` with parameters) on the app database. Bind values include bearer proofs: a logged TOTP proof,
   recovery-code proof or ticket proof lets anyone who can read the log and run SQL pass an admin's second factor.
