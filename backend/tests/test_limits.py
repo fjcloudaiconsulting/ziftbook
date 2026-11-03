@@ -1,8 +1,9 @@
 import hashlib
 import hmac
 import threading
+import time
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from datetime import timedelta
 
 import pytest
@@ -10,7 +11,8 @@ from sqlalchemy import Engine, text
 
 from app import limits
 from app.db import SessionLocal, tenant_context
-from tests.conftest import People
+from app.errors import ApiError
+from tests.conftest import People, fresh_address, wait_until_blocked
 
 WINDOW = timedelta(minutes=15)
 
@@ -402,3 +404,105 @@ def test_refunds_and_hits_on_the_same_keys_do_not_deadlock(action: str) -> None:
         thread.join()
 
     assert errors == []
+
+
+BLOCKED = text(
+    "SELECT count(DISTINCT l.pid) FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid "
+    "WHERE NOT l.granted AND a.datname = current_database()"
+)
+
+
+def from_address(address: str, call: Callable[[], object], out: list[object]) -> None:
+    """call() as a request from address would make it, its result or its exception into out."""
+    limits.CLIENT.set(address)  # a new thread starts with an empty context
+    try:
+        out.append(call())
+    except Exception as error:
+        out.append(error)
+
+
+def test_one_address_holds_at_most_two_limiter_calls_at_once(
+    action: str, app_engine: Engine
+) -> None:
+    key = f"{action}:k"
+    limits.hit({key: 100}, WINDOW)  # the row, so the holder below can lock it
+    address = fresh_address()
+    results: list[object] = []
+    with app_engine.begin() as holder:
+        holder.execute(text("SELECT FROM rate_limits WHERE key = :k FOR UPDATE"), {"k": key})
+        threads = [
+            threading.Thread(
+                target=from_address, args=(address, lambda: limits.hit({key: 100}, WINDOW), results)
+            )
+            for _ in range(6)
+        ]
+        for thread in threads:
+            thread.start()
+        wait_until_blocked(app_engine, 2)
+        for _ in range(100):  # the other four are refused without waiting for the lock
+            if len(results) == 4:
+                break
+            time.sleep(0.05)
+        with app_engine.connect() as conn:
+            assert conn.scalar(BLOCKED) == 2
+        assert [(e.status_code, e.code) for e in results if isinstance(e, ApiError)] == [
+            (429, "rate_limited")
+        ] * 4
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert results.count(False) == 2
+    with app_engine.connect() as conn:
+        # The four refused did no database work: only the first and the two that waited counted.
+        assert conn.scalar(text("SELECT hits FROM rate_limits WHERE key = :k"), {"k": key}) == 3
+    assert limits._in_flight == {}
+
+
+def test_an_address_at_its_cap_does_not_hold_up_another(action: str, app_engine: Engine) -> None:
+    key = f"{action}:k"
+    limits.hit({key: 100}, WINDOW)
+    address = fresh_address()
+    results: list[object] = []
+    other: list[object] = []
+    with app_engine.begin() as holder:
+        holder.execute(text("SELECT FROM rate_limits WHERE key = :k FOR UPDATE"), {"k": key})
+        threads = [
+            threading.Thread(
+                target=from_address, args=(address, lambda: limits.hit({key: 100}, WINDOW), results)
+            )
+            for _ in range(2)
+        ]
+        for thread in threads:
+            thread.start()
+        wait_until_blocked(app_engine, 2)
+        neighbour = threading.Thread(
+            target=from_address,
+            args=(fresh_address(), lambda: limits.hit({f"{action}:other": 100}, WINDOW), other),
+        )
+        neighbour.start()
+        neighbour.join(timeout=10)
+        assert other == [False]  # answered while the first address still holds both its slots
+    for thread in threads:
+        thread.join(timeout=10)
+    assert results == [False, False]
+
+
+def test_a_failed_limiter_call_gives_its_slot_back(
+    action: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def broken(keys: list[str], window: timedelta) -> dict[str, int]:
+        raise RuntimeError("database gone")
+
+    monkeypatch.setattr(limits, "_charge", broken)
+    results: list[object] = []
+    for _ in range(3):  # one after another: two slots kept by failures would refuse the third
+        thread = threading.Thread(
+            target=from_address,
+            args=("198.51.100.20", lambda: limits.hit({f"{action}:k": 10}, WINDOW), results),
+        )
+        thread.start()
+        thread.join(timeout=10)
+
+    # Each failed as itself, never as a full house: every slot came back.
+    assert [type(e) for e in results] == [RuntimeError] * 3
+    assert limits._in_flight == {}
