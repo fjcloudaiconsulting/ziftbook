@@ -12,16 +12,17 @@ charged first and checked second:
   pass changes the count, giving back the one attempt its charge counted. A check cut off before its
   commit leaves the charge counted.
 - A charge lives in second_factors.charges for 2 minutes: the check comes in the same request.
+- charge_totp_enrolment and check_totp_enrolment do the same for an enrolment's confirm code.
 
 Everything else that resets the secret or the count voids the charges in flight, so no charge made
 before it is checked after it: begin_totp_enrolment, confirm_totp_enrolment, use_recovery_code when
 it lifts a lock (replaced in place) and the CLI's new ticket. A recovery code with no lock leaves
 the count, and the charges with it.
 
-pass_second_factor stays as it is for the release still running during the deploy; revoking and
-dropping it is a later, contract migration.
+pass_second_factor and confirm_totp_enrolment stay for the release still running during the
+deploy; revoking and dropping them is a later, contract migration.
 
-The downgrade restores the three replaced bodies and drops the column and both functions.
+The downgrade restores the three replaced bodies and drops the column and the four functions.
 
 Revision ID: 0083
 Revises: 0069
@@ -116,6 +117,77 @@ BEGIN
     UPDATE admin_sessions s SET second_factor_at = now() WHERE s.id_hash = p_id_hash;
     -- The failures since the last pass, this attempt's charge not among them.
     RETURN QUERY SELECT 'passed', greatest(f.failures_since_pass - 1, 0);
+    RETURN;
+  END IF;
+  UPDATE second_factors x SET charges = array_remove(x.charges, p_charge) WHERE x.user_id = v_user;
+  RETURN QUERY SELECT 'failed', f.failed_attempts;  -- the charge counted it; 10: it locked
+END $$""",
+    "charge_totp_enrolment(bytea)": f"""
+CREATE FUNCTION charge_totp_enrolment(p_id_hash bytea)
+RETURNS TABLE (outcome text, failures integer, charge uuid)
+LANGUAGE plpgsql SECURITY DEFINER {SEARCH_PATH} AS $$
+-- 'charged' | 'locked' | 'none'. charge_second_factor for an enrolment begun and not confirmed:
+-- counts one confirm code before check_totp_enrolment looks at it (ZIF-261). A plain count, as
+-- 0069's confirm kept it: no leak.
+DECLARE
+  v_user uuid := live_admin_user(p_id_hash);
+  f second_factors;
+  v_charge uuid := uuidv7();
+BEGIN
+  SELECT * INTO f FROM second_factors x
+  WHERE x.user_id = v_user AND x.confirmed_at IS NULL AND x.secret_ct IS NOT NULL
+    AND x.ticket_expires_at > now()
+  FOR UPDATE;
+  IF NOT FOUND THEN RETURN QUERY SELECT 'none', 0, NULL::uuid; RETURN; END IF;
+  IF f.failed_attempts >= 10 THEN
+    RETURN QUERY SELECT 'locked', f.failed_attempts, NULL::uuid;
+    RETURN;
+  END IF;
+  -- A password holder must not be able to guess-confirm the operator's half-finished enrolment.
+  UPDATE second_factors x SET failed_attempts = f.failed_attempts + 1,
+    charges = ARRAY(SELECT c FROM unnest(f.charges) AS c
+                    WHERE uuid_extract_timestamp(c) > now() - {CHARGE_LIFE}) || v_charge
+  WHERE x.user_id = v_user;
+  RETURN QUERY SELECT 'charged', f.failed_attempts + 1, v_charge;
+END $$""",
+    "check_totp_enrolment(bytea,uuid,bytea,bigint,bytea[])": f"""
+CREATE FUNCTION check_totp_enrolment(
+  p_id_hash bytea, p_charge uuid, p_proof bytea, p_step bigint, p_code_proofs bytea[])
+RETURNS TABLE (outcome text, failures integer)
+LANGUAGE plpgsql SECURITY DEFINER {SEARCH_PATH} AS $$
+-- 'enrolled' | 'failed' | 'none'. Checks a confirm code charge_totp_enrolment already counted
+-- (ZIF-261); 'none' as check_second_factor's. Enrolled: confirms the begun enrolment, stores the
+-- ten recovery codes, uses up the ticket and passes this session's second factor.
+DECLARE
+  v_user uuid := live_admin_user(p_id_hash);
+  v_now bigint := {NOW_STEP};
+  f second_factors;
+BEGIN
+  IF cardinality(p_code_proofs) IS DISTINCT FROM 10 THEN
+    RAISE EXCEPTION 'ten recovery codes';
+  END IF;
+  SELECT * INTO f FROM second_factors x
+  WHERE x.user_id = v_user AND x.confirmed_at IS NULL AND x.secret_ct IS NOT NULL
+    AND x.ticket_expires_at > now()
+  FOR UPDATE;
+  IF NOT FOUND THEN RETURN QUERY SELECT 'none', 0; RETURN; END IF;
+  -- coalesce: a NULL charge is none too, never a check.
+  IF NOT coalesce(p_charge = ANY (f.charges)
+                  AND uuid_extract_timestamp(p_charge) > now() - {CHARGE_LIFE}, false) THEN
+    RETURN QUERY SELECT 'none', 0;
+    RETURN;
+  END IF;
+  IF f.proof_hash = sha256(p_proof) AND p_step BETWEEN v_now - 1 AND v_now + 1 THEN
+    -- A new secret starts with no failures and no attempt in flight (0069, 0083).
+    UPDATE second_factors x SET confirmed_at = now(), last_step = p_step, failed_attempts = 0,
+      failures_leaked_at = NULL, failures_since_pass = 0, charges = '{{}}',
+      ticket_hash = NULL, ticket_expires_at = NULL,
+      recovery_code_hashes = ARRAY(SELECT sha256(c) FROM unnest(p_code_proofs) AS c)
+    WHERE x.user_id = v_user;
+    -- Whoever else held this admin's password and a half session is out.
+    DELETE FROM admin_sessions s WHERE s.user_id = v_user AND s.id_hash <> p_id_hash;
+    UPDATE admin_sessions s SET second_factor_at = now() WHERE s.id_hash = p_id_hash;
+    RETURN QUERY SELECT 'enrolled', 0;
     RETURN;
   END IF;
   UPDATE second_factors x SET charges = array_remove(x.charges, p_charge) WHERE x.user_id = v_user;
