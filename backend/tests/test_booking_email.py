@@ -669,6 +669,7 @@ def test_every_booking_template_renders_service_and_when() -> None:
         "old_time": "OLD-TIME-MARKER",
         "payment": "",
         "amount": "AMOUNT-MARKER",
+        "contact": "",
     }
     for template in [*STATUS_FOR, "booking_request_team_member"]:  # ZIF-143's file variant
         for locale in LOCALES:
@@ -697,6 +698,7 @@ def test_exactly_the_message_templates_carry_the_clients_message() -> None:
         "page": "https://example.com/p",
         "payment": "",
         "amount": "AMOUNT",
+        "contact": "",
     }
     carrying = set()
     for path in sorted(mail.TEMPLATES.glob("booking_*.txt")):

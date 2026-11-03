@@ -356,6 +356,13 @@ STATUS_FOR = {
     "booking_client_rescheduled": {"confirmed", "pending"},
     # ZIF-57: the team is told when a colleague moves a booking of theirs.
     "booking_moved_team": {"confirmed"},
+    # ZIF-58: a refund Stripe refused or failed, on any ending that refunds (bookings.REFUNDING).
+    "booking_refund_failed": {
+        "declined",
+        "expired",
+        "cancelled_by_merchant",
+        "cancelled_by_client",
+    },
 }
 
 # ZIF-54 D1: the client templates whose $link is the guest booking link, minted here at send time.
@@ -363,9 +370,21 @@ LINKED = frozenset({"booking_received", "booking_confirmed", "booking_reminder"}
 
 # ZIF-58: the only client emails an erased client still gets, at the address and in the locale its
 # erasure kept (client_erasure_holds, which only the worker reads): a booking ended and the money
-# owed. None carries a manage link. Every other email to an erased client is skipped.
-HOLD_TEMPLATES = frozenset({"booking_cancelled", "booking_expired"})
+# owed, and a refund that failed (sent to no one else: a live client's is the business's to follow
+# up). None carries a manage link. Every other email to an erased client is skipped.
+HOLD_TEMPLATES = frozenset({"booking_cancelled", "booking_expired", "booking_refund_failed"})
 HOLD = text("SELECT email, locale FROM client_erasure_holds WHERE client_id = :id")
+# The failure the job announces: its amount, from the event that told it.
+REFUND_FAILED = text("""
+SELECT (e.details ->> 'amount_minor')::int AS amount_minor, b.price_currency AS currency
+FROM booking_events e JOIN bookings b ON b.tenant_id = e.tenant_id AND b.id = e.booking_id
+WHERE e.id = :event AND e.booking_id = :booking AND e.event = 'refund_failed'
+""")
+CONTACT_LINE = {
+    "en": "You can reach them at $email.",
+    "nl": "Het e-mailadres van het bedrijf is $email.",
+    "pt": "O e-mail do negócio é $email.",
+}
 
 # FOR SHARE OF c (ZIF-58): a job that read the client while an erasure was in flight would mint a
 # manage link after the erasure deleted them, and mail what it read before; a link's foreign key
@@ -649,6 +668,8 @@ def send_booking(job: Job) -> None:
                 if held is None:  # no longer to be told anything, or not this
                     return
                 recipient_email, recipient_locale = held.email, held.locale
+            elif template == "booking_refund_failed":  # through a hold only
+                return
             if recipient_email is None:  # merchant-created with no address
                 return
         else:
@@ -738,6 +759,21 @@ def send_booking(job: Job) -> None:
             values["amount"] = _money(paid.amount_minor, paid.currency, locale)
             if payload.get("late"):
                 file = "booking_expired_late"
+        if template == "booking_refund_failed":
+            failed = session.execute(
+                REFUND_FAILED, {"event": payload["event_id"], "booking": payload["booking_id"]}
+            ).first()
+            if failed is None:
+                return
+            values["amount"] = _money(failed.amount_minor, failed.currency, locale)
+            values["contact"] = (
+                ""
+                if settings.contact_email is None
+                else "\n\n"
+                + Template(CONTACT_LINE[locale]).substitute(
+                    email=passwords.normalise_email(settings.contact_email)
+                )
+            )
         subject, body = render(file, locale, values)
         status = _outbox(session, job, recipient_id, template, subject)
         if status == "pending" and token is not None:

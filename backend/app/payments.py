@@ -530,7 +530,13 @@ SELECT current_setting('app.tenant_id')::uuid, :booking_id, 'refund_failed',
 WHERE NOT EXISTS (SELECT 1 FROM booking_events
                   WHERE booking_id = :booking_id AND event = 'refund_failed'
                     AND details ->> 'refund' = :refund_id)
-RETURNING 1
+RETURNING id
+""")
+# ZIF-58: an erased client has no one else to hear a failed refund from (mail.HOLD_TEMPLATES).
+ERASED_CLIENT = text("""
+SELECT c.erased_at IS NOT NULL FROM bookings b
+JOIN clients c ON c.tenant_id = b.tenant_id AND c.id = b.client_id
+WHERE b.id = :id
 """)
 SET_REFUND_ID = text("""
 UPDATE booking_payments SET refund_id = coalesce(refund_id, :refund_id) WHERE intent_id = :intent
@@ -970,14 +976,15 @@ def _refund(tenant_id: UUID, row: Row[Any]) -> None:
                 SET_REFUND_FLAG,
                 {"intent": row.intent_id, "refunded": state.amount_refunded},
             )
-            db.execute(
+            told = db.execute(
                 TELL_REFUND_FAILED,
                 {
                     "booking_id": row.booking_id,
                     "refund_id": None,
                     "details": json.dumps({"amount_minor": owed, "refund": None}),
                 },
-            )
+            ).scalar_one()
+            _mail_refund_failed(db, tenant_id, row.booking_id, told)
             count_after_commit(
                 db,
                 tracing.PAYMENT_OUTCOMES,
@@ -1052,6 +1059,7 @@ def refund_changed(tenant_id: UUID, refund_id: str) -> None:
             ).first()
             db.execute(SET_REFUND_ID, params)
             if told is not None:
+                _mail_refund_failed(db, tenant_id, payment.booking_id, told.id)
                 count_after_commit(
                     db,
                     tracing.PAYMENT_OUTCOMES,
@@ -1060,6 +1068,21 @@ def refund_changed(tenant_id: UUID, refund_id: str) -> None:
         db.execute(SET_REFUND_FLAG, {**params, "refunded": refunded.amount_refunded})
     if told is not None:
         logger.error("refund failed", extra={"intent": refund.payment_intent, "refund": refund_id})
+
+
+def _mail_refund_failed(db: Session, tenant_id: UUID, booking_id: UUID, event_id: UUID) -> None:
+    """Enqueue the client's email about the failure just told (once: keyed on its event), when the
+    client was erased; the team sees the flag in the console either way."""
+    if db.scalar(ERASED_CLIENT, {"id": booking_id}):
+        bookings.email(
+            db,
+            tenant_id,
+            booking_id,
+            "booking_refund_failed",
+            key_suffix=f":{event_id}",
+            extra={"event_id": str(event_id)},
+            merchant=False,
+        )
 
 
 def _write(tenant_id: UUID, statement: Any, row: Row[Any], action: str) -> None:
