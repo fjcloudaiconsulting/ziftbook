@@ -40,7 +40,7 @@ from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import NullPool
 
-from app import admin, bookings, jobs, logs, payments, storage
+from app import admin, bookings, erasure_holds, jobs, logs, payments, storage
 from app.config import LOCAL_HOSTS, LedgerBucketSettings, LedgerSettings, MailSettings
 from app.db import join_tenant
 from app.errors import ApiError
@@ -320,9 +320,12 @@ def reapply(
                 )
             ]
             # false: the cancellations were announced the first time.
-            if session.scalar(CORE, {"id": entry.client_id}) is None:
+            erased_at = session.scalar(CORE, {"id": entry.client_id})
+            if erased_at is None:
                 # The core and the lookup above disagree on the business: nothing is applied.
                 raise RuntimeError("the erase core found no client")
+            # The backstop purge of the hold the core may have written (PR 6), in this transaction.
+            erasure_holds.enqueue_purge(session, entry.tenant_id, entry.client_id, erased_at)
             counts["reapplied"] += 1
             cancelled += len(ended)
         admin.record(
