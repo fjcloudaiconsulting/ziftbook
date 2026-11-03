@@ -15,7 +15,13 @@ from app import mail
 from app.db import SessionLocal, tenant_context
 from app.jobs import Job, enqueue
 from app.worker import KINDS
-from tests.conftest import People, fresh_email, migrate_tenant_context, save_setting
+from tests.conftest import (
+    MAILGUN_CALLS,
+    People,
+    fresh_email,
+    migrate_tenant_context,
+    save_setting,
+)
 from tests.test_account_email import (  # noqa: F401
     APP_URL,
     as_the_worker,
@@ -127,6 +133,32 @@ def test_a_job_for_a_request_no_longer_due_sends_nothing(people: People, after: 
     mail.send_contact_email(job_for(people.a, request_id))
 
     assert inbox(email) == []
+
+
+# Review S8 / NIT 2 FENCE. Wrong impl: the worker mailing whatever the request holds, so an address
+# written around the API (a row 0088 moved, or a compromised API's) reaches a list or a header.
+@pytest.mark.parametrize(
+    "stored_email",
+    ["a@b.nl\r\nbcc: x@y.nl", "a@b.nl, victim@y.nl", "shop <a@b.nl>", "not-an-address"],
+)
+def test_the_job_mails_only_an_address_the_api_would_take(
+    people: People, migrate_engine: Engine, stored_email: str
+) -> None:
+    with migrate_tenant_context(migrate_engine, people.a) as conn:  # as 0088 leaves a moved row
+        request_id = conn.scalar(
+            text(
+                "INSERT INTO contact_email_requests (tenant_id, email, expires_at)"
+                " VALUES (current_setting('app.tenant_id')::uuid, :e, now() + interval '1 day')"
+                " RETURNING id"
+            ),
+            {"e": stored_email},
+        )
+    before = len(MAILGUN_CALLS)
+
+    mail.send_contact_email(job_for(people.a, request_id))
+
+    assert len(MAILGUN_CALLS) == before
+    assert stored(migrate_engine, people.a).token_hash is None  # no link minted either
 
 
 def test_a_job_after_the_confirm_sends_nothing(people: People) -> None:
