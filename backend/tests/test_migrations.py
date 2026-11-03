@@ -2222,14 +2222,18 @@ WHERE table_name = 'second_factors' AND column_name = 'charges'
 """)
 
 
-# ZIF-261 FENCE (0083). Wrong impl: a downgrade that leaves the column or a function behind; an
-# upgrade whose functions run as the caller, search a caller's schema first, are PUBLIC's, or are
-# not the app's to call. Injected by deleting the downgrade's DROP COLUMN, then `SECURITY DEFINER`
-# from one header, then one REVOKE.
+# ZIF-261 FENCE (0083). Wrong impl: a downgrade that leaves the column or a function behind, or
+# keeps a replaced body; an upgrade whose functions run as the caller, search a caller's schema
+# first, are PUBLIC's, or are not the app's to call. Injected by deleting the downgrade's DROP
+# COLUMN, then its install(REPLACED_BEFORE), then `SECURITY DEFINER` from one header, then one
+# REVOKE.
 def test_0083_round_trips_the_charges(
     migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     cfg = lock_timeout_config(monkeypatch)
+    m = migration("0083_count_second_factor_first.py")
+    with migrate_engine.connect() as conn:
+        at_head = {sig: conn.execute(DEFINER_STATE, {"signature": sig}).one() for sig in m.REPLACED}
     try:
         command.downgrade(cfg, "0069")
         with migrate_engine.connect() as conn:
@@ -2238,6 +2242,10 @@ def test_0083_round_trips_the_charges(
                 conn.scalar(text("SELECT to_regprocedure(:s)"), {"s": sig})
                 for sig in CHARGE_DEFINERS
             ]
+            for sig, body in m.REPLACED_BEFORE.items():
+                row = conn.execute(DEFINER_STATE, {"signature": sig}).one()
+                assert row.prosrc == dollar_body(body), sig
+                assert tuple(row)[3:] == DEFINER_ACCESS, sig
         assert gone == [None] * len(CHARGE_DEFINERS)
     finally:
         command.upgrade(cfg, "head")
@@ -2246,6 +2254,28 @@ def test_0083_round_trips_the_charges(
         for sig in CHARGE_DEFINERS:
             row = conn.execute(DEFINER_STATE, {"signature": sig}).one()
             assert tuple(row)[3:] == DEFINER_ACCESS, sig
+        for sig in m.REPLACED:
+            row = conn.execute(DEFINER_STATE, {"signature": sig}).one()
+            assert row.definition == at_head[sig].definition, sig
+            assert tuple(row)[3:] == DEFINER_ACCESS, sig
+
+
+# ZIF-261: 0083's downgrade bodies are what 0039 (begin) and 0069 (the others) wrote, verbatim, as
+# CREATE OR REPLACE, so the downgrade restores them, not a drifted copy.
+def test_0083_downgrade_restores_the_replaced_functions() -> None:
+    begin = "begin_totp_enrolment(bytea,bytea,bytea,bytea)"
+    before = {
+        begin: migration("0039_admin_second_factor.py")
+        .FUNCTIONS[begin]
+        .replace("CREATE FUNCTION", "CREATE OR REPLACE FUNCTION", 1),
+        **{
+            sig: body
+            for sig, body in migration("0069_second_factor_failures_leak.py").FUNCTIONS.items()
+            if sig != "pass_second_factor(bytea,bytea,bigint)"
+        },
+    }
+
+    assert migration("0083_count_second_factor_first.py").REPLACED_BEFORE == before
 
 
 # ZIF-58 (0063): the name checks on clients, erased_at, the tombstone trigger and its function,

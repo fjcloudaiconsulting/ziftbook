@@ -13,10 +13,15 @@ charged first and checked second:
   commit leaves the charge counted.
 - A charge lives in second_factors.charges for 2 minutes: the check comes in the same request.
 
+Everything else that resets the secret or the count voids the charges in flight, so no charge made
+before it is checked after it: begin_totp_enrolment, confirm_totp_enrolment, use_recovery_code when
+it lifts a lock (replaced in place) and the CLI's new ticket. A recovery code with no lock leaves
+the count, and the charges with it.
+
 pass_second_factor stays as it is for the release still running during the deploy; revoking and
 dropping it is a later, contract migration.
 
-The downgrade drops the column and both functions.
+The downgrade restores the three replaced bodies and drops the column and both functions.
 
 Revision ID: 0083
 Revises: 0069
@@ -118,6 +123,187 @@ BEGIN
 END $$""",
 }
 
+# Every other place that resets the secret or the count voids the attempts in flight, so a charge
+# made before it is never checked after it. Replaced in place: same arguments and results.
+REPLACED = {
+    "begin_totp_enrolment(bytea,bytea,bytea,bytea)": f"""
+CREATE OR REPLACE FUNCTION begin_totp_enrolment(
+  p_id_hash bytea, p_ticket_proof bytea, p_secret_ct bytea, p_proof bytea)
+RETURNS text LANGUAGE plpgsql SECURITY DEFINER {SEARCH_PATH} AS $$
+-- 'begun' | 'invalid_ticket' | 'already_enrolled'. Stores a new, unconfirmed secret for the session
+-- user, given the CLI's ticket. Voids the attempts in flight: none is checked against the new
+-- secret (0083).
+DECLARE v_user uuid := live_admin_user(p_id_hash);
+BEGIN
+  -- Never overwrites a confirmed secret: re-enrolling goes through the CLI.
+  IF EXISTS (SELECT FROM second_factors f WHERE f.user_id = v_user AND f.confirmed_at IS NOT NULL)
+  THEN
+    RETURN 'already_enrolled';
+  END IF;
+  UPDATE second_factors f SET secret_ct = p_secret_ct, proof_hash = sha256(p_proof),
+                              last_step = 0, failed_attempts = 0, charges = '{{}}'
+  WHERE f.user_id = v_user AND f.ticket_hash = sha256(p_ticket_proof)
+    AND f.ticket_expires_at > now();
+  -- The ticket is not used up here: an abandoned QR can be restarted within the hour.
+  RETURN CASE WHEN FOUND THEN 'begun' ELSE 'invalid_ticket' END;
+END $$""",
+    "confirm_totp_enrolment(bytea,bytea,bigint,bytea[])": f"""
+CREATE OR REPLACE FUNCTION confirm_totp_enrolment(
+  p_id_hash bytea, p_proof bytea, p_step bigint, p_code_proofs bytea[])
+RETURNS TABLE (outcome text, failures integer)
+LANGUAGE plpgsql SECURITY DEFINER {SEARCH_PATH} AS $$
+-- 'enrolled' | 'failed' | 'locked' | 'none'. Confirms the begun enrolment with a code, stores the
+-- ten recovery codes, uses up the ticket and passes this session's second factor.
+DECLARE
+  v_user uuid := live_admin_user(p_id_hash);
+  v_now bigint := {NOW_STEP};
+  f second_factors;
+BEGIN
+  IF cardinality(p_code_proofs) IS DISTINCT FROM 10 THEN
+    RAISE EXCEPTION 'ten recovery codes';
+  END IF;
+  SELECT * INTO f FROM second_factors x
+  WHERE x.user_id = v_user AND x.confirmed_at IS NULL AND x.secret_ct IS NOT NULL
+    AND x.ticket_expires_at > now()
+  FOR UPDATE;
+  IF NOT FOUND THEN RETURN QUERY SELECT 'none', 0; RETURN; END IF;
+  IF f.failed_attempts >= 10 THEN RETURN QUERY SELECT 'locked', f.failed_attempts; RETURN; END IF;
+  IF f.proof_hash = sha256(p_proof) AND p_step BETWEEN v_now - 1 AND v_now + 1 THEN
+    -- A new secret starts with no failures, whichever CLI version issued the ticket (0069), and no
+    -- attempt in flight (0083).
+    UPDATE second_factors x SET confirmed_at = now(), last_step = p_step, failed_attempts = 0,
+      failures_leaked_at = NULL, failures_since_pass = 0, charges = '{{}}',
+      ticket_hash = NULL, ticket_expires_at = NULL,
+      recovery_code_hashes = ARRAY(SELECT sha256(c) FROM unnest(p_code_proofs) AS c)
+    WHERE x.user_id = v_user;
+    -- Whoever else held this admin's password and a half session is out.
+    DELETE FROM admin_sessions s WHERE s.user_id = v_user AND s.id_hash <> p_id_hash;
+    UPDATE admin_sessions s SET second_factor_at = now() WHERE s.id_hash = p_id_hash;
+    RETURN QUERY SELECT 'enrolled', 0;
+    RETURN;
+  END IF;
+  -- A password holder must not be able to guess-confirm the operator's half-finished enrolment.
+  UPDATE second_factors x SET failed_attempts = x.failed_attempts + 1 WHERE x.user_id = v_user;
+  RETURN QUERY SELECT 'failed', f.failed_attempts + 1;
+END $$""",
+    "use_recovery_code(bytea,bytea)": f"""
+CREATE OR REPLACE FUNCTION use_recovery_code(p_id_hash bytea, p_code_proof bytea)
+RETURNS TABLE (codes_left integer, was_locked boolean)
+LANGUAGE plpgsql SECURITY DEFINER {SEARCH_PATH} AS $$
+-- No row: no match. A match uses the code up, lifts a TOTP lock and passes this session's factor.
+-- Lifting a lock leaves 9, leaking from now: no pass refills the count (0069), and it voids the
+-- attempts in flight, so no pass gives back one the 9 already forgot (0083).
+DECLARE v_user uuid := live_admin_user(p_id_hash);
+BEGIN
+  RETURN QUERY
+    UPDATE second_factors f
+    SET recovery_code_hashes = array_remove(f.recovery_code_hashes, sha256(p_code_proof)),
+        failed_attempts = least(f.failed_attempts, 9),
+        failures_leaked_at = CASE WHEN f.failed_attempts >= 10 THEN now()
+                                  ELSE f.failures_leaked_at END,
+        failures_since_pass = 0,
+        charges = CASE WHEN f.failed_attempts >= 10 THEN '{{}}' ELSE f.charges END
+    WHERE f.user_id = v_user AND f.confirmed_at IS NOT NULL
+      AND sha256(p_code_proof) = ANY (f.recovery_code_hashes)
+    RETURNING cardinality(new.recovery_code_hashes), old.failed_attempts >= 10;  -- PG 18
+  IF FOUND THEN
+    UPDATE admin_sessions s SET second_factor_at = now() WHERE s.id_hash = p_id_hash;
+  END IF;
+END $$""",
+}
+
+# What they were (0039's begin, 0069's others), verbatim, for the downgrade.
+REPLACED_BEFORE = {
+    "begin_totp_enrolment(bytea,bytea,bytea,bytea)": f"""
+CREATE OR REPLACE FUNCTION begin_totp_enrolment(
+  p_id_hash bytea, p_ticket_proof bytea, p_secret_ct bytea, p_proof bytea)
+RETURNS text LANGUAGE plpgsql SECURITY DEFINER {SEARCH_PATH} AS $$
+-- 'begun' | 'invalid_ticket' | 'already_enrolled'. Stores a new, unconfirmed secret for the session
+-- user, given the CLI's ticket.
+DECLARE v_user uuid := live_admin_user(p_id_hash);
+BEGIN
+  -- Never overwrites a confirmed secret: re-enrolling goes through the CLI.
+  IF EXISTS (SELECT FROM second_factors f WHERE f.user_id = v_user AND f.confirmed_at IS NOT NULL)
+  THEN
+    RETURN 'already_enrolled';
+  END IF;
+  UPDATE second_factors f SET secret_ct = p_secret_ct, proof_hash = sha256(p_proof),
+                              last_step = 0, failed_attempts = 0
+  WHERE f.user_id = v_user AND f.ticket_hash = sha256(p_ticket_proof)
+    AND f.ticket_expires_at > now();
+  -- The ticket is not used up here: an abandoned QR can be restarted within the hour.
+  RETURN CASE WHEN FOUND THEN 'begun' ELSE 'invalid_ticket' END;
+END $$""",
+    "confirm_totp_enrolment(bytea,bytea,bigint,bytea[])": f"""
+CREATE OR REPLACE FUNCTION confirm_totp_enrolment(
+  p_id_hash bytea, p_proof bytea, p_step bigint, p_code_proofs bytea[])
+RETURNS TABLE (outcome text, failures integer)
+LANGUAGE plpgsql SECURITY DEFINER {SEARCH_PATH} AS $$
+-- 'enrolled' | 'failed' | 'locked' | 'none'. Confirms the begun enrolment with a code, stores the
+-- ten recovery codes, uses up the ticket and passes this session's second factor.
+DECLARE
+  v_user uuid := live_admin_user(p_id_hash);
+  v_now bigint := {NOW_STEP};
+  f second_factors;
+BEGIN
+  IF cardinality(p_code_proofs) IS DISTINCT FROM 10 THEN
+    RAISE EXCEPTION 'ten recovery codes';
+  END IF;
+  SELECT * INTO f FROM second_factors x
+  WHERE x.user_id = v_user AND x.confirmed_at IS NULL AND x.secret_ct IS NOT NULL
+    AND x.ticket_expires_at > now()
+  FOR UPDATE;
+  IF NOT FOUND THEN RETURN QUERY SELECT 'none', 0; RETURN; END IF;
+  IF f.failed_attempts >= 10 THEN RETURN QUERY SELECT 'locked', f.failed_attempts; RETURN; END IF;
+  IF f.proof_hash = sha256(p_proof) AND p_step BETWEEN v_now - 1 AND v_now + 1 THEN
+    -- A new secret starts with no failures, whichever CLI version issued the ticket (0069).
+    UPDATE second_factors x SET confirmed_at = now(), last_step = p_step, failed_attempts = 0,
+      failures_leaked_at = NULL, failures_since_pass = 0,
+      ticket_hash = NULL, ticket_expires_at = NULL,
+      recovery_code_hashes = ARRAY(SELECT sha256(c) FROM unnest(p_code_proofs) AS c)
+    WHERE x.user_id = v_user;
+    -- Whoever else held this admin's password and a half session is out.
+    DELETE FROM admin_sessions s WHERE s.user_id = v_user AND s.id_hash <> p_id_hash;
+    UPDATE admin_sessions s SET second_factor_at = now() WHERE s.id_hash = p_id_hash;
+    RETURN QUERY SELECT 'enrolled', 0;
+    RETURN;
+  END IF;
+  -- A password holder must not be able to guess-confirm the operator's half-finished enrolment.
+  UPDATE second_factors x SET failed_attempts = x.failed_attempts + 1 WHERE x.user_id = v_user;
+  RETURN QUERY SELECT 'failed', f.failed_attempts + 1;
+END $$""",
+    "use_recovery_code(bytea,bytea)": f"""
+CREATE OR REPLACE FUNCTION use_recovery_code(p_id_hash bytea, p_code_proof bytea)
+RETURNS TABLE (codes_left integer, was_locked boolean)
+LANGUAGE plpgsql SECURITY DEFINER {SEARCH_PATH} AS $$
+-- No row: no match. A match uses the code up, lifts a TOTP lock and passes this session's factor.
+-- Lifting a lock leaves 9, leaking from now: no pass refills the count (0069).
+DECLARE v_user uuid := live_admin_user(p_id_hash);
+BEGIN
+  RETURN QUERY
+    UPDATE second_factors f
+    SET recovery_code_hashes = array_remove(f.recovery_code_hashes, sha256(p_code_proof)),
+        failed_attempts = least(f.failed_attempts, 9),
+        failures_leaked_at = CASE WHEN f.failed_attempts >= 10 THEN now()
+                                  ELSE f.failures_leaked_at END,
+        failures_since_pass = 0
+    WHERE f.user_id = v_user AND f.confirmed_at IS NOT NULL
+      AND sha256(p_code_proof) = ANY (f.recovery_code_hashes)
+    RETURNING cardinality(new.recovery_code_hashes), old.failed_attempts >= 10;  -- PG 18
+  IF FOUND THEN
+    UPDATE admin_sessions s SET second_factor_at = now() WHERE s.id_hash = p_id_hash;
+  END IF;
+END $$""",
+}
+
+
+def install(functions: dict[str, str]) -> None:
+    for signature, definition in functions.items():
+        op.execute(definition)
+        # A replaced function keeps its grants; restated anyway so they are plain to see.
+        op.execute(f"REVOKE EXECUTE ON FUNCTION {signature} FROM PUBLIC")
+        op.execute(f"GRANT EXECUTE ON FUNCTION {signature} TO ziftbook_app")
+
 
 def upgrade() -> None:
     op.execute("""
@@ -125,13 +311,12 @@ def upgrade() -> None:
       -- The attempts charge_second_factor counted whose check has not come yet: uuidv7s.
       ADD COLUMN charges uuid[] NOT NULL DEFAULT '{}'
     """)
-    for signature, definition in FUNCTIONS.items():
-        op.execute(definition)
-        op.execute(f"REVOKE EXECUTE ON FUNCTION {signature} FROM PUBLIC")
-        op.execute(f"GRANT EXECUTE ON FUNCTION {signature} TO ziftbook_app")
+    install(FUNCTIONS)
+    install(REPLACED)
 
 
 def downgrade() -> None:
+    install(REPLACED_BEFORE)
     for signature in FUNCTIONS:
         op.execute(f"DROP FUNCTION {signature}")
     op.execute("ALTER TABLE second_factors DROP COLUMN charges")

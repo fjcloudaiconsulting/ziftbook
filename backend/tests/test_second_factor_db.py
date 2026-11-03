@@ -1028,3 +1028,93 @@ def test_a_charge_drops_expired_charges(app_engine: Engine, migrate_engine: Engi
     _, _, made = charge(app_engine, session)
 
     assert charges_of(migrate_engine, e.user_id) == [young, made]
+
+
+# fence (ZIF-261): a recovery code that lifts a lock leaves 9 and voids the attempts in flight, so
+# none of their passes gives back an attempt the 9 already forgot. Kills charges kept across the
+# lift (a pass then refunds below 9: one more guess). Injected by deleting the CASE on charges in
+# use_recovery_code.
+def test_a_recovery_code_off_a_lock_voids_the_charges(
+    app_engine: Engine, migrate_engine: Engine
+) -> None:
+    e = enrolled(app_engine, migrate_engine)
+    session = half_session(app_engine, migrate_engine, e.user_id)
+    set_failures(migrate_engine, e.user_id, 9, timedelta(hours=1))
+    _, failures, in_flight = charge(app_engine, session)
+    assert failures == 10
+
+    assert recover(app_engine, session, code_proofs(e.codes)[0]) == (9, True)
+
+    step = next_step(migrate_engine, e.user_id)
+    assert check(app_engine, session, in_flight, totp.proof(e.secret), step) == ("none", 0)
+    assert factor(migrate_engine, e.user_id)["failed_attempts"] == 9
+    assert charges_of(migrate_engine, e.user_id) == []
+
+
+# guard (ZIF-261): a recovery code with no lock leaves the count, so the attempts in flight keep
+# their charges and a pass gives back its own, exactly.
+def test_a_recovery_code_off_lock_keeps_the_charges(
+    app_engine: Engine, migrate_engine: Engine
+) -> None:
+    e = enrolled(app_engine, migrate_engine)
+    session = half_session(app_engine, migrate_engine, e.user_id)
+    set_failures(migrate_engine, e.user_id, 3, timedelta(hours=1))
+    _, _, in_flight = charge(app_engine, session)
+
+    assert recover(app_engine, session, code_proofs(e.codes)[0]) == (9, False)
+
+    step = next_step(migrate_engine, e.user_id)
+    assert check(app_engine, session, in_flight, totp.proof(e.secret), step) == ("passed", 0)
+    assert factor(migrate_engine, e.user_id)["failed_attempts"] == 3
+
+
+def plant_charge(migrate_engine: Engine, user_id: uuid.UUID) -> uuid.UUID:
+    """As migrate: a live charge on the row, as an attempt in flight leaves one."""
+    with migrate_engine.begin() as conn:
+        planted: uuid.UUID = conn.scalar(
+            text(
+                "UPDATE second_factors SET charges = charges || uuidv7() WHERE user_id = :u "
+                "RETURNING charges[cardinality(charges)]"
+            ),
+            {"u": user_id},
+        )
+    return planted
+
+
+# fence (ZIF-261): every reset of the secret or the count voids the attempts in flight: the CLI's
+# new ticket, beginning an enrolment and confirming one. A charge made before must never be checked
+# after: against the new secret, or as a failure the reset already forgot (an uncounted attempt).
+# Kills a reset that keeps the charges. Injected by deleting `charges = '{}'` from ISSUE_TICKET,
+# then from begin_totp_enrolment, then from confirm_totp_enrolment.
+@pytest.mark.parametrize("reset", ["cli", "begin", "confirm"])
+def test_a_reset_voids_the_charges(app_engine: Engine, migrate_engine: Engine, reset: str) -> None:
+    if reset == "cli":
+        e = enrolled(app_engine, migrate_engine)
+        _, _, before = charge(app_engine, half_session(app_engine, migrate_engine, e.user_id))
+        ticket = issue_ticket(e.user_id)
+        assert charges_of(migrate_engine, e.user_id) == []
+        # The whole way back, within the charge's 2 minutes: it is refused, never a check.
+        session = half_session(app_engine, migrate_engine, e.user_id)
+        s = totp.new_secret()
+        assert begin(app_engine, session, ticket_proof(ticket), e.user_id, s) == "begun"
+        codes = code_proofs([totp.new_code() for _ in range(10)])
+        assert tuple(call(app_engine, CONFIRM, id=session, p=totp.proof(s), codes=codes)) == (
+            "enrolled",
+            0,
+        )
+        assert check(app_engine, session, before, wrong(), None) == ("none", 0)
+        return
+    user_id = new_admin(migrate_engine)
+    ticket = issue_ticket(user_id)
+    session = half_session(app_engine, migrate_engine, user_id)
+    s = totp.new_secret()
+    if reset == "begin":
+        plant_charge(migrate_engine, user_id)
+        assert begin(app_engine, session, ticket_proof(ticket), user_id, s) == "begun"
+    else:
+        assert begin(app_engine, session, ticket_proof(ticket), user_id, s) == "begun"
+        plant_charge(migrate_engine, user_id)
+        codes = code_proofs([totp.new_code() for _ in range(10)])
+        row = call(app_engine, CONFIRM, id=session, p=totp.proof(s), codes=codes)
+        assert tuple(row) == ("enrolled", 0)
+    assert charges_of(migrate_engine, user_id) == []
