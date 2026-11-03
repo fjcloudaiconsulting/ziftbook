@@ -27,7 +27,7 @@ from sqlalchemy.orm import Session
 
 from app import business_settings, currencies, limits, passwords, tracing
 from app.business_settings import Locale
-from app.config import MailSettings
+from app.config import LOCAL_HOSTS, MailSettings
 from app.db import SessionLocal, tenant_context
 from app.jobs import Job
 
@@ -165,8 +165,10 @@ def _html(template: str, locale: str, subject: str, values: dict[str, str]) -> s
             heading = fill(parts[0])
         elif kind == "button":
             link = Template(parts[1]).substitute(values)
-            if not link.startswith(("https://", "http://")):
-                raise ValueError("a button's link must be a web address")
+            # https, or http to this machine (development); never whitespace or a control char.
+            local = link.startswith("http://") and urlsplit(link).hostname in LOCAL_HOSTS
+            if not (link.startswith("https://") or local) or not link.isprintable() or " " in link:
+                raise ValueError("a button's link must be an https web address")
             href = escape(link)
             body.append(
                 '<table role="presentation" cellpadding="0" cellspacing="0" border="0"'
