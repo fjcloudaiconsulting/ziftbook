@@ -1019,3 +1019,35 @@ def test_a_reapply_queues_no_booking_mail(
             {"id": str(booking_id)},
         ).all()
     assert mail == []
+
+
+# ZIF-58. FENCE (money, fail closed). Wrong impl: the hold keyed on the erasure's time in the
+# event, so an erasure_reapplied event without it (malformed, or from an older writer) pays the
+# full top-up, the very case the hold is for. The reason alone holds it; the time only narrows.
+def test_a_reapplied_ending_without_its_erasure_time_is_held(
+    people: People,
+    fake_stripe: FakeGateway,
+    migrate_engine: Engine,
+    ledger_bucket: S3Client,
+) -> None:
+    app = create_app()
+    owner = signed_in(app, people.a, people.both)
+    save_setting(people.a, "published", True)
+    service_id = make_shop(people, owner, fake_stripe, price=4000)
+    _, booking_id, _ = booked(app, people, fake_stripe, service_id, "pay")
+    client_id = client_of(people.a, booking_id)
+    entry = ledger.Entry(people.a, client_id, datetime.now(UTC) + timedelta(seconds=1))
+    storage.ledger_write(entry.key, entry.body())
+    assert reapply(entry.erased_at - timedelta(hours=1)) == 0
+    with migrate_tenant_context(migrate_engine, people.a) as conn:
+        conn.execute(
+            text("""
+            UPDATE booking_events SET details = details - 'erased_at'
+            WHERE booking_id = :id AND details ->> 'reason' = 'erasure_reapplied'
+            """),
+            {"id": booking_id},
+        )
+    run("payment.settle")
+    assert fake_stripe.count("refund") == 0
+    with migrate_tenant_context(migrate_engine, people.a) as conn:
+        assert conn.execute(BOOKING, {"id": booking_id}).one().refund_failed_at is not None
