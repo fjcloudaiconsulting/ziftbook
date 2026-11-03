@@ -28,7 +28,10 @@ MIB = 1024 * 1024
 MAX_BYTES = 10 * MIB  # an upload's cap (photos.MAX_BYTES)
 # The child's address space. The heaviest legitimate decode measured (tests/test_photo_isolation.py)
 # must stay under 80% of it, and the pod's memory must hold it beside the API (photos.budget).
-MEMORY = 192 * MIB
+# The heaviest measured: 137 MiB on the image's Python (arm64); 149 MiB on the
+# python-build-standalone build CI's backend job runs (arm64), whose interpreter binary maps 14 MiB
+# more, and about 8.5 MiB more again on x86_64.
+MEMORY = 208 * MIB
 CPU = (5, 6)  # seconds of CPU: SIGXCPU at the first, SIGKILL at the second
 LIMITS: dict[int, tuple[int, int]] = {
     resource.RLIMIT_AS: (MEMORY, MEMORY),

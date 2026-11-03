@@ -833,7 +833,7 @@ def test_only_one_decoder_runs_at_a_time(s3: S3Client, monkeypatch: pytest.Monke
 def test_the_decoder_limits_are_pinned() -> None:
     mib = 1024 * 1024
     assert photo_child.LIMITS == {
-        resource.RLIMIT_AS: (192 * mib, 192 * mib),
+        resource.RLIMIT_AS: (208 * mib, 208 * mib),
         resource.RLIMIT_CPU: (5, 6),
         resource.RLIMIT_FSIZE: (0, 0),
         resource.RLIMIT_NOFILE: (16, 16),
@@ -1009,7 +1009,7 @@ def cgroup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 # OOM restarts the whole pod, so the budget is checked at startup and logged, never refused.
 @pytest.mark.parametrize(
     ("memory_max", "state"),
-    [(None, "unlimited"), ("max", "unlimited"), (str(384 * MIB), "ok"), (str(300 * MIB), "tight")],
+    [(None, "unlimited"), ("max", "unlimited"), (str(448 * MIB), "ok"), (str(300 * MIB), "tight")],
 )
 def test_the_startup_budget_check(
     cgroup: Path,
@@ -1062,12 +1062,12 @@ def test_the_own_rss_is_read() -> None:
 
 
 # ZIF-230 fence (review finding 1). Kills: a limit raised past what the pods were sized for. The
-# production and staging API pods have 384Mi (cloud-infra clusters/hetzner/ziftbook-*/backend.yaml);
+# production and staging API pods have 448Mi (cloud-infra clusters/hetzner/ziftbook-*/backend.yaml);
 # a child OOM there restarts the pod, so raising the child's limit or the API's allowance means
 # raising that limit with it.
 def test_the_memory_budget_fits_the_pod() -> None:
     child = photo_child.MEMORY + photos.OUTPUT_COPIES * photos.OUTPUT_CAP
-    assert photos.API_ALLOWANCE + child + photos.BUDGET_MARGIN <= 384 * MIB
+    assert photos.API_ALLOWANCE + child + photos.BUDGET_MARGIN <= 448 * MIB
 
 
 HARDENED = """
