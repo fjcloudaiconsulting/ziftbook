@@ -19,6 +19,7 @@ import {
   parseWhole,
   paymentsAction,
   refusedKeys,
+  saveRefusal,
   settingsBody,
   slotExamples,
   SLOT_STEPS,
@@ -372,6 +373,26 @@ describe("ZIF-232 x ZIF-99 emptying the box while a change waits", () => {
     }
     const src = readFileSync(new URL("../app/[locale]/(console)/settings/settings.tsx", import.meta.url), "utf8");
     assert.match(src, /settingsBody\(base, draft, contact\)/);
+  });
+});
+
+describe("ZIF-232 x ZIF-99 a save refused for the contact email's links", () => {
+  test("fence: a 429 or 503 of a save that sent the address says nothing was saved, and why", () => {
+    // Wrong implementation killed: the generic message, or the block's link wording alone, when the API refused
+    // the whole save (no other key was saved either).
+    assert.equal(saveRefusal(429, "rate_limited", true), "contactTooMany");
+    assert.equal(saveRefusal(429, "contact_email_requests_today", true), "contactTooManyToday");
+    assert.equal(saveRefusal(503, "busy", true), "busy");
+    // Without the address, or any other answer: the form's usual handling.
+    assert.equal(saveRefusal(429, "rate_limited", false), null);
+    assert.equal(saveRefusal(503, "busy", false), null);
+    for (const status of [200, 401, 403, 422, 0]) assert.equal(saveRefusal(status, undefined, true), null);
+  });
+
+  test("fence: the page keeps every draft and says Nothing was saved first", () => {
+    const src = readFileSync(new URL("../app/[locale]/(console)/settings/settings.tsx", import.meta.url), "utf8");
+    assert.match(src, /const refusal = saveRefusal\(outcome\.status, outcome\.code, "contact_email" in body\);/);
+    assert.match(src, /text: `\$\{consoleT\("notSaved"\)\} \$\{refusal === "busy" \? form\("busy"\) : t\(refusal\)\}`/);
   });
 });
 

@@ -22,6 +22,7 @@ import {
   noticeUnit,
   pickFields,
   refusedKeys,
+  saveRefusal,
   SLOT_STEPS,
   settingsBody,
   slotExamples,
@@ -98,6 +99,7 @@ export function Settings() {
   const tWeek = useTranslations("Console.week");
   const nav = useTranslations("Console.nav");
   const form = useTranslations("Form");
+  const consoleT = useTranslations("Console");
   const errorsT = useTranslations("Console.errors");
   const locale = useLocale();
   const formId = useId();
@@ -255,6 +257,7 @@ export function Settings() {
         outcome = { status: 0 } as Awaited<ReturnType<typeof call<BusinessSettingsOutput>>>;
       }
       const refused = refusedKeys(outcome.status, outcome.code);
+      const refusal = saveRefusal(outcome.status, outcome.code, "contact_email" in body);
       if (outcome.status === 200 && outcome.data) {
         const data = outcome.data;
         // Only the form's own keys: never `published`, which the switch above owns.
@@ -272,6 +275,10 @@ export function Settings() {
         setInvalid(refused);
         setSaveFailed(true);
         document.getElementById(`${formId}-${refused[0]}`)?.focus();
+      } else if (refusal) {
+        // The whole save was refused: every draft stays as typed, and the bar stays.
+        setMessage({ tone: "error", text: `${consoleT("notSaved")} ${refusal === "busy" ? form("busy") : t(refusal)}` });
+        setSaveFailed(true);
       } else if (outcome.status === 403 && outcome.code === "owner_only") {
         setMessage({ tone: "error", text: errorsT("ownerOnly") });
         setSaveFailed(true);
