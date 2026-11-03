@@ -359,8 +359,14 @@ def booking_mail(seeded: Seeded, booking: uuid.UUID, template: str) -> None:
 
 
 def finish_mails(migrate_engine: Engine, seeded: Seeded, finish: str) -> None:
-    """Every email.booking job of that business done, or given up after its last attempt."""
-    change = "completed_at = now()" if finish == "done" else f"attempts = {jobs.MAX_ATTEMPTS}"
+    """Every email.booking job of that business done, given up after its last attempt (its last
+    lease run out), or on its last attempt still (as CLAIM leaves it: the lease runs 16 minutes)."""
+    last = f"attempts = {jobs.MAX_ATTEMPTS}, next_attempt_at = now()"
+    change = {
+        "done": "completed_at = now()",
+        "given up": f"{last} - interval '1 second'",
+        "last attempt": f"{last} + interval '16 minutes'",
+    }[finish]
     with migrate_engine.begin() as conn:
         conn.execute(
             text(f"UPDATE jobs SET {change} WHERE kind = 'email.booking' AND tenant_id = :t"),
@@ -388,7 +394,9 @@ def no_jobs(people: People, migrate_engine: Engine) -> Any:
 # owed keeps the address a month instead of minutes. A hold is deleted as soon as nothing is owed
 # and none of the client's emails through it (mail.HOLD_TEMPLATES) is still to be sent; another
 # booking email still queued (a reminder) does not keep it, and a mail that gave up counts as out.
-@pytest.mark.parametrize("finish", ["done", "given up"])
+# One on its last attempt has not given up: CLAIM counts the attempt when it starts, and that
+# attempt still has to read the hold (wrong impl: `attempts < MAX_ATTEMPTS` alone).
+@pytest.mark.parametrize("finish", ["done", "given up", "last attempt"])
 def test_a_hold_goes_once_nothing_is_owed_and_its_mails_are_out(
     people: People, migrate_engine: Engine, no_jobs: None, finish: str
 ) -> None:
@@ -401,7 +409,9 @@ def test_a_hold_goes_once_nothing_is_owed_and_its_mails_are_out(
     finish_mails(migrate_engine, seeded, finish)
     booking_mail(seeded, seeded.bookings[1], "booking_reminder")
     purge()
-    assert hold_address(migrate_engine, seeded) is None
+    assert hold_address(migrate_engine, seeded) == (
+        seeded.email if finish == "last attempt" else None
+    )
 
 
 # ZIF-58 F32 FENCE (2 of 5). Wrong impl: a purge on purge_after only; or one that lets the hold go
