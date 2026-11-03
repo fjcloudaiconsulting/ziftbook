@@ -207,3 +207,15 @@ export function contactEmailView(s: ContactEmailState, owner: boolean): ContactE
     : { pill: "unconfirmed", body: ["contactUnconfirmed", email], untilThen, action: "contactSend" };
 }
 
+/** What a send of a contact email link answered: sent, a message key for the owner, signed out, or reload the
+ * state (nothing waits any more). */
+export function contactSendOutcome(
+  status: number,
+  code?: string,
+): "sent" | "contactTooMany" | "contactTooManyToday" | "contactFailed" | "signedOut" | "reload" {
+  if (status === 200) return "sent";
+  if (status === 429) return code === "contact_email_requests_today" ? "contactTooManyToday" : "contactTooMany";
+  if (status === 401) return "signedOut";
+  if (status === 409) return "reload";
+  return "contactFailed";
+}

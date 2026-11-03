@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, test } from "node:test";
 
-import { contactEmailView } from "../lib/settings.ts";
+import { contactEmailView, contactSendOutcome } from "../lib/settings.ts";
 
 const none = { state: "none", confirmed: null, requested: null, link_expired: false, expires_at: null };
 const unconfirmed = { ...none, state: "unconfirmed", requested: "new@x.nl" };
@@ -65,11 +65,25 @@ describe("F8.1 each state has its pill, words and action", () => {
   });
 });
 
-describe("F8.1 the copy", () => {
+// F8.3 FENCE. Wrong impl: a silent failure, or one message for every refusal (an owner kept from an
+// address for the day by other businesses must be told that, not "try later").
+describe("F8.3 what a send answer means", () => {
+  test("each answer has its words", () => {
+    assert.equal(contactSendOutcome(200), "sent");
+    assert.equal(contactSendOutcome(429, "rate_limited"), "contactTooMany");
+    assert.equal(contactSendOutcome(429, "contact_email_requests_today"), "contactTooManyToday");
+    assert.equal(contactSendOutcome(401), "signedOut");
+    assert.equal(contactSendOutcome(409, "no_contact_email_request"), "reload");
+    for (const status of [0, 403, 422, 500, 503]) assert.equal(contactSendOutcome(status), "contactFailed");
+  });
+});
+
+describe("F8.3 the copy", () => {
   const keys = [
     "contactEmailLabel", "contactUnconfirmedPill", "contactSentPill", "contactConfirmedPill", "contactUnconfirmed",
     "contactExpired", "contactSent", "contactConfirmed", "contactUntilThen", "contactUntilThenNone", "contactWaiting",
-    "contactSend", "contactSendNew", "contactSendAgain",
+    "contactSend", "contactSendNew", "contactSendAgain", "contactLinkSent", "contactTooMany", "contactTooManyToday",
+    "contactFailed",
     "contactLoadFailed", "contactOwnerOnly",
   ];
   for (const locale of ["en", "nl", "pt"]) {
