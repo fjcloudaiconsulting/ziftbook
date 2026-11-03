@@ -2806,7 +2806,7 @@ def test_0086_round_trips_contact_email_requests(
 ) -> None:
     cfg = lock_timeout_config(monkeypatch)
     try:
-        command.downgrade(cfg, "0056")
+        command.downgrade(cfg, migration("0086_contact_email_requests.py").down_revision)
         with migrate_engine.connect() as conn:
             assert tuple(conn.execute(CONTACT_EMAIL_OBJECTS).one()) == (False, 0)
     finally:

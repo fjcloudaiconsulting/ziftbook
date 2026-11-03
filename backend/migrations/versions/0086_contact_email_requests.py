@@ -36,7 +36,7 @@ and the confirmation record. It takes ACCESS EXCLUSIVE on tenants for an instant
 so queries on tenants wait that long.
 
 Revision ID: 0086
-Revises: 0056
+Revises: 0084
 """
 
 from alembic import op
@@ -44,7 +44,7 @@ from alembic import op
 from app.db import enable_tenant_isolation
 
 revision = "0086"
-down_revision = "0056"
+down_revision = "0084"
 branch_labels = None
 depends_on = None
 
