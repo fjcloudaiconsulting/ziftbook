@@ -196,8 +196,13 @@ def test_downgrading_and_upgrading_0024_restores_the_tables_and_their_grants(
         # the GRANTs, and a downgrade/upgrade that lost them breaks every read and every write.
         assert conn.scalar(text("SELECT has_table_privilege('ziftbook_app', 'consents', 'SELECT')"))
         assert conn.scalar(text("SELECT has_table_privilege('ziftbook_app', 'clients', 'SELECT')"))
-        assert conn.scalar(text("SELECT has_table_privilege('ziftbook_app', 'clients', 'INSERT')"))
-        assert conn.scalar(text("SELECT has_table_privilege('ziftbook_app', 'clients', 'UPDATE')"))
+        # Column lists since 0063 (ZIF-58): every column the app writes, never erased_at.
+        assert conn.scalar(
+            text("SELECT has_column_privilege('ziftbook_app', 'clients', 'name', 'INSERT')")
+        )
+        assert conn.scalar(
+            text("SELECT has_column_privilege('ziftbook_app', 'clients', 'name', 'UPDATE')")
+        )
 
 
 ADD_JOB = """
@@ -2179,3 +2184,109 @@ def test_0069_downgrade_restores_0039s_functions() -> None:
         sig: old[sig].replace("CREATE FUNCTION", "CREATE OR REPLACE FUNCTION", 1)
         for sig in FAILURE_DEFINERS
     }
+
+
+# ZIF-58 (0063): the name checks on clients, erased_at, the tombstone trigger and its function,
+# and the app role's table and column privileges on clients.
+CLIENT_NAME_CHECKS = text("""
+SELECT array_agg(conname ORDER BY conname) FROM pg_constraint
+WHERE conrelid = 'clients'::regclass AND contype = 'c' AND conname LIKE 'ck_clients_name%'
+""")
+ERASED_AT_COLUMN = text("""
+SELECT count(*) FROM information_schema.columns
+WHERE table_schema = 'public' AND table_name = 'clients' AND column_name = 'erased_at'
+""")
+CLIENT_GRANTS = text("""
+SELECT (SELECT string_agg(x.privilege_type, ' ' ORDER BY x.privilege_type)
+        FROM pg_class c, aclexplode(c.relacl) x
+        WHERE c.oid = 'clients'::regclass AND x.grantee = 'ziftbook_app'::regrole),
+       (SELECT string_agg(a.attname || ' ' || x.privilege_type, ', '
+                          ORDER BY a.attname, x.privilege_type)
+        FROM pg_attribute a, aclexplode(a.attacl) x
+        WHERE a.attrelid = 'clients'::regclass AND x.grantee = 'ziftbook_app'::regrole)
+""")
+TOMBSTONE_GUARD = text("""
+SELECT (SELECT pg_get_triggerdef(t.oid) FROM pg_trigger t
+        WHERE t.tgname = 'clients_erased_final' AND t.tgrelid = 'clients'::regclass),
+       to_regprocedure('clients_erased_final()') IS NOT NULL
+""")
+TOMBSTONE_GUARD_FUNCTION = text("""
+SELECT p.prosecdef, p.proconfig, has_function_privilege('public', p.oid, 'EXECUTE')
+FROM pg_proc p WHERE p.oid = to_regprocedure('clients_erased_final()')
+""")
+CHILD_GUARD = text("""
+SELECT array_agg(pg_get_triggerdef(t.oid) ORDER BY t.tgname) FROM pg_trigger t
+WHERE t.tgname IN ('bookings_client_not_erased', 'consents_client_not_erased')
+""")
+CHILD_GUARD_FUNCTION = text("""
+SELECT p.prosecdef, p.proconfig, has_function_privilege('public', p.oid, 'EXECUTE')
+FROM pg_proc p WHERE p.oid = to_regprocedure('clients_erased_children()')
+""")
+CHILD_GUARD_TRIGGERS = [
+    f"CREATE TRIGGER {child}_client_not_erased BEFORE INSERT ON public.{child} FOR EACH ROW"
+    " EXECUTE FUNCTION clients_erased_children()"
+    for child in ("bookings", "consents")
+]
+TOMBSTONE_GUARD_TRIGGER = (
+    "CREATE TRIGGER clients_erased_final BEFORE UPDATE ON public.clients FOR EACH ROW"
+    " WHEN ((old.erased_at IS NOT NULL)) EXECUTE FUNCTION clients_erased_final()"
+)
+# INSERT on every column the app writes; UPDATE on the same less id and tenant_id, which no
+# statement changes (an id rewritten would orphan its client:<id> audit targets and outbox rows).
+CLIENT_INSERTABLE = (
+    "client_note",
+    "email",
+    "id",
+    "internal_note",
+    "locale",
+    "name",
+    "phone",
+    "tenant_id",
+    "user_id",
+)
+CLIENT_UPDATABLE = {"client_note", "email", "internal_note", "locale", "name", "phone", "user_id"}
+CLIENT_COLUMN_GRANTS = ", ".join(
+    f"{column} {privilege}"
+    for column in CLIENT_INSERTABLE
+    for privilege in ("INSERT", "UPDATE")
+    if privilege == "INSERT" or column in CLIENT_UPDATABLE
+)
+
+
+# ZIF-58 F1 FENCE (0063). Wrong impl: a downgrade that leaves the column, the trigger, its function
+# or the column grants behind, or does not put back ck_clients_name_length and the table-level
+# INSERT and UPDATE; an upgrade that GRANTs the column lists without the REVOKE (the table-level
+# INSERT and UPDATE stay, erased_at with them), names a column more or less (UPDATE of id or
+# tenant_id included), or whose triggers fire on live rows, miss bookings or consents, run as
+# their owner, search a caller's schema first, or are PUBLIC's.
+def test_0063_round_trips_the_client_tombstone(
+    migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = lock_timeout_config(monkeypatch)
+    try:
+        command.downgrade(cfg, migration("0063_clients_erased_at.py").down_revision)
+        with migrate_engine.connect() as conn:
+            assert conn.scalar(CLIENT_NAME_CHECKS) == ["ck_clients_name_length"]
+            assert conn.scalar(ERASED_AT_COLUMN) == 0
+            assert tuple(conn.execute(TOMBSTONE_GUARD).one()) == (None, False)
+            assert conn.scalar(CHILD_GUARD) is None
+            assert conn.execute(CHILD_GUARD_FUNCTION).first() is None
+            assert tuple(conn.execute(CLIENT_GRANTS).one()) == ("INSERT SELECT UPDATE", None)
+    finally:
+        command.upgrade(cfg, "head")
+    with migrate_engine.connect() as conn:
+        assert conn.scalar(CLIENT_NAME_CHECKS) == ["ck_clients_name_or_erased"]
+        assert conn.scalar(ERASED_AT_COLUMN) == 1
+        assert tuple(conn.execute(TOMBSTONE_GUARD).one()) == (TOMBSTONE_GUARD_TRIGGER, True)
+        assert conn.scalar(CHILD_GUARD) == CHILD_GUARD_TRIGGERS
+        assert tuple(conn.execute(CHILD_GUARD_FUNCTION).one()) == (
+            False,
+            ["search_path=pg_catalog, public, pg_temp"],
+            False,
+        )
+        assert tuple(conn.execute(TOMBSTONE_GUARD_FUNCTION).one()) == (
+            False,
+            ["search_path=pg_catalog, public, pg_temp"],
+            False,
+        )
+        assert tuple(conn.execute(CLIENT_GRANTS).one()) == ("SELECT", CLIENT_COLUMN_GRANTS)
