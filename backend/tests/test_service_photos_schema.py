@@ -42,6 +42,7 @@ ALLOWED = [
     "booking_holds.token_hash",
     "booking_links.token_hash",
     "bookings.checkout_hash",
+    "contact_email_requests.token_hash",  # ZIF-232: a confirmation link's sha256
     "email_tokens.token_hash",
     "invites.token_hash",
     "second_factors.proof_hash",

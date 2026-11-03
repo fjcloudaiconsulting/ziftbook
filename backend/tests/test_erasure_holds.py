@@ -242,7 +242,7 @@ def test_an_erased_client_hears_of_a_cancellation_at_the_held_address_only(
     clean_outbox: None,  # noqa: F811
     announce: bool,
 ) -> None:
-    set_contact(owner)
+    set_contact(owner, people.a)
     client_id = uuid.UUID(booked["client"])
     address = address_of(people.a, client_id)
     set_client(people.a, client_id, locale="pt")  # not the business's language
@@ -292,7 +292,7 @@ def test_a_failed_refund_is_mailed_once_to_the_erased_client(
     log_lines: Callable[[], list[dict[str, Any]]],
     how: str,
 ) -> None:
-    set_contact(owner)
+    set_contact(owner, people.a)
     _, booking_id, _ = paid_booking(app, people, fake_stripe, shop)
     client_id = client_of(people.a, booking_id)
     address = address_of(people.a, client_id)

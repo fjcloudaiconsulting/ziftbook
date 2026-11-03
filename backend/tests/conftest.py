@@ -866,6 +866,28 @@ def save_setting(tenant_id: uuid.UUID, key: str, value: Any) -> None:
         )
 
 
+def confirm_contact_email(tenant_id: uuid.UUID, email: str) -> None:
+    """Make email the business's contact email, and drop any waiting address, as a confirmed link
+    leaves them. As the migrate role: the settings guard lets no other role write the key (ZIF-232,
+    0087). Unlike the real confirm, it writes no audit row, no confirmation record and tells no
+    owner: a test of those goes through the link."""
+    engine = create_engine(os.environ["ZIF_MIGRATE_DATABASE_URL"], poolclass=NullPool)
+    try:
+        with migrate_tenant_context(engine, tenant_id) as conn:
+            conn.execute(
+                text("""
+                INSERT INTO settings (tenant_id, key, value)
+                VALUES (current_setting('app.tenant_id')::uuid, 'contact_email',
+                        to_jsonb(CAST(:e AS text)))
+                ON CONFLICT (tenant_id, key) DO UPDATE SET value = excluded.value
+                """),
+                {"e": email},
+            )
+            conn.execute(text("DELETE FROM contact_email_requests"))
+    finally:
+        engine.dispose()
+
+
 def signed_in(app: FastAPI, tenant_id: uuid.UUID, user_id: uuid.UUID) -> TestClient:
     """A client holding a session in that business, as that person."""
     with tenant_context(tenant_id) as session:

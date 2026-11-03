@@ -348,19 +348,6 @@ def test_a_contact_email_must_be_one_address(people: People, app: FastAPI, value
     assert saved_settings(people.a) == {}
 
 
-def test_the_contact_email_is_returned_normalised_and_null_unsets_it(
-    people: People, app: FastAPI
-) -> None:
-    owner = signed_in(app, people.a, people.both)
-
-    response = put_settings(owner, {"contact_email": " Shop@Example.COM "})
-    assert (response.status_code, response.json()["contact_email"]) == (200, "shop@example.com")
-    assert owner.get("/api/settings").json()["contact_email"] == "shop@example.com"
-
-    assert put_settings(owner, {"contact_email": None}).status_code == 200
-    assert owner.get("/api/settings").json()["contact_email"] is None
-
-
 # ZIF-99 F6b fence: RFC 2047 encoded words are decoded in address headers, so these render as two
 # addresses or a display name in Reply-To. Kills the regex alone.
 ENCODED_WORDS = [

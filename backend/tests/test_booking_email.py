@@ -28,6 +28,7 @@ from tests.conftest import (
     People,
     add_membership,
     add_user,
+    confirm_contact_email,
     end_membership,
     fresh_email,
     jobs_as_the_worker,
@@ -1360,8 +1361,10 @@ CONTACT = " Shop@Example.COM "  # as typed: the header must carry the normalised
 REPLY_TO = "shop@example.com"
 
 
-def set_contact(owner: TestClient) -> None:
+def set_contact(owner: TestClient, tenant_id: uuid.UUID) -> None:
+    """Typed as an owner would, then confirmed as its link would (ZIF-232)."""
     assert put_settings(owner, {"contact_email": CONTACT}).status_code == 200
+    confirm_contact_email(tenant_id, REPLY_TO)
 
 
 def sent_newest(
@@ -1390,7 +1393,7 @@ def test_emails_with_a_manage_link_never_get_a_reply_to(
     people: People, app: FastAPI, ready: str
 ) -> None:
     owner = signed_in(app, people.a, people.both)
-    set_contact(owner)
+    set_contact(owner, people.a)
     booking_id = make_pending(app, people.a, ready)
     received = sent_newest(people.a, booking_id, "booking_received")
     assert patch(owner, booking_id, "confirmed").status_code == 200
@@ -1417,7 +1420,7 @@ def test_emails_without_a_manage_link_reply_to_the_contact_email(
     people: People, app: FastAPI, ready: str
 ) -> None:
     owner = signed_in(app, people.a, people.both)
-    set_contact(owner)
+    set_contact(owner, people.a)
     declined_id = make_pending(app, people.a, ready)
     assert patch(owner, declined_id, "declined").status_code == 200
     cancelled_id = confirmed_booking(app, people, ready)
@@ -1441,7 +1444,7 @@ def test_emails_without_a_manage_link_reply_to_the_contact_email(
 # email). Kills keying on token is None alone: staff emails mint no token either.
 def test_staff_emails_never_get_a_reply_to(people: People, app: FastAPI, ready: str) -> None:
     owner = signed_in(app, people.a, people.both)
-    set_contact(owner)
+    set_contact(owner, people.a)
     pending_id = make_pending(app, people.a, ready)
     confirmed_id = confirmed_booking(app, people, ready, "11:00")
     with tenant_context(people.a) as session:
@@ -1473,6 +1476,23 @@ def test_without_a_contact_email_there_is_no_reply_to(
     sent = sent_newest(people.a, booking_id, "booking_cancelled")
 
     assert not has_reply_to(sent)
+
+
+# ZIF-232 F2.4 FENCE: an address waiting for its confirmation is no Reply-To; the one in effect
+# stays until the new one is confirmed. Kills a mailer that reads the typed address.
+def test_a_waiting_address_is_no_reply_to(people: People, app: FastAPI, ready: str) -> None:
+    owner = signed_in(app, people.a, people.both)
+    assert put_settings(owner, {"contact_email": "waiting@example.com"}).status_code == 200
+    first = confirmed_booking(app, people, ready)
+    assert patch(owner, first, "cancelled_by_merchant").status_code == 200
+    assert not has_reply_to(sent_newest(people.a, first, "booking_cancelled"))
+
+    confirm_contact_email(people.a, REPLY_TO)
+    assert put_settings(owner, {"contact_email": "next@example.com"}).status_code == 200
+    second = confirmed_booking(app, people, ready, "11:00")
+    assert patch(owner, second, "cancelled_by_merchant").status_code == 200
+
+    assert sent_newest(people.a, second, "booking_cancelled")["Headers"]["Reply-To"] == [REPLY_TO]
 
 
 # ZB-03: client-facing booking email is capped per business (at enqueue) and per address (at send).
@@ -1723,7 +1743,7 @@ def test_the_flood_alert_mails_every_owner_in_their_language_and_names_no_client
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     second_owner = add_worker(migrate_engine, people.a, role="owner", locale="pt")
-    set_contact(signed_in(app, people.a, people.both))
+    set_contact(signed_in(app, people.a, people.both), people.a)
     monkeypatch.setattr(bookings, "UNPROVEN_PER_BUSINESS_HOUR", 0)
     guest_email = fresh_email()
     calendar = MailSettings().app_url.rstrip("/")
