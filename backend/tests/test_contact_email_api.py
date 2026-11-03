@@ -70,6 +70,8 @@ def test_a_typed_address_waits_and_is_not_in_effect(
     )
     assert saved_settings(people.a) == {}
     assert contact_jobs(migrate_engine, people.a) == 0
+    with migrate_tenant_context(migrate_engine, people.a) as conn:  # the owner who asked
+        assert conn.scalar(text("SELECT requested_by FROM contact_email_requests")) == people.both
 
 
 def test_the_address_in_effect_stays_until_the_new_one_is_confirmed(
