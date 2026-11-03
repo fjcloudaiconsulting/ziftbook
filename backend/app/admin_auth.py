@@ -325,6 +325,15 @@ def pass_second_factor(body: CodeIn, current: HalfAdmin, request: Request) -> Ad
                     actor_user_id=current.user_id,
                     details={"method": "totp", "failures": failures, "locked": True},
                 )
+            elif charged == "charged":
+                # Commits with the charge: a check cut off later cannot erase that a code was tried.
+                admin.record(
+                    session,
+                    request,
+                    "second_factor_attempted",
+                    actor_user_id=current.user_id,
+                    details={"method": "totp", "failures": failures},
+                )
         if charged == "locked":
             raise ApiError(403, "second_factor_locked")
         if charged == "none":  # the session died or the factor was wiped since the guard
@@ -350,8 +359,8 @@ def pass_second_factor(body: CodeIn, current: HalfAdmin, request: Request) -> Ad
             elif outcome == "failed":
                 # failures: this attempt's own count, from its charge. The check's is the count now,
                 # which other attempts still in flight may have raised.
-                # The charge already counted it. Logged before the commit: a check cut off before
-                # it loses its audit row, never its count, and still leaves this line.
+                # The charge already counted it, and its attempt event is committed. Logged before
+                # the commit: a check cut off after it answered still leaves this line.
                 logger.warning(
                     "second factor failed",
                     extra={"user_id": str(current.user_id), "failures": failures},
@@ -472,6 +481,15 @@ def confirm_enrolment(body: CodeIn, current: HalfAdmin, request: Request) -> Rec
             text("SELECT outcome, failures, charge FROM charge_totp_enrolment(:id)"),
             {"id": id_hash},
         ).one()
+        if charged == "charged":
+            # Commits with the charge, as at sign-in.
+            admin.record(
+                session,
+                request,
+                "totp_enrolment_attempted",
+                actor_user_id=current.user_id,
+                details={"failures": failures},
+            )
     if charged == "locked":
         raise ApiError(403, "second_factor_locked")
     if charged == "none":  # nothing begun, or the ticket expired
