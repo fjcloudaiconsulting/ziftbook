@@ -9,11 +9,20 @@ from typing import Any
 
 import pytest
 from psycopg.errors import CheckViolation, InsufficientPrivilege, UniqueViolation
-from sqlalchemy import Engine, Row, text
+from sqlalchemy import Engine, Row, create_engine, make_url, text
 from sqlalchemy.exc import DBAPIError, IntegrityError, ProgrammingError
+from sqlalchemy.pool import NullPool
 
+from app import business_settings
 from app.db import SessionLocal, tenant_context
-from tests.conftest import People, migrate_tenant_context, saved_settings, wait_until_blocked
+from tests.conftest import (
+    ADMIN_DATABASE_URL,
+    People,
+    migrate_tenant_context,
+    save_setting,
+    saved_settings,
+    wait_until_blocked,
+)
 
 
 def digest(secret: str) -> bytes:
@@ -362,3 +371,79 @@ def test_a_definer_sees_only_the_callers_business(people: People, migrate_engine
 def test_without_a_business_the_functions_refuse(app_engine: Engine) -> None:
     with pytest.raises(DBAPIError), app_engine.begin() as conn:
         conn.execute(text("SELECT * FROM change_contact_email('a@x.nl', false)"))
+
+
+# 0087. The writes an older release, a bug or a compromised API could try.
+WRITES = {
+    "save": "INSERT INTO settings (tenant_id, key, value) VALUES"
+    " (current_setting('app.tenant_id')::uuid, 'contact_email', '\"a@x.nl\"')",
+    "save null": "INSERT INTO settings (tenant_id, key, value) VALUES"
+    " (current_setting('app.tenant_id')::uuid, 'contact_email', 'null')",
+    "update": "UPDATE settings SET value = '\"b@x.nl\"' WHERE key = 'contact_email'",
+    "rename": "UPDATE settings SET key = 'contact_email' WHERE key = 'language'",
+}
+
+
+def refused(engine: Engine, tenant_id: uuid.UUID, statement: str, role: str | None = None) -> bool:
+    try:
+        with engine.begin() as conn:
+            if role:
+                conn.execute(text(f"SET LOCAL ROLE {role}"))
+            conn.execute(
+                text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(tenant_id)}
+            )
+            conn.execute(text(statement))
+    except ProgrammingError as error:
+        assert isinstance(error.orig, InsufficientPrivilege)
+        return True
+    return False
+
+
+# F2.1 FENCE. Wrong impl: a deny-list on ziftbook_app (the worker and every other role write it),
+# a check on OLD.key only (a rename passes), or a trigger on INSERT only.
+@pytest.mark.parametrize("write", WRITES)
+def test_no_runtime_role_writes_the_contact_email_setting(
+    people: People, migrate_engine: Engine, app_engine: Engine, worker_engine: Engine, write: str
+) -> None:
+    set_in_effect(migrate_engine, people.a, "old@x.nl")
+    save_setting(people.a, "language", "nl")
+    if write != "update":  # an insert, or a rename onto a key the business has not saved
+        with migrate_tenant_context(migrate_engine, people.a) as conn:
+            conn.execute(text("DELETE FROM settings WHERE key = 'contact_email'"))
+
+    assert refused(app_engine, people.a, WRITES[write])
+    assert refused(worker_engine, people.a, WRITES[write])
+    admin = create_engine(
+        make_url(ADMIN_DATABASE_URL).set(database=migrate_engine.url.database), poolclass=NullPool
+    )
+    try:
+        assert refused(admin, people.a, WRITES[write])
+        assert not refused(admin, people.a, WRITES[write], role="ziftbook_migrate")
+    finally:
+        admin.dispose()
+
+
+# S7: an older release's PUT of the key is refused, and saves nothing else with it (one
+# transaction). It can only refuse: it never makes an unconfirmed address the one in effect.
+def test_an_older_releases_save_of_the_key_is_refused(people: People) -> None:
+    with pytest.raises(ProgrammingError) as raised, tenant_context(people.a) as session:
+        business_settings.save(session, "language", "nl")
+        business_settings.save(session, "contact_email", "a@x.nl")
+    assert isinstance(raised.value.orig, InsufficientPrivilege)
+    assert saved_settings(people.a) == {}
+
+
+# F2.2 FENCE. Wrong impl: a guard keyed on session_user, which refuses the confirm too.
+def test_the_confirm_writes_the_setting_through_the_guard(
+    people: People, worker_engine: Engine
+) -> None:
+    _, secret = sent(worker_engine, people.a, "shop@x.nl")
+    assert confirm(people.a, digest(secret)) is not None
+    assert in_effect(people.a) == "shop@x.nl"
+
+
+def test_a_runtime_role_still_deletes_it(people: People, migrate_engine: Engine) -> None:
+    set_in_effect(migrate_engine, people.a, "old@x.nl")
+    with tenant_context(people.a) as session:
+        session.execute(text("DELETE FROM settings WHERE key = 'contact_email'"))
+    assert in_effect(people.a) is None
