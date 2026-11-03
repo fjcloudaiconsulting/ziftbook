@@ -54,6 +54,14 @@ Specifics:
   migration, rebase it onto `main` and set its `down_revision` to the current head; `alembic heads` must print one line.
   If both are already merged, add a merge revision (`down_revision = ("a", "b")`, empty upgrade and downgrade)
   rather than editing a merged migration.
+- A migration that changes an existing function reads its stored definition (`pg_get_functiondef`) and replaces only
+  its own anchored fragments, each found exactly once or the migration refuses; its downgrade reverses exactly those
+  replacements on the stored definition. No migration rebuilds a function from another migration's file text or a
+  full copy of its body: two unmerged migrations that each copy the body silently drop each other's edit, whichever
+  lands second, while anchored replacements compose when they do not overlap and fail loudly when they do. Run the
+  result with `op.get_bind().exec_driver_sql(...)`, so text read back from the catalog is never parsed for bind
+  parameters. Its round-trip test asserts that the downgrade gives back the pre-upgrade definition byte for byte and
+  that the owner, `proacl` and `proconfig` are unchanged. 0058's re-creation of `erase_client_core` is the example.
 - A migration statement waits at most 5 seconds for a table or row lock (`lock_timeout`, set in `migrations/env.py`),
   so a migration stuck behind a long app transaction fails with `LockNotAvailable` instead of making every query on
   that table queue behind it. The migrations run exits non-zero and the app does not start on the new version; run
@@ -212,6 +220,8 @@ functions owned by `ziftbook_migrate`:
     change that person's name and phone;
   - end anyone's account sessions, by passing `end_account_sessions` a business session's hash, which it can read
     from `sessions` (a denial of service, no data).
+  - put a booking into anyone's cross-business history, by inserting it with `booked_as` set to them (it could
+    already insert bookings in any business; showing one in that person's own history is new).
 - Lock order for every writer that touches more than one of these: `password_credentials`, then `sessions`, then
   `account_sessions`, then `clients`. `reset_password` follows it; signing out everywhere locks the person's business
   sessions before it ends their account sessions (`auth.EVERY_SESSION`); a sign-in locks the stored hash
@@ -275,6 +285,8 @@ that person's platform account (ZIF-99).
   cancellations were announced the first time; a refund that fails later must still reach the client). A CHECK keeps
   `purge_after` at most 31 days after `created_at`; the worker deletes the hold by then. Only the core writes it; the
   app role can neither read nor write it; the worker reads and deletes it.
+- A client row links to an account (`clients.user_id`) only through that person's own proven booking at that
+  business (ZIF-146): `find_or_create`'s REFRESH fills a NULL `user_id`, never relinks, and nothing links by email.
 - Marketing consent (`consents`) is per business. Nothing writes a platform-level consent, and one business's consent
   never grants another anything.
 - `consents` is append-only: one row per grant or withdrawal per purpose, holding the exact text shown and its policy
@@ -362,6 +374,12 @@ migration 0026), not any code path. A race in a route somebody forgets to guard 
   `GRANT UPDATE (column)` only if a route changes it. A settled booking never becomes `pending` again, and an
   `UPDATE` never moves a booking into `awaiting_payment`, which only placement (the `INSERT`) sets (the
   `bookings_status_to_pending` trigger).
+- `bookings.booked_as` (ZIF-146) is the account whose live session proved the booking, written only by `place()`
+  from that session (re-confirmed `FOR KEY SHARE` inside the booking transaction), never from a body; NULL for a guest
+  or a merchant. It is personal data (it maps a booking to a person): no merchant route selects it and no response
+  schema carries it; only the person's own history (`own_bookings`) reads it. The app role may `INSERT` it, never
+  `UPDATE` it. A proven booking whose session ended after step 0 is refused, so nothing is written under an
+  identity that is gone.
 - The public booking POST writes **no** `audit_events` row: the requester is the data subject, and `auth.record`
   stamps their address into a table with no foreign keys that outlives erased people.
 
