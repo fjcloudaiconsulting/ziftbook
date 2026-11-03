@@ -5,19 +5,24 @@ import hashlib
 import secrets
 import threading
 import uuid
+from collections.abc import Iterator
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
 import pytest
 from fastapi import FastAPI
-from sqlalchemy import Engine, Row, text
+from fastapi.testclient import TestClient
+from sqlalchemy import Engine, Row, event, text
 
 import app as app_package
-from app import contact_email
+from app import contact_email, limits
 from app.db import tenant_context
 from app.main import create_app
 from tests.conftest import (
     People,
+    add_membership,
+    add_user,
     confirm_contact_email,
     events,
     fresh_address,
@@ -29,6 +34,8 @@ from tests.conftest import (
     signed_in,
     wait_until_blocked,
 )
+
+pytestmark = pytest.mark.usefixtures("fresh_contact_limits")
 
 
 @pytest.fixture
@@ -421,19 +428,140 @@ def test_the_fourth_link_in_an_hour_to_one_address_is_refused(
     assert len(queued(migrate_engine, people.a)) == 3
 
 
-def test_the_sixth_link_in_a_day_to_one_address_over_two_businesses_is_refused(
-    people: People, app: FastAPI, migrate_engine: Engine
+@pytest.fixture
+def owners(people: People, app: FastAPI, migrate_engine: Engine) -> Iterator[list[TestClient]]:
+    """Owners of four businesses: a and b, and two more made here."""
+    extra: list[tuple[uuid.UUID, uuid.UUID]] = []
+    for name in ("c", "d"):
+        with migrate_engine.begin() as conn:
+            tenant = conn.scalar(
+                text("INSERT INTO tenants (name) VALUES (:n) RETURNING id"), {"n": name}
+            )
+        user = add_user(migrate_engine)
+        add_membership(tenant, user, "owner")
+        extra.append((tenant, user))
+    set_role(people.b, people.only_b, "owner")
+    yield [
+        signed_in(app, people.a, people.both),
+        signed_in(app, people.b, people.only_b),
+        *(signed_in(app, tenant, user) for tenant, user in extra),
+    ]
+    for tenant, user in extra:
+        with migrate_tenant_context(migrate_engine, tenant) as conn:
+            conn.execute(text("DELETE FROM sessions WHERE tenant_id = :t"), {"t": tenant})
+            conn.execute(text("DELETE FROM settings"))
+            conn.execute(text("DELETE FROM memberships"))
+            conn.execute(text("DELETE FROM users WHERE id = :u"), {"u": user})
+            conn.execute(text("DELETE FROM tenants WHERE id = :t"), {"t": tenant})
+
+
+def send_and_clear(owner: TestClient, address: str, times: int) -> None:
+    for _ in range(times):
+        assert put_settings(owner, {"contact_email": address}).status_code == 200
+        assert put_settings(owner, {"contact_email": None}).status_code == 200
+
+
+def hits(key: str) -> int:
+    return limits.count(key, timedelta(days=1))
+
+
+# Security review 1 FENCE. Wrong impl: one count per address shared by every business, which lets
+# other businesses use up a business's links to its own inbox.
+def test_other_businesses_cannot_use_up_a_business_links_to_an_address(
+    owners: list[TestClient],
 ) -> None:
     address = f"{uuid.uuid4().hex[:12]}@example.com"
-    a = signed_in(app, people.a, people.both)
-    set_role(people.b, people.only_b, "owner")
-    b_owner = signed_in(app, people.b, people.only_b)
-    for owner, times in ((a, 3), (b_owner, 2)):
-        for _ in range(times):
-            assert put_settings(owner, {"contact_email": address}).status_code == 200
-            assert put_settings(owner, {"contact_email": None}).status_code == 200
+    a, b, c, _ = owners
+    send_and_clear(b, address, 3)
+    send_and_clear(c, address, 2)  # five links to the address today, from two others
 
-    assert put_settings(b_owner, {"contact_email": address}).status_code == 429
+    assert put_settings(a, {"contact_email": address}).status_code == 200
+
+
+# Security review 1 FENCE. Wrong impl: no cap on how many businesses mail one inbox (a ring of
+# them floods it), a cap that blocks a business that already mailed it today, or a refusal that
+# is still counted (a refused business would then pass the cap as one that already mailed it).
+def test_a_fourth_business_mailing_one_address_in_a_day_is_refused(
+    people: People, owners: list[TestClient]
+) -> None:
+    address = f"{uuid.uuid4().hex[:12]}@example.com"
+    a, b, c, d = owners
+    for owner in (a, b, c):
+        send_and_clear(owner, address, 1)
+
+    refused = put_settings(d, {"contact_email": address})
+    again = put_settings(d, {"contact_email": address})
+
+    assert [refused.status_code, again.status_code] == [429, 429]
+    assert hits(contact_email.businesses_key(limits.address_for_limits(address))) == 3
+    assert put_settings(c, {"contact_email": address}).status_code == 200
+
+
+def test_a_business_sends_one_address_five_links_a_day(people: People, app: FastAPI) -> None:
+    address = f"{uuid.uuid4().hex[:12]}@example.com"
+    sent = contact_email.sent_key(people.a, limits.address_for_limits(address))
+    for _ in range(5):
+        limits.charge(sent, timedelta(days=1))
+
+    over = put_settings(signed_in(app, people.a, people.both), {"contact_email": address})
+
+    assert over.status_code == 429
+    assert hits(sent) == 5  # the refused one is given back
+
+
+# Security review 1 FENCE. Wrong impl: the shared counts charged for a link that is refused by
+# this business's own limit, or for a save that queues no link.
+def test_a_save_that_queues_no_link_counts_nothing_shared(people: People, app: FastAPI) -> None:
+    owner = signed_in(app, people.a, people.both)
+    address = f"{uuid.uuid4().hex[:12]}@example.com"
+    sent = contact_email.sent_key(people.a, limits.address_for_limits(address))
+    send_and_clear(owner, address, 3)
+    assert put_settings(owner, {"contact_email": address}).status_code == 429  # 4th this hour
+    confirm_contact_email(people.a, address)
+    assert put_settings(owner, {"contact_email": address}).status_code == 200  # kept: no link
+
+    assert hits(sent) == 3
+
+
+# Security review 2 FENCE. Wrong impl: a limit charged on a second pooled connection while the
+# request's row locks are held (a flood then fills the pool with requests waiting on each other).
+def test_no_limit_takes_a_second_connection_once_the_rows_are_locked(
+    people: People, app: FastAPI, app_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[str] = []
+
+    def spy(name: str) -> Any:
+        real = getattr(limits, name)
+
+        def call(*args: Any, **kwargs: Any) -> Any:
+            calls.append(f"{name} own" if kwargs.get("db") is None else f"{name} in request")
+            return real(*args, **kwargs)
+
+        return call
+
+    for name in ("hit", "charge", "refund"):
+        monkeypatch.setattr(limits, name, spy(name))
+
+    def seen(conn: Any, cursor: Any, statement: str, *rest: Any) -> None:
+        for name in ("change_contact_email", "resend_contact_email"):
+            if name in statement:
+                calls.append(name)
+
+    owner = signed_in(app, people.a, people.both)
+    event.listen(app_engine, "before_cursor_execute", seen)
+    try:
+        for locked in ("change_contact_email", "resend_contact_email"):
+            calls.clear()
+            if locked == "change_contact_email":
+                answer = put_settings(owner, {"contact_email": "a@x.nl"})
+            else:
+                answer = owner.post(RESEND, json={})
+            assert answer.status_code == 200
+            after = calls[calls.index(locked) :]
+            assert [call for call in after if " " in call] == ["hit in request"] * 2, calls
+            assert "charge own" in calls[: calls.index(locked)], calls
+    finally:
+        event.remove(app_engine, "before_cursor_execute", seen)
 
 
 # S3 FENCE. Wrong impl: a limit checked against a state read before the request row was locked,
@@ -556,3 +684,30 @@ def test_the_owners_are_told_when_the_address_in_effect_changes(
     assert put_settings(owner, {"contact_email": None}).status_code == 200
     assert notices(migrate_engine, people.a) == [str(people.both)] * 2
     assert notices(migrate_engine, people.b) == []
+
+
+# Wrong impl: a link queued uncounted when another save changed the address between the unlocked
+# read and the lock, or a count kept for a link that was not queued.
+@pytest.mark.parametrize("guess", ["false", "true"])
+def test_a_save_raced_by_another_is_refused_as_busy(
+    people: People,
+    app: FastAPI,
+    migrate_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+    guess: str,
+) -> None:
+    owner = signed_in(app, people.a, people.both)
+    address = f"{uuid.uuid4().hex[:12]}@example.com"
+    if guess == "true":
+        assert put_settings(owner, {"contact_email": address}).status_code == 200
+    before = waiting(migrate_engine, people.a)
+    sent = contact_email.sent_key(people.a, limits.address_for_limits(address))
+    counted = hits(sent)
+    monkeypatch.setattr(
+        contact_email, "WILL_SEND", text(f"SELECT {guess} WHERE CAST(:e AS text) IS NOT NULL")
+    )
+
+    raced = put_settings(owner, {"contact_email": address})
+
+    assert (raced.status_code, raced.json()) == (503, {"code": "busy"})
+    assert (waiting(migrate_engine, people.a), hits(sent)) == (before, counted)
