@@ -879,7 +879,7 @@
           "clients"
         ],
         "summary": "List",
-        "description": "This business's clients, newest first, optionally searched by name, email or phone.",
+        "description": "This business's clients, newest first, optionally searched by name, email or phone. An\nerased client is never listed.",
         "operationId": "clients-list",
         "parameters": [
           {
@@ -6247,7 +6247,13 @@
           },
           "client_name": {
             "type": "string",
-            "title": "Client Name"
+            "title": "Client Name",
+            "description": "The client's name. \"\" exactly when client_erased is true: an erased client has no name, and the console shows it as an erased client."
+          },
+          "client_erased": {
+            "type": "boolean",
+            "title": "Client Erased",
+            "description": "True when the client was erased; client_name is then \"\"."
           },
           "created_at": {
             "type": "string",
@@ -6287,6 +6293,7 @@
           "worker_display_name",
           "client_id",
           "client_name",
+          "client_erased",
           "created_at",
           "expires_at",
           "status",
@@ -6514,7 +6521,13 @@
           },
           "client_name": {
             "type": "string",
-            "title": "Client Name"
+            "title": "Client Name",
+            "description": "The client's name. \"\" exactly when client_erased is true: an erased client has no name, and the console shows it as an erased client."
+          },
+          "client_erased": {
+            "type": "boolean",
+            "title": "Client Erased",
+            "description": "True when the client was erased; client_name is then \"\"."
           },
           "created_at": {
             "type": "string",
@@ -6649,6 +6662,7 @@
           "worker_display_name",
           "client_id",
           "client_name",
+          "client_erased",
           "created_at",
           "expires_at",
           "status",
@@ -7900,7 +7914,13 @@
           },
           "client_name": {
             "type": "string",
-            "title": "Client Name"
+            "title": "Client Name",
+            "description": "The client's name. \"\" exactly when client_erased is true: an erased client has no name, and the console shows it as an erased client."
+          },
+          "client_erased": {
+            "type": "boolean",
+            "title": "Client Erased",
+            "description": "True when the client was erased; client_name is then \"\"."
           },
           "service_name": {
             "additionalProperties": {
@@ -7924,6 +7944,7 @@
           "starts_at",
           "ends_at",
           "client_name",
+          "client_erased",
           "service_name",
           "status"
         ],
@@ -8462,7 +8483,13 @@
           },
           "client_name": {
             "type": "string",
-            "title": "Client Name"
+            "title": "Client Name",
+            "description": "The client's name. \"\" exactly when client_erased is true: an erased client has no name, and the console shows it as an erased client."
+          },
+          "client_erased": {
+            "type": "boolean",
+            "title": "Client Erased",
+            "description": "True when the client was erased; client_name is then \"\"."
           },
           "created_at": {
             "type": "string",
@@ -8497,6 +8524,7 @@
           "worker_display_name",
           "client_id",
           "client_name",
+          "client_erased",
           "created_at",
           "expires_at",
           "payment"

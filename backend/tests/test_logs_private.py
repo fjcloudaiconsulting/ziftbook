@@ -8,6 +8,7 @@ import asyncio
 import base64
 import hashlib
 import json
+import uuid
 from collections.abc import Callable, Iterator
 from datetime import datetime, timedelta
 from typing import Any
@@ -22,8 +23,8 @@ from sqlalchemy import Engine, text
 from app import admin_auth, auth, bookings, clients, csp_reports, payments, totp
 from app.config import MailSettings
 from app.db import tenant_context
-from app.jobs import run_once
-from app.mail import render
+from app.jobs import Job, run_once
+from app.mail import render, send_booking
 from app.main import create_app
 from app.worker import KINDS
 from tests.conftest import (
@@ -45,6 +46,7 @@ from tests.conftest import (
 from tests.stripe_fake import FakeGateway
 from tests.test_booking_payments_api import make_shop, resume, run, sync
 from tests.test_bookings_api import post_booking, sign_in_as
+from tests.test_erased_client_reads import erase_in
 from tests.test_second_factor_db import issue_ticket
 from tests.test_working_hours import seed
 
@@ -416,6 +418,50 @@ def test_no_personal_data_ever_reaches_a_log(
     )
     assert paused.status_code == 429
     run_jobs_once()
+
+    # 6k (ZIF-58): the booker's client is erased, as the erase function will erase it, and the
+    # console reads around it.
+    with tenant_context(people.a) as session:
+        gone = session.scalar(
+            text("SELECT client_id FROM bookings WHERE id = :id"), {"id": booked.json()["id"]}
+        )
+    with migrate_tenant_context(migrate_engine, people.a) as conn:
+        erase_in(conn, gone)
+    assert str(gone) not in [c["id"] for c in owner.get("/api/clients").json()]
+    assert owner.patch(f"/api/clients/{gone}", json={"client_note": client_note}).status_code == 404
+    assert (
+        owner.post(
+            f"/api/clients/{gone}/consents",
+            json={"policy_version": "2026-09-01", "purposes": {"sms": True}},
+        ).status_code
+        == 404
+    )
+    rebooked = owner.post(
+        "/api/bookings",
+        json={
+            "service_id": created.json()["id"],
+            "member_id": str(target),
+            "client_id": str(gone),
+            "starts_at": slots[1],
+        },
+    )
+    assert rebooked.status_code == 422
+    assert owner.get("/api/bookings/pending").status_code == 200
+    agenda = owner.get("/api/bookings", params={"from": slots[0], "to": slots[-1]})
+    assert agenda.status_code == 200
+    assert owner.get(f"/api/bookings/{booked.json()['id']}").json()["client_erased"] is True
+    erased_block = owner.post(
+        f"/api/members/{target}/time-off",
+        json={
+            "starts_at": in_the_way.isoformat(),
+            "ends_at": (in_the_way + timedelta(minutes=30)).isoformat(),
+        },
+    )
+    assert erased_block.json()["bookings"][0]["client_erased"] is True
+    team_mail = {"booking_id": booked.json()["id"], "template": "booking_new"}
+    send_booking(
+        Job(uuid.uuid4(), "email.booking", people.a, {**team_mail, "user_id": str(people.both)})
+    )
 
     # 7: invite flow — send, list, a wrong token, then accept with a brand-new account.
     invite_email = fresh_email()

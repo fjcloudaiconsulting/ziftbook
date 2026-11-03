@@ -380,7 +380,8 @@ def list_clients(
     before: UUID | None = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
 ) -> list[ClientOut]:
-    """This business's clients, newest first, optionally searched by name, email or phone."""
+    """This business's clients, newest first, optionally searched by name, email or phone. An
+    erased client is never listed."""
     stripped = q.strip() if q else None
     # Phones are stored as +31612345678 (ZIF-152): "12 34 56" matches without its spaces, and
     # "06 1234 5678" as the number it is. Older free-text phones still match as typed.
@@ -388,7 +389,8 @@ def list_clients(
     rows = current.db.execute(
         text(f"""
         SELECT {fields(members.is_owner(current))} FROM clients
-        WHERE (CAST(:before AS uuid) IS NULL OR id < :before)
+        WHERE erased_at IS NULL  -- an erased client leaves the console (ZIF-58)
+          AND (CAST(:before AS uuid) IS NULL OR id < :before)
           AND (CAST(:q AS text) IS NULL
                OR name ILIKE :q OR email ILIKE :q OR phone ILIKE :q
                OR phone ILIKE :compact OR phone = :number)
@@ -477,8 +479,13 @@ def update_client(
     owner = members.is_owner(current)
     if "internal_note" in change.model_fields_set and not owner:
         raise ApiError(403, "owner_only")  # even unchanged or null: it is not theirs to send
+    # An erased client is final (0063): 404. A PATCH that waited on an erasure's row lock re-reads
+    # the row after it and finds it erased.
     row = current.db.execute(
-        text(f"SELECT {fields(owner)} FROM clients WHERE id = :id FOR NO KEY UPDATE"),
+        text(f"""
+        SELECT {fields(owner)} FROM clients WHERE id = :id AND erased_at IS NULL
+        FOR NO KEY UPDATE
+        """),
         {"id": client_id},
     ).first()
     if row is None:
@@ -533,8 +540,16 @@ def add_consents(
     response: Response,
 ) -> ClientOut:
     """Record what a member says a client granted or withdrew, on the client's behalf."""
+    # FOR SHARE, not a plain read (ZIF-58): the consent's foreign key takes only KEY SHARE on the
+    # client, which an erasure's NO KEY UPDATE does not block, so a consent written while the
+    # client is being erased would land on the tombstone. This waits for the erasure, re-reads the
+    # row and answers 404.
     row = current.db.execute(
-        text(f"SELECT {fields(members.is_owner(current))} FROM clients WHERE id = :id"),
+        text(f"""
+        SELECT {fields(members.is_owner(current))} FROM clients
+        WHERE id = :id AND erased_at IS NULL
+        FOR SHARE
+        """),
         {"id": client_id},
     ).first()
     if row is None:

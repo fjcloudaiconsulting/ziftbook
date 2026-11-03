@@ -2,7 +2,16 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+# ZIF-58: the permanent wire contract for an erased client, shared by every model that names a
+# booking's client (app.bookings.BookingRow, InTheWay) and pinned in
+# tests/test_erased_client_reads.py. client_name stays a string, never null.
+CLIENT_NAME = (
+    'The client\'s name. "" exactly when client_erased is true: an erased client has no name, '
+    "and the console shows it as an erased client."
+)
+CLIENT_ERASED = 'True when the client was erased; client_name is then "".'
 
 
 class InTheWay(BaseModel):
@@ -11,7 +20,8 @@ class InTheWay(BaseModel):
     id: UUID
     starts_at: datetime
     ends_at: datetime
-    client_name: str
+    client_name: str = Field(description=CLIENT_NAME)
+    client_erased: bool = Field(description=CLIENT_ERASED)
     service_name: dict[str, str]  # all three locales, as snapshotted (BookingRow.service_name)
     status: Literal["pending", "confirmed"]
 

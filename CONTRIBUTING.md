@@ -202,6 +202,15 @@ that person's platform account (ZIF-99).
   `GRANT UPDATE (column)`, or every client write fails. A backfill `UPDATE` of `clients` (a migration or a runbook)
   filters `erased_at IS NULL`: the trigger refuses the first erased row, and CI has none, so it would fail in
   production.
+- An erased client leaves the console. A read that offers a client to act on filters `erased_at IS NULL`: the client
+  list and search skip it, `PATCH` and consents answer 404, and booking it answers 422 `unknown_client`. Nothing
+  makes an erased client's booking live again: a statement that moves a booking (`MOVE`, `RESCHEDULE`,
+  `PENDING_MOVE`) carries `bookings.CLIENT_NOT_ERASED` as a qualifier, and so must any new one. A read that
+  shows a booking keeps it and says `client_erased: true` with `client_name: ""`, the permanent pinned contract
+  (`app.errors.CLIENT_NAME`). A writer that reads a client before writing next to it either locks the row (`FOR
+  SHARE` or stronger, with the filter, as the consents route and the booking mail job do), or holds the tenant booking
+  lock, which every erasure takes first (as the merchant booking does): a foreign key's `KEY SHARE` does not wait for
+  an erasure in flight. The team gets no booking mail about an erased client's booking.
 - Marketing consent (`consents`) is per business. Nothing writes a platform-level consent, and one business's consent
   never grants another anything.
 - `consents` is append-only: one row per grant or withdrawal per purpose, holding the exact text shown and its policy

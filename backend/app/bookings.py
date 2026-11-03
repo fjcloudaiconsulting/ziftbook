@@ -45,7 +45,7 @@ from app import time_off as time_off_module
 from app.business_settings import Locale
 from app.clients import ClientName, Phone, PolicyVersion, Purpose
 from app.db import SessionLocal, count_after_commit, join_tenant, tenant_context
-from app.errors import ApiError, Error
+from app.errors import CLIENT_ERASED, CLIENT_NAME, ApiError, Error
 from app.services import STRICT, DescriptionText, Price, multiline
 
 logger = logging.getLogger(__name__)
@@ -259,7 +259,8 @@ class BookingRow(BaseModel):
     worker_id: UUID
     worker_display_name: str | None
     client_id: UUID
-    client_name: str
+    client_name: str = Field(description=CLIENT_NAME)
+    client_erased: bool = Field(description=CLIENT_ERASED)
     created_at: datetime  # "booked online 2 hours ago"
 
 
@@ -407,12 +408,14 @@ VALUES (current_setting('app.tenant_id')::uuid, :booking_id, :event, CAST(:ip AS
         CAST(:details AS jsonb))
 """)
 
-# The columns QUEUE and RANGE share, so the two lists can never drift apart.
+# The columns QUEUE and RANGE share, so the two lists can never drift apart. An erased client's
+# name is '' and the erasure blanks its bookings' snapshot (ZIF-58), so client_name is '' exactly
+# when client_erased is true, with no CASE.
 LIST_COLUMNS = """
 b.id, b.starts_at, b.ends_at, b.service_id, b.service_name,
 jsonb_build_object('amount_minor', b.price_amount_minor, 'currency', b.price_currency) AS price,
 b.worker_id, b.worker_display_name, b.client_id, coalesce(b.client_name, c.name) AS client_name,
-b.created_at
+c.erased_at IS NOT NULL AS client_erased, b.created_at
 """
 
 # A booking's payment `p` as PaymentFact reads it, for the detail and the queue alike.
@@ -684,17 +687,26 @@ WHERE id = :id AND starts_at > now()
 RETURNING id, status
 """)
 
+# ZIF-58: no statement moves an erased client's booking. An erasure keeps a confirmed booking that
+# has already started; moved to a later time it would be a live appointment of a client who can
+# no longer be told, and that no erasure could end again. A qualifier, not a pre-check, in each of
+# the three moving statements (RESCHEDULE, PENDING_MOVE, MOVE): zero rows, answered as 409.
+CLIENT_NOT_ERASED = """
+NOT EXISTS (SELECT 1 FROM clients c
+            WHERE c.tenant_id = bookings.tenant_id AND c.id = bookings.client_id
+              AND c.erased_at IS NOT NULL)"""
+
 # earliest_starts_at = LEAST(earliest_starts_at, :new): it only ever goes down (D7/D8), and the
 # CHECK pair (ck_bookings_earliest_starts_at, ck_bookings_earliest_starts_at_current) is the
 # database's own backstop on that guarantee. `status = 'confirmed'` (never 'pending': D7, a
 # pending booking is never rescheduled) and `reschedule_count = :seen` (the client's echo,
 # re-checked under the row's own write -- test 15's fence) are both qualifiers, not pre-checks:
 # a stale echo or a status this statement doesn't match updates zero rows, answered as 409.
-RESCHEDULE = text("""
+RESCHEDULE = text(f"""
 UPDATE bookings SET starts_at = :new, ends_at = :new + (ends_at - starts_at),
                     earliest_starts_at = LEAST(earliest_starts_at, :new),
                     reschedule_count = reschedule_count + 1
-WHERE id = :id AND status = 'confirmed' AND reschedule_count = :seen
+WHERE id = :id AND status = 'confirmed' AND reschedule_count = :seen AND {CLIENT_NOT_ERASED}
 RETURNING id, starts_at, ends_at, reschedule_count
 """)
 
@@ -705,10 +717,11 @@ RETURNING id, starts_at, ends_at, reschedule_count
 PENDING_MOVES = 3
 # ZIF-158: how long a checkout holds the slot while the client's card is checked.
 AWAITING_PAYMENT_TTL = timedelta(minutes=30)
-PENDING_MOVE = text("""
+PENDING_MOVE = text(f"""
 UPDATE bookings SET starts_at = :new, ends_at = :new + (ends_at - starts_at),
                     original_starts_at = :new, earliest_starts_at = :new
 WHERE id = :id AND status = 'pending' AND expires_at > now() AND starts_at > now()
+  AND {CLIENT_NOT_ERASED}
 RETURNING id, starts_at, ends_at, reschedule_count
 """)
 
@@ -860,11 +873,11 @@ def place(
 # moving a booking must not spend it). earliest_starts_at takes LEAST because
 # ck_bookings_earliest_starts_at_current forces it when moving earlier; moving later leaves the
 # refund anchor where it was. `status = 'confirmed'` is a qualifier, as RESCHEDULE's: D7.
-MOVE = text("""
+MOVE = text(f"""
 UPDATE bookings SET starts_at = :new, ends_at = :new + (ends_at - starts_at),
                     worker_id = :worker, worker_display_name = :name,
                     earliest_starts_at = LEAST(earliest_starts_at, :new)
-WHERE id = :id AND status = 'confirmed'
+WHERE id = :id AND status = 'confirmed' AND {CLIENT_NOT_ERASED}
 RETURNING id, starts_at, ends_at, worker_id
 """)
 
@@ -1668,9 +1681,16 @@ def book(
     # 4. An off-grid "anyone" would pick by load and could land on someone on holiday.
     if new.override and new.member_id is None:
         raise ApiError(422, "member_required")
-    # 5. Checked, not left to the foreign key (a 500); RLS makes another business's id unknown.
+    # 5. Checked, not left to the foreign key (a 500); RLS makes another business's id unknown,
+    # and an erased client is unknown too (ZIF-58). Under the lock, so no erasure lands between.
     if new.client_id is not None:
-        if db.scalar(text("SELECT 1 FROM clients WHERE id = :id"), {"id": new.client_id}) is None:
+        if (
+            db.scalar(
+                text("SELECT 1 FROM clients WHERE id = :id AND erased_at IS NULL"),
+                {"id": new.client_id},
+            )
+            is None
+        ):
             raise ApiError(422, "unknown_client")
         client_id = new.client_id
     else:
@@ -1851,7 +1871,9 @@ def reschedule(
         ):
             raise ApiError(409, "slot_unavailable") from None
         raise
-    if moved is None:  # lost a race under our own lock: the UPDATE's qualifier is the authority
+    # Lost a race under our own lock, or the client is erased (ZIF-58): the UPDATE's qualifiers are
+    # the authority.
+    if moved is None:
         raise ApiError(409, "invalid_transition")
     origin_ip, user_agent = auth.origin(request)
     db.execute(
