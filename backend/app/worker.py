@@ -128,8 +128,9 @@ async def work(
             # After the drain, so emails go first. A failing prune or sweep skips the ping (alerts)
             # and retries next poll, since the mark is only set on success.
             if swept is None or time.monotonic() - swept >= SWEEP_SECONDS:
-                # Global and one statement, so before the sweep: never hostage to a failing tenant.
+                # Global, so before the per-tenant sweep: never hostage to a failing tenant.
                 await asyncio.to_thread(jobs.prune)
+                await asyncio.to_thread(contact_email.sweep_senders)
                 # ZIF-58. Each sweep runs whatever the other did: the booking sweep re-arms refunds
                 # and card releases, and a hold's purge date is a bound. A failure still fails the
                 # iteration (no ping) once both have run; each failure is logged on its own.
@@ -140,7 +141,6 @@ async def work(
                     except Exception:
                         logger.exception("sweep failed", extra={"sweep": name})
                         failed = True
-                await asyncio.to_thread(contact_email.sweep_senders)
                 if failed:
                     # On purpose: swept stays unstamped, so both sweeps run again next poll (30 s),
                     # for every business, until the failure clears; the withheld ping alerts.
