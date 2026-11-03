@@ -4,12 +4,32 @@ so the real limits, upload read, ready marker and exit codes apply; only the dec
 for one that misbehaves as the upload's first line says. The child has no environment and no
 arguments, so the upload is the only way to tell it what to do."""
 
+# ruff: noqa: E402 -- the descriptors are listed before any other import can open one of its own
+import os
+
+
+def descriptors() -> set[int]:
+    """This process's open descriptors (the listing's own is closed by the time it is checked)."""
+    listing, found = "/proc/self/fd" if os.path.isdir("/proc/self/fd") else "/dev/fd", set()
+    for name in os.listdir(listing):
+        try:
+            os.fstat(int(name))
+            found.add(int(name))
+        except OSError:
+            pass
+    return found
+
+
+# What reached this process at exec, before anything else runs: an import may open descriptors of
+# its own (ctypes opens the interpreter's binary where libffi is linked into it, as in the
+# python-build-standalone builds uv installs), and those were never the API's.
+INHERITED = descriptors()
+
 import ctypes
 import fcntl
 import importlib.util
 import json
 import mmap
-import os
 import resource
 import signal
 import socket
@@ -177,15 +197,7 @@ def spin() -> None:
 def inspect(rest: bytes) -> bytes:
     """The real decode, only if this process got nothing it should not have."""
     environ = set(os.environ) - {"LC_CTYPE", "__CF_USER_TEXT_ENCODING"}  # set by Python, macOS
-    listing = "/proc/self/fd" if sys.platform == "linux" else "/dev/fd"
-    fds = set()
-    for name in os.listdir(listing):
-        try:
-            os.fstat(int(name))
-            fds.add(int(name))
-        except OSError:
-            pass  # the listing's own descriptor, closed by now
-    if environ or fds != {0, 1, 2} or not sys.flags.isolated:
+    if environ or INHERITED != {0, 1, 2} or not sys.flags.isolated:
         os._exit(9)
     if not sys.flags.dont_write_bytecode or os.getcwd() != "/":
         os._exit(9)
