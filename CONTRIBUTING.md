@@ -357,6 +357,10 @@ object per erasure in a dedicated bucket (`ZIF_ERASURE_LEDGER_*`), keyed
   erasure committed but not yet ledgered (normally seconds) followed by the loss of the database.
 - Retention: the bucket lock keeps every entry for at least the longest backup or point-in-time window plus a margin
   (35 days of backups means 42 days of ledger), and a lifecycle rule deletes it after that (storage limitation).
+- An `erasure.ledger` job that gave up (ERROR `job gave up`, alerted) leaves its erasure out of the ledger. Re-write
+  the missing entries with `python -m app.ledger backfill --since <the job's erasure time, or earlier>`, run like
+  `reapply` below but with the worker's **writing** key: it reads every business's `clients.erased_at` (never the
+  audit events) and writes only the entries that are not there, logging `ledger backfilled` (`erased`, `written`).
 
 ### Restoring the database
 
@@ -697,7 +701,7 @@ loggers (`web.*`); Next's own stderr output (banners, SSR error traces) is not i
   `sweep failed` (ERROR, `sweep` `holds` or `bookings`, with `exc`: the worker's two sweeps run whatever the other
   did, and either failing withholds the ping); `business sweep failed` (ERROR, `sweep`, `tenant_id`, with `exc`: one
   business failed in a sweep, which went on to the next and then raised); `erasure ledgered` (INFO, `client_id`, `written`: false when the
-  entry was there already); `erasures reapplied` (INFO, the run's counts, from `python -m app.ledger reapply`); `email sent` (INFO) and
+  entry was there already); `erasures reapplied` (INFO, the run's counts, from `python -m app.ledger reapply`); `ledger backfilled` (INFO, `erased`, `written`, from `python -m app.ledger backfill`); `email sent` (INFO) and
   `email failed` (WARNING) with `template` (and `error` on failure) plus the job context, and
   `email skipped` (INFO, `template`, `reason` `recipient_quota`, or `no_hold` for an erased client's
   `booking_refund_failed` whose hold is gone, from the worker's send);
