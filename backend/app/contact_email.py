@@ -8,7 +8,8 @@ which only this module and the mailer name, and is used for nothing until its li
 
 import logging
 import re
-from datetime import timedelta
+from datetime import datetime, timedelta
+from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Request, Response
@@ -16,7 +17,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 
 from app import auth, limits
-from app.auth import SignedIn
+from app.auth import CurrentSession, SignedIn
 from app.db import tenant_context
 from app.errors import ApiError, Error
 
@@ -104,3 +105,46 @@ def confirm(body: ContactEmailToken, request: Request, response: Response) -> No
     # After the commit: a confirm that failed to commit is not logged as done.
     logger.info("contact email confirmed", extra={"tenant_id": str(tenant_id)})
     response.headers["Cache-Control"] = "no-store"
+
+
+class ContactEmailOut(BaseModel):
+    """Which address clients see, and which waits for its inbox to confirm it."""
+
+    # none: no address. confirmed: clients see `confirmed`, nothing waits. unconfirmed: an address
+    # waits with no live link (never sent, or link_expired). sent: a link is queued or out.
+    state: Literal["none", "unconfirmed", "sent", "confirmed"]
+    confirmed: str | None  # what clients see now, whatever the state
+    requested: str | None  # the waiting address; shown to owners only
+    link_expired: bool
+    expires_at: datetime | None
+
+
+STATE = text("""
+SELECT (SELECT value #>> '{}' FROM settings WHERE key = 'contact_email') AS confirmed,
+       r.email, r.expires_at, coalesce(r.expires_at > now(), false) AS live
+FROM (SELECT 1) one LEFT JOIN contact_email_requests r ON true
+""")
+
+
+def state(current: SignedIn) -> ContactEmailOut:
+    row = current.db.execute(STATE).one()
+    if row.email is None:
+        kind: Literal["none", "unconfirmed", "sent", "confirmed"] = (
+            "none" if row.confirmed is None else "confirmed"
+        )
+    else:
+        kind = "sent" if row.live else "unconfirmed"
+    return ContactEmailOut(
+        state=kind,
+        confirmed=row.confirmed,
+        # Nobody has confirmed it, and it may be a third party's: owners only.
+        requested=row.email if current.role == "owner" else None,
+        link_expired=row.expires_at is not None and not row.live,
+        expires_at=row.expires_at,
+    )
+
+
+@router.get("/settings/contact-email", name="read", responses={401: {"model": Error}})
+def read_state(current: CurrentSession, response: Response) -> ContactEmailOut:
+    response.headers["Cache-Control"] = "no-store"
+    return state(current)

@@ -314,3 +314,70 @@ def test_a_confirm_logs_ids_only(
     logged = str(lines)
     for value in (secret, hashlib.sha256(secret.encode()).hexdigest(), "zzyzx-confirm"):
         assert value not in logged
+
+
+STATE = "/api/settings/contact-email"
+
+
+def lapse(migrate_engine: Engine, tenant_id: uuid.UUID) -> None:
+    with migrate_tenant_context(migrate_engine, tenant_id) as conn:
+        conn.execute(
+            text("UPDATE contact_email_requests SET expires_at = now() - interval '1 second'")
+        )
+
+
+def queue_link(tenant_id: uuid.UUID, email: str) -> None:
+    """A request with a link queued and not yet minted, as the PUT leaves one."""
+    with tenant_context(tenant_id) as session:
+        session.execute(text("SELECT change_contact_email(:e, true)"), {"e": email})
+
+
+def state_of(body: dict[str, Any]) -> tuple[Any, ...]:
+    return (body["state"], body["confirmed"], body["requested"], body["link_expired"])
+
+
+# F7.5, F7.6 FENCE. Wrong impl: a state read from the setting alone, a waiting address read as
+# live, or "sent" taken from the mint (a queued link would then read as never sent).
+def test_the_state_says_which_address_clients_see_and_which_waits(
+    people: People, app: FastAPI, migrate_engine: Engine, worker_engine: Engine
+) -> None:
+    owner = signed_in(app, people.a, people.both)
+
+    def state() -> tuple[Any, ...]:
+        response = owner.get(STATE)
+        assert response.headers["cache-control"] == "no-store"
+        return state_of(response.json())
+
+    assert state() == ("none", None, None, False)
+    with tenant_context(people.a) as session:  # no link due, as 0088 leaves a moved address
+        session.execute(text("SELECT change_contact_email('moved@example.com', false)"))
+    assert state() == ("unconfirmed", None, "moved@example.com", False)
+    queue_link(people.a, "moved@example.com")
+    assert state() == ("sent", None, "moved@example.com", False)  # queued, not yet minted
+    lapse(migrate_engine, people.a)
+    assert state() == ("unconfirmed", None, "moved@example.com", True)
+    with tenant_context(people.a) as session:
+        session.execute(text("SELECT change_contact_email(NULL, false)"))
+    confirm_contact_email(people.a, "shop@example.com")
+    assert state() == ("confirmed", "shop@example.com", None, False)
+    queue_link(people.a, "next@example.com")
+    body = owner.get(STATE).json()
+    assert state_of(body) == ("sent", "shop@example.com", "next@example.com", False)
+    assert body["expires_at"] is not None
+
+
+# S9 FENCE. Wrong impl: a worker member reading the waiting address (nobody confirmed it, and it
+# may be a third party's).
+def test_only_owners_see_the_waiting_address(
+    people: People, app: FastAPI, migrate_engine: Engine
+) -> None:
+    confirm_contact_email(people.a, "shop@example.com")
+    queue_link(people.a, "next@example.com")
+
+    body = signed_in(app, people.a, people.only_a).get(STATE).json()
+
+    assert state_of(body) == ("sent", "shop@example.com", None, False)
+
+
+def test_the_state_needs_a_session(app: FastAPI) -> None:
+    assert new_client(app).get(STATE).status_code == 401
