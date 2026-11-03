@@ -111,13 +111,14 @@ def _reason(value: str) -> str:
     return value
 
 
+# Wipes the factor, its count and the attempts still in flight against it (charges, 0083).
 ISSUE_TICKET = text("""
 INSERT INTO second_factors (user_id, ticket_hash, ticket_expires_at)
 VALUES (:u, sha256(:ticket_proof), now() + interval '1 hour')
 ON CONFLICT (user_id) DO UPDATE SET
   ticket_hash = excluded.ticket_hash, ticket_expires_at = excluded.ticket_expires_at,
   secret_ct = NULL, proof_hash = NULL, confirmed_at = NULL, last_step = 0, failed_attempts = 0,
-  recovery_code_hashes = '{}'
+  recovery_code_hashes = '{}', charges = '{}'
 """)
 
 
