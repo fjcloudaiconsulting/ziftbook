@@ -2418,7 +2418,7 @@ def test_0057_round_trips_account_sessions(
         assert tuple(conn.execute(ACCOUNT_OBJECTS).one()) == (True,) * 7
     assert END_ACCOUNT_SESSIONS in at_head
     try:
-        command.downgrade(cfg, "0056")
+        command.downgrade(cfg, migration("0057_account_sessions.py").down_revision)
         with migrate_engine.connect() as conn:
             assert tuple(conn.execute(ACCOUNT_OBJECTS).one()) == (False,) * 7
             assert conn.scalar(RESET_DEF) == at_head.replace(END_ACCOUNT_SESSIONS, "")
