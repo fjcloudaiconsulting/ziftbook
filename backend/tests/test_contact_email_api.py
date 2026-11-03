@@ -4,6 +4,7 @@ confirm it, and only a confirmed one is in effect."""
 import hashlib
 import secrets
 import threading
+import time
 import uuid
 from collections.abc import Iterator
 from datetime import timedelta
@@ -844,8 +845,8 @@ def test_a_resend_raced_by_a_change_is_refused_as_busy(
     queue_link(people.a, first)
     real = contact_email.claim
 
-    def claim_then_change(current: Any, email: str) -> None:
-        real(current, email)
+    def claim_then_change(current: Any, email: str, host: str | None) -> None:
+        real(current, email, host)
         with tenant_context(people.a) as session:  # another owner's save, meanwhile
             session.execute(text("SELECT change_contact_email(:e, false)"), {"e": other})
 
@@ -913,3 +914,36 @@ def test_an_owner_is_never_kept_from_their_own_sign_in_inbox(
     assert put_settings(a, {"contact_email": alias}).status_code == 200
     assert saved_settings(people.a).get("contact_email") is None  # not confirmed by this
     assert len(queued(migrate_engine, people.a)) == 1
+
+
+# Security review S3 FENCE. Wrong impl: claims without a cap on how many one requester has in
+# flight: each holds a second pooled connection, so concurrent saves for one inbox would drain the
+# API's pool for every business while they wait on the inbox's lock.
+def test_concurrent_saves_cannot_drain_the_pool(
+    people: People, app: FastAPI, app_engine: Engine
+) -> None:
+    owner = signed_in(app, people.a, people.both)
+    address = f"{uuid.uuid4().hex[:12]}@example.com"
+    key = contact_email.address_key(limits.address_for_limits(address))
+    results: list[int] = []
+
+    def put() -> None:
+        results.append(put_settings(owner, {"contact_email": address}).status_code)
+
+    with app_engine.begin() as conn:
+        conn.execute(
+            text("SELECT pg_advisory_xact_lock(:c, hashtext(:k))"),
+            {"c": contact_email.SENDERS_LOCK, "k": key},
+        )
+        threads = [threading.Thread(target=put) for _ in range(4)]
+        for thread in threads:
+            thread.start()
+        wait_until_blocked(app_engine, contact_email.MAX_CLAIMS_IN_FLIGHT)
+        for _ in range(200):  # the others are refused at once, holding nothing
+            if results.count(429) == 4 - contact_email.MAX_CLAIMS_IN_FLIGHT:
+                break
+            time.sleep(0.05)
+        assert sorted(results) == [429] * (4 - contact_email.MAX_CLAIMS_IN_FLIGHT)
+    for thread in threads:
+        thread.join()
+    assert set(results) <= {200, 429, 503} and 200 in results  # the two let through finish

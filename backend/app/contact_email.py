@@ -8,6 +8,9 @@ which only this module and the mailer name, and is used for nothing until its li
 
 import logging
 import re
+import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from typing import Literal
 from uuid import UUID, uuid4
@@ -75,7 +78,34 @@ SELECT EXISTS (SELECT FROM audit_events WHERE action = 'setting_changed'
 """)
 
 
-def claim(current: SignedIn, email: str) -> None:
+# claim() holds a second pooled connection while it may wait on the inbox's lock, so how many one
+# requester may have in flight is capped, per address and per business: concurrent saves for one
+# inbox cannot drain the API's pool. The shape of ZIF-264's limiter slots (limits._slot, #381);
+# once #381 is in the base, the claim takes its slot instead (a merge gate of this PR).
+MAX_CLAIMS_IN_FLIGHT = 2
+_claims: dict[str, int] = {}
+_claims_lock = threading.Lock()
+
+
+@contextmanager
+def _claim_slot(host: str | None, tenant_id: UUID) -> Iterator[None]:
+    buckets = (limits.ip_key("contact_email_claim", host), f"contact_email_claim:{tenant_id}")
+    with _claims_lock:
+        if any(_claims.get(bucket, 0) >= MAX_CLAIMS_IN_FLIGHT for bucket in buckets):
+            raise ApiError(429, "rate_limited")
+        for bucket in buckets:
+            _claims[bucket] = _claims.get(bucket, 0) + 1
+    try:
+        yield
+    finally:
+        with _claims_lock:
+            for bucket in buckets:
+                _claims[bucket] -= 1
+                if not _claims[bucket]:
+                    del _claims[bucket]
+
+
+def claim(current: SignedIn, email: str, host: str | None) -> None:
     """Make this business one of those mailing email's inbox today, or 429
     contact_email_requests_today when BUSINESSES_PER_ADDRESS_A_DAY others already are.
 
@@ -86,6 +116,11 @@ def claim(current: SignedIn, email: str) -> None:
     minutes. Counted from rows, one per
     inbox and business, so concurrent requests can neither count a business twice nor take it back.
     """
+    with _claim_slot(host, current.tenant_id):
+        _claim(current, email)
+
+
+def _claim(current: SignedIn, email: str) -> None:
     address = limits.address_for_limits(email)
     key = address_key(address)
     # A business already at its own limits takes no place: send_link would refuse it after the
@@ -184,7 +219,7 @@ def change(current: SignedIn, request: Request, email: str | None) -> None:
     claimed = email is not None and bool(current.db.scalar(WILL_SEND, {"e": email}))
     if claimed:
         assert email is not None
-        claim(current, email)
+        claim(current, email, request.client.host if request.client else None)
     row = current.db.execute(
         text("SELECT * FROM change_contact_email(:e, true, :u)"),
         {"e": email, "u": current.user_id},
@@ -322,7 +357,8 @@ def resend(current: CurrentOwner, request: Request, response: Response) -> Conta
     email = current.db.scalar(read)  # a read: no lock taken
     if email is None:
         raise ApiError(409, "no_contact_email_request")
-    claim(current, email)  # before the lock, as for the PUT
+    # Before the lock, as for the PUT.
+    claim(current, email, request.client.host if request.client else None)
     request_id = current.db.scalar(text("SELECT resend_contact_email(:u)"), {"u": current.user_id})
     if request_id is None:  # cleared or confirmed meanwhile
         raise ApiError(409, "no_contact_email_request")
