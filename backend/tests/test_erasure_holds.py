@@ -8,6 +8,7 @@ and never later than its purge date, at most 31 days after the erasure."""
 import asyncio
 import json
 import re
+import threading
 import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
@@ -971,3 +972,27 @@ def test_a_refund_failure_with_no_hold_left_is_logged(
     assert [(line["template"], line["reason"]) for line in skipped] == [
         ("booking_refund_failed", "no_hold")
     ]
+
+
+# ZIF-58 FENCE (review N5). Wrong impl: the hold sweep takes every business's booking lock every
+# five minutes, holds or none, doubling the booking sweep's lock traffic, waiting on slow holders.
+# A business with no hold is skipped without the lock (a hold written after that look is new and
+# not due): the sweep finishes while another session holds that business's booking lock.
+def test_the_hold_sweep_skips_a_business_with_no_hold_without_its_lock(
+    people: People, migrate_engine: Engine
+) -> None:
+    done = threading.Event()
+
+    def sweep() -> None:
+        with jobs_as_the_worker():
+            erasure_holds.sweep()
+        done.set()
+
+    with migrate_tenant_context(migrate_engine, people.b) as conn:
+        assert conn.scalar(text("SELECT count(*) FROM client_erasure_holds")) == 0
+        conn.execute(bookings.LOCK, {"key": bookings.LOCK_KEY})
+        sweeper = threading.Thread(target=sweep)
+        sweeper.start()
+        finished = done.wait(timeout=10)
+    sweeper.join(timeout=10)
+    assert finished

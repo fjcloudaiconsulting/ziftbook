@@ -37,6 +37,8 @@ WHERE h.tenant_id = current_setting('app.tenant_id')::uuid
 RETURNING h.client_id, h.purge_after < now() - CAST(:late AS interval) AS late
 """)
 
+ANY_HOLD = text("SELECT EXISTS (SELECT 1 FROM client_erasure_holds)")
+
 logger = logging.getLogger(__name__)
 
 
@@ -65,6 +67,10 @@ def sweep() -> int:
             # One business that fails never holds back the others' purges.
             try:
                 with tenant_context(tenant_id) as db:
+                    # Most businesses have none: skipped without the booking lock. A hold written
+                    # after this look is new, so not due before the next sweep.
+                    if not db.scalar(ANY_HOLD):
+                        continue
                     db.execute(bookings.LOCK, {"key": bookings.LOCK_KEY})  # first, as every writer
                     purged += purge(db)
             except Exception:
