@@ -13,7 +13,7 @@ from typing import Any
 import pytest
 from sqlalchemy import Engine, make_url, text
 
-from app import bookings, contact_email, erasure_holds, jobs, logs, retention, worker
+from app import bookings, erasure_holds, jobs, logs, retention, worker
 from app.config import WorkerSettings
 from app.db import SessionLocal, tenant_context
 from app.jobs import Job, JobKind, enqueue, run_once
@@ -52,14 +52,6 @@ def _no_retention_sweep(monkeypatch: pytest.MonkeyPatch) -> None:
     the retention functions (ZIF-235): the sweep is stubbed, on purpose, except where a test
     replaces it itself."""
     monkeypatch.setattr(retention, "sweep", lambda *args, **kwargs: retention.Swept(complete=True))
-
-
-@pytest.fixture(autouse=True)
-def no_senders_sweep(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The sweep timer also sweeps contact_email_senders (ZIF-232); its own tests are in
-    test_contact_email_db.py. Stubbed here, as these tests stub the timer's other sweeps, so a real
-    database call adds no wait to their timing."""
-    monkeypatch.setattr(contact_email, "sweep_senders", lambda: None)
 
 
 @pytest.fixture
@@ -776,28 +768,3 @@ def test_an_invalid_hold_withholds_the_ping_and_errs_every_run(
         assert len(errors) == len(holds) >= 2  # one ERROR per run
     else:
         assert pings and errors == []
-
-
-# Re-check NIT 9 FENCE. Wrong impl: the contact email senders sweep after the per-tenant booking
-# sweep, so a business whose sweep keeps failing also stops the global senders sweep.
-def test_the_senders_sweep_runs_even_when_a_tenant_sweep_fails(
-    bound_session: None, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    senders: list[int] = []
-
-    def failing_sweep() -> int:
-        raise RuntimeError("one business's sweep failed")
-
-    monkeypatch.setattr(jobs, "prune", lambda: 0)
-    monkeypatch.setattr(bookings, "sweep", failing_sweep)
-    monkeypatch.setattr(contact_email, "sweep_senders", lambda: senders.append(1))
-    monkeypatch.setattr(worker, "POLL_SECONDS", 0.05)
-
-    async def scenario() -> None:
-        stop = asyncio.Event()
-        task = asyncio.create_task(work({}, None, stop))
-        await until(lambda: len(senders) >= 2)  # every poll retries, the senders sweep included
-        stop.set()
-        await asyncio.wait_for(task, 5)
-
-    asyncio.run(scenario())

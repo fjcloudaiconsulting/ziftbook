@@ -18,6 +18,7 @@ from app.db import SessionLocal, tenant_context
 from tests.conftest import (
     ADMIN_DATABASE_URL,
     People,
+    jobs_as_the_worker,
     migrate_tenant_context,
     save_setting,
     saved_settings,
@@ -701,11 +702,14 @@ def test_a_business_counts_once_per_inbox(people: People, app_engine: Engine) ->
 
 
 # Review S4 FENCE. Wrong impl: rows that go only when another claim for that inbox comes along, so
-# an inbox nobody mails again keeps its rows for ever.
-def test_the_worker_sweeps_senders_a_day_after_their_last_claim_or_link(
+# an inbox nobody mails again keeps its rows for ever. The worker's retention sweep (ZIF-235) takes
+# them, as ziftbook_worker, during a hold too: a count, not evidence.
+def test_the_retention_sweep_deletes_senders_a_day_after_their_last_claim_or_link(
     people: People, migrate_engine: Engine
 ) -> None:
-    from app import contact_email
+    from datetime import timedelta
+
+    from app import contact_email, retention
 
     rows = {
         "fresh": ("now()", "NULL"),
@@ -724,7 +728,9 @@ def test_the_worker_sweeps_senders_a_day_after_their_last_claim_or_link(
                 {"k": f"sweep-{name}", "t": people.a},
             )
 
-    contact_email.sweep_senders()
+    with jobs_as_the_worker():
+        swept = retention.sweep(hold=retention.Hold("2099-01-01", "invalid"))
+    assert swept.held and swept.contact_email_senders >= 2
 
     with migrate_engine.connect() as conn:
         left = set(
@@ -733,3 +739,6 @@ def test_the_worker_sweeps_senders_a_day_after_their_last_claim_or_link(
             )
         )
     assert left == {"sweep-fresh", "sweep-linked today"}
+    # One rule: a day plus the retention margin, as the claims' own purge states it.
+    assert "interval '25 hours'" in contact_email.PURGE_SENDERS.text
+    assert contact_email.DAY + retention.MARGIN == timedelta(hours=25)

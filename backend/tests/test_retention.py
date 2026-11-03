@@ -236,6 +236,7 @@ COUNTS = {
     "sessions",
     "admin_sessions",
     "account_sessions",
+    "contact_email_senders",
     "failed_sign_ins",
     "older_events",
     "platform_failures",
