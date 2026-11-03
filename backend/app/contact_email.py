@@ -55,7 +55,8 @@ def inbox_key(address: str) -> str:
 LIVE = "(linked_at > now() - interval '1 day' OR claimed_at > now() - interval '5 minutes')"
 # Rows past their day plus an hour (longer than any runtime transaction lives, so no reader still
 # counts one), in batches; claims skip rows another holds. claim() purges as it goes, and the
-# worker's timer (sweep_senders) takes the rest, so an inbox nobody mails again keeps nothing.
+# worker's retention sweep (app.retention) takes the rest, so an inbox nobody mails again keeps
+# nothing.
 PURGE_SENDERS = text("""
 DELETE FROM contact_email_senders WHERE ctid IN (
   SELECT ctid FROM contact_email_senders
@@ -64,16 +65,6 @@ DELETE FROM contact_email_senders WHERE ctid IN (
   LIMIT :batch FOR UPDATE SKIP LOCKED)
 RETURNING 1
 """)
-SWEEP_BATCH = 1000
-
-
-def sweep_senders() -> None:
-    """The worker's sweep of contact_email_senders: every row past its day, batch by batch."""
-    while True:
-        with SessionLocal.begin() as session:
-            gone = len(session.execute(PURGE_SENDERS, {"batch": SWEEP_BATCH}).all())
-        if gone < SWEEP_BATCH:
-            return
 
 
 SENDERS = text(f"""

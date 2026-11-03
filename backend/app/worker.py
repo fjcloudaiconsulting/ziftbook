@@ -15,7 +15,6 @@ from sqlalchemy import create_engine, event
 
 from app import (
     bookings,
-    contact_email,
     erasure_holds,
     jobs,
     ledger,
@@ -130,7 +129,6 @@ async def work(
             if swept is None or time.monotonic() - swept >= SWEEP_SECONDS:
                 # Global, so before the per-tenant sweep: never hostage to a failing tenant.
                 await asyncio.to_thread(jobs.prune)
-                await asyncio.to_thread(contact_email.sweep_senders)
                 # ZIF-58. Each sweep runs whatever the other did: the booking sweep re-arms refunds
                 # and card releases, and a hold's purge date is a bound. A failure still fails the
                 # iteration (no ping) once both have run; each failure is logged on its own.

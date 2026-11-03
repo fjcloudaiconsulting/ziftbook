@@ -5,6 +5,8 @@ Run hourly by the worker (app.worker), as ziftbook_worker, in batches of short t
 - rate_limits rows (counters, the failed-sign-in ones included; their keys can hold an address):
   deleted once their window started longer ago than limits.MAX_WINDOW plus MARGIN;
 - sessions: deleted MARGIN after they stop being live (expired, or idle past auth.IDLE);
+- contact_email_senders (ZIF-232): a business's place in an inbox's day, deleted MARGIN after the
+  day of its last claim and link (contact_email.PURGE_SENDERS, the statement claims purge with);
 - admin sessions, account sessions (ZIF-146), audit events, platform audit events and
   booking-event addresses: through the migrate-owned functions of migration 0074, which fix the
   periods themselves (failed sign-ins 30 days, other audit events a year, booking-event addresses
@@ -15,8 +17,8 @@ is longer than any runtime transaction lives (30 s statement timeout, 60 s idle 
 so no reader can still see a swept row as live.
 
 During a hold (ZIF_RETENTION_HOLD_UNTIL, an incident's evidence) audit events and booking-event
-addresses are kept; sessions, rate limits and admin and account sessions, which are live state, are
-still swept.
+addresses are kept; sessions, rate limits, contact email senders and admin and account sessions,
+which are live state, are still swept.
 
 A run stops between batches when the budget is spent, after MAX_BATCHES, or when the worker is
 stopping; whatever is left goes on the next run. Every statement is time-based, so a repeated,
@@ -35,7 +37,7 @@ from uuid import UUID
 from opentelemetry.trace import SpanKind
 from sqlalchemy import text
 
-from app import auth, limits, tracing
+from app import auth, contact_email, limits, tracing
 from app.db import SessionLocal
 
 logger = logging.getLogger("app.retention")
@@ -101,6 +103,7 @@ class Swept:
     sessions: int = 0
     admin_sessions: int = 0
     account_sessions: int = 0
+    contact_email_senders: int = 0
     failed_sign_ins: int = 0
     older_events: int = 0
     platform_failures: int = 0
@@ -127,6 +130,12 @@ def _rate_limits(swept: Swept) -> bool:
 def _sessions(swept: Swept) -> bool:
     count = _deleted(SESSIONS, margin=MARGIN, idle=auth.IDLE + MARGIN)
     swept.sessions += count
+    return count < BATCH
+
+
+def _contact_email_senders(swept: Swept) -> bool:
+    count = _deleted(contact_email.PURGE_SENDERS)
+    swept.contact_email_senders += count
     return count < BATCH
 
 
@@ -228,6 +237,7 @@ def sweep(should_stop: Callable[[], bool] = lambda: False, hold: Hold | None = N
     steps: list[Callable[[Swept], bool]] = [
         _rate_limits,
         _sessions,
+        _contact_email_senders,
         _admin_sessions,
         _account_sessions,
     ]
