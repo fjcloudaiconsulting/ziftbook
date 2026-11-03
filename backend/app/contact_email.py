@@ -80,9 +80,10 @@ def claim(current: SignedIn, email: str) -> None:
     contact_email_requests_today when BUSINESSES_PER_ADDRESS_A_DAY others already are.
 
     Exempt, so others cannot keep a business from an inbox that is its own: a business already
-    counted today, and one that ever had this address confirmed. Before the request holds any row
-    lock, in a short transaction of its own (the count spans businesses); nothing to give back
-    afterwards, as a claim whose request fails lapses within minutes. Counted from rows, one per
+    counted today, one that ever had this address confirmed, and the owner's own sign-in inbox.
+    Before the request holds any row lock, in a short transaction of its own (the count spans
+    businesses); nothing to give back afterwards, as a claim whose request fails lapses within
+    minutes. Counted from rows, one per
     inbox and business, so concurrent requests can neither count a business twice nor take it back.
     """
     address = limits.address_for_limits(email)
@@ -93,7 +94,12 @@ def claim(current: SignedIn, email: str) -> None:
         limits.count(k, window) >= cap for k, window, cap in own_limits(current.tenant_id, address)
     ):
         raise ApiError(429, "rate_limited")
-    exempt = bool(current.db.scalar(EVER_CONFIRMED, {"e": email}))  # a read: no lock taken
+    # Reads only, no lock taken. An owner's own sign-in inbox was proven at sign-up, so others
+    # cannot keep them from it (it still needs its link confirmed).
+    own = current.db.scalar(text("SELECT email FROM users WHERE id = :u"), {"u": current.user_id})
+    exempt = (own is not None and limits.address_for_limits(own) == address) or bool(
+        current.db.scalar(EVER_CONFIRMED, {"e": email})
+    )
     with SessionLocal.begin() as session:
         session.execute(
             text("SELECT pg_advisory_xact_lock(:c, hashtext(:k))"), {"c": SENDERS_LOCK, "k": key}

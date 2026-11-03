@@ -897,3 +897,19 @@ def test_a_counted_business_keeps_its_place_whoever_else_mails_the_inbox(
     send_and_clear(a, address, 1)  # exempt: four businesses now counted
 
     assert put_settings(b, {"contact_email": address}).status_code == 200
+
+
+# Security review S2 FENCE. Wrong impl: other businesses able to keep an owner from the inbox they
+# sign in with (proven at sign-up, so it adds no flood). It still needs its link confirmed.
+def test_an_owner_is_never_kept_from_their_own_sign_in_inbox(
+    people: People, migrate_engine: Engine, owners: list[TestClient]
+) -> None:
+    a, b, c, d = owners
+    own = f"{people.both}@example.com"
+    alias = f"{people.both}+shop@Example.com"
+    for owner in (b, c, d):
+        send_and_clear(owner, own, 1)
+
+    assert put_settings(a, {"contact_email": alias}).status_code == 200
+    assert saved_settings(people.a).get("contact_email") is None  # not confirmed by this
+    assert len(queued(migrate_engine, people.a)) == 1
