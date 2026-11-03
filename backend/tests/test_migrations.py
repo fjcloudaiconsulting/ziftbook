@@ -2240,7 +2240,7 @@ def test_0083_round_trips_the_charges(
     with migrate_engine.connect() as conn:
         at_head = {sig: conn.execute(DEFINER_STATE, {"signature": sig}).one() for sig in m.REPLACED}
     try:
-        command.downgrade(cfg, "0069")
+        command.downgrade(cfg, migration("0083_count_second_factor_first.py").down_revision)
         with migrate_engine.connect() as conn:
             assert conn.scalar(CHARGES_COLUMN) == 0
             gone = [
