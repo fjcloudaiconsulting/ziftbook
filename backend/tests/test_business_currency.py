@@ -340,6 +340,24 @@ def test_change_currency_changes_only_the_caller_s_business(
         )
 
 
+# ZIF-146 x ZIF-102 FENCE (test_password_auth_db's FLAGS allow-list names this). Wrong impl:
+# change_currency reading payment_accounts without its tenant predicate, so a caller that sets
+# app.stripe_webhook is locked by another business's account.
+def test_change_currency_with_the_webhook_flag_on_sees_only_the_caller_s_account(
+    people: People, migrate_engine: Engine
+) -> None:
+    insert_account(migrate_engine, people.b, "acct_otherbusiness1")
+
+    def flagged_change(tenant_id: uuid.UUID) -> str:
+        with tenant_context(tenant_id) as session:
+            session.execute(text("SELECT set_config('app.stripe_webhook', 'on', true)"))
+            outcome: str = session.scalar(text("SELECT outcome FROM change_currency('USD', NULL)"))
+        return outcome
+
+    assert flagged_change(people.a) == "changed"
+    assert flagged_change(people.b) == "locked_payments"
+
+
 # F14: FENCE. Wrong impl: no isolation guard. Under REPEATABLE READ the checks would read a snapshot
 # taken before the lock wait and miss a booking committed meanwhile.
 def test_change_currency_needs_read_committed(people: People, app_engine: Engine) -> None:

@@ -636,7 +636,8 @@ FLAGS: dict[tuple[str, str], set[str]] = {
     },
     ("payment_accounts", "app.stripe_webhook"): {
         # Asks only whether the caller's own business (app.tenant_id) holds an account, by its own
-        # tenant predicate, and returns no row of it (ZIF-102, 0066).
+        # tenant predicate, and returns no row of it (ZIF-102, 0066). Behaviour pinned by
+        # test_business_currency's ..._with_the_webhook_flag_on_sees_only_the_caller_s_account.
         "change_currency",
     },
 }
