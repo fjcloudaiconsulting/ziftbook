@@ -651,6 +651,7 @@
       "contactTooMany": "Er zijn te veel links verstuurd. Probeer het later opnieuw.",
       "contactTooManyToday": "Dit adres heeft vandaag te veel bevestigingsverzoeken gehad. Probeer het morgen opnieuw.",
       "contactCancel": "Wijziging annuleren",
+      "contactClearWaiting": "Er wacht een adres op bevestiging. Gebruik Wijziging annuleren om het te laten vallen.",
       "contactCancelled": "Wijziging geannuleerd.",
       "contactFailed": "De link kon niet worden verstuurd. Probeer het opnieuw.",
       "contactLoadFailed": "Het contactadres kon niet worden geladen. Laad de pagina opnieuw om het nog eens te proberen.",

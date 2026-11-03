@@ -343,6 +343,38 @@ describe("ZIF-232 x ZIF-99 what the contact email box starts from", () => {
   });
 });
 
+describe("ZIF-232 x ZIF-99 emptying the box while a change waits", () => {
+  const waiting = contactState({ state: "sent", confirmed: "old@x.nl", requested: "new@x.nl" });
+  const base = formSaved(saved, waiting);
+
+  test("fence: it sends nothing, and the box says to use Cancel change", () => {
+    // Wrong implementation killed: sending null, which also removes the confirmed address clients see, when the
+    // owner only meant to drop the waiting one (Cancel change does that).
+    for (const text of ["", "  "]) {
+      assert.deepEqual(settingsBody(base, { ...draftFrom(base), contact_email: text, buffer_pct: "20" }, waiting), {
+        body: { buffer_pct: 20 },
+        invalid: ["contact_email"],
+      });
+      assert.equal(emailMessageKey(text, true), "contactClearWaiting");
+    }
+    // Nothing waits: an empty box removes the address, as before.
+    const settled = contactState({ state: "confirmed", confirmed: "old@x.nl" });
+    const plain = formSaved(saved, settled);
+    assert.deepEqual(settingsBody(plain, { ...draftFrom(plain), contact_email: "" }, settled), { body: { contact_email: null }, invalid: [] });
+    assert.equal(emailMessageKey("", false), "invalidEmail");
+  });
+
+  test("fence: every language says it, and the page shows it under the box", () => {
+    for (const locale of ["en", "nl", "pt"]) {
+      const t = JSON.parse(readFileSync(new URL(`../messages/${locale}.json`, import.meta.url), "utf8")).Console.settings;
+      assert.ok(t.contactClearWaiting, `${locale}.contactClearWaiting`);
+      assert.ok(t.contactClearWaiting.includes(t.contactCancel), `${locale} names the ${t.contactCancel} button`);
+    }
+    const src = readFileSync(new URL("../app/[locale]/(console)/settings/settings.tsx", import.meta.url), "utf8");
+    assert.match(src, /settingsBody\(base, draft, contact\)/);
+  });
+});
+
 describe("ZIF-99 which field a refused save marks", () => {
   test("fence: only the API's contact_email_invalid marks the address; any other refusal marks no field", () => {
     // Wrong implementation killed: every 422 of a save that included the address blamed on it (a refused
@@ -409,10 +441,8 @@ describe("ZIF-99 the message a refused address shows", () => {
     assert.equal(emailMessageKey("shop[1]@salon.nl"), "invalidEmail"); // refused by the API alone
     assert.equal(emailMessageKey("hello@café.nl"), "invalidEmail"); // converted, so only the API could refuse it
     const src = readFileSync(new URL("../app/[locale]/(console)/settings/settings.tsx", import.meta.url), "utf8");
-    assert.match(
-      src,
-      /const emailErr = invalid\.includes\("contact_email"\) && \(emailMessageKey\(String\(draft\.contact_email\)\) === "contactEmailInvalid" \? t\("contactEmailInvalid"\) : form\("invalidEmail"\)\);/,
-    );
+    assert.match(src, /const emailKey = emailMessageKey\(String\(draft\.contact_email\), Boolean\(contact\?\.requested\)\);/);
+    assert.match(src, /const emailErr = invalid\.includes\("contact_email"\) && \(emailKey === "invalidEmail" \? form\("invalidEmail"\) : t\(emailKey\)\);/);
   });
 
   test("fence: the accents message says what is wrong and refuses nothing the API accepts", () => {
