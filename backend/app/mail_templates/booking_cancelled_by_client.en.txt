@@ -5,6 +5,7 @@ As you asked, we've cancelled your booking at $business.
 
 | $service
 | $date at $time ($zone)
+| $with
 | $payment
 
 Changed your mind? You're always welcome to book a new time.

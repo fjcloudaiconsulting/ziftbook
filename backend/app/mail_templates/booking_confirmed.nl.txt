@@ -5,6 +5,7 @@ Je boeking bij $business is bevestigd. Ze kijken ernaar uit je te zien.
 
 | $service
 | $date om $time ($zone)
+| $with
 | $payment
 
 Met het bijgevoegde agendabestand zet je de afspraak in je agenda.

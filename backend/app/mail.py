@@ -738,6 +738,13 @@ PAYMENT_LINES = {
 }
 SYMBOLS = {"BRL": "R$", "EUR": "€", "GBP": "£", "USD": "$"}
 
+# Who a client's booking is with, worded as their booking page words it (frontend/messages).
+WITH = {
+    "en": ("With $name", "With a member of the team"),
+    "nl": ("Bij $name", "Bij iemand van het team"),
+    "pt": ("Com $name", "Com alguém da equipe"),
+}
+
 
 def _money(amount_minor: int, currency: str, locale: str) -> str:
     """The web app's money format (frontend/lib/money.ts: Intl.NumberFormat, currency style, narrow
@@ -994,7 +1001,11 @@ def send_booking(job: Job) -> None:
                 )
                 values["old_date"] = previous_local.strftime(DATE_FORMAT[locale])
                 values["old_time"] = previous_local.strftime("%H:%M")
-        elif template in LINKED:
+        else:
+            named, team = WITH[locale]
+            name = row.worker_display_name
+            values["with"] = Template(named).substitute(name=name) if name else team
+        if user_id is None and template in LINKED:
             # D1: mint and set values["link"] BEFORE render() (the body needs it), and only insert
             # the hash if _outbox (below) reports 'pending' -- a token minted for a dedupe no-op is
             # dropped unused, never stored.

@@ -5,6 +5,7 @@ Seu agendamento em $business está confirmado. Estão esperando por você.
 
 | $service
 | $date às $time ($zone)
+| $with
 | $payment
 
 O arquivo de calendário anexo adiciona o horário à sua agenda.

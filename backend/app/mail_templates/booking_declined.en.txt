@@ -5,6 +5,7 @@ We're sorry: $business can't take your booking request for this time.
 
 | $service
 | $date at $time ($zone)
+| $with
 | $payment
 
 Nothing was booked. You're welcome to choose another time that suits you.

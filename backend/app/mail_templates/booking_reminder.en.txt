@@ -5,5 +5,6 @@ A friendly reminder of your booking at $business. They look forward to seeing yo
 
 | $service
 | $date at $time ($zone)
+| $with
 
 [View, change or cancel your booking]($link)

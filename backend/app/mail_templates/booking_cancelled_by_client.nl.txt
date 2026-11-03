@@ -5,6 +5,7 @@ Zoals je vroeg, hebben we je boeking bij $business geannuleerd.
 
 | $service
 | $date om $time ($zone)
+| $with
 | $payment
 
 Toch van gedachten veranderd? Je bent altijd welkom om een nieuw moment te boeken.

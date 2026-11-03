@@ -5,6 +5,7 @@ Het spijt ons: $business heeft je boeking moeten annuleren.
 
 | $service
 | $date om $time ($zone)
+| $with
 | $payment
 
 Heb je vragen? Neem dan gerust contact op met $business.
