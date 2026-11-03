@@ -142,6 +142,11 @@ CLIENT = text("""
 SELECT erased_at FROM clients WHERE tenant_id = :tenant_id AND id = :id FOR NO KEY UPDATE
 """)
 CORE = text("SELECT erase_client_core(:id, false)")
+PAID_OF = text("""
+SELECT DISTINCT booking_id FROM booking_payments
+WHERE tenant_id = :tenant_id AND booking_id = ANY(CAST(:ids AS uuid[]))
+  AND status = 'paid' AND settled_at IS NULL
+""")
 
 
 def reapply(engine: Engine, since: datetime, reason: str) -> int:
@@ -152,6 +157,7 @@ def reapply(engine: Engine, since: datetime, reason: str) -> int:
     entries = read(since)  # before the transaction: no outbound call under a booking lock
     counts = {"entries": len(entries), "reapplied": 0, "already_erased": 0, "absent": 0}
     cancelled = 0
+    paid_ended: list[str] = []  # settle pays these no more than Stripe shows (payments._refund)
     with Session(engine) as session, session.begin():
         for entry in entries:
             join_tenant(session, entry.tenant_id)
@@ -174,6 +180,12 @@ def reapply(engine: Engine, since: datetime, reason: str) -> int:
             )
             # Stripe is safe to ask again: settle reads what was refunded already.
             payments.settle_ended(session, entry.tenant_id, ended)
+            paid_ended += [
+                str(booking)
+                for booking in session.scalars(
+                    PAID_OF, {"tenant_id": entry.tenant_id, "ids": ended}
+                )
+            ]
             # false: the cancellations were announced the first time.
             if session.scalar(CORE, {"id": entry.client_id}) is None:
                 # The core and the lookup above disagree on the business: nothing is applied.
@@ -186,9 +198,18 @@ def reapply(engine: Engine, since: datetime, reason: str) -> int:
             "erasure_reapplied",
             actor_user_id=None,
             reason=reason,
-            details={"via": "cli", "cancelled": cancelled, **counts},
+            details={
+                "via": "cli",
+                "cancelled": cancelled,
+                "paid_ended": len(paid_ended),
+                **counts,
+            },
         )
-    logger.info("erasures reapplied", extra={"cancelled": cancelled, **counts})
+    # The paid bookings it ended, by id: the operator checks each in Stripe (runbook step 3).
+    logger.info(
+        "erasures reapplied",
+        extra={"cancelled": cancelled, "paid_ended": paid_ended, **counts},
+    )
     return 0
 
 
