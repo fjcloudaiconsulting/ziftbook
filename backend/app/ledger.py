@@ -21,12 +21,14 @@ gave up), from the live database; it needs no ledger key. Same connection and ex
 """
 
 import argparse
+import hashlib
 import json
 import logging
 import os
+import re
 import sys
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import urlsplit
 from uuid import UUID
@@ -123,21 +125,6 @@ def record(job: Job) -> None:
     logger.info("erasure ledgered", extra={"client_id": str(entry.client_id), "written": written})
 
 
-def read(since: datetime | None) -> list[Entry]:
-    """The ledger's entries from since on (all of them without), oldest first. Raises on an entry
-    it cannot read."""
-    start = "erasures/" if since is None else f"erasures/{since.astimezone(UTC):%Y/%m/%d}/"
-    entries = []
-    for raw in storage.ledger_entries(start):
-        data = json.loads(raw)
-        if data.get("v") != 1:
-            raise ValueError("a ledger entry of an unknown version")
-        entry = Entry.parse(data)
-        if since is None or entry.erased_at >= since:
-            entries.append(entry)
-    return sorted(entries, key=lambda entry: entry.erased_at)
-
-
 class Refused(Exception):
     """A run that cannot be right, refused before anything is applied: exit with code."""
 
@@ -145,6 +132,58 @@ class Refused(Exception):
         super().__init__(message)
         self.code = code
         self.fields = fields
+
+
+# A key that holds ids and a time only, as Entry.key builds it: logged and audited as it is. Any
+# other key (anyone with the writing key can name an object anything) by its hash.
+SAFE_KEY = re.compile(r"erasures/\d{4}/\d{2}/\d{2}/\d{8}T\d{6}\.\d{6}Z-client-[0-9a-f-]{36}\.json")
+# An entry dated later than this is refused: an erasure cannot have happened in the future.
+SKEW = timedelta(minutes=5)
+
+
+def name_of(key: str) -> str:
+    return key if SAFE_KEY.fullmatch(key) else "sha256:" + hashlib.sha256(key.encode()).hexdigest()
+
+
+def read(
+    since: datetime | None, skip: frozenset[str] = frozenset()
+) -> tuple[list[Entry], list[str]]:
+    """The ledger's entries from since on (all of them without), oldest first, and the names of
+    those skipped. An entry it cannot apply (unreadable, of an unknown version or kind, its body
+    not the entry its key names, or dated in the future) refuses the run, each by name, so the
+    operator can inspect it and pass it with --skip-key."""
+    start = "erasures/" if since is None else f"erasures/{since.astimezone(UTC):%Y/%m/%d}/"
+    latest = datetime.now(UTC) + SKEW
+    entries, skipped, refused = [], [], []
+    for key, raw in storage.ledger_entries(start):
+        name = name_of(key)
+        if name in skip:
+            skipped.append(name)
+            continue
+        try:
+            data = json.loads(raw)
+            if data.get("v") != 1:
+                raise ValueError("a ledger entry of an unknown version")
+            entry = Entry.parse(data)
+            if entry.key != key or entry.erased_at > latest:
+                raise ValueError("a ledger entry that is not the erasure its key names")
+        except ValueError, KeyError, TypeError, AttributeError:
+            refused.append(name)
+            continue
+        if since is None or entry.erased_at >= since:
+            entries.append(entry)
+    if unused := skip - set(skipped):
+        raise Refused("reapply refused: a --skip-key names no ledger entry", 2, keys=sorted(unused))
+    if refused:
+        for name in refused:
+            logger.error("ledger entry refused", extra={"key": name})
+        raise Refused(
+            "reapply refused: ledger entries it cannot apply; inspect each, and pass one that is"
+            " not an erasure with --skip-key",
+            1,
+            refused=len(refused),
+        )
+    return sorted(entries, key=lambda entry: entry.erased_at), skipped
 
 
 # What the restored database holds: its newest record of anything (a restore point is no later),
@@ -208,12 +247,15 @@ WHERE tenant_id = :tenant_id AND booking_id = ANY(CAST(:ids AS uuid[]))
 """)
 
 
-def reapply(engine: Engine, since: datetime | None, reason: str) -> int:
+def reapply(
+    engine: Engine, since: datetime | None, reason: str, skip: frozenset[str] = frozenset()
+) -> int:
     """Erase again every client the ledger lists from since on that the restored database still
     has unerased, in erasure order, in one transaction with its platform audit event: all of it
     or, on any error, none. A client already erased, or one the restored database never had, is
     counted and left alone, so a second run changes nothing."""
-    entries = read(since)  # before the transaction: no outbound call under a booking lock
+    # Before the transaction: no outbound call under a booking lock.
+    entries, skipped = read(since, skip)
     check_window(engine, since, entries)
     counts = {"entries": len(entries), "reapplied": 0, "already_erased": 0, "absent": 0}
     cancelled = 0
@@ -262,6 +304,7 @@ def reapply(engine: Engine, since: datetime | None, reason: str) -> int:
                 "via": "cli",
                 "cancelled": cancelled,
                 "paid_ended": len(paid_ended),
+                "skipped": skipped,
                 **counts,
             },
         )
@@ -272,6 +315,7 @@ def reapply(engine: Engine, since: datetime | None, reason: str) -> int:
             "bucket": LedgerSettings().erasure_ledger_bucket,
             "cancelled": cancelled,
             "paid_ended": paid_ended,
+            "skipped": skipped,
             **counts,
         },
     )
@@ -312,6 +356,13 @@ def _since(value: str) -> datetime:
     return at
 
 
+def _skip_key(value: str) -> str:
+    # Names only: an audit detail never holds what an operator might mistype into it.
+    if not (SAFE_KEY.fullmatch(value) or re.fullmatch(r"sha256:[0-9a-f]{64}", value)):
+        raise argparse.ArgumentTypeError("give a key as 'ledger entry refused' names it")
+    return value
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m app.ledger", description=__doc__)
     parser.add_argument("command", choices=("reapply", "backfill"))
@@ -321,6 +372,13 @@ def main(argv: list[str] | None = None) -> int:
         help="reapply: the restore point - 1h (default: the whole ledger); backfill: required",
     )
     parser.add_argument("--reason", type=admin._reason, help="reapply: why, for the audit log")
+    parser.add_argument(
+        "--skip-key",
+        action="append",
+        default=[],
+        type=_skip_key,
+        help="reapply: pass this entry (repeatable), as 'ledger entry refused' names it",
+    )
     args = parser.parse_args(argv)
     if args.command == "reapply" and args.reason is None:
         parser.error("reapply needs --reason")
@@ -332,7 +390,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "backfill":
             return backfill(engine, args.since)
-        return reapply(engine, args.since, args.reason)
+        return reapply(engine, args.since, args.reason, frozenset(args.skip_key))
     except Refused as refused:
         logger.error(str(refused), extra=refused.fields)
         return refused.code

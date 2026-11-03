@@ -1,6 +1,7 @@
 """The erasure ledger (ZIF-58, spec section 8): erasures recorded outside the database, on moto
 (never a real bucket), and re-applied after a restore."""
 
+import hashlib
 import json
 import os
 import uuid
@@ -318,6 +319,7 @@ def test_a_restored_backup_is_erased_again_and_refunds_nothing_twice(
             "absent": 0,
             "cancelled": 1,
             "paid_ended": 1,
+            "skipped": [],
         }
         restored_migrate.dispose()
 
@@ -375,6 +377,7 @@ def test_a_second_reapply_changes_nothing(
         "absent": 0,
         "cancelled": 0,
         "paid_ended": 0,
+        "skipped": [],
     }
 
 
@@ -410,22 +413,61 @@ def test_reapply_takes_the_entries_from_since_on(
     assert last_reapply(migrate_engine)["absent"] == 1
 
 
-# ZIF-58. GUARD. An entry it cannot read stops the run before anything is applied: exit 1 (the
-# uncaught error), the database as it was.
-def test_an_unreadable_entry_applies_nothing(
-    people: People, migrate_engine: Engine, ledger_bucket: S3Client
+def hashed(key: str) -> str:
+    return "sha256:" + hashlib.sha256(key.encode()).hexdigest()
+
+
+# ZIF-58. FENCE. Wrong impl: an entry it cannot apply raised, unnamed (the log keeps the class),
+# and the bucket lock keeps it for the whole retention: no restore could finish. A malformed
+# entry, one whose body is another entry's, and one dated in the future (it would end live
+# bookings at a time to come, which the core refuses) are each refused by name (the key when it
+# holds ids only, else its hash), and nothing is applied. --skip-key passes each, recorded.
+def test_entries_it_cannot_apply_are_named_and_can_be_skipped(
+    people: People,
+    migrate_engine: Engine,
+    ledger_bucket: S3Client,
+    log_lines: Any,
 ) -> None:
     client_id, _, erased_at = seed_ledgered(
         people, migrate_engine, timedelta(days=2), timedelta(minutes=5)
     )
-    ledger_bucket.put_object(
-        Bucket=BUCKET, Key="erasures/9999/12/31/x.json", Body=b'{"v": 2, "kind": "client"}'
-    )
+    malformed = "erasures/2026/11/03/not-an-erasure@example.com.json"
+    ledger_bucket.put_object(Bucket=BUCKET, Key=malformed, Body=b'{"v": 2, "kind": "client"}')
+    other = ledger.Entry(people.a, uuid.uuid4(), erased_at)
+    misplaced = ledger.Entry(people.a, uuid.uuid4(), erased_at).key
+    ledger_bucket.put_object(Bucket=BUCKET, Key=misplaced, Body=other.body())
+    future = ledger.Entry(people.a, uuid.uuid4(), datetime.now(UTC) + timedelta(days=1))
+    storage.ledger_write(future.key, future.body())
     before = take(migrate_engine, people.a)
-    with pytest.raises(ValueError):
-        reapply(erased_at - timedelta(hours=1))
+
+    assert reapply(erased_at - timedelta(hours=1)) == 1
     assert take(migrate_engine, people.a) == before
-    assert client_id in before["clients"]
+    refused = [line for line in log_lines() if line["msg"] == "ledger entry refused"]
+    assert sorted(line["key"] for line in refused) == sorted(
+        [hashed(malformed), misplaced, future.key]
+    )
+    assert "@" not in json.dumps(log_lines())
+
+    skips = [hashed(malformed), misplaced, future.key]
+    argv = ["reapply", "--since", (erased_at - timedelta(hours=1)).isoformat()]
+    argv += ["--reason", "restore drill"]
+    for key in skips:
+        argv += ["--skip-key", key]
+    assert ledger.main(argv) == 0
+    details = last_reapply(migrate_engine)
+    assert (details["reapplied"], sorted(details["skipped"])) == (1, sorted(skips))
+    with migrate_tenant_context(migrate_engine, people.a) as conn:
+        assert conn.execute(CLIENT_ROWS, {"id": client_id}).one().erased_at is not None
+
+
+# ZIF-58. GUARD. A --skip-key that names no listed entry is a typo, not a skip: exit 2.
+def test_a_skip_key_that_names_nothing_is_refused(
+    people: People, migrate_engine: Engine, ledger_bucket: S3Client
+) -> None:
+    _, _, erased_at = seed_ledgered(people, migrate_engine, timedelta(days=2), timedelta(minutes=5))
+    nothing = ledger.Entry(people.a, uuid.uuid4(), erased_at).key
+    argv = ["reapply", "--since", (erased_at - timedelta(hours=1)).isoformat()]
+    assert ledger.main([*argv, "--reason", "restore drill", "--skip-key", nothing]) == 2
 
 
 def erase_now(migrate_engine: Engine, tenant_id: uuid.UUID) -> uuid.UUID:
@@ -534,6 +576,7 @@ def test_each_backfill_run_queues_its_own_jobs(
         ["reapply", "--since", "2026-11-03T09:00:00+00:00", "--reason", " "],
         ["backfill", "--since", "2026-11-03T09:00:00"],
         ["backfill"],
+        ["reapply", "--reason", "drill", "--skip-key", "a person's name"],
     ],
 )
 def test_usage_errors_exit_2(argv: list[str]) -> None:

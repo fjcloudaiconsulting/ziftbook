@@ -174,8 +174,8 @@ def ledger_write(key: str, body: bytes) -> bool:
     return True
 
 
-def ledger_entries(start_after: str) -> list[bytes]:
-    """Every ledger entry whose key sorts after start_after, in key order."""
+def ledger_entries(start_after: str) -> list[tuple[str, bytes]]:
+    """Every ledger entry whose key sorts after start_after, with its key, in key order."""
     s3, bucket = _ledger()
     with _failures():
         keys = [
@@ -185,4 +185,6 @@ def ledger_entries(start_after: str) -> list[bytes]:
             )
             for o in page.get("Contents", [])
         ]
-        return [s3.get_object(Bucket=bucket, Key=key)["Body"].read() for key in keys]
+        # shortcut: one GET per key, in turn, before the reapply's transaction (minutes for 10k
+        # entries); a bounded thread pool is the upgrade if a restore ever waits on it.
+        return [(key, s3.get_object(Bucket=bucket, Key=key)["Body"].read()) for key in keys]
