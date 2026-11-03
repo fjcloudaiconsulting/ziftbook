@@ -2576,3 +2576,25 @@ def test_0059_round_trips_account_sign_up(
         assert conn.scalar(MINT_DEF) == at_head
         assert tuple(conn.execute(SIGN_UP_OBJECTS).one()) == (True, True)
         assert list(conn.scalars(MINT_HOLDERS)) == ["ziftbook_migrate", "ziftbook_worker"]
+
+
+WORKER_OWED = text("""
+SELECT has_function_privilege('ziftbook_worker', 'client_money_owed(uuid,uuid)', 'EXECUTE'),
+       has_function_privilege('ziftbook_app', 'client_money_owed(uuid,uuid)', 'EXECUTE')
+""")
+
+
+# ZIF-58 FENCE (0077). Wrong impl: a downgrade that leaves the worker's EXECUTE behind, or an
+# upgrade that grants it to the app role (the worker inherits from it) instead of the worker alone.
+def test_0077_round_trips_the_workers_money_owed(
+    migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = lock_timeout_config(monkeypatch)
+    try:
+        command.downgrade(cfg, "0064")
+        with migrate_engine.connect() as conn:
+            assert tuple(conn.execute(WORKER_OWED).one()) == (False, False)
+    finally:
+        command.upgrade(cfg, "head")
+    with migrate_engine.connect() as conn:
+        assert tuple(conn.execute(WORKER_OWED).one()) == (True, False)

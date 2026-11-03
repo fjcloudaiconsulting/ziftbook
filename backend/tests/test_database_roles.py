@@ -242,7 +242,8 @@ def test_link_requests_queue_their_email_without_minting(
 # it from the app role (0051) leaves no role that can mint; or the worker gets grants of its own
 # beyond the job-only grants listed here. ZIF-58 (0064) adds, on purpose, reading and deleting the
 # erased clients' contact holds, which the app role can neither read nor write: the worker sends
-# through them and purges them. ZIF-102 adds invite_locale (0061), the invite job's.
+# through them and purges them; and (0077) client_money_owed, the one rule the purge shares with
+# the erase core. ZIF-102 adds invite_locale (0061), the invite job's.
 def test_worker_role_holds_only_its_job_functions_in_its_own_right(
     migrate_engine: Engine,
 ) -> None:
@@ -267,6 +268,7 @@ def test_worker_role_holds_only_its_job_functions_in_its_own_right(
     assert list(held) == [
         "client_erasure_holds DELETE",
         "client_erasure_holds SELECT",
+        "client_money_owed(p_tenant uuid, p_client uuid) EXECUTE",
         "invite_locale(p_invite_id uuid) EXECUTE",
         "mint_email_token(p_id uuid, p_token_hash bytea) EXECUTE",
     ]
