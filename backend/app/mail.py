@@ -373,7 +373,11 @@ LINKED = frozenset({"booking_received", "booking_confirmed", "booking_reminder"}
 # owed, and a refund that failed (sent to no one else: a live client's is the business's to follow
 # up). None carries a manage link. Every other email to an erased client is skipped.
 HOLD_TEMPLATES = frozenset({"booking_cancelled", "booking_expired", "booking_refund_failed"})
-HOLD = text("SELECT email, locale FROM client_erasure_holds WHERE client_id = :id")
+# A hold past its purge date is no hold, purged or not; the business named as well as the policy.
+HOLD = text("""
+SELECT email, locale FROM client_erasure_holds
+WHERE tenant_id = current_setting('app.tenant_id')::uuid AND client_id = :id AND purge_after > now()
+""")
 # The failure the job announces: its amount, from the event that told it.
 REFUND_FAILED = text("""
 SELECT (e.details ->> 'amount_minor')::int AS amount_minor, b.price_currency AS currency

@@ -760,3 +760,24 @@ def test_a_refund_failing_after_an_erasure_still_reaches_the_client(
 
     subject = render("booking_refund_failed", "en")[0]
     assert [message["Subject"] for message in sent_to(address)].count(subject) == 1
+
+
+# ZIF-58 FENCE. Wrong impl: the send reads the hold by client id alone, so a hold past its purge
+# date that the purge has not reached yet (a worker back from a long outage drains its mail before
+# it sweeps; a restored backup) still sends. Past purge_after a hold is no hold.
+def test_a_hold_past_its_purge_date_sends_nothing(
+    people: People,
+    migrate_engine: Engine,
+    booked: dict[str, str],  # noqa: F811
+    clean_outbox: None,  # noqa: F811
+) -> None:
+    client_id = uuid.UUID(booked["client"])
+    address = address_of(people.a, client_id)
+    erase_announcing(migrate_engine, people, client_id)
+    due(migrate_engine, Seeded(people.a, client_id, (), address), "1 second")
+
+    with jobs_as_the_worker():
+        cancelled = run_send_booking(people.a, booked["pending"], "booking_cancelled")
+
+    assert outbox_for(people.a, cancelled.id) is None
+    assert sent_to(address) == []
