@@ -36,8 +36,6 @@ from tests.conftest import (
     wait_until_blocked,
 )
 
-pytestmark = pytest.mark.usefixtures("fresh_contact_limits")
-
 
 @pytest.fixture
 def app(people: People) -> FastAPI:

@@ -46,8 +46,6 @@ from tests.test_bookings_api import at, post_booking, post_guest
 from tests.test_bookings_approval_api import expire, make_pending, patch
 from tests.test_working_hours import seed
 
-pytestmark = pytest.mark.usefixtures("fresh_contact_limits")
-
 
 @pytest.fixture(autouse=True)
 def clean_outbox(people: People, migrate_engine: Engine) -> Iterator[None]:
