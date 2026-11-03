@@ -1,14 +1,10 @@
 We hebben je boekingsaanvraag ontvangen
-# We hebben je boekingsaanvraag ontvangen
+# Bedankt, je aanvraag is binnen
 
-Hallo,
-
-$business heeft je boekingsaanvraag ontvangen:
+$business heeft je boekingsaanvraag ontvangen. Ze moeten de aanvraag nog accepteren. We mailen je zodra ze antwoorden.
 
 | $service
 | $date om $time ($zone)
 | $payment
-
-Het bedrijf moet de aanvraag nog accepteren. We mailen je zodra ze antwoorden.
 
 [Bekijk, wijzig of annuleer je afspraak]($link)

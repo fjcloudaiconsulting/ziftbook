@@ -1,14 +1,10 @@
 We've received your booking request
-# We've received your booking request
+# Thanks, your request is in
 
-Hello,
-
-$business has received your booking request:
+$business has received your booking request. They still need to accept it, and we'll email you as soon as they answer.
 
 | $service
 | $date at $time ($zone)
 | $payment
-
-The business still has to accept it. We'll email you as soon as they answer.
 
 [View, change or cancel your booking]($link)

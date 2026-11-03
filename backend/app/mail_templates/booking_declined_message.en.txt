@@ -1,9 +1,7 @@
 Your booking request was declined
-# Your booking request was declined
+# Your request couldn't be booked
 
-Hello,
-
-$business can't take your booking request:
+We're sorry: $business can't take your booking request for this time.
 
 | $service
 | $date at $time ($zone)
@@ -13,4 +11,4 @@ $business wrote:
 
 > $message
 
-Nothing was booked. You're welcome to choose another time.
+Nothing was booked. You're welcome to choose another time that suits you.

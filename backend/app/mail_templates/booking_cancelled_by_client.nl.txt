@@ -1,10 +1,10 @@
 Je boeking is geannuleerd
 # Je boeking is geannuleerd
 
-Hallo,
-
-Zoals gevraagd is je boeking bij $business geannuleerd:
+Zoals je vroeg, hebben we je boeking bij $business geannuleerd.
 
 | $service
 | $date om $time ($zone)
 | $payment
+
+Toch van gedachten veranderd? Je bent altijd welkom om een nieuw moment te boeken.

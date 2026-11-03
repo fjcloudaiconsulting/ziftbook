@@ -1,13 +1,9 @@
 Reminder: your upcoming booking
-# Reminder: your upcoming booking
+# Your booking is coming up
 
-Hello,
-
-This is a reminder of your booking at $business:
+A friendly reminder of your booking at $business. They look forward to seeing you.
 
 | $service
 | $date at $time ($zone)
-
-See you then.
 
 [View, change or cancel your booking]($link)

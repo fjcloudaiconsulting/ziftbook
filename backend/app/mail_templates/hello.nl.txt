@@ -1,6 +1,4 @@
 Hallo van ziftbook
 # Hallo van ziftbook
 
-Hallo,
-
-Dit bericht bevestigt dat ziftbook je e-mail kan sturen.
+Dit bericht bevestigt dat ziftbook je e-mail kan sturen. Je hoeft verder niets te doen.

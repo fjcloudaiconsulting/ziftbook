@@ -1,9 +1,7 @@
 Seu agendamento está confirmado
-# Seu agendamento está confirmado
+# Seu horário está garantido
 
-Olá,
-
-Seu agendamento em $business está confirmado:
+Seu agendamento em $business está confirmado. Estão esperando por você.
 
 | $service
 | $date às $time ($zone)

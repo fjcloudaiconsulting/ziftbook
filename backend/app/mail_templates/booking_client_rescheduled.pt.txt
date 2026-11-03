@@ -1,12 +1,11 @@
 Um cliente remarcou o agendamento
-# Um cliente remarcou o agendamento
+# Um agendamento foi remarcado
 
-Olá,
-
-$client remarcou o agendamento:
+$client remarcou o agendamento para outro horário.
 
 | $service
-| Antes $old_date às $old_time
 | Agora $date às $time ($zone)
+| Antes $old_date às $old_time
+| Cliente: $client
 
-[Abrir o link]($link)
+[Abrir o ziftbook]($link)

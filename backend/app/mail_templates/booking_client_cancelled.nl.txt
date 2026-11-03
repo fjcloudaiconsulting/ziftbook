@@ -1,11 +1,10 @@
 Een klant heeft de afspraak geannuleerd
-# Een klant heeft de afspraak geannuleerd
+# Een afspraak is geannuleerd
 
-Hallo,
-
-$client heeft de afspraak geannuleerd:
+$client heeft de afspraak geannuleerd.
 
 | $service
 | $date om $time ($zone)
+| Klant: $client
 
-[Open de link]($link)
+[Open ziftbook]($link)

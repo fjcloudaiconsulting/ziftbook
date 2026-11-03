@@ -1,12 +1,10 @@
 Je boeking is geannuleerd
 # Je boeking is geannuleerd
 
-Hallo,
-
-$business heeft je boeking geannuleerd:
+Het spijt ons: $business heeft je boeking moeten annuleren.
 
 | $service
 | $date om $time ($zone)
 | $payment
 
-Heb je vragen? Neem dan contact op met het bedrijf.
+Heb je vragen? Neem dan gerust contact op met $business.
