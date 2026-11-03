@@ -1328,8 +1328,10 @@ def test_parallel_charges_stop_at_ten(app_engine: Engine, migrate_engine: Engine
 
 
 # fence (ZIF-262): beginning an enrolment again keeps its count of wrong confirm codes, so entering
-# the ticket again refills no guesses and lifts no lock: only the CLI's new ticket does. Kills the
-# reset in begin_totp_enrolment. Injected by restoring `failed_attempts = 0` in begin.
+# the ticket again refills no guesses and lifts no lock, and a stopped enrolment answers
+# invalid_ticket rather than a new secret: only the CLI's new ticket gets through. Kills the reset
+# in begin_totp_enrolment, or a begin past the lock. Injected by restoring `failed_attempts = 0` in
+# begin, then by deleting `AND f.failed_attempts < 10`.
 def test_beginning_again_keeps_the_confirm_count(
     app_engine: Engine, migrate_engine: Engine
 ) -> None:
@@ -1347,8 +1349,12 @@ def test_beginning_again_keeps_the_confirm_count(
     assert factor(migrate_engine, user_id)["failed_attempts"] == 3
     for n in range(4, 11):
         assert confirm(app_engine, session, wrong(), TEN) == ("failed", n)
-    s = totp.new_secret()
-    assert begin(app_engine, session, ticket_proof(ticket), user_id, s) == "begun"
+    # Stopped: the ticket starts nothing, so no new secret (no QR code) that could never confirm.
+    stopped = factor(migrate_engine, user_id)["secret_ct"]
+    assert begin(app_engine, session, ticket_proof(ticket), user_id, totp.new_secret()) == (
+        "invalid_ticket"
+    )
+    assert factor(migrate_engine, user_id)["secret_ct"] == stopped
     assert confirm(app_engine, session, totp.proof(s), TEN) == ("locked", 10)
 
     # The way out: a new ticket from the CLI.

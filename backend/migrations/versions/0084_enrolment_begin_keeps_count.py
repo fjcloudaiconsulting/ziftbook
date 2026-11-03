@@ -3,7 +3,9 @@
 begin_totp_enrolment set second_factors.failed_attempts back to 0, so entering the setup ticket
 again gave ten fresh guesses at the pending secret, as often as wanted within the ticket's hour, and
 lifted a lock. Now begin keeps the count; 10 wrong confirm codes lock the enrolment until the CLI's
-new ticket (`python -m app.admin enrol`), which resets it.
+new ticket (`python -m app.admin enrol`), which resets it. Begin on a stopped enrolment answers
+invalid_ticket and stores no new secret, so the web app shows no QR code that could never confirm.
+Takes no table lock.
 
 Replaced in place: same arguments and result, so its owner and grants stay; restated anyway. The
 downgrade restores 0083's body and leaves every count as it is.
@@ -40,7 +42,10 @@ BEGIN
   UPDATE second_factors f SET secret_ct = p_secret_ct, proof_hash = sha256(p_proof),
                               last_step = 0, charges = '{{}}'
   WHERE f.user_id = v_user AND f.ticket_hash = sha256(p_ticket_proof)
-    AND f.ticket_expires_at > now();
+    AND f.ticket_expires_at > now()
+    -- Stopped: no new secret that could never be confirmed (ZIF-262). invalid_ticket sends the
+    -- admin for a new ticket.
+    AND f.failed_attempts < 10;
   -- The ticket is not used up here: an abandoned QR can be restarted within the hour.
   RETURN CASE WHEN FOUND THEN 'begun' ELSE 'invalid_ticket' END;
 END $$""",
