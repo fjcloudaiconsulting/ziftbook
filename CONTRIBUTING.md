@@ -622,11 +622,11 @@ A platform admin runs the platform across businesses (ZIF-70). `platform_admins`
   `second_factor_passed` is the failures since the last pass. A lock, or a lock again soon after a recovery code,
   means someone is sending codes: a password holder (reset the password, then `enrol`), or someone who can run SQL
   as the app role, which starts admin sessions from the stored hash (rotate the database credentials, `enrol`, and
-  handle it as a ZB-08 incident). That second kind can keep a wrong code from being counted at all (ZIF-261), so
-  look at the log too: `second factor failed` lines for an admin with no matching `second_factor_failed` audit
-  event, or whose `failures` stays the same between lines less than 8 hours apart, mean requests are being cut off
-  before they commit.
-  Handle that as the same ZB-08 incident.
+  handle it as a ZB-08 incident). Every code is counted before it is checked, in a transaction of its own
+  (ZIF-261, 0083), so cutting a request off before its commit cannot keep a code from counting; it only drops that
+  code's audit event. A `failures` value missing from an admin's `second_factor_failed` (or
+  `totp_enrolment_failed`) events less than 8 hours apart, or a `second factor failed` line with no matching
+  event, means requests are being cut off: handle that as the same ZB-08 incident.
 - Never enable statement or parameter logging (`log_statement`, `log_min_duration_statement` with parameters,
   `auto_explain` with parameters) on the app database. Bind values include bearer proofs: a logged TOTP proof,
   recovery-code proof or ticket proof lets anyone who can read the log and run SQL pass an admin's second factor.
@@ -817,10 +817,9 @@ loggers (`web.*`); Next's own stderr output (banners, SSR error traces) is not i
   when an email's wrong passwords on admin sign-in itself reach the admin challenge's threshold (the
   challenge also counts wrong passwords on business sign-in, so it can come first));
   `second factor failed` and `totp enrolment failed` (WARNING, `user_id`, `failures`: every wrong admin
-  TOTP code, at sign-in or at enrolment confirm, logged inside its transaction before the commit, so a
-  failure whose count never commits still leaves a line; none for an attempt refused as locked). Until
-  ZIF-261 is done these lines are the only trace of such a failure, so the API must log at `WARNING` or
-  below and its stdout must be kept (see Platform admin for how to read them);
+  TOTP code, at sign-in or at enrolment confirm, logged before its check commits, so a check cut off
+  before its commit, whose audit event rolls back (never its count, ZIF-261), still leaves a line; none
+  for an attempt refused as locked; see Platform admin for how to read them);
   `booking placement refund failed` (WARNING, with `exc`: a booking that was not placed keeps its
   address limits counted); `booking flood`
   (WARNING, `tenant_id`, at most once an hour: a business's unproven guest bookings reached their cap
@@ -898,7 +897,7 @@ from `.env`; it fixes the log settings at `DEBUG`/`text`, passes no `ZIF_LOG_SQL
 
 | Signal | Leaves the app as | On | Off | Tune |
 |---|---|---|---|---|
-| Logs | JSON lines on stdout (`ZIF_LOG_FORMAT=json`, the default; `text` in dev). The API, worker, migrations and web app never send logs over OTLP: a log collector reads their stdout (none is set up yet). | always (stdout) | stdout cannot be turned off; raise `ZIF_LOG_LEVEL` to `ERROR` for the least, except the API's, which stays at `WARNING` or below until ZIF-261 is done (the `second factor failed` lines, see Logging) | `ZIF_LOG_LEVEL` (default `INFO`), `ZIF_LOG_SQL` (see Logging) |
+| Logs | JSON lines on stdout (`ZIF_LOG_FORMAT=json`, the default; `text` in dev). The API, worker, migrations and web app never send logs over OTLP: a log collector reads their stdout (none is set up yet). | always (stdout) | stdout cannot be turned off; raise `ZIF_LOG_LEVEL` to `ERROR` for the least | `ZIF_LOG_LEVEL` (default `INFO`), `ZIF_LOG_SQL` (see Logging) |
 | Traces | OTLP/HTTP to `ZIF_OTEL_EXPORTER_OTLP_ENDPOINT` | set the endpoint (plus `ZIF_OTEL_EXPORTER_OTLP_HEADERS` if the collector wants auth) | leave the endpoint unset: no spans are exported and no connection is attempted. `ZIF_OTEL_TRACES_EXPORTER=none` turns traces off with the endpoint still set. In prod you can also set `ZIF_OTEL_TRACES_SAMPLER=always_off` | prod: `ZIF_OTEL_TRACES_SAMPLER` / `_ARG` (default 10% of new traces, following the caller's decision); dev: 100% |
 | Metrics | API: `http.server.*`, `db.client.connection.*`, business counters (`ziftbook.sign_up.*`, `ziftbook.invite.*`, `ziftbook.booking.created`), `ziftbook.csp.violations`, `ziftbook.limiter.at_cap`; worker: `ziftbook.job.*`, `ziftbook.email.deliveries`, `db.client.connection.*`; web: `http.server.request.duration` for `/api` only, `ziftbook.web.request.errors` for pages; over OTLP/HTTP to `ZIF_OTEL_EXPORTER_OTLP_ENDPOINT` every 60s | set the endpoint | leave the endpoint unset: no reader, no connection. `ZIF_OTEL_METRICS_EXPORTER=none` turns metrics off with the endpoint still set | every 60s (the Python SDK's `OTEL_METRIC_EXPORT_INTERVAL`, which compose does not pass; the web app is fixed at 60s) |
 
