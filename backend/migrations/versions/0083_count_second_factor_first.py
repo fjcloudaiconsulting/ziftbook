@@ -22,6 +22,10 @@ the count, and the charges with it.
 pass_second_factor and confirm_totp_enrolment stay for the release still running during the
 deploy; revoking and dropping them is a later, contract migration.
 
+Deploy: a call that blocks on this migration's table lock finishes the body it already loaded once
+the lock frees (see 0069). No charge exists yet at that moment, so the old bodies' missing
+`charges = '{}'` changes nothing.
+
 The downgrade restores the three replaced bodies and drops the column and the four functions.
 
 Revision ID: 0083
