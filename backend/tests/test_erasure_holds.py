@@ -937,3 +937,37 @@ def test_the_backstop_is_due_as_the_core_dates_the_hold(people: People, no_jobs:
         )
     assert expected != erased + timedelta(days=30)
     assert due == expected
+
+
+# ZIF-58 GUARD (review N4). A failed refund for an erased client whose hold is gone (the spec
+# allows it: more than 7 days after the refund settled, or past the purge date) cannot be mailed;
+# ops sees it as email skipped, reason no_hold, with ids only.
+def test_a_refund_failure_with_no_hold_left_is_logged(
+    people: People,
+    migrate_engine: Engine,
+    booked: dict[str, str],  # noqa: F811
+    clean_outbox: None,  # noqa: F811
+    log_lines: Callable[[], list[dict[str, Any]]],
+) -> None:
+    client_id = uuid.UUID(booked["client"])
+    erase_announcing(migrate_engine, people, client_id, announce=False)  # nothing owed: no hold
+    with tenant_context(people.a) as session:
+        told = session.scalar(
+            payments.TELL_REFUND_FAILED,
+            {
+                "booking_id": booked["pending"],
+                "refund_id": None,
+                "details": json.dumps({"amount_minor": 2500, "refund": None}),
+            },
+        )
+
+    with jobs_as_the_worker():
+        job = run_send_booking(
+            people.a, booked["pending"], "booking_refund_failed", event_id=str(told)
+        )
+
+    assert outbox_for(people.a, job.id) is None
+    skipped = [line for line in log_lines() if line["msg"] == "email skipped"]
+    assert [(line["template"], line["reason"]) for line in skipped] == [
+        ("booking_refund_failed", "no_hold")
+    ]
