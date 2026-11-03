@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Engine, Row, event, text
 
 import app as app_package
-from app import contact_email, limits
+from app import auth, contact_email, limits
 from app.db import tenant_context
 from app.main import create_app
 from tests.conftest import (
@@ -970,6 +970,73 @@ def test_concurrent_saves_cannot_drain_the_pool(
     for thread in threads:
         thread.join()
     assert set(results) <= {200, 429, 503} and 200 in results  # the two let through finish
+
+
+def client_at(app: FastAPI, tenant_id: uuid.UUID, user_id: uuid.UUID, address: str) -> TestClient:
+    """signed_in, from a chosen client address."""
+    with tenant_context(tenant_id) as session:
+        token = auth.create(session, user_id, ip=None, user_agent=None)
+    client = new_client(app, address)
+    client.cookies.set(auth.COOKIE, token)
+    return client
+
+
+def last_while_two_wait(
+    app_engine: Engine, waiting: list[TestClient], last: TestClient, address: str
+) -> object:
+    """Two saves held on the inbox's lock, then a third: its status, or "blocked" if it waits."""
+    key = contact_email.inbox_key(limits.address_for_limits(address))
+    answer: list[object] = []
+
+    def put(client: TestClient, into: list[object]) -> None:
+        into.append(put_settings(client, {"contact_email": address}).status_code)
+
+    held: list[object] = []
+    with app_engine.begin() as conn:
+        conn.execute(
+            text("SELECT pg_advisory_xact_lock(:c, hashtext(:k))"),
+            {"c": contact_email.SENDERS_LOCK, "k": key},
+        )
+        threads = [threading.Thread(target=put, args=(client, held)) for client in waiting]
+        for thread in threads:
+            thread.start()
+        wait_until_blocked(app_engine, 2)
+        third = threading.Thread(target=put, args=(last, answer))
+        third.start()
+        third.join(timeout=5)
+        outcome = answer[0] if answer else "blocked"
+    for thread in [*threads, third]:
+        thread.join()
+    return outcome
+
+
+# Re-check NIT 8 FENCE. Wrong impl: only a per-business bucket, so one address holds claims for
+# many businesses at once (each holding a pooled connection).
+def test_one_address_holds_two_claims_whatever_the_business(
+    people: People, app: FastAPI, app_engine: Engine
+) -> None:
+    set_role(people.b, people.only_b, "owner")
+    ip = fresh_address()
+    a = client_at(app, people.a, people.both, ip)
+    b = client_at(app, people.b, people.only_b, ip)
+
+    assert last_while_two_wait(app_engine, [a, a], b, f"{uuid.uuid4().hex[:12]}@example.com") == 429
+
+
+# Re-check NIT 8 FENCE. Wrong impl: only a per-address bucket, so one business holds claims from
+# many addresses at once.
+def test_one_business_holds_two_claims_whatever_the_address(
+    people: People, app: FastAPI, app_engine: Engine
+) -> None:
+    first = client_at(app, people.a, people.both, fresh_address())
+    other = client_at(app, people.a, people.both, fresh_address())
+
+    assert (
+        last_while_two_wait(
+            app_engine, [first, first], other, f"{uuid.uuid4().hex[:12]}@example.com"
+        )
+        == 429
+    )
 
 
 CANCEL = "/api/settings/contact-email/request"
