@@ -18,7 +18,7 @@ from app import admin, admin_auth, auth, totp
 from app.admin_auth import ADMIN_COOKIE
 from app.main import create_app
 from tests.conftest import PASSWORD, add_password, add_user, email_of, fresh_address, new_client
-from tests.test_second_factor_db import factor, issue_ticket
+from tests.test_second_factor_db import CHARGE, CHECK, call, factor, issue_ticket
 
 PASS = "/api/admin/session/second-factor"
 BEGIN = "/api/admin/totp/enrolment"
@@ -581,6 +581,54 @@ def test_a_wrong_code_reports_its_own_count(
     assert "second_factor_locked" not in [action for action, _ in events]
     assert warned(log_lines, "second factor failed") == [("WARNING", str(an_admin), 9)]
     assert [line["msg"] for line in log_lines() if line["level"] == "ERROR"] == []
+
+
+# fence (ZIF-261): the other order. Another session's code is charged first (9), this one second
+# (10), and the other passes, giving its attempt back (9), before this check. This wrong code is
+# reported at its own count, 10, but locks nothing: no 403, no lock event, no ERROR line, and the
+# next code is charged. Kills a lock decided on the charge's count alone. Injected by deleting the
+# check's current count from the lock test. (From the re-check's probe.)
+def test_a_wrong_code_locks_nothing_a_pass_gave_back(
+    app: FastAPI,
+    app_engine: Engine,
+    migrate_engine: Engine,
+    an_admin: uuid.UUID,
+    monkeypatch: pytest.MonkeyPatch,
+    log_lines: Callable[[], list[dict[str, Any]]],
+) -> None:
+    v = verified_client(app, migrate_engine, an_admin)
+    half = sign_in(app, an_admin)
+    other_id = auth.hash_token(sign_in(app, an_admin).cookies[ADMIN_COOKIE])
+    set_count(migrate_engine, an_admin, 8)
+    outcome, _, other_charge = call(app_engine, CHARGE, id=other_id)
+    assert outcome == "charged"
+    matching_step = totp.matching_step
+
+    def step_then_the_other_passes(*args: Any, **kwargs: Any) -> int | None:
+        row = call(
+            app_engine,
+            CHECK,
+            id=other_id,
+            charge=other_charge,
+            p=totp.proof(v.secret),
+            step=v.t0 + 1,
+        )
+        assert row[0] == "passed"
+        return matching_step(*args, **kwargs)
+
+    monkeypatch.setattr(totp, "matching_step", step_then_the_other_passes)
+    refused = half.post(PASS, json={"code": wrong_code(v)})
+
+    assert answer(refused) == (401, {"code": "invalid_code"})
+    assert failed_attempts(migrate_engine, an_admin) == 9
+    events = audit(migrate_engine, an_admin)
+    assert [d for a, d in events if a == "second_factor_failed"] == [
+        {"method": "totp", "failures": 10}
+    ]
+    assert "second_factor_locked" not in [action for action, _ in events]
+    assert [line["msg"] for line in log_lines() if line["level"] == "ERROR"] == []
+    monkeypatch.setattr(totp, "matching_step", matching_step)
+    assert half.post(PASS, json={"code": wrong_code(v)}).status_code == 403  # this one locks
 
 
 # fence (ZIF-261): the same at enrolment confirm. Injected by reporting check_totp_enrolment's
