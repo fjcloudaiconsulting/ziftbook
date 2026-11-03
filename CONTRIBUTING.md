@@ -844,8 +844,8 @@ loggers (`web.*`); Next's own stderr output (banners, SSR error traces) is not i
   this API's report route; the web's `started` line carries `csp` and `csp_reports`, never the URL);
   `csp report url is not this page's host: violations are not reported` (WARNING, web, once per process: a page
   was served on a host other than `ZIF_CSP_REPORT_URL`'s, and names no report endpoint) and
-  `worker database role: not ziftbook_worker; ...` (WARNING, worker, `database_role`: sign-up, reset
-  and invite emails fail once the contract migration revokes token minting from `ziftbook_app`).
+  `worker database role: not ziftbook_worker; ...` (WARNING, worker, `database_role`: sign-up, reset,
+  invite and contact email links fail once the contract migration revokes token minting from `ziftbook_app`).
   Both startup lines carry `database_role` (`current_user`, never `session_user`; left out when the
   query failed).
 - Abuse events, ids and reasons only: `turnstile mismatch` (WARNING, `reason` `hostname` or `action`:
@@ -861,6 +861,8 @@ loggers (`web.*`); Next's own stderr output (banners, SSR error traces) is not i
   address limits counted); `booking flood`
   (WARNING, `tenant_id`, at most once an hour: a business's unproven guest bookings reached their cap
   and its owners are emailed) and `booking flood alert failed` (WARNING, with `exc`).
+- `contact email confirmed` (INFO, `tenant_id`, ZIF-232): a business's contact email was confirmed from its link;
+  never the address or the link.
 - CSP violations (ZIF-236, `app/csp_reports.py`): `csp violation` (INFO) with `report_format`, `directive`,
   `disposition`, `page` (the route template, `/[locale]/[slug]/book`, or `other`), `blocked` and `source` (a
   category: a CSP keyword, `self`, `media`, `upload`, a provider such as `stripe` or `cloudflare`, `extension`,

@@ -1,6 +1,8 @@
 """A business's contact email through the API (ZIF-232): a typed address waits for its inbox to
 confirm it, and only a confirmed one is in effect."""
 
+import hashlib
+import secrets
 import uuid
 from pathlib import Path
 from typing import Any
@@ -10,12 +12,16 @@ from fastapi import FastAPI
 from sqlalchemy import Engine, Row, text
 
 import app as app_package
+from app import contact_email
+from app.db import tenant_context
 from app.main import create_app
 from tests.conftest import (
     People,
     confirm_contact_email,
     events,
+    fresh_address,
     migrate_tenant_context,
+    new_client,
     put_settings,
     saved_settings,
     signed_in,
@@ -180,3 +186,124 @@ def test_only_the_contact_email_module_and_the_mailer_name_the_requests() -> Non
         and path.name not in {"contact_email.py", "mail.py"}
     )
     assert naming == []
+
+
+CONFIRM = "/api/contact-email/confirm"
+
+
+def link(worker_engine: Engine, tenant_id: uuid.UUID, email: str) -> str:
+    """The fragment of a freshly mailed link for email, as the job mints it."""
+    with tenant_context(tenant_id) as session:
+        request_id = session.execute(
+            text("SELECT request_id FROM change_contact_email(:e, true)"), {"e": email}
+        ).scalar_one()
+    secret = secrets.token_urlsafe(32)
+    with worker_engine.begin() as conn:
+        conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(tenant_id)})
+        assert conn.execute(
+            text("SELECT * FROM mint_contact_email_token(:id, :h)"),
+            {"id": request_id, "h": hashlib.sha256(secret.encode()).digest()},
+        ).first()
+    return f"{tenant_id}.{secret}"
+
+
+# F5.1 FENCE. Wrong impl: an answer that names the business or the address, or a confirm that is
+# not audited.
+def test_a_live_link_confirms_the_address(
+    people: People, app: FastAPI, migrate_engine: Engine, worker_engine: Engine
+) -> None:
+    confirm_contact_email(people.a, "old@example.com")
+    token = link(worker_engine, people.a, "new@example.com")
+
+    response = new_client(app).post(CONFIRM, json={"token": token})
+
+    assert (response.status_code, response.content) == (204, b"")
+    assert response.headers["cache-control"] == "no-store"
+    assert saved_settings(people.a)["contact_email"] == "new@example.com"
+    assert waiting(migrate_engine, people.a) is None
+    assert contact_events(migrate_engine, people.a)[-1] == (
+        "setting_changed",
+        None,
+        {"old": "old@example.com", "new": "new@example.com"},
+    )
+
+
+# F5.2, F5.3 FENCE. Wrong impl: a different answer for any of these (the endpoint would tell
+# whether a business, an address or a link exists), or a link that works twice.
+def test_every_dead_link_gets_the_same_answer(
+    people: People, app: FastAPI, migrate_engine: Engine, worker_engine: Engine
+) -> None:
+    used = link(worker_engine, people.b, "used@example.com")
+    assert new_client(app).post(CONFIRM, json={"token": used}).status_code == 204
+    resent = link(worker_engine, people.a, "resent@example.com")
+    with tenant_context(people.a) as session:
+        session.execute(text("SELECT resend_contact_email()"))
+    changed = link(worker_engine, people.a, "changed@example.com")
+    owner = signed_in(app, people.a, people.both)
+    assert put_settings(owner, {"contact_email": "x@example.com"}).status_code == 200
+    lapsed_tenant, secret = link(worker_engine, people.b, "lapsed@example.com").split(".")
+    with migrate_tenant_context(migrate_engine, people.b) as conn:
+        conn.execute(
+            text("UPDATE contact_email_requests SET expires_at = now() - interval '1 second'")
+        )
+    dead = [
+        "nonsense",
+        f"{uuid.uuid4()}.{secrets.token_urlsafe(32)}",
+        f"{people.a}.{secrets.token_urlsafe(32)}",
+        f"{people.a}.short",
+        f"{people.a}.{secret}",  # the lapsed link under another business's id
+        f"{lapsed_tenant}.{secret}",
+        used,
+        resent,
+        changed,
+    ]
+
+    answers = [new_client(app).post(CONFIRM, json={"token": token}) for token in dead]
+
+    assert {(a.status_code, a.text) for a in answers} == {(400, '{"code":"invalid_token"}')}
+    assert saved_settings(people.a) == {}
+
+
+# F5.4 FENCE. Wrong impl: no limit, or one counted after the lookup (a guess then costs a
+# database transaction before it is refused).
+def test_the_eleventh_try_from_one_address_is_refused_before_any_lookup(
+    people: People, app: FastAPI, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client = new_client(app, fresh_address())
+    for _ in range(10):
+        assert client.post(CONFIRM, json={"token": "nonsense"}).status_code == 400
+
+    def no_lookup(*args: object, **kwargs: object) -> None:
+        raise AssertionError("looked up")
+
+    monkeypatch.setattr(contact_email, "tenant_context", no_lookup)
+    over = client.post(CONFIRM, json={"token": f"{people.a}.{secrets.token_urlsafe(32)}"})
+
+    assert (over.status_code, over.json()) == (429, {"code": "rate_limited"})
+
+
+# F5.6 FENCE. Wrong impl: a GET that confirms (a mail scanner's prefetch would), or a form post.
+def test_only_a_json_post_confirms(people: People, app: FastAPI, worker_engine: Engine) -> None:
+    token = link(worker_engine, people.a, "shop@example.com")
+    client = new_client(app)
+
+    assert client.get(CONFIRM, params={"token": token}).status_code == 405
+    assert client.post(CONFIRM, data={"token": token}).status_code == 415
+    assert saved_settings(people.a) == {}
+
+
+# F5.5 FENCE. Wrong impl: the token, its hash or the address in a log line.
+def test_a_confirm_logs_ids_only(
+    people: People, app: FastAPI, worker_engine: Engine, log_lines: Any
+) -> None:
+    token = link(worker_engine, people.a, "zzyzx-confirm@example.com")
+    secret = token.split(".")[1]
+
+    assert new_client(app).post(CONFIRM, json={"token": token}).status_code == 204
+
+    lines = log_lines()
+    (confirmed,) = [line for line in lines if line["msg"] == "contact email confirmed"]
+    assert confirmed["tenant_id"] == str(people.a)
+    logged = str(lines)
+    for value in (secret, hashlib.sha256(secret.encode()).hexdigest(), "zzyzx-confirm"):
+        assert value not in logged

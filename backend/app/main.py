@@ -38,6 +38,7 @@ from app import (
     business_currency,
     business_settings,
     clients,
+    contact_email,
     csp_reports,
     invites,
     limits,
@@ -403,6 +404,7 @@ def create_app() -> FastAPI:
         admin_auth.admin_write_router,
         setup.router,
         csp_reports.router,
+        contact_email.router,
     ):
         for route in each.routes:
             if isinstance(route, APIRoute) and WRITE & set(route.methods or ()):
