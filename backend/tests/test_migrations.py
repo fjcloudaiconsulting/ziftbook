@@ -2598,3 +2598,44 @@ def test_0077_round_trips_the_workers_money_owed(
         command.upgrade(cfg, "head")
     with migrate_engine.connect() as conn:
         assert tuple(conn.execute(WORKER_OWED).one()) == (True, False)
+
+
+HOLD_NEEDED = text("""
+SELECT to_regprocedure('client_hold_needed(uuid,uuid)') IS NOT NULL,
+       position('client_hold_needed' IN core) > 0,
+       position('client_money_owed(v_tenant' IN core) > 0
+FROM pg_get_functiondef('erase_client_core(uuid,boolean)'::regprocedure) core
+""")
+HOLD_NEEDED_ACCESS = text("""
+SELECT has_function_privilege('ziftbook_worker', 'client_hold_needed(uuid,uuid)', 'EXECUTE'),
+       has_function_privilege('ziftbook_app', 'client_hold_needed(uuid,uuid)', 'EXECUTE'),
+       has_function_privilege('public', 'client_hold_needed(uuid,uuid)', 'EXECUTE')
+""")
+CORE_POSTURE = text("""
+SELECT prosecdef, proconfig, proowner::regrole::text,
+       has_function_privilege('ziftbook_app', oid, 'EXECUTE')
+FROM pg_proc WHERE oid = 'erase_client_core(uuid,boolean)'::regprocedure
+""")
+
+
+# ZIF-58 FENCE (0078). Wrong impl: a downgrade that leaves the function or the 0078 core behind;
+# an upgrade that grants the function to the app role or PUBLIC, or that loses the core's posture
+# (definer, pinned search_path, owner, no app EXECUTE) when it replaces it.
+def test_0078_round_trips_the_hold_rule(
+    migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = lock_timeout_config(monkeypatch)
+    with migrate_engine.connect() as conn:
+        posture = tuple(conn.execute(CORE_POSTURE).one())
+    try:
+        command.downgrade(cfg, "0077")
+        with migrate_engine.connect() as conn:
+            assert tuple(conn.execute(HOLD_NEEDED).one()) == (False, False, True)
+            assert tuple(conn.execute(CORE_POSTURE).one()) == posture
+    finally:
+        command.upgrade(cfg, "head")
+    with migrate_engine.connect() as conn:
+        assert tuple(conn.execute(HOLD_NEEDED).one()) == (True, True, False)
+        assert tuple(conn.execute(HOLD_NEEDED_ACCESS).one()) == (True, False, False)
+        assert tuple(conn.execute(CORE_POSTURE).one()) == posture
+    assert posture == (True, ["search_path=pg_catalog, public, pg_temp"], "ziftbook_migrate", False)

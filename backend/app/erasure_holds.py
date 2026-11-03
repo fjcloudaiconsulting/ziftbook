@@ -16,8 +16,7 @@ from sqlalchemy.orm import Session
 
 from app import bookings, jobs, tracing
 from app.db import SessionLocal, tenant_context
-from app.jobs import MAX_ATTEMPTS, Job
-from app.mail import HOLD_TEMPLATES
+from app.jobs import Job
 
 # The core's purge date: when it erased the client plus 30 days (0064's INSERT).
 HOLD_LIFETIME = timedelta(days=30)
@@ -27,31 +26,13 @@ HOLD_LIFETIME = timedelta(days=30)
 # bound (0064's CHECK) was at risk.
 LATE = timedelta(hours=1)
 
-# Nothing is left to tell when no money is owed an answer (client_money_owed, the rule the erase
-# core wrote the hold on), no refund settled in the last 7 days (one can still fail at the bank
-# days later), and none of the client's emails through the hold is still to be sent. An email has
-# given up only once its last lease has run out, as jobs.PRUNE reads it: CLAIM counts an attempt
-# when it starts, so a last attempt still running has attempts = MAX_ATTEMPTS and must still find
-# the hold. That arm cannot use ix_jobs_claimable; it runs per hold, once the money arms are false,
-# and holds are few.
-PURGE = text(f"""
+# A hold goes at its purge date, or once client_hold_needed (0078, the rule the erase core writes
+# it on) says nothing is left to tell: no money owed, no refund settled in the last 7 days, no
+# email through the hold still to be sent.
+PURGE = text("""
 DELETE FROM client_erasure_holds h
 WHERE h.tenant_id = current_setting('app.tenant_id')::uuid
-  AND (h.purge_after <= now()
-       OR NOT (client_money_owed(h.tenant_id, h.client_id)
-               OR EXISTS (SELECT 1 FROM booking_payments p
-                          JOIN bookings b ON b.tenant_id = p.tenant_id AND b.id = p.booking_id
-                          WHERE p.tenant_id = h.tenant_id AND b.client_id = h.client_id
-                            AND p.refunded_minor > 0
-                            AND p.settled_at > now() - interval '7 days')
-               OR EXISTS (SELECT 1 FROM jobs j
-                          JOIN bookings b ON b.id::text = j.payload ->> 'booking_id'
-                          WHERE j.tenant_id = h.tenant_id AND b.tenant_id = h.tenant_id
-                            AND b.client_id = h.client_id
-                            AND j.kind = 'email.booking' AND j.completed_at IS NULL
-                            AND (j.attempts < {MAX_ATTEMPTS} OR j.next_attempt_at > now())
-                            AND j.payload ->> 'template' IN
-                              ({", ".join(f"'{t}'" for t in sorted(HOLD_TEMPLATES))}))))
+  AND (h.purge_after <= now() OR NOT client_hold_needed(h.tenant_id, h.client_id))
 RETURNING h.client_id, h.purge_after < now() - CAST(:late AS interval) AS late
 """)
 
