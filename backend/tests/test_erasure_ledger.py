@@ -918,3 +918,19 @@ def test_a_payment_made_before_the_erasure_but_lost_is_held_and_listed(
     assert fake_stripe.count("refund") == 0
     held = [line for line in log_lines() if line["msg"] == "refund held after a reapply"]
     assert [line["booking_id"] for line in held] == [booking_id]
+
+
+# ZIF-58. FENCE. Wrong impl: refusing only an empty listing. Another environment's bucket (staging's
+# key in production's pod) is not empty, and its entries are all absent here: the run exited 0
+# and erased clients stayed restored. When the database records erasures in the window and the
+# listing holds none of them, the run is refused.
+def test_a_listing_with_none_of_the_database_s_erasures_is_refused(
+    people: People, migrate_engine: Engine, ledger_bucket: S3Client
+) -> None:
+    with migrate_engine.begin() as conn:
+        since = conn.scalar(text("SELECT clock_timestamp()"))
+    erase_now(migrate_engine, people.a)  # the database records an erasure in the window
+    foreign = ledger.Entry(uuid.uuid4(), uuid.uuid4(), datetime.now(UTC))
+    storage.ledger_write(foreign.key, foreign.body())
+    assert reapply(since) == 1
+    assert ledger.main(["reapply", "--reason", "restore drill"]) == 1  # the whole ledger too
