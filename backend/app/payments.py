@@ -501,7 +501,7 @@ SELECT p.id, p.intent_id, p.kind, p.status, p.booking_id, p.amount_minor, p.curr
        EXISTS (SELECT 1 FROM booking_events e
                WHERE e.booking_id = p.booking_id AND e.event = 'paid') AS was_booked,
        EXISTS (SELECT 1 FROM booking_events e
-               WHERE e.booking_id = p.booking_id
+               WHERE e.tenant_id = p.tenant_id AND e.booking_id = p.booking_id
                  AND e.details ->> 'reason' = 'erasure_reapplied') AS reapplied,
        (SELECT stripe_account_id FROM payment_accounts) AS account
 FROM booking_payments p
