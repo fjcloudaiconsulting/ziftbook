@@ -28,13 +28,13 @@ Downgrade: refuses while an erased row exists ('' fails the old CHECK), which is
 schema cannot hold an erased client.
 
 Revision ID: 0063
-Revises: 0056
+Revises: 0069
 """
 
 from alembic import op
 
 revision = "0063"
-down_revision = "0056"
+down_revision = "0069"
 branch_labels = None
 depends_on = None
 
