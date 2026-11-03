@@ -5,6 +5,7 @@ Your booking at $business is confirmed. They look forward to seeing you.
 
 | $service
 | $date at $time ($zone)
+| $with
 | $payment
 
 The attached calendar file adds it to your calendar.

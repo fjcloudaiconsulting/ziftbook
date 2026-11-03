@@ -5,6 +5,7 @@ Het spijt ons: $business kan je boekingsaanvraag voor dit moment niet aannemen.
 
 | $service
 | $date om $time ($zone)
+| $with
 | $payment
 
 $business schreef:

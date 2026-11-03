@@ -5,6 +5,7 @@ Sentimos muito: $business não pode aceitar seu pedido de agendamento para este 
 
 | $service
 | $date às $time ($zone)
+| $with
 | $payment
 
 Nada foi agendado. Você pode escolher outro horário que seja melhor para você.

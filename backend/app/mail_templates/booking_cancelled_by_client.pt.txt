@@ -5,6 +5,7 @@ Conforme você pediu, cancelamos seu agendamento em $business.
 
 | $service
 | $date às $time ($zone)
+| $with
 | $payment
 
 Mudou de ideia? Você pode agendar um novo horário quando quiser.

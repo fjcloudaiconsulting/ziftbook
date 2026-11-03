@@ -5,6 +5,7 @@ $business has received your booking request. They still need to accept it, and w
 
 | $service
 | $date at $time ($zone)
+| $with
 | $payment
 
 [View, change or cancel your booking]($link)

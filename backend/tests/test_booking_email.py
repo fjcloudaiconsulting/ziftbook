@@ -672,6 +672,7 @@ def test_every_booking_template_renders_service_and_when() -> None:
         "payment": "",
         "amount": "AMOUNT-MARKER",
         "contact": "",
+        "with": "With Member",
     }
     for template in [*STATUS_FOR, "booking_request_team_member"]:  # ZIF-143's file variant
         for locale in LOCALES:
@@ -701,6 +702,7 @@ def test_exactly_the_message_templates_carry_the_clients_message() -> None:
         "payment": "",
         "amount": "AMOUNT",
         "contact": "",
+        "with": "With Member",
     }
     carrying = set()
     for path in sorted(mail.TEMPLATES.glob("booking_*.txt")):
@@ -1783,3 +1785,27 @@ def test_a_flood_alert_for_someone_not_an_owner_sends_nothing(people: People, wh
     )
 
     assert subjects_sent_to(email_of(user_id)) == []
+
+
+# ZIF-175 fence: the client's card says who the booking is with, as their booking page does
+# ("With {name}", else "With a member of the team"). Kills: the line missing, and the fallback
+# missing (a bare "With").
+@pytest.mark.parametrize(
+    ("name", "said"), [("Ana", "With Ana"), (None, "With a member of the team")]
+)
+def test_the_clients_card_says_who_the_booking_is_with(
+    people: People, app: FastAPI, ready: str, name: str | None, said: str
+) -> None:
+    booking_id = make_pending(app, people.a, ready)
+    assert patch(signed_in(app, people.a, people.both), booking_id, "confirmed").status_code == 200
+    with tenant_context(people.a) as session:
+        session.execute(
+            text("UPDATE bookings SET worker_display_name = :n WHERE id = :id"),
+            {"n": name, "id": booking_id},
+        )
+
+    run_send_booking(people.a, booking_id, "booking_confirmed")
+
+    sent = mail_for(_client_email(people.a, booking_id))
+    assert said + "\n" in sent["Text"]
+    assert said in sent["Html"]

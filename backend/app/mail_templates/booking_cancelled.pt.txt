@@ -5,6 +5,7 @@ Sentimos muito: $business precisou cancelar seu agendamento.
 
 | $service
 | $date às $time ($zone)
+| $with
 | $payment
 
 Se tiver dúvidas, entre em contato com $business.

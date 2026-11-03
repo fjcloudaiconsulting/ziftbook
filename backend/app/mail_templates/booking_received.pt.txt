@@ -5,6 +5,7 @@ $business recebeu seu pedido de agendamento. O negócio ainda precisa aceitar o 
 
 | $service
 | $date às $time ($zone)
+| $with
 | $payment
 
 [Veja, altere ou cancele seu agendamento]($link)

@@ -5,6 +5,7 @@ $business heeft je boekingsaanvraag ontvangen. Ze moeten de aanvraag nog accepte
 
 | $service
 | $date om $time ($zone)
+| $with
 | $payment
 
 [Bekijk, wijzig of annuleer je afspraak]($link)

@@ -5,6 +5,7 @@ We're sorry: $business had to cancel your booking.
 
 | $service
 | $date at $time ($zone)
+| $with
 | $payment
 
 If you have any questions, please get in touch with $business.
