@@ -214,11 +214,14 @@ USERS_POLICIES = [
 # Every SECURITY DEFINER function ziftbook_app may EXECUTE, in any schema but the system ones, by
 # name and identity arguments. Read from the migrated database. ZIF-146 adds the account-session
 # functions on purpose: each is keyed by a live session hash or a just-verified password hash, takes
-# no email, name or query, and answers about no one but the session's own holder.
+# no email, name or query, and answers about no one but the session's own holder. The three contact
+# email functions (ZIF-232, 0086) are no directory read: they read no users and see only the
+# caller's business.
 DEFINERS = [
     "public.accept_invite(p_token_hash bytea, p_password_hash text, p_name text)",
     "public.account_by_email(p_email text)",
     "public.begin_totp_enrolment(p_id_hash bytea, p_ticket_proof bytea, p_secret_ct bytea, p_proof bytea)",  # noqa: E501
+    "public.change_contact_email(p_email text, p_send boolean)",
     # ZIF-102: changes only the caller's business's currency; reads and writes nothing of a user.
     "public.change_currency(p_currency text, p_confirmed_prices integer)",
     "public.charge_second_factor(p_id_hash bytea)",
@@ -229,6 +232,7 @@ DEFINERS = [
     "public.complete_password_reset(p_token_hash bytea, p_password_hash text)",
     "public.complete_setup(p_email text, p_password_hash text, p_name text, p_locale text)",
     "public.complete_sign_up(p_token_hash bytea, p_password_hash text, p_business_name text, p_country text, p_currency text, p_name text)",  # noqa: E501
+    "public.confirm_contact_email(p_token_hash bytea)",
     "public.confirm_totp_enrolment(p_id_hash bytea, p_proof bytea, p_step bigint, p_code_proofs bytea[])",  # noqa: E501
     "public.email_token_live(p_token_hash bytea, p_purpose text)",
     "public.end_account_session(p_id_hash bytea)",
@@ -242,6 +246,7 @@ DEFINERS = [
     "public.own_bookings(p_id_hash bytea, p_before_starts_at timestamp with time zone, p_before_key bytea, p_limit integer)",  # noqa: E501
     "public.pass_second_factor(p_id_hash bytea, p_proof bytea, p_step bigint)",
     "public.password_unchanged(p_user_id uuid, p_hash text)",
+    "public.resend_contact_email()",
     "public.reset_password(p_token_hash bytea, p_password_hash text)",
     "public.resolve_account_session(p_id_hash bytea)",
     "public.resolve_admin_session(p_id_hash bytea)",

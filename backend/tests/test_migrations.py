@@ -2786,3 +2786,29 @@ def test_0078_and_0058_edit_the_erase_core_without_overlapping() -> None:
     second = apply_edits(apply_edits(core, edits_78), edits_58)
     assert first == second
     assert "booked_as = NULL" in first and "client_hold_needed(v_tenant, p_client)" in first
+
+
+# ZIF-232 (0086): the request table and its four functions.
+CONTACT_EMAIL_OBJECTS = text("""
+SELECT to_regclass('contact_email_requests') IS NOT NULL,
+       (SELECT count(*) FROM pg_proc
+        WHERE proname IN ('change_contact_email', 'resend_contact_email', 'confirm_contact_email',
+                          'mint_contact_email_token')
+          AND pronamespace = 'public'::regnamespace)
+""")
+
+
+# ZIF-232 FENCE (0086). Wrong impl: a downgrade that leaves a function behind (the next upgrade's
+# CREATE FUNCTION then collides), or drops the table before the functions that name it.
+def test_0086_round_trips_contact_email_requests(
+    migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = lock_timeout_config(monkeypatch)
+    try:
+        command.downgrade(cfg, "0056")
+        with migrate_engine.connect() as conn:
+            assert tuple(conn.execute(CONTACT_EMAIL_OBJECTS).one()) == (False, 0)
+    finally:
+        command.upgrade(cfg, "head")
+    with migrate_engine.connect() as conn:
+        assert tuple(conn.execute(CONTACT_EMAIL_OBJECTS).one()) == (True, 4)
