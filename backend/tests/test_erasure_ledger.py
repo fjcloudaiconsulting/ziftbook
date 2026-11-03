@@ -35,7 +35,7 @@ from tests.conftest import (
     signed_in,
 )
 from tests.stripe_fake import FakeGateway
-from tests.test_booking_payments_api import make_shop, run
+from tests.test_booking_payments_api import make_shop, place, run
 from tests.test_booking_refunds import booked
 from tests.test_bookings_db import seed_service
 from tests.test_client_erasure_db import INSERT_BOOKING, INSERT_CLIENT, INSERT_PAYMENT, take
@@ -756,7 +756,8 @@ def test_a_reapplied_ending_never_pays_more_than_stripe_shows(
     client_id = client_of(people.a, booking_id)
     if refunded:  # the client's own cancellation, which the restore lost
         fake_stripe.add_refund(intent, refunded, "succeeded")
-    entry = ledger.Entry(people.a, client_id, datetime.now(UTC) - timedelta(minutes=5))
+    # The erasure came after the charge.
+    entry = ledger.Entry(people.a, client_id, datetime.now(UTC) + timedelta(seconds=1))
     storage.ledger_write(entry.key, entry.body())
     assert reapply(entry.erased_at - timedelta(hours=1)) == 0
     run("payment.settle")
@@ -858,3 +859,62 @@ def test_reapply_runs_alone(
         if beside == "another reapply":
             other.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": ledger.RUN_LOCK})
     assert take(migrate_engine, people.a) == before
+
+
+def checkout(people: People, fake_stripe: FakeGateway) -> tuple[str, str, uuid.UUID]:
+    """A booking in checkout with an open payment intent: (the booking, the intent, the client)."""
+    app = create_app()
+    owner = signed_in(app, people.a, people.both)
+    save_setting(people.a, "published", True)
+    service_id = make_shop(people, owner, fake_stripe, price=4000)
+    made = place(app, people, service_id, payment="pay")
+    assert made.status_code == 201, made.text
+    booking_id = made.json()["id"]
+    return booking_id, fake_stripe.latest(booking_id), client_of(people.a, booking_id)
+
+
+# ZIF-58. FENCE (money). Wrong impl: holding back every re-applied ending's refund. A checkout the
+# reapply expired, which the client's bank completes afterwards, is a payment nothing the restore
+# lost can explain (a lost cancellation needs the money to have landed before the erasure): it is
+# owed in full, and settle refunds it, as it refunds any late payment.
+def test_a_payment_made_after_the_erasure_is_refunded_in_full(
+    people: People,
+    fake_stripe: FakeGateway,
+    migrate_engine: Engine,
+    ledger_bucket: S3Client,
+    log_lines: Any,
+) -> None:
+    booking_id, intent, client_id = checkout(people, fake_stripe)
+    entry = ledger.Entry(people.a, client_id, datetime.now(UTC) - timedelta(seconds=30))
+    storage.ledger_write(entry.key, entry.body())
+    assert reapply(entry.erased_at - timedelta(hours=1)) == 0
+    with migrate_tenant_context(migrate_engine, people.a) as conn:
+        assert conn.execute(BOOKING, {"id": booking_id}).one().status == "expired"
+    fake_stripe.confirm(intent)  # the bank completes the payment now, after the reapply
+    run("payment.settle")
+    assert fake_stripe.count("refund") == 1
+    assert not [line for line in log_lines() if line["msg"] == "refund held after a reapply"]
+
+
+# ZIF-58. FENCE (money). Wrong impl: paid_ended from the restored payment status alone. A
+# checkout the client paid before the erasure, whose payment the restore lost (the row is back
+# to open), is held like any re-applied ending, and the reapply lists it in paid_ended, so the
+# operator's checklist has every payment it may hold.
+def test_a_payment_made_before_the_erasure_but_lost_is_held_and_listed(
+    people: People,
+    fake_stripe: FakeGateway,
+    migrate_engine: Engine,
+    ledger_bucket: S3Client,
+    log_lines: Any,
+) -> None:
+    booking_id, intent, client_id = checkout(people, fake_stripe)
+    fake_stripe.confirm(intent)  # paid; the restore lost the webhook's record of it
+    entry = ledger.Entry(people.a, client_id, datetime.now(UTC) + timedelta(seconds=1))
+    storage.ledger_write(entry.key, entry.body())
+    assert reapply(entry.erased_at - timedelta(hours=1)) == 0
+    reapplied = [line for line in log_lines() if line["msg"] == "erasures reapplied"]
+    assert reapplied[-1]["paid_ended"] == [booking_id]
+    run("payment.settle")
+    assert fake_stripe.count("refund") == 0
+    held = [line for line in log_lines() if line["msg"] == "refund held after a reapply"]
+    assert [line["booking_id"] for line in held] == [booking_id]
