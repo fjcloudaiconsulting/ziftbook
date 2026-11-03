@@ -54,6 +54,14 @@ Specifics:
   migration, rebase it onto `main` and set its `down_revision` to the current head; `alembic heads` must print one line.
   If both are already merged, add a merge revision (`down_revision = ("a", "b")`, empty upgrade and downgrade)
   rather than editing a merged migration.
+- A migration that changes an existing function reads its stored definition (`pg_get_functiondef`) and replaces only
+  its own anchored fragments, each found exactly once or the migration refuses; its downgrade reverses exactly those
+  replacements on the stored definition. No migration rebuilds a function from another migration's file text or a
+  full copy of its body: two unmerged migrations that each copy the body silently drop each other's edit, whichever
+  lands second, while anchored replacements compose when they do not overlap and fail loudly when they do. Run the
+  result with `op.get_bind().exec_driver_sql(...)`, so text read back from the catalog is never parsed for bind
+  parameters. Its round-trip test asserts that the downgrade gives back the pre-upgrade definition byte for byte and
+  that the owner, `proacl` and `proconfig` are unchanged. 0058's re-creation of `erase_client_core` is the example.
 - A migration statement waits at most 5 seconds for a table or row lock (`lock_timeout`, set in `migrations/env.py`),
   so a migration stuck behind a long app transaction fails with `LockNotAvailable` instead of making every query on
   that table queue behind it. The migrations run exits non-zero and the app does not start on the new version; run
