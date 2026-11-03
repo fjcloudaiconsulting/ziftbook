@@ -269,6 +269,23 @@ def test_a_link_confirms_only_while_its_requester_is_an_owner(
         )
 
 
+# Re-check SHOULD 1 FENCE. Wrong impl: a change that replaces a waiting address keeps the earlier
+# requester, so an owner about to be removed types their own inbox, is removed, and still confirms.
+def test_a_replacing_change_makes_its_owner_the_requester(
+    people: People, migrate_engine: Engine, worker_engine: Engine
+) -> None:
+    set_role(people.a, people.only_a, "owner")
+    change(people.a, "first@x.nl", send=True, by=people.only_a)
+    replaced = change(people.a, "own@x.nl", send=True, by=people.both)
+    secret = mint(worker_engine, people.a, replaced.request_id)
+    assert secret is not None
+    with migrate_tenant_context(migrate_engine, people.a) as conn:
+        assert conn.scalar(text("SELECT requested_by FROM contact_email_requests")) == people.both
+    set_role(people.a, people.both, "worker")
+
+    assert confirm(people.a, digest(secret)) is None
+
+
 def test_a_resend_makes_its_owner_the_requester(
     people: People, migrate_engine: Engine, worker_engine: Engine
 ) -> None:
