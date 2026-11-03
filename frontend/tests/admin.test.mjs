@@ -116,3 +116,15 @@ describe("a stopped setup", () => {
     });
   }
 });
+
+describe("a ticket entered after a stopped setup", () => {
+  // ZIF-262 (ZIF-275): a stopped enrolment answers its ticket with invalid_ticket. Back on the ticket form from the
+  // "Setup stopped" screen, the admin still reads why and what to do, not only "that ticket doesn't match".
+  const enrol = readFileSync(new URL("../app/[locale]/admin/sign-in/enrol.tsx", import.meta.url), "utf8");
+  test("the stopped screen takes its text to the ticket form", () => {
+    assert.match(enrol, /onClick=\{\(\) => onRestart\(\{ tone: "error", text: t\("enrolLocked"\) \}\)\}/);
+  });
+  test("a refused ticket keeps that text", () => {
+    assert.match(enrol, /state === "wrong"\) \{\s*setMessage\(initial \?\? null\);/);
+  });
+});
