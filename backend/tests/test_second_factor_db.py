@@ -12,6 +12,7 @@ import threading
 import uuid
 from dataclasses import dataclass
 from datetime import timedelta
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -1237,3 +1238,23 @@ def test_the_enrolment_lock_is_decided_at_the_charge(
     assert tuple(call(app_engine, CHARGE_ENROLMENT, id=session)) == ("locked", 10, None)
     row = call(app_engine, CHECK_ENROLMENT, id=session, charge=tenth, p=totp.proof(s), codes=TEN)
     assert tuple(row) == ("enrolled", 0)
+
+
+# The SQL call of a function by name: `FROM f(`, `SELECT f(` or `f(:param`.
+CALLS = r"(?:\b(?:FROM|SELECT)\s+(?:public\.)?{name}\s*\(|\b{name}\s*\(\s*:)"
+
+
+# fence (ZIF-261): no app code calls the one-transaction functions 0069 left, which count inside the
+# check, until the contract step drops them (ZIF-274). Kills a route that goes back to them.
+# Injected by restoring `FROM pass_second_factor(:id, :p, :step)` in the route, then
+# `FROM confirm_totp_enrolment(:id, :p, :step, :codes)`.
+@pytest.mark.parametrize("name", ["pass_second_factor", "confirm_totp_enrolment"])
+def test_no_app_code_calls_the_one_transaction_functions(name: str) -> None:
+    app_dir = Path(__file__).resolve().parents[1] / "app"
+    pattern = re.compile(CALLS.format(name=name), re.IGNORECASE)
+    callers = [
+        str(path.relative_to(app_dir))
+        for path in sorted(app_dir.rglob("*.py"))
+        if pattern.search(path.read_text())
+    ]
+    assert callers == []
