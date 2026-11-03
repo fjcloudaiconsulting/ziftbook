@@ -490,10 +490,31 @@ def test_values_are_escaped_in_html_and_kept_as_typed_in_text() -> None:
         assert HOSTILE in body, template
 
 
-# ZIF-175 fence. Kills: a button whose link is not a web address (javascript: in an href).
-def test_a_button_link_must_be_a_web_address() -> None:
+# ZIF-175 fence (security review N1): a button's link is https, or http only to this machine (the
+# development default, http://localhost:3000). Kills javascript: in an href, and a production
+# ZIF_APP_URL set to http by mistake sending reset, sign-up and manage tokens in the clear.
+@pytest.mark.parametrize(
+    "link",
+    [
+        "javascript:alert(1)",
+        "http://app.example.com/x",
+        "HTTPS://x.example",
+        "https:evil",
+        " https://x.example",
+        "https://x.example/a b",
+        "http://localhost.evil.example/x",
+    ],
+)
+def test_a_button_link_must_be_https_or_this_machine(link: str) -> None:
     with pytest.raises(ValueError, match="link"):
-        mail.compose("sign_up", "en", {"link": "javascript:alert(1)"})
+        mail.compose("sign_up", "en", {"link": link})
+
+
+@pytest.mark.parametrize(
+    "link", ["https://app.example.com/x#t", "http://localhost:3000/en", "http://127.0.0.1:3000/en"]
+)
+def test_an_https_or_local_link_makes_a_button(link: str) -> None:
+    assert f'href="{link}"' in mail.compose("sign_up", "en", {"link": link})[2]
 
 
 # ZIF-175 fence: the HTML is an alternative to the text, and the calendar file stays an attachment
