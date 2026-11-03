@@ -1094,3 +1094,38 @@ def test_a_reapply_queues_the_hold_s_backstop_purge(
         due = conn.scalars(BACKSTOP, {"t": people.a, "c": client_id}).all()
     assert holds == 1  # not vacuous: the re-applied erasure wrote a hold
     assert due == [True]
+
+
+HELD_REFUND = text("""
+SELECT p.refund_failed_at IS NOT NULL AS flagged,
+       (SELECT count(*) FROM booking_events
+        WHERE booking_id = :b AND event = 'refund_failed') AS told,
+       (SELECT count(*) FROM jobs
+        WHERE payload ->> 'booking_id' = CAST(:b AS text)
+          AND payload ->> 'template' = 'booking_refund_failed') AS mailed,
+       (SELECT count(*) FROM client_erasure_holds WHERE client_id = :c) AS holds
+FROM booking_payments p WHERE p.booking_id = :b
+""")
+
+
+# ZIF-58 x PR 6 GUARD. Wrong impl: the refund-failed mail keyed on refund_failed_at, so a refund
+# settle holds after a reapply (the flag alone, nothing failed at Stripe) mails the erased client
+# through its hold. The mail keys on the refund_failed event, which a held refund never writes.
+def test_a_reapply_s_held_refund_mails_nobody(
+    people: People, fake_stripe: FakeGateway, migrate_engine: Engine, ledger_bucket: S3Client
+) -> None:
+    client_id, booking_id = reapplied_with_money_owed(people, fake_stripe, migrate_engine)
+    with migrate_tenant_context(migrate_engine, people.a) as conn:
+        conn.execute(
+            text("""
+            UPDATE booking_events SET details = details - 'erased_at'
+            WHERE booking_id = :id AND details ->> 'reason' = 'erasure_reapplied'
+            """),
+            {"id": booking_id},
+        )
+    run("payment.settle")
+    assert fake_stripe.count("refund") == 0
+    with migrate_tenant_context(migrate_engine, people.a) as conn:
+        state = conn.execute(HELD_REFUND, {"b": booking_id, "c": client_id}).one()
+    # Held (the flag), with a hold the mail could have gone through, and nobody told.
+    assert tuple(state) == (True, 0, 0, 1)
