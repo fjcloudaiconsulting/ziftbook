@@ -669,6 +669,7 @@ def send_booking(job: Job) -> None:
 
         user_id = payload.get("user_id")
         role = None  # the merchant recipient's, ZIF-143
+        held = None  # the erased client's contact hold, ZIF-58
         if user_id is None:
             recipient_id = row.client_id
             recipient_email, recipient_locale = row.client_email, row.client_locale
@@ -806,16 +807,21 @@ def send_booking(job: Job) -> None:
             )
     if status == "sent":
         return
-    if user_id is None and limits.hit(
-        {
-            limits.email_key(
-                "mail_rcpt", f"{job.tenant_id}|{recipient_email.lower()}"
-            ): CLIENT_MAIL_PER_RECIPIENT_HOUR,
-            limits.email_key(
-                "mail_rcpt_any", recipient_email.lower()
-            ): CLIENT_MAIL_PER_RECIPIENT_ANY_HOUR,
-        },
-        timedelta(hours=1),
+    # ZIF-58: never a hold's mail (see bookings.email): the only channel to an erased client.
+    if (
+        user_id is None
+        and held is None
+        and limits.hit(
+            {
+                limits.email_key(
+                    "mail_rcpt", f"{job.tenant_id}|{recipient_email.lower()}"
+                ): CLIENT_MAIL_PER_RECIPIENT_HOUR,
+                limits.email_key(
+                    "mail_rcpt_any", recipient_email.lower()
+                ): CLIENT_MAIL_PER_RECIPIENT_ANY_HOUR,
+            },
+            timedelta(hours=1),
+        )
     ):
         logger.info("email skipped", extra={"template": template, "reason": "recipient_quota"})
         return
