@@ -181,6 +181,8 @@ export type ContactEmailView = {
   untilThen: Copy | null;
   action: "contactSend" | "contactSendNew" | "contactSendAgain" | null;
   ownerOnly?: true;
+  // Owners may drop the waiting address and keep the one in effect.
+  cancel?: true;
 };
 
 /** What the Settings block says about the contact email, or null when there is none. `requested` waits for its
@@ -201,21 +203,22 @@ export function contactEmailView(s: ContactEmailState, owner: boolean): ContactE
     return { pill: sent ? "sent" : "unconfirmed", body: ["contactWaiting", {}], untilThen, action: null, ownerOnly: true };
   }
   const email = { email: s.requested };
-  if (sent) return { pill: "sent", body: ["contactSent", email], untilThen, action: "contactSendAgain" };
+  if (sent) return { pill: "sent", body: ["contactSent", email], untilThen, action: "contactSendAgain", cancel: true };
   return s.link_expired
-    ? { pill: "unconfirmed", body: ["contactExpired", email], untilThen, action: "contactSendNew" }
-    : { pill: "unconfirmed", body: ["contactUnconfirmed", email], untilThen, action: "contactSend" };
+    ? { pill: "unconfirmed", body: ["contactExpired", email], untilThen, action: "contactSendNew", cancel: true }
+    : { pill: "unconfirmed", body: ["contactUnconfirmed", email], untilThen, action: "contactSend", cancel: true };
 }
 
-/** What a send of a contact email link answered: sent, a message key for the owner, signed out, or reload the
- * state (nothing waits any more). */
-export function contactSendOutcome(
+/** What a send or cancel of the waiting contact email answered: done, a message key for the owner, signed out,
+ * or reload the state (nothing waits any more). */
+export function contactActionOutcome(
   status: number,
   code?: string,
-): "sent" | "contactTooMany" | "contactTooManyToday" | "contactFailed" | "signedOut" | "reload" {
-  if (status === 200) return "sent";
+): "done" | "contactTooMany" | "contactTooManyToday" | "contactFailed" | "signedOut" | "reload" {
+  if (status === 200) return "done";
   if (status === 429) return code === "contact_email_requests_today" ? "contactTooManyToday" : "contactTooMany";
   if (status === 401) return "signedOut";
   if (status === 409) return "reload";
   return "contactFailed";
 }
+
