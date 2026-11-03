@@ -590,8 +590,18 @@ def test_a_failed_request_gives_back_nothing_and_holds_its_place_briefly(
     sent = contact_email.sent_key(people.a, limits.address_for_limits(other))
     for _ in range(5):
         limits.charge(sent, timedelta(days=1))
-    assert put_settings(a, {"contact_email": other}).status_code == 429  # a's own daily limit
-    assert put_settings(d, {"contact_email": other}).json() == TODAY  # a's claim holds its place
+    assert put_settings(a, {"contact_email": other}).json() == {"code": "rate_limited"}
+    assert senders(migrate_engine, other) == 2  # over its own limit, a takes no place
+    key = contact_email.address_key(limits.address_for_limits(other))
+    with migrate_engine.begin() as conn:  # a claim whose request then failed
+        conn.execute(
+            text(
+                "INSERT INTO contact_email_senders (address_key, tenant_id, claimed_at)"
+                " VALUES (:k, :t, now())"
+            ),
+            {"k": key, "t": people.a},
+        )
+    assert put_settings(d, {"contact_email": other}).json() == TODAY  # holds its place a while
     with migrate_engine.begin() as conn:
         conn.execute(
             text(
