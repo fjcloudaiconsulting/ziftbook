@@ -739,10 +739,15 @@ def test_the_api_logs_its_settings_once_at_startup(
             "rate_limit_key": "unset",
             "storage": "off",
             "payments": "off",
+            "erasure_ledger": "off",
             "database_role": "ziftbook_app",
         }
     ]
     assert "postgresql" not in json.dumps(log_lines())
+    # ZIF-58: erasure answers 503 erasure_unavailable outside localhost while the bucket is unset.
+    assert [
+        line["level"] for line in log_lines() if line["msg"].startswith("erasure ledger unset")
+    ] == ["WARNING"]
 
 
 # 16: configure() is idempotent and polite to handlers it doesn't own.
