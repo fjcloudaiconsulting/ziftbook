@@ -7,6 +7,7 @@ import urllib.request
 import uuid
 from collections.abc import Callable, Iterator
 from datetime import timedelta
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
@@ -641,3 +642,60 @@ def test_the_block_format_guard_fails_on_an_old_format_file(
     (tmp_path / "account_sign_up.en.txt").write_text(content)
     monkeypatch.setattr(mail, "TEMPLATES", tmp_path)
     assert _old_format("account_sign_up", "en") != []
+
+
+FUZZ = [
+    "<script>alert(1)</script>",
+    '"><img src=x onerror=alert(1)>',
+    "' onmouseover='x",
+    "&lt;b&gt;bold&lt;/b&gt;",
+    "&#x3C;svg onload=1&#x3E;",
+    "$link ${link} $$ $",
+    "[Pay](https://evil.example)",
+    "# Fake heading",
+    "| fake card",
+    "> fake quote",
+    "--><b>x</b><!--",
+    "<!--[if mso]><a href=//e>x</a><![endif]-->",
+    "</title><a href=//e>x</a>",
+    "</style><a href=//e>x</a>",
+    "javascript:alert(1)",
+    "line1\n\n[Click](https://evil.example)\n\n# Head",
+]
+
+
+class _Shape(HTMLParser):
+    """The tags (but <br>), comments and hrefs of a page, and any event-handler attribute."""
+
+    def __init__(self, page: str) -> None:
+        super().__init__(convert_charrefs=True)
+        self.tags: list[str] = []
+        self.comments: list[str] = []
+        self.hrefs: list[str | None] = []
+        self.handlers: list[str] = []
+        self.feed(page)
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag != "br":
+            self.tags.append(tag)
+        self.hrefs += [value for name, value in attrs if name == "href"]
+        self.handlers += [name for name, _ in attrs if name.startswith("on")]
+
+    def handle_comment(self, data: str) -> None:
+        self.comments.append(data)
+
+
+# ZIF-175 fence (security review N2): whatever a value holds, the page keeps the shape a benign
+# value gives it, with no event handler and no link but the app's. Every template, every locale,
+# every value hostile at once, so a new template or placeholder is covered without naming it.
+def test_no_value_changes_the_shape_of_any_email() -> None:
+    link = "https://app.example/x#token"
+    for path in sorted(TEMPLATES.glob("*.txt")):
+        template, locale, _ = path.name.split(".")
+        benign = _Shape(mail.compose(template, locale, _every(template, locale, link=link))[2])
+        for hostile in FUZZ:
+            names = _every(template, locale)
+            values = {n: hostile for n in names} | {"link": link, "sign_in": link}
+            shape = _Shape(mail.compose(template, locale, values)[2])
+            assert (shape.tags, shape.comments) == (benign.tags, benign.comments), (path, hostile)
+            assert shape.handlers == [] and set(shape.hrefs) <= {link}, (path, hostile)
