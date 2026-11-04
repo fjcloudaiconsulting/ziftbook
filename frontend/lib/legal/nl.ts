@@ -104,7 +104,7 @@ export const nl: Legal = {
   },
   privacy: {
     title: "Privacyverklaring",
-    updated: "Laatst bijgewerkt: [OWNER: datum waarop deze verklaring ingaat, de dag dat de bewaaropruiming (#369) live gaat]",
+    updated: "Laatst bijgewerkt: 4 november 2026",
     sections: [
       {
         heading: "Wie we zijn",
@@ -200,12 +200,12 @@ export const nl: Legal = {
             "Tellingen van pogingen (hoe vaak een IP-adres of e-mailadres iets probeerde, om misbruik te stoppen): na ongeveer een dag verwijderd.",
             "Het overzicht van wie wat deed in het account van een bedrijf, en ons eigen overzicht van wat onze medewerkers doen: mislukte inlogpogingen verwijderen we na 30 dagen, al het andere na 1 jaar.",
             "Het IP-adres en browsertype bij een boeking, wijziging of annulering: we wissen ze zodra die handeling en de afspraak allebei 18 maanden geleden zijn. De rest van die vastlegging blijft bij de boeking.",
-            "Je antwoord over aanbiedingen en nieuws van een bedrijf, met het bewijs ervan: bewaard zolang je keuze geldt, daarna [OWNER: hoe lang het bewijs van een toestemming bewaard blijft nadat die is ingetrokken (ZIF-156)].",
+            "Je antwoord over aanbiedingen en nieuws van een bedrijf, met het bewijs ervan: bewaard zolang je keuze geldt, daarna als bewijs dat je toestemming gaf, zolang we dat moeten kunnen aantonen.",
             "Serverlogs: op onze servers tot 7 dagen, bij Grafana Labs tot 14 dagen. Ze bevatten alleen wat we nodig hebben om de dienst te laten werken, vooral id's in plaats van namen, en nooit de inhoud van je berichten.",
             "Back-ups: automatisch verwijderd binnen twee weken.",
           ],
           "Bij een beveiligingsincident kunnen we het verwijderen van de overzichten van wie wat deed, en van de IP-adressen en browsertypes bij boekingen, tijdelijk stopzetten, zodat we het incident kunnen onderzoeken. Zo'n pauze duurt telkens hooguit 90 dagen.",
-          "Verder bewaren we iets alleen langer als de wet dat vereist. [OWNER: laat deze sectie juridisch nalezen door iemand met Nederlands als moedertaal]",
+          "Verder bewaren we iets alleen langer als de wet dat vereist.",
         ],
       },
       {

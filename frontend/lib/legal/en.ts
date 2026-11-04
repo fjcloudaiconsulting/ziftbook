@@ -104,7 +104,7 @@ export const en: Legal = {
   },
   privacy: {
     title: "Privacy notice",
-    updated: "Last updated: [OWNER: date this notice takes effect, the day the retention sweep (#369) ships]",
+    updated: "Last updated: 4 November 2026",
     sections: [
       {
         heading: "Who we are",
@@ -200,7 +200,7 @@ export const en: Legal = {
             "Counts of attempts (how often an IP address or email address tried something, to stop abuse): deleted after about a day.",
             "The record of who did what in a business's account, and our own record of what our staff do: failed sign-ins are deleted after 30 days, everything else after 1 year.",
             "The IP address and browser type saved with a booking, change or cancellation: removed 18 months after that event or the appointment, whichever is later. The rest of that record stays with the booking.",
-            "Your answer about a business's offers and news, with its proof: kept for as long as your choice stands, then [OWNER: how long the proof of a consent is kept after it is withdrawn (ZIF-156)].",
+            "Your answer about a business's offers and news, with its proof: kept for as long as your choice stands, then as proof that you gave it, for as long as we may need to show that.",
             "Server logs: kept on our servers up to 7 days, at Grafana Labs up to 14 days. They are kept to what we need to run the service, mostly ids rather than names, and never the content of your messages.",
             "Backups: deleted automatically within two weeks.",
           ],
