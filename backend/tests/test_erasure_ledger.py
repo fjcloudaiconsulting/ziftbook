@@ -432,7 +432,8 @@ def test_entries_it_cannot_apply_are_named_and_can_be_skipped(
     client_id, _, erased_at = seed_ledgered(
         people, migrate_engine, timedelta(days=2), timedelta(minutes=5)
     )
-    malformed = "erasures/2026/11/03/not-an-erasure@example.com.json"
+    # Dated by the run, as read() lists from since's day: a fixed day falls out of the listing.
+    malformed = f"erasures/{erased_at.astimezone(UTC):%Y/%m/%d}/not-an-erasure@example.com.json"
     ledger_bucket.put_object(Bucket=BUCKET, Key=malformed, Body=b'{"v": 2, "kind": "client"}')
     other = ledger.Entry(people.a, uuid.uuid4(), erased_at)
     misplaced = ledger.Entry(people.a, uuid.uuid4(), erased_at).key
