@@ -491,6 +491,18 @@ def test_values_are_escaped_in_html_and_kept_as_typed_in_text() -> None:
         assert HOSTILE in body, template
 
 
+# ZIF-175 fence: the refund-failed email's contact line is a paragraph of its own, and no paragraph
+# at all without a contact email. Kills a value carrying its own blank lines into one paragraph, and
+# an empty paragraph left in either part.
+def test_the_refund_failed_contact_line_is_its_own_paragraph() -> None:
+    line = "You can reach them at hello@example.com."
+    values = _every("booking_refund_failed", "en")
+    _, body, html = mail.compose("booking_refund_failed", "en", values | {"contact": line})
+    assert f"\n\n{line}\n\n" in body and f">{line}</p>" in html
+    _, body, html = mail.compose("booking_refund_failed", "en", values | {"contact": ""})
+    assert "\n\n\n" not in body and "></p>" not in html
+
+
 # ZIF-175 fence (security review N1): a button's link is https, or http only to this machine (the
 # development default, http://localhost:3000). Kills javascript: in an href, and a production
 # ZIF_APP_URL set to http by mistake sending reset, sign-up and manage tokens in the clear.
