@@ -13,6 +13,7 @@ import {
   type LinkedBooking,
 } from "@/api-client";
 import { takeToken } from "@/lib/account";
+import { mailtoHref } from "@/lib/contact";
 import { addDays, answerScreen, copyMessage, firstStage, localDay, localWhen, refundMessage, withTaken } from "@/lib/booking-link";
 import { dateLocale } from "@/lib/console";
 import { linkStore, type OpenedLink } from "@/lib/link";
@@ -20,6 +21,7 @@ import { formatMoney } from "@/lib/money";
 import { type Locale, serviceName } from "@/lib/services";
 import { problemList, zoneCity } from "@/lib/week";
 
+import { ContactLine } from "../_ui/contact-line";
 import { Banner, Heading, NoScript, type Outcome as Answer, Outcome, send, Submit } from "../_ui/parts";
 import { Picker } from "../_ui/picker";
 import styles from "../_ui/ui.module.css";
@@ -350,8 +352,10 @@ function Manage({ token }: { token: string | null }) {
     );
   }
 
-  // Screen 5: the booking. The business name and the cancellation text are text someone typed: only ever rendered as text.
+  // Screen 5: the booking. The business name, its contact email and the cancellation text are text someone typed: only
+  // ever rendered as text.
   const pending = booking.status === "pending";
+  const contact = booking.contact_email;
   const copy = copyMessage(engine.copy_key);
   const purposes = problemList(
     linked.pending_consents.map((purpose) => t(`purposes.${purpose}`)),
@@ -362,6 +366,7 @@ function Manage({ token }: { token: string | null }) {
       <Heading focus key="booking">
         {booking.business}
       </Heading>
+      {contact && <ContactLine email={contact} label={t("contactLabel")} tight />}
       <p className={styles.lede}>{pending ? t("waiting", { business: booking.business }) : t("confirmed")}</p>
       {view.note && view.note !== "consentDone" && <Banner tone="note">{t(view.note)}</Banner>}
       {problem}
@@ -395,7 +400,13 @@ function Manage({ token }: { token: string | null }) {
             {t("reschedule", { n: engine.reschedules_left })}
           </button>
         )}
-        {!engine.can_cancel && !engine.can_reschedule && <p className={styles.hint}>{t("noChanges", { business: booking.business })}</p>}
+        {!engine.can_cancel && !engine.can_reschedule && (
+          <p className={styles.hint}>
+            {contact
+              ? t.rich("noChangesEmail", { business: booking.business, email: contact, link: (chunks) => <a href={mailtoHref(contact)}>{chunks}</a> })
+              : t("noChanges", { business: booking.business })}
+          </p>
+        )}
       </div>
       {linked.pending_consents.length > 0 && (
         <div className={styles.empty}>

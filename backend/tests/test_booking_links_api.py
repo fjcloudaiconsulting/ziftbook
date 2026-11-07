@@ -31,6 +31,7 @@ from app.db import tenant_context
 from app.jobs import Job
 from tests.conftest import (
     People,
+    confirm_contact_email,
     fresh_address,
     fresh_email,
     member_id,
@@ -386,7 +387,10 @@ def test_linked_booking_carries_no_client_identity(
 ) -> None:
     email = fresh_email()
     booking_id = confirmed_booking(app, people.a, ready, email=email)
-    assert patch(signed_in(app, people.a, people.both), booking_id, "confirmed").status_code == 200
+    owner = signed_in(app, people.a, people.both)
+    assert patch(owner, booking_id, "confirmed").status_code == 200
+    # ZIF-99: the business's own contact email is in the payload on purpose; the client's is not.
+    confirm_contact_email(people.a, "shop@example.com")
     client = linked(app, people.a, booking_id)
 
     body = get(client).json()
@@ -417,7 +421,9 @@ def test_linked_booking_carries_no_client_identity(
         "cancellation_policy_text",
         "paid",
         "card_fee",
+        "contact_email",
     }
+    assert body["booking"]["contact_email"] == "shop@example.com"
     assert "Guest" not in blob  # post_booking's default client name
     assert email not in blob
     with tenant_context(people.a) as session:
@@ -426,6 +432,46 @@ def test_linked_booking_carries_no_client_identity(
         ).one()
     assert str(ids.client_id) not in blob
     assert str(ids.worker_id) not in blob
+
+
+# ZIF-99 fence. The manage page shows the business's own contact email, read in the link's own
+# tenant: the saved setting, null when there is none, never another business's. The page re-renders
+# from every route's answer, so each of the four routes that answer a LinkedBooking (read, consents,
+# reschedule, cancel) is checked on its own. Kills a hard-coded null, a read outside the link's
+# tenant, and any one route building its answer without the setting.
+def test_the_manage_page_shows_the_business_s_contact_email(
+    people: People, app: FastAPI, ready: str
+) -> None:
+    booking_id = confirmed_booking(
+        app, people.a, ready, starts_at=at("10:00"), consents={"marketing_email": True}
+    )
+    owner = signed_in(app, people.a, people.both)
+    assert patch(owner, booking_id, "confirmed").status_code == 200
+    confirm_contact_email(people.b, "other@example.com")  # another business's address
+    client = linked(app, people.a, booking_id)
+
+    assert get(client).json()["booking"]["contact_email"] is None
+    # ZIF-232 x ZIF-99 (F-PR3.1): an address waiting for its link is not the business's yet.
+    assert put_settings(owner, {"contact_email": "waiting@example.com"}).status_code == 200
+    assert get(client).json()["booking"]["contact_email"] is None
+
+    confirm_contact_email(people.a, "shop@example.com")
+    body = get(client).json()
+    assert body["booking"]["contact_email"] == "shop@example.com"
+    assert "other@example.com" not in str(body)
+
+    confirmed = post(client, "/consents", {"booking_id": booking_id})
+    assert confirmed.status_code == 200, confirmed.content
+    assert confirmed.json()["booking"]["contact_email"] == "shop@example.com"
+
+    moved = post(client, "/reschedule", reschedule_body(booking_id, at("10:30"), 0))
+    assert moved.status_code == 200, moved.content
+    assert moved.json()["booking"]["contact_email"] == "shop@example.com"
+
+    refund_pct = moved.json()["engine"]["refund_pct"]
+    cancelled = post(client, "/cancel", cancel_body(booking_id, refund_pct))
+    assert cancelled.status_code == 200
+    assert cancelled.json()["booking"]["contact_email"] == "shop@example.com"
 
 
 # ---------------------------------------------------------------------------

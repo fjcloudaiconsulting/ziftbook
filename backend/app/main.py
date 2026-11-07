@@ -79,6 +79,11 @@ WRITE = {"POST", "PUT", "PATCH", "DELETE"}
 MAX_BODY = 64 * 1024
 # ZIF-158: Stripe's events dwarf anything a browser sends. The webhook alone gets this cap.
 WEBHOOK_MAX_BODY = 256 * 1024
+# ZIF-99. Body fields whose refusal has its own 422 code, per route (method, path template), so the
+# console can mark the one field the API refused. Every other refusal is invalid_request.
+FIELD_CODES: dict[tuple[str, str | None], dict[str, str]] = {
+    ("PUT", "/api/settings"): {"contact_email": "contact_email_invalid"},
+}
 # ZB-16. The API's connection pool, sized against what draws on it. Sync routes and dependencies run
 # on anyio's default thread limiter (40 threads; the app configures no other), so up to 40 requests
 # can want a connection at once. They share at most 15, SQLAlchemy's defaults made explicit (5 kept
@@ -553,8 +558,18 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(RequestValidationError)
     async def invalid_request(request: Request, error: RequestValidationError) -> JSONResponse:
-        # A code, not FastAPI's description of the body: errors are codes.
-        return JSONResponse({"code": "invalid_request"}, status_code=422)
+        # A code, not FastAPI's description of the body: errors are codes. A body field listed in
+        # FIELD_CODES for this route gets its own code, but only when every error is on that one
+        # field, so the page never marks a field that is not the one refused.
+        route = getattr(request.scope.get("route"), "path", None)
+        codes = FIELD_CODES.get((request.method, route), {})
+        fields = {tuple(e["loc"][:2]) for e in error.errors()}
+        code = "invalid_request"
+        if len(fields) == 1:
+            (loc,) = fields
+            if len(loc) == 2 and loc[0] == "body" and isinstance(loc[1], str):
+                code = codes.get(loc[1], code)
+        return JSONResponse({"code": code}, status_code=422)
 
     # A lock wait past the engine's lock_timeout (ZIF-114), on any route that does not catch it
     # itself. Every other OperationalError (a lost connection, say) goes on to internal_error.

@@ -1077,6 +1077,11 @@ web app.
   204 to everything it accepts (rate limited, malformed or dropped included), because Chrome retries any other
   answer. It drops, before any database work, a report whose `Sec-Fetch-Site` is present and not `same-origin`, and
   one arriving while two limiter calls are already running.
+- The business's `contact_email` setting is its public address on purpose (ZIF-99): the booking page
+  (`BookingPageOut.contact_email`) and the manage-link answer (`LinkedBooking.booking.contact_email`) carry it, and the
+  Settings hint keeps telling the owner that clients see it. Every use of it (those two and the Reply-To) answers
+  only an address its inbox has confirmed (ZIF-232, 0087). The web app renders it only as text and links it only through
+  `mailtoHref` (`frontend/lib/contact.ts`), never by building a `mailto:` itself.
 
 ## Translations
 

@@ -4,16 +4,22 @@ import { readFileSync } from "node:fs";
 import { describe, test } from "node:test";
 
 import {
+  asciiEmail,
   breakMinutes,
   changedKeys,
   draftFrom,
   effective,
+  emailMessageKey,
+  emailProblem,
   FIELDS,
+  formSaved,
   mergeSaved,
   noticeOptions,
   noticeUnit,
   parseWhole,
   paymentsAction,
+  refusedKeys,
+  saveRefusal,
   settingsBody,
   slotExamples,
   SLOT_STEPS,
@@ -35,6 +41,7 @@ const saved = {
   max_reschedules: 2,
   cancellation_policy_text: "Please cancel at least 48 hours ahead.",
   workers_edit_own_hours: false,
+  contact_email: null,
 };
 const ints = FIELDS.filter((f) => f.kind === "int");
 
@@ -229,5 +236,247 @@ describe("F2 the payment switch", () => {
     const withCheck = { ...saved, payment_check: false };
     assert.deepEqual(changedKeys(withCheck, { ...draftFrom(withCheck), payment_check: true }), ["payment_check"]);
     assert.deepEqual(settingsBody(withCheck, { ...draftFrom(withCheck), payment_check: true }).body, { payment_check: true });
+  });
+});
+
+// The block's state (GET /api/settings/contact-email, ZIF-232), which the box starts from.
+const contactState = (fields) => ({ state: "none", confirmed: null, requested: null, link_expired: false, expires_at: null, ...fields });
+
+describe("ZIF-99 the contact email for clients", () => {
+  const withEmail = formSaved(saved, contactState({ state: "confirmed", confirmed: "hello@salonbloom.nl" }));
+
+  test("fence: it sits in Your business, right after the email language", () => {
+    // Wrong implementation killed: the key missing from FIELDS (never sent, never dirty) or listed out of page order.
+    const keys = FIELDS.map((f) => f.key);
+    assert.equal(keys[keys.indexOf("language") + 1], "contact_email");
+  });
+
+  test("fence: no address is an empty box, and an untouched empty box is clean", () => {
+    // Wrong implementation killed: String(null) putting the text "null" in the box (and then sending it).
+    assert.equal(draftFrom(saved).contact_email, "");
+    assert.deepEqual(changedKeys(saved, draftFrom(saved)), []);
+    assert.equal(draftFrom(withEmail).contact_email, "hello@salonbloom.nl");
+  });
+
+  test("fence: an address is sent the way the API stores it; spaces and capitals alone are no change", () => {
+    // Wrong implementation killed: an unsaved-changes bar that never goes away after the server lowercases the address.
+    assert.deepEqual(settingsBody(saved, { ...draftFrom(saved), contact_email: " Hello@SalonBloom.nl " }), {
+      body: { contact_email: "hello@salonbloom.nl" },
+      invalid: [],
+    });
+    assert.deepEqual(changedKeys(withEmail, { ...draftFrom(withEmail), contact_email: " HELLO@salonbloom.nl" }), []);
+  });
+
+  test("fence: emptying the box removes the address (null), never an empty string", () => {
+    // Wrong implementation killed: sending "", which the API refuses as an address.
+    for (const text of ["", "   "]) {
+      assert.deepEqual(settingsBody(withEmail, { ...draftFrom(withEmail), contact_email: text }), { body: { contact_email: null }, invalid: [] });
+    }
+  });
+
+  test("fence: an address with accents is refused with its own message; a malformed one with the usual one", () => {
+    // Wrong implementation killed: sending an address the API refuses (non-ASCII cannot go in a mail header),
+    // or one generic message that never says why an accented address is refused.
+    assert.equal(emailProblem("josé@salon.nl"), "accents");
+    assert.equal(emailProblem("josé@café.nl"), "accents");
+    for (const text of ["hello", "hello@salon", "@salon.nl", "a@b@c.nl", "a b@c.nl", "a@b.nl, c@d.nl", "<a@b.nl>", "a@b.nl\nBcc: c@d.nl", "=?utf-8?q?x?=@b.nl", `${"a".repeat(250)}@b.nl`]) {
+      assert.equal(emailProblem(text), "invalid", JSON.stringify(text));
+    }
+    for (const text of ["", "  ", "hello@salonbloom.nl", " Hello@SalonBloom.NL ", "first.last+shop@xn--caf-dma.nl"]) {
+      assert.equal(emailProblem(text), null, JSON.stringify(text));
+    }
+    const { body, invalid } = settingsBody(saved, { ...draftFrom(saved), contact_email: "josé@salon.nl", buffer_pct: "20" });
+    assert.deepEqual([body, invalid], [{ buffer_pct: 20 }, ["contact_email"]]);
+  });
+
+  test("every language has the field's words, and Your business says where clients reach you", () => {
+    for (const locale of ["en", "nl", "pt"]) {
+      const t = JSON.parse(readFileSync(new URL(`../messages/${locale}.json`, import.meta.url), "utf8")).Console.settings;
+      for (const key of ["contactEmailLabel", "contactEmailOptional", "contactEmailHint", "contactEmailInvalid"]) assert.ok(t[key], `${locale}.${key}`);
+      assert.ok(t.changed.contact_email, `${locale}.changed.contact_email`);
+    }
+    const desc = (locale) => JSON.parse(readFileSync(new URL(`../messages/${locale}.json`, import.meta.url), "utf8")).Console.settings.yourBusinessDesc;
+    assert.equal(desc("en"), "Your time zone, the default language for client emails, and where clients can reach you.");
+    assert.equal(desc("nl"), "Je tijdzone, de standaardtaal voor e-mails aan klanten en waar klanten je kunnen bereiken.");
+    assert.equal(desc("pt"), "Seu fuso horário, o idioma padrão dos e-mails para clientes e onde os clientes podem falar com você.");
+  });
+
+  test("fence: the hint says clients see the address once it is confirmed (ZIF-232)", () => {
+    // Wrong implementation killed: the pre-ZIF-232 hint, which promised clients see whatever is typed.
+    const hint = (l) => JSON.parse(readFileSync(new URL(`../messages/${l}.json`, import.meta.url), "utf8")).Console.settings.contactEmailHint;
+    assert.match(hint("en"), /^Once you confirm it, clients see it on your booking page/);
+    assert.match(hint("nl"), /^Na je bevestiging zien klanten het op je boekingspagina/);
+    assert.match(hint("pt"), /^Depois que você confirmar, os clientes veem este e-mail/);
+  });
+});
+
+describe("ZIF-232 x ZIF-99 what the contact email box starts from", () => {
+  test("fence: the waiting address, else the confirmed one, never the settings echo", () => {
+    // Wrong implementation killed: the box seeded from settings.contact_email (only ever the confirmed address),
+    // so an owner whose change waits sees the old address and re-saving the page re-sends it.
+    const echoed = { ...saved, contact_email: "old@x.nl" };
+    assert.equal(formSaved(echoed, contactState({ state: "sent", confirmed: "old@x.nl", requested: "new@x.nl" })).contact_email, "new@x.nl");
+    assert.equal(formSaved(echoed, contactState({ state: "confirmed", confirmed: "old@x.nl" })).contact_email, "old@x.nl");
+    assert.equal(formSaved(echoed, contactState({ state: "unconfirmed", requested: "new@x.nl" })).contact_email, "new@x.nl");
+    assert.equal(formSaved(echoed, contactState({})).contact_email, null);
+    // Before the state is read, or from an API without the route: the settings answer, as before.
+    assert.equal(formSaved(echoed, null).contact_email, "old@x.nl");
+    // The rest is the settings answer, untouched.
+    assert.equal(formSaved(echoed, contactState({})).timezone, saved.timezone);
+  });
+
+  test("fence: a waiting address in the box is no change", () => {
+    // Wrong implementation killed: a page that is dirty as soon as it loads while a change waits.
+    const base = formSaved(saved, contactState({ state: "sent", confirmed: "old@x.nl", requested: "new@x.nl" }));
+    assert.equal(draftFrom(base).contact_email, "new@x.nl");
+    assert.deepEqual(changedKeys(base, draftFrom(base)), []);
+  });
+
+  test("fence: Settings reads the state once for the box and the block, and again after a save that sent it", () => {
+    // Wrong implementation killed: the block reading the state on its own (the box never learns the waiting
+    // address), or a save of the address that leaves the box on the echo (the confirmed address).
+    const src = readFileSync(new URL("../app/[locale]/(console)/settings/settings.tsx", import.meta.url), "utf8");
+    const block = readFileSync(new URL("../app/[locale]/(console)/settings/contact-email.tsx", import.meta.url), "utf8");
+    assert.match(src, /contactEmailRead\(\)/);
+    assert.doesNotMatch(block, /contactEmailRead/);
+    assert.match(src, /const base = formSaved\(settings, contact\);/);
+    assert.match(src, /if \("contact_email" in body\) setContactReads\(\(n\) => n \+ 1\);/);
+  });
+});
+
+describe("ZIF-232 x ZIF-99 emptying the box while a change waits", () => {
+  const waiting = contactState({ state: "sent", confirmed: "old@x.nl", requested: "new@x.nl" });
+  const base = formSaved(saved, waiting);
+
+  test("fence: it sends nothing, and the box says to use Cancel change", () => {
+    // Wrong implementation killed: sending null, which also removes the confirmed address clients see, when the
+    // owner only meant to drop the waiting one (Cancel change does that).
+    for (const text of ["", "  "]) {
+      assert.deepEqual(settingsBody(base, { ...draftFrom(base), contact_email: text, buffer_pct: "20" }, waiting), {
+        body: { buffer_pct: 20 },
+        invalid: ["contact_email"],
+      });
+      assert.equal(emailMessageKey(text, true), "contactClearWaiting");
+    }
+    // Nothing waits: an empty box removes the address, as before.
+    const settled = contactState({ state: "confirmed", confirmed: "old@x.nl" });
+    const plain = formSaved(saved, settled);
+    assert.deepEqual(settingsBody(plain, { ...draftFrom(plain), contact_email: "" }, settled), { body: { contact_email: null }, invalid: [] });
+    assert.equal(emailMessageKey("", false), "invalidEmail");
+  });
+
+  test("fence: every language says it, and the page shows it under the box", () => {
+    for (const locale of ["en", "nl", "pt"]) {
+      const t = JSON.parse(readFileSync(new URL(`../messages/${locale}.json`, import.meta.url), "utf8")).Console.settings;
+      assert.ok(t.contactClearWaiting, `${locale}.contactClearWaiting`);
+      assert.ok(t.contactClearWaiting.includes(t.contactCancel), `${locale} names the ${t.contactCancel} button`);
+    }
+    const src = readFileSync(new URL("../app/[locale]/(console)/settings/settings.tsx", import.meta.url), "utf8");
+    assert.match(src, /settingsBody\(base, draft, contact\)/);
+  });
+});
+
+describe("ZIF-232 x ZIF-99 a save refused for the contact email's links", () => {
+  test("fence: a 429 or 503 of a save that sent the address says nothing was saved, and why", () => {
+    // Wrong implementation killed: the generic message, or the block's link wording alone, when the API refused
+    // the whole save (no other key was saved either).
+    assert.equal(saveRefusal(429, "rate_limited", true), "contactTooMany");
+    assert.equal(saveRefusal(429, "contact_email_requests_today", true), "contactTooManyToday");
+    assert.equal(saveRefusal(503, "busy", true), "busy");
+    // Without the address, or any other answer: the form's usual handling.
+    assert.equal(saveRefusal(429, "rate_limited", false), null);
+    assert.equal(saveRefusal(503, "busy", false), null);
+    for (const status of [200, 401, 403, 422, 0]) assert.equal(saveRefusal(status, undefined, true), null);
+  });
+
+  test("fence: the page keeps every draft and says Nothing was saved first", () => {
+    const src = readFileSync(new URL("../app/[locale]/(console)/settings/settings.tsx", import.meta.url), "utf8");
+    assert.match(src, /const refusal = saveRefusal\(outcome\.status, outcome\.code, "contact_email" in body\);/);
+    assert.match(src, /text: `\$\{consoleT\("notSaved"\)\} \$\{refusal === "busy" \? form\("busy"\) : t\(refusal\)\}`/);
+  });
+});
+
+describe("ZIF-99 which field a refused save marks", () => {
+  test("fence: only the API's contact_email_invalid marks the address; any other refusal marks no field", () => {
+    // Wrong implementation killed: every 422 of a save that included the address blamed on it (a refused
+    // time zone would then point at the address, and every retry fail the same way).
+    assert.deepEqual(refusedKeys(422, "contact_email_invalid"), ["contact_email"]);
+    assert.deepEqual(refusedKeys(422, "invalid_request"), []);
+    assert.deepEqual(refusedKeys(422, undefined), []);
+    assert.deepEqual(refusedKeys(400, "contact_email_invalid"), []);
+    assert.deepEqual(refusedKeys(200, undefined), []);
+  });
+
+  test("fence: the page marks, focuses and keeps the bar for exactly those keys", () => {
+    // Wrong implementation killed: the branch dropped (the address shows only the generic banner) or the old
+    // "any 422 with the address in the body" rule kept.
+    const src = readFileSync(new URL("../app/[locale]/(console)/settings/settings.tsx", import.meta.url), "utf8");
+    assert.match(src, /const refused = refusedKeys\(outcome\.status, outcome\.code\);/);
+    assert.match(src, /\} else if \(refused\.length > 0\) \{\s*setInvalid\(refused\);\s*setSaveFailed\(true\);\s*document\.getElementById\(`\$\{formId\}-\$\{refused\[0\]\}`\)\?\.focus\(\);/);
+    assert.doesNotMatch(src, /sent\.includes\("contact_email"\)/);
+  });
+});
+
+describe("ZIF-99 an international domain", () => {
+  test("fence: the domain is sent in its ASCII (xn--) form in every browser", () => {
+    // Wrong implementation killed: relying on the browser. Chromium's type=email converts the domain, Firefox
+    // and Safari do not, so the same address was saved in one browser and refused in another.
+    assert.equal(asciiEmail(" Hello@Café.NL "), "hello@xn--caf-dma.nl");
+    assert.equal(asciiEmail("info@bücher.de"), "info@xn--bcher-kva.de");
+    assert.equal(asciiEmail("hello@xn--caf-dma.nl"), "hello@xn--caf-dma.nl");
+    assert.equal(asciiEmail("hello@salonbloom.nl"), "hello@salonbloom.nl");
+    assert.equal(asciiEmail(""), "");
+    assert.equal(emailProblem("hello@café.nl"), null);
+    assert.deepEqual(settingsBody(saved, { ...draftFrom(saved), contact_email: "hello@café.nl" }), {
+      body: { contact_email: "hello@xn--caf-dma.nl" },
+      invalid: [],
+    });
+    // The saved xn-- form typed with its accents is no change.
+    const withIdn = formSaved(saved, contactState({ state: "confirmed", confirmed: "hello@xn--caf-dma.nl" }));
+    assert.deepEqual(changedKeys(withIdn, { ...draftFrom(withIdn), contact_email: "hello@café.nl" }), []);
+  });
+
+  test("fence: only the domain is converted; an accented name before the @ is still refused", () => {
+    // Wrong implementation killed: converting the whole address, or the local part, which has no ASCII form.
+    assert.equal(asciiEmail("josé@café.nl"), "josé@xn--caf-dma.nl");
+    assert.equal(emailProblem("josé@café.nl"), "accents");
+  });
+
+  test("fence: a domain the URL parser would rewrite is left alone and refused", () => {
+    // Wrong implementation killed: handing the URL parser a domain it silently changes (it drops tabs and
+    // line breaks, and reads /, ?, #, % and : as URL syntax), which would save a different address.
+    // Fullwidth digits: the parser reads them as an IPv4 address (a@１.２ -> a@1.0.0.2, a@０ｘ７ｆ.１ -> a@127.0.0.1).
+    for (const text of ["a@caf\né.nl", "a@caf\té.nl", "a@café.nl/x", "a@café.nl?x", "a@café.nl#x", "a@café%20.nl", "a@café.nl:80", "a@ café.nl", "a@１.２", "a@０ｘ７ｆ.１"]) {
+      assert.equal(asciiEmail(text), text.trim().toLowerCase(), JSON.stringify(text));
+      assert.notEqual(emailProblem(text), null, JSON.stringify(text));
+    }
+  });
+});
+
+describe("ZIF-99 the message a refused address shows", () => {
+  test("fence: an accented name gets its own message, anything else the usual one", () => {
+    // Wrong implementation killed: one generic message for every refusal, so an owner never learns the accent
+    // is the problem (design notes 1a).
+    assert.equal(emailMessageKey("josé@salon.nl"), "contactEmailInvalid");
+    assert.equal(emailMessageKey("hello@salon"), "invalidEmail");
+    assert.equal(emailMessageKey("shop[1]@salon.nl"), "invalidEmail"); // refused by the API alone
+    assert.equal(emailMessageKey("hello@café.nl"), "invalidEmail"); // converted, so only the API could refuse it
+    const src = readFileSync(new URL("../app/[locale]/(console)/settings/settings.tsx", import.meta.url), "utf8");
+    assert.match(src, /const emailKey = emailMessageKey\(String\(draft\.contact_email\), Boolean\(contact\?\.requested\)\);/);
+    assert.match(src, /const emailErr = invalid\.includes\("contact_email"\) && \(emailKey === "invalidEmail" \? form\("invalidEmail"\) : t\(emailKey\)\);/);
+  });
+
+  test("fence: the accents message says what is wrong and refuses nothing the API accepts", () => {
+    // Wrong implementation killed: "plain letters and numbers only", which contradicts its own example and
+    // tells owners that + - _ . are refused.
+    const msg = (l) => JSON.parse(readFileSync(new URL(`../messages/${l}.json`, import.meta.url), "utf8")).Console.settings.contactEmailInvalid;
+    assert.deepEqual(
+      ["en", "nl", "pt"].map(msg),
+      [
+        "Use letters without accents, like name@yourbusiness.com.",
+        "Gebruik letters zonder accenten, zoals naam@jouwbedrijf.nl.",
+        "Use letras sem acento, como nome@seunegocio.com.br.",
+      ],
+    );
   });
 });

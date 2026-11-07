@@ -19,17 +19,20 @@ export type Settings = {
   workers_edit_own_hours: boolean;
   workers_answer_requests: boolean;
   payment_check: boolean;
+  contact_email: string | null;
 };
 export type Key = keyof Settings;
 export type Draft = Record<Key, string | boolean>;
 
-/** int: a number input (whole, bounded); select: a numeric select; text: a string; bool: a checkbox. */
-export type Field = { key: Key; kind: "int" | "select" | "bool" | "text"; min?: number; max?: number };
+/** int: a number input (whole, bounded); select: a numeric select; text: a string; bool: a checkbox;
+ * email: one address or none (an empty box is null). */
+export type Field = { key: Key; kind: "int" | "select" | "bool" | "text" | "email"; min?: number; max?: number };
 
 /** In page order; `published` is never here (it saves on its own). */
 export const FIELDS: Field[] = [
   { key: "timezone", kind: "text" },
   { key: "language", kind: "text" },
+  { key: "contact_email", kind: "email" },
   { key: "auto_confirm", kind: "bool" },
   { key: "slot_step_minutes", kind: "select" },
   { key: "min_notice_minutes", kind: "select", min: 0, max: 10080 },
@@ -56,7 +59,7 @@ export function draftFrom(s: Partial<Settings>): Draft {
   const draft: Record<string, string | boolean> = {};
   for (const { key, kind } of FIELDS) {
     if (!(key in s)) continue;
-    draft[key] = kind === "bool" ? (s[key] as boolean) : String(s[key]);
+    draft[key] = kind === "bool" ? (s[key] as boolean) : String(s[key] ?? "");
   }
   return draft as Draft;
 }
@@ -69,11 +72,82 @@ export function parseWhole(text: string, min: number, max: number): number | nul
   return value >= min && value <= max ? value : null;
 }
 
-function parse(field: Field, value: string | boolean): string | number | boolean | null {
+// The API's own address rule (backend/app/passwords.py _EMAIL): one address, no names or lists.
+const EMAIL = /^[^@\s<>(),;:"\\\x00-\x1f]+@[^@\s<>(),;:"\\\x00-\x1f]+\.[^@\s<>(),;:"\\\x00-\x1f]+$/;
+
+/** The address as the API stores it: trimmed and lowercased. */
+function normaliseEmail(text: string): string {
+  return text.trim().toLowerCase();
+}
+
+// Characters the URL parser would drop or read as URL syntax rather than as part of a host name.
+const NOT_A_HOST = /[\s\x00-\x1f\x7f/?#%:@\\[\]]/;
+
+/** The address with an international domain in its ASCII (xn--) form, which is how a mail header
+ * carries it and what the API accepts. The same in every browser: Chromium's type=email converts the
+ * domain itself, Firefox and Safari do not. Only the domain: the part before the @ has no ASCII
+ * form. A domain the URL parser would rewrite (a line break, a slash, a %, or digits it reads as an IP
+ * address) is left as typed. */
+export function asciiEmail(text: string): string {
+  const email = normaliseEmail(text);
+  const at = email.lastIndexOf("@");
+  const domain = email.slice(at + 1);
+  if (at === -1 || !/[^\x00-\x7f]/.test(domain) || NOT_A_HOST.test(domain)) return email;
+  try {
+    const host = new URL(`http://${domain}`).hostname;
+    // A last label with no letter is an address the parser read as an IP (fullwidth digits: １.２ -> 1.0.0.2).
+    const ip = !/[a-z]/.test(host.slice(host.lastIndexOf(".") + 1));
+    return /^[\x21-\x7e]+$/.test(host) && !ip ? `${email.slice(0, at)}@${host}` : email;
+  } catch {
+    return email;
+  }
+}
+
+/** Why the API would refuse this contact email, or null (an empty box is fine: it means none).
+ * "accents": a non-ASCII character before the @, which a mail header cannot carry as a plain address
+ * (backend/app/business_settings.py header_address); an accented domain is converted (asciiEmail).
+ * The API also refuses a few odd shapes the browser does not check (contact_email_invalid). */
+export function emailProblem(text: string): "accents" | "invalid" | null {
+  const email = asciiEmail(text);
+  if (email === "") return null;
+  const at = email.lastIndexOf("@");
+  if (/[^\x00-\x7f]/.test(at === -1 ? email : email.slice(0, at))) return "accents";
+  if (/[^\x00-\x7f]/.test(email) || email.length > 254 || email.includes("=?") || !EMAIL.test(email)) return "invalid";
+  return null;
+}
+
+/** Which message a refused contact email shows: an accented name its own (the API cannot put it in a
+ * mail header), an empty box while a change waits its own (Cancel change drops the waiting address),
+ * anything else the usual invalid-email one. */
+export function emailMessageKey(text: string, waiting = false): "contactEmailInvalid" | "contactClearWaiting" | "invalidEmail" {
+  if (waiting && asciiEmail(text) === "") return "contactClearWaiting";
+  return emailProblem(text) === "accents" ? "contactEmailInvalid" : "invalidEmail";
+}
+
+/** The value to compare and send, or undefined when the text does not parse. */
+function parse(field: Field, value: string | boolean): string | number | boolean | null | undefined {
   if (field.kind === "bool" || field.kind === "text") return value;
-  if (field.kind === "int") return parseWhole(String(value), field.min!, field.max!);
+  if (field.kind === "email") {
+    const email = asciiEmail(String(value ?? ""));
+    if (email === "") return null;
+    return emailProblem(email) ? undefined : email;
+  }
+  if (field.kind === "int") return parseWhole(String(value), field.min!, field.max!) ?? undefined;
   const n = Number(value);
-  return Number.isInteger(n) ? n : null;
+  return Number.isInteger(n) ? n : undefined;
+}
+
+/** The saved settings as the form compares with them (ZIF-232 x ZIF-99): contact_email is the address waiting for
+ * its link, else the confirmed one, else none, from the block's state. settings.contact_email is only ever the
+ * confirmed address, so it stands in only before the state is read, or when the API has no such route. */
+export function formSaved(settings: Settings, contact: ContactEmailState | null): Settings {
+  return contact ? { ...settings, contact_email: contact.requested ?? contact.confirmed ?? null } : settings;
+}
+
+/** The keys a refused save marks: only those the API names with their own code (ZIF-99). Its other
+ * refusals (invalid_request) do not say which key was wrong, so they mark none. */
+export function refusedKeys(status: number, code: string | undefined): Key[] {
+  return status === 422 && code === "contact_email_invalid" ? ["contact_email"] : [];
 }
 
 /** Keys whose parsed draft value differs from the saved one (unparsable counts as changed), in page order. */
@@ -82,12 +156,18 @@ export function changedKeys(saved: Settings, draft: Draft): Key[] {
 }
 
 /** The PUT body (changed keys that parse) and the changed keys that don't. */
-export function settingsBody(saved: Settings, draft: Draft): { body: Partial<Settings>; invalid: Key[] } {
+export function settingsBody(
+  saved: Settings,
+  draft: Draft,
+  contact: ContactEmailState | null = null,
+): { body: Partial<Settings>; invalid: Key[] } {
   const body: Record<string, unknown> = {};
   const invalid: Key[] = [];
   for (const key of changedKeys(saved, draft)) {
     const value = parse(FIELDS.find((f) => f.key === key)!, draft[key]);
-    if (value === null) invalid.push(key);
+    // An empty box while a change waits is no removal: null would also drop the confirmed address
+    // clients see (ZIF-232). Cancel change drops the waiting one.
+    if (value === undefined || (key === "contact_email" && value === null && contact?.requested)) invalid.push(key);
     else body[key] = value;
   }
   return { body: body as Partial<Settings>, invalid };
@@ -221,6 +301,14 @@ export function contactActionOutcome(
   if (status === 403 && code === "owner_only") return "contactOwnerOnly"; // no longer an owner
   if (status === 409) return "reload";
   return "contactFailed";
+}
+
+/** Why a save that sent the contact email was refused as a whole (ZIF-232): its link limits (429) or a
+ * change that raced it (503); nothing was saved, no other key either. null: not such a refusal. */
+export function saveRefusal(status: number, code: string | undefined, sentContact: boolean): "contactTooMany" | "contactTooManyToday" | "busy" | null {
+  if (!sentContact) return null;
+  if (status === 429) return code === "contact_email_requests_today" ? "contactTooManyToday" : "contactTooMany";
+  return status === 503 ? "busy" : null;
 }
 
 /** Whether the block shows after reading the state: an API from before the route (404) shows nothing. */

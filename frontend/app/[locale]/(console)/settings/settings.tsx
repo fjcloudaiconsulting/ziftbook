@@ -3,21 +3,26 @@
 import { useLocale, useTranslations } from "next-intl";
 import { type FormEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
 
-import { type BusinessSettingsOutput, settingsUpdate } from "@/api-client";
+import { type BusinessSettingsOutput, type ContactEmailOut, contactEmailRead, settingsUpdate } from "@/api-client";
 import { bookingPageAddress, dateLocale } from "@/lib/console";
 import {
   breakMinutes,
   changedKeys,
+  contactLoadOutcome,
   type Draft,
   draftFrom,
   effective,
+  emailMessageKey,
   FIELDS,
+  formSaved,
   type IntKey,
   type Key,
   mergeSaved,
   noticeOptions,
   noticeUnit,
   pickFields,
+  refusedKeys,
+  saveRefusal,
   SLOT_STEPS,
   settingsBody,
   slotExamples,
@@ -37,6 +42,7 @@ import { Payments } from "./payments";
 function Field({
   id,
   label,
+  optional,
   unit,
   hint,
   error,
@@ -45,6 +51,7 @@ function Field({
 }: {
   id: string;
   label: string;
+  optional?: string;
   unit?: string;
   hint?: string;
   error?: string | false;
@@ -57,6 +64,7 @@ function Field({
     <div className={uiStyles.field}>
       <label className={uiStyles.label} htmlFor={id}>
         {label}
+        {optional && <> <span className={styles.optional}>{optional}</span></>}
       </label>
       {unit ? (
         <div className={styles.unitRow}>
@@ -91,10 +99,35 @@ export function Settings() {
   const tWeek = useTranslations("Console.week");
   const nav = useTranslations("Console.nav");
   const form = useTranslations("Form");
+  const consoleT = useTranslations("Console");
   const errorsT = useTranslations("Console.errors");
   const locale = useLocale();
   const formId = useId();
   const [draft, setDraft] = useState<Draft>(() => draftFrom(settings));
+  // The contact email's state (ZIF-232), read here for the box and the block below it: the box starts from the
+  // address waiting for its link, else the confirmed one (formSaved). Read again after a save that sent it.
+  const [contact, setContact] = useState<ContactEmailOut | null>(null);
+  const [contactLoaded, setContactLoaded] = useState<"show" | "hide" | "failed" | null>(null);
+  const [contactReads, setContactReads] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const outcome = await call(() => contactEmailRead());
+      if (cancelled) return;
+      const shown = contactLoadOutcome(outcome.status === 200 && !outcome.data ? 0 : outcome.status);
+      if (shown === "show") takeContact(outcome.data!);
+      setContactLoaded(shown);
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- on load, and when asked to read again
+  }, [contactReads]);
+  /** A new contact email state: the box follows it, as the page's baseline does. */
+  function takeContact(state: ContactEmailOut) {
+    setContact(state);
+    setDraft((d) => ({ ...d, contact_email: state.requested ?? state.confirmed ?? "" }));
+  }
   const [invalid, setInvalid] = useState<Key[]>([]);
   const [saving, setSaving] = useState(false);
   const [saveFailed, setSaveFailed] = useState(false);
@@ -125,7 +158,8 @@ export function Settings() {
     return () => clearTimeout(timer);
   }, [copyState]);
 
-  const changed = changedKeys(settings, draft);
+  const base = formSaved(settings, contact);
+  const changed = changedKeys(base, draft);
   const dirty = changed.length > 0;
   const list = (keys: Key[]) => new Intl.ListFormat(locale, { type: "unit" }).format(keys.map((k) => t(`changed.${k}`)));
   const unit = (n: number, u: string) => new Intl.NumberFormat(locale, { style: "unit", unit: u, unitDisplay: "long" }).format(n);
@@ -142,6 +176,9 @@ export function Settings() {
   };
   const set = (key: Key, value: string | boolean) => setDraft((d) => ({ ...d, [key]: value }));
   const err = (key: Key) => invalid.includes(key) && rangeMsg(key);
+  // An address with accents says why it is refused; anything else the API refuses reads as Form's.
+  const emailKey = emailMessageKey(String(draft.contact_email), Boolean(contact?.requested));
+  const emailErr = invalid.includes("contact_email") && (emailKey === "invalidEmail" ? form("invalidEmail") : t(emailKey));
   const step = effective(settings, draft, "slot_step_minutes");
   const pct = effective(settings, draft, "buffer_pct");
   const count = (key: IntKey) => effective(settings, draft, key);
@@ -188,7 +225,7 @@ export function Settings() {
   }
 
   function undo() {
-    setDraft(draftFrom(settings));
+    setDraft(draftFrom(base));
     setInvalid([]);
     setSaveFailed(false);
     setMessage(null);
@@ -199,7 +236,7 @@ export function Settings() {
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
     if (submitting.current) return;
-    const { body, invalid: bad } = settingsBody(settings, draft);
+    const { body, invalid: bad } = settingsBody(base, draft, contact);
     setMessage(null);
     setSignedOut(false);
     setSaveFailed(false);
@@ -219,15 +256,28 @@ export function Settings() {
       } catch {
         outcome = { status: 0 } as Awaited<ReturnType<typeof call<BusinessSettingsOutput>>>;
       }
+      const refused = refusedKeys(outcome.status, outcome.code);
+      const refusal = saveRefusal(outcome.status, outcome.code, "contact_email" in body);
       if (outcome.status === 200 && outcome.data) {
         const data = outcome.data;
         // Only the form's own keys: never `published`, which the switch above owns.
         updateSettings(pickFields(data) as Partial<BusinessSettingsOutput>);
-        setDraft((d) => mergeSaved(d, data, sent));
+        // Not the contact email: the answer carries only the confirmed address, and the box follows the state,
+        // read again here (a new address now waits for its link).
+        setDraft((d) => mergeSaved(d, data, sent.filter((k) => k !== "contact_email")));
+        if ("contact_email" in body) setContactReads((n) => n + 1);
         setMessage({ tone: "info", text: t("savedList", { list: list(sent) }) });
         setFocusMessage((n) => n + 1);
       } else if (outcome.status === 401) {
         setSignedOut(true);
+        setSaveFailed(true);
+      } else if (refused.length > 0) {
+        setInvalid(refused);
+        setSaveFailed(true);
+        document.getElementById(`${formId}-${refused[0]}`)?.focus();
+      } else if (refusal) {
+        // The whole save was refused: every draft stays as typed, and the bar stays.
+        setMessage({ tone: "error", text: `${consoleT("notSaved")} ${refusal === "busy" ? form("busy") : t(refusal)}` });
         setSaveFailed(true);
       } else if (outcome.status === 403 && outcome.code === "owner_only") {
         setMessage({ tone: "error", text: errorsT("ownerOnly") });
@@ -374,7 +424,29 @@ export function Settings() {
           <Field id={fid("language")} label={t("languageLabel")} hint={t("languageHint")} short>
             {(p) => pick("language", p.id, p.describedBy, Object.entries(NAMES).map(([value, label]) => ({ value, label })))}
           </Field>
-          <ContactEmail />
+          <Field
+            id={fid("contact_email")}
+            label={t("contactEmailLabel")}
+            optional={t("contactEmailOptional")}
+            hint={t("contactEmailHint")}
+            error={emailErr}
+          >
+            {(p) => (
+              <input
+                id={p.id}
+                type="email"
+                autoComplete="off"
+                autoCapitalize="none"
+                spellCheck={false}
+                maxLength={254}
+                value={String(draft.contact_email)}
+                onChange={(e) => set("contact_email", e.target.value)}
+                aria-invalid={p.invalid}
+                aria-describedby={p.describedBy}
+              />
+            )}
+          </Field>
+          <ContactEmail state={contact} loaded={contactLoaded} onState={takeContact} reload={() => setContactReads((n) => n + 1)} />
           </div>
         </fieldset>
 

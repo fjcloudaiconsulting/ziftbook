@@ -15,6 +15,7 @@ from tests.conftest import (
     People,
     add_membership,
     add_user,
+    confirm_contact_email,
     email_of,
     events,
     fresh_address,
@@ -128,6 +129,7 @@ def test_the_page_answers_exactly_the_documented_fields(
         "services",
         "auto_confirm",
         "payment",
+        "contact_email",
     }
     assert body["payment"] is None  # the default business takes no card check
     assert (body["id"], body["slug"], body["name"]) == (str(people.a), slug, "a")
@@ -438,6 +440,32 @@ def test_the_cancellation_terms_are_the_saved_settings(
     }
     assert put_settings(owner, {"cancellation_policy_text": ""}).status_code == 200
     assert page(new_client(app), slug).json()["cancellation"]["text"] is None
+
+
+# ZIF-99 fence. The page shows the business's own contact email: its confirmed address, and null
+# when there is none. Kills a page that reads another business's settings, a hard-coded null, or a
+# stale value after the owner unsets it. ZIF-232 x ZIF-99 fences (F-PR3.1, F-PR3.2): an address
+# still waiting for its link is never shown, whether or not one is confirmed.
+def test_the_contact_email_is_the_confirmed_address_and_null_without_one(
+    people: People, app: FastAPI, owner: TestClient, slug: str
+) -> None:
+    def shown() -> object:
+        return page(new_client(app), slug).json()["contact_email"]
+
+    assert shown() is None
+    confirm_contact_email(people.b, "other@example.com")  # another business's address
+    assert shown() is None
+
+    assert put_settings(owner, {"contact_email": "waiting@example.com"}).status_code == 200
+    assert shown() is None  # F-PR3.1: waiting, nothing confirmed
+
+    confirm_contact_email(people.a, "shop@example.com")
+    assert shown() == "shop@example.com"
+    assert put_settings(owner, {"contact_email": "next@example.com"}).status_code == 200
+    assert shown() == "shop@example.com"  # F-PR3.2: the confirmed one, while the next waits
+
+    assert put_settings(owner, {"contact_email": None}).status_code == 200
+    assert shown() is None
 
 
 # 23. fence. Every locale's offered version is one a booking accepts; the page has no top-level one.
