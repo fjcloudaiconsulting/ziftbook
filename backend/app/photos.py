@@ -465,7 +465,8 @@ def _run(upload: IO[bytes]) -> Run:
     return Run(proc.returncode, output, killed, cpu_ms)
 
 
-FORMATS = Literal["JPEG", "MPO", "PNG", "WEBP"]  # MPO: a phone's HDR JPEG (ZIF-246)
+# photo_decode.FORMATS (pinned equal by a test): the formats a record can carry.
+FORMATS = Literal["JPEG", "MPO", "PNG", "WEBP"]
 # photo_decode.ERRORS (pinned equal by a test): the names a refusal's error can take.
 ERROR = Literal[
     "unsafe_container",

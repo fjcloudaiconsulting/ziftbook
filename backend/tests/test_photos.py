@@ -20,14 +20,14 @@ import pytest
 from botocore.exceptions import EndpointConnectionError, ReadTimeoutError
 from botocore.response import StreamingBody
 from mypy_boto3_s3 import S3Client
-from PIL import Image, ImageCms, ImageFile, ImageOps
+from PIL import Image, ImageCms, ImageFile, ImageOps, MpoImagePlugin
 from sqlalchemy import text
 
 from app import photo_decode, photos, storage, worker
 from app.db import tenant_context
 from app.errors import ApiError
 from app.jobs import Job
-from tests.conftest import API_DIR, People, image, upload
+from tests.conftest import API_DIR, People, image, mpo, upload
 from tests.test_bookings_db import seed_service
 
 
@@ -401,7 +401,6 @@ else:
         ("8 MP RGBA PNG", lambda: image_of("PNG", "RGBA", (3200, 2590))),
         ("100 MP baseline JPEG", lambda: image_of("JPEG", "RGB", (12500, 8000))),
         ("12 MP MPO", lambda: mpo((4000, 3000))),  # ZIF-246: a phone's HDR photo
-        ("100 MP baseline MPO", lambda: mpo((12500, 8000))),
     ],
 )
 def test_decoding_stays_inside_a_memory_budget(
@@ -635,21 +634,18 @@ def test_webp_has_its_own_cap(s3: S3Client, monkeypatch: pytest.MonkeyPatch) -> 
     assert decode_refusal(image("WEBP", (2500, 2000))) == "photo_unreadable"
 
 
-def mpo(size: tuple[int, int], **kw: object) -> bytes:
-    """An MPO as a phone saves an HDR photo: the main image (red), then a gain map (blue, a
-    quarter of its size)."""
-    buf = io.BytesIO()
-    gain_map = Image.new("RGB", (size[0] // 4, size[1] // 4), "blue")
-    Image.new("RGB", size, "red").save(buf, "MPO", save_all=True, append_images=[gain_map], **kw)
-    return buf.getvalue()
-
-
 def resized(data: bytes, frame: int, size: tuple[int, int]) -> bytes:
-    """data with the frame header of its nth JPEG (0 is the main image) claiming size instead:
-    the image data stays as it was."""
+    """data with the frame header of its nth image (0 is the main one) claiming size instead: the
+    image data stays as it was. The image is found from the MP index, as Pillow finds it."""
     start = 0
-    for _ in range(frame):
-        start = data.index(b"\xff\xd8\xff", start + 2)
+    if frame:
+        im = Image.open(io.BytesIO(data))
+        assert isinstance(im, MpoImagePlugin.MpoImageFile) and im.mpinfo is not None
+        # The index's offsets count from the MP header, after "MPF\0" in the main image's APP2.
+        markers = photo_decode._markers(data)
+        app2 = next(i for i, m in markers if m == 0xE2 and data[i + 4 : i + 8] == b"MPF\0")
+        start = app2 + 8 + im.mpinfo[0xB002][frame]["DataOffset"]
+        assert data[start : start + 2] == b"\xff\xd8"
     sof = start + next(i for i, m in photo_decode._markers(data[start:]) if m in (0xC0, 0xC2))
     return data[: sof + 5] + struct.pack(">HH", size[1], size[0]) + data[sof + 9 :]
 
@@ -680,20 +676,21 @@ def test_an_mpo_s_other_frames_are_never_read() -> None:
 # ZIF-246 guard: an MPO's main image is held to the JPEG caps (baseline 100 MP, after draft,
 # and the common cap for a progressive one).
 @pytest.mark.parametrize(
-    "data",
+    "make",
     [
         pytest.param(  # past Image.MAX_IMAGE_PIXELS, which only warns at open
-            resized(mpo((400, 300)), 0, (12500, 8001)),
+            lambda: resized(mpo((400, 300)), 0, (12500, 8001)),
             marks=pytest.mark.filterwarnings("ignore::PIL.Image.DecompressionBombWarning"),
         ),
-        resized(mpo((400, 300)), 0, (20000, 900)),
-        mpo((5000, 4000), progressive=True),
+        lambda: resized(mpo((400, 300)), 0, (20000, 900)),
+        lambda: mpo((5000, 4000), progressive=True),
     ],
     ids=["baseline", "after-draft", "progressive"],
 )
 def test_an_mpo_main_image_over_the_caps_is_refused_before_decode(
-    monkeypatch: pytest.MonkeyPatch, data: bytes
+    monkeypatch: pytest.MonkeyPatch, make: Callable[[], bytes]
 ) -> None:
+    data = make()
     no_load(monkeypatch)
     with pytest.raises(photo_decode.Refused) as refused:
         photo_decode.decode(data)

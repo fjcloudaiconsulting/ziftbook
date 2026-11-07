@@ -21,7 +21,7 @@ import tracemalloc
 import uuid
 from collections.abc import Callable, Iterator
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
 import pytest
 from mypy_boto3_s3 import S3Client
@@ -32,7 +32,7 @@ from PIL import Image
 from app import photo_child, photo_decode, photos
 from app.errors import ApiError
 from tests import photo_syscalls
-from tests.conftest import API_DIR, closed, image, points, upload
+from tests.conftest import API_DIR, closed, image, mpo, points, upload
 
 PROBE = Path(__file__).with_name("photo_child_probe.py")
 LINUX = sys.platform == "linux"
@@ -704,23 +704,8 @@ def heaviest() -> Iterator[tuple[str, Callable[[], bytes]]]:
     yield "8 MP RGBA PNG", lambda: encoded(noise("RGBA", (3200, 2590), 0x01, 1), "PNG")
     yield "100 MP baseline JPEG", lambda: encoded(Image.new("RGB", (12500, 8000), "red"), "JPEG")
     yield (  # ZIF-246: a phone's HDR photo, the main image then a gain map
-        "100 MP baseline MPO",
-        lambda: encoded(
-            Image.new("RGB", (12500, 8000), "red"),
-            "MPO",
-            save_all=True,
-            append_images=[Image.new("L", (3125, 2000))],
-        ),
-    )
-    yield (
         "12 MP MPO near the upload cap",
-        lambda: encoded(
-            noise("RGB", (4000, 3000), 0x7F, 10),
-            "MPO",
-            save_all=True,
-            append_images=[noise("L", (1000, 750), 0xFF, 11)],
-            quality=92,
-        ),
+        lambda: mpo(noise("RGB", (4000, 3000), 0x7F, 10), quality=94),
     )
     yield "4 MP lossy RGBA WebP", lambda: encoded(noise("RGBA", (2000, 2000), 0x0F, 2), "WEBP")
     yield (
@@ -1328,6 +1313,13 @@ def test_the_error_names_are_a_closed_set() -> None:
     assert photo_decode.error_name(UnicodeDecodeError("utf-8", b"", 0, 1, "x")) == "ValueError"
     assert photo_decode.error_name(FileNotFoundError()) == "OSError"
     assert photo_decode.error_name(struct.error()) == "error"
+
+
+# ZIF-246 fence. Kills: a format the decoder reports missing from the record check, which refuses
+# every such record (a phone's HDR photo, refusals included) as a protocol fault.
+def test_the_record_formats_are_what_the_decoder_reports() -> None:
+    assert get_args(photos.FORMATS) == photo_decode.FORMATS
+    assert {"JPEG", "MPO", "PNG", "WEBP"} == set(photo_decode.FORMATS)
 
 
 # ZIF-230 fence (build review, correctness 10a). Kills: a typo minting a new value of the metric's

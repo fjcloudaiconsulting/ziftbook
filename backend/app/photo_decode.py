@@ -12,7 +12,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
 
-from PIL import Image, ImageCms, ImageOps, UnidentifiedImageError
+from PIL import Image, ImageCms, ImageOps, JpegImagePlugin, UnidentifiedImageError
 
 JPEG_CAP = 100_000_000
 # Header pixels. Progressive JPEGs and every other format decode at full size (no draft shortcut):
@@ -22,6 +22,9 @@ OTHER_CAP = 8_300_000
 WEBP_CAP = 4_000_000
 Image.MAX_IMAGE_PIXELS = JPEG_CAP  # backstop only: the caps below refuse first
 SRGB = ImageCms.createProfile("sRGB")
+# Every format a record can carry (photos.FORMATS, pinned equal by a test): MPO is a phone's HDR
+# photo, a JPEG followed by other frames such as a gain map (ZIF-246).
+FORMATS = ("JPEG", "MPO", "PNG", "WEBP")
 
 
 # Every name a refusal's `error` can take (photos.ERRORS, which logs it): the checks', and the
@@ -189,9 +192,9 @@ def _decode(data: bytes, seen: dict[str, Any]) -> Decoded:
         raise Refused("photo_unreadable", error_name(error)) from None
     im: Image.Image = opened
     seen["format"], seen["pixels"] = im.format, im.width * im.height
-    # A phone's HDR photo opens as an MPO (ZIF-246): its main image is a JPEG and everything below
-    # reads only that. Nothing here seeks the other frames (a gain map, say).
-    jpeg = im.format in ("JPEG", "MPO")
+    # Chosen by class, as the draft and the caps depend on libjpeg: an MPO (ZIF-246) is a JPEG
+    # subclass, and everything below reads only its main image. Nothing seeks the other frames.
+    jpeg = isinstance(im, JpegImagePlugin.JpegImageFile)
     # A progressive or multi-scan JPEG has no draft shortcut that saves memory, so it gets the
     # common cap.
     baseline = (
