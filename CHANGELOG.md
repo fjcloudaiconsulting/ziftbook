@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.35.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.34.0...v0.35.0) (2026-11-07)
+
+
+### Features
+
+* owners are sent a confirmation link when they set or resend a contact email (ZIF-232) ([#393](https://github.com/fjcloudaiconsulting/ziftbook/issues/393)) ([286a2f0](https://github.com/fjcloudaiconsulting/ziftbook/commit/286a2f0c3d951821264ab1dedf97e908f80a5e84))
+
 ## [0.34.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.33.0...v0.34.0) (2026-11-07)
 
 
