@@ -14,7 +14,7 @@ import {
 } from "@/api-client";
 import { takeToken } from "@/lib/account";
 import { mailtoHref } from "@/lib/contact";
-import { addDays, answerScreen, copyMessage, firstStage, localDay, localWhen, refundMessage, withTaken } from "@/lib/booking-link";
+import { addDays, answerScreen, consentAsk, copyMessage, firstStage, localDay, localWhen, refundMessage, withTaken } from "@/lib/booking-link";
 import { dateLocale } from "@/lib/console";
 import { linkStore, type OpenedLink } from "@/lib/link";
 import { formatMoney } from "@/lib/money";
@@ -33,7 +33,7 @@ function useBookingLink(): OpenedLink | null | undefined {
   return useSyncExternalStore(store.subscribe, store.snapshot, () => undefined);
 }
 
-type Note = "termsChanged" | "changed" | "notAllowed" | "consentDone";
+type Note = "termsChanged" | "changed" | "notAllowed" | "consentDone" | "consentChanged" | "outdated";
 type Pick = { is: "pick"; linked: LinkedBooking; first: string; slots?: string[]; day?: string; chosen?: string; taken?: string };
 type View =
   | { is: "opening" }
@@ -122,7 +122,9 @@ function Manage({ token }: { token: string | null }) {
 
   function afterWrite(answer: Answer<LinkedBooking>, again: () => void, pick?: Pick) {
     const screen = answerScreen(answer);
-    if (screen === "termsChanged" || screen === "changed" || screen === "notAllowed") return refresh(screen);
+    if (screen === "termsChanged" || screen === "changed" || screen === "notAllowed" || screen === "consentChanged" || screen === "outdated") {
+      return refresh(screen);
+    }
     if (screen === "refresh") return refresh();
     if (screen === "slotTaken" && pick) return loadWeek(pick.linked, pick.first, pick.chosen);
     otherwise(answer, again);
@@ -171,9 +173,9 @@ function Manage({ token }: { token: string | null }) {
   function confirmConsents(linked: LinkedBooking) {
     const again = () =>
       act(async () => {
-        // ZIF-159: the version of the wording this page shows, in its language; the server stores its own text for it.
-        const body = { booking_id: linked.booking.id, policy_version: linked.consent[locale as Locale].policy_version };
-        const answer = await send(bookingLinkConsents({ body }));
+        // ZIF-159: the version and the purposes this page shows, in its language; the server stores its own text for each.
+        const { policy_version, purposes } = consentAsk(linked.pending_consents, linked.consent[locale as Locale]);
+        const answer = await send(bookingLinkConsents({ body: { booking_id: linked.booking.id, policy_version, purposes } }));
         if (answer.status === 200 && answer.data) setView({ is: "booking", linked: answer.data, note: "consentDone" });
         else await afterWrite(answer, again);
       });
@@ -359,6 +361,7 @@ function Manage({ token }: { token: string | null }) {
   const pending = booking.status === "pending";
   const contact = booking.contact_email;
   const copy = copyMessage(engine.copy_key);
+  const ask = consentAsk(linked.pending_consents, linked.consent[locale as Locale]);
   return (
     <>
       <Heading focus key="booking">
@@ -406,11 +409,13 @@ function Manage({ token }: { token: string | null }) {
           </p>
         )}
       </div>
-      {linked.pending_consents.length > 0 && (
+      {ask.purposes.length > 0 && (
         <div className={styles.empty}>
           <span>{t("consentAsk", { business: booking.business })}</span>
-          {/* The server's wording, verbatim (ZIF-159): never a copy of our own, it is what the confirm stores. */}
-          <strong>{linked.consent[locale as Locale].marketing_email}</strong>
+          {/* The server's wording, verbatim (ZIF-159): never a copy of our own, it is exactly what the confirm stores. */}
+          {ask.texts.map((wording) => (
+            <strong key={wording}>{wording}</strong>
+          ))}
           <button
             className={`${styles.button} ${styles.primary}`}
             type="button"

@@ -1115,8 +1115,7 @@ def book_online(
     #    422 with nothing written - regardless of whether anything was withdrawn.
     # ZB-27: the legacy version still reads back from stored rows, but a NEW booking takes only
     # the wording the booking page offers.
-    clients.require_offered(policy_version)
-    clients.texts_for(policy_version, consents)
+    clients.require_offered(policy_version, consents)
     phone = clients.e164(db, phone)  # ZIF-152: also a 422 before any write, after the 404s
     message = message_text(message)  # ZIF-157: likewise
     # ZIF-158. Before any write. The step is the business's (offer() fails open), never the

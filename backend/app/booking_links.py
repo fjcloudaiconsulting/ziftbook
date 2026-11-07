@@ -7,7 +7,7 @@ import json
 import logging
 from datetime import UTC, date, datetime, timedelta
 from types import SimpleNamespace
-from typing import Annotated, Any
+from typing import Annotated, Any, get_args
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -30,7 +30,6 @@ from app import (
     payments,
     schedule,
 )
-from app.booking_page import PageConsentOut, consent_offer
 from app.bookings import CLIENT_CANCEL, INSERT_EVENT, RESCHEDULE
 from app.business_settings import BusinessSettings, Locale
 from app.cancellation import Decision
@@ -157,6 +156,25 @@ class EngineOut(BaseModel):
     free_until: datetime | None
 
 
+class ConsentWording(BaseModel):
+    """One locale's consent version and its wording per purpose (ZIF-159). The manage page asks to
+    confirm each pending purpose this wording covers, verbatim, and posts back the version and
+    exactly those purposes."""
+
+    policy_version: str
+    texts: dict[Purpose, str]
+
+
+# Built once: it is the catalogue's, the same for every link.
+WORDING = {
+    locale: ConsentWording(
+        policy_version=clients.policy_version_for(locale),
+        texts=clients.CONSENT_TEXTS[clients.policy_version_for(locale)],
+    )
+    for locale in get_args(Locale)
+}
+
+
 class LinkedBooking(BaseModel):
     """Never the client's name, email, phone or ids, nor the worker id, source or events: the
     link is a bearer credential (spec S4, test 12). The business's own contact email is included
@@ -165,9 +183,9 @@ class LinkedBooking(BaseModel):
     booking: BookingOut
     engine: EngineOut
     pending_consents: list[Purpose]
-    # ZIF-159: the wording the confirm button confirms, per locale. The page renders it verbatim
-    # and posts back the version it rendered; the server stores its own text for that version.
-    consent: dict[Locale, PageConsentOut]
+    # ZIF-159: the wording the confirm button confirms, per locale. A pending purpose with no
+    # wording in the page's locale is not asked, so never confirmed; its tick stays on the event.
+    consent: dict[Locale, ConsentWording]
 
 
 CONSENT_EVENT = text("""
@@ -201,7 +219,6 @@ def pending_consents(db: Session, booking_id: UUID, client_id: UUID) -> list[Pur
     if event is None or not event.consent_purposes:
         return []
     granted = {p for p, was_granted in event.consent_purposes.items() if was_granted}
-    granted &= clients.OFFERED  # a legacy tick no page shows wording for cannot be confirmed
     if not granted:
         return []
     withdrawn = set(
@@ -308,7 +325,7 @@ def _view(
             ),
         ),
         pending_consents=consents,
-        consent=consent_offer(),
+        consent=WORDING,
     )
 
 
@@ -610,12 +627,14 @@ def reschedule(body: RescheduleIn, request: Request) -> LinkedBooking:
 
 
 class ConsentsIn(BaseModel):
-    """policy_version is the one the page rendered (its locale is in it: "<version>/<locale>").
-    Never the wording: the server looks that up, so the evidence is not the caller's to write."""
+    """The version the page rendered (its locale is in it: "<version>/<locale>") and the purposes
+    it showed wording for. Never the wording: the server looks that up, so the evidence is not the
+    caller's to write."""
 
     model_config = STRICT
     booking_id: Annotated[UUID, Field(strict=False)]
     policy_version: clients.PolicyVersion
+    purposes: Annotated[list[Purpose], Field(min_length=1)]
 
 
 @router.post(
@@ -631,9 +650,10 @@ def confirm_consents(body: ConsentsIn, request: Request) -> LinkedBooking:
 
     ZIF-159: the stored wording is the one the CONFIRMING person was shown, in their page's
     locale, not the booking-time version: that one is the guest's, kept on the `created` event,
-    and whoever clicks here may read another language."""
+    and whoever clicks here may read another language. Only the purposes the page showed are
+    confirmed, each with its own text; a posted purpose the version has no wording for is a 422."""
     tenant_id, token_hash = _enter(request, "booking_link_write", WRITE_LIMIT, WRITE_WINDOW)
-    clients.require_offered(body.policy_version)
+    clients.require_offered(body.policy_version, body.purposes)
     origin_ip, user_agent = auth.origin(request)
     try:
         with tenant_context(tenant_id) as db:
@@ -641,9 +661,15 @@ def confirm_consents(body: ConsentsIn, request: Request) -> LinkedBooking:
             row = resolve(db, token_hash)
             if body.booking_id != row.booking_id:
                 raise ApiError(409, "link_changed")
-            purposes = pending_consents(db, row.booking_id, row.client_id)
+            pending = pending_consents(db, row.booking_id, row.client_id)
+            # A purpose ticked at booking and shown here; a shown one no longer pending is not.
+            purposes = sorted(set(pending) & set(body.purposes))
             if not purposes:
                 raise ApiError(409, "nothing_to_confirm")
+            # A tick the page had no wording for (a legacy sms or whatsapp) stays on the `created`
+            # event, unconfirmed; this confirm closes the ask (D11), so count it, never name it.
+            if unasked := len(set(pending) - set(purposes)):
+                logger.info("consent confirmed with ticks left unasked", extra={"unasked": unasked})
             clients.record_consents(
                 db,
                 client_id=row.client_id,

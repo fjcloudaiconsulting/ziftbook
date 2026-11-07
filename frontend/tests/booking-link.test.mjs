@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 import { describe, test } from "node:test";
 
 import { takeToken } from "../lib/account.ts";
-import { answerScreen, copyMessage, firstStage, localWhen, pickerDay, refundMessage, slotsByDay, weekDays, withTaken } from "../lib/booking-link.ts";
+import { answerScreen, consentAsk, copyMessage, firstStage, localWhen, pickerDay, refundMessage, slotsByDay, weekDays, withTaken } from "../lib/booking-link.ts";
 
 const TENANT = "0192f3a4-5b6c-7d8e-9f01-23456789abcd";
 const SECRET = "Ab3_-".repeat(8) + "xyz"; // 43 URL-safe characters
@@ -59,14 +59,18 @@ describe("which screen an answer leads to", () => {
       [{ status: 409, code: "slot_unavailable" }, "slotTaken"],
       [{ status: 409, code: "not_allowed" }, "notAllowed"],
       [{ status: 409, code: "nothing_to_confirm" }, "refresh"],
-      // ZIF-159: the consent wording changed while the page was open: re-read it, never retry the stale version.
-      [{ status: 422, code: "unknown_policy_version" }, "refresh"],
+      // ZIF-159: the consent wording changed while the page was open: re-read it with a note, never resend it.
+      [{ status: 422, code: "unknown_policy_version" }, "consentChanged"],
+      [{ status: 422, code: "purpose_not_in_policy_version" }, "consentChanged"],
+      // Any other 422 is a page older than the server (one loaded before a deploy): resending cannot help.
+      [{ status: 422, code: "invalid_request" }, "outdated"],
+      [{ status: 422 }, "outdated"],
     ];
     for (const [answer, screen] of cases) assert.equal(answerScreen(answer), screen, JSON.stringify(answer));
   });
 
   test("a network error, 429, 503 or anything unknown keeps the screen and offers a retry", () => {
-    for (const answer of [{ status: 0 }, { status: 429 }, { status: 503, code: "busy" }, { status: 422 }, { status: 500 }, { status: 409 }, { status: 409, code: "new" }]) {
+    for (const answer of [{ status: 0 }, { status: 429 }, { status: 503, code: "busy" }, { status: 500 }, { status: 409 }, { status: 409, code: "new" }]) {
       assert.equal(answerScreen(answer), "retry", JSON.stringify(answer));
     }
   });
@@ -201,13 +205,28 @@ describe("the free-cancellation deadline", () => {
 describe("the consent confirm (ZIF-159)", () => {
   const read = (rel) => readFileSync(new URL(rel, import.meta.url), "utf8");
 
-  test("fence: the page shows the API's wording for its locale and posts back that version", () => {
+  test("fence: it asks each pending purpose the locale's wording covers, in those words, and posts exactly those", () => {
+    // Wrong implementations killed: one fixed purpose's text whatever is pending (a second purpose
+    // confirmed with words nobody read), and asking a purpose this locale has no wording for.
+    const wording = { policy_version: "v/nl", texts: { marketing_email: "E-mail mij.", sms: "Sms mij." } };
+    assert.deepEqual(consentAsk(["marketing_email", "sms"], wording), {
+      policy_version: "v/nl",
+      purposes: ["marketing_email", "sms"],
+      texts: ["E-mail mij.", "Sms mij."],
+    });
+    assert.deepEqual(consentAsk(["marketing_email", "whatsapp"], wording), { policy_version: "v/nl", purposes: ["marketing_email"], texts: ["E-mail mij."] });
+    assert.deepEqual(consentAsk(["whatsapp"], wording).purposes, []);
+    assert.deepEqual(consentAsk(["toString"], wording).purposes, []); // kills `in` for Object.hasOwn
+  });
+
+  test("fence: the page shows the API's wording for its locale and posts back that version and those purposes", () => {
     // Wrong implementations killed: a frontend copy of the consent sentence (the stored evidence would
     // not be what the person read), and a confirm that posts no version (the server would store the
     // booking-time wording, in the guest's language).
     const src = read("../app/[locale]/booking/manage-booking.tsx");
-    assert.match(src, /\{linked\.consent\[locale as Locale\]\.marketing_email\}/);
-    assert.match(src, /policy_version: linked\.consent\[locale as Locale\]\.policy_version/);
+    assert.match(src, /const ask = consentAsk\(linked\.pending_consents, linked\.consent\[locale as Locale\]\);/);
+    assert.match(src, /\{ask\.texts\.map\(/);
+    assert.match(src, /consentAsk\(linked\.pending_consents, linked\.consent\[locale as Locale\]\);\n\s*const answer = await send\(bookingLinkConsents\(\{ body: \{ booking_id: linked\.booking\.id, policy_version, purposes \} \}\)\);/);
     for (const locale of ["en", "nl", "pt"]) {
       const messages = JSON.parse(read(`../messages/${locale}.json`)).BookingLink;
       assert.equal(messages.purposes, undefined, locale);

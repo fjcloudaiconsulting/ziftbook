@@ -148,9 +148,18 @@ def post(client: TestClient, path: str, body: dict[str, Any]) -> Response:
     return client.post(f"{URL}{path}", json=body)
 
 
-def confirm(client: TestClient, booking_id: str, locale: str = "en") -> Response:
-    """The manage page's confirm click, posting the version of the wording it rendered."""
-    body = {"booking_id": booking_id, "policy_version": clients.policy_version_for(locale)}
+def confirm(
+    client: TestClient,
+    booking_id: str,
+    locale: str = "en",
+    purposes: tuple[str, ...] = ("marketing_email",),
+) -> Response:
+    """The manage page's confirm click, posting the version it rendered and the purposes shown."""
+    body = {
+        "booking_id": booking_id,
+        "policy_version": clients.policy_version_for(locale),
+        "purposes": list(purposes),
+    }
     return post(client, "/consents", body)
 
 
@@ -1447,37 +1456,109 @@ def test_the_stored_wording_is_the_one_the_confirming_person_saw(
     client = linked(app, people.a, booking_id)
 
     shown = get(client).json()["consent"]["nl"]
-    assert shown == {
-        "policy_version": dutch,
-        "marketing_email": clients.CONSENT_TEXTS[dutch]["marketing_email"],
-    }
+    assert shown == {"policy_version": dutch, "texts": clients.CONSENT_TEXTS[dutch]}
     assert confirm(client, booking_id, "nl").status_code == 200
 
     with tenant_context(people.a) as session:
         (row,) = session.execute(text("SELECT text_shown, policy_version FROM consents")).all()
-    assert (row.text_shown, row.policy_version) == (shown["marketing_email"], dutch)
+    assert (row.text_shown, row.policy_version) == (shown["texts"]["marketing_email"], dutch)
     assert row.text_shown != clients.CONSENT_TEXTS[english]["marketing_email"]
 
 
+def with_sms_in_english(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
+    """Today's English wording plus an sms purpose that nl and pt do not have."""
+    english = clients.policy_version_for("en")
+    texts = {**clients.CONSENT_TEXTS[english], "sms": "Text me offers from this business."}
+    monkeypatch.setitem(clients.CONSENT_TEXTS, english, texts)
+    wording = booking_links.ConsentWording(policy_version=english, texts=texts)
+    monkeypatch.setitem(booking_links.WORDING, "en", wording)
+    return texts
+
+
+# ZIF-159 fence. Kills: confirming every pending purpose whatever the page showed (an sms grant
+# stored with wording nobody read), one text for all purposes, and a purpose set taken from one
+# locale (an English-only purpose would 422 every Dutch confirm).
+def test_only_the_purposes_shown_are_confirmed_each_with_its_own_wording(
+    people: People, app: FastAPI, ready: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    texts = with_sms_in_english(monkeypatch)
+    english = clients.policy_version_for("en")
+
+    def book(hour: str) -> tuple[str, TestClient]:
+        response = post_guest(
+            new_client(app),
+            people.a,
+            ready,
+            starts_at=at(hour),
+            email=fresh_email(),
+            policy_version=english,
+            consents={"marketing_email": True, "sms": True},
+        )
+        assert response.status_code == 201, response.json()
+        booking_id = response.json()["id"]
+        return booking_id, linked(app, people.a, booking_id)
+
+    both, client = book("10:00")
+    view = get(client).json()
+    assert view["pending_consents"] == ["marketing_email", "sms"]
+    assert view["consent"]["en"]["texts"] == texts
+    assert confirm(client, both, purposes=("marketing_email", "sms")).status_code == 200
+
+    # Shown in Dutch, which has no sms wording: asking for it is a 422, the email alone is fine.
+    dutch_only, dutch_client = book("11:00")
+    refused = confirm(dutch_client, dutch_only, "nl", purposes=("marketing_email", "sms"))
+    assert (refused.status_code, refused.json()) == (422, {"code": "purpose_not_in_policy_version"})
+    assert confirm(dutch_client, dutch_only, "nl").status_code == 200
+
+    with tenant_context(people.a) as session:
+        rows = session.execute(
+            text("""
+            SELECT b.id::text AS booking_id, c.purpose, c.text_shown, c.policy_version
+            FROM consents c JOIN bookings b ON b.client_id = c.client_id
+            ORDER BY b.id, c.purpose
+            """)
+        ).all()
+    dutch = clients.policy_version_for("nl")
+    stored = sorted((r.booking_id, r.purpose, r.text_shown, r.policy_version) for r in rows)
+    assert stored == sorted(
+        [
+            (both, "marketing_email", texts["marketing_email"], english),
+            (both, "sms", texts["sms"], english),
+            (dutch_only, "marketing_email", clients.CONSENT_TEXTS[dutch]["marketing_email"], dutch),
+        ]
+    )
+
+
 # ZIF-108/ZIF-159 fence. Kills: a confirm that stores a version no page offers today (the legacy
-# English-only one, a locale we do not serve, a made-up one), or takes wording from the caller.
+# English-only one, a locale we do not serve, a made-up one), a purpose the version has no wording
+# for, a confirm with no purposes or no version (a page from before this change), or wording
+# taken from the caller.
 @pytest.mark.parametrize(
-    "extra",
+    "change",
     [
         {"policy_version": "2026-09-01"},
         {"policy_version": f"{clients.POLICY_VERSION}/de"},
         {"policy_version": "9999-12-31/en"},
-        {"policy_version": clients.policy_version_for("en"), "text_shown": "I agree to anything"},
+        {"purposes": ["sms"]},
+        {"purposes": []},
+        {"purposes": None},
+        {"policy_version": None},
+        {"text_shown": "I agree to anything"},
     ],
 )
 def test_a_confirm_refuses_wording_no_page_offers(
-    people: People, app: FastAPI, ready: str, owner: TestClient, extra: dict[str, str]
+    people: People, app: FastAPI, ready: str, owner: TestClient, change: dict[str, Any]
 ) -> None:
     booking_id = confirmed_booking(app, people.a, ready, consents={"marketing_email": True})
     assert patch(owner, booking_id, "confirmed").status_code == 200
     client = linked(app, people.a, booking_id)
+    body = {
+        "booking_id": booking_id,
+        "policy_version": clients.policy_version_for("en"),
+        "purposes": ["marketing_email"],
+    } | change
 
-    response = post(client, "/consents", {"booking_id": booking_id, **extra})
+    response = post(client, "/consents", {k: v for k, v in body.items() if v is not None})
 
     assert response.status_code == 422
     assert get(client).json()["pending_consents"] == ["marketing_email"]
@@ -1485,10 +1566,16 @@ def test_a_confirm_refuses_wording_no_page_offers(
         assert session.scalar(text("SELECT count(*) FROM consents")) == 0
 
 
-# fence. A legacy tick for a purpose no page shows wording for today is never asked for, so the
-# confirm is not stuck on a 422. Kills pending_consents without the OFFERED filter.
-def test_a_legacy_tick_without_current_wording_is_not_asked_for(
-    people: People, app: FastAPI, ready: str, owner: TestClient, migrate_engine: Engine
+# ZIF-159 fence. A legacy tick no page shows wording for stays pending and unasked until the
+# confirm of what was shown closes the ask (D11): never confirmed, and the tick stays on the
+# `created` event. Kills confirming it with wording nobody read, and a confirm stuck on a 422.
+def test_a_legacy_tick_without_current_wording_is_never_confirmed(
+    people: People,
+    app: FastAPI,
+    ready: str,
+    owner: TestClient,
+    migrate_engine: Engine,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     booking_id = confirmed_booking(app, people.a, ready, consents={"marketing_email": True})
     assert patch(owner, booking_id, "confirmed").status_code == 200
@@ -1505,12 +1592,26 @@ def test_a_legacy_tick_without_current_wording_is_not_asked_for(
             {"id": booking_id},
         )
     client = linked(app, people.a, booking_id)
+    view = get(client).json()
+    assert view["pending_consents"] == ["marketing_email", "sms"]
+    assert "sms" not in view["consent"]["en"]["texts"]
 
-    assert get(client).json()["pending_consents"] == ["marketing_email"]
-    assert confirm(client, booking_id).status_code == 200
+    with caplog.at_level(logging.INFO, logger="app"):
+        assert confirm(client, booking_id).status_code == 200
+
     with tenant_context(people.a) as session:
         purposes = session.execute(text("SELECT purpose FROM consents")).scalars().all()
+        ticked = session.scalar(
+            text(
+                "SELECT consent_purposes FROM booking_events "
+                "WHERE booking_id = :id AND event = 'created'"
+            ),
+            {"id": booking_id},
+        )
     assert purposes == ["marketing_email"]
+    assert ticked == {"marketing_email": True, "sms": True}
+    (record,) = [r for r in caplog.records if r.getMessage().startswith("consent confirmed with")]
+    assert record.__dict__["unasked"] == 1
 
 
 # fence (D11). A withdrawal made BEFORE the booking's grant does not override it: the grant is

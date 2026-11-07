@@ -74,20 +74,18 @@ CONSENT_TEXTS[f"{POLICY_VERSION}/pt"] = {
 }
 
 
-# The purposes a page can show wording for today, and so the only ones anyone can confirm.
-OFFERED: frozenset[Purpose] = frozenset(CONSENT_TEXTS[f"{POLICY_VERSION}/en"])
-
-
 def policy_version_for(locale: str) -> str:
     """The per-locale consent version a booking page offers."""
     return f"{POLICY_VERSION}/{locale}"
 
 
-def require_offered(policy_version: str) -> None:
-    """422 unless a page offers this version today, in one of our locales (ZB-27): the legacy
-    version still reads back from stored rows, but nobody is shown it any more."""
+def require_offered(policy_version: str, purposes: Iterable[Purpose]) -> None:
+    """422 unless a page offers this version today, in one of our locales (ZB-27), with wording
+    for every one of these purposes. The legacy version still reads back from stored rows, but
+    nobody is shown it any more. A check before any write: record_consents stays the boundary."""
     if policy_version not in {policy_version_for(loc) for loc in get_args(Locale)}:
         raise ApiError(422, "unknown_policy_version")
+    texts_for(policy_version, purposes)
 
 
 def texts_for(policy_version: str, purposes: Iterable[Purpose]) -> dict[Purpose, str]:
