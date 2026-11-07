@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.36.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.35.0...v0.36.0) (2026-11-07)
+
+
+### Features
+
+* **backend:** a client creates a ziftbook account with no business (ZIF-146) ([#359](https://github.com/fjcloudaiconsulting/ziftbook/issues/359)) ([1f2a294](https://github.com/fjcloudaiconsulting/ziftbook/commit/1f2a294ae723bf47d390fed08e0f3fe87c2177af))
+* **web:** on a phone, the calendar shows the time grid or the list (ZIF-283) ([#400](https://github.com/fjcloudaiconsulting/ziftbook/issues/400)) ([90154e1](https://github.com/fjcloudaiconsulting/ziftbook/commit/90154e1c06df2b150c5c725eaab4b0f467d89381))
+
+
+### Bug Fixes
+
+* **deps:** update npm non-major ([#373](https://github.com/fjcloudaiconsulting/ziftbook/issues/373)) ([a841039](https://github.com/fjcloudaiconsulting/ziftbook/commit/a841039a891b7ad7a46c18e5d97b8823df262568))
+* **deps:** update python non-major ([#376](https://github.com/fjcloudaiconsulting/ziftbook/issues/376)) ([a813900](https://github.com/fjcloudaiconsulting/ziftbook/commit/a81390015507ebc9d42033ff984517484907ef50))
+
 ## [0.35.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.34.0...v0.35.0) (2026-11-07)
 
 
