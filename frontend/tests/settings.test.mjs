@@ -436,7 +436,7 @@ describe("ZIF-99 which field a refused save marks", () => {
     // "any 422 with the address in the body" rule kept.
     const src = readFileSync(new URL("../app/[locale]/(console)/settings/settings.tsx", import.meta.url), "utf8");
     assert.match(src, /const refused = refusedKeys\(outcome\.status, outcome\.code\);/);
-    assert.match(src, /\} else if \(refused\.length > 0\) \{\s*setInvalid\(refused\);\s*setSaveFailed\(true\);\s*document\.getElementById\(`\$\{formId\}-\$\{refused\[0\]\}`\)\?\.focus\(\);/);
+    assert.match(src, /\} else if \(refused\.length > 0\) \{\s*setInvalid\(refused\);\s*setSaveFailed\(true\);[^}]*?focusField\(refused\[0\]\);/);
     assert.doesNotMatch(src, /sent\.includes\("contact_email"\)/);
   });
 });

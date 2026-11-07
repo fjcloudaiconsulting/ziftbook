@@ -31,10 +31,10 @@ export function Payments({ disabled, switchRow }: { disabled: boolean; switchRow
   const owner = session.role === "owner";
 
   // Stripe sends the owner back with ?stripe=return (read the state again) or ?stripe=refresh (the
-  // link expired: fetch a fresh one); either way the param goes once handled.
+  // link expired: fetch a fresh one); either way the param goes once handled, and the page stays on this tab.
   useEffect(() => {
     const back = new URLSearchParams(window.location.search).get("stripe");
-    if (back) router.replace("/settings");
+    if (back) router.replace({ pathname: "/settings", query: { tab: "payments" } });
     let cancelled = false;
     (async () => {
       const outcome = await call(() => paymentsAccount());

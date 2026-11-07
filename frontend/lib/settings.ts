@@ -328,3 +328,55 @@ export function contactLoadOutcome(status: number): "show" | "hide" | "failed" {
   if (status === 200) return "show";
   return status === 404 ? "hide" : "failed";
 }
+
+/** The page's tabs (ZIF-161), in order; `?tab=<id>` picks one. */
+export const TABS = ["business", "bookings", "payments", "team"] as const;
+export type Tab = (typeof TABS)[number];
+
+/** The tab each field sits in: a refused field opens its tab, a changed one marks it. */
+const TAB_OF: Record<Key, Tab> = {
+  timezone: "business",
+  language: "business",
+  contact_email: "business",
+  auto_confirm: "bookings",
+  slot_step_minutes: "bookings",
+  min_notice_minutes: "bookings",
+  booking_horizon_days: "bookings",
+  buffer_pct: "bookings",
+  pending_ttl_hours: "bookings",
+  max_pending_per_email: "bookings",
+  free_cancellation_hours: "bookings",
+  reschedule_cutoff_hours: "bookings",
+  max_reschedules: "bookings",
+  cancellation_policy_text: "bookings",
+  payment_check: "payments",
+  workers_edit_own_hours: "team",
+  workers_answer_requests: "team",
+};
+
+export function tabOf(key: Key): Tab {
+  return TAB_OF[key];
+}
+
+/** The tabs holding unsaved changes, in tab order. */
+export function dirtyTabs(changed: Key[]): Tab[] {
+  return TABS.filter((tab) => changed.some((key) => TAB_OF[key] === tab));
+}
+
+/** The tab a URL's query opens: `tab` when it names one, else payments on a return from Stripe (a link
+ * made before the return URL carried the tab), else the first. */
+export function tabFromQuery(search: string): Tab {
+  const params = new URLSearchParams(search);
+  const tab = params.get("tab") ?? "";
+  if ((TABS as readonly string[]).includes(tab)) return tab as Tab;
+  return params.has("stripe") ? "payments" : TABS[0];
+}
+
+/** The tab index a key moves to in a tablist of `count` (ARIA tabs pattern), or null for any other key. */
+export function tabKeyTarget(key: string, index: number, count: number): number | null {
+  if (key === "ArrowRight") return (index + 1) % count;
+  if (key === "ArrowLeft") return (index - 1 + count) % count;
+  if (key === "Home") return 0;
+  if (key === "End") return count - 1;
+  return null;
+}

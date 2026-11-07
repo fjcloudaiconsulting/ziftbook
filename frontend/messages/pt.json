@@ -746,6 +746,13 @@
       "wholeNumber": "Digite um número inteiro de {min} a {max}.",
       "saveChanges": "Salvar alterações",
       "unsavedChanges": "Alterações não salvas: {list}.",
+      "tabs": {
+        "business": "Seu negócio",
+        "bookings": "Agendamentos",
+        "payments": "Pagamentos",
+        "team": "Equipe"
+      },
+      "tabUnsaved": "alterações não salvas",
       "savedList": "Alterações salvas: {list}.",
       "changed": {
         "timezone": "fuso horário",

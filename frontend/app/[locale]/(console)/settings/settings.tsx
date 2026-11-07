@@ -1,7 +1,8 @@
 "use client";
 
 import { useLocale, useTranslations } from "next-intl";
-import { type FormEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
+import { type FormEvent, type KeyboardEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 
 import { type BusinessSettingsOutput, type ContactEmailOut, contactEmailRead, settingsUpdate } from "@/api-client";
 import { bookingPageAddress, dateLocale } from "@/lib/console";
@@ -11,6 +12,7 @@ import {
   contactLoadOutcome,
   type Draft,
   draftFrom,
+  dirtyTabs,
   effective,
   emailMessageKey,
   FIELDS,
@@ -26,6 +28,11 @@ import {
   SLOT_STEPS,
   settingsBody,
   slotExamples,
+  type Tab,
+  tabFromQuery,
+  tabKeyTarget,
+  tabOf,
+  TABS,
   zoneOptions,
 } from "@/lib/settings";
 
@@ -159,6 +166,30 @@ export function Settings() {
     return () => clearTimeout(timer);
   }, [copyState]);
 
+  // The tabs (ZIF-161): `?tab=<id>` picks one and a pick writes it back, so a reload keeps it.
+  const [tab, setTab] = useState<Tab>(() => tabFromQuery(window.location.search));
+  const tabRefs = useRef<Partial<Record<Tab, HTMLButtonElement | null>>>({});
+  function pickTab(next: Tab) {
+    setTab(next);
+    // Native History, not the router: same route, so no scroll to top and no server round trip.
+    const url = new URL(window.location.href);
+    url.searchParams.set("tab", next);
+    window.history.replaceState(window.history.state, "", url);
+  }
+  // Roving tabindex + arrow keys, per the ARIA APG tabs pattern (as the services form's language tabs).
+  function onTabKeyDown(event: KeyboardEvent, index: number) {
+    const next = tabKeyTarget(event.key, index, TABS.length);
+    if (next === null) return;
+    event.preventDefault();
+    pickTab(TABS[next]);
+    tabRefs.current[TABS[next]]?.focus();
+  }
+  /** Focus a field, opening its tab first: a field in a hidden panel takes no focus. */
+  function focusField(key: Key) {
+    flushSync(() => pickTab(tabOf(key)));
+    document.getElementById(`${formId}-${key}`)?.focus();
+  }
+
   const base = formSaved(settings, contact);
   const changed = changedKeys(base, draft);
   const dirty = changed.length > 0;
@@ -243,7 +274,7 @@ export function Settings() {
     setSaveFailed(false);
     setInvalid(bad);
     if (bad.length > 0) {
-      document.getElementById(`${formId}-${bad[0]}`)?.focus();
+      focusField(bad[0]);
       return;
     }
     const sent = Object.keys(body) as Key[];
@@ -275,7 +306,9 @@ export function Settings() {
       } else if (refused.length > 0) {
         setInvalid(refused);
         setSaveFailed(true);
-        document.getElementById(`${formId}-${refused[0]}`)?.focus();
+        // Before the focus, which flushes: a field in a disabled fieldset takes none.
+        setSaving(false);
+        focusField(refused[0]);
       } else if (refusal) {
         // The whole save was refused: every draft stays as typed, and the bar stays.
         setMessage({ tone: "error", text: `${consoleT("notSaved")} ${refusal === "busy" ? form("busy") : t(refusal)}` });
@@ -339,6 +372,10 @@ export function Settings() {
   );
   const zones = zoneOptions(settings.timezone, Intl.supportedValuesOf("timeZone"));
   const showBar = dirty || saving || saveFailed;
+  const marked = dirtyTabs(changed);
+  const publishId = `${formId}-publish`;
+  // Every panel stays mounted and is only hidden: a tab switch keeps the edits in the others, and Save sends them all.
+  const panel = (id: Tab) => ({ id: `${formId}-panel-${id}`, role: "tabpanel", "aria-labelledby": `${formId}-tab-${id}`, hidden: tab !== id });
 
   return (
     <>
@@ -351,6 +388,47 @@ export function Settings() {
           <Banner tone={message.tone}>{message.text}</Banner>
         </div>
       )}
+      {/* The publish switch's own form, outside the settings form (forms don't nest); its button sits in the
+          Booking page section and points here with form=. */}
+      <form
+        id={publishId}
+        noValidate
+        onSubmit={(event) => {
+          event.preventDefault();
+          onTogglePublish();
+        }}
+      />
+
+      <form id={formId} noValidate onSubmit={onSubmit}>
+        <div className={`${styles.tabs} ${styles.settingsTabs}`} role="tablist" aria-label={nav("settings")}>
+          {TABS.map((id, index) => (
+            <button
+              key={id}
+              ref={(el) => {
+                tabRefs.current[id] = el;
+              }}
+              id={`${formId}-tab-${id}`}
+              type="button"
+              role="tab"
+              aria-selected={tab === id}
+              aria-controls={`${formId}-panel-${id}`}
+              tabIndex={tab === id ? 0 : -1}
+              className={styles.subTab}
+              onClick={() => pickTab(id)}
+              onKeyDown={(event) => onTabKeyDown(event, index)}
+            >
+              {t(`tabs.${id}`)}
+              {marked.includes(id) && (
+                <>
+                  <span className={styles.tabDot} aria-hidden="true" />
+                  <span className={uiStyles.srOnly}>{` (${t("tabUnsaved")})`}</span>
+                </>
+              )}
+            </button>
+          ))}
+        </div>
+
+        <div {...panel("business")}>
       <div className={`${styles.section} ${styles.sectionRow}`}>
         <h2>{t("bookingPageHeading")}</h2>
         <p className={styles.sectionDesc}>{t("bookingPageDesc")}</p>
@@ -397,22 +475,13 @@ export function Settings() {
             </a>
           </p>
         )}
-        <form
-          noValidate
-          onSubmit={(event) => {
-            event.preventDefault();
-            onTogglePublish();
-          }}
-        >
-          <Submit busy={publishing} busyLabel={form("sending")} secondary={settings.published}>
-            {t(settings.published ? "unpublish" : "publish")}
-          </Submit>
-        </form>
+        <Submit busy={publishing} busyLabel={form("sending")} secondary={settings.published} form={publishId}>
+          {t(settings.published ? "unpublish" : "publish")}
+        </Submit>
         {settings.published && <p className={uiStyles.hint}>{t("unpublishHint")}</p>}
         </div>
       </div>
 
-      <form id={formId} noValidate onSubmit={onSubmit}>
         <fieldset className={`${styles.section} ${styles.sectionRow} ${styles.settingsSection}`} disabled={saving}>
           <legend>
             <h2>{t("yourBusinessHeading")}</h2>
@@ -451,7 +520,9 @@ export function Settings() {
           <ContactEmail state={contact} loaded={contactLoaded} onState={takeContact} reload={() => setContactReads((n) => n + 1)} />
           </div>
         </fieldset>
+        </div>
 
+        <div {...panel("bookings")}>
         <fieldset className={`${styles.section} ${styles.sectionRow} ${styles.settingsSection}`} disabled={saving}>
           <legend>
             <h2>{t("bookingsHeading")}</h2>
@@ -514,9 +585,6 @@ export function Settings() {
           </div>
         </fieldset>
 
-        {/* Read again after a currency change: whether Stripe pays out in it follows the currency. */}
-        <Payments key={session.currency} disabled={saving} switchRow={(min, ready) => check("payment_check", t("paymentCheckLabel"), t("paymentCheckHint", { min }), !ready && !draft.payment_check)} />
-
         <fieldset className={`${styles.section} ${styles.sectionRow} ${styles.settingsSection}`} disabled={saving}>
           <legend>
             <h2>{t("cancellingHeading")}</h2>
@@ -561,7 +629,14 @@ export function Settings() {
           </Field>
           </div>
         </fieldset>
+        </div>
 
+        <div {...panel("payments")}>
+        {/* Read again after a currency change: whether Stripe pays out in it follows the currency. */}
+        <Payments key={session.currency} disabled={saving} switchRow={(min, ready) => check("payment_check", t("paymentCheckLabel"), t("paymentCheckHint", { min }), !ready && !draft.payment_check)} />
+        </div>
+
+        <div {...panel("team")}>
         <fieldset className={`${styles.section} ${styles.sectionRow} ${styles.settingsSection}`} disabled={saving}>
           <legend>
             <h2>{t("teamHeading")}</h2>
@@ -572,6 +647,7 @@ export function Settings() {
           {check("workers_answer_requests", t("workersAnswerLabel"), t("workersAnswerHint"))}
           </div>
         </fieldset>
+        </div>
 
         {showBar && (
           <SaveBar

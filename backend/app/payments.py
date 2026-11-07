@@ -355,8 +355,8 @@ def connect(body: ConnectIn, seen: Owner, request: Request, response: Response) 
                 logger.warning("apple pay domain not registered", extra={"account": account})
             url = gateway.onboarding_link(
                 account,
-                f"{app_url}/{body.locale}/settings?stripe=return",
-                f"{app_url}/{body.locale}/settings?stripe=refresh",
+                f"{app_url}/{body.locale}/settings?tab=payments&stripe=return",
+                f"{app_url}/{body.locale}/settings?tab=payments&stripe=refresh",
             )
         except stripe_gateway.Failed:
             raise _unavailable() from None
