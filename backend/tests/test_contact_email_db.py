@@ -18,6 +18,7 @@ from app.db import SessionLocal, tenant_context
 from tests.conftest import (
     ADMIN_DATABASE_URL,
     People,
+    jobs_as_the_worker,
     migrate_tenant_context,
     save_setting,
     saved_settings,
@@ -671,3 +672,73 @@ def test_a_runtime_role_still_deletes_it(people: People, migrate_engine: Engine)
     with tenant_context(people.a) as session:
         session.execute(text("DELETE FROM settings WHERE key = 'contact_email'"))
     assert in_effect(people.a) is None
+
+
+SENDERS_PRIVILEGES = text("""
+SELECT p.privilege FROM unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE',
+                                     'REFERENCES', 'TRIGGER']) p(privilege)
+WHERE has_table_privilege('ziftbook_app', 'contact_email_senders', p.privilege)
+ORDER BY 1
+""")
+
+
+# 0094 FENCE. Wrong impl: 0001's default privileges left in place (TRUNCATE would let the app
+# role wipe every business's count), or a table the app cannot write.
+def test_the_app_role_keeps_the_senders_count_and_nothing_more(migrate_engine: Engine) -> None:
+    with migrate_engine.connect() as conn:
+        held = list(conn.scalars(SENDERS_PRIVILEGES))
+    assert held == ["DELETE", "INSERT", "SELECT", "UPDATE"]
+
+
+def test_a_business_counts_once_per_inbox(people: People, app_engine: Engine) -> None:
+    insert = text(
+        "INSERT INTO contact_email_senders (inbox_key, tenant_id, claimed_at)"
+        " VALUES ('k', :t, now())"
+    )
+    with pytest.raises(IntegrityError) as raised, app_engine.begin() as conn:
+        conn.execute(insert, {"t": people.a})
+        conn.execute(insert, {"t": people.a})
+    assert isinstance(raised.value.orig, UniqueViolation)
+
+
+# Review S4 FENCE. Wrong impl: rows that go only when another claim for that inbox comes along, so
+# an inbox nobody mails again keeps its rows for ever. The worker's retention sweep (ZIF-235) takes
+# them, as ziftbook_worker, during a hold too: a count, not evidence.
+def test_the_retention_sweep_deletes_senders_a_day_after_their_last_claim_or_link(
+    people: People, migrate_engine: Engine
+) -> None:
+    from datetime import timedelta
+
+    from app import contact_email, retention
+
+    rows = {
+        "fresh": ("now()", "NULL"),
+        "linked today": ("now() - interval '2 days'", "now() - interval '20 hours'"),
+        "old claim": ("now() - interval '26 hours'", "NULL"),
+        "old link": ("now() - interval '3 days'", "now() - interval '26 hours'"),
+    }
+    with migrate_engine.begin() as conn:
+        for name, (claimed, linked) in rows.items():
+            conn.execute(
+                text(
+                    "INSERT INTO contact_email_senders"
+                    " (inbox_key, tenant_id, claimed_at, linked_at)"
+                    f" VALUES (:k, :t, {claimed}, {linked})"
+                ),
+                {"k": f"sweep-{name}", "t": people.a},
+            )
+
+    with jobs_as_the_worker():
+        swept = retention.sweep(hold=retention.Hold("2099-01-01", "invalid"))
+    assert swept.held and swept.contact_email_senders >= 2
+
+    with migrate_engine.connect() as conn:
+        left = set(
+            conn.scalars(
+                text("SELECT inbox_key FROM contact_email_senders WHERE inbox_key LIKE 'sweep-%'")
+            )
+        )
+    assert left == {"sweep-fresh", "sweep-linked today"}
+    # One rule: a day plus the retention margin, as the claims' own purge states it.
+    assert "interval '25 hours'" in contact_email.PURGE_SENDERS.text
+    assert contact_email.DAY + retention.MARGIN == timedelta(hours=25)

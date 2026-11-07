@@ -347,6 +347,14 @@ def test_aliases_share_one_limit_key() -> None:
     assert limits.address_for_limits("A.B@Example.com") == "a.b@example.com"  # dots count off Gmail
 
 
+# ZIF-232 security review 3 FENCE. Wrong impl: a domain's trailing dot (the same mailbox, and an
+# address normalise_email accepts) giving an address a count of its own.
+def test_a_trailing_dot_on_the_domain_shares_the_key() -> None:
+    assert limits.address_for_limits("ab@gmail.com.") == "ab@gmail.com"
+    assert limits.address_for_limits("a.b@googlemail.com..") == "ab@gmail.com"
+    assert limits.address_for_limits("a@Example.com.") == "a@example.com"
+
+
 # ZB-19. Wrong impl: folding that indexes into a split it assumes has an '@', or that encodes.
 @pytest.mark.parametrize("email", ["no-at-sign", "ünï.cødé+tag@exämple.com", "a\ud800@x.nl", "@"])
 def test_folding_never_raises(email: str) -> None:

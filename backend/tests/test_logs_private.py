@@ -228,6 +228,17 @@ def test_no_personal_data_ever_reaches_a_log(
     contact = "zzyzx-contact@example.net"
     secret(contact)
     assert put_settings(owner, {"contact_email": contact}).status_code == 200
+    # 4c: a new link for it, the worker's send (the first job finds its request replaced) and the
+    # confirm, with a dead link first.
+    assert owner.post("/api/settings/contact-email/confirmation", json={}).status_code == 200
+    assert owner.get("/api/settings/contact-email").status_code == 200
+    contact_token = token_in(mailed(contact))
+    token_secret(contact_token)
+    token_secret(contact_token.partition(".")[2])
+    linked = client_for(app)
+    assert linked.post("/api/contact-email/confirm", json={"token": "x.y"}).status_code == 400
+    confirmed = linked.post("/api/contact-email/confirm", json={"token": contact_token})
+    assert confirmed.status_code == 204
 
     # 5: PATCH /api/members/{id} role change, as the owner.
     target = member_id(people.a, people.only_a)
@@ -805,6 +816,7 @@ def test_no_personal_data_ever_reaches_a_log(
     assert failed[0]["error"] == "HTTPError"
     sent = {line["template"] for line in lines if line["msg"] == "email sent"}
     assert {"sign_up", "sign_up_registered", "password_reset", "invite"} <= sent
+    assert {"contact_email_confirm", "contact_email_changed"} <= sent
     assert {"booking_received", "booking_request", "booking_confirmed", "booking_declined"} <= sent
     assert "booking_flood" in sent
     assert {"booking_cancelled", "booking_refund_failed"} <= sent

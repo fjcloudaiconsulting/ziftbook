@@ -3,20 +3,27 @@ confirm it, and only a confirmed one is in effect."""
 
 import hashlib
 import secrets
+import threading
+import time
 import uuid
+from collections.abc import Iterator
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
 import pytest
 from fastapi import FastAPI
-from sqlalchemy import Engine, Row, text
+from fastapi.testclient import TestClient
+from sqlalchemy import Engine, Row, event, text
 
 import app as app_package
-from app import contact_email
+from app import auth, contact_email, limits
 from app.db import tenant_context
 from app.main import create_app
 from tests.conftest import (
     People,
+    add_membership,
+    add_user,
     confirm_contact_email,
     events,
     fresh_address,
@@ -26,6 +33,7 @@ from tests.conftest import (
     saved_settings,
     set_role,
     signed_in,
+    wait_until_blocked,
 )
 
 
@@ -41,15 +49,6 @@ def waiting(migrate_engine: Engine, tenant_id: uuid.UUID) -> Row[Any] | None:
         ).first()
 
 
-def contact_jobs(migrate_engine: Engine, tenant_id: uuid.UUID) -> int:
-    with migrate_engine.connect() as conn:
-        found: int = conn.scalar(
-            text("SELECT count(*) FROM jobs WHERE tenant_id = :t AND kind LIKE 'email.contact%'"),
-            {"t": tenant_id},
-        )
-    return found
-
-
 def contact_events(migrate_engine: Engine, tenant_id: uuid.UUID) -> list[tuple[Any, ...]]:
     return [
         (e["action"], e["actor_user_id"], e["details"])
@@ -57,9 +56,9 @@ def contact_events(migrate_engine: Engine, tenant_id: uuid.UUID) -> list[tuple[A
     ]
 
 
-# F2.3 FENCE. Wrong impl: the PUT still saves the key (the address in effect unconfirmed), or it
-# queues a link in the release before every worker knows the job.
-def test_a_typed_address_waits_and_is_not_in_effect(
+# F2.3, F7.1 FENCE. Wrong impl: the PUT still saves the key (the address in effect unconfirmed),
+# or it queues no link, or one not tied to the request (a later change could not stop it).
+def test_a_typed_address_waits_and_is_sent_a_link(
     people: People, app: FastAPI, migrate_engine: Engine
 ) -> None:
     owner = signed_in(app, people.a, people.both)
@@ -70,15 +69,39 @@ def test_a_typed_address_waits_and_is_not_in_effect(
     assert owner.get("/api/settings").json()["contact_email"] is None
     request = waiting(migrate_engine, people.a)
     assert request is not None
-    assert (request.email, request.token_hash, request.expires_at) == (
-        "shop@example.com",
-        None,
-        None,
-    )
+    assert (request.email, request.token_hash) == ("shop@example.com", None)
+    assert request.expires_at is not None
     assert saved_settings(people.a) == {}
-    assert contact_jobs(migrate_engine, people.a) == 0
+    assert queued(migrate_engine, people.a) == [f"email.contact_email:{people.a}:{request.id}"]
     with migrate_tenant_context(migrate_engine, people.a) as conn:  # the owner who asked
         assert conn.scalar(text("SELECT requested_by FROM contact_email_requests")) == people.both
+
+
+def queued(migrate_engine: Engine, tenant_id: uuid.UUID) -> list[str]:
+    with migrate_engine.connect() as conn:
+        return list(
+            conn.scalars(
+                text(
+                    "SELECT dedupe_key FROM jobs"
+                    " WHERE tenant_id = :t AND kind = 'email.contact_email' ORDER BY id"
+                ),
+                {"t": tenant_id},
+            )
+        )
+
+
+# F7.1 FENCE. Wrong impl: a link on every save of the waiting address (the one already sent dies).
+def test_the_same_address_again_sends_no_second_link(
+    people: People, app: FastAPI, migrate_engine: Engine, worker_engine: Engine
+) -> None:
+    owner = signed_in(app, people.a, people.both)
+    token = link(worker_engine, people.a, "shop@example.com")
+
+    assert put_settings(owner, {"contact_email": "shop@example.com"}).status_code == 200
+    assert put_settings(owner, {"language": "nl"}).status_code == 200
+
+    assert queued(migrate_engine, people.a) == []
+    assert new_client(app).post(CONFIRM, json={"token": token}).status_code == 204
 
 
 def test_the_address_in_effect_stays_until_the_new_one_is_confirmed(
@@ -314,3 +337,756 @@ def test_a_confirm_logs_ids_only(
     logged = str(lines)
     for value in (secret, hashlib.sha256(secret.encode()).hexdigest(), "zzyzx-confirm"):
         assert value not in logged
+
+
+STATE = "/api/settings/contact-email"
+
+
+def lapse(migrate_engine: Engine, tenant_id: uuid.UUID) -> None:
+    with migrate_tenant_context(migrate_engine, tenant_id) as conn:
+        conn.execute(
+            text("UPDATE contact_email_requests SET expires_at = now() - interval '1 second'")
+        )
+
+
+def queue_link(tenant_id: uuid.UUID, email: str) -> None:
+    """A request with a link queued and not yet minted, as the PUT leaves one."""
+    with tenant_context(tenant_id) as session:
+        session.execute(text("SELECT change_contact_email(:e, true)"), {"e": email})
+
+
+def state_of(body: dict[str, Any]) -> tuple[Any, ...]:
+    return (body["state"], body["confirmed"], body["requested"], body["link_expired"])
+
+
+# F7.5, F7.6 FENCE. Wrong impl: a state read from the setting alone, a waiting address read as
+# live, or "sent" taken from the mint (a queued link would then read as never sent).
+def test_the_state_says_which_address_clients_see_and_which_waits(
+    people: People, app: FastAPI, migrate_engine: Engine, worker_engine: Engine
+) -> None:
+    owner = signed_in(app, people.a, people.both)
+
+    def state() -> tuple[Any, ...]:
+        response = owner.get(STATE)
+        assert response.headers["cache-control"] == "no-store"
+        return state_of(response.json())
+
+    assert state() == ("none", None, None, False)
+    with tenant_context(people.a) as session:  # no link due, as 0088 leaves a moved address
+        session.execute(text("SELECT change_contact_email('moved@example.com', false)"))
+    assert state() == ("unconfirmed", None, "moved@example.com", False)
+    queue_link(people.a, "moved@example.com")
+    assert state() == ("sent", None, "moved@example.com", False)  # queued, not yet minted
+    lapse(migrate_engine, people.a)
+    assert state() == ("unconfirmed", None, "moved@example.com", True)
+    with tenant_context(people.a) as session:
+        session.execute(text("SELECT change_contact_email(NULL, false)"))
+    confirm_contact_email(people.a, "shop@example.com")
+    assert state() == ("confirmed", "shop@example.com", None, False)
+    queue_link(people.a, "next@example.com")
+    body = owner.get(STATE).json()
+    assert state_of(body) == ("sent", "shop@example.com", "next@example.com", False)
+    assert body["expires_at"] is not None
+
+
+# S9 FENCE. Wrong impl: a worker member reading the waiting address (nobody confirmed it, and it
+# may be a third party's).
+def test_only_owners_see_the_waiting_address(
+    people: People, app: FastAPI, migrate_engine: Engine
+) -> None:
+    confirm_contact_email(people.a, "shop@example.com")
+    queue_link(people.a, "next@example.com")
+
+    body = signed_in(app, people.a, people.only_a).get(STATE).json()
+
+    assert state_of(body) == ("sent", "shop@example.com", None, False)
+
+
+def test_the_state_needs_a_session(app: FastAPI) -> None:
+    assert new_client(app).get(STATE).status_code == 401
+
+
+# F7.2 FENCE. Wrong impl: limits per business only (a ring of businesses floods one inbox), keyed
+# on the raw address (aliases of one inbox each get their own count), or a refused save that still
+# saves the other keys sent with it.
+def test_the_fourth_link_in_an_hour_to_one_address_is_refused(
+    people: People, app: FastAPI, migrate_engine: Engine
+) -> None:
+    owner = signed_in(app, people.a, people.both)
+    local = uuid.uuid4().hex[:12]
+    aliases = [f"{local}@gmail.com", f"{local[:4]}.{local[4:]}@gmail.com", f"{local}+x@gmail.com"]
+    for alias in aliases:
+        assert put_settings(owner, {"contact_email": alias}).status_code == 200
+        assert put_settings(owner, {"contact_email": None}).status_code == 200
+    before = waiting(migrate_engine, people.a)
+
+    over = put_settings(owner, {"language": "pt", "contact_email": f"{local}@googlemail.com"})
+
+    assert (over.status_code, over.json()) == (429, {"code": "rate_limited"})
+    assert (waiting(migrate_engine, people.a), saved_settings(people.a)) == (before, {})
+    assert len(queued(migrate_engine, people.a)) == 3
+
+
+@pytest.fixture
+def owners(people: People, app: FastAPI, migrate_engine: Engine) -> Iterator[list[TestClient]]:
+    """Owners of four businesses: a and b, and two more made here."""
+    extra: list[tuple[uuid.UUID, uuid.UUID]] = []
+    for name in ("c", "d"):
+        with migrate_engine.begin() as conn:
+            tenant = conn.scalar(
+                text("INSERT INTO tenants (name) VALUES (:n) RETURNING id"), {"n": name}
+            )
+        user = add_user(migrate_engine)
+        add_membership(tenant, user, "owner")
+        extra.append((tenant, user))
+    set_role(people.b, people.only_b, "owner")
+    yield [
+        signed_in(app, people.a, people.both),
+        signed_in(app, people.b, people.only_b),
+        *(signed_in(app, tenant, user) for tenant, user in extra),
+    ]
+    for tenant, user in extra:
+        with migrate_tenant_context(migrate_engine, tenant) as conn:
+            conn.execute(text("DELETE FROM sessions WHERE tenant_id = :t"), {"t": tenant})
+            conn.execute(text("DELETE FROM settings"))
+            conn.execute(text("DELETE FROM memberships"))
+            conn.execute(text("DELETE FROM users WHERE id = :u"), {"u": user})
+            conn.execute(text("DELETE FROM tenants WHERE id = :t"), {"t": tenant})
+
+
+def send_and_clear(owner: TestClient, address: str, times: int) -> None:
+    for _ in range(times):
+        assert put_settings(owner, {"contact_email": address}).status_code == 200
+        assert put_settings(owner, {"contact_email": None}).status_code == 200
+
+
+def hits(key: str) -> int:
+    return limits.count(key, timedelta(days=1))
+
+
+# Security review 1 FENCE. Wrong impl: one count per address shared by every business, which lets
+# other businesses use up a business's links to its own inbox.
+def test_other_businesses_cannot_use_up_a_business_links_to_an_address(
+    owners: list[TestClient],
+) -> None:
+    address = f"{uuid.uuid4().hex[:12]}@example.com"
+    a, b, c, _ = owners
+    send_and_clear(b, address, 3)
+    send_and_clear(c, address, 2)  # five links to the address today, from two others
+
+    assert put_settings(a, {"contact_email": address}).status_code == 200
+
+
+def senders(migrate_engine: Engine, address: str) -> int:
+    """The businesses counted today toward the inbox of address."""
+    key = contact_email.inbox_key(limits.address_for_limits(address))
+    with migrate_engine.connect() as conn:
+        found: int = conn.scalar(
+            text(
+                "SELECT count(*) FROM contact_email_senders"
+                f" WHERE inbox_key = :k AND {contact_email.LIVE}"
+            ),
+            {"k": key},
+        )
+    return found
+
+
+TODAY = {"code": "contact_email_requests_today"}
+
+
+# Security review FENCE. Wrong impl: no cap on how many businesses mail one inbox (a ring of them
+# floods it), a cap that blocks a business that already mailed it today, or a refusal that is
+# still counted (a refused business would then pass the cap as one that already mailed it).
+def test_a_fourth_business_mailing_one_address_in_a_day_is_refused(
+    migrate_engine: Engine, owners: list[TestClient]
+) -> None:
+    address = f"{uuid.uuid4().hex[:12]}@example.com"
+    a, b, c, d = owners
+    for owner in (a, b, c):
+        send_and_clear(owner, address, 1)
+
+    refused = put_settings(d, {"contact_email": address})
+    again = put_settings(d, {"contact_email": address})
+
+    assert [refused.json(), again.json()] == [TODAY, TODAY]
+    assert refused.status_code == 429
+    assert senders(migrate_engine, address) == 3
+    assert put_settings(c, {"contact_email": address}).status_code == 200
+
+
+# Security review FENCE (targeted lockout). Wrong impl: other businesses able to keep a business
+# from an address it once had confirmed, by mailing it first.
+def test_a_business_that_had_the_address_confirmed_is_never_kept_from_it(
+    people: People,
+    app: FastAPI,
+    migrate_engine: Engine,
+    worker_engine: Engine,
+    owners: list[TestClient],
+) -> None:
+    address = f"{uuid.uuid4().hex[:12]}@example.com"
+    a, b, c, d = owners
+    token = link(worker_engine, people.a, address)
+    assert new_client(app).post(CONFIRM, json={"token": token}).status_code == 204
+    assert put_settings(a, {"contact_email": None}).status_code == 200
+    with migrate_engine.begin() as conn:  # a's link of the day lapsed: only the confirm is left
+        conn.execute(
+            text("DELETE FROM contact_email_senders WHERE tenant_id = :t"), {"t": people.a}
+        )
+    for owner in (b, c, d):
+        send_and_clear(owner, address, 1)
+
+    assert put_settings(a, {"contact_email": address}).status_code == 200
+
+
+# Security review FENCE (race). Wrong impl: "first link of the day" inferred from a counter, which
+# two businesses racing can both pass.
+def test_two_businesses_racing_for_the_last_place_get_one(
+    app_engine: Engine, migrate_engine: Engine, owners: list[TestClient]
+) -> None:
+    address = f"{uuid.uuid4().hex[:12]}@example.com"
+    a, b, c, d = owners
+    for owner in (a, b):
+        send_and_clear(owner, address, 1)
+    results: list[int] = []
+
+    def put(owner: TestClient) -> None:
+        results.append(put_settings(owner, {"contact_email": address}).status_code)
+
+    key = contact_email.inbox_key(limits.address_for_limits(address))
+    with app_engine.begin() as conn:
+        conn.execute(
+            text("SELECT pg_advisory_xact_lock(:c, hashtext(:k))"),
+            {"c": contact_email.SENDERS_LOCK, "k": key},
+        )
+        threads = [threading.Thread(target=put, args=(owner,)) for owner in (c, d)]
+        for thread in threads:
+            thread.start()
+        wait_until_blocked(app_engine, 2)
+    for thread in threads:
+        thread.join()
+
+    assert sorted(results) == [200, 429]
+    assert senders(migrate_engine, address) == 3
+
+
+# Security review FENCE (race, a request undone mid-race). Wrong impl: a failed request that gives
+# back its business's place while a link from that business stands, so a fourth business passes.
+def test_a_failed_request_gives_back_nothing_and_holds_its_place_briefly(
+    people: People, migrate_engine: Engine, owners: list[TestClient]
+) -> None:
+    address = f"{uuid.uuid4().hex[:12]}@example.com"
+    a, b, c, d = owners
+    send_and_clear(b, address, 1)
+    send_and_clear(c, address, 3)
+    assert put_settings(c, {"contact_email": address}).status_code == 429  # c's own hourly limit
+    assert senders(migrate_engine, address) == 2  # c still counts: its links stand
+    send_and_clear(a, address, 1)
+    assert put_settings(d, {"contact_email": address}).json() == TODAY
+
+    other = f"{uuid.uuid4().hex[:12]}@example.com"
+    for owner in (b, c):
+        send_and_clear(owner, other, 1)
+    sent = contact_email.sent_key(people.a, limits.address_for_limits(other))
+    for _ in range(5):
+        limits.charge(sent, timedelta(days=1))
+    assert put_settings(a, {"contact_email": other}).json() == {"code": "rate_limited"}
+    assert senders(migrate_engine, other) == 2  # over its own limit, a takes no place
+    key = contact_email.inbox_key(limits.address_for_limits(other))
+    with migrate_engine.begin() as conn:  # a claim whose request then failed
+        conn.execute(
+            text(
+                "INSERT INTO contact_email_senders (inbox_key, tenant_id, claimed_at)"
+                " VALUES (:k, :t, now())"
+            ),
+            {"k": key, "t": people.a},
+        )
+    assert put_settings(d, {"contact_email": other}).json() == TODAY  # holds its place a while
+    with migrate_engine.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE contact_email_senders SET claimed_at = now() - interval '6 minutes'"
+                " WHERE tenant_id = :t AND linked_at IS NULL"
+            ),
+            {"t": people.a},
+        )
+    assert put_settings(d, {"contact_email": other}).status_code == 200  # and lets it go
+
+
+def test_a_business_sends_one_address_five_links_a_day(people: People, app: FastAPI) -> None:
+    address = f"{uuid.uuid4().hex[:12]}@example.com"
+    sent = contact_email.sent_key(people.a, limits.address_for_limits(address))
+    for _ in range(5):
+        limits.charge(sent, timedelta(days=1))
+
+    over = put_settings(signed_in(app, people.a, people.both), {"contact_email": address})
+
+    assert (over.status_code, over.json()) == (429, {"code": "rate_limited"})
+    assert hits(sent) == 5  # rolled back with the request
+
+
+# Wrong impl: a count kept for a link refused by this business's own limit, or for a save that
+# queues no link.
+def test_a_save_that_queues_no_link_counts_nothing(people: People, app: FastAPI) -> None:
+    owner = signed_in(app, people.a, people.both)
+    address = f"{uuid.uuid4().hex[:12]}@example.com"
+    sent = contact_email.sent_key(people.a, limits.address_for_limits(address))
+    send_and_clear(owner, address, 3)
+    assert put_settings(owner, {"contact_email": address}).status_code == 429  # 4th this hour
+    confirm_contact_email(people.a, address)
+    assert put_settings(owner, {"contact_email": address}).status_code == 200  # kept: no link
+
+    assert hits(sent) == 3
+
+
+# Security review FENCE (pool). Wrong impl: any limiter work on a second pooled connection once the
+# request holds a row lock (a flood then fills the pool with requests each waiting on another),
+# including a refund in a finally, or a key saved before the contact email's claim.
+def test_nothing_takes_a_second_connection_once_a_row_is_locked(
+    people: People, app: FastAPI, app_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[str] = []
+
+    def spy(module: Any, name: str) -> None:
+        real = getattr(module, name)
+
+        def call(*args: Any, **kwargs: Any) -> Any:
+            calls.append(f"{name} in request" if kwargs.get("db") is not None else f"{name} own")
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(module, name, call)
+
+    for name in ("hit", "charge", "refund"):
+        spy(limits, name)
+    spy(contact_email, "claim")
+    locking = ("change_contact_email", "resend_contact_email", "INSERT INTO settings")
+
+    def seen(conn: Any, cursor: Any, statement: str, *rest: Any) -> None:
+        calls.extend(name for name in locking if name in statement)
+
+    owner = signed_in(app, people.a, people.both)
+    event.listen(app_engine, "before_cursor_execute", seen)
+    try:
+        for resend in (False, True):
+            calls.clear()
+            if resend:
+                answer = owner.post(RESEND, json={})
+            else:
+                answer = put_settings(owner, {"language": "nl", "contact_email": "a@x.nl"})
+            assert answer.status_code == 200
+            first = min(calls.index(name) for name in locking if name in calls)
+            assert calls[:first] == ["claim own"], calls
+            assert [c for c in calls[first:] if c.endswith(" own")] == [], calls
+    finally:
+        event.remove(app_engine, "before_cursor_execute", seen)
+
+
+# S3 FENCE. Wrong impl: a limit checked against a state read before the request row was locked,
+# so a save that turns out to queue a link is not counted.
+def test_every_queued_link_is_counted(
+    people: People, app: FastAPI, migrate_engine: Engine, app_engine: Engine
+) -> None:
+    owner = signed_in(app, people.a, people.both)
+    assert put_settings(owner, {"contact_email": "first@example.com"}).status_code == 200
+    results: list[int] = []
+
+    def put(address: str) -> None:
+        results.append(put_settings(owner, {"contact_email": address}).status_code)
+
+    with migrate_tenant_context(migrate_engine, people.a) as conn:
+        conn.execute(text("SELECT 1 FROM contact_email_requests FOR UPDATE"))
+        threads = [
+            threading.Thread(target=put, args=(a,)) for a in ("b@example.com", "c@example.com")
+        ]
+        for thread in threads:
+            thread.start()
+        wait_until_blocked(app_engine, 2)
+    for thread in threads:
+        thread.join()
+
+    assert results == [200, 200]
+    with migrate_engine.connect() as conn:
+        hits = conn.scalar(
+            text("SELECT hits FROM rate_limits WHERE key = :k"),
+            {"k": f"contact_email:tenant:{people.a}"},
+        )
+    assert hits == len(queued(migrate_engine, people.a)) == 3
+
+
+RESEND = "/api/settings/contact-email/confirmation"
+
+
+# F7.3 FENCE. Wrong impl: CurrentSession on the resend (a worker member mails a third party), or
+# a resend with nothing waiting that queues a job anyway.
+def test_only_an_owner_resends_and_only_a_waiting_address(
+    people: People, app: FastAPI, migrate_engine: Engine
+) -> None:
+    owner = signed_in(app, people.a, people.both)
+    worker = signed_in(app, people.a, people.only_a)
+
+    nothing = owner.post(RESEND, json={})
+    assert (nothing.status_code, nothing.json()) == (409, {"code": "no_contact_email_request"})
+    queue_link(people.a, "shop@example.com")
+    refused = worker.post(RESEND, json={})
+    assert (refused.status_code, refused.json()) == (403, {"code": "owner_only"})
+    assert queued(migrate_engine, people.a) == []
+
+
+# F7.4 FENCE. Wrong impl: a resend that keeps the id or the hash (the old link would still work,
+# or the new job would mint for a request that no longer has its id).
+def test_a_resend_kills_the_old_link_and_queues_a_new_one(
+    people: People, app: FastAPI, migrate_engine: Engine, worker_engine: Engine
+) -> None:
+    owner = signed_in(app, people.a, people.both)
+    old = link(worker_engine, people.a, "shop@example.com")
+
+    response = owner.post(RESEND, json={})
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert state_of(response.json()) == ("sent", None, "shop@example.com", False)
+    request = waiting(migrate_engine, people.a)
+    assert request is not None and request.token_hash is None
+    assert queued(migrate_engine, people.a) == [f"email.contact_email:{people.a}:{request.id}"]
+    assert new_client(app).post(CONFIRM, json={"token": old}).status_code == 400
+    assert contact_events(migrate_engine, people.a)[-1] == (
+        "contact_email_requested",
+        people.both,
+        None,
+    )
+    with migrate_tenant_context(migrate_engine, people.a) as conn:  # the resender now asks
+        assert conn.scalar(text("SELECT requested_by FROM contact_email_requests")) == people.both
+
+
+def test_a_resend_counts_toward_the_same_limits(
+    people: People, app: FastAPI, migrate_engine: Engine
+) -> None:
+    owner = signed_in(app, people.a, people.both)
+    assert put_settings(owner, {"contact_email": "shop@example.com"}).status_code == 200
+    for _ in range(2):
+        assert owner.post(RESEND, json={}).status_code == 200
+    before = waiting(migrate_engine, people.a)
+
+    over = owner.post(RESEND, json={})
+
+    assert (over.status_code, over.json()) == (429, {"code": "rate_limited"})
+    assert waiting(migrate_engine, people.a) == before
+
+
+def notices(migrate_engine: Engine, tenant_id: uuid.UUID) -> list[str]:
+    with migrate_engine.connect() as conn:
+        return list(
+            conn.scalars(
+                text(
+                    "SELECT payload ->> 'recipient_id' FROM jobs WHERE tenant_id = :t"
+                    " AND kind = 'email.send' AND payload ->> 'template' = 'contact_email_changed'"
+                ),
+                {"t": tenant_id},
+            )
+        )
+
+
+# S2 FENCE. Wrong impl: no notice (an inbox an attacker confirmed keeps client replies unseen), a
+# notice to a worker member, or one for a change that is not in effect.
+def test_the_owners_are_told_when_the_address_in_effect_changes(
+    people: People, app: FastAPI, migrate_engine: Engine, worker_engine: Engine
+) -> None:
+    owner = signed_in(app, people.a, people.both)
+    assert put_settings(owner, {"contact_email": None}).status_code == 200
+    assert put_settings(owner, {"contact_email": "typed@example.com"}).status_code == 200
+    assert notices(migrate_engine, people.a) == []
+
+    token = link(worker_engine, people.a, "shop@example.com")
+    assert new_client(app).post(CONFIRM, json={"token": token}).status_code == 204
+    assert notices(migrate_engine, people.a) == [str(people.both)]
+
+    assert put_settings(owner, {"contact_email": None}).status_code == 200
+    assert notices(migrate_engine, people.a) == [str(people.both)] * 2
+    assert notices(migrate_engine, people.b) == []
+
+
+# Wrong impl: a link queued uncounted when another save changed the address between the unlocked
+# read and the lock, or a count kept for a link that was not queued.
+@pytest.mark.parametrize("guess", ["false", "true"])
+def test_a_save_raced_by_another_is_refused_as_busy(
+    people: People,
+    app: FastAPI,
+    migrate_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+    guess: str,
+) -> None:
+    owner = signed_in(app, people.a, people.both)
+    address = f"{uuid.uuid4().hex[:12]}@example.com"
+    if guess == "true":
+        assert put_settings(owner, {"contact_email": address}).status_code == 200
+    before = waiting(migrate_engine, people.a)
+    sent = contact_email.sent_key(people.a, limits.address_for_limits(address))
+    counted = hits(sent)
+    monkeypatch.setattr(
+        contact_email, "WILL_SEND", text(f"SELECT {guess} WHERE CAST(:e AS text) IS NOT NULL")
+    )
+
+    raced = put_settings(owner, {"contact_email": address})
+
+    assert (raced.status_code, raced.json()) == (503, {"code": "busy"})
+    assert (waiting(migrate_engine, people.a), hits(sent)) == (before, counted)
+
+
+# Correctness review S2 FENCE. Wrong impl: a resend that mails whatever address waits by the time
+# it locks the row, after claiming the inbox cap for the one it read first (the new address would
+# then be mailed without its own claim).
+def test_a_resend_raced_by_a_change_is_refused_as_busy(
+    people: People, app: FastAPI, migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    owner = signed_in(app, people.a, people.both)
+    first = f"{uuid.uuid4().hex[:12]}@example.com"
+    other = f"{uuid.uuid4().hex[:12]}@example.com"
+    queue_link(people.a, first)
+    real = contact_email.claim
+
+    def claim_then_change(current: Any, email: str, host: str | None) -> None:
+        real(current, email, host)
+        with tenant_context(people.a) as session:  # another owner's save, meanwhile
+            session.execute(text("SELECT change_contact_email(:e, false)"), {"e": other})
+
+    monkeypatch.setattr(contact_email, "claim", claim_then_change)
+    sent = contact_email.sent_key(people.a, limits.address_for_limits(first))
+
+    raced = owner.post(RESEND, json={})
+
+    assert (raced.status_code, raced.json()) == (503, {"code": "busy"})
+    assert queued(migrate_engine, people.a) == []
+    assert hits(sent) == 0
+    assert waiting(migrate_engine, people.a).email == other  # type: ignore[union-attr]
+
+
+# Correctness review S3 FENCE. Wrong impl: the exemption read from any setting_changed of the key,
+# so a business that once typed the address (an owner as actor, from before ZIF-232) passes the
+# inbox cap: a ring could seed that history.
+def test_typing_an_address_once_is_no_proof_it_was_confirmed(
+    people: People, owners: list[TestClient]
+) -> None:
+    address = f"{uuid.uuid4().hex[:12]}@example.com"
+    a, b, c, d = owners
+    with tenant_context(people.a) as session:
+        session.execute(
+            text(
+                "INSERT INTO audit_events (actor_user_id, action, target, details)"
+                " VALUES (:u, 'setting_changed', 'setting:contact_email', CAST(:d AS jsonb))"
+            ),
+            {"u": people.both, "d": f'{{"old": null, "new": "{address}"}}'},
+        )
+    for owner in (b, c, d):
+        send_and_clear(owner, address, 1)
+
+    assert put_settings(a, {"contact_email": address}).json() == TODAY
+
+
+# Re-check SHOULD 2 FENCE. Wrong impl: the exemption read from audit_events, which the API writes
+# itself (an audit row with no actor proves nothing) and which is swept after a year. Only the
+# confirmation record, written by the confirm alone, exempts.
+def test_an_audit_row_alone_does_not_exempt_from_the_inbox_cap(
+    people: People, owners: list[TestClient]
+) -> None:
+    address = f"{uuid.uuid4().hex[:12]}@example.com"
+    a, b, c, d = owners
+    with tenant_context(people.a) as session:
+        session.execute(
+            text(
+                "INSERT INTO audit_events (actor_user_id, action, target, details)"
+                " VALUES (NULL, 'setting_changed', 'setting:contact_email', CAST(:d AS jsonb))"
+            ),
+            {"d": f'{{"old": null, "new": "{address}"}}'},
+        )
+    for owner in (b, c, d):
+        send_and_clear(owner, address, 1)
+
+    assert put_settings(a, {"contact_email": address}).json() == TODAY
+
+
+# Correctness review N8 FENCE. Wrong impl: a business already counted today refused once three
+# others are counted too (possible when an exempt business joined).
+def test_a_counted_business_keeps_its_place_whoever_else_mails_the_inbox(
+    people: People, app: FastAPI, worker_engine: Engine, owners: list[TestClient]
+) -> None:
+    address = f"{uuid.uuid4().hex[:12]}@example.com"
+    a, b, c, d = owners
+    token = link(worker_engine, people.a, address)
+    assert new_client(app).post(CONFIRM, json={"token": token}).status_code == 204
+    assert put_settings(a, {"contact_email": None}).status_code == 200
+    for owner in (b, c, d):
+        send_and_clear(owner, address, 1)
+    send_and_clear(a, address, 1)  # exempt: four businesses now counted
+
+    assert put_settings(b, {"contact_email": address}).status_code == 200
+
+
+# Security review S2 FENCE. Wrong impl: other businesses able to keep an owner from the inbox they
+# sign in with (proven at sign-up, so it adds no flood). It still needs its link confirmed.
+def test_an_owner_is_never_kept_from_their_own_sign_in_inbox(
+    people: People, migrate_engine: Engine, owners: list[TestClient]
+) -> None:
+    a, b, c, d = owners
+    own = f"{people.both}@example.com"
+    for owner in (b, c, d):
+        send_and_clear(owner, own, 1)
+        send_and_clear(owner, f"{people.both}+shop@example.com", 1)
+
+    # Re-check NIT 5: only the exact address the owner proved. A +tag may be another mailbox at a
+    # domain without subaddressing, so it is not exempt (the limit keys still fold it).
+    assert put_settings(a, {"contact_email": f"{people.both}+shop@example.com"}).json() == TODAY
+    assert put_settings(a, {"contact_email": f" {people.both}@Example.COM "}).status_code == 200
+    assert saved_settings(people.a).get("contact_email") is None  # not confirmed by this
+    assert len(queued(migrate_engine, people.a)) == 1
+
+
+# Security review S3 FENCE. Wrong impl: claims without a cap on how many one requester has in
+# flight: each holds a second pooled connection, so concurrent saves for one inbox would drain the
+# API's pool for every business while they wait on the inbox's lock.
+def test_concurrent_saves_cannot_drain_the_pool(
+    people: People, app: FastAPI, app_engine: Engine
+) -> None:
+    owner = signed_in(app, people.a, people.both)
+    address = f"{uuid.uuid4().hex[:12]}@example.com"
+    key = contact_email.inbox_key(limits.address_for_limits(address))
+    results: list[int] = []
+
+    def put() -> None:
+        results.append(put_settings(owner, {"contact_email": address}).status_code)
+
+    with app_engine.begin() as conn:
+        conn.execute(
+            text("SELECT pg_advisory_xact_lock(:c, hashtext(:k))"),
+            {"c": contact_email.SENDERS_LOCK, "k": key},
+        )
+        threads = [threading.Thread(target=put) for _ in range(4)]
+        for thread in threads:
+            thread.start()
+        wait_until_blocked(app_engine, limits.MAX_IN_FLIGHT)
+        for _ in range(200):  # the others are refused at once, holding nothing
+            if results.count(429) == 4 - limits.MAX_IN_FLIGHT:
+                break
+            time.sleep(0.05)
+        assert sorted(results) == [429] * (4 - limits.MAX_IN_FLIGHT)
+    for thread in threads:
+        thread.join()
+    assert set(results) <= {200, 429, 503} and 200 in results  # the two let through finish
+
+
+def client_at(app: FastAPI, tenant_id: uuid.UUID, user_id: uuid.UUID, address: str) -> TestClient:
+    """signed_in, from a chosen client address."""
+    with tenant_context(tenant_id) as session:
+        token = auth.create(session, user_id, ip=None, user_agent=None)
+    client = new_client(app, address)
+    client.cookies.set(auth.COOKIE, token)
+    return client
+
+
+def last_while_two_wait(
+    app_engine: Engine, waiting: list[TestClient], last: TestClient, address: str
+) -> object:
+    """Two saves held on the inbox's lock, then a third: its status, or "blocked" if it waits."""
+    key = contact_email.inbox_key(limits.address_for_limits(address))
+    answer: list[object] = []
+
+    def put(client: TestClient, into: list[object]) -> None:
+        into.append(put_settings(client, {"contact_email": address}).status_code)
+
+    held: list[object] = []
+    with app_engine.begin() as conn:
+        conn.execute(
+            text("SELECT pg_advisory_xact_lock(:c, hashtext(:k))"),
+            {"c": contact_email.SENDERS_LOCK, "k": key},
+        )
+        threads = [threading.Thread(target=put, args=(client, held)) for client in waiting]
+        for thread in threads:
+            thread.start()
+        wait_until_blocked(app_engine, 2)
+        third = threading.Thread(target=put, args=(last, answer))
+        third.start()
+        third.join(timeout=5)
+        outcome = answer[0] if answer else "blocked"
+    for thread in [*threads, third]:
+        thread.join()
+    return outcome
+
+
+# Re-check NIT 8 FENCE. Wrong impl: only a per-business bucket, so one address holds claims for
+# many businesses at once (each holding a pooled connection).
+def test_one_address_holds_two_claims_whatever_the_business(
+    people: People, app: FastAPI, app_engine: Engine
+) -> None:
+    set_role(people.b, people.only_b, "owner")
+    ip = fresh_address()
+    a = client_at(app, people.a, people.both, ip)
+    b = client_at(app, people.b, people.only_b, ip)
+
+    assert last_while_two_wait(app_engine, [a, a], b, f"{uuid.uuid4().hex[:12]}@example.com") == 429
+
+
+# Re-check NIT 8 FENCE. Wrong impl: only a per-address bucket, so one business holds claims from
+# many addresses at once.
+def test_one_business_holds_two_claims_whatever_the_address(
+    people: People, app: FastAPI, app_engine: Engine
+) -> None:
+    first = client_at(app, people.a, people.both, fresh_address())
+    other = client_at(app, people.a, people.both, fresh_address())
+
+    assert (
+        last_while_two_wait(
+            app_engine, [first, first], other, f"{uuid.uuid4().hex[:12]}@example.com"
+        )
+        == 429
+    )
+
+
+# ZIF-264 x ZIF-232 FENCE (merge gate). Wrong impl: a claim cap of its own beside the limiter's, so
+# an address with both of its limiter slots taken (limits._slot) still holds claims on top: each a
+# second pooled connection. The claim takes the address's limiter slot, so it is refused at once,
+# having claimed nothing.
+def test_a_claim_takes_the_address_s_limiter_slot(
+    people: People, app: FastAPI, migrate_engine: Engine
+) -> None:
+    ip = fresh_address()
+    owner = client_at(app, people.a, people.both, ip)
+    address = f"{uuid.uuid4().hex[:12]}@example.com"
+    key = contact_email.inbox_key(limits.address_for_limits(address))
+
+    with limits._slot(ip), limits._slot(ip):
+        response = put_settings(owner, {"contact_email": address})
+
+    assert (response.status_code, response.json()) == (429, {"code": "rate_limited"})
+    with migrate_engine.connect() as conn:
+        claimed = conn.scalar(
+            text("SELECT count(*) FROM contact_email_senders WHERE inbox_key = :k"), {"k": key}
+        )
+    assert claimed == 0
+    assert limits._in_flight == {}
+
+
+CANCEL = "/api/settings/contact-email/request"
+
+
+# Review S6 FENCE. Wrong impl: cancelling a change through a clear, which also removes the address
+# clients see; a cancel a worker member can make; or one that leaves the waiting link working.
+def test_an_owner_cancels_a_change_and_keeps_the_address_in_effect(
+    people: People, app: FastAPI, migrate_engine: Engine, worker_engine: Engine
+) -> None:
+    confirm_contact_email(people.a, "old@example.com")
+    token = link(worker_engine, people.a, "new@example.com")
+    owner = signed_in(app, people.a, people.both)
+
+    refused = signed_in(app, people.a, people.only_a).request("DELETE", CANCEL, json={})
+    cancelled = owner.request("DELETE", CANCEL, json={})
+    nothing = owner.request("DELETE", CANCEL, json={})
+
+    assert (refused.status_code, refused.json()) == (403, {"code": "owner_only"})
+    assert cancelled.status_code == 200
+    assert state_of(cancelled.json()) == ("confirmed", "old@example.com", None, False)
+    assert (nothing.status_code, nothing.json()) == (409, {"code": "no_contact_email_request"})
+    assert saved_settings(people.a)["contact_email"] == "old@example.com"
+    assert new_client(app).post(CONFIRM, json={"token": token}).status_code == 400
+    assert contact_events(migrate_engine, people.a)[-1] == (
+        "contact_email_request_cancelled",
+        people.both,
+        None,
+    )

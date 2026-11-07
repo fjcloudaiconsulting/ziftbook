@@ -167,8 +167,9 @@ every table that holds a tenant's data:
 
 `tests/test_tenant_schema.py` fails for a table with `tenant_id` that is not isolated (forced row-level security),
 and for a foreign key between tenant-owned tables that does not pair `tenant_id`. Exempt on purpose: `jobs` (global,
-claimed across tenants), `sessions` (how the tenant is found) and `platform_audit_events` (global; its `tenant_id`
-names the business a platform admin acted on).
+claimed across tenants), `sessions` (how the tenant is found), `platform_audit_events` (global; its `tenant_id`
+names the business a platform admin acted on) and `contact_email_senders` (ZIF-232; counts the businesses that
+mailed one inbox, across them, and is swept a day after use).
 
 `tenants` is the root table: it isn't isolated with `enable_tenant_isolation` and has no row-level security of its
 own.
@@ -745,6 +746,19 @@ value needs a redeploy it is an environment variable; otherwise it is a setting.
   confirms: it is kept, visible to owners only, until an owner changes or clears it, it is confirmed, or the business
   is deleted (one row per business; no sweep). An operator who sets one by hand runs
   `SET ROLE ziftbook_migrate` first; a data-only restore of `settings` needs `--disable-triggers`.
+  Links are limited per business and address (3 an hour, 5 a day) and per business (10 a day), all counted inside
+  the request's transaction (`limits.hit(..., db=...)`), and to 3 businesses a day per inbox, counted as rows in
+  `contact_email_senders` (0094) by `contact_email.claim` in a short transaction of its own before the request locks
+  any row (so the PUT handles `contact_email` before any other key). A claim takes one of the client address's
+  limiter slots (`limits._slot`, shared with every limiter call of that address and its /48, ZIF-264) and one of the
+  business's 2 claim slots. A business already counted that day, one that ever had the address confirmed, and an owner
+  typing their own sign-in inbox are never refused by that cap (`contact_email_requests_today`); any other business
+  can be kept from an address for a day by three others, the accepted price of an inbox no ring of businesses can
+  flood. Aliases (`+tag`, Gmail dots, a trailing dot) share counts; a catch-all domain or subdomain addressing gives
+  each name its own inbox key, so only the 10 a day per business bounds mail to such a mailbox (a per-domain cap
+  was refused: anyone could use it to block a whole provider). No limiter call takes a second connection while the
+  request holds a row lock. Owners can cancel a waiting address (`DELETE /api/settings/contact-email/request`),
+  which keeps the one in effect; a clear removes both.
 - Incident (contact email diverted, for example after an API compromise): the API can request and confirm an inbox
   it controls, but every confirmation is recorded by `confirm_contact_email` itself in
   `contact_email_confirmations`, which no runtime role can change (kept while the business exists and deleted with
@@ -800,8 +814,9 @@ Deferred and scheduled work goes through the `jobs` table (`app/jobs.py`); there
   failure withholds the ping), within a 20-second budget and stopping between batches when the worker stops; a run
   that leaves a backlog comes back after 5 minutes. It deletes `rate_limits` rows an hour after the longest window
   (`limits.MAX_WINDOW`, one day: no limit may use a longer window, `limits` refuses one), sessions, admin sessions
-  and account sessions an hour after they stop being live, audit events past their period (see "Audit log"), and clears `ip` and
-  `user_agent` of a booking event once the event and its booking's end are both 18 months old (the row stays as
+  and account sessions an hour after they stop being live, a business's `contact_email_senders` row an hour after the
+  day of its last claim and link (ZIF-232; claims purge with the same statement), audit events past their period
+  (see "Audit log"), and clears `ip` and `user_agent` of a booking event once the event and its booking's end are both 18 months old (the row stays as
   evidence), walking the businesses in id order; a run that stops before the end leaves its place, and the next
   run goes on from it (a worker restart starts the pass again). The hour is a margin for readers whose transaction began before the sweep. Every table that stores an
   address or a browser is listed in `retention.COVERED` with its rule; a test compares it with the catalog, so a new
@@ -1171,7 +1186,7 @@ ZIF-38). An empty variable means the default: `env_ignore_empty=True` on the bas
 | `ZIF_APP_REVISION` | api, frontend | `dev` | no | no | Git sha of the build, baked into the backend and frontend images. |
 | `ZIF_SHOW_VERSION` | frontend | none | no | no | `true` shows the version line (`v0.27.1 · 315a9c5`) at the bottom of the console sidebar and More sheet and in the booking pages' footer. Only staging sets it. Read server-side per request, never `NEXT_PUBLIC_*`. |
 | `ZIF_HEALTHCHECK_URL` | worker | none | no | no | Pinged after every successful loop. |
-| `ZIF_RETENTION_HOLD_UNTIL` | worker | none | no | no | An incident's evidence hold (ZIF-235): a plain date, `YYYY-MM-DD`, from tomorrow to 90 days ahead, exclusive: the hold lasts until 00:00 UTC on that date. Until then the retention sweep keeps audit events, platform audit events and booking-event addresses; sessions, rate limits, admin sessions and account sessions are still swept. It shows in the `worker started` line, the worker logs a WARNING at startup, and every sweep line is a WARNING while it holds; at 00:00 UTC on its date it ends by itself. Today's date or an earlier one holds nothing and logs an ERROR at startup (a mistyped year shows). Any other value (`0`, a datetime, a number, more than 90 days ahead) never turns the hold off and never stops the worker: it holds until fixed, logs an ERROR at startup and on every sweep, and the worker withholds its healthcheck ping, so the alert fires until someone corrects it. Set it in the worker's environment (production and staging: the worker's ConfigMap in cloud-infra `clusters/hetzner/ziftbook-{prod,staging}`, then restart the worker; compose: `.env`), and remove it once the evidence is exported. |
+| `ZIF_RETENTION_HOLD_UNTIL` | worker | none | no | no | An incident's evidence hold (ZIF-235): a plain date, `YYYY-MM-DD`, from tomorrow to 90 days ahead, exclusive: the hold lasts until 00:00 UTC on that date. Until then the retention sweep keeps audit events, platform audit events and booking-event addresses; sessions, rate limits, contact email senders, admin sessions and account sessions are still swept. It shows in the `worker started` line, the worker logs a WARNING at startup, and every sweep line is a WARNING while it holds; at 00:00 UTC on its date it ends by itself. Today's date or an earlier one holds nothing and logs an ERROR at startup (a mistyped year shows). Any other value (`0`, a datetime, a number, more than 90 days ahead) never turns the hold off and never stops the worker: it holds until fixed, logs an ERROR at startup and on every sweep, and the worker withholds its healthcheck ping, so the alert fires until someone corrects it. Set it in the worker's environment (production and staging: the worker's ConfigMap in cloud-infra `clusters/hetzner/ziftbook-{prod,staging}`, then restart the worker; compose: `.env`), and remove it once the evidence is exported. |
 | `ZIF_IMAGE_TAG` | compose | none | yes | no | Release tag (`vX.Y.Z`) for the three GHCR images. |
 | `ZIF_API_URL` | frontend | none | yes | no | Backend base URL the web app proxies `/api` to. |
 | **Telemetry** | | | | | |
