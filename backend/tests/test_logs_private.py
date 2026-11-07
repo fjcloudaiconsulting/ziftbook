@@ -967,6 +967,7 @@ def test_the_retention_sweep_never_logs_what_it_deletes(
     with jobs_as_the_worker():
         retention.sweep()
         retention.sweep(hold=retention.parse_hold("0", datetime.now().date()))
+    direct = log_lines()[seeded:]
 
     # A worker iteration as ziftbook_app: the sweep fails (42501) and the invalid hold errs.
     monkeypatch.setattr(worker_module, "POLL_SECONDS", 0.05)
@@ -986,7 +987,8 @@ def test_the_retention_sweep_never_logs_what_it_deletes(
     dumped = json.dumps(lines)
     for value in never:
         assert value not in dumped, value
-    swept = [line for line in lines if line["msg"] == "retention swept"]
+    # ZIF-286: the timed worker window may log "retention swept" too; count only the direct two.
+    swept = [line for line in direct if line["msg"] == "retention swept"]
     assert len(swept) == 2 and swept[1]["hold_until"] == "0"
     failed = [line for line in lines if line["msg"] == "retention sweep failed"]
     assert failed and all(line["level"] == "ERROR" and "exc" in line for line in failed)
