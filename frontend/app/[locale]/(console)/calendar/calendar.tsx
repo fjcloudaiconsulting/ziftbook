@@ -41,9 +41,11 @@ type Popover = { at: string; time: string; member: string; name: string; column:
 
 // The last view, per browser (ZIF-143). Blocked storage reads nothing, and the calendar opens in Day as before.
 const VIEW_KEY = "ziftbook.calendar.view";
-function rememberedView(): string | null {
+// A phone's list or time grid, per browser (ZIF-283). Blocked storage reads nothing: the list, as before.
+const LAYOUT_KEY = "ziftbook.calendar.phoneLayout";
+function remembered(key: string): string | null {
   try {
-    return localStorage.getItem(VIEW_KEY);
+    return localStorage.getItem(key);
   } catch {
     return null;
   }
@@ -108,8 +110,17 @@ export function Calendar() {
     isOwner ? "owner" : "worker",
     session.member_id,
     members?.map((m) => m.member_id) ?? null,
-    params.get("view") === null ? rememberedView() : null,
+    params.get("view") === null ? remembered(VIEW_KEY) : null,
   );
+  const [phoneGrid, setPhoneGrid] = useState(() => remembered(LAYOUT_KEY) === "grid");
+  function choosePhoneLayout(grid: boolean) {
+    setPhoneGrid(grid);
+    try {
+      localStorage.setItem(LAYOUT_KEY, grid ? "grid" : "list");
+    } catch {
+      // Nothing to remember in: the choice lasts until the page reloads.
+    }
+  }
   useEffect(() => {
     try {
       localStorage.setItem(VIEW_KEY, view.view);
@@ -570,6 +581,13 @@ export function Calendar() {
             </Link>
           ))}
         </nav>
+        <span className={`${css.seg} ${css.layoutSwitch}`} role="group" aria-label={t("layout")}>
+          {[false, true].map((grid) => (
+            <button key={String(grid)} type="button" aria-pressed={phoneGrid === grid} onClick={() => choosePhoneLayout(grid)}>
+              {grid ? t("layoutGrid") : t("layoutList")}
+            </button>
+          ))}
+        </span>
         {isOwner && members && (
           <div className={`${uiStyles.input} ${css.member} ${css.deskOnly}`}>
             <select aria-label={t("member")} value={colMember} onChange={(event) => router.push(href({ member: event.target.value }), { scroll: false })}>
@@ -624,29 +642,24 @@ export function Calendar() {
             </>
           ) : (
             <>
-              <div className={`${css.phoneOnly} ${css.phoneList} ${css.hideWithDetail}`}>
-                {weekView ? (
-                  <div className={uiStyles.stack}>
-                    {days.map((day) => (
-                      <section key={day} className={css.dayBlock} aria-label={longDay.format(asDate(day))}>
-                        <h2 className={css.dayHeading}>{longDay.format(asDate(day))}</h2>
-                        {dayList(day)}
-                      </section>
-                    ))}
-                  </div>
-                ) : (
-                  dayList(view.date)
-                )}
-                <div className={css.phoneActions}>
-                  <Link className={`${uiStyles.button} ${uiStyles.primary} ${uiStyles.small}`} href={href({ panel: "new", at: null, with: null })} scroll={false} onClick={openPanel}>
-                    {t("newBooking")}
-                  </Link>
-                  <Link className={`${uiStyles.button} ${uiStyles.secondary} ${uiStyles.small}`} href={href({ panel: "block", at: null, with: null })} scroll={false} onClick={openPanel}>
-                    {t("blockTime")}
-                  </Link>
+              {!phoneGrid && (
+                <div className={`${css.phoneOnly} ${css.phoneList} ${css.hideWithDetail}`}>
+                  {weekView ? (
+                    <div className={uiStyles.stack}>
+                      {days.map((day) => (
+                        <section key={day} className={css.dayBlock} aria-label={longDay.format(asDate(day))}>
+                          <h2 className={css.dayHeading}>{longDay.format(asDate(day))}</h2>
+                          {dayList(day)}
+                        </section>
+                      ))}
+                    </div>
+                  ) : (
+                    dayList(view.date)
+                  )}
                 </div>
-              </div>
-              <div className={`${css.deskOnly} ${uiStyles.stack}`}>
+              )}
+              {/* The grid on a phone too once chosen there; hideWithDetail only acts on a phone. */}
+              <div className={`${phoneGrid ? "" : css.deskOnly} ${css.hideWithDetail} ${uiStyles.stack}`}>
                 {(closedToday || empty) && (
                   <p className={css.gridNote}>
                     <strong>{closedToday ? t("closedTitle") : t("nothingBooked")}</strong>
@@ -691,6 +704,14 @@ export function Calendar() {
                   </div>
                 </div>
                 <p className={css.legend}>{t(canAnswer ? "legend" : "legendOwner")}</p>
+              </div>
+              <div className={`${css.phoneOnly} ${css.phoneActions} ${css.hideWithDetail}`}>
+                <Link className={`${uiStyles.button} ${uiStyles.primary} ${uiStyles.small}`} href={href({ panel: "new", at: null, with: null })} scroll={false} onClick={openPanel}>
+                  {t("newBooking")}
+                </Link>
+                <Link className={`${uiStyles.button} ${uiStyles.secondary} ${uiStyles.small}`} href={href({ panel: "block", at: null, with: null })} scroll={false} onClick={openPanel}>
+                  {t("blockTime")}
+                </Link>
               </div>
             </>
           )}

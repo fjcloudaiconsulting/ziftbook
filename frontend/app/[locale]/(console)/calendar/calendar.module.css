@@ -7,8 +7,9 @@
 .stepper a + a { border-left: 1px solid var(--line); }
 .stepper a:hover { background: var(--surface); }
 .seg { display: inline-flex; padding: 3px; background: var(--surface); border-radius: 999px; }
-.seg a { min-height: 38px; padding: 0 1rem; display: grid; place-items: center; border-radius: 999px; font-weight: 600; font-size: 0.9375rem; color: var(--muted); text-decoration: none; white-space: nowrap; }
-.seg a[aria-current="true"] { background: var(--bg); color: var(--ink); box-shadow: 0 1px 3px oklch(0.23 0.025 28 / 0.15); }
+.seg button { border: 0; background: none; font: inherit; cursor: pointer; }
+.seg a, .seg button { min-height: 38px; padding: 0 1rem; display: grid; place-items: center; border-radius: 999px; font-weight: 600; font-size: 0.9375rem; color: var(--muted); text-decoration: none; white-space: nowrap; }
+.seg a[aria-current="true"], .seg button[aria-pressed="true"] { background: var(--bg); color: var(--ink); box-shadow: 0 1px 3px oklch(0.23 0.025 28 / 0.15); }
 /* Phone: the date sits on its own line under the stepper. Desktop: first in the toolbar, as drawn. */
 .dateLabel { margin: 0; flex-basis: 100%; order: 3; color: var(--muted); font-size: 0.9375rem; }
 .member { display: none; min-width: 10rem; }
@@ -119,6 +120,7 @@
 
 @media (min-width: 56rem) {
   .newActions { display: inline-flex; }
+  .layoutSwitch { display: none; }
   .phoneOnly { display: none; }
   .deskOnly { display: block; }
   .dateLabel { flex-basis: auto; order: 0; margin-right: auto; color: var(--ink); font: 400 1.25rem/1.2 var(--font-display), Georgia, serif; }
@@ -130,5 +132,7 @@
 /* The panel covers a phone's screen: the list behind it leaves the page, so focus and readers stay in the panel. */
 @media (max-width: 55.999rem) {
   .panel .close { display: none; }
+  /* The grid on a phone (ZIF-283): columns keep a readable width and the lanes scroll sideways. */
+  .inner { min-width: calc(var(--cols) * max(var(--mincol), 7rem)); }
   .hasDetail .hideWithDetail { display: none; }
 }
