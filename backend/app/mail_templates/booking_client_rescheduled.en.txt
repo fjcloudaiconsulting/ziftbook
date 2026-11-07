@@ -7,5 +7,6 @@ $client moved their booking.
 | Now $date at $time ($zone)
 | Was $old_date at $old_time
 | Client: $client
+| $with
 
 [Open ziftbook]($link)

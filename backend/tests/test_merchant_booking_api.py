@@ -730,6 +730,7 @@ def test_the_team_template_set_is_complete() -> None:
         "old_date": "OLD-DATE-MARKER",
         "old_time": "OLD-TIME-MARKER",
         "member": "MEMBER-MARKER",
+        "with": "With Member",
     }
     for template in ("booking_moved_team", "booking_moved_team_member"):
         for locale in LOCALES:

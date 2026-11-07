@@ -9,6 +9,7 @@ import uuid
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta, timezone
 from email import message_from_string
+from string import Template
 from typing import Any
 
 import pytest
@@ -1790,13 +1791,13 @@ def test_a_flood_alert_for_someone_not_an_owner_sends_nothing(people: People, wh
     assert subjects_sent_to(email_of(user_id)) == []
 
 
-# ZIF-175 fence: the client's card says who the booking is with, as their booking page does
-# ("With {name}", else "With a member of the team"). Kills: the line missing, and the fallback
-# missing (a bare "With").
+# ZIF-175 fence: the client's card and the team's say who the booking is with, as the client's
+# booking page does ("With {name}", else "With a member of the team"). Kills: the line missing on
+# either card, and the fallback missing (a bare "With").
 @pytest.mark.parametrize(
     ("name", "said"), [("Ana", "With Ana"), (None, "With a member of the team")]
 )
-def test_the_clients_card_says_who_the_booking_is_with(
+def test_the_booking_card_says_who_the_booking_is_with(
     people: People, app: FastAPI, ready: str, name: str | None, said: str
 ) -> None:
     booking_id = make_pending(app, people.a, ready)
@@ -1812,6 +1813,12 @@ def test_the_clients_card_says_who_the_booking_is_with(
     sent = mail_for(_client_email(people.a, booking_id))
     assert said + "\n" in sent["Text"]
     assert said in sent["Html"]
+
+    run_send_booking(people.a, booking_id, "booking_new", user_id=str(people.both))
+
+    sent = mail_for(email_of(people.both))  # in the member's own language
+    said_in = [Template(n).substitute(name=name) if name else t for n, t in mail.WITH.values()]
+    assert any(s + "\n" in sent["Text"] and s in sent["Html"] for s in said_in)
 
 
 # ZIF-175 fence: an opening sentence must be true on every path that sends it. booking_new goes to

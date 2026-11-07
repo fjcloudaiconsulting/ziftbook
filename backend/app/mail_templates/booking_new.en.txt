@@ -6,6 +6,7 @@ The booking for $client is confirmed.
 | $service
 | $date at $time ($zone)
 | Client: $client
+| $with
 | $payment
 
 > $message

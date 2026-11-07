@@ -6,6 +6,7 @@ De boeking voor $client is bevestigd.
 | $service
 | $date om $time ($zone)
 | Klant: $client
+| $with
 | $payment
 
 > $message

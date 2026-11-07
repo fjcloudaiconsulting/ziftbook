@@ -6,5 +6,6 @@ $client heeft de afspraak geannuleerd.
 | $service
 | $date om $time ($zone)
 | Klant: $client
+| $with
 
 [Open ziftbook]($link)

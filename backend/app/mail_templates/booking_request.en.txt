@@ -6,6 +6,7 @@ $client would like to book.
 | $service
 | $date at $time ($zone)
 | Client: $client
+| $with
 | $payment
 
 > $message

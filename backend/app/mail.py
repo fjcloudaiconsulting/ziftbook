@@ -748,7 +748,8 @@ PAYMENT_LINES = {
 }
 SYMBOLS = {"BRL": "R$", "EUR": "€", "GBP": "£", "USD": "$"}
 
-# Who a client's booking is with, worded as their booking page words it (frontend/messages).
+# Who a booking is with, on the client's card and the team's, worded as the client's booking page
+# words it (frontend/messages).
 WITH = {
     "en": ("With $name", "With a member of the team"),
     "nl": ("Bij $name", "Bij iemand van het team"),
@@ -1011,10 +1012,9 @@ def send_booking(job: Job) -> None:
                 )
                 values["old_date"] = previous_local.strftime(DATE_FORMAT[locale])
                 values["old_time"] = previous_local.strftime("%H:%M")
-        else:
-            named, team = WITH[locale]
-            name = row.worker_display_name
-            values["with"] = Template(named).substitute(name=name) if name else team
+        named, team = WITH[locale]
+        name = row.worker_display_name
+        values["with"] = Template(named).substitute(name=name) if name else team
         if user_id is None and template in LINKED:
             # D1: mint and set values["link"] BEFORE render() (the body needs it), and only insert
             # the hash if _outbox (below) reports 'pending' -- a token minted for a dedupe no-op is

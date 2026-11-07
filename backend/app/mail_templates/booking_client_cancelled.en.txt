@@ -6,5 +6,6 @@ $client cancelled their booking.
 | $service
 | $date at $time ($zone)
 | Client: $client
+| $with
 
 [Open ziftbook]($link)

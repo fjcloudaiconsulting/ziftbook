@@ -6,5 +6,6 @@ $client cancelou o agendamento.
 | $service
 | $date às $time ($zone)
 | Cliente: $client
+| $with
 
 [Abrir o ziftbook]($link)

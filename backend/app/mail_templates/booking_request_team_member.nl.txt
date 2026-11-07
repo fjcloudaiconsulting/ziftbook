@@ -6,6 +6,7 @@ $client wil graag boeken.
 | $service
 | $date om $time ($zone)
 | Klant: $client
+| $with
 
 > $message
 

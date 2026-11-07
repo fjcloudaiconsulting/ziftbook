@@ -6,6 +6,7 @@ $client quer fazer um agendamento.
 | $service
 | $date às $time ($zone)
 | Cliente: $client
+| $with
 | $payment
 
 > $message

@@ -6,6 +6,7 @@ O agendamento de $client está confirmado.
 | $service
 | $date às $time ($zone)
 | Cliente: $client
+| $with
 | $payment
 
 > $message

@@ -7,5 +7,6 @@ $client remarcou o agendamento.
 | Agora $date às $time ($zone)
 | Antes $old_date às $old_time
 | Cliente: $client
+| $with
 
 [Abrir o ziftbook]($link)
