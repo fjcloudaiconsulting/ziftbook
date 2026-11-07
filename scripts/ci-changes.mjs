@@ -16,6 +16,8 @@ export function affected(paths) {
     else if (path.startsWith("backend/")) jobs.backend = true;
     else if (path.startsWith("frontend/")) jobs.frontend = true;
     else if (path.startsWith("landing/")) jobs.landing = true;
+    // The warning gate of the frontend and landing steps (ZIF-153).
+    else if (path === "scripts/fail-on-warnings.sh") jobs.frontend = jobs.landing = true;
     // Workflows, root config (.nvmrc, compose, version.txt, ...) and any path not listed here run everything.
     else if (!/^(scripts|\.githooks)\/|^CONTRIBUTING\.md$/.test(path)) {
       return { backend: true, frontend: true, landing: true, repo: true };

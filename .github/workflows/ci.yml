@@ -79,7 +79,8 @@ jobs:
       - name: Test the commit-msg hook
         run: sh .githooks/commit-msg.test.sh
       - name: Run repo script tests
-        run: node --test "scripts/*.test.mjs"
+        shell: bash
+        run: node --test "scripts/*.test.mjs" 2>&1 | tee "$RUNNER_TEMP/scripts.log" && scripts/fail-on-warnings.sh "$RUNNER_TEMP/scripts.log"
       - name: Check message catalogs
         run: node scripts/check-catalogs.mjs
       - name: Check env names
@@ -205,14 +206,21 @@ jobs:
         run: pnpm lint
       - name: Type-check frontend
         run: pnpm typecheck
-      # ZIF-153: a warning fails the build and the tests. Next marks its warnings with "⚠", Node its
-      # own with "(node:<pid>)"; the step prints the lines it found. bash here runs with pipefail.
+      # Next's build cache: faster builds. A missing one also makes next build warn on CI.
+      - name: Restore the Next build cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: frontend/.next/cache
+          key: next-${{ runner.os }}-${{ hashFiles('frontend/pnpm-lock.yaml') }}-${{ hashFiles('frontend/*.ts', 'frontend/app/**', 'frontend/lib/**', 'frontend/i18n/**', 'frontend/messages/**') }}
+          restore-keys: next-${{ runner.os }}-${{ hashFiles('frontend/pnpm-lock.yaml') }}-
+      # ZIF-153: Next's ⚠ lines and Node runtime warnings fail the step (scripts/fail-on-warnings.sh).
+      # bash here runs with pipefail, so a failing build or test fails the step too.
       - name: Build frontend
         shell: bash
-        run: pnpm build 2>&1 | tee "$RUNNER_TEMP/build.log" && ! grep -E '⚠|^\(node:[0-9]+\) ' "$RUNNER_TEMP/build.log"
+        run: pnpm build 2>&1 | tee "$RUNNER_TEMP/build.log" && ../scripts/fail-on-warnings.sh "$RUNNER_TEMP/build.log"
       - name: Run frontend tests
         shell: bash
-        run: pnpm test 2>&1 | tee "$RUNNER_TEMP/test.log" && ! grep -E '⚠|^\(node:[0-9]+\) ' "$RUNNER_TEMP/test.log"
+        run: pnpm test 2>&1 | tee "$RUNNER_TEMP/test.log" && ../scripts/fail-on-warnings.sh "$RUNNER_TEMP/test.log"
 
   landing:
     name: Landing Tests
@@ -232,7 +240,8 @@ jobs:
         with:
           node-version-file: .nvmrc
       - name: Run landing tests
-        run: npm test
+        shell: bash
+        run: npm test 2>&1 | tee "$RUNNER_TEMP/landing.log" && ../scripts/fail-on-warnings.sh "$RUNNER_TEMP/landing.log"
 
   # Aggregate checks, the names branch protection requires. Always run; fail unless every gated job passed or was skipped.
   # `changes` is gated too: if it fails, every job after it skips, and skipped alone would read as passing.

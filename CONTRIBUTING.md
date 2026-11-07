@@ -8,9 +8,11 @@
   `make setup` copies the same check into your `.git/hooks` as a local commit hook (re-run it after the hook changes).
   If you set up before ZB-07, re-run `make setup` once after pulling it.
 - `make lint typecheck test` runs locally what CI runs.
-- A warning fails CI (ZIF-153): pytest turns warnings into errors (`filterwarnings` in `backend/pyproject.toml`; an
-  ignore names the message and says why), ESLint runs with `--max-warnings 0`, and the frontend build and test steps
-  fail on a line with Next's `⚠` or Node's `(node:<pid>)`. Fix the warning rather than silence it.
+- What fails CI on a warning (ZIF-153): Python warnings in the backend tests (`filterwarnings` in
+  `backend/pyproject.toml`; an ignore names the message and says why); ESLint warnings (`--max-warnings 0`); and Next's
+  `⚠` lines and Node runtime warnings (`(node:<pid>) ...`) in the frontend build, the frontend, landing and repo script
+  tests (`scripts/fail-on-warnings.sh`, whose allow-list gives each benign line its reason). Other output, such as pnpm
+  `WARN` lines or React `Warning:` messages in test output, is not gated.
 - Landing: run `npm --prefix landing ci` once before `npm --prefix landing run dev`; wrangler comes from the lockfile.
 - CI on a pull request runs only the jobs its changed paths can affect (`scripts/ci-changes.mjs`); a docs-only PR runs
   just the title check and the two aggregate checks, `Backend Checks` and `Frontend Checks`, which pass when every job
