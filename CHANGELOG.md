@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.34.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.33.0...v0.34.0) (2026-11-07)
+
+
+### Features
+
+* the worker purges old sign-in failures, rate limits, sessions and stored addresses (ZIF-235) ([#369](https://github.com/fjcloudaiconsulting/ziftbook/issues/369)) ([6733176](https://github.com/fjcloudaiconsulting/ziftbook/commit/6733176b84371b09848d9dcc6c459dfaa22ec735))
+* **web:** the privacy notice states how long each kind of data is kept (ZIF-263) ([#380](https://github.com/fjcloudaiconsulting/ziftbook/issues/380)) ([d591aa1](https://github.com/fjcloudaiconsulting/ziftbook/commit/d591aa16e7ff68fa76ea476f4337fbc09c759148))
+
 ## [0.33.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.32.0...v0.33.0) (2026-11-07)
 
 
