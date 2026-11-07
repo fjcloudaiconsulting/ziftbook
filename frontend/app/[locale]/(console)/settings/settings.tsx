@@ -30,6 +30,7 @@ import { NAMES } from "../../_ui/header";
 import { Banner, Chevron, FieldError, Heading, problem, Submit } from "../../_ui/parts";
 import { SaveBar } from "../../_ui/save-bar";
 import uiStyles from "../../_ui/ui.module.css";
+import { ContactEmail } from "./contact-email";
 import { Payments } from "./payments";
 
 /** Label, control, then unit, error and hint, all tied to the control with aria-describedby. */
@@ -373,6 +374,7 @@ export function Settings() {
           <Field id={fid("language")} label={t("languageLabel")} hint={t("languageHint")} short>
             {(p) => pick("language", p.id, p.describedBy, Object.entries(NAMES).map(([value, label]) => ({ value, label })))}
           </Field>
+          <ContactEmail />
           </div>
         </fieldset>
 

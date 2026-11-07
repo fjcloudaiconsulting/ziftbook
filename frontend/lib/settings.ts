@@ -157,3 +157,74 @@ export function paymentsAction(state: PaymentsState, countrySupported: boolean):
   if (state === "off" || !countrySupported) return null;
   return state === "none" ? "connect" : state === "onboarding" ? "continue" : "dashboard";
 }
+
+/** GET /api/settings/contact-email (ZIF-232), as the generated client types it. */
+export type ContactEmailState = {
+  state: "none" | "unconfirmed" | "sent" | "confirmed";
+  confirmed: string | null;
+  requested: string | null;
+  link_expired: boolean;
+  expires_at: string | null;
+};
+type CopyKey =
+  | "contactUnconfirmed"
+  | "contactExpired"
+  | "contactSent"
+  | "contactConfirmed"
+  | "contactWaiting"
+  | "contactUntilThen"
+  | "contactUntilThenNone";
+type Copy = [key: CopyKey, values: Record<string, string>];
+export type ContactEmailView = {
+  pill: "unconfirmed" | "sent" | "confirmed";
+  body: Copy;
+  untilThen: Copy | null;
+  action: "contactSend" | "contactSendNew" | "contactSendAgain" | null;
+  ownerOnly?: true;
+  // Owners may drop the waiting address and keep the one in effect.
+  cancel?: true;
+};
+
+/** What the Settings block says about the contact email, or null when there is none. `requested` waits for its
+ * inbox to confirm it and is used for nothing: only `confirmed` is what clients see. Only owners are told the
+ * waiting address, and only they may send its link. */
+export function contactEmailView(s: ContactEmailState, owner: boolean): ContactEmailView | null {
+  if (s.state === "none") return null;
+  if (s.state === "confirmed") {
+    return { pill: "confirmed", body: ["contactConfirmed", { email: s.confirmed ?? "" }], untilThen: null, action: null };
+  }
+  const sent = s.state === "sent";
+  const untilThen: Copy | null = s.confirmed
+    ? ["contactUntilThen", { email: s.confirmed }]
+    : sent
+      ? ["contactUntilThenNone", {}]
+      : null;
+  if (!owner || s.requested === null) {
+    return { pill: sent ? "sent" : "unconfirmed", body: ["contactWaiting", {}], untilThen, action: null, ownerOnly: true };
+  }
+  const email = { email: s.requested };
+  if (sent) return { pill: "sent", body: ["contactSent", email], untilThen, action: "contactSendAgain", cancel: true };
+  return s.link_expired
+    ? { pill: "unconfirmed", body: ["contactExpired", email], untilThen, action: "contactSendNew", cancel: true }
+    : { pill: "unconfirmed", body: ["contactUnconfirmed", email], untilThen, action: "contactSend", cancel: true };
+}
+
+/** What a send or cancel of the waiting contact email answered: done, a message key for the owner, signed out,
+ * or reload the state (nothing waits any more). */
+export function contactActionOutcome(
+  status: number,
+  code?: string,
+): "done" | "contactTooMany" | "contactTooManyToday" | "contactOwnerOnly" | "contactFailed" | "signedOut" | "reload" {
+  if (status === 200) return "done";
+  if (status === 429) return code === "contact_email_requests_today" ? "contactTooManyToday" : "contactTooMany";
+  if (status === 401) return "signedOut";
+  if (status === 403 && code === "owner_only") return "contactOwnerOnly"; // no longer an owner
+  if (status === 409) return "reload";
+  return "contactFailed";
+}
+
+/** Whether the block shows after reading the state: an API from before the route (404) shows nothing. */
+export function contactLoadOutcome(status: number): "show" | "hide" | "failed" {
+  if (status === 200) return "show";
+  return status === 404 ? "hide" : "failed";
+}

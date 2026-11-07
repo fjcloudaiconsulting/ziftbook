@@ -1,0 +1,129 @@
+// ZIF-232: what the Settings block says about the contact email, for each state the API answers.
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { describe, test } from "node:test";
+
+import { contactActionOutcome, contactEmailView, contactLoadOutcome } from "../lib/settings.ts";
+
+const none = { state: "none", confirmed: null, requested: null, link_expired: false, expires_at: null };
+const unconfirmed = { ...none, state: "unconfirmed", requested: "new@x.nl" };
+const expired = { ...unconfirmed, link_expired: true, expires_at: "2026-11-02T10:00:00Z" };
+const sent = { ...unconfirmed, state: "sent", expires_at: "2026-11-04T10:00:00Z" };
+const confirmed = { ...none, state: "confirmed", confirmed: "shop@x.nl" };
+const sentWhileConfirmed = { ...sent, confirmed: "shop@x.nl" };
+
+// F8.1 FENCE. Wrong impl: a waiting address shown as the one clients see, or the wrong action.
+describe("F8.1 each state has its pill, words and action", () => {
+  test("an owner", () => {
+    assert.equal(contactEmailView(none, true), null);
+    assert.deepEqual(contactEmailView(unconfirmed, true), {
+      pill: "unconfirmed",
+      body: ["contactUnconfirmed", { email: "new@x.nl" }],
+      untilThen: null,
+      action: "contactSend",
+      cancel: true,
+    });
+    assert.deepEqual(contactEmailView(expired, true), {
+      pill: "unconfirmed",
+      body: ["contactExpired", { email: "new@x.nl" }],
+      untilThen: null,
+      action: "contactSendNew",
+      cancel: true,
+    });
+    assert.deepEqual(contactEmailView(sent, true), {
+      pill: "sent",
+      body: ["contactSent", { email: "new@x.nl" }],
+      untilThen: ["contactUntilThenNone", {}],
+      action: "contactSendAgain",
+      cancel: true,
+    });
+    assert.deepEqual(contactEmailView(confirmed, true), {
+      pill: "confirmed",
+      body: ["contactConfirmed", { email: "shop@x.nl" }],
+      untilThen: null,
+      action: null,
+    });
+    assert.deepEqual(contactEmailView(sentWhileConfirmed, true).untilThen, ["contactUntilThen", { email: "shop@x.nl" }]);
+    assert.deepEqual(contactEmailView({ ...expired, confirmed: "shop@x.nl" }, true).untilThen, [
+      "contactUntilThen",
+      { email: "shop@x.nl" },
+    ]);
+  });
+
+  // F8.2 FENCE. Wrong impl: a send button for a worker member, or words that need the waiting
+  // address the API does not give them.
+  test("a worker member gets no button and no waiting address", () => {
+    for (const state of [unconfirmed, expired, sent]) {
+      const view = contactEmailView({ ...state, requested: null }, false);
+      assert.equal(view.action, null);
+      assert.deepEqual(view.body, ["contactWaiting", {}]);
+      assert.equal(view.ownerOnly, true);
+      assert.equal(view.cancel, undefined);
+    }
+    assert.deepEqual(contactEmailView(confirmed, false), {
+      pill: "confirmed",
+      body: ["contactConfirmed", { email: "shop@x.nl" }],
+      untilThen: null,
+      action: null,
+    });
+  });
+});
+
+// F8.3 FENCE. Wrong impl: a silent failure, or one message for every refusal (an owner kept from an
+// address for the day by other businesses must be told that, not "try later").
+describe("F8.3 what a send or cancel answer means", () => {
+  test("each answer has its words", () => {
+    assert.equal(contactActionOutcome(200), "done");
+    assert.equal(contactActionOutcome(429, "rate_limited"), "contactTooMany");
+    assert.equal(contactActionOutcome(429, "contact_email_requests_today"), "contactTooManyToday");
+    assert.equal(contactActionOutcome(401), "signedOut");
+    assert.equal(contactActionOutcome(403, "owner_only"), "contactOwnerOnly"); // demoted meanwhile
+    assert.equal(contactActionOutcome(409, "no_contact_email_request"), "reload");
+    for (const status of [0, 422, 500, 503]) assert.equal(contactActionOutcome(status), "contactFailed");
+  });
+});
+
+// Review NIT 4 FENCE. Wrong impl: every Settings view showing an error while the web runs ahead of
+// an API that has no state route yet (a deploy, or the API alone rolled back).
+describe("F8.3 reading the state", () => {
+  test("an API without the route hides the block; a failure says so", () => {
+    assert.equal(contactLoadOutcome(200), "show");
+    assert.equal(contactLoadOutcome(404), "hide");
+    for (const status of [0, 401, 500, 503]) assert.equal(contactLoadOutcome(status), "failed");
+  });
+});
+
+describe("F8.3 the copy", () => {
+  const keys = [
+    "contactEmailLabel", "contactUnconfirmedPill", "contactSentPill", "contactConfirmedPill", "contactUnconfirmed",
+    "contactExpired", "contactSent", "contactConfirmed", "contactUntilThen", "contactUntilThenNone", "contactWaiting",
+    "contactSend", "contactSendNew", "contactSendAgain", "contactLinkSent", "contactTooMany", "contactTooManyToday",
+    "contactFailed", "contactCancel", "contactCancelled",
+    "contactLoadFailed", "contactOwnerOnly",
+  ];
+  test("the owner-only line says who sends the link, not who confirms it (review NIT 5)", () => {
+    const copy = JSON.parse(readFileSync(new URL("../messages/en.json", import.meta.url), "utf8")).Console.settings;
+    assert.equal(copy.contactOwnerOnly, "Only an owner can send its confirmation link.");
+    assert.doesNotMatch(copy.contactUnconfirmed, /until you confirm/);
+  });
+  for (const locale of ["en", "nl", "pt"]) {
+    test(`${locale} has every key and no em dash`, () => {
+      const copy = JSON.parse(readFileSync(new URL(`../messages/${locale}.json`, import.meta.url), "utf8")).Console.settings;
+      for (const key of keys) {
+        assert.equal(typeof copy[key], "string", key);
+        assert.doesNotMatch(copy[key], /—/, key);
+      }
+    });
+  }
+});
+
+// Re-check NIT 4 FENCE. Wrong impl: the polite live region inside the block, which unmounts with it
+// when a cancel leaves no address, so "Change cancelled." is never announced.
+describe("the block's live region", () => {
+  const src = readFileSync(new URL("../app/[locale]/(console)/settings/contact-email.tsx", import.meta.url), "utf8");
+  test("stays mounted whatever the block shows", () => {
+    assert.equal(src.match(/role="status"/g)?.length, 1);
+    assert.doesNotMatch(src, /return null;/);
+    assert.match(src, /return \(\s*<>\s*\{content\}\s*\{live\}\s*<\/>\s*\);/);
+  });
+});

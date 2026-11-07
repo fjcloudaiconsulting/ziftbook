@@ -65,6 +65,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.repo != 'false'
     runs-on: ubuntu-latest
+    # Seconds of work: a script that hangs fails here, not after the 6-hour default.
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

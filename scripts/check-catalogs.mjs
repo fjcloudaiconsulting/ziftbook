@@ -55,10 +55,52 @@ export function compareCatalogs(source, translation, prefix = "") {
   return problems;
 }
 
+/** Every key that appears twice in one object of a JSON text, as a dotted path. Git merges a key
+ * added on two branches without a conflict, and JSON.parse keeps the last copy silently. */
+export function duplicateKeys(text) {
+  const found = [];
+  const stack = []; // per open object or array: { keys, path, object, pending }
+  let i = 0;
+  const readString = () => {
+    let end = i + 1;
+    while (end < text.length && text[end] !== '"') end += text[end] === "\\" ? 2 : 1;
+    if (end >= text.length) throw new Error(`unterminated string at offset ${i}`);
+    const value = JSON.parse(text.slice(i, end + 1));
+    i = end + 1;
+    return value;
+  };
+  while (i < text.length) {
+    const c = text[i];
+    const top = stack[stack.length - 1];
+    if (c === '"') {
+      const value = readString();
+      let j = i;
+      while (/\s/.test(text[j] ?? "")) j++;
+      if (top?.object && text[j] === ":") {
+        const path = top.path ? `${top.path}.${value}` : value;
+        if (top.keys.has(value)) found.push(path);
+        top.keys.add(value);
+        top.pending = path;
+      }
+      continue;
+    }
+    if (c === "{" || c === "[") stack.push({ keys: new Set(), path: top?.pending ?? "", object: c === "{", pending: top?.pending ?? "" });
+    else if (c === "}" || c === "]") stack.pop();
+    i++;
+  }
+  return found;
+}
+
 if (import.meta.url === `file://${process.argv[1]}`) {
   const load = (dir, locale) => JSON.parse(readFileSync(`${dir}/${locale}.json`, "utf8"));
   let failed = false;
   for (const { dir, source, translations } of CATALOG_SETS) {
+    for (const locale of [source, ...translations]) {
+      for (const key of duplicateKeys(readFileSync(`${dir}/${locale}.json`, "utf8"))) {
+        console.error(`${dir}/${locale}.json: key ${key} appears twice`);
+        failed = true;
+      }
+    }
     for (const locale of translations) {
       for (const problem of compareCatalogs(load(dir, source), load(dir, locale))) {
         console.error(`${dir}/${locale}.json: ${problem}`);
