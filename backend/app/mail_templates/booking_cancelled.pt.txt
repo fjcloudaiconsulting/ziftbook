@@ -1,11 +1,11 @@
 Seu agendamento foi cancelado
-Olá,
+# Seu agendamento foi cancelado
 
-$business cancelou seu agendamento:
+Sentimos muito: $business cancelou seu agendamento.
 
-$service
-$date às $time ($zone)$payment
+| $service
+| $date às $time ($zone)
+| $with
+| $payment
 
-Em caso de dúvidas, entre em contato com o negócio.
-
-ziftbook
+Se tiver dúvidas, entre em contato com $business.

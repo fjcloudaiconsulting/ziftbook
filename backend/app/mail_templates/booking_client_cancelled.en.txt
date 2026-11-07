@@ -1,11 +1,11 @@
 A client cancelled their booking
-Hello,
+# A booking was cancelled
 
-$client has cancelled their booking:
+$client cancelled their booking.
 
-$service
-$date at $time ($zone)
+| $service
+| $date at $time ($zone)
+| Client: $client
+| $with
 
-$link
-
-ziftbook
+[Open ziftbook]($link)

@@ -1,10 +1,8 @@
 Create your ziftbook account
-Hello,
+# Create your ziftbook account
 
-Open this link to confirm your email and create your ziftbook account. With it, your details fill themselves in when you book.
+Confirm your email address to create your ziftbook account. With it, your details fill themselves in when you book.
 
-$link
+[Create your account]($link)
 
-The link works once, for 24 hours. If you didn't ask for a ziftbook account, you can ignore this email.
-
-ziftbook
+The link works once, for 24 hours. If you didn't ask for a ziftbook account, you can safely ignore this email.

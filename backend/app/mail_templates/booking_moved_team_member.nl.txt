@@ -1,8 +1,11 @@
 Boeking verzet
-Hallo,
+# Een afspraak is verzet
 
-$client, $service: verzet van $old_date om $old_time naar $date om $time ($zone), nu bij $member.
+Deze afspraak is verzet en is nu bij $member.
 
-$link
+| $service
+| Nu $date om $time ($zone)
+| Was $old_date om $old_time
+| Klant: $client
 
-ziftbook
+[Open ziftbook]($link)

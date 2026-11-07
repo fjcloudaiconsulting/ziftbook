@@ -1,6 +1,4 @@
 Hello from ziftbook
-Hello,
+# Hello from ziftbook
 
-This message confirms that ziftbook can send you email.
-
-ziftbook
+This message confirms that ziftbook can send you email. There's nothing else you need to do.

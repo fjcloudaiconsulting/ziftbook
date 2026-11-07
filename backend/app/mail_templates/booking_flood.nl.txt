@@ -1,10 +1,8 @@
 Ongewoon veel online boekingen
-Hallo,
+# Sommige online boekingen zijn gepauzeerd
 
 „$business” kreeg dit uur ongewoon veel online boekingsaanvragen van niet-geverifieerde e-mailadressen.
 
-Nieuwe aanvragen zoals deze zijn de rest van het uur gepauzeerd. Bekijk je agenda:
+Om je agenda te beschermen, zijn nieuwe aanvragen zoals deze de rest van het uur gepauzeerd.
 
-$link
-
-ziftbook
+[Bekijk je agenda]($link)

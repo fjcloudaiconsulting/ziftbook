@@ -730,6 +730,7 @@ def test_the_team_template_set_is_complete() -> None:
         "old_date": "OLD-DATE-MARKER",
         "old_time": "OLD-TIME-MARKER",
         "member": "MEMBER-MARKER",
+        "with": "With Member",
     }
     for template in ("booking_moved_team", "booking_moved_team_member"):
         for locale in LOCALES:
@@ -784,11 +785,15 @@ def test_send_booking_member_changed_body_names_the_member_or_falls_back(
         member_changed="1",
     )
     (body,) = bodies
-    # Locale-free: the member variant ends "(zone), now with <name>."; the plain one at "(zone)."
+    # Locale-free: the opening sentence is the plain file's, or the member file's naming them.
+    opening = body.split("\n\n")[1]
+    plain = {
+        mail.render("booking_moved_team", locale)[1].split("\n\n")[1] for locale in mail.LOCALES
+    }
     if name is None:
-        assert "(Europe/Amsterdam).\n" in body
+        assert opening in plain
     else:
-        assert f"{name}.\n" in body and "(Europe/Amsterdam).\n" not in body
+        assert opening not in plain and f"{name}." in opening
 
 
 # ZIF-157 B1 FENCE. Wrong impl: `b.client_name` without the coalesce (the snapshot is NULL for a

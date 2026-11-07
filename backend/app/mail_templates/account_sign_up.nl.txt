@@ -1,10 +1,8 @@
 Maak je ziftbook-account aan
-Hallo,
+# Maak je ziftbook-account aan
 
-Open deze link om je e-mailadres te bevestigen en je ziftbook-account aan te maken. Daarmee worden je gegevens vanzelf ingevuld als je boekt.
+Bevestig je e-mailadres om je ziftbook-account aan te maken. Daarmee worden je gegevens vanzelf ingevuld als je boekt.
 
-$link
+[Maak je account aan]($link)
 
-De link werkt één keer, 24 uur lang. Heb je geen ziftbook-account aangevraagd? Dan kun je deze e-mail negeren.
-
-ziftbook
+De link werkt één keer, 24 uur lang. Heb je geen ziftbook-account aangevraagd? Dan kun je deze e-mail gerust negeren.

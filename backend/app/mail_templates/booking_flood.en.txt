@@ -1,10 +1,8 @@
 Unusual number of online bookings
-Hello,
+# Some online bookings are paused
 
 “$business” received an unusual number of online booking requests from unverified email addresses this hour.
 
-Further requests like these are paused for the rest of the hour. Check your calendar:
+To protect your calendar, further requests like these are paused for the rest of the hour.
 
-$link
-
-ziftbook
+[Check your calendar]($link)

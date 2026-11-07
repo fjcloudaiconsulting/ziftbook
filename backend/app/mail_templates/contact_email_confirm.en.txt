@@ -1,16 +1,12 @@
 Confirm this email address for ziftbook
-Hello,
+# Confirm this email address
 
 This business on ziftbook wants its clients to reach it at this email address:
 
 “$business”
 
-Once you confirm, clients see this address on its booking page, and their replies to some booking emails come here.
+Once you confirm, clients see this address on its booking page, and their replies to some booking emails come here. The link opens a page where you press Confirm.
 
-Open this link and press Confirm:
+[Confirm this address]($link)
 
-$link
-
-The link works once, for 24 hours. If you don't know this business, you can ignore this email. The address is not used until it is confirmed.
-
-ziftbook
+The link works once, for 24 hours. If you don't know this business, you can safely ignore this email. The address is not used until it is confirmed.

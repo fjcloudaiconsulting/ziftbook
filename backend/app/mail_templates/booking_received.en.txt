@@ -1,13 +1,11 @@
 We've received your booking request
-Hello,
+# Thanks, your request is in
 
-$business has received your booking request:
+$business has received your booking request. They still need to accept it, and we'll email you as soon as they answer.
 
-$service
-$date at $time ($zone)$payment
+| $service
+| $date at $time ($zone)
+| $with
+| $payment
 
-The business still has to accept it. We'll email you as soon as they answer.
-
-View, change or cancel your booking: $link
-
-ziftbook
+[View, change or cancel your booking]($link)

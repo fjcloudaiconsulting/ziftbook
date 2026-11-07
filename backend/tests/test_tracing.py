@@ -198,7 +198,7 @@ def test_t5_send_failure_span(mailgun_replies: dict[str, int | Exception], spans
     mailgun_replies[address] = 400
 
     with pytest.raises(requests.HTTPError):
-        mail.deliver("hello", address, "subject", "body")
+        mail.deliver("hello", address, "subject", "body", "<p>body</p>")
 
     send_span = _one(spans(), name="email send")
     assert send_span.events == ()

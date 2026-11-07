@@ -2,10 +2,13 @@ import asyncio
 import base64
 import io
 import json
+import string
 import urllib.request
 import uuid
 from collections.abc import Callable, Iterator
 from datetime import timedelta
+from html.parser import HTMLParser
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -234,28 +237,29 @@ def test_a_failed_email_logs_the_error_class_and_the_job_retries(
 
 # ZIF-151 fence: the request the SDK sends. Kills the messages route (the calendar part would be
 # retyped by Mailgun), the US host for an EU account, a dropped domain, the SDK's 60s default
-# timeout, the click-tracking option going missing (links carry secrets), and a From off the
+# timeout, the click-tracking option going missing (links carry secrets), the open-tracking option
+# going missing (ZIF-175: a pixel in the HTML part would report every open), and a From off the
 # sending domain (fails DMARC alignment).
 def test_mail_goes_to_mailguns_eu_mime_route_with_the_message_as_built() -> None:
     address = f"{uuid.uuid4()}@example.com"
 
-    mail.deliver("hello", address, "Subject", "Body\n")
+    mail.deliver("hello", address, "Subject", "Body\n", "<p>Body</p>")
 
     (sent,) = sent_to(address)
     assert sent["URL"] == "https://api.eu.mailgun.net/v3/test.ziftbook.invalid/messages.mime"
     assert sent["Auth"] == ("api", "test-key")
     assert sent["Timeout"] == (10.0, 10.0)
-    assert sent["Form"] == {"to": address, "o:tracking-clicks": "no"}
+    assert sent["Form"] == {"to": address, "o:tracking-clicks": "no", "o:tracking-opens": "no"}
     assert sent["Headers"]["From"] == ["ziftbook <no-reply@test.ziftbook.invalid>"]
     assert sent["Headers"]["To"] == [address]
-    assert (sent["Subject"], sent["Text"]) == ("Subject", "Body\n")
+    assert (sent["Subject"], sent["Text"], sent["Html"]) == ("Subject", "Body\n", "<p>Body</p>\n")
 
 
 def test_a_us_account_uses_mailguns_us_host(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ZIF_MAILGUN_REGION", "us")
     address = f"{uuid.uuid4()}@example.com"
 
-    mail.deliver("hello", address, "Subject", "Body\n")
+    mail.deliver("hello", address, "Subject", "Body\n", "<p>Body</p>")
 
     (sent,) = sent_to(address)
     assert sent["URL"] == "https://api.mailgun.net/v3/test.ziftbook.invalid/messages.mime"
@@ -269,7 +273,7 @@ def test_with_no_mail_transport_the_send_fails(monkeypatch: pytest.MonkeyPatch, 
     address = f"{uuid.uuid4()}@example.com"
 
     with pytest.raises(mail.MailNotConfigured):
-        mail.deliver("hello", address, "Subject", "Body\n")
+        mail.deliver("hello", address, "Subject", "Body\n", "<p>Body</p>")
 
     assert [c for c in MAILGUN_CALLS if c["To"] == address] == []
 
@@ -281,7 +285,7 @@ def test_a_redirect_is_not_a_sent_email(mailgun_replies: dict[str, int | Excepti
     mailgun_replies[address] = 302
 
     with pytest.raises(requests.HTTPError):
-        mail.deliver("hello", address, "Subject", "Body\n")
+        mail.deliver("hello", address, "Subject", "Body\n", "<p>Body</p>")
 
 
 # ZIF-151 fence: a dropped connection fails the send too (the SDK wraps it in its ApiError), so the
@@ -293,7 +297,7 @@ def test_a_dropped_connection_is_not_a_sent_email(
     mailgun_replies[address] = requests.ConnectionError()
 
     with pytest.raises(ApiError):
-        mail.deliver("hello", address, "Subject", "Body\n")
+        mail.deliver("hello", address, "Subject", "Body\n", "<p>Body</p>")
 
     assert sent_to(address) == []
 
@@ -304,10 +308,12 @@ def test_a_reply_to_is_normalised_and_a_list_is_refused(monkeypatch: pytest.Monk
     address = f"{uuid.uuid4()}@example.com"
 
     with pytest.raises(ValueError, match="not an email address"):
-        mail.deliver("hello", address, "Subject", "Body\n", reply_to="a@x.com, victim@y.com")
+        mail.deliver(
+            "hello", address, "Subject", "Body\n", "<p>Body</p>", reply_to="a@x.com, victim@y.com"
+        )
     assert sent_to(address) == []
 
-    mail.deliver("hello", address, "Subject", "Body\n", reply_to=" Shop@X.com ")
+    mail.deliver("hello", address, "Subject", "Body\n", "<p>Body</p>", reply_to=" Shop@X.com ")
     (sent,) = sent_to(address)
     assert sent["Headers"]["Reply-To"] == ["shop@x.com"]
 
@@ -320,7 +326,7 @@ def test_a_reply_to_is_normalised_and_a_list_is_refused(monkeypatch: pytest.Monk
     monkeypatch.setattr(urllib.request, "urlopen", capture)
     monkeypatch.setenv("ZIF_MAILPIT_URL", "http://mailpit.test:8025/")
     monkeypatch.delenv("ZIF_MAILGUN_API_KEY")
-    mail.deliver("hello", address, "Subject", "Body\n", reply_to=" Shop@X.com ")
+    mail.deliver("hello", address, "Subject", "Body\n", "<p>Body</p>", reply_to=" Shop@X.com ")
     (request,) = requests
     assert isinstance(request.data, bytes)
     assert json.loads(request.data)["ReplyTo"] == [{"Email": "shop@x.com"}]
@@ -340,11 +346,13 @@ def test_development_mail_goes_to_mailpits_http_api(monkeypatch: pytest.MonkeyPa
     monkeypatch.setenv("ZIF_MAILPIT_URL", "http://mailpit.test:8025/")
     address = f"{uuid.uuid4()}@example.com"
 
-    mail.deliver("hello", address, "Subject", "Body\n")  # the key is still set: Mailgun
+    mail.deliver(
+        "hello", address, "Subject", "Body\n", "<p>Body</p>"
+    )  # the key is still set: Mailgun
     assert requests == [] and len(sent_to(address)) == 1
 
     monkeypatch.delenv("ZIF_MAILGUN_API_KEY")
-    mail.deliver("hello", address, "Subject", "Body\n", ics=b"BEGIN:VCALENDAR\r\n")
+    mail.deliver("hello", address, "Subject", "Body\n", "<p>Body</p>", ics=b"BEGIN:VCALENDAR\r\n")
 
     (request,) = requests
     assert (request.full_url, request.get_method()) == (
@@ -358,6 +366,7 @@ def test_development_mail_goes_to_mailpits_http_api(monkeypatch: pytest.MonkeyPa
         "To": [{"Email": address}],
         "Subject": "Subject",
         "Text": "Body\n",
+        "HTML": "<p>Body</p>",
         "Attachments": [
             {
                 "Content": base64.b64encode(b"BEGIN:VCALENDAR\r\n").decode(),
@@ -377,9 +386,9 @@ def test_a_delivery_counts_as_sent_or_failed_by_template(
     mailgun_replies[sent] = 200
     mailgun_replies[refused] = 503
 
-    mail.deliver("hello", sent, "Subject", "Body\n")
+    mail.deliver("hello", sent, "Subject", "Body\n", "<p>Body</p>")
     with pytest.raises(requests.HTTPError):
-        mail.deliver("hello", refused, "Subject", "Body\n")
+        mail.deliver("hello", refused, "Subject", "Body\n", "<p>Body</p>")
 
     assert {
         (p.attributes["email.template"], p.attributes["email.outcome"]): p.value
@@ -431,3 +440,274 @@ def test_the_owners_hear_when_the_contact_email_changes(
 @pytest.mark.parametrize("template", ["contact_email_changed", "contact_email_confirm"])
 def test_the_contact_email_templates_have_no_em_dash(template: str, locale: str) -> None:
     assert "—" not in (TEMPLATES / f"{template}.{locale}.txt").read_text()
+
+
+def _every(template: str, locale: str, **values: str) -> dict[str, str]:
+    """Every placeholder the template names, as a value that says which one it is."""
+    names = string.Template((TEMPLATES / f"{template}.{locale}.txt").read_text()).get_identifiers()
+    link = "https://app.test/x#t"
+    return {n: link if n in ("link", "sign_in") else f"{n.upper()}-VALUE" for n in names} | values
+
+
+def _parts(raw: bytes) -> list[str]:
+    """The content types of a message, depth first."""
+    from email import message_from_bytes, policy
+
+    return [
+        part.get_content_type() for part in message_from_bytes(raw, policy=policy.default).walk()
+    ]
+
+
+# ZIF-175 guard. Kills: a template that renders only a text part, or HTML that leaves a placeholder.
+def test_every_template_renders_a_text_and_an_html_part_in_every_locale() -> None:
+    for template in {path.name.split(".")[0] for path in TEMPLATES.glob("*.txt")}:
+        for locale in LOCALES:
+            subject, body, html = mail.compose(template, locale, _every(template, locale))
+            assert subject and body.strip(), (template, locale)
+            assert html.startswith("<!doctype html>"), (template, locale)
+            assert f'<html lang="{locale}"' in html, (template, locale)
+            assert "$" not in body and "$" not in html, (template, locale)
+
+
+HOSTILE = '<script>alert("x")</script> O\'Brien & Co'
+
+
+# ZIF-175 fence: every value is untrusted in HTML (client names, messages and business names come
+# from strangers). Kills: a value substituted unescaped, a value parsed as markup (a button or a
+# heading from a client's message), and the text part losing the value as typed.
+def test_values_are_escaped_in_html_and_kept_as_typed_in_text() -> None:
+    hostile = {
+        "business": HOSTILE,
+        "client": HOSTILE,
+        "service": HOSTILE,
+        "message": f"{HOSTILE}\n[Pay here](https://evil.test)\n# Heading",
+    }
+    for template in ("booking_new", "booking_declined_message", "invite"):
+        values = {k: v for k, v in hostile.items() if k in _every(template, "en")}
+        subject, body, html = mail.compose(template, "en", _every(template, "en", **values))
+        assert "<script>" not in html and 'href="https://evil.test"' not in html, template
+        assert html.count("<h1") == 1, template  # the message's "# Heading" stays text
+        assert "&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt; O&#x27;Brien &amp; Co" in html
+        assert HOSTILE in body, template
+
+
+# ZIF-175 fence: the refund-failed email's contact line is a paragraph of its own, and no paragraph
+# at all without a contact email. Kills a value carrying its own blank lines into one paragraph, and
+# an empty paragraph left in either part.
+def test_the_refund_failed_contact_line_is_its_own_paragraph() -> None:
+    line = "You can reach them at hello@example.com."
+    values = _every("booking_refund_failed", "en")
+    _, body, html = mail.compose("booking_refund_failed", "en", values | {"contact": line})
+    assert f"\n\n{line}\n\n" in body and f">{line}</p>" in html
+    _, body, html = mail.compose("booking_refund_failed", "en", values | {"contact": ""})
+    assert "\n\n\n" not in body and "></p>" not in html
+
+
+# ZIF-175 fence (security review N1): a button's link is https, or http only to this machine (the
+# development default, http://localhost:3000). Kills javascript: in an href, and a production
+# ZIF_APP_URL set to http by mistake sending reset, sign-up and manage tokens in the clear.
+@pytest.mark.parametrize(
+    "link",
+    [
+        "javascript:alert(1)",
+        "http://app.example.com/x",
+        "HTTPS://x.example",
+        "https:evil",
+        " https://x.example",
+        "https://x.example/a b",
+        "http://localhost.evil.example/x",
+    ],
+)
+def test_a_button_link_must_be_https_or_this_machine(link: str) -> None:
+    with pytest.raises(ValueError, match="link"):
+        mail.compose("sign_up", "en", {"link": link})
+
+
+@pytest.mark.parametrize(
+    "link", ["https://app.example.com/x#t", "http://localhost:3000/en", "http://127.0.0.1:3000/en"]
+)
+def test_an_https_or_local_link_makes_a_button(link: str) -> None:
+    assert f'href="{link}"' in mail.compose("sign_up", "en", {"link": link})[2]
+
+
+# ZIF-175 fence: the HTML is an alternative to the text, and the calendar file stays an attachment
+# beside both. Kills: HTML replacing the text part, HTML first (text-only clients then show the
+# markup), and the .ics inside the alternative (clients would show it instead of the body).
+def test_the_message_is_text_and_html_alternatives_with_the_calendar_beside_them() -> None:
+    address = f"{uuid.uuid4()}@example.com"
+
+    mail.deliver("hello", address, "Subject", "Body\n", "<p>Body</p>")
+    mail.deliver("hello", address, "Subject", "Body\n", "<p>Body</p>", ics=b"BEGIN:VCALENDAR\r\n")
+
+    with_ics, plain = (call["Raw"].encode() for call in sent_to(address))  # sent_to: newest first
+    assert _parts(plain) == ["multipart/alternative", "text/plain", "text/html"]
+    assert _parts(with_ics) == [
+        "multipart/mixed",
+        "multipart/alternative",
+        "text/plain",
+        "text/html",
+        "text/calendar",
+    ]
+
+
+# ZIF-175 guard: no dash punctuation the copy style rules out (em or en dashes), in any template
+# or in the layout's own words.
+def test_no_template_or_layout_word_has_a_dash() -> None:
+    for path in TEMPLATES.glob("*.txt"):
+        assert not {"\N{EM DASH}", "\N{EN DASH}"} & set(path.read_text()), path.name
+    for words in (mail.FOOTER, mail.LINK_FALLBACK):
+        assert not {"\N{EM DASH}", "\N{EN DASH}"} & set("".join(words.values()))
+
+
+@pytest.mark.parametrize(
+    ("body", "error"),
+    [
+        ("Hello,\n\nA paragraph.", "one heading"),
+        ("# One\n\n# Two", "one heading"),
+        ("# One\n\n[A]($link)\n\n[B]($link)", "one button"),
+    ],
+)
+def test_a_template_needs_one_heading_and_at_most_one_button(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, body: str, error: str
+) -> None:
+    # ZIF-175 fence: the HTML shows one heading and one button, so a file with another count would
+    # drop words the text part keeps. Kills _parse accepting zero or two headings, or two buttons.
+    (tmp_path / "odd.en.txt").write_text(f"Subject\n{body}\n")
+    monkeypatch.setattr(mail, "TEMPLATES", tmp_path)
+    with pytest.raises(ValueError, match=error):
+        mail.render("odd", "en")
+
+
+# ZIF-175 fence (security review S1): no heading carries a value. A heading is the platform's own
+# voice, right under its mark, and mail clients turn a domain inside it into a link; a business
+# name is chosen by whoever signs up. Kills a $placeholder in any template's heading.
+def test_no_heading_carries_a_value() -> None:
+    for path in TEMPLATES.glob("*.txt"):
+        template, locale, _ = path.name.split(".")
+        headings = [parts for kind, parts in mail._parse(template, locale)[1] if kind == "heading"]
+        assert not any("$" in line for parts in headings for line in parts), path.name
+
+
+# ZIF-175 fence: only a booking email names the business above its heading; its reader already
+# deals with that business. An invite goes to anyone a stranger names, so the name stays in its
+# sentence. Kills the eyebrow on the invite.
+def test_only_booking_emails_name_the_business_above_the_heading() -> None:
+    name = "ziftbook Security: verify at ziftbook-help.example"
+    invite = mail.compose("invite", "en", {"business": name, "link": "https://app.test/x"})[2]
+    flood = mail.compose("booking_flood", "en", {"business": name, "link": "https://app.test/x"})[2]
+    eyebrow = f'letter-spacing:.02em">{name}</p>'
+    assert name in invite and eyebrow not in invite
+    assert eyebrow in flood
+
+
+def _old_format(template: str, locale: str) -> list[str]:
+    """What still reads as the pre-ZIF-175 plain format in a template file: no single heading, a
+    link outside the button (so no button in HTML), the greeting, or the bare sign-off."""
+    try:
+        _, blocks = mail._parse(template, locale)
+    except ValueError as error:
+        return [str(error)]
+    problems = []
+    for kind, parts in blocks:
+        text = "\n".join(parts)
+        if kind != "button" and ("$link" in text or "$sign_in" in text):
+            problems.append(f"a link outside a button: {text!r}")
+        if text in ("Hello,", "Hallo,", "Olá,", "ziftbook"):
+            problems.append(f"the old greeting or sign-off: {text!r}")
+    return problems
+
+
+# ZIF-175 guard: every template file is in the block format. Other branches add templates in the
+# old one (zif146: account_registered, account_sign_up); whichever merges second converts them, and
+# this fails until it does.
+def test_every_template_is_in_the_block_format() -> None:
+    for path in TEMPLATES.glob("*.txt"):
+        template, locale, _ = path.name.split(".")
+        assert _old_format(template, locale) == [], path.name
+
+
+OLD_SIGN_UP = """Create your ziftbook account
+Hello,
+
+Open this link to confirm your email and create your ziftbook account.
+
+$link
+
+The link works once, for 24 hours.
+
+ziftbook
+"""
+
+
+# The guard's own check: it fails on a file as zif146 writes it, and on one half converted.
+@pytest.mark.parametrize(
+    "content",
+    [
+        OLD_SIGN_UP,
+        OLD_SIGN_UP.replace("Hello,", "# Create your account"),
+        "Sign in\n# Sign in\n\nSign in here: $sign_in\nForgot your password?\n",
+    ],
+)
+def test_the_block_format_guard_fails_on_an_old_format_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, content: str
+) -> None:
+    (tmp_path / "account_sign_up.en.txt").write_text(content)
+    monkeypatch.setattr(mail, "TEMPLATES", tmp_path)
+    assert _old_format("account_sign_up", "en") != []
+
+
+FUZZ = [
+    "<script>alert(1)</script>",
+    '"><img src=x onerror=alert(1)>',
+    "' onmouseover='x",
+    "&lt;b&gt;bold&lt;/b&gt;",
+    "&#x3C;svg onload=1&#x3E;",
+    "$link ${link} $$ $",
+    "[Pay](https://evil.example)",
+    "# Fake heading",
+    "| fake card",
+    "> fake quote",
+    "--><b>x</b><!--",
+    "<!--[if mso]><a href=//e>x</a><![endif]-->",
+    "</title><a href=//e>x</a>",
+    "</style><a href=//e>x</a>",
+    "javascript:alert(1)",
+    "line1\n\n[Click](https://evil.example)\n\n# Head",
+]
+
+
+class _Shape(HTMLParser):
+    """The tags (but <br>), comments and hrefs of a page, and any event-handler attribute."""
+
+    def __init__(self, page: str) -> None:
+        super().__init__(convert_charrefs=True)
+        self.tags: list[str] = []
+        self.comments: list[str] = []
+        self.hrefs: list[str | None] = []
+        self.handlers: list[str] = []
+        self.feed(page)
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag != "br":
+            self.tags.append(tag)
+        self.hrefs += [value for name, value in attrs if name == "href"]
+        self.handlers += [name for name, _ in attrs if name.startswith("on")]
+
+    def handle_comment(self, data: str) -> None:
+        self.comments.append(data)
+
+
+# ZIF-175 fence (security review N2): whatever a value holds, the page keeps the shape a benign
+# value gives it, with no event handler and no link but the app's. Every template, every locale,
+# every value hostile at once, so a new template or placeholder is covered without naming it.
+def test_no_value_changes_the_shape_of_any_email() -> None:
+    link = "https://app.example/x#token"
+    for path in sorted(TEMPLATES.glob("*.txt")):
+        template, locale, _ = path.name.split(".")
+        benign = _Shape(mail.compose(template, locale, _every(template, locale, link=link))[2])
+        for hostile in FUZZ:
+            names = _every(template, locale)
+            values = {n: hostile for n in names} | {"link": link, "sign_in": link}
+            shape = _Shape(mail.compose(template, locale, values)[2])
+            assert (shape.tags, shape.comments) == (benign.tags, benign.comments), (path, hostile)
+            assert shape.handlers == [] and set(shape.hrefs) <= {link}, (path, hostile)

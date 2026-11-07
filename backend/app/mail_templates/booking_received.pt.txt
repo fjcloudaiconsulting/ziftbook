@@ -1,13 +1,11 @@
 Recebemos seu pedido de agendamento
-Olá,
+# Obrigado, recebemos seu pedido
 
-$business recebeu seu pedido de agendamento:
+$business recebeu seu pedido de agendamento. O negócio ainda precisa aceitar o pedido, e enviaremos um e-mail assim que houver resposta.
 
-$service
-$date às $time ($zone)$payment
+| $service
+| $date às $time ($zone)
+| $with
+| $payment
 
-O negócio ainda precisa aceitar o pedido. Enviaremos um e-mail assim que houver resposta.
-
-Veja, altere ou cancele seu agendamento: $link
-
-ziftbook
+[Veja, altere ou cancele seu agendamento]($link)

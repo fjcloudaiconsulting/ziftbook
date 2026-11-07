@@ -1,13 +1,10 @@
 Lembrete: seu agendamento está chegando
-Olá,
+# Seu agendamento está chegando
 
-Este é um lembrete do seu agendamento em $business:
+Um lembrete do seu agendamento em $business. Estão esperando por você.
 
-$service
-$date às $time ($zone)
+| $service
+| $date às $time ($zone)
+| $with
 
-Até lá!
-
-Veja, altere ou cancele seu agendamento: $link
-
-ziftbook
+[Veja, altere ou cancele seu agendamento]($link)

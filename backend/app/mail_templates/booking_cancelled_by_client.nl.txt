@@ -1,9 +1,11 @@
 Je boeking is geannuleerd
-Hallo,
+# Je boeking is geannuleerd
 
-Zoals gevraagd is je boeking bij $business geannuleerd:
+Zoals je vroeg, is je boeking bij $business geannuleerd.
 
-$service
-$date om $time ($zone)$payment
+| $service
+| $date om $time ($zone)
+| $with
+| $payment
 
-ziftbook
+Toch van gedachten veranderd? Je bent altijd welkom om een nieuw moment te boeken.
