@@ -1,8 +1,12 @@
 Booking moved
-Hello,
+# A booking was moved
 
-$client, $service: moved from $old_date at $old_time to $date at $time ($zone).
+This booking was moved.
 
-$link
+| $service
+| Now $date at $time ($zone)
+| Was $old_date at $old_time
+| Client: $client
+| $with
 
-ziftbook
+[Open ziftbook]($link)

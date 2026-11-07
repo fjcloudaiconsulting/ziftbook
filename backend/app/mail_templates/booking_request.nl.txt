@@ -1,15 +1,16 @@
 Nieuwe boekingsaanvraag
-Hallo,
+# Nieuwe boekingsaanvraag
 
-Een klant wil boeken:
+$client wil graag boeken.
 
-Klant: $client$message
+| $service
+| $date om $time ($zone)
+| Klant: $client
+| $with
+| $payment
 
-$service
-$date om $time ($zone)$payment
+> $message
 
 Accepteer of wijs de aanvraag af vóór $expires. Antwoord je niet op tijd, dan vervalt de aanvraag.
 
-$link
-
-ziftbook
+[Open ziftbook]($link)

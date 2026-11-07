@@ -1,15 +1,15 @@
 Seu pedido de agendamento foi recusado
-Olá,
+# Não foi possível agendar
 
-$business não pode aceitar seu pedido de agendamento:
+Sentimos muito: $business não pode aceitar seu pedido de agendamento para este horário.
 
-$service
-$date às $time ($zone)$payment
+| $service
+| $date às $time ($zone)
+| $with
+| $payment
 
 $business escreveu:
 
-$message
+> $message
 
-Nada foi agendado. Você pode escolher outro horário.
-
-ziftbook
+Nada foi agendado. Você pode escolher outro horário que seja melhor para você.

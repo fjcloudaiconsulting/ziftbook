@@ -1,15 +1,14 @@
 New booking
-Hello,
+# You have a new booking
 
-You have a new booking:
+The booking for $client is confirmed.
 
-Client: $client$message
+| $service
+| $date at $time ($zone)
+| Client: $client
+| $with
+| $payment
 
-$service
-$date at $time ($zone)$payment
+> $message
 
-It's confirmed.
-
-$link
-
-ziftbook
+[Open ziftbook]($link)

@@ -1,15 +1,15 @@
 Your booking request was declined
-Hello,
+# Your request couldn't be booked
 
-$business can't take your booking request:
+We're sorry: $business can't take your booking request for this time.
 
-$service
-$date at $time ($zone)$payment
+| $service
+| $date at $time ($zone)
+| $with
+| $payment
 
 $business wrote:
 
-$message
+> $message
 
-Nothing was booked. You're welcome to choose another time.
-
-ziftbook
+Nothing was booked. You're welcome to choose another time that suits you.

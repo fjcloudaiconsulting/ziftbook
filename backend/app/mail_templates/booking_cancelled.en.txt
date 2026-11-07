@@ -1,11 +1,11 @@
 Your booking was cancelled
-Hello,
+# Your booking was cancelled
 
-$business has cancelled your booking:
+We're sorry to tell you that $business has cancelled your booking.
 
-$service
-$date at $time ($zone)$payment
+| $service
+| $date at $time ($zone)
+| $with
+| $payment
 
-If you have questions, please contact the business.
-
-ziftbook
+If you have any questions, please get in touch with $business.

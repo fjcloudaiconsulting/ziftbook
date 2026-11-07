@@ -75,7 +75,7 @@ def test_send_invite_mints_and_mails_a_link(
     )
     assert token_hash == hashlib.sha256(secret.encode()).digest()
     assert timedelta(days=6, hours=23, minutes=59) < lifetime <= timedelta(days=7)
-    assert options["o:tracking-clicks"] == "no"
+    assert (options["o:tracking-clicks"], options["o:tracking-opens"]) == ("no", "no")
     assert sent["Subject"] == "You're invited to join a business on ziftbook"
 
 
@@ -140,7 +140,7 @@ def test_send_invite_for_a_gone_invite_sends_nothing(
 
 
 # An owner-chosen business name never breaks the template or duplicates the link.
-def test_send_invite_puts_the_business_name_on_its_own_line(
+def test_send_invite_keeps_an_odd_business_name_as_typed(
     people: People, app_engine: Engine, migrate_engine: Engine
 ) -> None:
     name = "Studio $link ${x} Ana"
@@ -153,7 +153,7 @@ def test_send_invite_puts_the_business_name_on_its_own_line(
 
     (sent,) = inbox(email)
     body, _ = message(sent["ID"])
-    assert f"“{name}”" in body.splitlines()
+    assert f"“{name}”" in body
     assert body.count("http") == 1
     assert name not in sent["Subject"]
 

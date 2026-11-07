@@ -1,13 +1,10 @@
 Reminder: your upcoming booking
-Hello,
+# Your booking is coming up
 
-This is a reminder of your booking at $business:
+A friendly reminder of your booking at $business. They look forward to seeing you.
 
-$service
-$date at $time ($zone)
+| $service
+| $date at $time ($zone)
+| $with
 
-See you then.
-
-View, change or cancel your booking: $link
-
-ziftbook
+[View, change or cancel your booking]($link)

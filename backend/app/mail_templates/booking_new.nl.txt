@@ -1,15 +1,14 @@
 Nieuwe boeking
-Hallo,
+# Je hebt een nieuwe boeking
 
-Je hebt een nieuwe boeking:
+De boeking voor $client is bevestigd.
 
-Klant: $client$message
+| $service
+| $date om $time ($zone)
+| Klant: $client
+| $with
+| $payment
 
-$service
-$date om $time ($zone)$payment
+> $message
 
-De boeking is bevestigd.
-
-$link
-
-ziftbook
+[Open ziftbook]($link)

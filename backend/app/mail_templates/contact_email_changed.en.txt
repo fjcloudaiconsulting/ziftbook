@@ -1,12 +1,10 @@
 The contact email for your clients changed
-Hello,
+# Your clients' contact email changed
 
 The contact email that clients of this business see on ziftbook just changed:
 
 “$business”
 
-Their replies to some booking emails go to that address too. If neither you nor another owner of the business made this change, check it in Settings:
+Their replies to some booking emails go to that address too. If neither you nor another owner of the business made this change, check it in Settings.
 
-$link
-
-ziftbook
+[Open Settings]($link)

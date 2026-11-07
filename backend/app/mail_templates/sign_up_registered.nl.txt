@@ -1,13 +1,12 @@
 Je hebt al een ziftbook-account
-Hallo,
+# Je hebt al een account
 
 Iemand wilde met dit e-mailadres een ziftbook-account aanmaken, maar er bestaat er al een, dus er is niets gewijzigd.
 
-Log hier in: $sign_in
+[Log in]($sign_in)
+
 Wachtwoord vergeten? Je kunt het opnieuw instellen vanaf de inlogpagina.
 
 Heeft dit account nog geen bedrijf? Dan kan er voorlopig geen bedrijf aan worden toegevoegd: meld je met een ander e-mailadres aan om er een in te stellen.
 
-Was jij dit niet? Dan kun je deze e-mail negeren.
-
-ziftbook
+Was jij dit niet? Dan kun je deze e-mail gerust negeren.

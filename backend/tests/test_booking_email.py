@@ -9,6 +9,7 @@ import uuid
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta, timezone
 from email import message_from_string
+from string import Template
 from typing import Any
 
 import pytest
@@ -441,6 +442,7 @@ def test_confirmed_mail_carries_an_ics_attachment_received_does_not(
     message = mail_for(confirmed_email)
     assert message["Text"].strip() != ""
     assert "The attached calendar file" in message["Text"]
+    assert message["Html"].startswith("<!doctype html>")  # ZIF-175: through the job, too
 
     received_id = make_pending(app, people.a, ready, starts_at=at("11:00"))
     received_email = _client_email(people.a, received_id)
@@ -671,6 +673,7 @@ def test_every_booking_template_renders_service_and_when() -> None:
         "payment": "",
         "amount": "AMOUNT-MARKER",
         "contact": "",
+        "with": "With Member",
     }
     for template in [*STATUS_FOR, "booking_request_team_member"]:  # ZIF-143's file variant
         for locale in LOCALES:
@@ -700,6 +703,7 @@ def test_exactly_the_message_templates_carry_the_clients_message() -> None:
         "payment": "",
         "amount": "AMOUNT",
         "contact": "",
+        "with": "With Member",
     }
     carrying = set()
     for path in sorted(mail.TEMPLATES.glob("booking_*.txt")):
@@ -974,7 +978,10 @@ def test_a_linked_client_email_carries_a_fragment_token_that_hashes_into_booking
             default=str,
         )
     assert token not in outbox_blob
-    assert message["Form"]["o:tracking-clicks"] == "no"
+    assert (message["Form"]["o:tracking-clicks"], message["Form"]["o:tracking-opens"]) == (
+        "no",
+        "no",
+    )
 
 
 # fence (D1). A job already sent, run again, stores no second booking_links row: the token it
@@ -1782,3 +1789,90 @@ def test_a_flood_alert_for_someone_not_an_owner_sends_nothing(people: People, wh
     )
 
     assert subjects_sent_to(email_of(user_id)) == []
+
+
+# ZIF-175 fence: the client's card and the team's say who the booking is with, as the client's
+# booking page does ("With {name}", else "With a member of the team"). Kills: the line missing on
+# either card, and the fallback missing (a bare "With").
+@pytest.mark.parametrize(
+    ("name", "said"), [("Ana", "With Ana"), (None, "With a member of the team")]
+)
+def test_the_booking_card_says_who_the_booking_is_with(
+    people: People, app: FastAPI, ready: str, name: str | None, said: str
+) -> None:
+    booking_id = make_pending(app, people.a, ready)
+    assert patch(signed_in(app, people.a, people.both), booking_id, "confirmed").status_code == 200
+    with tenant_context(people.a) as session:
+        session.execute(
+            text("UPDATE bookings SET worker_display_name = :n WHERE id = :id"),
+            {"n": name, "id": booking_id},
+        )
+
+    run_send_booking(people.a, booking_id, "booking_confirmed")
+
+    sent = mail_for(_client_email(people.a, booking_id))
+    assert said + "\n" in sent["Text"]
+    assert said in sent["Html"]
+
+    run_send_booking(people.a, booking_id, "booking_new", user_id=str(people.both))
+
+    sent = mail_for(email_of(people.both))  # in the member's own language
+    said_in = [Template(n).substitute(name=name) if name else t for n, t in mail.WITH.values()]
+    assert any(s + "\n" in sent["Text"] and s in sent["Html"] for s in said_in)
+
+
+# ZIF-175 fence: an opening sentence must be true on every path that sends it. booking_new goes to
+# every owner and the worker for an online booking, to the worker for a booking a colleague made in
+# the console, and to the new worker when a booking moves to them; booking_moved_team also goes out
+# when only the member changed; booking_cancelled says nothing about why. Kills "$client booked
+# with you", "moved to a new time" and "had to cancel" coming back.
+# shortcut: only the templates whose openings were ever path-dependent; add one when a template
+# gains a send path that makes its opening untrue.
+OPENINGS = {
+    "booking_new": {
+        "en": "The booking for Sofia is confirmed.",
+        "nl": "De boeking voor Sofia is bevestigd.",
+        "pt": "O agendamento de Sofia está confirmado.",
+    },
+    "booking_moved_team": {
+        "en": "This booking was moved.",
+        "nl": "Deze afspraak is verzet.",
+        "pt": "Este agendamento foi remarcado.",
+    },
+    "booking_cancelled": {
+        "en": "We're sorry to tell you that Studio has cancelled your booking.",
+        "nl": "Het spijt ons: Studio heeft je boeking geannuleerd.",
+        "pt": "Sentimos muito: Studio cancelou seu agendamento.",
+    },
+    "booking_client_rescheduled": {
+        "en": "Sofia moved their booking.",
+        "nl": "Sofia heeft de afspraak verzet.",
+        "pt": "Sofia remarcou o agendamento.",
+    },
+    "booking_cancelled_by_client": {
+        "en": "As you asked, your booking at Studio is cancelled.",
+        "nl": "Zoals je vroeg, is je boeking bij Studio geannuleerd.",
+        "pt": "Conforme você pediu, seu agendamento em Studio foi cancelado.",
+    },
+}
+
+
+@pytest.mark.parametrize("template", OPENINGS)
+def test_the_opening_sentence_holds_on_every_path_that_sends_it(template: str) -> None:
+    values = {
+        "business": "Studio",
+        "client": "Sofia",
+        "service": "SVC",
+        "date": "DATE",
+        "time": "TIME",
+        "zone": "ZONE",
+        "old_date": "OLD-DATE",
+        "old_time": "OLD-TIME",
+        "message": "",
+        "payment": "",
+        "with": "With Ana",
+        "link": "https://app.test/en",
+    }
+    for locale, opening in OPENINGS[template].items():
+        _, body = mail.render(template, locale, values)
+        assert body.split("\n\n")[1] == opening, (template, locale)

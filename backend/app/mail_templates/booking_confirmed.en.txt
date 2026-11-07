@@ -1,13 +1,13 @@
 Your booking is confirmed
-Hello,
+# You're booked in
 
-Your booking at $business is confirmed:
+Your booking at $business is confirmed. They look forward to seeing you.
 
-$service
-$date at $time ($zone)$payment
+| $service
+| $date at $time ($zone)
+| $with
+| $payment
 
 The attached calendar file adds it to your calendar.
 
-View, change or cancel your booking: $link
-
-ziftbook
+[View, change or cancel your booking]($link)

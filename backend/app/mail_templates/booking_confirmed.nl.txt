@@ -1,13 +1,13 @@
 Je boeking is bevestigd
-Hallo,
+# Je afspraak staat
 
-Je boeking bij $business is bevestigd:
+Je boeking bij $business is bevestigd. Ze kijken ernaar uit je te zien.
 
-$service
-$date om $time ($zone)$payment
+| $service
+| $date om $time ($zone)
+| $with
+| $payment
 
 Met het bijgevoegde agendabestand zet je de afspraak in je agenda.
 
-Bekijk, wijzig of annuleer je afspraak: $link
-
-ziftbook
+[Bekijk, wijzig of annuleer je afspraak]($link)

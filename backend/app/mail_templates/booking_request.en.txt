@@ -1,15 +1,16 @@
 New booking request
-Hello,
+# New booking request
 
-A client has asked to book:
+$client would like to book.
 
-Client: $client$message
+| $service
+| $date at $time ($zone)
+| Client: $client
+| $with
+| $payment
 
-$service
-$date at $time ($zone)$payment
+> $message
 
 Accept or decline it before $expires. If you don't answer in time, the request expires.
 
-$link
-
-ziftbook
+[Open ziftbook]($link)

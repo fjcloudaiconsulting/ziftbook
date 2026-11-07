@@ -1,6 +1,4 @@
 Olá do ziftbook
-Olá,
+# Olá do ziftbook
 
-Esta mensagem confirma que o ziftbook consegue enviar e-mails para você.
-
-ziftbook
+Esta mensagem confirma que o ziftbook consegue enviar e-mails para você. Você não precisa fazer mais nada.

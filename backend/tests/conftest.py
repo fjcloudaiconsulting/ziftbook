@@ -284,6 +284,7 @@ def _mailgun_post(self: requests.Session, url: str, *args: Any, **kwargs: Any) -
     raw: bytes = kwargs["files"]["message"][1]
     parsed = message_from_bytes(raw, policy=email_policy)
     text_part = parsed.get_body(("plain",))
+    html_part = parsed.get_body(("html",))
     MAILGUN_CALLS.append(
         {
             "ID": str(uuid.uuid4()),
@@ -295,6 +296,7 @@ def _mailgun_post(self: requests.Session, url: str, *args: Any, **kwargs: Any) -
             "To": kwargs["data"]["to"],
             "Subject": parsed["Subject"],
             "Text": text_part.get_content() if text_part is not None else "",
+            "Html": html_part.get_content() if html_part is not None else "",
             "Raw": raw.decode(),
             "Headers": {name: parsed.get_all(name) for name in parsed},
         }
