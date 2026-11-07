@@ -2,7 +2,7 @@ import logging
 import socket
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from typing import Any
 
 import pytest
@@ -10,14 +10,15 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event
 
 from app import main
+from app.db import SessionLocal
 from app.main import create_app
-
-DOWN = "postgresql+psycopg://x:SECRET@127.0.0.1:1/x"
 
 
 @pytest.fixture(autouse=True)
-def fresh_probe_cache() -> None:
+def fresh_probe_cache() -> Iterator[None]:
     main.reset_dependencies_probe()
+    yield
+    main.reset_dependencies_probe()  # a cached 503 must not reach the worker's next test
 
 
 def test_healthz_reports_ok_and_running_version(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -48,11 +49,9 @@ def test_dependencies_ok_when_the_database_answers(migrated: None) -> None:
     assert response.json() == {"status": "ok", "database": "ok"}
 
 
-def test_dependencies_503_with_a_coarse_code_when_the_database_is_down(
-    migrated: None, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_dependencies_503_with_a_coarse_code_when_the_database_is_down(migrated: None) -> None:
     with TestClient(create_app()) as client:
-        monkeypatch.setattr(main, "_probe_engine", create_engine(DOWN))
+        SessionLocal.configure(bind=create_engine("postgresql+psycopg://x:SECRET@127.0.0.1:1/x"))
         response = client.get("/api/health/dependencies")
 
     assert response.status_code == 503
@@ -60,9 +59,7 @@ def test_dependencies_503_with_a_coarse_code_when_the_database_is_down(
     assert "127.0.0.1" not in response.text
 
 
-def test_dependencies_503_within_the_bound_when_the_database_never_answers(
-    migrated: None, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_dependencies_503_within_the_bound_when_the_database_never_answers(migrated: None) -> None:
     # ZIF-160 fence. Kills: a probe connection with no deadline of its own (no connect_timeout, or a
     # pooled socket found wedged), which waits as long as the OS TCP timeout, minutes.
     # A listener that is never accept()ed: the kernel completes the TCP handshake, then nothing is
@@ -72,7 +69,7 @@ def test_dependencies_503_within_the_bound_when_the_database_never_answers(
     result: list[Any] = []
     with TestClient(create_app()) as client:
         url = f"postgresql+psycopg://x:x@127.0.0.1:{port}/x"
-        monkeypatch.setattr(main, "_probe_engine", main.probe_engine(url))
+        SessionLocal.configure(bind=create_engine(url))  # the probe builds its own engine on it
         started = time.monotonic()
         # In a thread with a join timeout, so a hang fails the test instead of the run.
         caller = threading.Thread(
@@ -134,7 +131,7 @@ def test_dependencies_caches_unavailable_and_logs_the_error_once(
 ) -> None:
     calls = _spy_on_probes(monkeypatch)
     with TestClient(create_app()) as client:
-        monkeypatch.setattr(main, "_probe_engine", create_engine(DOWN))
+        SessionLocal.configure(bind=create_engine("postgresql+psycopg://x:SECRET@127.0.0.1:1/x"))
         with caplog.at_level(logging.ERROR, logger="app.main"):
             first = client.get("/api/health/dependencies")
             second = client.get("/api/health/dependencies")
@@ -151,7 +148,7 @@ def test_dependencies_probe_is_bounded_by_a_statement_timeout(
     seen: list[str] = []
 
     with TestClient(create_app()) as client:
-        engine = main._probe_engine
+        engine = main.probe_engine()
 
         @event.listens_for(engine, "before_cursor_execute")
         def record(conn: Any, cursor: Any, statement: str, *rest: Any) -> None:
@@ -186,7 +183,7 @@ def test_concurrent_requests_share_one_probe_and_one_error_line(
 
     with TestClient(create_app()) as client:
         patch = pytest.MonkeyPatch()
-        patch.setattr("app.main._probe_engine", _Blocked())
+        patch.setattr("app.main.probe_engine", lambda: _Blocked())
         statuses: list[int] = []
 
         def hit() -> None:
@@ -232,7 +229,7 @@ def test_a_hung_probe_serves_the_last_result_only_while_it_is_young(
     with TestClient(create_app()) as client:
         assert client.get("/api/health/dependencies").status_code == 200  # cached "ok" at 1000
         patch = pytest.MonkeyPatch()
-        patch.setattr("app.main._probe_engine", _Hung())
+        patch.setattr("app.main.probe_engine", lambda: _Hung())
         now[0] += main.PROBE_TTL + 0.1
         prober = threading.Thread(target=client.get, args=("/api/health/dependencies",))
         with caplog.at_level(logging.ERROR, logger="app.main"):

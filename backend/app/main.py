@@ -106,9 +106,9 @@ logger = logging.getLogger(__name__)
 # ZB-13. The public dependencies probe answers from its last result for this long, "unavailable"
 # included, so a flood costs the database one SELECT per window and the log one line per window.
 PROBE_TTL = 5.0
-# ZIF-160. The probe has its own engine (probe_engine below), set at startup, so it never waits on,
-# holds or wedges a slot of the app's pool, whose settings stay as they are for every other route.
-_probe_engine: Engine | None = None
+# ZIF-160. (the app engine, the probe's own engine on its URL): see probe_engine. The probe never
+# waits on, holds or wedges a slot of the app's pool, whose settings stay as they are.
+_probe_engine: tuple[Engine, Engine] | None = None
 # (monotonic checked_at, ok), failures included.
 _probe: tuple[float, bool] | None = None
 # Single flight: the one caller that takes this lock probes. Callers arriving meanwhile never wait
@@ -118,27 +118,35 @@ _probe_lock = threading.Lock()
 _now = time.monotonic
 
 
-def probe_engine(url: str) -> Engine:
-    # ZIF-160. Every step of a probe ends by itself, so the answer comes within about 5s: a fresh
-    # connection each time (NullPool: no pooled socket to find wedged); connect_timeout spans the
-    # whole setup, the startup handshake with a listener that never speaks included (2s is the
-    # driver's floor); tcp_user_timeout and keepalives end a connection whose peer stops
-    # acknowledging; statement_timeout (in _database_ok) a server that is slow to answer.
+def probe_engine() -> Engine:
+    # ZIF-160. Built once per app engine, on its URL and role. Every step of a probe ends by itself,
+    # so the answer comes within about 5s: a fresh connection each time (NullPool: no pooled socket
+    # to find wedged, and nothing to dispose); connect_timeout spans the whole setup, the startup
+    # handshake with a listener that never speaks included (2s is the driver's floor);
+    # tcp_user_timeout and keepalives end a connection whose peer stops acknowledging;
+    # statement_timeout (in _database_ok) a server that is slow to answer.
     # Not bounded here: a frozen server process whose kernel still acknowledges (the driver has no
     # read timeout). The edge's per-IP limit and the smoke's own timeout cover that.
-    return create_engine(
-        url,
-        poolclass=NullPool,
-        hide_parameters=True,
-        connect_args={
-            "connect_timeout": 2,
-            "tcp_user_timeout": 2000,  # ms
-            "keepalives": 1,
-            "keepalives_idle": 1,
-            "keepalives_interval": 1,
-            "keepalives_count": 2,
-        },
-    )
+    global _probe_engine
+    app_engine = SessionLocal.kw["bind"]
+    if _probe_engine is None or _probe_engine[0] is not app_engine:
+        _probe_engine = (
+            app_engine,
+            create_engine(
+                app_engine.url,
+                poolclass=NullPool,
+                hide_parameters=True,
+                connect_args={
+                    "connect_timeout": 2,
+                    "tcp_user_timeout": 2000,  # ms
+                    "keepalives": 1,
+                    "keepalives_idle": 1,
+                    "keepalives_interval": 1,
+                    "keepalives_count": 2,
+                },
+            ),
+        )
+    return _probe_engine[1]
 
 
 def reset_dependencies_probe() -> None:
@@ -148,8 +156,7 @@ def reset_dependencies_probe() -> None:
 
 def _database_ok() -> bool:
     try:
-        assert _probe_engine is not None, "probe before startup"
-        with _probe_engine.connect() as conn:
+        with probe_engine().connect() as conn:
             conn.execute(text("SET LOCAL statement_timeout = '2s'"))
             conn.execute(text("SELECT 1"))
         return True
@@ -219,9 +226,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # uvicorn logs that message with no exc_info, bypassing our formatter (a malformed database URL
     # would otherwise leak straight to stdout). Log the real error safely ourselves, then raise a
     # message-free one so nothing repeats the leak.
-    global _probe_engine
     try:
-        probe = _probe_engine = probe_engine(DatabaseSettings().database_url)  # ZIF-160
         engine = create_engine(
             DatabaseSettings().database_url,
             pool_pre_ping=True,
@@ -334,7 +339,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         try:
             SessionLocal.configure(bind=None)
             engine.dispose()
-            probe.dispose()
         except Exception:
             logger.critical("shutdown failed", exc_info=True)
             raise RuntimeError("shutdown failed") from None
