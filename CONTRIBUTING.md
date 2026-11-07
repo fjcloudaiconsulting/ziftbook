@@ -87,9 +87,9 @@ Specifics:
   nothing: never grant it ownership, `BYPASSRLS` or DDL rights.
 - The worker connects as `ziftbook_worker` (ZB-08): a member of `ziftbook_app`, so it has every privilege the app
   role has, plus what only background jobs may do: `mint_email_token`, which the app role does not have (0051),
-  setting an invite's `token_hash` (0053), and reading and deleting an erased client's contact hold (0064) with
-  `client_money_owed` (0077). A worker still on `ziftbook_app` fails every sign-up, reset and invite
-  email. The same never-list applies to it.
+  setting an invite's `token_hash` (0053), reading and deleting an erased client's contact hold (0064) with
+  `client_money_owed` (0077), and `mint_contact_email_token` (ZIF-232, 0086). A worker still on `ziftbook_app` fails
+  every sign-up, reset, invite and contact email confirmation email. The same never-list applies to it.
 - Neither runtime role can create temporary tables, and both search `public` before `pg_temp` (ZB-31;
   `bootstrap.sql`, plus 0050 where `ziftbook_migrate` owns the database; elsewhere 0050 changes nothing and logs
   `temporary tables left to bootstrap.sql` at WARNING). Where the admin role does not own the database either
@@ -844,8 +844,8 @@ loggers (`web.*`); Next's own stderr output (banners, SSR error traces) is not i
   this API's report route; the web's `started` line carries `csp` and `csp_reports`, never the URL);
   `csp report url is not this page's host: violations are not reported` (WARNING, web, once per process: a page
   was served on a host other than `ZIF_CSP_REPORT_URL`'s, and names no report endpoint) and
-  `worker database role: not ziftbook_worker; ...` (WARNING, worker, `database_role`: sign-up, reset
-  and invite emails fail once the contract migration revokes token minting from `ziftbook_app`).
+  `worker database role: not ziftbook_worker; ...` (WARNING, worker, `database_role`: sign-up, reset,
+  invite and contact email links fail once the contract migration revokes token minting from `ziftbook_app`).
   Both startup lines carry `database_role` (`current_user`, never `session_user`; left out when the
   query failed).
 - Abuse events, ids and reasons only: `turnstile mismatch` (WARNING, `reason` `hostname` or `action`:
@@ -861,6 +861,9 @@ loggers (`web.*`); Next's own stderr output (banners, SSR error traces) is not i
   address limits counted); `booking flood`
   (WARNING, `tenant_id`, at most once an hour: a business's unproven guest bookings reached their cap
   and its owners are emailed) and `booking flood alert failed` (WARNING, with `exc`).
+- `contact email confirmed` (INFO, `tenant_id`, ZIF-232): a business's contact email was confirmed from its link;
+  never the address or the link. `contact email link skipped` (WARNING, `reason` `invalid_address`, with the job's
+  ids): a waiting address the PUT would refuse (one written around the API) is sent no link.
 - CSP violations (ZIF-236, `app/csp_reports.py`): `csp violation` (INFO) with `report_format`, `directive`,
   `disposition`, `page` (the route template, `/[locale]/[slug]/book`, or `other`), `blocked` and `source` (a
   category: a CSP keyword, `self`, `media`, `upload`, a provider such as `stripe` or `cloudflare`, `extension`,

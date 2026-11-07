@@ -129,4 +129,4 @@ def test_the_worker_on_the_app_role_logs_a_warning(
     started = [x for x in log_lines() if x["msg"] == "worker started"]
     assert started[-1]["database_role"] == "ziftbook_app"
     assert [(x["level"], x["database_role"]) for x in warnings] == [("WARNING", "ziftbook_app")]
-    assert "sign-up, reset and invite emails fail" in warnings[0]["msg"]
+    assert "sign-up, reset, invite and contact email links fail" in warnings[0]["msg"]

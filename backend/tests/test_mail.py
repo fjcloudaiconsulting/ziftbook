@@ -386,3 +386,48 @@ def test_a_delivery_counts_as_sent_or_failed_by_template(
         for p in points(metric_reader, "ziftbook.email.deliveries")
     } == {("hello", "sent"): 1, ("hello", "failed"): 1}
     closed(metric_reader)
+
+
+def send_template(tenant_id: uuid.UUID, recipient_id: uuid.UUID, template: str) -> None:
+    with SessionLocal.begin() as session:
+        enqueue(
+            session,
+            "email.send",
+            f"email.send:{tenant_id}:{template}:{recipient_id}:{uuid.uuid4()}",
+            {"recipient_id": str(recipient_id), "template": template},
+            tenant_id=tenant_id,
+        )
+
+    async def run_until_idle() -> None:
+        while await run_once(KINDS):
+            pass
+
+    with jobs_as_the_worker():
+        asyncio.run(run_until_idle())
+
+
+# ZIF-232 S2 FENCE: the owners' notice that the contact email in effect changed names the business
+# (an owner may own several) in the body only, and links to Settings in the owner's language. Kills
+# a template whose $business or $link email.send leaves unfilled (the job fails), and an address
+# in it (the notice reaches every owner, the new address need not be theirs to read).
+def test_the_owners_hear_when_the_contact_email_changes(
+    people: People, clean_outbox: None, migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ZIF_APP_URL", "https://app.example.test")
+    name = "Studio $link Zzyzx"
+    with migrate_engine.begin() as conn:
+        conn.execute(text("UPDATE tenants SET name = :n WHERE id = :t"), {"n": name, "t": people.a})
+
+    send_template(people.a, people.both, "contact_email_changed")
+
+    (sent,) = sent_to(f"{people.both}@example.com")
+    assert sent["Subject"] == "Het contactadres voor je klanten is gewijzigd"  # both chose Dutch
+    assert f"„{name}”" in sent["Text"].splitlines()
+    assert "https://app.example.test/nl/settings" in sent["Text"].split()
+    assert name not in sent["Subject"] and "@" not in sent["Text"]
+
+
+@pytest.mark.parametrize("locale", LOCALES)
+@pytest.mark.parametrize("template", ["contact_email_changed", "contact_email_confirm"])
+def test_the_contact_email_templates_have_no_em_dash(template: str, locale: str) -> None:
+    assert "—" not in (TEMPLATES / f"{template}.{locale}.txt").read_text()

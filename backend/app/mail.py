@@ -271,6 +271,51 @@ def send_invite(job: Job) -> None:
         deliver("invite", invite.email, subject, body)
 
 
+# The confirm page, under a segment no business slug can take (0035's reserved list).
+CONTACT_EMAIL_PAGE = "account/contact-email"
+
+
+def send_contact_email(job: Job) -> None:
+    """The email.contact_email job (ZIF-232): mail the link that confirms a business's contact email
+    to that address. Payload: request_id.
+
+    Runs in the request's business. A changed, resent, cleared or confirmed request has another id
+    or none, so a queued job for the old one sends nothing. Minting and sending share a transaction,
+    as in send_invite: a failed send leaves no hash, and the retry mints a new one. No Reply-To and
+    no outbox row, as for an invite.
+    """
+    if job.tenant_id is None:
+        raise ValueError("email.contact_email needs a tenant")
+    token = secrets.token_urlsafe(32)
+    app_url = MailSettings().app_url.rstrip("/")
+    with tenant_context(job.tenant_id) as session:
+        # The PUT's own rule, again: a row written around it (0088 moved any string) must not reach
+        # a list or a header. Checked before minting, so such a request gets no link at all.
+        email = session.scalar(
+            text("SELECT email FROM contact_email_requests WHERE id = :id"),
+            {"id": job.payload["request_id"]},
+        )
+        if email is None:
+            return
+        try:
+            business_settings.header_address(passwords.normalise_email(email))
+        except ValueError:
+            logger.warning("contact email link skipped", extra={"reason": "invalid_address"})
+            return
+        request = session.execute(
+            text("SELECT email, business FROM mint_contact_email_token(:id, :hash)"),
+            {"id": job.payload["request_id"], "hash": hashlib.sha256(token.encode()).digest()},
+        ).first()
+        if request is None:  # changed, resent, cleared, confirmed, or queued too long ago
+            return
+        language = business_settings.read(session).language
+        link = f"{app_url}/{language}/{CONTACT_EMAIL_PAGE}#{job.tenant_id}.{token}"
+        subject, body = render(
+            "contact_email_confirm", language, {"link": link, "business": request.business}
+        )
+        deliver("contact_email_confirm", request.email, subject, body)
+
+
 # The app role may UPDATE only email_outbox's status, sent_at and subject, and never DELETE (0048):
 # a new column these write needs its own GRANT UPDATE in a migration.
 def _outbox(
@@ -308,8 +353,9 @@ def send(job: Job) -> None:
     """The email.send job. Payload: recipient_id (a user), template.
 
     The address and language come from users, inside the job's tenant: someone who isn't a member of
-    that tenant (any more) gets nothing. Delivery is at least once: a crash between the Mailgun
-    handoff and recording it sends again.
+    that tenant (any more) gets nothing. A template may name the business ($business) and its
+    Settings page ($link). Delivery is at least once: a crash between the Mailgun handoff and
+    recording it sends again.
     """
     if job.tenant_id is None:
         raise ValueError("email.send needs a tenant")
@@ -330,7 +376,15 @@ def send(job: Job) -> None:
             return
         # The person's own language, else their business's.
         locale = recipient.locale or business_settings.read(session).language
-        subject, body = render(payload["template"], locale)
+        business = session.scalar(
+            text("SELECT name FROM tenants WHERE id = :id"), {"id": job.tenant_id}
+        )
+        app_url = MailSettings().app_url.rstrip("/")
+        subject, body = render(
+            payload["template"],
+            locale,
+            {"business": business, "link": f"{app_url}/{locale}/settings"},
+        )
         status = _outbox(session, job, payload["recipient_id"], payload["template"], subject)
     if status == "sent":
         return

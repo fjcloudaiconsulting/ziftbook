@@ -1,0 +1,12 @@
+Het contactadres voor je klanten is gewijzigd
+Hallo,
+
+Het contactadres dat klanten van dit bedrijf op ziftbook zien, is zojuist gewijzigd:
+
+„$business”
+
+Hun antwoorden op sommige e-mails over afspraken gaan ook naar dat adres. Heb jij dit niet gewijzigd, en ook geen andere eigenaar van het bedrijf? Controleer het dan in Instellingen:
+
+$link
+
+ziftbook

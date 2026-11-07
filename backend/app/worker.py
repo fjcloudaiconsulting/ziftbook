@@ -32,6 +32,9 @@ KINDS: dict[str, JobKind] = {
     # ZB-05. An owner's alert that guest bookings are paused for the rest of the hour: later than
     # that it no longer holds, so the grace is the hour.
     "email.booking_flood": JobKind(mail.send_booking_flood, timeout=30, grace=timedelta(hours=1)),
+    # ZIF-232. A contact email's confirmation link; the grace is the day a queued link is due in,
+    # and the mint refuses a lapsed request anyway.
+    "email.contact_email": JobKind(mail.send_contact_email, timeout=30, grace=timedelta(hours=24)),
     # ZIF-133. A replaced or removed photo's objects; the grace is long because nothing is lost by
     # waiting, and the handler re-checks that no service still uses the prefix.
     "media.delete": JobKind(photos.media_delete, timeout=30, grace=timedelta(days=7)),
@@ -170,8 +173,8 @@ async def serve(settings: WorkerSettings) -> None:
     # contract migration revokes it). Never a refusal to start. None: the query failed.
     if role is not None and role != "ziftbook_worker":
         logger.warning(
-            "worker database role: not ziftbook_worker; sign-up, reset and invite emails fail"
-            " once the contract migration revokes token minting from ziftbook_app",
+            "worker database role: not ziftbook_worker; sign-up, reset, invite and contact email"
+            " links fail once the contract migration revokes token minting from ziftbook_app",
             extra={"database_role": role},
         )
     if not payments_on:
