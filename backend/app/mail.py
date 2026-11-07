@@ -1070,11 +1070,10 @@ def send_booking(job: Job) -> None:
             if failed is None:
                 return
             values["amount"] = _money(failed.amount_minor, failed.currency, locale)
-            values["contact"] = (
+            values["contact"] = (  # its own paragraph, left out when empty
                 ""
                 if settings.contact_email is None
-                else "\n\n"
-                + Template(CONTACT_LINE[locale]).substitute(
+                else Template(CONTACT_LINE[locale]).substitute(
                     email=passwords.normalise_email(settings.contact_email)
                 )
             )

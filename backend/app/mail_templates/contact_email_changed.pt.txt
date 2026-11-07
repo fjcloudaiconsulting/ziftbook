@@ -1,12 +1,10 @@
 O e-mail de contato para seus clientes mudou
-Olá,
+# O e-mail de contato dos seus clientes mudou
 
 O e-mail de contato que os clientes deste negócio veem no ziftbook acabou de mudar:
 
 “$business”
 
-As respostas deles a alguns e-mails sobre agendamentos também vão para esse endereço. Se nem você nem outro proprietário do negócio fez essa mudança, confira em Configurações:
+As respostas deles a alguns e-mails sobre agendamentos também vão para esse endereço. Se nem você nem outro proprietário do negócio fez essa mudança, confira em Configurações.
 
-$link
-
-ziftbook
+[Abrir Configurações]($link)

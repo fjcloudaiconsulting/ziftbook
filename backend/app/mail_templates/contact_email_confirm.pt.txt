@@ -1,16 +1,12 @@
 Confirme este endereço de e-mail para o ziftbook
-Olá,
+# Confirme este endereço de e-mail
 
 Este negócio no ziftbook quer que os clientes falem com ele por este endereço de e-mail:
 
 “$business”
 
-Depois da confirmação, os clientes veem este endereço na página de agendamento, e as respostas deles a alguns e-mails sobre agendamentos chegam aqui.
+Depois da confirmação, os clientes veem este endereço na página de agendamento, e as respostas deles a alguns e-mails sobre agendamentos chegam aqui. O link abre uma página onde você clica em Confirmar.
 
-Abra este link e clique em Confirmar:
+[Confirmar este endereço]($link)
 
-$link
-
-O link funciona uma vez, por 24 horas. Se você não conhece este negócio, pode ignorar este e-mail. O endereço só é usado depois de confirmado.
-
-ziftbook
+O link funciona uma vez, por 24 horas. Se você não conhece este negócio, pode simplesmente ignorar este e-mail. O endereço só é usado depois de confirmado.
