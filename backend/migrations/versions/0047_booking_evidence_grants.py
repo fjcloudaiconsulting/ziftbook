@@ -58,9 +58,10 @@ decline_message, original_starts_at
 
 
 def upgrade() -> None:
-    # ZIF-287: lock first. A vacuum of bookings started after the REVOKE below would wait for this
-    # transaction while its CREATE TRIGGER waits for the vacuum: a deadlock.
-    op.execute("LOCK TABLE bookings IN ACCESS EXCLUSIVE MODE")
+    # ZIF-287: keep vacuum out first (this mode conflicts with its own; reads and writes go on). A
+    # vacuum of bookings started after the REVOKE below would wait for this transaction while its
+    # CREATE TRIGGER waits for the vacuum: a deadlock.
+    op.execute("LOCK TABLE bookings IN SHARE UPDATE EXCLUSIVE MODE")
     # Each REVOKE runs before its GRANT (CONTRIBUTING.md): revoking a table-level privilege also
     # takes every column grant of it, so the other order would leave nothing. SELECT, and DELETE
     # (revoked in 0026), do not move.
