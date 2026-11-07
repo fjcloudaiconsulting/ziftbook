@@ -16,9 +16,9 @@ from alembic import command
 from alembic.config import Config
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
-from psycopg.errors import CheckViolation, NotNullViolation
+from psycopg.errors import CheckViolation, DeadlockDetected, LockNotAvailable, NotNullViolation
 from sqlalchemy import Connection, Engine, create_engine, make_url, text
-from sqlalchemy.exc import DBAPIError, IntegrityError
+from sqlalchemy.exc import DBAPIError, IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import NullPool
 
@@ -33,6 +33,7 @@ from tests.conftest import (
     end_membership,
     member_id,
     migrate_tenant_context,
+    retried_on_deadlock,
 )
 from tests.test_bookings_db import insert_booking, seed_service
 from tests.test_second_factor_db import PASS, enrolled, half_session, wrong
@@ -1137,6 +1138,49 @@ def test_0039_round_trips_second_factors(
         assert conn.scalar(RESOLVE_DEF) == at_head
         assert tuple(conn.execute(SECOND_FACTOR_OBJECTS).one()) == (True,) * 8
         assert tuple(conn.execute(RESOLVE_GRANTS).one()) == (True, False)
+
+
+def deadlocking(
+    times: int, error: type[Exception] = DeadlockDetected
+) -> tuple[Callable[..., None], list[str]]:
+    """A stand-in Alembic command whose first `times` calls fail as a migration statement would,
+    and the revisions it was called with."""
+    calls: list[str] = []
+
+    def run(config: Config, revision: str) -> None:
+        calls.append(revision)
+        if len(calls) <= times:
+            raise OperationalError("ALTER TABLE users DROP COLUMN phone", None, error("lost"))
+
+    return run, calls
+
+
+# ZIF-284 fence. Kills: a round trip that fails on autovacuum's one-off deadlock (0039's on CI); a
+# command that runs again after any other error, or swallows a second deadlock; a retry whose
+# warning does not name the sessions on this database; round trips that bypass the retry.
+def test_a_migration_command_runs_once_more_after_a_deadlock(migrate_engine: Engine) -> None:
+    assert getattr(command.upgrade, "__wrapped__", None) is not None
+    assert getattr(command.downgrade, "__wrapped__", None) is not None
+    cfg = Config(toml_file=str(API_DIR / "pyproject.toml"))
+
+    once, calls = deadlocking(1)
+    with migrate_engine.connect() as held, pytest.warns(UserWarning) as caught:
+        pid = held.scalar(text("SELECT pg_backend_pid()"))
+        retried_on_deadlock(once)(cfg, "0038")
+    assert calls == ["0038", "0038"]
+    [warning] = caught
+    assert str(warning.message).startswith("migration retried after a deadlock (to 0038): lost")
+    assert f"{pid} | client backend" in str(warning.message)
+
+    twice, calls = deadlocking(2)
+    with pytest.raises(OperationalError), pytest.warns(UserWarning):
+        retried_on_deadlock(twice)(cfg, "0038")
+    assert len(calls) == 2
+
+    other, calls = deadlocking(1, LockNotAvailable)
+    with pytest.raises(OperationalError):
+        retried_on_deadlock(other)(cfg, "0038")
+    assert calls == ["0038"]
 
 
 # ZIF-71 PR1 guard: the downgrade's resolve_admin_session is 0037's text verbatim.

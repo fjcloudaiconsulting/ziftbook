@@ -1,4 +1,5 @@
 import asyncio
+import functools
 import hashlib
 import io
 import ipaddress
@@ -13,6 +14,7 @@ import time
 import urllib.parse
 import urllib.request
 import uuid
+import warnings
 from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -39,8 +41,10 @@ from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from PIL import Image
+from psycopg.errors import DeadlockDetected
 from sqlalchemy import Connection, Engine, create_engine, text
 from sqlalchemy.engine import URL, make_url
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import NullPool
 
@@ -590,6 +594,70 @@ def superuser(migrate_engine: Engine) -> Iterator[Engine]:
     )
     yield engine
     engine.dispose()
+
+
+# Every session on this database but the asker's, with its locks: what a deadlock warning shows.
+SESSIONS_HERE = text("""
+SELECT a.pid, a.backend_type, a.state, a.wait_event_type, a.wait_event, left(a.query, 80),
+  (SELECT string_agg(coalesce(l.relation::regclass::text, l.locktype) || ' ' || l.mode
+     || CASE WHEN l.granted THEN '' ELSE ' (waiting)' END, ', ')
+   FROM pg_locks l WHERE l.pid = a.pid)
+FROM pg_stat_activity a
+WHERE a.datname = current_database() AND a.pid <> pg_backend_pid()
+""")
+
+
+def sessions_here() -> str:
+    """SESSIONS_HERE on the database the migrate URL names now, as the superuser (who sees every
+    query). Never raises: it only describes a failure already being handled."""
+    url = make_url(ADMIN_DATABASE_URL).set(
+        database=make_url(os.environ["ZIF_MIGRATE_DATABASE_URL"]).database
+    )
+    engine = create_engine(url, poolclass=NullPool)
+    try:
+        with engine.connect() as conn:
+            return "; ".join(" | ".join(map(str, row)) for row in conn.execute(SESSIONS_HERE))
+    except Exception as error:
+        return f"unavailable ({type(error).__name__})"
+    finally:
+        engine.dispose()
+
+
+def retried_on_deadlock(run: Callable[..., None]) -> Callable[..., None]:
+    """An Alembic command that runs once more after a deadlock, with a warning naming this
+    database's sessions (ZIF-284).
+
+    The deadlock is autovacuum's, not the suite's: 0057's downgrade REVOKEs and GRANTs on users
+    (updating its pg_class row) and then drops a column (AccessExclusiveLock). A vacuum of users
+    that started in between waits for the migration's transaction to update that same row, the
+    migration waits for the vacuum's lock, and Postgres fails the migration: it cancels an
+    autovacuum that only blocks a lock, never one in a deadlock. Any migration that changes a
+    table's grants and then alters it can meet this. Each migration is its own transaction, so
+    the command resumes at the one that failed; a second deadlock fails the test.
+    """
+
+    @functools.wraps(run)
+    def once_more(config: Config, revision: str, *args: Any, **kwargs: Any) -> None:
+        try:
+            return run(config, revision, *args, **kwargs)
+        except DBAPIError as error:
+            if not isinstance(error.orig, DeadlockDetected):
+                raise
+            warnings.warn(
+                f"migration retried after a deadlock (to {revision}): {error.orig} "
+                f"Sessions now: {sessions_here() or 'none'}",
+                stacklevel=2,
+            )
+        return run(config, revision, *args, **kwargs)
+
+    return once_more
+
+
+@pytest.fixture(autouse=True)
+def _migrations_survive_a_deadlock(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every in-process round trip calls command.upgrade/downgrade on this module object."""
+    monkeypatch.setattr(command, "upgrade", retried_on_deadlock(command.upgrade))
+    monkeypatch.setattr(command, "downgrade", retried_on_deadlock(command.downgrade))
 
 
 @pytest.fixture
