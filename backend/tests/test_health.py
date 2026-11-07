@@ -1,5 +1,7 @@
 import logging
+import socket
 import threading
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -53,6 +55,36 @@ def test_dependencies_503_with_a_coarse_code_when_the_database_is_down(migrated:
     assert response.status_code == 503
     assert response.json() == {"code": "database_unavailable"}
     assert "127.0.0.1" not in response.text
+
+
+def test_dependencies_503_within_5s_when_the_database_never_answers(migrated: None) -> None:
+    # ZIF-160 fence. Kills: a probe with no hard deadline, which waits as long as a wedged socket
+    # (the OS TCP timeout, minutes) or the sum of the pool, connect and statement timeouts.
+    # A listener that is never accept()ed: the kernel completes the TCP handshake, then nothing is
+    # ever read or written, as with a database host that stopped answering mid-connection.
+    silent = socket.create_server(("127.0.0.1", 0))
+    port = silent.getsockname()[1]
+    result: list[Any] = []
+    with TestClient(create_app()) as client:
+        SessionLocal.configure(bind=create_engine(f"postgresql+psycopg://x:x@127.0.0.1:{port}/x"))
+        started = time.monotonic()
+        # In a thread with a join timeout, so a hang fails the test instead of the run.
+        caller = threading.Thread(
+            target=lambda: result.append(client.get("/api/health/dependencies")), daemon=True
+        )
+        caller.start()
+        caller.join(8)
+        elapsed = time.monotonic() - started
+        # Resets the pending connection, so a still-waiting probe ends before the client shuts down.
+        silent.close()
+        # The abandoned probe records its result when it ends; let it, or it lands in the next test.
+        deadline = time.monotonic() + 5
+        while main._probing and time.monotonic() < deadline:
+            time.sleep(0.05)
+
+    assert result, "the probe hung"
+    assert elapsed < 5
+    assert (result[0].status_code, result[0].json()) == (503, {"code": "database_unavailable"})
 
 
 class _SpySession:
