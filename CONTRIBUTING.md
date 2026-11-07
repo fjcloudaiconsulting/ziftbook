@@ -925,6 +925,31 @@ loggers (`web.*`); Next's own stderr output (banners, SSR error traces) is not i
   (a page on another origin), `batch_cap` (past 10 violations in one request) and `global_cap` (past the line
   budget). `csp drop timer failed` (ERROR, with `exc`, once per process): the timer's write failed; it keeps
   ticking.
+- Photo decodes (ZIF-230; each runs in a child process, `app/photo_child.py`): `photo refused` (INFO,
+  `code`; with `decoder`, `error` (a class or check name), `cpu_ms`, `peak_kb` and `upload_id` when the
+  decoder answered); `photo decoder failed` (WARNING, `decoder` one of `cpu`, `memory`, `oom`, `signal`,
+  `exit`, `output`, `protocol`, `timeout`, `starved`, with `cpu_ms`, `signal` or `exit_code`, `upload_id`:
+  a limit ended the child, it crashed, wrote too much or nothing usable, or passed its deadline; the
+  photo answers 422 `photo_unreadable`, or 503 `busy` when `starved`); `photo decoder could not start`
+  (ERROR, `decoder` `spawn`, `limits`, `import` or `start` (any other end before the child's ready
+  marker): every photo answers 503 `busy` until it is fixed;
+  `headroom`, with `memory_max` and `rss`: the container's memory could not hold a child at its
+  ceiling beside the API, so none was started; `scratch`: the upload's file in `/tmp` could not be made
+  or written); `photo decoder not reaped` (ERROR: a killed child
+  did not exit). At startup, `api started` carries `photo_budget` (`ok`, `tight` or `unlimited`, from
+  the cgroup's `memory.max`), and `photo decoder memory budget too small` (ERROR, `memory_max`,
+  `required`, `oom_group`) says the pod cannot hold the API and a decode: with `memory.oom.group`, as
+  the kubelet sets on cgroup v2, a child's OOM restarts the whole pod. Never a refusal to start.
+  `api started` also carries `proc_hardening` (`on`, `unsupported` off Linux, or `failed`, with the
+  ERROR `api hardening failed: photo decodes refused`): on Linux the API makes itself non-dumpable at
+  startup, so a decoder child (same uid) cannot read its environment or memory through `/proc`. Before
+  each decode it checks that it still is; while it is dumpable (hardening failed, or never ran, as
+  with `--lifespan off`) every photo answers 503 `busy` (`decoder=hardening`). A deployed image runs
+  the API as one process, without `--reload` or `--workers`: a reloader or a workers' master keeps
+  the full environment and stays dumpable (development's `--reload` accepts that). Side effects: the API's own `/proc/self/environ`, `io` and
+  `auxv` are unreadable even to it (nothing reads them), it writes no core dump, and
+  `cat /proc/1/environ` through `kubectl exec` is refused; `kubectl debug` with `SYS_PTRACE` still
+  works.
 - `ZIF_LOG_SQL=true` logs SQL statements, never their values, when `ZIF_LOG_LEVEL` is `DEBUG`; off by
   default.
 - Ids only: never a password, token or its hash, cookie, email address, name, business or service name,
@@ -984,9 +1009,9 @@ from `.env`; it fixes the log settings at `DEBUG`/`text`, passes no `ZIF_LOG_SQL
 
 | Signal | Leaves the app as | On | Off | Tune |
 |---|---|---|---|---|
-| Logs | JSON lines on stdout (`ZIF_LOG_FORMAT=json`, the default; `text` in dev). The API, worker, migrations and web app never send logs over OTLP: a log collector reads their stdout (none is set up yet). | always (stdout) | stdout cannot be turned off; raise `ZIF_LOG_LEVEL` to `ERROR` for the least | `ZIF_LOG_LEVEL` (default `INFO`), `ZIF_LOG_SQL` (see Logging) |
+| Logs | JSON lines on stdout (`ZIF_LOG_FORMAT=json`, the default; `text` in dev). The API, worker, migrations and web app never send logs over OTLP: a log collector reads their stdout (in the cluster, the log collector ships the Ziftbook pods' logs). | always (stdout) | stdout cannot be turned off; raise `ZIF_LOG_LEVEL` to `ERROR` for the least | `ZIF_LOG_LEVEL` (default `INFO`), `ZIF_LOG_SQL` (see Logging) |
 | Traces | OTLP/HTTP to `ZIF_OTEL_EXPORTER_OTLP_ENDPOINT` | set the endpoint (plus `ZIF_OTEL_EXPORTER_OTLP_HEADERS` if the collector wants auth) | leave the endpoint unset: no spans are exported and no connection is attempted. `ZIF_OTEL_TRACES_EXPORTER=none` turns traces off with the endpoint still set. In prod you can also set `ZIF_OTEL_TRACES_SAMPLER=always_off` | prod: `ZIF_OTEL_TRACES_SAMPLER` / `_ARG` (default 10% of new traces, following the caller's decision); dev: 100% |
-| Metrics | API: `http.server.*`, `db.client.connection.*`, business counters (`ziftbook.sign_up.*`, `ziftbook.invite.*`, `ziftbook.booking.created`), `ziftbook.csp.violations`, `ziftbook.limiter.at_cap`; worker: `ziftbook.job.*`, `ziftbook.email.deliveries`, `db.client.connection.*`; web: `http.server.request.duration` for `/api` only, `ziftbook.web.request.errors` for pages; over OTLP/HTTP to `ZIF_OTEL_EXPORTER_OTLP_ENDPOINT` every 60s | set the endpoint | leave the endpoint unset: no reader, no connection. `ZIF_OTEL_METRICS_EXPORTER=none` turns metrics off with the endpoint still set | every 60s (the Python SDK's `OTEL_METRIC_EXPORT_INTERVAL`, which compose does not pass; the web app is fixed at 60s) |
+| Metrics | API: `http.server.*`, `db.client.connection.*`, business counters (`ziftbook.sign_up.*`, `ziftbook.invite.*`, `ziftbook.booking.created`), `ziftbook.csp.violations`, `ziftbook.limiter.at_cap`, `ziftbook.photo.decodes`; worker: `ziftbook.job.*`, `ziftbook.email.deliveries`, `db.client.connection.*`; web: `http.server.request.duration` for `/api` only, `ziftbook.web.request.errors` for pages; over OTLP/HTTP to `ZIF_OTEL_EXPORTER_OTLP_ENDPOINT` every 60s | set the endpoint | leave the endpoint unset: no reader, no connection. `ZIF_OTEL_METRICS_EXPORTER=none` turns metrics off with the endpoint still set | every 60s (the Python SDK's `OTEL_METRIC_EXPORT_INTERVAL`, which compose does not pass; the web app is fixed at 60s) |
 
 - Next's own startup banner (standalone `server.js`) is plain text and ignores `ZIF_LOG_*`;
   every other web server line follows them.
@@ -1009,6 +1034,7 @@ from `.env`; it fixes the log settings at `DEBUG`/`text`, passes no `ZIF_LOG_SQL
   | `ziftbook.booking.created` | counter | `booking.source` (booking_page, merchant) | api |
   | `ziftbook.csp.violations` | counter | `csp.directive`, `csp.disposition`, `csp.blocked`: the `csp violation` line's closed sets (Logging), so at most 26 × 3 × 21 = 1,638 series; and at most 500 distinct ones per process, past which every violation is counted in one overflow series (all three `other`), whatever a client sends. Counted whether or not the line budget logs it, never for another origin's page; the page, source and format stay in the log line | api |
   | `ziftbook.limiter.at_cap` | counter | `limiter.tier` (address: its IPv4 or IPv6 /64 had its 2 limiter calls in flight; network: its /48 had its 8), never the address. Each is a 429 `rate_limited` answered with no database work (ZIF-264) | api |
+  | `ziftbook.photo.decodes` | counter | `photo.outcome` (ok, refused, cpu, memory, oom, signal, exit, output, protocol, timeout, starved, headroom, scratch, spawn, limits, import, start, hardening: `photos.OUTCOMES`, see Logging) | api |
   | `ziftbook.web.request.errors` | counter | `http.route` (the template) | web |
 
   The queue series come from every worker, so aggregate them with `max`, not `sum`. `job.running`

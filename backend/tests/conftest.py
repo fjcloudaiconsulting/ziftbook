@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import secrets
+import sys
 import threading
 import time
 import urllib.parse
@@ -68,6 +69,31 @@ cast(TracerProvider, trace.get_tracer_provider()).add_span_processor(
 # pytest's, and before collection imports app.main and calls logs.configure(), which reassigns
 # threading.excepthook process-wide for the rest of the session.
 _pytest_thread_hook: Callable[[threading.ExceptHookArgs], object] = threading.excepthook
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[None]) -> Any:
+    """ZIF-230: on Linux, as anyone but root, no photo isolation test may skip. They skip only on
+    macOS (no /proc, no RLIMIT_AS, no seccomp) or as root (no RLIMIT_NPROC), so a broken skip
+    condition cannot hide a guarantee on CI or in the image's photo-check stage."""
+    report: pytest.TestReport = yield
+    if (
+        report.skipped
+        and item.path.name == "test_photo_isolation.py"
+        and sys.platform == "linux"
+        and os.geteuid() != 0
+    ):
+        report.outcome = "failed"
+    return report
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _hardened() -> None:
+    """ZIF-230: the API is non-dumpable before it decodes a photo (main.py's lifespan); so is the
+    test process, which decodes them too. A no-op off Linux."""
+    from app import photos
+
+    photos.harden()
 
 
 @pytest.hookimpl(trylast=True)
@@ -425,6 +451,7 @@ METRIC_KEYS = {
     "stripe.result",
     "payment.kind",
     "payment.outcome",
+    "photo.outcome",
     "db.client.connection.state",
     "db.client.connection.pool.name",
 }

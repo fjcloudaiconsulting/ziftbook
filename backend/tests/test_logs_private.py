@@ -16,6 +16,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 from fastapi import FastAPI
+from mypy_boto3_s3 import S3Client
 from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 from opentelemetry.sdk.trace import ReadableSpan
 from sqlalchemy import Engine, text
@@ -29,6 +30,7 @@ from app import (
     erasure_holds,
     ledger,
     payments,
+    photos,
     retention,
     storage,
     totp,
@@ -56,6 +58,7 @@ from tests.conftest import (
     sent_to,
     signed_in,
     token_in,
+    upload,
 )
 from tests.stripe_fake import FakeGateway
 from tests.test_booking_payments_api import make_shop, resume, run, sync
@@ -63,6 +66,7 @@ from tests.test_bookings_api import post_booking, sign_in_as
 from tests.test_erased_client_reads import erase_in
 from tests.test_erasure_holds import erase_announcing
 from tests.test_erasure_ledger import ledger_store
+from tests.test_photo_isolation import PROBE, probe
 from tests.test_second_factor_db import issue_ticket
 from tests.test_working_hours import seed
 
@@ -994,3 +998,38 @@ def test_the_retention_sweep_never_logs_what_it_deletes(
     assert failed and all(line["level"] == "ERROR" and "exc" in line for line in failed)
     assert any(line["msg"].startswith("retention hold value invalid") for line in lines)
     assert any(line["logger"] == "sqlalchemy.engine.Engine" for line in lines)  # SQL was logged
+
+
+# ZIF-230 fence. Kills: a failing photo decode logging the upload's bytes, the store's secret or
+# anything personal: its lines carry ids, integers and closed sets only.
+def test_a_failing_photo_decode_logs_ids_only(
+    people: People,
+    app: FastAPI,
+    s3: S3Client,
+    log_lines: Callable[[], list[dict[str, Any]]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(photos, "CHILD", PROBE)
+    monkeypatch.setattr(photos, "DECODE_TIMEOUT", 1.0)
+    marker = "zif230-upload-" + uuid.uuid4().hex
+    never = [marker, email_of(people.both), "dev-secret", "testclient"]
+    owner = signed_in(app, people.a, people.both)
+    for mode in ("probe-crash", "probe-sleep", "probe-exit-before:4", "probe-raw"):
+        upload_id = upload(s3, people.a, probe(mode, marker.encode()))
+        assert owner.post(f"/api/photo-uploads/{upload_id}/check", json={}).status_code in (
+            422,
+            503,
+        )
+    lines = log_lines()
+    dumped = json.dumps(lines)
+    for value in never:
+        assert value not in dumped, value
+    decoder = [
+        line
+        for line in lines
+        if line["msg"] in ("photo decoder failed", "photo decoder could not start")
+    ]
+    assert [line["decoder"] for line in decoder] == ["signal", "starved", "import", "protocol"]
+    allowed = {"decoder", "upload_id", "cpu_ms", "signal", "exit_code", "peak_kb"}
+    for line in decoder:
+        assert set(line) - set(lines[0]) - {"msg"} <= allowed | {"ts", "level", "logger"}
