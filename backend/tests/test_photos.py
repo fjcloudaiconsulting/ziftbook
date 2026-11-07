@@ -400,6 +400,8 @@ else:
     [
         ("8 MP RGBA PNG", lambda: image_of("PNG", "RGBA", (3200, 2590))),
         ("100 MP baseline JPEG", lambda: image_of("JPEG", "RGB", (12500, 8000))),
+        ("12 MP MPO", lambda: mpo((4000, 3000))),  # ZIF-246: a phone's HDR photo
+        ("100 MP baseline MPO", lambda: mpo((12500, 8000))),
     ],
 )
 def test_decoding_stays_inside_a_memory_budget(
@@ -631,6 +633,71 @@ def test_webp_has_its_own_cap(s3: S3Client, monkeypatch: pytest.MonkeyPatch) -> 
     assert photos.process(t, ok).width == 1200
     no_load(monkeypatch)
     assert decode_refusal(image("WEBP", (2500, 2000))) == "photo_unreadable"
+
+
+def mpo(size: tuple[int, int], **kw: object) -> bytes:
+    """An MPO as a phone saves an HDR photo: the main image (red), then a gain map (blue, a
+    quarter of its size)."""
+    buf = io.BytesIO()
+    gain_map = Image.new("RGB", (size[0] // 4, size[1] // 4), "blue")
+    Image.new("RGB", size, "red").save(buf, "MPO", save_all=True, append_images=[gain_map], **kw)
+    return buf.getvalue()
+
+
+def resized(data: bytes, frame: int, size: tuple[int, int]) -> bytes:
+    """data with the frame header of its nth JPEG (0 is the main image) claiming size instead:
+    the image data stays as it was."""
+    start = 0
+    for _ in range(frame):
+        start = data.index(b"\xff\xd8\xff", start + 2)
+    sof = start + next(i for i, m in photo_decode._markers(data[start:]) if m in (0xC0, 0xC2))
+    return data[: sof + 5] + struct.pack(">HH", size[1], size[0]) + data[sof + 9 :]
+
+
+# ZIF-246 fence. Kills: a phone's HDR photo (an MPO: the main JPEG, then a gain map) held to the
+# common cap, refused by the record's format allow-list, or its variants made from another frame.
+def test_a_phone_hdr_photo_is_read_from_its_main_image(s3: S3Client) -> None:
+    t = uuid.uuid4()
+    data = mpo((4000, 3000))
+    assert Image.open(io.BytesIO(data)).format == "MPO"
+    v = photos.process(t, upload(s3, t, data))
+    assert (v.width, v.height) == (1200, 900)
+    for blob in (v.thumb, v.detail):
+        red, green, blue = Image.open(io.BytesIO(blob)).convert("RGB").getpixel((100, 100))  # type: ignore[misc]
+        assert red > 240 and green < 16 and blue < 16
+
+
+# ZIF-246 guard (ZB-33): nothing seeks an MPO's other frames. Pillow refuses this gain map as a
+# decompression bomb the moment it seeks to it, so the photo decodes only if nothing does.
+def test_an_mpo_s_other_frames_are_never_read() -> None:
+    trap = resized(mpo((800, 600)), 1, (60000, 60000))
+    with pytest.raises(Image.DecompressionBombError):
+        Image.open(io.BytesIO(trap)).seek(1)
+    decoded = photo_decode.decode(trap)
+    assert (decoded.format, decoded.pixels, decoded.width) == ("MPO", 800 * 600, 800)
+
+
+# ZIF-246 guard: an MPO's main image is held to the JPEG caps (baseline 100 MP, after draft,
+# and the common cap for a progressive one).
+@pytest.mark.parametrize(
+    "data",
+    [
+        pytest.param(  # past Image.MAX_IMAGE_PIXELS, which only warns at open
+            resized(mpo((400, 300)), 0, (12500, 8001)),
+            marks=pytest.mark.filterwarnings("ignore::PIL.Image.DecompressionBombWarning"),
+        ),
+        resized(mpo((400, 300)), 0, (20000, 900)),
+        mpo((5000, 4000), progressive=True),
+    ],
+    ids=["baseline", "after-draft", "progressive"],
+)
+def test_an_mpo_main_image_over_the_caps_is_refused_before_decode(
+    monkeypatch: pytest.MonkeyPatch, data: bytes
+) -> None:
+    no_load(monkeypatch)
+    with pytest.raises(photo_decode.Refused) as refused:
+        photo_decode.decode(data)
+    assert (refused.value.error, refused.value.format) == ("pixel_cap", "MPO")
 
 
 def test_pillow_carries_the_decoder_fixes() -> None:

@@ -189,10 +189,13 @@ def _decode(data: bytes, seen: dict[str, Any]) -> Decoded:
         raise Refused("photo_unreadable", error_name(error)) from None
     im: Image.Image = opened
     seen["format"], seen["pixels"] = im.format, im.width * im.height
+    # A phone's HDR photo opens as an MPO (ZIF-246): its main image is a JPEG and everything below
+    # reads only that. Nothing here seeks the other frames (a gain map, say).
+    jpeg = im.format in ("JPEG", "MPO")
     # A progressive or multi-scan JPEG has no draft shortcut that saves memory, so it gets the
     # common cap.
     baseline = (
-        im.format == "JPEG"
+        jpeg
         and not (im.info.get("progressive") or im.info.get("progression"))
         and not multi_scan(data)
     )
@@ -200,7 +203,7 @@ def _decode(data: bytes, seen: dict[str, Any]) -> Decoded:
     if im.width * im.height > cap:
         raise Refused("photo_unreadable", "pixel_cap")
     try:
-        if im.format == "JPEG":
+        if jpeg:
             im.draft("RGB", (1200, 1200))
         if im.width * im.height > OTHER_CAP:  # what load() would decode, after draft
             raise Refused("photo_unreadable", "pixel_cap")

@@ -703,6 +703,25 @@ def heaviest() -> Iterator[tuple[str, Callable[[], bytes]]]:
     MAX_BYTES."""
     yield "8 MP RGBA PNG", lambda: encoded(noise("RGBA", (3200, 2590), 0x01, 1), "PNG")
     yield "100 MP baseline JPEG", lambda: encoded(Image.new("RGB", (12500, 8000), "red"), "JPEG")
+    yield (  # ZIF-246: a phone's HDR photo, the main image then a gain map
+        "100 MP baseline MPO",
+        lambda: encoded(
+            Image.new("RGB", (12500, 8000), "red"),
+            "MPO",
+            save_all=True,
+            append_images=[Image.new("L", (3125, 2000))],
+        ),
+    )
+    yield (
+        "12 MP MPO near the upload cap",
+        lambda: encoded(
+            noise("RGB", (4000, 3000), 0x7F, 10),
+            "MPO",
+            save_all=True,
+            append_images=[noise("L", (1000, 750), 0xFF, 11)],
+            quality=92,
+        ),
+    )
     yield "4 MP lossy RGBA WebP", lambda: encoded(noise("RGBA", (2000, 2000), 0x0F, 2), "WEBP")
     yield (
         "4 MP lossless WebP",
