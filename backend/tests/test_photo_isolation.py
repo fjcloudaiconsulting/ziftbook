@@ -1062,7 +1062,7 @@ def test_the_own_rss_is_read() -> None:
 
 
 # ZIF-230 fence (review finding 1). Kills: a limit raised past what the pods were sized for. The
-# production and staging API pods have 448Mi (cloud-infra clusters/hetzner/ziftbook-*/backend.yaml);
+# production and staging API pods have 448Mi (the backend memory limit in the cluster manifests);
 # a child OOM there restarts the pod, so raising the child's limit or the API's allowance means
 # raising that limit with it.
 def test_the_memory_budget_fits_the_pod() -> None:
