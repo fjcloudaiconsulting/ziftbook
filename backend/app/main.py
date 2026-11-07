@@ -4,7 +4,6 @@ import ipaddress
 import json
 import logging
 import re
-import threading
 import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -12,6 +11,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 from urllib.parse import urlsplit
 
+import psycopg
 from fastapi import APIRouter, FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -19,10 +19,9 @@ from fastapi.routing import APIRoute
 from opentelemetry import trace
 from opentelemetry.trace import SpanKind
 from pydantic import BaseModel
-from sqlalchemy import Engine, create_engine, event, text
+from sqlalchemy import create_engine, event
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.exc import TimeoutError as PoolTimeoutError
-from sqlalchemy.pool import NullPool
 from starlette.middleware.body_limit import RequestBodyLimitMiddleware
 from starlette.types import ASGIApp, Receive, Scope, Send
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
@@ -106,59 +105,55 @@ logger = logging.getLogger(__name__)
 # ZB-13. The public dependencies probe answers from its last result for this long, "unavailable"
 # included, so a flood costs the database one SELECT per window and the log one line per window.
 PROBE_TTL = 5.0
-# ZIF-160. (the app engine, the probe's own engine on its URL): see probe_engine. The probe never
-# waits on, holds or wedges a slot of the app's pool, whose settings stay as they are.
-_probe_engine: tuple[Engine, Engine] | None = None
+# ZIF-160. One probe answers within this, whatever the database does: the deadline cancels it in
+# any phase (connect, TLS, login, query, a frozen server whose kernel still acknowledges). Inside
+# the 5s the post-deploy smoke allows.
+PROBE_DEADLINE = 4.0
+# Well inside the deadline, and room for a slow but healthy login (a fresh connection each time).
+PROBE_CONNECT_TIMEOUT = 3
 # (monotonic checked_at, ok), failures included.
 _probe: tuple[float, bool] | None = None
-# Single flight: the one caller that takes this lock probes. Callers arriving meanwhile never wait
-# on it: they answer the last result while it is younger than 2 * PROBE_TTL (else unavailable, as
-# with none yet) and neither probe nor log.
-_probe_lock = threading.Lock()
+# Single flight: set by the one caller that probes, cleared when its probe ends, which is within
+# PROBE_DEADLINE. Callers arriving meanwhile answer the last result while it is younger than
+# 2 * PROBE_TTL (else unavailable, as with none yet) and neither probe nor log.
+_probing = False
+# A timed-out probe's cancellation runs on after its caller answered (the driver may first ask the
+# server to cancel the query, bounded by its own timeouts); this keeps the task referenced.
+_abandoned: set[asyncio.Task[None]] = set()
 _now = time.monotonic
 
 
-def probe_engine() -> Engine:
-    # ZIF-160. Built once per app engine, on its URL and role. Every step of a probe ends by itself,
-    # so the answer comes within about 5s: a fresh connection each time (NullPool: no pooled socket
-    # to find wedged, and nothing to dispose); connect_timeout spans the whole setup, the startup
-    # handshake with a listener that never speaks included (2s is the driver's floor);
-    # tcp_user_timeout and keepalives end a connection whose peer stops acknowledging;
-    # statement_timeout (in _database_ok) a server that is slow to answer.
-    # Not bounded here: a frozen server process whose kernel still acknowledges (the driver has no
-    # read timeout). The edge's per-IP limit and the smoke's own timeout cover that.
-    global _probe_engine
-    app_engine = SessionLocal.kw["bind"]
-    if _probe_engine is None or _probe_engine[0] is not app_engine:
-        _probe_engine = (
-            app_engine,
-            create_engine(
-                app_engine.url,
-                poolclass=NullPool,
-                hide_parameters=True,
-                connect_args={
-                    "connect_timeout": 2,
-                    "tcp_user_timeout": 2000,  # ms
-                    "keepalives": 1,
-                    "keepalives_idle": 1,
-                    "keepalives_interval": 1,
-                    "keepalives_count": 2,
-                },
-            ),
-        )
-    return _probe_engine[1]
-
-
 def reset_dependencies_probe() -> None:
-    global _probe
+    global _probe, _probing
     _probe = None
+    _probing = False
 
 
-def _database_ok() -> bool:
+async def _select_1(conninfo: str) -> None:
+    # A fresh connection on the app's URL and role, outside its pool: the probe never waits on,
+    # holds or wedges a pool slot, and the pool's settings stay as they are for every other route.
+    async with await psycopg.AsyncConnection.connect(
+        conninfo, autocommit=True, connect_timeout=PROBE_CONNECT_TIMEOUT
+    ) as conn:
+        await conn.execute("SET statement_timeout = '2s'")
+        await conn.execute("SELECT 1")
+
+
+async def _database_ok() -> bool:
     try:
-        with probe_engine().connect() as conn:
-            conn.execute(text("SET LOCAL statement_timeout = '2s'"))
-            conn.execute(text("SELECT 1"))
+        bind = SessionLocal.kw["bind"]
+        if bind is None:
+            raise RuntimeError("no database engine bound")
+        conninfo = bind.url.set(drivername="postgresql").render_as_string(hide_password=False)
+        probe = asyncio.create_task(_select_1(conninfo))
+        # Not wait_for: it would wait out the cancellation too, past the deadline.
+        if not (await asyncio.wait({probe}, timeout=PROBE_DEADLINE))[0]:
+            probe.cancel()
+            _abandoned.add(probe)
+            probe.add_done_callback(_abandoned.discard)
+            logger.error("dependencies probe timed out", extra={"dependency": "database"})
+            return False
+        probe.result()
         return True
     except Exception:
         logger.error("dependencies unhealthy", extra={"dependency": "database"}, exc_info=True)
@@ -364,18 +359,18 @@ def create_app() -> FastAPI:
         response_model=Dependencies,
         responses={503: {"model": Error}},
     )
-    def dependencies() -> Any:
-        global _probe
+    async def dependencies() -> Any:
+        # Async (ZIF-160): the probe is cancellable at its deadline and holds no request thread.
+        # On the event loop, so the check and set of _probing below cannot interleave.
+        global _probe, _probing
         cached = _probe
-        stale = cached is None or _now() - cached[0] >= PROBE_TTL
-        if stale and _probe_lock.acquire(blocking=False):
+        if not _probing and (cached is None or _now() - cached[0] >= PROBE_TTL):
+            _probing = True
             try:
-                cached = _probe  # the caller before may have just probed
-                if cached is None or _now() - cached[0] >= PROBE_TTL:
-                    ok = _database_ok()
-                    cached = _probe = (_now(), ok)
+                ok = await _database_ok()
+                cached = _probe = (_now(), ok)
             finally:
-                _probe_lock.release()
+                _probing = False
         # Fresh, just probed, or another caller's probe is in flight: that one's last result is
         # served only while younger than 2 * PROBE_TTL.
         ok = cached is not None and cached[1] and _now() - cached[0] < 2 * PROBE_TTL

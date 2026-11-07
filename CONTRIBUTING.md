@@ -510,6 +510,8 @@ migration 0026), not any code path. A race in a route somebody forgets to guard 
   (`idle_in_transaction_session_timeout`), so slow work runs outside a transaction: outbound calls, and a service
   photo's decode and store (`app/services.py`). Keep new slow work there too.
   Raising the pool means checking it against Postgres' `max_connections` together with the worker's 21.
+  Outside the pool, `/api/health/dependencies` opens at most one short-lived connection per `PROBE_TTL` (5 seconds)
+  per API process, closed when the probe ends (ZIF-160).
 - **One address has at most 2 rate-limiter calls in flight per API process, and one IPv6 /48 at most 8**
   (`limits.hit()`, ZIF-264): a flood from one address no longer queues on its rate-limit row until the pool is
   full. Past that, `hit()` answers 429 `rate_limited` with no database work (counted in
