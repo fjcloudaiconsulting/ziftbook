@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.38.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.37.0...v0.38.0) (2026-11-07)
+
+
+### Features
+
+* **backend:** decode service photos in a sandboxed child process (ZIF-230) ([#375](https://github.com/fjcloudaiconsulting/ziftbook/issues/375)) ([407607b](https://github.com/fjcloudaiconsulting/ziftbook/commit/407607b3dbdf08377fefd3313927fed0c3ef1513))
+* **backend:** emails carry an HTML part, with warmer copy and a booking card (ZIF-175) ([#406](https://github.com/fjcloudaiconsulting/ziftbook/issues/406)) ([0c66ba0](https://github.com/fjcloudaiconsulting/ziftbook/commit/0c66ba09c2a5ebaecb77b8e751d38463a7145f3a))
+
 ## [0.37.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.36.0...v0.37.0) (2026-11-07)
 
 
