@@ -7,13 +7,25 @@ import time
 import urllib.request
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 from opentelemetry import metrics
 from opentelemetry.metrics import CallbackOptions, Observation
 from sqlalchemy import create_engine, event
 
-from app import bookings, erasure_holds, jobs, ledger, limits, logs, mail, payments, photos, tracing
+from app import (
+    bookings,
+    erasure_holds,
+    jobs,
+    ledger,
+    limits,
+    logs,
+    mail,
+    payments,
+    photos,
+    retention,
+    tracing,
+)
 from app.config import LedgerSettings, MailSettings, StripeSettings, WorkerSettings
 from app.db import SessionLocal, database_role, reset_session
 from app.jobs import JobKind, run_once
@@ -83,6 +95,9 @@ POLL_SECONDS = 30
 # ZIF-122: settle expired pending bookings (housekeeping) and, ZIF-58, purge the contact holds no
 # longer needed: on a timer, not every poll.
 SWEEP_SECONDS = 300
+# ZIF-235: the retention sweep, hourly; sooner while a run leaves a backlog (its budget is spent).
+RETENTION_SECONDS = 3600
+RETENTION_BACKLOG_SECONDS = 300
 
 logger = logging.getLogger("app.worker")
 
@@ -91,11 +106,21 @@ def ping(url: str) -> None:
     urllib.request.urlopen(url, timeout=5).close()
 
 
-async def work(kinds: dict[str, JobKind], healthcheck_url: str | None, stop: asyncio.Event) -> None:
+async def work(
+    kinds: dict[str, JobKind],
+    healthcheck_url: str | None,
+    stop: asyncio.Event,
+    hold: retention.Hold | None = None,
+) -> None:
     """Run due jobs until nothing is due, sweep when due, ping, then wait POLL_SECONDS or until
-    stopped."""
+    stopped. hold: the retention hold as configured (ZIF-235), if any."""
     swept: float | None = None  # monotonic time of the last SUCCESSFUL sweep
+    retention_due: float | None = None  # when the next retention run is due; None: now
+    # The architect's ruling (ZIF-235 D6): an invalid hold value holds, and withholds the ping on
+    # every iteration until someone fixes it, so the owner is alerted for as long as it lasts.
+    invalid_hold = hold is not None and hold.state == "invalid"
     while not stop.is_set():
+        healthy = not invalid_hold
         try:
             while await run_once(kinds) and not stop.is_set():
                 pass
@@ -122,14 +147,31 @@ async def work(kinds: dict[str, JobKind], healthcheck_url: str | None, stop: asy
         except Exception:
             # No ping: an iteration that keeps failing (e.g. the database is down) raises the alert.
             logger.exception("worker iteration failed")
-        else:
-            if healthcheck_url:
-                try:
-                    await asyncio.to_thread(ping, healthcheck_url)
-                except Exception as error:
-                    # Any class: a ping never stops the worker (ZIF-21; a URL with no scheme raises
-                    # ValueError). The URL is a secret-ish check id.
-                    logger.warning("healthcheck ping failed", extra={"error": type(error).__name__})
+            healthy = False
+        # ZIF-235. After the booking sweep, which frees slots, and in its own try: neither is
+        # hostage to the other. A failure withholds the ping and retries next poll. The sweep
+        # bounds its own run (a time budget, and stop checked between batches).
+        if not stop.is_set() and (retention_due is None or time.monotonic() >= retention_due):
+            if invalid_hold:
+                assert hold is not None
+                logger.error(
+                    "retention hold value invalid: holding until it is fixed",
+                    extra={"hold_until": (hold.raw or "")[:40]},
+                )
+            try:
+                result = await asyncio.to_thread(retention.sweep, stop.is_set, hold)
+                wait = RETENTION_SECONDS if result.complete else RETENTION_BACKLOG_SECONDS
+                retention_due = time.monotonic() + wait
+            except Exception:
+                logger.exception("retention sweep failed")
+                healthy = False
+        if healthy and healthcheck_url:
+            try:
+                await asyncio.to_thread(ping, healthcheck_url)
+            except Exception as error:
+                # Any class: a ping never stops the worker (ZIF-21; a URL with no scheme raises
+                # ValueError). The URL is a secret-ish check id.
+                logger.warning("healthcheck ping failed", extra={"error": type(error).__name__})
         try:
             await asyncio.wait_for(stop.wait(), POLL_SECONDS)
         except TimeoutError:
@@ -167,6 +209,8 @@ async def serve(settings: WorkerSettings) -> None:
             "rate_limit_key": rate_limit_key,
             # ZB-08. The role the worker's queries run as: ziftbook_worker.
             "database_role": role,
+            # ZIF-235: the evidence hold as set (left out when unset).
+            "retention_hold_until": (settings.retention_hold_until or "")[:40] or None,
         },
     )
     # ZB-08: a WARNING, not an ERROR, while ziftbook_app may still mint email tokens (until the
@@ -188,7 +232,22 @@ async def serve(settings: WorkerSettings) -> None:
         )
     if rate_limit_key != "set":
         logger.warning("rate limit key unset: rate-limit keys are not peppered")
-    await work(KINDS, settings.healthcheck_url, stop)
+    # ZIF-235 D6. Never silent, never a refusal to start: see retention.Hold.
+    hold = retention.parse_hold(settings.retention_hold_until, datetime.now(UTC).date())
+    shown = {"hold_until": (hold.raw or "")[:40]}
+    if hold.state == "invalid":
+        logger.error(
+            "retention hold value invalid: holding until it is fixed"
+            " (a plain YYYY-MM-DD at most 90 days ahead)",
+            extra=shown,
+        )
+    elif hold.state == "past":
+        logger.error("retention hold date has passed: not holding", extra=shown)
+    elif hold.state == "on":
+        logger.warning(
+            "retention hold on: audit events and booking addresses are kept", extra=shown
+        )
+    await work(KINDS, settings.healthcheck_url, stop, hold)
     logger.info("worker stopped")
 
 

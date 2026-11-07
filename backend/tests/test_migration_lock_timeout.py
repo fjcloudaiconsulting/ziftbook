@@ -5,8 +5,9 @@ import os
 import re
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 from alembic import command
@@ -16,7 +17,7 @@ from sqlalchemy import Engine, create_engine, make_url, text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.pool import NullPool
 
-from tests.conftest import ADMIN_DATABASE_URL, API_DIR, wait_until_blocked
+from tests.conftest import ADMIN_DATABASE_URL, API_DIR
 
 # The real env.py runs this one revision, against a database of its own, so the test never depends
 # on what the current head migration happens to touch.
@@ -114,10 +115,11 @@ def test_a_run_waiting_its_turn_waits_past_the_lock_timeout(
         waiting = threading.Thread(target=upgrade)
         waiting.start()
         try:
-            wait_until_blocked(engine, 1)
             time.sleep(6)  # past the 5s lock_timeout: a bounded wait has failed by now
             assert not errors, errors
             assert waiting.is_alive()
+            with engine.connect() as conn:
+                assert conn.scalar(ADDED) == 0  # still waiting its turn
         finally:
             other_run.execute(text("SELECT pg_advisory_unlock(:id)"), {"id": MIGRATION_LOCK_ID})
             waiting.join(timeout=30)
@@ -125,3 +127,78 @@ def test_a_run_waiting_its_turn_waits_past_the_lock_timeout(
     assert not errors, errors
     with engine.connect() as conn:
         assert conn.scalar(ADDED) == 1
+
+
+# ZIF-235 (build review, correctness #2). Kills: env.py waiting in pg_advisory_lock (or in any
+# statement that waits for the lock). A blocked statement holds a snapshot, and CREATE INDEX
+# CONCURRENTLY in the run holding the lock (0072) waits for every older snapshot: Postgres finds
+# the cycle after deadlock_timeout and aborts the index build. Polled with pg_try_advisory_lock and
+# a commit between tries, the waiting run holds no snapshot, and the build finishes.
+def test_a_run_waiting_its_turn_never_blocks_a_concurrent_index_build(
+    scratch: tuple[Config, Engine],
+) -> None:
+    cfg, engine = scratch
+    errors: list[BaseException] = []
+
+    def upgrade() -> None:
+        try:
+            command.upgrade(cfg, "head")
+        except BaseException as error:
+            errors.append(error)
+
+    with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as first_run:
+        first_run.execute(text("SELECT pg_advisory_lock(:id)"), {"id": MIGRATION_LOCK_ID})
+        waiting = threading.Thread(target=upgrade)
+        waiting.start()
+        try:
+            time.sleep(3)  # the second run is waiting its turn
+            assert waiting.is_alive(), errors
+            first_run.execute(text("SET lock_timeout = 0"))
+            started = time.monotonic()
+            first_run.execute(text("CREATE INDEX CONCURRENTLY ix_probe_id ON probe (id)"))
+            assert time.monotonic() - started < 20
+        finally:
+            first_run.execute(text("SELECT pg_advisory_unlock(:id)"), {"id": MIGRATION_LOCK_ID})
+            waiting.join(timeout=30)
+    assert not waiting.is_alive()
+    assert not errors, errors
+    with engine.connect() as conn:
+        assert conn.scalar(ADDED) == 1
+        valid = conn.scalar(
+            text("SELECT indisvalid FROM pg_index WHERE indexrelid = 'ix_probe_id'::regclass")
+        )
+    assert valid is True
+
+
+# ZIF-235 (re-verify N1). Polling, a run waiting its turn shows in neither pg_locks nor
+# pg_stat_activity (it is idle between tries), so a stuck holder would hang the deploy unseen.
+# Kills: a waiting run that never logs, logs once only, or names no holder. Thresholds come from the
+# Alembic config's attributes (30 s and 300 s when unset), shortened here.
+def test_a_run_waiting_its_turn_says_who_holds_the_lock(
+    scratch: tuple[Config, Engine], log_lines: Callable[[], list[dict[str, Any]]]
+) -> None:
+    cfg, engine = scratch
+    cfg.attributes["lock_wait_warning_seconds"] = 1
+    cfg.attributes["lock_wait_repeat_seconds"] = 1
+    errors: list[BaseException] = []
+
+    def upgrade() -> None:
+        try:
+            command.upgrade(cfg, "head")
+        except BaseException as error:
+            errors.append(error)
+
+    with engine.connect() as other_run:
+        holder = other_run.scalar(text("SELECT pg_backend_pid()"))
+        other_run.execute(text("SELECT pg_advisory_lock(:id)"), {"id": MIGRATION_LOCK_ID})
+        waiting = threading.Thread(target=upgrade)
+        waiting.start()
+        try:
+            time.sleep(4)
+        finally:
+            other_run.execute(text("SELECT pg_advisory_unlock(:id)"), {"id": MIGRATION_LOCK_ID})
+            waiting.join(timeout=30)
+    assert not errors, errors
+    warned = [line for line in log_lines() if line["msg"] == "migration lock held by another run"]
+    assert len(warned) >= 2  # and again while it waits
+    assert all(line["level"] == "WARNING" and line["holder_pid"] == holder for line in warned)

@@ -2917,3 +2917,153 @@ def test_0088_moves_every_saved_contact_email_out_of_use(
             with migrate_tenant_context(migrate_engine, tenant_id) as conn:
                 conn.execute(text("DELETE FROM settings"))
                 conn.execute(text("DELETE FROM tenants WHERE id = :t"), {"t": tenant_id})
+
+
+# ZIF-235 (0072): the retention sweep's indexes, built CONCURRENTLY in the repository's first
+# autocommit_block.
+RETENTION_INDEXES = text("""
+SELECT c.relname, i.indisvalid, pg_get_indexdef(i.indexrelid)
+FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+WHERE c.relname IN ('ix_audit_events_created_at', 'ix_audit_events_sign_in_failed_created_at',
+                    'ix_booking_events_tenant_id_created_at_with_origin',
+                    'ix_platform_audit_events_created_at',
+                    'ix_platform_audit_events_failed_created_at')
+ORDER BY 1
+""")
+RETENTION_INDEX_DEFS = [
+    (
+        "ix_audit_events_created_at",
+        True,
+        "CREATE INDEX ix_audit_events_created_at ON public.audit_events USING btree (created_at)",
+    ),
+    (
+        "ix_audit_events_sign_in_failed_created_at",
+        True,
+        "CREATE INDEX ix_audit_events_sign_in_failed_created_at ON public.audit_events"
+        " USING btree (created_at) WHERE (action = 'sign_in_failed'::text)",
+    ),
+    (
+        "ix_booking_events_tenant_id_created_at_with_origin",
+        True,
+        "CREATE INDEX ix_booking_events_tenant_id_created_at_with_origin ON public.booking_events"
+        " USING btree (tenant_id, created_at) WHERE ((ip IS NOT NULL) OR (user_agent IS NOT NULL))",
+    ),
+    (
+        "ix_platform_audit_events_created_at",
+        True,
+        "CREATE INDEX ix_platform_audit_events_created_at ON public.platform_audit_events"
+        " USING btree (created_at)",
+    ),
+    (
+        "ix_platform_audit_events_failed_created_at",
+        True,
+        "CREATE INDEX ix_platform_audit_events_failed_created_at ON public.platform_audit_events"
+        " USING btree (created_at) WHERE (action = ANY (ARRAY['admin_sign_in_failed'::text,"
+        " 'second_factor_failed'::text, 'totp_enrolment_failed'::text]))",
+    ),
+]
+
+
+# ZIF-235 FENCE (0072). Wrong impl: a downgrade that leaves an index behind; an upgrade that keeps
+# an invalid index a failed earlier run left (CREATE INDEX CONCURRENTLY leaves one on a timeout,
+# and IF NOT EXISTS would keep it).
+def test_0072_round_trips_the_retention_indexes_and_replaces_an_invalid_leftover(
+    migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = lock_timeout_config(monkeypatch)
+    admin = create_engine(
+        make_url(ADMIN_DATABASE_URL).set(database=migrate_engine.url.database), poolclass=NullPool
+    )
+    try:
+        command.downgrade(cfg, migration("0072_retention_indexes.py").down_revision)
+        with migrate_engine.connect() as conn:
+            assert conn.execute(RETENTION_INDEXES).all() == []
+        # What a run that timed out mid-build leaves: an index of the same name, not valid.
+        with admin.begin() as conn:
+            conn.execute(text("CREATE INDEX ix_audit_events_created_at ON audit_events (id)"))
+            conn.execute(
+                text(
+                    "UPDATE pg_index SET indisvalid = false"
+                    " WHERE indexrelid = 'ix_audit_events_created_at'::regclass"
+                )
+            )
+    finally:
+        command.upgrade(cfg, "head")
+        admin.dispose()
+    with migrate_engine.connect() as conn:
+        assert [tuple(row) for row in conn.execute(RETENTION_INDEXES)] == RETENTION_INDEX_DEFS
+
+
+RETENTION_POLICY_NAMES = text("""
+SELECT policyname FROM pg_policies WHERE schemaname = 'public' AND tablename = 'audit_events'
+  AND policyname LIKE 'retention_sweep%' ORDER BY 1
+""")
+
+
+# ZIF-235 FENCE (0073). Wrong impl: a downgrade that leaves either policy behind.
+def test_0073_round_trips_the_audit_retention_policies(
+    migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = lock_timeout_config(monkeypatch)
+    try:
+        command.downgrade(cfg, "0072")
+        with migrate_engine.connect() as conn:
+            assert conn.scalars(RETENTION_POLICY_NAMES).all() == []
+    finally:
+        command.upgrade(cfg, "head")
+    with migrate_engine.connect() as conn:
+        assert conn.scalars(RETENTION_POLICY_NAMES).all() == [
+            "retention_sweep",
+            "retention_sweep_read",
+        ]
+
+
+RETENTION_FUNCTIONS = text("""
+SELECT p.oid::regprocedure::text, pg_get_userbyid(p.proowner), p.prosecdef, p.proconfig,
+       has_function_privilege('ziftbook_worker', p.oid, 'EXECUTE'),
+       has_function_privilege('ziftbook_app', p.oid, 'EXECUTE'),
+       has_function_privilege('public', p.oid, 'EXECUTE')
+FROM pg_proc p WHERE p.proname IN ('sweep_audit_events', 'sweep_admin_sessions',
+                                   'sweep_account_sessions', 'sweep_booking_origins')
+ORDER BY 1
+""")
+
+
+# ZIF-235 FENCE (0074). Wrong impl: a downgrade that leaves a function behind; an upgrade whose
+# function runs as its caller, searches a caller's schema first, or is executable by the app role
+# or PUBLIC.
+def test_0074_round_trips_the_retention_functions(
+    migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = lock_timeout_config(monkeypatch)
+    try:
+        command.downgrade(cfg, "0073")
+        with migrate_engine.connect() as conn:
+            assert conn.execute(RETENTION_FUNCTIONS).all() == []
+    finally:
+        command.upgrade(cfg, "head")
+    pinned = ["search_path=pg_catalog, public, pg_temp"]
+    with migrate_engine.connect() as conn:
+        assert [tuple(row) for row in conn.execute(RETENTION_FUNCTIONS)] == [
+            (name, "ziftbook_migrate", True, pinned, True, False, False)
+            for name in (
+                "sweep_account_sessions()",
+                "sweep_admin_sessions()",
+                "sweep_audit_events()",
+                "sweep_booking_origins(uuid)",
+            )
+        ]
+
+
+# ZIF-235 (build review, correctness #3) FENCE. Wrong impl: 0072 leaves the session's lock_timeout
+# at 0 after its block (the restore dropped or reordered). 0073 would then wait without bound for
+# its ACCESS EXCLUSIVE on audit_events, and every sign-in would queue behind it (ZIF-34). Run on one
+# connection, as env.py runs every migration of a deploy on one.
+def test_0072_leaves_the_lock_timeout_as_it_found_it(migrate_engine: Engine) -> None:
+    module = migration("0072_retention_indexes.py")
+    with migrate_engine.connect() as conn:
+        conn.execute(text("SET lock_timeout = '5s'"))
+        conn.commit()
+        with Operations.context(MigrationContext.configure(conn)):
+            module.upgrade()
+        assert conn.scalar(text("SHOW lock_timeout")) == "5s"

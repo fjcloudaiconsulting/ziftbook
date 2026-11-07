@@ -71,7 +71,11 @@ Specifics:
   it again once the lock is free. If it keeps failing, find the transaction holding the lock (`pg_locks` joined to
   `pg_stat_activity`), or split the migration so each step locks less (one table per migration; add a constraint
   `NOT VALID` and validate it in a later one). Waiting for another migration run to finish is not bounded:
-  concurrent runs take turns.
+  concurrent runs take turns. `migrations/env.py` polls its advisory lock (`pg_try_advisory_lock`, a commit
+  between tries) rather than waiting in `pg_advisory_lock`: a waiting statement holds a snapshot, and a
+  `CREATE INDEX CONCURRENTLY` in the run holding the lock would deadlock with it. A waiting run therefore shows as idle
+  (last query `COMMIT`), not as a lock waiter: it logs `migration lock held by another run` (WARNING,
+  `holder_pid`, `waited_seconds`) after 30 seconds and every 5 minutes after, so a stuck holder can be found.
 - Validating a constraint on a table with FORCE row-level security (a `VALIDATE CONSTRAINT`, or an `ADD CONSTRAINT`
   that checks existing rows) scans as the owner under the tenant policy: with no `app.tenant_id` it fails (42704),
   and with one it checks that business's rows only and still marks the constraint valid. Use `app.db.lift_force`
@@ -88,8 +92,10 @@ Specifics:
 - The worker connects as `ziftbook_worker` (ZB-08): a member of `ziftbook_app`, so it has every privilege the app
   role has, plus what only background jobs may do: `mint_email_token`, which the app role does not have (0051),
   setting an invite's `token_hash` (0053), reading and deleting an erased client's contact hold (0064) with
-  `client_money_owed` (0077), and `mint_contact_email_token` (ZIF-232, 0086). A worker still on `ziftbook_app` fails
-  every sign-up, reset, invite and contact email confirmation email. The same never-list applies to it.
+  `client_money_owed` (0077), `mint_contact_email_token` (ZIF-232, 0086), and the retention functions
+  `sweep_audit_events`, `sweep_admin_sessions`, `sweep_account_sessions` and `sweep_booking_origins` (0074, ZIF-235).
+  A worker still on `ziftbook_app` fails every sign-up, reset, invite and contact email confirmation email. The same
+  never-list applies to it.
 - Neither runtime role can create temporary tables, and both search `public` before `pg_temp` (ZB-31;
   `bootstrap.sql`, plus 0050 where `ziftbook_migrate` owns the database; elsewhere 0050 changes nothing and logs
   `temporary tables left to bootstrap.sql` at WARNING). Where the admin role does not own the database either
@@ -588,11 +594,20 @@ we can show which businesses were not affected.
 - Operators read every event as `ziftbook_migrate`, in a transaction:
   `BEGIN; SET LOCAL app.audit_review = 'on'; SELECT DISTINCT tenant_id FROM audit_events WHERE created_at > ...;`
 - The app role can set `app.audit_review` too. A definer function owned by `ziftbook_migrate` that reads
-  `audit_events` must clear it first, or it shows the caller every business's events.
+  `audit_events` must clear it first, or it shows the caller every business's events. The same holds for
+  `app.retention_sweep` (0073), which opens the events past their retention to `ziftbook_migrate` for the worker's
+  sweep: any other such definer sets it to `''` before its first read, and no `SECURITY INVOKER` function owned by
+  `ziftbook_migrate` reads `audit_events` (a definer calling one would inherit the flag). `tests/test_retention_db.py`
+  checks both.
 - A new column on `audit_events` needs its own `GRANT INSERT (column) ON audit_events TO ziftbook_app`, because the
   table's INSERT grant lists columns. Its migration must be applied **before** the app that writes it: `record`
   names every column, so a new app against the old schema fails on every event, not only the new one.
-- Nothing purges events yet. The ZIF-5 sweeper will remove failed sign-ins after 30 days and the rest after a year.
+- The worker's retention sweep (`app/retention.py`, ZIF-235) deletes failed sign-ins after 30 days and every other
+  event after a year, here and in `platform_audit_events` (its three failure actions after 30 days). Rows past their
+  period are gone for good: the owner's audit page shows a year at most. During an incident an operator can hold the
+  evidence with `ZIF_RETENTION_HOLD_UNTIL` (worker; `YYYY-MM-DD`, exclusive: until 00:00 UTC on that date, at
+  most 90 days ahead); export what is needed as
+  `ziftbook_migrate` with `app.audit_review` before the hold ends.
 
 ### Platform admin
 
@@ -781,6 +796,16 @@ Deferred and scheduled work goes through the `jobs` table (`app/jobs.py`); there
   (`booking.reminder:<tenant>:<booking>:<starts_at>`).
 - Removing a job kind needs a migration that deletes its rows: the prune only removes finished jobs, and no worker
   finishes a kind it no longer registers.
+- **Retention (ZIF-235).** The worker runs `retention.sweep()` hourly, after the booking sweep and in its own try (a
+  failure withholds the ping), within a 20-second budget and stopping between batches when the worker stops; a run
+  that leaves a backlog comes back after 5 minutes. It deletes `rate_limits` rows an hour after the longest window
+  (`limits.MAX_WINDOW`, one day: no limit may use a longer window, `limits` refuses one), sessions, admin sessions
+  and account sessions an hour after they stop being live, audit events past their period (see "Audit log"), and clears `ip` and
+  `user_agent` of a booking event once the event and its booking's end are both 18 months old (the row stays as
+  evidence), walking the businesses in id order; a run that stops before the end leaves its place, and the next
+  run goes on from it (a worker restart starts the pass again). The hour is a margin for readers whose transaction began before the sweep. Every table that stores an
+  address or a browser is listed in `retention.COVERED` with its rule; a test compares it with the catalog, so a new
+  one needs a rule (or a reasoned exemption, as `consents` has until ZIF-156) before it ships.
 - Payloads hold ids only; the handler loads what it needs inside `tenant_context(job.tenant_id)`. A job with no tenant
   (such as `email.token`, for sign-up and reset links) touches only global tables, through `SessionLocal.begin()`.
 - Handlers may run more than once for a job (a crash after the work but before it is recorded, or a timeout that
@@ -830,7 +855,10 @@ loggers (`web.*`); Next's own stderr output (banners, SSR error traces) is not i
   `booking_refund_failed` whose hold is gone, from the worker's send);
   `client mail over quota` (WARNING, `template`, `source` `merchant` or `public`, when a business's
   hourly client email quota holds an email back at enqueue); never the
-  address, subject or body. Each process logs one startup line (`api started`, `worker started`, `migrations started`) with its
+  address, subject or body. `retention swept` (one per retention run, ZIF-235: counts of what each step
+  deleted or cleared, `batches`, `complete`, `busy`, `held`, and `hold_until` while a hold holds; INFO, or
+  WARNING when the run left a backlog, found the audit sweep busy or kept evidence for a hold) and
+  `retention sweep failed` (ERROR, with `exc`; the ping is withheld). Each process logs one startup line (`api started`, `worker started`, `migrations started`) with its
   non-secret settings. Among the startup lines that need acting on:
   `turnstile secret unset: bookings, sign-ups, resets and sign-in challenges refused` (ERROR, API);
   `turnstile disabled on a public url` (ERROR, API: `ZIF_TURNSTILE_DISABLED` while `ZIF_APP_URL` is
@@ -848,6 +876,10 @@ loggers (`web.*`); Next's own stderr output (banners, SSR error traces) is not i
   invite and contact email links fail once the contract migration revokes token minting from `ziftbook_app`).
   Both startup lines carry `database_role` (`current_user`, never `session_user`; left out when the
   query failed).
+  The worker's retention hold (`ZIF_RETENTION_HOLD_UNTIL`, `hold_until` as set; `worker started` carries
+  `retention_hold_until`): `retention hold on: ...` (WARNING, a valid hold), `retention hold date has passed:
+  not holding` (ERROR, a past date), and `retention hold value invalid: holding until it is fixed ...` (ERROR,
+  any other value, at startup and on every retention run, with the ping withheld).
 - Abuse events, ids and reasons only: `turnstile mismatch` (WARNING, `reason` `hostname` or `action`:
   a passing token solved on another host or for another form, as when `ZIF_APP_URL` doesn't name the
   site's host); `admin sign-in failures` (WARNING, `target` `user:<id>`, null for an unknown email,
@@ -1139,6 +1171,7 @@ ZIF-38). An empty variable means the default: `env_ignore_empty=True` on the bas
 | `ZIF_APP_REVISION` | api, frontend | `dev` | no | no | Git sha of the build, baked into the backend and frontend images. |
 | `ZIF_SHOW_VERSION` | frontend | none | no | no | `true` shows the version line (`v0.27.1 · 315a9c5`) at the bottom of the console sidebar and More sheet and in the booking pages' footer. Only staging sets it. Read server-side per request, never `NEXT_PUBLIC_*`. |
 | `ZIF_HEALTHCHECK_URL` | worker | none | no | no | Pinged after every successful loop. |
+| `ZIF_RETENTION_HOLD_UNTIL` | worker | none | no | no | An incident's evidence hold (ZIF-235): a plain date, `YYYY-MM-DD`, from tomorrow to 90 days ahead, exclusive: the hold lasts until 00:00 UTC on that date. Until then the retention sweep keeps audit events, platform audit events and booking-event addresses; sessions, rate limits, admin sessions and account sessions are still swept. It shows in the `worker started` line, the worker logs a WARNING at startup, and every sweep line is a WARNING while it holds; at 00:00 UTC on its date it ends by itself. Today's date or an earlier one holds nothing and logs an ERROR at startup (a mistyped year shows). Any other value (`0`, a datetime, a number, more than 90 days ahead) never turns the hold off and never stops the worker: it holds until fixed, logs an ERROR at startup and on every sweep, and the worker withholds its healthcheck ping, so the alert fires until someone corrects it. Set it in the worker's environment (production and staging: the worker's ConfigMap in cloud-infra `clusters/hetzner/ziftbook-{prod,staging}`, then restart the worker; compose: `.env`), and remove it once the evidence is exported. |
 | `ZIF_IMAGE_TAG` | compose | none | yes | no | Release tag (`vX.Y.Z`) for the three GHCR images. |
 | `ZIF_API_URL` | frontend | none | yes | no | Backend base URL the web app proxies `/api` to. |
 | **Telemetry** | | | | | |

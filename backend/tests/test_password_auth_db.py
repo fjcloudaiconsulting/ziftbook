@@ -620,16 +620,23 @@ WHERE pg_get_expr(p.polqual, p.polrelid) ~ 'current_setting\(''app\.'
   AND pg_get_expr(p.polqual, p.polrelid) !~ 'app\.tenant_id'
 ORDER BY 1
 """)
-# Definers owned by ziftbook_migrate that mention the table but never its flag.
+# Definers owned by ziftbook_migrate that mention the table but never its flag. The body from
+# pg_get_functiondef, never prosrc: a SQL-standard body (BEGIN ATOMIC) leaves prosrc empty.
 FLAG_UNHANDLED = text(r"""
 SELECT p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
 WHERE p.prosecdef AND pg_get_userbyid(p.proowner) = 'ziftbook_migrate' AND n.nspname = 'public'
-  AND p.prosrc ~ ('\m' || :table || '\M') AND p.prosrc !~ replace(:flag, '.', '\.')
+  AND p.prokind IN ('f', 'p')
+  AND pg_get_functiondef(p.oid) ~ ('\m' || :table || '\M')
+  AND pg_get_functiondef(p.oid) !~ replace(:flag, '.', '\.')
 ORDER BY 1
 """)
 # The flags in force, pinned: a new one is a deliberate change here, with its allow-list.
 FLAGS: dict[tuple[str, str], set[str]] = {
     ("audit_events", "app.audit_review"): set(),
+    # ZIF-235 (0073, 0074). sweep_audit_events, the one definer that reads audit_events, sets the
+    # flag and restores the caller's value, so it names it and is not listed; that it clears or
+    # sets the flag before its first read is test_retention_db's T14.
+    ("audit_events", "app.retention_sweep"): set(),
     ("memberships", "app.sign_in"): {
         # Inserts this business's membership; its ON CONFLICT arbiter is (v.tenant_id, user_id), so
         # only that business's row can conflict, and the UPDATE stays under tenant_isolation (0045).
@@ -648,8 +655,8 @@ FLAGS: dict[tuple[str, str], set[str]] = {
 
 # ZIF-146 FENCE (security B4 "while there", code review N-5). Wrong impl: a new definer that selects
 # from a flag-gated table without touching its flag, so a caller who set the flag reads every
-# business's rows: members (app.sign_in), audit events (app.audit_review), payment accounts
-# (app.stripe_webhook).
+# business's rows: members (app.sign_in), audit events (app.audit_review, app.retention_sweep),
+# payment accounts (app.stripe_webhook).
 def test_every_definer_reading_a_flag_gated_table_handles_its_flag(migrate_engine: Engine) -> None:
     with migrate_engine.connect() as conn:
         flags = {tuple(row) for row in conn.execute(FLAGGED_TABLES)}
@@ -659,16 +666,26 @@ def test_every_definer_reading_a_flag_gated_table_handles_its_flag(migrate_engin
             assert found == allowed, (table, flag)
 
 
+# The positive control, in both body forms: a quoted body (prosrc holds it) and a SQL-standard one
+# (BEGIN ATOMIC: prosrc is empty and the body is in prosqlbody, so the check reads
+# pg_get_functiondef; ZIF-235's review reproduced the gap).
+LEAKY_BODIES = {
+    "quoted": "AS 'SELECT count(*) FROM {table}'",
+    "begin atomic": "BEGIN ATOMIC SELECT count(*) FROM {table}; END",
+}
+
+
+@pytest.mark.parametrize("form", sorted(LEAKY_BODIES))
 @pytest.mark.parametrize(("table", "flag"), sorted(FLAGS))
 def test_the_flag_check_catches_a_definer_that_forgets_it(
-    migrate_engine: Engine, table: str, flag: str
+    migrate_engine: Engine, table: str, flag: str, form: str
 ) -> None:
     with migrate_engine.connect() as conn, conn.begin() as transaction:
         conn.execute(
             text(f"""
             CREATE FUNCTION leaky_reader() RETURNS bigint LANGUAGE sql SECURITY DEFINER
               SET search_path = pg_catalog, public, pg_temp
-              AS 'SELECT count(*) FROM {table}';
+              {LEAKY_BODIES[form].format(table=table)};
             """)
         )
         found = set(conn.scalars(FLAG_UNHANDLED, {"table": table, "flag": flag}))
