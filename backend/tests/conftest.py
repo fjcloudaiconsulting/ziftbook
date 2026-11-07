@@ -578,9 +578,14 @@ def bound(app_engine: Engine) -> Iterator[None]:
 
 
 def fresh_address() -> str:
-    """A new IPv6 /64, so per-IP rate limits never carry over between tests or runs. No zero groups:
-    Postgres would print 2001:db8:abc:0::1 as 2001:db8:abc::1."""
-    return f"2001:db8:{secrets.randbelow(65535) + 1:x}:{secrets.randbelow(65535) + 1:x}::1"
+    """A new IPv6 /64 in a new /48, so per-IP rate limits never carry over between tests or runs:
+    auth limits key IPv6 by /48 (limits.AUTH_V6_PREFIX), and 2001:db8::/32 leaves only 16 bits of
+    /48s, so tests collided. 3fff::/20 (RFC 9637, documentation) leaves 28. No zero groups:
+    Postgres would print 3fff:abc:1:0::1 as 3fff:abc:1::1."""
+    return (
+        f"3fff:{secrets.randbelow(0xFFF) + 1:x}:{secrets.randbelow(0xFFFF) + 1:x}"
+        f":{secrets.randbelow(0xFFFF) + 1:x}::1"
+    )
 
 
 def new_client(app: FastAPI, address: str | None = None) -> TestClient:
