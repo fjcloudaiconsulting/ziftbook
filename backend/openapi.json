@@ -5616,7 +5616,7 @@
           "booking-link"
         ],
         "summary": "Consents",
-        "description": "D11: the explicit confirmation click, never the link click itself. Confirms the grants\nticked at booking (the `created` event's true values), minus any later withdrawal, and records\nthem with `clients.record_consents(source='booking_page', ...)`. Runs once per booking: a\nsecond click finds nothing pending and changes nothing (idempotent, test 26).",
+        "description": "D11: the explicit confirmation click, never the link click itself. Confirms the grants\nticked at booking (the `created` event's true values), minus any later withdrawal, and records\nthem with `clients.record_consents(source='booking_page', ...)`. Runs once per booking: a\nsecond click finds nothing pending and changes nothing (idempotent, test 26).\n\nZIF-159: the stored wording is the one the CONFIRMING person was shown, in their page's\nlocale, not the booking-time version: that one is the guest's, kept on the `created` event,\nand whoever clicks here may read another language.",
         "operationId": "booking-link-consents",
         "requestBody": {
           "content": {
@@ -8816,14 +8816,22 @@
             "type": "string",
             "format": "uuid",
             "title": "Booking Id"
+          },
+          "policy_version": {
+            "type": "string",
+            "maxLength": 40,
+            "minLength": 1,
+            "title": "Policy Version"
           }
         },
         "additionalProperties": false,
         "type": "object",
         "required": [
-          "booking_id"
+          "booking_id",
+          "policy_version"
         ],
-        "title": "ConsentsIn"
+        "title": "ConsentsIn",
+        "description": "policy_version is the one the page rendered (its locale is in it: \"<version>/<locale>\").\nNever the wording: the server looks that up, so the evidence is not the caller's to write."
       },
       "ContactEmailOut": {
         "properties": {
@@ -9588,13 +9596,28 @@
             },
             "type": "array",
             "title": "Pending Consents"
+          },
+          "consent": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/PageConsentOut"
+            },
+            "propertyNames": {
+              "enum": [
+                "en",
+                "nl",
+                "pt"
+              ]
+            },
+            "type": "object",
+            "title": "Consent"
           }
         },
         "type": "object",
         "required": [
           "booking",
           "engine",
-          "pending_consents"
+          "pending_consents",
+          "consent"
         ],
         "title": "LinkedBooking",
         "description": "Never the client's name, email, phone or ids, nor the worker id, source or events: the\nlink is a bearer credential (spec S4, test 12). The business's own contact email is included\non purpose (ZIF-99): it is the business's public address, not the client's."

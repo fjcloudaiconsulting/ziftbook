@@ -30,8 +30,9 @@ from app import (
     payments,
     schedule,
 )
+from app.booking_page import PageConsentOut, consent_offer
 from app.bookings import CLIENT_CANCEL, INSERT_EVENT, RESCHEDULE
-from app.business_settings import BusinessSettings
+from app.business_settings import BusinessSettings, Locale
 from app.cancellation import Decision
 from app.clients import Purpose
 from app.db import tenant_context
@@ -164,6 +165,9 @@ class LinkedBooking(BaseModel):
     booking: BookingOut
     engine: EngineOut
     pending_consents: list[Purpose]
+    # ZIF-159: the wording the confirm button confirms, per locale. The page renders it verbatim
+    # and posts back the version it rendered; the server stores its own text for that version.
+    consent: dict[Locale, PageConsentOut]
 
 
 CONSENT_EVENT = text("""
@@ -197,6 +201,7 @@ def pending_consents(db: Session, booking_id: UUID, client_id: UUID) -> list[Pur
     if event is None or not event.consent_purposes:
         return []
     granted = {p for p, was_granted in event.consent_purposes.items() if was_granted}
+    granted &= clients.OFFERED  # a legacy tick no page shows wording for cannot be confirmed
     if not granted:
         return []
     withdrawn = set(
@@ -303,6 +308,7 @@ def _view(
             ),
         ),
         pending_consents=consents,
+        consent=consent_offer(),
     )
 
 
@@ -604,8 +610,12 @@ def reschedule(body: RescheduleIn, request: Request) -> LinkedBooking:
 
 
 class ConsentsIn(BaseModel):
+    """policy_version is the one the page rendered (its locale is in it: "<version>/<locale>").
+    Never the wording: the server looks that up, so the evidence is not the caller's to write."""
+
     model_config = STRICT
     booking_id: Annotated[UUID, Field(strict=False)]
+    policy_version: clients.PolicyVersion
 
 
 @router.post(
@@ -617,8 +627,13 @@ def confirm_consents(body: ConsentsIn, request: Request) -> LinkedBooking:
     """D11: the explicit confirmation click, never the link click itself. Confirms the grants
     ticked at booking (the `created` event's true values), minus any later withdrawal, and records
     them with `clients.record_consents(source='booking_page', ...)`. Runs once per booking: a
-    second click finds nothing pending and changes nothing (idempotent, test 26)."""
+    second click finds nothing pending and changes nothing (idempotent, test 26).
+
+    ZIF-159: the stored wording is the one the CONFIRMING person was shown, in their page's
+    locale, not the booking-time version: that one is the guest's, kept on the `created` event,
+    and whoever clicks here may read another language."""
     tenant_id, token_hash = _enter(request, "booking_link_write", WRITE_LIMIT, WRITE_WINDOW)
+    clients.require_offered(body.policy_version)
     origin_ip, user_agent = auth.origin(request)
     try:
         with tenant_context(tenant_id) as db:
@@ -626,14 +641,13 @@ def confirm_consents(body: ConsentsIn, request: Request) -> LinkedBooking:
             row = resolve(db, token_hash)
             if body.booking_id != row.booking_id:
                 raise ApiError(409, "link_changed")
-            event = db.execute(CONSENT_EVENT, {"id": row.booking_id}).first()
             purposes = pending_consents(db, row.booking_id, row.client_id)
-            if not purposes or event is None:
+            if not purposes:
                 raise ApiError(409, "nothing_to_confirm")
             clients.record_consents(
                 db,
                 client_id=row.client_id,
-                policy_version=event.policy_version,
+                policy_version=body.policy_version,
                 purposes=dict.fromkeys(purposes, True),
                 source="booking_page",
                 ip=origin_ip,

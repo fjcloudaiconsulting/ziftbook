@@ -983,12 +983,7 @@
     "noChanges": "Este agendamento não pode mais ser alterado on-line. Entre em contato com {business}.",
     "noChangesEmail": "Este agendamento não pode mais ser alterado on-line. Entre em contato com {business} pelo e-mail <link>{email}</link>.",
     "contactLabel": "E-mail de contato: ",
-    "consentAsk": "Ao agendar, você pediu a {business} para manter contato por: {purposes}. Confirma?",
-    "purposes": {
-      "marketing_email": "e-mail",
-      "sms": "SMS",
-      "whatsapp": "WhatsApp"
-    },
+    "consentAsk": "Ao agendar com {business}, você marcou:",
     "consentConfirm": "Confirmar",
     "consentDone": "Obrigado, está confirmado.",
     "confirming": "Confirmando…",

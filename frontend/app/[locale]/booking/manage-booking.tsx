@@ -19,7 +19,7 @@ import { dateLocale } from "@/lib/console";
 import { linkStore, type OpenedLink } from "@/lib/link";
 import { formatMoney } from "@/lib/money";
 import { type Locale, serviceName } from "@/lib/services";
-import { problemList, zoneCity } from "@/lib/week";
+import { zoneCity } from "@/lib/week";
 
 import { ContactLine } from "../_ui/contact-line";
 import { Banner, Heading, NoScript, type Outcome as Answer, Outcome, send, Submit } from "../_ui/parts";
@@ -171,7 +171,9 @@ function Manage({ token }: { token: string | null }) {
   function confirmConsents(linked: LinkedBooking) {
     const again = () =>
       act(async () => {
-        const answer = await send(bookingLinkConsents({ body: { booking_id: linked.booking.id } }));
+        // ZIF-159: the version of the wording this page shows, in its language; the server stores its own text for it.
+        const body = { booking_id: linked.booking.id, policy_version: linked.consent[locale as Locale].policy_version };
+        const answer = await send(bookingLinkConsents({ body }));
         if (answer.status === 200 && answer.data) setView({ is: "booking", linked: answer.data, note: "consentDone" });
         else await afterWrite(answer, again);
       });
@@ -357,10 +359,6 @@ function Manage({ token }: { token: string | null }) {
   const pending = booking.status === "pending";
   const contact = booking.contact_email;
   const copy = copyMessage(engine.copy_key);
-  const purposes = problemList(
-    linked.pending_consents.map((purpose) => t(`purposes.${purpose}`)),
-    locale,
-  );
   return (
     <>
       <Heading focus key="booking">
@@ -410,7 +408,9 @@ function Manage({ token }: { token: string | null }) {
       </div>
       {linked.pending_consents.length > 0 && (
         <div className={styles.empty}>
-          <span>{t("consentAsk", { business: booking.business, purposes })}</span>
+          <span>{t("consentAsk", { business: booking.business })}</span>
+          {/* The server's wording, verbatim (ZIF-159): never a copy of our own, it is what the confirm stores. */}
+          <strong>{linked.consent[locale as Locale].marketing_email}</strong>
           <button
             className={`${styles.button} ${styles.primary}`}
             type="button"

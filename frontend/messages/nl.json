@@ -983,12 +983,7 @@
     "noChanges": "Deze afspraak kan niet meer online worden gewijzigd. Neem contact op met {business}.",
     "noChangesEmail": "Deze afspraak kan niet meer online worden gewijzigd. Neem contact op met {business} via <link>{email}</link>.",
     "contactLabel": "Contactadres: ",
-    "consentAsk": "Bij het boeken vroeg je {business} om contact te houden via: {purposes}. Bevestigen?",
-    "purposes": {
-      "marketing_email": "e-mail",
-      "sms": "sms",
-      "whatsapp": "WhatsApp"
-    },
+    "consentAsk": "Bij het boeken bij {business} vinkte je aan:",
     "consentConfirm": "Bevestigen",
     "consentDone": "Bedankt, bevestigd.",
     "confirming": "Bevestigen…",

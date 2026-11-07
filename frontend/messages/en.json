@@ -983,12 +983,7 @@
     "noChanges": "This booking can no longer be changed online. Contact {business}.",
     "noChangesEmail": "This booking can no longer be changed online. Contact {business} at <link>{email}</link>.",
     "contactLabel": "Contact email: ",
-    "consentAsk": "When you booked, you asked {business} to keep in touch by: {purposes}. Confirm?",
-    "purposes": {
-      "marketing_email": "email",
-      "sms": "text message",
-      "whatsapp": "WhatsApp"
-    },
+    "consentAsk": "When you booked with {business}, you ticked:",
     "consentConfirm": "Confirm",
     "consentDone": "Thanks, confirmed.",
     "confirming": "Confirming…",

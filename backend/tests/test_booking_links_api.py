@@ -148,6 +148,12 @@ def post(client: TestClient, path: str, body: dict[str, Any]) -> Response:
     return client.post(f"{URL}{path}", json=body)
 
 
+def confirm(client: TestClient, booking_id: str, locale: str = "en") -> Response:
+    """The manage page's confirm click, posting the version of the wording it rendered."""
+    body = {"booking_id": booking_id, "policy_version": clients.policy_version_for(locale)}
+    return post(client, "/consents", body)
+
+
 # ---------------------------------------------------------------------------
 # D3/D4: the exchange and the token/hash oracle.
 # ---------------------------------------------------------------------------
@@ -240,7 +246,7 @@ def test_a_dead_booking_gives_404_on_every_route(
         get(client, "/availability", **day),
         post(client, "/cancel", {"booking_id": booking_id, "refund_pct": 0}),
         post(client, "/reschedule", reschedule_body(booking_id, at("11:00"), 0)),
-        post(client, "/consents", {"booking_id": booking_id}),
+        confirm(client, booking_id),
     ]
     assert [(a.status_code, a.text) for a in answers] == [(404, '{"code":"link_expired"}')] * 6
 
@@ -347,7 +353,7 @@ def test_json_only_cookie_flags_and_headers(people: People, app: FastAPI, ready:
         post(new_client(app), "/session", {"token": "not-a-token"}),
         view,
         get(client, "/availability", **{"from": DAY.isoformat(), "to": DAY.isoformat()}),
-        post(client, "/consents", {"booking_id": booking_id}),
+        confirm(client, booking_id),
         post(client, "/reschedule", reschedule_body(booking_id, at("11:00"), 0)),
         post(client, "/cancel", cancel_body(booking_id, 42)),
         post(client, "/cancel", cancel_body(booking_id, view.json()["engine"]["refund_pct"])),
@@ -396,7 +402,7 @@ def test_linked_booking_carries_no_client_identity(
     body = get(client).json()
 
     blob = str(body)
-    assert set(body) == {"booking", "engine", "pending_consents"}
+    assert set(body) == {"booking", "engine", "pending_consents", "consent"}
     assert set(body["engine"]) == {
         "can_cancel",
         "can_reschedule",
@@ -460,7 +466,7 @@ def test_the_manage_page_shows_the_business_s_contact_email(
     assert body["booking"]["contact_email"] == "shop@example.com"
     assert "other@example.com" not in str(body)
 
-    confirmed = post(client, "/consents", {"booking_id": booking_id})
+    confirmed = confirm(client, booking_id)
     assert confirmed.status_code == 200, confirmed.content
     assert confirmed.json()["booking"]["contact_email"] == "shop@example.com"
 
@@ -1368,7 +1374,7 @@ def test_confirm_skips_a_purpose_withdrawn_after_booking(
     before = get(client).json()
     assert before["pending_consents"] == []
 
-    response = post(client, "/consents", {"booking_id": booking_id})
+    response = confirm(client, booking_id)
 
     assert (response.status_code, response.json()) == (409, {"code": "nothing_to_confirm"})
     with tenant_context(people.a) as session:
@@ -1412,10 +1418,7 @@ def test_a_guest_tick_becomes_consent_only_through_the_link(
         ).one()
     assert event.consent_purposes == {"marketing_email": True}
 
-    assert (
-        post(linked(app, people.a, booking_id), "/consents", {"booking_id": booking_id}).status_code
-        == 200
-    )
+    assert confirm(linked(app, people.a, booking_id), booking_id, "nl").status_code == 200
 
     with tenant_context(people.a) as session:
         (row,) = session.execute(text("SELECT text_shown, policy_version FROM consents")).all()
@@ -1423,6 +1426,91 @@ def test_a_guest_tick_becomes_consent_only_through_the_link(
     assert row.text_shown == dutch
     assert dutch != clients.CONSENT_TEXTS[f"{clients.POLICY_VERSION}/en"]["marketing_email"]
     assert row.policy_version == version
+
+
+# ZIF-159 fence. Kills: storing the booking-time version (the guest's language) instead of the
+# one the confirming page rendered; the manage page reading its own copy instead of the API's.
+def test_the_stored_wording_is_the_one_the_confirming_person_saw(
+    people: People, app: FastAPI, ready: str
+) -> None:
+    english, dutch = clients.policy_version_for("en"), clients.policy_version_for("nl")
+    response = post_guest(
+        new_client(app),
+        people.a,
+        ready,
+        email=fresh_email(),
+        policy_version=english,
+        consents={"marketing_email": True},
+    )
+    assert response.status_code == 201, response.json()
+    booking_id = response.json()["id"]
+    client = linked(app, people.a, booking_id)
+
+    shown = get(client).json()["consent"]["nl"]
+    assert shown == {
+        "policy_version": dutch,
+        "marketing_email": clients.CONSENT_TEXTS[dutch]["marketing_email"],
+    }
+    assert confirm(client, booking_id, "nl").status_code == 200
+
+    with tenant_context(people.a) as session:
+        (row,) = session.execute(text("SELECT text_shown, policy_version FROM consents")).all()
+    assert (row.text_shown, row.policy_version) == (shown["marketing_email"], dutch)
+    assert row.text_shown != clients.CONSENT_TEXTS[english]["marketing_email"]
+
+
+# ZIF-108/ZIF-159 fence. Kills: a confirm that stores a version no page offers today (the legacy
+# English-only one, a locale we do not serve, a made-up one), or takes wording from the caller.
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"policy_version": "2026-09-01"},
+        {"policy_version": f"{clients.POLICY_VERSION}/de"},
+        {"policy_version": "9999-12-31/en"},
+        {"policy_version": clients.policy_version_for("en"), "text_shown": "I agree to anything"},
+    ],
+)
+def test_a_confirm_refuses_wording_no_page_offers(
+    people: People, app: FastAPI, ready: str, owner: TestClient, extra: dict[str, str]
+) -> None:
+    booking_id = confirmed_booking(app, people.a, ready, consents={"marketing_email": True})
+    assert patch(owner, booking_id, "confirmed").status_code == 200
+    client = linked(app, people.a, booking_id)
+
+    response = post(client, "/consents", {"booking_id": booking_id, **extra})
+
+    assert response.status_code == 422
+    assert get(client).json()["pending_consents"] == ["marketing_email"]
+    with tenant_context(people.a) as session:
+        assert session.scalar(text("SELECT count(*) FROM consents")) == 0
+
+
+# fence. A legacy tick for a purpose no page shows wording for today is never asked for, so the
+# confirm is not stuck on a 422. Kills pending_consents without the OFFERED filter.
+def test_a_legacy_tick_without_current_wording_is_not_asked_for(
+    people: People, app: FastAPI, ready: str, owner: TestClient, migrate_engine: Engine
+) -> None:
+    booking_id = confirmed_booking(app, people.a, ready, consents={"marketing_email": True})
+    assert patch(owner, booking_id, "confirmed").status_code == 200
+    # As the migrate role: booking_events is append-only for the app role, and no route today
+    # writes a tick on the legacy version.
+    with migrate_engine.begin() as conn:
+        conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(people.a)})
+        conn.execute(
+            text("""
+            UPDATE booking_events SET policy_version = '2026-09-01',
+                   consent_purposes = '{"marketing_email": true, "sms": true}'
+            WHERE booking_id = :id AND event = 'created'
+            """),
+            {"id": booking_id},
+        )
+    client = linked(app, people.a, booking_id)
+
+    assert get(client).json()["pending_consents"] == ["marketing_email"]
+    assert confirm(client, booking_id).status_code == 200
+    with tenant_context(people.a) as session:
+        purposes = session.execute(text("SELECT purpose FROM consents")).scalars().all()
+    assert purposes == ["marketing_email"]
 
 
 # fence (D11). A withdrawal made BEFORE the booking's grant does not override it: the grant is
@@ -1457,9 +1545,9 @@ def test_confirming_twice_is_idempotent(
     assert patch(owner, booking_id, "confirmed").status_code == 200
     client = linked(app, people.a, booking_id)
 
-    first = post(client, "/consents", {"booking_id": booking_id})
+    first = confirm(client, booking_id)
     assert first.status_code == 200
-    second = post(client, "/consents", {"booking_id": booking_id})
+    second = confirm(client, booking_id)
     assert (second.status_code, second.json()["code"]) == (409, "nothing_to_confirm")
 
     with tenant_context(people.a) as session:
@@ -1504,14 +1592,14 @@ def test_two_concurrent_confirms_record_once(
     token = mint(people.a, booking_id)
     results: list[int] = []
 
-    def confirm() -> None:
-        response = post(with_cookie(app, people.a, token), "/consents", {"booking_id": booking_id})
+    def click() -> None:
+        response = confirm(with_cookie(app, people.a, token), booking_id)
         results.append(response.status_code)
 
-    first = threading.Thread(target=confirm)
+    first = threading.Thread(target=click)
     first.start()
     assert holding.wait(timeout=10)
-    second = threading.Thread(target=confirm)
+    second = threading.Thread(target=click)
     second.start()
     # Without the lock the second never waits: let the timeout pass and the row counts below fail.
     with contextlib.suppress(AssertionError):
@@ -1549,7 +1637,7 @@ def test_rate_limits_trip_before_any_lookup(people: People, app: FastAPI, ready:
 
     writer = fresh_address()
     for _ in range(20):
-        post(new_client(app, writer), "/consents", {"booking_id": booking_id})
+        confirm(new_client(app, writer), booking_id)
     holder = new_client(app, writer)
     holder.cookies.set(COOKIE, live)
     refund_pct = get(linked(app, people.a, booking_id)).json()["engine"]["refund_pct"]
@@ -1585,7 +1673,7 @@ def test_no_log_line_or_span_carries_the_token_or_its_hash(
         assert view.status_code == 200
         day = {"from": DAY.isoformat(), "to": DAY.isoformat()}
         assert get(client, "/availability", **day).status_code == 200
-        assert post(client, "/consents", {"booking_id": booking_id}).status_code == 200
+        assert confirm(client, booking_id).status_code == 200
         moved = post(client, "/reschedule", reschedule_body(booking_id, at("11:00"), 0))
         assert moved.status_code == 200
         refund_pct = moved.json()["engine"]["refund_pct"]

@@ -38,6 +38,8 @@ export function answerScreen(answer: { status: number; code?: string }): Screen 
   if (answer.status === 200 || answer.status === 204) return "booking";
   if (answer.status === 404) return "notActive";
   if (answer.status === 409 && answer.code && Object.hasOwn(CONFLICTS, answer.code)) return CONFLICTS[answer.code];
+  // The consent wording changed since the page loaded (ZIF-159): re-read it, so the next click posts the new one.
+  if (answer.status === 422 && answer.code === "unknown_policy_version") return "refresh";
   return "retry";
 }
 

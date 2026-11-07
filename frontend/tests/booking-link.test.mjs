@@ -59,6 +59,8 @@ describe("which screen an answer leads to", () => {
       [{ status: 409, code: "slot_unavailable" }, "slotTaken"],
       [{ status: 409, code: "not_allowed" }, "notAllowed"],
       [{ status: 409, code: "nothing_to_confirm" }, "refresh"],
+      // ZIF-159: the consent wording changed while the page was open: re-read it, never retry the stale version.
+      [{ status: 422, code: "unknown_policy_version" }, "refresh"],
     ];
     for (const [answer, screen] of cases) assert.equal(answerScreen(answer), screen, JSON.stringify(answer));
   });
@@ -192,6 +194,24 @@ describe("the free-cancellation deadline", () => {
     for (const locale of ["en", "nl", "pt"]) {
       const sentence = JSON.parse(readFileSync(new URL(`../messages/${locale}.json`, import.meta.url), "utf8")).BookingLink.freeUntil;
       assert.match(sentence, /\{date\}, \{time\}/, locale);
+    }
+  });
+});
+
+describe("the consent confirm (ZIF-159)", () => {
+  const read = (rel) => readFileSync(new URL(rel, import.meta.url), "utf8");
+
+  test("fence: the page shows the API's wording for its locale and posts back that version", () => {
+    // Wrong implementations killed: a frontend copy of the consent sentence (the stored evidence would
+    // not be what the person read), and a confirm that posts no version (the server would store the
+    // booking-time wording, in the guest's language).
+    const src = read("../app/[locale]/booking/manage-booking.tsx");
+    assert.match(src, /\{linked\.consent\[locale as Locale\]\.marketing_email\}/);
+    assert.match(src, /policy_version: linked\.consent\[locale as Locale\]\.policy_version/);
+    for (const locale of ["en", "nl", "pt"]) {
+      const messages = JSON.parse(read(`../messages/${locale}.json`)).BookingLink;
+      assert.equal(messages.purposes, undefined, locale);
+      assert.doesNotMatch(messages.consentAsk, /\{purposes\}/, locale);
     }
   });
 });
