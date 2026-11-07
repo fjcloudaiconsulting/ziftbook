@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { actionsFor, bookingHref, closedDay, closedDetail, isPaid, isWaiting, mayDecline, spanTimes, telHref, daySlices, dayWindow, historyLabel, paymentFact, hourRange, hrefFor, lanes, monToSun, nowTop, parseView, switchDate, visibleDays, weekStart, weekdayOf, whenParts } from "../lib/calendar.ts";
+import { actionsFor, bookingHref, closedDay, closedDetail, isPaid, isWaiting, mayDecline, spanTimes, telHref, daySlices, dayWindow, historyLabel, paymentFact, hourRange, hrefFor, intervalEnd, lanes, monToSun, nowTop, parseView, switchDate, toneOf, visibleDays, weekStart, weekdayOf, whenParts } from "../lib/calendar.ts";
 import { formatMoney } from "../lib/money.ts";
 
 const AMS = "Europe/Amsterdam";
@@ -568,6 +568,54 @@ describe("bookingHref (ZIF-130)", () => {
     assert.equal(
       bookingHref({ id, starts_at: "2026-10-09T22:30:00Z" }, "m1", AMS),
       `/calendar?view=day&date=2026-10-10&member=m1&booking=${id}`,
+    );
+  });
+});
+
+// ZIF-174 fence. Kills: the interval drawn from the padded end (a short booking's tail too long), an
+// interval spilling past the day's end, an interval left out of packing (a booking placed inside it drawn
+// over its tail) or out of the hour range (clipped at closing), and a status tone that falls back to grey or
+// to the waiting look for a confirmed booking.
+describe("the interval after a booking, and its status tone (ZIF-174)", () => {
+  const sliceOf = (startISO, minutes) => daySlices({ start: at(startISO), end: at(startISO) + minutes * 60_000 }, ["2026-09-30"], AMS)[0];
+
+  test("the interval ends its minutes after the booking's real end", () => {
+    assert.equal(intervalEnd(sliceOf("2026-09-30T08:00:00Z", 60), 15), 675); // 10:00-11:00 Amsterdam, free at 11:15
+  });
+  test("a short booking's interval counts from its real end, not its drawn one", () => {
+    const slice = sliceOf("2026-09-30T08:00:00Z", 15); // drawn 23 minutes tall
+    assert.equal(slice.end - slice.start, 23);
+    assert.equal(intervalEnd(slice, 6), 621, "inside the drawn block: no tail to draw");
+    assert.equal(intervalEnd(slice, 15) - slice.end, 7, "the tail is what sticks out below the block");
+  });
+  test("the interval stops at the day's end, and a booking over midnight adds none to its first day", () => {
+    assert.equal(intervalEnd(sliceOf("2026-09-30T21:00:00Z", 50), 30), 1440); // 23:00-23:50 + 30
+    const [first] = daySlices({ start: at("2026-09-30T21:00:00Z"), end: at("2026-09-30T23:00:00Z") }, ["2026-09-30", "2026-10-01"], AMS);
+    assert.equal(intervalEnd(first, 30), 1440);
+  });
+  test("a booking placed inside another's interval sits beside it; one after the interval is full width", () => {
+    const a = sliceOf("2026-09-30T08:00:00Z", 60);
+    const extent = (slice, minutes) => ({ start: slice.start, end: Math.max(slice.end, intervalEnd(slice, minutes)) });
+    const inside = sliceOf("2026-09-30T09:00:00Z", 30); // 11:00, inside 11:00-11:15
+    const after = sliceOf("2026-09-30T09:15:00Z", 30); // 11:15
+    assert.deepEqual(lanes([extent(a, 15), extent(inside, 0)]), [
+      { lane: 0, of: 2 },
+      { lane: 1, of: 2 },
+    ]);
+    assert.deepEqual(lanes([extent(a, 15), extent(after, 0)]), [
+      { lane: 0, of: 1 },
+      { lane: 0, of: 1 },
+    ]);
+  });
+  test("a booking ending at closing widens the hours to show its interval", () => {
+    const open = [{ weekday: 3, starts_at: "09:00", ends_at: "18:00" }];
+    const slice = sliceOf("2026-09-30T15:00:00Z", 60); // 17:00-18:00
+    assert.equal(hourRange(open, [3], [{ start: slice.start, end: intervalEnd(slice, 15) }]).to, 19);
+  });
+  test("confirmed is its own tone, pending waits, completed and no-show are done", () => {
+    assert.deepEqual(
+      ["confirmed", "pending", "completed", "no_show"].map(toneOf),
+      ["confirmed", "waiting", "done", "done"],
     );
   });
 });

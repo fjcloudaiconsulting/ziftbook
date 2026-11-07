@@ -502,3 +502,33 @@ def test_both_routes_are_no_store_and_operation_ids_are_unique(
     assert len(operations) == len(set(operations))
     assert "booking-approvals-range" in operations
     assert "booking-approvals-read" in operations
+
+
+# ZIF-174 fence. Kills: an agenda without each booking's interval (the calendar would draw it as
+# free time), the service's own buffer ignored for the business's percentage, the percentage taken
+# of the service's duration instead of the booking's own length, and the detail answering a field
+# it does not compute.
+def test_the_agenda_carries_each_bookings_interval(
+    people: People, shop: dict[str, Any], owner: TestClient
+) -> None:
+    save_setting(people.a, "buffer_pct", 50)
+    own = seed_service(people.a)
+    with tenant_context(people.a) as session:
+        session.execute(text("UPDATE services SET buffer_minutes = 15 WHERE id = :id"), {"id": own})
+    by_pct = put(people, shop, "owner", hour(10), hour(11))  # a 30-minute service booked for 60
+    by_own = str(
+        book(
+            people.a,
+            client_id=shop["client"],
+            worker_id=shop["worker"],
+            service_id=own,
+            starts_at=hour(10),
+            ends_at=hour(11),
+        )
+    )
+
+    response = range_(owner)
+
+    assert response.status_code == 200, response.text
+    assert {row["id"]: row["buffer_minutes"] for row in response.json()} == {by_pct: 30, by_own: 15}
+    assert "buffer_minutes" not in owner.get(f"/api/bookings/{by_own}").json()

@@ -137,6 +137,24 @@ export function lanes(slices: { start: number; end: number }[]): { lane: number;
   return out;
 }
 
+/** ZIF-174: the minute this slice's booking is free again, its service's interval included. The interval is
+ * drawn under the booking from its drawn end and packed with it, so a gap the service keeps never reads as
+ * free time, and a booking placed inside it sits beside it. shortcut: an interval past midnight stops at
+ * the day's end (the next day's agenda has no booking that ended the day before); draw the rest when an
+ * owner asks. */
+export function intervalEnd(slice: Slice, minutes: number): number {
+  return Math.min(1440, slice.realEnd + minutes);
+}
+
+export type Tone = "confirmed" | "waiting" | "done";
+
+/** ZIF-174: a booking's colour on the calendar. Never the only signal: waiting is also dashed with ◷, done
+ * carries ✓ or ✕, and every item's accessible name ends with its status. */
+export function toneOf(status: string): Tone {
+  if (status === "pending") return "waiting";
+  return status === "completed" || status === "no_show" ? "done" : "confirmed";
+}
+
 const toMinutes = (hhmm: string) => {
   const [h, m] = hhmm.split(":").map(Number);
   return h * 60 + m;

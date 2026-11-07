@@ -16,6 +16,10 @@
   --error-soft: oklch(0.97 0.018 20);
   --error-line: oklch(0.84 0.06 20);
   --ok: oklch(0.47 0.11 152);
+  /* A confirmed booking on the calendar (ZIF-174): ink (14.9:1) and muted (6:1) text on --ok-soft pass AA;
+     --ok-line is 3.2:1 against --bg. */
+  --ok-soft: oklch(0.95 0.045 152);
+  --ok-line: oklch(0.64 0.11 152);
   --note-soft: oklch(0.97 0.012 80);
   --note-line: oklch(0.88 0.05 80);
   --note-ink: oklch(0.42 0.08 70);

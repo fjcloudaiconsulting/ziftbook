@@ -15,7 +15,7 @@ import {
   type TimeOffRangeOut,
 } from "@/api-client";
 import { Link, useRouter } from "@/i18n/navigation";
-import { closedDay, closedDetail, daySlices, dayWindow, hourRange, hrefFor, type CalendarView, lanes, monToSun, nowTop, type Panel, parseView, type Slice, spanTimes, switchDate, type View, visibleDays, weekdayOf } from "@/lib/calendar";
+import { closedDay, closedDetail, daySlices, dayWindow, hourRange, hrefFor, type CalendarView, intervalEnd, lanes, monToSun, nowTop, type Panel, parseView, type Slice, spanTimes, switchDate, toneOf, type View, visibleDays, weekdayOf } from "@/lib/calendar";
 import { canAnswerRequests, clientLabel, dateLocale, type Role } from "@/lib/console";
 import { type Locale, type NameMap, serviceName } from "@/lib/services";
 import { messageShown, slotAt } from "@/lib/new-booking";
@@ -34,7 +34,8 @@ import css from "./calendar.module.css";
 
 type Loaded = { key: string; bookings: AgendaOut[]; blocks: TimeOffRangeOut[]; opening: Shift[] };
 type Item = ReturnType<typeof mergeAgenda<AgendaOut, TimeOffRangeOut>>[number];
-type Cell = { item: Item; slice: Slice; lane: number; of: number };
+/** `until`: where the cell's drawing ends, a booking's interval included (ZIF-174). */
+type Cell = { item: Item; slice: Slice; until: number; lane: number; of: number };
 type Column = { key: string; day: string; label: string; ariaLabel: string; small?: string; cells: Cell[] };
 /** The empty-spot popover: where it sits on screen, and the start and person the click meant. */
 type Popover = { at: string; time: string; member: string; name: string; column: string; left: number; top: number };
@@ -258,9 +259,11 @@ export function Calendar() {
   // --- desktop columns: members (day) or the days of one person (week) ---
   const selfMember = view.member === "all" ? session.member_id : view.member;
   function cellsFor(list: Item[], day: string): Cell[] {
-    const pairs = list.flatMap((item) => daySlices(item, [day], tz).map((slice) => ({ item, slice })));
+    const pairs = list.flatMap((item) =>
+      daySlices(item, [day], tz).map((slice) => ({ item, slice, until: item.kind === "booking" ? Math.max(slice.end, intervalEnd(slice, item.booking.buffer_minutes)) : slice.end })),
+    );
     const bookings = pairs.filter((pair) => pair.item.kind === "booking");
-    const packed = lanes(bookings.map((pair) => pair.slice));
+    const packed = lanes(bookings.map((pair) => ({ start: pair.slice.start, end: pair.until })));
     const cells: Cell[] = [
       ...bookings.map((pair, i) => ({ ...pair, ...packed[i] })),
       ...pairs.filter((pair) => pair.item.kind === "block").map((pair) => ({ ...pair, lane: 0, of: 1 })),
@@ -285,7 +288,11 @@ export function Calendar() {
   const hours = hourRange(
     data?.opening ?? [],
     days.map(weekdayOf),
-    everyCell.map((cell) => ({ start: cell.slice.start, end: cell.slice.realEnd, allDay: cell.item.kind === "block" && cell.item.allDay })),
+    everyCell.map((cell) => ({
+      start: cell.slice.start,
+      end: cell.item.kind === "booking" ? intervalEnd(cell.slice, cell.item.booking.buffer_minutes) : cell.slice.realEnd,
+      allDay: cell.item.kind === "block" && cell.item.allDay,
+    })),
   );
   const closedToday = !weekView && closedDay(data?.opening ?? [], weekdayOf(view.date));
 
@@ -303,7 +310,8 @@ export function Calendar() {
     const start = Math.max(slice.start, hours.from * 60);
     const end = Math.min(slice.end, hours.to * 60);
     if (end <= start) return null;
-    const place: CSSProperties = { top: top(start), height: `calc(var(--hour) * ${(end - start) / 60})` };
+    const bottom = Math.min(cell.until, hours.to * 60);
+    const place: CSSProperties = { top: top(start), height: `calc(var(--hour) * ${(bottom - start) / 60})` };
     if (item.kind === "block") {
       const text = blockText(item);
       const reason = item.block.reason;
@@ -332,22 +340,32 @@ export function Calendar() {
     const short = (item.end - item.start) / 60_000 < 45; // one line: a 30-minute item is about 32px tall
     const second = weekView ? (short ? words : []) : [serviceOf(booking), ...words];
     const selected = booking.id === view.booking;
-    const name = t("itemLabel", {
-      start: localTime(booking.starts_at, tz),
-      end: localTime(booking.ends_at, tz),
-      client: clientLabel(booking, clients("erased")),
-      service: serviceOf(booking),
-      status: chip ? today(chip.word) : booking.status,
-    });
+    const interval = booking.buffer_minutes > 0 ? t("interval", { n: booking.buffer_minutes }) : null;
+    const name = [
+      t("itemLabel", {
+        start: localTime(booking.starts_at, tz),
+        end: localTime(booking.ends_at, tz),
+        client: clientLabel(booking, clients("erased")),
+        service: serviceOf(booking),
+        status: chip ? today(chip.word) : booking.status,
+      }),
+      interval,
+    ]
+      .filter(Boolean)
+      .join(", ");
     const width: CSSProperties = { left: `calc(100% * ${cell.lane} / ${cell.of} + 2px)`, width: `calc(100% / ${cell.of} - 4px)` };
-    const tone = booking.status === "pending" ? css.waiting : booking.status === "completed" || booking.status === "no_show" ? css.done : "";
+    const tail = bottom - end; // minutes of the interval drawn under the booking
     const icon = chip && booking.status !== "confirmed" && (
       <span className={css.ico} aria-hidden="true">
         {chip.icon}{" "}
       </span>
     );
     return (
-      <li key={`${item.key}-${column.key}`} className={`${css.item} ${short ? css.short : ""} ${tone} ${selected ? css.selected : ""}`} style={{ ...place, ...width }}>
+      <li
+        key={`${item.key}-${column.key}`}
+        className={`${css.item} ${short ? css.short : ""} ${css[toneOf(booking.status)]} ${tail > 0 ? css.tailed : ""} ${selected ? css.selected : ""}`}
+        style={{ ...place, ...width }}
+      >
         <Link
           href={href({ booking: booking.id })}
           scroll={false}
@@ -369,6 +387,12 @@ export function Calendar() {
             <span>{second.join(" · ")}</span>
           )}
         </Link>
+        {/* The service's interval, part of the booking (its name says it): never a free spot to click. */}
+        {tail > 0 && (
+          <span className={css.tail} style={{ height: `calc(var(--hour) * ${tail / 60})` }} aria-hidden="true">
+            {tail >= 15 && interval}
+          </span>
+        )}
       </li>
     );
   }
@@ -420,7 +444,11 @@ export function Calendar() {
           }
           const { booking } = item;
           const chip = chipOf(booking.status);
-          const meta = [isOwner ? (booking.worker_display_name ?? person("nameNotSet")) : null, booking.source === "merchant" ? today("walkIn") : null].filter(Boolean);
+          const meta = [
+            isOwner ? (booking.worker_display_name ?? person("nameNotSet")) : null,
+            booking.source === "merchant" ? today("walkIn") : null,
+            booking.buffer_minutes > 0 ? t("interval", { n: booking.buffer_minutes }) : null,
+          ].filter(Boolean);
           return [
             marker,
             <li key={item.key} className={past}>

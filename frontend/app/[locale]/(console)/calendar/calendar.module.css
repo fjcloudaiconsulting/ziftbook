@@ -47,15 +47,20 @@
 .lane { position: relative; border-left: 1px solid var(--line); min-width: 0; }
 .lane.closed { background: repeating-linear-gradient(135deg, var(--surface) 0 6px, transparent 6px 12px); }
 .laneList { list-style: none; margin: 0; padding: 0; }
-.item { position: absolute; z-index: 1; border-radius: 0.55rem; overflow: hidden; font-size: 0.8125rem; line-height: 1.25; border: 1px solid var(--primary-line); background: var(--primary-soft); min-height: 24px; }
-.item a { display: block; height: 100%; min-height: 24px; padding: 0.3rem 0.5rem; color: var(--ink); text-decoration: none; }
+/* An item is its booking (the link) over its service's interval (the tail, ZIF-174), coloured by status. */
+.item { position: absolute; z-index: 1; display: flex; flex-direction: column; border-radius: 0.55rem; font-size: 0.8125rem; line-height: 1.25; min-height: 24px; }
+.item a, .tail { border: var(--tone-width, 1px) var(--tone-style, solid) var(--tone-line); }
+.item a { flex: 1 1 auto; display: block; min-height: 24px; overflow: hidden; border-radius: inherit; background: var(--tone-fill); padding: 0.3rem 0.5rem; color: var(--ink); text-decoration: none; }
+.item.tailed a { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+.tail { flex: none; overflow: hidden; border-top: 0; border-radius: 0 0 0.55rem 0.55rem; background: var(--tone-tail, color-mix(in oklch, var(--tone-fill) 40%, var(--bg))); padding: 0 0.5rem; font-size: 0.6875rem; line-height: 1.3; color: var(--muted); white-space: nowrap; text-overflow: ellipsis; cursor: default; }
+.item.confirmed { --tone-line: var(--ok-line); --tone-fill: var(--ok-soft); }
 .item b { display: block; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .item span { color: var(--muted); display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .item b .ico { display: inline; color: inherit; }
 .item.short a { padding-top: 0.15rem; padding-bottom: 0.15rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .item.short b, .item.short span { display: inline; }
-.item.waiting { border: 1.5px dashed var(--note-ink); background: var(--note-soft); }
-.item.done { background: var(--bg); border-color: var(--line); color: var(--muted); }
+.item.waiting { --tone-width: 1.5px; --tone-style: dashed; --tone-line: var(--note-ink); --tone-fill: var(--note-soft); }
+.item.done { --tone-line: var(--line); --tone-fill: var(--bg); --tone-tail: var(--surface); color: var(--muted); }
 .item.done a { color: var(--muted); }
 .item.selected { outline: 2px solid var(--primary); outline-offset: 1px; }
 .block { position: absolute; z-index: 0; left: 0; right: 0; padding: 0.3rem 0.5rem; overflow: hidden; font-size: 0.8125rem; line-height: 1.25; color: var(--muted); background: repeating-linear-gradient(135deg, var(--surface) 0 6px, var(--bg) 6px 12px); border: 1px solid var(--line); }
