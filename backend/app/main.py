@@ -369,7 +369,7 @@ def create_app() -> FastAPI:
         docs_url=None,
         redoc_url=None,
         openapi_url=None,
-        # The telemetry standard (cloud-infra docs/architecture.md, Telemetry). Native metrics only,
+        # The telemetry standard (in the infrastructure repository). Native metrics only,
         # recorded on the MeterProvider tracing.configure() registered (its View is the attribute
         # allowlist). The app owns the SERVER span and the logs: native tracing would add a second
         # SERVER span carrying url.path and url.query, native logs export exception messages, and

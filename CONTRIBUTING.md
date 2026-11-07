@@ -369,7 +369,7 @@ object per erasure in a dedicated bucket (`ZIF_ERASURE_LEDGER_*`), keyed
   erasure committed but not yet ledgered (normally seconds) followed by the loss of the database.
 - Retention: **14 days**, a bucket lock rule of 14 days on `erasures/` and a lifecycle rule that deletes an entry after
   15. The ledger has to outlive the oldest backup that can still be restored, by the one-hour `--since` margin and
-  some slack. The production backups (cloud-infra `terraform/tbd-backups`, `clusters/hetzner/data/db-backup.yaml`) are
+  some slack. The production backups (set up in the infrastructure repository) are
   a nightly logical dump, kept 8 days, with a replaced version kept 1 more day and no point-in-time recovery, so the
   oldest restorable backup is at most 9 days old: 14 days covers it with 5 days of slack, and matches the privacy
   notice's "backups are deleted within two weeks". Change the backup retention and you change this one first: never
@@ -418,7 +418,7 @@ Mandatory for every restore of the production or staging database. Skipping step
    - An entry it cannot apply (unreadable, of an unknown version or kind, a body that is not the erasure its key
      names, or dated in the future) stops the run before anything is applied, each logged as ERROR `ledger entry
      refused` with its `key` (or `sha256:<hash>` of a key that holds more than ids). The bucket lock keeps it, so
-     inspect it (`aws s3api get-object --endpoint-url https://<account>.eu.r2.cloudflarestorage.com --profile
+     inspect it (`aws s3api get-object --endpoint-url <the S3 endpoint> --profile
      <read-only> --bucket <bucket> --key <key> -`) and, when it is not an erasure, run again with `--skip-key <the
      logged key>` (repeatable; recorded in the audit event).
    - After a security incident, list the entries since the suspected compromise first, and skip those the incident
@@ -435,7 +435,7 @@ Mandatory for every restore of the production or staging database. Skipping step
      applied; fix the cause and run it again. Its `erasures reapplied` line names the `bucket` and gives `entries`,
      `reapplied`, `already_erased`, `absent`, `cancelled`, `skipped` and `paid_ended`. Check that the bucket is the
      environment's, and that `entries` is the number of objects the ledger holds (`aws s3 ls --recursive
-     --endpoint-url https://<account>.eu.r2.cloudflarestorage.com --profile <read-only> s3://<bucket>/erasures/`)
+     --endpoint-url <the S3 endpoint> --profile <read-only> s3://<bucket>/erasures/`)
      whose time, in the key, is at or after `--since` (all of them without it), less the skipped among those.
 4. Start the worker (settle runs the refunds and releases), then the API.
 5. Resolve every held refund. Settle never pays a booking that a reapply ended, and that was charged before the
@@ -517,7 +517,7 @@ migration 0026), not any code path. A race in a route somebody forgets to guard 
   transaction (`invites.create`) holds two while its call runs, and work before a route's first limit (the
   public booking's session lookup) is not capped. **Residual:** many addresses together can still fill a
   process's pool (8 IPv4 addresses, or two /48s, waiting on locks are 16 calls). That bound lives at the edge,
-  in Cloudflare's rate-limit rules (ZIF-219), not here.
+  in the edge's rate-limit rules (ZIF-219), not here.
 - `booking_holds` (migration 0034) is unused since ZIF-158: nothing reads or writes it, and a later owner-gated
   migration drops it.
 - The constraint's predicate is the four **occupying** statuses. That set lives in three places — the predicate,
@@ -695,11 +695,10 @@ Rate limits and audit events key on the visitor's address. Each deployment has e
 
 Where each deployment gets it:
 
-- **Production and staging** (k3s; `app.ziftbook.com` and `dev.ziftbook.com`, manifests in cloud-infra
-  `clusters/hetzner/ziftbook-{prod,staging}`): Cloudflare to the Cloudflare Tunnel (`cloudflared` pod) to the
-  web app to the API. Cloudflare overwrites `CF-Connecting-IP` on every request, and NetworkPolicies admit only
-  the `cloudflared` pods to the web app, so no other path reaches it. The web app sets `ZIF_CLIENT_IP_HEADER=cf-connecting-ip`; the API sets
-  `ZIF_TRUSTED_PROXIES=10.42.0.0/16` (the pod network), and NetworkPolicies admit only the web app's pods to
+- **Production and staging** (in the cluster; manifests in the infrastructure repository): the edge, then a
+  tunnel pod, then the web app, then the API. The edge overwrites `CF-Connecting-IP` on every request, and
+  NetworkPolicies admit only the tunnel pods to the web app, so no other path reaches it. The web app sets `ZIF_CLIENT_IP_HEADER=cf-connecting-ip`; the API sets
+  `ZIF_TRUSTED_PROXIES` to the pod network's CIDR, and NetworkPolicies admit only the web app's pods to
   it. Each visitor gets their own per-IP limits.
 - **`docker-compose-prod.yaml`** publishes the web app's port 3000 directly (bound to 127.0.0.1, with no Turnstile
   opt-out), so it leaves `ZIF_CLIENT_IP_HEADER` unset (any client could forge the header) and the API trusts only
@@ -708,16 +707,16 @@ Where each deployment gets it:
   minutes, every further one is refused, for every client of every business, and at most two limiter calls run at
   once per API process for all of them together (ZIF-264). Use it to try a release, never
   for public traffic as it stands.
-- **Pod-network risk (k3s):** the trusted CIDR is the whole pod network, so anything that reaches the
+- **Pod-network risk:** the trusted CIDR is the whole pod network, so anything that reaches the
   backend from inside it is trusted, including traffic SNATed to a node's cluster-internal address
-  (`10.42.x.1`): a NodePort or LoadBalancer Service, a hostNetwork pod, or any other node-local caller, and
-  any of those could set its own `X-Forwarded-For`. k3s/flannel doesn't SNAT pod-to-ClusterIP traffic, but
+  (on the pod network): a NodePort or LoadBalancer Service, a hostNetwork pod, or any other node-local caller, and
+  any of those could set its own `X-Forwarded-For`. The cluster's network plugin doesn't SNAT pod-to-ClusterIP traffic, but
   that is not the safeguard: the backend Service must never be exposed via NodePort, LoadBalancer or
   Ingress, and NetworkPolicies must admit only the web app's pods.
-- **Worker residual (cloud-infra INFRA-145):** a Cloudflare Worker attached to the `ziftbook.com` zone runs
-  inside it, so its code can send its own `CF-Connecting-IP` to the zone's node hostnames, production
+- **Edge function residual (INFRA-145):** the landing site's edge function runs inside the same zone as
+  the app, so its code can send its own `CF-Connecting-IP` to the zone's hostnames, production
   included: it could dodge per-IP limits, lock a chosen address out, and write forged addresses into audit
-  events. Only whoever merges to this repo's `main`, or holds the landing Worker's deploy token, can change
+  events. Only whoever merges to this repo's `main`, or holds the landing site's deploy token, can change
   that code.
 
 ## Business settings
@@ -996,9 +995,9 @@ Attributes on every span come from an explicit allowlist instead.
 ## Observability
 
 Every signal leaves the app in a vendor-neutral form: logs as JSON lines on stdout, traces and
-metrics over OTLP to one endpoint. This follows the platform's telemetry standard (cloud-infra
-`docs/architecture.md`, Telemetry). What sits behind that endpoint (the
-Grafana LGTM stack today; Prometheus, fluentd or anything else later) is an OpenTelemetry
+metrics over OTLP to one endpoint. This follows the platform's telemetry standard (in the infrastructure
+repository). What sits behind that endpoint (whatever backend the platform runs today, or
+anything else later) is an OpenTelemetry
 Collector's configuration, never app code. So no vendor agent, SDK or protocol belongs in this
 repo. Every switch below is an environment variable read at process start, so any deployment
 sets it the same way. With `docker-compose-prod.yaml`, set it in `.env` and run
@@ -1187,7 +1186,7 @@ ZIF-38). An empty variable means the default: `env_ignore_empty=True` on the bas
 | `ZIF_MAILPIT_URL` | worker | none | no (development only) | no | Mailpit's base URL; with no Mailgun key, mail goes to its HTTP send API. Never SMTP. |
 | `ZIF_APP_URL` | api, worker | `http://localhost:3000` | yes | no | The public web URL: where links in emails point (worker) and where Stripe sends an owner back after onboarding, and the Apple Pay domain (api). Must be the public web URL in production, on both. |
 | **Photo storage** | | | | | |
-| `ZIF_S3_ENDPOINT` | api, worker, frontend, ledger CLI | `""` | yes (the erasure ledger's, and photos') | no | The S3-compatible API (production and staging: the R2 account endpoint, `https://<account>.eu.r2.cloudflarestorage.com`; compose: SeaweedFS). No default in code. The erasure ledger needs it on the worker and the `reapply` pod: unset, the worker logs `erasure_ledger: "off"` (below). While any of the first six variables here is unset the API logs a WARNING at startup (`storage: "off"`) and answers 503 `photos_unavailable` to a photo; startup never fails over it. The web app allows uploads to its origin in the pages' Content-Security-Policy (ZB-12) unless `ZIF_S3_PUBLIC_ENDPOINT` is set: give it the API's value. |
+| `ZIF_S3_ENDPOINT` | api, worker, frontend, ledger CLI | `""` | yes (the erasure ledger's, and photos') | no | The S3-compatible API (production and staging: the object store's S3 endpoint; compose: SeaweedFS). No default in code. The erasure ledger needs it on the worker and the `reapply` pod: unset, the worker logs `erasure_ledger: "off"` (below). While any of the first six variables here is unset the API logs a WARNING at startup (`storage: "off"`) and answers 503 `photos_unavailable` to a photo; startup never fails over it. The web app allows uploads to its origin in the pages' Content-Security-Policy (ZB-12) unless `ZIF_S3_PUBLIC_ENDPOINT` is set: give it the API's value. |
 | `ZIF_S3_UPLOADS_BUCKET` | api | `""` | for photos | no | Where the browser PUTs the original (presigned, 5 minutes). Nothing deletes from it: give it a 1-day lifecycle rule and a CORS rule allowing PUT with `content-type` from the web app's origin. |
 | `ZIF_S3_MEDIA_BUCKET` | api, worker | `""` | for photos | no | Where the resized variants are written, served publicly from `ZIF_MEDIA_URL`. |
 | `ZIF_S3_ACCESS_KEY_ID` | api, worker | `""` | for photos | no | Access key id for both buckets. |
@@ -1212,7 +1211,7 @@ ZIF-38). An empty variable means the default: `env_ignore_empty=True` on the bas
 | `ZIF_TESTS_ALLOW_DB` | tests | unset | no | no | Test suite only. The suite refuses a database host other than `localhost`, `127.0.0.1`, `::1` or `postgres`, because it drops and recreates databases; set this to the exact database name to allow one remote database. Never point it at a shared or production database. |
 | `ZIF_CSP_ENFORCE` | frontend | `false` | no | no | `true` enforces the pages' Content-Security-Policy (ZB-12: scripts only with the page's nonce). Anything else sends it as `Content-Security-Policy-Report-Only`: browsers report what it would block and block nothing. Read when the web server starts. Turn it on in staging first, once a booking with a card and Turnstile and an admin sign-in show no violations (the API's `csp violation` lines and `ziftbook.csp.violations`, with `ZIF_CSP_REPORT_URL` set; else the browser console), then in production. No violations is only evidence when reports are arriving (ZIF-236): while those pages are exercised, the `csp reports dropped` lines must show no `cross_site` count (the API drops a report whose `Sec-Fetch-Site` is not `same-origin`, so a browser that labelled its own reports otherwise would look clean), and in each of Chrome, Firefox and Safari a deliberate violation (`document.body.setAttribute("style", "color: red")` in the console on a staging page) must have produced its `csp violation` line (`style-src-attr`, `inline`). |
 | `ZIF_CSP_REPORT_URL` | frontend | unset | no | no | Where browsers send Content-Security-Policy violation reports (ZIF-236): this deployment's own web origin plus `/api/csp-reports` (production `https://app.ziftbook.com/api/csp-reports`, staging `https://dev.ziftbook.com/api/csp-reports`), named in every page's policy (`report-uri`, and `report-to` through a `Reporting-Endpoints` header). The API logs only route templates and categories of what it receives (Logging). Anything but `https://<host>[:port]/api/csp-reports` written exactly so (no credentials, query, fragment, trailing slash or upper case) is refused: reports carry a page's full URL, a checkout's with Stripe's client secret, so they must never reach a collector that keeps it. A page names the URL only when it was served on the URL's own host (the request's `Host`, which Cloudflare's tunnel keeps by default), so a typo'd or another environment's host is never sent reports: such pages name none, and the web logs `csp report url is not this page's host: violations are not reported` (WARNING, once per process, never a host). Unset or refused: no policy names one; the web's `started` line says `csp_reports: "off"`, and a refused value also logs `csp report url refused: violations are not reported` (WARNING). Unsetting it turns reporting off without a build. Read when the web server starts. |
-| `ZIF_TRUSTED_PROXIES` | api | `""` | yes | no | Addresses whose `X-Forwarded-For` the API believes (production and staging: the pod network `10.42.0.0/16`; compose: the web app's `172.28.0.10`). Empty trusts nobody. |
+| `ZIF_TRUSTED_PROXIES` | api | `""` | yes | no | Addresses whose `X-Forwarded-For` the API believes (production and staging: the pod network's CIDR; compose: the web app's `172.28.0.10`). Empty trusts nobody. |
 | `ZIF_CLIENT_IP_HEADER` | frontend | none | yes, behind a proxy | no | Header the web app trusts for the visitor's address (production and staging: `cf-connecting-ip`). Set only behind a proxy that overwrites it; unset there, every visitor shares the proxy's address and its per-IP limits. |
 | **Logging** | | | | | |
 | `ZIF_LOG_LEVEL` | api, worker, migrations, frontend | `INFO` | no | no | `DEBUG`/`INFO`/`WARNING`/`ERROR`. |
@@ -1223,7 +1222,7 @@ ZIF-38). An empty variable means the default: `env_ignore_empty=True` on the bas
 | `ZIF_APP_REVISION` | api, frontend | `dev` | no | no | Git sha of the build, baked into the backend and frontend images. |
 | `ZIF_SHOW_VERSION` | frontend | none | no | no | `true` shows the version line (`v0.27.1 · 315a9c5`) at the bottom of the console sidebar and More sheet and in the booking pages' footer. Only staging sets it. Read server-side per request, never `NEXT_PUBLIC_*`. |
 | `ZIF_HEALTHCHECK_URL` | worker | none | no | no | Pinged after every successful loop. |
-| `ZIF_RETENTION_HOLD_UNTIL` | worker | none | no | no | An incident's evidence hold (ZIF-235): a plain date, `YYYY-MM-DD`, from tomorrow to 90 days ahead, exclusive: the hold lasts until 00:00 UTC on that date. Until then the retention sweep keeps audit events, platform audit events and booking-event addresses; sessions, rate limits, contact email senders, admin sessions and account sessions are still swept. It shows in the `worker started` line, the worker logs a WARNING at startup, and every sweep line is a WARNING while it holds; at 00:00 UTC on its date it ends by itself. Today's date or an earlier one holds nothing and logs an ERROR at startup (a mistyped year shows). Any other value (`0`, a datetime, a number, more than 90 days ahead) never turns the hold off and never stops the worker: it holds until fixed, logs an ERROR at startup and on every sweep, and the worker withholds its healthcheck ping, so the alert fires until someone corrects it. Set it in the worker's environment (production and staging: the worker's ConfigMap in cloud-infra `clusters/hetzner/ziftbook-{prod,staging}`, then restart the worker; compose: `.env`), and remove it once the evidence is exported. |
+| `ZIF_RETENTION_HOLD_UNTIL` | worker | none | no | no | An incident's evidence hold (ZIF-235): a plain date, `YYYY-MM-DD`, from tomorrow to 90 days ahead, exclusive: the hold lasts until 00:00 UTC on that date. Until then the retention sweep keeps audit events, platform audit events and booking-event addresses; sessions, rate limits, contact email senders, admin sessions and account sessions are still swept. It shows in the `worker started` line, the worker logs a WARNING at startup, and every sweep line is a WARNING while it holds; at 00:00 UTC on its date it ends by itself. Today's date or an earlier one holds nothing and logs an ERROR at startup (a mistyped year shows). Any other value (`0`, a datetime, a number, more than 90 days ahead) never turns the hold off and never stops the worker: it holds until fixed, logs an ERROR at startup and on every sweep, and the worker withholds its healthcheck ping, so the alert fires until someone corrects it. Set it in the worker's environment (production and staging: the worker's ConfigMap in the infrastructure repository, then restart the worker; compose: `.env`), and remove it once the evidence is exported. |
 | `ZIF_IMAGE_TAG` | compose | none | yes | no | Release tag (`vX.Y.Z`) for the three GHCR images. |
 | `ZIF_API_URL` | frontend | none | yes | no | Backend base URL the web app proxies `/api` to. |
 | **Telemetry** | | | | | |
