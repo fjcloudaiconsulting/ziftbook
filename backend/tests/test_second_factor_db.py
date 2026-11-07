@@ -1365,10 +1365,12 @@ def test_beginning_again_keeps_the_confirm_count(
     assert confirm(app_engine, session, totp.proof(s), TEN) == ("enrolled", 0)
 
 
-# ZIF-275 fence. Kills: totp_enrolment_locked true below 10 wrong confirm codes, for a wrong or
-# expired ticket, for another admin's session or for a confirmed factor (each would turn a begin
-# that should start into 403 enrol_locked, or tell a wrong ticket that the enrolment stopped).
-def test_enrolment_locked_only_with_its_own_live_ticket_at_10(
+# ZIF-275 fence. Kills: totp_enrolment_locked drifting from begin_totp_enrolment's threshold (at 9,
+# 10 and 11 begin refuses a live ticket exactly when it says locked), or true for a wrong ticket,
+# another admin's session or a confirmed factor (each would turn a begin that should start into a
+# locked answer, or tell a wrong ticket that the enrolment stopped), or false once a stopped
+# setup's ticket expired (back to "wrong ticket" for the right one).
+def test_enrolment_locked_is_begins_refusal_at_10_expired_or_not(
     app_engine: Engine, migrate_engine: Engine
 ) -> None:
     user_id = new_admin(migrate_engine)
@@ -1386,13 +1388,14 @@ def test_enrolment_locked_only_with_its_own_live_ticket_at_10(
             )
 
     assert begin(app_engine, session, ticket, user_id, totp.new_secret()) == "begun"
-    set_("failed_attempts = 9")
-    assert not locked(session, ticket)
-    set_("failed_attempts = 10")
-    assert locked(session, ticket)
+    for n in (9, 10, 11):
+        set_(f"failed_attempts = {n}")
+        is_locked = locked(session, ticket)
+        refused = begin(app_engine, session, ticket, user_id, totp.new_secret()) != "begun"
+        assert (is_locked, refused) == (n >= 10, n >= 10), n
     assert not locked(session, wrong())
     assert not locked(other, ticket)
+    set_("ticket_expires_at = now() - interval '1 second'")
+    assert locked(session, ticket)
     set_("confirmed_at = now()")
-    assert not locked(session, ticket)
-    set_("confirmed_at = NULL, ticket_expires_at = now() - interval '1 second'")
     assert not locked(session, ticket)

@@ -638,8 +638,9 @@ A platform admin runs the platform across businesses (ZIF-70). `platform_admins`
   lock never leaks away: the only ways out are a recovery code or `python -m app.admin enrol`, never time and
   never a password reset. A recovery code lifts the lock but leaves 9, so the next wrong code within 8 hours locks
   again. Wrong codes at enrolment confirm count the same way, without the leak: 10 stop the enrolment, and entering
-  the same ticket again keeps the count (ZIF-262) and is then refused with 403 `enrol_locked`, no new secret and
-  no QR code (ZIF-275), so the way out is a new ticket from `enrol`. The `failures` in a
+  the same ticket again keeps the count (ZIF-262) and is then refused with 403 `second_factor_locked`, as confirm
+  answers, with no new secret and no QR code, even once the ticket's hour has passed (ZIF-275), so the way out is a
+  new ticket from `enrol`. The `failures` in a
   `second_factor_failed` audit event is that count; `failed_since_last` in
   `second_factor_passed` is the failures since the last pass. A lock, or a lock again soon after a recovery code,
   means someone is sending codes: a password holder (reset the password, then `enrol`), or someone who can run SQL
@@ -660,6 +661,7 @@ A platform admin runs the platform across businesses (ZIF-70). `platform_admins`
   for the reset's own event (`recovery_code_used`, `admin_signed_out`, `totp_enrolment_issued`, `totp_enrolled`)
   next to it before calling it a cut-off check; alone, such an attempt is no ZB-08 incident. A
   `totp_enrolment_failed` event without `failures` is a refused ticket, not a code: leave it out of the pairing.
+  With `locked: true` it was the right ticket of a stopped enrolment (someone retrying it); without, a wrong one.
   The pairing is a hint, not proof: the app role can insert platform audit events (it cannot change, delete or
   backdate one), so someone running SQL as it can add a matching outcome after cutting a check off, or plant
   attempts. Against that attacker the signals are the ones it cannot undo: the attempt events, the count and the

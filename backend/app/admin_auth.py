@@ -435,12 +435,14 @@ def pass_second_factor(body: CodeIn, current: HalfAdmin, request: Request) -> Ad
 def begin_enrolment(body: TicketIn, current: HalfAdmin, request: Request) -> EnrolmentOut:
     """Start TOTP enrolment with the ticket `python -m app.admin enrol` printed. Until it is
     confirmed, starting again with the same ticket replaces the secret. Once 10 wrong confirm
-    codes stopped it, that ticket starts nothing (403 enrol_locked): only a new ticket does."""
+    codes stopped it, that ticket starts nothing (403 second_factor_locked, as confirm answers):
+    only a new ticket does."""
     _limited(request, "admin_enrol", 10)
     _key_needed()
     s = totp.new_secret()
     id_hash = _id_hash(request)
     ticket = totp.proof(totp.normalise(body.ticket))
+    locked = False
     with SessionLocal.begin() as session:
         outcome = session.scalar(
             text("SELECT begin_totp_enrolment(:id, :ticket, :ct, :p)"),
@@ -452,19 +454,23 @@ def begin_enrolment(body: TicketIn, current: HalfAdmin, request: Request) -> Enr
             },
         )
         if outcome == "invalid_ticket":
+            # begin refuses a stopped enrolment's ticket as a wrong one (0084); 0095's
+            # totp_enrolment_locked tells them apart (tests pin the two to the same 10).
+            locked = bool(
+                session.scalar(
+                    text("SELECT totp_enrolment_locked(:id, :ticket)"),
+                    {"id": id_hash, "ticket": ticket},
+                )
+            )
             admin.record(
                 session,
                 request,
                 "totp_enrolment_failed",
                 actor_user_id=current.user_id,
-            )
-            # begin refuses a stopped enrolment's ticket as a wrong one (0084): tell them apart.
-            locked = session.scalar(
-                text("SELECT totp_enrolment_locked(:id, :ticket)"),
-                {"id": id_hash, "ticket": ticket},
+                details={"locked": True} if locked else None,
             )
     if outcome == "invalid_ticket":
-        raise ApiError(*((403, "enrol_locked") if locked else (401, "invalid_ticket")))
+        raise ApiError(*((403, "second_factor_locked") if locked else (401, "invalid_ticket")))
     if outcome == "already_enrolled":
         raise ApiError(409, "already_enrolled")
     uri = totp.otpauth_uri(s, current.email)
