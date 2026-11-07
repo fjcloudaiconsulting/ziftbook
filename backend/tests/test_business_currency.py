@@ -9,14 +9,19 @@ from typing import Any
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from psycopg import OperationalError as PsycopgOperationalError
 from psycopg.errors import (
+    AdminShutdown,
     CheckViolation,
+    DeadlockDetected,
     FeatureNotSupported,
     ForeignKeyViolation,
     InsufficientPrivilege,
+    SerializationFailure,
 )
 from sqlalchemy import Engine, text
-from sqlalchemy.exc import DBAPIError, IntegrityError
+from sqlalchemy.exc import DBAPIError, IntegrityError, OperationalError
+from sqlalchemy.orm import Session
 
 from app import countries
 from app.db import lift_force, tenant_context
@@ -117,7 +122,11 @@ def test_a_currency_changed_while_stripe_is_called_is_refused_and_a_retry_starts
     assert len(set(fake_stripe.accounts)) == 2 and account in fake_stripe.accounts
 
 
-OPTIONS = [{"code": c, "minor_units": 2} for c in ("BRL", "EUR", "GBP", "USD")]
+# The test businesses are in NL, whose Stripe accounts settle only EUR (STRIPE_CURRENCIES).
+OPTIONS = [
+    {"code": c, "minor_units": 2, "stripe_settles": c == "EUR"}
+    for c in ("BRL", "EUR", "GBP", "USD")
+]
 
 
 def prices(tenant_id: uuid.UUID) -> list[tuple[int, str]]:
@@ -696,3 +705,70 @@ def test_an_existing_account_in_an_unsettled_currency_still_gets_its_onboarding_
     assert response.status_code == 200
     assert response.json()["url"].startswith("https://connect.stripe.test/setup/acct_heldbrl00001/")
     assert fake_stripe.count("create_account") == 0
+
+
+def settled(owner: TestClient) -> dict[str, bool]:
+    return {
+        o["code"]: o["stripe_settles"]
+        for o in owner.get("/api/settings/currency").json()["options"]
+    }
+
+
+# FENCE. Wrong impl: options that do not say which currencies Stripe pays out in for the business's
+# country: the owner would learn only after a change, when connecting Stripe is refused (409
+# payments_unavailable_currency), that the business can no longer take payments online.
+def test_each_option_says_whether_stripe_pays_out_in_it_for_the_business_s_country(
+    people: People, owner: TestClient, migrate_engine: Engine
+) -> None:
+    assert settled(owner) == {"BRL": False, "EUR": True, "GBP": False, "USD": False}
+
+    for country, expected in (("GB", "GBP"), ("US", "USD"), ("BR", None)):
+        with migrate_engine.begin() as conn:
+            conn.execute(
+                text("UPDATE tenants SET country = :c WHERE id = :t"), {"c": country, "t": people.a}
+            )
+        assert settled(owner) == {c: c == expected for c in ("BRL", "EUR", "GBP", "USD")}
+
+
+# FENCE. Wrong impl: the change left to the global handler, which answers a deadlock or a
+# serialization failure with a 500. A booking racing the change can deadlock it (the booking holds
+# the service row and waits on tenants; the change holds tenants and waits on the service row's
+# cascade); the owner should read "busy, try again", as the booking does.
+@pytest.mark.parametrize("failure", [DeadlockDetected, SerializationFailure])
+def test_a_currency_change_aborted_by_the_database_answers_busy(
+    people: People, owner: TestClient, monkeypatch: pytest.MonkeyPatch, failure: type[Exception]
+) -> None:
+    real = Session.execute
+
+    def aborted(self: Session, statement: Any, *args: Any, **kwargs: Any) -> Any:
+        if "change_currency(" in str(statement):
+            raise OperationalError(str(statement), {}, failure("aborted"))
+        return real(self, statement, *args, **kwargs)
+
+    monkeypatch.setattr(Session, "execute", aborted)
+
+    response = owner.put("/api/settings/currency", json={"currency": "USD"})
+
+    assert (response.status_code, response.json()) == (503, {"code": "busy"})
+
+
+# FENCE. Wrong impl: every OperationalError from the change answered 503 busy. A lost connection or
+# a server shutting down is no lock contention: it must stay an unexpected error (500, logged as
+# unhandled), never "busy, try again".
+@pytest.mark.parametrize("failure", [AdminShutdown, PsycopgOperationalError])
+def test_a_currency_change_failing_otherwise_is_not_answered_busy(
+    people: People, owner: TestClient, monkeypatch: pytest.MonkeyPatch, failure: type[Exception]
+) -> None:
+    real = Session.execute
+
+    def broken(self: Session, statement: Any, *args: Any, **kwargs: Any) -> Any:
+        if "change_currency(" in str(statement):
+            raise OperationalError(str(statement), {}, failure("gone"))
+        return real(self, statement, *args, **kwargs)
+
+    monkeypatch.setattr(Session, "execute", broken)
+
+    response = owner.put("/api/settings/currency", json={"currency": "USD"})
+
+    assert response.status_code == 500
+    assert response.json() != {"code": "busy"}

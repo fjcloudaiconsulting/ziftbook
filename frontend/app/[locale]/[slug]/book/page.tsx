@@ -5,7 +5,7 @@ import { siteKeyFrom } from "@/lib/account";
 import { parseCheckout } from "@/lib/booking-page";
 import { appVersion } from "@/lib/version";
 
-import { LanguageSwitcher } from "../../_ui/header";
+import { OwnLanguageSwitcher } from "../../_ui/header";
 import { Outcome } from "../../_ui/parts";
 import styles from "../../_ui/ui.module.css";
 import { BookingPage } from "../booking-page";
@@ -42,7 +42,7 @@ export default async function CheckoutPage({
     const t = await getTranslations("BookingPage");
     return (
       <>
-        <header className={styles.minimalHeader}><LanguageSwitcher /></header>
+        <header className={styles.minimalHeader}><OwnLanguageSwitcher hold={pick.has("booking")} /></header>
         <main className={styles.screen}>
           <div className={styles.col}>
             <Outcome icon="calendar" title={t("loadErrorTitle")} lede={t("loadErrorLede")}>
@@ -62,7 +62,7 @@ export default async function CheckoutPage({
 
   return (
     <>
-      <header className={styles.minimalHeader}><LanguageSwitcher /></header>
+      <header className={styles.minimalHeader}><OwnLanguageSwitcher hold={pick.has("booking")} /></header>
       <BookingPage
         page={loaded.data}
         locale={locale}

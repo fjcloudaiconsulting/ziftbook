@@ -4,6 +4,8 @@
 // outcome mapping, day-part grouping and the availability window.
 import type { StripeElementsOptionsMode } from "@stripe/stripe-js";
 
+import type { BookingsCreateData } from "@/api-client";
+
 import { addDays, slotsByDay } from "./booking-link.ts";
 
 /** Cancellation terms once a slot is picked: free up to `freeUntil`, or already inside that
@@ -129,11 +131,27 @@ export function bookingBody(form: BookingForm): BookingBody {
   };
 }
 
+/** ZIF-102: the query of the booking POST, the currency the page showed the price in. The API
+ * refuses the booking (409 currency_changed) when the business's currency changed since. A query
+ * parameter, never a body key, so either release of the API reads the request during a deploy. */
+export function bookingQuery(shown: { currency: string }): NonNullable<BookingsCreateData["query"]> {
+  // The page's own price: the API sent this currency, from its list.
+  return { shown_currency: shown.currency as NonNullable<BookingsCreateData["query"]>["shown_currency"] };
+}
+
+/** ZIF-102: the service a step holds, with the price the reloaded page now shows when only its
+ * currency changed under it (the owner changed the business's currency): the page then shows, and
+ * sends, the new currency. Otherwise the held service, unchanged. */
+export function repriced<S extends { price: { currency: string } }>(held: S, live: { price: S["price"] } | undefined): S {
+  return live && live.price.currency !== held.price.currency ? { ...held, price: live.price } : held;
+}
+
 export type AnswerOutcome =
   | { kind: "done" }
   | { kind: "slotTaken" }
   | { kind: "serviceGone" }
   | { kind: "policyChanged" }
+  | { kind: "pricesChanged" }
   | { kind: "fieldErrors" }
   | { kind: "phoneInvalid" }
   | { kind: "messageInvalid" }
@@ -153,6 +171,7 @@ const POLICY_CHANGED_CODES = new Set(["unknown_policy_version", "purpose_not_in_
 export function answerState(answer: { status: number; code?: string }, widget: boolean): AnswerOutcome {
   if (answer.status === 201 || answer.status === 202) return { kind: "done" };
   if (answer.status === 409 && answer.code && SLOT_TAKEN_CODES.has(answer.code)) return { kind: "slotTaken" };
+  if (answer.status === 409 && answer.code === "currency_changed") return { kind: "pricesChanged" };
   if (answer.status === 404) return { kind: "serviceGone" };
   if (answer.status === 422 && answer.code && POLICY_CHANGED_CODES.has(answer.code)) return { kind: "policyChanged" };
   if (answer.status === 422 && (answer.code === "payment_required" || answer.code === "payment_not_offered")) return { kind: "paymentChanged" };

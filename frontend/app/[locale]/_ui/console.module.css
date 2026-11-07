@@ -468,6 +468,8 @@
 }
 .url span { flex: 1; overflow-wrap: anywhere; font-size: 0.9375rem; }
 .urlOff span { color: var(--muted); }
+/* ZIF-102: a value that can no longer change (the business's currency). */
+.urlLock { flex: none; display: inline-flex; color: var(--muted); font-style: normal; }
 .urlSlug { font-weight: 400; white-space: nowrap; }
 .copyButton {
   flex: none; min-height: 36px; padding: 0.3rem 0.8rem; border-radius: 999px; border: 1px solid var(--field-line);

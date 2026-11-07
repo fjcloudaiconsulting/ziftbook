@@ -5,8 +5,9 @@ import { type ReactNode, useEffect, useRef, useState } from "react";
 
 import { type PaymentAccountOut, paymentsAccount, paymentsConnect } from "@/api-client";
 import { useRouter } from "@/i18n/navigation";
+import { currencyName } from "@/lib/currency";
 import { formatMoney } from "@/lib/money";
-import { paymentsAction } from "@/lib/settings";
+import { connectError, paymentsAction } from "@/lib/settings";
 
 import { SignedOutBanner, useConsole } from "../../_ui/console";
 import styles from "../../_ui/console.module.css";
@@ -24,6 +25,7 @@ export function Payments({ disabled, switchRow }: { disabled: boolean; switchRow
   const [account, setAccount] = useState<PaymentAccountOut | null>(null);
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [currencyChanged, setCurrencyChanged] = useState(false);
   const [signedOut, setSignedOut] = useState(false);
   const busyRef = useRef(false);
   const owner = session.role === "owner";
@@ -39,7 +41,7 @@ export function Payments({ disabled, switchRow }: { disabled: boolean; switchRow
       if (cancelled) return;
       if (outcome.status === 200 && outcome.data) {
         setAccount(outcome.data);
-        if (back === "refresh" && owner && paymentsAction(outcome.data.state, outcome.data.country_supported) === "continue") void go("connect");
+        if (back === "refresh" && owner && paymentsAction(outcome.data.state, outcome.data.country_supported, outcome.data.currency_supported) === "continue") void go("connect");
       } else setFailed(true);
     })();
     return () => {
@@ -62,6 +64,7 @@ export function Payments({ disabled, switchRow }: { disabled: boolean; switchRow
     setBusy(true);
     setFailed(false);
     setSignedOut(false);
+    setCurrencyChanged(false);
     const outcome = await call(() => paymentsConnect({ body: { locale } }), { write: true });
     // Reset even before leaving for Stripe: Back may restore this page from the bfcache as it was.
     busyRef.current = false;
@@ -70,19 +73,28 @@ export function Payments({ disabled, switchRow }: { disabled: boolean; switchRow
       window.location.assign(outcome.data.url);
       return;
     }
-    if (outcome.status === 401) setSignedOut(true);
-    else setFailed(true);
+    const why = connectError(outcome);
+    if (why === "signedOut") setSignedOut(true);
+    else if (why === "failed") setFailed(true);
+    else {
+      // ZIF-102: the currency, not Stripe. Read the state again: the panel then says why.
+      if (why === "currencyChanged") setCurrencyChanged(true);
+      const again = await call(() => paymentsAccount());
+      if (again.status === 200 && again.data) setAccount(again.data);
+    }
   }
 
   if (!account && !failed) return null;
-  const action = account && owner ? paymentsAction(account.state, account.country_supported) : null;
+  const action = account && owner ? paymentsAction(account.state, account.country_supported, account.currency_supported) : null;
   const body = !account
     ? null
     : account.state === "off"
       ? t("paymentsOff")
       : !account.country_supported
         ? t("paymentsCountry")
-        : t(account.state === "none" ? "paymentsNone" : account.state === "onboarding" ? "paymentsOnboarding" : "paymentsReady");
+        : account.state === "none" && !account.currency_supported
+          ? t("paymentsCurrency", { currency: currencyName(account.currency, locale) })
+          : t(account.state === "none" ? "paymentsNone" : account.state === "onboarding" ? "paymentsOnboarding" : "paymentsReady");
 
   return (
     <fieldset className={`${styles.section} ${styles.sectionRow} ${styles.settingsSection}`} disabled={disabled}>
@@ -111,6 +123,7 @@ export function Payments({ disabled, switchRow }: { disabled: boolean; switchRow
           </button>
         </p>
       )}
+      {currencyChanged && <Banner tone="note">{t("paymentsCurrencyChanged")}</Banner>}
       {failed && <Banner tone="error">{t("paymentsFailed")}</Banner>}
       </div>
     </fieldset>

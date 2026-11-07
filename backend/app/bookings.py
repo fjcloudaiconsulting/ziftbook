@@ -46,6 +46,7 @@ from app import (
 from app import time_off as time_off_module
 from app.business_settings import Locale
 from app.clients import ClientName, Phone, PolicyVersion, Purpose
+from app.currencies import Currency
 from app.db import SessionLocal, count_after_commit, join_tenant, tenant_context
 from app.errors import CLIENT_ERASED, CLIENT_NAME, ApiError, Error
 from app.services import STRICT, DescriptionText, Price, multiline
@@ -69,7 +70,8 @@ MAX_AGENDA_WINDOW = timedelta(days=8)  # a 7-day local week across a clock chang
 
 class BookingIn(BaseModel):
     # Field by field: nothing a client sends can name a business, a currency, a price, a status,
-    # a source or a platform account. There is no user_id field here and never will be.
+    # a source or a platform account. There is no user_id field here and never will be. (The
+    # currency the page SHOWED rides the query, create()'s shown_currency: compared, never stored.)
     model_config = STRICT  # app.services.STRICT: strict=True, extra="forbid"
     # time_off.Instant, NEVER a bare AwareDatetime. Two independent reasons, each fatal:
     #   * {"starts_at": "0001-01-01T00:00:00+00:00"} makes astimezone() raise OverflowError, which
@@ -1065,6 +1067,7 @@ def book_online(
     message: str | None,
     payment: Literal["check", "pay"] | None,
     checkout_hash: bytes,
+    shown_currency: str | None = None,
 ) -> tuple[BookingOut, str | None, datetime | None]:
     """A client's own booking from the booking page (create()). The caller holds the tenant lock
     (its transaction's first statement) and catches OperationalError as 503 busy.
@@ -1079,6 +1082,10 @@ def book_online(
     the card on and the hold's deadline: the booking is then `awaiting_payment`, keeps
     checkout_hash (ZB-15), and nobody is told yet (payments.reconcile announces it once the card
     is checked).
+
+    shown_currency: the currency the booking page showed the price in, or None from a page that
+    sends none (the previous release's). A currency change relabels the service row (0066's
+    cascade), so it is compared with that row as read FOR SHARE below.
     """
     # 2. FOR SHARE is mandatory: archiving takes FOR NO KEY UPDATE and the booking's foreign
     #    key check only KEY SHARE, so without this a booking can land on a service archived
@@ -1092,6 +1099,15 @@ def book_online(
     # commits still lands: it was placed first, and the owner sees it.
     if not settings.published:
         raise ApiError(404, "not_found")
+    # ZIF-102. The owner changed the currency after the page showed the price: the client has not
+    # seen this price, so nothing is booked and the page reloads its prices. Under the service's
+    # FOR SHARE: a change committed before it is read here. A change that starts after it either
+    # waits for this transaction and then finds this booking (locked_bookings), or, when it took
+    # tenants before this booking's foreign key check does, deadlocks with it; Postgres then aborts
+    # one of the two (this booking answers 503 busy, the change 503 busy). Neither books a price the
+    # client did not see.
+    if shown_currency is not None and shown_currency != row.price_currency:
+        raise ApiError(409, "currency_changed")
     opening = schedule.envelope(db)  # 4: once, never per worker or per day
     hours, names = availability.candidates(db, service_id, member_id)
     candidates = sorted(hours)  # 5
@@ -1314,7 +1330,16 @@ router = APIRouter(prefix="/api/public", tags=["bookings"])
     responses={s: {"model": Error} for s in (403, 404, 409, 415, 422, 429, 503)},
 )
 def create(  # sync def: turnstile.verify's urlopen blocks, and runs in FastAPI's threadpool
-    tenant_id: UUID, service_id: UUID, new: BookingIn, request: Request, response: Response
+    tenant_id: UUID,
+    service_id: UUID,
+    new: BookingIn,
+    request: Request,
+    response: Response,
+    # ZIF-102. The currency the page showed the price in (409 currency_changed if it no longer is).
+    # In the query, not the strict body: an API still on the previous release ignores an unknown
+    # query parameter but refuses an unknown body key, so a page from this release books through
+    # either during a rolling deploy. Optional: a page from the previous release sends none.
+    shown_currency: Annotated[Currency | None, Query()] = None,
 ) -> BookingOut:
     """Book a free slot straight away, as a guest or signed in. The address is `proven` only for
     its own signed-in account; a guest's booking never changes an existing client (ZIF-157)."""
@@ -1400,6 +1425,7 @@ def create(  # sync def: turnstile.verify's urlopen blocks, and runs in FastAPI'
                 message=new.message,
                 payment=new.payment,
                 checkout_hash=checkout_digest(secret),
+                shown_currency=shown_currency,
             )
         placed = True  # committed: the reservation stands
     except OperationalError:

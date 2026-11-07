@@ -1,0 +1,188 @@
+// ZIF-102: which language a page opens in (CONTRIBUTING.md, "Which language a person sees"). The
+// owner's rulings: a saved language always wins, on every surface (4); a guest whose browser speaks
+// none of ours gets English (5), and there is one language list (routing.locales).
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { describe, test } from "node:test";
+
+import { browserLocale, forgetPick, isAdminPath, movesOnPick, pickedHere, recordPick, resolveLocale, savePickedLanguage, subscribePick, takeUnsavedNotice } from "../lib/locale.ts";
+
+const base = { own: null, signedIn: true, surface: "console", browser: [], business: null, url: "en", picked: null };
+
+describe("a language picked with the language button", () => {
+  test("fence: a pick that could not be saved is remembered for this tab", () => {
+    // Wrong implementation killed: forgetting it, so the saved language takes the page back.
+    forgetPick();
+    recordPick("ana", "pt", false);
+    assert.equal(pickedHere("ana"), "pt");
+  });
+
+  test("fence: a saved pick leaves nothing behind (the account holds it now)", () => {
+    recordPick("ana", "pt", false);
+    recordPick("ana", "nl", true);
+    assert.equal(pickedHere("ana"), null);
+  });
+
+  test("fence: the page a pick that could not be saved led to says so, once", () => {
+    // Wrong implementation killed: a silent failure (the person believes it is saved), or a note
+    // on every page after it. Not on the page the pick was made on, before the language changed.
+    forgetPick();
+    recordPick("ana", "pt", false);
+    assert.equal(takeUnsavedNotice("ana", "en"), false);
+    assert.equal(takeUnsavedNotice("ana", "pt"), true);
+    assert.equal(takeUnsavedNotice("ana", "pt"), false);
+    recordPick("ana", "nl", true);
+    assert.equal(takeUnsavedNotice("ana", "nl"), false);
+  });
+
+  test("fence: a pick belongs to the person who made it", () => {
+    // Wrong implementation killed: one pick for the whole tab. Ana's session expires, Bruno signs in
+    // in the same tab: his saved language must win, and no "couldn't be saved" note is his.
+    forgetPick();
+    recordPick("ana", "pt", false);
+    assert.equal(pickedHere("bruno"), null);
+    assert.equal(takeUnsavedNotice("bruno", "pt"), false);
+    assert.equal(resolveLocale({ ...base, own: "nl", url: "pt", picked: pickedHere("bruno") }), "nl");
+  });
+
+  test("fence: a failed save of the language already on screen is told at once, not on a later page", () => {
+    // Wrong implementation killed: the menu kept saying "Saved to your account" (nothing re-read the
+    // pick), and the note popped open later on an unrelated page.
+    forgetPick();
+    let told = 0;
+    const stop = subscribePick(() => (told += 1));
+    recordPick("ana", "pt", false, { onScreen: true });
+    assert.equal(told, 1); // the menu re-reads the pick now
+    assert.equal(pickedHere("ana"), "pt"); // its note: couldn't be saved
+    assert.equal(takeUnsavedNotice("ana", "pt"), false); // already on screen
+    forgetPick();
+    assert.equal(told, 2);
+    stop();
+    recordPick("ana", "nl", false);
+    assert.equal(told, 2);
+  });
+
+  test("guard: signing out forgets it", () => {
+    recordPick("ana", "pt", false);
+    forgetPick();
+    assert.equal(pickedHere("ana"), null);
+  });
+});
+
+
+describe("resolveLocale", () => {
+  test("fence: a signed-in viewer's saved language wins over the link on a public page", () => {
+    // Wrong implementation killed: URL first on public pages.
+    assert.equal(resolveLocale({ ...base, own: "nl", surface: "public", url: "pt", browser: ["pt-BR"] }), "nl");
+  });
+
+  test("fence: in the console, a saved language wins over the browser and the business", () => {
+    assert.equal(resolveLocale({ ...base, own: "pt", browser: ["nl-NL"], business: "nl", url: "en" }), "pt");
+  });
+
+  test("fence: in the console with no saved language, an unsupported browser gets the business's language", () => {
+    // Wrong implementation killed: the business before the browser, or the URL before the business.
+    assert.equal(resolveLocale({ ...base, browser: ["de-DE", "de"], business: "nl", url: "en" }), "nl");
+    assert.equal(resolveLocale({ ...base, browser: ["de-DE", "pt-BR"], business: "nl", url: "en" }), "pt");
+  });
+
+  test("fence: a guest gets the URL's language, never the business's", () => {
+    // The proxy already sent an unprefixed address from a German browser to English (ruling 5).
+    // Wrong implementation killed: the business language for guests.
+    assert.equal(resolveLocale({ ...base, signedIn: false, surface: "public", browser: ["de"], business: "nl", url: "en" }), "en");
+    assert.equal(resolveLocale({ ...base, signedIn: false, surface: "public", own: "nl", url: "pt" }), "pt");
+  });
+
+  test("fence: a signed-in viewer with no saved language keeps the URL's on a public page", () => {
+    // Wrong implementation killed: the console's browser rule applied to public pages.
+    assert.equal(resolveLocale({ ...base, surface: "public", browser: ["nl"], business: "nl", url: "pt" }), "pt");
+  });
+
+  test("fence: a language picked here that could not be saved keeps this page, for now", () => {
+    // Wrong implementation killed: sending the person straight back to the saved language they
+    // just moved away from, so the button seems to do nothing.
+    assert.equal(resolveLocale({ ...base, own: "nl", url: "pt", picked: "pt" }), "pt");
+  });
+
+  test("guard: with nothing to go on, the console keeps the URL's", () => {
+    assert.equal(resolveLocale({ ...base, browser: ["de"], business: null, url: "pt" }), "pt");
+  });
+
+  test("guard: a value outside the list is never an answer", () => {
+    assert.equal(resolveLocale({ ...base, own: "de", browser: ["fr"], business: "de", url: "nl" }), "nl");
+  });
+});
+
+describe("browserLocale", () => {
+  test("fence: the first of the browser's languages we speak, matched on its primary subtag", () => {
+    assert.equal(browserLocale(["de-AT", "pt-PT", "nl"]), "pt");
+    assert.equal(browserLocale(["NL-be"]), "nl");
+    assert.equal(browserLocale(["en-GB"]), "en");
+  });
+
+  test("guard: none of ours, none at all", () => {
+    assert.equal(browserLocale(["de", "fr-FR"]), null);
+    assert.equal(browserLocale([]), null);
+  });
+});
+
+describe("saving a public page's language pick (savePickedLanguage)", () => {
+  const ana = { user_id: "ana", tenant_id: "salon" };
+
+  test("fence: a session that changed to someone else in another tab is never written", async () => {
+    // Wrong implementation killed: the PUT sent straight away, which saves the pick to whoever's
+    // cookie the browser now holds (Bruno), while telling the clicker it was saved.
+    let put = 0;
+    const result = await savePickedLanguage(ana, async () => ({ status: 200, data: { user_id: "bruno", tenant_id: "salon" } }), async () => {
+      put += 1;
+      return { status: 200 };
+    });
+    assert.equal(result, "mismatch");
+    assert.equal(put, 0);
+  });
+
+  test("guard: the same person is saved; a signed-out session and a failed save are not", async () => {
+    const same = async () => ({ status: 200, data: ana });
+    assert.equal(await savePickedLanguage(ana, same, async () => ({ status: 200 })), "saved");
+    assert.equal(await savePickedLanguage(ana, same, async () => ({ status: 503 })), "failed");
+    assert.equal(await savePickedLanguage(ana, async () => ({ status: 401 }), async () => ({ status: 200 })), "signedOut");
+  });
+});
+
+describe("platform admin pages (isAdminPath)", () => {
+  test("fence: the admin pages are told apart, so they never read or write a business person's language", () => {
+    // Wrong implementation killed: the member session read on /admin, which moves the admin console
+    // to a business person's language and saves the admin's pick to that person.
+    assert.equal(isAdminPath("/admin"), true);
+    assert.equal(isAdminPath("/admin/sign-in"), true);
+    assert.equal(isAdminPath("/administrator-salon"), false); // a business's slug, not the admin
+    assert.equal(isAdminPath("/sign-in"), false);
+  });
+
+  test("guard: the public language hook skips its viewer logic there", () => {
+    const src = readFileSync(new URL("../app/[locale]/_ui/header.tsx", import.meta.url), "utf8");
+    assert.match(src, /const admin = isAdminPath\(pathname\);[\s\S]*if \(admin\) return;[\s\S]*if \(admin \|\| !viewer\) return undefined;/);
+  });
+});
+
+describe("who moves the page after a pick (movesOnPick)", () => {
+  test("fence: in the console a saved pick is moved by the shell alone, so the page moves once", () => {
+    // Wrong implementation killed: the button and the shell both navigating (two fetches, and the
+    // last one decides whether the query survives).
+    assert.equal(movesOnPick({ current: "en", picked: "nl", saved: true, shellMoves: true }), false);
+    assert.equal(movesOnPick({ current: "en", picked: "nl", saved: false, shellMoves: true }), true);
+  });
+
+  test("guard: a public page moves itself; the language on screen never moves", () => {
+    assert.equal(movesOnPick({ current: "en", picked: "nl", saved: true, shellMoves: false }), true);
+    assert.equal(movesOnPick({ current: "nl", picked: "nl", saved: false, shellMoves: false }), false);
+  });
+
+  test("fence: the button's move keeps the address's query, as the redirects do", () => {
+    // Wrong implementation killed: router.replace(pathname, ...), which drops ?service=... on the
+    // checkout or Stripe's ?stripe=... on Settings.
+    const src = readFileSync(new URL("../app/[locale]/_ui/header.tsx", import.meta.url), "utf8");
+    const pick = src.slice(src.indexOf("async function pick("), src.indexOf("return (", src.indexOf("async function pick(")));
+    assert.match(pick, /router\.replace\(`\$\{pathname\}\$\{window\.location\.search\}`, \{ locale: id \}\)/);
+  });
+});

@@ -10,6 +10,8 @@ import { describe, test } from "node:test";
 import {
   afterPickTaken,
   answerState,
+  bookingQuery,
+  repriced,
   bookingBody,
   cancellationState,
   checkoutUrl,
@@ -595,5 +597,44 @@ describe("Turnstile widget", () => {
     assert.notEqual(start, -1);
     const options = source.slice(start, source.indexOf("callback:", start));
     assert.match(options, /\baction: "booking",/);
+  });
+});
+
+// ZIF-102: the owner may change the currency until the first booking, so the price a client was
+// shown can change currency under the page.
+describe("F-currency the currency the page showed", () => {
+  test("fence: the booking carries the currency of the price the page showed, in the query", () => {
+    // Wrong implementation killed: sending the business's currency from anywhere but the price
+    // the button shows, or none at all (the API then cannot refuse the stale page).
+    assert.deepEqual(bookingQuery({ amount_minor: 3500, currency: "USD" }), { shown_currency: "USD" });
+  });
+
+  test("fence: a 409 currency_changed reloads the prices, never the generic failure", () => {
+    // Wrong implementation killed: falling through to "unknown" (the client is left with the old price).
+    assert.equal(answerState({ status: 409, code: "currency_changed" }).kind, "pricesChanged");
+    assert.equal(answerState({ status: 409, code: "something_else" }).kind, "unknown");
+  });
+
+  test("fence: a held service takes the reloaded price when its currency changed", () => {
+    // Wrong implementation killed: keeping the held price, so the button shows (and sends) the old
+    // currency again and every press is refused.
+    const held = { id: "s", price: { amount_minor: 3500, currency: "EUR" } };
+    const live = { id: "s", price: { amount_minor: 3500, currency: "USD" } };
+    assert.deepEqual(repriced(held, live), { id: "s", price: { amount_minor: 3500, currency: "USD" } });
+  });
+
+  test("guard: the held service is kept as it is otherwise", () => {
+    const held = { id: "s", price: { amount_minor: 3500, currency: "EUR" } };
+    assert.equal(repriced(held, { id: "s", price: { amount_minor: 4000, currency: "EUR" } }), held);
+    assert.equal(repriced(held, undefined), held);
+  });
+});
+
+describe("F-currency wiring", () => {
+  test("fence: the booking POST carries the currency of the held service's price", () => {
+    // Wrong implementation killed: the query left out of the call, which the API reads as a page from
+    // the previous release and books (the race reopens with every unit fence still green).
+    const src = readFileSync(new URL("../app/[locale]/[slug]/booking-page.tsx", import.meta.url), "utf8");
+    assert.match(src, /bookingsCreate\(\{ path: \{ tenant_id: page\.id, service_id: f\.service\.id \}, query: bookingQuery\(f\.service\.price\), body:/);
   });
 });

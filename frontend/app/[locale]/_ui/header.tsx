@@ -1,11 +1,14 @@
 "use client";
 
 import { useLocale, useTranslations } from "next-intl";
-import { useId } from "react";
+import { type MouseEvent, useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 
-import { Link, usePathname } from "@/i18n/navigation";
+import { accountSetLocale, sessionRead } from "@/api-client";
+import { Link, usePathname, useRouter } from "@/i18n/navigation";
 import { routing } from "@/i18n/routing";
+import { isAdminPath, movesOnPick, pickedHere, recordPick, resolveLocale, savePickedLanguage, subscribePick, takeUnsavedNotice } from "@/lib/locale";
 
+import { send } from "./parts";
 import styles from "./ui.module.css";
 
 type Locale = (typeof routing.locales)[number];
@@ -55,16 +58,50 @@ function Flag({ locale }: { locale: Locale }) {
   );
 }
 
-/** The language list, shared by the signed-out header's popover and the console's account popover. */
-export function LanguageLinks() {
+/** ZIF-102: the signed-in person the language button is for, and how to save a pick to their
+ * account (true once it holds it). */
+export type OwnLanguage = {
+  user: string;
+  save(locale: Locale): Promise<boolean>;
+  /** The console: its shell moves the page once the saved language changes (movesOnPick). */
+  shellMoves?: boolean;
+};
+
+/** The language list, shared by the signed-out header's popover and the console's. With `own`
+ * (a signed-in person), a pick is saved to their account before the page changes language. */
+export function LanguageLinks({ own }: { own?: OwnLanguage }) {
   const locale = useLocale();
   const pathname = usePathname();
+  const router = useRouter();
+  const [busy, setBusy] = useState(false);
+
+  async function pick(event: MouseEvent, id: Locale) {
+    if (!own) return; // signed out: the link only changes this view, as before
+    event.preventDefault();
+    if (busy) return;
+    setBusy(true);
+    const saved = await own.save(id);
+    setBusy(false);
+    // Not saved: it still applies here, for now (resolveLocale's `picked`), and the menu says so.
+    recordPick(own.user, id, saved, { onScreen: id === locale });
+    if (movesOnPick({ current: locale, picked: id, saved, shellMoves: own.shellMoves ?? false })) {
+      router.replace(`${pathname}${window.location.search}`, { locale: id });
+    }
+  }
+
   return (
-    <ul>
+    <ul aria-busy={busy || undefined}>
       {routing.locales.map((id) => (
         <li key={id}>
           {/* The fragment of an emailed link was already taken out of the address bar. */}
-          <Link href={pathname} locale={id} hrefLang={id} lang={id} aria-current={id === locale ? "page" : undefined}>
+          <Link
+            href={pathname}
+            locale={id}
+            hrefLang={id}
+            lang={id}
+            aria-current={id === locale ? "page" : undefined}
+            onClick={own ? (event) => void pick(event, id) : undefined}
+          >
             <span className={styles.languageRow}>
               <Flag locale={id} />
               {NAMES[id]}
@@ -80,23 +117,100 @@ export function LanguageLinks() {
  * The language button and its popover: one component for the signed-out header and the console
  * top bar, so there is only ever one switcher to keep in sync. Closed, it shows only the current
  * language's flag; its accessible name (e.g. "Language: English") still names the language, for
- * anyone not reading the flag.
+ * anyone not reading the flag. With `own` (ZIF-102), the menu is the person's own language: a
+ * pick is saved to their account, and the menu says so.
  */
-export function LanguageSwitcher() {
+export function LanguageSwitcher({ own }: { own?: OwnLanguage }) {
   const t = useTranslations("Header");
   const locale = useLocale() as Locale;
   const id = useId();
+  const menu = useRef<HTMLElement>(null);
+  const user = own?.user;
+  // Re-read on every pick, so a failed save of the language on screen says so at once.
+  const picked = useSyncExternalStore(subscribePick, () => (user === undefined ? null : pickedHere(user)), () => null);
+  const unsaved = picked !== null && picked === locale;
+
+  // The page a pick that could not be saved led to: open the menu once, where its note says so.
+  useEffect(() => {
+    if (user !== undefined && takeUnsavedNotice(user, locale)) menu.current?.showPopover?.();
+  }, [user, locale]);
 
   return (
     <>
       <button className={styles.languageButton} type="button" popoverTarget={id} aria-label={`${t("language")}: ${t("languageName")}`}>
         <Flag locale={locale} />
       </button>
-      <nav id={id} className={styles.languageMenu} popover="auto" aria-label={t("language")}>
-        <LanguageLinks />
+      <nav ref={menu} id={id} className={styles.languageMenu} popover="auto" aria-label={own ? t("yourLanguage") : t("language")}>
+        {own && <p className={styles.languageHead}>{t("yourLanguage")}</p>}
+        <LanguageLinks own={own} />
+        {own && (
+          <p className={styles.languageFoot} role="status">
+            {unsaved ? t("languageNotSaved") : t("languageSaved")}
+          </p>
+        )}
       </nav>
     </>
   );
+}
+
+/**
+ * ZIF-102, ruling 4: on a public page, the booking page included, a signed-in viewer's own language
+ * wins over the link (CONTRIBUTING.md, "Which language a person sees"); a guest keeps the page's.
+ * Reads GET /api/session once per page, moves the page when needed, and answers the save for the
+ * language button (undefined for a guest). `hold`: the page must not move now (the checkout
+ * resuming a booking from its address, where a move would remount it mid-check). Never on the
+ * platform admin's pages (isAdminPath).
+ */
+export function useOwnLanguage({ hold = false }: { hold?: boolean } = {}): OwnLanguage | undefined {
+  const locale = useLocale();
+  const pathname = usePathname();
+  const router = useRouter();
+  const admin = isAdminPath(pathname);
+  // The person the page was read for: a pick saves to them only (savePickedLanguage).
+  const [viewer, setViewer] = useState<{ user_id: string; tenant_id: string } | null>(null);
+
+  useEffect(() => {
+    if (admin) return;
+    let cancelled = false;
+    void send(sessionRead()).then((outcome) => {
+      if (cancelled || outcome.status !== 200 || !outcome.data) return;
+      setViewer({ user_id: outcome.data.user_id, tenant_id: outcome.data.tenant_id });
+      if (hold) return;
+      const own = resolveLocale({
+        own: outcome.data.locale,
+        signedIn: true,
+        surface: "public",
+        browser: [],
+        business: null,
+        url: locale as Locale,
+        picked: pickedHere(outcome.data.user_id),
+      });
+      if (own !== locale) router.replace(`${pathname}${window.location.search}`, { locale: own });
+    });
+    return () => {
+      cancelled = true;
+    };
+    // Once per page: a pick made here afterwards is the person's (and saved, or `picked`).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  if (admin || !viewer) return undefined;
+  return {
+    user: viewer.user_id,
+    async save(picked) {
+      const result = await savePickedLanguage(viewer, () => send(sessionRead()), () => send(accountSetLocale({ body: { locale: picked } })));
+      // Someone else signed in in another tab: start over as them, as the console does.
+      if (result === "mismatch") window.location.reload();
+      // Signed out meanwhile: the button changes only this view again.
+      if (result === "signedOut") setViewer(null);
+      return result === "saved";
+    },
+  };
+}
+
+/** The language button of a public page, for a signed-in viewer their own language (useOwnLanguage). */
+export function OwnLanguageSwitcher({ hold = false }: { hold?: boolean }) {
+  return <LanguageSwitcher own={useOwnLanguage({ hold })} />;
 }
 
 export function Header() {
@@ -105,7 +219,7 @@ export function Header() {
       <Link className={styles.wordmark} href="/">
         ziftbook
       </Link>
-      <LanguageSwitcher />
+      <OwnLanguageSwitcher />
     </header>
   );
 }

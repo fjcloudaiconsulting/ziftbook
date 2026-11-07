@@ -1650,6 +1650,16 @@
               }
             }
           },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "413": {
             "description": "Content Too Large",
             "content": {
@@ -4552,6 +4562,28 @@
               "type": "string",
               "format": "uuid",
               "title": "Service Id"
+            }
+          },
+          {
+            "name": "shown_currency",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "BRL",
+                    "EUR",
+                    "GBP",
+                    "USD"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Shown Currency"
             }
           }
         ],
@@ -8950,12 +8982,17 @@
           "minor_units": {
             "type": "integer",
             "title": "Minor Units"
+          },
+          "stripe_settles": {
+            "type": "boolean",
+            "title": "Stripe Settles"
           }
         },
         "type": "object",
         "required": [
           "code",
-          "minor_units"
+          "minor_units",
+          "stripe_settles"
         ],
         "title": "CurrencyOption"
       },
