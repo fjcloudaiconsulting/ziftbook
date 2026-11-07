@@ -1,10 +1,13 @@
 import logging
 import os
+import re
 import time
 
 from alembic import context
 from opentelemetry.trace import SpanKind
+from psycopg.errors import DeadlockDetected
 from sqlalchemy import create_engine, text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.pool import NullPool
 
 from app import logs, tracing
@@ -72,4 +75,24 @@ with engine.connect() as connection:
         transaction_per_migration=True,
     )
     with tracing.span("migrations upgrade", SpanKind.INTERNAL, {}):
-        context.run_migrations()
+        try:
+            context.run_migrations()
+        except DBAPIError as error:
+            # ZIF-287: an autovacuum that starts between a migration's GRANT on a table and its
+            # ALTER of it waits for this transaction while the ALTER waits for the vacuum, and
+            # Postgres fails the migration. Its transaction rolled back and the ones before it
+            # committed, so run_migrations resumes from alembic_version: once, and only towards an
+            # absolute target ("-2" would count from where the first try stopped). The DETAIL a
+            # client gets holds pids, lock modes and OIDs, never query text or row values.
+            target = context.get_context().opts.get("destination_rev")
+            absolute = isinstance(target, str) and re.fullmatch(r"\w+", target)
+            if not isinstance(error.orig, DeadlockDetected) or not absolute:
+                raise
+            logging.getLogger("app.migrations").warning(
+                "migration retried after a deadlock",
+                extra={"detail": error.orig.diag.message_detail},
+            )
+            # A failed 0072-style autocommit_block can leave its session-level lock_timeout 0.
+            connection.execute(text("SET lock_timeout = '5s'"))
+            connection.commit()
+            context.run_migrations()

@@ -76,6 +76,15 @@ Specifics:
   `CREATE INDEX CONCURRENTLY` in the run holding the lock would deadlock with it. A waiting run therefore shows as idle
   (last query `COMMIT`), not as a lock waiter: it logs `migration lock held by another run` (WARNING,
   `holder_pid`, `waited_seconds`) after 30 seconds and every 5 minutes after, so a stuck holder can be found.
+- A migration that changes a table's grants (a table-level `GRANT` or `REVOKE`) and also alters that table (`ALTER
+  TABLE`, a trigger, a policy, an index) first runs `LOCK TABLE <table> IN ACCESS EXCLUSIVE MODE` (ZIF-287). The grant
+  rewrites the table's `pg_class` row under no lock a vacuum respects; an autovacuum that starts before the alter
+  then waits for the migration's transaction while the alter waits for the vacuum, and Postgres fails the migration
+  as a deadlock. Column-level grants do not touch that row, and an alter before the grants already holds the lock.
+  `tests/test_migration_deadlock.py` checks every migration after 0094. A deploy that still hits such a deadlock
+  runs once more from the migration that failed (`migrations/env.py`), logging `migration retried after a deadlock`
+  (WARNING, `detail`: Postgres's DETAIL, which names pids, lock modes and OIDs only); a second deadlock, or a
+  relative target such as `-2`, fails the run as before.
 - Validating a constraint on a table with FORCE row-level security (a `VALIDATE CONSTRAINT`, or an `ADD CONSTRAINT`
   that checks existing rows) scans as the owner under the tenant policy: with no `app.tenant_id` it fails (42704),
   and with one it checks that business's rows only and still marks the constraint valid. Use `app.db.lift_force`
