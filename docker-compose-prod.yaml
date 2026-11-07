@@ -6,7 +6,7 @@
 # CONTRIBUTING.md.
 # ZIF_CLIENT_IP_HEADER is not passed through here on purpose. Port 3000 is published directly (on 127.0.0.1 only), so any
 # header can be forged, and every visitor shares the web app's address and its per-IP rate limits. Fine
-# for trying a release; production runs on k3s behind Cloudflare (CONTRIBUTING.md, "Client IP").
+# for trying a release; production runs in the cluster behind the edge (CONTRIBUTING.md, "Client IP").
 name: ziftbook
 
 # Fixed addresses, so the backend can trust exactly the frontend (ZIF_TRUSTED_PROXIES). If this
