@@ -636,7 +636,8 @@
       }
     },
     "clients": {
-      "comingSoon": "Os seus clientes chegam em breve."
+      "comingSoon": "Os seus clientes chegam em breve.",
+      "erased": "Cliente apagado"
     },
     "settings": {
       "contactEmailLabel": "E-mail de contato para clientes",

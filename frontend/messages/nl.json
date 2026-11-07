@@ -636,7 +636,8 @@
       }
     },
     "clients": {
-      "comingSoon": "Je klanten komen binnenkort."
+      "comingSoon": "Je klanten komen binnenkort.",
+      "erased": "Gewiste klant"
     },
     "settings": {
       "contactEmailLabel": "Contactadres voor klanten",

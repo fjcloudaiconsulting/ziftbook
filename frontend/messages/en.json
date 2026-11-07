@@ -636,7 +636,8 @@
       }
     },
     "clients": {
-      "comingSoon": "Your clients are coming soon."
+      "comingSoon": "Your clients are coming soon.",
+      "erased": "Erased client"
     },
     "settings": {
       "contactEmailLabel": "Contact email for clients",

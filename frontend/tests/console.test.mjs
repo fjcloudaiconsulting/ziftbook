@@ -3,7 +3,7 @@
 process.env.TZ = "America/Sao_Paulo";
 
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { describe, test } from "node:test";
 
 import {
@@ -12,6 +12,7 @@ import {
   bookingPageAddress,
   canAnswerRequests,
   canEditHours,
+  clientLabel,
   dateLocale,
   guardedWrite,
   navFor,
@@ -357,5 +358,41 @@ describe("stickyHeight (ZIF-144)", () => {
     assert.match(top, /var\(--topbar-height\b/);
     assert.match(bottom, /var\(--bottombar-height\b/);
     assert.match(bottom, /var\(--savebar-height\b/);
+  });
+});
+
+describe("clientLabel (ZIF-58)", () => {
+  // An erased client's booking keeps client_name "" (the API pins the pair): the console must
+  // never print that blank, and every client name it shows goes through this one rule.
+  test("an erased client reads as the erased label, not as a blank name", () => {
+    assert.equal(clientLabel({ client_name: "", client_erased: true }, "Erased client"), "Erased client");
+  });
+
+  test("any other client keeps its name", () => {
+    assert.equal(clientLabel({ client_name: "Ana Souza", client_erased: false }, "Erased client"), "Ana Souza");
+  });
+
+  test("the flag decides, not the blank: a name is never swapped while client_erased is false", () => {
+    // Wrong implementation killed: `client_name || label`, which would also hide a real name the
+    // API returns blank by mistake instead of letting the contract test catch it.
+    assert.equal(clientLabel({ client_name: "", client_erased: false }, "Erased client"), "");
+  });
+
+  test("every language has the label, in sentence case and without an em dash", () => {
+    const labels = Object.fromEntries(
+      ["en", "nl", "pt"].map((l) => [l, JSON.parse(readFileSync(new URL(`../messages/${l}.json`, import.meta.url), "utf8")).Console.clients.erased]),
+    );
+    assert.deepEqual(labels, { en: "Erased client", nl: "Gewiste klant", pt: "Cliente apagado" });
+    for (const label of Object.values(labels)) assert.ok(!label.includes("\u2014"));
+  });
+
+  test("fence: no console screen prints client_name itself", () => {
+    // Wrong implementation killed: a screen (calendar, detail, queue, agenda, the time-off
+    // in-the-way list) that renders `booking.client_name` and so shows an erased client as a blank.
+    const root = new URL("../app/", import.meta.url);
+    const offenders = readdirSync(root, { recursive: true })
+      .filter((f) => /\.tsx?$/.test(f))
+      .filter((f) => /\.client_name\b/.test(readFileSync(new URL(f, root), "utf8")));
+    assert.deepEqual(offenders, []);
   });
 });
