@@ -574,8 +574,8 @@ describe("bookingHref (ZIF-130)", () => {
 
 // ZIF-174 fence. Kills: the interval drawn from the padded end (a short booking's tail too long), an
 // interval spilling past the day's end, an interval left out of packing (a booking placed inside it drawn
-// over its tail) or out of the hour range (clipped at closing), and a status tone that falls back to grey or
-// to the waiting look for a confirmed booking.
+// over its tail) or out of the hour range (clipped at closing), the padded end widening the hours, a missing
+// field drawing NaN, and a status tone that greys or yellows a confirmed booking or greens an unknown one.
 describe("the interval after a booking, and its status tone (ZIF-174)", () => {
   const sliceOf = (startISO, minutes) => daySlices({ start: at(startISO), end: at(startISO) + minutes * 60_000 }, ["2026-09-30"], AMS)[0];
 
@@ -612,10 +612,20 @@ describe("the interval after a booking, and its status tone (ZIF-174)", () => {
     const slice = sliceOf("2026-09-30T15:00:00Z", 60); // 17:00-18:00
     assert.equal(hourRange(open, [3], [{ start: slice.start, end: intervalEnd(slice, 15) }]).to, 19);
   });
-  test("confirmed is its own tone, pending waits, completed and no-show are done", () => {
+  test("a short booking at closing adds no hour for its padding, only for a real gap", () => {
+    const open = [{ weekday: 3, starts_at: "09:00", ends_at: "18:00" }];
+    const slice = sliceOf("2026-09-30T15:45:00Z", 15); // 17:45-18:00, drawn to 18:08
+    assert.equal(hourRange(open, [3], [{ start: slice.start, end: intervalEnd(slice, 0) }]).to, 18);
+    assert.equal(hourRange(open, [3], [{ start: slice.start, end: intervalEnd(slice, 15) }]).to, 19);
+  });
+  test("no gap, or an answer without the field, draws no tail and never NaN", () => {
+    const slice = sliceOf("2026-09-30T08:00:00Z", 60);
+    for (const minutes of [0, null, undefined]) assert.equal(intervalEnd(slice, minutes), slice.realEnd, String(minutes));
+  });
+  test("confirmed is its own tone, pending waits, completed and no-show are done, anything else is neutral", () => {
     assert.deepEqual(
-      ["confirmed", "pending", "completed", "no_show"].map(toneOf),
-      ["confirmed", "waiting", "done", "done"],
+      ["confirmed", "pending", "completed", "no_show", "awaiting_payment", "something_new"].map(toneOf),
+      ["confirmed", "waiting", "done", "done", "neutral", "neutral"],
     );
   });
 });

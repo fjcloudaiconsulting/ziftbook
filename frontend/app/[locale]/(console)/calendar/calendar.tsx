@@ -34,8 +34,9 @@ import css from "./calendar.module.css";
 
 type Loaded = { key: string; bookings: AgendaOut[]; blocks: TimeOffRangeOut[]; opening: Shift[] };
 type Item = ReturnType<typeof mergeAgenda<AgendaOut, TimeOffRangeOut>>[number];
-/** `until`: where the cell's drawing ends, a booking's interval included (ZIF-174). */
-type Cell = { item: Item; slice: Slice; until: number; lane: number; of: number };
+/** `free`: the real end, a booking's interval included (ZIF-174); `until`: where the drawing ends (`free` or the
+ * padded end, whichever is later). */
+type Cell = { item: Item; slice: Slice; free: number; until: number; lane: number; of: number };
 type Column = { key: string; day: string; label: string; ariaLabel: string; small?: string; cells: Cell[] };
 /** The empty-spot popover: where it sits on screen, and the start and person the click meant. */
 type Popover = { at: string; time: string; member: string; name: string; column: string; left: number; top: number };
@@ -260,7 +261,10 @@ export function Calendar() {
   const selfMember = view.member === "all" ? session.member_id : view.member;
   function cellsFor(list: Item[], day: string): Cell[] {
     const pairs = list.flatMap((item) =>
-      daySlices(item, [day], tz).map((slice) => ({ item, slice, until: item.kind === "booking" ? Math.max(slice.end, intervalEnd(slice, item.booking.buffer_minutes)) : slice.end })),
+      daySlices(item, [day], tz).map((slice) => {
+        const free = item.kind === "booking" ? intervalEnd(slice, item.booking.buffer_minutes) : slice.realEnd;
+        return { item, slice, free, until: Math.max(slice.end, free) };
+      }),
     );
     const bookings = pairs.filter((pair) => pair.item.kind === "booking");
     const packed = lanes(bookings.map((pair) => ({ start: pair.slice.start, end: pair.until })));
@@ -288,11 +292,8 @@ export function Calendar() {
   const hours = hourRange(
     data?.opening ?? [],
     days.map(weekdayOf),
-    everyCell.map((cell) => ({
-      start: cell.slice.start,
-      end: cell.item.kind === "booking" ? intervalEnd(cell.slice, cell.item.booking.buffer_minutes) : cell.slice.realEnd,
-      allDay: cell.item.kind === "block" && cell.item.allDay,
-    })),
+    // Real ends, gap included, never the padded one: 8 padded minutes add no empty hour (ZIF-57).
+    everyCell.map((cell) => ({ start: cell.slice.start, end: cell.free, allDay: cell.item.kind === "block" && cell.item.allDay })),
   );
   const closedToday = !weekView && closedDay(data?.opening ?? [], weekdayOf(view.date));
 

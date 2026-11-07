@@ -339,8 +339,8 @@ class BookingFacts(BookingRow):
 class AgendaOut(BookingFacts):
     # ZIF-174: the gap the service keeps after this booking, as availability computes it today (the
     # service's own buffer, else the business's percentage of the booking's length), so the
-    # calendar draws it as part of the booking, not as free time. Not snapshotted: a buffer is a
-    # scheduling rule, not evidence.
+    # calendar draws it as part of the booking, not as free time. 0 for a booking availability does
+    # not count (a no-show). Not snapshotted: a buffer is a scheduling rule, not evidence.
     buffer_minutes: int
 
 
@@ -1532,16 +1532,20 @@ def agenda(
             "me": current.user_id,
         },
     ).all()
-    pct = business_settings.read(current.db).buffer_pct
     response.headers["Cache-Control"] = "no-store"
+    if not rows:
+        return []
+    pct = business_settings.read(current.db).buffer_pct
     return [
         AgendaOut.model_validate(
             {
                 **row._mapping,
-                # The length availability.member_slots uses for an existing booking: its own.
-                "buffer_minutes": availability.buffer_for(
-                    (row.ends_at - row.starts_at) // timedelta(minutes=1), row.service_buffer, pct
-                ),
+                # Only a booking availability counts keeps a gap: a no-show frees its time.
+                "buffer_minutes": availability.booking_buffer(
+                    row.starts_at, row.ends_at, row.service_buffer, pct
+                )
+                if row.status in availability.OCCUPYING
+                else 0,
             }
         )
         for row in rows

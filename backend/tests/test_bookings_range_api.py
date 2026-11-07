@@ -16,6 +16,7 @@ from sqlalchemy import event as sa_event
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 
+from app import availability
 from app.db import SessionLocal, tenant_context
 from app.main import create_app
 from tests.conftest import (
@@ -527,8 +528,20 @@ def test_the_agenda_carries_each_bookings_interval(
         )
     )
 
+    no_show = put(people, shop, "owner", hour(14), hour(15), status="no_show")
+
     response = range_(owner)
 
     assert response.status_code == 200, response.text
-    assert {row["id"]: row["buffer_minutes"] for row in response.json()} == {by_pct: 30, by_own: 15}
+    got = {row["id"]: row["buffer_minutes"] for row in response.json()}
+    assert got == {by_pct: 30, by_own: 15, no_show: 0}  # availability frees a no-show's time
     assert "buffer_minutes" not in owner.get(f"/api/bookings/{by_own}").json()
+
+
+# ZIF-174 fence. Kills: the shared helper (the calendar's gap and availability's blocked tail)
+# rounding the percentage down, or a service's own buffer of 0 falling back to the percentage.
+def test_an_existing_bookings_buffer_rounds_up_and_honours_the_service() -> None:
+    start = DAY
+    assert availability.booking_buffer(start, start + timedelta(minutes=45), None, 10) == 5
+    assert availability.booking_buffer(start, start + timedelta(minutes=45), 0, 10) == 0
+    assert availability.booking_buffer(start, start + timedelta(minutes=45), 20, 10) == 20

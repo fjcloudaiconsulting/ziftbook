@@ -142,17 +142,20 @@ export function lanes(slices: { start: number; end: number }[]): { lane: number;
  * free time, and a booking placed inside it sits beside it. shortcut: an interval past midnight stops at
  * the day's end (the next day's agenda has no booking that ended the day before); draw the rest when an
  * owner asks. */
-export function intervalEnd(slice: Slice, minutes: number): number {
-  return Math.min(1440, slice.realEnd + minutes);
+export function intervalEnd(slice: Slice, minutes: number | null | undefined): number {
+  // `?? 0`: an answer without the field (an older API mid-deploy) draws no gap rather than NaN.
+  return Math.min(1440, slice.realEnd + (minutes ?? 0));
 }
 
-export type Tone = "confirmed" | "waiting" | "done";
+export type Tone = "confirmed" | "waiting" | "done" | "neutral";
 
 /** ZIF-174: a booking's colour on the calendar. Never the only signal: waiting is also dashed with ◷, done
- * carries ✓ or ✕, and every item's accessible name ends with its status. */
+ * carries ✓ or ✕, and every item's accessible name ends with its status. A status this build does not know
+ * is neutral, never green: the legend says green is confirmed. */
 export function toneOf(status: string): Tone {
+  if (status === "confirmed") return "confirmed";
   if (status === "pending") return "waiting";
-  return status === "completed" || status === "no_show" ? "done" : "confirmed";
+  return status === "completed" || status === "no_show" ? "done" : "neutral";
 }
 
 const toMinutes = (hhmm: string) => {
