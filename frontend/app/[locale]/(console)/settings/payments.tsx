@@ -41,7 +41,7 @@ export function Payments({ disabled, switchRow }: { disabled: boolean; switchRow
       if (cancelled) return;
       if (outcome.status === 200 && outcome.data) {
         setAccount(outcome.data);
-        if (back === "refresh" && owner && paymentsAction(outcome.data.state, outcome.data.country_supported, outcome.data.currency_supported) === "continue") void go("connect");
+        if (back === "refresh" && owner && paymentsAction(outcome.data.state, outcome.data.country_supported, outcome.data.currency_supported) === "continue") void go();
       } else setFailed(true);
     })();
     return () => {
@@ -58,7 +58,7 @@ export function Payments({ disabled, switchRow }: { disabled: boolean; switchRow
     else if (result === "failed") setFailed(true);
   }
 
-  async function go(kind: "connect") {
+  async function go() {
     if (busyRef.current) return;
     busyRef.current = true;
     setBusy(true);
@@ -106,7 +106,7 @@ export function Payments({ disabled, switchRow }: { disabled: boolean; switchRow
       {signedOut && <SignedOutBanner />}
       {body && <p className={styles.body}>{body}</p>}
       {(action === "connect" || action === "continue") && (
-        <button className={`${uiStyles.button} ${uiStyles.primary}`} type="button" aria-disabled={busy || undefined} onClick={() => go("connect")}>
+        <button className={`${uiStyles.button} ${uiStyles.primary}`} type="button" aria-disabled={busy || undefined} onClick={() => go()}>
           {busy && <span className={uiStyles.spinner} aria-hidden="true" />}
           {t(action === "connect" ? "paymentsConnect" : "paymentsContinue")}
         </button>

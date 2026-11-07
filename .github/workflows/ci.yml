@@ -205,10 +205,14 @@ jobs:
         run: pnpm lint
       - name: Type-check frontend
         run: pnpm typecheck
+      # ZIF-153: a warning fails the build and the tests. Next marks its warnings with "⚠", Node its
+      # own with "(node:<pid>)"; the step prints the lines it found. bash here runs with pipefail.
       - name: Build frontend
-        run: pnpm build
+        shell: bash
+        run: pnpm build 2>&1 | tee "$RUNNER_TEMP/build.log" && ! grep -E '⚠|^\(node:[0-9]+\) ' "$RUNNER_TEMP/build.log"
       - name: Run frontend tests
-        run: pnpm test
+        shell: bash
+        run: pnpm test 2>&1 | tee "$RUNNER_TEMP/test.log" && ! grep -E '⚠|^\(node:[0-9]+\) ' "$RUNNER_TEMP/test.log"
 
   landing:
     name: Landing Tests

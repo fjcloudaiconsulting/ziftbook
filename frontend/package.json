@@ -1,12 +1,13 @@
 {
   "name": "ziftbook-web",
   "private": true,
+  "type": "module",
   "scripts": {
     "generate": "openapi-ts -s",
     "dev": "openapi-ts -s && next dev",
     "build": "openapi-ts -s && next build",
     "start": "next start",
-    "lint": "eslint",
+    "lint": "eslint --max-warnings 0",
     "typecheck": "openapi-ts -s && next typegen && tsc --noEmit",
     "test": "node --test \"tests/*.test.mjs\""
   },
