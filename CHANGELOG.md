@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.33.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.32.0...v0.33.0) (2026-11-07)
+
+
+### Features
+
+* **backend:** a booking made while signed in links the client record and records who placed it (ZIF-146) ([#356](https://github.com/fjcloudaiconsulting/ziftbook/issues/356)) ([ec5a306](https://github.com/fjcloudaiconsulting/ziftbook/commit/ec5a3061531c3a0642242ba8568ec47007a7a854))
+* **backend:** a person sets their own language (ZIF-102) ([#350](https://github.com/fjcloudaiconsulting/ziftbook/issues/350)) ([1478268](https://github.com/fjcloudaiconsulting/ziftbook/commit/14782684ef8187894d7f5962b04ed959344d92e3))
+* **backend:** a person signs in to their ziftbook account, with or without a business (ZIF-146) ([#355](https://github.com/fjcloudaiconsulting/ziftbook/issues/355)) ([8cf7c2c](https://github.com/fjcloudaiconsulting/ziftbook/commit/8cf7c2c5a8003ecf18e3382fb295081e951a4f1d))
+* **backend:** a signed-in person sees every booking their account placed (ZIF-146) ([#357](https://github.com/fjcloudaiconsulting/ziftbook/issues/357)) ([1dfb85d](https://github.com/fjcloudaiconsulting/ziftbook/commit/1dfb85d69848ce52db28f1d5a55493cf7feb0f7b))
+* **backend:** an erased client still hears about cancellations and refunds (ZIF-58) ([#384](https://github.com/fjcloudaiconsulting/ziftbook/issues/384)) ([db6df3b](https://github.com/fjcloudaiconsulting/ziftbook/commit/db6df3b8e30af7f48a8417e88e08cd4c99ffbaba))
+* **backend:** email prices use the currency's minor units and plain symbol (ZIF-102) ([#352](https://github.com/fjcloudaiconsulting/ziftbook/issues/352)) ([f7034c0](https://github.com/fjcloudaiconsulting/ziftbook/commit/f7034c0a700ad6ebbe2f4e5715439518db544e1c))
+* **backend:** erasures are recorded outside the database, and a restore re-applies them (ZIF-58) ([#388](https://github.com/fjcloudaiconsulting/ziftbook/issues/388)) ([b1f4458](https://github.com/fjcloudaiconsulting/ziftbook/commit/b1f445820fa8c16b1c3aae5fab800ecd2da82605))
+* **backend:** the console handles an erased client (ZIF-58) ([#371](https://github.com/fjcloudaiconsulting/ziftbook/issues/371)) ([57b7963](https://github.com/fjcloudaiconsulting/ziftbook/commit/57b796378f8dcc857b5e7513a8e040090655d873))
+* **backend:** the owner changes the business's currency until its first booking (ZIF-102) ([#354](https://github.com/fjcloudaiconsulting/ziftbook/issues/354)) ([5eff0ee](https://github.com/fjcloudaiconsulting/ziftbook/commit/5eff0eeb15d877706890c2885f6048badfeef528))
+* **backend:** the worker can send account sign-up links (ZIF-146) ([#358](https://github.com/fjcloudaiconsulting/ziftbook/issues/358)) ([490b198](https://github.com/fjcloudaiconsulting/ziftbook/commit/490b198323bd5814d49e1f6cf9e2ae5153c6695a))
+* **db:** an erased client is a final tombstone (ZIF-58) ([#370](https://github.com/fjcloudaiconsulting/ziftbook/issues/370)) ([420f2f6](https://github.com/fjcloudaiconsulting/ziftbook/commit/420f2f6dce8ea6af96f2426a29e7e51d98163417))
+* **db:** the erase core blanks a client of this business only (ZIF-58) ([#372](https://github.com/fjcloudaiconsulting/ziftbook/issues/372)) ([214b31d](https://github.com/fjcloudaiconsulting/ziftbook/commit/214b31d8046c19581cf1124f57a5d29ec3feb851))
+* the worker mails and the API confirms a contact email link (ZIF-232) ([#391](https://github.com/fjcloudaiconsulting/ziftbook/issues/391)) ([29f8092](https://github.com/fjcloudaiconsulting/ziftbook/commit/29f809234f3b9ec8f6d208e99b80a56cecc0bb35))
+* **web:** a page confirms a contact email from its link (ZIF-232) ([#392](https://github.com/fjcloudaiconsulting/ziftbook/issues/392)) ([2af9aa7](https://github.com/fjcloudaiconsulting/ziftbook/commit/2af9aa7b6d4c42d1d8cf7487ccea446512f94fa7))
+* **web:** prices use the currency's minor units and plain symbol (ZIF-102) ([#353](https://github.com/fjcloudaiconsulting/ziftbook/issues/353)) ([8682daf](https://github.com/fjcloudaiconsulting/ziftbook/commit/8682daf5f4fd51cf05c7537a75bdbbe3dda92c9e))
+
+
+### Bug Fixes
+
+* a contact email is used only once its inbox confirmed it (ZIF-232) ([#389](https://github.com/fjcloudaiconsulting/ziftbook/issues/389)) ([ebd6ce4](https://github.com/fjcloudaiconsulting/ziftbook/commit/ebd6ce4305e2dea5d2b1f23d4d16b9cda03f3545))
+* **backend:** an invite is written in the invitee's own language when they have one (ZIF-102) ([#351](https://github.com/fjcloudaiconsulting/ziftbook/issues/351)) ([45884cb](https://github.com/fjcloudaiconsulting/ziftbook/commit/45884cbd7e7574439999bf75b84288662c32bf7f))
+* **backend:** bound concurrent limiter calls per address (ZIF-264) ([#381](https://github.com/fjcloudaiconsulting/ziftbook/issues/381)) ([c235175](https://github.com/fjcloudaiconsulting/ziftbook/commit/c2351755758c018832d67452e7f40a79b5617858))
+* contact emails saved before confirmation existed wait for it (ZIF-232) ([#390](https://github.com/fjcloudaiconsulting/ziftbook/issues/390)) ([c09177e](https://github.com/fjcloudaiconsulting/ziftbook/commit/c09177eb7a9a84ceacacb6914544776703c37c41))
+* **db:** admin second-factor failures leak over time instead of resetting on a pass (ZIF-234) ([#366](https://github.com/fjcloudaiconsulting/ziftbook/issues/366)) ([b2df12c](https://github.com/fjcloudaiconsulting/ziftbook/commit/b2df12cad5316067efcb73afcc440d9f47a9630b))
+* **db:** an admin's TOTP attempt counts in its own transaction before its code is checked (ZIF-261) ([#385](https://github.com/fjcloudaiconsulting/ziftbook/issues/385)) ([db1418e](https://github.com/fjcloudaiconsulting/ziftbook/commit/db1418e43fbddf3e5a5459d0a8df3f17ca7af766))
+* **db:** beginning an admin's TOTP enrolment again keeps its wrong-code count (ZIF-262) ([#386](https://github.com/fjcloudaiconsulting/ziftbook/issues/386)) ([878c651](https://github.com/fjcloudaiconsulting/ziftbook/commit/878c651b1e15d9b824199c294aa6e2fdb3519a33))
+
 ## [0.32.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.31.1...v0.32.0) (2026-11-01)
 
 
