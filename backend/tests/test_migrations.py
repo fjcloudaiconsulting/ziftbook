@@ -7,7 +7,7 @@ import re
 import uuid
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime, timedelta
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from typing import Any
 from urllib.parse import urlencode
 
@@ -32,8 +32,8 @@ from tests.conftest import (
     delete_bookings,
     end_membership,
     member_id,
+    migrate,
     migrate_tenant_context,
-    retried_on_deadlock,
 )
 from tests.test_bookings_db import insert_booking, seed_service
 from tests.test_second_factor_db import PASS, enrolled, half_session, wrong
@@ -70,7 +70,7 @@ def test_downgrading_and_upgrading_0013_restores_its_columns_and_grants(
     options = urlencode({"options": "-c lock_timeout=5s"})
     monkeypatch.setenv("ZIF_MIGRATE_DATABASE_URL", f"{url}{'&' if '?' in url else '?'}{options}")
     try:
-        command.downgrade(cfg, "0012")
+        migrate(command.downgrade, cfg, "0012")
         with migrate_engine.connect() as conn:
             assert {"country", "currency"}.isdisjoint(set(conn.scalars(COLUMNS)))
             assert conn.scalar(text(TABLE_PRIVILEGE), {"priv": "UPDATE"})
@@ -83,7 +83,7 @@ def test_downgrading_and_upgrading_0013_restores_its_columns_and_grants(
             assert conn.scalar(text(INVITES_TABLE)) is None
             assert conn.scalar(text(ACCEPT_INVITE)) is None
     finally:
-        command.upgrade(cfg, "head")
+        migrate(command.upgrade, cfg, "head")
     with migrate_engine.connect() as conn:
         assert {"country", "currency"} <= set(conn.scalars(COLUMNS))
         assert not conn.scalar(text(TABLE_PRIVILEGE), {"priv": "UPDATE"})
@@ -107,14 +107,14 @@ def test_downgrading_and_upgrading_0022_restores_the_three_arg_complete_sign_up_
     options = urlencode({"options": "-c lock_timeout=5s"})
     monkeypatch.setenv("ZIF_MIGRATE_DATABASE_URL", f"{url}{'&' if '?' in url else '?'}{options}")
     try:
-        command.downgrade(cfg, "0021")
+        migrate(command.downgrade, cfg, "0021")
         with migrate_engine.connect() as conn:
             assert conn.scalar(text(THREE_ARG)) is not None
             assert conn.scalar(text(FIVE_ARG)) is not None
             assert conn.scalar(text(THREE_ARG_TO_APP))
             assert not conn.scalar(text(THREE_ARG_TO_PUBLIC))
     finally:
-        command.upgrade(cfg, "head")
+        migrate(command.upgrade, cfg, "head")
     with migrate_engine.connect() as conn:
         assert conn.scalar(text(THREE_ARG)) is None
         assert conn.scalar(text(SIX_ARG)) is not None
@@ -138,12 +138,12 @@ def test_downgrading_and_upgrading_0023_restores_the_display_name_column_and_a_c
     options = urlencode({"options": "-c lock_timeout=5s"})
     monkeypatch.setenv("ZIF_MIGRATE_DATABASE_URL", f"{url}{'&' if '?' in url else '?'}{options}")
     try:
-        command.downgrade(cfg, "0022")
+        migrate(command.downgrade, cfg, "0022")
         with migrate_engine.connect() as conn:
             assert "display_name" not in set(conn.scalars(MEMBERSHIP_COLUMNS))
             assert conn.scalar(text(CONSTRAINT_NAME)) is None
     finally:
-        command.upgrade(cfg, "head")
+        migrate(command.upgrade, cfg, "head")
     with migrate_engine.connect() as conn:
         assert "display_name" in set(conn.scalars(MEMBERSHIP_COLUMNS))
         # The name, not merely some check: without the downgrade's op.f() the convention is
@@ -174,12 +174,12 @@ def test_downgrading_and_upgrading_0024_restores_the_tables_and_their_grants(
     options = urlencode({"options": "-c lock_timeout=5s"})
     monkeypatch.setenv("ZIF_MIGRATE_DATABASE_URL", f"{url}{'&' if '?' in url else '?'}{options}")
     try:
-        command.downgrade(cfg, "0023")
+        migrate(command.downgrade, cfg, "0023")
         with migrate_engine.connect() as conn:
             assert conn.scalar(text("SELECT to_regclass('clients')")) is None
             assert conn.scalar(text("SELECT to_regclass('consents')")) is None
     finally:
-        command.upgrade(cfg, "head")
+        migrate(command.upgrade, cfg, "head")
     with migrate_engine.connect() as conn:
         assert not conn.scalar(
             text("SELECT has_table_privilege('ziftbook_app', 'consents', 'UPDATE')")
@@ -226,13 +226,13 @@ def test_upgrading_0020_rewrites_last_error_to_the_class_only(
     key = f"test.zif93:{uuid.uuid4()}"
     address = "someone@example.com"
     try:
-        command.downgrade(cfg, "0019")
+        migrate(command.downgrade, cfg, "0019")
         with migrate_engine.begin() as conn:
             conn.execute(
                 text(ADD_JOB),
                 {"key": key, "last_error": f"SMTPRecipientsRefused({{'{address}': (550, b'no')}})"},
             )
-        command.upgrade(cfg, "head")
+        migrate(command.upgrade, cfg, "head")
         with migrate_engine.connect() as conn:
             last_error = conn.scalar(
                 text("SELECT last_error FROM jobs WHERE dedupe_key = :key"), {"key": key}
@@ -244,7 +244,7 @@ def test_upgrading_0020_rewrites_last_error_to_the_class_only(
         # otherwise leak this row into it for every later test to see.
         with migrate_engine.begin() as conn:
             conn.execute(text("DELETE FROM jobs WHERE dedupe_key = :key"), {"key": key})
-        command.upgrade(cfg, "head")
+        migrate(command.upgrade, cfg, "head")
 
 
 def test_downgrading_and_upgrading_0025_keeps_the_timerange_type(
@@ -257,12 +257,12 @@ def test_downgrading_and_upgrading_0025_keeps_the_timerange_type(
     options = urlencode({"options": "-c lock_timeout=5s"})
     monkeypatch.setenv("ZIF_MIGRATE_DATABASE_URL", f"{url}{'&' if '?' in url else '?'}{options}")
     try:
-        command.downgrade(cfg, "0024")
+        migrate(command.downgrade, cfg, "0024")
         with migrate_engine.connect() as conn:
             assert conn.scalar(text("SELECT to_regclass('opening_hours')")) is None
             assert conn.scalar(text("SELECT to_regtype('timerange')")) is not None
     finally:
-        command.upgrade(cfg, "head")
+        migrate(command.upgrade, cfg, "head")
     with migrate_engine.connect() as conn:
         assert conn.scalar(text("SELECT to_regclass('opening_hours')")) is not None
         assert (
@@ -281,12 +281,12 @@ def test_downgrading_and_upgrading_0026_restores_the_tables_and_their_grants(
     options = urlencode({"options": "-c lock_timeout=5s"})
     monkeypatch.setenv("ZIF_MIGRATE_DATABASE_URL", f"{url}{'&' if '?' in url else '?'}{options}")
     try:
-        command.downgrade(cfg, "0025")
+        migrate(command.downgrade, cfg, "0025")
         with migrate_engine.connect() as conn:
             assert conn.scalar(text("SELECT to_regclass('bookings')")) is None
             assert conn.scalar(text("SELECT to_regclass('booking_events')")) is None
     finally:
-        command.upgrade(cfg, "head")
+        migrate(command.upgrade, cfg, "head")
     with migrate_engine.connect() as conn:
         assert not conn.scalar(
             text("SELECT has_table_privilege('ziftbook_app', 'bookings', 'DELETE')")
@@ -385,7 +385,7 @@ def test_downgrading_and_upgrading_0027_restores_both_thresholds(
     options = urlencode({"options": "-c lock_timeout=5s"})
     monkeypatch.setenv("ZIF_MIGRATE_DATABASE_URL", f"{url}{'&' if '?' in url else '?'}{options}")
     try:
-        command.downgrade(cfg, "0026")
+        migrate(command.downgrade, cfg, "0026")
         with migrate_engine.connect() as conn:
             assert dict(conn.execute(NEW_COLUMNS).all()) == {"cancellation_policy_text": "YES"}
             assert conn.scalars(NEW_CHECKS).all() == []
@@ -400,7 +400,7 @@ def test_downgrading_and_upgrading_0027_restores_both_thresholds(
         # 0026 with both columns gone for every later test in this xdist worker.
         with migrate_engine.begin() as conn:
             delete_bookings(conn, (people.a, people.b))
-        command.upgrade(cfg, "head")
+        migrate(command.upgrade, cfg, "head")
     with migrate_engine.connect() as conn:
         assert dict(conn.execute(NEW_COLUMNS).all()) == {
             "cancellation_policy_text": "YES",
@@ -452,7 +452,7 @@ def test_0027_refuses_to_backfill_an_existing_booking(
     service_id = seed_service(people.a)
     worker_id = member_id(people.a, people.both)
     try:
-        command.downgrade(cfg, "0026")
+        migrate(command.downgrade, cfg, "0026")
         with tenant_context(people.a) as session:
             client_id = session.scalar(
                 text(
@@ -469,14 +469,14 @@ def test_0027_refuses_to_backfill_an_existing_booking(
         # arrives, but under an IntegrityError. Both are asserted, so another backfill form's
         # CheckViolation would not satisfy this either.
         with pytest.raises(IntegrityError) as raised:
-            command.upgrade(cfg, "head")
+            migrate(command.upgrade, cfg, "head")
         assert isinstance(raised.value.orig, NotNullViolation)
     finally:
         # Tenant-scoped, as the migrate role, BEFORE the re-upgrade: the row that made the upgrade
         # raise would otherwise make it raise again and leave every later test at 0026.
         with migrate_engine.begin() as conn:
             delete_bookings(conn, (people.a,))
-        command.upgrade(cfg, "head")
+        migrate(command.upgrade, cfg, "head")
 
 
 # 26. fence (ZIF-101): 0028 is DDL only, no backfill. A partial block inserted at 0027 (tenant-
@@ -493,7 +493,7 @@ def test_0028_does_not_backfill_existing_partial_blocks(
     a_member = member_id(people.a, people.only_a)
     b_member = member_id(people.b, people.only_b)
     try:
-        command.downgrade(cfg, "0027")
+        migrate(command.downgrade, cfg, "0027")
         with tenant_context(people.a) as session:
             a_id = session.scalar(
                 text("""
@@ -512,7 +512,7 @@ def test_0028_does_not_backfill_existing_partial_blocks(
                 """),
                 {"m": b_member, "s": "2026-10-01T22:00:00Z", "e": "2026-10-02T22:00:00Z"},
             )
-        command.upgrade(cfg, "head")
+        migrate(command.upgrade, cfg, "head")
         with migrate_engine.connect() as conn:
             conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(people.a)})
             a_row = conn.execute(
@@ -559,7 +559,7 @@ def test_0028_downgrade_refuses_while_a_whole_day_row_exists(
         )
     try:
         with pytest.raises(IntegrityError) as raised:
-            command.downgrade(cfg, "0027")
+            migrate(command.downgrade, cfg, "0027")
         assert isinstance(raised.value.orig, NotNullViolation)
         with migrate_engine.connect() as conn:
             version = conn.scalar(text("SELECT version_num FROM alembic_version"))
@@ -572,7 +572,7 @@ def test_0028_downgrade_refuses_while_a_whole_day_row_exists(
 
         with tenant_context(people.a) as session:
             session.execute(text("DELETE FROM time_off WHERE id = :id"), {"id": day_id})
-        command.downgrade(cfg, "0027")
+        migrate(command.downgrade, cfg, "0027")
         with migrate_engine.connect() as conn:
             columns = set(
                 conn.scalars(
@@ -593,7 +593,7 @@ def test_0028_downgrade_refuses_while_a_whole_day_row_exists(
             )
             assert not_null == {"starts_at": "NO", "ends_at": "NO"}
     finally:
-        command.upgrade(cfg, "head")
+        migrate(command.upgrade, cfg, "head")
     with migrate_engine.connect() as conn:
         checks = set(
             conn.scalars(
@@ -641,12 +641,12 @@ def test_downgrading_and_upgrading_0029_restores_booking_links_and_the_snapshots
     options = urlencode({"options": "-c lock_timeout=5s"})
     monkeypatch.setenv("ZIF_MIGRATE_DATABASE_URL", f"{url}{'&' if '?' in url else '?'}{options}")
     try:
-        command.downgrade(cfg, "0028")
+        migrate(command.downgrade, cfg, "0028")
         with migrate_engine.connect() as conn:
             assert conn.scalar(text(LINK_TABLE)) is None
             assert conn.scalars(NEW_BOOKING_COLUMNS).all() == []
     finally:
-        command.upgrade(cfg, "head")
+        migrate(command.upgrade, cfg, "head")
     with migrate_engine.connect() as conn:
         assert conn.scalar(text(LINK_TABLE)) is not None
         # SELECT is table-level; INSERT is a column list (like booking_events' since 0026), so
@@ -781,7 +781,7 @@ def downgrade_outcome(cfg: Config) -> str | None:
     error, and a `finally: upgrade head` around the caller can no longer hide it.
     """
     try:
-        command.downgrade(cfg, "0029")
+        migrate(command.downgrade, cfg, "0029")
         return None
     except Exception as error:
         orig = getattr(error, "orig", None)
@@ -808,7 +808,7 @@ def test_0030_round_trips(
                         text("INSERT INTO tenants (name) VALUES (:n) RETURNING id"), {"n": name}
                     )
                 )
-        command.upgrade(cfg, "0030")
+        migrate(command.upgrade, cfg, "0030")
         with migrate_engine.connect() as conn:
             before = conn.execute(SLUGS, {"ids": ids}).all()
             assert [s for _, s in before] == [f"round-{tag}", f"trip-{tag}"]
@@ -838,7 +838,7 @@ def test_0030_round_trips(
         # with upgrade's CREATE FUNCTION). Swallow that here so it can never replace the assertion
         # above as the test's reported failure.
         try:
-            command.upgrade(cfg, "head")
+            migrate(command.upgrade, cfg, "head")
         except Exception:
             pass
     with migrate_engine.begin() as conn:
@@ -854,7 +854,7 @@ def test_0030_backfills_oldest_first(
     older, newer = uuid.uuid7(), uuid.uuid7()
     cfg = lock_timeout_config(monkeypatch)
     try:
-        command.downgrade(cfg, "0029")
+        migrate(command.downgrade, cfg, "0029")
         with migrate_engine.begin() as conn:
             for tenant_id in (newer, older):  # heap order: the newer business first
                 conn.execute(
@@ -862,7 +862,7 @@ def test_0030_backfills_oldest_first(
                     {"i": tenant_id, "n": f"Nail bar {tag}"},
                 )
     finally:
-        command.upgrade(cfg, "head")
+        migrate(command.upgrade, cfg, "head")
     with migrate_engine.begin() as conn:
         slugs: dict[uuid.UUID, str] = dict(conn.execute(SLUGS, {"ids": [older, newer]}).all())
         conn.execute(text("DELETE FROM tenants WHERE id = ANY(:ids)"), {"ids": [older, newer]})
@@ -909,11 +909,11 @@ def test_0031_round_trips(
     with tenant_context(people.a) as session:
         pending_id = booked(session, worker_id, service_id, "pending")
     try:
-        command.downgrade(cfg, "0030")
+        migrate(command.downgrade, cfg, "0030")
         with migrate_engine.connect() as conn:
             assert tuple(conn.execute(DECLINE_MESSAGE).one()) == (0, 0)
     finally:
-        command.upgrade(cfg, "head")
+        migrate(command.upgrade, cfg, "head")
     with migrate_engine.connect() as conn:
         assert tuple(conn.execute(DECLINE_MESSAGE).one()) == (1, 1)
         assert conn.scalar(
@@ -958,11 +958,11 @@ def test_0034_round_trips_booking_holds(
 ) -> None:
     cfg = lock_timeout_config(monkeypatch)
     try:
-        command.downgrade(cfg, "0033")
+        migrate(command.downgrade, cfg, "0033")
         with migrate_engine.connect() as conn:
             assert conn.scalar(text("SELECT to_regclass('booking_holds')")) is None
     finally:
-        command.upgrade(cfg, "head")
+        migrate(command.upgrade, cfg, "head")
     with migrate_engine.connect() as conn:
         assert conn.execute(
             text(
@@ -1002,13 +1002,13 @@ def test_0035_round_trips_slug_ok(migrate_engine: Engine, monkeypatch: pytest.Mo
         at_head = conn.scalar(SLUG_OK_DEF)
     assert "'setup'" in at_head
     try:
-        command.downgrade(cfg, "0034")
+        migrate(command.downgrade, cfg, "0034")
         with migrate_engine.connect() as conn:
             before = conn.scalar(SLUG_OK_DEF)
             assert conn.scalar(text("SELECT slug_ok('setup')")) is True
             assert tuple(conn.execute(SLUG_OK_GRANTS).one()) == (True, False)
     finally:
-        command.upgrade(cfg, "head")
+        migrate(command.upgrade, cfg, "head")
     assert before == at_head.replace(",'setup'", "")
     with migrate_engine.connect() as conn:
         assert conn.scalar(SLUG_OK_DEF) == at_head
@@ -1023,17 +1023,17 @@ def test_0035_refuses_while_a_business_holds_setup(
 ) -> None:
     cfg = lock_timeout_config(monkeypatch)
     try:
-        command.downgrade(cfg, "0034")
+        migrate(command.downgrade, cfg, "0034")
         with migrate_engine.begin() as conn:
             conn.execute(text("INSERT INTO tenants (name, slug) VALUES ('Setup', 'setup')"))
         with pytest.raises(DBAPIError, match='holds the slug "setup"'):
-            command.upgrade(cfg, "0035")
+            migrate(command.upgrade, cfg, "0035")
         with migrate_engine.connect() as conn:
             assert conn.scalar(VERSION) == "0034"
     finally:
         with migrate_engine.begin() as conn:
             conn.execute(text("DELETE FROM tenants WHERE slug = 'setup'"))
-        command.upgrade(cfg, "head")
+        migrate(command.upgrade, cfg, "head")
 
 
 RESET_DEF = text("SELECT pg_get_functiondef('reset_password(bytea,text)'::regprocedure)")
@@ -1060,22 +1060,22 @@ def test_0037_round_trips_admin_sessions(
     with migrate_engine.connect() as conn:
         at_head = conn.scalar(RESET_DEF)
     try:
-        command.downgrade(cfg, "0037")
+        migrate(command.downgrade, cfg, "0037")
         with migrate_engine.connect() as conn:
             at_0037 = conn.scalar(RESET_DEF)
         assert END_ADMIN_SESSIONS in at_0037
-        command.downgrade(cfg, "0036")
+        migrate(command.downgrade, cfg, "0036")
         with migrate_engine.connect() as conn:
             before = conn.scalar(RESET_DEF)
             assert tuple(conn.execute(ADMIN_SESSION_OBJECTS).one()) == (False,) * 4
             assert tuple(conn.execute(RESET_GRANTS).one()) == (True, False)
-        command.upgrade(cfg, "0037")
+        migrate(command.upgrade, cfg, "0037")
         with migrate_engine.connect() as conn:
             assert conn.scalar(RESET_DEF) == at_0037
             assert tuple(conn.execute(ADMIN_SESSION_OBJECTS).one()) == (True,) * 4
             assert tuple(conn.execute(RESET_GRANTS).one()) == (True, False)
     finally:
-        command.upgrade(cfg, "head")
+        migrate(command.upgrade, cfg, "head")
     assert before == at_0037.replace(END_ADMIN_SESSIONS, "")
     with migrate_engine.connect() as conn:
         assert conn.scalar(RESET_DEF) == at_head
@@ -1126,13 +1126,13 @@ def test_0039_round_trips_second_factors(
     with migrate_engine.connect() as conn:
         at_head = conn.scalar(RESOLVE_DEF)
     try:
-        command.downgrade(cfg, "0038")
+        migrate(command.downgrade, cfg, "0038")
         with migrate_engine.connect() as conn:
             before = conn.scalar(RESOLVE_DEF)
             assert tuple(conn.execute(SECOND_FACTOR_OBJECTS).one()) == (False,) * 8
             assert tuple(conn.execute(RESOLVE_GRANTS).one()) == (True, False)
     finally:
-        command.upgrade(cfg, "head")
+        migrate(command.upgrade, cfg, "head")
     assert "factor_passed" in at_head and "factor_passed" not in before
     with migrate_engine.connect() as conn:
         assert conn.scalar(RESOLVE_DEF) == at_head
@@ -1142,7 +1142,7 @@ def test_0039_round_trips_second_factors(
 
 def deadlocking(
     times: int, error: type[Exception] = DeadlockDetected
-) -> tuple[Callable[..., None], list[str]]:
+) -> tuple[Callable[[Config, str], None], list[str]]:
     """A stand-in Alembic command whose first `times` calls fail as a migration statement would,
     and the revisions it was called with."""
     calls: list[str] = []
@@ -1155,32 +1155,66 @@ def deadlocking(
     return run, calls
 
 
+def retry_warnings(caught: pytest.WarningsRecorder) -> list[str]:
+    return [str(w.message) for w in caught if "retried after a deadlock" in str(w.message)]
+
+
+ROUND_TRIP_FILES = ("test_migrations.py", "test_names.py", "test_service_photos_schema.py")
+
+
 # ZIF-284 fence. Kills: a round trip that fails on autovacuum's one-off deadlock (0039's on CI); a
-# command that runs again after any other error, or swallows a second deadlock; a retry whose
-# warning does not name the sessions on this database; round trips that bypass the retry.
-def test_a_migration_command_runs_once_more_after_a_deadlock(migrate_engine: Engine) -> None:
-    assert getattr(command.upgrade, "__wrapped__", None) is not None
-    assert getattr(command.downgrade, "__wrapped__", None) is not None
+# command that runs again after any other error, or swallows a second deadlock; a retry without
+# the deadlock's DETAIL; a relative target, which a retry would overshoot; a round-trip test that
+# calls Alembic directly and so has no retry.
+def test_a_migration_command_runs_once_more_after_a_deadlock() -> None:
     cfg = Config(toml_file=str(API_DIR / "pyproject.toml"))
 
     once, calls = deadlocking(1)
-    with migrate_engine.connect() as held, pytest.warns(UserWarning) as caught:
-        pid = held.scalar(text("SELECT pg_backend_pid()"))
-        retried_on_deadlock(once)(cfg, "0038")
+    with pytest.warns(UserWarning) as caught:
+        migrate(once, cfg, "0038")
     assert calls == ["0038", "0038"]
-    [warning] = caught
-    assert str(warning.message).startswith("migration retried after a deadlock (to 0038): lost")
-    assert f"{pid} | client backend" in str(warning.message)
+    assert retry_warnings(caught) == ["migration retried after a deadlock (to 0038): lost"]
 
     twice, calls = deadlocking(2)
-    with pytest.raises(OperationalError), pytest.warns(UserWarning):
-        retried_on_deadlock(twice)(cfg, "0038")
-    assert len(calls) == 2
+    with pytest.raises(OperationalError), pytest.warns(UserWarning) as caught:
+        migrate(twice, cfg, "0038")
+    assert len(calls) == 2 and len(retry_warnings(caught)) == 1
 
     other, calls = deadlocking(1, LockNotAvailable)
     with pytest.raises(OperationalError):
-        retried_on_deadlock(other)(cfg, "0038")
+        migrate(other, cfg, "0038")
     assert calls == ["0038"]
+
+    relative, calls = deadlocking(0)
+    for revision in ("-1", "+2", "head-1", "0038+1"):
+        with pytest.raises(AssertionError, match="not an absolute revision"):
+            migrate(relative, cfg, revision)
+    assert calls == []
+
+    for name in ROUND_TRIP_FILES:
+        source = (API_DIR / "tests" / name).read_text()
+        assert not re.search(r"(?<!migrate\()command\.(up|down)grade\(", source), name
+
+
+# ZIF-284 fence. Kills: a downgrade that changes a table's grants before it holds the table's lock.
+# A vacuum of that table started in between waits for the migration's transaction (to update the
+# table's pg_class row), the migration's ALTER waits for the vacuum: a deadlock (0057's on CI).
+@pytest.mark.parametrize(
+    ("name", "table"),
+    [
+        ("0013_business_country.py", "tenants"),
+        ("0057_account_sessions.py", "users"),
+        ("0063_clients_erased_at.py", "clients"),
+    ],
+)
+def test_a_downgrade_that_regrants_a_table_locks_it_first(
+    name: str, table: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = migration(name)
+    executed: list[str] = []
+    monkeypatch.setattr(module, "op", SimpleNamespace(execute=executed.append))
+    module.downgrade()
+    assert executed[0] == f"LOCK TABLE {table} IN ACCESS EXCLUSIVE MODE"
 
 
 # ZIF-71 PR1 guard: the downgrade's resolve_admin_session is 0037's text verbatim.
@@ -1203,11 +1237,11 @@ def test_0041_round_trips_the_booking_snapshot(
 ) -> None:
     cfg = lock_timeout_config(monkeypatch)
     try:
-        command.downgrade(cfg, "0040")
+        migrate(command.downgrade, cfg, "0040")
         with migrate_engine.connect() as conn:
             assert conn.execute(SNAPSHOT_COLUMNS).all() == []
     finally:
-        command.upgrade(cfg, "head")
+        migrate(command.upgrade, cfg, "head")
     with migrate_engine.connect() as conn:
         assert dict(conn.execute(SNAPSHOT_COLUMNS).all()) == {
             "client_name": "YES",
@@ -1269,11 +1303,11 @@ SELECT has_column_privilege('ziftbook_app', 'bookings', 'original_starts_at', 'U
 def test_0042_round_trips(migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch) -> None:
     cfg = lock_timeout_config(monkeypatch)
     try:
-        command.downgrade(cfg, "0041")
+        migrate(command.downgrade, cfg, "0041")
         with migrate_engine.connect() as conn:
             assert conn.execute(ANCHOR_GUARD).one() == (False, False)
     finally:
-        command.upgrade(cfg, "head")
+        migrate(command.upgrade, cfg, "head")
     with migrate_engine.connect() as conn:
         assert conn.execute(ANCHOR_GUARD).one() == (True, True)
 
@@ -1306,11 +1340,11 @@ def test_0043_round_trips_payment_accounts(
 ) -> None:
     cfg = lock_timeout_config(monkeypatch)
     try:
-        command.downgrade(cfg, "0042")
+        migrate(command.downgrade, cfg, "0042")
         with migrate_engine.connect() as conn:
             assert tuple(conn.execute(PAYMENT_ACCOUNTS).one()) == (False, 0, 0, False, False, False)
     finally:
-        command.upgrade(cfg, "head")
+        migrate(command.upgrade, cfg, "head")
     with migrate_engine.connect() as conn:
         assert tuple(conn.execute(PAYMENT_ACCOUNTS).one()) == (True, 2, 2, True, True, True)
         assert tuple(conn.execute(PAYMENT_PRIVILEGES).one()) == (
@@ -1376,11 +1410,11 @@ def test_0044_round_trips_booking_payments(
 ) -> None:
     cfg = lock_timeout_config(monkeypatch)
     try:
-        command.downgrade(cfg, "0043")
+        migrate(command.downgrade, cfg, "0043")
         with migrate_engine.connect() as conn:
             assert tuple(conn.execute(BOOKING_PAYMENTS).one()) == (False, 0)
     finally:
-        command.upgrade(cfg, "head")
+        migrate(command.upgrade, cfg, "head")
     with migrate_engine.connect() as conn:
         assert tuple(conn.execute(BOOKING_PAYMENTS).one()) == (True, 1)
         assert (
@@ -1509,11 +1543,11 @@ def test_downgrading_and_upgrading_0045_restores_the_role_check_and_the_three_fu
         return columns, sessions_check, "removed" in role_check
 
     try:
-        command.downgrade(cfg, "0044")
+        migrate(command.downgrade, cfg, "0044")
         assert shape() == (0, 0, False)
         assert sources() == old_sources
     finally:
-        command.upgrade(cfg, "head")
+        migrate(command.upgrade, cfg, "head")
     assert shape() == (1, 1, True)
     assert all("removed" in source for source in sources())
     for change in ("SET role = 'removed'", "SET removed_at = now()"):
@@ -1533,7 +1567,7 @@ def test_0045_downgrade_refuses_while_a_membership_is_removed(
     end_membership(people.a, people.only_a)
     try:
         with pytest.raises(IntegrityError) as raised:
-            command.downgrade(cfg, "0044")
+            migrate(command.downgrade, cfg, "0044")
         assert isinstance(raised.value.orig, CheckViolation)
         assert raised.value.orig.diag.constraint_name == "ck_memberships_role"
         with migrate_engine.connect() as conn:
@@ -1544,7 +1578,7 @@ def test_0045_downgrade_refuses_while_a_membership_is_removed(
             )
         assert role == "removed"
     finally:
-        command.upgrade(cfg, "head")
+        migrate(command.upgrade, cfg, "head")
 
 
 CHECKOUT_HASH = text("""
@@ -1564,11 +1598,11 @@ def test_0046_round_trips_the_checkout_hash(
 ) -> None:
     cfg = lock_timeout_config(monkeypatch)
     try:
-        command.downgrade(cfg, "0045")
+        migrate(command.downgrade, cfg, "0045")
         with migrate_engine.connect() as conn:
             assert conn.execute(CHECKOUT_HASH).all() == []
     finally:
-        command.upgrade(cfg, "head")
+        migrate(command.upgrade, cfg, "head")
     with migrate_engine.connect() as conn:
         assert tuple(conn.execute(CHECKOUT_HASH).one()) == ("bytea", "YES", True, True, False)
 
@@ -1671,14 +1705,14 @@ def test_0047_round_trips_the_booking_evidence_grants(
 ) -> None:
     cfg = lock_timeout_config(monkeypatch)
     try:
-        command.downgrade(cfg, "0046")
+        migrate(command.downgrade, cfg, "0046")
         with migrate_engine.connect() as conn:
             grants = conn.execute(EVIDENCE_GRANTS).all()
             assert {column for column, _, update in grants if update} == UPDATABLE_AT_0046
             assert all(insert for _, insert, _ in grants)
             assert tuple(conn.execute(EVIDENCE_GUARD).one()) == (True, False, 0, False, False)
     finally:
-        command.upgrade(cfg, "head")
+        migrate(command.upgrade, cfg, "head")
     with migrate_engine.connect() as conn:
         grants = conn.execute(EVIDENCE_GRANTS).all()
         assert {column for column, _, update in grants if update} == UPDATABLE
@@ -1743,7 +1777,7 @@ def test_0048_round_trips_the_app_roles_write_privileges(
 ) -> None:
     cfg = lock_timeout_config(monkeypatch)
     try:
-        command.downgrade(cfg, "0047")
+        migrate(command.downgrade, cfg, "0047")
         with migrate_engine.connect() as conn:
             assert [tuple(r) for r in conn.execute(WRITE_GRANTS)] == WRITE_GRANTS_AT_0047
             assert [tuple(r) for r in conn.execute(USERS_INSERT_POLICY)] == [
@@ -1751,7 +1785,7 @@ def test_0048_round_trips_the_app_roles_write_privileges(
             ]
             assert conn.execute(FUNCTION_DEFAULTS).all() == []
         # At 0048 itself: 0057 narrows the users SELECT at head (ZIF-146).
-        command.upgrade(cfg, "0048")
+        migrate(command.upgrade, cfg, "0048")
         with migrate_engine.connect() as conn:
             assert [tuple(r) for r in conn.execute(WRITE_GRANTS)] == WRITE_GRANTS_AT_0048
             assert conn.execute(USERS_INSERT_POLICY).all() == []
@@ -1759,7 +1793,7 @@ def test_0048_round_trips_the_app_roles_write_privileges(
                 (0, "{ziftbook_migrate=X/ziftbook_migrate}")
             ]
     finally:
-        command.upgrade(cfg, "head")
+        migrate(command.upgrade, cfg, "head")
     with migrate_engine.connect() as conn:
         assert [tuple(r) for r in conn.execute(WRITE_GRANTS)] == WRITE_GRANTS_AT_HEAD
         # Unchanged since 0048 (code review N10: kept at head too).
@@ -1784,11 +1818,11 @@ def test_0049_round_trips_the_workers_mint_grant(
 ) -> None:
     cfg = lock_timeout_config(monkeypatch)
     try:
-        command.downgrade(cfg, "0048")
+        migrate(command.downgrade, cfg, "0048")
         with migrate_engine.connect() as conn:
             assert list(conn.scalars(MINT_HOLDERS)) == ["ziftbook_app", "ziftbook_migrate"]
     finally:
-        command.upgrade(cfg, "head")
+        migrate(command.upgrade, cfg, "head")
     with migrate_engine.connect() as conn:
         assert list(conn.scalars(MINT_HOLDERS)) == ["ziftbook_migrate", "ziftbook_worker"]
 
@@ -1810,7 +1844,7 @@ def test_0050_round_trips_temporary_tables(
 ) -> None:
     cfg = lock_timeout_config(monkeypatch)
     try:
-        command.downgrade(cfg, "0049")
+        migrate(command.downgrade, cfg, "0049")
         with migrate_engine.connect() as conn:
             assert list(conn.scalars(TEMPORARY_HOLDERS)) == [
                 "public",
@@ -1819,7 +1853,7 @@ def test_0050_round_trips_temporary_tables(
                 "ziftbook_worker",
             ]
     finally:
-        command.upgrade(cfg, "head")
+        migrate(command.upgrade, cfg, "head")
     with migrate_engine.connect() as conn:
         assert list(conn.scalars(TEMPORARY_HOLDERS)) == ["ziftbook_migrate"]
 
@@ -1901,7 +1935,7 @@ def test_0051_round_trips_the_app_roles_mint_grant(
 ) -> None:
     cfg = lock_timeout_config(monkeypatch)
     try:
-        command.downgrade(cfg, "0050")
+        migrate(command.downgrade, cfg, "0050")
         with migrate_engine.connect() as conn:
             assert list(conn.scalars(MINT_HOLDERS)) == [
                 "ziftbook_app",
@@ -1909,7 +1943,7 @@ def test_0051_round_trips_the_app_roles_mint_grant(
                 "ziftbook_worker",
             ]
     finally:
-        command.upgrade(cfg, "head")
+        migrate(command.upgrade, cfg, "head")
     with migrate_engine.connect() as conn:
         assert list(conn.scalars(MINT_HOLDERS)) == ["ziftbook_migrate", "ziftbook_worker"]
 
@@ -1930,11 +1964,11 @@ def test_0052_round_trips_the_app_roles_membership_delete(
 ) -> None:
     cfg = lock_timeout_config(monkeypatch)
     try:
-        command.downgrade(cfg, "0051")
+        migrate(command.downgrade, cfg, "0051")
         with migrate_engine.connect() as conn:
             assert conn.scalar(MEMBERSHIP_GRANTS) == "DELETE INSERT SELECT UPDATE"
     finally:
-        command.upgrade(cfg, "head")
+        migrate(command.upgrade, cfg, "head")
     with migrate_engine.connect() as conn:
         assert conn.scalar(MEMBERSHIP_GRANTS) == "SELECT"
 
@@ -1956,12 +1990,12 @@ def test_0054_round_trips_the_app_roles_membership_insert_and_update(
 ) -> None:
     cfg = lock_timeout_config(monkeypatch)
     try:
-        command.downgrade(cfg, "0053")
+        migrate(command.downgrade, cfg, "0053")
         with migrate_engine.connect() as conn:
             assert conn.scalar(MEMBERSHIP_GRANTS) == "INSERT SELECT UPDATE"
             assert conn.scalar(MEMBERSHIP_COLUMN_GRANTS) is None
     finally:
-        command.upgrade(cfg, "head")
+        migrate(command.upgrade, cfg, "head")
     with migrate_engine.connect() as conn:
         assert conn.scalar(MEMBERSHIP_GRANTS) == "SELECT"
         assert conn.scalar(MEMBERSHIP_COLUMN_GRANTS) == (
@@ -2002,13 +2036,13 @@ def test_0055_round_trips_the_live_member_filters(
     assert NAME_GATE.format(LIVE) in at_head
     assert access == ("ziftbook_migrate", True, False)
     try:
-        command.downgrade(cfg, "0054")
+        migrate(command.downgrade, cfg, "0054")
         with migrate_engine.connect() as conn:
             assert conn.scalar(USERS_POLICY_QUAL) == ALL_MEMBERS_QUAL
             before = conn.scalar(SET_OWN_NAME_DEF)
             assert tuple(conn.execute(SET_OWN_NAME_ACCESS).one()) == access
     finally:
-        command.upgrade(cfg, "head")
+        migrate(command.upgrade, cfg, "head")
     assert before == at_head.replace(NAME_GATE.format(LIVE), NAME_GATE.format(""))
     with migrate_engine.connect() as conn:
         assert conn.scalar(USERS_POLICY_QUAL) == LIVE_MEMBERS_QUAL
@@ -2055,11 +2089,11 @@ def test_0056_round_trips_the_revive_guard(
 ) -> None:
     cfg = lock_timeout_config(monkeypatch)
     try:
-        command.downgrade(cfg, "0055")
+        migrate(command.downgrade, cfg, "0055")
         with migrate_engine.connect() as conn:
             assert tuple(conn.execute(REVIVE_GUARD).one()) == (None, False)
     finally:
-        command.upgrade(cfg, "head")
+        migrate(command.upgrade, cfg, "head")
     with migrate_engine.connect() as conn:
         assert tuple(conn.execute(REVIVE_GUARD).one()) == (REVIVE_GUARD_TRIGGER, True)
         assert tuple(conn.execute(REVIVE_GUARD_FUNCTION).one()) == (
@@ -2089,11 +2123,11 @@ def test_0053_round_trips_the_invite_token_guard(
 ) -> None:
     cfg = lock_timeout_config(monkeypatch)
     try:
-        command.downgrade(cfg, "0052")
+        migrate(command.downgrade, cfg, "0052")
         with migrate_engine.connect() as conn:
             assert tuple(conn.execute(INVITE_TOKEN_GUARD).one()) == (False, False)
     finally:
-        command.upgrade(cfg, "head")
+        migrate(command.upgrade, cfg, "head")
     with migrate_engine.connect() as conn:
         assert tuple(conn.execute(INVITE_TOKEN_GUARD).one()) == (True, True)
         assert tuple(conn.execute(INVITE_TOKEN_GUARD_FUNCTION).one()) == (
@@ -2196,7 +2230,9 @@ def test_0069_round_trips_the_failure_budget(
     e = enrolled(app_engine, migrate_engine)
     old_conn = app_engine.connect()
     try:
-        command.downgrade(cfg, migration("0069_second_factor_failures_leak.py").down_revision)
+        migrate(
+            command.downgrade, cfg, migration("0069_second_factor_failures_leak.py").down_revision
+        )
         with migrate_engine.connect() as conn:
             assert conn.scalar(FAILURE_COLUMNS) == 0
             for sig in FAILURE_DEFINERS:
@@ -2219,7 +2255,7 @@ def test_0069_round_trips_the_failure_budget(
         old_conn.commit()
         assert tuple(first) == ("failed", 1)
     finally:
-        command.upgrade(cfg, "head")
+        migrate(command.upgrade, cfg, "head")
     try:
         second = old_conn.execute(PASS, {"id": session, "p": wrong(), "step": None}).one()
         old_conn.commit()
@@ -2286,7 +2322,9 @@ def test_0083_round_trips_the_charges(
     with migrate_engine.connect() as conn:
         at_head = {sig: conn.execute(DEFINER_STATE, {"signature": sig}).one() for sig in m.REPLACED}
     try:
-        command.downgrade(cfg, migration("0083_count_second_factor_first.py").down_revision)
+        migrate(
+            command.downgrade, cfg, migration("0083_count_second_factor_first.py").down_revision
+        )
         with migrate_engine.connect() as conn:
             assert conn.scalar(CHARGES_COLUMN) == 0
             gone = [
@@ -2299,7 +2337,7 @@ def test_0083_round_trips_the_charges(
                 assert tuple(row)[3:] == DEFINER_ACCESS, sig
         assert gone == [None] * len(CHARGE_DEFINERS)
     finally:
-        command.upgrade(cfg, "head")
+        migrate(command.upgrade, cfg, "head")
     with migrate_engine.connect() as conn:
         assert conn.scalar(CHARGES_COLUMN) == 1
         for sig in CHARGE_DEFINERS:
@@ -2348,13 +2386,13 @@ def test_0084_round_trips_begin(migrate_engine: Engine, monkeypatch: pytest.Monk
     with migrate_engine.connect() as conn:
         at_head = conn.execute(DEFINER_STATE, {"signature": BEGIN_ENROLMENT}).one()
     try:
-        command.downgrade(cfg, "0083")
+        migrate(command.downgrade, cfg, "0083")
         with migrate_engine.connect() as conn:
             row = conn.execute(DEFINER_STATE, {"signature": BEGIN_ENROLMENT}).one()
         assert row.prosrc == dollar_body(old)
         assert tuple(row)[3:] == DEFINER_ACCESS
     finally:
-        command.upgrade(cfg, "head")
+        migrate(command.upgrade, cfg, "head")
     with migrate_engine.connect() as conn:
         row = conn.execute(DEFINER_STATE, {"signature": BEGIN_ENROLMENT}).one()
     assert row.definition == at_head.definition
@@ -2439,7 +2477,7 @@ def test_0063_round_trips_the_client_tombstone(
 ) -> None:
     cfg = lock_timeout_config(monkeypatch)
     try:
-        command.downgrade(cfg, migration("0063_clients_erased_at.py").down_revision)
+        migrate(command.downgrade, cfg, migration("0063_clients_erased_at.py").down_revision)
         with migrate_engine.connect() as conn:
             assert conn.scalar(CLIENT_NAME_CHECKS) == ["ck_clients_name_length"]
             assert conn.scalar(ERASED_AT_COLUMN) == 0
@@ -2448,7 +2486,7 @@ def test_0063_round_trips_the_client_tombstone(
             assert conn.execute(CHILD_GUARD_FUNCTION).first() is None
             assert tuple(conn.execute(CLIENT_GRANTS).one()) == ("INSERT SELECT UPDATE", None)
     finally:
-        command.upgrade(cfg, "head")
+        migrate(command.upgrade, cfg, "head")
     with migrate_engine.connect() as conn:
         assert conn.scalar(CLIENT_NAME_CHECKS) == ["ck_clients_name_or_erased"]
         assert conn.scalar(ERASED_AT_COLUMN) == 1
@@ -2493,11 +2531,11 @@ def test_0064_round_trips_the_erase_functions(
 ) -> None:
     cfg = lock_timeout_config(monkeypatch)
     try:
-        command.downgrade(cfg, "0063")
+        migrate(command.downgrade, cfg, "0063")
         with migrate_engine.connect() as conn:
             assert tuple(conn.execute(ERASE_FUNCTIONS).one()) == (False, False, False, False)
     finally:
-        command.upgrade(cfg, "head")
+        migrate(command.upgrade, cfg, "head")
     with migrate_engine.connect() as conn:
         assert tuple(conn.execute(ERASE_FUNCTIONS).one()) == (True, True, True, True)
         assert tuple(conn.execute(ERASE_ACCESS).one()) == (
@@ -2520,17 +2558,17 @@ def test_0066_refuses_while_a_business_holds_another_currency(
 ) -> None:
     cfg = lock_timeout_config(monkeypatch)
     try:
-        command.downgrade(cfg, "0062")
+        migrate(command.downgrade, cfg, "0062")
         with migrate_engine.begin() as conn:
             conn.execute(text("INSERT INTO tenants (name, currency) VALUES ('Zurich', 'CHF')"))
         with pytest.raises(DBAPIError, match="hold a currency outside BRL, EUR, GBP and USD"):
-            command.upgrade(cfg, "0066")
+            migrate(command.upgrade, cfg, "0066")
         with migrate_engine.connect() as conn:
             assert conn.scalar(VERSION) == "0062"
     finally:
         with migrate_engine.begin() as conn:
             conn.execute(text("DELETE FROM tenants WHERE name = 'Zurich' AND currency = 'CHF'"))
-        command.upgrade(cfg, "head")
+        migrate(command.upgrade, cfg, "head")
 
 
 # ZIF-146 guard: 0057's reset_password template, with only the admin line, is 0037's body verbatim,
@@ -2567,14 +2605,14 @@ def test_0057_round_trips_account_sessions(
         assert tuple(conn.execute(ACCOUNT_OBJECTS).one()) == (True,) * 7
     assert END_ACCOUNT_SESSIONS in at_head
     try:
-        command.downgrade(cfg, migration("0057_account_sessions.py").down_revision)
+        migrate(command.downgrade, cfg, migration("0057_account_sessions.py").down_revision)
         with migrate_engine.connect() as conn:
             assert tuple(conn.execute(ACCOUNT_OBJECTS).one()) == (False,) * 7
             assert conn.scalar(RESET_DEF) == at_head.replace(END_ACCOUNT_SESSIONS, "")
             assert [tuple(r) for r in conn.execute(WRITE_GRANTS)] == WRITE_GRANTS_AT_0048
             assert tuple(conn.execute(RESET_GRANTS).one()) == (True, False)
     finally:
-        command.upgrade(cfg, "head")
+        migrate(command.upgrade, cfg, "head")
     with migrate_engine.connect() as conn:
         assert conn.scalar(RESET_DEF) == at_head
         assert tuple(conn.execute(ACCOUNT_OBJECTS).one()) == (True,) * 7
@@ -2639,11 +2677,11 @@ def test_0058_round_trips_booking_provenance(
     try:
         # The core as 0058 left it: a later migration (ZIF-58's 0078) edits it too, and undoes that
         # on its own way down.
-        command.downgrade(cfg, m.revision)
+        migrate(command.downgrade, cfg, m.revision)
         with migrate_engine.connect() as conn:
             core_at_0058 = conn.execute(ERASE_CORE_STATE).one()
         assert m.BLANK_BOOKINGS in core_at_0058[0]
-        command.downgrade(cfg, m.down_revision)
+        migrate(command.downgrade, cfg, m.down_revision)
         with migrate_engine.connect() as conn:
             assert tuple(conn.execute(PROVENANCE_OBJECTS).one()) == (False,) * 4
             core = conn.execute(ERASE_CORE_STATE).one()
@@ -2651,7 +2689,7 @@ def test_0058_round_trips_booking_provenance(
         assert core[0] == core_at_0058[0].replace(m.BLANK_BOOKINGS, m.BLANK_BOOKINGS_0064)
         assert tuple(core)[1:] == tuple(core_at_head)[1:]
     finally:
-        command.upgrade(cfg, "head")
+        migrate(command.upgrade, cfg, "head")
     with migrate_engine.connect() as conn:
         assert tuple(conn.execute(PROVENANCE_OBJECTS).one()) == (True,) * 4
         assert tuple(conn.execute(BOOKED_AS_PRIVILEGES).one()) == (True, False)
@@ -2718,13 +2756,13 @@ def test_0059_round_trips_account_sign_up(
             )
         )
     try:
-        command.downgrade(cfg, "0058")
+        migrate(command.downgrade, cfg, "0058")
         with migrate_engine.connect() as conn:
             assert tuple(conn.execute(SIGN_UP_OBJECTS).one()) == (False, False)
             assert "account_sign_up" not in conn.scalar(MINT_DEF)
             assert list(conn.scalars(MINT_HOLDERS)) == ["ziftbook_migrate", "ziftbook_worker"]
     finally:
-        command.upgrade(cfg, "head")
+        migrate(command.upgrade, cfg, "head")
     with migrate_engine.connect() as conn:
         assert conn.scalar(MINT_DEF) == at_head
         assert tuple(conn.execute(SIGN_UP_OBJECTS).one()) == (True, True)
@@ -2744,11 +2782,11 @@ def test_0077_round_trips_the_workers_money_owed(
 ) -> None:
     cfg = lock_timeout_config(monkeypatch)
     try:
-        command.downgrade(cfg, migration("0077_worker_reads_money_owed.py").down_revision)
+        migrate(command.downgrade, cfg, migration("0077_worker_reads_money_owed.py").down_revision)
         with migrate_engine.connect() as conn:
             assert tuple(conn.execute(WORKER_OWED).one()) == (False, False)
     finally:
-        command.upgrade(cfg, "head")
+        migrate(command.upgrade, cfg, "head")
     with migrate_engine.connect() as conn:
         assert tuple(conn.execute(WORKER_OWED).one()) == (True, False)
 
@@ -2798,7 +2836,7 @@ def test_0078_round_trips_the_hold_rule(
         core_at_head = conn.scalar(CORE_DEFINITION)
     assert migration("0058_booking_provenance.py").BLANK_BOOKINGS in core_at_head
     try:
-        command.downgrade(cfg, m.down_revision)
+        migrate(command.downgrade, cfg, m.down_revision)
         with migrate_engine.connect() as conn:
             assert tuple(conn.execute(HOLD_NEEDED).one()) == (False, False, True)
             assert tuple(conn.execute(CORE_POSTURE).one()) == posture
@@ -2806,7 +2844,7 @@ def test_0078_round_trips_the_hold_rule(
                 core_at_head, reversed_edits(m.CORE_EDITS)
             )
     finally:
-        command.upgrade(cfg, "head")
+        migrate(command.upgrade, cfg, "head")
     with migrate_engine.connect() as conn:
         assert tuple(conn.execute(HOLD_NEEDED).one()) == (True, True, False)
         assert tuple(conn.execute(HOLD_NEEDED_ACCESS).one()) == (True, False, False)
@@ -2852,11 +2890,11 @@ def test_0086_round_trips_contact_email_requests(
 ) -> None:
     cfg = lock_timeout_config(monkeypatch)
     try:
-        command.downgrade(cfg, migration("0086_contact_email_requests.py").down_revision)
+        migrate(command.downgrade, cfg, migration("0086_contact_email_requests.py").down_revision)
         with migrate_engine.connect() as conn:
             assert tuple(conn.execute(CONTACT_EMAIL_OBJECTS).one()) == (False, 0)
     finally:
-        command.upgrade(cfg, "head")
+        migrate(command.upgrade, cfg, "head")
     with migrate_engine.connect() as conn:
         assert tuple(conn.execute(CONTACT_EMAIL_OBJECTS).one()) == (True, 5)
 
@@ -2886,11 +2924,11 @@ def test_0087_round_trips_the_contact_email_guard(
 ) -> None:
     cfg = lock_timeout_config(monkeypatch)
     try:
-        command.downgrade(cfg, "0086")
+        migrate(command.downgrade, cfg, "0086")
         with migrate_engine.connect() as conn:
             assert tuple(conn.execute(CONTACT_EMAIL_GUARD).one()) == (None, False)
     finally:
-        command.upgrade(cfg, "head")
+        migrate(command.upgrade, cfg, "head")
     with migrate_engine.connect() as conn:
         assert tuple(conn.execute(CONTACT_EMAIL_GUARD).one()) == (CONTACT_EMAIL_GUARD_TRIGGER, True)
         assert tuple(conn.execute(CONTACT_EMAIL_GUARD_FUNCTION).one()) == (
@@ -2923,7 +2961,7 @@ def test_0088_moves_every_saved_contact_email_out_of_use(
         ]
     tenants = [people.a, people.b, *odd]
     try:
-        command.downgrade(cfg, "0087")
+        migrate(command.downgrade, cfg, "0087")
         for tenant_id, value in zip(
             tenants,
             ['"Shop@Example.COM"', None, '{"a": 1}', json.dumps("a" * 250 + "@x.nl")],
@@ -2935,7 +2973,7 @@ def test_0088_moves_every_saved_contact_email_out_of_use(
         with migrate_engine.begin() as conn:
             conn.execute(text("SET LOCAL app.audit_review = 'on'"))
             audited = conn.scalar(AUDIT_ROWS)
-        command.upgrade(cfg, "0088")
+        migrate(command.upgrade, cfg, "0088")
         moved = {}
         for tenant_id in tenants:
             with migrate_tenant_context(migrate_engine, tenant_id) as conn:
@@ -2952,11 +2990,11 @@ def test_0088_moves_every_saved_contact_email_out_of_use(
         with tenant_context(people.a) as session:
             assert business_settings.read(session).contact_email is None  # what the mailer reads
 
-        command.downgrade(cfg, "0087")
+        migrate(command.downgrade, cfg, "0087")
         with migrate_tenant_context(migrate_engine, people.a) as conn:
             assert conn.scalar(text("SELECT count(*) FROM settings")) == 0
     finally:
-        command.upgrade(cfg, "head")
+        migrate(command.upgrade, cfg, "head")
         for tenant_id in odd:
             with migrate_tenant_context(migrate_engine, tenant_id) as conn:
                 conn.execute(text("DELETE FROM settings"))
@@ -2970,11 +3008,11 @@ def test_0094_round_trips_contact_email_senders(
     exists = text("SELECT to_regclass('contact_email_senders') IS NOT NULL")
     cfg = lock_timeout_config(monkeypatch)
     try:
-        command.downgrade(cfg, migration("0094_contact_email_senders.py").down_revision)
+        migrate(command.downgrade, cfg, migration("0094_contact_email_senders.py").down_revision)
         with migrate_engine.connect() as conn:
             assert conn.scalar(exists) is False
     finally:
-        command.upgrade(cfg, "head")
+        migrate(command.upgrade, cfg, "head")
     with migrate_engine.connect() as conn:
         assert conn.scalar(exists) is True
 
@@ -3035,7 +3073,7 @@ def test_0072_round_trips_the_retention_indexes_and_replaces_an_invalid_leftover
         make_url(ADMIN_DATABASE_URL).set(database=migrate_engine.url.database), poolclass=NullPool
     )
     try:
-        command.downgrade(cfg, migration("0072_retention_indexes.py").down_revision)
+        migrate(command.downgrade, cfg, migration("0072_retention_indexes.py").down_revision)
         with migrate_engine.connect() as conn:
             assert conn.execute(RETENTION_INDEXES).all() == []
         # What a run that timed out mid-build leaves: an index of the same name, not valid.
@@ -3048,7 +3086,7 @@ def test_0072_round_trips_the_retention_indexes_and_replaces_an_invalid_leftover
                 )
             )
     finally:
-        command.upgrade(cfg, "head")
+        migrate(command.upgrade, cfg, "head")
         admin.dispose()
     with migrate_engine.connect() as conn:
         assert [tuple(row) for row in conn.execute(RETENTION_INDEXES)] == RETENTION_INDEX_DEFS
@@ -3066,11 +3104,11 @@ def test_0073_round_trips_the_audit_retention_policies(
 ) -> None:
     cfg = lock_timeout_config(monkeypatch)
     try:
-        command.downgrade(cfg, "0072")
+        migrate(command.downgrade, cfg, "0072")
         with migrate_engine.connect() as conn:
             assert conn.scalars(RETENTION_POLICY_NAMES).all() == []
     finally:
-        command.upgrade(cfg, "head")
+        migrate(command.upgrade, cfg, "head")
     with migrate_engine.connect() as conn:
         assert conn.scalars(RETENTION_POLICY_NAMES).all() == [
             "retention_sweep",
@@ -3097,11 +3135,11 @@ def test_0074_round_trips_the_retention_functions(
 ) -> None:
     cfg = lock_timeout_config(monkeypatch)
     try:
-        command.downgrade(cfg, "0073")
+        migrate(command.downgrade, cfg, "0073")
         with migrate_engine.connect() as conn:
             assert conn.execute(RETENTION_FUNCTIONS).all() == []
     finally:
-        command.upgrade(cfg, "head")
+        migrate(command.upgrade, cfg, "head")
     pinned = ["search_path=pg_catalog, public, pg_temp"]
     with migrate_engine.connect() as conn:
         assert [tuple(row) for row in conn.execute(RETENTION_FUNCTIONS)] == [

@@ -235,6 +235,9 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # ZIF-284: lock first. A vacuum of users started after the GRANT below would wait for
+    # this transaction while its ALTER waits for the vacuum: a deadlock.
+    op.execute("LOCK TABLE users IN ACCESS EXCLUSIVE MODE")
     op.execute(f"REVOKE SELECT ({APP_USER_COLUMNS}) ON users FROM ziftbook_app")
     op.execute("GRANT SELECT ON users TO ziftbook_app")
     op.execute("ALTER TABLE users DROP COLUMN phone")
