@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.37.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.36.0...v0.37.0) (2026-11-07)
+
+
+### Features
+
+* a person's own language, the business currency in Settings, and the booking currency check (ZIF-102) ([#365](https://github.com/fjcloudaiconsulting/ziftbook/issues/365)) ([8d1d71d](https://github.com/fjcloudaiconsulting/ziftbook/commit/8d1d71d5e23b3874562f913c2a81da10f720068b))
+* **web:** the console shows an erased client as "Erased client" (ZIF-58) ([#378](https://github.com/fjcloudaiconsulting/ziftbook/issues/378)) ([be804d3](https://github.com/fjcloudaiconsulting/ziftbook/commit/be804d35229e6a30e61d2d0ccbbc73a6f0bcc673))
+
 ## [0.36.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.35.0...v0.36.0) (2026-11-07)
 
 
