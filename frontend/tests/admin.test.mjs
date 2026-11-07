@@ -118,9 +118,15 @@ describe("a stopped setup", () => {
 });
 
 describe("a ticket entered after a stopped setup", () => {
-  // ZIF-262 (ZIF-275): a stopped enrolment answers its ticket with invalid_ticket. Back on the ticket form from the
-  // "Setup stopped" screen, the admin still reads why and what to do, not only "that ticket doesn't match".
+  // ZIF-262: back on the ticket form from the "Setup stopped" screen, the admin still reads why and what to do, not
+  // only "that ticket doesn't match".
   const enrol = readFileSync(new URL("../app/[locale]/admin/sign-in/enrol.tsx", import.meta.url), "utf8");
+  // ZIF-275 fence. Kills: a stopped enrolment's ticket (403 enrol_locked, also after a reload) shown as a wrong
+  // ticket, or as anything but the "Setup stopped" text; the ticket form never reaches onBegun, so no QR code.
+  test("a stopped enrolment's ticket shows why setup stopped, not a QR code", () => {
+    assert.equal(factorState(403, "enrol_locked"), "locked");
+    assert.match(enrol, /state === "locked"\) \{\s*(\/\/.*\s*)?setMessage\(\{ tone: "error", text: t\("enrolLocked"\) \}\);\s*\}/);
+  });
   test("the stopped screen takes its text to the ticket form, marked to stay", () => {
     assert.match(
       enrol,

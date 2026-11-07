@@ -6540,7 +6540,7 @@
           "admin"
         ],
         "summary": "Begin Enrolment",
-        "description": "Start TOTP enrolment with the ticket `python -m app.admin enrol` printed. Until it is\nconfirmed, starting again with the same ticket replaces the secret.",
+        "description": "Start TOTP enrolment with the ticket `python -m app.admin enrol` printed. Until it is\nconfirmed, starting again with the same ticket replaces the secret. Once 10 wrong confirm\ncodes stopped it, that ticket starts nothing (403 enrol_locked): only a new ticket does.",
         "operationId": "admin-begin_enrolment",
         "requestBody": {
           "content": {
@@ -6565,6 +6565,16 @@
           },
           "401": {
             "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
             "content": {
               "application/json": {
                 "schema": {

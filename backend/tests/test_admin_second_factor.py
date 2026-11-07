@@ -730,8 +730,10 @@ def test_a_locked_attempt_is_audited(
     assert failed_attempts(migrate_engine, an_admin) == 10
 
 
-# guard (ZIF-262): over HTTP, a stopped enrolment's ticket answers 401 invalid_ticket, audited as a
-# refused ticket, with no new secret and so no QR code; a new ticket from the CLI starts again.
+# ZIF-275 fence. Kills: begin on a stopped enrolment answering the generic invalid_ticket (the app
+# then shows "wrong ticket" for the right one), or a new secret and QR code that could never
+# confirm, or a begin that moves the lock's count or ticket expiry; a wrong ticket on a stopped
+# enrolment learning it is stopped. A new ticket from the CLI starts again (ZIF-262).
 def test_a_stopped_enrolment_refuses_its_ticket(
     app: FastAPI, migrate_engine: Engine, an_admin: uuid.UUID
 ) -> None:
@@ -739,13 +741,16 @@ def test_a_stopped_enrolment_refuses_its_ticket(
     client = sign_in(app, an_admin)
     assert client.post(BEGIN, json={"ticket": ticket}).status_code == 200
     set_count(migrate_engine, an_admin, 10)
-    stopped = factor(migrate_engine, an_admin)["secret_ct"]
+    stopped = factor(migrate_engine, an_admin)
 
     refused = client.post(BEGIN, json={"ticket": ticket})
 
-    assert answer(refused) == (401, {"code": "invalid_ticket"})
-    assert factor(migrate_engine, an_admin)["secret_ct"] == stopped
+    assert answer(refused) == (403, {"code": "enrol_locked"})
+    assert factor(migrate_engine, an_admin) == stopped
     assert audit(migrate_engine, an_admin)[-1] == ("totp_enrolment_failed", None)
+    wrong = client.post(BEGIN, json={"ticket": "AAAA-AAAA-AAAA-AAAA"})
+    assert answer(wrong) == (401, {"code": "invalid_ticket"})
+    assert factor(migrate_engine, an_admin) == stopped
     ticket = issue_ticket(an_admin)  # signs the admin out
     again = sign_in(app, an_admin).post(BEGIN, json={"ticket": ticket})
     assert again.status_code == 200

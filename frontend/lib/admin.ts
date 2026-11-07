@@ -24,7 +24,7 @@ export type FactorState = "wrong" | "locked" | "unavailable" | "tooMany" | "conf
  */
 export function factorState(status: number, code?: string): FactorState {
   if (code === "invalid_code" || code === "invalid_ticket") return "wrong";
-  if (code === "second_factor_locked") return "locked";
+  if (code === "second_factor_locked" || code === "enrol_locked") return "locked";
   if (code === "second_factor_unavailable") return "unavailable";
   if (status === 429) return "tooMany";
   if (status === 409) return "conflict";

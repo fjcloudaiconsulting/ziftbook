@@ -64,6 +64,9 @@ export function TicketStep({
       setMessage(initial?.sticky ? initial : null);
       setWrong(true);
       input.current?.focus();
+    } else if (state === "locked") {
+      // ZIF-275: this ticket's setup stopped; no QR code, the way out is a new ticket.
+      setMessage({ tone: "error", text: t("enrolLocked") });
     } else if (state === "expired") {
       onExpired(ticket.trim());
     } else if (state === "conflict") {

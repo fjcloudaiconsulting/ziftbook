@@ -2935,6 +2935,24 @@ def test_0094_round_trips_contact_email_senders(
         assert conn.scalar(exists) is True
 
 
+# ZIF-275 fence (0095). Kills: a downgrade that leaves the function behind; an upgrade whose
+# function runs as the caller, searches a caller's schema first, is PUBLIC's or not the app's.
+def test_0095_round_trips_totp_enrolment_locked(
+    migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    signature = migration("0095_totp_enrolment_locked.py").SIGNATURE
+    cfg = lock_timeout_config(monkeypatch)
+    try:
+        command.downgrade(cfg, "0094")
+        with migrate_engine.connect() as conn:
+            assert conn.execute(DEFINER_STATE, {"signature": signature}).first() is None
+    finally:
+        command.upgrade(cfg, "head")
+    with migrate_engine.connect() as conn:
+        row = conn.execute(DEFINER_STATE, {"signature": signature}).one()
+    assert tuple(row)[3:] == DEFINER_ACCESS
+
+
 # ZIF-235 (0072): the retention sweep's indexes, built CONCURRENTLY in the repository's first
 # autocommit_block.
 RETENTION_INDEXES = text("""

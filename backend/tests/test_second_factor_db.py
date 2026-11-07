@@ -46,6 +46,7 @@ CHECK_ENROLMENT = text(
     f"SELECT outcome, failures FROM check_totp_enrolment(:id, :charge, :p, {NOW_STEP}, :codes)"
 )
 RECOVER = text("SELECT codes_left, was_locked FROM use_recovery_code(:id, :p)")
+LOCKED = text("SELECT totp_enrolment_locked(:id, :ticket)")
 TICKET = re.compile(r"[A-Z2-7]{4}(?:-[A-Z2-7]{4}){3}")
 
 
@@ -1362,3 +1363,36 @@ def test_beginning_again_keeps_the_confirm_count(
     session = half_session(app_engine, migrate_engine, user_id)
     assert begin(app_engine, session, ticket_proof(ticket), user_id, s) == "begun"
     assert confirm(app_engine, session, totp.proof(s), TEN) == ("enrolled", 0)
+
+
+# ZIF-275 fence. Kills: totp_enrolment_locked true below 10 wrong confirm codes, for a wrong or
+# expired ticket, for another admin's session or for a confirmed factor (each would turn a begin
+# that should start into 403 enrol_locked, or tell a wrong ticket that the enrolment stopped).
+def test_enrolment_locked_only_with_its_own_live_ticket_at_10(
+    app_engine: Engine, migrate_engine: Engine
+) -> None:
+    user_id = new_admin(migrate_engine)
+    ticket = ticket_proof(issue_ticket(user_id))
+    session = half_session(app_engine, migrate_engine, user_id)
+    other = half_session(app_engine, migrate_engine, new_admin(migrate_engine))
+
+    def locked(id_hash: bytes, proof: bytes) -> bool:
+        return bool(call(app_engine, LOCKED, id=id_hash, ticket=proof)[0])
+
+    def set_(columns: str) -> None:
+        with migrate_engine.begin() as conn:
+            conn.execute(
+                text(f"UPDATE second_factors SET {columns} WHERE user_id = :u"), {"u": user_id}
+            )
+
+    assert begin(app_engine, session, ticket, user_id, totp.new_secret()) == "begun"
+    set_("failed_attempts = 9")
+    assert not locked(session, ticket)
+    set_("failed_attempts = 10")
+    assert locked(session, ticket)
+    assert not locked(session, wrong())
+    assert not locked(other, ticket)
+    set_("confirmed_at = now()")
+    assert not locked(session, ticket)
+    set_("confirmed_at = NULL, ticket_expires_at = now() - interval '1 second'")
+    assert not locked(session, ticket)
