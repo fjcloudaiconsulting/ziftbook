@@ -610,8 +610,9 @@ export function Calendar() {
       </div>
       {isOwner && members && (
         <nav className={`${css.chips} ${css.phoneOnly} ${css.hideWithDetail}`} aria-label={t("filter")}>
-          {[{ id: "all", name: t("everyone") }, ...team.map((m) => ({ id: m.member_id, name: nameOf(m) }))].map((option) => (
-            <Link key={option.id} href={href({ member: option.id })} scroll={false} aria-current={view.member === option.id ? "true" : undefined}>
+          {/* The grid's week shows one person, as the desktop select does; the list can show everyone. */}
+          {(phoneGrid ? options : [{ id: "all", name: t("everyone") }, ...team.map((m) => ({ id: m.member_id, name: nameOf(m) }))]).map((option) => (
+            <Link key={option.id} href={href({ member: option.id })} scroll={false} aria-current={(phoneGrid ? colMember : view.member) === option.id ? "true" : undefined}>
               {option.name}
             </Link>
           ))}
