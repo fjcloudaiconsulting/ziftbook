@@ -1465,7 +1465,7 @@ def test_the_stored_wording_is_the_one_the_confirming_person_saw(
     assert row.text_shown != clients.CONSENT_TEXTS[english]["marketing_email"]
 
 
-def with_sms_in_english(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
+def with_sms_in_english(monkeypatch: pytest.MonkeyPatch) -> dict[clients.Purpose, str]:
     """Today's English wording plus an sms purpose that nl and pt do not have."""
     english = clients.policy_version_for("en")
     texts = {**clients.CONSENT_TEXTS[english], "sms": "Text me offers from this business."}
