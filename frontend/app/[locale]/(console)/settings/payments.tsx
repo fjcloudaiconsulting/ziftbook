@@ -4,10 +4,9 @@ import { useLocale, useTranslations } from "next-intl";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 
 import { type PaymentAccountOut, paymentsAccount, paymentsConnect } from "@/api-client";
-import { useRouter } from "@/i18n/navigation";
 import { currencyName } from "@/lib/currency";
 import { formatMoney } from "@/lib/money";
-import { connectError, paymentsAction } from "@/lib/settings";
+import { connectError, paymentsAction, withoutStripe } from "@/lib/settings";
 
 import { SignedOutBanner, useConsole } from "../../_ui/console";
 import styles from "../../_ui/console.module.css";
@@ -21,7 +20,6 @@ export function Payments({ disabled, switchRow }: { disabled: boolean; switchRow
   const { session, call } = useConsole();
   const t = useTranslations("Console.settings");
   const locale = useLocale() as "en" | "nl" | "pt";
-  const router = useRouter();
   const [account, setAccount] = useState<PaymentAccountOut | null>(null);
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -31,10 +29,16 @@ export function Payments({ disabled, switchRow }: { disabled: boolean; switchRow
   const owner = session.role === "owner";
 
   // Stripe sends the owner back with ?stripe=return (read the state again) or ?stripe=refresh (the
-  // link expired: fetch a fresh one); either way the param goes once handled, and the page stays on this tab.
+  // link expired: fetch a fresh one); either way the param goes once handled. Read at mount, before the
+  // effect drops it, so a second run of the effect still knows.
+  const [back] = useState(() => new URLSearchParams(window.location.search).get("stripe"));
   useEffect(() => {
-    const back = new URLSearchParams(window.location.search).get("stripe");
-    if (back) router.replace({ pathname: "/settings", query: { tab: "payments" } });
+    if (back) {
+      // Only `stripe` goes: the tab stays the one the address opened (Settings owns ?tab).
+      const url = new URL(window.location.href);
+      url.search = withoutStripe(url.search);
+      window.history.replaceState(window.history.state, "", url);
+    }
     let cancelled = false;
     (async () => {
       const outcome = await call(() => paymentsAccount());
@@ -84,7 +88,6 @@ export function Payments({ disabled, switchRow }: { disabled: boolean; switchRow
     }
   }
 
-  if (!account && !failed) return null;
   const action = account && owner ? paymentsAction(account.state, account.country_supported, account.currency_supported) : null;
   const body = !account
     ? null
@@ -103,6 +106,12 @@ export function Payments({ disabled, switchRow }: { disabled: boolean; switchRow
       </legend>
       <p className={styles.sectionDesc}>{t("paymentsDesc")}</p>
       <div className={styles.sectionBody}>
+      {/* The section is a tab of its own (ZIF-161): say it is loading rather than show an empty tab. */}
+      {!account && !failed && (
+        <p className={uiStyles.hint} role="status">
+          {t("paymentsLoading")}
+        </p>
+      )}
       {signedOut && <SignedOutBanner />}
       {body && <p className={styles.body}>{body}</p>}
       {(action === "connect" || action === "continue") && (

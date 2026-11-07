@@ -14,7 +14,7 @@ import {
   servicesUpdate,
 } from "@/api-client";
 import { Link, useRouter } from "@/i18n/navigation";
-import { archivedDate } from "@/lib/console";
+import { archivedDate, tabKeyTarget } from "@/lib/console";
 import { currencySign, formatMoney, parseMoney, priceText, signFirst } from "@/lib/money";
 import { photoChange, savePhotoError } from "@/lib/photo-upload";
 import { type Placeholder, PLACEHOLDERS, placeholderFor } from "@/lib/placeholders";
@@ -338,13 +338,8 @@ function LangField({
   // tab sits in the page's Tab order, and Left/Right/Home/End move both the selection and focus
   // between the other two.
   function onTabKeyDown(event: KeyboardEvent, loc: Locale) {
-    const index = LOCALES.indexOf(loc);
-    let nextIndex: number;
-    if (event.key === "ArrowRight") nextIndex = (index + 1) % LOCALES.length;
-    else if (event.key === "ArrowLeft") nextIndex = (index - 1 + LOCALES.length) % LOCALES.length;
-    else if (event.key === "Home") nextIndex = 0;
-    else if (event.key === "End") nextIndex = LOCALES.length - 1;
-    else return;
+    const nextIndex = tabKeyTarget(event.key, LOCALES.indexOf(loc), LOCALES.length);
+    if (nextIndex === null) return;
     event.preventDefault();
     const next = LOCALES[nextIndex];
     setActive(next);

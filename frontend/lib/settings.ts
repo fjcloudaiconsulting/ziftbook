@@ -372,11 +372,11 @@ export function tabFromQuery(search: string): Tab {
   return params.has("stripe") ? "payments" : TABS[0];
 }
 
-/** The tab index a key moves to in a tablist of `count` (ARIA tabs pattern), or null for any other key. */
-export function tabKeyTarget(key: string, index: number, count: number): number | null {
-  if (key === "ArrowRight") return (index + 1) % count;
-  if (key === "ArrowLeft") return (index - 1 + count) % count;
-  if (key === "Home") return 0;
-  if (key === "End") return count - 1;
-  return null;
+/** The query once a return from Stripe is handled: `stripe` gone, and `tab` naming the tab the query
+ * opened, so dropping `stripe` never changes it (an explicit tab stays; a bare return keeps payments). */
+export function withoutStripe(search: string): string {
+  const params = new URLSearchParams(search);
+  params.set("tab", tabFromQuery(search));
+  params.delete("stripe");
+  return params.toString();
 }

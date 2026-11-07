@@ -753,6 +753,7 @@
         "team": "Team"
       },
       "tabUnsaved": "unsaved changes",
+      "paymentsLoading": "Checking your online payments…",
       "savedList": "Saved: {list}.",
       "changed": {
         "timezone": "time zone",

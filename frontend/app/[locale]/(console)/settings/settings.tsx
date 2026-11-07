@@ -1,11 +1,12 @@
 "use client";
 
+import { useSearchParams } from "next/navigation";
 import { useLocale, useTranslations } from "next-intl";
 import { type FormEvent, type KeyboardEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 
 import { type BusinessSettingsOutput, type ContactEmailOut, contactEmailRead, settingsUpdate } from "@/api-client";
-import { bookingPageAddress, dateLocale } from "@/lib/console";
+import { bookingPageAddress, dateLocale, tabKeyTarget } from "@/lib/console";
 import {
   breakMinutes,
   changedKeys,
@@ -30,7 +31,6 @@ import {
   slotExamples,
   type Tab,
   tabFromQuery,
-  tabKeyTarget,
   tabOf,
   TABS,
   zoneOptions,
@@ -166,8 +166,16 @@ export function Settings() {
     return () => clearTimeout(timer);
   }, [copyState]);
 
-  // The tabs (ZIF-161): `?tab=<id>` picks one and a pick writes it back, so a reload keeps it.
-  const [tab, setTab] = useState<Tab>(() => tabFromQuery(window.location.search));
+  // The tabs (ZIF-161): `?tab=<id>` picks one and a pick writes it back, so a reload keeps it. The address
+  // owns the tab, so a soft navigation (the Settings link from ?tab=team) or Back/Forward moves it too; the
+  // state copy lets a pick flush before a focus (focusField).
+  const query = useSearchParams().toString();
+  const [tab, setTab] = useState<Tab>(() => tabFromQuery(query));
+  const [tabQuery, setTabQuery] = useState(query);
+  if (query !== tabQuery) {
+    setTabQuery(query);
+    setTab(tabFromQuery(query));
+  }
   const tabRefs = useRef<Partial<Record<Tab, HTMLButtonElement | null>>>({});
   function pickTab(next: Tab) {
     setTab(next);
@@ -375,7 +383,8 @@ export function Settings() {
   const marked = dirtyTabs(changed);
   const publishId = `${formId}-publish`;
   // Every panel stays mounted and is only hidden: a tab switch keeps the edits in the others, and Save sends them all.
-  const panel = (id: Tab) => ({ id: `${formId}-panel-${id}`, role: "tabpanel", "aria-labelledby": `${formId}-tab-${id}`, hidden: tab !== id });
+  // tabIndex 0 (APG tabs pattern): a panel with nothing focusable in it yet is still a Tab stop.
+  const panel = (id: Tab) => ({ id: `${formId}-panel-${id}`, role: "tabpanel", "aria-labelledby": `${formId}-tab-${id}`, hidden: tab !== id, tabIndex: 0 });
 
   return (
     <>
@@ -389,9 +398,10 @@ export function Settings() {
         </div>
       )}
       {/* The publish switch's own form, outside the settings form (forms don't nest); its button sits in the
-          Booking page section and points here with form=. */}
+          Booking page section and points here with form=. Hidden: an empty item would still take the column's gap. */}
       <form
         id={publishId}
+        hidden
         noValidate
         onSubmit={(event) => {
           event.preventDefault();

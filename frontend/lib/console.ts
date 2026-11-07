@@ -185,3 +185,13 @@ export function writeOutcome<T>(result: GuardedWriteResult<T>): SendOutcome<T> {
 export function clientLabel(booking: { client_name: string; client_erased: boolean }, erased: string): string {
   return booking.client_erased ? erased : booking.client_name;
 }
+
+/** The tab index a key moves to in a tablist of `count` (ARIA APG tabs pattern: Left/Right wrap,
+ * Home/End jump), or null for any other key. */
+export function tabKeyTarget(key: string, index: number, count: number): number | null {
+  if (key === "ArrowRight") return (index + 1) % count;
+  if (key === "ArrowLeft") return (index - 1 + count) % count;
+  if (key === "Home") return 0;
+  if (key === "End") return count - 1;
+  return null;
+}

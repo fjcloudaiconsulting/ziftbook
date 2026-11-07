@@ -753,6 +753,7 @@
         "team": "Equipe"
       },
       "tabUnsaved": "alterações não salvas",
+      "paymentsLoading": "Verificando seus pagamentos online…",
       "savedList": "Alterações salvas: {list}.",
       "changed": {
         "timezone": "fuso horário",
