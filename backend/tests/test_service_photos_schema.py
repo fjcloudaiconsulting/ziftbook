@@ -16,7 +16,7 @@ from sqlalchemy import Engine, text
 from sqlalchemy.exc import IntegrityError
 
 from app.db import tenant_context
-from tests.conftest import API_DIR, People, migrate
+from tests.conftest import API_DIR, People
 from tests.test_bookings_db import seed_service
 from tests.test_migrations import migration
 
@@ -179,7 +179,7 @@ def test_0040_backfill_and_round_trip(
 ) -> None:
     cfg = migrate_config(monkeypatch)
     try:
-        migrate(command.downgrade, cfg, "0039")
+        command.downgrade(cfg, "0039")
         with migrate_engine.connect() as conn:
             assert list(conn.execute(PHOTO_COLUMNS)) == []
         ids = []
@@ -197,7 +197,7 @@ def test_0040_backfill_and_round_trip(
                     )
                 )
     finally:
-        migrate(command.upgrade, cfg, "head")
+        command.upgrade(cfg, "head")
     with migrate_engine.connect() as conn:
         assert [r.column_name for r in conn.execute(PHOTO_COLUMNS)] == [
             "photo_content_type",

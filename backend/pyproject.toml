@@ -56,8 +56,6 @@ filterwarnings = [
     "error",
     # Raised inside starlette.testclient itself, not our code; drop once Starlette updates.
     "ignore:The anyio.abc.BlockingPortal alias is deprecated:DeprecationWarning",
-    # ZIF-284: shown in the summary, never an error; a second deadlock still fails the test.
-    "default:migration retried after a deadlock:UserWarning",
 ]
 
 [tool.alembic]

@@ -30,7 +30,6 @@ from tests.conftest import (
     issue_link,
     live,
     member_id,
-    migrate,
     new_client,
     set_role,
     signed_in,
@@ -515,7 +514,7 @@ def test_downgrading_and_upgrading_0032_removes_and_restores_the_name_column(
     monkeypatch.setenv("ZIF_MIGRATE_DATABASE_URL", f"{url}{'&' if '?' in url else '?'}{options}")
     legacy = uuid.uuid7()
     try:
-        migrate(command.downgrade, cfg, "0031")
+        command.downgrade(cfg, "0031")
         with migrate_engine.begin() as conn:
             assert "name" not in set(conn.scalars(columns))
             conn.execute(
@@ -524,7 +523,7 @@ def test_downgrading_and_upgrading_0032_removes_and_restores_the_name_column(
             )
             assert conn.scalar(text("SELECT to_regprocedure('set_own_name(uuid,text)')")) is None
     finally:
-        migrate(command.upgrade, cfg, "head")
+        command.upgrade(cfg, "head")
     try:
         with migrate_engine.connect() as conn:
             assert "name" in set(conn.scalars(columns))

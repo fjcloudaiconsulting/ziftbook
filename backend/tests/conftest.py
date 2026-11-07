@@ -13,7 +13,6 @@ import time
 import urllib.parse
 import urllib.request
 import uuid
-import warnings
 from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -40,10 +39,8 @@ from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from PIL import Image
-from psycopg.errors import DeadlockDetected
 from sqlalchemy import Connection, Engine, create_engine, text
 from sqlalchemy.engine import URL, make_url
-from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import NullPool
 
@@ -264,8 +261,6 @@ if XDIST_WORKER:
         # alembic dies on alembic_version with InsufficientPrivilege (42501).
         _conn.execute(text(f"CREATE DATABASE {_database} OWNER ziftbook_migrate"))
     _admin.dispose()
-    # No migrate() retry here or in empty_database: a new database's tables hold too few rows for
-    # autovacuum to visit them (ZIF-284 needs one mid-run). `migrated` finds this one at head.
     command.upgrade(Config(toml_file=str(API_DIR / "pyproject.toml")), "head")
     install()
 
@@ -595,31 +590,6 @@ def superuser(migrate_engine: Engine) -> Iterator[Engine]:
     )
     yield engine
     engine.dispose()
-
-
-def migrate(step: Callable[[Config, str], None], config: Config, revision: str) -> None:
-    """command.upgrade or command.downgrade to an absolute revision, run once more after a deadlock
-    with a warning carrying its DETAIL (ZIF-284). For the round-trip tests only.
-
-    Autovacuum on this worker's database, which by then holds the suite's rows, can deadlock with a
-    migration that changes a table's grants and then locks it (0057's downgrade on CI): Postgres
-    fails the migration rather than cancel an autovacuum in a cycle. Each migration is its own
-    transaction, so the command resumes at the one that failed; a relative target ('-1') would
-    overshoot, so none is accepted. A second deadlock, or any other error, fails the test. The
-    retry runs env.py again: one more "migrations started" line and span. Tests of the migration
-    runner itself (its lock and timeout) call the command directly, so a deadlock there fails.
-    """
-    assert re.fullmatch(r"\w+", revision), f"{revision!r} is not an absolute revision"
-    try:
-        step(config, revision)
-        return
-    except DBAPIError as error:
-        if not isinstance(error.orig, DeadlockDetected):
-            raise
-        warnings.warn(
-            f"migration retried after a deadlock (to {revision}): {error.orig}", stacklevel=2
-        )
-    step(config, revision)
 
 
 @pytest.fixture
