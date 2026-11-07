@@ -2,6 +2,8 @@
 
 Appointment booking for small service businesses.
 
+[![ziftbook on StartupScores](https://startupscores.com/badge/ziftbook.svg?style=shield&v=combo&theme=dark)](https://startupscores.com/open-source/ziftbook)
+
 ## Getting started
 
 Prerequisites: `git`, `make`, [uv](https://docs.astral.sh/uv/), Node 24 with [pnpm](https://pnpm.io/), Docker.
