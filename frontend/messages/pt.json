@@ -241,6 +241,18 @@
     "memberTitle": "Você já faz parte da equipe de {business}",
     "memberLede": "Você já trabalha lá, então nada mudou. Entre para ver seus agendamentos."
   },
+  "ContactEmail": {
+    "title": "Confirme seu endereço de e-mail",
+    "intro": "Um negócio no ziftbook pediu para usar este endereço como e-mail de contato para clientes. Confirme só se o endereço for seu e você concordar.",
+    "confirm": "Confirmar",
+    "confirming": "Confirmando…",
+    "doneTitle": "Endereço confirmado",
+    "done": "Os clientes do negócio agora veem este endereço e podem responder para ele. Você pode fechar esta página.",
+    "invalidTitle": "Este link não funciona mais",
+    "invalid": "Este link expirou ou já foi usado. Peça ao negócio para enviar um novo.",
+    "missing": "Esta página precisa do link do e-mail. Abra o link de novo pelo e-mail.",
+    "tooMany": "Tentativas demais. Tente novamente em alguns minutos."
+  },
   "Console": {
     "nav": {
       "today": "Hoje",
