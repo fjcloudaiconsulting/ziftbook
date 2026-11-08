@@ -199,7 +199,41 @@
     "noCodesLeft": "Geen herstelcodes meer?",
     "resetIntro": "Wie de server van deze ziftbook beheert, kan je tweestapsverificatie opnieuw instellen met:",
     "homeTitle": "Platformbeheer",
-    "homeLede": "Tools om de bedrijven op deze ziftbook te beheren verschijnen hier zodra ze er zijn."
+    "homeLede": "Zoek de bedrijven op deze ziftbook op en bekijk er een.",
+    "businessesTitle": "Bedrijven",
+    "businessTitle": "Bedrijf",
+    "searchLabel": "Zoek op naam of slug",
+    "search": "Zoeken",
+    "businessCount": "{count, plural, =0 {Geen bedrijven gevonden} one {# bedrijf} other {# bedrijven}}",
+    "createdOn": "Aangemaakt op {date}",
+    "memberCount": "{count, plural, one {# lid} other {# leden}}",
+    "stripe": {
+      "none": "Geen Stripe",
+      "onboarding": "Stripe: wordt ingesteld",
+      "ready": "Stripe: klaar"
+    },
+    "pagesLabel": "Pagina's",
+    "previous": "Vorige",
+    "next": "Volgende",
+    "pageOf": "Pagina {page} van {pages}",
+    "businessNotFound": "Op dit adres staat geen bedrijf. Ga terug naar de lijst en kies er daar een.",
+    "slug": "Slug",
+    "country": "Land",
+    "currency": "Valuta",
+    "created": "Aangemaakt",
+    "stripeLabel": "Online betalingen",
+    "membersTitle": "Leden",
+    "unnamed": "Nog geen naam",
+    "role": {
+      "owner": "Eigenaar",
+      "worker": "Medewerker"
+    },
+    "settingsTitle": "Instellingen",
+    "yes": "Ja",
+    "no": "Nee",
+    "eventsTitle": "Recente activiteit",
+    "noEvents": "Nog niets vastgelegd.",
+    "notAMember": "geen lid meer"
   },
   "ForgotPassword": {
     "title": "Stel je wachtwoord opnieuw in",

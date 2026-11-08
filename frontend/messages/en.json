@@ -199,7 +199,41 @@
     "noCodesLeft": "No recovery codes left?",
     "resetIntro": "Whoever runs this ziftbook's server can reset two-factor sign-in for you with:",
     "homeTitle": "Platform admin",
-    "homeLede": "Tools for looking after the businesses on this ziftbook will appear here as they're added."
+    "homeLede": "Find the businesses on this ziftbook and look into one.",
+    "businessesTitle": "Businesses",
+    "businessTitle": "Business",
+    "searchLabel": "Search by name or slug",
+    "search": "Search",
+    "businessCount": "{count, plural, =0 {No businesses found} one {# business} other {# businesses}}",
+    "createdOn": "Created {date}",
+    "memberCount": "{count, plural, one {# member} other {# members}}",
+    "stripe": {
+      "none": "No Stripe",
+      "onboarding": "Stripe: setting up",
+      "ready": "Stripe: ready"
+    },
+    "pagesLabel": "Pages",
+    "previous": "Previous",
+    "next": "Next",
+    "pageOf": "Page {page} of {pages}",
+    "businessNotFound": "There's no business at this address. Go back to the list and pick one there.",
+    "slug": "Slug",
+    "country": "Country",
+    "currency": "Currency",
+    "created": "Created",
+    "stripeLabel": "Online payments",
+    "membersTitle": "Members",
+    "unnamed": "No name yet",
+    "role": {
+      "owner": "Owner",
+      "worker": "Staff"
+    },
+    "settingsTitle": "Settings",
+    "yes": "Yes",
+    "no": "No",
+    "eventsTitle": "Recent activity",
+    "noEvents": "Nothing recorded yet.",
+    "notAMember": "not a current member"
   },
   "ForgotPassword": {
     "title": "Reset your password",

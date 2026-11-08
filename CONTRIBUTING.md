@@ -696,6 +696,11 @@ A platform admin runs the platform across businesses (ZIF-70). `platform_admins`
   token, cookie, email or personal data.
 - The app role may only append, naming its columns: never `id` or `created_at`, never read, change or delete. A
   `write` event without a non-blank `reason` is refused by the database. Operators read it as `ziftbook_migrate`.
+- An admin read of one business's data goes through `admin_auth.business(...)` on `admin_router`: it records a
+  `business_read` (`target` names what was read) in the read's own transaction, before the read. The businesses list
+  (ZIF-73, `app/admin_businesses.py`) is not recorded per business: it reads `tenants` and, inside each listed business
+  (`join_tenant`), only its live member count and whether its Stripe account exists and can take charges. Neither
+  route reads clients, bookings, consents, or an audit event's `ip` or `user_agent`.
 - `erasure_reapplied` (ZIF-58, a `write` with the operator's `--reason`): one per `python -m app.ledger reapply` run,
   its details counts (`entries`, `reapplied`, `already_erased`, `absent`, `cancelled`, `paid_ended`) and the
   `skipped` entries' names (ledger keys, which hold ids only, or their hashes).

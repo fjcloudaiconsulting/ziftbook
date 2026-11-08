@@ -54,12 +54,13 @@ export function problem(outcome: Outcome<unknown>): "busy" | "unreachable" | "in
   return "unexpected";
 }
 
-export function Screen({ children }: { children: ReactNode }) {
+/** wide: a list or a record (the admin's businesses), not a form. */
+export function Screen({ wide, children }: { wide?: boolean; children: ReactNode }) {
   return (
     <>
       <Header />
       <main className={styles.screen}>
-        <div className={styles.col}>{children}</div>
+        <div className={wide ? `${styles.col} ${styles.colWide}` : styles.col}>{children}</div>
       </main>
     </>
   );

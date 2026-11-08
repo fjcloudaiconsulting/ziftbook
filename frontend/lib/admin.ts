@@ -47,3 +47,27 @@ export function shellQuote(value: string): string {
 export function enrolCommand(email: string): string {
   return `python -m app.admin enrol ${shellQuote(email)}`;
 }
+
+/** An admin data answer that means the session is gone (401) or short of its second factor (403): back through
+ * sign-in, which resumes at the right step. */
+export function needsSignIn(status: number): boolean {
+  return status === 401 || status === 403;
+}
+
+/** How many pages `total` rows take, at least one. */
+export function pageCount(total: number, pageSize: number): number {
+  return Math.max(1, Math.ceil(total / pageSize));
+}
+
+/** A business setting's value as the admin reads it: yes or no for a switch, a dash for nothing. */
+export function settingText(value: unknown, yes: string, no: string): string {
+  if (typeof value === "boolean") return value ? yes : no;
+  if (value === null || value === undefined || value === "") return "—";
+  return String(value);
+}
+
+/** "8 Nov 2026" in the reader's language (en reads day first, as the console's dates do); a dash for none. */
+export function shortDate(iso: string | null | undefined, locale: string): string {
+  if (!iso) return "—";
+  return new Intl.DateTimeFormat(locale === "en" ? "en-GB" : locale, { day: "numeric", month: "short", year: "numeric" }).format(new Date(iso));
+}
