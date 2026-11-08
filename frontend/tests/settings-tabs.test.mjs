@@ -79,7 +79,7 @@ describe("ZIF-161 keyboard", () => {
     assert.match(src, /role="tab"/);
     assert.match(src, /aria-selected=\{tab === id\}/);
     assert.match(src, /tabIndex=\{tab === id \? 0 : -1\}/);
-    assert.match(src, /pickTab\(TABS\[next\]\);\s*tabRefs\.current\[TABS\[next\]\]\?\.focus\(\);/);
+    assert.match(src, /tabRefs\.current\[TABS\[next\]\]\?\.focus\(\{ preventScroll: true \}\);\s*chooseTab\(TABS\[next\]\);/);
   });
 
   test("fence: every panel is a Tab stop, so one with nothing focusable yet is still reachable", () => {
@@ -167,5 +167,27 @@ describe("ZIF-161 spacing", () => {
     assert.match(src, /<form\s+id=\{publishId\}\s+hidden\b/);
     assert.match(css, /^\.section \+ \.settingsSection \{ margin-top: 1\.25rem; \}/m);
     assert.doesNotMatch(css, /\.sectionBody > form > button/);
+  });
+});
+
+describe("ZIF-289 the tab bar on a phone", () => {
+  test("fence: a chosen tab scrolls into view, by click or key, and a key's focus does not scroll first", () => {
+    // Kills: a tab picked by click or arrow key that stays cut off at the edge of the scrolled bar, or a focus
+    // scroll that jumps the bar before the (smooth) scrollIntoView runs.
+    assert.match(src, /function chooseTab\(next: Tab\) \{\s*pickTab\(next\);\s*tabRefs\.current\[next\]\?\.scrollIntoView\(\{ block: "nearest", inline: "nearest" \}\);/);
+    assert.match(src, /onClick=\{\(\) => chooseTab\(id\)\}/);
+    // The key path (focus without its own scroll, then chooseTab) is fenced in "ZIF-161 keyboard" above.
+    // A field the save refuses opens its tab without scrolling the page back up to the bar.
+    assert.match(src, /flushSync\(\(\) => pickTab\(tabOf\(key\)\)\)/);
+  });
+
+  test("fence: the bar fades at an edge with more tabs past it, and scrolls instantly under reduced motion", () => {
+    // Kills: a bar that cuts a label mid-word with nothing hinting at more tabs; a fade drawn when every tab
+    // fits (the scroll timeline is inactive then); a smooth scroll for someone who asked for less motion; a
+    // chosen tab that ends under the fade.
+    assert.match(css, /@supports \(animation-timeline: scroll\(\)\) \{\s*\.settingsTabs \{[^}]*mask-image: linear-gradient\(to right, transparent, #000 var\(--fade-start\), #000 calc\(100% - var\(--fade-end\)\), transparent\);[^}]*animation: tab-fade linear both;\s*animation-timeline: scroll\(self inline\);/);
+    assert.match(css, /@keyframes tab-fade \{\s*0% \{ --fade-start: 0px; --fade-end: var\(--gutter\); \}/);
+    assert.match(css, /@media \(prefers-reduced-motion: no-preference\) \{\s*\.settingsTabs \{ scroll-behavior: smooth; \}/);
+    assert.match(css, /\.settingsTabs \{[^}]*scroll-padding-inline: var\(--gutter\);/);
   });
 });

@@ -184,13 +184,19 @@ export function Settings() {
     url.searchParams.set("tab", next);
     window.history.replaceState(window.history.state, "", url);
   }
+  /** A pick by click or key also brings its tab into view in a bar that scrolls sideways (ZIF-289, phone);
+   *  smooth or instant comes from the bar's CSS scroll-behavior, so reduced motion is honoured there. */
+  function chooseTab(next: Tab) {
+    pickTab(next);
+    tabRefs.current[next]?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }
   // Roving tabindex + arrow keys, per the ARIA APG tabs pattern (as the services form's language tabs).
   function onTabKeyDown(event: KeyboardEvent, index: number) {
     const next = tabKeyTarget(event.key, index, TABS.length);
     if (next === null) return;
     event.preventDefault();
-    pickTab(TABS[next]);
-    tabRefs.current[TABS[next]]?.focus();
+    tabRefs.current[TABS[next]]?.focus({ preventScroll: true });
+    chooseTab(TABS[next]);
   }
   /** Focus a field, opening its tab first: a field in a hidden panel takes no focus. */
   function focusField(key: Key) {
@@ -424,7 +430,7 @@ export function Settings() {
               aria-controls={`${formId}-panel-${id}`}
               tabIndex={tab === id ? 0 : -1}
               className={styles.subTab}
-              onClick={() => pickTab(id)}
+              onClick={() => chooseTab(id)}
               onKeyDown={(event) => onTabKeyDown(event, index)}
             >
               {t(`tabs.${id}`)}
