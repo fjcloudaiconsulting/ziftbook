@@ -24,6 +24,11 @@ test("backend files the frontend tests read run the backend and the frontend", (
   }
 });
 
+// ZIF-153 fence. Kills: a change to the warning gate that skips the jobs using it.
+test("the warning gate runs the frontend and landing jobs", () => {
+  assert.deepEqual(affected(["scripts/fail-on-warnings.sh"]), { ...none, frontend: true, landing: true, repo: true });
+});
+
 test("docs folders and markdown inside an app directory are that app's input", () => {
   assert.deepEqual(affected(["backend/README.md"]), { ...none, backend: true, repo: true });
   assert.deepEqual(affected(["frontend/docs/x.ts"]), { ...none, frontend: true, repo: true });
