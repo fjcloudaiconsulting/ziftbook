@@ -232,8 +232,7 @@
     "yes": "Ja",
     "no": "Nee",
     "eventsTitle": "Recente activiteit",
-    "noEvents": "Nog niets vastgelegd.",
-    "notAMember": "geen lid meer"
+    "noEvents": "Nog niets vastgelegd."
   },
   "ForgotPassword": {
     "title": "Stel je wachtwoord opnieuw in",

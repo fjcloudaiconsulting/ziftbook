@@ -66,8 +66,7 @@ export function settingText(value: unknown, yes: string, no: string): string {
   return String(value);
 }
 
-/** "8 Nov 2026" in the reader's language (en reads day first, as the console's dates do); a dash for none. */
-export function shortDate(iso: string | null | undefined, locale: string): string {
-  if (!iso) return "—";
-  return new Intl.DateTimeFormat(locale === "en" ? "en-GB" : locale, { day: "numeric", month: "short", year: "numeric" }).format(new Date(iso));
+/** A date in `format` (one formatter per render, built on `dateLocale`); a dash when the API has none. */
+export function shortDate(iso: string | null | undefined, format: Intl.DateTimeFormat): string {
+  return iso ? format.format(new Date(iso)) : "—";
 }

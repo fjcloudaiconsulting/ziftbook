@@ -8,10 +8,11 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine, text
+from sqlalchemy.orm import Session
 
 from app import admin_businesses, auth
 from app.admin_businesses import like
-from app.db import tenant_context
+from app.db import join_tenant, tenant_context
 from app.main import create_app
 from tests.conftest import (
     PASSWORD,
@@ -128,13 +129,37 @@ def test_admins_find_businesses_by_name_or_slug(
     assert {p["total"] for p in pages} == {2}
 
 
-def test_a_business_without_stripe_and_a_blank_search(admin: TestClient, people: People) -> None:
+def test_a_business_without_stripe_and_a_blank_search(
+    admin: TestClient, people: People, tag: str
+) -> None:
+    rows = admin.get(LIST, params={"q": tag}).json()["businesses"]
+    assert [(row["id"], row["stripe"]) for row in rows] == [
+        (str(people.b), "none"),
+        (str(people.a), "none"),
+    ]
     every = admin.get(LIST).json()
     assert every["total"] >= 2
     assert len(every["businesses"]) <= admin_businesses.PAGE_SIZE
     assert admin.get(LIST, params={"q": "  "}).json()["total"] == every["total"]
     assert admin.get(LIST, params={"q": "x" * 101}).status_code == 422
     assert admin.get(LIST, params={"page": 0}).status_code == 422
+
+
+# ZIF-73 fence. Kills: the count and the page read in two snapshots (READ COMMITTED), so a business
+# created between them makes total disagree with the rows.
+def test_the_count_and_the_page_share_one_snapshot(
+    admin: TestClient, tag: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: list[str] = []
+
+    def spy(session: Session, tenant_id: uuid.UUID) -> None:
+        seen.append(session.scalar(text("SHOW transaction_isolation")))
+        join_tenant(session, tenant_id)
+
+    monkeypatch.setattr(admin_businesses, "join_tenant", spy)
+
+    assert admin.get(LIST, params={"q": tag}).status_code == 200
+    assert seen == ["repeatable read"] * 2
 
 
 # ZIF-73 fence. Kills: a search term's % or _ matching any character (an admin searching "50%"
@@ -166,8 +191,8 @@ def test_admins_inspect_a_business(
         {"user_id": str(people.both), "name": "Test Person", "role": "owner"},
     ]
     assert body["settings"]["timezone"] == "Europe/Amsterdam"
-    assert [(e["action"], e["actor_user_id"], e["target"]) for e in body["events"]] == [
-        ("setting_changed", str(people.both), "setting:x")
+    assert [(e["action"], e["actor_user_id"], e["target_kind"]) for e in body["events"]] == [
+        ("setting_changed", str(people.both), "setting")
     ]
     assert platform_events(migrate_engine, "business_read", actor_user_id=an_admin) == [
         {
@@ -192,13 +217,17 @@ def keys(value: object) -> set[str]:
     return set()
 
 
-# ZIF-73 fence. Kills: a client's name, email, phone or note in either answer; a member's email;
-# the audit log's addresses and browsers; and any field added to the answers without review (the
-# key lists are exact: widen them only after checking the new field holds no personal data).
+# ZIF-73 fence. Kills: a client's id, name, email, phone or note in either answer, including the id
+# an audit target carries (client:<id>, booking:<id>, as clients.py and bookings.py record them) and
+# a client account acting in the log; a member's email; the audit log's addresses and browsers; and
+# any field added to the answers without review (the key lists are exact: widen them only after
+# checking the new field holds no personal data).
 def test_no_personal_data_in_the_answers(
     admin: TestClient, people: People, tag: str, migrate_engine: Engine
 ) -> None:
     secret = uuid.uuid4().hex[:10]
+    client_account = add_user(migrate_engine)  # a client who books with an account: no member
+    booking_id = uuid.uuid4()
     client_id = seed_client(
         people.a,
         name=f"Client {secret}",
@@ -206,10 +235,22 @@ def test_no_personal_data_in_the_answers(
         phone="+31612345678",
         client_note=f"note {secret}",
         internal_note=f"internal {secret}",
+        user_id=client_account,
     )
     with tenant_context(people.a) as session:
         auth.record(
-            session, a_request(), "client_created", actor_user_id=people.both, target="client:x"
+            session,
+            a_request(),
+            "client_created",
+            actor_user_id=people.both,
+            target=f"client:{client_id}",
+        )
+        auth.record(
+            session,
+            a_request(),
+            "booking_created",
+            actor_user_id=client_account,
+            target=f"booking:{booking_id}",
         )
 
     listed = admin.get(LIST, params={"q": tag})
@@ -220,7 +261,13 @@ def test_no_personal_data_in_the_answers(
         for private in (secret, "612345678", email_of(people.both), email_of(people.only_a)):
             assert private not in answer
         assert "192.0.2.1" not in answer and "pytest" not in answer  # a_request's address, browser
-    assert str(client_id) not in detail.text
+    for private_id in (client_id, client_account, booking_id):
+        assert str(private_id) not in detail.text
+    events = [(e["action"], e["actor_user_id"], e["target_kind"]) for e in detail.json()["events"]]
+    assert events[:2] == [
+        ("booking_created", None, "booking"),
+        ("client_created", str(people.both), "client"),
+    ]
     assert keys(listed.json()) == {
         "businesses",
         "total",
@@ -233,7 +280,7 @@ def test_no_personal_data_in_the_answers(
         *("members", "settings", "events"),
     }
     assert keys(body["members"]) == {"user_id", "name", "role"}
-    assert keys(body["events"]) == {"id", "created_at", "action", "actor_user_id", "target"}
+    assert keys(body["events"]) == {"id", "created_at", "action", "actor_user_id", "target_kind"}
     assert set(body["settings"]) == set(admin_businesses.BusinessSettings.model_fields)
     assert json.dumps(body["settings"]).find(secret) == -1
 

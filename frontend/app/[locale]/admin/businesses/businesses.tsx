@@ -7,8 +7,9 @@ import { Link, useRouter } from "@/i18n/navigation";
 
 import { adminListBusinesses, type BusinessPage } from "@/api-client";
 import { needsSignIn, pageCount, shortDate } from "@/lib/admin";
+import { dateLocale } from "@/lib/console";
 
-import { Banner, Chevron, Heading, problem, Screen, send } from "../../_ui/parts";
+import { Banner, Chevron, Heading, type Outcome, problem, Screen, send } from "../../_ui/parts";
 import styles from "../../_ui/ui.module.css";
 import admin from "../admin.module.css";
 import { BackLink } from "../parts";
@@ -22,23 +23,23 @@ export function Businesses() {
   const searchId = useId();
   const [typed, setTyped] = useState("");
   const [query, setQuery] = useState({ q: "", page: 1 });
-  const [answer, setAnswer] = useState<BusinessPage | null>(null);
-  const [failure, setFailure] = useState<string | null>(null);
+  // The answer with the query it answers: rows and page number always belong together, and a failed
+  // fetch shows its error, not the previous page's rows.
+  const [shown, setShown] = useState<{ query: typeof query; outcome: Outcome<BusinessPage> } | null>(null);
 
   useEffect(() => {
     let current = true;
     send(adminListBusinesses({ query })).then((outcome) => {
-      if (!current) return; // a later search has taken over
-      if (needsSignIn(outcome.status)) router.replace("/admin/sign-in");
-      else if (outcome.data) {
-        setAnswer(outcome.data);
-        setFailure(null);
-      } else setFailure(form(problem(outcome)));
+      if (current) setShown({ query, outcome }); // else a later search has taken over
     });
     return () => {
       current = false;
     };
-  }, [query, router, form]);
+  }, [query]);
+
+  useEffect(() => {
+    if (shown && needsSignIn(shown.outcome.status)) router.replace("/admin/sign-in");
+  }, [shown, router]);
 
   function search(event: FormEvent) {
     event.preventDefault();
@@ -46,6 +47,10 @@ export function Businesses() {
   }
 
   const region = new Intl.DisplayNames([locale], { type: "region" });
+  const day = new Intl.DateTimeFormat(dateLocale(locale), { day: "numeric", month: "short", year: "numeric" });
+  const answer = shown?.outcome.data;
+  const page = shown?.query.page ?? 1;
+  const failure = shown && !answer && !needsSignIn(shown.outcome.status) ? form(problem(shown.outcome)) : null;
   const pages = answer ? pageCount(answer.total, answer.page_size) : 1;
 
   return (
@@ -82,7 +87,7 @@ export function Businesses() {
                       <span className={styles.rowMeta}>
                         {[
                           region.of(business.country) ?? business.country,
-                          t("createdOn", { date: shortDate(business.created_at, locale) }),
+                          t("createdOn", { date: shortDate(business.created_at, day) }),
                           t("memberCount", { count: business.members }),
                         ].join(" · ")}
                       </span>
@@ -99,17 +104,17 @@ export function Businesses() {
               <button
                 className={`${styles.button} ${styles.secondary} ${styles.small}`}
                 type="button"
-                disabled={query.page <= 1}
-                onClick={() => setQuery({ ...query, page: query.page - 1 })}
+                disabled={page <= 1}
+                onClick={() => setQuery({ q: shown?.query.q ?? "", page: page - 1 })}
               >
                 {t("previous")}
               </button>
-              <span>{t("pageOf", { page: query.page, pages })}</span>
+              <span>{t("pageOf", { page, pages })}</span>
               <button
                 className={`${styles.button} ${styles.secondary} ${styles.small}`}
                 type="button"
-                disabled={query.page >= pages}
-                onClick={() => setQuery({ ...query, page: query.page + 1 })}
+                disabled={page >= pages}
+                onClick={() => setQuery({ q: shown?.query.q ?? "", page: page + 1 })}
               >
                 {t("next")}
               </button>

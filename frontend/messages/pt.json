@@ -232,8 +232,7 @@
     "yes": "Sim",
     "no": "Não",
     "eventsTitle": "Atividade recente",
-    "noEvents": "Nada registrado ainda.",
-    "notAMember": "não faz mais parte da equipe"
+    "noEvents": "Nada registrado ainda."
   },
   "ForgotPassword": {
     "title": "Redefina sua senha",

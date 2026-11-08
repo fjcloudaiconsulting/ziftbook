@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 import { describe, test } from "node:test";
 
 import { needsSignIn, pageCount, settingText, shortDate } from "../lib/admin.ts";
+import { dateLocale } from "../lib/console.ts";
 
 const read = (path) => readFileSync(new URL(`../app/[locale]/admin/${path}`, import.meta.url), "utf8");
 const list = read("businesses/businesses.tsx");
@@ -17,7 +18,23 @@ describe("signed out or short of the second factor", () => {
     assert.equal(needsSignIn(401), true);
     assert.equal(needsSignIn(403), true);
     for (const status of [0, 200, 404, 422, 500, 503]) assert.equal(needsSignIn(status), false);
-    for (const screen of [list, detail]) assert.match(screen, /needsSignIn\(outcome\.status\)\) router\.replace\("\/admin\/sign-in"\)/);
+    for (const screen of [list, detail]) assert.match(screen, /needsSignIn\((shown\.)?outcome\.status\)\) router\.replace\("\/admin\/sign-in"\)/);
+  });
+});
+
+describe("answers in flight", () => {
+  // ZIF-73 fence. Kills: the detail fetched again when the router or a translator changes (each GET writes a
+  // business_read), and a stale answer (an earlier search or id) overwriting the newer one.
+  test("the detail fetches on its id alone; both screens drop a stale answer", () => {
+    assert.match(detail, /\}, \[id\]\);/);
+    for (const screen of [list, detail]) assert.match(screen, /if \(current\) set/);
+  });
+
+  // ZIF-73 fence. Kills: a failed page fetch leaving the previous page's rows under the new page number.
+  test("the list keeps rows and page number in one answer", () => {
+    assert.match(list, /setShown\(\{ query, outcome \}\)/);
+    assert.match(list, /const page = shown\?\.query\.page/);
+    assert.doesNotMatch(list, /[^.]query\.page/); // only shown?.query.page names the page shown
   });
 });
 
@@ -41,8 +58,9 @@ describe("settings and dates", () => {
   });
 
   test("a date the API doesn't have is a dash; en reads day first", () => {
-    assert.equal(shortDate(null, "en"), "—");
-    assert.match(shortDate("2026-11-08T12:00:00Z", "en"), /^8 Nov 2026$/);
+    const day = new Intl.DateTimeFormat(dateLocale("en"), { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+    assert.equal(shortDate(null, day), "—");
+    assert.equal(shortDate("2026-11-08T12:00:00Z", day), "8 Nov 2026");
   });
 });
 

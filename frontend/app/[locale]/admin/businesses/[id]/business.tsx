@@ -7,8 +7,9 @@ import { useRouter } from "@/i18n/navigation";
 
 import { adminReadBusiness, type BusinessDetail } from "@/api-client";
 import { needsSignIn, settingText, shortDate } from "@/lib/admin";
+import { dateLocale } from "@/lib/console";
 
-import { Banner, Heading, problem, Screen, send } from "../../../_ui/parts";
+import { Banner, Heading, type Outcome, problem, Screen, send } from "../../../_ui/parts";
 import styles from "../../../_ui/ui.module.css";
 import admin from "../../admin.module.css";
 import { BackLink } from "../../parts";
@@ -20,20 +21,36 @@ export function Business({ id }: { id: string }) {
   const form = useTranslations("Form");
   const locale = useLocale();
   const router = useRouter();
-  const [business, setBusiness] = useState<BusinessDetail | null>(null);
-  const [failure, setFailure] = useState<string | null>(null);
+  const [answered, setAnswered] = useState<{ id: string; outcome: Outcome<BusinessDetail> } | null>(null);
 
+  // On the id alone: every GET records a business_read, so nothing else (a new router or translator)
+  // may send another, and an answer for an id no longer shown is dropped.
   useEffect(() => {
+    let current = true;
     send(adminReadBusiness({ path: { tenant_id: id } })).then((outcome) => {
-      if (needsSignIn(outcome.status)) router.replace("/admin/sign-in");
-      else if (outcome.data) setBusiness(outcome.data);
-      // 422: not an id at all, which is no business either.
-      else setFailure(outcome.status === 404 || outcome.status === 422 ? t("businessNotFound") : form(problem(outcome)));
+      if (current) setAnswered({ id, outcome });
     });
-  }, [id, router, form, t]);
+    return () => {
+      current = false;
+    };
+  }, [id]);
 
+  const outcome = answered?.id === id ? answered.outcome : null; // another id's answer: still loading
+  useEffect(() => {
+    if (outcome && needsSignIn(outcome.status)) router.replace("/admin/sign-in");
+  }, [outcome, router]);
+
+  const business = outcome?.data;
+  const failure =
+    !outcome || business || needsSignIn(outcome.status)
+      ? null
+      : // 422: not an id at all, which is no business either.
+        outcome.status === 404 || outcome.status === 422
+        ? t("businessNotFound")
+        : form(problem(outcome));
   const names = new Map(business?.members.map((member) => [member.user_id, member.name ?? t("unnamed")]));
-  const when = (iso: string) => new Intl.DateTimeFormat(locale === "en" ? "en-GB" : locale, { dateStyle: "medium", timeStyle: "short" }).format(new Date(iso));
+  const day = new Intl.DateTimeFormat(dateLocale(locale), { day: "numeric", month: "short", year: "numeric" });
+  const moment = new Intl.DateTimeFormat(dateLocale(locale), { dateStyle: "medium", timeStyle: "short" });
 
   return (
     <Screen wide>
@@ -47,7 +64,7 @@ export function Business({ id }: { id: string }) {
               [t("slug"), <span key="slug" className={admin.mono}>{business.slug}</span>],
               [t("country"), new Intl.DisplayNames([locale], { type: "region" }).of(business.country) ?? business.country],
               [t("currency"), business.currency],
-              [t("created"), shortDate(business.created_at, locale)],
+              [t("created"), shortDate(business.created_at, day)],
               [t("stripeLabel"), t(`stripe.${business.stripe}`)],
             ].map(([label, value], i) => (
               <div key={i} className={admin.fact}>
@@ -101,7 +118,7 @@ export function Business({ id }: { id: string }) {
                     <span className={styles.rowMain}>
                       <span className={`${styles.rowTitle} ${admin.mono}`}>{event.action}</span>
                       <span className={styles.rowMeta}>
-                        {[when(event.created_at), event.actor_user_id && (names.get(event.actor_user_id) ?? t("notAMember")), event.target]
+                        {[moment.format(new Date(event.created_at)), event.actor_user_id && names.get(event.actor_user_id), event.target_kind]
                           .filter(Boolean)
                           .join(" · ")}
                       </span>

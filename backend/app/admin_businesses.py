@@ -51,8 +51,8 @@ class EventRow(BaseModel):
     id: UUID
     created_at: datetime
     action: str
-    actor_user_id: UUID | None
-    target: str | None
+    actor_user_id: UUID | None  # only a live member's (listed in members): never a client account's
+    target_kind: str | None  # "client", "booking", "setting"...: never the id after the colon
 
 
 class BusinessDetail(BaseModel):
@@ -109,6 +109,9 @@ def list_businesses(
     """
     pattern = like(q)
     with SessionLocal.begin() as session:
+        # One snapshot for the count, the page and its counts: a business created between them
+        # would otherwise skew total against the rows.
+        session.connection(execution_options={"isolation_level": "REPEATABLE READ"})
         total = session.scalar(
             text(f"SELECT count(*) FROM tenants {MATCHES}"), {"pattern": pattern}
         )
@@ -117,6 +120,9 @@ def list_businesses(
             {"pattern": pattern, "limit": PAGE_SIZE, "offset": (page - 1) * PAGE_SIZE},
         ).all()
         businesses = []
+        # shortcut: two statements per listed business (set_config, COUNTS), about 50 a page, fine
+        # for an admin-only list of PAGE_SIZE rows. Upgrade to one set-based read (a reviewed
+        # definer function) if the page grows or this shows in latency.
         for row in rows:
             join_tenant(session, row.id)
             counts = session.execute(COUNTS).one()
@@ -151,10 +157,16 @@ def read_business(tenant_id: UUID, current: CurrentAdmin, request: Request) -> B
             ORDER BY m.id
             """)
         ).all()
-        # Never ip or user_agent: a member's or a client's address and browser.
+        # Never ip, user_agent or details, nor a target's id (client:<id>, booking:<id>), nor an
+        # actor who is not a live member (a client's account): no client is identified here.
         events = session.execute(
             text("""
-            SELECT id, created_at, action, actor_user_id, target
+            SELECT id, created_at, action,
+                   CASE WHEN actor_user_id IN (
+                     SELECT user_id FROM memberships WHERE role <> 'removed'
+                   ) THEN actor_user_id END AS actor_user_id,
+                   CASE WHEN position(':' IN target) > 0
+                     THEN split_part(target, ':', 1) END AS target_kind
             FROM audit_events
             ORDER BY id DESC  -- uuidv7: newest first
             LIMIT :limit

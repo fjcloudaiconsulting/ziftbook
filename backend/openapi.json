@@ -9710,7 +9710,7 @@
             ],
             "title": "Actor User Id"
           },
-          "target": {
+          "target_kind": {
             "anyOf": [
               {
                 "type": "string"
@@ -9719,7 +9719,7 @@
                 "type": "null"
               }
             ],
-            "title": "Target"
+            "title": "Target Kind"
           }
         },
         "type": "object",
@@ -9728,7 +9728,7 @@
           "created_at",
           "action",
           "actor_user_id",
-          "target"
+          "target_kind"
         ],
         "title": "EventRow"
       },

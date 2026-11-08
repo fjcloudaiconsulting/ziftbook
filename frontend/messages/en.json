@@ -232,8 +232,7 @@
     "yes": "Yes",
     "no": "No",
     "eventsTitle": "Recent activity",
-    "noEvents": "Nothing recorded yet.",
-    "notAMember": "not a current member"
+    "noEvents": "Nothing recorded yet."
   },
   "ForgotPassword": {
     "title": "Reset your password",
