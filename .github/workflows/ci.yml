@@ -140,6 +140,14 @@ jobs:
           ${{ job.services.postgres.id }}
           psql -v ON_ERROR_STOP=1 -U ziftbook -d ziftbook -f -
           < migrations/bootstrap.sql
+      # ZIF-284: a vacuum of a table whose grants a migration just changed deadlocks the migration's
+      # next ALTER on it, and failed round-trip tests twice on release commits. This Postgres is
+      # thrown away after the job, so turning autovacuum off costs nothing here.
+      - name: Turn autovacuum off
+        run: >-
+          docker exec ${{ job.services.postgres.id }}
+          psql -v ON_ERROR_STOP=1 -U ziftbook -d ziftbook
+          -c "ALTER SYSTEM SET autovacuum = off" -c "SELECT pg_reload_conf()"
       - name: Lint backend
         run: uv run ruff check .
       - name: Check backend format

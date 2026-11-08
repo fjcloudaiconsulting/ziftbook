@@ -109,6 +109,9 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # ZIF-284: lock first. A vacuum of clients started after the GRANT below would wait for
+    # this transaction while its DROP TRIGGER waits for the vacuum: a deadlock.
+    op.execute("LOCK TABLE clients IN ACCESS EXCLUSIVE MODE")
     # Back to 0024's table-level INSERT and UPDATE. REVOKE first, as above.
     op.execute("REVOKE INSERT, UPDATE ON clients FROM ziftbook_app")
     op.execute("GRANT INSERT, UPDATE ON clients TO ziftbook_app")

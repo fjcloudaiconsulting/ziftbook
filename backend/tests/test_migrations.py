@@ -7,7 +7,7 @@ import re
 import uuid
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime, timedelta
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from typing import Any
 from urllib.parse import urlencode
 
@@ -1137,6 +1137,27 @@ def test_0039_round_trips_second_factors(
         assert conn.scalar(RESOLVE_DEF) == at_head
         assert tuple(conn.execute(SECOND_FACTOR_OBJECTS).one()) == (True,) * 8
         assert tuple(conn.execute(RESOLVE_GRANTS).one()) == (True, False)
+
+
+# ZIF-284 fence. Kills: a downgrade that changes a table's grants before it holds the table's lock.
+# A vacuum of that table started in between waits for the migration's transaction (to update the
+# table's pg_class row), the migration's ALTER waits for the vacuum: a deadlock (0057's on CI).
+@pytest.mark.parametrize(
+    ("name", "table"),
+    [
+        ("0013_business_country.py", "tenants"),
+        ("0057_account_sessions.py", "users"),
+        ("0063_clients_erased_at.py", "clients"),
+    ],
+)
+def test_a_downgrade_that_regrants_a_table_locks_it_first(
+    name: str, table: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = migration(name)
+    executed: list[str] = []
+    monkeypatch.setattr(module, "op", SimpleNamespace(execute=executed.append))
+    module.downgrade()
+    assert executed[0] == f"LOCK TABLE {table} IN ACCESS EXCLUSIVE MODE"
 
 
 # ZIF-71 PR1 guard: the downgrade's resolve_admin_session is 0037's text verbatim.

@@ -84,6 +84,9 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # ZIF-284: lock first. A vacuum of tenants started after the GRANT below would wait for
+    # this transaction while its ALTER waits for the vacuum: a deadlock.
+    op.execute("LOCK TABLE tenants IN ACCESS EXCLUSIVE MODE")
     op.execute(f"DROP FUNCTION {SIGNATURE}")
     op.execute("REVOKE UPDATE (name) ON tenants FROM ziftbook_app")
     op.execute("GRANT UPDATE, DELETE ON tenants TO ziftbook_app")
