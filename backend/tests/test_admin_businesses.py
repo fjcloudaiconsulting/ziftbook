@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app import admin_businesses, auth
 from app.admin_businesses import like
+from app.business_settings import BusinessSettings
 from app.db import join_tenant, tenant_context
 from app.main import create_app
 from tests.conftest import (
@@ -281,7 +282,7 @@ def test_no_personal_data_in_the_answers(
     }
     assert keys(body["members"]) == {"user_id", "name", "role"}
     assert keys(body["events"]) == {"id", "created_at", "action", "actor_user_id", "target_kind"}
-    assert set(body["settings"]) == set(admin_businesses.BusinessSettings.model_fields)
+    assert set(body["settings"]) == set(BusinessSettings.model_fields)
     assert json.dumps(body["settings"]).find(secret) == -1
 
 
