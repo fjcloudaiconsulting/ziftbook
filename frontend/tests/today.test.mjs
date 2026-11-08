@@ -7,9 +7,11 @@
 process.env.TZ = "America/Sao_Paulo";
 
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { describe, test } from "node:test";
 
 import { acceptBody, agendaPhase, answerAfter409, applyAnswers, badgeText, blockLabel, declineBody, leaveQueue, todayEmpty, expiryLabel, mergeAgenda, nowLineAt, relativeAgo, sortQueue } from "../lib/today.ts";
+import { intervalShown } from "../lib/calendar.ts";
 import { listWindow } from "../lib/time-off.ts";
 
 const AMS = "Europe/Amsterdam";
@@ -252,5 +254,25 @@ describe("answerAfter409", () => {
     const recorded = answerAfter409("already_answered");
     if (recorded) answers.set("m", recorded);
     assert.deepEqual(applyAnswers([{ id: "m" }], answers, "queue"), []);
+  });
+});
+
+// ZIF-288 fence. Kills: Today's list leaving out the gap the calendar's phone list shows, Today wording it
+// with its own copy instead of the calendar's "+15 min gap", and a no-show's 0 or an answer without the
+// field naming a gap.
+describe("the gap after a booking on Today's list (ZIF-288)", () => {
+  const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
+
+  test("a gap is named by its minutes; none, a no-show's 0, or a missing field names nothing", () => {
+    assert.equal(intervalShown(15), 15);
+    for (const minutes of [0, null, undefined]) assert.equal(intervalShown(minutes), null, String(minutes));
+  });
+
+  test("Today's agenda and the calendar's phone list name it the same way, with the calendar's copy", () => {
+    const named = /const gap = intervalShown\(booking\.buffer_minutes\);\s*const meta = \[[^\]]*gap \? (\w+)\("interval", \{ n: gap \}\) : null,?\s*\]/;
+    const today = read("../app/[locale]/(console)/today.tsx");
+    assert.match(today, /const calendarT = useTranslations\("Console\.calendar"\);/);
+    assert.equal(today.match(named)?.[1], "calendarT", "Today's agenda row names the gap");
+    assert.equal(read("../app/[locale]/(console)/calendar/calendar.tsx").match(named)?.[1], "t", "the calendar's phone list names it");
   });
 });

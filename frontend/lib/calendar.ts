@@ -147,6 +147,13 @@ export function intervalEnd(slice: Slice, minutes: number | null | undefined): n
   return Math.min(1440, slice.realEnd + (minutes ?? 0));
 }
 
+/** ZIF-288: the gap to name after a booking ("+15 min gap"), or null for none. One rule for the calendar
+ * (grid and phone list) and Today's list: 0 is a no-show or a service without a gap, and a missing field
+ * (an older API mid-deploy) shows nothing. */
+export function intervalShown(minutes: number | null | undefined): number | null {
+  return minutes && minutes > 0 ? minutes : null;
+}
+
 export type Tone = "confirmed" | "waiting" | "done" | "neutral";
 
 /** ZIF-174: a booking's colour on the calendar. Never the only signal: waiting is also dashed with ◷, done
