@@ -3,6 +3,7 @@
 import { useTranslations } from "next-intl";
 import { type RefObject, type Ref, useEffect, useId, useRef, useState } from "react";
 
+import { Link } from "@/i18n/navigation";
 import { enrolCommand } from "@/lib/admin";
 
 import { FieldError } from "../_ui/parts";
@@ -146,6 +147,18 @@ export function CodeField({
         )
       )}
     </div>
+  );
+}
+
+/** Up one admin screen, as the console's back links. */
+export function BackLink({ href, children }: { href: string; children: string }) {
+  return (
+    <Link className={styles.back} href={href}>
+      <svg aria-hidden="true" viewBox="0 0 12 12" width="12" height="12">
+        <path d="M7.5 2.5l-3 3.5 3 3.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+      {children}
+    </Link>
   );
 }
 

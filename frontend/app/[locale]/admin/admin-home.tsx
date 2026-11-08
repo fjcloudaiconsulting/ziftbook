@@ -3,7 +3,7 @@
 import { useTranslations } from "next-intl";
 import { useEffect, useState } from "react";
 
-import { useRouter } from "@/i18n/navigation";
+import { Link, useRouter } from "@/i18n/navigation";
 
 import { adminRead, adminSignOut, type AdminSession } from "@/api-client";
 import { stepFor } from "@/lib/admin";
@@ -12,7 +12,7 @@ import { Banner, Heading, JSON_WRITE, Mark, problem, Screen, send } from "../_ui
 import styles from "../_ui/ui.module.css";
 import admin from "./admin.module.css";
 
-/** Until ZIF-72's console: who is signed in, and the way out. */
+/** Who is signed in, the way to the businesses (ZIF-73), and the way out. */
 export function AdminHome() {
   const t = useTranslations("Admin");
   const form = useTranslations("Form");
@@ -49,6 +49,9 @@ export function AdminHome() {
               <span>{who.email}</span>
             </div>
           </div>
+          <Link className={`${styles.button} ${styles.primary}`} href="/admin/businesses">
+            {t("businessesTitle")}
+          </Link>
           {signOutFailure && <Banner tone="error">{signOutFailure}</Banner>}
           <button className={`${styles.button} ${styles.secondary}`} type="button" onClick={leave}>
             {t("signOut")}

@@ -68,6 +68,8 @@ PAGES = (
     "/[locale]",
     "/[locale]/account/contact-email",
     "/[locale]/admin",
+    "/[locale]/admin/businesses",
+    "/[locale]/admin/businesses/[id]",
     "/[locale]/admin/sign-in",
     "/[locale]/booking",
     "/[locale]/calendar",

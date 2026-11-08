@@ -109,6 +109,22 @@ a.onPhone.onPhone { color: var(--ink); }
 .section { display: flex; flex-direction: column; gap: 0.6rem; }
 .sectionTitle { margin: 0; font: 600 1rem/1.3 var(--font-body), system-ui, sans-serif; }
 
+/* Businesses (ZIF-73): the search field and its button side by side, wrapping on a narrow phone. */
+.searchRow { display: flex; flex-wrap: wrap; gap: 0.6rem; }
+.searchRow > :first-child { flex: 1 1 12rem; }
+.searchRow > button { flex: none; }
+
+.pager { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.6rem; font-size: 0.9375rem; color: var(--muted); }
+.pager button:disabled { opacity: 0.5; cursor: default; }
+
+/* Label and value pairs: side by side when there's room, stacked on a phone. */
+.facts { display: grid; gap: 0; margin: 0; border: 1px solid var(--line); border-radius: 1rem; overflow: hidden; }
+.fact { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.15rem 1rem; padding: 0.65rem 1rem; }
+.fact + .fact { border-top: 1px solid var(--line); }
+.fact dt { color: var(--muted); font-size: 0.9375rem; }
+.fact dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.fact .mono { font-size: 0.875rem; }
+
 .account { display: flex; align-items: center; gap: 0.9rem; padding: 0.9rem 1rem; border: 1px solid var(--line); border-radius: 1rem; }
 .account div { min-width: 0; display: flex; flex-direction: column; gap: 0.1rem; }
 .account strong { font-weight: 600; overflow-wrap: anywhere; }

@@ -68,6 +68,9 @@ def test_admin_routes_are_the_allowlist() -> None:
         ("POST", "/api/admin/session/second-factor"),
         ("POST", "/api/admin/totp/enrolment"),
         ("POST", "/api/admin/totp/enrolment/confirm"),
+        # ZIF-73, on admin_router
+        ("GET", "/api/admin/businesses"),
+        ("GET", "/api/admin/businesses/{tenant_id}"),
     }
     # The password alone reaches only these: a later route on admin_half_router fails here.
     assert {

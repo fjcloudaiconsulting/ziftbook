@@ -29,6 +29,7 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 from app import (
     accounts,
     admin_auth,
+    admin_businesses,  # noqa: F401  its routes are on admin_auth.admin_router
     audit,
     auth,
     availability,

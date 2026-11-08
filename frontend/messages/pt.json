@@ -199,7 +199,40 @@
     "noCodesLeft": "Acabaram os códigos de recuperação?",
     "resetIntro": "Quem administra o servidor deste ziftbook pode redefinir sua verificação em duas etapas com:",
     "homeTitle": "Administração da plataforma",
-    "homeLede": "As ferramentas para cuidar dos negócios deste ziftbook vão aparecer aqui conforme forem chegando."
+    "homeLede": "Encontre os negócios deste ziftbook e veja os detalhes de cada um.",
+    "businessesTitle": "Negócios",
+    "businessTitle": "Negócio",
+    "searchLabel": "Buscar por nome ou slug",
+    "search": "Buscar",
+    "businessCount": "{count, plural, =0 {Nenhum negócio encontrado} one {# negócio} other {# negócios}}",
+    "createdOn": "Criado em {date}",
+    "memberCount": "{count, plural, one {# pessoa} other {# pessoas}}",
+    "stripe": {
+      "none": "Sem Stripe",
+      "onboarding": "Stripe: em configuração",
+      "ready": "Stripe: pronto"
+    },
+    "pagesLabel": "Páginas",
+    "previous": "Anterior",
+    "next": "Próxima",
+    "pageOf": "Página {page} de {pages}",
+    "businessNotFound": "Não há nenhum negócio neste endereço. Volte para a lista e escolha um lá.",
+    "slug": "Slug",
+    "country": "País",
+    "currency": "Moeda",
+    "created": "Criado em",
+    "stripeLabel": "Pagamentos on-line",
+    "membersTitle": "Pessoas",
+    "unnamed": "Ainda sem nome",
+    "role": {
+      "owner": "Responsável",
+      "worker": "Equipe"
+    },
+    "settingsTitle": "Configurações",
+    "yes": "Sim",
+    "no": "Não",
+    "eventsTitle": "Atividade recente",
+    "noEvents": "Nada registrado ainda."
   },
   "ForgotPassword": {
     "title": "Redefina sua senha",

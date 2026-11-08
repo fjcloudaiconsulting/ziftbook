@@ -6758,6 +6758,157 @@
         }
       }
     },
+    "/api/admin/businesses": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "List Businesses",
+        "description": "Businesses whose name or slug contains q, newest first, PAGE_SIZE a page.\n\nNot recorded per business: it shows no business's people or settings, only counts. Each row's\ncounts are read inside that business (join_tenant), as data migrations walk businesses, so the\napp role needs no new grant and row-level security still decides what it sees.",
+        "operationId": "admin-list_businesses",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 100,
+              "default": "",
+              "title": "Q"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 10000,
+              "minimum": 1,
+              "default": 1,
+              "title": "Page"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          }
+        }
+      }
+    },
+    "/api/admin/businesses/{tenant_id}": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Read Business",
+        "description": "One business: its members and their roles, its settings and its latest audit events.\nRecorded as business_read before anything is read (admin_auth.business).",
+        "operationId": "admin-read_business",
+        "parameters": [
+          {
+            "name": "tenant_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Tenant Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessDetail"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          }
+        }
+      }
+    },
     "/api/setup": {
       "get": {
         "tags": [
@@ -8177,6 +8328,166 @@
         ],
         "title": "Business"
       },
+      "BusinessDetail": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "slug": {
+            "type": "string",
+            "title": "Slug"
+          },
+          "country": {
+            "type": "string",
+            "title": "Country"
+          },
+          "currency": {
+            "type": "string",
+            "title": "Currency"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "stripe": {
+            "type": "string",
+            "enum": [
+              "none",
+              "onboarding",
+              "ready"
+            ],
+            "title": "Stripe"
+          },
+          "members": {
+            "items": {
+              "$ref": "#/components/schemas/MemberRow"
+            },
+            "type": "array",
+            "title": "Members"
+          },
+          "settings": {
+            "$ref": "#/components/schemas/BusinessSettings-Output"
+          },
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/EventRow"
+            },
+            "type": "array",
+            "title": "Events"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "slug",
+          "country",
+          "currency",
+          "created_at",
+          "stripe",
+          "members",
+          "settings",
+          "events"
+        ],
+        "title": "BusinessDetail"
+      },
+      "BusinessPage": {
+        "properties": {
+          "businesses": {
+            "items": {
+              "$ref": "#/components/schemas/BusinessRow"
+            },
+            "type": "array",
+            "title": "Businesses"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "page_size": {
+            "type": "integer",
+            "title": "Page Size"
+          }
+        },
+        "type": "object",
+        "required": [
+          "businesses",
+          "total",
+          "page_size"
+        ],
+        "title": "BusinessPage"
+      },
+      "BusinessRow": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "slug": {
+            "type": "string",
+            "title": "Slug"
+          },
+          "country": {
+            "type": "string",
+            "title": "Country"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "members": {
+            "type": "integer",
+            "title": "Members"
+          },
+          "stripe": {
+            "type": "string",
+            "enum": [
+              "none",
+              "onboarding",
+              "ready"
+            ],
+            "title": "Stripe"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "slug",
+          "country",
+          "created_at",
+          "members",
+          "stripe"
+        ],
+        "title": "BusinessRow"
+      },
       "BusinessSettings-Input": {
         "properties": {
           "timezone": {
@@ -9371,6 +9682,56 @@
         ],
         "title": "EventOut"
       },
+      "EventRow": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "action": {
+            "type": "string",
+            "title": "Action"
+          },
+          "actor_user_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actor User Id"
+          },
+          "target_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Kind"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "created_at",
+          "action",
+          "actor_user_id",
+          "target_kind"
+        ],
+        "title": "EventRow"
+      },
       "Health": {
         "properties": {
           "status": {
@@ -9751,6 +10112,41 @@
           "display_name"
         ],
         "title": "MemberOut"
+      },
+      "MemberRow": {
+        "properties": {
+          "user_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "User Id"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "owner",
+              "worker"
+            ],
+            "title": "Role"
+          }
+        },
+        "type": "object",
+        "required": [
+          "user_id",
+          "name",
+          "role"
+        ],
+        "title": "MemberRow"
       },
       "MerchantBookingIn": {
         "properties": {
