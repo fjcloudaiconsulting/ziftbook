@@ -79,7 +79,7 @@ describe("ZIF-161 keyboard", () => {
     assert.match(src, /role="tab"/);
     assert.match(src, /aria-selected=\{tab === id\}/);
     assert.match(src, /tabIndex=\{tab === id \? 0 : -1\}/);
-    assert.match(src, /tabRefs\.current\[TABS\[next\]\]\?\.focus\(\{ preventScroll: true \}\);\s*chooseTab\(TABS\[next\]\);/);
+    assert.match(src, /pickTab\(TABS\[next\]\);\s*(\/\/[^\n]*\s*)?tabRefs\.current\[TABS\[next\]\]\?\.focus\(\{ preventScroll: true \}\);/);
   });
 
   test("fence: every panel is a Tab stop, so one with nothing focusable yet is still reachable", () => {
@@ -171,23 +171,37 @@ describe("ZIF-161 spacing", () => {
 });
 
 describe("ZIF-289 the tab bar on a phone", () => {
-  test("fence: a chosen tab scrolls into view, by click or key, and a key's focus does not scroll first", () => {
-    // Kills: a tab picked by click or arrow key that stays cut off at the edge of the scrolled bar, or a focus
-    // scroll that jumps the bar before the (smooth) scrollIntoView runs.
-    assert.match(src, /function chooseTab\(next: Tab\) \{\s*pickTab\(next\);\s*tabRefs\.current\[next\]\?\.scrollIntoView\(\{ block: "nearest", inline: "nearest" \}\);/);
-    assert.match(src, /onClick=\{\(\) => chooseTab\(id\)\}/);
-    // The key path (focus without its own scroll, then chooseTab) is fenced in "ZIF-161 keyboard" above.
-    // A field the save refuses opens its tab without scrolling the page back up to the bar.
-    assert.match(src, /flushSync\(\(\) => pickTab\(tabOf\(key\)\)\)/);
+  test("fence: the selected tab scrolls into view, however it was chosen, and only the bar scrolls", () => {
+    // Kills: a tab chosen by ?tab=, a reload, Back/Forward or a soft navigation that stays cut off under the
+    // fade (a scroll run only from the click/key handlers); a scrollIntoView that also scrolls the page
+    // vertically; a smooth scroll on first render; a scroll that ignores the fade's padding.
+    const effect = src.match(/useEffect\(\(\) => \{\s*const bar = tabBarRef\.current;[\s\S]*?\}, \[tab\]\);/);
+    assert.ok(effect, "a [tab] effect scrolls the bar");
+    assert.match(effect[0], /bar\.scrollTo\(\{ left: bar\.scrollLeft \+ delta, behavior \}\)/);
+    assert.match(effect[0], /firstTabScroll\.current \? "instant" : "auto"/);
+    assert.match(effect[0], /getComputedStyle\(bar\)\.scrollPaddingInlineStart/);
+    assert.match(src, /<div ref=\{tabBarRef\} className=\{`\$\{styles\.tabs\} \$\{styles\.settingsTabs\}`\} role="tablist"/);
+    assert.doesNotMatch(src, /scrollIntoView/);
   });
 
-  test("fence: the bar fades at an edge with more tabs past it, and scrolls instantly under reduced motion", () => {
-    // Kills: a bar that cuts a label mid-word with nothing hinting at more tabs; a fade drawn when every tab
-    // fits (the scroll timeline is inactive then); a smooth scroll for someone who asked for less motion; a
-    // chosen tab that ends under the fade.
-    assert.match(css, /@supports \(animation-timeline: scroll\(\)\) \{\s*\.settingsTabs \{[^}]*mask-image: linear-gradient\(to right, transparent, #000 var\(--fade-start\), #000 calc\(100% - var\(--fade-end\)\), transparent\);[^}]*animation: tab-fade linear both;\s*animation-timeline: scroll\(self inline\);/);
-    assert.match(css, /@keyframes tab-fade \{\s*0% \{ --fade-start: 0px; --fade-end: var\(--gutter\); \}/);
-    assert.match(css, /@media \(prefers-reduced-motion: no-preference\) \{\s*\.settingsTabs \{ scroll-behavior: smooth; \}/);
-    assert.match(css, /\.settingsTabs \{[^}]*scroll-padding-inline: var\(--gutter\);/);
+  test("fence: a field the save refuses opens its tab without scrolling the page up to the bar", () => {
+    // Kills: focusField scrolling anything itself, away from the field it is about to focus.
+    const body = src.match(/function focusField\(key: Key\) \{([\s\S]*?)\n {2}\}/)[1];
+    assert.match(body, /flushSync\(\(\) => pickTab\(tabOf\(key\)\)\)/);
+    assert.doesNotMatch(body, /scrollTo|scrollIntoView|scrollBy|chooseTab/);
+  });
+
+  test("fence: every tab bar fades at an edge with more tabs past it, never on its divider or underline", () => {
+    // Kills: a bar that cuts a label mid-word with nothing hinting at more tabs; a fade on the Settings bar only
+    // (the person page bar and longer nl/pt labels overflow too); a fade drawn when every tab fits (the scroll
+    // timeline is inactive then); a right fade still drawn at the end of the scroll, or none at its start; a
+    // faded divider or selected underline at the edges; a smooth scroll for someone who asked for less motion;
+    // a chosen tab that ends under the fade.
+    assert.match(css, /@supports \(animation-timeline: scroll\(\)\) \{\s*\.tabs \{\s*mask:\s*linear-gradient\(#000 0 0\) bottom \/ 100% 3px no-repeat,\s*linear-gradient\(to right, transparent, #000 var\(--fade-start\), #000 calc\(100% - var\(--fade-end\)\), transparent\);\s*animation: tab-fade linear both;\s*animation-timeline: scroll\(self inline\);/);
+    assert.match(css, /@keyframes tab-fade \{\s*0% \{ --fade-start: 0px; --fade-end: var\(--gutter\); \}\s*10%, 90% \{ --fade-start: var\(--gutter\); --fade-end: var\(--gutter\); \}\s*100% \{ --fade-start: var\(--gutter\); --fade-end: 0px; \}\s*\}/);
+    for (const name of ["start", "end"]) assert.match(css, new RegExp(`@property --fade-${name} \\{ syntax: "<length>"; inherits: false; initial-value: 0px; \\}`));
+    assert.match(css, /@media \(prefers-reduced-motion: no-preference\) \{\s*\.tabs \{ scroll-behavior: smooth; \}/);
+    assert.match(css, /^\.tabs \{[^}]*overflow-x: auto; scroll-padding-inline: var\(--gutter\); \}/m);
+    assert.match(css, /^\.settingsTabs \{ margin-bottom: 1\.25rem; \}/m);
   });
 });

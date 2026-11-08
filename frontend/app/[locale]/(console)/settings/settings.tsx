@@ -184,19 +184,33 @@ export function Settings() {
     url.searchParams.set("tab", next);
     window.history.replaceState(window.history.state, "", url);
   }
-  /** A pick by click or key also brings its tab into view in a bar that scrolls sideways (ZIF-289, phone);
-   *  smooth or instant comes from the bar's CSS scroll-behavior, so reduced motion is honoured there. */
-  function chooseTab(next: Tab) {
-    pickTab(next);
-    tabRefs.current[next]?.scrollIntoView({ block: "nearest", inline: "nearest" });
-  }
+  // The selected tab, however it was chosen (click, key, ?tab=, Back/Forward), scrolls into view in a bar that
+  // scrolls sideways (ZIF-289, phone), clear of the fade (the bar's scroll-padding). The bar alone scrolls, never
+  // the page. Instant on first render; after that the bar's CSS scroll-behavior decides, so reduced motion holds.
+  const tabBarRef = useRef<HTMLDivElement>(null);
+  const firstTabScroll = useRef(true);
+  useEffect(() => {
+    const bar = tabBarRef.current;
+    const el = tabRefs.current[tab];
+    const behavior = firstTabScroll.current ? "instant" : "auto";
+    firstTabScroll.current = false;
+    if (!bar || !el) return;
+    const pad = parseFloat(getComputedStyle(bar).scrollPaddingInlineStart) || 0;
+    const b = bar.getBoundingClientRect();
+    const r = el.getBoundingClientRect();
+    const before = r.left - b.left - pad;
+    const after = r.right - b.right + pad;
+    const delta = before < 0 ? before : after > 0 ? after : 0;
+    if (delta !== 0) bar.scrollTo({ left: bar.scrollLeft + delta, behavior });
+  }, [tab]);
   // Roving tabindex + arrow keys, per the ARIA APG tabs pattern (as the services form's language tabs).
   function onTabKeyDown(event: KeyboardEvent, index: number) {
     const next = tabKeyTarget(event.key, index, TABS.length);
     if (next === null) return;
     event.preventDefault();
+    pickTab(TABS[next]);
+    // No scroll of its own: the effect above scrolls the bar (smoothly, unless reduced motion).
     tabRefs.current[TABS[next]]?.focus({ preventScroll: true });
-    chooseTab(TABS[next]);
   }
   /** Focus a field, opening its tab first: a field in a hidden panel takes no focus. */
   function focusField(key: Key) {
@@ -416,7 +430,7 @@ export function Settings() {
       />
 
       <form id={formId} noValidate onSubmit={onSubmit}>
-        <div className={`${styles.tabs} ${styles.settingsTabs}`} role="tablist" aria-label={nav("settings")}>
+        <div ref={tabBarRef} className={`${styles.tabs} ${styles.settingsTabs}`} role="tablist" aria-label={nav("settings")}>
           {TABS.map((id, index) => (
             <button
               key={id}
@@ -430,7 +444,7 @@ export function Settings() {
               aria-controls={`${formId}-panel-${id}`}
               tabIndex={tab === id ? 0 : -1}
               className={styles.subTab}
-              onClick={() => chooseTab(id)}
+              onClick={() => pickTab(id)}
               onKeyDown={(event) => onTabKeyDown(event, index)}
             >
               {t(`tabs.${id}`)}

@@ -378,7 +378,30 @@
 .pillMuted { color: var(--muted); }
 
 /* Person tab bar (design-r2.html:452-457) */
-.tabs { display: flex; gap: 0.25rem; border-bottom: 1px solid var(--line); overflow-x: auto; }
+.tabs { display: flex; gap: 0.25rem; border-bottom: 1px solid var(--line); overflow-x: auto; scroll-padding-inline: var(--gutter); }
+@media (prefers-reduced-motion: no-preference) {
+  .tabs { scroll-behavior: smooth; }
+}
+/* A bar that scrolls sideways (ZIF-289, phone) fades at an edge while more tabs lie past it. The bar's own scroll
+ * drives the fade, and a bar that fits has an inactive timeline, so no fade (desktop unchanged). Without
+ * scroll-driven animations the bar just has no fade. The first mask layer keeps the bottom 3px (the tab's 2px
+ * underline and the bar's 1px divider) unfaded. scroll-padding-inline keeps a chosen tab out of the fade. */
+@property --fade-start { syntax: "<length>"; inherits: false; initial-value: 0px; }
+@property --fade-end { syntax: "<length>"; inherits: false; initial-value: 0px; }
+@supports (animation-timeline: scroll()) {
+  .tabs {
+    mask:
+      linear-gradient(#000 0 0) bottom / 100% 3px no-repeat,
+      linear-gradient(to right, transparent, #000 var(--fade-start), #000 calc(100% - var(--fade-end)), transparent);
+    animation: tab-fade linear both;
+    animation-timeline: scroll(self inline);
+  }
+}
+@keyframes tab-fade {
+  0% { --fade-start: 0px; --fade-end: var(--gutter); }
+  10%, 90% { --fade-start: var(--gutter); --fade-end: var(--gutter); }
+  100% { --fade-start: var(--gutter); --fade-end: 0px; }
+}
 .subTab {
   min-height: 3rem; padding: 0 0.9rem; border: 0; background: none; cursor: pointer; color: var(--muted);
   font: 600 0.9375rem/1 var(--font-body), system-ui, sans-serif; border-bottom: 2px solid transparent; white-space: nowrap;
@@ -428,27 +451,7 @@
 .settingsSection:last-of-type { border-bottom: 0; }
 .settingsSection > legend { padding: 0; margin: 0 0 0.9rem; }
 /* Settings tabs (ZIF-161): the person tab bar above; a dot marks a tab with unsaved changes. */
-.settingsTabs { margin-bottom: 1.25rem; scroll-padding-inline: var(--gutter); }
-@media (prefers-reduced-motion: no-preference) {
-  .settingsTabs { scroll-behavior: smooth; }
-}
-/* On a phone the bar scrolls sideways (ZIF-289): an edge fades while more tabs lie past it. The bar's own scroll
- * drives the fade, and a bar that fits has an inactive timeline, so no fade (desktop unchanged). Without
- * scroll-driven animations the bar just has no fade. scroll-padding-inline keeps a chosen tab out of the fade. */
-@property --fade-start { syntax: "<length>"; inherits: false; initial-value: 0px; }
-@property --fade-end { syntax: "<length>"; inherits: false; initial-value: 0px; }
-@supports (animation-timeline: scroll()) {
-  .settingsTabs {
-    mask-image: linear-gradient(to right, transparent, #000 var(--fade-start), #000 calc(100% - var(--fade-end)), transparent);
-    animation: tab-fade linear both;
-    animation-timeline: scroll(self inline);
-  }
-}
-@keyframes tab-fade {
-  0% { --fade-start: 0px; --fade-end: var(--gutter); }
-  10%, 90% { --fade-start: var(--gutter); --fade-end: var(--gutter); }
-  100% { --fade-start: var(--gutter); --fade-end: 0px; }
-}
+.settingsTabs { margin-bottom: 1.25rem; }
 .tabDot { width: 0.5rem; height: 0.5rem; margin-left: 0.4rem; border-radius: 50%; background: var(--primary); flex: none; }
 /* Settings at 64rem+ (ZIF-163): each section is a row, its name and one line left, its fields right.
  * Below that the description is hidden and the fields stack as before. */
