@@ -1,11 +1,15 @@
+import asyncio
 import logging
+import socket
 import threading
-from collections.abc import Callable
+import time
+from collections.abc import Callable, Iterator
 from typing import Any
 
+import psycopg
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine
 
 from app import main
 from app.db import SessionLocal
@@ -13,8 +17,10 @@ from app.main import create_app
 
 
 @pytest.fixture(autouse=True)
-def fresh_probe_cache() -> None:
+def fresh_probe_cache() -> Iterator[None]:
     main.reset_dependencies_probe()
+    yield
+    main.reset_dependencies_probe()  # a cached 503 must not reach the worker's next test
 
 
 def test_healthz_reports_ok_and_running_version(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -55,34 +61,64 @@ def test_dependencies_503_with_a_coarse_code_when_the_database_is_down(migrated:
     assert "127.0.0.1" not in response.text
 
 
-class _SpySession:
-    def __init__(self, real: Any, calls: list[str]) -> None:
-        self._real = real
-        self._calls = calls
+def _probe_a_silent_database() -> tuple[list[Any], float]:
+    # A listener that is never accept()ed: the kernel completes the TCP handshake, then nothing is
+    # ever read or written, as with a database host that stopped answering mid-connection.
+    silent = socket.create_server(("127.0.0.1", 0))
+    result: list[Any] = []
+    with TestClient(create_app()) as client:
+        port = silent.getsockname()[1]
+        SessionLocal.configure(bind=create_engine(f"postgresql+psycopg://x:x@127.0.0.1:{port}/x"))
+        started = time.monotonic()
+        # In a thread with a join timeout, so a hang fails the test instead of the run.
+        caller = threading.Thread(
+            target=lambda: result.append(client.get("/api/health/dependencies")), daemon=True
+        )
+        caller.start()
+        caller.join(8)
+        elapsed = time.monotonic() - started
+        silent.close()  # ends a hung probe (a regression), so the client can shut down
+        caller.join(5)
+    return result, elapsed
 
-    def __enter__(self) -> Any:
-        self._calls.append("session")
-        return self._real.__enter__()
 
-    def __exit__(self, *exc: Any) -> Any:
-        return self._real.__exit__(*exc)
+def test_dependencies_503_within_5s_when_the_database_never_answers(migrated: None) -> None:
+    # ZIF-160 fence. Kills: a probe with no bound of its own, which waits as long as the OS TCP
+    # timeout (minutes) for a database that stopped answering.
+    result, elapsed = _probe_a_silent_database()
+
+    assert result, "the probe hung"
+    assert elapsed < 5  # the contract the post-deploy smoke relies on
+    assert (result[0].status_code, result[0].json()) == (503, {"code": "database_unavailable"})
 
 
-class _SpyFactory:
-    def __init__(self, real: Any, calls: list[str]) -> None:
-        self._real = real
-        self._calls = calls
+def test_the_probe_deadline_bounds_every_phase(
+    migrated: None, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # ZIF-160 fence. Kills: a probe bounded only by the driver's timeouts (connect_timeout, or none
+    # at all once connected, as with a frozen server whose kernel still acknowledges), not by
+    # PROBE_DEADLINE. The connect timeout is set far past the deadline, so only the deadline can
+    # answer in time.
+    monkeypatch.setattr(main, "PROBE_DEADLINE", 0.5)
+    monkeypatch.setattr(main, "PROBE_CONNECT_TIMEOUT", 30)
+    with caplog.at_level(logging.ERROR, logger="app.main"):
+        result, elapsed = _probe_a_silent_database()
 
-    def __call__(self) -> Any:
-        return _SpySession(self._real(), self._calls)
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._real, name)
+    assert result, "the probe hung"
+    assert elapsed < 2
+    assert (result[0].status_code, result[0].json()) == (503, {"code": "database_unavailable"})
+    assert [r.message for r in caplog.records] == ["dependencies probe timed out"]
 
 
 def _spy_on_probes(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     calls: list[str] = []
-    monkeypatch.setattr("app.main.SessionLocal", _SpyFactory(SessionLocal, calls))
+    real = main._database_ok
+
+    async def spy() -> bool:
+        calls.append("probe")
+        return await real()
+
+    monkeypatch.setattr("app.main._database_ok", spy)
     return calls
 
 
@@ -133,18 +169,17 @@ def test_dependencies_probe_is_bounded_by_a_statement_timeout(
     migrated: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     seen: list[str] = []
+    execute = psycopg.AsyncConnection.execute
 
+    async def record(conn: Any, query: Any, *rest: Any, **kwargs: Any) -> Any:
+        seen.append(query)
+        return await execute(conn, query, *rest, **kwargs)
+
+    monkeypatch.setattr(psycopg.AsyncConnection, "execute", record)
     with TestClient(create_app()) as client:
-        engine = SessionLocal.kw["bind"]
-
-        @event.listens_for(engine, "before_cursor_execute")
-        def record(conn: Any, cursor: Any, statement: str, *rest: Any) -> None:
-            seen.append(statement)
-
         assert client.get("/api/health/dependencies").status_code == 200
-        event.remove(engine, "before_cursor_execute", record)
 
-    assert seen == ["SET LOCAL statement_timeout = '2s'", "SELECT 1"]
+    assert seen == ["SET statement_timeout = '2s'", "SELECT 1"]
 
 
 def test_concurrent_requests_share_one_probe_and_one_error_line(
@@ -155,19 +190,16 @@ def test_concurrent_requests_share_one_probe_and_one_error_line(
     release = threading.Event()
     calls: list[str] = []
 
-    class _Blocked:
-        def __enter__(self) -> Any:
-            calls.append("session")
-            entered.set()
-            release.wait(10)
-            raise RuntimeError("database down")
-
-        def __exit__(self, *exc: Any) -> None:
-            return None
+    async def blocked(conninfo: str) -> None:
+        calls.append("probe")
+        entered.set()
+        while not release.is_set():
+            await asyncio.sleep(0.01)
+        raise RuntimeError("database down")
 
     with TestClient(create_app()) as client:
         patch = pytest.MonkeyPatch()
-        patch.setattr("app.main.SessionLocal", lambda: _Blocked())
+        patch.setattr("app.main._select_1", blocked)
         statuses: list[int] = []
 
         def hit() -> None:
@@ -198,19 +230,16 @@ def test_a_hung_probe_serves_the_last_result_only_while_it_is_young(
     entered = threading.Event()
     release = threading.Event()
 
-    class _Hung:
-        def __enter__(self) -> Any:
-            entered.set()
-            release.wait(10)
-            raise RuntimeError("database down")
-
-        def __exit__(self, *exc: Any) -> None:
-            return None
+    async def hung(conninfo: str) -> None:
+        entered.set()
+        while not release.is_set():
+            await asyncio.sleep(0.01)
+        raise RuntimeError("database down")
 
     with TestClient(create_app()) as client:
         assert client.get("/api/health/dependencies").status_code == 200  # cached "ok" at 1000
         patch = pytest.MonkeyPatch()
-        patch.setattr("app.main.SessionLocal", lambda: _Hung())
+        patch.setattr("app.main._select_1", hung)
         now[0] += main.PROBE_TTL + 0.1
         prober = threading.Thread(target=client.get, args=("/api/health/dependencies",))
         with caplog.at_level(logging.ERROR, logger="app.main"):
@@ -222,11 +251,14 @@ def test_a_hung_probe_serves_the_last_result_only_while_it_is_young(
             logged_while_hung = [r for r in caplog.records if r.message == "dependencies unhealthy"]
             release.set()
             prober.join(10)
+            # ZIF-160. The failed probe is cached too: no stale 200 from the "ok" before it.
+            after = client.get("/api/health/dependencies")
         patch.undo()
 
     assert young.status_code == 200
     assert (old.status_code, old.json()) == (503, {"code": "database_unavailable"})
     assert logged_while_hung == []
+    assert after.status_code == 503
 
 
 @pytest.mark.parametrize(
