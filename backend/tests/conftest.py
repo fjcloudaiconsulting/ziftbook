@@ -1077,6 +1077,17 @@ def image(fmt: str, size: tuple[int, int], **kw: object) -> bytes:
     return buf.getvalue()
 
 
+def mpo(main: tuple[int, int] | Image.Image, **kw: object) -> bytes:
+    """An MPO as a phone saves an HDR photo (ZIF-246): the main image (red when only its size is
+    given), then a gain map (blue, a quarter of its size)."""
+    if isinstance(main, tuple):
+        main = Image.new("RGB", main, "red")
+    gain_map = Image.new("RGB", (main.width // 4, main.height // 4), "blue")
+    buf = io.BytesIO()
+    main.save(buf, "MPO", save_all=True, append_images=[gain_map], **kw)
+    return buf.getvalue()
+
+
 def upload(
     s3: S3Client, tenant: uuid.UUID, data: bytes, content_type: str = "application/octet-stream"
 ) -> uuid.UUID:
