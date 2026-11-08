@@ -104,7 +104,7 @@ export const en: Legal = {
   },
   privacy: {
     title: "Privacy notice",
-    updated: "Last updated: 4 November 2026",
+    updated: "Last updated: 8 November 2026",
     sections: [
       {
         heading: "Who we are",
@@ -131,7 +131,7 @@ export const en: Legal = {
             "the booking: the service, the time, who it is with, the price, and whether it is confirmed, changed or cancelled;",
             "the language you used;",
             "your IP address and browser type, saved with each booking, change and cancellation as a record of who did what;",
-            "if the business asks whether you want its offers or news: your answer, the exact wording you saw, the time, and your IP address and browser, as proof of your choice;",
+            "if the business asks whether you want its offers or news: your answer, the exact wording you saw, the time, and, when you answer online yourself, your IP address and browser, as proof of your choice;",
             "notes the business keeps about you, if it adds any.",
           ],
           "We use this to make and manage your booking, to send you emails about it (such as a link to confirm your booking, a confirmation or the business's answer, a reminder about 24 hours before, and messages when it changes or is cancelled), and so the business can contact you about your appointment. The legal basis is the agreement you make with the business, the business's legitimate interest in keeping a record of bookings, our legitimate interest in preventing abuse, and your consent for offers and news, which you can withdraw at any time.",
@@ -200,11 +200,11 @@ export const en: Legal = {
             "Counts of attempts (how often an IP address or email address tried something, to stop abuse): deleted after about a day.",
             "The record of who did what in a business's account, and our own record of what our staff do: failed sign-ins are deleted after 30 days, everything else after 1 year.",
             "The IP address and browser type saved with a booking, change or cancellation: removed 18 months after that event or the appointment, whichever is later. The rest of that record stays with the booking.",
-            "Your answer about a business's offers and news, with its proof: kept for as long as your choice stands, then as proof that you gave it, for as long as we may need to show that.",
+            "Your answer about a business's offers and news, with its proof: kept for as long as your choice stands, then as proof that you gave it, for as long as we may need to show that. The IP address and browser type in that proof are removed 1 year after you change your answer.",
             "Server logs: kept on our servers up to 7 days, at Grafana Labs up to 14 days. They are kept to what we need to run the service, mostly ids rather than names, and never the content of your messages.",
             "Backups: deleted automatically within two weeks.",
           ],
-          "If there is a security incident, we can pause deleting the records of who did what and the IP addresses and browser types saved with bookings, so we can investigate. Such a pause lasts at most 90 days at a time.",
+          "If there is a security incident, we can pause deleting the records of who did what and the IP addresses and browser types saved with bookings and with answers about offers and news, so we can investigate. Such a pause lasts at most 90 days at a time.",
           "Apart from that, we keep something longer only when the law requires it.",
         ],
       },

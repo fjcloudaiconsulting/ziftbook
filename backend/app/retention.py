@@ -10,15 +10,17 @@ Run hourly by the worker (app.worker), as ziftbook_worker, in batches of short t
 - admin sessions, account sessions (ZIF-146), audit events, platform audit events and
   booking-event addresses: through the migrate-owned functions of migration 0074, which fix the
   periods themselves (failed sign-ins 30 days, other audit events a year, booking-event addresses
-  18 months after both the event and the appointment) and which only ziftbook_worker may call.
+  18 months after both the event and the appointment) and which only ziftbook_worker may call;
+- consent addresses (ZIF-156): through migration 0096's sweep_consent_origins, a year after the
+  client's answer for that purpose changed after them; the answer that stands keeps its proof.
 
 MARGIN: a reader whose transaction began before the sweep's reads with an earlier now(); an hour
 is longer than any runtime transaction lives (30 s statement timeout, 60 s idle in transaction),
 so no reader can still see a swept row as live.
 
-During a hold (ZIF_RETENTION_HOLD_UNTIL, an incident's evidence) audit events and booking-event
-addresses are kept; sessions, rate limits, contact email senders and admin and account sessions,
-which are live state, are still swept.
+During a hold (ZIF_RETENTION_HOLD_UNTIL, an incident's evidence) audit events, booking-event
+addresses and consent addresses are kept; sessions, rate limits, contact email senders and admin
+and account sessions, which are live state, are still swept.
 
 A run stops between batches when the budget is spent, after MAX_BATCHES, or when the worker is
 stopping; whatever is left goes on the next run. Every statement is time-based, so a repeated,
@@ -67,8 +69,10 @@ COVERED = {
         " stays as evidence (sweep_booking_origins, 0074)"
     ),
     "consents": (
-        "exempt until ZIF-156 decides (owner ruling D4): the proof of a consent is needed while it"
-        " stands, so its address needs a rule tied to the consent's life, not to its age"
+        "ip and user_agent cleared a year after the client's answer for that purpose changed"
+        " (granted to withdrawn, or back); the rows of the answer that stands keep them (owner"
+        " ruling D4), the row always stays as evidence, and a merchant-entered row holds neither"
+        " (ZIF-156, sweep_consent_origins, 0096)"
     ),
 }
 
@@ -93,6 +97,7 @@ ADMIN_SESSIONS = text("SELECT deleted FROM sweep_admin_sessions()")
 ACCOUNT_SESSIONS = text("SELECT deleted FROM sweep_account_sessions()")
 AUDIT_EVENTS = text("SELECT * FROM sweep_audit_events()")
 BOOKING_ORIGINS = text("SELECT cleared, next_tenant FROM sweep_booking_origins(:start)")
+CONSENT_ORIGINS = text("SELECT cleared, next_tenant FROM sweep_consent_origins(:start)")
 
 
 @dataclass
@@ -109,6 +114,7 @@ class Swept:
     platform_failures: int = 0
     platform_events: int = 0
     booking_origins: int = 0
+    consent_origins: int = 0
     batches: int = 0
     complete: bool = False  # nothing left past its period (as far as this run could see)
     busy: bool = False  # another worker held the audit batch; it sweeps them
@@ -168,25 +174,37 @@ def _audit_events(swept: Swept) -> bool:
 
 
 class _Walk:
-    """The pass over the businesses for the booking-event addresses, resumed call by call and run
-    by run: a run that stops before the pass ends (budget, MAX_BATCHES) leaves its place here, and
-    the next run goes on from it, so no business is starved. Back to the first business only once
-    a call says the pass is complete. Per worker process: a restart starts a new pass (a full pass
-    fits in one run up to MAX_BATCHES x 200 = 10,000 businesses), and each replica keeps its own
-    place (SKIP LOCKED splits the rows)."""
+    """The pass over the businesses for the booking-event (or consent) addresses, resumed call by
+    call and run by run: a run that stops before the pass ends (budget, MAX_BATCHES) leaves its
+    place here, and the next run goes on from it, so no business is starved. Back to the first
+    business only once a call says the pass is complete. Per worker process: a restart starts a new
+    pass (a full pass fits in one run up to MAX_BATCHES x 200 = 10,000 businesses), and each replica
+    keeps its own place (SKIP LOCKED splits the rows)."""
 
-    def __init__(self) -> None:
+    def __init__(self, statement: Any) -> None:
+        self.statement = statement
         self.start: UUID | None = None
 
-    def __call__(self, swept: Swept) -> bool:
+    def step(self) -> int:
+        """One call: the rows it cleared. start is None again once the pass is complete."""
         with SessionLocal.begin() as session:
-            row = session.execute(BOOKING_ORIGINS, {"start": self.start}).one()
-        swept.booking_origins += row.cleared
+            row = session.execute(self.statement, {"start": self.start}).one()
         self.start = row.next_tenant
-        return self.start is None
+        return int(row.cleared)
 
 
-WALK = _Walk()
+WALK = _Walk(BOOKING_ORIGINS)
+CONSENT_WALK = _Walk(CONSENT_ORIGINS)
+
+
+def _booking_origins(swept: Swept) -> bool:
+    swept.booking_origins += WALK.step()
+    return WALK.start is None
+
+
+def _consent_origins(swept: Swept) -> bool:
+    swept.consent_origins += CONSENT_WALK.step()
+    return CONSENT_WALK.start is None
 
 
 @dataclass(frozen=True)
@@ -242,7 +260,7 @@ def sweep(should_stop: Callable[[], bool] = lambda: False, hold: Hold | None = N
         _account_sessions,
     ]
     if not held:
-        steps += [_audit_events, WALK]
+        steps += [_audit_events, _booking_origins, _consent_origins]
     started = time.monotonic()
     with tracing.span("retention.sweep", SpanKind.INTERNAL, {}) as span:
         while steps:

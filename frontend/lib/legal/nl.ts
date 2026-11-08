@@ -104,7 +104,7 @@ export const nl: Legal = {
   },
   privacy: {
     title: "Privacyverklaring",
-    updated: "Laatst bijgewerkt: 4 november 2026",
+    updated: "Laatst bijgewerkt: 8 november 2026",
     sections: [
       {
         heading: "Wie we zijn",
@@ -131,7 +131,7 @@ export const nl: Legal = {
             "de boeking: de dienst, de tijd, bij wie, de prijs, en of die bevestigd, gewijzigd of geannuleerd is;",
             "de taal die je gebruikte;",
             "je IP-adres en browsertype, opgeslagen bij elke boeking, wijziging en annulering, als vastlegging van wie wat deed;",
-            "als het bedrijf vraagt of je zijn aanbiedingen of nieuws wilt ontvangen: je antwoord, de precieze tekst die je zag, het tijdstip, en je IP-adres en browser, als bewijs van je keuze;",
+            "als het bedrijf vraagt of je zijn aanbiedingen of nieuws wilt ontvangen: je antwoord, de precieze tekst die je zag, het tijdstip, en, als je zelf online antwoordt, je IP-adres en browser, als bewijs van je keuze;",
             "notities die het bedrijf over je bijhoudt, als het die toevoegt.",
           ],
           "We gebruiken dit om je boeking te maken en te beheren, om je e-mails erover te sturen (zoals een link om je boeking te bevestigen, een bevestiging of het antwoord van het bedrijf, een herinnering ongeveer 24 uur van tevoren, en berichten als de boeking wijzigt of geannuleerd wordt), en zodat het bedrijf contact met je kan opnemen over je afspraak. De rechtsgrond is de overeenkomst die je met het bedrijf sluit, het gerechtvaardigd belang van het bedrijf om boekingen vast te leggen, ons gerechtvaardigd belang om misbruik te voorkomen, en je toestemming voor aanbiedingen en nieuws, die je altijd kunt intrekken.",
@@ -200,11 +200,11 @@ export const nl: Legal = {
             "Tellingen van pogingen (hoe vaak een IP-adres of e-mailadres iets probeerde, om misbruik te stoppen): na ongeveer een dag verwijderd.",
             "Het overzicht van wie wat deed in het account van een bedrijf, en ons eigen overzicht van wat onze medewerkers doen: mislukte inlogpogingen verwijderen we na 30 dagen, al het andere na 1 jaar.",
             "Het IP-adres en browsertype bij een boeking, wijziging of annulering: we wissen ze zodra die handeling en de afspraak allebei 18 maanden geleden zijn. De rest van die vastlegging blijft bij de boeking.",
-            "Je antwoord over aanbiedingen en nieuws van een bedrijf, met het bewijs ervan: bewaard zolang je keuze geldt, daarna als bewijs dat je toestemming gaf, zolang we dat moeten kunnen aantonen.",
+            "Je antwoord over aanbiedingen en nieuws van een bedrijf, met het bewijs ervan: bewaard zolang je keuze geldt, daarna als bewijs dat je toestemming gaf, zolang we dat moeten kunnen aantonen. Het IP-adres en browsertype in dat bewijs verwijderen we 1 jaar nadat je je antwoord wijzigt.",
             "Serverlogs: op onze servers tot 7 dagen, bij Grafana Labs tot 14 dagen. Ze bevatten alleen wat we nodig hebben om de dienst te laten werken, vooral id's in plaats van namen, en nooit de inhoud van je berichten.",
             "Back-ups: automatisch verwijderd binnen twee weken.",
           ],
-          "Bij een beveiligingsincident kunnen we het verwijderen van de overzichten van wie wat deed, en van de IP-adressen en browsertypes bij boekingen, tijdelijk stopzetten, zodat we het incident kunnen onderzoeken. Zo'n pauze duurt telkens hooguit 90 dagen.",
+          "Bij een beveiligingsincident kunnen we het verwijderen van de overzichten van wie wat deed, en van de IP-adressen en browsertypes bij boekingen en bij antwoorden over aanbiedingen en nieuws, tijdelijk stopzetten, zodat we het incident kunnen onderzoeken. Zo'n pauze duurt telkens hooguit 90 dagen.",
           "Verder bewaren we iets alleen langer als de wet dat vereist.",
         ],
       },

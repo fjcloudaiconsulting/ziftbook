@@ -104,7 +104,7 @@ export const pt: Legal = {
   },
   privacy: {
     title: "Aviso de privacidade",
-    updated: "Última atualização: 4 de novembro de 2026",
+    updated: "Última atualização: 8 de novembro de 2026",
     sections: [
       {
         heading: "Quem somos",
@@ -131,7 +131,7 @@ export const pt: Legal = {
             "a reserva: o serviço, o horário, com quem, o preço, e se ela foi confirmada, alterada ou cancelada;",
             "o idioma que você usou;",
             "o seu endereço IP e o tipo de navegador, registrados a cada reserva, alteração e cancelamento, como registro de quem fez o quê;",
-            "se o estabelecimento perguntar se você quer receber ofertas ou novidades: a sua resposta, o texto exato que você viu, a data e a hora, e o seu endereço IP e navegador, como prova da sua escolha;",
+            "se o estabelecimento perguntar se você quer receber ofertas ou novidades: a sua resposta, o texto exato que você viu, a data e a hora, e, quando é você que responde on-line, o seu endereço IP e navegador, como prova da sua escolha;",
             "anotações que o estabelecimento faz sobre você, se fizer alguma.",
           ],
           "Usamos esses dados para criar e gerenciar a sua reserva, para enviar e-mails sobre ela (como um link para confirmar a sua reserva, uma confirmação ou a resposta do estabelecimento, um lembrete cerca de 24 horas antes, e mensagens quando ela for alterada ou cancelada), e para que o estabelecimento possa falar com você sobre o seu horário. A base legal é o acordo que você faz com o estabelecimento, o legítimo interesse do estabelecimento em registrar as reservas, o nosso legítimo interesse em evitar abusos, e o seu consentimento para ofertas e novidades, que você pode retirar a qualquer momento.",
@@ -200,11 +200,11 @@ export const pt: Legal = {
             "Contagens de tentativas (quantas vezes um endereço IP ou e-mail tentou fazer algo, para evitar abusos): apagadas depois de cerca de um dia.",
             "O registro de quem fez o quê na conta de um negócio, e o nosso próprio registro do que a nossa equipe faz: as tentativas de acesso que falharam são apagadas depois de 30 dias, e todo o resto depois de 1 ano.",
             "O seu endereço IP e o tipo de navegador registrados em uma reserva, alteração ou cancelamento: apagados 18 meses depois desse evento ou do horário agendado, o que vier por último. O restante do registro continua com a reserva.",
-            "A sua resposta sobre ofertas e novidades de um estabelecimento, com a prova dela: guardada enquanto a sua escolha valer, e depois como prova de que você o deu, pelo tempo em que precisarmos demonstrar isso.",
+            "A sua resposta sobre ofertas e novidades de um estabelecimento, com a prova dela: guardada enquanto a sua escolha valer, e depois como prova de que você o deu, pelo tempo em que precisarmos demonstrar isso. O endereço IP e o tipo de navegador dessa prova são removidos 1 ano depois que você mudar a sua resposta.",
             "Logs do servidor: até 7 dias nos nossos servidores e até 14 dias na Grafana Labs. Eles guardam só o necessário para operar o serviço, principalmente identificadores no lugar de nomes, e nunca o conteúdo das suas mensagens.",
             "Backups: apagados automaticamente em até duas semanas.",
           ],
-          "Se houver um incidente de segurança, podemos suspender a exclusão dos registros de quem fez o quê e dos endereços IP e tipos de navegador das reservas, para investigar. Essa suspensão dura no máximo 90 dias de cada vez.",
+          "Se houver um incidente de segurança, podemos suspender a exclusão dos registros de quem fez o quê e dos endereços IP e tipos de navegador das reservas e das respostas sobre ofertas e novidades, para investigar. Essa suspensão dura no máximo 90 dias de cada vez.",
           "Fora isso, só guardamos algo por mais tempo quando a lei exige.",
         ],
       },

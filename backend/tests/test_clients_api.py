@@ -268,10 +268,23 @@ def test_an_unknown_policy_version_is_refused_before_anything_is_written(
     assert count == 0
 
 
-# 24: FENCE. Wrong impl: read request.headers.get("x-forwarded-for") in the route.
-def test_a_merchant_consent_stores_the_connection_address_not_a_forwarded_header(
-    people: People, app: FastAPI
+# 24: ZIF-156 fence. Kills: a merchant consent stored with the address and browser of the member
+# who entered it (the receptionist's personal data, not the client's), whatever the headers say;
+# and the route passing them to record_consents at all, which 0096's deploy-window trigger would
+# otherwise strip silently; and the member's address lost from the record that keeps it instead,
+# the consent_recorded audit event (the connection's address, not a forwarded header).
+# tests/test_clients_db.py fences the rule in record_consents and the database behind it.
+def test_a_merchant_consent_stores_no_address_or_browser(
+    people: People, app: FastAPI, migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    passed: list[tuple[Any, Any]] = []
+    record = clients.record_consents
+
+    def spy(*args: Any, **kwargs: Any) -> None:
+        passed.append((kwargs["ip"], kwargs["user_agent"]))
+        record(*args, **kwargs)
+
+    monkeypatch.setattr(clients, "record_consents", spy)
     address = fresh_address()
     with tenant_context(people.a) as session:
         token = auth.create(session, people.both, ip=None, user_agent=None)
@@ -286,13 +299,15 @@ def test_a_merchant_consent_stores_the_connection_address_not_a_forwarded_header
     )
 
     assert response.status_code == 201
+    assert passed == [(None, None)]
     with tenant_context(people.a) as session:
         stored = session.execute(
             text("SELECT host(ip) AS ip, user_agent FROM consents WHERE client_id = :c"),
             {"c": uuid.UUID(client_id)},
         ).one()
-    assert stored.ip == address
-    assert stored.user_agent == "zif49-agent/1"
+    assert (stored.ip, stored.user_agent) == (None, None)
+    (event,) = events(migrate_engine, action="consent_recorded", target=f"client:{client_id}")
+    assert (event["ip"], event["user_agent"]) == (address, "zif49-agent/1")
 
 
 # 25: GUARD.
