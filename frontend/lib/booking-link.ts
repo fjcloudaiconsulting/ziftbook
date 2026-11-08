@@ -20,6 +20,8 @@ export type Screen =
   | "slotTaken"
   | "notAllowed"
   | "refresh"
+  | "consentChanged"
+  | "outdated"
   | "retry";
 
 const CONFLICTS: Record<string, Screen> = {
@@ -33,11 +35,17 @@ const CONFLICTS: Record<string, Screen> = {
 };
 
 /** Which screen an answer leads to. Every 404 is the same screen (spec §7 screen 3); anything
- * else unplanned keeps the current screen with a retry banner (screen 4). */
+ * else unplanned keeps the current screen with a retry banner (screen 4), except a 422: the page
+ * sent what the server no longer takes, and a retry would send the same body again. */
 export function answerScreen(answer: { status: number; code?: string }): Screen {
   if (answer.status === 200 || answer.status === 204) return "booking";
   if (answer.status === 404) return "notActive";
   if (answer.status === 409 && answer.code && Object.hasOwn(CONFLICTS, answer.code)) return CONFLICTS[answer.code];
+  if (answer.status === 422) {
+    // The consent wording changed since the page loaded (ZIF-159): re-read it and say so before another click.
+    if (answer.code === "unknown_policy_version" || answer.code === "purpose_not_in_policy_version") return "consentChanged";
+    return "outdated"; // this page is older than the server (a deploy since it loaded): only a reload helps
+  }
   return "retry";
 }
 
@@ -119,4 +127,12 @@ export function localWhen(instant: string, timeZone: string, locale: string): { 
     date: new Intl.DateTimeFormat(locale, { weekday: "long", day: "numeric", month: "long", timeZone }).format(at),
     time: new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit", timeZone }).format(at),
   };
+}
+
+/** What the consent confirm asks (ZIF-159): each pending purpose the page's wording covers, in the
+ * server's words, and the version and purposes to post back. A purpose without wording in this
+ * locale is not asked, so it is never confirmed with words nobody read. */
+export function consentAsk<P extends string>(pending: P[], wording: { policy_version: string; texts: Record<string, string> }) {
+  const purposes = pending.filter((purpose) => Object.hasOwn(wording.texts, purpose));
+  return { policy_version: wording.policy_version, purposes, texts: purposes.map((purpose) => wording.texts[purpose]) };
 }

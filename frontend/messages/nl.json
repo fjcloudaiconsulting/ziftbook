@@ -992,12 +992,9 @@
     "noChanges": "Deze afspraak kan niet meer online worden gewijzigd. Neem contact op met {business}.",
     "noChangesEmail": "Deze afspraak kan niet meer online worden gewijzigd. Neem contact op met {business} via <link>{email}</link>.",
     "contactLabel": "Contactadres: ",
-    "consentAsk": "Bij het boeken vroeg je {business} om contact te houden via: {purposes}. Bevestigen?",
-    "purposes": {
-      "marketing_email": "e-mail",
-      "sms": "sms",
-      "whatsapp": "WhatsApp"
-    },
+    "consentAsk": "Bij het boeken bij {business} zijn marketingberichten aangevinkt. Bevestig dat je akkoord gaat met:",
+    "consentChanged": "De tekst is gewijzigd. Lees hem opnieuw voordat je bevestigt.",
+    "outdated": "Deze pagina is verouderd. Laad hem opnieuw.",
     "consentConfirm": "Bevestigen",
     "consentDone": "Bedankt, bevestigd.",
     "confirming": "Bevestigen…",

@@ -992,12 +992,9 @@
     "noChanges": "This booking can no longer be changed online. Contact {business}.",
     "noChangesEmail": "This booking can no longer be changed online. Contact {business} at <link>{email}</link>.",
     "contactLabel": "Contact email: ",
-    "consentAsk": "When you booked, you asked {business} to keep in touch by: {purposes}. Confirm?",
-    "purposes": {
-      "marketing_email": "email",
-      "sms": "text message",
-      "whatsapp": "WhatsApp"
-    },
+    "consentAsk": "When you booked with {business}, marketing messages were ticked. Confirm that you agree to:",
+    "consentChanged": "The wording has changed. Please read it again before confirming.",
+    "outdated": "This page is out of date. Please reload it.",
     "consentConfirm": "Confirm",
     "consentDone": "Thanks, confirmed.",
     "confirming": "Confirming…",

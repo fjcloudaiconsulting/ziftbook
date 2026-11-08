@@ -66,6 +66,18 @@ class PageConsentOut(BaseModel):
     marketing_email: str
 
 
+# Built once: it is the catalogue's, the same for every page.
+CONSENT_OFFER = {
+    locale: PageConsentOut(
+        policy_version=clients.policy_version_for(locale),
+        marketing_email=clients.CONSENT_TEXTS[clients.policy_version_for(locale)][
+            "marketing_email"
+        ],
+    )
+    for locale in get_args(Locale)
+}
+
+
 class PagePaymentOut(BaseModel):
     publishable_key: str
     stripe_account: str  # direct charges: the browser's Stripe.js acts on this account
@@ -153,14 +165,7 @@ def read(slug: str, request: Request) -> BookingPageOut:
         timezone=settings.timezone,
         language=settings.language,
         booking_horizon_days=settings.booking_horizon_days,
-        consent={
-            locale: PageConsentOut(
-                policy_version=version,
-                marketing_email=clients.CONSENT_TEXTS[version]["marketing_email"],
-            )
-            for locale in get_args(Locale)
-            if (version := clients.policy_version_for(locale))
-        },
+        consent=CONSENT_OFFER,
         cancellation=CancellationOut(
             text=settings.cancellation_policy_text or None,
             free_cancellation_hours=settings.free_cancellation_hours,

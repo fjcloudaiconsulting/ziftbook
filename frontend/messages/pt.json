@@ -992,12 +992,9 @@
     "noChanges": "Este agendamento não pode mais ser alterado on-line. Entre em contato com {business}.",
     "noChangesEmail": "Este agendamento não pode mais ser alterado on-line. Entre em contato com {business} pelo e-mail <link>{email}</link>.",
     "contactLabel": "E-mail de contato: ",
-    "consentAsk": "Ao agendar, você pediu a {business} para manter contato por: {purposes}. Confirma?",
-    "purposes": {
-      "marketing_email": "e-mail",
-      "sms": "SMS",
-      "whatsapp": "WhatsApp"
-    },
+    "consentAsk": "Ao agendar com {business}, as mensagens de marketing foram marcadas. Confirme que você concorda com:",
+    "consentChanged": "O texto mudou. Leia de novo antes de confirmar.",
+    "outdated": "Esta página está desatualizada. Recarregue-a.",
     "consentConfirm": "Confirmar",
     "consentDone": "Obrigado, está confirmado.",
     "confirming": "Confirmando…",
