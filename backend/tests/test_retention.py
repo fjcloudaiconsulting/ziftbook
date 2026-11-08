@@ -454,10 +454,10 @@ def test_the_worker_starts_with_any_hold_value(monkeypatch: pytest.MonkeyPatch) 
 
 
 def replaced_consent(people: People, superuser: Engine) -> uuid.UUID:
-    """A consent replaced by a newer one 2 years ago: its address is past its period."""
+    """A grant withdrawn 2 years ago: its address is past its period."""
     client_id = seed_client(people.a)
     replaced = seed_consent(superuser, people.a, client_id, "marketing_email", "3 years")
-    seed_consent(superuser, people.a, client_id, "marketing_email", "2 years")
+    seed_consent(superuser, people.a, client_id, "marketing_email", "2 years", granted=False)
     return replaced
 
 
@@ -514,12 +514,23 @@ def test_a_past_hold_keeps_nothing(
 # run. A run that cannot finish the pass (budget, MAX_BATCHES, a backlog elsewhere) would throw its
 # place away, and the businesses past what one run reaches (the newest: ids are uuidv7) would keep
 # their booking addresses forever. The reviewer's probe: 200 businesses sorting first, one batch
-# per run; the target business must be reached within the runs a full pass needs.
+# per run; the target business must be reached within the runs a full pass needs. ZIF-156: the
+# consent walk, a copy of the booking one, as well.
+@pytest.mark.parametrize("walk", ["booking", "consent"])
 def test_the_origin_walk_resumes_where_the_last_run_stopped(
-    people: People, superuser: Engine, migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+    people: People,
+    superuser: Engine,
+    migrate_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+    walk: str,
 ) -> None:
-    booking_id = seed_booking(superuser, people.a, people.both, "18 months 2 hours")
-    event_id = seed_event(superuser, people.a, booking_id, "18 months 2 hours")
+    if walk == "booking":
+        booking_id = seed_booking(superuser, people.a, people.both, "18 months 2 hours")
+        event_id = seed_event(superuser, people.a, booking_id, "18 months 2 hours")
+        rows = event_rows
+    else:
+        event_id = replaced_consent(people, superuser)
+        rows = consent_rows
     with migrate_engine.begin() as conn:
         ahead = conn.scalars(
             text("""
@@ -535,9 +546,9 @@ def test_the_origin_walk_resumes_where_the_last_run_stopped(
         with jobs_as_the_worker():
             for _ in range(-(-businesses // 200) + 1):
                 retention.sweep()
-                if event_rows(superuser, [event_id])[event_id].ip is None:
+                if rows(superuser, [event_id])[event_id].ip is None:
                     break
-        assert event_rows(superuser, [event_id])[event_id].ip is None
+        assert rows(superuser, [event_id])[event_id].ip is None
     finally:
         with migrate_engine.begin() as conn:
             conn.execute(text("DELETE FROM tenants WHERE id = ANY(:i)"), {"i": list(ahead)})

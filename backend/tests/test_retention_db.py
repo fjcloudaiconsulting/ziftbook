@@ -874,10 +874,107 @@ def test_the_origin_walk_skips_an_event_another_transaction_holds(
     assert rows[held].ip == "192.0.2.10" and rows[free].ip is None
 
 
-# The walk's bounds: at most 1000 rows per call, resuming at the business it stopped in.
-def test_a_call_clears_at_most_1000_and_the_next_resumes_in_the_same_business(
+# ---- consent origins (ZIF-156) ----
+
+
+def seed_consent(
+    superuser: Engine,
+    tenant_id: uuid.UUID,
+    client_id: uuid.UUID,
+    purpose: str,
+    age: str,
+    *,
+    granted: bool = True,
+    source: str = "booking_page",
+) -> uuid.UUID:
+    """A consent given at now() minus `age`, with an address and browser (which 0096's trigger
+    drops from a merchant row). Seed a client's rows oldest first: later is the higher id, as
+    CURRENT_CONSENTS reads it."""
+    with superuser.begin() as conn:
+        consent_id: uuid.UUID = conn.scalar(
+            text("""
+            INSERT INTO consents (tenant_id, client_id, purpose, granted, text_shown,
+                                  policy_version, source, ip, user_agent, created_at)
+            VALUES (:t, :c, :p, :g, 'text', '2026-09-01', :s, '192.0.2.20', 'Agent',
+                    now() - CAST(:a AS interval))
+            RETURNING id
+            """),
+            {"t": tenant_id, "c": client_id, "p": purpose, "g": granted, "s": source, "a": age},
+        )
+    return consent_id
+
+
+CONSENT_ROWS = text("""
+SELECT id, host(ip) AS ip, user_agent, to_jsonb(c) - 'ip' - 'user_agent' AS rest
+FROM consents c WHERE id = ANY(:ids)
+""")
+
+
+def consent_rows(superuser: Engine, ids: list[uuid.UUID]) -> dict[uuid.UUID, Any]:
+    with superuser.connect() as conn:
+        return {row.id: row for row in conn.execute(CONSENT_ROWS, {"ids": ids})}
+
+
+def swept_consents(
+    superuser: Engine, worker_engine: Engine, ids: list[uuid.UUID]
+) -> set[uuid.UUID]:
+    """One full pass of the consent sweep; the seeded rows it left with neither value, every other
+    column unchanged and no row deleted."""
+    before = consent_rows(superuser, ids)
+    origins_pass(worker_engine, "sweep_consent_origins")
+    after = consent_rows(superuser, ids)
+    assert set(after) == set(before)  # no row deleted
+    assert all(after[i].rest == before[i].rest for i in after)  # every other column unchanged
+    return {i for i in after if after[i].ip is None and after[i].user_agent is None}
+
+
+# ZIF-156 fence. Kills: an address kept past a year after the answer changed, cleared before the
+# year, or cleared from the answer that stands (however old: owner ruling D4); a change looked for
+# across clients or purposes; a sweep of one business only; or a statement that touches the
+# wording, version, purpose, source or time (the Art. 7(1) evidence) or deletes a row.
+def test_consent_origins_clear_a_year_after_the_answer_changes_and_never_while_it_stands(
     people: People, superuser: Engine, worker_engine: Engine
 ) -> None:
+    cleared, kept = [], []
+    for tenant in (people.a, people.b):
+        first, second = seed_client(tenant), seed_client(tenant)
+        # Granted, then withdrawn more than a year ago: the grant goes, the withdrawal stands.
+        cleared.append(seed_consent(superuser, tenant, first, "marketing_email", "3 years"))
+        kept.append(
+            seed_consent(
+                superuser, tenant, first, "marketing_email", "1 year 1 hour", granted=False
+            )
+        )
+        # Withdrawn under a year ago: the grant keeps its proof until the year is up.
+        kept.append(seed_consent(superuser, tenant, first, "sms", "3 years"))
+        kept.append(seed_consent(superuser, tenant, first, "sms", "1 year -1 hour", granted=False))
+        # Withdrawn, then granted again more than a year ago: the withdrawal goes.
+        cleared.append(seed_consent(superuser, tenant, first, "whatsapp", "4 years", granted=False))
+        kept.append(seed_consent(superuser, tenant, first, "whatsapp", "2 years"))
+        # Another client, never changed, however old.
+        kept.append(seed_consent(superuser, tenant, second, "marketing_email", "3 years"))
+
+    gone = swept_consents(superuser, worker_engine, cleared + kept)
+
+    assert gone == set(cleared)
+
+
+# ZIF-156 fence. Kills: "replaced" read as any later row. The client's online grant keeps its proof
+# when the receptionist records the same answer later (a merchant row, which holds no address), or
+# when the client says yes again on a later booking: the answer has not changed.
+def test_a_later_row_with_the_same_answer_keeps_the_proof(
+    people: People, superuser: Engine, worker_engine: Engine
+) -> None:
+    client_id = seed_client(people.a)
+    online = seed_consent(superuser, people.a, client_id, "marketing_email", "4 years")
+    seed_consent(superuser, people.a, client_id, "marketing_email", "3 years", source="merchant")
+    again = seed_consent(superuser, people.a, client_id, "marketing_email", "2 years")
+
+    assert swept_consents(superuser, worker_engine, [online, again]) == set()
+
+
+def backlog_events(superuser: Engine, people: People) -> list[uuid.UUID]:
+    """1001 booking events past their period, in one business."""
     booking_id = seed_booking(superuser, people.a, people.both, f"{ORIGIN} 2 hours")
     with tenant_context(people.a) as db:
         ids = db.scalars(
@@ -897,28 +994,63 @@ def test_a_call_clears_at_most_1000_and_the_next_resumes_in_the_same_business(
             ),
             {"i": list(ids)},
         )
+    return list(ids)
+
+
+def backlog_consents(superuser: Engine, people: People) -> list[uuid.UUID]:
+    """1001 grants withdrawn two years ago, for one client of one business."""
+    client_id = seed_client(people.a)
+    with superuser.begin() as conn:
+        ids = conn.scalars(
+            text("""
+            INSERT INTO consents (tenant_id, client_id, purpose, granted, text_shown,
+                                  policy_version, source, ip, created_at)
+            SELECT :t, :c, 'marketing_email', true, 'text', '2026-09-01', 'booking_page',
+                   '192.0.2.21', now() - interval '3 years'
+            FROM generate_series(1, 1001)
+            RETURNING id
+            """),
+            {"t": people.a, "c": client_id},
+        ).all()
+    seed_consent(superuser, people.a, client_id, "marketing_email", "2 years", granted=False)
+    return list(ids)
+
+
+# The walks' bounds (ZIF-156: both of them, one copied from the other).
+BACKLOGS = {
+    "sweep_booking_origins": ("booking_events", backlog_events),
+    "sweep_consent_origins": ("consents", backlog_consents),
+}
+
+
+# The walk's bounds: at most 1000 rows per call, resuming at the business it stopped in.
+@pytest.mark.parametrize("function", sorted(BACKLOGS))
+def test_a_call_clears_at_most_1000_and_the_next_resumes_in_the_same_business(
+    people: People, superuser: Engine, worker_engine: Engine, function: str
+) -> None:
+    table, backlog = BACKLOGS[function]
+    ids = backlog(superuser, people)
 
     with worker_engine.begin() as conn:
-        first = conn.execute(text("SELECT * FROM sweep_booking_origins(:t)"), {"t": people.a}).one()
+        first = conn.execute(text(f"SELECT * FROM {function}(:t)"), {"t": people.a}).one()
     assert first.cleared == 1000 and first.next_tenant == people.a
     with worker_engine.begin() as conn:
-        second = conn.execute(
-            text("SELECT * FROM sweep_booking_origins(:t)"), {"t": people.a}
-        ).one()
+        second = conn.execute(text(f"SELECT * FROM {function}(:t)"), {"t": people.a}).one()
     assert second.cleared >= 1
     with superuser.connect() as conn:
         assert (
             conn.scalar(
-                text("SELECT count(*) FROM booking_events WHERE id = ANY(:i) AND ip IS NOT NULL"),
-                {"i": list(ids)},
+                text(f"SELECT count(*) FROM {table} WHERE id = ANY(:i) AND ip IS NOT NULL"),
+                {"i": ids},
             )
             == 0
         )
 
 
 # The walk's bounds: at most 200 businesses per call, so a call stays short however many there are.
+@pytest.mark.parametrize("function", sorted(BACKLOGS))
 def test_a_call_visits_at_most_200_businesses(
-    migrate_engine: Engine, worker_engine: Engine
+    migrate_engine: Engine, worker_engine: Engine, function: str
 ) -> None:
     with migrate_engine.begin() as conn:
         made = conn.scalars(
@@ -930,73 +1062,11 @@ def test_a_call_visits_at_most_200_businesses(
         with migrate_engine.connect() as conn:
             expected = conn.scalar(text("SELECT id FROM tenants ORDER BY id OFFSET 200 LIMIT 1"))
         with worker_engine.begin() as conn:
-            row = conn.execute(text("SELECT * FROM sweep_booking_origins(NULL)")).one()
+            row = conn.execute(text(f"SELECT * FROM {function}(NULL)")).one()
         assert row.next_tenant == expected
     finally:
         with migrate_engine.begin() as conn:
             conn.execute(text("DELETE FROM tenants WHERE id = ANY(:i)"), {"i": list(made)})
-
-
-# ---- consent origins (ZIF-156) ----
-
-
-def seed_consent(
-    superuser: Engine, tenant_id: uuid.UUID, client_id: uuid.UUID, purpose: str, age: str
-) -> uuid.UUID:
-    """A booking-page consent given at now() minus `age`, with its address and browser. Seed a
-    client's rows oldest first: the newest is the one with the highest id, as CURRENT_CONSENTS
-    reads it."""
-    with superuser.begin() as conn:
-        consent_id: uuid.UUID = conn.scalar(
-            text("""
-            INSERT INTO consents (tenant_id, client_id, purpose, granted, text_shown,
-                                  policy_version, source, ip, user_agent, created_at)
-            VALUES (:t, :c, :p, true, 'text', '2026-09-01', 'booking_page', '192.0.2.20',
-                    'Agent', now() - CAST(:a AS interval))
-            RETURNING id
-            """),
-            {"t": tenant_id, "c": client_id, "p": purpose, "a": age},
-        )
-    return consent_id
-
-
-CONSENT_ROWS = text("""
-SELECT id, host(ip) AS ip, user_agent, to_jsonb(c) - 'ip' - 'user_agent' AS rest
-FROM consents c WHERE id = ANY(:ids)
-""")
-
-
-def consent_rows(superuser: Engine, ids: list[uuid.UUID]) -> dict[uuid.UUID, Any]:
-    with superuser.connect() as conn:
-        return {row.id: row for row in conn.execute(CONSENT_ROWS, {"ids": ids})}
-
-
-# ZIF-156 fence. Kills: an address cleared from the consent that stands (the newest per client and
-# purpose, however old: the proof of the choice in force, owner ruling D4), a period anchored on
-# the row's own age rather than on when it was replaced, a cutoff other than a year, a "newer row"
-# looked for across clients or purposes, a sweep of one business only, or a statement that
-# touches the wording, version, purpose, source or time (the Art. 7(1) evidence) or deletes a row.
-def test_consent_origins_clear_a_year_after_the_consent_is_replaced_and_never_while_it_stands(
-    people: People, superuser: Engine, worker_engine: Engine
-) -> None:
-    cleared, kept = [], []
-    for tenant in (people.a, people.b):
-        first, second = seed_client(tenant), seed_client(tenant)
-        cleared.append(seed_consent(superuser, tenant, first, "marketing_email", "3 years"))
-        kept.append(seed_consent(superuser, tenant, first, "marketing_email", "1 year 1 hour"))
-        kept.append(seed_consent(superuser, tenant, first, "sms", "3 years"))
-        kept.append(seed_consent(superuser, tenant, first, "sms", "1 year -1 hour"))
-        kept.append(seed_consent(superuser, tenant, first, "whatsapp", "3 years"))
-        kept.append(seed_consent(superuser, tenant, second, "marketing_email", "3 years"))
-    before = consent_rows(superuser, cleared + kept)
-
-    origins_pass(worker_engine, "sweep_consent_origins")
-
-    after = consent_rows(superuser, cleared + kept)
-    assert set(after) == set(before)  # no row deleted
-    assert {i for i in after if after[i].ip is None and after[i].user_agent is None} == set(cleared)
-    assert all(after[i].ip == "192.0.2.20" and after[i].user_agent == "Agent" for i in kept)
-    assert all(after[i].rest == before[i].rest for i in after)  # every other column unchanged
 
 
 # M1 (review B1, the reviewer's P1 as a regression test). A migrate-owned definer that reads
@@ -1128,12 +1198,21 @@ def violations(source: str, own: str, schema_functions: set[str]) -> list[str]:
     return found
 
 
-def origin_writes_ok(source: str, schema_functions: frozenset[str] = frozenset()) -> bool:
+ORIGIN_WRITES = {
+    "sweep_booking_origins": ("booking_events", BOOKING_ORIGIN_WRITE),
+    "sweep_consent_origins": ("consents", CONSENT_ORIGIN_WRITE),
+}
+
+
+def origin_writes_ok(
+    source: str, schema_functions: frozenset[str] = frozenset(), own: str = "sweep_booking_origins"
+) -> bool:
     """The body's only write is the one statement that clears ip and user_agent, nothing else."""
+    table, write = ORIGIN_WRITES[own]
     return (
-        writes(source) == [("update", "booking_events")]
-        and bool(BOOKING_ORIGIN_WRITE.search(code(source)))
-        and not violations(source, "sweep_booking_origins", set(schema_functions))
+        writes(source) == [("update", table)]
+        and bool(write.search(code(source)))
+        and not violations(source, own, set(schema_functions))
     )
 
 
@@ -1178,8 +1257,7 @@ def test_each_retention_function_writes_only_what_it_is_for(migrate_engine: Engi
     assert {name: violations(src, name, set(schema)) for name, src in sources.items()} == {
         name: [] for name in EXPECTED_WRITES
     }
-    assert origin_writes_ok(sources["sweep_booking_origins"], schema)
-    assert CONSENT_ORIGIN_WRITE.search(code(sources["sweep_consent_origins"]))  # ip, user_agent
+    assert all(origin_writes_ok(sources[name], schema, name) for name in ORIGIN_WRITES)
 
 
 @pytest.mark.parametrize(

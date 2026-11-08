@@ -1,39 +1,40 @@
 """Consent addresses: none on a merchant-entered consent, and a retention period (ZIF-156).
 
 A consent a member records for a client (source = 'merchant') stored the member's address and
-browser, the receptionist's personal data, not the client's. From here:
+browser, the receptionist's personal data, not the client's. The app now passes neither. Here:
 
+- ck_consents_merchant_no_origin: a merchant row holds no ip and no user_agent. Added NOT VALID,
+  so it scans nothing under its lock; 0097 clears the existing rows, and the next release's
+  contract migration validates it.
 - consents_merchant_no_origin, a BEFORE INSERT trigger, sets ip and user_agent to NULL on a
-  merchant row. The new app passes neither; the trigger is what keeps the release still running
-  during the deploy (which passes both) recording merchant consents rather than failing them.
-- ck_consents_merchant_no_origin states the rule for every row, existing and future, whatever
-  writes it (an UPDATE, a data-only restore with triggers disabled).
-- Existing merchant rows lose their ip and user_agent here, before the check validates.
+  merchant row, for the deploy window only: the release still running passes the member's address,
+  and without the trigger the check would refuse its consent writes (a 500). It also means the check
+  can only refuse an UPDATE until the trigger goes, so tests/test_clients_api.py fences the app's
+  own write path. The next release's contract migration drops it.
 
 sweep_consent_origins(p_from), SECURITY DEFINER, owned by ziftbook_migrate, executable by
 ziftbook_worker only, as 0074's functions: sets ip and user_agent of a consent to NULL a year after
-a newer row for the same client and purpose replaced it (the period of 0074's audit events, the
-nearest analogue; ZIF-285's legal review may change it). The consent that stands, the newest per
-client and purpose, keeps its proof however old it is (owner ruling D4, and the privacy notice:
-"kept for as long as your choice stands"). The row itself, its wording, version, purpose, source and
-time, always stays: the Art. 7(1) evidence. Newest is by id, as app.clients.CURRENT_CONSENTS reads
-it. The walk is 0074's sweep_booking_origins's: business by business under tenant_isolation, FOR
-UPDATE SKIP LOCKED, at most 1000 rows and 200 businesses per call, next_tenant where the next call
-resumes (NULL once past the last business).
+the client's answer for that purpose changed (granted to withdrawn, or back) after it. A later row
+with the same answer, from the merchant or the booking page, changes nothing: the rows of the
+answer that stands keep their proof however old they are (owner ruling D4, and the privacy notice:
+"removed 1 year after you change your answer"). The row itself, its wording, version, purpose,
+source and time, always stays: the Art. 7(1) evidence. Later is by id, as
+app.clients.CURRENT_CONSENTS reads it. The walk is 0074's sweep_booking_origins's: business by
+business under tenant_isolation, FOR UPDATE SKIP LOCKED, at most 1000 rows and 200 businesses per
+call, next_tenant where the next call resumes (NULL once past the last business); its resume and
+cap tests run against both functions.
 
-Lock: the update and the check's validation run with FORCE lifted (app.db.lift_force), so NO FORCE
-holds ACCESS EXCLUSIVE on consents until commit: one small table, for one scan of it and the
-update of its merchant rows.
+Lock: ADD CONSTRAINT NOT VALID takes ACCESS EXCLUSIVE on consents and CREATE TRIGGER SHARE ROW
+EXCLUSIVE, each for a catalog change only, until this migration commits; nothing here scans or
+updates a row.
 
-The downgrade drops the function, the check and the trigger. Cleared addresses do not come back.
+The downgrade drops the function, the trigger and the check.
 
 Revision ID: 0096
 Revises: 0095
 """
 
 from alembic import op
-
-from app.db import lift_force
 
 revision = "0096"
 down_revision = "0095"
@@ -43,6 +44,9 @@ depends_on = None
 SEARCH_PATH = "SET search_path = pg_catalog, public, pg_temp"
 SIGNATURE = "sweep_consent_origins(uuid)"
 
+# shortcut: every call reads each business's withdrawals older than a year, and the address-holding
+# consents of those clients and purposes, cleared or not; at about 100,000 such withdrawals across
+# businesses, keep a per-business high-water mark (the newest change already swept) instead.
 SWEEP = f"""
 CREATE FUNCTION sweep_consent_origins(p_from uuid, OUT cleared integer, OUT next_tenant uuid)
 LANGUAGE plpgsql SECURITY DEFINER {SEARCH_PATH} AS $$
@@ -66,10 +70,15 @@ BEGIN
     WHERE c.tenant_id = v_t AND c.id = ANY(ARRAY(
       SELECT x.id FROM consents x
       WHERE x.tenant_id = v_t AND (x.ip IS NOT NULL OR x.user_agent IS NOT NULL)
+        -- Driven by the answer changes (0098's index): a change a year old has a withdrawal a year
+        -- old on one side or the other, so only the client-purposes that hold one are read.
+        AND (x.client_id, x.purpose) IN (
+          SELECT w.client_id, w.purpose FROM consents w
+          WHERE w.tenant_id = v_t AND NOT w.granted AND w.created_at < now() - interval '1 year')
         AND EXISTS (
           SELECT 1 FROM consents y
-          WHERE y.tenant_id = x.tenant_id AND y.client_id = x.client_id
-            AND y.purpose = x.purpose AND y.id > x.id
+          WHERE y.tenant_id = v_t AND y.client_id = x.client_id AND y.purpose = x.purpose
+            AND y.id > x.id AND y.granted <> x.granted
             AND y.created_at < now() - interval '1 year')
       ORDER BY x.created_at LIMIT 1000 - cleared
       FOR UPDATE OF x SKIP LOCKED));
@@ -85,18 +94,10 @@ END $$"""
 
 
 def upgrade() -> None:
-    lift_force(
-        op.execute,
-        "consents",
-        "UPDATE consents SET ip = NULL, user_agent = NULL"
-        " WHERE source = 'merchant' AND (ip IS NOT NULL OR user_agent IS NOT NULL)",
-    )
-    lift_force(
-        op.execute,
-        "consents",
-        "ALTER TABLE consents ADD CONSTRAINT ck_consents_merchant_no_origin"
-        " CHECK (source <> 'merchant' OR (ip IS NULL AND user_agent IS NULL))",
-    )
+    # The strongest lock first, so the trigger's never has to be upgraded to it.
+    op.execute("""
+    ALTER TABLE consents ADD CONSTRAINT ck_consents_merchant_no_origin
+      CHECK (source <> 'merchant' OR (ip IS NULL AND user_agent IS NULL)) NOT VALID""")
     op.execute(f"""
     CREATE FUNCTION consents_merchant_no_origin() RETURNS trigger
       LANGUAGE plpgsql SECURITY INVOKER {SEARCH_PATH} AS $$

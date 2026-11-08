@@ -354,8 +354,11 @@ that person's platform account (ZIF-99).
   ziftbook_app`, or every consent write fails, not only writes of the new column.
 - A consent a member records for a client (`source = 'merchant'`) stores no `ip` or `user_agent` (ZIF-156): they
   would be the member's, not the client's, and the member's own `consent_recorded` audit event already keeps them.
-  The route passes neither, a `BEFORE INSERT` trigger drops them, and `ck_consents_merchant_no_origin` refuses them
-  (0096). Only a consent the client gave online (`booking_page`) keeps its address and browser, as its proof.
+  The route passes neither (`tests/test_clients_api.py` fences it), and `ck_consents_merchant_no_origin` refuses them
+  (0096, NOT VALID until the next release validates it; 0097 cleared the existing rows). Until then a `BEFORE
+  INSERT` trigger also drops them, for the older release still running during the deploy; the next release's
+  contract migration drops it. Only a consent the client gave online (`booking_page`) keeps its address and
+  browser, as its proof.
 - The wording and the version stored with a consent come from the server (`app.clients.CONSENT_TEXTS`). An unknown
   version is a 422, and so is a known version that publishes no wording for a purpose the caller named. A caller
   never supplies the text it claims to have shown.
@@ -844,8 +847,9 @@ Deferred and scheduled work goes through the `jobs` table (`app/jobs.py`); there
   (see "Audit log"), and clears `ip` and `user_agent` of a booking event once the event and its booking's end are both 18 months old (the row stays as
   evidence), walking the businesses in id order; a run that stops before the end leaves its place, and the next
   run goes on from it (a worker restart starts the pass again). It clears `ip` and `user_agent` of a consent a year
-  after a newer consent for the same client and purpose replaced it (ZIF-156, the same walk): the consent that stands
-  keeps its proof however old, and the row, its wording, version, purpose and time always stay. The hour is a margin for readers whose transaction began before the sweep. Every table that stores an
+  after the client's answer for that purpose changed after it, granted to withdrawn or back (ZIF-156, the same walk,
+  driven by 0098's index of withdrawals): a later row with the same answer changes nothing, the rows of the answer
+  that stands keep their proof however old, and the row, its wording, version, purpose and time always stay. The hour is a margin for readers whose transaction began before the sweep. Every table that stores an
   address or a browser is listed in `retention.COVERED` with its rule; a test compares it with the catalog, so a new
   one needs a rule (or a reasoned exemption) before it ships.
 - Payloads hold ids only; the handler loads what it needs inside `tenant_context(job.tenant_id)`. A job with no tenant

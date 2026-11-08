@@ -2974,6 +2974,69 @@ def test_0095_round_trips_totp_enrolment_locked(
     assert tuple(row)[3:] == DEFINER_ACCESS
 
 
+# ZIF-156 (0096 to 0098): the check (NOT VALID) and deploy-window trigger on merchant consents,
+# their function, and the consent sweep's index.
+CONSENT_ORIGIN_OBJECTS = text("""
+SELECT (SELECT convalidated FROM pg_constraint WHERE conname = 'ck_consents_merchant_no_origin'),
+       (SELECT count(*) FROM pg_trigger WHERE tgname = 'consents_merchant_no_origin'),
+       to_regprocedure('consents_merchant_no_origin()') IS NOT NULL,
+       (SELECT indisvalid FROM pg_index
+        WHERE indexrelid = to_regclass('ix_consents_tenant_id_created_at_withdrawals'))
+""")
+SEED_CONSENT = text("""
+INSERT INTO consents (tenant_id, client_id, purpose, granted, text_shown, policy_version, source,
+                      ip, user_agent)
+VALUES (:t, :c, 'marketing_email', true, 'text', '2026-09-01', :s, '192.0.2.40', 'Agent')
+RETURNING id
+""")
+
+
+# ZIF-156 FENCE. Kills: a downgrade that leaves the check, the trigger, its function, the sweep or
+# the index behind; a backfill (0097) that misses a merchant row written before it, or clears a
+# booking-page one; a check validated under 0096's lock (the contract migration's job); a sweep
+# that runs as its caller, searches a caller's schema first, or is the app role's or PUBLIC's.
+def test_0096_to_0098_round_trip_and_clear_the_existing_merchant_addresses(
+    people: People, superuser: Engine, migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sweep = migration("0096_consent_origins.py").SIGNATURE
+    cfg = lock_timeout_config(monkeypatch)
+    try:
+        command.downgrade(cfg, "0095")
+        with migrate_engine.connect() as conn:
+            assert tuple(conn.execute(CONSENT_ORIGIN_OBJECTS).one()) == (None, 0, False, None)
+            assert conn.execute(DEFINER_STATE, {"signature": sweep}).first() is None
+        with superuser.begin() as conn:
+            client_id = conn.scalar(
+                text("INSERT INTO clients (tenant_id, name) VALUES (:t, 'C') RETURNING id"),
+                {"t": people.a},
+            )
+            merchant, online = (
+                conn.scalar(SEED_CONSENT, {"t": people.a, "c": client_id, "s": source})
+                for source in ("merchant", "booking_page")
+            )
+    finally:
+        command.upgrade(cfg, "head")
+    with migrate_engine.connect() as conn:
+        assert tuple(conn.execute(CONSENT_ORIGIN_OBJECTS).one()) == (False, 1, True, True)
+        row = conn.execute(DEFINER_STATE, {"signature": sweep}).one()
+    assert tuple(row)[3:] == (
+        "ziftbook_migrate",
+        False,
+        False,
+        True,
+        ["search_path=pg_catalog, public, pg_temp"],
+    )
+    with superuser.connect() as conn:
+        stored = conn.execute(
+            text("SELECT id, host(ip), user_agent FROM consents WHERE id = ANY(:i)"),
+            {"i": [merchant, online]},
+        ).all()
+    assert {tuple(r)[0]: tuple(r)[1:] for r in stored} == {
+        merchant: (None, None),
+        online: ("192.0.2.40", "Agent"),
+    }
+
+
 # ZIF-235 (0072): the retention sweep's indexes, built CONCURRENTLY in the repository's first
 # autocommit_block.
 RETENTION_INDEXES = text("""

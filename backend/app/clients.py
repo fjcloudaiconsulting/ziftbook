@@ -250,8 +250,10 @@ def record_consents(
     between. Do not "lift it into the route" and do not add a second call in the route either: one
     call, in here.
 
-    A merchant row never stores ip or user_agent: they would be the member's (ZIF-156). The
-    database drops them on insert and its check refuses them (0096), so pass None.
+    A merchant caller passes ip=None and user_agent=None: they would be the member's (ZIF-156).
+    tests/test_clients_api.py fences the console route. Until the next release's contract
+    migration, 0096's trigger also drops them on insert, for the older release still running
+    during the deploy; ck_consents_merchant_no_origin then refuses them on every write.
 
     The column list here is exactly the migration's GRANT INSERT list. Writes no audit event: the
     booking page's requester is the data subject, and auth.record stamps the requester's address

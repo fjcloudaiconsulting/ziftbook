@@ -269,9 +269,20 @@ def test_an_unknown_policy_version_is_refused_before_anything_is_written(
 
 
 # 24: ZIF-156 fence. Kills: a merchant consent stored with the address and browser of the member
-# who entered it (the receptionist's personal data, not the client's), whatever the headers say.
-# tests/test_clients_db.py fences the database rule behind it.
-def test_a_merchant_consent_stores_no_address_or_browser(people: People, app: FastAPI) -> None:
+# who entered it (the receptionist's personal data, not the client's), whatever the headers say;
+# and the route passing them to record_consents at all, which 0096's deploy-window trigger would
+# otherwise strip silently. tests/test_clients_db.py fences the database rule behind it.
+def test_a_merchant_consent_stores_no_address_or_browser(
+    people: People, app: FastAPI, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    passed: list[tuple[Any, Any]] = []
+    record = clients.record_consents
+
+    def spy(*args: Any, **kwargs: Any) -> None:
+        passed.append((kwargs["ip"], kwargs["user_agent"]))
+        record(*args, **kwargs)
+
+    monkeypatch.setattr(clients, "record_consents", spy)
     address = fresh_address()
     with tenant_context(people.a) as session:
         token = auth.create(session, people.both, ip=None, user_agent=None)
@@ -286,6 +297,7 @@ def test_a_merchant_consent_stores_no_address_or_browser(people: People, app: Fa
     )
 
     assert response.status_code == 201
+    assert passed == [(None, None)]
     with tenant_context(people.a) as session:
         stored = session.execute(
             text("SELECT host(ip) AS ip, user_agent FROM consents WHERE client_id = :c"),

@@ -11,8 +11,8 @@ Run hourly by the worker (app.worker), as ziftbook_worker, in batches of short t
   booking-event addresses: through the migrate-owned functions of migration 0074, which fix the
   periods themselves (failed sign-ins 30 days, other audit events a year, booking-event addresses
   18 months after both the event and the appointment) and which only ziftbook_worker may call;
-- consent addresses (ZIF-156): through migration 0096's sweep_consent_origins, a year after a newer
-  consent for the same client and purpose replaced it; the consent that stands keeps its proof.
+- consent addresses (ZIF-156): through migration 0096's sweep_consent_origins, a year after the
+  client's answer for that purpose changed after them; the answer that stands keeps its proof.
 
 MARGIN: a reader whose transaction began before the sweep's reads with an earlier now(); an hour
 is longer than any runtime transaction lives (30 s statement timeout, 60 s idle in transaction),
@@ -69,9 +69,10 @@ COVERED = {
         " stays as evidence (sweep_booking_origins, 0074)"
     ),
     "consents": (
-        "ip and user_agent cleared a year after a newer consent for the same client and purpose"
-        " replaced it; the one that stands keeps them (owner ruling D4), the row always stays as"
-        " evidence, and a merchant-entered row holds neither (ZIF-156, sweep_consent_origins, 0096)"
+        "ip and user_agent cleared a year after the client's answer for that purpose changed"
+        " (granted to withdrawn, or back); the rows of the answer that stands keep them (owner"
+        " ruling D4), the row always stays as evidence, and a merchant-entered row holds neither"
+        " (ZIF-156, sweep_consent_origins, 0096)"
     ),
 }
 
@@ -180,21 +181,30 @@ class _Walk:
     pass (a full pass fits in one run up to MAX_BATCHES x 200 = 10,000 businesses), and each replica
     keeps its own place (SKIP LOCKED splits the rows)."""
 
-    def __init__(self, statement: Any, count: str) -> None:
+    def __init__(self, statement: Any) -> None:
         self.statement = statement
-        self.count = count  # the Swept field it adds to
         self.start: UUID | None = None
 
-    def __call__(self, swept: Swept) -> bool:
+    def step(self) -> int:
+        """One call: the rows it cleared. start is None again once the pass is complete."""
         with SessionLocal.begin() as session:
             row = session.execute(self.statement, {"start": self.start}).one()
-        setattr(swept, self.count, getattr(swept, self.count) + row.cleared)
         self.start = row.next_tenant
-        return self.start is None
+        return int(row.cleared)
 
 
-WALK = _Walk(BOOKING_ORIGINS, "booking_origins")
-CONSENT_WALK = _Walk(CONSENT_ORIGINS, "consent_origins")
+WALK = _Walk(BOOKING_ORIGINS)
+CONSENT_WALK = _Walk(CONSENT_ORIGINS)
+
+
+def _booking_origins(swept: Swept) -> bool:
+    swept.booking_origins += WALK.step()
+    return WALK.start is None
+
+
+def _consent_origins(swept: Swept) -> bool:
+    swept.consent_origins += CONSENT_WALK.step()
+    return CONSENT_WALK.start is None
 
 
 @dataclass(frozen=True)
@@ -250,7 +260,7 @@ def sweep(should_stop: Callable[[], bool] = lambda: False, hold: Hold | None = N
         _account_sessions,
     ]
     if not held:
-        steps += [_audit_events, WALK, CONSENT_WALK]
+        steps += [_audit_events, _booking_origins, _consent_origins]
     started = time.monotonic()
     with tracing.span("retention.sweep", SpanKind.INTERNAL, {}) as span:
         while steps:
