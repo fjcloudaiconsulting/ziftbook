@@ -29,6 +29,7 @@ describe("legal pages", () => {
       ["everything else", "1 year"],
       ["IP address and browser type", "18 months"],
       ["offers and news", "as long as your choice stands"],
+      ["change your answer", "1 year"], // ZIF-156: the consent's address, once it is replaced
       ["security incident", "90 days"],
     ],
     nl: [
@@ -38,6 +39,7 @@ describe("legal pages", () => {
       ["al het andere", "1 jaar"],
       ["IP-adres en browsertype", "18 maanden"],
       ["aanbiedingen en nieuws", "zolang je keuze geldt"],
+      ["je antwoord wijzigt", "1 jaar"],
       ["beveiligingsincident", "90 dagen"],
     ],
     pt: [
@@ -47,6 +49,7 @@ describe("legal pages", () => {
       ["todo o resto", "1 ano"],
       ["endereço IP e o tipo de navegador", "18 meses"],
       ["ofertas e novidades", "enquanto a sua escolha valer"],
+      ["mudar a sua resposta", "1 ano"],
       ["incidente de segurança", "90 dias"],
     ],
   };

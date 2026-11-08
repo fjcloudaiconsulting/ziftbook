@@ -250,6 +250,9 @@ def record_consents(
     between. Do not "lift it into the route" and do not add a second call in the route either: one
     call, in here.
 
+    A merchant row never stores ip or user_agent: they would be the member's (ZIF-156). The
+    database drops them on insert and its check refuses them (0096), so pass None.
+
     The column list here is exactly the migration's GRANT INSERT list. Writes no audit event: the
     booking page's requester is the data subject, and auth.record stamps the requester's address
     and browser into a table with no foreign keys that outlives erased people. The console route
@@ -574,15 +577,16 @@ def add_consents(
     ).first()
     if row is None:
         raise ApiError(404, "not_found")
-    ip, user_agent = auth.origin(request)
+    # No address or browser (ZIF-156): they are the member's, not the client's. The event below
+    # keeps the member's, as for any change made in the console.
     record_consents(
         current.db,
         client_id=client_id,
         policy_version=body.policy_version,
         purposes=body.purposes,
         source="merchant",
-        ip=ip,
-        user_agent=user_agent,
+        ip=None,
+        user_agent=None,
     )
     auth.record(
         current.db,

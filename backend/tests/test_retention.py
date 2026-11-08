@@ -21,7 +21,16 @@ from app import auth, limits, retention
 from app.config import WorkerSettings
 from app.db import SessionLocal
 from tests.conftest import People, engine_as_worker, jobs_as_the_worker
-from tests.test_retention_db import audit_targets, event_rows, seed_audit, seed_booking, seed_event
+from tests.test_clients_db import seed_client
+from tests.test_retention_db import (
+    audit_targets,
+    consent_rows,
+    event_rows,
+    seed_audit,
+    seed_booking,
+    seed_consent,
+    seed_event,
+)
 from tests.test_sessions import start
 
 Lines = Callable[[], list[dict[str, Any]]]
@@ -29,11 +38,11 @@ Lines = Callable[[], list[dict[str, Any]]]
 
 @pytest.fixture(autouse=True)
 def _walk_from_the_start() -> Iterator[None]:
-    """The booking-origin walk keeps its place across runs (module state): each test starts a new
-    pass, and leaves none behind."""
-    retention.WALK.start = None
+    """The origin walks keep their place across runs (module state): each test starts a new pass,
+    and leaves none behind."""
+    retention.WALK.start = retention.CONSENT_WALK.start = None
     yield
-    retention.WALK.start = None
+    retention.WALK.start = retention.CONSENT_WALK.start = None
 
 
 @pytest.fixture
@@ -242,6 +251,7 @@ COUNTS = {
     "platform_failures",
     "platform_events",
     "booking_origins",
+    "consent_origins",
     "batches",
 }
 
@@ -443,11 +453,21 @@ def test_the_worker_starts_with_any_hold_value(monkeypatch: pytest.MonkeyPatch) 
     assert WorkerSettings().retention_hold_until == "0"
 
 
-# 28b: FENCE. Wrong impl: a hold that is ignored, one that also stops sessions, rate limits or
-# admin sessions (live state, not evidence), or one said nowhere.
+def replaced_consent(people: People, superuser: Engine) -> uuid.UUID:
+    """A consent replaced by a newer one 2 years ago: its address is past its period."""
+    client_id = seed_client(people.a)
+    replaced = seed_consent(superuser, people.a, client_id, "marketing_email", "3 years")
+    seed_consent(superuser, people.a, client_id, "marketing_email", "2 years")
+    return replaced
+
+
+# 28b: FENCE. Wrong impl: a hold that is ignored (ZIF-156: consent addresses included), one that
+# also stops sessions, rate limits or admin sessions (live state, not evidence), or one said
+# nowhere.
 @pytest.mark.parametrize("raw", ["tomorrow", "0"], ids=["on", "invalid"])
 def test_a_hold_keeps_the_evidence_and_says_so_every_run(
     action: str,
+    people: People,
     app_engine: Engine,
     superuser: Engine,
     audit_marker: str,
@@ -455,15 +475,18 @@ def test_a_hold_keeps_the_evidence_and_says_so_every_run(
     raw: str,
 ) -> None:
     seed_audit(superuser, f"{audit_marker}:old", "signed_out", "1 year 1 hour")
+    replaced = replaced_consent(people, superuser)
     seed_key(app_engine, f"{action}:old", 1, "3 days")
     today = datetime.now(UTC).date()
     value = (today + timedelta(days=1)).isoformat() if raw == "tomorrow" else raw
     hold = retention.parse_hold(value, today)
 
-    swept = retention.sweep(hold=hold)
+    with jobs_as_the_worker():  # again: people's fixture bound SessionLocal to the app role
+        swept = retention.sweep(hold=hold)
 
     assert swept.held is True and swept.complete is True
     assert audit_targets(superuser, audit_marker) == {f"{audit_marker}:old"}
+    assert consent_rows(superuser, [replaced])[replaced].ip == "192.0.2.20"
     assert keys(app_engine, action) == set()
     (line,) = [line for line in log_lines() if line.get("logger") == "app.retention"]
     assert line["level"] == "WARNING" and line["hold_until"] == value
@@ -472,16 +495,19 @@ def test_a_hold_keeps_the_evidence_and_says_so_every_run(
 # 28c: GUARD. A hold whose date has come, or a past one, keeps nothing.
 @pytest.mark.parametrize("days", [0, -400])
 def test_a_past_hold_keeps_nothing(
-    action: str, superuser: Engine, audit_marker: str, days: int
+    action: str, people: People, superuser: Engine, audit_marker: str, days: int
 ) -> None:
     seed_audit(superuser, f"{audit_marker}:old", "signed_out", "1 year 1 hour")
+    replaced = replaced_consent(people, superuser)
     today = datetime.now(UTC).date()
     hold = retention.parse_hold((today + timedelta(days=days)).isoformat(), today)
 
-    swept = retention.sweep(hold=hold)
+    with jobs_as_the_worker():  # again: people's fixture bound SessionLocal to the app role
+        swept = retention.sweep(hold=hold)
 
     assert swept.held is False
     assert audit_targets(superuser, audit_marker) == set()
+    assert consent_rows(superuser, [replaced])[replaced].ip is None
 
 
 # Build review (correctness #1) FENCE. Wrong impl: a walk that starts at the first business on every

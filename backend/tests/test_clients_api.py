@@ -268,10 +268,10 @@ def test_an_unknown_policy_version_is_refused_before_anything_is_written(
     assert count == 0
 
 
-# 24: FENCE. Wrong impl: read request.headers.get("x-forwarded-for") in the route.
-def test_a_merchant_consent_stores_the_connection_address_not_a_forwarded_header(
-    people: People, app: FastAPI
-) -> None:
+# 24: ZIF-156 fence. Kills: a merchant consent stored with the address and browser of the member
+# who entered it (the receptionist's personal data, not the client's), whatever the headers say.
+# tests/test_clients_db.py fences the database rule behind it.
+def test_a_merchant_consent_stores_no_address_or_browser(people: People, app: FastAPI) -> None:
     address = fresh_address()
     with tenant_context(people.a) as session:
         token = auth.create(session, people.both, ip=None, user_agent=None)
@@ -291,8 +291,7 @@ def test_a_merchant_consent_stores_the_connection_address_not_a_forwarded_header
             text("SELECT host(ip) AS ip, user_agent FROM consents WHERE client_id = :c"),
             {"c": uuid.UUID(client_id)},
         ).one()
-    assert stored.ip == address
-    assert stored.user_agent == "zif49-agent/1"
+    assert (stored.ip, stored.user_agent) == (None, None)
 
 
 # 25: GUARD.

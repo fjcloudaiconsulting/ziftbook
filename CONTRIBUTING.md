@@ -110,7 +110,8 @@ Specifics:
   role has, plus what only background jobs may do: `mint_email_token`, which the app role does not have (0051),
   setting an invite's `token_hash` (0053), reading and deleting an erased client's contact hold (0064) with
   `client_money_owed` (0077), `mint_contact_email_token` (ZIF-232, 0086), and the retention functions
-  `sweep_audit_events`, `sweep_admin_sessions`, `sweep_account_sessions` and `sweep_booking_origins` (0074, ZIF-235).
+  `sweep_audit_events`, `sweep_admin_sessions`, `sweep_account_sessions` and `sweep_booking_origins` (0074, ZIF-235),
+  and `sweep_consent_origins` (0096, ZIF-156).
   A worker still on `ziftbook_app` fails every sign-up, reset, invite and contact email confirmation email. The same
   never-list applies to it.
 - Neither runtime role can create temporary tables, and both search `public` before `pg_temp` (ZB-31;
@@ -351,6 +352,10 @@ that person's platform account (ZIF-99).
   version. The app role has `SELECT` and an `INSERT` limited to a column list, so it can neither edit a row nor
   backdate one. As with `audit_events`, a column added later needs its own `GRANT INSERT (column) ON consents TO
   ziftbook_app`, or every consent write fails, not only writes of the new column.
+- A consent a member records for a client (`source = 'merchant'`) stores no `ip` or `user_agent` (ZIF-156): they
+  would be the member's, not the client's, and the member's own `consent_recorded` audit event already keeps them.
+  The route passes neither, a `BEFORE INSERT` trigger drops them, and `ck_consents_merchant_no_origin` refuses them
+  (0096). Only a consent the client gave online (`booking_page`) keeps its address and browser, as its proof.
 - The wording and the version stored with a consent come from the server (`app.clients.CONSENT_TEXTS`). An unknown
   version is a 422, and so is a known version that publishes no wording for a purpose the caller named. A caller
   never supplies the text it claims to have shown.
@@ -838,9 +843,11 @@ Deferred and scheduled work goes through the `jobs` table (`app/jobs.py`); there
   day of its last claim and link (ZIF-232; claims purge with the same statement), audit events past their period
   (see "Audit log"), and clears `ip` and `user_agent` of a booking event once the event and its booking's end are both 18 months old (the row stays as
   evidence), walking the businesses in id order; a run that stops before the end leaves its place, and the next
-  run goes on from it (a worker restart starts the pass again). The hour is a margin for readers whose transaction began before the sweep. Every table that stores an
+  run goes on from it (a worker restart starts the pass again). It clears `ip` and `user_agent` of a consent a year
+  after a newer consent for the same client and purpose replaced it (ZIF-156, the same walk): the consent that stands
+  keeps its proof however old, and the row, its wording, version, purpose and time always stay. The hour is a margin for readers whose transaction began before the sweep. Every table that stores an
   address or a browser is listed in `retention.COVERED` with its rule; a test compares it with the catalog, so a new
-  one needs a rule (or a reasoned exemption, as `consents` has until ZIF-156) before it ships.
+  one needs a rule (or a reasoned exemption) before it ships.
 - Payloads hold ids only; the handler loads what it needs inside `tenant_context(job.tenant_id)`. A job with no tenant
   (such as `email.token`, for sign-up and reset links) touches only global tables, through `SessionLocal.begin()`.
 - Handlers may run more than once for a job (a crash after the work but before it is recorded, or a timeout that
@@ -1243,7 +1250,7 @@ ZIF-38). An empty variable means the default: `env_ignore_empty=True` on the bas
 | `ZIF_APP_REVISION` | api, frontend | `dev` | no | no | Git sha of the build, baked into the backend and frontend images. |
 | `ZIF_SHOW_VERSION` | frontend | none | no | no | `true` shows the version line (`v0.27.1 · 315a9c5`) at the bottom of the console sidebar and More sheet and in the booking pages' footer. Only staging sets it. Read server-side per request, never `NEXT_PUBLIC_*`. |
 | `ZIF_HEALTHCHECK_URL` | worker | none | no | no | Pinged after every successful loop. |
-| `ZIF_RETENTION_HOLD_UNTIL` | worker | none | no | no | An incident's evidence hold (ZIF-235): a plain date, `YYYY-MM-DD`, from tomorrow to 90 days ahead, exclusive: the hold lasts until 00:00 UTC on that date. Until then the retention sweep keeps audit events, platform audit events and booking-event addresses; sessions, rate limits, contact email senders, admin sessions and account sessions are still swept. It shows in the `worker started` line, the worker logs a WARNING at startup, and every sweep line is a WARNING while it holds; at 00:00 UTC on its date it ends by itself. Today's date or an earlier one holds nothing and logs an ERROR at startup (a mistyped year shows). Any other value (`0`, a datetime, a number, more than 90 days ahead) never turns the hold off and never stops the worker: it holds until fixed, logs an ERROR at startup and on every sweep, and the worker withholds its healthcheck ping, so the alert fires until someone corrects it. Set it in the worker's environment (production and staging: the worker's ConfigMap in the infrastructure repository, then restart the worker; compose: `.env`), and remove it once the evidence is exported. |
+| `ZIF_RETENTION_HOLD_UNTIL` | worker | none | no | no | An incident's evidence hold (ZIF-235): a plain date, `YYYY-MM-DD`, from tomorrow to 90 days ahead, exclusive: the hold lasts until 00:00 UTC on that date. Until then the retention sweep keeps audit events, platform audit events, booking-event addresses and consent addresses; sessions, rate limits, contact email senders, admin sessions and account sessions are still swept. It shows in the `worker started` line, the worker logs a WARNING at startup, and every sweep line is a WARNING while it holds; at 00:00 UTC on its date it ends by itself. Today's date or an earlier one holds nothing and logs an ERROR at startup (a mistyped year shows). Any other value (`0`, a datetime, a number, more than 90 days ahead) never turns the hold off and never stops the worker: it holds until fixed, logs an ERROR at startup and on every sweep, and the worker withholds its healthcheck ping, so the alert fires until someone corrects it. Set it in the worker's environment (production and staging: the worker's ConfigMap in the infrastructure repository, then restart the worker; compose: `.env`), and remove it once the evidence is exported. |
 | `ZIF_IMAGE_TAG` | compose | none | yes | no | Release tag (`vX.Y.Z`) for the three GHCR images. |
 | `ZIF_API_URL` | frontend | none | yes | no | Backend base URL the web app proxies `/api` to. |
 | **Telemetry** | | | | | |

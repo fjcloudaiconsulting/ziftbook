@@ -321,6 +321,45 @@ def test_every_consent_column_but_id_and_created_at_is_insertable(migrate_engine
     assert insertable == all_columns - {"id", "created_at"}
 
 
+ORIGIN = text("SELECT host(ip) AS ip, user_agent FROM consents WHERE client_id = :c")
+
+
+# ZIF-156 fence. Kills: a merchant consent stored with an address or a browser (the member's, not
+# the client's) by any writer: a merchant caller that passes one to record_consents, the release
+# still running during the deploy, or a later UPDATE (0096's check); and a rule that also drops
+# the origin of a consent the client gave on the booking page, which is its evidence.
+def test_a_merchant_consent_never_holds_an_address_or_browser(
+    people: People, superuser: Engine
+) -> None:
+    merchant, booker = seed_client(people.a), seed_client(people.a)
+    sources: list[tuple[uuid.UUID, clients.Source]] = [
+        (merchant, "merchant"),
+        (booker, "booking_page"),
+    ]
+    with tenant_context(people.a) as session:
+        for client_id, source in sources:
+            clients.record_consents(
+                session,
+                client_id=client_id,
+                policy_version="2026-09-01",
+                purposes={"marketing_email": True},
+                source=source,
+                ip="192.0.2.30",
+                user_agent="zif156-agent/1",
+            )
+        assert tuple(session.execute(ORIGIN, {"c": merchant}).one()) == (None, None)
+        assert tuple(session.execute(ORIGIN, {"c": booker}).one()) == (
+            "192.0.2.30",
+            "zif156-agent/1",
+        )
+
+    with pytest.raises(IntegrityError) as error, superuser.begin() as conn:
+        conn.execute(
+            text("UPDATE consents SET ip = '192.0.2.31' WHERE client_id = :c"), {"c": merchant}
+        )
+    assert isinstance(error.value.orig, CheckViolation)
+
+
 # 8: FENCE. Wrong impl: ORDER BY client_id, purpose, created_at DESC in CURRENT_CONSENTS.
 def test_the_current_consent_is_the_newest_row_by_id_not_by_created_at(
     people: People, migrate_engine: Engine

@@ -312,19 +312,20 @@ def test_the_invoker_check_catches_one_and_ignores_comments(migrate_engine: Engi
     assert found == {"invoker_audit_reader", "atomic_audit_reader", "trigger_audit_reader"}
 
 
-# ---- 0074: the worker's four retention functions ----
+# ---- 0074 and 0096: the worker's retention functions ----
 
-FUNCTIONS_0074 = {
+SWEEPERS = {
     "sweep_audit_events()": "SELECT * FROM sweep_audit_events()",
     "sweep_admin_sessions()": "SELECT * FROM sweep_admin_sessions()",
     "sweep_account_sessions()": "SELECT * FROM sweep_account_sessions()",
     "sweep_booking_origins(uuid)": "SELECT * FROM sweep_booking_origins(NULL)",
+    "sweep_consent_origins(uuid)": "SELECT * FROM sweep_consent_origins(NULL)",
 }
 
 
 # 1: FENCE. Wrong impl: EXECUTE granted to ziftbook_app or left to PUBLIC; the API role could then
 # delete audit evidence (past its window, but on its own schedule) or walk every business.
-@pytest.mark.parametrize("signature", sorted(FUNCTIONS_0074))
+@pytest.mark.parametrize("signature", sorted(SWEEPERS))
 def test_the_app_role_cannot_call_a_retention_function(
     app_engine: Engine, migrate_engine: Engine, signature: str
 ) -> None:
@@ -339,7 +340,7 @@ def test_the_app_role_cannot_call_a_retention_function(
         ).one()
     assert tuple(held) == (False, False, True)
     with pytest.raises(ProgrammingError) as error, app_engine.begin() as conn:
-        conn.execute(text(FUNCTIONS_0074[signature]))
+        conn.execute(text(SWEEPERS[signature]))
     assert getattr(error.value.orig, "sqlstate", None) == "42501"
 
 
@@ -359,6 +360,7 @@ FROM pg_proc p WHERE p.oid = CAST(:f AS regprocedure)
         ("sweep_admin_sessions()", ""),
         ("sweep_account_sessions()", ""),
         ("sweep_booking_origins(uuid)", "uuid"),
+        ("sweep_consent_origins(uuid)", "uuid"),
     ],
 )
 def test_a_retention_function_is_a_pinned_definer_whose_caller_chooses_no_period(
@@ -782,12 +784,12 @@ def event_rows(superuser: Engine, ids: list[uuid.UUID]) -> dict[uuid.UUID, Any]:
         return {row.id: row for row in conn.execute(ROWS, {"ids": ids})}
 
 
-def origins_pass(worker_engine: Engine) -> int:
+def origins_pass(worker_engine: Engine, function: str = "sweep_booking_origins") -> int:
     """One full walk over the businesses: calls until the cursor comes back empty."""
     cleared, start = 0, None
     for _ in range(1000):
         with worker_engine.begin() as conn:
-            row = conn.execute(text("SELECT * FROM sweep_booking_origins(:f)"), {"f": start}).one()
+            row = conn.execute(text(f"SELECT * FROM {function}(:f)"), {"f": start}).one()
         cleared += int(row.cleared)
         start = row.next_tenant
         if start is None:
@@ -935,6 +937,68 @@ def test_a_call_visits_at_most_200_businesses(
             conn.execute(text("DELETE FROM tenants WHERE id = ANY(:i)"), {"i": list(made)})
 
 
+# ---- consent origins (ZIF-156) ----
+
+
+def seed_consent(
+    superuser: Engine, tenant_id: uuid.UUID, client_id: uuid.UUID, purpose: str, age: str
+) -> uuid.UUID:
+    """A booking-page consent given at now() minus `age`, with its address and browser. Seed a
+    client's rows oldest first: the newest is the one with the highest id, as CURRENT_CONSENTS
+    reads it."""
+    with superuser.begin() as conn:
+        consent_id: uuid.UUID = conn.scalar(
+            text("""
+            INSERT INTO consents (tenant_id, client_id, purpose, granted, text_shown,
+                                  policy_version, source, ip, user_agent, created_at)
+            VALUES (:t, :c, :p, true, 'text', '2026-09-01', 'booking_page', '192.0.2.20',
+                    'Agent', now() - CAST(:a AS interval))
+            RETURNING id
+            """),
+            {"t": tenant_id, "c": client_id, "p": purpose, "a": age},
+        )
+    return consent_id
+
+
+CONSENT_ROWS = text("""
+SELECT id, host(ip) AS ip, user_agent, to_jsonb(c) - 'ip' - 'user_agent' AS rest
+FROM consents c WHERE id = ANY(:ids)
+""")
+
+
+def consent_rows(superuser: Engine, ids: list[uuid.UUID]) -> dict[uuid.UUID, Any]:
+    with superuser.connect() as conn:
+        return {row.id: row for row in conn.execute(CONSENT_ROWS, {"ids": ids})}
+
+
+# ZIF-156 fence. Kills: an address cleared from the consent that stands (the newest per client and
+# purpose, however old: the proof of the choice in force, owner ruling D4), a period anchored on
+# the row's own age rather than on when it was replaced, a cutoff other than a year, a "newer row"
+# looked for across clients or purposes, a sweep of one business only, or a statement that
+# touches the wording, version, purpose, source or time (the Art. 7(1) evidence) or deletes a row.
+def test_consent_origins_clear_a_year_after_the_consent_is_replaced_and_never_while_it_stands(
+    people: People, superuser: Engine, worker_engine: Engine
+) -> None:
+    cleared, kept = [], []
+    for tenant in (people.a, people.b):
+        first, second = seed_client(tenant), seed_client(tenant)
+        cleared.append(seed_consent(superuser, tenant, first, "marketing_email", "3 years"))
+        kept.append(seed_consent(superuser, tenant, first, "marketing_email", "1 year 1 hour"))
+        kept.append(seed_consent(superuser, tenant, first, "sms", "3 years"))
+        kept.append(seed_consent(superuser, tenant, first, "sms", "1 year -1 hour"))
+        kept.append(seed_consent(superuser, tenant, first, "whatsapp", "3 years"))
+        kept.append(seed_consent(superuser, tenant, second, "marketing_email", "3 years"))
+    before = consent_rows(superuser, cleared + kept)
+
+    origins_pass(worker_engine, "sweep_consent_origins")
+
+    after = consent_rows(superuser, cleared + kept)
+    assert set(after) == set(before)  # no row deleted
+    assert {i for i in after if after[i].ip is None and after[i].user_agent is None} == set(cleared)
+    assert all(after[i].ip == "192.0.2.20" and after[i].user_agent == "Agent" for i in kept)
+    assert all(after[i].rest == before[i].rest for i in after)  # every other column unchanged
+
+
 # M1 (review B1, the reviewer's P1 as a regression test). A migrate-owned definer that reads
 # bookings and booking_events for the caller's business, as ZIF-146's own_bookings or a ZIF-58
 # erasure reader does, must return that business's rows only, even with app.retention_sweep on.
@@ -1020,6 +1084,10 @@ SPLIT = re.compile(r";|\b(?:then|else|loop|begin|declare)\b", re.IGNORECASE)
 # Dynamic SQL: a write the static check cannot read.
 DYNAMIC = re.compile(r"\bexecute\b", re.IGNORECASE)
 CALLS = re.compile(r"\b(\w+)\s*\(")
+CONSENT_ORIGIN_WRITE = re.compile(
+    r"\bupdate\s+consents\s+c\s+set\s+ip\s*=\s*null\s*,\s*user_agent\s*=\s*null\s+where\b",
+    re.IGNORECASE,
+)
 BOOKING_ORIGIN_WRITE = re.compile(
     r"\bupdate\s+booking_events\s+e\s+set\s+ip\s*=\s*null\s*,\s*user_agent\s*=\s*null"
     r"\s+where\b",
@@ -1079,6 +1147,7 @@ EXPECTED_WRITES = {
     "sweep_admin_sessions": [("delete", "admin_sessions")],
     "sweep_account_sessions": [("delete", "account_sessions")],
     "sweep_booking_origins": [("update", "booking_events")],
+    "sweep_consent_origins": [("update", "consents")],
 }
 DEFINITIONS = text("""
 SELECT p.proname, pg_get_functiondef(p.oid) FROM pg_proc p
@@ -1110,6 +1179,7 @@ def test_each_retention_function_writes_only_what_it_is_for(migrate_engine: Engi
         name: [] for name in EXPECTED_WRITES
     }
     assert origin_writes_ok(sources["sweep_booking_origins"], schema)
+    assert CONSENT_ORIGIN_WRITE.search(code(sources["sweep_consent_origins"]))  # ip, user_agent
 
 
 @pytest.mark.parametrize(
@@ -1193,4 +1263,5 @@ def test_every_event_batch_takes_the_oldest_first(migrate_engine: Engine) -> Non
         sources = definitions(conn)
     assert unordered_batches(sources["sweep_audit_events"]) == 0
     assert unordered_batches(sources["sweep_booking_origins"]) == 0
+    assert unordered_batches(sources["sweep_consent_origins"]) == 0
     assert unordered_batches("SELECT x.id FROM t x WHERE true LIMIT 1000") == 1
