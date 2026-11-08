@@ -118,16 +118,23 @@ describe("a stopped setup", () => {
 });
 
 describe("a ticket entered after a stopped setup", () => {
-  // ZIF-262 (ZIF-275): a stopped enrolment answers its ticket with invalid_ticket. Back on the ticket form from the
-  // "Setup stopped" screen, the admin still reads why and what to do, not only "that ticket doesn't match".
+  // node --test cannot render these components (no DOM or React renderer here, as today.test.mjs notes), so these
+  // check the answer mapping and, loosely, which step uses what.
   const enrol = readFileSync(new URL("../app/[locale]/admin/sign-in/enrol.tsx", import.meta.url), "utf8");
-  test("the stopped screen takes its text to the ticket form, marked to stay", () => {
-    assert.match(
-      enrol,
-      /onClick=\{\(\) => onRestart\(\{ tone: "error", text: t\("enrolLocked"\), sticky: true \}\)\}/,
-    );
+  const ticketStep = enrol.slice(enrol.indexOf("export function TicketStep"), enrol.indexOf("function SetupStopped"));
+  const scanStep = enrol.slice(enrol.indexOf("export function ScanStep"), enrol.indexOf("export function RecoveryCodes"));
+  // ZIF-275 fence. Kills: a stopped enrolment's ticket (403 second_factor_locked from begin, also after a reload)
+  // shown as a wrong ticket or "something went wrong" instead of the "Setup stopped" screen the confirm step shows.
+  test("a stopped enrolment's ticket shows the Setup stopped screen, not a QR code", () => {
+    assert.equal(factorState(403, "second_factor_locked"), "locked");
+    assert.match(ticketStep, /state === "locked"/);
+    assert.match(ticketStep, /<SetupStopped/);
+    assert.match(scanStep, /<SetupStopped/);
   });
-  test("a refused ticket keeps only that text, never another message the form was opened with", () => {
-    assert.match(enrol, /state === "wrong"\) \{\s*setMessage\(initial\?\.sticky \? initial : null\);/);
+  // ZIF-262: back on the ticket form from that screen, the admin still reads why and what to do, not only "that
+  // ticket doesn't match", and a refused ticket then keeps only that text.
+  test("the stopped screen takes its text to the ticket form, marked to stay", () => {
+    for (const step of [ticketStep, scanStep]) assert.match(step, /text: t\("enrolLocked"\), sticky: true/);
+    assert.match(ticketStep, /state === "wrong"\) \{\s*setMessage\(sticky\);/);
   });
 });

@@ -41,12 +41,16 @@ export function TicketStep({
   const [busy, setBusy] = useState(false);
   const [wrong, setWrong] = useState(false);
   const [message, setMessage] = useState<Message | null>(initial ?? null);
+  const [stopped, setStopped] = useState(false);
+  // Back from the "Setup stopped" screen: its button unmounts, so focus moves to the form's heading.
+  const [refocus, setRefocus] = useState(false);
   // The parent passes a new message object per step change, e.g. after a 409 whose follow-up read failed.
   const [seen, setSeen] = useState(initial);
   if (initial !== seen) {
     setSeen(initial);
     if (initial) setMessage(initial);
   }
+  const sticky = message?.sticky ? message : initial?.sticky ? initial : null;
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
@@ -61,9 +65,12 @@ export function TicketStep({
     if (outcome.status === 200 && outcome.data) {
       onBegun(outcome.data);
     } else if (state === "wrong") {
-      setMessage(initial?.sticky ? initial : null);
+      setMessage(sticky);
       setWrong(true);
       input.current?.focus();
+    } else if (state === "locked") {
+      // ZIF-275: this ticket's setup stopped (also after a reload): no QR code, the way out is a new ticket.
+      setStopped(true);
     } else if (state === "expired") {
       onExpired(ticket.trim());
     } else if (state === "conflict") {
@@ -77,10 +84,24 @@ export function TicketStep({
     }
   }
 
+  if (stopped) {
+    return (
+      <SetupStopped
+        who={who}
+        onNewTicket={() => {
+          setStopped(false);
+          setRefocus(true);
+          setTicket("");
+          setMessage({ tone: "error", text: t("enrolLocked"), sticky: true });
+        }}
+      />
+    );
+  }
+
   return (
     <>
       <Mark icon="key" />
-      <Heading focus={focus}>{t("enrolTitle")}</Heading>
+      <Heading focus={focus || refocus}>{t("enrolTitle")}</Heading>
       <p className={styles.lede}>{t("enrolLede")}</p>
       {message && <Banner tone={message.tone}>{message.text}</Banner>}
       <div className={admin.section}>
@@ -122,6 +143,22 @@ export function TicketStep({
           {t("continue")}
         </Submit>
       </form>
+    </>
+  );
+}
+
+/** 10 wrong confirm codes stopped this setup: its ticket starts nothing, only a new one does (ZIF-262, ZIF-275). */
+function SetupStopped({ who, onNewTicket }: { who: AdminSession; onNewTicket(): void }) {
+  const t = useTranslations("Admin");
+  return (
+    <>
+      <Mark icon="key" />
+      <Heading focus>{t("enrolLockedTitle")}</Heading>
+      <Banner tone="error">{t("enrolLocked")}</Banner>
+      <EnrolCommand email={who.email} />
+      <button className={`${styles.button} ${styles.secondary}`} type="button" onClick={onNewTicket}>
+        {t("newTicket")}
+      </button>
     </>
   );
 }
@@ -189,17 +226,7 @@ export function ScanStep({
   }
 
   if (locked) {
-    return (
-      <>
-        <Mark icon="key" />
-        <Heading focus>{t("enrolLockedTitle")}</Heading>
-        <Banner tone="error">{t("enrolLocked")}</Banner>
-        <EnrolCommand email={who.email} />
-        <button className={`${styles.button} ${styles.secondary}`} type="button" onClick={() => onRestart({ tone: "error", text: t("enrolLocked"), sticky: true })}>
-          {t("newTicket")}
-        </button>
-      </>
-    );
+    return <SetupStopped who={who} onNewTicket={() => onRestart({ tone: "error", text: t("enrolLocked"), sticky: true })} />;
   }
 
   return (

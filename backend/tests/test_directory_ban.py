@@ -259,6 +259,9 @@ DEFINERS = [
     "public.start_email_token(p_purpose text, p_email text, p_locale text)",
     "public.stripe_account_tenant(p_account text)",
     "public.totp_ciphertext(p_id_hash bytea)",
+    # ZIF-275 (0095): keyed by the caller's own live admin session and its setup ticket; answers
+    # only whether that enrolment stopped, reads no user.
+    "public.totp_enrolment_locked(p_id_hash bytea, p_ticket_proof bytea)",
     "public.use_recovery_code(p_id_hash bytea, p_code_proof bytea)",
 ]
 WIDENING = ' Widening it breaks the ZIF-99 directory ban, see CONTRIBUTING "Client records".'
