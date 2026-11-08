@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.40.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.39.0...v0.40.0) (2026-11-08)
+
+
+### Features
+
+* admins find and inspect businesses, read-only (ZIF-73) ([#422](https://github.com/fjcloudaiconsulting/ziftbook/issues/422)) ([fbef570](https://github.com/fjcloudaiconsulting/ziftbook/commit/fbef57006b6a7edea09a8a295cfcb6d5cda29b67))
+* **web:** the Today page shows the gap after each booking, as the calendar does (ZIF-288) ([#419](https://github.com/fjcloudaiconsulting/ziftbook/issues/419)) ([12b7632](https://github.com/fjcloudaiconsulting/ziftbook/commit/12b76326b3b7dc457457a3bc427ac5ef15bcfb62))
+
+
+### Bug Fixes
+
+* **backend:** a merchant-entered consent stores no staff address, and a consent's address is cleared a year after the answer changes (ZIF-156) ([#421](https://github.com/fjcloudaiconsulting/ziftbook/issues/421)) ([36cfe84](https://github.com/fjcloudaiconsulting/ziftbook/commit/36cfe849b9068db35f5706531937d2cfe2d9705d))
+* **web:** every tab bar fades at its edges, and the selected Settings tab scrolls into view however it was chosen (ZIF-289) ([#420](https://github.com/fjcloudaiconsulting/ziftbook/issues/420)) ([998b8bc](https://github.com/fjcloudaiconsulting/ziftbook/commit/998b8bc919685a9be91ff73c1efdf1963bf8bd05))
+
 ## [0.39.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.38.0...v0.39.0) (2026-11-08)
 
 
