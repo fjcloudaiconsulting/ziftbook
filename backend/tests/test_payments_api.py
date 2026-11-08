@@ -89,8 +89,9 @@ def test_the_links_and_the_audit_event(
     )
     (acct,) = (a for (a, *_) in rows(migrate_engine, people.a))
     link = [p for op, p in fake_stripe.calls if op == "onboarding_link"][0]
-    assert link["return_url"] == "http://localhost:3000/nl/settings?stripe=return"
-    assert link["refresh_url"] == "http://localhost:3000/nl/settings?stripe=refresh"
+    # ZIF-161: the owner comes back to the settings page's payments tab.
+    assert link["return_url"] == "http://localhost:3000/nl/settings?tab=payments&stripe=return"
+    assert link["refresh_url"] == "http://localhost:3000/nl/settings?tab=payments&stripe=refresh"
     created = [e for e in events(migrate_engine, tenant_id=people.a) if "payment" in e["action"]]
     assert [(e["action"], e["target"]) for e in created] == [
         ("payment_account_created", f"payment_account:{acct}")

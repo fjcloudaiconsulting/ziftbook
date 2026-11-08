@@ -746,6 +746,14 @@
       "wholeNumber": "Enter a whole number from {min} to {max}.",
       "saveChanges": "Save changes",
       "unsavedChanges": "Unsaved changes: {list}.",
+      "tabs": {
+        "business": "Your business",
+        "bookings": "Bookings",
+        "payments": "Payments",
+        "team": "Team"
+      },
+      "tabUnsaved": "unsaved changes",
+      "paymentsLoading": "Checking your online payments…",
       "savedList": "Saved: {list}.",
       "changed": {
         "timezone": "time zone",

@@ -746,6 +746,14 @@
       "wholeNumber": "Vul een heel getal van {min} tot {max} in.",
       "saveChanges": "Wijzigingen opslaan",
       "unsavedChanges": "Niet-opgeslagen wijzigingen: {list}.",
+      "tabs": {
+        "business": "Je bedrijf",
+        "bookings": "Boekingen",
+        "payments": "Betalingen",
+        "team": "Team"
+      },
+      "tabUnsaved": "niet-opgeslagen wijzigingen",
+      "paymentsLoading": "Je online betalingen worden opgehaald…",
       "savedList": "Opgeslagen: {list}.",
       "changed": {
         "timezone": "tijdzone",

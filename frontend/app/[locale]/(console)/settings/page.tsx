@@ -1,4 +1,5 @@
 import { getTranslations } from "next-intl/server";
+import { Suspense } from "react";
 
 import { Settings } from "./settings";
 
@@ -8,5 +9,10 @@ export async function generateMetadata() {
 }
 
 export default function SettingsPage() {
-  return <Settings />;
+  // useSearchParams (the tab) needs a Suspense boundary to build statically; the shell has already loaded by then.
+  return (
+    <Suspense>
+      <Settings />
+    </Suspense>
+  );
 }
