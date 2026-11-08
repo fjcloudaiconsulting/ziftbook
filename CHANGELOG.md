@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.39.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.38.0...v0.39.0) (2026-11-08)
+
+
+### Features
+
+* **web:** Settings groups its sections into tabs (ZIF-161) ([#414](https://github.com/fjcloudaiconsulting/ziftbook/issues/414)) ([36c3bb6](https://github.com/fjcloudaiconsulting/ziftbook/commit/36c3bb6f1e5750ddb492dd224c1223fe1faa93d5))
+* **web:** the calendar colours bookings by status and draws each service's interval after it (ZIF-174) ([#415](https://github.com/fjcloudaiconsulting/ziftbook/issues/415)) ([d437733](https://github.com/fjcloudaiconsulting/ziftbook/commit/d4377339256bb04690f66b8e0349b2e02221e5e2))
+
+
+### Bug Fixes
+
+* an admin whose second-factor setup is locked is told so, instead of a new QR code (ZIF-275) ([#412](https://github.com/fjcloudaiconsulting/ziftbook/issues/412)) ([8fe7670](https://github.com/fjcloudaiconsulting/ziftbook/commit/8fe76706055fe694ac65c5c0dbd6d9e9c3f803f3))
+* **backend:** a deploy's migration retries once when autovacuum deadlocks it (ZIF-287) ([#417](https://github.com/fjcloudaiconsulting/ziftbook/issues/417)) ([cb09756](https://github.com/fjcloudaiconsulting/ziftbook/commit/cb097561e7e1f3aa42edf25fa8a099ff0bdf21aa))
+* **backend:** photos from phones that save HDR JPEGs (MPO) are accepted, decoding only the main image (ZIF-246) ([#409](https://github.com/fjcloudaiconsulting/ziftbook/issues/409)) ([8e990f2](https://github.com/fjcloudaiconsulting/ziftbook/commit/8e990f246e0588f3b802441a117593e82c68bd8e))
+* **backend:** the health probe answers within 5 s when the database hangs (ZIF-160) ([#410](https://github.com/fjcloudaiconsulting/ziftbook/issues/410)) ([55aea54](https://github.com/fjcloudaiconsulting/ziftbook/commit/55aea542717533818edaaced4eaced370a7a49e4))
+* consent evidence stores the wording, in the language, the confirming person saw (ZIF-108, ZIF-159) ([#416](https://github.com/fjcloudaiconsulting/ziftbook/issues/416)) ([3a32379](https://github.com/fjcloudaiconsulting/ziftbook/commit/3a32379bae4e1dd810eda92aec75e56f6476007d))
+
 ## [0.38.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.37.0...v0.38.0) (2026-11-07)
 
 
