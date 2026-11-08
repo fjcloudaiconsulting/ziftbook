@@ -5,9 +5,10 @@
 // No TZ is pinned here on purpose: the suite must pass in whatever zone the runner is in
 // (`TZ=America/New_York node --test tests/calendar.test.mjs`, `TZ=Asia/Tokyo ...`).
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { describe, test } from "node:test";
 
-import { actionsFor, bookingHref, closedDay, closedDetail, isPaid, isWaiting, mayDecline, spanTimes, telHref, daySlices, dayWindow, historyLabel, paymentFact, hourRange, hrefFor, intervalEnd, lanes, monToSun, nowTop, parseView, switchDate, toneOf, visibleDays, weekStart, weekdayOf, whenParts } from "../lib/calendar.ts";
+import { actionsFor, bookingHref, bookingMeta, closedDay, closedDetail, isPaid, isWaiting, mayDecline, spanTimes, telHref, daySlices, dayWindow, historyLabel, paymentFact, hourRange, hrefFor, intervalEnd, intervalShown, lanes, monToSun, nowTop, parseView, switchDate, toneOf, visibleDays, weekStart, weekdayOf, whenParts } from "../lib/calendar.ts";
 import { formatMoney } from "../lib/money.ts";
 
 const AMS = "Europe/Amsterdam";
@@ -627,5 +628,33 @@ describe("the interval after a booking, and its status tone (ZIF-174)", () => {
       ["confirmed", "pending", "completed", "no_show", "awaiting_payment", "something_new"].map(toneOf),
       ["confirmed", "waiting", "done", "done", "neutral", "neutral"],
     );
+  });
+});
+
+// ZIF-288 fence. Kills: Today's list leaving out the gap the calendar's phone list shows (or building its
+// own line that drifts from it), a gap named on a no-show's 0, the drawn tail and its "+N min gap" name
+// following different rules, and the worker shown to a worker or the walk-in word on an online booking.
+describe("a booking row's second line, shared by the calendar's phone list and Today (ZIF-288)", () => {
+  const words = { worker: (name) => `With ${name ?? "?"}`, walkIn: "walk-in", interval: (n) => `+${n} min gap` };
+  const booking = { worker_display_name: "Ada", source: "merchant", buffer_minutes: 15 };
+
+  test("the owner sees worker, walk-in and gap, in that order", () => {
+    assert.deepEqual(bookingMeta(booking, true, words), ["With Ada", "walk-in", "+15 min gap"]);
+  });
+  test("a worker's own row leaves out the worker; an online booking has no walk-in word", () => {
+    assert.deepEqual(bookingMeta({ ...booking, source: "client" }, false, words), ["+15 min gap"]);
+  });
+  test("no gap, or a no-show's 0, names none, and the drawn tail agrees", () => {
+    const slice = daySlices({ start: at("2026-09-30T08:00:00Z"), end: at("2026-09-30T09:00:00Z") }, ["2026-09-30"], AMS)[0];
+    for (const minutes of [0, null, undefined, -5]) {
+      assert.equal(intervalShown(minutes), null, String(minutes));
+      assert.equal(intervalEnd(slice, minutes), slice.realEnd, String(minutes));
+    }
+    assert.deepEqual(bookingMeta({ ...booking, buffer_minutes: 0 }, true, words), ["With Ada", "walk-in"]);
+  });
+  test("both lists build their line with it", () => {
+    for (const page of ["today.tsx", "calendar/calendar.tsx"]) {
+      assert.match(readFileSync(new URL(`../app/[locale]/(console)/${page}`, import.meta.url), "utf8"), /\bbookingMeta\(booking, isOwner,/, page);
+    }
   });
 });

@@ -13,7 +13,7 @@ import {
   type TimeOffRangeOut,
 } from "@/api-client";
 import { Link } from "@/i18n/navigation";
-import { isPaid, mayDecline } from "@/lib/calendar";
+import { bookingMeta, isPaid, mayDecline } from "@/lib/calendar";
 import { canAnswerRequests, clientLabel, dateLocale, type Role, showPublishStep, todayLabel } from "@/lib/console";
 import { formatMoney } from "@/lib/money";
 import { type NameMap, type Locale, serviceName } from "@/lib/services";
@@ -558,7 +558,8 @@ export function Today() {
               }
               const { booking } = item;
               const chip = chipOf(booking.status);
-              const meta = [isOwner ? worker(booking.worker_display_name) : null, booking.source === "merchant" ? t("walkIn") : null].filter(Boolean);
+              // ZIF-288: the calendar phone list's builder, so the service's gap reads the same here.
+              const meta = bookingMeta(booking, isOwner, { worker, walkIn: t("walkIn"), interval: (n) => calendarT("interval", { n }) });
               return [
                 nowLine,
                 <li key={item.key} className={past}>

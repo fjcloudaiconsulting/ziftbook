@@ -15,7 +15,7 @@ import {
   type TimeOffRangeOut,
 } from "@/api-client";
 import { Link, useRouter } from "@/i18n/navigation";
-import { closedDay, closedDetail, daySlices, dayWindow, hourRange, hrefFor, type CalendarView, intervalEnd, lanes, monToSun, nowTop, type Panel, parseView, type Slice, spanTimes, switchDate, toneOf, type View, visibleDays, weekdayOf } from "@/lib/calendar";
+import { bookingMeta, closedDay, closedDetail, daySlices, dayWindow, hourRange, hrefFor, type CalendarView, intervalEnd, intervalShown, lanes, monToSun, nowTop, type Panel, parseView, type Slice, spanTimes, switchDate, toneOf, type View, visibleDays, weekdayOf } from "@/lib/calendar";
 import { canAnswerRequests, clientLabel, dateLocale, type Role } from "@/lib/console";
 import { type Locale, type NameMap, serviceName } from "@/lib/services";
 import { messageShown, slotAt } from "@/lib/new-booking";
@@ -341,7 +341,8 @@ export function Calendar() {
     const short = (item.end - item.start) / 60_000 < 45; // one line: a 30-minute item is about 32px tall
     const second = weekView ? (short ? words : []) : [serviceOf(booking), ...words];
     const selected = booking.id === view.booking;
-    const interval = booking.buffer_minutes > 0 ? t("interval", { n: booking.buffer_minutes }) : null;
+    const gap = intervalShown(booking.buffer_minutes);
+    const interval = gap ? t("interval", { n: gap }) : null;
     const name = [
       t("itemLabel", {
         start: localTime(booking.starts_at, tz),
@@ -445,11 +446,11 @@ export function Calendar() {
           }
           const { booking } = item;
           const chip = chipOf(booking.status);
-          const meta = [
-            isOwner ? (booking.worker_display_name ?? person("nameNotSet")) : null,
-            booking.source === "merchant" ? today("walkIn") : null,
-            booking.buffer_minutes > 0 ? t("interval", { n: booking.buffer_minutes }) : null,
-          ].filter(Boolean);
+          const meta = bookingMeta(booking, isOwner, {
+            worker: (name) => name ?? person("nameNotSet"),
+            walkIn: today("walkIn"),
+            interval: (n) => t("interval", { n }),
+          });
           return [
             marker,
             <li key={item.key} className={past}>
