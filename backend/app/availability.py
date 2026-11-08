@@ -31,6 +31,12 @@ def buffer_for(duration_minutes: int, override: int | None, pct: int) -> int:
     return override if override is not None else -(-duration_minutes * pct // 100)
 
 
+def booking_buffer(starts_at: datetime, ends_at: datetime, override: int | None, pct: int) -> int:
+    """The gap an existing booking keeps after it, from its own length: what member_slots blocks
+    and what the calendar draws (ZIF-174), so the two cannot drift."""
+    return buffer_for((ends_at - starts_at) // timedelta(minutes=1), override, pct)
+
+
 def merged(intervals: Iterable[Interval]) -> list[Interval]:
     """Sorted, with overlapping or touching intervals joined."""
     out: list[Interval] = []
@@ -109,10 +115,7 @@ def member_slots(
     blocked = merged(
         [
             *time_off,
-            *(
-                (s, e + timedelta(minutes=buffer_for((e - s) // timedelta(minutes=1), o, pct)))
-                for s, e, o in booked
-            ),
+            *((s, e + timedelta(minutes=booking_buffer(s, e, o, pct))) for s, e, o in booked),
         ]
     )
     length = timedelta(minutes=duration)

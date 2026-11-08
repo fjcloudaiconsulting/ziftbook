@@ -7483,6 +7483,10 @@
           "source": {
             "type": "string",
             "title": "Source"
+          },
+          "buffer_minutes": {
+            "type": "integer",
+            "title": "Buffer Minutes"
           }
         },
         "type": "object",
@@ -7501,7 +7505,8 @@
           "created_at",
           "expires_at",
           "status",
-          "source"
+          "source",
+          "buffer_minutes"
         ],
         "title": "AgendaOut"
       },

@@ -330,10 +330,18 @@ class PendingOut(BookingRow):
     payment: PaymentFact | None
 
 
-class AgendaOut(BookingRow):
+class BookingFacts(BookingRow):
     expires_at: datetime | None  # set while a hold is live; null once settled
     status: str
     source: str  # booking_page, merchant (a walk-in) or marketplace
+
+
+class AgendaOut(BookingFacts):
+    # ZIF-174: the gap the service keeps after this booking, as availability computes it today (the
+    # service's own buffer, else the business's percentage of the booking's length), so the
+    # calendar draws it as part of the booking, not as free time. 0 for a booking availability does
+    # not count (a no-show). Not snapshotted: a buffer is a scheduling rule, not evidence.
+    buffer_minutes: int
 
 
 class EventOut(BaseModel):
@@ -344,7 +352,7 @@ class EventOut(BaseModel):
     details: dict[str, Any] | None
 
 
-class BookingDetailOut(AgendaOut):
+class BookingDetailOut(BookingFacts):
     client_email: str | None
     client_phone: str | None
     client_message: str | None
@@ -515,9 +523,10 @@ LIMIT :limit
 # ponytail: no limit or cursor. The 8-day span cap is the bound (one worker's day holds a few dozen
 # bookings at most); the upgrade is a (starts_at, id) cursor like app/clients.py:63.
 RANGE = text(f"""
-SELECT {LIST_COLUMNS}, b.expires_at, b.status, b.source
+SELECT {LIST_COLUMNS}, b.expires_at, b.status, b.source, s.buffer_minutes AS service_buffer
 FROM bookings b
 JOIN clients c ON c.tenant_id = b.tenant_id AND c.id = b.client_id
+JOIN services s ON s.tenant_id = b.tenant_id AND s.id = b.service_id
 WHERE b.starts_at < :to AND b.ends_at > :from
   AND b.starts_at > CAST(:from AS timestamptz) - interval '12 hours'
   AND b.status = ANY(CAST(:statuses AS text[]))
@@ -1524,7 +1533,23 @@ def agenda(
         },
     ).all()
     response.headers["Cache-Control"] = "no-store"
-    return [AgendaOut.model_validate(row, from_attributes=True) for row in rows]
+    if not rows:
+        return []
+    pct = business_settings.read(current.db).buffer_pct
+    return [
+        AgendaOut.model_validate(
+            {
+                **row._mapping,
+                # Only a booking availability counts keeps a gap: a no-show frees its time.
+                "buffer_minutes": availability.booking_buffer(
+                    row.starts_at, row.ends_at, row.service_buffer, pct
+                )
+                if row.status in availability.OCCUPYING
+                else 0,
+            }
+        )
+        for row in rows
+    ]
 
 
 # Events nobody acts on: the clock and Stripe (ZIF-158) write them.
