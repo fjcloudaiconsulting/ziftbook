@@ -10,6 +10,7 @@ import pytest
 from psycopg.errors import CheckViolation, ForeignKeyViolation, InsufficientPrivilege
 from sqlalchemy import Engine, text
 from sqlalchemy.exc import DBAPIError, IntegrityError
+from sqlalchemy.orm import Session
 
 from app import clients
 from app.db import tenant_context
@@ -358,6 +359,30 @@ def test_a_merchant_consent_never_holds_an_address_or_browser(
             text("UPDATE consents SET ip = '192.0.2.31' WHERE client_id = :c"), {"c": merchant}
         )
     assert isinstance(error.value.orig, CheckViolation)
+
+
+# ZIF-156 fence. Kills: record_consents writing what a merchant caller passes, left to the caller
+# and to 0096's deploy-window trigger. With the trigger off, as after the contract migration, the
+# check refuses the insert (a 500) unless record_consents dropped them itself.
+def test_record_consents_drops_a_merchant_callers_address_itself(
+    people: People, migrate_engine: Engine
+) -> None:
+    client_id = seed_client(people.a)
+    with migrate_engine.connect() as conn, conn.begin() as transaction:
+        conn.execute(text("ALTER TABLE consents DISABLE TRIGGER consents_merchant_no_origin"))
+        conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(people.a)})
+        clients.record_consents(
+            Session(bind=conn),
+            client_id=client_id,
+            policy_version="2026-09-01",
+            purposes={"marketing_email": True},
+            source="merchant",
+            ip="192.0.2.32",
+            user_agent="zif156-agent/2",
+        )
+        stored = tuple(conn.execute(ORIGIN, {"c": client_id}).one())
+        transaction.rollback()  # the trigger back on, the row gone
+    assert stored == (None, None)
 
 
 # 8: FENCE. Wrong impl: ORDER BY client_id, purpose, created_at DESC in CURRENT_CONSENTS.

@@ -44,9 +44,12 @@ depends_on = None
 SEARCH_PATH = "SET search_path = pg_catalog, public, pg_temp"
 SIGNATURE = "sweep_consent_origins(uuid)"
 
-# shortcut: every call reads each business's withdrawals older than a year, and the address-holding
-# consents of those clients and purposes, cleared or not; at about 100,000 such withdrawals across
-# businesses, keep a per-business high-water mark (the newest change already swept) instead.
+# shortcut: what each hourly call reads only grows: every withdrawal older than a year (0098's
+# index, index-only), plus every row of those clients and purposes, the standing answer's
+# included, which keeps its address by design and so is read again on every run. Fine at
+# pre-launch scale; at about 100,000 withdrawals older than a year across businesses, keep a
+# per-business high-water mark (the created_at of the newest answer change already swept) and read
+# only the changes past it and the year, so a run costs the rows that just became due.
 SWEEP = f"""
 CREATE FUNCTION sweep_consent_origins(p_from uuid, OUT cleared integer, OUT next_tenant uuid)
 LANGUAGE plpgsql SECURITY DEFINER {SEARCH_PATH} AS $$
@@ -68,13 +71,16 @@ BEGIN
     PERFORM set_config('app.tenant_id', v_t::text, true);
     UPDATE consents c SET ip = NULL, user_agent = NULL
     WHERE c.tenant_id = v_t AND c.id = ANY(ARRAY(
+      -- Driven by the answer changes (0098's index): a change a year old has a withdrawal a year
+      -- old on one side or the other, so only the client-purposes that hold one are read. In a
+      -- MATERIALIZED CTE: FOR UPDATE OF x row-marks every other relation of its own query, which
+      -- rules out the index-only scan.
+      WITH changed AS MATERIALIZED (
+        SELECT DISTINCT w.client_id, w.purpose FROM consents w
+        WHERE w.tenant_id = v_t AND NOT w.granted AND w.created_at < now() - interval '1 year')
       SELECT x.id FROM consents x
       WHERE x.tenant_id = v_t AND (x.ip IS NOT NULL OR x.user_agent IS NOT NULL)
-        -- Driven by the answer changes (0098's index): a change a year old has a withdrawal a year
-        -- old on one side or the other, so only the client-purposes that hold one are read.
-        AND (x.client_id, x.purpose) IN (
-          SELECT w.client_id, w.purpose FROM consents w
-          WHERE w.tenant_id = v_t AND NOT w.granted AND w.created_at < now() - interval '1 year')
+        AND (x.client_id, x.purpose) IN (SELECT ch.client_id, ch.purpose FROM changed ch)
         AND EXISTS (
           SELECT 1 FROM consents y
           WHERE y.tenant_id = v_t AND y.client_id = x.client_id AND y.purpose = x.purpose

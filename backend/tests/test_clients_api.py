@@ -271,9 +271,11 @@ def test_an_unknown_policy_version_is_refused_before_anything_is_written(
 # 24: ZIF-156 fence. Kills: a merchant consent stored with the address and browser of the member
 # who entered it (the receptionist's personal data, not the client's), whatever the headers say;
 # and the route passing them to record_consents at all, which 0096's deploy-window trigger would
-# otherwise strip silently. tests/test_clients_db.py fences the database rule behind it.
+# otherwise strip silently; and the member's address lost from the record that keeps it instead,
+# the consent_recorded audit event (the connection's address, not a forwarded header).
+# tests/test_clients_db.py fences the rule in record_consents and the database behind it.
 def test_a_merchant_consent_stores_no_address_or_browser(
-    people: People, app: FastAPI, monkeypatch: pytest.MonkeyPatch
+    people: People, app: FastAPI, migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     passed: list[tuple[Any, Any]] = []
     record = clients.record_consents
@@ -304,6 +306,8 @@ def test_a_merchant_consent_stores_no_address_or_browser(
             {"c": uuid.UUID(client_id)},
         ).one()
     assert (stored.ip, stored.user_agent) == (None, None)
+    (event,) = events(migrate_engine, action="consent_recorded", target=f"client:{client_id}")
+    assert (event["ip"], event["user_agent"]) == (address, "zif49-agent/1")
 
 
 # 25: GUARD.
