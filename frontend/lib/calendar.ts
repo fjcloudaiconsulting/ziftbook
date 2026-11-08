@@ -143,15 +143,29 @@ export function lanes(slices: { start: number; end: number }[]): { lane: number;
  * the day's end (the next day's agenda has no booking that ended the day before); draw the rest when an
  * owner asks. */
 export function intervalEnd(slice: Slice, minutes: number | null | undefined): number {
-  // `?? 0`: an answer without the field (an older API mid-deploy) draws no gap rather than NaN.
-  return Math.min(1440, slice.realEnd + (minutes ?? 0));
+  // Through intervalShown: the drawn tail and its "+N min gap" name follow one rule.
+  return Math.min(1440, slice.realEnd + (intervalShown(minutes) ?? 0));
 }
 
-/** ZIF-288: the gap to name after a booking ("+15 min gap"), or null for none. One rule for the calendar
- * (grid and phone list) and Today's list: 0 is a no-show or a service without a gap, and a missing field
- * (an older API mid-deploy) shows nothing. */
+/** ZIF-288: the gap after a booking, or null for none (0 is a no-show or a service without a gap). The
+ * one rule the drawn tail, its accessible name, the phone list and Today's list share; it behaves as the
+ * `> 0` checks it replaced, which already read a missing field as no gap. */
 export function intervalShown(minutes: number | null | undefined): number | null {
   return minutes && minutes > 0 ? minutes : null;
+}
+
+/** ZIF-288: a booking row's second line after the service, in the calendar's phone list and on Today:
+ * who works it (owner view only), walk-in, and the service's gap. One builder, so the two lists can't
+ * drift; each page passes its own words (Today says "With Ada", the calendar row just "Ada"). */
+export function bookingMeta(
+  booking: { worker_display_name: string | null; source: string; buffer_minutes?: number | null },
+  isOwner: boolean,
+  words: { worker(name: string | null): string; walkIn: string; interval(n: number): string },
+): string[] {
+  const gap = intervalShown(booking.buffer_minutes);
+  return [isOwner ? words.worker(booking.worker_display_name) : null, booking.source === "merchant" ? words.walkIn : null, gap ? words.interval(gap) : null].filter(
+    (word): word is string => word !== null,
+  );
 }
 
 export type Tone = "confirmed" | "waiting" | "done" | "neutral";
