@@ -34,6 +34,10 @@ OUTBOX_UPDATABLE = "status, sent_at, subject"
 
 
 def upgrade() -> None:
+    # ZIF-287: keep vacuum out first (this mode conflicts with its own; reads and writes go on). A
+    # vacuum of users started after the REVOKE below would wait for this transaction while its
+    # DROP POLICY waits for the vacuum: a deadlock.
+    op.execute("LOCK TABLE users IN SHARE UPDATE EXCLUSIVE MODE")
     op.execute("REVOKE INSERT, UPDATE, DELETE ON users FROM ziftbook_app")
     op.execute("DROP POLICY create_users ON users")
     op.execute("REVOKE INSERT ON tenants FROM ziftbook_app")
