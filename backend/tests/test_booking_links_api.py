@@ -39,6 +39,7 @@ from tests.conftest import (
     put_settings,
     save_setting,
     signed_in,
+    suspend,
     wait_until_blocked,
 )
 from tests.test_availability_api import assign, new_service, weekdays
@@ -513,6 +514,41 @@ def test_a_stale_refund_echo_is_terms_changed(people: People, app: FastAPI, read
             text("SELECT status FROM bookings WHERE id = :id"), {"id": booking_id}
         )
     assert status == "confirmed"
+
+
+# ZIF-73 F6 FENCE. A suspended business takes no new slot (no move, no times), but the client may
+# still read, and cancel. A confirmed booking's copy says no move; a pending one keeps "pending".
+# Kills: the override applied before the pending branch (it rebuilds the Decision and undoes it);
+# overriding can_reschedule only (the copy still says a move is allowed); cancel blocked.
+@pytest.mark.parametrize("confirmed", [True, False])
+def test_a_suspended_business_s_link_cannot_move_a_booking_but_can_cancel_it(
+    people: People, app: FastAPI, ready: str, owner: TestClient, confirmed: bool
+) -> None:
+    far = at("10:00", day=TODAY + timedelta(days=20))
+    booking_id = confirmed_booking(app, people.a, ready, starts_at=far)
+    if confirmed:
+        assert patch(owner, booking_id, "confirmed").status_code == 200
+    client = linked(app, people.a, booking_id)
+    day = {"from": far[:10], "to": far[:10]}
+    engine = get(client).json()["engine"]
+    assert engine["can_reschedule"] is True  # positive control
+    assert get(client, "/availability", **day).json()["slots"]
+
+    suspend(people.a)
+
+    view = get(client)
+    engine = view.json()["engine"]
+    assert view.status_code == 200
+    assert (engine["can_reschedule"], engine["reschedules_left"]) == (False, 0)
+    if confirmed:
+        assert engine["copy_key"] == "full_refund_no_reschedule"
+    else:
+        assert engine["copy_key"] == "pending"
+    assert get(client, "/availability", **day).json()["slots"] == []
+    move = post(client, "/reschedule", pending_move(booking_id, at("11:00", FAR), far))
+    assert (move.status_code, move.json()["code"]) == (409, "not_allowed")
+    cancel = post(client, "/cancel", cancel_body(booking_id, engine["refund_pct"]))
+    assert cancel.status_code == 200
 
 
 # 27 (ZIF-157 B3, test 1). fence. A pending booking can be cancelled and moved, whatever the

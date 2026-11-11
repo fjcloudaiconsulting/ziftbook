@@ -135,7 +135,7 @@ def read(slug: str, request: Request) -> BookingPageOut:
         # ZIF-145. Unpublished is byte-identical to an unknown slug: no distinct 403/410 code, and
         # no earlier check may leak that the slug exists (the tenant lookup above already 404s the
         # same way for a slug nobody owns).
-        if not settings.published:
+        if not settings.published or business_settings.suspended(db):
             raise ApiError(404, "not_found")
         account = payments.available(db, settings)  # once for the page, not per service
         services: dict[UUID, PublicServiceOut] = {}

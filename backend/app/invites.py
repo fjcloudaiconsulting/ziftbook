@@ -174,7 +174,7 @@ def find(token: str) -> Found:
             text("""
             SELECT i.email, t.name AS business_name FROM invites i
             JOIN tenants t ON t.id = i.tenant_id
-            WHERE i.token_hash = :h AND i.expires_at > now()
+            WHERE i.token_hash = :h AND i.expires_at > now() AND t.suspended_at IS NULL
             """),
             {"h": digest},
         ).first()

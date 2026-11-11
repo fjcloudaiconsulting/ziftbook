@@ -783,6 +783,11 @@ def _live(
 ) -> Row[Any] | None:
     """The payment landed: a booking whose checkout is still live becomes a request (or confirmed),
     is recorded and announced now, not at placement. None when the hold ran out first."""
+    if business_settings.suspended(db):
+        # ZIF-73. A client may confirm with Stripe directly after the suspension: book nothing, and
+        # end the hold so the "hold ran out" handling (settle's refund, the release) applies.
+        db.execute(bookings.EXPIRE_ONE, {"id": booking_id})
+        return None
     booked = db.execute(
         bookings.PAID,
         {"id": booking_id, "pending_ttl_hours": business_settings.read(db).pending_ttl_hours},
@@ -1295,6 +1300,9 @@ def resume(
         booking, payment = _checkout(tenant_id, booking_id, request)
         if booking is None or payment is None:
             raise ApiError(404, "not_found")
+        with tenant_context(tenant_id) as db:
+            if business_settings.suspended(db):  # ZIF-73: the page is offline, so no new intent
+                raise ApiError(404, "not_found")
         if payment.status in ("checked", "paid"):  # the webhook got there first
             raise ApiError(409, "payment_settled")
         if not booking.live:

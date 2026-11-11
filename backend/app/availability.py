@@ -442,7 +442,7 @@ def read_availability(
         # ZIF-145. After the range check (422 invalid_range must still win over an unpublished
         # page: F10) and before any further read, so an unpublished business never computes or
         # leaks a single slot.
-        if not settings.published:
+        if not settings.published or business_settings.suspended(db):
             raise ApiError(404, "not_found")
         return compute(db, service, service_id, member_id, from_, to, settings)
 

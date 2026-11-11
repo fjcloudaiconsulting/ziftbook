@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from httpx2 import Response
 from sqlalchemy import Engine, text
 
-from app import clients, limits
+from app import business_settings, clients, limits
 from app.db import tenant_context
 from app.main import create_app
 from tests.conftest import (
@@ -24,6 +24,7 @@ from tests.conftest import (
     put_settings,
     save_setting,
     signed_in,
+    suspend,
 )
 from tests.test_availability_api import assign, get, new_service, set_display_name, weekdays
 from tests.test_bookings_api import post_booking
@@ -228,6 +229,43 @@ def test_publishing_gates_all_three_routes_and_only_an_owner_may_flip_it(
         {"old": False, "new": True},
         {"old": True, "new": False},
     ]
+
+
+# ZIF-73 F4 FENCE. Wrong impl: the suspension checked on one or two of the three public routes, or
+# answered with a code of its own instead of the unpublished 404.
+def test_a_suspended_business_answers_every_public_route_like_an_unpublished_one(
+    people: People, app: FastAPI, owner: TestClient, slug: str, ready: str
+) -> None:
+    client = new_client(app)
+
+    def answers() -> list[tuple[int, bytes]]:
+        return [
+            (r.status_code, r.content)
+            for r in (
+                page(client, slug),
+                get(client, people.a, ready),
+                post_booking(client, people.a, ready),
+            )
+        ]
+
+    assert [status for status, _ in answers()] == [200, 200, 201]  # positive control
+    suspend(people.a)
+    suspended = answers()
+    suspend(people.a, on=False)
+    assert put_settings(owner, {"published": False}).status_code == 200
+
+    assert [status for status, _ in suspended] == [404, 404, 404]
+    assert suspended == answers()
+
+
+# ZIF-73 F4 helper control. Kills: a lookup that ignores which business the transaction is in.
+def test_the_suspended_helper_reads_only_its_own_business(people: People) -> None:
+    suspend(people.a)
+
+    with tenant_context(people.a) as db:
+        assert business_settings.suspended(db) is True
+    with tenant_context(people.b) as db:
+        assert business_settings.suspended(db) is False
 
 
 # F9. fence

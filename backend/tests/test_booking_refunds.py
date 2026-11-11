@@ -27,6 +27,7 @@ from tests.conftest import (
     put_settings,
     save_setting,
     signed_in,
+    suspend,
 )
 from tests.stripe_fake import FakeGateway
 from tests.test_availability_api import assign, weekdays
@@ -47,6 +48,7 @@ from tests.test_booking_payments_api import (
     place,
     resume,
     run,
+    settle_keys,
     status_of,
     sync,
     webhook,
@@ -339,6 +341,46 @@ def test_a_payment_after_the_time_ran_out_is_refunded_in_full(
     run_send_booking(people.a, unanswered, "booking_expired")
     assert mail_for(_address(people, unanswered))["Headers"]["Reply-To"] == ["shop@example.com"]
     assert "didn't confirm" in mail_for(_address(people, unanswered))["Text"]
+
+
+# ZIF-73 F9 FENCE. A client may confirm with Stripe directly after the suspension: reconcile then
+# books nothing, announces nothing, ends the hold, and settle gives the money back (paid) or lets
+# go of the hold (checked). Kills: no gate on the booking step; a gate that leaves the hold alive,
+# so settle sees an awaiting booking and does nothing.
+@pytest.mark.parametrize("kind", ["pay", "check"])
+def test_a_payment_landing_after_the_suspension_books_nothing_and_is_given_back(
+    people: People,
+    app: FastAPI,
+    ready: str,
+    fake_stripe: FakeGateway,
+    app_engine: Engine,
+    migrate_engine: Engine,
+    kind: str,
+) -> None:
+    first = place(app, people, ready, payment=kind, starts_at=at("09:00")).json()["id"]
+    fake_stripe.confirm(fake_stripe.latest(first))
+    payments.reconcile(people.a, fake_stripe.latest(first))
+    assert status_of(people, first) in ("pending", "confirmed")  # positive control
+    late = place(app, people, ready, payment=kind, starts_at=at("10:00")).json()["id"]
+    intent = fake_stripe.latest(late)
+    assert intent.startswith("pi_")
+    suspend(people.a)
+
+    fake_stripe.confirm(intent)
+    payments.reconcile(people.a, intent)
+
+    assert status_of(people, late) == "expired"
+    assert history(people, late) == ["created", "expired"]
+    assert emails(app_engine, people, late) == {}
+    tag = "paid" if kind == "pay" else "checked"
+    assert any(f":{late}:{tag}" in key for key in settle_keys(app_engine, people, late))
+    due_now(migrate_engine, late)
+    run("payment.settle")
+    if kind == "pay":
+        assert fake_stripe.refunded() == [PRICE]
+    else:
+        assert fake_stripe.intents[intent]["status"] == "canceled"
+    assert pay_rows(people, late)[0]["settled_at"] is not None
 
 
 def _address(people: People, booking_id: str) -> str:

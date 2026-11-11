@@ -3,6 +3,7 @@
 import hashlib
 import ipaddress
 import json
+import logging
 import secrets
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -19,6 +20,8 @@ from app import limits, passwords, turnstile
 from app.db import SessionLocal, join_tenant, tenant_context
 from app.errors import ApiError, Error
 from app.locales import Locale
+
+logger = logging.getLogger(__name__)
 
 IDLE = timedelta(days=7)
 ABSOLUTE = timedelta(days=30)
@@ -308,6 +311,10 @@ RESOLVE = text("""
 WITH live AS (
     SELECT id_hash, tenant_id, user_id, role, last_seen_at FROM sessions
     WHERE id_hash = :id_hash AND expires_at > now() AND last_seen_at > now() - :idle
+      -- ZIF-73: a suspended business's sessions are not deleted, so lifting it revives them, until
+      -- the idle limit (7 days) ends them as it does any session.
+      AND NOT EXISTS (SELECT FROM tenants t
+                      WHERE t.id = sessions.tenant_id AND t.suspended_at IS NOT NULL)
 ), touched AS (
     UPDATE sessions SET last_seen_at = now() FROM live
     WHERE sessions.id_hash = live.id_hash AND live.last_seen_at < now() - :touch_every
@@ -559,6 +566,14 @@ def sign_in(credentials: Credentials, request: Request, response: Response) -> S
     if account.tenant_id is None:
         raise ApiError(403, "no_tenant", headers=account_cookie_cleared())
     with tenant_context(account.tenant_id) as session:
+        # account_by_email puts suspended businesses last, so this one is all the person has.
+        # Not business_settings.suspended: that module imports this one.
+        if session.scalar(
+            text("SELECT suspended_at IS NOT NULL FROM tenants WHERE id = :t"),
+            {"t": account.tenant_id},
+        ):
+            logger.info("sign-in refused: business suspended")  # tenant_context binds tenant_id
+            raise ApiError(403, "business_suspended", headers=account_cookie_cleared())
         if not session.scalar(
             text("SELECT password_unchanged(:user_id, :hash)"),
             {"user_id": account.user_id, "hash": account.password_hash},

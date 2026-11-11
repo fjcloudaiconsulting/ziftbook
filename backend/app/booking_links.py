@@ -5,6 +5,7 @@ Every failure to find a live link is the SAME 404 `link_expired` (D4, test 6).
 import hashlib
 import json
 import logging
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from types import SimpleNamespace
 from typing import Annotated, Any, get_args
@@ -91,7 +92,7 @@ SELECT b.id AS booking_id, b.status, b.starts_at, b.ends_at, b.original_starts_a
        b.earliest_starts_at, b.reschedule_count, b.max_reschedules, b.free_cancellation_hours,
        b.reschedule_cutoff_hours, b.service_id, b.worker_id, b.worker_display_name,
        b.service_name, b.price_amount_minor, b.price_currency, b.cancellation_policy_text,
-       b.client_id, t.name AS business, now() AS now,
+       b.client_id, t.name AS business, t.suspended_at, now() AS now,
        p.amount_minor AS paid_minor, p.stripe_fee_minor,
        (SELECT count(*) FROM booking_events e
         WHERE e.booking_id = b.id AND e.event = 'rescheduled') AS moves
@@ -244,6 +245,14 @@ def _decide(row: Any, policy: cancellation.Policy) -> Decision:
         decision = Decision(
             decision.can_cancel, left > 0, 100 if row.paid_minor else 0, 0, "pending", max(left, 0)
         )
+    if row.suspended_at is not None and decision.can_reschedule:
+        # ZIF-73. Last, after the pending branch rebuilds the Decision: a suspended business takes
+        # no new slot, but read and cancel stay. The copy says what decide() says when no move is
+        # possible; a pending keeps "pending".
+        key = decision.copy_key
+        if row.status != "pending":
+            key = key.removesuffix("_reschedule") + "_no_reschedule"
+        decision = replace(decision, can_reschedule=False, copy_key=key, reschedules_left=0)
     return decision
 
 

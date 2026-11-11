@@ -32,6 +32,7 @@ from tests.conftest import (
     points,
     set_role,
     signed_in,
+    suspend,
 )
 from tests.test_account_email import bound, inbox, link_in, message  # noqa: F401
 from tests.test_invite_email import run_jobs
@@ -465,6 +466,29 @@ def test_lookup_of_an_unusable_link(
 
     long_response = new_client(app).post("/api/invites/lookup", json={"token": "y" * 101})
     assert long_response.status_code == 422
+
+
+# ZIF-73 F5 FENCE. Wrong impl: the suspension checked on accept only, or on lookup only, or an
+# answer of its own: both must read like any dead link, and no account or membership is made.
+def test_an_invite_into_a_suspended_business_is_an_invalid_link(
+    people: People, app: FastAPI, migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    email = fresh_email()
+    created = signed_in(app, people.a, people.both).post("/api/invites", json={"email": email})
+    token = mint(monkeypatch, people.a, uuid.UUID(created.json()["id"]))
+    lookup = new_client(app).post("/api/invites/lookup", json={"token": token})
+    assert lookup.status_code == 200  # positive control
+
+    suspend(people.a)
+    lookup = new_client(app).post("/api/invites/lookup", json={"token": token})
+    accept = new_client(app).post(
+        "/api/invites/accept", json={"token": token, "password": PASSWORD, "name": "New Person"}
+    )
+
+    for response in (lookup, accept):
+        assert (response.status_code, response.json()) == (400, {"code": "invalid_token"})
+    with migrate_engine.connect() as conn:
+        assert conn.scalar(text("SELECT count(*) FROM users WHERE email = :e"), {"e": email}) == 0
 
 
 # L3: lookup is read-only; the link still accepts afterwards.

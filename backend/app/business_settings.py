@@ -157,6 +157,19 @@ def read(db: Session) -> BusinessSettings:
     )
 
 
+def suspended(db: Session) -> bool:
+    """Whether the transaction's business is suspended (ZIF-73): its public side answers like an
+    unpublished page."""
+    return bool(
+        db.scalar(
+            text(
+                "SELECT suspended_at IS NOT NULL FROM tenants"
+                " WHERE id = current_setting('app.tenant_id')::uuid"
+            )
+        )
+    )
+
+
 def save(db: Session, key: str, value: object) -> object:
     """Save one key for the transaction's business. Returns the value it replaced, None if none."""
     return db.execute(
