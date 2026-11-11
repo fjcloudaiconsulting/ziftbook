@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from httpx2 import Response
 from sqlalchemy import Engine, text
 
-from app import clients, limits
+from app import business_settings, clients, limits
 from app.db import tenant_context
 from app.main import create_app
 from tests.conftest import (
@@ -256,6 +256,16 @@ def test_a_suspended_business_answers_every_public_route_like_an_unpublished_one
 
     assert [status for status, _ in suspended] == [404, 404, 404]
     assert suspended == answers()
+
+
+# ZIF-73 F4 helper control. Kills: a lookup that ignores which business the transaction is in.
+def test_the_suspended_helper_reads_only_its_own_business(people: People) -> None:
+    suspend(people.a)
+
+    with tenant_context(people.a) as db:
+        assert business_settings.suspended(db) is True
+    with tenant_context(people.b) as db:
+        assert business_settings.suspended(db) is False
 
 
 # F9. fence

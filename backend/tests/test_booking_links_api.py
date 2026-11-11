@@ -541,7 +541,7 @@ def test_a_suspended_business_s_link_cannot_move_a_booking_but_can_cancel_it(
     assert view.status_code == 200
     assert (engine["can_reschedule"], engine["reschedules_left"]) == (False, 0)
     if confirmed:
-        assert engine["copy_key"].endswith("_no_reschedule")
+        assert engine["copy_key"] == "full_refund_no_reschedule"
     else:
         assert engine["copy_key"] == "pending"
     assert get(client, "/availability", **day).json()["slots"] == []

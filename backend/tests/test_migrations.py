@@ -1708,7 +1708,7 @@ WRITE_GRANTS_AT_0048 = [
 # own GRANT SELECT; a table-level SELECT or a phone grant is a deliberate change here.
 WRITE_GRANTS_AT_HEAD = [
     ("email_outbox", "INSERT SELECT", "sent_at UPDATE, status UPDATE, subject UPDATE"),
-    ("tenants", "SELECT", "name UPDATE, suspended_at UPDATE, suspension_reason UPDATE"),
+    ("tenants", "SELECT", "name UPDATE"),
     ("users", None, "email SELECT, id SELECT, locale SELECT, name SELECT"),
 ]
 
@@ -3188,16 +3188,18 @@ def test_0072_leaves_the_lock_timeout_as_it_found_it(migrate_engine: Engine) -> 
 
 
 # ZIF-73 F8 FENCE. Wrong impl: a CHECK that bites one way only (a reason without a time, or a time
-# without a reason), or no length cap.
+# without a reason), no length cap, or a blank reason.
 @pytest.mark.parametrize(
     ("set_clause", "params"),
     [
         ("suspended_at = now()", {}),
         ("suspension_reason = 'x'", {}),
         ("suspended_at = now(), suspension_reason = :r", {"r": "x" * 501}),
+        ("suspended_at = now(), suspension_reason = :r", {"r": ""}),
+        ("suspended_at = now(), suspension_reason = :r", {"r": "   "}),
     ],
 )
-def test_a_suspension_is_both_a_time_and_a_reason_of_at_most_500_characters(
+def test_a_suspension_is_both_a_time_and_a_reason_of_1_to_500_characters(
     people: People, migrate_engine: Engine, set_clause: str, params: dict[str, str]
 ) -> None:
     with pytest.raises(IntegrityError) as raised, migrate_engine.begin() as conn:

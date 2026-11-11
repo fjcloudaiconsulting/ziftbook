@@ -194,10 +194,13 @@ def test_a_suspended_business_s_session_is_dead_until_it_is_lifted(
     assert owner.get("/api/session").status_code == 200  # positive control
     assert owner.get("/api/payments/account").status_code == 200
 
+    elsewhere = signed_in(app, people.b, people.both)  # control: another business is untouched
     suspend(people.a)
 
     assert owner.get("/api/session").status_code == 401
     assert owner.get("/api/payments/account").status_code == 401
+    assert elsewhere.get("/api/session").status_code == 200
+    assert elsewhere.get("/api/payments/account").status_code == 200
 
     suspend(people.a, on=False)  # G0
 
@@ -244,6 +247,18 @@ def test_a_person_whose_only_business_is_suspended_is_refused_and_gets_no_sessio
         assert sessions_of(migrate_engine, people.a, stranger) == 0
     finally:
         drop_memberships(migrate_engine, people, stranger)
+
+
+# ZIF-73 F3b FENCE. Wrong impl: the suspension checked before the password, which tells anyone who
+# knows an address that its business is suspended.
+def test_a_wrong_password_for_a_suspended_business_is_an_ordinary_401(
+    people: People, client: TestClient
+) -> None:
+    suspend(people.a)
+
+    response = sign_in(client, email_of(people.only_a), "not-the-password-1")
+
+    assert (response.status_code, response.json()) == (401, {"code": "invalid_credentials"})
 
 
 def insert_membership(

@@ -311,7 +311,8 @@ RESOLVE = text("""
 WITH live AS (
     SELECT id_hash, tenant_id, user_id, role, last_seen_at FROM sessions
     WHERE id_hash = :id_hash AND expires_at > now() AND last_seen_at > now() - :idle
-      -- ZIF-73: a suspended business's sessions stay, dormant; reactivating revives them.
+      -- ZIF-73: a suspended business's sessions are not deleted, so lifting it revives them, until
+      -- the idle limit (7 days) ends them as it does any session.
       AND NOT EXISTS (SELECT FROM tenants t
                       WHERE t.id = sessions.tenant_id AND t.suspended_at IS NOT NULL)
 ), touched AS (
@@ -571,7 +572,10 @@ def sign_in(credentials: Credentials, request: Request, response: Response) -> S
             text("SELECT suspended_at IS NOT NULL FROM tenants WHERE id = :t"),
             {"t": account.tenant_id},
         ):
-            logger.info("sign-in refused: business suspended")
+            logger.info(
+                "sign-in refused: business suspended",
+                extra={"tenant_id": str(account.tenant_id)},
+            )
             raise ApiError(403, "business_suspended", headers=account_cookie_cleared())
         if not session.scalar(
             text("SELECT password_unchanged(:user_id, :hash)"),
