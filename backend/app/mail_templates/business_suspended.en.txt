@@ -6,3 +6,5 @@ We've suspended “$business” on ziftbook. While it is suspended, your booking
 The reason:
 
 > $reason
+
+Questions about this? Write to support@ziftbook.com.

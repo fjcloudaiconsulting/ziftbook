@@ -6,3 +6,5 @@ We hebben “$business” op ziftbook opgeschort. Zolang de opschorting duurt, i
 De reden:
 
 > $reason
+
+Vragen hierover? Mail naar support@ziftbook.com.
