@@ -33,7 +33,7 @@ export function Suspension({ business, onOpen, onChanged }: { business: Business
   const [kind, setKind] = useState<"app" | "recovery">("app");
   const [code, setCode] = useState("");
   const [codeError, setCodeError] = useState<string>();
-  const [blocked, setBlocked] = useState(false); // locked or unavailable: only a recovery code can work
+  const [blocked, setBlocked] = useState<false | "locked" | "unavailable">(false); // only a recovery code can work now
   const [message, setMessage] = useState<Message | null>(null);
   const [busy, setBusy] = useState(false);
   const submitting = useRef(false);
@@ -58,11 +58,15 @@ export function Suspension({ business, onOpen, onChanged }: { business: Business
     setPhase("reason");
     setReason("");
     setReasonError(undefined);
+    setCode("");
+    setCodeError(undefined);
     setMessage(null);
     requestAnimationFrame(() => opener.current?.focus());
   }
 
+  // The admin's own switch: a no-op while a check is in flight. The lock path below sets the kind itself.
   function switchTo(next: "app" | "recovery") {
+    if (busy) return;
     setKind(next);
     setCode("");
     setCodeError(undefined);
@@ -146,9 +150,11 @@ export function Suspension({ business, onOpen, onChanged }: { business: Business
       } else if (state === "expired" || state === "conflict") {
         router.replace("/admin/sign-in");
       } else if (state === "locked" || state === "unavailable") {
-        setBlocked(true);
-        setMessage(state === "locked" ? { tone: "error", text: t("locked") } : { tone: "note", text: t("appUnavailable") });
-        switchTo("recovery");
+        setBlocked(state);
+        setKind("recovery");
+        setCodeError(undefined);
+        setCode("");
+        requestAnimationFrame(() => codeInput.current?.focus());
       } else if (state === "tooMany") {
         setMessage({ tone: "note", text: t("tooMany") });
       } else {
@@ -178,6 +184,8 @@ export function Suspension({ business, onOpen, onChanged }: { business: Business
       aria-labelledby={titleId}
       aria-describedby={phase === "code" ? ledeId : undefined}
     >
+      {phase === "code" && blocked === "locked" && <Banner tone="error">{t("locked")}</Banner>}
+      {phase === "code" && blocked === "unavailable" && <Banner tone="note">{t("appUnavailable")}</Banner>}
       {message && <Banner tone={message.tone}>{message.text}</Banner>}
       {phase === "reason" ? (
         <form className={styles.form} onSubmit={onSubmitReason} noValidate>

@@ -26,17 +26,19 @@ export function Business({ id }: { id: string }) {
   const tCalendar = useTranslations("Console.calendar");
   const router = useRouter();
   const [answered, setAnswered] = useState<{ id: string; reloads: number; outcome: Outcome<BusinessDetail> } | null>(null);
+  const [lastGood, setLastGood] = useState<{ id: string; data: BusinessDetail } | null>(null);
   const [reloads, setReloads] = useState(0);
   const [done, setDone] = useState<Done | null>(null);
   const doneLine = useRef<HTMLDivElement>(null);
 
   // On the id alone, and again after a change the admin made: every GET records a business_read, so nothing else
-  // (a new router or translator) may send another. An answer for an id no longer shown is dropped, and the
-  // earlier detail stays on screen while a refetch is in flight.
+  // (a new router or translator) may send another. An answer for an id no longer shown is dropped. The last good
+  // detail stays on screen while a refetch is in flight and when it fails (the failure shows above it).
   useEffect(() => {
     let current = true;
     send(adminReadBusiness({ path: { tenant_id: id } })).then((outcome) => {
       if (current) setAnswered({ id, reloads, outcome });
+      if (current && outcome.data) setLastGood({ id, data: outcome.data });
     });
     return () => {
       current = false;
@@ -52,10 +54,10 @@ export function Business({ id }: { id: string }) {
     if (outcome && needsSignIn(outcome.status)) router.replace("/admin/sign-in");
   }, [outcome, router]);
 
-  const business = outcome?.data;
+  const business = outcome?.data ?? (lastGood?.id === id ? lastGood.data : undefined);
   const refreshing = answered?.reloads !== reloads; // a change is being read back: no second action meanwhile
   const failure =
-    !outcome || business || needsSignIn(outcome.status)
+    !outcome || outcome.data || needsSignIn(outcome.status)
       ? null
       : // 422: not an id at all, which is no business either.
         outcome.status === 404 || outcome.status === 422

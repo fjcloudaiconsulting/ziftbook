@@ -257,8 +257,8 @@
     "upcomingSome": "De eerste {shown} van {total} worden getoond.",
     "upcomingNone": "Geen komende boekingen.",
     "upcomingZone": "Tijden zijn in {zone}.",
-    "keepRunning": "Laat het draaien",
-    "keepSuspended": "Laat het opgeschort"
+    "keepRunning": "Niet opschorten",
+    "keepSuspended": "Opgeschort laten"
   },
   "ForgotPassword": {
     "title": "Stel je wachtwoord opnieuw in",

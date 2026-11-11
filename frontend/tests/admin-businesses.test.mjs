@@ -163,3 +163,35 @@ describe("what the suspension screens read", () => {
     assert.ok(suspended < signInForm.indexOf("outcome.status === 403"));
   });
 });
+
+describe("suspension and refresh", () => {
+  // ZIF-73 fence. Kills: a used code left in state, the resend dropped, or the resend wrapped in the guarded no-op.
+  test("a passed code is cleared, the form returns to the reason and the write is sent again", () => {
+    assert.match(suspension, /outcome\.status === 200\) \{\s*setCode\(""\)[^\n]*\n\s*setPhase\("reason"\);\s*await attempt\(\);/);
+  });
+
+  // ZIF-73 fence. Kills: the detail never read back after a change (the refetch counter not bumped), and the action
+  // offered while that read is in flight.
+  test("a change bumps the refetch and hides the action meanwhile", () => {
+    assert.match(detail, /setReloads\(\(\w+\) => \w+ \+ 1\)/);
+    assert.match(detail, /\{!refreshing && \(\s*<Suspension/);
+  });
+
+  // ZIF-73 fence. Kills: the suspended pill shown on every row.
+  test("the pill shows only for a suspended business", () => {
+    assert.match(list, /business\.suspended_at && <span className=\{`\$\{styles\.pill\} \$\{styles\.pillWarn\}`\}>\{t\("suspended"\)\}/);
+  });
+
+  // ZIF-73 fence. Kills: the lock notice kept in `message`, which the next submit or the resend clears.
+  test("the lock notice renders from the blocked state", () => {
+    assert.match(suspension, /blocked === "locked" && <Banner tone="error">\{t\("locked"\)\}/);
+    assert.match(suspension, /blocked === "unavailable" && <Banner tone="note">\{t\("appUnavailable"\)\}/);
+    assert.doesNotMatch(suspension, /setMessage\([^\n]*t\("(locked|appUnavailable)"\)/);
+  });
+
+  // ZIF-73 fence. Kills: a failed read-back after a change blanking the business the admin was looking at.
+  test("a failed refetch keeps the last good detail", () => {
+    assert.match(detail, /if \(current && outcome\.data\) setLastGood\(/);
+    assert.match(detail, /const business = outcome\?\.data \?\? \(lastGood\?\.id === id \? lastGood\.data : undefined\)/);
+  });
+});
