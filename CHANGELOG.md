@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.41.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.40.0...v0.41.0) (2026-11-11)
+
+
+### Features
+
+* **backend:** a suspended business is offline and its members can't sign in (ZIF-73) ([#428](https://github.com/fjcloudaiconsulting/ziftbook/issues/428)) ([de385c4](https://github.com/fjcloudaiconsulting/ziftbook/commit/de385c4edd29057ddf41f35b2bdcfdef608a3b58))
+* **backend:** admins suspend and reactivate a business with a reason, and its owners are told (ZIF-73) ([#430](https://github.com/fjcloudaiconsulting/ziftbook/issues/430)) ([35788e2](https://github.com/fjcloudaiconsulting/ziftbook/commit/35788e296b712a34c1cd8528317f358da2b8c83e))
+
+
+### Bug Fixes
+
+* **backend:** the suspension email names the existing support address (ZIF-73) ([#431](https://github.com/fjcloudaiconsulting/ziftbook/issues/431)) ([6373ba8](https://github.com/fjcloudaiconsulting/ziftbook/commit/6373ba87d9ae9334639c4f9220901b3c390922c2))
+
 ## [0.40.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.39.0...v0.40.0) (2026-11-08)
 
 
