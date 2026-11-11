@@ -1,0 +1,6 @@
+Your business is active again on ziftbook
+# Your business is active again
+
+We've lifted the suspension on “$business”. Your team can sign in again, and everything works as it did before.
+
+[Sign in]($link)

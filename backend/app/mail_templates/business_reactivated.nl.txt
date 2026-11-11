@@ -1,0 +1,6 @@
+Je bedrijf is weer actief op ziftbook
+# Je bedrijf is weer actief
+
+We hebben de opschorting van “$business” opgeheven. Je team kan weer inloggen en alles werkt weer zoals voorheen.
+
+[Inloggen]($link)

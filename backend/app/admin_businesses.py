@@ -1,26 +1,41 @@
-"""Platform admins find and inspect businesses (ZIF-73), read-only.
+"""Platform admins find, inspect, suspend and reactivate businesses (ZIF-73).
 
-Both routes sit on admin_auth.admin_router: the second factor passed. Neither reads a client's
-personal data: no clients, bookings, consents or booking links, and no address or browser from the
-audit log. A business's created date is its uuidv7 id's.
+The two reads sit on admin_auth.admin_router (the second factor passed), the two writes on
+admin_write_router (passed within 15 minutes). None reads a client's personal data: no clients,
+consents or booking links, and no address or browser from the audit log. A suspended business shows
+its upcoming confirmed times and their payments, never a booking id or anything about the client.
+A business's created date is its uuidv7 id's.
 """
 
+import logging
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from fastapi import Query, Request
-from pydantic import BaseModel
+from pydantic import AfterValidator, BaseModel, ConfigDict, StringConstraints
 from sqlalchemy import text
+from sqlalchemy.orm import Session
 
-from app import business_settings
-from app.admin_auth import CurrentAdmin, admin_router, business
+from app import business_settings, services
+from app.admin_auth import (
+    CurrentAdmin,
+    admin_router,
+    admin_write_router,
+    business,
+    session_hash,
+)
+from app.bookings import PAYMENT_COLUMNS, PaymentFact, payment_fact
 from app.business_settings import BusinessSettings
 from app.db import SessionLocal, join_tenant
-from app.errors import Error
+from app.errors import ApiError, Error
+from app.jobs import enqueue
+
+logger = logging.getLogger(__name__)
 
 PAGE_SIZE = 25
 RECENT_EVENTS = 20
+UPCOMING_LIMIT = 100
 
 Stripe = Literal["none", "onboarding", "ready"]
 
@@ -33,6 +48,7 @@ class BusinessRow(BaseModel):
     created_at: datetime | None  # None for an id that carries no time (not uuidv7)
     members: int  # live members: owners and workers
     stripe: Stripe  # from the stored account, never a call to Stripe
+    suspended_at: datetime | None
 
 
 class BusinessPage(BaseModel):
@@ -55,6 +71,15 @@ class EventRow(BaseModel):
     target_kind: str | None  # "client", "booking", "setting"...: never the id after the colon
 
 
+class UpcomingBooking(BaseModel):
+    # Exactly these: no booking id and nothing about the client.
+    starts_at: datetime
+    ends_at: datetime
+    service_name: dict[str, str]
+    worker_display_name: str | None
+    payment: PaymentFact | None
+
+
 class BusinessDetail(BaseModel):
     id: UUID
     name: str
@@ -66,12 +91,31 @@ class BusinessDetail(BaseModel):
     members: list[MemberRow]
     settings: BusinessSettings
     events: list[EventRow]  # the latest RECENT_EVENTS, newest first
+    suspended_at: datetime | None
+    suspension_reason: str | None
+    # Confirmed bookings not yet over (the soonest UPCOMING_LIMIT), only while suspended: the
+    # admin's list of what the owner still has to honour. None while active.
+    upcoming: list[UpcomingBooking] | None
+    upcoming_total: int
 
 
 TENANT = """
-SELECT id, name, slug, country, currency, uuid_extract_timestamp(id) AS created_at
+SELECT id, name, slug, country, currency, uuid_extract_timestamp(id) AS created_at,
+       suspended_at, suspension_reason
 FROM tenants
 """
+# QUEUE's payment join (bookings.py): at most one live payment per booking, so no row is added. In
+# progress counts as upcoming: the booking is not over. No client, no booking id.
+UPCOMING = text(f"""
+SELECT b.starts_at, b.ends_at, b.service_name, b.worker_display_name, {PAYMENT_COLUMNS},
+       count(*) OVER () AS total
+FROM bookings b
+LEFT JOIN booking_payments p
+  ON p.tenant_id = b.tenant_id AND p.booking_id = b.id AND p.status <> 'canceled'
+WHERE b.status = 'confirmed' AND b.ends_at > now()
+ORDER BY b.starts_at, b.id
+LIMIT :limit
+""")
 # A business's own rows: run with app.tenant_id set, so row-level security picks the business.
 COUNTS = text("""
 SELECT (SELECT count(*) FROM memberships WHERE role <> 'removed') AS members,
@@ -135,6 +179,7 @@ def list_businesses(
                     created_at=row.created_at,
                     members=counts.members,
                     stripe=stripe(counts.connected, counts.charges_enabled),
+                    suspended_at=row.suspended_at,
                 )
             )
     return BusinessPage(businesses=businesses, total=total or 0, page_size=PAGE_SIZE)
@@ -174,6 +219,9 @@ def read_business(tenant_id: UUID, current: CurrentAdmin, request: Request) -> B
             {"limit": RECENT_EVENTS},
         ).all()
         settings = business_settings.read(session)
+        upcoming = (
+            session.execute(UPCOMING, {"limit": UPCOMING_LIMIT}).all() if row.suspended_at else None
+        )
     return BusinessDetail(
         id=row.id,
         name=row.name,
@@ -185,4 +233,118 @@ def read_business(tenant_id: UUID, current: CurrentAdmin, request: Request) -> B
         members=[MemberRow.model_validate(m, from_attributes=True) for m in members],
         settings=settings,
         events=[EventRow.model_validate(e, from_attributes=True) for e in events],
+        suspended_at=row.suspended_at,
+        suspension_reason=row.suspension_reason,
+        upcoming=None
+        if upcoming is None
+        else [
+            UpcomingBooking(
+                starts_at=u.starts_at,
+                ends_at=u.ends_at,
+                service_name=u.service_name,
+                worker_display_name=u.worker_display_name,
+                payment=payment_fact(u),
+            )
+            for u in upcoming
+        ],
+        upcoming_total=upcoming[0].total if upcoming else 0,
+    )
+
+
+class Reason(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+    # As services.DescriptionText: stripped, never blank, no control characters (a NUL would be a
+    # 500 from the database), and the CHECK's 500.
+    reason: Annotated[
+        str,
+        StringConstraints(strip_whitespace=True, min_length=1, max_length=500),
+        AfterValidator(services.multiline),
+    ]
+
+
+# What each function answers other than its success, as the error it becomes.
+REFUSALS = {
+    "stale": (403, "second_factor_stale"),
+    "not_found": (404, "not_found"),
+    "already_suspended": (409, "already_suspended"),
+    "not_suspended": (409, "not_suspended"),
+}
+WRITE_ERRORS: dict[int | str, dict[str, Any]] = {
+    s: {"model": Error} for s in (401, 403, 404, 409, 415, 422, 503)
+}
+
+
+def tell_owners(db: Session, tenant_id: UUID, template: str, suspended_at: datetime) -> None:
+    """One email.send per live owner, in the change's transaction. The payload holds the
+    suspension's timestamp, never its reason: mail.send reads the reason from the business, and
+    skips a mail the business has since moved past (suspended again, reactivated)."""
+    stamp = suspended_at.isoformat()
+    for user_id in db.scalars(text("SELECT user_id FROM memberships WHERE role = 'owner'")):
+        enqueue(
+            db,
+            "email.send",
+            f"email.send:{tenant_id}:{template}:{stamp}:{user_id}",
+            {"recipient_id": str(user_id), "template": template, "suspended_at": stamp},
+            tenant_id=tenant_id,
+        )
+
+
+def change(
+    current: CurrentAdmin,
+    request: Request,
+    tenant_id: UUID,
+    body: Reason,
+    *,
+    action: Literal["business_suspended", "business_reactivated"],
+    sql: str,
+    params: dict[str, str],
+    template: str,
+) -> None:
+    """The function, the audit row and the owners' emails in one transaction (admin_auth.business):
+    a refusal or a failure rolls all three back."""
+    with business(
+        current, request, tenant_id, target="business", action=action, reason=body.reason
+    ) as db:
+        row = db.execute(
+            text(sql),
+            {"h": session_hash(request), **params},
+        ).one()
+        if row.outcome in REFUSALS:
+            raise ApiError(*REFUSALS[row.outcome])
+        tell_owners(db, tenant_id, template, row.suspended_at)
+    logger.info("business suspended" if action == "business_suspended" else "business reactivated")
+
+
+@admin_write_router.post(
+    "/businesses/{tenant_id}/suspension", status_code=204, responses=WRITE_ERRORS
+)
+def suspend(tenant_id: UUID, body: Reason, current: CurrentAdmin, request: Request) -> None:
+    """Suspend a business, with the reason its owners are shown. 409 when it already is."""
+    change(
+        current,
+        request,
+        tenant_id,
+        body,
+        action="business_suspended",
+        sql="SELECT * FROM suspend_business(:h, :reason)",
+        params={"reason": body.reason},
+        template="business_suspended",
+    )
+
+
+@admin_write_router.post(
+    "/businesses/{tenant_id}/reactivation", status_code=204, responses=WRITE_ERRORS
+)
+def reactivate(tenant_id: UUID, body: Reason, current: CurrentAdmin, request: Request) -> None:
+    """Lift a suspension. The reason is the admin's, kept in the audit log only. 409 when the
+    business is not suspended."""
+    change(
+        current,
+        request,
+        tenant_id,
+        body,
+        action="business_reactivated",
+        sql="SELECT * FROM reactivate_business(:h)",
+        params={},
+        template="business_reactivated",
     )

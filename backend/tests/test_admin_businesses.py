@@ -2,6 +2,7 @@
 
 import json
 import uuid
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -23,11 +24,14 @@ from tests.conftest import (
     add_user,
     email_of,
     end_membership,
+    member_id,
     new_client,
+    suspend,
 )
 from tests.conftest import signed_in as merchant
 from tests.test_admin_second_factor import sign_in, verified_client
 from tests.test_admin_sessions import a_request, platform_events
+from tests.test_bookings_db import insert_booking, seed_service
 from tests.test_clients_db import seed_client
 
 LIST = "/api/admin/businesses"
@@ -117,6 +121,7 @@ def test_admins_find_businesses_by_name_or_slug(
         "created_at": row_a["created_at"],
         "members": 2,  # only_a and both
         "stripe": "onboarding",
+        "suspended_at": None,
     }
     assert row_a["created_at"] is not None
     assert found.json()["businesses"][0]["stripe"] == "ready"
@@ -254,10 +259,32 @@ def test_no_personal_data_in_the_answers(
             target=f"booking:{booking_id}",
         )
 
+    # Suspended, with a booking of that client: its upcoming list is the part that must stay blind.
+    service, worker, now = (
+        seed_service(people.a),
+        member_id(people.a, people.both),
+        datetime.now(UTC),
+    )
+    with tenant_context(people.a) as session:
+        real_booking = [
+            insert_booking(
+                session,
+                client_id=client_id,
+                worker_id=worker,
+                service_id=service,
+                starts_at=now + timedelta(hours=hours),
+                ends_at=now + timedelta(hours=hours, minutes=30),
+            )
+            for hours in (1, 2)
+        ]
+    suspend(people.a)
+
     listed = admin.get(LIST, params={"q": tag})
     detail = admin.get(f"{LIST}/{people.a}")
 
     assert listed.status_code == detail.status_code == 200
+    assert len(detail.json()["upcoming"]) == 2
+    assert all(str(b) not in detail.text for b in real_booking)
     for answer in (listed.text, detail.text):
         for private in (secret, "612345678", email_of(people.both), email_of(people.only_a)):
             assert private not in answer
@@ -273,12 +300,16 @@ def test_no_personal_data_in_the_answers(
         "businesses",
         "total",
         "page_size",
-        *("id", "name", "slug", "country", "created_at", "members", "stripe"),
+        *("id", "name", "slug", "country", "created_at", "members", "stripe", "suspended_at"),
     }
     body = detail.json()
     assert set(body) == {
         *("id", "name", "slug", "country", "currency", "created_at", "stripe"),
         *("members", "settings", "events"),
+        *("suspended_at", "suspension_reason", "upcoming", "upcoming_total"),
+    }
+    assert {frozenset(row) for row in body["upcoming"]} == {
+        frozenset(("starts_at", "ends_at", "service_name", "worker_display_name", "payment"))
     }
     assert keys(body["members"]) == {"user_id", "name", "role"}
     assert keys(body["events"]) == {"id", "created_at", "action", "actor_user_id", "target_kind"}

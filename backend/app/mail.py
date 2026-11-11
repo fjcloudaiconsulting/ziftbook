@@ -559,7 +559,10 @@ def _mark_sent(job: Job) -> None:
 
 
 def send(job: Job) -> None:
-    """The email.send job. Payload: recipient_id (a user), template.
+    """The email.send job. Payload: recipient_id (a user), template, and for business_suspended and
+    business_reactivated suspended_at (ISO): the suspension the mail tells of. business_suspended is
+    skipped unless the business is suspended since exactly then (its reason is read from the
+    business, never the payload); business_reactivated is skipped while it is suspended again.
 
     The address and language come from users, inside the job's tenant: someone who isn't a member of
     that tenant (any more) gets nothing. A template may name the business ($business) and its
@@ -585,14 +588,28 @@ def send(job: Job) -> None:
             return
         # The person's own language, else their business's.
         locale = recipient.locale or business_settings.read(session).language
-        business = session.scalar(
-            text("SELECT name FROM tenants WHERE id = :id"), {"id": job.tenant_id}
-        )
+        tenant = session.execute(
+            text("SELECT name, suspended_at, suspension_reason FROM tenants WHERE id = :id"),
+            {"id": job.tenant_id},
+        ).one()
+        # ZIF-73: the email tells of one suspension, or of its end. A business suspended again with
+        # another reason, or reactivated, has moved on: the older mail is dropped, not sent late.
+        template = payload["template"]
+        if (
+            template == "business_suspended"
+            and tenant.suspended_at != datetime.fromisoformat(payload["suspended_at"])
+        ) or (template == "business_reactivated" and tenant.suspended_at is not None):
+            logger.info("email skipped", extra={"template": template, "reason": "moved_on"})
+            return
         app_url = MailSettings().app_url.rstrip("/")
         subject, body, html = compose(
             payload["template"],
             locale,
-            {"business": business, "link": f"{app_url}/{locale}/settings"},
+            {
+                "business": tenant.name,
+                "link": f"{app_url}/{locale}/settings",
+                "reason": tenant.suspension_reason or "",
+            },
         )
         status = _outbox(session, job, payload["recipient_id"], payload["template"], subject)
     if status == "sent":

@@ -1,0 +1,10 @@
+Je bedrijf is opgeschort op ziftbook
+# Je bedrijf is opgeschort
+
+We hebben “$business” op ziftbook opgeschort. Zolang de opschorting duurt, is je boekingspagina offline, kan je team niet inloggen en kunnen er geen nieuwe boekingen worden gemaakt. Je klanten kunnen hun bestaande boekingen nog wel bekijken en annuleren.
+
+De reden:
+
+> $reason
+
+Vragen hierover? Mail naar support@ziftbook.com.

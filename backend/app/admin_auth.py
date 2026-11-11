@@ -141,8 +141,7 @@ admin_half_router = APIRouter(
 admin_router = APIRouter(
     prefix="/api/admin", tags=["admin"], dependencies=[Depends(admin_signed_in)]
 )
-# Every admin write goes here: the second factor passed within 15 minutes. business()'s write
-# variant is built with the first write route.
+# Every admin write goes here: the second factor passed within 15 minutes.
 admin_write_router = APIRouter(
     prefix="/api/admin", tags=["admin"], dependencies=[Depends(admin_recently_verified)]
 )
@@ -260,7 +259,7 @@ def sign_out(current: HalfAdmin, request: Request, response: Response) -> None:
     clear_admin_cookie(response)
 
 
-def _id_hash(request: Request) -> bytes:
+def session_hash(request: Request) -> bytes:
     return auth.hash_token(request.cookies[ADMIN_COOKIE])  # the guard has resolved it
 
 
@@ -301,7 +300,7 @@ def pass_second_factor(body: CodeIn, current: HalfAdmin, request: Request) -> Ad
     if not current.enrolled:
         raise ApiError(409, "enrolment_required")
     typed = totp.normalise(body.code)
-    id_hash = _id_hash(request)
+    id_hash = session_hash(request)
     error: ApiError | None = None
     if TOTP_CODE.fullmatch(typed):
         _limited(request, "admin_2fa", 20)
@@ -440,7 +439,7 @@ def begin_enrolment(body: TicketIn, current: HalfAdmin, request: Request) -> Enr
     _limited(request, "admin_enrol", 10)
     _key_needed()
     s = totp.new_secret()
-    id_hash = _id_hash(request)
+    id_hash = session_hash(request)
     ticket = totp.proof(totp.normalise(body.ticket))
     locked = False
     with SessionLocal.begin() as session:
@@ -488,7 +487,7 @@ def confirm_enrolment(body: CodeIn, current: HalfAdmin, request: Request) -> Rec
     other sessions, and answers the 10 recovery codes, once."""
     _limited(request, "admin_2fa", 20)
     _key_needed()
-    id_hash = _id_hash(request)
+    id_hash = session_hash(request)
     codes = [totp.new_code() for _ in range(10)]
     # Counted first, in a transaction of its own, as pass_second_factor's code (ZIF-261).
     with SessionLocal.begin() as session:
@@ -554,12 +553,19 @@ def confirm_enrolment(body: CodeIn, current: HalfAdmin, request: Request) -> Rec
 
 @contextmanager
 def business(
-    current: AdminSession, request: Request, tenant_id: UUID, *, target: str
+    current: AdminSession,
+    request: Request,
+    tenant_id: UUID,
+    *,
+    target: str,
+    action: admin.Action = "business_read",
+    reason: str | None = None,
 ) -> Iterator[Session]:
-    """One business's data, for an admin read: a tenant_context, with the read recorded first.
+    """One business's data, for an admin read or write: a tenant_context, with it recorded first.
 
-    The record is in the same transaction and before the yield: if it fails the read never runs,
-    and a read that fails leaves no record. One business per transaction. 404 for an unknown one.
+    The record is in the same transaction and before the yield: if it fails the body never runs,
+    and a body that fails (an ApiError included) leaves no record and no change. One business per
+    transaction. 404 for an unknown one. A write passes its action and reason.
     """
     with tenant_context(tenant_id) as session:
         # No row-level security on tenants: this is a plain existence check.
@@ -568,10 +574,11 @@ def business(
         admin.record(
             session,
             request,
-            "business_read",
+            action,
             actor_user_id=current.user_id,
             tenant_id=tenant_id,
             target=target,
+            reason=reason,
         )
         request.state.tenant_id = tenant_id
         yield session
