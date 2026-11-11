@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.42.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.41.0...v0.42.0) (2026-11-11)
+
+
+### Features
+
+* **frontend:** admins suspend and reactivate a business from its page, and suspended members are told why at sign-in (ZIF-73) ([#432](https://github.com/fjcloudaiconsulting/ziftbook/issues/432)) ([897e151](https://github.com/fjcloudaiconsulting/ziftbook/commit/897e151d18a02437252b93350633d7599edf2278))
+
 ## [0.41.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.40.0...v0.41.0) (2026-11-11)
 
 
