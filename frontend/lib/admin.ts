@@ -54,6 +54,18 @@ export function needsSignIn(status: number): boolean {
   return status === 401 || status === 403;
 }
 
+/** What an admin write's answer means. A stale or missing second factor (403) is a re-check in place, never
+ * sign-in: a stale session still reports its factor "passed", so sign-in would send the admin straight back. */
+export function writeStep(status: number, code?: string): "done" | "recheck" | "signIn" | "changed" | "notFound" | "invalid" | "other" {
+  if (status === 204) return "done";
+  if (status === 403 && (code === "second_factor_stale" || code === "second_factor_required")) return "recheck";
+  if (status === 401 || status === 403) return "signIn";
+  if (status === 409) return "changed";
+  if (status === 404) return "notFound";
+  if (status === 422) return "invalid";
+  return "other";
+}
+
 /** How many pages `total` rows take, at least one. */
 export function pageCount(total: number, pageSize: number): number {
   return Math.max(1, Math.ceil(total / pageSize));

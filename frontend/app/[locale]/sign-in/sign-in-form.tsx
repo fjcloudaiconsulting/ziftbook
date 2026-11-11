@@ -55,6 +55,8 @@ export function SignInForm({ turnstileSiteKey }: { turnstileSiteKey: string | nu
       setEmailError(form("invalidEmail"));
     } else if (meaning === "try_later") {
       setMessage({ tone: "note", text: t(outcome.code === "challenge_required" ? "tryLater" : "tooMany") });
+    } else if (meaning === "suspended") {
+      setMessage({ tone: "error", text: t("suspended") });
     } else if (outcome.status === 403) {
       setMessage({ tone: "error", text: t("noBusiness") });
     } else {
