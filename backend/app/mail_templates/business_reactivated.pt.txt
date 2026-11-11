@@ -1,0 +1,6 @@
+Seu negócio está ativo de novo no ziftbook
+# Seu negócio está ativo de novo
+
+Retiramos a suspensão de “$business”. Sua equipe pode entrar novamente e tudo funciona como antes.
+
+[Entrar]($link)

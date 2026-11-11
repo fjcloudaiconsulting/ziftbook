@@ -1,0 +1,8 @@
+Seu negócio está suspenso no ziftbook
+# Seu negócio está suspenso
+
+Suspendemos “$business” no ziftbook. Enquanto estiver suspenso, sua página de agendamento fica offline, sua equipe não consegue entrar e nenhum agendamento novo pode ser feito. Seus clientes ainda podem ver e cancelar os agendamentos que já têm.
+
+O motivo:
+
+> $reason

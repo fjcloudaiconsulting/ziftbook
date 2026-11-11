@@ -141,8 +141,7 @@ admin_half_router = APIRouter(
 admin_router = APIRouter(
     prefix="/api/admin", tags=["admin"], dependencies=[Depends(admin_signed_in)]
 )
-# Every admin write goes here: the second factor passed within 15 minutes. business()'s write
-# variant is built with the first write route.
+# Every admin write goes here: the second factor passed within 15 minutes.
 admin_write_router = APIRouter(
     prefix="/api/admin", tags=["admin"], dependencies=[Depends(admin_recently_verified)]
 )
@@ -554,12 +553,19 @@ def confirm_enrolment(body: CodeIn, current: HalfAdmin, request: Request) -> Rec
 
 @contextmanager
 def business(
-    current: AdminSession, request: Request, tenant_id: UUID, *, target: str
+    current: AdminSession,
+    request: Request,
+    tenant_id: UUID,
+    *,
+    target: str,
+    action: admin.Action = "business_read",
+    reason: str | None = None,
 ) -> Iterator[Session]:
-    """One business's data, for an admin read: a tenant_context, with the read recorded first.
+    """One business's data, for an admin read or write: a tenant_context, with it recorded first.
 
-    The record is in the same transaction and before the yield: if it fails the read never runs,
-    and a read that fails leaves no record. One business per transaction. 404 for an unknown one.
+    The record is in the same transaction and before the yield: if it fails the body never runs,
+    and a body that fails (an ApiError included) leaves no record and no change. One business per
+    transaction. 404 for an unknown one. A write passes its action and reason.
     """
     with tenant_context(tenant_id) as session:
         # No row-level security on tenants: this is a plain existence check.
@@ -568,10 +574,11 @@ def business(
         admin.record(
             session,
             request,
-            "business_read",
+            action,
             actor_user_id=current.user_id,
             tenant_id=tenant_id,
             target=target,
+            reason=reason,
         )
         request.state.tenant_id = tenant_id
         yield session

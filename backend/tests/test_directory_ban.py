@@ -247,6 +247,7 @@ DEFINERS = [
     "public.own_bookings(p_id_hash bytea, p_before_starts_at timestamp with time zone, p_before_key bytea, p_limit integer)",  # noqa: E501
     "public.pass_second_factor(p_id_hash bytea, p_proof bytea, p_step bigint)",
     "public.password_unchanged(p_user_id uuid, p_hash text)",
+    "public.reactivate_business(p_id_hash bytea)",  # ZIF-73 (0100): acts on the caller's business
     "public.resend_contact_email(p_requester uuid)",
     "public.reset_password(p_token_hash bytea, p_password_hash text)",
     "public.resolve_account_session(p_id_hash bytea)",
@@ -258,6 +259,7 @@ DEFINERS = [
     "public.start_admin_session(p_user uuid, p_password_hash text, p_id_hash bytea, p_ip inet, p_user_agent text)",  # noqa: E501
     "public.start_email_token(p_purpose text, p_email text, p_locale text)",
     "public.stripe_account_tenant(p_account text)",
+    "public.suspend_business(p_id_hash bytea, p_reason text)",  # ZIF-73 (0100), as reactivate
     "public.totp_ciphertext(p_id_hash bytea)",
     # ZIF-275 (0095): keyed by the caller's own live admin session and its setup ticket; answers
     # only whether that enrolment stopped, reads no user.

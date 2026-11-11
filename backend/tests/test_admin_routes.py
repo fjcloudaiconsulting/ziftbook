@@ -71,6 +71,9 @@ def test_admin_routes_are_the_allowlist() -> None:
         # ZIF-73, on admin_router
         ("GET", "/api/admin/businesses"),
         ("GET", "/api/admin/businesses/{tenant_id}"),
+        # ZIF-73, on admin_write_router
+        ("POST", "/api/admin/businesses/{tenant_id}/suspension"),
+        ("POST", "/api/admin/businesses/{tenant_id}/reactivation"),
     }
     # The password alone reaches only these: a later route on admin_half_router fails here.
     assert {

@@ -1,0 +1,8 @@
+Your business is suspended on ziftbook
+# Your business is suspended
+
+We've suspended “$business” on ziftbook. While it is suspended, your booking page is offline, your team can't sign in, and no new bookings can be made. Your clients can still see and cancel the bookings they already have.
+
+The reason:
+
+> $reason
