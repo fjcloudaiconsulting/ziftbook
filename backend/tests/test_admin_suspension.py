@@ -36,6 +36,7 @@ from tests.conftest import (
 from tests.test_admin_businesses import LIST, admin, an_admin, app, tag  # noqa: F401
 from tests.test_admin_routes import admin_routes
 from tests.test_admin_second_factor import sign_in, verified_client
+from tests.test_bookings_api import while_the_tenant_lock_is_held
 from tests.test_bookings_db import insert_booking, seed_service
 from tests.test_clients_db import seed_client
 
@@ -103,7 +104,11 @@ def test_the_functions_refuse_a_session_without_a_fresh_second_factor(
         for sql in (SUSPEND_SQL, REACTIVATE_SQL):
             assert tuple(call(app_engine, people.a, sql, hash_)) == ("stale", None)
     assert suspension_of(migrate_engine, people.a) == (None, None)
-    passed_ago(14)  # positive control: the same session, within the window
+    passed_ago(14)
+    # a half session of an admin whose other session is fresh is still no session with a factor
+    for sql in (SUSPEND_SQL, REACTIVATE_SQL):
+        assert tuple(call(app_engine, people.a, sql, cookie_hash(half))) == ("stale", None)
+    # positive control: the fresh session itself, within the window
     assert call(app_engine, people.a, SUSPEND_SQL, h).outcome == "suspended"
 
 
@@ -206,6 +211,34 @@ def run_jobs() -> None:
 
     with jobs_as_the_worker():
         asyncio.run(until_idle())
+
+
+# Kills: a function that reports success for a business that is not there (a wrong app.tenant_id).
+def test_the_functions_say_not_found_for_an_unknown_business(
+    app: FastAPI,  # noqa: F811
+    app_engine: Engine,
+    migrate_engine: Engine,
+    an_admin: uuid.UUID,  # noqa: F811
+) -> None:
+    h = cookie_hash(verified_client(app, migrate_engine, an_admin).client)
+    for sql in (SUSPEND_SQL, REACTIVATE_SQL):
+        assert tuple(call(app_engine, uuid.uuid4(), sql, h)) == ("not_found", None)
+
+
+# Kills: the route waiting on the booking lock without the 503 (or writing before it).
+def test_a_suspension_while_the_business_lock_is_held_is_busy(
+    admin: TestClient,  # noqa: F811
+    people: People,
+    team: Team,
+    migrate_engine: Engine,
+) -> None:
+    busy = while_the_tenant_lock_is_held(
+        admin, people.a, 10, lambda c: c.post(suspension(people.a), json={"reason": "x"})
+    )
+
+    assert (busy.status_code, busy.json()) == (503, {"code": "busy"})
+    assert suspension_of(migrate_engine, people.a) == (None, None)
+    assert audit_of(migrate_engine, people.a) == []
 
 
 # F4. Kills: an UPDATE with no tenant filter (b suspended too), mailing every member (worker,
@@ -473,7 +506,7 @@ def test_the_suspension_email_escapes_the_reason_and_speaks_the_owners_language(
 
 
 # F12. Kills: a check that only asks whether the business is still suspended (the first mail would
-# go, with the second reason), and a reason carried in the payload (it would go with the first).
+# go, with the second reason).
 def test_only_the_current_suspensions_email_is_sent(
     admin: TestClient,  # noqa: F811
     people: People,
@@ -535,7 +568,8 @@ def test_reactivating_clears_the_suspension_and_tells_the_owners(
     assert sent_to(f"{team.gone}@example.com") == []
 
 
-# F14. Kills: logging the reason (an admin's words about a business are not for the log).
+# F14. Kills: logging the reason, in the route or in the mail job (an admin's words about a business
+# are not for the log).
 def test_the_reason_never_reaches_a_log(
     admin: TestClient,  # noqa: F811
     people: People,
@@ -544,10 +578,28 @@ def test_the_reason_never_reaches_a_log(
 ) -> None:
     sentinel = f"zif-reason-{uuid.uuid4().hex}"
     assert admin.post(suspension(people.a), json={"reason": sentinel}).status_code == 204
-    assert admin.post(reactivation(people.a), json={"reason": sentinel}).status_code == 204
     run_jobs()
 
+    for user in team.owners.values():  # positive control: the mail was composed with the reason
+        (sent,) = sent_to(f"{user}@example.com")
+        assert sentinel in sent["Text"]
     lines = [json.dumps(line) for line in log_lines()]
-    assert any("business suspended" in line for line in lines)  # positive control
-    assert any("business reactivated" in line for line in lines)
+    assert any("business suspended" in line for line in lines)
     assert not [line for line in lines if sentinel in line]
+
+
+# Kills: a multi-line reason collapsed or cut at its first line in either part of the email.
+def test_a_two_line_reason_is_quoted_whole(
+    admin: TestClient,  # noqa: F811
+    people: People,
+    team: Team,
+) -> None:
+    assert (
+        admin.post(suspension(people.a), json={"reason": "first line\nsecond line"}).status_code
+        == 204
+    )
+    run_jobs()
+
+    (sent,) = sent_to(f"{people.both}@example.com")
+    assert "> first line\n> second line" in sent["Text"]
+    assert "first line<br>second line" in sent["Html"]

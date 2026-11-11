@@ -559,7 +559,10 @@ def _mark_sent(job: Job) -> None:
 
 
 def send(job: Job) -> None:
-    """The email.send job. Payload: recipient_id (a user), template.
+    """The email.send job. Payload: recipient_id (a user), template, and for business_suspended and
+    business_reactivated suspended_at (ISO): the suspension the mail tells of. business_suspended is
+    skipped unless the business is suspended since exactly then (its reason is read from the
+    business, never the payload); business_reactivated is skipped while it is suspended again.
 
     The address and language come from users, inside the job's tenant: someone who isn't a member of
     that tenant (any more) gets nothing. A template may name the business ($business) and its

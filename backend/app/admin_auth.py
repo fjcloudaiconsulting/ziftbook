@@ -259,7 +259,7 @@ def sign_out(current: HalfAdmin, request: Request, response: Response) -> None:
     clear_admin_cookie(response)
 
 
-def _id_hash(request: Request) -> bytes:
+def session_hash(request: Request) -> bytes:
     return auth.hash_token(request.cookies[ADMIN_COOKIE])  # the guard has resolved it
 
 
@@ -300,7 +300,7 @@ def pass_second_factor(body: CodeIn, current: HalfAdmin, request: Request) -> Ad
     if not current.enrolled:
         raise ApiError(409, "enrolment_required")
     typed = totp.normalise(body.code)
-    id_hash = _id_hash(request)
+    id_hash = session_hash(request)
     error: ApiError | None = None
     if TOTP_CODE.fullmatch(typed):
         _limited(request, "admin_2fa", 20)
@@ -439,7 +439,7 @@ def begin_enrolment(body: TicketIn, current: HalfAdmin, request: Request) -> Enr
     _limited(request, "admin_enrol", 10)
     _key_needed()
     s = totp.new_secret()
-    id_hash = _id_hash(request)
+    id_hash = session_hash(request)
     ticket = totp.proof(totp.normalise(body.ticket))
     locked = False
     with SessionLocal.begin() as session:
@@ -487,7 +487,7 @@ def confirm_enrolment(body: CodeIn, current: HalfAdmin, request: Request) -> Rec
     other sessions, and answers the 10 recovery codes, once."""
     _limited(request, "admin_2fa", 20)
     _key_needed()
-    id_hash = _id_hash(request)
+    id_hash = session_hash(request)
     codes = [totp.new_code() for _ in range(10)]
     # Counted first, in a transaction of its own, as pass_second_factor's code (ZIF-261).
     with SessionLocal.begin() as session:

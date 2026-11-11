@@ -17,8 +17,14 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, StringConstraints
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app import auth, business_settings, services
-from app.admin_auth import ADMIN_COOKIE, CurrentAdmin, admin_router, admin_write_router, business
+from app import business_settings, services
+from app.admin_auth import (
+    CurrentAdmin,
+    admin_router,
+    admin_write_router,
+    business,
+    session_hash,
+)
 from app.bookings import PAYMENT_COLUMNS, PaymentFact, payment_fact
 from app.business_settings import BusinessSettings
 from app.db import SessionLocal, join_tenant
@@ -259,6 +265,7 @@ class Reason(BaseModel):
 # What each function answers other than its success, as the error it becomes.
 REFUSALS = {
     "stale": (403, "second_factor_stale"),
+    "not_found": (404, "not_found"),
     "already_suspended": (409, "already_suspended"),
     "not_suspended": (409, "not_suspended"),
 }
@@ -290,6 +297,7 @@ def change(
     *,
     action: Literal["business_suspended", "business_reactivated"],
     sql: str,
+    params: dict[str, str],
     template: str,
 ) -> None:
     """The function, the audit row and the owners' emails in one transaction (admin_auth.business):
@@ -299,10 +307,7 @@ def change(
     ) as db:
         row = db.execute(
             text(sql),
-            {
-                "h": auth.hash_token(request.cookies[ADMIN_COOKIE]),
-                "reason": body.reason,
-            },
+            {"h": session_hash(request), **params},
         ).one()
         if row.outcome in REFUSALS:
             raise ApiError(*REFUSALS[row.outcome])
@@ -322,6 +327,7 @@ def suspend(tenant_id: UUID, body: Reason, current: CurrentAdmin, request: Reque
         body,
         action="business_suspended",
         sql="SELECT * FROM suspend_business(:h, :reason)",
+        params={"reason": body.reason},
         template="business_suspended",
     )
 
@@ -339,5 +345,6 @@ def reactivate(tenant_id: UUID, body: Reason, current: CurrentAdmin, request: Re
         body,
         action="business_reactivated",
         sql="SELECT * FROM reactivate_business(:h)",
+        params={},
         template="business_reactivated",
     )

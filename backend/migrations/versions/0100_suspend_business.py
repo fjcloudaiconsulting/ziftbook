@@ -47,6 +47,10 @@ BEGIN
   -- No FOR UPDATE (it would block the key-share locks of booking inserts): the advisory lock
   -- already serialises every writer.
   SELECT t.suspended_at INTO v_at FROM tenants t WHERE t.id = v_tenant;
+  IF NOT FOUND THEN
+    RETURN QUERY SELECT 'not_found'::text, NULL::timestamptz;
+    RETURN;
+  END IF;
 {body}
 END $$"""
 
