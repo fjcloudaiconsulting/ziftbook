@@ -1708,7 +1708,7 @@ WRITE_GRANTS_AT_0048 = [
 # own GRANT SELECT; a table-level SELECT or a phone grant is a deliberate change here.
 WRITE_GRANTS_AT_HEAD = [
     ("email_outbox", "INSERT SELECT", "sent_at UPDATE, status UPDATE, subject UPDATE"),
-    ("tenants", "SELECT", "name UPDATE"),
+    ("tenants", "SELECT", "name UPDATE, suspended_at UPDATE, suspension_reason UPDATE"),
     ("users", None, "email SELECT, id SELECT, locale SELECT, name SELECT"),
 ]
 
@@ -3185,3 +3185,54 @@ def test_0072_leaves_the_lock_timeout_as_it_found_it(migrate_engine: Engine) -> 
         with Operations.context(MigrationContext.configure(conn)):
             module.upgrade()
         assert conn.scalar(text("SHOW lock_timeout")) == "5s"
+
+
+# ZIF-73 F8 FENCE. Wrong impl: a CHECK that bites one way only (a reason without a time, or a time
+# without a reason), or no length cap.
+@pytest.mark.parametrize(
+    ("set_clause", "params"),
+    [
+        ("suspended_at = now()", {}),
+        ("suspension_reason = 'x'", {}),
+        ("suspended_at = now(), suspension_reason = :r", {"r": "x" * 501}),
+    ],
+)
+def test_a_suspension_is_both_a_time_and_a_reason_of_at_most_500_characters(
+    people: People, migrate_engine: Engine, set_clause: str, params: dict[str, str]
+) -> None:
+    with pytest.raises(IntegrityError) as raised, migrate_engine.begin() as conn:
+        conn.execute(
+            text(f"UPDATE tenants SET {set_clause} WHERE id = :t"), {"t": people.a, **params}
+        )
+    assert isinstance(raised.value.orig, CheckViolation)
+    with migrate_engine.begin() as conn:
+        conn.execute(
+            text("UPDATE tenants SET suspended_at = now(), suspension_reason = :r WHERE id = :t"),
+            {"t": people.a, "r": "x" * 500},
+        )
+
+
+# ZIF-73 G2 guard: 0099's downgrade restores 0045's account_by_email exactly (the 0045 round trip
+# goes past 0045 and cannot see this), and its upgrade puts the suspended-last ordering back.
+def test_downgrading_0099_restores_0045s_account_by_email(
+    migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = lock_timeout_config(monkeypatch)
+
+    def body(source: str) -> str:
+        return " ".join(source.split())
+
+    old = migration("0045_membership_removed.py")
+    expected = body(old.account_by_email(old.ACTIVE).split("$$")[1])
+
+    def installed() -> str:
+        with migrate_engine.connect() as conn:
+            return body(conn.scalar(FUNCTION_SOURCE, {"n": "account_by_email"}))
+
+    try:
+        command.downgrade(cfg, "0098")
+        assert installed() == expected
+    finally:
+        command.upgrade(cfg, "head")
+    assert installed() != expected
+    assert "suspended_at" in installed()

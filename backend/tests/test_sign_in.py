@@ -27,6 +27,8 @@ from tests.conftest import (
     member_id,
     migrate_tenant_context,
     new_client,
+    signed_in,
+    suspend,
     wait_until_blocked,
 )
 
@@ -170,6 +172,76 @@ def test_a_member_of_several_businesses_lands_in_the_oldest_membership(
             )
     try:
         assert sign_in(client, email_of(stranger)).json()["tenant_id"] == str(people.b)
+    finally:
+        drop_memberships(migrate_engine, people, stranger)
+
+
+def sessions_of(migrate_engine: Engine, tenant_id: uuid.UUID, user_id: uuid.UUID) -> int:
+    with migrate_tenant_context(migrate_engine, tenant_id) as conn:
+        found: int = conn.scalar(
+            text("SELECT count(*) FROM sessions WHERE user_id = :u"), {"u": user_id}
+        )
+    return found
+
+
+# ZIF-73 F1 FENCE. Wrong impl: the suspension checked in auth.signed_in instead of RESOLVE, so a
+# route that depends on auth.resolve directly (services, payments) still answers. G0 guard: the
+# session is dormant, not deleted, so lifting the suspension revives the same cookie.
+def test_a_suspended_business_s_session_is_dead_until_it_is_lifted(
+    people: People, app: FastAPI
+) -> None:
+    owner = signed_in(app, people.a, people.both)
+    assert owner.get("/api/session").status_code == 200  # positive control
+    assert owner.get("/api/payments/account").status_code == 200
+
+    suspend(people.a)
+
+    assert owner.get("/api/session").status_code == 401
+    assert owner.get("/api/payments/account").status_code == 401
+
+    suspend(people.a, on=False)  # G0
+
+    assert owner.get("/api/session").status_code == 200
+    assert owner.get("/api/payments/account").status_code == 200
+
+
+# ZIF-73 F2 FENCE. Wrong impl: account_by_email ordering unchanged, so the oldest membership (the
+# suspended business) is picked and the person is refused though another business is live.
+def test_a_person_with_a_live_business_signs_into_it_past_an_older_suspended_one(
+    people: People, stranger: uuid.UUID, client: TestClient, migrate_engine: Engine
+) -> None:
+    for tenant_id, role in ((people.a, "worker"), (people.b, "worker")):  # a first: the older
+        insert_membership(migrate_engine, tenant_id, stranger, role)
+    suspend(people.a)
+    try:
+        response = sign_in(client, email_of(stranger))
+
+        assert response.status_code == 200
+        assert response.json()["tenant_id"] == str(people.b)
+    finally:
+        drop_memberships(migrate_engine, people, stranger)
+
+
+# ZIF-73 F3 FENCE. Wrong impl: no check at sign-in, so the session row is created and only
+# RESOLVE refuses it later.
+def test_a_person_whose_only_business_is_suspended_is_refused_and_gets_no_session(
+    people: People,
+    app: FastAPI,
+    stranger: uuid.UUID,
+    client: TestClient,
+    migrate_engine: Engine,
+) -> None:
+    insert_membership(migrate_engine, people.a, stranger, "worker")
+    assert sign_in(client, email_of(stranger)).status_code == 200  # positive control
+    with migrate_tenant_context(migrate_engine, people.a) as conn:
+        conn.execute(text("DELETE FROM sessions WHERE user_id = :u"), {"u": stranger})
+    suspend(people.a)
+    try:
+        refused = sign_in(new_client(app), email_of(stranger))
+
+        assert (refused.status_code, refused.json()) == (403, {"code": "business_suspended"})
+        assert auth.COOKIE not in refused.cookies
+        assert sessions_of(migrate_engine, people.a, stranger) == 0
     finally:
         drop_memberships(migrate_engine, people, stranger)
 

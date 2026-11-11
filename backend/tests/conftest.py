@@ -976,6 +976,22 @@ def add_membership(tenant_id: uuid.UUID, user_id: uuid.UUID, role: str = "worker
         migrate.dispose()
 
 
+def suspend(tenant_id: uuid.UUID, on: bool = True) -> None:
+    """Suspend a business (ZIF-73), or lift it, as the migrate role: nothing in the app does yet."""
+    migrate = create_engine(os.environ["ZIF_MIGRATE_DATABASE_URL"], poolclass=NullPool)
+    try:
+        with migrate.begin() as conn:
+            conn.execute(
+                text(
+                    "UPDATE tenants SET suspended_at = CASE WHEN :on THEN now() END,"
+                    " suspension_reason = CASE WHEN :on THEN 'test' END WHERE id = :t"
+                ),
+                {"t": tenant_id, "on": on},
+            )
+    finally:
+        migrate.dispose()
+
+
 def member_id(tenant_id: uuid.UUID, user_id: uuid.UUID) -> uuid.UUID:
     with tenant_context(tenant_id) as session:
         found: uuid.UUID = session.scalar(

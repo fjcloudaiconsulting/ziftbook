@@ -1106,7 +1106,7 @@ def book_online(
     # ZIF-145. After Turnstile and the limits, so unpublished answers like unknown (F10);
     # before any write. A booking that read published=true before a concurrent unpublish
     # commits still lands: it was placed first, and the owner sees it.
-    if not settings.published:
+    if not settings.published or business_settings.suspended(db):
         raise ApiError(404, "not_found")
     # ZIF-102. The owner changed the currency after the page showed the price: the client has not
     # seen this price, so nothing is booked and the page reloads its prices. Under the service's

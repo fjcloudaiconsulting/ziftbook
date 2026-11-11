@@ -38,6 +38,7 @@ from tests.conftest import (
     put_settings,
     save_setting,
     signed_in,
+    suspend,
 )
 from tests.stripe_fake import FakeGateway, connect, event_body, signed
 from tests.test_availability_api import assign, new_service, seed_booking, weekdays
@@ -884,6 +885,24 @@ def test_a_client_can_come_back_or_start_over(
     assert fake_stripe.intents[intent]["status"] == "canceled"
     assert pay_rows(people, booking_id)[0]["status"] == "canceled"
     assert place(app, people, ready, email=address).status_code == 201
+
+
+# ZIF-73 F7 FENCE. Kills: resume not gated. A suspended business's page is offline, so no new
+# intent; sync and abandon stay, so what is under way can finish and a hold can be given back.
+def test_a_suspended_business_cannot_resume_a_payment_but_can_abandon_one(
+    people: People, app: FastAPI, ready: str
+) -> None:
+    client = new_client(app)
+    booking_id = place(app, people, ready, client=client).json()["id"]
+    assert resume(client, people, booking_id).status_code == 200  # positive control
+
+    suspend(people.a)
+
+    refused = resume(client, people, booking_id)
+    assert (refused.status_code, refused.json()) == (404, {"code": "not_found"})
+    assert sync(client, people, booking_id).status_code == 200
+    assert abandon(client, people, booking_id).status_code == 204
+    assert status_of(people, booking_id) == "expired"
 
 
 def test_a_resume_after_a_cancelled_intent_makes_the_next_one(
