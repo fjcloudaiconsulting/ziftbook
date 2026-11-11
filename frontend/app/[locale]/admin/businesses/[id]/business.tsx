@@ -193,7 +193,7 @@ export function Business({ id }: { id: string }) {
             )}
           </section>
 
-          {!refreshing && (
+          {!refreshing && outcome?.data && (
             <Suspension
               business={business}
               onOpen={() => setDone(null)}

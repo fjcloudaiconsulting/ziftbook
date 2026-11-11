@@ -174,7 +174,8 @@ describe("suspension and refresh", () => {
   // offered while that read is in flight.
   test("a change bumps the refetch and hides the action meanwhile", () => {
     assert.match(detail, /setReloads\(\(\w+\) => \w+ \+ 1\)/);
-    assert.match(detail, /\{!refreshing && \(\s*<Suspension/);
+    // and never on a kept stale detail after a failed read-back (its 409 would blame someone else)
+    assert.match(detail, /\{!refreshing && outcome\?\.data && \(\s*<Suspension/);
   });
 
   // ZIF-73 fence. Kills: the suspended pill shown on every row.
@@ -193,5 +194,15 @@ describe("suspension and refresh", () => {
   test("a failed refetch keeps the last good detail", () => {
     assert.match(detail, /if \(current && outcome\.data\) setLastGood\(/);
     assert.match(detail, /const business = outcome\?\.data \?\? \(lastGood\?\.id === id \? lastGood\.data : undefined\)/);
+    // Kills: the failure banner hidden behind the kept detail.
+    assert.match(detail, /!outcome \|\| outcome\.data \|\|/);
+  });
+
+  // ZIF-73 fence. Kills: a code surviving Cancel, the kind switched mid-check, and the lock path going through the
+  // busy-gated switch (a no-op inside the chain, so the kind would stay "app").
+  test("cancel, the switch and the lock path leave no stale code or kind", () => {
+    assert.match(suspension, /function cancel\(\) \{[^}]*setCode\(""\);\s*setCodeError\(undefined\);/);
+    assert.match(suspension, /function switchTo[^{]*\{\s*if \(busy\) return;/);
+    assert.match(suspension, /setBlocked\(state\);\s*setKind\("recovery"\);/);
   });
 });
