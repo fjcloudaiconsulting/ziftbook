@@ -75,7 +75,7 @@ export function Business({ id }: { id: string }) {
       <BackLink href="/admin/businesses">{t("businessesTitle")}</BackLink>
       {failure && <Banner tone="error">{failure}</Banner>}
       {done && (
-        <div ref={doneLine} tabIndex={-1}>
+        <div ref={doneLine} tabIndex={-1} className={admin.quietFocus}>
           <Banner tone={done.tone}>{done.text}</Banner>
         </div>
       )}

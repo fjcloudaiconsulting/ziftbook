@@ -10,6 +10,7 @@ import { appCode, factorState, writeStep } from "@/lib/admin";
 
 import { Banner, FieldError, problem, send } from "../../../_ui/parts";
 import styles from "../../../_ui/ui.module.css";
+import admin from "../../admin.module.css";
 import { CodeField } from "../../parts";
 
 export type Done = { tone: "info" | "note"; text: string };
@@ -39,7 +40,7 @@ export function Suspension({ business, onOpen, onChanged }: { business: Business
   const submitting = useRef(false);
   const opener = useRef<HTMLButtonElement>(null);
   const textarea = useRef<HTMLTextAreaElement>(null);
-  const title = useRef<HTMLHeadingElement>(null);
+  const title = useRef<HTMLElement>(null);
   const codeInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -204,7 +205,10 @@ export function Suspension({ business, onOpen, onChanged }: { business: Business
                 aria-required="true"
                 aria-invalid={reasonError ? true : undefined}
                 aria-describedby={describedBy}
-                onChange={(event) => setReason(event.target.value)}
+                onChange={(event) => {
+                  setReason(event.target.value);
+                  setReasonError(undefined);
+                }}
               />
             </div>
             <p className={styles.hint} id={`${reasonId}-hint`}>
@@ -227,9 +231,9 @@ export function Suspension({ business, onOpen, onChanged }: { business: Business
         </form>
       ) : (
         <form className={styles.form} onSubmit={onSubmitCode} noValidate>
-          <h3 ref={title} id={titleId} tabIndex={-1}>
+          <strong ref={title} id={titleId} tabIndex={-1} className={admin.quietFocus}>
             {t("recheckTitle")}
-          </h3>
+          </strong>
           <p id={ledeId}>{t("recheckLede")}</p>
           <CodeField
             kind={kind}

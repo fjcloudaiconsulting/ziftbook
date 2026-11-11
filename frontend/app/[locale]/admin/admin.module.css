@@ -132,3 +132,6 @@ a.onPhone.onPhone { color: var(--ink); }
 
 /* A suspension reason as the admin typed it, line breaks kept. */
 .reason { white-space: pre-wrap; }
+
+/* Focus moved there by the screen, never by Tab: the box would read as an error around a title. */
+.quietFocus[tabindex="-1"]:focus { outline: none; }
