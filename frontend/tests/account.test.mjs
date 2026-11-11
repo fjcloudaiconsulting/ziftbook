@@ -143,6 +143,12 @@ describe("sign-in outcome", () => {
     assert.equal(signInOutcome(429, "rate_limited", true), "try_later");
   });
 
+  // ZIF-73 fence F5. Kills: a suspended business worded as "no business" (a 403 lumped together), and the reverse.
+  test("a suspended business is told apart from one the account left", () => {
+    assert.equal(signInOutcome(403, "business_suspended", false), "suspended");
+    assert.equal(signInOutcome(403, "no_tenant", false), "error");
+  });
+
   test("the other answers keep their meaning", () => {
     assert.equal(signInOutcome(200, undefined, true), "ok");
     assert.equal(signInOutcome(401, undefined, true), "invalid");

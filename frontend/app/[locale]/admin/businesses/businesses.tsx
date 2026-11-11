@@ -92,6 +92,7 @@ export function Businesses() {
                         ].join(" · ")}
                       </span>
                     </span>
+                    {business.suspended_at && <span className={`${styles.pill} ${styles.pillWarn}`}>{t("suspended")}</span>}
                     <span className={styles.pill}>{t(`stripe.${business.stripe}`)}</span>
                     <Chevron />
                   </Link>

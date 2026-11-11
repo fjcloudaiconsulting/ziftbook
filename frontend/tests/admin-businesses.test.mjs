@@ -4,12 +4,14 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, test } from "node:test";
 
-import { needsSignIn, pageCount, settingText, shortDate } from "../lib/admin.ts";
+import { needsSignIn, pageCount, settingText, shortDate, writeStep } from "../lib/admin.ts";
 import { dateLocale } from "../lib/console.ts";
 
 const read = (path) => readFileSync(new URL(`../app/[locale]/admin/${path}`, import.meta.url), "utf8");
 const list = read("businesses/businesses.tsx");
 const detail = read("businesses/[id]/business.tsx");
+const suspension = read("businesses/[id]/suspension.tsx");
+const signInForm = readFileSync(new URL("../app/[locale]/sign-in/sign-in-form.tsx", import.meta.url), "utf8");
 
 describe("signed out or short of the second factor", () => {
   // ZIF-73 fence. Kills: a half session (403) or an ended one (401) left on an empty businesses screen instead of
@@ -26,7 +28,7 @@ describe("answers in flight", () => {
   // ZIF-73 fence. Kills: the detail fetched again when the router or a translator changes (each GET writes a
   // business_read), and a stale answer (an earlier search or id) overwriting the newer one.
   test("the detail fetches on its id alone; both screens drop a stale answer", () => {
-    assert.match(detail, /\}, \[id\]\);/);
+    assert.match(detail, /\}, \[id, reloads\]\);/); // no router or translator: a refetch follows only the admin's own change
     for (const screen of [list, detail]) assert.match(screen, /if \(current\) set/);
   });
 
@@ -71,17 +73,136 @@ describe("no client data", () => {
   });
 });
 
+const NEW_KEYS = [
+  "statusLabel", "active", "suspendedSince", "suspended", "reasonLabel", "suspendAction", "reactivateAction", "suspendTitle",
+  "reactivateTitle", "suspendBody", "suspendHint", "reactivateHint", "reasonRequired", "reasonInvalid", "recheckTitle",
+  "recheckLede", "suspendedDone", "reactivatedDone", "changedNote", "upcomingTitle", "upcomingSome", "upcomingNone",
+  "upcomingZone", "keepRunning", "keepSuspended",
+];
+
 describe("copy", () => {
   // ZIF-73 fence. Kills: a key the screens use missing in a language (check-catalogs compares the catalogs with each
   // other, not with the code).
-  const keys = [...new Set([...`${list}\n${detail}`.matchAll(/\bt\("([A-Za-z.]+)"/g)].map((match) => match[1]))];
+  const keys = [...new Set([...`${list}\n${detail}\n${suspension}`.matchAll(/\bt\("([A-Za-z.]+)"/g)].map((match) => match[1]))];
   for (const locale of ["en", "nl", "pt"]) {
     test(`every key the screens use is in ${locale}`, () => {
-      const { Admin } = JSON.parse(readFileSync(new URL(`../messages/${locale}.json`, import.meta.url), "utf8"));
+      const { Admin, SignIn } = JSON.parse(readFileSync(new URL(`../messages/${locale}.json`, import.meta.url), "utf8"));
       for (const key of keys) assert.ok(key.split(".").reduce((node, part) => node?.[part], Admin), `${locale}: Admin.${key}`);
+      for (const key of NEW_KEYS) assert.ok(Admin[key], `${locale}: Admin.${key}`);
+      assert.ok(SignIn.suspended, `${locale}: SignIn.suspended`);
+      assert.ok(!/—/.test(JSON.stringify([NEW_KEYS.map((key) => Admin[key]), SignIn.suspended])), `${locale}: no em dash`);
       for (const group of ["stripe.none", "stripe.onboarding", "stripe.ready", "role.owner", "role.worker"]) {
         assert.ok(group.split(".").reduce((node, part) => node?.[part], Admin), `${locale}: Admin.${group}`);
       }
     });
   }
+});
+
+describe("a write's answer (writeStep)", () => {
+  // ZIF-73 fence F1. Kills: writeStep delegating to needsSignIn (a stale factor sent to /admin/sign-in, which replaces
+  // straight back to /admin: a redirect loop, and the typed reason lost).
+  test("a stale or missing second factor is a re-check, not a sign-in", () => {
+    assert.equal(writeStep(403, "second_factor_stale"), "recheck");
+    assert.equal(writeStep(403, "second_factor_required"), "recheck");
+  });
+
+  // ZIF-73 fence F2. Kills: every 401/403 read as a re-check (a code prompt on a dead session, a loop on an unrelated 403).
+  test("a dead session or any other 403 goes back through sign-in", () => {
+    assert.equal(writeStep(401), "signIn");
+    assert.equal(writeStep(403, "forbidden"), "signIn");
+    assert.equal(writeStep(403), "signIn");
+  });
+
+  // ZIF-73 fence F3. Kills: a 204 (no body) read as a failure, and a 409 shown as a generic error.
+  test("204 is done and a 409 means someone changed it first", () => {
+    assert.equal(writeStep(204), "done");
+    assert.equal(writeStep(409, "already_suspended"), "changed");
+    assert.equal(writeStep(409, "not_suspended"), "changed");
+  });
+
+  test("404, 422 and the rest", () => {
+    assert.equal(writeStep(404), "notFound");
+    assert.equal(writeStep(422), "invalid");
+    assert.equal(writeStep(503), "other");
+    assert.equal(writeStep(0), "other");
+  });
+});
+
+describe("what the suspension screens read", () => {
+  // ZIF-73 fences F6, F3b. Kills: the re-check bypassed (needsSignIn on a write), a write's 204 read as data.
+  test("the panel sends through writeStep and the code form, never needsSignIn, never a body", () => {
+    assert.match(suspension, /writeStep\(/);
+    assert.match(suspension, /adminPassSecondFactor\(/);
+    assert.doesNotMatch(suspension, /needsSignIn\(/);
+    assert.match(suspension, /writeStep\(\w+\.status, \w+\.code\)/);
+    assert.doesNotMatch(suspension, /\.data\b/);
+  });
+
+  // ZIF-73 fences F6, F6b. Kills: no refetch after a change, browser-zone times, "[object Object]" for a service,
+  // a second formatter without the business's zone.
+  test("the detail shows times in the business's zone and a service by its name", () => {
+    assert.match(detail, /\}, \[id, reloads\]\);/);
+    assert.match(detail, /serviceName\(/);
+    // the only formatRange call is on the formatter that has the business's zone
+    assert.equal(detail.split("formatRange(").length - 1, 1);
+    assert.match(detail, /const range =\s+business && new Intl\.DateTimeFormat\([^\n]*timeZone: business\.settings\.timezone/);
+    assert.match(detail, /range\.formatRange\(/);
+    assert.equal(detail.split("timeZone: business.settings.timezone").length - 1, 1);
+  });
+
+  // ZIF-73 fence F6. Kills: no pill on a suspended row.
+  test("a suspended row carries the warning pill", () => {
+    assert.match(list, /suspended_at/);
+    assert.match(list, /pillWarn/);
+  });
+
+  // ZIF-73 fence F6. Kills: the suspended branch after the 403 noBusiness one (never reached).
+  test("sign-in reads a suspended business before any other 403", () => {
+    const suspended = signInForm.indexOf('meaning === "suspended"');
+    assert.ok(suspended > -1);
+    assert.ok(suspended < signInForm.indexOf("outcome.status === 403"));
+  });
+});
+
+describe("suspension and refresh", () => {
+  // ZIF-73 fence. Kills: a used code left in state, the resend dropped, or the resend wrapped in the guarded no-op.
+  test("a passed code is cleared, the form returns to the reason and the write is sent again", () => {
+    assert.match(suspension, /outcome\.status === 200\) \{\s*setCode\(""\)[^\n]*\n\s*setPhase\("reason"\);\s*await attempt\(\);/);
+  });
+
+  // ZIF-73 fence. Kills: the detail never read back after a change (the refetch counter not bumped), and the action
+  // offered while that read is in flight.
+  test("a change bumps the refetch and hides the action meanwhile", () => {
+    assert.match(detail, /setReloads\(\(\w+\) => \w+ \+ 1\)/);
+    // and never on a kept stale detail after a failed read-back (its 409 would blame someone else)
+    assert.match(detail, /\{!refreshing && outcome\?\.data && \(\s*<Suspension/);
+  });
+
+  // ZIF-73 fence. Kills: the suspended pill shown on every row.
+  test("the pill shows only for a suspended business", () => {
+    assert.match(list, /business\.suspended_at && <span className=\{`\$\{styles\.pill\} \$\{styles\.pillWarn\}`\}>\{t\("suspended"\)\}/);
+  });
+
+  // ZIF-73 fence. Kills: the lock notice kept in `message`, which the next submit or the resend clears.
+  test("the lock notice renders from the blocked state", () => {
+    assert.match(suspension, /blocked === "locked" && <Banner tone="error">\{t\("locked"\)\}/);
+    assert.match(suspension, /blocked === "unavailable" && <Banner tone="note">\{t\("appUnavailable"\)\}/);
+    assert.doesNotMatch(suspension, /setMessage\([^\n]*t\("(locked|appUnavailable)"\)/);
+  });
+
+  // ZIF-73 fence. Kills: a failed read-back after a change blanking the business the admin was looking at.
+  test("a failed refetch keeps the last good detail", () => {
+    assert.match(detail, /if \(current && outcome\.data\) setLastGood\(/);
+    assert.match(detail, /const business = outcome\?\.data \?\? \(lastGood\?\.id === id \? lastGood\.data : undefined\)/);
+    // Kills: the failure banner hidden behind the kept detail.
+    assert.match(detail, /!outcome \|\| outcome\.data \|\|/);
+  });
+
+  // ZIF-73 fence. Kills: a code surviving Cancel, the kind switched mid-check, and the lock path going through the
+  // busy-gated switch (a no-op inside the chain, so the kind would stay "app").
+  test("cancel, the switch and the lock path leave no stale code or kind", () => {
+    assert.match(suspension, /function cancel\(\) \{[^}]*setCode\(""\);\s*setCodeError\(undefined\);/);
+    assert.match(suspension, /function switchTo[^{]*\{\s*if \(busy\) return;/);
+    assert.match(suspension, /setBlocked\(state\);\s*setKind\("recovery"\);/);
+  });
 });
