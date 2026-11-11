@@ -583,9 +583,13 @@ def test_the_reason_never_reaches_a_log(
     for user in team.owners.values():  # positive control: the mail was composed with the reason
         (sent,) = sent_to(f"{user}@example.com")
         assert sentinel in sent["Text"]
+    lifted = f"zif-reason-{uuid.uuid4().hex}"  # a reactivation's reason is not for the log either
+    assert admin.post(reactivation(people.a), json={"reason": lifted}).status_code == 204
+    run_jobs()
     lines = [json.dumps(line) for line in log_lines()]
     assert any("business suspended" in line for line in lines)
-    assert not [line for line in lines if sentinel in line]
+    assert any("business reactivated" in line for line in lines)
+    assert not [line for line in lines if sentinel in line or lifted in line]
 
 
 # Kills: a multi-line reason collapsed or cut at its first line in either part of the email.
