@@ -572,10 +572,7 @@ def sign_in(credentials: Credentials, request: Request, response: Response) -> S
             text("SELECT suspended_at IS NOT NULL FROM tenants WHERE id = :t"),
             {"t": account.tenant_id},
         ):
-            logger.info(
-                "sign-in refused: business suspended",
-                extra={"tenant_id": str(account.tenant_id)},
-            )
+            logger.info("sign-in refused: business suspended")  # tenant_context binds tenant_id
             raise ApiError(403, "business_suspended", headers=account_cookie_cleared())
         if not session.scalar(
             text("SELECT password_unchanged(:user_id, :hash)"),
