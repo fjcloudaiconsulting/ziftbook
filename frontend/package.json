@@ -19,8 +19,8 @@
     "@opentelemetry/sdk-metrics": "3.0.0",
     "@opentelemetry/sdk-trace": "3.0.0",
     "@stripe/stripe-js": "10.2.1",
-    "next": "16.4.5",
-    "next-intl": "4.14.9",
+    "next": "16.4.6",
+    "next-intl": "4.15.0",
     "react": "19.3.1",
     "react-dom": "19.3.1"
   },
@@ -30,10 +30,10 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
-    "eslint-config-next": "16.4.5",
+    "eslint-config-next": "16.4.6",
     "typescript": "6.0.3"
   },
-  "packageManager": "pnpm@12.17.0",
+  "packageManager": "pnpm@12.18.0",
   "engines": {
     "node": ">=24"
   }
