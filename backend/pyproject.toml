@@ -5,21 +5,21 @@ requires-python = "==3.15.*"
 dependencies = [
     "alembic==1.20.1",
     "argon2-cffi==25.1.0",
-    "boto3==1.43.123",
+    "boto3==1.43.126",
     "cryptography==50.0.2",
     "fastapi==0.162.0",
     "mailgun==1.10.0",
     "opentelemetry-api==1.45.1",
     "opentelemetry-exporter-otlp-proto-http==1.45.1",
     "opentelemetry-sdk==1.45.1",
-    "phonenumbers==9.0.42",
+    "phonenumbers==9.0.43",
     "pillow==13.0.0",
-    "psycopg[binary]==3.3.6",
-    "pydantic==2.14.2",
+    "psycopg[binary]==3.3.8",
+    "pydantic==2.14.3",
     "pydantic-settings==2.16.2",
     "requests==2.34.2",
     "segno==1.6.6",
-    "sqlalchemy==2.1.6",
+    "sqlalchemy==2.1.8",
     "stripe==16.1.0",
     "tzdata==2026.6",
     "uvicorn==0.54.0",
@@ -27,13 +27,13 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "boto3-stubs[s3]==1.43.123",
+    "boto3-stubs[s3]==1.43.126",
     "httpx2",
     "moto[s3]==5.2.5",
     "mypy==2.4.1",
     "pytest",
     "pytest-xdist",
-    "ruff==0.17.3",
+    "ruff==0.17.4",
 ]
 
 [tool.uv]
