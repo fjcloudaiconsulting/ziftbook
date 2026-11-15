@@ -2,7 +2,7 @@
 # throwaway literals for a database that lives for one CI run.
 services:
   postgres:
-    image: mirror.gcr.io/library/postgres:18@sha256:e3d24f6906d0760bf4da0dae872415391ededefad23fd471c47dc53b0ddf3c42
+    image: mirror.gcr.io/library/postgres:18@sha256:2ea8630df176ad090ec92136dee850397c5af8781e4bcf2e4162593691c61bbc
     environment:
       POSTGRES_USER: ziftbook
       POSTGRES_PASSWORD: smoke
@@ -15,7 +15,7 @@ services:
 
   # Creates the database roles; idempotent. Only runs with the migrations (profile migrate), so `up --wait` never sees an exited service.
   db-init:
-    image: mirror.gcr.io/library/postgres:18@sha256:e3d24f6906d0760bf4da0dae872415391ededefad23fd471c47dc53b0ddf3c42
+    image: mirror.gcr.io/library/postgres:18@sha256:2ea8630df176ad090ec92136dee850397c5af8781e4bcf2e4162593691c61bbc
     profiles: [migrate]
     depends_on:
       postgres:
