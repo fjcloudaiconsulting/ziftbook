@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.43.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.42.1...v0.43.0) (2026-11-15)
+
+
+### Features
+
+* **backend:** each service says how clients pay: in person, their choice, a deposit or prepaid (ZIF-62) ([#436](https://github.com/fjcloudaiconsulting/ziftbook/issues/436)) ([a528ce9](https://github.com/fjcloudaiconsulting/ziftbook/commit/a528ce971f356019f6c97fe41462a44185ada0d8))
+* **frontend:** owners choose how clients pay per service, and checkout takes a deposit or the full price up front (ZIF-62) ([#437](https://github.com/fjcloudaiconsulting/ziftbook/issues/437)) ([3106637](https://github.com/fjcloudaiconsulting/ziftbook/commit/3106637b288b9f3112ef9fad896be2d9bdd0ba19))
+
+
+### Bug Fixes
+
+* **backend:** a merchant consent that carries a member's address now fails instead of being cleared (ZIF-290) ([#434](https://github.com/fjcloudaiconsulting/ziftbook/issues/434)) ([5bde75d](https://github.com/fjcloudaiconsulting/ziftbook/commit/5bde75d0d878744bf50a4c8b35526e5f752f0c11))
+
 ## [0.42.1](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.42.0...v0.42.1) (2026-11-15)
 
 
