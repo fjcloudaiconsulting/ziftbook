@@ -252,8 +252,8 @@ def record_consents(
 
     A merchant row never stores ip or user_agent: they would be the member's (ZIF-156). Dropped
     here, for every caller, so a merchant caller that passes them stores nothing rather than
-    meeting ck_consents_merchant_no_origin (a 500) once the contract migration drops 0096's
-    deploy-window trigger. The console route passes None as well (tests/test_clients_api.py).
+    meeting ck_consents_merchant_no_origin (a 500), now that 0101 dropped 0096's deploy-window
+    trigger. The console route passes None as well (tests/test_clients_api.py).
 
     The column list here is exactly the migration's GRANT INSERT list. Writes no audit event: the
     booking page's requester is the data subject, and auth.record stamps the requester's address
