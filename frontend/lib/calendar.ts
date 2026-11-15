@@ -337,8 +337,8 @@ export function historyLabel(
 }
 
 /** The booking's payment as one catalog key plus its amounts, or null when there is nothing to show
- * (no payment, or one still open or canceled). A failed refund is never worded as refunded. A payment
- * below the booking's price is a deposit (ZIF-62): the rest is due at the appointment. */
+ * (no payment, or one still open or canceled). A failed refund is never worded as refunded. `price`: given
+ * for a deposit booking (ZIF-62), whose payment is below it; the rest is due at the appointment. */
 export function paymentFact(
   payment: { status: string; amount_minor: number; currency: string; refunded_minor: number; refund_failed: boolean } | null,
   locale: string,
