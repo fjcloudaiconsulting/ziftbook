@@ -418,8 +418,10 @@ def test_downgrading_and_upgrading_0027_restores_both_thresholds(
                 ), (column, privilege)
         # The snapshot is written once and never updated: immutability as a privilege, the way
         # booking_events' append-only shape is. Exactly these columns, no others.
-        # ZIF-146 (0058): booked_as is written once too.
-        assert sorted(conn.scalars(NO_UPDATE)) == sorted((*SNAPSHOT, *EVIDENCE, "booked_as"))
+        # ZIF-146 (0058): booked_as is written once too, and ZIF-62's (0102) payment snapshot.
+        assert sorted(conn.scalars(NO_UPDATE)) == sorted(
+            (*SNAPSHOT, *EVIDENCE, "booked_as", "payment_rule", "payment_due_minor")
+        )
 
 
 # F20 (T8) - 0027 REFUSES on a non-empty bookings table. That refusal is the feature: ZIF-55 is
@@ -1359,7 +1361,8 @@ def test_0044_round_trips_booking_payments(
     finally:
         command.upgrade(cfg, "head")
     with migrate_engine.connect() as conn:
-        assert tuple(conn.execute(BOOKING_PAYMENTS).one()) == (True, 1)
+        # 0102 (ZIF-62) moved the payment's key to the booking's payment_due_minor.
+        assert tuple(conn.execute(BOOKING_PAYMENTS).one()) == (True, 0)
         assert (
             conn.scalar(
                 text("SELECT has_table_privilege('ziftbook_app', 'booking_payments', 'DELETE')")
@@ -1396,7 +1399,7 @@ def test_0044_round_trips_booking_payments(
                 got = conn.scalar(text(PAYMENT_GRANT), {"c": column, "p": privilege})
                 assert got is expected, (column, privilege)
 
-    booking_id = _seed_booking(people)
+    booking_id = _seed_booking(people, migrate_engine)
     for constraint, change in PAYMENT_CHECKS:
         row = {**GOOD_PAYMENT, **change}
         with pytest.raises(IntegrityError) as raised:
@@ -1412,12 +1415,14 @@ def test_0044_round_trips_booking_payments(
     _insert_payment(migrate_engine, people, booking_id, {**GOOD_PAYMENT, "intent_id": "pi_two"})
 
 
-def _seed_booking(people: People) -> uuid.UUID:
+def _seed_booking(people: People, migrate_engine: Engine | None = None, days: int = 3) -> uuid.UUID:
+    """A merchant booking; with migrate_engine, given the payment snapshot (0102) a payment of its
+    full price needs."""
     from tests.test_bookings_db import book
     from tests.test_clients_db import seed_client
 
-    start = datetime.now(UTC) + timedelta(days=3)
-    return book(
+    start = datetime.now(UTC) + timedelta(days=days)
+    booking_id = book(
         people.a,
         client_id=seed_client(people.a, email=f"{uuid.uuid4().hex}@example.com"),
         worker_id=member_id(people.a, people.both),
@@ -1425,6 +1430,16 @@ def _seed_booking(people: People) -> uuid.UUID:
         starts_at=start,
         ends_at=start + timedelta(minutes=30),
     )
+    if migrate_engine is not None:
+        with migrate_tenant_context(migrate_engine, people.a) as conn:
+            conn.execute(
+                text(
+                    "UPDATE bookings SET payment_rule = 'choice', "
+                    "payment_due_minor = price_amount_minor WHERE id = :id"
+                ),
+                {"id": booking_id},
+            )
+    return booking_id
 
 
 def _insert_payment(
@@ -1636,6 +1651,8 @@ INSERTABLE = {
     "client_message",
     "checkout_hash",
     "booked_as",  # ZIF-146 (0058): the account that placed it, INSERT only
+    "payment_rule",  # ZIF-62 (0102): the payment snapshot, INSERT only
+    "payment_due_minor",
 }
 
 
@@ -1660,7 +1677,7 @@ def test_0047_round_trips_the_booking_evidence_grants(
         grants = conn.execute(EVIDENCE_GRANTS).all()
         assert {column for column, _, update in grants if update} == UPDATABLE
         assert {column for column, insert, _ in grants if insert} == INSERTABLE
-        assert tuple(conn.execute(EVIDENCE_GUARD).one()) == (False, False, 26, True, True)
+        assert tuple(conn.execute(EVIDENCE_GUARD).one()) == (False, False, 28, True, True)
         assert tuple(conn.execute(STATUS_GUARD_FUNCTION).one()) == (
             False,
             ["search_path=pg_catalog, public, pg_temp"],
@@ -3070,6 +3087,151 @@ def test_0101_round_trips_the_merchant_consent_contract(
     with pytest.raises(IntegrityError) as error, superuser.begin() as conn:
         conn.execute(SEED_CONSENT, {"t": people.a, "c": client_id, "s": "merchant"})
     assert isinstance(error.value.orig, CheckViolation)
+
+
+PAYMENT_RULE_OBJECTS = text("""
+SELECT (SELECT count(*) FROM information_schema.columns
+         WHERE (table_name, column_name) IN (('services', 'payment_rule'),
+               ('services', 'deposit_pct'), ('bookings', 'payment_rule'),
+               ('bookings', 'payment_due_minor'))),
+       (SELECT array_agg(conname::text ORDER BY conname) FROM pg_constraint
+         WHERE conname IN ('fk_booking_payments_booking_price', 'fk_booking_payments_booking_due',
+                           'uq_bookings_tenant_id_id_price', 'uq_bookings_tenant_id_id_due')
+           AND convalidated),
+       EXISTS (SELECT FROM pg_trigger WHERE tgname = 'bookings_payment_snapshot_default'),
+       (SELECT bool_and(relforcerowsecurity) FROM pg_class
+         WHERE relname IN ('bookings', 'booking_payments'))
+""")
+SNAPSHOT_PRIVILEGES = text("""
+SELECT has_column_privilege('ziftbook_app', 'bookings', 'payment_rule', 'INSERT'),
+       has_column_privilege('ziftbook_app', 'bookings', 'payment_due_minor', 'INSERT'),
+       has_column_privilege('ziftbook_app', 'bookings', 'payment_rule', 'UPDATE'),
+       has_column_privilege('ziftbook_app', 'bookings', 'payment_due_minor', 'UPDATE')
+""")
+SNAPSHOT_OF = text("SELECT payment_rule, payment_due_minor FROM bookings WHERE id = :id")
+SET_SNAPSHOT = text("""
+UPDATE bookings SET payment_rule = :rule, payment_due_minor = :due WHERE id = :id
+""")
+
+
+# ZIF-62 FENCE. Kills: a 0102 that leaves a booking that already has a payment without the
+# snapshot (the new key, or its validation, would refuse it); a key still on the price (a deposit
+# could never be recorded) or on nothing (any amount); a FORCE left lifted on either table; an
+# UPDATE grant on the snapshot; no deploy-window trigger (the running release's checkout fails);
+# a downgrade that drops a deposit's money record to fit the old key, or leaves anything behind.
+def test_0102_round_trips_the_payment_rules(
+    people: People, migrate_engine: Engine, app_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = lock_timeout_config(monkeypatch)
+    head = (4, ["fk_booking_payments_booking_due", "uq_bookings_tenant_id_id_due"], True, True)
+    try:
+        command.downgrade(cfg, "0101")
+        with migrate_engine.connect() as conn:
+            assert tuple(conn.execute(PAYMENT_RULE_OBJECTS).one()) == (
+                0,
+                ["fk_booking_payments_booking_price", "uq_bookings_tenant_id_id_price"],
+                False,
+                True,
+            )
+        paid, unpaid = _seed_booking(people, days=3), _seed_booking(people, days=5)
+        _insert_payment(migrate_engine, people, paid, GOOD_PAYMENT)
+    finally:
+        command.upgrade(cfg, "head")
+    with migrate_engine.connect() as conn:
+        assert tuple(conn.execute(PAYMENT_RULE_OBJECTS).one()) == head
+        assert tuple(conn.execute(SNAPSHOT_PRIVILEGES).one()) == (True, True, False, False)
+    with migrate_tenant_context(migrate_engine, people.a) as conn:
+        assert tuple(conn.execute(SNAPSHOT_OF, {"id": paid}).one()) == ("choice", 2500)
+        assert tuple(conn.execute(SNAPSHOT_OF, {"id": unpaid}).one()) == (None, None)
+
+    # The running release's checkout: a booking placed awaiting a payment with no snapshot.
+    start = datetime.now(UTC) + timedelta(days=4)
+    window = _seed_booking(people, days=6)
+    with tenant_context(people.a) as session:
+        held = insert_booking(
+            session,
+            client_id=session.scalar(
+                text("SELECT client_id FROM bookings WHERE id = :id"), {"id": window}
+            ),
+            worker_id=member_id(people.a, people.both),
+            service_id=session.scalar(
+                text("SELECT service_id FROM bookings WHERE id = :id"), {"id": window}
+            ),
+            starts_at=start,
+            ends_at=start + timedelta(minutes=30),
+            status="awaiting_payment",
+            expires_at=datetime.now(UTC) + timedelta(minutes=30),
+            source="booking_page",
+        )
+        assert tuple(session.execute(SNAPSHOT_OF, {"id": held}).one()) == ("choice", 2500)
+    _insert_payment(migrate_engine, people, held, {**GOOD_PAYMENT, "intent_id": "pi_window"})
+
+    # A deposit: the payment is the snapshot's amount, never the price.
+    deposit = _seed_booking(people, days=7)
+    with migrate_tenant_context(migrate_engine, people.a) as conn:
+        conn.execute(SET_SNAPSHOT, {"rule": "deposit", "due": 750, "id": deposit})
+    with pytest.raises(IntegrityError) as raised:
+        _insert_payment(migrate_engine, people, deposit, {**GOOD_PAYMENT, "intent_id": "pi_full"})
+    assert raised.value.orig.diag.constraint_name == "fk_booking_payments_booking_due"  # type: ignore[union-attr]
+    _insert_payment(
+        migrate_engine,
+        people,
+        deposit,
+        {**GOOD_PAYMENT, "kind": "pay", "intent_id": "pi_deposit", "amount_minor": 750},
+    )
+    # The downgrade refuses rather than drop the deposit's record to fit the price key.
+    with pytest.raises(IntegrityError):
+        command.downgrade(cfg, "0101")
+    with migrate_engine.connect() as conn:
+        assert tuple(conn.execute(PAYMENT_RULE_OBJECTS).one()) == head
+
+
+# ZIF-62 FENCE. Kills: a snapshot that can be half set, more than the price, or less than the price
+# for any rule but a deposit; a deposit with no percentage, or one outside 1..99, or a percentage on
+# another rule.
+@pytest.mark.parametrize(
+    ("rule", "due", "constraint"),
+    [
+        ("choice", None, "ck_bookings_payment_due"),
+        (None, 2500, "ck_bookings_payment_due"),
+        ("deposit", 2501, "ck_bookings_payment_due"),
+        ("deposit", 0, "ck_bookings_payment_due"),
+        ("choice", 750, "ck_bookings_payment_due"),
+        ("prepaid", 750, "ck_bookings_payment_due"),
+        ("in_person", 2500, "ck_bookings_payment_rule"),
+    ],
+)
+def test_a_payment_snapshot_is_whole_and_within_the_price(
+    rule: str | None, due: int | None, constraint: str, people: People, migrate_engine: Engine
+) -> None:
+    booking_id = _seed_booking(people)
+    with pytest.raises(IntegrityError) as raised:
+        with migrate_tenant_context(migrate_engine, people.a) as conn:
+            conn.execute(SET_SNAPSHOT, {"rule": rule, "due": due, "id": booking_id})
+    assert raised.value.orig.diag.constraint_name == constraint  # type: ignore[union-attr]
+
+
+@pytest.mark.parametrize(
+    ("rule", "pct", "constraint"),
+    [
+        ("deposit", None, "ck_services_deposit_pct_with_deposit"),
+        ("choice", 30, "ck_services_deposit_pct_with_deposit"),
+        ("deposit", 100, "ck_services_deposit_pct"),
+        ("deposit", 0, "ck_services_deposit_pct"),
+        ("later", None, "ck_services_payment_rule"),
+    ],
+)
+def test_a_service_s_deposit_is_a_percentage_of_a_deposit_rule(
+    rule: str, pct: int | None, constraint: str, people: People, app_engine: Engine
+) -> None:
+    service_id = seed_service(people.a)
+    with pytest.raises(IntegrityError) as raised:
+        with tenant_context(people.a) as session:
+            session.execute(
+                text("UPDATE services SET payment_rule = :r, deposit_pct = :p WHERE id = :id"),
+                {"r": rule, "p": pct, "id": service_id},
+            )
+    assert raised.value.orig.diag.constraint_name == constraint  # type: ignore[union-attr]
 
 
 # ZIF-235 (0072): the retention sweep's indexes, built CONCURRENTLY in the repository's first

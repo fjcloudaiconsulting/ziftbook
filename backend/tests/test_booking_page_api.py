@@ -152,8 +152,14 @@ def test_the_page_answers_exactly_the_documented_fields(
             "placeholder",
             "photo",
             "payment",
+            "payment_rule",
+            "payment_due",
         }
-        assert service["payment"] is False
+        assert (service["payment"], service["payment_rule"], service["payment_due"]) == (
+            False,
+            None,
+            None,
+        )
         assert set(service["price"]) == {"amount_minor", "currency"}
         for worker in service["workers"]:
             assert set(worker) == {"id", "display_name"}

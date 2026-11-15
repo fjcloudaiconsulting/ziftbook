@@ -117,6 +117,26 @@ def offer(db: Session, settings: BusinessSettings, amount_minor: int, currency: 
     return available(db, settings) if meets_minimum(amount_minor, currency) else None
 
 
+def due(rule: str, pct: int | None, amount_minor: int, currency: str) -> int:
+    """What a `pay` charges under a rule (ZIF-62): the price, or a deposit's pct of it, rounded half
+    up, raised to Stripe's minimum and never more than the price."""
+    if rule != "deposit" or pct is None:
+        return amount_minor
+    share = (amount_minor * pct + 50) // 100
+    return min(amount_minor, max(share, MIN_CHARGE.get(currency, 0)))
+
+
+def rule_for(
+    account: str | None, rule: str, pct: int | None, amount_minor: int, currency: str
+) -> bookings.PaymentStep | None:
+    """A service's payment step, or None (no step, fail open): offer()'s conditions (account is
+    available()'s answer, so the page reads it once for every service) and a rule paid online. One
+    function for the booking page and the booking create; a resume reads the booking's snapshot."""
+    if account is None or rule not in bookings.KINDS or not meets_minimum(amount_minor, currency):
+        return None
+    return bookings.PaymentStep(account, rule, due(rule, pct, amount_minor, currency))
+
+
 def refresh_account(tenant_id: object) -> None:
     """Write what Stripe says about the business's account into charges_enabled."""
     with tenant_context(tenant_id) as db:  # type: ignore[arg-type]
@@ -646,21 +666,24 @@ def _started(
 
 def start(
     tenant_id: UUID,
-    account: str,
+    step: bookings.PaymentStep,
     booking: bookings.BookingOut,
     expires_at: datetime,
     kind: str,
 ) -> bookings.PaymentStart:
     """The rest of a create that placed an awaiting_payment booking: the intent at Stripe (no lock,
-    no transaction), then its row. If either fails the checkout hold is given back at once."""
+    no transaction), then its row. If either fails the checkout hold is given back at once.
+
+    The amount is the step's due_minor for either kind: a check is offered only under `choice`,
+    whose due is the full price (fk_booking_payments_booking_due holds the row to it)."""
     with logs.bound(tenant_id=str(tenant_id)):
         try:
             made, fee, mode = _create(
                 kind,
-                account,
+                step.account,
                 tenant_id,
                 booking.id,
-                booking.price.amount_minor,
+                step.due_minor,
                 booking.price.currency,
                 1,
             )
@@ -677,7 +700,7 @@ def start(
             _give_back(tenant_id, booking.id)
             raise _unavailable() from None
         try:
-            _insert(tenant_id, booking, made.id, kind, fee, mode)
+            _insert(tenant_id, booking, step.due_minor, made.id, kind, fee, mode)
         except DBAPIError, PoolTimeoutError, LookupError:
             # A lock timeout, a lost connection, no pooled connection free in time (ZB-16: the
             # pool's TimeoutError is no DBAPIError), a missing account. The intent never reached a
@@ -688,7 +711,13 @@ def start(
 
 
 def _insert(
-    tenant_id: UUID, booking: bookings.BookingOut, intent_id: str, kind: str, fee: int, mode: str
+    tenant_id: UUID,
+    booking: bookings.BookingOut,
+    amount: int,
+    intent_id: str,
+    kind: str,
+    fee: int,
+    mode: str,
 ) -> None:
     with tenant_context(tenant_id) as db:
         db.execute(bookings.LOCK, {"key": bookings.LOCK_KEY})
@@ -698,7 +727,7 @@ def _insert(
                 "booking_id": booking.id,
                 "kind": kind,
                 "intent_id": intent_id,
-                "amount_minor": booking.price.amount_minor,
+                "amount_minor": amount,
                 "currency": booking.price.currency,
                 "fee": fee,
                 "fee_mode": mode,
@@ -1162,6 +1191,10 @@ class SyncPayment(BaseModel):
 
 class SyncOut(bookings.BookingCore):
     payment: SyncPayment
+    # ZIF-62. The booking's snapshot, named as on the booking page's services: the page shows
+    # these, never the service's rule now, which the owner may have changed during the hold.
+    payment_rule: Literal["choice", "deposit", "prepaid"] | None
+    payment_due: Price | None
 
 
 class ResumeIn(BaseModel):
@@ -1176,8 +1209,8 @@ SELECT b.id,
             ELSE b.status END AS status,
        b.starts_at, b.ends_at, b.duration_minutes, b.service_name,
        b.price_amount_minor, b.price_currency, b.worker_id, b.worker_display_name,
-       b.cancellation_policy_text, b.expires_at, b.checkout_hash,
-       (b.status = 'awaiting_payment' AND b.expires_at > now()) AS live
+       b.cancellation_policy_text, b.expires_at, b.checkout_hash, b.payment_rule,
+       b.payment_due_minor, (b.status = 'awaiting_payment' AND b.expires_at > now()) AS live
 FROM bookings b WHERE b.id = :id AND b.source = 'booking_page'
 """)
 LIVE_BOOKING = text("""
@@ -1246,6 +1279,10 @@ def _out(booking: Row[Any], payment: SyncPayment) -> SyncOut:
         worker_display_name=booking.worker_display_name,
         cancellation_policy_text=booking.cancellation_policy_text,
         payment=payment,
+        payment_rule=booking.payment_rule,
+        payment_due=None
+        if booking.payment_due_minor is None
+        else Price(amount_minor=booking.payment_due_minor, currency=booking.price_currency),
     )
 
 
@@ -1307,6 +1344,10 @@ def resume(
             raise ApiError(409, "payment_settled")
         if not booking.live:
             raise ApiError(404, "not_found")
+        # ZIF-62: the kinds of the rule the booking was placed under, never the service's rule now
+        # (every booking with a payment has one: 0102).
+        if body.kind not in bookings.KINDS.get(booking.payment_rule, ()):
+            raise ApiError(422, "payment_not_offered")
         switching = body.kind != payment.kind
         if switching and not _offered(tenant_id, booking):
             raise ApiError(422, "payment_not_offered")
@@ -1339,7 +1380,7 @@ def resume(
                 payment.account,
                 tenant_id,
                 booking_id,
-                booking.price_amount_minor,
+                booking.payment_due_minor,  # as start()'s: a check's is the full price
                 booking.price_currency,
                 payment.n + 1,
             )
@@ -1359,7 +1400,7 @@ def resume(
                             "booking_id": booking_id,
                             "kind": body.kind,
                             "intent_id": made.id,
-                            "amount_minor": booking.price_amount_minor,
+                            "amount_minor": booking.payment_due_minor,
                             "currency": booking.price_currency,
                             "fee": fee,
                             "fee_mode": mode,

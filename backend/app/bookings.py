@@ -91,7 +91,8 @@ class BookingIn(BaseModel):
     turnstile_token: Annotated[str, StringConstraints(max_length=2048)] | None = None
     # A body bound only: the real check is message_text(), so the 422 names the field.
     message: Annotated[str, StringConstraints(max_length=4000)] | None = None
-    # ZIF-158. Required while the business's payment step is on (offer()), refused while it is not.
+    # ZIF-158. Required while the service has a payment step (payments.rule_for), refused while it
+    # has none, and one of the kinds its rule offers (KINDS, ZIF-62).
     payment: Literal["check", "pay"] | None = None
 
 
@@ -103,6 +104,24 @@ class PaymentStart(BaseModel):
     client_secret: str
     type: Literal["payment", "setup"]
     expires_at: datetime  # the checkout hold ends then
+
+
+class PaymentStep(NamedTuple):
+    """A booking's payment step (ZIF-62, app.payments.rule_for): the account it is paid on, the
+    service's rule, snapshotted on the booking, and what a `pay` charges."""
+
+    account: str
+    rule: str  # a KINDS key: choice, deposit or prepaid
+    due_minor: int
+
+
+# The kinds of payment each rule lets the client pick: a card check only while paying in full is the
+# alternative, since a check holds the full price.
+KINDS: dict[str, tuple[str, ...]] = {
+    "choice": ("check", "pay"),
+    "deposit": ("pay",),
+    "prepaid": ("pay",),
+}
 
 
 class BookingCore(BaseModel):
@@ -365,13 +384,19 @@ class BookingDetailOut(BookingFacts):
     # panel never offers Accept on it (PATCH would 409).
     expired: bool
     payment: PaymentFact | None  # the live payment, else the newest
+    # ZIF-62. The booking's payment rule and what it asked online, as fixed when it was placed; both
+    # null for a booking placed with no payment step. A deposit's rest, price minus payment_due, is
+    # paid at the appointment.
+    payment_rule: Literal["choice", "deposit", "prepaid"] | None
+    payment_due: Price | None
     history: list[EventOut]
 
 
 LOCK = text("SELECT pg_advisory_xact_lock(:key, hashtext(current_setting('app.tenant_id')))")
 
 SERVICE = text("""
-SELECT now() AS now, name, price_amount_minor, price_currency, duration_minutes, buffer_minutes
+SELECT now() AS now, name, price_amount_minor, price_currency, duration_minutes, buffer_minutes,
+       payment_rule, deposit_pct
 FROM services
 WHERE id = :service_id AND archived_at IS NULL
 FOR SHARE
@@ -445,7 +470,8 @@ INSERT INTO bookings (
   service_name, price_amount_minor, price_currency, duration_minutes, cancellation_policy_text,
   auto_confirm_at_booking, worker_display_name, free_cancellation_hours, reschedule_cutoff_hours,
   original_starts_at, earliest_starts_at, max_reschedules,
-  client_name, client_phone, client_message, checkout_hash, booked_as)
+  client_name, client_phone, client_message, checkout_hash, booked_as,
+  payment_rule, payment_due_minor)
 VALUES (
   current_setting('app.tenant_id')::uuid, :client_id, :worker_id, :service_id,
   :starts_at, :starts_at + make_interval(mins => :duration_minutes), :status, :expires_at,
@@ -457,7 +483,9 @@ VALUES (
   :client_name, :client_phone, :client_message, :checkout_hash,
   -- ZIF-146: the account whose live session proved this booking; never from a body, NULL for a
   -- guest or a merchant. Personal data: no merchant query selects it.
-  :booked_as)
+  :booked_as,
+  -- ZIF-62: the payment step's rule and amount, NULL for a booking with none.
+  :payment_rule, :payment_due_minor)
 RETURNING id, status, starts_at, ends_at
 """)
 
@@ -545,7 +573,10 @@ SELECT {LIST_COLUMNS}, b.expires_at, b.status, b.source, wm.user_id AS worker_us
        b.cancellation_policy_text, b.reschedule_count, b.max_reschedules,
        coalesce(b.status = ANY(CAST(:expiring AS text[])) AND b.expires_at <= now(), false)
          AS expired,
-       {PAYMENT_COLUMNS}
+       {PAYMENT_COLUMNS}, b.payment_rule,
+       CASE WHEN b.payment_due_minor IS NOT NULL THEN
+         jsonb_build_object('amount_minor', b.payment_due_minor, 'currency', b.price_currency)
+       END AS payment_due
 FROM bookings b
 JOIN clients c ON c.tenant_id = b.tenant_id AND c.id = b.client_id
 JOIN memberships wm ON wm.tenant_id = b.tenant_id AND wm.id = b.worker_id
@@ -903,6 +934,7 @@ def place(
     client_message: str | None = None,
     checkout_hash: bytes | None = None,
     booked_as: UUID | None = None,
+    step: PaymentStep | None = None,
     metric: dict[str, str] | None = None,
 ) -> tuple[Row[Any], UUID]:
     """The one insert path for a new booking (ZIF-57): the public create() and the merchant's both
@@ -960,6 +992,8 @@ def place(
                         "client_message": client_message,
                         "checkout_hash": checkout_hash,
                         "booked_as": booked_as,
+                        "payment_rule": step.rule if step is not None else None,
+                        "payment_due_minor": step.due_minor if step is not None else None,
                     },
                 ).one()
                 # Inside the winning savepoint, immediately after the booking insert.
@@ -1077,7 +1111,7 @@ def book_online(
     payment: Literal["check", "pay"] | None,
     checkout_hash: bytes,
     shown_currency: str | None = None,
-) -> tuple[BookingOut, str | None, datetime | None]:
+) -> tuple[BookingOut, PaymentStep | None, datetime | None]:
     """A client's own booking from the booking page (create()). The caller holds the tenant lock
     (its transaction's first statement) and catches OperationalError as 503 busy.
 
@@ -1087,8 +1121,9 @@ def book_online(
     SHARE, before anything is written (held()): a session ended since step 0 is 401
     unauthenticated, so nothing is written under an identity that is gone.
 
-    Returns the booking, and while the business's payment step is on, the Stripe account to check
-    the card on and the hold's deadline: the booking is then `awaiting_payment`, keeps
+    Returns the booking, and while the service has a payment step, the step (the Stripe account, the
+    rule and the amount, snapshotted on the booking) and the hold's deadline: the booking is then
+    `awaiting_payment`, keeps
     checkout_hash (ZB-15), and nobody is told yet (payments.reconcile announces it once the card
     is checked).
 
@@ -1127,14 +1162,20 @@ def book_online(
     clients.require_offered(policy_version, consents)
     phone = clients.e164(db, phone)  # ZIF-152: also a 422 before any write, after the 404s
     message = message_text(message)  # ZIF-157: likewise
-    # ZIF-158. Before any write. The step is the business's (offer() fails open), never the
-    # client's to skip or to ask for.
+    # ZIF-158. Before any write. The step is the business's and the service's (rule_for() fails
+    # open), never the client's to skip or to ask for, and the kind is one the rule offers (ZIF-62).
     from app import payments  # here: payments imports this module
 
-    stripe_account = payments.offer(db, settings, row.price_amount_minor, row.price_currency)
-    if stripe_account is not None and payment is None:
+    step = payments.rule_for(
+        payments.available(db, settings),
+        row.payment_rule,
+        row.deposit_pct,
+        row.price_amount_minor,
+        row.price_currency,
+    )
+    if step is not None and payment is None:
         raise ApiError(422, "payment_required")
-    if stripe_account is None and payment is not None:
+    if payment is not None and (step is None or payment not in KINDS[step.rule]):
         raise ApiError(422, "payment_not_offered")
     proven = proof is not None
     if proof is not None and not held(db, proof):
@@ -1225,7 +1266,7 @@ def book_online(
     expires_at = (
         None if status == "confirmed" else row.now + timedelta(hours=settings.pending_ttl_hours)
     )
-    if stripe_account is not None:
+    if step is not None:
         status, expires_at = "awaiting_payment", row.now + AWAITING_PAYMENT_TTL
     queue = by_load(eligible, booked_rows, day, zone)
     booking, candidate = place(
@@ -1243,8 +1284,9 @@ def book_online(
         client_name=name,
         client_phone=phone,
         client_message=message,
-        checkout_hash=checkout_hash if stripe_account is not None else None,
+        checkout_hash=checkout_hash if step is not None else None,
         booked_as=proof.user_id if proof is not None else None,
+        step=step,
         metric={"booking.proven": "true" if proven else "false"},
         event={
             "ip": origin_ip,
@@ -1255,7 +1297,7 @@ def book_online(
             "details": None,
         },
     )
-    if stripe_account is not None:
+    if step is not None:
         assert expires_at is not None
         # The deadline job: whatever the client does or does not, an open intent is cancelled then.
         jobs.enqueue(
@@ -1280,7 +1322,7 @@ def book_online(
         worker_display_name=names[candidate],
         cancellation_policy_text=settings.cancellation_policy_text or None,
     )
-    return out, stripe_account, expires_at
+    return out, step, expires_at
 
 
 def give_back(placements: list[str]) -> None:
@@ -1414,7 +1456,7 @@ def create(  # sync def: turnstile.verify's urlopen blocks, and runs in FastAPI'
         with tenant_context(tenant_id) as db:
             # 1. The first statement of the transaction, always, nothing above it.
             db.execute(LOCK, {"key": LOCK_KEY})
-            out, stripe_account, expires_at = book_online(
+            out, step, expires_at = book_online(
                 db,
                 tenant_id=tenant_id,
                 service_id=service_id,
@@ -1448,12 +1490,12 @@ def create(  # sync def: turnstile.verify's urlopen blocks, and runs in FastAPI'
         # transaction has closed (the with block above has exited by the time this runs).
         if not placed:
             give_back(reserved)
-    if stripe_account is not None:
+    if step is not None:
         assert expires_at is not None
         from app import payments  # here: payments imports this module
 
         assert new.payment is not None  # book_online refuses a payment step without it
-        out.payment = payments.start(tenant_id, stripe_account, out, expires_at, new.payment)
+        out.payment = payments.start(tenant_id, step, out, expires_at, new.payment)
         response.set_cookie(
             checkout_cookie(out.id),
             secret,

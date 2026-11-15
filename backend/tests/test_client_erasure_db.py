@@ -87,6 +87,9 @@ CLASSIFICATION: dict[str, dict[str, str]] = {
         "client_message": "blank",
         "checkout_hash": "blank",
         "booked_as": "blank",
+        # ZIF-62 (0102): the payment snapshot, part of the financial line.
+        "payment_rule": "keep",
+        "payment_due_minor": "keep",
     },
     "booking_events": {
         "id": "keep",
@@ -193,6 +196,11 @@ INSERT_LINK = text("""
 INSERT INTO booking_links (token_hash, tenant_id, booking_id)
 VALUES (:hash, current_setting('app.tenant_id')::uuid, :booking)
 """)
+# ZIF-62 (0102): a booking with a payment carries the payment snapshot the payment's key needs.
+PAYMENT_SNAPSHOT = text("""
+UPDATE bookings SET payment_rule = 'choice', payment_due_minor = price_amount_minor
+WHERE id = :booking
+""")
 INSERT_PAYMENT = text("""
 INSERT INTO booking_payments (tenant_id, booking_id, kind, intent_id, amount_minor, currency,
                               fee_mode, status, settled_at, refund_failed_at)
@@ -289,6 +297,7 @@ def seed_person(
         for purpose in ("marketing_email", "sms"):
             conn.execute(INSERT_CONSENT, {"client": client_id, "purpose": purpose})
         now = datetime.now().astimezone()
+        conn.execute(PAYMENT_SNAPSHOT, {"booking": bookings[1]})
         conn.execute(
             INSERT_PAYMENT,
             {

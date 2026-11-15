@@ -38,6 +38,7 @@ from tests.test_admin_routes import admin_routes
 from tests.test_admin_second_factor import sign_in, verified_client
 from tests.test_bookings_api import while_the_tenant_lock_is_held
 from tests.test_bookings_db import insert_booking, seed_service
+from tests.test_client_erasure_db import PAYMENT_SNAPSHOT
 from tests.test_clients_db import seed_client
 
 SUSPEND_SQL = "SELECT * FROM suspend_business(:h, 'a reason')"
@@ -404,6 +405,7 @@ def test_a_suspended_business_lists_its_upcoming_confirmed_bookings_only(
     )
     seed_bookings(people.b, people.both, [("confirmed", 2 * day, 2 * day + 30)])
     with migrate_tenant_context(migrate_engine, people.a) as conn:
+        conn.execute(PAYMENT_SNAPSHOT, {"booking": ids[0]})  # ZIF-62: the payment's key needs it
         conn.execute(
             text(
                 "INSERT INTO booking_payments (tenant_id, booking_id, kind, intent_id,"
