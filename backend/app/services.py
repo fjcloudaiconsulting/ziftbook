@@ -6,7 +6,7 @@ import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, Self
 from uuid import UUID
 
 from fastapi import APIRouter, Body, Depends, Request, Response
@@ -17,6 +17,7 @@ from pydantic import (
     Field,
     StringConstraints,
     field_validator,
+    model_validator,
 )
 from pydantic.json_schema import SkipJsonSchema
 from sqlalchemy import Row, text
@@ -60,6 +61,17 @@ Duration = Annotated[int, Field(ge=5, le=720)]
 Buffer = Annotated[int, Field(ge=0, le=240)]
 # What a service without a photo shows (ZIF-133); the web app pre-selects it from the name.
 Placeholder = Literal["generic", "nails", "hair", "beauty", "massage"]
+# ZIF-62. How a client pays for the service: at the appointment, a card check or paying in full
+# (their choice), a deposit now and the rest at the appointment, or everything now. Online rules
+# apply only while the business takes payments (app.payments.rule_for).
+PaymentRule = Literal["in_person", "choice", "deposit", "prepaid"]
+DepositPct = Annotated[int, Field(ge=1, le=99)]  # of the price, charged at booking
+
+
+def deposit_fits(rule: str, pct: int | None) -> bool:
+    """A percentage exactly when the rule is a deposit (ck_services_deposit_pct_with_deposit)."""
+    return (pct is not None) == (rule == "deposit")
+
 
 # Built field by field: nothing a client sends can name a business, a currency or an id.
 STRICT = ConfigDict(strict=True, extra="forbid")
@@ -91,6 +103,14 @@ class ServiceIn(BaseModel):
     placeholder: Placeholder = "generic"
     # An upload checked and linked when this is saved (ZIF-133); strict=False as worker_ids.
     photo_upload_id: Annotated[UUID, Field(strict=False)] | None = None
+    payment_rule: PaymentRule = "choice"
+    deposit_pct: DepositPct | None = None  # required with a deposit, refused with any other rule
+
+    @model_validator(mode="after")
+    def a_deposit_has_a_percentage(self) -> Self:
+        if not deposit_fits(self.payment_rule, self.deposit_pct):
+            raise ValueError("deposit_pct goes with a deposit, and only with one")
+        return self
 
 
 class ServiceChange(BaseModel):
@@ -108,9 +128,20 @@ class ServiceChange(BaseModel):
     placeholder: Placeholder | SkipJsonSchema[None] = None
     # A new upload sets or replaces the photo, null removes it (like buffer_minutes).
     photo_upload_id: Annotated[UUID, Field(strict=False)] | None = None
+    # Checked against each other once merged with the stored service: leaving a deposit sends
+    # deposit_pct null with the new rule.
+    payment_rule: PaymentRule | SkipJsonSchema[None] = None
+    deposit_pct: DepositPct | None = None
 
     @field_validator(
-        "name", "description", "price", "duration_minutes", "archived", "placeholder", mode="before"
+        "name",
+        "description",
+        "price",
+        "duration_minutes",
+        "archived",
+        "placeholder",
+        "payment_rule",
+        mode="before",
     )
     @classmethod
     def not_null(cls, value: object) -> object:
@@ -132,6 +163,8 @@ class ServiceOut(BaseModel):
     worker_ids: list[UUID]  # member ids, in id order; [] for none
     placeholder: Placeholder
     photo: photos.Photo | None  # null while it has none, or while ZIF_MEDIA_URL is unset
+    payment_rule: PaymentRule
+    deposit_pct: int | None  # set exactly when payment_rule is deposit
 
 
 FIELDS = """
@@ -139,6 +172,7 @@ id, name, description,
 jsonb_build_object('amount_minor', price_amount_minor, 'currency', price_currency) AS price,
 duration_minutes, buffer_minutes, archived_at IS NOT NULL AS archived, archived_at,
 photo_placeholder AS placeholder, photo_key, photo_width, photo_height,
+payment_rule, deposit_pct,
 ARRAY(SELECT sw.member_id FROM service_workers sw
       WHERE sw.service_id = services.id ORDER BY sw.member_id) AS worker_ids
 """
@@ -235,9 +269,10 @@ def create_service(
             text(f"""
             INSERT INTO services (id, tenant_id, name, description, price_amount_minor,
                                   price_currency, duration_minutes, buffer_minutes,
-                                  photo_placeholder)
+                                  photo_placeholder, payment_rule, deposit_pct)
             SELECT :id, id, CAST(:name AS jsonb), CAST(:description AS jsonb), :amount_minor,
-                   currency, :duration_minutes, :buffer_minutes, :placeholder
+                   currency, :duration_minutes, :buffer_minutes, :placeholder, :payment_rule,
+                   :deposit_pct
             FROM tenants WHERE id = current_setting('app.tenant_id')::uuid
             RETURNING {FIELDS}
             """),
@@ -249,6 +284,8 @@ def create_service(
                 "duration_minutes": new.duration_minutes,
                 "buffer_minutes": new.buffer_minutes,
                 "placeholder": new.placeholder,
+                "payment_rule": new.payment_rule,
+                "deposit_pct": new.deposit_pct,
             },
         ).one()
         service = out(row)
@@ -300,6 +337,7 @@ def update_service(
     with as_owner(owner) as current:
         row = found_row(current, service_id)  # a 404 before any image work
     sent = change.model_dump(exclude_unset=True)
+    refuse_a_bad_deposit(row, sent)  # before any image work too, so a refusal stores no photo
     swap = "photo_upload_id" in sent
     upload_id: UUID | None = sent.pop("photo_upload_id", None)
     if swap:  # the same upload again (a double Save) or no photo to remove: nothing to do
@@ -347,6 +385,7 @@ def update_service(
             )
         if not changed:
             return service  # an empty body, or the same values: nothing written, nothing recorded
+        refuse_a_bad_deposit(row, sent)  # the row as locked: another save may have changed it
         after = before | sent
         key, width, height = row.photo_key, row.photo_width, row.photo_height
         if swap:
@@ -361,6 +400,7 @@ def update_service(
               name = CAST(:name AS jsonb), description = CAST(:description AS jsonb),
               price_amount_minor = :amount_minor, duration_minutes = :duration_minutes,
               buffer_minutes = :buffer_minutes, photo_placeholder = :placeholder,
+              payment_rule = :payment_rule, deposit_pct = :deposit_pct,
               photo_key = :photo_key, photo_width = :photo_width, photo_height = :photo_height,
               photo_content_type = CASE WHEN CAST(:photo_key AS text) IS NULL THEN NULL
                                         ELSE 'image/webp' END,
@@ -378,6 +418,8 @@ def update_service(
                 "buffer_minutes": after["buffer_minutes"],
                 "archived": after["archived"],
                 "placeholder": after["placeholder"],
+                "payment_rule": after["payment_rule"],
+                "deposit_pct": after["deposit_pct"],
                 "photo_key": key,
                 "photo_width": width,
                 "photo_height": height,
@@ -403,6 +445,13 @@ def update_service(
             details=changed,
         )
         return out(updated)
+
+
+def refuse_a_bad_deposit(row: Row[Any], sent: dict[str, Any]) -> None:
+    """The change's rule and percentage, merged with the stored ones, must fit (ServiceIn's 422)."""
+    rule = sent.get("payment_rule", row.payment_rule)
+    if not deposit_fits(rule, sent.get("deposit_pct", row.deposit_pct)):
+        raise ApiError(422, "invalid_request")
 
 
 def lock_members(current: SignedIn, member_ids: list[UUID]) -> dict[UUID, UUID]:

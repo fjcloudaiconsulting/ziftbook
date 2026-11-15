@@ -68,6 +68,8 @@ def test_an_owner_creates_a_service_and_any_member_reads_it(
         "worker_ids": [],
         "placeholder": "generic",
         "photo": None,
+        "payment_rule": "choice",
+        "deposit_pct": None,
     }
     assert response.headers["cache-control"] == "no-store"
 
@@ -682,3 +684,53 @@ def test_the_placeholder_defaults_to_generic_is_changed_audited_and_never_null(
         assert (refused.status_code, refused.json()["code"]) == (422, "invalid_request")
     assert service(owner, placeholder="cats").status_code == 422
     assert stored(people.a)[0]["photo_placeholder"] == "massage"
+
+
+# ZIF-62 FENCE. Kills: a deposit saved with no percentage, or a percentage outside 1..99 or on
+# another rule (each would charge a client an amount nobody set); a change checked alone instead
+# of merged with the stored service (a deposit's percentage left on a rule that has none, or a
+# deposit rule with none); an unknown or null rule; a refusal that still writes.
+def test_how_clients_pay_is_saved_checked_and_audited(
+    people: People, owner: TestClient, migrate_engine: Engine
+) -> None:
+    for body in (
+        {"payment_rule": "deposit"},
+        {"payment_rule": "deposit", "deposit_pct": 0},
+        {"payment_rule": "deposit", "deposit_pct": 100},
+        {"payment_rule": "deposit", "deposit_pct": 30.0},
+        {"payment_rule": "prepaid", "deposit_pct": 30},
+        {"deposit_pct": 30},
+        {"payment_rule": "later"},
+        {"payment_rule": None},
+    ):
+        refused = service(owner, **body)
+        assert (refused.status_code, refused.json()) == (422, {"code": "invalid_request"}), body
+    assert stored(people.a) == []
+
+    created = service(owner, payment_rule="deposit", deposit_pct=30).json()
+    assert (created["payment_rule"], created["deposit_pct"]) == ("deposit", 30)
+    sid = created["id"]
+    assert service(owner, payment_rule="in_person").json()["payment_rule"] == "in_person"
+
+    for body in (
+        {"payment_rule": "prepaid"},  # the stored 30 would stay on a rule that has none
+        {"deposit_pct": None},
+        {"payment_rule": None},
+        {"deposit_pct": 100},
+    ):
+        refused = owner.patch(f"/api/services/{sid}", json=body)
+        assert (refused.status_code, refused.json()) == (422, {"code": "invalid_request"}), body
+
+    repct = owner.patch(f"/api/services/{sid}", json={"deposit_pct": 50})
+    assert (repct.json()["payment_rule"], repct.json()["deposit_pct"]) == ("deposit", 50)
+    prepaid = owner.patch(
+        f"/api/services/{sid}", json={"payment_rule": "prepaid", "deposit_pct": None}
+    )
+    assert (prepaid.json()["payment_rule"], prepaid.json()["deposit_pct"]) == ("prepaid", None)
+    row = next(r for r in stored(people.a) if str(r["id"]) == sid)
+    assert (row["payment_rule"], row["deposit_pct"]) == ("prepaid", None)
+    rows = events(migrate_engine, tenant_id=people.a, target=f"service:{sid}")
+    assert rows[-1]["details"] == {
+        "payment_rule": {"old": "deposit", "new": "prepaid"},
+        "deposit_pct": {"old": 50, "new": None},
+    }
