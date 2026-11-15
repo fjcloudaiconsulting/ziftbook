@@ -30,7 +30,7 @@ SLUG = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*")  # slug_ok()'s format (migration 00
 SERVICES = text("""
 SELECT s.id, s.name, s.description, s.duration_minutes,
        s.price_amount_minor, s.price_currency, s.photo_placeholder,
-       s.photo_key, s.photo_width, s.photo_height,
+       s.photo_key, s.photo_width, s.photo_height, s.payment_rule, s.deposit_pct,
        m.id AS member_id, m.display_name
 FROM services s
 JOIN service_workers sw ON sw.tenant_id = s.tenant_id AND sw.service_id = s.id
@@ -58,7 +58,11 @@ class PublicServiceOut(BaseModel):
     workers: list[WorkerOut]  # display_name (nulls last), then id; never empty
     placeholder: Placeholder
     photo: photos.Photo | None
-    payment: bool  # a card check at checkout (payments.offer, the one source of the minimum rule)
+    payment: bool  # a payment step at checkout (payments.rule_for, the one source of the rules)
+    # ZIF-62. The step's rule: `choice` offers a card check or paying in full, `deposit` and
+    # `prepaid` paying payment_due only. Both null when payment is false.
+    payment_rule: Literal["choice", "deposit", "prepaid"] | None
+    payment_due: Price | None  # what paying charges now; for a deposit, the rest is due in person
 
 
 class PageConsentOut(BaseModel):
@@ -141,6 +145,13 @@ def read(slug: str, request: Request) -> BookingPageOut:
         services: dict[UUID, PublicServiceOut] = {}
         for row in db.execute(SERVICES):
             if row.id not in services:
+                step = payments.rule_for(
+                    account,
+                    row.payment_rule,
+                    row.deposit_pct,
+                    row.price_amount_minor,
+                    row.price_currency,
+                )
                 services[row.id] = PublicServiceOut(
                     id=row.id,
                     name=row.name,
@@ -150,8 +161,11 @@ def read(slug: str, request: Request) -> BookingPageOut:
                     workers=[],
                     placeholder=row.photo_placeholder,
                     photo=photos.urls(row.photo_key, row.photo_width, row.photo_height),
-                    payment=account is not None
-                    and payments.meets_minimum(row.price_amount_minor, row.price_currency),
+                    payment=step is not None,
+                    payment_rule=step.rule if step is not None else None,
+                    payment_due=Price(amount_minor=step.due_minor, currency=row.price_currency)
+                    if step is not None
+                    else None,
                 )
             services[row.id].workers.append(
                 WorkerOut(id=row.member_id, display_name=row.display_name)

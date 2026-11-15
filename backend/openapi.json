@@ -8246,6 +8246,32 @@
               }
             ]
           },
+          "payment_rule": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "choice",
+                  "deposit",
+                  "prepaid"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payment Rule"
+          },
+          "payment_due": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Price"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "history": {
             "items": {
               "$ref": "#/components/schemas/EventOut"
@@ -8281,6 +8307,8 @@
           "max_reschedules",
           "expired",
           "payment",
+          "payment_rule",
+          "payment_due",
           "history"
         ],
         "title": "BookingDetailOut"
@@ -11046,6 +11074,32 @@
           "payment": {
             "type": "boolean",
             "title": "Payment"
+          },
+          "payment_rule": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "choice",
+                  "deposit",
+                  "prepaid"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payment Rule"
+          },
+          "payment_due": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Price"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",
@@ -11058,7 +11112,9 @@
           "workers",
           "placeholder",
           "photo",
-          "payment"
+          "payment",
+          "payment_rule",
+          "payment_due"
         ],
         "title": "PublicServiceOut"
       },
@@ -11246,6 +11302,29 @@
               }
             ],
             "title": "Photo Upload Id"
+          },
+          "payment_rule": {
+            "type": "string",
+            "enum": [
+              "in_person",
+              "choice",
+              "deposit",
+              "prepaid"
+            ],
+            "title": "Payment Rule"
+          },
+          "deposit_pct": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 99.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deposit Pct"
           }
         },
         "additionalProperties": false,
@@ -11342,6 +11421,30 @@
               }
             ],
             "title": "Photo Upload Id"
+          },
+          "payment_rule": {
+            "type": "string",
+            "enum": [
+              "in_person",
+              "choice",
+              "deposit",
+              "prepaid"
+            ],
+            "title": "Payment Rule",
+            "default": "choice"
+          },
+          "deposit_pct": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 99.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deposit Pct"
           }
         },
         "additionalProperties": false,
@@ -11450,6 +11553,27 @@
                 "type": "null"
               }
             ]
+          },
+          "payment_rule": {
+            "type": "string",
+            "enum": [
+              "in_person",
+              "choice",
+              "deposit",
+              "prepaid"
+            ],
+            "title": "Payment Rule"
+          },
+          "deposit_pct": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deposit Pct"
           }
         },
         "type": "object",
@@ -11464,7 +11588,9 @@
           "archived_at",
           "worker_ids",
           "placeholder",
-          "photo"
+          "photo",
+          "payment_rule",
+          "deposit_pct"
         ],
         "title": "ServiceOut"
       },
