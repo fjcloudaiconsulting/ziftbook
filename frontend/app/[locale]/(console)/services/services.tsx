@@ -7,6 +7,7 @@ import {
   type MemberOut,
   type ServiceOut,
   membersList,
+  paymentsAccount,
   servicesCreate,
   servicesList,
   servicesRead,
@@ -27,6 +28,9 @@ import {
   LOCALES,
   type NameMap,
   needsWorkerWarning,
+  PAYMENT_RULES,
+  type PaymentRule,
+  paymentRuleView,
   serviceBody,
   type ServiceForm,
   serviceName,
@@ -292,7 +296,7 @@ export function Services() {
 
 /* ---------------------------------- Form ---------------------------------- */
 
-type Errors = Partial<Record<"name" | "price" | "duration" | "gap", string>> & { banner?: string };
+type Errors = Partial<Record<"name" | "price" | "duration" | "gap" | "deposit", string>> & { banner?: string };
 
 function emptyNameMap(): Record<Locale, string> {
   return { en: "", nl: "", pt: "" };
@@ -462,6 +466,13 @@ function ServiceFormBody(props: Props) {
   // null: not picked yet, so a new service follows the name rule as the owner types (design 4c).
   const [picked, setPicked] = useState<Placeholder | null>(service ? service.placeholder : null);
   const placeholder = picked ?? placeholderFor(name);
+  const [paymentRule, setPaymentRule] = useState<PaymentRule>(service?.payment_rule ?? "choice");
+  const [depositPct, setDepositPct] = useState(() => (service?.deposit_pct != null ? String(service.deposit_pct) : "30"));
+  // null: not read yet (or the switch is off, so there is nothing to read): no hint until known.
+  const [stripeReady, setStripeReady] = useState<boolean | null>(null);
+  const online = settings.payment_check && stripeReady === true;
+  const onlineKnown = !settings.payment_check || stripeReady !== null;
+  const ruleView = paymentRuleView(paymentRule, online);
   const [photo, setPhoto] = useState<PhotoField>({ kind: "saved" });
   const [photoError, setPhotoError] = useState<PhotoError | null>(null);
   const photoErrorRef = useRef<HTMLDivElement>(null);
@@ -483,6 +494,13 @@ function ServiceFormBody(props: Props) {
       if (outcome.status === 200 && outcome.data) setMembers(outcome.data);
       else setMembersFailure(problem(outcome));
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!settings.payment_check) return;
+    // A failed read leaves the online rules disabled: the server would offer no step either way.
+    call(() => paymentsAccount()).then((outcome) => setStripeReady(outcome.status === 200 && outcome.data?.state === "ready"));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -510,7 +528,7 @@ function ServiceFormBody(props: Props) {
     // closure and would all pass a state-based guard. The ref is set synchronously, before any
     // `await`, so only the first call in a tick ever gets past it.
     if (submitting.current) return;
-    const form: ServiceForm = { name, description, price, duration, gap, fixedGap, placeholder };
+    const form: ServiceForm = { name, description, price, duration, gap, fixedGap, placeholder, paymentRule, depositPct };
     // A price is always in the business's currency (services.py PriceIn).
     const result = serviceBody(form, (text) => parseMoney(text, session.currency));
     if ("errors" in result && result.errors) {
@@ -785,6 +803,70 @@ function ServiceFormBody(props: Props) {
           </div>
         )}
         {editing && <p className={styles.hint}>{t("gapEditHint")}</p>}
+      </fieldset>
+
+      <fieldset className={styles.field} style={{ border: 0, margin: 0, padding: 0 }} aria-describedby="service-pay-hint">
+        <legend className={styles.label} style={{ padding: 0 }}>
+          {t("payLegend")}
+        </legend>
+        <p className={styles.hint} id="service-pay-hint">
+          {onlineKnown && !online ? t("payOffHint") : t("payHint")}
+        </p>
+        <div className={styles.choices} style={{ marginTop: "0.5rem" }}>
+          {PAYMENT_RULES.map((rule) => (
+            <label className={styles.choice} key={rule}>
+              <input
+                type="radio"
+                name="payment-rule"
+                checked={paymentRule === rule}
+                disabled={ruleView.disabled.includes(rule)}
+                onChange={() => {
+                  markDirty();
+                  setPaymentRule(rule);
+                }}
+              />
+              <span>
+                <b>{t(`payRules.${rule}`)}</b>
+                <em>{t(`payRuleHints.${rule}`)}</em>
+              </span>
+            </label>
+          ))}
+        </div>
+        {paymentRule === "deposit" && (
+          <div className={styles.field}>
+            <label className={styles.label} htmlFor="service-deposit">
+              {t("depositLabel")}
+            </label>
+            <div className={`${styles.input} ${styles.prefixed} ${styles.trailing}`}>
+              <span className={styles.prefix} aria-hidden="true">
+                {"%"}
+              </span>
+              <input
+                id="service-deposit"
+                type="number"
+                inputMode="numeric"
+                min={1}
+                max={99}
+                value={depositPct}
+                disabled={!online}
+                onChange={(event) => {
+                  markDirty();
+                  setDepositPct(event.target.value);
+                }}
+                aria-invalid={errors.deposit ? true : undefined}
+                aria-describedby={errors.deposit ? "service-deposit-error" : "service-deposit-hint"}
+              />
+            </div>
+            {errors.deposit ? (
+              <FieldError id="service-deposit-error">{t("depositRange")}</FieldError>
+            ) : (
+              <p className={styles.hint} id="service-deposit-hint">
+                {t("depositHint")}
+              </p>
+            )}
+          </div>
+        )}
+        {onlineKnown && ruleView.waits && <Banner tone="note">{t("payWaits")}</Banner>}
       </fieldset>
 
       <fieldset className={styles.field} style={{ border: 0, margin: 0, padding: 0 }}>

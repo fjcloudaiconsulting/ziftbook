@@ -6,7 +6,7 @@ import type { useTranslations } from "next-intl";
 import { type Ref, useEffect, useImperativeHandle, useMemo, useRef } from "react";
 
 import type { PagePaymentOut } from "@/api-client";
-import { elementsOptions, type PaymentChoice, STRIPE_LOCALE } from "@/lib/booking-page";
+import { elementsOptions, type PaymentChoice, type payOffer, STRIPE_LOCALE } from "@/lib/booking-page";
 import { formatMoney } from "@/lib/money";
 
 import styles from "../_ui/ui.module.css";
@@ -49,11 +49,13 @@ function appearance(): Appearance {
   };
 }
 
-/** The check / pay choice and, under it, Stripe's Payment Element mounted in a ref (as Turnstile is). */
+/** The check / pay choice (ZIF-62: Pay now alone for a deposit or a prepaid service) and, under it,
+ * Stripe's Payment Element mounted in a ref (as Turnstile is). */
 export function PaymentStep({
   ref,
   payment,
   price,
+  offer,
   locale,
   biz,
   choice,
@@ -66,6 +68,8 @@ export function PaymentStep({
   ref: Ref<PayHandle>;
   payment: PagePaymentOut;
   price: { amount_minor: number; currency: string };
+  /** ZIF-62: one option or two, and what Pay now charges. */
+  offer: ReturnType<typeof payOffer>;
   locale: string;
   biz: string;
   choice: PaymentChoice;
@@ -92,7 +96,7 @@ export function PaymentStep({
       .then((stripe) => {
         if (off) return;
         if (!stripe || !box.current) return onUnavailable();
-        const elements = stripe.elements({ ...elementsOptions(choice, payment.check_with, price), appearance: appearance() });
+        const elements = stripe.elements({ ...elementsOptions(choice, payment.check_with, choice === "pay" ? offer.due : price), appearance: appearance() });
         element = elements.create("payment");
         element.mount(box.current);
         live.current = { stripe, elements };
@@ -128,6 +132,23 @@ export function PaymentStep({
   }));
 
   const amount = formatMoney(price.amount_minor, price.currency, locale);
+  const due = formatMoney(offer.due.amount_minor, offer.due.currency, locale);
+  const payHint = t(payment.keeps_card_fee ? "payNowHintFee" : "payNowHint", { biz });
+  if (offer.single) {
+    // The one way to pay, stated rather than offered: a lone radio would be a choice with nothing to choose.
+    return (
+      <>
+        {legend && <p className={`${styles.label} ${styles.payLegend}`}>{t("payTitle")}</p>}
+        <div className={styles.choice} style={{ cursor: "default" }}>
+          <span>
+            <b>{offer.rest ? t("payDeposit", { deposit: due, rest: formatMoney(offer.rest.amount_minor, offer.rest.currency, locale) }) : t("payNow", { price: due })}</b>
+            <em>{payHint}</em>
+          </span>
+        </div>
+        <div ref={box} />
+      </>
+    );
+  }
   return (
     <>
       <fieldset className={styles.choices} aria-labelledby={legend ? undefined : "pay-h"} disabled={busy}>
@@ -142,8 +163,8 @@ export function PaymentStep({
         <label className={styles.choice}>
           <input type="radio" name="pay" checked={choice === "pay"} onChange={() => onChoice("pay")} />
           <span>
-            <b>{t("payNow", { price: amount })}</b>
-            <em>{t(payment.keeps_card_fee ? "payNowHintFee" : "payNowHint", { biz })}</em>
+            <b>{t("payNow", { price: due })}</b>
+            <em>{payHint}</em>
           </span>
         </label>
       </fieldset>

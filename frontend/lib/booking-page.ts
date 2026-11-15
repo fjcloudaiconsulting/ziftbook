@@ -362,6 +362,21 @@ export function elementsOptions(
   return { mode: "payment", amount: price.amount_minor, currency, captureMethod: "manual", allowedPaymentMethodTypes: ["card"] };
 }
 
+/** ZIF-62: what the service's payment step offers. `single`: a deposit or a prepaid service takes Pay
+ * now only (no card check); `due`: what Pay now charges (the deposit, or the whole price); `rest`:
+ * what a deposit leaves to pay at the appointment, else null. The server computes `payment_due`; a
+ * page without one (no step) falls back to the price. */
+type Money = { amount_minor: number; currency: string };
+export function payOffer(service: { price: Money; payment_rule?: string | null; payment_due?: Money | null }): { single: boolean; due: Money; rest: Money | null } {
+  const due = service.payment_due ?? service.price;
+  const left = service.price.amount_minor - due.amount_minor;
+  return {
+    single: service.payment_rule === "deposit" || service.payment_rule === "prepaid",
+    due,
+    rest: service.payment_rule === "deposit" && left > 0 ? { amount_minor: left, currency: service.price.currency } : null,
+  };
+}
+
 const STRIPE = /^(payment_intent|setup_intent|redirect_status)/;
 
 /** The address minus whatever Stripe appended on the way back (the client secret must never stay in

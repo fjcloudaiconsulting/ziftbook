@@ -11,6 +11,7 @@ import {
   defaultBuffer,
   initialLanguageTab,
   needsWorkerWarning,
+  paymentRuleView,
   serviceBody,
   serviceName,
 } from "../lib/services.ts";
@@ -230,5 +231,37 @@ describe("initialLanguageTab", () => {
 
   test("first-present-in-canonical-order when the viewer's language is blank and several others have text", () => {
     assert.equal(initialLanguageTab("pt", { nl: "Nagels", en: "Nails" }), "en");
+  });
+});
+
+describe("how clients pay (ZIF-62)", () => {
+  const form = (extra) => ({ name: { en: "Cut" }, description: {}, price: "35,00", duration: "45", gap: "default", ...extra });
+
+  test("fence: a deposit sends its percentage; every other rule sends none", () => {
+    // ZIF-62 fence. Kills: a deposit saved without its percentage, or a percentage left on a non-deposit
+    // rule (the server refuses both: deposit_pct is set exactly when the rule is a deposit).
+    assert.deepEqual(body(form({ paymentRule: "deposit", depositPct: "30" })).body, { ...body(form({})).body, payment_rule: "deposit", deposit_pct: 30 });
+    for (const rule of ["in_person", "choice", "prepaid"]) {
+      const sent = body(form({ paymentRule: rule, depositPct: "30" })).body;
+      assert.equal(sent.payment_rule, rule);
+      assert.equal(sent.deposit_pct, null);
+    }
+  });
+
+  test("fence: a deposit outside 1..99 %, blank or fractional is a field error, never sent", () => {
+    // ZIF-62 fence. Kills: Number("") read as 0 %, a 100 % "deposit" (that is prepaid), a fraction rounded.
+    for (const depositPct of ["", " ", "0", "100", "12.5", "abc"]) {
+      assert.deepEqual(body(form({ paymentRule: "deposit", depositPct })).errors, { deposit: "depositRange" }, depositPct);
+    }
+    assert.equal(body(form({ paymentRule: "deposit", depositPct: "1" })).body.deposit_pct, 1);
+    assert.equal(body(form({ paymentRule: "deposit", depositPct: "99" })).body.deposit_pct, 99);
+  });
+
+  test("fence: while online payments are off, only 'at the appointment' can be picked and a stored online rule is kept and flagged", () => {
+    // ZIF-62 fence. Kills: online rules offered while the switch is off or Stripe isn't ready (the client
+    // would never be asked to pay), and a stored online rule silently dropped or not explained.
+    assert.deepEqual(paymentRuleView("deposit", false), { disabled: ["choice", "deposit", "prepaid"], waits: true });
+    assert.deepEqual(paymentRuleView("in_person", false), { disabled: ["choice", "deposit", "prepaid"], waits: false });
+    for (const rule of ["in_person", "choice", "deposit", "prepaid"]) assert.deepEqual(paymentRuleView(rule, true), { disabled: [], waits: false });
   });
 });

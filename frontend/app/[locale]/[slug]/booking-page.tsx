@@ -23,6 +23,7 @@ import {
   mayForget,
   nextWeekDisabled,
   type PaymentChoice,
+  payOffer,
   phoneValue,
   pickFromUrl,
   repriced,
@@ -188,6 +189,10 @@ export function BookingPage({
   // --- ZIF-158: the payment step ---
   const liveService = page.services.find((svc) => svc.id === serviceId);
   const stepOn = Boolean(page.payment && liveService?.payment);
+  // ZIF-62: a deposit or a prepaid service takes Pay now only, for its own amount.
+  // shortcut: a resumed booking reads the service's current rule, not the booking's snapshot (the sync
+  // answer carries neither); a rule changed while a booking waits for payment can show the wrong amount.
+  const toPay = liveService ? payOffer(liveService) : null;
   // ZIF-102: when the reloaded page prices the held service in another currency (the owner changed
   // it), the steps show, and the booking sends, the new one. Adjusted while rendering, as React
   // recommends for state that follows a prop, never in an effect.
@@ -199,7 +204,8 @@ export function BookingPage({
       return service === f.service ? f : { ...f, service };
     });
   }
-  const [choice, setChoice] = useState<PaymentChoice>("check");
+  const [picked, setChoice] = useState<PaymentChoice>("check");
+  const choice: PaymentChoice = toPay?.single ? "pay" : picked;
   const [bookingId, setBookingId] = useState<string | null>(booking);
   const [checking, setChecking] = useState(booking !== null);
   const [start, setStart] = useState<PaymentStart | null>(null);
@@ -534,6 +540,7 @@ export function BookingPage({
         price: s.price,
         email,
         payment: s.payment.kind === "pay" ? "paid" : "checked",
+        offer: toPay,
       });
       return;
     }
@@ -923,7 +930,9 @@ export function BookingPage({
   const price = formatMoney((sync?.price ?? s2.service.price).amount_minor, (sync?.price ?? s2.service.price).currency, locale);
   // A resumed booking without its secret yet shows the kind it was made with.
   const shown = start === null && sync ? sync.payment.kind : choice;
-  const sendText = flow.busy ? (auto ? t("booking") : t("sending")) : t(sendLabel(stepOn ? shown : null, auto), { price });
+  // What Pay now charges (a deposit is less than the price): the button and a refund name that amount.
+  const charged = stepOn && shown === "pay" && toPay ? formatMoney(toPay.due.amount_minor, toPay.due.currency, locale) : price;
+  const sendText = flow.busy ? (auto ? t("booking") : t("sending")) : t(sendLabel(stepOn ? shown : null, auto), { price: charged });
   const extraTerms = termsLines(stepOn ? shown : null, Boolean(page.payment?.keeps_card_fee));
 
   // The page's frame: heading and business line, and (unless the booking is no longer open) the way back.
@@ -980,7 +989,7 @@ export function BookingPage({
       onMessageOpen={setMessageOpen}
     />
   );
-  const endText = (kind: End) => t(({ processing: "payProcessing", expired: "payExpired", expiredPaid: "payExpiredPaid", expiredProcessing: "payExpiredProcessing", stale: "payStale", checkEmail: "payCheckEmail" } as const)[kind], { price });
+  const endText = (kind: End) => t(({ processing: "payProcessing", expired: "payExpired", expiredPaid: "payExpiredPaid", expiredProcessing: "payExpiredProcessing", stale: "payStale", checkEmail: "payCheckEmail" } as const)[kind], { price: charged });
   if (checking) return frame(null, false);
   if (end === "processing" && sync) return frame(<Processing aside={bookingAside(sync)} t={t} />, false);
   // A check that failed keeps the booking: its button asks again, never resets (mayForget).
@@ -1001,6 +1010,7 @@ export function BookingPage({
       <ResumeView
         page={page}
         price={sync.price}
+        offer={toPay ?? payOffer(sync)}
         payment={stepOn && !payGone ? page.payment : null}
         choice={shown}
         busy={flow.busy}
@@ -1199,7 +1209,7 @@ export function BookingPage({
                   </fieldset>
                   {payGone && locked && <Banner tone="note">{t("paymentChanged")}</Banner>}
                   {stepOn && !payGone && liveService && page.payment && (
-                    <PaymentStep ref={stepRef} payment={page.payment} price={liveService.price} locale={locale} biz={page.name} choice={choice} busy={flow.busy} legend t={t} onChoice={chooseKind} onUnavailable={() => fail(t("payUnavailable"))} />
+                    <PaymentStep ref={stepRef} payment={page.payment} price={liveService.price} offer={payOffer(liveService)} locale={locale} biz={page.name} choice={choice} busy={flow.busy} legend t={t} onChoice={chooseKind} onUnavailable={() => fail(t("payUnavailable"))} />
                   )}
                   {/* Rendered visibly (never display:none) and kept mounted once the details are
                    * open: an interaction-only challenge must be able to actually appear here. */}

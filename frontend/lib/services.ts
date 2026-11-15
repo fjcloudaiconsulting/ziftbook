@@ -42,7 +42,15 @@ export type ServiceForm = {
   fixedGap?: string;
   // Optional so callers and tests that don't care need not name it; the server's default is generic.
   placeholder?: Placeholder;
+  // ZIF-62: optional as `placeholder`; the server's default is "choice" (today's behaviour).
+  paymentRule?: PaymentRule;
+  depositPct?: string;
 };
+
+/** ZIF-62: how a client pays for a service. `choice` is today's check-or-pay; the online three only
+ * take effect while the business's payment switch is on and Stripe is ready. */
+export type PaymentRule = "in_person" | "choice" | "deposit" | "prepaid";
+export const PAYMENT_RULES: PaymentRule[] = ["in_person", "choice", "deposit", "prepaid"];
 
 export type ServiceBody = {
   name: NameMap;
@@ -51,6 +59,8 @@ export type ServiceBody = {
   duration_minutes: number;
   buffer_minutes: number | null;
   placeholder?: Placeholder;
+  payment_rule?: PaymentRule;
+  deposit_pct?: number | null;
 };
 
 export type ServiceBodyResult = { body: ServiceBody; errors?: never } | { body?: never; errors: Record<string, string> };
@@ -88,6 +98,14 @@ export function serviceBody(form: ServiceForm, parsePrice: (text: string) => num
     else bufferMinutes = fixed;
   }
 
+  let depositPct: number | null = null;
+  if (form.paymentRule === "deposit") {
+    const pct = Number(form.depositPct);
+    // As the gap: an emptied field is an error, never 0 %.
+    if (!form.depositPct?.trim() || !Number.isInteger(pct) || pct < 1 || pct > 99) errors.deposit = "depositRange";
+    else depositPct = pct;
+  }
+
   if (Object.keys(errors).length > 0) return { errors };
 
   const description: NameMap = {};
@@ -104,8 +122,18 @@ export function serviceBody(form: ServiceForm, parsePrice: (text: string) => num
       duration_minutes: duration,
       buffer_minutes: bufferMinutes, // "use the business default" is null, never 0 (services.py:77)
       ...(form.placeholder ? { placeholder: form.placeholder } : {}),
+      // The server keeps a percentage only on a deposit (deposit_pct set iff deposit).
+      ...(form.paymentRule ? { payment_rule: form.paymentRule, deposit_pct: depositPct } : {}),
     },
   };
+}
+
+/** ZIF-62: the rules the form offers. While online payments are off (the business's switch, or Stripe
+ * not ready) only `in_person` can be picked; a stored online rule stays selected and is kept, and
+ * `waits` says it books in person until online payments are on. */
+export function paymentRuleView(rule: PaymentRule, online: boolean): { disabled: PaymentRule[]; waits: boolean } {
+  if (online) return { disabled: [], waits: false };
+  return { disabled: PAYMENT_RULES.filter((r) => r !== "in_person"), waits: rule !== "in_person" };
 }
 
 /** The business's default gap, shown as a hint next to "Use the business default"

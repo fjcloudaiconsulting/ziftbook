@@ -214,7 +214,7 @@ export function BookingDetail({
   }
 
   function paymentLine(d: BookingDetailOut) {
-    const fact = paymentFact(d.payment, locale);
+    const fact = paymentFact(d.payment, locale, d.price);
     if (!fact) return null;
     const text = t(fact.failed && role !== "owner" ? "paymentRefundFailedWorker" : fact.key, fact.params);
     return (

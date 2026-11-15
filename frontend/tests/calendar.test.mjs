@@ -274,6 +274,18 @@ describe("payment events and the payment fact (ZIF-158)", () => {
     assert.equal(paymentFact(pay({ status: "open" }), "en"), null);
   });
 
+  test("fence: a payment below the booking's price is a deposit, with the rest due at the appointment (ZIF-62)", () => {
+    // ZIF-62 fence. Kills: a deposit worded "Paid €10.50 online" (the merchant would not collect the rest),
+    // and a full payment or a refunded deposit worded as a deposit.
+    const price = { amount_minor: 3500, currency: "EUR" };
+    assert.deepEqual(paymentFact(pay({ amount_minor: 1050 }), "en", price), {
+      key: "paymentDeposit", params: { amount: formatMoney(1050, "EUR", "en"), due: formatMoney(2450, "EUR", "en") }, failed: false,
+    });
+    assert.equal(paymentFact(pay(), "en", price).key, "paymentPaid");
+    assert.equal(paymentFact(pay({ amount_minor: 1050, refunded_minor: 1050 }), "en", price).key, "paymentRefunded");
+    assert.equal(paymentFact(pay({ amount_minor: 1050, refund_failed: true }), "en", price).key, "paymentRefundFailed");
+  });
+
   test("guard: amounts are formatted by formatMoney in the page's locale", () => {
     assert.deepEqual(paymentFact(pay({ refunded_minor: 1000 }), "nl").params, { amount: formatMoney(3500, "EUR", "nl"), refunded: formatMoney(1000, "EUR", "nl") });
   });
