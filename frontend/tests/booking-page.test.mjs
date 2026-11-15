@@ -40,6 +40,7 @@ import {
   slugLooksValid,
   STRIPE_LOCALE,
   storedNext,
+  bookingOffer,
   payOffer,
   termsLines,
   weekFor,
@@ -617,12 +618,30 @@ describe("how clients pay, per service (ZIF-62)", () => {
     assert.equal(elementsOptions("pay", "authorisation", due).amount, 1050);
   });
 
+  test("fence: a booking that exists shows its own rule and amount, not the service's current ones", () => {
+    // ZIF-62 fence. Kills: a returning client (refresh, Back from the bank) shown the service's new rule
+    // and amount after the owner changed it, while the server charges what was fixed on the booking.
+    const service = { price, payment_rule: "deposit", payment_due: { amount_minor: 1050, currency: "EUR" } };
+    const booking = { price, payment_rule: "choice", payment_due: price };
+    assert.deepEqual(bookingOffer(booking, service), { single: false, due: price, rest: null });
+    assert.deepEqual(bookingOffer({ price, payment_rule: "deposit", payment_due: { amount_minor: 700, currency: "EUR" } }, { price, payment_rule: "prepaid", payment_due: price }), {
+      single: true, due: { amount_minor: 700, currency: "EUR" }, rest: { amount_minor: 2800, currency: "EUR" },
+    });
+    // No booking yet: the service's offer; neither: none.
+    assert.deepEqual(bookingOffer(null, service), payOffer(service));
+    assert.equal(bookingOffer(null, undefined), null);
+  });
+
   test("wiring: the step gets the offer, the Element gets the deposit, the button and the end texts name the charge", () => {
     const step = readFileSync(new URL("../app/[locale]/[slug]/payment-step.tsx", import.meta.url), "utf8");
     assert.match(step, /elementsOptions\(choice, payment\.check_with, choice === "pay" \? offer\.due : price\)/);
     assert.match(step, /if \(offer\.single\)/);
     const page = readFileSync(new URL("../app/[locale]/[slug]/booking-page.tsx", import.meta.url), "utf8");
     assert.match(page, /const choice: PaymentChoice = toPay\?\.single \? "pay" : picked;/);
+    assert.match(page, /const toPay = bookingOffer\(sync, liveService\);/);
+    assert.match(page, /offer=\{payOffer\(sync\)\}/);
+    assert.match(page, /offer: payOffer\(s\),/);
+    assert.doesNotMatch(page, /shortcut:/);
     assert.match(page, /sendLabel\(stepOn \? shown : null, auto\), \{ price: charged \}/);
   });
 });

@@ -12,6 +12,7 @@ import {
   type AnswerOutcome,
   answerState,
   bookingBody,
+  bookingOffer,
   bookingQuery,
   checkoutUrl,
   cleanMessage,
@@ -189,10 +190,6 @@ export function BookingPage({
   // --- ZIF-158: the payment step ---
   const liveService = page.services.find((svc) => svc.id === serviceId);
   const stepOn = Boolean(page.payment && liveService?.payment);
-  // ZIF-62: a deposit or a prepaid service takes Pay now only, for its own amount.
-  // shortcut: a resumed booking reads the service's current rule, not the booking's snapshot (the sync
-  // answer carries neither); a rule changed while a booking waits for payment can show the wrong amount.
-  const toPay = liveService ? payOffer(liveService) : null;
   // ZIF-102: when the reloaded page prices the held service in another currency (the owner changed
   // it), the steps show, and the booking sends, the new one. Adjusted while rendering, as React
   // recommends for state that follows a prop, never in an effect.
@@ -205,11 +202,14 @@ export function BookingPage({
     });
   }
   const [picked, setChoice] = useState<PaymentChoice>("check");
-  const choice: PaymentChoice = toPay?.single ? "pay" : picked;
   const [bookingId, setBookingId] = useState<string | null>(booking);
   const [checking, setChecking] = useState(booking !== null);
   const [start, setStart] = useState<PaymentStart | null>(null);
   const [sync, setSync] = useState<SyncOut | null>(null);
+  // ZIF-62: a deposit or a prepaid service takes Pay now only, for its own amount; a booking that
+  // exists keeps the rule and amount fixed on it, whatever the service says now.
+  const toPay = bookingOffer(sync, liveService);
+  const choice: PaymentChoice = toPay?.single ? "pay" : picked;
   const [end, setEnd] = useState<End | null>(null);
   const [offer, setOffer] = useState<SyncOut | null>(null);
   const [payGone, setPayGone] = useState(false);
@@ -540,7 +540,7 @@ export function BookingPage({
         price: s.price,
         email,
         payment: s.payment.kind === "pay" ? "paid" : "checked",
-        offer: toPay,
+        offer: payOffer(s),
       });
       return;
     }
@@ -1010,7 +1010,7 @@ export function BookingPage({
       <ResumeView
         page={page}
         price={sync.price}
-        offer={toPay ?? payOffer(sync)}
+        offer={payOffer(sync)}
         payment={stepOn && !payGone ? page.payment : null}
         choice={shown}
         busy={flow.busy}

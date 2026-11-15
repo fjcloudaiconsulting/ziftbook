@@ -377,6 +377,15 @@ export function payOffer(service: { price: Money; payment_rule?: string | null; 
   };
 }
 
+/** The offer the page follows: a booking that exists (waiting for payment, or just paid) keeps the rule
+ * and amount fixed on it when it was made; only a checkout with no booking yet reads the service's. */
+export function bookingOffer(
+  booking: Parameters<typeof payOffer>[0] | null,
+  service: Parameters<typeof payOffer>[0] | null | undefined,
+): ReturnType<typeof payOffer> | null {
+  return booking ? payOffer(booking) : service ? payOffer(service) : null;
+}
+
 const STRIPE = /^(payment_intent|setup_intent|redirect_status)/;
 
 /** The address minus whatever Stripe appended on the way back (the client secret must never stay in
