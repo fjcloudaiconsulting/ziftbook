@@ -361,15 +361,14 @@ def test_a_merchant_consent_never_holds_an_address_or_browser(
     assert isinstance(error.value.orig, CheckViolation)
 
 
-# ZIF-156 fence. Kills: record_consents writing what a merchant caller passes, left to the caller
-# and to 0096's deploy-window trigger. With the trigger off, as after the contract migration, the
-# check refuses the insert (a 500) unless record_consents dropped them itself.
+# ZIF-156 fence. Kills: record_consents writing what a merchant caller passes, left to the caller.
+# 0101 dropped 0096's deploy-window trigger, so the check refuses the insert (a 500) unless
+# record_consents dropped them itself.
 def test_record_consents_drops_a_merchant_callers_address_itself(
     people: People, migrate_engine: Engine
 ) -> None:
     client_id = seed_client(people.a)
     with migrate_engine.connect() as conn, conn.begin() as transaction:
-        conn.execute(text("ALTER TABLE consents DISABLE TRIGGER consents_merchant_no_origin"))
         conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(people.a)})
         clients.record_consents(
             Session(bind=conn),

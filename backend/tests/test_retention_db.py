@@ -887,19 +887,29 @@ def seed_consent(
     granted: bool = True,
     source: str = "booking_page",
 ) -> uuid.UUID:
-    """A consent given at now() minus `age`, with an address and browser (which 0096's trigger
-    drops from a merchant row). Seed a client's rows oldest first: later is the higher id, as
-    CURRENT_CONSENTS reads it."""
+    """A consent given at now() minus `age`, with an address and browser, except on a merchant
+    row, which ck_consents_merchant_no_origin keeps empty. Seed a client's rows oldest first:
+    later is the higher id, as CURRENT_CONSENTS reads it."""
+    merchant = source == "merchant"
     with superuser.begin() as conn:
         consent_id: uuid.UUID = conn.scalar(
             text("""
             INSERT INTO consents (tenant_id, client_id, purpose, granted, text_shown,
                                   policy_version, source, ip, user_agent, created_at)
-            VALUES (:t, :c, :p, :g, 'text', '2026-09-01', :s, '192.0.2.20', 'Agent',
+            VALUES (:t, :c, :p, :g, 'text', '2026-09-01', :s, :ip, :ua,
                     now() - CAST(:a AS interval))
             RETURNING id
             """),
-            {"t": tenant_id, "c": client_id, "p": purpose, "g": granted, "s": source, "a": age},
+            {
+                "t": tenant_id,
+                "c": client_id,
+                "p": purpose,
+                "g": granted,
+                "s": source,
+                "a": age,
+                "ip": None if merchant else "192.0.2.20",
+                "ua": None if merchant else "Agent",
+            },
         )
     return consent_id
 

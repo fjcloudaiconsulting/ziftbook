@@ -3014,10 +3014,14 @@ def test_0096_to_0098_round_trip_and_clear_the_existing_merchant_addresses(
                 conn.scalar(SEED_CONSENT, {"t": people.a, "c": client_id, "s": source})
                 for source in ("merchant", "booking_page")
             )
+        command.upgrade(cfg, "0098")
+        with migrate_engine.connect() as conn:
+            assert tuple(conn.execute(CONSENT_ORIGIN_OBJECTS).one()) == (False, 1, True, True)
     finally:
         command.upgrade(cfg, "head")
     with migrate_engine.connect() as conn:
-        assert tuple(conn.execute(CONSENT_ORIGIN_OBJECTS).one()) == (False, 1, True, True)
+        # 0101 validated the check and dropped the trigger and its function.
+        assert tuple(conn.execute(CONSENT_ORIGIN_OBJECTS).one()) == (True, 0, False, True)
         row = conn.execute(DEFINER_STATE, {"signature": sweep}).one()
     assert tuple(row)[3:] == (
         "ziftbook_migrate",
@@ -3035,6 +3039,37 @@ def test_0096_to_0098_round_trip_and_clear_the_existing_merchant_addresses(
         merchant: (None, None),
         online: ("192.0.2.40", "Agent"),
     }
+
+
+# ZIF-290 FENCE. Kills: a 0101 that leaves the trigger or its function (a writer passing a
+# member's address would still be fixed silently), a downgrade that doesn't put the trigger back,
+# or a put-back trigger that no longer clears the address.
+def test_0101_round_trips_the_merchant_consent_contract(
+    people: People, superuser: Engine, migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = lock_timeout_config(monkeypatch)
+    with superuser.begin() as conn:
+        client_id = conn.scalar(
+            text("INSERT INTO clients (tenant_id, name) VALUES (:t, 'C') RETURNING id"),
+            {"t": people.a},
+        )
+    try:
+        command.downgrade(cfg, "0100")
+        with migrate_engine.connect() as conn:
+            assert tuple(conn.execute(CONSENT_ORIGIN_OBJECTS).one()) == (True, 1, True, True)
+        with superuser.begin() as conn:
+            cleared = conn.scalar(SEED_CONSENT, {"t": people.a, "c": client_id, "s": "merchant"})
+            stored = conn.execute(
+                text("SELECT ip, user_agent FROM consents WHERE id = :i"), {"i": cleared}
+            ).one()
+        assert tuple(stored) == (None, None)
+    finally:
+        command.upgrade(cfg, "head")
+    with migrate_engine.connect() as conn:
+        assert tuple(conn.execute(CONSENT_ORIGIN_OBJECTS).one()) == (True, 0, False, True)
+    with pytest.raises(IntegrityError) as error, superuser.begin() as conn:
+        conn.execute(SEED_CONSENT, {"t": people.a, "c": client_id, "s": "merchant"})
+    assert isinstance(error.value.orig, CheckViolation)
 
 
 # ZIF-235 (0072): the retention sweep's indexes, built CONCURRENTLY in the repository's first
