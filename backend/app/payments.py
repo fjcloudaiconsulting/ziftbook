@@ -1191,6 +1191,10 @@ class SyncPayment(BaseModel):
 
 class SyncOut(bookings.BookingCore):
     payment: SyncPayment
+    # ZIF-62. The booking's snapshot, named as on the booking page's services: the page shows
+    # these, never the service's rule now, which the owner may have changed during the hold.
+    payment_rule: Literal["choice", "deposit", "prepaid"] | None
+    payment_due: Price | None
 
 
 class ResumeIn(BaseModel):
@@ -1275,6 +1279,10 @@ def _out(booking: Row[Any], payment: SyncPayment) -> SyncOut:
         worker_display_name=booking.worker_display_name,
         cancellation_policy_text=booking.cancellation_policy_text,
         payment=payment,
+        payment_rule=booking.payment_rule,
+        payment_due=None
+        if booking.payment_due_minor is None
+        else Price(amount_minor=booking.payment_due_minor, currency=booking.price_currency),
     )
 
 

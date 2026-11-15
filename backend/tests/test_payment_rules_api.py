@@ -219,3 +219,30 @@ def test_a_deposit_is_refunded_by_the_cancellation_rules(
 
     assert fake_stripe.refunded() == refunds
     assert status_of(people, booking_id) in ("declined", "cancelled_by_client")
+
+
+# ZIF-62 FENCE. Kills: a sync answer without the booking's snapshot (a page back on an
+# awaiting_payment booking would fall back to the service's current rule and show another
+# amount), or one read from the service instead of the booking.
+def test_sync_answers_the_booking_s_rule_and_amount_after_the_service_changed(
+    people: People, app: FastAPI, owner: TestClient, fake_stripe: FakeGateway
+) -> None:
+    service_id = shop(people, owner, fake_stripe, "deposit", 30)
+    client = new_client(app)
+    booking_id = place(app, people, service_id, payment="pay", client=client).json()["id"]
+    changed = owner.patch(
+        f"/api/services/{service_id}",
+        json={"payment_rule": "prepaid", "deposit_pct": None, "price": {"amount_minor": 4000}},
+    )
+    assert changed.status_code == 200, changed.text
+
+    answer = sync(client, people, booking_id)
+
+    assert answer.status_code == 200, answer.text
+    body = answer.json()
+    assert (body["status"], body["payment_rule"], body["payment_due"], body["price"]) == (
+        "awaiting_payment",
+        "deposit",
+        euros(750),
+        euros(PRICE),
+    )

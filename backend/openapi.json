@@ -11880,6 +11880,32 @@
           },
           "payment": {
             "$ref": "#/components/schemas/SyncPayment"
+          },
+          "payment_rule": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "choice",
+                  "deposit",
+                  "prepaid"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payment Rule"
+          },
+          "payment_due": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Price"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",
@@ -11894,7 +11920,9 @@
           "worker_id",
           "worker_display_name",
           "cancellation_policy_text",
-          "payment"
+          "payment",
+          "payment_rule",
+          "payment_due"
         ],
         "title": "SyncOut"
       },
