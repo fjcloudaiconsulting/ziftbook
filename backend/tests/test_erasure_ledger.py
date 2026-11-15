@@ -38,7 +38,13 @@ from tests.stripe_fake import FakeGateway
 from tests.test_booking_payments_api import make_shop, place, run
 from tests.test_booking_refunds import booked
 from tests.test_bookings_db import seed_service
-from tests.test_client_erasure_db import INSERT_BOOKING, INSERT_CLIENT, INSERT_PAYMENT, take
+from tests.test_client_erasure_db import (
+    INSERT_BOOKING,
+    INSERT_CLIENT,
+    INSERT_PAYMENT,
+    PAYMENT_SNAPSHOT,
+    take,
+)
 from tests.test_erased_client_reads import client_of
 
 BUCKET = "ziftbook-erasures"
@@ -657,6 +663,7 @@ def seed_in_b(people: People, migrate_engine: Engine) -> tuple[uuid.UUID, uuid.U
                 "booked_as": None,
             },
         )
+        conn.execute(PAYMENT_SNAPSHOT, {"booking": booking_id})
         conn.execute(
             INSERT_PAYMENT,
             {
