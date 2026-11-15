@@ -556,8 +556,8 @@ def test_the_amount_is_the_snapshot_price(
             c=currency,
         )
 
-    assert refused(2501, "EUR") == ("23503", "fk_booking_payments_booking_price")
-    assert refused(2500, "USD") == ("23503", "fk_booking_payments_booking_price")
+    assert refused(2501, "EUR") == ("23503", "fk_booking_payments_booking_due")
+    assert refused(2500, "USD") == ("23503", "fk_booking_payments_booking_due")
     assert refused(0, "EUR") == ("23514", "ck_booking_payments_amount_minor")
 
     # The business changes its price after the booking was placed: the snapshot still decides.
