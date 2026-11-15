@@ -480,6 +480,7 @@
       "factPayment": "Pagamento",
       "paymentChecked": "Cartão verificado, nada cobrado",
       "paymentPaid": "{amount} pagos online",
+      "paymentDeposit": "Sinal de {amount} pago · {due} a pagar no atendimento",
       "paymentRefunded": "{amount} pagos, {refunded} reembolsados",
       "paymentRefundFailed": "{amount} pagos. O reembolso falhou: resolva no seu painel do Stripe.",
       "paymentRefundFailedWorker": "{amount} pagos. O reembolso falhou: o proprietário resolve no painel do Stripe.",
@@ -672,6 +673,25 @@
         "gapFixedNumberLabel": "Intervalo fixo, em minutos",
         "gapEditHint": "Agendamentos já marcados mantêm seus horários.",
         "gapRange": "Digite um intervalo entre 0 e 240 minutos.",
+        "payLegend": "Como os clientes pagam",
+        "payHint": "Nas opções online, o cliente paga ao agendar.",
+        "payOffHint": "Ative os pagamentos online em Configurações para cobrar quando o cliente agenda. Até lá, todo serviço é pago no atendimento.",
+        "payRules": {
+          "in_person": "No atendimento",
+          "choice": "Verificação do cartão ou pagamento antecipado",
+          "deposit": "Sinal ao agendar",
+          "prepaid": "Pagamento total ao agendar"
+        },
+        "payRuleHints": {
+          "in_person": "Nada é pedido online.",
+          "choice": "O cliente escolhe: um cartão que verificamos sem cobrar, ou pagar tudo antecipadamente.",
+          "deposit": "O cliente paga parte do preço ao agendar e o restante no atendimento.",
+          "prepaid": "O cliente paga o preço total ao agendar."
+        },
+        "depositLabel": "Sinal, como parte do preço",
+        "depositHint": "Entre 1% e 99%. Nunca menos que o menor valor que o Stripe cobra.",
+        "depositRange": "Digite um sinal entre 1% e 99%.",
+        "payWaits": "Este serviço é pago no atendimento até os pagamentos online serem ativados.",
         "whoLegend": "Quem realiza este serviço",
         "whoHint": "Os clientes só podem agendar com quem realiza este serviço.",
         "youLabel": "Você",
@@ -1198,6 +1218,7 @@
     "payCheckHint": "Verificamos seu cartão por {price} e liberamos o valor logo em seguida. Nada é cobrado; você paga no atendimento. Seu banco pode mostrar {price} pendente por alguns dias.",
     "payCheckSetupHint": "Verificamos se seu cartão é válido. Nada é cobrado; você paga no atendimento.",
     "payNow": "Pagar {price} agora",
+    "payDeposit": "Pagar {deposit} de sinal agora · {rest} no atendimento",
     "payNowHint": "Se {biz} recusar, cancelar ou não responder a tempo, você recebe tudo de volta. Se você cancelar, recebe de volta o que as regras de cancelamento de {biz} permitem.",
     "payNowHintFee": "Se {biz} recusar, cancelar ou não responder a tempo, você recebe tudo de volta. Se você cancelar, recebe de volta o que as regras de cancelamento de {biz} permitem, menos a taxa de processamento do pagamento.",
     "termsPaymentFee": "As taxas de processamento do pagamento não são reembolsadas se você cancelar. Tudo é reembolsado se {biz} recusar, cancelar ou não responder a tempo.",
@@ -1220,6 +1241,7 @@
     "doneChecked": "Verificamos seu cartão por {price}. Nada foi cobrado.",
     "doneCheckedSetup": "Verificamos seu cartão. Nada foi cobrado.",
     "donePaid": "Você pagou {price}.",
+    "doneDeposit": "Você pagou {deposit} de sinal. Os {rest} restantes ficam para o atendimento.",
     "okLedeNoEmail": "Enviamos uma confirmação com um link para alterar ou cancelar.",
     "pendLedeNoEmail": "{biz} vai confirmar o seu pedido. Enviamos um link para consultá-lo ou cancelá-lo, e escreveremos de novo quando responderem."
   }

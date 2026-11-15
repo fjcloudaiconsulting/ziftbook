@@ -5,7 +5,7 @@ import type { ReactNode, Ref } from "react";
 
 import type { BookingPageOut } from "@/api-client";
 import { addDays, localDay, localWhen } from "@/lib/booking-link";
-import { cancellationState, freeNamed, nextWeekDisabled, ownPolicyText, type PaymentChoice, slotsFor } from "@/lib/booking-page";
+import { cancellationState, freeNamed, nextWeekDisabled, ownPolicyText, type PaymentChoice, type payOffer, slotsFor } from "@/lib/booking-page";
 import { formatMoney } from "@/lib/money";
 import { type Locale } from "@/lib/services";
 import { zoneCity } from "@/lib/week";
@@ -27,6 +27,8 @@ export type Done = {
   email: string | null;
   /** What was done with the card: checked, nothing charged, or paid. null: the business takes no payment online. */
   payment: "checked" | "paid" | null;
+  /** ZIF-62: what Pay now charged when it differs from the price (a deposit); absent: the price. */
+  offer?: ReturnType<typeof payOffer> | null;
 };
 
 /** Step 3's "who" choice (ZIF-100): only when the time was picked under "Anyone available" on a
@@ -329,7 +331,17 @@ export function DoneScreen({
             {done.worker?.display_name && `${done.worker.display_name} · `}
             {price}
           </li>
-          {done.payment && <li>{t(done.payment === "paid" ? "donePaid" : page.payment?.check_with === "setup" ? "doneCheckedSetup" : "doneChecked", { price })}</li>}
+          {done.payment === "paid" && done.offer?.rest ? (
+            <li>{t("doneDeposit", { deposit: formatMoney(done.offer.due.amount_minor, done.offer.due.currency, locale), rest: formatMoney(done.offer.rest.amount_minor, done.offer.rest.currency, locale) })}</li>
+          ) : (
+            done.payment && (
+              <li>
+                {t(done.payment === "paid" ? "donePaid" : page.payment?.check_with === "setup" ? "doneCheckedSetup" : "doneChecked", {
+                  price: done.payment === "paid" && done.offer ? formatMoney(done.offer.due.amount_minor, done.offer.due.currency, locale) : price,
+                })}
+              </li>
+            )
+          )}
         </ul>
         <p className={styles.hint}>{t("spam")}</p>
         <button className={`${styles.button} ${styles.secondary}`} type="button" onClick={onAgain}>
@@ -346,6 +358,7 @@ export function DoneScreen({
 export function ResumeView({
   page,
   price,
+  offer,
   payment,
   choice,
   busy,
@@ -362,6 +375,7 @@ export function ResumeView({
 }: {
   page: Pick<BookingPageOut, "name" | "payment">;
   price: { amount_minor: number; currency: string };
+  offer: ReturnType<typeof payOffer>;
   payment: BookingPageOut["payment"];
   choice: PaymentChoice;
   busy: boolean;
@@ -395,7 +409,7 @@ export function ResumeView({
                 }}
               >
                 {banner && <Banner tone={banner.tone}>{banner.text}</Banner>}
-                <PaymentStep ref={stepRef} payment={payment} price={price} locale={locale} biz={page.name} choice={choice} busy={busy} legend={false} t={t} onChoice={onChoice} onUnavailable={onUnavailable} />
+                <PaymentStep ref={stepRef} payment={payment} price={price} offer={offer} locale={locale} biz={page.name} choice={choice} busy={busy} legend={false} t={t} onChoice={onChoice} onUnavailable={onUnavailable} />
                 <Submit busy={busy} busyLabel={label}>
                   {label}
                 </Submit>

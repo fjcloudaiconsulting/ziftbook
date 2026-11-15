@@ -337,11 +337,13 @@ export function historyLabel(
 }
 
 /** The booking's payment as one catalog key plus its amounts, or null when there is nothing to show
- * (no payment, or one still open or canceled). A failed refund is never worded as refunded. */
+ * (no payment, or one still open or canceled). A failed refund is never worded as refunded. `price`: given
+ * for a deposit booking (ZIF-62), whose payment is below it; the rest is due at the appointment. */
 export function paymentFact(
   payment: { status: string; amount_minor: number; currency: string; refunded_minor: number; refund_failed: boolean } | null,
   locale: string,
-): { key: "paymentChecked" | "paymentPaid" | "paymentRefunded" | "paymentRefundFailed"; params: Record<string, string>; failed: boolean } | null {
+  price?: { amount_minor: number },
+): { key: "paymentChecked" | "paymentPaid" | "paymentDeposit" | "paymentRefunded" | "paymentRefundFailed"; params: Record<string, string>; failed: boolean } | null {
   if (!payment) return null;
   const amount = formatMoney(payment.amount_minor, payment.currency, locale);
   if (payment.status === "checked") return { key: "paymentChecked", params: {}, failed: false };
@@ -349,6 +351,9 @@ export function paymentFact(
   if (payment.refund_failed) return { key: "paymentRefundFailed", params: { amount }, failed: true };
   if (payment.refunded_minor > 0) {
     return { key: "paymentRefunded", params: { amount, refunded: formatMoney(payment.refunded_minor, payment.currency, locale) }, failed: false };
+  }
+  if (price && price.amount_minor > payment.amount_minor) {
+    return { key: "paymentDeposit", params: { amount, due: formatMoney(price.amount_minor - payment.amount_minor, payment.currency, locale) }, failed: false };
   }
   return { key: "paymentPaid", params: { amount }, failed: false };
 }

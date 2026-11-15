@@ -480,6 +480,7 @@
       "factPayment": "Betaling",
       "paymentChecked": "Kaart gecontroleerd, niets afgeschreven",
       "paymentPaid": "{amount} online betaald",
+      "paymentDeposit": "Aanbetaling van {amount} betaald · {due} te betalen bij de afspraak",
       "paymentRefunded": "{amount} betaald, {refunded} terugbetaald",
       "paymentRefundFailed": "{amount} betaald. De terugbetaling is mislukt: los dit op in je Stripe-dashboard.",
       "paymentRefundFailedWorker": "{amount} betaald. De terugbetaling is mislukt: de eigenaar lost dit op in het Stripe-dashboard.",
@@ -672,6 +673,25 @@
         "gapFixedNumberLabel": "Vaste pauze, in minuten",
         "gapEditHint": "Afspraken die al geboekt zijn, houden hun tijden.",
         "gapRange": "Vul een pauze in tussen 0 en 240 minuten.",
+        "payLegend": "Hoe klanten betalen",
+        "payHint": "Bij de online opties betaalt de klant bij het boeken.",
+        "payOffHint": "Zet online betalingen aan in Instellingen om klanten bij het boeken te laten betalen. Tot dan wordt elke dienst bij de afspraak betaald.",
+        "payRules": {
+          "in_person": "Bij de afspraak",
+          "choice": "Kaartcontrole of vooraf betalen",
+          "deposit": "Aanbetaling bij het boeken",
+          "prepaid": "Alles vooraf betalen"
+        },
+        "payRuleHints": {
+          "in_person": "Er wordt online niets gevraagd.",
+          "choice": "De klant kiest: een kaart die we controleren zonder af te schrijven, of alles vooraf betalen.",
+          "deposit": "De klant betaalt een deel van de prijs bij het boeken en de rest bij de afspraak.",
+          "prepaid": "De klant betaalt de hele prijs bij het boeken."
+        },
+        "depositLabel": "Aanbetaling, als deel van de prijs",
+        "depositHint": "Tussen 1% en 99%. Nooit minder dan het kleinste bedrag dat Stripe afschrijft.",
+        "depositRange": "Vul een aanbetaling in tussen 1% en 99%.",
+        "payWaits": "Deze dienst wordt bij de afspraak betaald tot online betalingen aan staan.",
         "whoLegend": "Wie deze dienst uitvoert",
         "whoHint": "Klanten kunnen alleen boeken bij iemand die deze dienst uitvoert.",
         "youLabel": "Jij",
@@ -1198,6 +1218,7 @@
     "payCheckHint": "We controleren je kaart voor {price} en geven het bedrag meteen weer vrij. Er wordt niets afgeschreven; je betaalt bij je afspraak. Je bank kan een paar dagen een reservering van {price} tonen.",
     "payCheckSetupHint": "We controleren of je kaart geldig is. Er wordt niets afgeschreven; je betaalt bij je afspraak.",
     "payNow": "Nu {price} betalen",
+    "payDeposit": "Nu {deposit} aanbetalen · {rest} bij de afspraak",
     "payNowHint": "Als {biz} je afspraak weigert, annuleert of niet op tijd antwoordt, krijg je alles terug. Annuleer je zelf, dan krijg je terug wat de annuleringsregels van {biz} toestaan.",
     "payNowHintFee": "Als {biz} je afspraak weigert, annuleert of niet op tijd antwoordt, krijg je alles terug. Annuleer je zelf, dan krijg je terug wat de annuleringsregels van {biz} toestaan, min de betalingskosten.",
     "termsPaymentFee": "Betalingskosten worden niet terugbetaald als je annuleert. Alles wordt terugbetaald als {biz} je afspraak weigert, annuleert of niet op tijd antwoordt.",
@@ -1220,6 +1241,7 @@
     "doneChecked": "We hebben je kaart gecontroleerd voor {price}. Er is niets afgeschreven.",
     "doneCheckedSetup": "We hebben je kaart gecontroleerd. Er is niets afgeschreven.",
     "donePaid": "Je hebt {price} betaald.",
+    "doneDeposit": "Je hebt {deposit} aanbetaald. De overige {rest} betaal je bij je afspraak.",
     "okLedeNoEmail": "We hebben je een bevestiging gemaild met een link om te wijzigen of annuleren.",
     "pendLedeNoEmail": "{biz} bevestigt je verzoek. We hebben je een link gemaild om het te bekijken of te annuleren, en mailen opnieuw zodra ze reageren."
   }

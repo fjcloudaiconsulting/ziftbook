@@ -40,6 +40,8 @@ import {
   slugLooksValid,
   STRIPE_LOCALE,
   storedNext,
+  bookingOffer,
+  payOffer,
   termsLines,
   weekFor,
   withName,
@@ -586,6 +588,61 @@ describe("F2 the payment step (ZIF-158)", () => {
     assert.equal(sendAction({ working: false, sent: false, hasSecret: false }), "post");
     assert.equal(sendAction({ working: false, sent: true, hasSecret: true }), "pay");
     assert.equal(sendAction({ working: false, sent: true, hasSecret: false }), "reopen");
+  });
+});
+
+describe("how clients pay, per service (ZIF-62)", () => {
+  const price = { amount_minor: 3500, currency: "EUR" };
+
+  test("fence: a deposit or a prepaid service offers Pay now alone, for its own amount; choice keeps both", () => {
+    // ZIF-62 fence. Kills: a card check offered on a deposit or prepaid service (the server refuses the
+    // kind), Pay now charging the full price for a deposit, and a rest shown for a prepaid service.
+    assert.deepEqual(payOffer({ price, payment_rule: "deposit", payment_due: { amount_minor: 1050, currency: "EUR" } }), {
+      single: true, due: { amount_minor: 1050, currency: "EUR" }, rest: { amount_minor: 2450, currency: "EUR" },
+    });
+    assert.deepEqual(payOffer({ price, payment_rule: "prepaid", payment_due: price }), { single: true, due: price, rest: null });
+    assert.deepEqual(payOffer({ price, payment_rule: "choice", payment_due: price }), { single: false, due: price, rest: null });
+    // No step (or an older page without the fields): the price, both options as before.
+    assert.deepEqual(payOffer({ price, payment_rule: null, payment_due: null }), { single: false, due: price, rest: null });
+    assert.deepEqual(payOffer({ price }), { single: false, due: price, rest: null });
+  });
+
+  test("fence: a deposit raised to the whole price (Stripe's minimum) shows no rest", () => {
+    // ZIF-62 fence. Kills: "€0.00 at the appointment".
+    assert.equal(payOffer({ price: { amount_minor: 60, currency: "EUR" }, payment_rule: "deposit", payment_due: { amount_minor: 60, currency: "EUR" } }).rest, null);
+  });
+
+  test("fence: Pay now's Element is for the deposit, a check for the whole price", () => {
+    // ZIF-62 fence. Kills: the Element built for the price while the intent is for the deposit (Stripe refuses the confirm).
+    const { due } = payOffer({ price, payment_rule: "deposit", payment_due: { amount_minor: 1050, currency: "EUR" } });
+    assert.equal(elementsOptions("pay", "authorisation", due).amount, 1050);
+  });
+
+  test("fence: a booking that exists shows its own rule and amount, not the service's current ones", () => {
+    // ZIF-62 fence. Kills: a returning client (refresh, Back from the bank) shown the service's new rule
+    // and amount after the owner changed it, while the server charges what was fixed on the booking.
+    const service = { price, payment_rule: "deposit", payment_due: { amount_minor: 1050, currency: "EUR" } };
+    const booking = { price, payment_rule: "choice", payment_due: price };
+    assert.deepEqual(bookingOffer(booking, service), { single: false, due: price, rest: null });
+    assert.deepEqual(bookingOffer({ price, payment_rule: "deposit", payment_due: { amount_minor: 700, currency: "EUR" } }, { price, payment_rule: "prepaid", payment_due: price }), {
+      single: true, due: { amount_minor: 700, currency: "EUR" }, rest: { amount_minor: 2800, currency: "EUR" },
+    });
+    // No booking yet: the service's offer; neither: none.
+    assert.deepEqual(bookingOffer(null, service), payOffer(service));
+    assert.equal(bookingOffer(null, undefined), null);
+  });
+
+  test("wiring: the step gets the offer, the Element gets the deposit, the button and the end texts name the charge", () => {
+    const step = readFileSync(new URL("../app/[locale]/[slug]/payment-step.tsx", import.meta.url), "utf8");
+    assert.match(step, /elementsOptions\(choice, payment\.check_with, choice === "pay" \? offer\.due : price\)/);
+    assert.match(step, /if \(offer\.single\)/);
+    const page = readFileSync(new URL("../app/[locale]/[slug]/booking-page.tsx", import.meta.url), "utf8");
+    assert.match(page, /const choice: PaymentChoice = toPay\?\.single \? "pay" : picked;/);
+    assert.match(page, /const toPay = bookingOffer\(sync, liveService\);/);
+    assert.match(page, /offer=\{payOffer\(sync\)\}/);
+    assert.match(page, /offer: payOffer\(s\),/);
+    assert.doesNotMatch(page, /shortcut:/);
+    assert.match(page, /sendLabel\(stepOn \? shown : null, auto\), \{ price: charged \}/);
   });
 });
 
