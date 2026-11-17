@@ -96,11 +96,42 @@ jobs:
       - name: No Docker Hub images
         uses: fjcloudaiconsulting/.github/actions/no-docker-hub@v1
 
-  api:
-    name: Backend Tests
+  api-lint:
+    name: Backend Lint
     needs: changes
     if: needs.changes.outputs.backend != 'false'
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # uv version from backend/.tool-versions (uv line only), Python from backend/.python-version.
+      - name: Install backend dependencies
+        uses: fjcloudaiconsulting/.github/actions/uv-sync@v1
+      - name: Lint backend
+        run: uv run ruff check .
+      - name: Check backend format
+        run: uv run ruff format --check .
+      - name: Type-check backend
+        run: uv run mypy app tests migrations scripts
+
+  # ZIF-295: the suite runs in 4 shards, each on its own runner and Postgres, balanced by the recorded test times in
+  # backend/.test_durations (pytest-split). A test missing from that file counts as the average, so a stale file only
+  # unbalances the shards, never skips a test. Refresh it now and then: `uv run pytest -n 4 --store-durations`.
+  api:
+    name: Backend Tests (${{ matrix.group }}/4)
+    needs: changes
+    if: needs.changes.outputs.backend != 'false'
+    runs-on: ubuntu-latest
+    strategy:
+      # One failing shard still lets the others finish, so a run shows every failure at once.
+      fail-fast: false
+      matrix:
+        group: [1, 2, 3, 4]
     defaults:
       run:
         working-directory: backend
@@ -149,18 +180,13 @@ jobs:
           docker exec ${{ job.services.postgres.id }}
           psql -v ON_ERROR_STOP=1 -U ziftbook -d ziftbook
           -c "ALTER SYSTEM SET autovacuum = off" -c "SELECT pg_reload_conf()"
-      - name: Lint backend
-        run: uv run ruff check .
-      - name: Check backend format
-        run: uv run ruff format --check .
-      - name: Type-check backend
-        run: uv run mypy app tests migrations scripts
       # Serial, no -n: the file whose own tests assert the serial path (ZIF-111) still passes
-      # without xdist.
+      # without xdist. Once, in the first shard.
       - name: Run backend tests (serial path)
+        if: matrix.group == 1
         run: uv run pytest -q tests/test_parallel_safety.py
       - name: Run backend tests
-        run: uv run pytest -n auto
+        run: uv run pytest -n auto --splits 4 --group ${{ matrix.group }} --splitting-algorithm least_duration
 
   # Built once, on the main push, as sha-<7> (pull requests build without pushing). Release only retags these.
   backend-images:
@@ -256,7 +282,7 @@ jobs:
   backend-checks:
     name: Backend Checks
     if: always()
-    needs: [changes, repo, api, backend-images]
+    needs: [changes, repo, api-lint, api, backend-images]
     runs-on: ubuntu-latest
     steps:
       - name: Verify every gated job passed
