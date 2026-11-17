@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.43.1](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.43.0...v0.43.1) (2026-11-17)
+
+
+### Bug Fixes
+
+* **deps:** update dependency fastapi to v0.162.4 ([#439](https://github.com/fjcloudaiconsulting/ziftbook/issues/439)) ([7868ca9](https://github.com/fjcloudaiconsulting/ziftbook/commit/7868ca9d4ac9ce413bd10e9a3a80916d0df9c957))
+* **deps:** update opentelemetry ([#441](https://github.com/fjcloudaiconsulting/ziftbook/issues/441)) ([e028ef6](https://github.com/fjcloudaiconsulting/ziftbook/commit/e028ef643644b90bb79b8a8ee04f2de15165084b))
+
 ## [0.43.0](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.42.1...v0.43.0) (2026-11-15)
 
 
