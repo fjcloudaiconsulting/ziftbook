@@ -2,7 +2,7 @@
 # Build with the backend directory as a named context, for the committed OpenAPI contract:
 #   docker build --build-context backend=backend frontend
 # Local development: `next dev` with hot reload, source synced by `docker compose up --watch`.
-FROM mirror.gcr.io/library/node:24-alpine@sha256:116b800c3754b440ee0aa3ed2f20f5bf3d99a554bfd9adeea09ea8017f6e85f5 AS dev
+FROM mirror.gcr.io/library/node:26-alpine@sha256:6bd9ab43c0ec0190ca7b2d193906cb8b7edf6e7f4afa43ddeccd6452710bffb5 AS dev
 ENV NEXT_TELEMETRY_DISABLED=1
 WORKDIR /src/frontend
 RUN corepack enable
@@ -18,7 +18,7 @@ FROM dev AS build
 RUN pnpm build && mkdir -p public
 
 # Release image: Next standalone server only, non-root.
-FROM mirror.gcr.io/library/node:24-alpine@sha256:116b800c3754b440ee0aa3ed2f20f5bf3d99a554bfd9adeea09ea8017f6e85f5 AS prod
+FROM mirror.gcr.io/library/node:26-alpine@sha256:6bd9ab43c0ec0190ca7b2d193906cb8b7edf6e7f4afa43ddeccd6452710bffb5 AS prod
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
     PORT=3000 \
