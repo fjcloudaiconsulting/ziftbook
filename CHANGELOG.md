@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.43.2](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.43.1...v0.43.2) (2026-11-18)
+
+
+### Bug Fixes
+
+* **deps:** update python non-major ([#445](https://github.com/fjcloudaiconsulting/ziftbook/issues/445)) ([2af5ce4](https://github.com/fjcloudaiconsulting/ziftbook/commit/2af5ce4f47884bff143ad774de9c45942e5e61e3))
+
 ## [0.43.1](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.43.0...v0.43.1) (2026-11-17)
 
 
