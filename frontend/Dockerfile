@@ -5,8 +5,9 @@
 FROM mirror.gcr.io/library/node:26-alpine@sha256:6bd9ab43c0ec0190ca7b2d193906cb8b7edf6e7f4afa43ddeccd6452710bffb5 AS dev
 ENV NEXT_TELEMETRY_DISABLED=1
 WORKDIR /src/frontend
-RUN corepack enable
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+# Node 25+ no longer bundles corepack: install the pnpm that packageManager names.
+RUN npm install -g --no-fund --no-audit "$(node -p 'require("./package.json").packageManager')"
 RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
     pnpm install --frozen-lockfile
 COPY . .
