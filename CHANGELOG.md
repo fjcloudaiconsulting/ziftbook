@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.43.3](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.43.2...v0.43.3) (2026-11-18)
+
+
+### Bug Fixes
+
+* **deps:** update npm non-major ([#444](https://github.com/fjcloudaiconsulting/ziftbook/issues/444)) ([e163fa1](https://github.com/fjcloudaiconsulting/ziftbook/commit/e163fa101b90c203414e4cc863e888a0a63d0dbf))
+
 ## [0.43.2](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.43.1...v0.43.2) (2026-11-18)
 
 
