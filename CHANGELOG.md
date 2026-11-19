@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.43.4](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.43.3...v0.43.4) (2026-11-19)
+
+
+### Bug Fixes
+
+* **deps:** update dependency fastapi to v0.162.7 ([#451](https://github.com/fjcloudaiconsulting/ziftbook/issues/451)) ([dfae3e9](https://github.com/fjcloudaiconsulting/ziftbook/commit/dfae3e92480eabfc2b82d5f007b7d2229df39e64))
+* **deps:** update dependency stripe to v17 ([#454](https://github.com/fjcloudaiconsulting/ziftbook/issues/454)) ([89080ee](https://github.com/fjcloudaiconsulting/ziftbook/commit/89080ee1e60031d0c027165d1154fe2abb731e9c))
+* **deps:** update python non-major ([#452](https://github.com/fjcloudaiconsulting/ziftbook/issues/452)) ([62f04ba](https://github.com/fjcloudaiconsulting/ziftbook/commit/62f04ba4433b931f812b769abb62144c87aed7c5))
+
 ## [0.43.3](https://github.com/fjcloudaiconsulting/ziftbook/compare/v0.43.2...v0.43.3) (2026-11-18)
 
 
