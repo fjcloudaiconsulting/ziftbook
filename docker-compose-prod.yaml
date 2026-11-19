@@ -23,7 +23,7 @@ networks:
 
 services:
   postgres:
-    image: mirror.gcr.io/library/postgres:18@sha256:2ea8630df176ad090ec92136dee850397c5af8781e4bcf2e4162593691c61bbc
+    image: mirror.gcr.io/library/postgres:18@sha256:e754b839f447639b7004895f4d8a4bfcb4e9dbe3a1bc035f27f646562a16fd61
     restart: unless-stopped
     environment:
       POSTGRES_USER: ziftbook
@@ -40,7 +40,7 @@ services:
 
   # Creates or updates the database roles (backend/migrations/bootstrap.sql); idempotent, runs on every start.
   db-init:
-    image: mirror.gcr.io/library/postgres:18@sha256:2ea8630df176ad090ec92136dee850397c5af8781e4bcf2e4162593691c61bbc
+    image: mirror.gcr.io/library/postgres:18@sha256:e754b839f447639b7004895f4d8a4bfcb4e9dbe3a1bc035f27f646562a16fd61
     depends_on:
       postgres:
         condition: service_healthy
