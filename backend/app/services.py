@@ -21,8 +21,9 @@ from pydantic import (
 )
 from pydantic.json_schema import SkipJsonSchema
 from sqlalchemy import Row, text
+from sqlalchemy.orm import Session
 
-from app import auth, jobs, photos
+from app import auth, entitlements, jobs, photos
 from app.accounts import named, printable
 from app.auth import CurrentOwner, CurrentSession, SignedIn
 from app.business_settings import Locale
@@ -249,7 +250,7 @@ def read_service(service_id: UUID, current: CurrentSession, response: Response) 
     "/services",
     name="create",
     status_code=201,
-    responses={s: {"model": Error} for s in (401, 403, 415, 422, 429, 503)},
+    responses={s: {"model": Error} for s in (401, 402, 403, 415, 422, 429, 503)},
 )
 def create_service(
     new: ServiceIn, owner: ResolvedOwner, request: Request, response: Response
@@ -257,6 +258,9 @@ def create_service(
     # Chosen here, not by the column default: the photo's key carries it, and the photo is stored
     # before the row is written. A uuid7 like the default, so services still list in creation order.
     service_id = uuid.uuid7()
+    if new.payment_rule in PAID_AHEAD:  # before any image work, so a refusal stores no photo
+        with as_owner(owner) as current:
+            refuse_a_new_deposit(current.db, None, new.payment_rule)
     stored = None
     if new.photo_upload_id is not None:
         # Before any transaction opens (ZB-16): the decode may wait on the lock, and a transaction
@@ -325,7 +329,7 @@ def create_service(
 @router.patch(
     "/services/{service_id}",
     name="update",
-    responses={s: {"model": Error} for s in (401, 403, 404, 415, 422, 429, 503)},
+    responses={s: {"model": Error} for s in (401, 402, 403, 404, 415, 422, 429, 503)},
 )
 def update_service(
     service_id: UUID,
@@ -334,10 +338,11 @@ def update_service(
     request: Request,
     response: Response,
 ) -> ServiceOut:
+    sent = change.model_dump(exclude_unset=True)
     with as_owner(owner) as current:
         row = found_row(current, service_id)  # a 404 before any image work
-    sent = change.model_dump(exclude_unset=True)
-    refuse_a_bad_deposit(row, sent)  # before any image work too, so a refusal stores no photo
+        refuse_a_bad_deposit(row, sent)  # before any image work too, so a refusal stores no photo
+        refuse_a_new_deposit(current.db, row.payment_rule, sent.get("payment_rule"))
     swap = "photo_upload_id" in sent
     upload_id: UUID | None = sent.pop("photo_upload_id", None)
     if swap:  # the same upload again (a double Save) or no photo to remove: nothing to do
@@ -386,6 +391,7 @@ def update_service(
         if not changed:
             return service  # an empty body, or the same values: nothing written, nothing recorded
         refuse_a_bad_deposit(row, sent)  # the row as locked: another save may have changed it
+        refuse_a_new_deposit(current.db, row.payment_rule, sent.get("payment_rule"))
         after = before | sent
         key, width, height = row.photo_key, row.photo_width, row.photo_height
         if swap:
@@ -452,6 +458,16 @@ def refuse_a_bad_deposit(row: Row[Any], sent: dict[str, Any]) -> None:
     rule = sent.get("payment_rule", row.payment_rule)
     if not deposit_fits(rule, sent.get("deposit_pct", row.deposit_pct)):
         raise ApiError(422, "invalid_request")
+
+
+PAID_AHEAD = ("deposit", "prepaid")
+
+
+def refuse_a_new_deposit(db: Session, old: str | None, new: str | None) -> None:
+    """ZIF-78: a rule that newly asks for money ahead needs the plan's deposits (402). A service
+    already on one keeps it: saving it unchanged, or leaving it, is fine."""
+    if new in PAID_AHEAD and new != old:
+        entitlements.require(db, "deposits")
 
 
 def lock_members(current: SignedIn, member_ids: list[UUID]) -> dict[UUID, UUID]:

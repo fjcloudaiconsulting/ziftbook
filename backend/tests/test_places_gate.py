@@ -132,6 +132,36 @@ def test_a_returning_removed_member_counts(
     assert owner.post("/api/invites", json={"email": fresh_email()}).status_code == 402
 
 
+# ZIF-78 R30 fence. Kills: a revived membership (a removed member re-invited and accepting) that
+# the places count misses, so the business grows past its plan.
+def test_a_revived_member_takes_the_place_they_accept(
+    people: People,
+    app: FastAPI,  # noqa: F811
+    migrate_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    give_plan(people.a, {"places": 2, "email_reminders": True})
+    add_password(migrate_engine, people.only_a, PASSWORD)
+    owner = signed_in(app, people.a, people.both)
+    old_id = member_id(people.a, people.only_a)
+    assert owner.request("DELETE", f"/api/members/{old_id}", json={}).status_code == 204
+    invite = owner.post("/api/invites", json={"email": email_of(people.only_a)})
+    assert invite.status_code == 201
+    token = mint(monkeypatch, people.a, uuid.UUID(invite.json()["id"]))
+
+    accepted = new_client(app).post(
+        "/api/invites/accept", json={"token": token, "password": PASSWORD, "name": "Back Again"}
+    )
+    assert accepted.status_code == 201, accepted.text
+    assert member_id(people.a, people.only_a) == old_id  # the same row, revived
+
+    refused = owner.post("/api/invites", json={"email": fresh_email()})
+    assert (refused.status_code, refused.json()) == (
+        402,
+        {"code": "plan_limit", "feature": "places", "limit": 2},
+    )
+
+
 def test_accept_by_a_member_in_a_full_business_is_409(
     people: People,  # noqa: F811
     app: FastAPI,  # noqa: F811

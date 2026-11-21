@@ -33,6 +33,7 @@ from app import (
     availability,
     business_settings,
     clients,
+    entitlements,
     jobs,
     limits,
     logs,
@@ -723,9 +724,10 @@ def email_merchants(
 def remind(
     db: Session, tenant_id: UUID, booking_id: UUID, starts_at: datetime, now: datetime
 ) -> None:
-    """Enqueue the 24h-ahead reminder, unless the start is already less than 24h away (R3)."""
+    """Enqueue the 24h-ahead reminder, unless the start is already less than 24h away (R3) or the
+    plan has no email_reminders (ZIF-78)."""
     due_at = starts_at - timedelta(hours=24)
-    if due_at <= now:
+    if due_at <= now or not entitlements.entitlements(db).flag("email_reminders"):
         return
     jobs.enqueue(
         db,
@@ -1168,7 +1170,7 @@ def book_online(
 
     step = payments.rule_for(
         payments.available(db, settings),
-        row.payment_rule,
+        payments.effective_rule(db, row.payment_rule),  # ZIF-78: what the booking snapshots
         row.deposit_pct,
         row.price_amount_minor,
         row.price_currency,
@@ -1690,7 +1692,9 @@ def transition(
     if (
         row.status == "pending"
         and not members.is_owner(current)
-        and not business_settings.read(current.db).workers_answer_requests
+        and not business_settings.effective(
+            current.db, business_settings.read(current.db)
+        ).workers_answer_requests
     ):
         raise ApiError(403, "owner_only")
     # 3d, ZB-02 (D5): any transition that would refund a paid payment is the owner's, because the

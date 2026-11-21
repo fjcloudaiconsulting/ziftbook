@@ -149,7 +149,7 @@ def read(slug: str, request: Request) -> BookingPageOut:
             if row.id not in services:
                 step = payments.rule_for(
                     account,
-                    row.payment_rule,
+                    payments.effective_rule(db, row.payment_rule),  # entitlements read once
                     row.deposit_pct,
                     row.price_amount_minor,
                     row.price_currency,

@@ -819,6 +819,9 @@ request's session), never a plan's name or slug.
   402 `{"code": "plan_limit", "feature": "<key>", "limit": <count, or null for a flag>}`, which the console turns
   into its one upgrade prompt; declare the 402 in the route's `responses`. Never gate money already in motion:
   refunds, captures and webhooks for existing bookings run whatever the plan.
+- **A flag over a stored setting** (`business_settings.GATED`, a service's deposit rule): the setting is read through
+  the plan where it is used (`business_settings.effective`, `payments.available`, `payments.effective_rule`) and the
+  stored value is kept, so an upgrade restores it. Only turning it on answers 402; re-saving or turning it off doesn't.
 - **Writes:** the app role only reads the billing tables (0103). An admin's change (plan, override, offer, grant,
   billing setting) goes through a `SECURITY DEFINER` function with its audit row; Stripe's state and the people
   limit's mark go through the worker (`billing.enforce`, `app/enforcement.py`). Never grant the app role a write on

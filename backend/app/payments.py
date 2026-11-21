@@ -31,6 +31,7 @@ from app.business_settings import BusinessSettings, Locale
 from app.config import MailSettings, StripeSettings
 from app.countries import STRIPE_CURRENCIES
 from app.db import SessionLocal, count_after_commit, tenant_context
+from app.entitlements import entitlements
 from app.errors import ApiError, Error
 from app.jobs import Job
 from app.services import STRICT, Price
@@ -98,12 +99,22 @@ class UrlOut(BaseModel):
     url: str
 
 
-def available(db: Session, settings: BusinessSettings) -> str | None:
-    """The Stripe account id when the business takes a card check at all, else None (fail open)."""
+def takes_payments(db: Session, settings: BusinessSettings) -> str | None:
+    """The Stripe account id when Stripe is configured, the business has the step on and its
+    account takes charges, else None (fail open). Plan-free: a booking already in checkout (a
+    resume's switch) follows its snapshot, not the plan now (ZIF-78 R31)."""
     if not StripeSettings().configured() or not settings.payment_check:
         return None
     row = db.execute(ACCOUNT).first()
     return row.stripe_account_id if row is not None and row.charges_enabled else None
+
+
+def available(db: Session, settings: BusinessSettings) -> str | None:
+    """takes_payments() for a new checkout: also off while the plan has no online_payments, whatever
+    payment_check holds (ZIF-78)."""
+    if not entitlements(db).flag("online_payments"):
+        return None
+    return takes_payments(db, settings)
 
 
 def meets_minimum(amount_minor: int, currency: str) -> bool:
@@ -124,6 +135,18 @@ def due(rule: str, pct: int | None, amount_minor: int, currency: str) -> int:
         return amount_minor
     share = (amount_minor * pct + 50) // 100
     return min(amount_minor, max(share, MIN_CHARGE.get(currency, 0)))
+
+
+def effective_rule(db: Session, rule: str) -> str:
+    """The rule a service is sold under now (ZIF-78): without deposits, a stored deposit or prepaid
+    rule falls back to the choice while online payments are on, else to paying in person. The
+    stored rule is kept, so an upgrade restores it; the booking snapshots this one."""
+    if rule not in ("deposit", "prepaid"):
+        return rule
+    found = entitlements(db)
+    if found.flag("deposits"):
+        return rule
+    return "choice" if found.flag("online_payments") else "in_person"
 
 
 def rule_for(
@@ -1441,10 +1464,13 @@ def resume(
 
 
 def _offered(tenant_id: UUID, booking: Row[Any]) -> bool:
-    """The business still takes the payment step for this booking's price."""
+    """The business still takes the payment step for this booking's price, whatever its plan now
+    (ZIF-78 R31: money in motion)."""
     with tenant_context(tenant_id) as db:
         settings = business_settings.read(db)
-        return offer(db, settings, booking.price_amount_minor, booking.price_currency) is not None
+        return takes_payments(db, settings) is not None and meets_minimum(
+            booking.price_amount_minor, booking.price_currency
+        )
 
 
 def _orphan(account: str, intent_id: str) -> None:
