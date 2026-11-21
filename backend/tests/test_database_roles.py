@@ -136,8 +136,9 @@ def test_app_role_updates_only_the_outbox_columns_the_mailer_sets(migrate_engine
 
 
 # ZB-10 FENCE (0054). What app/members.py sets: change_role the role, remove the role and
-# removed_at, set_display_name the display name. Wrong impl: UPDATE of user_id or tenant_id back on
-# the app role, which would move a membership to another person or business.
+# removed_at, set_display_name the display name; ZIF-78 (0104) an owner's pick of who keeps
+# access. Wrong impl: UPDATE of user_id or tenant_id back on the app role, which would move a
+# membership to another person or business.
 def test_app_role_updates_only_the_membership_columns_the_app_sets(migrate_engine: Engine) -> None:
     with migrate_engine.connect() as conn:
         columns = set(
@@ -149,7 +150,7 @@ def test_app_role_updates_only_the_membership_columns_the_app_sets(migrate_engin
                 """)
             )
         )
-    assert columns == {"role", "removed_at", "display_name"}
+    assert columns == {"role", "removed_at", "display_name", "keeps_access"}
 
 
 @pytest.fixture
@@ -247,7 +248,9 @@ def test_link_requests_queue_their_email_without_minting(
 # ZIF-232 (0086) adds the contact email mint on purpose: it takes a request id, never an address,
 # and the worker has no grant on the table itself. ZIF-235 (0074) adds the four retention
 # functions, on purpose: the API role must not run them, so they are the worker's own; ZIF-156
-# (0096) a fifth, sweep_consent_origins, for the same reason.
+# (0096) a fifth, sweep_consent_origins, for the same reason. ZIF-78 (0103, 0104) adds the billing
+# writes Stripe's webhooks and the people-limit sweep make: subscriptions, a business's over-limit
+# stamp and a member's pause.
 def test_worker_role_holds_only_its_job_functions_in_its_own_right(
     migrate_engine: Engine,
 ) -> None:
@@ -275,8 +278,11 @@ def test_worker_role_holds_only_its_job_functions_in_its_own_right(
         "client_hold_needed(p_tenant uuid, p_client uuid) EXECUTE",
         "client_money_owed(p_tenant uuid, p_client uuid) EXECUTE",
         "invite_locale(p_invite_id uuid) EXECUTE",
+        "memberships.access_paused_at UPDATE",
         "mint_contact_email_token(p_id uuid, p_token_hash bytea) EXECUTE",
         "mint_email_token(p_id uuid, p_token_hash bytea) EXECUTE",
+        "subscriptions INSERT",
+        "subscriptions UPDATE",
         "sweep_account_sessions(OUT deleted integer) EXECUTE",
         "sweep_admin_sessions(OUT deleted integer) EXECUTE",
         "sweep_audit_events(OUT busy boolean, OUT failed_sign_ins integer,"
@@ -284,6 +290,7 @@ def test_worker_role_holds_only_its_job_functions_in_its_own_right(
         " OUT platform_events integer) EXECUTE",
         "sweep_booking_origins(p_from uuid, OUT cleared integer, OUT next_tenant uuid) EXECUTE",
         "sweep_consent_origins(p_from uuid, OUT cleared integer, OUT next_tenant uuid) EXECUTE",
+        "tenant_billing.over_limit_since UPDATE",
     ]
 
 

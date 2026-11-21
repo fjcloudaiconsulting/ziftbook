@@ -111,7 +111,9 @@ Specifics:
   setting an invite's `token_hash` (0053), reading and deleting an erased client's contact hold (0064) with
   `client_money_owed` (0077), `mint_contact_email_token` (ZIF-232, 0086), and the retention functions
   `sweep_audit_events`, `sweep_admin_sessions`, `sweep_account_sessions` and `sweep_booking_origins` (0074, ZIF-235),
-  and `sweep_consent_origins` (0096, ZIF-156).
+  and `sweep_consent_origins` (0096, ZIF-156), and the billing writes (0103 and 0104, ZIF-78): `INSERT` and
+  `UPDATE` on `subscriptions`, `UPDATE (over_limit_since)` on `tenant_billing` and `UPDATE (access_paused_at)` on
+  `memberships`.
   A worker still on `ziftbook_app` fails every sign-up, reset, invite and contact email confirmation email. The same
   never-list applies to it.
 - Neither runtime role can create temporary tables, and both search `public` before `pg_temp` (ZB-31;
@@ -167,16 +169,15 @@ every table that holds a tenant's data:
 - A membership is never deleted by the app. Removing someone sets `role = 'removed'` and `removed_at`
   (ZIF-112); the row stays because bookings and their history reference it. The app role has no `DELETE` on
   `memberships` (0052, ZB-10), no `INSERT` (sign-up and invites create memberships in their definer functions), and
-  `UPDATE` of only `role`, `removed_at` and `display_name` (0054): a new column the app sets needs its own column
-  `GRANT`. Only `ziftbook_migrate` changes a removed membership's `role` or `removed_at` (a trigger, 0056): bringing
-  one back is `accept_invite`'s. A new read of `memberships` decides: active (filter `role <> 'removed'`, inside the
-  locking statement when it locks) or history (no filter). History names a member by `memberships.display_name`
-  (or a booking's `worker_display_name`); the account's name is only a fallback for a live member, because a
-  business reads a person's account row only while they are a live member (the `users` policy, 0055, ZB-32). A
-  read reached through a session needs none:
-  `ck_sessions_role` and the sessions foreign key keep a session's membership live. Never infer owner from
-  `role <> 'worker'`; compare to `'owner'`. A new table referencing memberships with `ON DELETE CASCADE` also needs
-  a line in `members.remove`, which deletes what the cascades used to.
+  `UPDATE` of only `role`, `removed_at`, `display_name` (0054) and `keeps_access` (0104): a new column the app sets
+  needs its own column `GRANT`. Only `ziftbook_migrate` changes a removed membership's `role` or `removed_at` (a
+  trigger, 0056): bringing one back is `accept_invite`'s. A new read of `memberships` decides: active (filter
+  `role <> 'removed'`, inside the locking statement when it locks) or history (no filter). History names a member by
+  `memberships.display_name` (or a booking's `worker_display_name`); the account's name is only a fallback for a live
+  member, because a business reads a person's account row only while they are a live member (the `users` policy, 0055,
+  ZB-32). A read reached through a session needs none: `ck_sessions_role` and the sessions foreign key keep a
+  session's membership live. Never infer owner from `role <> 'worker'`; compare to `'owner'`. A new table referencing
+  memberships with `ON DELETE CASCADE` also needs a line in `members.remove`, which deletes what the cascades used to.
 - The business's responsible person is derived, not stored: its oldest live owner (`ORDER BY memberships.id`).
   Nothing reads it yet. It is the creator only while they stay an owner: 0045's revive keeps a removed member's old
   `memberships.id`, so a returning creator who is made owner again becomes the oldest owner again.
@@ -804,6 +805,24 @@ value needs a redeploy it is an environment variable; otherwise it is a setting.
   `email.contact_email` jobs queued in the window.
 - Convert a business's local times with `zoneinfo`, never with SQL `AT TIME ZONE`: Postgres doesn't know every name
   the `tzdata` package accepts (`US/Pacific`, `Asia/Calcutta`).
+
+## Plans and entitlements
+
+What a business may use comes from its plan (ZIF-78). Every feature is a key in `FEATURES`
+(`backend/app/entitlements.py`), typed `flag`, `count` or `percent` (basis points, 0 to 10000); plans and per-business
+overrides store `{key: value}` checked by `entitlements.validate`. A gate asks `entitlements(db)` (cached on the
+request's session), never a plan's name or slug.
+
+- **Add a feature:** a `FEATURES` entry with its kind, an off or zero default and a description (the admin plan editor
+  shows it); no migration. Plans gain it when an operator sets it; until then every business gets the default.
+- **Gate:** `require(db, key)` for a flag, `require_room(db, key, used)` for a count, before the write. Both answer
+  402 `{"code": "plan_limit", "feature": "<key>", "limit": <count, or null for a flag>}`, which the console turns
+  into its one upgrade prompt; declare the 402 in the route's `responses`. Never gate money already in motion:
+  refunds, captures and webhooks for existing bookings run whatever the plan.
+- **Writes:** the app role only reads the billing tables (0103). An admin's change (plan, override, offer, grant,
+  billing setting) goes through a `SECURITY DEFINER` function with its audit row; Stripe's state and the people
+  limit's mark go through the worker (`billing.enforce`, `app/enforcement.py`). Never grant the app role a write on
+  them: a business could give itself a plan.
 
 ## Money
 

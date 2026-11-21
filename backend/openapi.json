@@ -7587,6 +7587,48 @@
           }
         }
       }
+    },
+    "/api/entitlements": {
+      "get": {
+        "tags": [
+          "billing"
+        ],
+        "summary": "Read Entitlements",
+        "description": "The business's plan, where it comes from, every feature's value, and the places in use.",
+        "operationId": "billing-read_entitlements",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntitlementsOut"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -9898,6 +9940,142 @@
         ],
         "title": "EnrolmentOut"
       },
+      "EntitlementsOut": {
+        "properties": {
+          "plan_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Plan Id"
+          },
+          "plan_slug": {
+            "type": "string",
+            "title": "Plan Slug"
+          },
+          "plan_name": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Plan Name"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "grant",
+              "subscription",
+              "trial",
+              "default"
+            ],
+            "title": "Source"
+          },
+          "trial_ends_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trial Ends At"
+          },
+          "grant_ends_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Grant Ends At"
+          },
+          "period_end": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Period End"
+          },
+          "cancel_at_period_end": {
+            "type": "boolean",
+            "title": "Cancel At Period End"
+          },
+          "over_limit_since": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Over Limit Since"
+          },
+          "values": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "object",
+            "title": "Values"
+          },
+          "members_used": {
+            "type": "integer",
+            "title": "Members Used"
+          },
+          "grace_ends_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Grace Ends At"
+          },
+          "offers": {
+            "items": {
+              "$ref": "#/components/schemas/PlanOption"
+            },
+            "type": "array",
+            "title": "Offers"
+          }
+        },
+        "type": "object",
+        "required": [
+          "plan_id",
+          "plan_slug",
+          "plan_name",
+          "source",
+          "trial_ends_at",
+          "grant_ends_at",
+          "period_end",
+          "cancel_at_period_end",
+          "over_limit_since",
+          "values",
+          "members_used",
+          "grace_ends_at",
+          "offers"
+        ],
+        "title": "EntitlementsOut"
+      },
       "Error": {
         "properties": {
           "code": {
@@ -9939,6 +10117,28 @@
               }
             ],
             "title": "Total"
+          },
+          "feature": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Feature"
+          },
+          "limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Limit"
           }
         },
         "type": "object",
@@ -10966,6 +11166,56 @@
           "headers"
         ],
         "title": "PhotoUploadOut"
+      },
+      "PlanOption": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "slug": {
+            "type": "string",
+            "title": "Slug"
+          },
+          "name": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Name"
+          },
+          "platform_fee_direct": {
+            "type": "integer",
+            "title": "Platform Fee Direct"
+          },
+          "platform_fee_marketplace": {
+            "type": "integer",
+            "title": "Platform Fee Marketplace"
+          },
+          "coupon_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coupon Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "slug",
+          "name",
+          "platform_fee_direct",
+          "platform_fee_marketplace",
+          "coupon_id"
+        ],
+        "title": "PlanOption",
+        "description": "A plan this business can subscribe to (prices come from Stripe, read elsewhere)."
       },
       "Price": {
         "properties": {

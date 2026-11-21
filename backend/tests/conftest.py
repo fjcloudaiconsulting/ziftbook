@@ -44,7 +44,7 @@ from sqlalchemy.engine import URL, make_url
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import NullPool
 
-from app import admin, auth, logs, mail, passwords, payments, stripe_gateway, tracing
+from app import admin, auth, entitlements, logs, mail, passwords, payments, stripe_gateway, tracing
 from app.db import SessionLocal, tenant_context
 from app.jobs import run_once
 from app.worker import KINDS
@@ -629,6 +629,86 @@ def bound(app_engine: Engine) -> Iterator[None]:
     SessionLocal.configure(bind=None)
 
 
+# ZIF-78 (ruling R4): the plan every business without a grant, subscription or trial is on here,
+# so tests written before plans keep today's behaviour. A gate test puts its business on explicit
+# values with give_plan; one about the seeded Free plan requests free_default.
+ALL_FEATURES: dict[str, object] = {
+    **{key: True for key, feature in entitlements.FEATURES.items() if feature.kind == "flag"},
+    "places": 50,
+    "messages_per_month": 1000,
+    "platform_fee_direct": 0,
+    "platform_fee_marketplace": 0,
+}
+assert entitlements.validate(ALL_FEATURES).keys() == entitlements.FEATURES.keys()
+PLAN = text("""
+INSERT INTO plans (slug, name, values) VALUES (:slug, '{"en": "T", "nl": "T", "pt": "T"}',
+  CAST(:values AS jsonb))
+ON CONFLICT (slug) DO UPDATE SET values = excluded.values, archived_at = NULL
+RETURNING id
+""")
+# No pool: an idle connection kept open would block a CREATE DATABASE ... TEMPLATE of this one.
+BILLING = create_engine(os.environ["ZIF_MIGRATE_DATABASE_URL"], poolclass=NullPool)
+
+
+@pytest.fixture(autouse=True)
+def _all_features_default(request: pytest.FixtureRequest) -> None:
+    """Point the default plan at ALL_FEATURES before every test that uses the database. Every test,
+    not once: a migration test that downgrades past 0103 re-seeds Free as the default."""
+    if "migrated" not in request.fixturenames:
+        return
+    request.getfixturevalue("migrated")
+    with BILLING.begin() as conn:
+        plan = conn.scalar(PLAN, {"slug": "all-features", "values": json.dumps(ALL_FEATURES)})
+        conn.execute(text("UPDATE platform_billing SET default_plan_id = :p"), {"p": plan})
+
+
+@pytest.fixture
+def free_default() -> Iterator[None]:
+    """The seeded Free plan as the default for this test; the all-features plan again after."""
+    with BILLING.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE platform_billing SET default_plan_id = (SELECT id FROM plans"
+                " WHERE slug = 'free')"
+            )
+        )
+    yield
+    with BILLING.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE platform_billing SET default_plan_id = (SELECT id FROM plans"
+                " WHERE slug = 'all-features')"
+            )
+        )
+
+
+def give_plan(tenant_id: uuid.UUID, values: dict[str, object]) -> None:
+    """Put one business on exactly these values (registry defaults for the rest): a plan holding
+    them, granted to it open-ended. A fixture deleting the business calls delete_billing first."""
+    checked = entitlements.validate(values)
+    encoded = json.dumps(checked, sort_keys=True)
+    slug = f"given-{hashlib.sha256(encoded.encode()).hexdigest()[:16]}"
+    with migrate_tenant_context(BILLING, tenant_id) as conn:
+        plan = conn.scalar(PLAN, {"slug": slug, "values": encoded})
+        conn.execute(
+            text("""
+            INSERT INTO plan_grants (tenant_id, plan_id, reason, admin_user_id)
+            VALUES (:t, :p, 'test', :t)
+            ON CONFLICT (tenant_id) DO UPDATE SET plan_id = excluded.plan_id, ends_at = NULL
+            """),
+            {"t": tenant_id, "p": plan},
+        )
+
+
+def delete_billing(conn: Connection, tenant_ids: Iterable[object]) -> None:
+    """The billing rows that hold a business (no ON DELETE CASCADE), as the migrate role, one
+    business at a time (forced row-level security)."""
+    for tenant_id in tenant_ids:
+        conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(tenant_id)})
+        for table in ("plan_grants", "business_overrides", "plan_offers", "subscriptions"):
+            conn.execute(text(f"DELETE FROM {table}"))
+
+
 def fresh_address() -> str:
     """A new IPv6 /64 in a new /48, so per-IP rate limits never carry over between tests or runs:
     auth limits key IPv6 by /48 (limits.AUTH_V6_PREFIX), and 2001:db8::/32 leaves only 16 bits of
@@ -1060,6 +1140,7 @@ def people(migrate_engine: Engine, bound: None) -> Iterator[People]:
         delete_clients(conn, (a, b))
         delete_services(conn, (a, b))
         delete_payment_accounts(conn, (a, b))
+        delete_billing(conn, (a, b))
         conn.execute(text("DELETE FROM tenants WHERE id IN (:a, :b)"), {"a": a, "b": b})
 
 
