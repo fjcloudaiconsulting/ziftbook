@@ -186,6 +186,11 @@ describe("submitFailure", () => {
     assert.equal(submitFailure({ status: 409, code: "slot_taken" }, true, "Ana"), "slotTaken");
     assert.equal(submitFailure({ status: 409, code: "other" }, true, "Ana"), "problem");
   });
+  test("ZIF-78 fence: a paused person's place is said so, with and without an override", () => {
+    // Kills: "that time was just taken" (or a general problem) for a person whose place is paused.
+    assert.equal(submitFailure({ status: 409, code: "member_paused" }, false, "Ana"), "memberPaused");
+    assert.equal(submitFailure({ status: 409, code: "member_paused" }, true, "Ana"), "memberPaused");
+  });
   test("ZIF-158 fence: the removed slot_held code reads as 'just taken' like any other 409", () => {
     assert.equal(submitFailure({ status: 409, code: "slot_held" }, false, "Ana"), "slotTaken");
   });

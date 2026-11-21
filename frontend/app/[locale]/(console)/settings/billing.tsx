@@ -4,7 +4,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { useEffect, useRef, useState } from "react";
 
 import { billingCheckout, billingPortal, type PlanOption, type UrlOut } from "@/api-client";
-import { billingError, discountUnknown, feeLabel, isStripeUrl, priceLabel } from "@/lib/billing";
+import { billingError, canManage, feeLabel, isStripeUrl, priceLabel, priceNote } from "@/lib/billing";
 import { dateLocale } from "@/lib/console";
 
 import { JSON_WRITE, SignedOutBanner, useConsole } from "../../_ui/console";
@@ -65,6 +65,8 @@ export function Billing() {
       setSubscribed(true);
       void reloadEntitlements();
     }
+    // The plan list then shows the offer's discount as gone.
+    if (why === "couponUnavailable") void reloadEntitlements();
     setError(why);
   }
 
@@ -79,13 +81,13 @@ export function Billing() {
     return t("sourceDefault");
   }
 
-  const managed = !!e && (e.source === "subscription" || subscribed);
+  const managed = !!e && canManage(e, subscribed);
   const canSubscribe = owner && !!e && !managed && e.source !== "grant";
   const places = e?.values.places;
 
   function renderOption(option: PlanOption) {
     const price = priceLabel(option, locale);
-    const per = option.interval === "month" ? "perMonth" : option.interval === "year" ? "perYear" : "priceOnly";
+    const note = priceNote(option);
     const label = name(option.name);
     return (
       <li key={option.id}>
@@ -95,8 +97,8 @@ export function Billing() {
               {label}
               {e && option.id === e.plan_id && <span className={styles.pill}>{t("currentBadge")}</span>}
             </span>
-            <span className={styles.rowMeta}>{price ? t(per, { price }) : t("noPrice")}</span>
-            {discountUnknown(option) && <span className={styles.rowMeta}>{t("coupon")}</span>}
+            <span className={styles.rowMeta}>{price ? t(price.key, price.values) : t("noPrice")}</span>
+            {note && <span className={styles.rowMeta}>{t(note)}</span>}
             <span className={styles.rowMeta}>{t("feeDirect", { fee: feeLabel(option.platform_fee_direct, locale) })}</span>
             <span className={styles.rowMeta}>{t("feeMarketplace", { fee: feeLabel(option.platform_fee_marketplace, locale) })}</span>
             <span className={styles.rowMeta}>{t("stripeFee")}</span>
@@ -150,6 +152,10 @@ export function Billing() {
               <br />
               {source()}{" "}
               {typeof places === "number" ? t("placesOf", { used: e.members_used, limit: places }) : t("places", { used: e.members_used })}
+              <br />
+              {t("feeDirect", { fee: feeLabel(Number(e.values.platform_fee_direct), locale) })}
+              <br />
+              {t("feeMarketplace", { fee: feeLabel(Number(e.values.platform_fee_marketplace), locale) })}
             </p>
             {e.over_limit_since && <Banner tone="note">{t("overLimit")}</Banner>}
             {!owner && <p className={uiStyles.hint}>{t("ownerOnly")}</p>}

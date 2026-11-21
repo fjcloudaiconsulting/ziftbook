@@ -315,6 +315,7 @@ function Fields({ prefill, team, todayISO, date, onDone, services, booking }: Pr
         setEmailError(t("emailTaken"));
         focusTarget.current = "bf-new-email";
       } else if (failure === "changed") setBanner(t("changedClose"));
+      else if (failure === "memberPaused") setBanner(t("memberPaused"));
       else if (failure === "ownerOnly") setBanner(errorsT("ownerOnly"));
       else if (failure === "phoneInvalid") setBanner(errorsT("phoneInvalid"));
       else setBanner(form(problem(outcome)));

@@ -417,6 +417,7 @@
     "joining": "Entrando na equipe…",
     "wrongPassword": "Essa senha não está certa. Tente de novo ou redefina.",
     "accountExists": "Este e-mail agora tem uma conta no ziftbook. Digite a senha dela para aceitar.",
+    "noRoom": "{business} não tem lugar para mais uma pessoa agora. Fale com o dono do negócio e depois abra este link de novo.",
     "expiredTitle": "Este convite expirou",
     "expiredLede": "Os links de convite valem uma vez, por 7 dias. Peça um novo convite ao responsável pelo negócio.",
     "joinedBefore": "Já entrou na equipe?",
@@ -714,6 +715,7 @@
       "moveFor": "{client} · {service}",
       "slotTaken": "Esse horário acabou de ser ocupado. Escolha outro.",
       "slotUnavailable": "{member} não faz este serviço ou não trabalha nesse horário. Escolha outra pessoa ou horário.",
+      "memberPaused": "O lugar desta pessoa está pausado. Escolha outra pessoa.",
       "emailTaken": "Já existe um cliente com este e-mail. Busque por ele.",
       "changedClose": "Este agendamento mudou. Feche e abra de novo.",
       "booked": "Agendado: {client}, {when}.",
@@ -1073,6 +1075,7 @@
       "overLimitHint": "Seu plano cobre menos pessoas do que você tem. No tempo que resta, marque quem mantém o acesso. Os demais ficam pausados até você fazer upgrade.",
       "overLimitLink": "Escolher um plano",
       "keepsFailed": "Não foi possível salvar. Tente de novo.",
+      "keepsTooMany": "Há mais pessoas marcadas do que lugares no seu plano ({count}). Os donos mantêm o acesso primeiro, depois os demais na ordem mostrada, até completar os lugares.",
       "ownerKept": "O negócio sempre mantém o dono."
     },
     "invites": {
@@ -1230,6 +1233,11 @@
       "perMonth": "{price} por mês",
       "perYear": "{price} por ano",
       "priceOnly": "{price}",
+      "onceMonth": "{price} no primeiro mês, depois {then} por mês",
+      "onceYear": "{price} no primeiro ano, depois {then} por ano",
+      "repeatingMonth": "{price} por mês durante {count, plural, one {# mês} other {# meses}}, depois {then} por mês",
+      "repeatingYear": "{price} por ano durante {count, plural, one {# ano} other {# anos}}, depois {then} por ano",
+      "couponGone": "O desconto desta oferta não está mais disponível.",
       "noPrice": "O preço aparece no pagamento",
       "coupon": "Desconto aplicado no pagamento.",
       "feeDirect": "Taxa da plataforma nas reservas da sua página de reservas: {fee}",
@@ -1249,6 +1257,7 @@
       "notPurchasable": "Este plano não pode ser comprado online.",
       "noSubscription": "Ainda não há assinatura para gerenciar. Assine um plano primeiro.",
       "notFound": "Este plano não existe mais. Recarregue a página e tente de novo.",
+      "couponUnavailable": "O desconto desta oferta acabou, então ela não pode ser comprada agora. Escolha outro plano.",
       "failedGeneric": "Algo deu errado. Tente de novo em instantes."
     }
   },

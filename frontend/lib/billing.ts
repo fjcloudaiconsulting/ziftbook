@@ -10,13 +10,14 @@ export function daysLeft(until: string, now: Date): number {
 
 type Dates = Pick<EntitlementsOut, "source" | "trial_ends_at" | "grant_ends_at" | "grace_ends_at">;
 
-/** The console banner: the downgrade grace beats the trial beats a grant that ends. A date already past
- * shows nothing (the API moves on at its next read). */
+/** The console banner: the downgrade grace beats the trial beats a grant that ends. The trial and grant banners
+ * follow where the plan comes from (a business that subscribed during its trial, or was granted a plan, is not
+ * on the trial). A date already past shows nothing (the API moves on at its next read). */
 export function bannerFor(e: Dates, now: Date): { kind: "trial" | "grace" | "granted" | null; days: number } {
   const picks = [
     ["grace", e.grace_ends_at],
-    ["trial", e.trial_ends_at],
-    ["granted", e.grant_ends_at],
+    ["trial", e.source === "trial" ? e.trial_ends_at : null],
+    ["granted", e.source === "grant" ? e.grant_ends_at : null],
   ] as const;
   for (const [kind, until] of picks) {
     if (until && new Date(until) > now) return { kind, days: daysLeft(until, now) };
@@ -24,20 +25,56 @@ export function bannerFor(e: Dates, now: Date): { kind: "trial" | "grace" | "gra
   return { kind: null, days: 0 };
 }
 
-/** The plan's price in the reader's format, or "" when it has none: after the offer coupon's discount when the API
- * knows it (Stripe rounds a percentage's discount to the minor unit; never below zero). With only the coupon's id
- * known, the list price: the screen notes the discount instead of computing one. */
-export function priceLabel(option: Pick<PlanOption, "unit_amount" | "currency" | "percent_off" | "amount_off">, locale: string): string {
-  if (option.unit_amount === null || !option.currency) return "";
-  let amount = option.unit_amount;
-  if (option.percent_off != null) amount -= Math.round((amount * option.percent_off) / 100);
-  else if (option.amount_off != null) amount = Math.max(0, amount - option.amount_off);
-  return formatMoney(amount, option.currency, locale);
+/** Whether the owner gets "Manage billing": a live Stripe subscription (its period end), even while a granted
+ * plan is the one in force, or one the API just said exists (409 already_subscribed). */
+export function canManage(e: Pick<EntitlementsOut, "source" | "period_end">, subscribed: boolean): boolean {
+  return e.period_end !== null || e.source === "subscription" || subscribed;
 }
 
-/** Whether the screen notes "discount applied at checkout": a coupon whose discount the API couldn't give. */
-export function discountUnknown(option: Pick<PlanOption, "coupon_id" | "percent_off" | "amount_off">): boolean {
-  return !!option.coupon_id && option.percent_off == null && option.amount_off == null;
+type Priced = Pick<
+  PlanOption,
+  "unit_amount" | "currency" | "interval" | "coupon_id" | "percent_off" | "amount_off" | "coupon_duration" | "coupon_duration_in_months" | "coupon_valid"
+>;
+export type PriceKey = "perMonth" | "perYear" | "priceOnly" | "onceMonth" | "onceYear" | "repeatingMonth" | "repeatingYear";
+
+/** The discounted amount, or null when the screen can't word one: no price, no known discount, a dead coupon,
+ * or terms that don't fit the price (a repeating coupon's months that make no whole years of a yearly price).
+ * Stripe rounds a percentage's discount to the minor unit; an amount off never goes below zero. */
+function discounted(o: Priced): number | null {
+  if (o.unit_amount === null || o.coupon_valid === false) return null;
+  const unit = o.interval === "month" || o.interval === "year";
+  if (o.coupon_duration === "once" && !unit) return null;
+  if (o.coupon_duration === "repeating") {
+    const months = o.coupon_duration_in_months ?? 0;
+    if (!unit || months < 1 || (o.interval === "year" && months % 12 !== 0)) return null;
+  }
+  if (o.percent_off != null) return o.unit_amount - Math.round((o.unit_amount * o.percent_off) / 100);
+  if (o.amount_off != null) return Math.max(0, o.unit_amount - o.amount_off);
+  return null;
+}
+
+/** The plan's price as a message (its key in Console.billing and values), or null when it has none. A coupon
+ * the API knows is worded as Stripe applies it: forever is the discounted price; once is the first month or year
+ * at the discounted price, then the list price; repeating is the discounted price for its months (whole years on
+ * a yearly price), then the list price. Otherwise the list price, and priceNote says why. */
+export function priceLabel(option: Priced, locale: string): { key: PriceKey; values: { price: string; then?: string; count?: number } } | null {
+  if (option.unit_amount === null || !option.currency) return null;
+  const money = (amount: number) => formatMoney(amount, option.currency!, locale);
+  const yearly = option.interval === "year";
+  const list = money(option.unit_amount);
+  const off = discounted(option);
+  if (off === null || option.coupon_duration === "forever" || option.coupon_duration === null)
+    return { key: option.interval === "month" ? "perMonth" : yearly ? "perYear" : "priceOnly", values: { price: off === null ? list : money(off) } };
+  if (option.coupon_duration === "once") return { key: yearly ? "onceYear" : "onceMonth", values: { price: money(off), then: list } };
+  const months = option.coupon_duration_in_months!;
+  return { key: yearly ? "repeatingYear" : "repeatingMonth", values: { price: money(off), then: list, count: yearly ? months / 12 : months } };
+}
+
+/** The note under a plan's price: "couponGone" once Stripe says the offer's coupon is deleted, expired or used up;
+ * "coupon" (discount applied at checkout) for a coupon whose discount the screen can't word; else none. */
+export function priceNote(option: Priced): "coupon" | "couponGone" | null {
+  if (option.coupon_valid === false) return "couponGone";
+  return option.coupon_id && discounted(option) === null ? "coupon" : null;
 }
 
 /** A fee held in basis points, as a percentage ("0%" stated, never left out). */
@@ -53,6 +90,7 @@ export function billingError(outcome: { status: number; code?: string }):
   | "notPurchasable"
   | "noSubscription"
   | "notFound"
+  | "couponUnavailable"
   | "failed" {
   if (outcome.status === 503 && outcome.code === "billing_unavailable") return "unavailable";
   if (outcome.status === 409) {
@@ -60,6 +98,7 @@ export function billingError(outcome: { status: number; code?: string }):
     if (outcome.code === "plan_granted") return "granted";
     if (outcome.code === "not_purchasable") return "notPurchasable";
     if (outcome.code === "no_subscription") return "noSubscription";
+    if (outcome.code === "coupon_unavailable") return "couponUnavailable";
   }
   if (outcome.status === 404 && outcome.code === "plan_not_found") return "notFound";
   return "failed";

@@ -417,6 +417,7 @@
     "joining": "Bezig met aansluiten…",
     "wrongPassword": "Dat wachtwoord klopt niet. Probeer het opnieuw of stel een nieuw in.",
     "accountExists": "Dit e-mailadres heeft nu een ziftbook-account. Vul het wachtwoord daarvan in om te accepteren.",
+    "noRoom": "{business} heeft op dit moment geen plek voor nog iemand. Vraag het aan de eigenaar van het bedrijf en open deze link daarna opnieuw.",
     "expiredTitle": "Deze uitnodiging is verlopen",
     "expiredLede": "Uitnodigingslinks werken één keer, 7 dagen lang. Vraag de eigenaar van het bedrijf om een nieuwe uitnodiging.",
     "joinedBefore": "Al aangesloten?",
@@ -714,6 +715,7 @@
       "moveFor": "{client} · {service}",
       "slotTaken": "Die tijd is net bezet. Kies een andere.",
       "slotUnavailable": "{member} doet deze dienst niet of werkt dan niet. Kies een andere persoon of tijd.",
+      "memberPaused": "De plek van deze persoon is gepauzeerd. Kies iemand anders.",
       "emailTaken": "Er staat al een klant met dit e-mailadres in je lijst. Zoek die klant op.",
       "changedClose": "Deze boeking is gewijzigd. Sluit hem en open hem opnieuw.",
       "booked": "Geboekt: {client}, {when}.",
@@ -1073,6 +1075,7 @@
       "overLimitHint": "Je abonnement dekt minder mensen dan je hebt. Vink in de tijd die er nog is aan wie toegang houdt. De rest wordt gepauzeerd tot je upgradet.",
       "overLimitLink": "Kies een abonnement",
       "keepsFailed": "Dat kon niet worden opgeslagen. Probeer het nog eens.",
+      "keepsTooMany": "Je hebt meer mensen aangevinkt dan je abonnement plekken heeft ({count}). Eigenaren houden als eerste toegang, daarna de anderen in de getoonde volgorde, tot de plekken vol zijn.",
       "ownerKept": "Het bedrijf houdt altijd zijn eigenaar."
     },
     "invites": {
@@ -1230,6 +1233,11 @@
       "perMonth": "{price} per maand",
       "perYear": "{price} per jaar",
       "priceOnly": "{price}",
+      "onceMonth": "{price} de eerste maand, daarna {then} per maand",
+      "onceYear": "{price} het eerste jaar, daarna {then} per jaar",
+      "repeatingMonth": "{price} per maand gedurende {count, plural, one {# maand} other {# maanden}}, daarna {then} per maand",
+      "repeatingYear": "{price} per jaar gedurende {count, plural, one {# jaar} other {# jaar}}, daarna {then} per jaar",
+      "couponGone": "De korting op dit aanbod is niet meer beschikbaar.",
       "noPrice": "Prijs zie je bij het afrekenen",
       "coupon": "Korting wordt toegepast bij het afrekenen.",
       "feeDirect": "Platformkosten op boekingen via je boekingspagina: {fee}",
@@ -1249,6 +1257,7 @@
       "notPurchasable": "Dit abonnement kun je niet online afsluiten.",
       "noSubscription": "Er is nog geen abonnement om te beheren. Neem eerst een abonnement.",
       "notFound": "Dit abonnement bestaat niet meer. Laad de pagina opnieuw en probeer het nog eens.",
+      "couponUnavailable": "De korting op dit aanbod is verlopen, dus je kunt het nu niet afsluiten. Kies een ander abonnement.",
       "failedGeneric": "Er ging iets mis. Probeer het zo nog eens."
     }
   },

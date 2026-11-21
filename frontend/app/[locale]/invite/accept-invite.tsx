@@ -134,6 +134,8 @@ function Invite({ link, turnstileSiteKey }: { link: OpenedLink | null; turnstile
       setMessage({ tone: "info", text: t("accountExists") });
       setPassword("");
       passwordInput.current?.focus();
+    } else if (meaning === "noRoom") {
+      setMessage({ tone: "note", text: t("noRoom", { business: invite.business_name }) });
     } else if (meaning === "nameRequired") {
       setPersonNameError(t("personNameRequired"));
     } else if (meaning.startsWith("password_")) {

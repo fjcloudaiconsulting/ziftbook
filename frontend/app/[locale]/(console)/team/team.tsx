@@ -40,20 +40,27 @@ function HoursMeta({ shifts, locale }: { shifts: { weekday: number; starts_at: s
   return <span className={styles.rowMeta}>{days === null ? t("noHours") : t("worksLabel", { days })}</span>;
 }
 
+// The background job's pause or unpause after a pick lands within a few seconds.
+const RELOAD_AFTER_PICK_MS = 3000;
+
 /** While the business has more people than its plan covers (ZIF-78), the owner ticks who keeps access; the
- * rest are paused once the grace ends. Applied at once by the API, so the list is read again after each
- * pick (the rows' "Paused" label follows). */
+ * rest are paused once the grace ends. After the grace a background job pauses or unpauses people shortly after
+ * a pick, so the list is read again at once and once more a few seconds later (the rows' "Paused" label follows). */
 function KeepsAccess({ members, onChanged, onSignedOut }: { members: MemberOut[]; onChanged(): void; onSignedOut(value: boolean): void }) {
   const t = useTranslations("Console.team");
   const tConsole = useTranslations("Console");
   const form = useTranslations("Form");
   const person = useTranslations("Console.person");
-  const { call } = useConsole();
+  const { call, entitlements } = useConsole();
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const busyRef = useRef(false);
+  const later = useRef<ReturnType<typeof setTimeout>>(undefined);
+  useEffect(() => () => clearTimeout(later.current), []);
   // The API always keeps one owner: with a single owner that row is fixed; with several, each can be picked.
   const kept = (m: MemberOut) => m.role === "owner" && members.filter((x) => x.role === "owner").length === 1;
+  const places = entitlements?.values.places;
+  const ticked = members.filter((m) => m.keeps_access || kept(m)).length;
 
   async function pick(member: MemberOut, keeps: boolean) {
     if (busyRef.current) return;
@@ -68,8 +75,11 @@ function KeepsAccess({ members, onChanged, onSignedOut }: { members: MemberOut[]
       setBusy(null);
       busyRef.current = false;
     }
-    if (outcome.status === 204) onChanged();
-    else if (outcome.status === 401) onSignedOut(true);
+    if (outcome.status === 204) {
+      onChanged();
+      clearTimeout(later.current);
+      later.current = setTimeout(onChanged, RELOAD_AFTER_PICK_MS);
+    } else if (outcome.status === 401) onSignedOut(true);
     else if (outcome.status === 402) return; // the console's own upgrade message already says why
     else setError(`${t("keepsFailed")} ${form(problem(outcome))} ${tConsole("notSaved")}`);
   }
@@ -82,6 +92,7 @@ function KeepsAccess({ members, onChanged, onSignedOut }: { members: MemberOut[]
       <p className={uiStyles.hint}>
         {t("overLimitHint")} <Link href="/settings?tab=plan">{t("overLimitLink")}</Link>
       </p>
+      {typeof places === "number" && ticked > places && <p className={uiStyles.hint}>{t("keepsTooMany", { count: places })}</p>}
       {error && <Banner tone="error">{error}</Banner>}
       {members.map((m) => (
         <div key={m.member_id} className={styles.checkRow}>
@@ -400,7 +411,7 @@ export function TeamList() {
     loadInvites();
   }
 
-  /** Only the member rows again (a pick of who keeps access pauses or unpauses people at once). */
+  /** Only the member rows again (a pick of who keeps access can pause or unpause people). */
   async function reloadMembers() {
     const outcome = await call(() => membersList());
     if (outcome.status === 200 && outcome.data) setMembers(outcome.data);

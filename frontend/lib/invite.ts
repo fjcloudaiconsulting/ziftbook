@@ -31,6 +31,7 @@ export type Accepted =
   | "alreadyMember"
   | "tooMany"
   | "nameRequired"
+  | "noRoom"
   | (typeof PASSWORD_CODES)[number]
   | "other";
 
@@ -39,6 +40,7 @@ export function acceptOutcome(answer: { status: number; code?: string }): Accept
   if (answer.status === 201) return "joined";
   if (answer.status === 400) return "expired";
   if (answer.status === 401) return "wrongPassword";
+  if (answer.status === 402) return "noRoom"; // ZIF-78: the business's plan has no place left
   if (answer.status === 429) return "tooMany";
   if (answer.status === 409 && answer.code === "account_exists") return "accountExists";
   if (answer.status === 409 && answer.code === "already_member") return "alreadyMember";
