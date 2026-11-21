@@ -15,6 +15,7 @@ import { Banner, Heading, type Outcome, problem, Screen, send } from "../../../_
 import styles from "../../../_ui/ui.module.css";
 import admin from "../../admin.module.css";
 import { BackLink } from "../../parts";
+import { BusinessBilling } from "./billing";
 import { type Done, Suspension } from "./suspension";
 
 /** ZIF-73: one business, read-only: its members and roles, its settings and its latest audit events. No client's
@@ -192,6 +193,8 @@ export function Business({ id }: { id: string }) {
               </ul>
             )}
           </section>
+
+          <BusinessBilling tenantId={business.id} />
 
           {!refreshing && outcome?.data && (
             <Suspension
