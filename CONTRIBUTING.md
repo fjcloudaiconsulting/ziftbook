@@ -831,7 +831,10 @@ request's session), never a plan's name or slug.
   whose Price is archived in Stripe shows no price and drops out of the portal. An admin's plan save or archive
   calls it once the write has committed; Stripe refusing or not set up never fails the write, which answers
   `portal_synced: false` and the plans screen says so (saving again retries). A plan option carries its offer's
-  coupon discount (`percent_off`, `amount_off`), read from Stripe and kept in process like the Prices.
+  coupon discount (`percent_off`, `amount_off`) and terms (`coupon_duration`, `coupon_duration_in_months`), read
+  from Stripe and kept in process like the Prices; `coupon_valid` is false once Stripe says the coupon is deleted,
+  expired or used up, and None while Stripe can't be asked. Checkout answers 409 `coupon_unavailable` for a dead
+  coupon and sends an unknown one along (Stripe decides).
 
 ## Money
 

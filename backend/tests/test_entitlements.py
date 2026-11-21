@@ -434,6 +434,9 @@ def test_get_entitlements_shape_and_no_store(
             "interval": None,
             "percent_off": None,
             "amount_off": None,
+            "coupon_duration": None,
+            "coupon_duration_in_months": None,
+            "coupon_valid": None,
         },
         str(offered): {
             "id": str(offered),
@@ -447,6 +450,9 @@ def test_get_entitlements_shape_and_no_store(
             "interval": None,
             "percent_off": None,
             "amount_off": None,
+            "coupon_duration": None,
+            "coupon_duration_in_months": None,
+            "coupon_valid": None,
         },
     }
     assert len([o for o in body["offers"] if o["id"] == str(public)]) == 1

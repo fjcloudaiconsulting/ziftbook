@@ -13574,6 +13574,44 @@
               }
             ],
             "title": "Amount Off"
+          },
+          "coupon_duration": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "once",
+                  "repeating",
+                  "forever"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coupon Duration"
+          },
+          "coupon_duration_in_months": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coupon Duration In Months"
+          },
+          "coupon_valid": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coupon Valid"
           }
         },
         "type": "object",
@@ -13588,10 +13626,13 @@
           "currency",
           "interval",
           "percent_off",
-          "amount_off"
+          "amount_off",
+          "coupon_duration",
+          "coupon_duration_in_months",
+          "coupon_valid"
         ],
         "title": "PlanOption",
-        "description": "A plan this business can subscribe to. The price is Stripe's (ZIF-79), before any coupon;\nall three price fields are None while Stripe can't be asked. The coupon's discount is None\nwhile Stripe can't be asked, once it no longer applies, and with no coupon."
+        "description": "A plan this business can subscribe to. The price is Stripe's (ZIF-79), before any coupon;\nall three price fields are None while Stripe can't be asked. The coupon fields are None while\nStripe can't be asked and with no coupon; its discount and terms also once it no longer\napplies (coupon_valid false)."
       },
       "PlanOut": {
         "properties": {

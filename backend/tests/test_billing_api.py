@@ -178,11 +178,34 @@ def test_checkout_applies_the_offer_coupon(
     other = plan({}, public=True, price=True)
     offer(migrate_engine, people.a, offered, "SPRING")
     offer(migrate_engine, people.b, other, "NOT_YOURS")
+    fake_stripe.coupons["SPRING"] = CouponInfo(True, 20.0, None, "forever", None, None)
 
     assert checkout(owner, offered).status_code == 200
     assert checkout(owner, other).status_code == 200
 
     assert [s["coupon"] for s in sent(fake_stripe, "create_checkout")] == ["SPRING", None]
+
+
+# ZIF-79 fence. Kills: a coupon Stripe says is spent or deleted sent to Checkout (Stripe refuses
+# it, the owner sees "billing unavailable"); checkout blocked while Stripe can't say (unknown is
+# not invalid: the coupon goes along and Stripe decides).
+def test_a_dead_coupon_is_refused_and_an_unknown_one_goes_along(
+    people: People, owner: TestClient, fake_stripe: FakeGateway, plan: Plan, migrate_engine: Engine
+) -> None:
+    spent, gone, unknown = (plan({}, price=True) for _ in range(3))
+    offer(migrate_engine, people.a, spent, "SPENT")
+    offer(migrate_engine, people.a, gone, "GONE")
+    offer(migrate_engine, people.a, unknown, "LATER")
+    fake_stripe.coupons["SPENT"] = CouponInfo(False, 50.0, None, "once", None, None)
+    fake_stripe.coupons["LATER"] = CouponInfo(True, 50.0, None, "once", None, None)
+
+    for dead in (spent, gone):
+        response = checkout(owner, dead)
+        assert (response.status_code, response.json()) == (409, {"code": "coupon_unavailable"})
+    fake_stripe.fail_next("retrieve_coupon")
+    assert checkout(owner, unknown).status_code == 200
+
+    assert [s["coupon"] for s in sent(fake_stripe, "create_checkout")] == ["LATER"]
 
 
 # ZIF-79 fence. Kills: the trial's days lost on subscribing (charged at once); a trial_end Stripe
@@ -485,15 +508,17 @@ def test_plan_options_carry_their_stripe_price(
 
 
 # ZIF-79 fence. Kills: an offer's discount missing from its plan option (the console can't show
-# the discounted price); a deleted, spent or other-currency coupon shown as a discount; Stripe
-# asked for coupons on every console load; the plan list failing when Stripe is down, instead of
-# answering without the discount.
+# the discounted price); a coupon's terms missing (a first-month discount shown as forever); a
+# deleted, spent or other-currency coupon shown as a discount; a dead coupon told apart from an
+# unknown one no longer; Stripe asked for coupons on every console load; the plan list failing
+# when Stripe is down, instead of answering without the discount.
 def test_plan_options_carry_their_coupon_discount(
     people: People, owner: TestClient, fake_stripe: FakeGateway, plan: Plan, migrate_engine: Engine
 ) -> None:
     coupons = {
         "HALF": CouponInfo(True, 12.5, None, "forever", None, None),
         "FIVE": CouponInfo(True, None, 500, "once", None, "eur"),
+        "THREE": CouponInfo(True, 10.0, None, "repeating", 3, None),
         "DOLLARS": CouponInfo(True, None, 500, "once", None, "usd"),
         "SPENT": CouponInfo(False, 50.0, None, "once", None, None),
         "GONE": None,
@@ -506,27 +531,31 @@ def test_plan_options_carry_their_coupon_discount(
         fake_stripe.prices[price_of(migrate_engine, plans[coupon])] = info("prod_a")
     fake_stripe.coupons.update({k: v for k, v in coupons.items() if k and v})
 
-    def discounts() -> dict[str | None, tuple[Any, Any]]:
+    fields = ("percent_off", "amount_off", "coupon_duration", "coupon_duration_in_months")
+
+    def discounts() -> dict[str | None, tuple[Any, ...]]:
         body = owner.get("/api/entitlements").json()
-        by_id = {o["id"]: (o["percent_off"], o["amount_off"]) for o in body["offers"]}
+        by_id = {o["id"]: (*(o[f] for f in fields), o["coupon_valid"]) for o in body["offers"]}
         return {coupon: by_id[str(plan_id)] for coupon, plan_id in plans.items()}
 
+    nothing = (None, None, None, None)
     assert discounts() == {
-        "HALF": (12.5, None),
-        "FIVE": (None, 500),
-        "DOLLARS": (None, None),
-        "SPENT": (None, None),
-        "GONE": (None, None),
-        None: (None, None),
+        "HALF": (12.5, None, "forever", None, True),
+        "FIVE": (None, 500, "once", None, True),
+        "THREE": (10.0, None, "repeating", 3, True),
+        "DOLLARS": (None, None, "once", None, True),
+        "SPENT": (*nothing, False),
+        "GONE": (*nothing, False),
+        None: (*nothing, None),
     }
     calls = fake_stripe.count("retrieve_coupon")
-    assert calls == 5  # each coupon once
-    assert discounts()["HALF"] == (12.5, None)
+    assert calls == 6  # each coupon once
+    assert discounts()["HALF"] == (12.5, None, "forever", None, True)
     assert fake_stripe.count("retrieve_coupon") == calls  # cached
 
     entitlements._coupons.clear()
-    fake_stripe.fail_next("retrieve_coupon", times=5)
-    assert set(discounts().values()) == {(None, None)}
+    fake_stripe.fail_next("retrieve_coupon", times=6)
+    assert set(discounts().values()) == {(*nothing, None)}
 
 
 # ZIF-79 fence. Kills: one Stripe call per plan on every cold console load (one listing serves

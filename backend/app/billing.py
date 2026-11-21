@@ -25,7 +25,7 @@ from sqlalchemy.orm import Session
 from app import auth, business_settings, enforcement, jobs, limits, logs, stripe_gateway
 from app.config import MailSettings, StripeSettings
 from app.db import SessionLocal, tenant_context
-from app.entitlements import entitlements
+from app.entitlements import coupons, entitlements
 from app.errors import ApiError, Error
 from app.jobs import Job
 from app.services import STRICT
@@ -162,6 +162,12 @@ def checkout(body: CheckoutIn, row: Owner, response: Response) -> UrlOut:
             if found.trial_ends_at - datetime.now(UTC) >= MIN_TRIAL_LEFT:
                 trial_end = int(found.trial_ends_at.timestamp())
         _ready(row.tenant_id)
+        # A coupon Stripe says is gone or spent would fail the session: say so. Unknown (Stripe
+        # not answering) goes ahead, and Stripe decides.
+        if plan.stripe_coupon_id is not None:
+            coupon = coupons([plan.stripe_coupon_id]).get(plan.stripe_coupon_id)
+            if coupon is not None and not coupon.valid:
+                raise ApiError(409, "coupon_unavailable")
         settings = _settings_url(locale)
         params = {
             "customer": subscription.stripe_customer_id if subscription else None,
