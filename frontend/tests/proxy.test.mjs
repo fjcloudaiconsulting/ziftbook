@@ -612,11 +612,13 @@ describe("request body cap (ZIF-136)", () => {
     const hook = await send(port, "/api/stripe/webhook", [big]);
     assert.equal(hook.status, 200);
     assert.equal(JSON.parse(hook.body).body.length, big.length);
+    const billing = await send(port, "/api/stripe/billing-webhook", [big]);
+    assert.equal(billing.status, 200);
     const other = await send(port, "/api/sign-up", [big]);
     assert.equal(other.status, 413);
     const over = await send(port, "/api/stripe/webhook", [Buffer.alloc(WEBHOOK_MAX_BODY_BYTES + 1, "a")]);
     assert.equal(over.status, 413);
-    assert.equal(api.requests.length, 1);
+    assert.equal(api.requests.length, 2);
   });
 
   test("fence: a chunked body past Next's own limit is a 413, never forwarded cut", async () => {

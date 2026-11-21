@@ -34,6 +34,7 @@ from app.stripe_gateway import (
     Mode,
     PriceInfo,
     RefundState,
+    SubscriptionInfo,
 )
 
 WEBHOOK_SECRET = "whsec_test_secret_not_a_real_one"
@@ -86,6 +87,9 @@ class FakeGateway(Gateway):
         self.portal: dict[str, list[str]] | None = None
         self.checkout_sessions: dict[str, str] = {}
         self.checkout_params: dict[str, tuple[Any, ...]] = {}
+        # Platform subscriptions by id, and those whose latest invoice was refunded.
+        self.subscriptions: dict[str, dict[str, Any]] = {}
+        self.refunded_subscriptions: list[str] = []
 
     @contextmanager
     def _keyed(self, key: str) -> Iterator[None]:
@@ -454,6 +458,47 @@ class FakeGateway(Gateway):
         self._enter("list_prices", ids=list(ids))
         listed = {i: p for i, p in self.prices.items() if p.active and p.recurring}
         return {i: listed[i] for i in ids if i in listed}
+
+    def retrieve_subscription(self, sub_id: str) -> SubscriptionInfo:
+        self._enter("retrieve_subscription", sub_id=sub_id)
+        got = self.subscriptions[sub_id]
+        return SubscriptionInfo(
+            sub_id,
+            got["customer"],
+            got["status"],
+            got["price_id"],
+            got["current_period_end"],
+            got["cancel_at_period_end"],
+            got["tenant_id"],
+        )
+
+    def cancel_subscription(self, sub_id: str, *, prorate: bool) -> None:
+        self._enter("cancel_subscription", sub_id=sub_id, prorate=prorate)
+        self.subscriptions[sub_id]["status"] = "canceled"
+
+    def refund_latest_invoice(self, sub_id: str) -> None:
+        self._enter("refund_latest_invoice", sub_id=sub_id)
+        if sub_id not in self.refunded_subscriptions:  # as Stripe's idempotency key answers
+            self.refunded_subscriptions.append(sub_id)
+
+    def add_subscription(
+        self,
+        tenant_id: object,
+        price_id: str | None,
+        status: str = "active",
+        customer: str | None = None,
+    ) -> str:
+        """A subscription Checkout made at Stripe, with the tenant in its metadata (None: none)."""
+        sub_id = "sub_" + uuid.uuid4().hex[:20]
+        self.subscriptions[sub_id] = {
+            "customer": customer or "cus_" + uuid.uuid4().hex[:14],
+            "status": status,
+            "price_id": price_id,
+            "current_period_end": datetime(2030, 1, 31, tzinfo=UTC),
+            "cancel_at_period_end": False,
+            "tenant_id": None if tenant_id is None else str(tenant_id),
+        }
+        return sub_id
 
 
 def signed(body: bytes, secret: str = WEBHOOK_SECRET, t: int | None = None) -> dict[str, str]:

@@ -14,6 +14,7 @@ from opentelemetry.metrics import CallbackOptions, Observation
 from sqlalchemy import create_engine, event
 
 from app import (
+    billing,
     bookings,
     enforcement,
     erasure_holds,
@@ -66,6 +67,9 @@ KINDS: dict[str, JobKind] = {
     # ZIF-78. Stamps or clears a business's over-the-places mark from the state when it runs, so
     # a late run is still right; a day's grace covers a worker that was down.
     "billing.enforce": JobKind(enforcement.run, timeout=30, grace=timedelta(days=1)),
+    # ZIF-79. A platform subscription event: re-reads the subscription at Stripe, so a late run is
+    # still right. As stripe.event: Stripe retries for days; 50 stays under the 60 s lease.
+    "billing.event": JobKind(billing.reconcile, timeout=50, grace=timedelta(days=3)),
 }
 
 

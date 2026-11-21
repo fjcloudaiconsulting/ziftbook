@@ -101,7 +101,8 @@ async function forwardApi(request: NextRequest): Promise<Response> {
   if (tp) headers.set("traceparent", tp);
 
   try {
-    const limit = pathname === "/api/stripe/webhook" ? WEBHOOK_MAX_BODY_BYTES : MAX_BODY_BYTES;
+    const webhook = pathname === "/api/stripe/webhook" || pathname === "/api/stripe/billing-webhook";
+    const limit = webhook ? WEBHOOK_MAX_BODY_BYTES : MAX_BODY_BYTES;
     const body = request.method === "GET" || request.method === "HEAD" ? undefined : await readBody(request, limit);
     if (body === null) {
       // ZIF-236: a dropped CSP report batch is told apart from any other oversize body (browsers retry it).
