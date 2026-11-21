@@ -1,7 +1,7 @@
-Je proefperiode op ziftbook eindigt over 3 dagen
-# Je proefperiode eindigt over 3 dagen
+Je proefperiode op ziftbook eindigt binnenkort
+# Je proefperiode eindigt binnenkort
 
-De gratis proefperiode van “$business” op ziftbook eindigt over 3 dagen. Daarna gaat het bedrijf over op het gratis abonnement, en wat daar niet in zit, wordt uitgeschakeld. Heeft je team meer mensen dan het gratis abonnement toestaat? Dan kan iedereen daarna nog 30 dagen inloggen.
+De gratis proefperiode van “$business” op ziftbook eindigt binnen 3 dagen. Daarna gaat het bedrijf over op het gratis abonnement, en wat daar niet in zit, wordt uitgeschakeld. Heeft je team meer mensen dan het gratis abonnement toestaat? Dan kan iedereen daarna nog 30 dagen inloggen.
 
 Wil je alles houden zoals het is? Kies dan een abonnement in Instellingen.
 
