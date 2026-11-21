@@ -2,7 +2,7 @@
 
 ## Reporting a vulnerability
 
-Report suspected vulnerabilities privately to **security@thebetterdecision.com**.
+Report suspected vulnerabilities privately to **security@ziftbook.com**.
 Please do not open a public issue for a security problem.
 
 Include what you can: the affected endpoint or component, the steps to
