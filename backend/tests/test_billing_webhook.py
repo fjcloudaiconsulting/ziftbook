@@ -16,7 +16,7 @@ from sqlalchemy import Engine, text
 from app import billing, payments
 from app.db import tenant_context
 from app.entitlements import entitlements
-from app.jobs import run_once
+from app.jobs import Job, run_once
 from app.main import WEBHOOK_MAX_BODY, create_app
 from app.stripe_gateway import Failed, Gateway, SubscriptionInfo
 from app.worker import KINDS
@@ -570,6 +570,38 @@ def test_a_stale_read_never_outlives_a_newer_one(
 
     assert row_of(people.a).status == "canceled"
     assert source(people.a) != "subscription"
+
+
+# ZIF-79 fence. Kills: two jobs for one subscription interleaved so the one that read first
+# commits last (job A reads "active", job B reads "canceled" and finishes, then A writes): A's
+# older snapshot left in the row.
+def test_two_interleaved_jobs_end_on_the_newer_state(
+    client: TestClient,
+    people: People,
+    stripe: FakeGateway,
+    plan: Plan,
+    migrate_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sub = stripe.add_subscription(people.a, price_of(migrate_engine, plan({}, price=True)))
+    read = stripe.retrieve_subscription
+    ran_b: list[bool] = []
+
+    def a_reads_then_b_runs(sub_id: str) -> SubscriptionInfo:
+        found = read(sub_id)
+        if not ran_b:  # job A's first read: then the cancel, and job B start to finish
+            ran_b.append(True)
+            stripe.subscriptions[sub_id]["status"] = "canceled"
+            billing.reconcile(Job(uuid.uuid4(), "billing.event", None, {"subscription_id": sub}))
+            assert row_of(people.a).status == "canceled"  # B wrote the newer state first
+        return found
+
+    monkeypatch.setattr(stripe, "retrieve_subscription", a_reads_then_b_runs)
+    post(client, sub_event(sub, "customer.subscription.created"))
+    run_jobs()  # job A, with B inside its first Stripe read
+
+    assert ran_b == [True]
+    assert row_of(people.a).status == "canceled"
 
 
 # ZIF-79 fence. Kills: an older subscription's late event replacing the business's current one

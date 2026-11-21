@@ -49,7 +49,7 @@ LIVE = {"active", "trialing", "past_due"}
 # The ticket-number advisory lock convention (app/schedule.py): one business's events take turns,
 # so two new subscriptions cannot both find no row.
 LOCK_KEY = 79
-# How many times reconcile writes a subscription that keeps changing before the job retries.
+# How many times reconcile (or the portal sync) writes what keeps changing before it gives up.
 RECONCILE_TRIES = 3
 
 # A double click within one window gets the same Checkout Session (Stripe's idempotency key).
@@ -226,8 +226,24 @@ def sync_portal() -> bool:
     retries)."""
     if not StripeSettings().secret_ready():
         return False
+    # Two saves can push in the other order than they read: whoever pushes last reads the plans
+    # again after its push and pushes again until they match (as reconcile does).
+    ids = _portal_ids()
+    for _ in range(RECONCILE_TRIES):
+        _push_portal(ids)
+        again = _portal_ids()
+        if again == ids:
+            break
+        ids = again
+    return True
+
+
+def _portal_ids() -> list[str]:
     with SessionLocal.begin() as db:
-        ids = list(db.scalars(PORTAL_PLANS))
+        return list(db.scalars(PORTAL_PLANS))
+
+
+def _push_portal(ids: list[str]) -> None:
     gateway = stripe_gateway.gateway
     found = gateway.list_prices(ids)
     products: dict[str, list[str]] = {}
@@ -237,7 +253,6 @@ def sync_portal() -> bool:
         else:
             logger.warning("billing price unknown to stripe", extra={"price": price_id})
     gateway.sync_portal_configuration(products)
-    return True
 
 
 def _accept(event: stripe_gateway.BillingEvent) -> None:

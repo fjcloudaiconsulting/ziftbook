@@ -417,6 +417,40 @@ def test_sync_portal_offers_the_public_paid_plans(
     assert fake_stripe.calls == []
 
 
+# ZIF-79 fence. Kills: two plan saves syncing the portal out of order (the first save's read pushed
+# after the second's), leaving an archived plan for sale in the portal.
+def test_interleaved_portal_syncs_end_on_the_newer_plans(
+    bound: None,
+    fake_stripe: FakeGateway,
+    plan: Plan,
+    migrate_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    kept = plan({}, public=True, price=True)
+    archived = plan({}, public=True, price=True)
+    prices = {p: price_of(migrate_engine, p) for p in (kept, archived)}
+    fake_stripe.prices.update({prices[kept]: info("prod_a"), prices[archived]: info("prod_b")})
+    push = fake_stripe.sync_portal_configuration
+    second: list[bool] = []
+
+    def second_save_lands_first(found: dict[str, list[str]]) -> None:
+        if not second:  # the first save's push waits while the second save archives and syncs
+            second.append(True)
+            with migrate_engine.begin() as conn:
+                conn.execute(
+                    text("UPDATE plans SET archived_at = now() WHERE id = :p"), {"p": archived}
+                )
+            billing.sync_portal()
+            assert fake_stripe.portal == {"prod_a": [prices[kept]]}
+        push(found)
+
+    monkeypatch.setattr(fake_stripe, "sync_portal_configuration", second_save_lands_first)
+    billing.sync_portal()
+
+    assert second == [True]
+    assert fake_stripe.portal == {"prod_a": [prices[kept]]}
+
+
 # ZIF-79 fence. Kills: the portal left offering a plan that is no longer for sale; plan changes
 # enabled with no product (Stripe refuses); a silent sync when the account has no portal set up.
 def test_the_portal_configuration_is_the_default_one(monkeypatch: pytest.MonkeyPatch) -> None:
