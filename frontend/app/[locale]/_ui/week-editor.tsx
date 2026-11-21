@@ -28,7 +28,10 @@ import { Banner, FieldError, type Outcome, problem } from "./parts";
 import { SaveBar } from "./save-bar";
 import uiStyles from "./ui.module.css";
 
-type T = ReturnType<typeof useTranslations>;
+// Scoped to the namespaces passed in: the unscoped translator's key union (the whole catalog) grew too deep for tsc
+// to match the shift labels' template-literal keys against (TS2589).
+type T = ReturnType<typeof useTranslations<"Console.opening" | "Console.hours">>;
+type TWeek = ReturnType<typeof useTranslations<"Console.week">>;
 
 type Phase = "idle" | "saving" | "saved" | "error";
 type Status = Phase | "dirty";
@@ -47,7 +50,7 @@ function shiftLabel(kind: "opensAt" | "closesAt", weekday: string, index: number
 
 /** The top banner's one phrase per problem day (`Console.week.phrase*`). Every `weekProblems`
  * per-day code has a branch: none silently falls through to another code's words. */
-function dayPhrase(code: string, weekday: string, tWeek: T): string {
+function dayPhrase(code: string, weekday: string, tWeek: TWeek): string {
   if (code === "overlapping_hours") return tWeek("phraseOverlapping", { weekday });
   if (code === "end_not_after_start") return tWeek("phraseEndNotAfterStart", { weekday });
   if (code === "outside_opening_hours") return tWeek("phraseOutsideOpeningHours", { weekday });
@@ -65,7 +68,7 @@ type WeekEditorProps = {
   /** The page-specific copy (`Console.opening`, or its working-hours equivalent). */
   t: T;
   /** `Console.week`: the shared savebar, error and day-editing copy. */
-  tWeek: T;
+  tWeek: TWeek;
   onSave(body: ApiShift[]): Promise<Outcome<ApiShift[]>>;
   savedMessage: string;
   /** The note banner above the days, shown only while `envelope` is bounded (U11: unbounded shows

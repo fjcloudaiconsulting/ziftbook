@@ -42,6 +42,7 @@ import { NAMES } from "../../_ui/header";
 import { Banner, Chevron, FieldError, Heading, problem, Submit } from "../../_ui/parts";
 import { SaveBar } from "../../_ui/save-bar";
 import uiStyles from "../../_ui/ui.module.css";
+import { Billing } from "./billing";
 import { ContactEmail } from "./contact-email";
 import { CurrencyField } from "./currency";
 import { Payments } from "./payments";
@@ -677,6 +678,10 @@ export function Settings() {
           {check("workers_answer_requests", t("workersAnswerLabel"), t("workersAnswerHint"))}
           </div>
         </fieldset>
+        </div>
+
+        <div {...panel("plan")}>
+        <Billing />
         </div>
 
         {showBar && (

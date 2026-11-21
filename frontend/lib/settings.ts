@@ -332,7 +332,7 @@ export function contactLoadOutcome(status: number): "show" | "hide" | "failed" {
 }
 
 /** The page's tabs (ZIF-161), in order; `?tab=<id>` picks one. */
-export const TABS = ["business", "bookings", "payments", "team"] as const;
+export const TABS = ["business", "bookings", "payments", "team", "plan"] as const;
 export type Tab = (typeof TABS)[number];
 
 /** The tab each field sits in: a refused field opens its tab, a changed one marks it. */

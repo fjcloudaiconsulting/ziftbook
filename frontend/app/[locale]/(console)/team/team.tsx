@@ -9,6 +9,7 @@ import {
   invitesList,
   type InviteOut,
   membersList,
+  membersSetKeepsAccess,
   membersSetDisplayName,
   membersUpdate,
   type MemberOut,
@@ -37,6 +38,73 @@ function HoursMeta({ shifts, locale }: { shifts: { weekday: number; starts_at: s
   if (shifts === null) return null;
   const days = teamHoursSummary(shifts, dateLocale(locale), (from, to) => tWeek("dayRange", { from, to }));
   return <span className={styles.rowMeta}>{days === null ? t("noHours") : t("worksLabel", { days })}</span>;
+}
+
+/** While the business has more people than its plan covers (ZIF-78), the owner ticks who keeps access; the
+ * rest are paused once the grace ends. Applied at once by the API, so the list is read again after each
+ * pick (the rows' "Paused" label follows). */
+function KeepsAccess({ members, onChanged, onSignedOut }: { members: MemberOut[]; onChanged(): void; onSignedOut(value: boolean): void }) {
+  const t = useTranslations("Console.team");
+  const tConsole = useTranslations("Console");
+  const form = useTranslations("Form");
+  const person = useTranslations("Console.person");
+  const { call } = useConsole();
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const busyRef = useRef(false);
+  // The API always keeps one owner: with a single owner that row is fixed; with several, each can be picked.
+  const kept = (m: MemberOut) => m.role === "owner" && members.filter((x) => x.role === "owner").length === 1;
+
+  async function pick(member: MemberOut, keeps: boolean) {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setBusy(member.member_id);
+    setError(null);
+    onSignedOut(false);
+    let outcome;
+    try {
+      outcome = await call(() => membersSetKeepsAccess({ path: { member_id: member.member_id }, body: { keeps } }), { write: true });
+    } finally {
+      setBusy(null);
+      busyRef.current = false;
+    }
+    if (outcome.status === 204) onChanged();
+    else if (outcome.status === 401) onSignedOut(true);
+    else if (outcome.status === 402) return; // the console's own upgrade message already says why
+    else setError(`${t("keepsFailed")} ${form(problem(outcome))} ${tConsole("notSaved")}`);
+  }
+
+  return (
+    <section aria-labelledby="keeps-access-heading" className={uiStyles.stack}>
+      <h2 id="keeps-access-heading" className={styles.heading2}>
+        {t("keepsAccess")}
+      </h2>
+      <p className={uiStyles.hint}>
+        {t("overLimitHint")} <Link href="/settings?tab=plan">{t("overLimitLink")}</Link>
+      </p>
+      {error && <Banner tone="error">{error}</Banner>}
+      {members.map((m) => (
+        <div key={m.member_id} className={styles.checkRow}>
+          <input
+            id={`keeps-${m.member_id}`}
+            type="checkbox"
+            checked={m.keeps_access || kept(m)}
+            aria-label={t("keepsAccessFor", { name: m.display_name || m.email })}
+            aria-disabled={busy !== null || kept(m) || undefined}
+            onChange={(event) => {
+              if (!kept(m)) pick(m, event.target.checked);
+            }}
+          />
+          <div className={`${uiStyles.field} ${styles.checkText}`}>
+            <label className={uiStyles.label} htmlFor={`keeps-${m.member_id}`}>
+              {m.display_name || m.email || person("nameNotSet")}
+            </label>
+            {kept(m) && <p className={uiStyles.hint}>{t("ownerKept")}</p>}
+          </div>
+        </div>
+      ))}
+    </section>
+  );
 }
 
 /** Opened by the header's or the empty state's "Invite someone" button (undrawn, U8). Focus
@@ -227,7 +295,7 @@ function InviteRow({
 }
 
 export function TeamList() {
-  const { session, call } = useConsole();
+  const { session, call, entitlements } = useConsole();
   const locale = useLocale();
   const t = useTranslations("Console.team");
   const nav = useTranslations("Console.nav");
@@ -332,6 +400,12 @@ export function TeamList() {
     loadInvites();
   }
 
+  /** Only the member rows again (a pick of who keeps access pauses or unpauses people at once). */
+  async function reloadMembers() {
+    const outcome = await call(() => membersList());
+    if (outcome.status === 200 && outcome.data) setMembers(outcome.data);
+  }
+
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -420,6 +494,7 @@ export function TeamList() {
                 </span>
                 <span className={styles.rowMeta}>{m.email}</span>
                 <HoursMeta shifts={hours[m.member_id] ?? null} locale={locale} />
+                {m.paused && <span className={`${styles.pill} ${styles.pillWarn}`}>{t("paused")}</span>}
                 {!m.display_name && (
                   <span className={`${styles.pill} ${styles.pillWarn}`}>
                     <svg aria-hidden="true" viewBox="0 0 16 16" width="12" height="12">
@@ -438,6 +513,9 @@ export function TeamList() {
           </li>
         ))}
       </ul>
+      {mayInvite && entitlements?.over_limit_since && (
+        <KeepsAccess members={members} onChanged={reloadMembers} onSignedOut={setSignedOut} />
+      )}
       {(invites?.length ?? 0) > 0 && (
         <>
           <h2 className={styles.heading2}>{tInvites("invited")}</h2>

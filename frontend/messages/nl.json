@@ -39,7 +39,8 @@
     "noScript": "Deze pagina heeft JavaScript nodig om je link privé te houden. Zet het aan in je browser en open de link uit de e-mail opnieuw.",
     "needsJavaScript": "Deze pagina heeft JavaScript nodig. Zet het aan in je browser en laad de pagina opnieuw.",
     "verifyFailed": "Bevestig hieronder dat je geen robot bent en verstuur het daarna opnieuw.",
-    "tryAgain": "Probeer opnieuw"
+    "tryAgain": "Probeer opnieuw",
+    "planLimit": "Dit zit niet in je abonnement."
   },
   "Inbox": {
     "title": "Kijk in je inbox",
@@ -961,7 +962,8 @@
         "business": "Je bedrijf",
         "bookings": "Boekingen",
         "payments": "Betalingen",
-        "team": "Team"
+        "team": "Team",
+        "plan": "Abonnement"
       },
       "tabUnsaved": "niet-opgeslagen wijzigingen",
       "paymentsLoading": "Je online betalingen worden opgehaald…",
@@ -1064,7 +1066,14 @@
       "unnamedWarning": "Klanten zien nog geen naam",
       "onlyYouTitle": "Op dit moment ben jij de enige",
       "onlyYouBody": "Nodig iemand uit en die krijgt een eigen inlog, eigen werktijden en eigen afspraken. Jij bepaalt welke diensten diegene uitvoert.",
-      "onlyYouHint": "Alleen werken kan prima. Stel je eigen werktijden in en klanten kunnen boeken."
+      "onlyYouHint": "Alleen werken kan prima. Stel je eigen werktijden in en klanten kunnen boeken.",
+      "paused": "Gepauzeerd: kan niet inloggen met dit abonnement",
+      "keepsAccess": "Houdt toegang",
+      "keepsAccessFor": "Houdt toegang: {name}",
+      "overLimitHint": "Je abonnement dekt minder mensen dan je hebt. Vink in de tijd die er nog is aan wie toegang houdt. De rest wordt gepauzeerd tot je upgradet.",
+      "overLimitLink": "Kies een abonnement",
+      "keepsFailed": "Dat kon niet worden opgeslagen. Probeer het nog eens.",
+      "ownerKept": "Het bedrijf houdt altijd zijn eigenaar."
     },
     "invites": {
       "inviteSomeone": "Iemand uitnodigen",
@@ -1168,6 +1177,79 @@
       "errorMissingStart": "Kies een begintijd.",
       "errorMissingEnd": "Kies een eindtijd.",
       "notFound": "Dit blok kon niet worden gevonden. Het is mogelijk al verwijderd."
+    },
+    "features": {
+      "places": "meer mensen in je bedrijf",
+      "online_payments": "online betalingen",
+      "deposits": "aanbetalingen en vooruitbetalingen",
+      "email_reminders": "e-mailherinneringen",
+      "worker_permissions": "rechten voor medewerkers",
+      "platform_fee_direct": "deze tariefinstelling",
+      "platform_fee_marketplace": "deze tariefinstelling",
+      "calendar_sync": "agendasynchronisatie",
+      "messages_per_month": "meer berichten deze maand",
+      "client_messaging": "berichten naar klanten",
+      "no_show_fees": "no-showkosten",
+      "marketplace_listing": "de vermelding op de marktplaats",
+      "custom_domain": "een eigen domein",
+      "ai_assistant": "de AI-assistent",
+      "hide_branding": "de ziftbook-branding verbergen",
+      "other": "deze functie"
+    },
+    "planLimit": {
+      "owner": "{feature} zit niet in je abonnement.",
+      "worker": "{feature} zit niet in je abonnement. Vraag het aan de eigenaar van het bedrijf.",
+      "link": "Kies een abonnement"
+    },
+    "planBanner": {
+      "trial": "Je gratis proefperiode eindigt over {days, plural, one {# dag} other {# dagen}}.",
+      "grace": "Je abonnement dekt nu minder mensen. Over {days, plural, one {# dag} other {# dagen}} kunnen alleen de mensen die erin passen nog inloggen.",
+      "graceWorker": "Het abonnement van je bedrijf dekt nu minder mensen. Over {days, plural, one {# dag} other {# dagen}} kunnen nog maar een paar mensen inloggen. Vraag het aan de eigenaar van het bedrijf.",
+      "granted": "Je abonnement is inbegrepen tot {date}.",
+      "choose": "Kies een abonnement",
+      "keep": "Kies wie toegang houdt"
+    },
+    "billing": {
+      "heading": "Je abonnement",
+      "desc": "Het abonnement van je bedrijf en wat wisselen kost.",
+      "loading": "Je abonnement wordt opgehaald…",
+      "failed": "We konden je abonnement niet ophalen. Probeer het zo nog eens.",
+      "retry": "Opnieuw proberen",
+      "current": "Huidig abonnement: {plan}",
+      "sourceGrant": "Inbegrepen bij je bedrijf.",
+      "sourceGrantUntil": "Inbegrepen bij je bedrijf tot {date}.",
+      "sourceTrial": "Gratis proefperiode tot {date}.",
+      "sourceSubscription": "Wordt verlengd op {date}.",
+      "sourceEnds": "Abonnement eindigt op {date}.",
+      "sourceDefault": "Het abonnement waar elk bedrijf mee begint.",
+      "places": "{used, plural, one {# plek} other {# plekken}} in gebruik.",
+      "placesOf": "{used} van {limit} plekken in gebruik.",
+      "overLimit": "Je bedrijf heeft meer mensen dan dit abonnement dekt. Kies op de pagina Team wie toegang houdt.",
+      "optionsHeading": "Abonnementen",
+      "currentBadge": "Huidig abonnement",
+      "perMonth": "{price} per maand",
+      "perYear": "{price} per jaar",
+      "priceOnly": "{price}",
+      "noPrice": "Prijs zie je bij het afrekenen",
+      "coupon": "Korting wordt toegepast bij het afrekenen.",
+      "feeDirect": "Platformkosten op boekingen via je boekingspagina: {fee}",
+      "feeMarketplace": "Platformkosten op boekingen via de marktplaats: {fee}",
+      "stripeFee": "Stripe brengt de kosten voor kaartbetalingen in rekening op het eigen Stripe-account van je bedrijf.",
+      "subscribe": "Abonneren",
+      "subscribeTo": "Abonneren op {plan}",
+      "manage": "Abonnement beheren",
+      "manageHint": "Wissel van abonnement, zeg op of pas je kaart en facturen aan.",
+      "busy": "Openen…",
+      "ownerOnly": "Alleen de eigenaar van het bedrijf kan het abonnement wijzigen.",
+      "granted": "Je abonnement is inbegrepen bij je bedrijf, dus er valt niets af te sluiten.",
+      "done": "Bedankt. Het kan even duren voordat je abonnement hier zichtbaar is.",
+      "checkAgain": "Opnieuw controleren",
+      "unavailable": "Betalen is nu niet beschikbaar. Probeer het later nog eens.",
+      "alreadySubscribed": "Je hebt al een abonnement. Gebruik Abonnement beheren om het te wijzigen.",
+      "notPurchasable": "Dit abonnement kun je niet online afsluiten.",
+      "noSubscription": "Er is nog geen abonnement om te beheren. Neem eerst een abonnement.",
+      "notFound": "Dit abonnement bestaat niet meer. Laad de pagina opnieuw en probeer het nog eens.",
+      "failedGeneric": "Er ging iets mis. Probeer het zo nog eens."
     }
   },
   "BookingLink": {

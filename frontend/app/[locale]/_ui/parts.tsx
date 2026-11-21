@@ -14,8 +14,9 @@ import styles from "./ui.module.css";
 /** What an API call came back with: status 0 means the request never got an answer.
  * `weekday`: only `outside_opening_hours` carries it (`errors.py`), so the working-hours
  * screen can name the day the server refused. `bookings` and `total`: only `overlaps_bookings`
- * (ZIF-130), the appointments a time-off block would cover. `key`: only `invalid_values` (ZIF-78), the feature refused. */
-export type Outcome<T> = { status: number; code?: string; weekday?: number; bookings?: InTheWay[]; total?: number; key?: string; data?: T };
+ * (ZIF-130), the appointments a time-off block would cover. `key`: only `invalid_values` (ZIF-78), the feature refused.
+ * `feature`: only `plan_limit` (ZIF-78), the feature the plan lacks. */
+export type Outcome<T> = { status: number; code?: string; weekday?: number; bookings?: InTheWay[]; total?: number; key?: string; feature?: string; data?: T };
 
 // The API only accepts JSON writes (its CSRF defence), and the client drops Content-Type from a
 // request with no body: these DELETEs send an empty JSON object.
@@ -32,6 +33,7 @@ export async function send<T>(request: Promise<{ data?: T; error?: unknown; resp
       bookings: body?.bookings ?? undefined,
       total: body?.total ?? undefined,
       key: body?.key ?? undefined,
+      feature: body?.feature ?? undefined,
       data,
     };
   } catch {
@@ -48,8 +50,10 @@ export function ClientName({ booking }: { booking: { client_name: string; client
 }
 
 /** The message for an answer no screen handles itself. */
-export function problem(outcome: Outcome<unknown>): "busy" | "unreachable" | "invalidRequest" | "unexpected" {
+export function problem(outcome: Outcome<unknown>): "busy" | "unreachable" | "invalidRequest" | "planLimit" | "unexpected" {
   if (outcome.status === 0) return "unreachable";
+  // The upgrade message that names the feature and links to the Plan tab is the console's (Shell, `call`).
+  if (outcome.status === 402 && outcome.code === "plan_limit") return "planLimit";
   if (outcome.status === 503) return "busy";
   if (outcome.status === 422) return "invalidRequest";
   return "unexpected";

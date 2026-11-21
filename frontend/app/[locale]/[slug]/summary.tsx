@@ -42,7 +42,7 @@ export function Summary({
   locale: string;
   dLocale: string;
   zone: string;
-  t: ReturnType<typeof useTranslations>;
+  t: ReturnType<typeof useTranslations<"BookingPage">>;
   message: string;
   messageOpen: boolean;
   messageError: string | undefined;

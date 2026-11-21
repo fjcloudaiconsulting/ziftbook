@@ -76,7 +76,7 @@ export function PaymentStep({
   busy: boolean;
   /** false: the surrounding section's heading already names the group. */
   legend: boolean;
-  t: ReturnType<typeof useTranslations>;
+  t: ReturnType<typeof useTranslations<"BookingPage">>;
   onChoice(choice: PaymentChoice): void;
   onUnavailable(): void;
 }) {
