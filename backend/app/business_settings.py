@@ -206,8 +206,12 @@ router = APIRouter(prefix="/api", tags=["settings"])
 
 @router.get("/settings", name="read", responses={401: {"model": Error}})
 def read_settings(current: CurrentSession, response: Response) -> BusinessSettings:
+    """The stored settings to the owner, who edits them; to a worker, what they may do now
+    (effective): a plan without worker_permissions offers nothing the API would refuse."""
     response.headers["Cache-Control"] = "no-store"
-    return read(current.db)
+    stored = read(current.db)
+    # members.is_owner, inline: members imports accounts, which imports this module.
+    return stored if current.role == "owner" else effective(current.db, stored)
 
 
 @router.put(

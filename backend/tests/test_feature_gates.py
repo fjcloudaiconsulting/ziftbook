@@ -249,6 +249,28 @@ def test_worker_cannot_answer_when_worker_permissions_off_even_if_setting_on(
     assert session.put(hours_path(worker_member), json=week).status_code == 200
 
 
+# ZIF-78 fence. Kills: a worker's console reading the stored worker settings, so a business that
+# lost worker_permissions still offers them Accept, Decline and their hours, which the API refuses;
+# the owner's form shown the plan's view instead of what is stored (an upgrade restores it).
+def test_a_worker_reads_the_worker_settings_in_effect_and_the_owner_reads_them_stored(
+    people: People, owner: TestClient, worker: tuple[TestClient, str]
+) -> None:
+    session, _ = worker
+    save_setting(people.a, "workers_answer_requests", True)
+    save_setting(people.a, "workers_edit_own_hours", True)
+    keys = ("workers_answer_requests", "workers_edit_own_hours")
+
+    def read(client: TestClient) -> tuple[bool, ...]:
+        answer = client.get("/api/settings")
+        assert answer.status_code == 200, answer.text
+        return tuple(answer.json()[k] for k in keys)
+
+    give_plan(people.a, FREE)
+    assert (read(session), read(owner)) == ((False, False), (True, True))
+    give_plan(people.a, FREE | {"worker_permissions": True})
+    assert read(session) == (True, True)
+
+
 # ZIF-78 fence. Kills: the request email read from the stored setting, telling a worker who may
 # not answer (the plan lost worker_permissions) to accept or decline.
 def test_a_worker_without_worker_permissions_gets_the_owner_answers_email(

@@ -1407,6 +1407,7 @@
           "settings"
         ],
         "summary": "Read",
+        "description": "The stored settings to the owner, who edits them; to a worker, what they may do now\n(effective): a plan without worker_permissions offers nothing the API would refuse.",
         "operationId": "settings-read",
         "responses": {
           "200": {
