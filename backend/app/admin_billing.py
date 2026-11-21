@@ -235,7 +235,7 @@ def refuse(outcome: str, conflict: str) -> None:
         raise ApiError(404, "not_found")
     if outcome == "conflict":
         raise ApiError(409, conflict)
-    if outcome == "in_use":  # admin_save_plan: a Price change on a plan with subscriptions
+    if outcome == "in_use":  # admin_save_plan: a plan's set Price moved or cleared
         raise ApiError(409, "plan_in_use")
     if outcome != "ok":  # mismatch: called outside the business's tenant_context, a bug
         raise RuntimeError(f"definer answered {outcome}")
@@ -338,7 +338,7 @@ def create_plan(body: PlanIn, current: CurrentAdmin, request: Request) -> PlanOu
 @admin_write_router.put("/plans/{plan_id}", responses=WRITE_ERRORS)
 def update_plan(plan_id: UUID, body: PlanIn, current: CurrentAdmin, request: Request) -> PlanOut:
     """Change a plan, archived or not: its values reach every business on it at once. 409
-    plan_in_use for a new Price while any subscription is on it: make a new plan instead."""
+    plan_in_use for a Price moved or cleared once set: make a new plan instead."""
     return save_plan(current, request, plan_id, body)
 
 

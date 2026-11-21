@@ -283,7 +283,7 @@
       "slugHint": "Lowercase letters, digits and hyphens, up to 40.",
       "nameIn": "Name ({language})",
       "price": "Price ID (optional)",
-      "priceHint": "Leave empty for a plan nobody pays for.",
+      "priceHint": "Leave empty for a plan nobody pays for. Once saved, the price can't change.",
       "public": "Public",
       "publicHint": "A public plan is offered to every business. A private one only to the businesses you offer it to.",
       "featuresTitle": "What the plan includes",
@@ -358,7 +358,7 @@
       },
       "errors": {
         "plan_taken": "Another plan already uses that slug or price ID.",
-        "plan_in_use": "Businesses are subscribed to this plan's price, so the price can't change. Make a new plan instead.",
+        "plan_in_use": "This plan's price is set and can't change: subscribers, and anyone mid-checkout, stay on the price they chose. Make a new plan instead.",
         "plan_is_default": "The default and trial plans can't be archived. Choose other ones first.",
         "plan_unavailable": "That plan is archived or has no price, so it can't be used here.",
         "invalid_values": "{key} isn't a valid value.",

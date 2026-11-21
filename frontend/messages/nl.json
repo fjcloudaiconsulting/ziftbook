@@ -283,7 +283,7 @@
       "slugHint": "Kleine letters, cijfers en streepjes, maximaal 40.",
       "nameIn": "Naam ({language})",
       "price": "Prijs-ID (optioneel)",
-      "priceHint": "Laat leeg voor een abonnement waar niemand voor betaalt.",
+      "priceHint": "Laat leeg voor een abonnement waar niemand voor betaalt. Eenmaal opgeslagen kan de prijs niet meer veranderen.",
       "public": "Openbaar",
       "publicHint": "Een openbaar abonnement wordt aan elk bedrijf aangeboden. Een privé-abonnement alleen aan de bedrijven aan wie je het aanbiedt.",
       "featuresTitle": "Wat het abonnement bevat",
@@ -358,7 +358,7 @@
       },
       "errors": {
         "plan_taken": "Een ander abonnement gebruikt die slug of dat prijs-ID al.",
-        "plan_in_use": "Er zijn bedrijven geabonneerd op de prijs van dit abonnement, dus de prijs kan niet veranderen. Maak een nieuw abonnement.",
+        "plan_in_use": "De prijs van dit abonnement staat vast en kan niet veranderen: abonnees, en wie nog aan het afrekenen is, houden de prijs die ze kozen. Maak een nieuw abonnement.",
         "plan_is_default": "Het standaard- en het proefabonnement kunnen niet worden gearchiveerd. Kies eerst andere.",
         "plan_unavailable": "Dat abonnement is gearchiveerd of heeft geen prijs, dus het kan hier niet worden gebruikt.",
         "invalid_values": "{key} is geen geldige waarde.",

@@ -98,7 +98,7 @@ class PriceInfo:
     """A Price on the platform account, as the plan editor checks it."""
 
     active: bool
-    recurring: bool
+    recurring: bool  # retrieve_price: recurring at a fixed quantity (licensed), not metered
     currency: str
     unit_amount: int | None
     interval: str | None  # month, year...; None for a one-off Price
@@ -458,7 +458,8 @@ class Gateway:
             recurring = got.recurring
             return PriceInfo(
                 got.active,
-                recurring is not None,
+                # Metered is billed on reported usage, which Checkout's quantity of 1 never sells.
+                recurring is not None and recurring.usage_type == "licensed",
                 got.currency,
                 got.unit_amount,
                 recurring.interval if recurring is not None else None,

@@ -349,3 +349,25 @@ def test_a_refund_is_read_back_and_the_processing_fee_is_the_stripe_one() -> Non
     # ZIF-58: when the charge happened, which a re-applied erasure's settle compares with.
     assert got.charged_at == datetime.fromtimestamp(1793700000, UTC)
     assert "latest_charge.balance_transaction" in charged.wire(0)
+
+
+# ZIF-78 fence. Kills: a metered Price passing the plan editor's check (Checkout sells a quantity of
+# 1, which a metered Price refuses), or a licensed one refused.
+@pytest.mark.parametrize("usage, sells", [("licensed", True), ("metered", False)])
+def test_a_metered_price_is_not_one_checkout_sells(
+    usage: str, sells: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ZIF_STRIPE_SECRET_KEY", "sk_test_not_a_real_key")
+    body = {
+        "id": "price_1",
+        "object": "price",
+        "active": True,
+        "currency": "eur",
+        "unit_amount": 900,
+        "product": "prod_1",
+        "recurring": {"interval": "month", "interval_count": 1, "usage_type": usage},
+    }
+
+    found = Gateway(http_client=Recorder(body=body)).retrieve_price("price_1")
+
+    assert found.recurring is sells

@@ -283,7 +283,7 @@
       "slugHint": "Letras minúsculas, algarismos e hífenes, até 40.",
       "nameIn": "Nome ({language})",
       "price": "ID do preço (opcional)",
-      "priceHint": "Deixe vazio para um plano que ninguém paga.",
+      "priceHint": "Deixe vazio para um plano que ninguém paga. Depois de salvo, o preço não pode mudar.",
       "public": "Público",
       "publicHint": "Um plano público é oferecido a todos os negócios. Um privado só aos negócios a quem o oferecer.",
       "featuresTitle": "O que o plano inclui",
@@ -358,7 +358,7 @@
       },
       "errors": {
         "plan_taken": "Outro plano já usa esse slug ou ID de preço.",
-        "plan_in_use": "Há negócios subscritos ao preço deste plano, por isso o preço não pode mudar. Crie um plano novo.",
+        "plan_in_use": "O preço deste plano já está definido e não pode mudar: assinantes, e quem está no meio do pagamento, ficam com o preço que escolheram. Crie um plano novo.",
         "plan_is_default": "Os planos padrão e de teste não podem ser arquivados. Escolha outros primeiro.",
         "plan_unavailable": "Esse plano está arquivado ou não tem preço, por isso não pode ser usado aqui.",
         "invalid_values": "{key} não é um valor válido.",

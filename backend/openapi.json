@@ -7624,7 +7624,7 @@
           "admin"
         ],
         "summary": "Update Plan",
-        "description": "Change a plan, archived or not: its values reach every business on it at once. 409\nplan_in_use for a new Price while any subscription is on it: make a new plan instead.",
+        "description": "Change a plan, archived or not: its values reach every business on it at once. 409\nplan_in_use for a Price moved or cleared once set: make a new plan instead.",
         "operationId": "admin-update_plan",
         "parameters": [
           {

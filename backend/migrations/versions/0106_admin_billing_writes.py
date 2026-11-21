@@ -6,8 +6,9 @@ database's clock, as 0100's do, so a caller that skipped the route guard gets 's
 an outcome: ok, stale, not_found or conflict (and in_use and mismatch, below).
 
 - admin_save_plan inserts (p_id NULL) or updates a plan; a slug or Price another plan has is a
-  conflict. Its Price never changes while any subscription is on the plan ('in_use'): Stripe keeps
-  a subscriber on the Price they bought, so a new price for new customers is a new plan.
+  conflict. Once set, its Price never changes ('in_use'): Stripe keeps a subscriber, and anyone
+  mid-Checkout, on the Price they chose, which must keep naming this plan; a new price is a new
+  plan.
   admin_archive_plan archives one, never the default or the trial plan (a conflict).
 - admin_set_billing sets the default plan, the trial plan and the trial's days; an archived plan
   is a conflict. It and admin_archive_plan lock platform_billing first, so neither can slip past
@@ -108,9 +109,6 @@ LANGUAGE plpgsql VOLATILE SECURITY DEFINER {SEARCH_PATH} AS $$
 DECLARE
   v_id uuid;
   v_price text;
-  v_caller text := current_setting('app.tenant_id', true);
-  v_tenant uuid;
-  v_subscribed boolean := false;
 BEGIN
   IF {STALE} THEN
     RETURN QUERY SELECT 'stale'::text, NULL::uuid;
@@ -128,26 +126,17 @@ BEGIN
       RETURNING p.id INTO v_id;
     ELSE
       -- FOR UPDATE, not the UPDATE's NO KEY UPDATE: it conflicts with the KEY SHARE a subscription
-      -- insert's foreign key takes, so none can land on this plan between the check and the write.
+      -- insert's foreign key takes, so reconcile's read of the Price stays this plan's.
       SELECT p.stripe_price_id INTO v_price FROM plans p WHERE p.id = p_id FOR UPDATE;
       IF NOT FOUND THEN
         RETURN QUERY SELECT 'not_found'::text, NULL::uuid;
         RETURN;
       END IF;
-      IF v_price IS DISTINCT FROM p_price THEN
-        -- subscriptions is under forced row-level security: looked at one business at a time.
-        -- shortcut: one statement per business on a Price change only; a set-based check needs a
-        -- role that bypasses row-level security, which this repository never grants.
-        FOR v_tenant IN SELECT t.id FROM tenants t ORDER BY t.id LOOP
-          PERFORM set_config('app.tenant_id', v_tenant::text, true);
-          v_subscribed := EXISTS (SELECT FROM subscriptions s WHERE s.plan_id = p_id);
-          EXIT WHEN v_subscribed;
-        END LOOP;
-        PERFORM set_config('app.tenant_id', coalesce(v_caller, ''), true);
-        IF v_subscribed THEN
-          RETURN QUERY SELECT 'in_use'::text, NULL::uuid;
-          RETURN;
-        END IF;
+      -- A Checkout opened on the old Price can still complete (up to a day later): it must land
+      -- on this plan, so a set Price is never moved or cleared, subscribers or not.
+      IF v_price IS NOT NULL AND v_price IS DISTINCT FROM p_price THEN
+        RETURN QUERY SELECT 'in_use'::text, NULL::uuid;
+        RETURN;
       END IF;
       UPDATE plans p SET slug = p_slug, name = p_name, stripe_price_id = p_price,
         values = p_values, public = p_public, updated_at = clock_timestamp()

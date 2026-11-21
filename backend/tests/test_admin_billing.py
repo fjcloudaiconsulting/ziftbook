@@ -319,9 +319,9 @@ def test_price_must_be_active_recurring_eur(
     assert stripe.count("retrieve_price") == asked
 
 
-# ZIF-78 fence. Kills: a plan's Price swapped under its subscribers (their Price would then match no
-# plan), and a check outside the definer that a subscription landing meanwhile could race.
-def test_a_plan_with_subscribers_keeps_its_price(
+# ZIF-78 fence. Kills: a plan's set Price swapped or cleared (its subscribers' Price, or one an open
+# Checkout completes on, would then match no plan), and a check outside the definer.
+def test_a_priced_plan_keeps_its_price(
     admin: TestClient,  # noqa: F811
     stripe: FakeGateway,
     people: People,
@@ -364,11 +364,19 @@ def test_a_plan_with_subscribers_keeps_its_price(
     )
     assert same.status_code == 200, same.content
     assert effective(people.b).values["places"] == 9
-    # a plan nobody subscribes to takes a Price
+    # a plan with no Price takes one, and then keeps it too, subscribers or not: a Checkout opened
+    # on it may still complete and must land on this plan
     priced = admin.put(
         f"/api/admin/plans/{unused}", json=plan_body(f"{slug}-b", stripe_price_id=newer)
     )
     assert (priced.status_code, priced.json()["stripe_price_id"]) == (200, newer)
+    third = price_id()
+    stripe.prices[third] = EUR_MONTHLY
+    for new_price in (third, None):
+        moved = admin.put(
+            f"/api/admin/plans/{unused}", json=plan_body(f"{slug}-b", stripe_price_id=new_price)
+        )
+        assert (moved.status_code, moved.json()) == (409, {"code": "plan_in_use"}), new_price
 
 
 # ZIF-78 Review Focus 5. Kills: archiving that moves a business off its plan, or a plan still sold
