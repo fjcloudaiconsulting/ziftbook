@@ -1958,8 +1958,9 @@ def test_0054_round_trips_the_app_roles_membership_insert_and_update(
         command.upgrade(cfg, "head")
     with migrate_engine.connect() as conn:
         assert conn.scalar(MEMBERSHIP_GRANTS) == "SELECT"
+        # ZIF-78 (0104) adds keeps_access.
         assert conn.scalar(MEMBERSHIP_COLUMN_GRANTS) == (
-            "display_name UPDATE, removed_at UPDATE, role UPDATE"
+            "display_name UPDATE, keeps_access UPDATE, removed_at UPDATE, role UPDATE"
         )
 
 

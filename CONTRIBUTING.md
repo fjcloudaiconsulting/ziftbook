@@ -111,7 +111,9 @@ Specifics:
   setting an invite's `token_hash` (0053), reading and deleting an erased client's contact hold (0064) with
   `client_money_owed` (0077), `mint_contact_email_token` (ZIF-232, 0086), and the retention functions
   `sweep_audit_events`, `sweep_admin_sessions`, `sweep_account_sessions` and `sweep_booking_origins` (0074, ZIF-235),
-  and `sweep_consent_origins` (0096, ZIF-156).
+  and `sweep_consent_origins` (0096, ZIF-156), and the billing writes (0103 and 0104, ZIF-78): `INSERT` and
+  `UPDATE` on `subscriptions`, `UPDATE (over_limit_since)` on `tenant_billing` and `UPDATE (access_paused_at)` on
+  `memberships`.
   A worker still on `ziftbook_app` fails every sign-up, reset, invite and contact email confirmation email. The same
   never-list applies to it.
 - Neither runtime role can create temporary tables, and both search `public` before `pg_temp` (ZB-31;
@@ -167,16 +169,15 @@ every table that holds a tenant's data:
 - A membership is never deleted by the app. Removing someone sets `role = 'removed'` and `removed_at`
   (ZIF-112); the row stays because bookings and their history reference it. The app role has no `DELETE` on
   `memberships` (0052, ZB-10), no `INSERT` (sign-up and invites create memberships in their definer functions), and
-  `UPDATE` of only `role`, `removed_at` and `display_name` (0054): a new column the app sets needs its own column
-  `GRANT`. Only `ziftbook_migrate` changes a removed membership's `role` or `removed_at` (a trigger, 0056): bringing
-  one back is `accept_invite`'s. A new read of `memberships` decides: active (filter `role <> 'removed'`, inside the
-  locking statement when it locks) or history (no filter). History names a member by `memberships.display_name`
-  (or a booking's `worker_display_name`); the account's name is only a fallback for a live member, because a
-  business reads a person's account row only while they are a live member (the `users` policy, 0055, ZB-32). A
-  read reached through a session needs none:
-  `ck_sessions_role` and the sessions foreign key keep a session's membership live. Never infer owner from
-  `role <> 'worker'`; compare to `'owner'`. A new table referencing memberships with `ON DELETE CASCADE` also needs
-  a line in `members.remove`, which deletes what the cascades used to.
+  `UPDATE` of only `role`, `removed_at`, `display_name` (0054) and `keeps_access` (0104): a new column the app sets
+  needs its own column `GRANT`. Only `ziftbook_migrate` changes a removed membership's `role` or `removed_at` (a
+  trigger, 0056): bringing one back is `accept_invite`'s. A new read of `memberships` decides: active (filter
+  `role <> 'removed'`, inside the locking statement when it locks) or history (no filter). History names a member by
+  `memberships.display_name` (or a booking's `worker_display_name`); the account's name is only a fallback for a live
+  member, because a business reads a person's account row only while they are a live member (the `users` policy, 0055,
+  ZB-32). A read reached through a session needs none: `ck_sessions_role` and the sessions foreign key keep a
+  session's membership live. Never infer owner from `role <> 'worker'`; compare to `'owner'`. A new table referencing
+  memberships with `ON DELETE CASCADE` also needs a line in `members.remove`, which deletes what the cascades used to.
 - The business's responsible person is derived, not stored: its oldest live owner (`ORDER BY memberships.id`).
   Nothing reads it yet. It is the creator only while they stay an owner: 0045's revive keeps a removed member's old
   `memberships.id`, so a returning creator who is made owner again becomes the oldest owner again.
