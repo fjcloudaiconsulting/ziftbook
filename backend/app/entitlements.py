@@ -231,6 +231,9 @@ class EntitlementsOut(BaseModel):
     members_used: int  # live members plus pending invites, against places
     grace_ends_at: datetime | None  # when members beyond the places stop signing in
     offers: list[PlanOption]  # owners only; empty for a worker
+    # Owners only: the Stripe subscription's status, live or not (unpaid and paused give no plan
+    # but still have a portal; canceled and incomplete_expired may subscribe again). None: none.
+    subscription_status: str | None
 
 
 # Public, unarchived paid plans and the plans offered to this business (plan_offers is under
@@ -343,6 +346,9 @@ def plan_options(rows: list[Row[Any]]) -> list[PlanOption]:
     return options
 
 
+SUBSCRIPTION_STATUS = text("SELECT status FROM subscriptions")
+
+
 @router.get(
     "/entitlements", name="read_entitlements", responses={s: {"model": Error} for s in (401, 403)}
 )
@@ -358,10 +364,12 @@ def read_entitlements(
         found = entitlements(db)
         used = db.scalar(PLACES_USED)
         rows = offers(db) if row.role == "owner" else []
+        status = db.scalar(SUBSCRIPTION_STATUS) if row.role == "owner" else None
     since = found.over_limit_since
     return EntitlementsOut(
         **asdict(found),
         members_used=used,
         grace_ends_at=since + GRACE if since is not None else None,
         offers=plan_options(rows),
+        subscription_status=status,
     )

@@ -11978,6 +11978,17 @@
             },
             "type": "array",
             "title": "Offers"
+          },
+          "subscription_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subscription Status"
           }
         },
         "type": "object",
@@ -11994,7 +12005,8 @@
           "values",
           "members_used",
           "grace_ends_at",
-          "offers"
+          "offers",
+          "subscription_status"
         ],
         "title": "EntitlementsOut"
       },

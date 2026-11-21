@@ -516,6 +516,28 @@ def test_checkout_is_rate_limited_per_business(
     assert answers == [200] * billing.STRIPE_LIMIT + [429]
 
 
+# ZIF-79 fence. Kills: an unpaid or paused subscription (no plan, still a portal) reported as none,
+# so the console hides Manage billing; the status shown to a worker.
+@pytest.mark.parametrize("status", ["unpaid", "paused", "canceled"])
+def test_owners_see_the_subscription_status_live_or_not(
+    status: str,
+    people: People,
+    app: FastAPI,
+    owner: TestClient,
+    plan: Plan,
+    migrate_engine: Engine,
+) -> None:
+    assert owner.get("/api/entitlements").json()["subscription_status"] is None
+    subscribe(migrate_engine, people.a, plan({}, price=True), status=status)
+
+    body = owner.get("/api/entitlements").json()
+    worker = signed_in(app, people.a, people.only_a).get("/api/entitlements").json()
+
+    assert body["subscription_status"] == status
+    assert body["source"] != "subscription"  # no plan from it, yet a portal
+    assert worker["subscription_status"] is None
+
+
 # ZIF-79 fence. Kills: plan options without their price; Stripe asked on every console load (the
 # 5-minute cache); the plan list failing when Stripe is down, instead of answering without
 # prices; a transaction held across the Stripe call (the fake asserts it).

@@ -415,6 +415,7 @@ def test_get_entitlements_shape_and_no_store(
         "members_used",
         "grace_ends_at",
         "offers",
+        "subscription_status",
     }
     assert (body["source"], body["members_used"], body["values"]["places"]) == ("grant", 3, 1)
     assert body["values"]["online_payments"] is False
