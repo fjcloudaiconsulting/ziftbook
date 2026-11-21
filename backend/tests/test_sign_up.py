@@ -19,6 +19,7 @@ from tests.conftest import (
     PASSWORD,
     People,
     cookie_named,
+    delete_billing,
     delete_memberships,
     delete_payment_accounts,
     delete_services,
@@ -62,6 +63,7 @@ def businesses(migrate_engine: Engine, bound: None) -> Iterator[list[dict[str, A
         conn.execute(text("DELETE FROM users WHERE id::text = ANY(:u)"), ids)
         delete_services(conn, ids["t"])
         delete_payment_accounts(conn, ids["t"])
+        delete_billing(conn, ids["t"])
         conn.execute(text("DELETE FROM tenants WHERE id::text = ANY(:t)"), ids)
 
 

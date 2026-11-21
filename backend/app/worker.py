@@ -15,6 +15,7 @@ from sqlalchemy import create_engine, event
 
 from app import (
     bookings,
+    enforcement,
     erasure_holds,
     jobs,
     ledger,
@@ -62,6 +63,9 @@ KINDS: dict[str, JobKind] = {
     # ZIF-58. An erasure's record outside the database. Long grace: a late entry still protects a
     # later restore, and a given-up one is an ERROR (python -m app.ledger backfill re-writes it).
     "erasure.ledger": JobKind(ledger.record, timeout=30, grace=timedelta(days=30)),
+    # ZIF-78. Stamps or clears a business's over-the-places mark from the state when it runs, so
+    # a late run is still right; a day's grace covers a worker that was down.
+    "billing.enforce": JobKind(enforcement.run, timeout=30, grace=timedelta(days=1)),
 }
 
 

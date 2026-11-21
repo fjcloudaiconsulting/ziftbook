@@ -40,6 +40,10 @@ class Error(BaseModel):
     # first, and how many there are in all.
     bookings: list[InTheWay] | None = None
     total: int | None = None
+    # Only plan_limit sets these (ZIF-78, a 402): the feature the plan lacks, and its count, or null
+    # for a flag. The handler keeps limit's null whenever feature is set.
+    feature: str | None = None
+    limit: int | None = None
 
 
 class ApiError(Exception):
@@ -51,6 +55,8 @@ class ApiError(Exception):
         *,
         bookings: list[InTheWay] | None = None,
         total: int | None = None,
+        feature: str | None = None,
+        limit: int | None = None,
         headers: dict[str, str] | None = None,
     ) -> None:
         self.status_code = status_code
@@ -60,3 +66,5 @@ class ApiError(Exception):
         self.weekday = weekday
         self.bookings = bookings
         self.total = total
+        self.feature = feature
+        self.limit = limit

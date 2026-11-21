@@ -41,6 +41,7 @@ from app import (
     clients,
     contact_email,
     csp_reports,
+    entitlements,
     invites,
     limits,
     logs,
@@ -441,6 +442,7 @@ def create_app() -> FastAPI:
         setup.router,
         csp_reports.router,
         contact_email.router,
+        entitlements.router,
     ):
         for route in each.routes:
             if isinstance(route, APIRoute) and WRITE & set(route.methods or ()):
@@ -580,7 +582,11 @@ def create_app() -> FastAPI:
             weekday=error.weekday,
             bookings=error.bookings,
             total=error.total,
+            feature=error.feature,
+            limit=error.limit,
         ).model_dump(mode="json", exclude_none=True)
+        if error.feature is not None:  # ZIF-78: a flag's 402 says "limit": null, not nothing
+            body["limit"] = error.limit
         return JSONResponse(body, status_code=error.status_code, headers=error.headers)
 
     @app.exception_handler(413)
