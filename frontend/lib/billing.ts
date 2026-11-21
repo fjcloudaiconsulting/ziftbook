@@ -31,6 +31,12 @@ export function canManage(e: Pick<EntitlementsOut, "source" | "period_end">, sub
   return e.period_end !== null || e.source === "subscription" || subscribed;
 }
 
+/** Whether a plan in the list gets "Subscribe": any but the one in force, and that one too while it is only the
+ * trial's (subscribing keeps the trial's days). */
+export function canSubscribeTo(e: Pick<EntitlementsOut, "source" | "plan_id">, planId: string): boolean {
+  return planId !== e.plan_id || e.source === "trial";
+}
+
 type Priced = Pick<
   PlanOption,
   "unit_amount" | "currency" | "interval" | "coupon_id" | "percent_off" | "amount_off" | "coupon_duration" | "coupon_duration_in_months" | "coupon_valid"
@@ -59,7 +65,8 @@ function discounted(o: Priced): number | null {
  * a yearly price), then the list price. Otherwise the list price, and priceNote says why. */
 export function priceLabel(option: Priced, locale: string): { key: PriceKey; values: { price: string; then?: string; count?: number } } | null {
   if (option.unit_amount === null || !option.currency) return null;
-  const money = (amount: number) => formatMoney(amount, option.currency!, locale);
+  // Stripe sends the code in lower case ("eur"); Intl lists it in upper.
+  const money = (amount: number) => formatMoney(amount, option.currency!.toUpperCase(), locale);
   const yearly = option.interval === "year";
   const list = money(option.unit_amount);
   const off = discounted(option);

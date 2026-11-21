@@ -4,7 +4,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { useEffect, useRef, useState } from "react";
 
 import { billingCheckout, billingPortal, type PlanOption, type UrlOut } from "@/api-client";
-import { billingError, canManage, feeLabel, isStripeUrl, priceLabel, priceNote } from "@/lib/billing";
+import { billingError, canManage, canSubscribeTo, feeLabel, isStripeUrl, priceLabel, priceNote } from "@/lib/billing";
 import { dateLocale } from "@/lib/console";
 
 import { JSON_WRITE, SignedOutBanner, useConsole } from "../../_ui/console";
@@ -103,7 +103,7 @@ export function Billing() {
             <span className={styles.rowMeta}>{t("feeMarketplace", { fee: feeLabel(option.platform_fee_marketplace, locale) })}</span>
             <span className={styles.rowMeta}>{t("stripeFee")}</span>
           </span>
-          {canSubscribe && e && option.id !== e.plan_id && (
+          {canSubscribe && e && canSubscribeTo(e, option.id) && (
             <span className={styles.rowActions}>
               <button
                 className={`${uiStyles.button} ${uiStyles.primary} ${uiStyles.small}`}

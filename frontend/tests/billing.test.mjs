@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { bannerFor, billingError, canManage, daysLeft, feeLabel, isStripeUrl, priceLabel, priceNote } from "../lib/billing.ts";
+import { bannerFor, billingError, canManage, canSubscribeTo, daysLeft, feeLabel, isStripeUrl, priceLabel, priceNote } from "../lib/billing.ts";
 
 const now = new Date("2026-11-21T12:00:00Z");
 const base = { source: "default", trial_ends_at: null, grant_ends_at: null, grace_ends_at: null };
@@ -55,6 +55,15 @@ describe("canManage", () => {
   });
 });
 
+describe("canSubscribeTo", () => {
+  test("fence: the trial's own plan can be bought during the trial (ZIF-79)", () => {
+    // Kills: an owner trialling the plan they want unable to subscribe to it until the trial ends.
+    assert.equal(canSubscribeTo({ source: "trial", plan_id: "p1" }, "p1"), true);
+    assert.equal(canSubscribeTo({ source: "subscription", plan_id: "p1" }, "p1"), false);
+    assert.equal(canSubscribeTo({ source: "default", plan_id: "p1" }, "p2"), true);
+  });
+});
+
 describe("priceLabel, priceNote and feeLabel", () => {
   const option = {
     unit_amount: 1250,
@@ -77,6 +86,8 @@ describe("priceLabel, priceNote and feeLabel", () => {
     assert.equal(priceLabel({ ...option, interval: null }, "en").key, "priceOnly");
     assert.equal(priceLabel({ ...option, unit_amount: null }, "en"), null);
     assert.equal(priceLabel({ ...option, currency: null }, "en"), null);
+    // Kills: Stripe's lower-case code ("eur") thrown on by the currency lookup, crashing the Plan tab.
+    assert.deepEqual(priceLabel({ ...option, currency: "eur" }, "en"), { key: "perMonth", values: { price: "€12.50" } });
     assert.equal(priceNote(option), null);
   });
 
