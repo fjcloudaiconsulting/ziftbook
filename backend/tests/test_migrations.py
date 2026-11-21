@@ -3180,11 +3180,15 @@ def test_0102_round_trips_the_payment_rules(
         deposit,
         {**GOOD_PAYMENT, "kind": "pay", "intent_id": "pi_deposit", "amount_minor": 750},
     )
-    # The downgrade refuses rather than drop the deposit's record to fit the price key.
-    with pytest.raises(IntegrityError):
-        command.downgrade(cfg, "0101")
-    with migrate_engine.connect() as conn:
-        assert tuple(conn.execute(PAYMENT_RULE_OBJECTS).one()) == head
+    # The downgrade refuses rather than drop the deposit's record to fit the price key. The
+    # revisions above 0102 have gone down by then (each commits alone): back to head after.
+    try:
+        with pytest.raises(IntegrityError):
+            command.downgrade(cfg, "0101")
+        with migrate_engine.connect() as conn:
+            assert tuple(conn.execute(PAYMENT_RULE_OBJECTS).one()) == head
+    finally:
+        command.upgrade(cfg, "head")
 
 
 # ZIF-62 FENCE. Kills: a snapshot that can be half set, more than the price, or less than the price

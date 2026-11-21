@@ -14,6 +14,7 @@ from sqlalchemy.exc import ProgrammingError
 
 from app.db import tenant_context
 from tests.conftest import (
+    EmptyInstall,
     People,
     fresh_email,
     issue_link,
@@ -74,9 +75,10 @@ def trial(migrate_engine: Engine) -> Iterator[Any]:
 
 
 # ZIF-78 fence. Kills: no Free plan or no platform row (every business would resolve to nothing),
-# more than one platform row, or a Free plan seeded without its one place.
-def test_free_plan_and_platform_row_are_seeded(app_engine: Engine) -> None:
-    with app_engine.connect() as conn:
+# more than one platform row, or a Free plan seeded without its one place. On the empty install: the
+# suite points this database's default at an all-features plan (conftest, ZIF-78 ruling R4).
+def test_free_plan_and_platform_row_are_seeded(empty_database: EmptyInstall) -> None:
+    with empty_database.app.connect() as conn:
         rows = conn.execute(
             text("""SELECT p.slug, p.values, p.public, p.name, p.stripe_price_id
                     FROM platform_billing b JOIN plans p ON p.id = b.default_plan_id""")

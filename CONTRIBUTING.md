@@ -806,6 +806,24 @@ value needs a redeploy it is an environment variable; otherwise it is a setting.
 - Convert a business's local times with `zoneinfo`, never with SQL `AT TIME ZONE`: Postgres doesn't know every name
   the `tzdata` package accepts (`US/Pacific`, `Asia/Calcutta`).
 
+## Plans and entitlements
+
+What a business may use comes from its plan (ZIF-78). Every feature is a key in `FEATURES`
+(`backend/app/entitlements.py`), typed `flag`, `count` or `percent` (basis points, 0 to 10000); plans and per-business
+overrides store `{key: value}` checked by `entitlements.validate`. A gate asks `entitlements(db)` (cached on the
+request's session), never a plan's name or slug.
+
+- **Add a feature:** a `FEATURES` entry with its kind, an off or zero default and a description (the admin plan editor
+  shows it); no migration. Plans gain it when an operator sets it; until then every business gets the default.
+- **Gate:** `require(db, key)` for a flag, `require_room(db, key, used)` for a count, before the write. Both answer
+  402 `{"code": "plan_limit", "feature": "<key>", "limit": <count, or null for a flag>}`, which the console turns
+  into its one upgrade prompt; declare the 402 in the route's `responses`. Never gate money already in motion:
+  refunds, captures and webhooks for existing bookings run whatever the plan.
+- **Writes:** the app role only reads the billing tables (0103). An admin's change (plan, override, offer, grant,
+  billing setting) goes through a `SECURITY DEFINER` function with its audit row; Stripe's state and the people
+  limit's mark go through the worker (`billing.enforce`, `app/enforcement.py`). Never grant the app role a write on
+  them: a business could give itself a plan.
+
 ## Money
 
 An amount is an integer in its currency's minor units everywhere: prices, payments, Stripe calls. How many minor
