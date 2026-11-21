@@ -25,10 +25,19 @@ export function bannerFor(e: Dates, now: Date): { kind: "trial" | "grace" | "gra
   return { kind: null, days: 0 };
 }
 
-/** Whether the owner gets "Manage billing": a live Stripe subscription (its period end), even while a granted
- * plan is the one in force, or one the API just said exists (409 already_subscribed). */
-export function canManage(e: Pick<EntitlementsOut, "source" | "period_end">, subscribed: boolean): boolean {
-  return e.period_end !== null || e.source === "subscription" || subscribed;
+/** Whether the owner gets "Manage billing": any Stripe subscription, live or not (unpaid or paused ones give no
+ * plan but the portal settles them; an ended one still has its invoices), or one the API just said exists (409
+ * already_subscribed). */
+export function canManage(e: Pick<EntitlementsOut, "subscription_status">, subscribed: boolean): boolean {
+  return e.subscription_status !== null || subscribed;
+}
+
+// The statuses of a subscription that is over (backend app/billing.py ENDED): Checkout is open again.
+const ENDED = new Set(["canceled", "incomplete_expired"]);
+
+/** Whether Stripe still bills or settles a subscription of the business, so a second Checkout is refused. */
+export function stillBilled(e: Pick<EntitlementsOut, "subscription_status">, subscribed: boolean): boolean {
+  return subscribed || (e.subscription_status !== null && !ENDED.has(e.subscription_status));
 }
 
 /** Whether a plan in the list gets "Subscribe": any but the one in force, and that one too while it is only the

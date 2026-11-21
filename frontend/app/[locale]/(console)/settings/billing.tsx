@@ -4,7 +4,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { useEffect, useRef, useState } from "react";
 
 import { billingCheckout, billingPortal, type PlanOption, type UrlOut } from "@/api-client";
-import { billingError, canManage, canSubscribeTo, feeLabel, isStripeUrl, priceLabel, priceNote } from "@/lib/billing";
+import { billingError, canManage, canSubscribeTo, feeLabel, isStripeUrl, priceLabel, priceNote, stillBilled } from "@/lib/billing";
 import { dateLocale } from "@/lib/console";
 
 import { JSON_WRITE, SignedOutBanner, useConsole } from "../../_ui/console";
@@ -82,7 +82,7 @@ export function Billing() {
   }
 
   const managed = !!e && canManage(e, subscribed);
-  const canSubscribe = owner && !!e && !managed && e.source !== "grant";
+  const canSubscribe = owner && !!e && !stillBilled(e, subscribed) && e.source !== "grant";
   const places = e?.values.places;
 
   function renderOption(option: PlanOption) {

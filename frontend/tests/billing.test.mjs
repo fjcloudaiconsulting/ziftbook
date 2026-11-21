@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { bannerFor, billingError, canManage, canSubscribeTo, daysLeft, feeLabel, isStripeUrl, priceLabel, priceNote } from "../lib/billing.ts";
+import { bannerFor, billingError, canManage, canSubscribeTo, daysLeft, feeLabel, isStripeUrl, priceLabel, priceNote, stillBilled } from "../lib/billing.ts";
 
 const now = new Date("2026-11-21T12:00:00Z");
 const base = { source: "default", trial_ends_at: null, grant_ends_at: null, grace_ends_at: null };
@@ -44,14 +44,23 @@ describe("bannerFor", () => {
   });
 });
 
-describe("canManage", () => {
-  test("fence: a live subscription gets Manage billing, even under a granted plan (ZIF-79)", () => {
-    // Kills: a granted business that still pays Stripe left with no way to cancel or see invoices.
-    assert.equal(canManage({ source: "grant", period_end: "2026-12-21T00:00:00Z" }, false), true);
-    assert.equal(canManage({ source: "subscription", period_end: null }, false), true);
-    assert.equal(canManage({ source: "default", period_end: null }, true), true);
-    assert.equal(canManage({ source: "grant", period_end: null }, false), false);
-    assert.equal(canManage({ source: "trial", period_end: null }, false), false);
+describe("canManage and stillBilled", () => {
+  test("fence: any Stripe subscription gets Manage billing, live or not (ZIF-79)", () => {
+    // Kills: an unpaid or paused subscription (no plan, still a portal) left with no way to pay or cancel; a granted
+    // business that still pays Stripe left with no way to cancel or see invoices.
+    for (const status of ["active", "past_due", "unpaid", "paused", "incomplete", "canceled"])
+      assert.equal(canManage({ subscription_status: status }, false), true, status);
+    assert.equal(canManage({ subscription_status: null }, true), true);
+    assert.equal(canManage({ subscription_status: null }, false), false);
+  });
+
+  test("fence: Subscribe waits while Stripe still bills, and comes back once it ended (ZIF-79)", () => {
+    // Kills: a second Checkout offered next to an unpaid or paused subscription; a cancelled one blocking a new one.
+    for (const status of ["active", "trialing", "past_due", "unpaid", "paused", "incomplete"])
+      assert.equal(stillBilled({ subscription_status: status }, false), true, status);
+    for (const status of ["canceled", "incomplete_expired", null])
+      assert.equal(stillBilled({ subscription_status: status }, false), false, String(status));
+    assert.equal(stillBilled({ subscription_status: null }, true), true);
   });
 });
 
