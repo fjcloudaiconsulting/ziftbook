@@ -57,6 +57,8 @@ export function SignInForm({ turnstileSiteKey }: { turnstileSiteKey: string | nu
       setMessage({ tone: "note", text: t(outcome.code === "challenge_required" ? "tryLater" : "tooMany") });
     } else if (meaning === "suspended") {
       setMessage({ tone: "error", text: t("suspended") });
+    } else if (meaning === "paused") {
+      setMessage({ tone: "error", text: t("paused") });
     } else if (outcome.status === 403) {
       setMessage({ tone: "error", text: t("noBusiness") });
     } else {

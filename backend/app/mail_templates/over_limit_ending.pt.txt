@@ -1,0 +1,8 @@
+Faltam 7 dias para escolher quem mantém o acesso ao ziftbook
+# Faltam 7 dias para escolher quem mantém o acesso
+
+“$business” ainda tem mais pessoas do que o plano no ziftbook inclui. Em 7 dias, só entram tantas pessoas quanto o plano comporta. As outras mantêm seus agendamentos e dados, e voltam a entrar assim que o plano tiver espaço.
+
+Escolha quem mantém o acesso na página Equipe, ou escolha um plano maior em Configurações.
+
+[Abrir Configurações]($link)

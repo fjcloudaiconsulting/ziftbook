@@ -3049,6 +3049,103 @@
         }
       }
     },
+    "/api/members/{member_id}/keeps-access": {
+      "put": {
+        "tags": [
+          "members"
+        ],
+        "summary": "Set Keeps Access",
+        "description": "Pick whether a member keeps their place once the business is past the grace of being over\nits plan's places (ZIF-78). Applied at once: who is paused is checked again straight after.",
+        "operationId": "members-set_keeps_access",
+        "parameters": [
+          {
+            "name": "member_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Member Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KeepsAccessChange"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          }
+        }
+      }
+    },
     "/api/invites": {
       "get": {
         "tags": [
@@ -10481,6 +10578,20 @@
         ],
         "title": "InviteToken"
       },
+      "KeepsAccessChange": {
+        "properties": {
+          "keeps": {
+            "type": "boolean",
+            "title": "Keeps"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "keeps"
+        ],
+        "title": "KeepsAccessChange"
+      },
       "LinkRequest": {
         "properties": {
           "email": {
@@ -10621,6 +10732,14 @@
               }
             ],
             "title": "Display Name"
+          },
+          "keeps_access": {
+            "type": "boolean",
+            "title": "Keeps Access"
+          },
+          "paused": {
+            "type": "boolean",
+            "title": "Paused"
           }
         },
         "type": "object",
@@ -10629,7 +10748,9 @@
           "user_id",
           "email",
           "role",
-          "display_name"
+          "display_name",
+          "keeps_access",
+          "paused"
         ],
         "title": "MemberOut"
       },

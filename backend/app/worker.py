@@ -102,6 +102,8 @@ SWEEP_SECONDS = 300
 # ZIF-235: the retention sweep, hourly; sooner while a run leaves a backlog (its budget is spent).
 RETENTION_SECONDS = 3600
 RETENTION_BACKLOG_SECONDS = 300
+# ZIF-78: the people limit's and the trial's hourly look at every business.
+ENFORCEMENT_SECONDS = 3600
 
 logger = logging.getLogger("app.worker")
 
@@ -120,6 +122,7 @@ async def work(
     stopped. hold: the retention hold as configured (ZIF-235), if any."""
     swept: float | None = None  # monotonic time of the last SUCCESSFUL sweep
     retention_due: float | None = None  # when the next retention run is due; None: now
+    enforcement_due: float | None = None  # likewise, the enforcement sweep (ZIF-78)
     # The architect's ruling (ZIF-235 D6): an invalid hold value holds, and withholds the ping on
     # every iteration until someone fixes it, so the owner is alerted for as long as it lasts.
     invalid_hold = hold is not None and hold.state == "invalid"
@@ -168,6 +171,15 @@ async def work(
                 retention_due = time.monotonic() + wait
             except Exception:
                 logger.exception("retention sweep failed")
+                healthy = False
+        # ZIF-78. In its own try, as retention: a failure withholds the ping and retries next poll
+        # (its enforce jobs are keyed by the hour, so retries add none).
+        if not stop.is_set() and (enforcement_due is None or time.monotonic() >= enforcement_due):
+            try:
+                await asyncio.to_thread(enforcement.sweep)
+                enforcement_due = time.monotonic() + ENFORCEMENT_SECONDS
+            except Exception:
+                logger.exception("enforcement sweep failed")
                 healthy = False
         if healthy and healthcheck_url:
             try:

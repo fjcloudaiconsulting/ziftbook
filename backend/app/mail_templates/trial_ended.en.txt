@@ -1,0 +1,8 @@
+Your ziftbook trial has ended
+# Your trial has ended
+
+The free trial of “$business” on ziftbook has ended, and the business is now on the free plan. The features it doesn't include are switched off. If your team has more people than the free plan allows, everyone can still sign in for 30 days, and we'll email you before that time is up.
+
+To get everything back, choose a plan in Settings.
+
+[Choose a plan]($link)

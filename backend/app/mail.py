@@ -25,10 +25,11 @@ from opentelemetry.trace import SpanKind
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app import business_settings, currencies, limits, passwords, tracing
+from app import business_settings, currencies, enforcement, limits, passwords, tracing
 from app.business_settings import Locale
 from app.config import LOCAL_HOSTS, MailSettings
 from app.db import SessionLocal, tenant_context
+from app.entitlements import entitlements
 from app.jobs import Job
 
 TEMPLATES = Path(__file__).parent / "mail_templates"
@@ -558,11 +559,27 @@ def _mark_sent(job: Job) -> None:
         )
 
 
+# ZIF-78. Each payload carries the stamp it tells of: the trial's end for a trial's, the
+# over-the-limit mark for the people limit's.
+BILLING_NOTICES = frozenset(
+    {"trial_ending", "trial_ended", "over_limit_started", "over_limit_ending"}
+)
+
+
+def _billing_moved_on(session: Session, template: str, stamp: str) -> bool:
+    found = entitlements(session)
+    at = datetime.fromisoformat(stamp)
+    if template.startswith("trial_"):
+        return found.trial_ends_at != at or session.scalar(enforcement.SUBSCRIBED) is True
+    return found.over_limit_since != at
+
+
 def send(job: Job) -> None:
     """The email.send job. Payload: recipient_id (a user), template, and for business_suspended and
     business_reactivated suspended_at (ISO): the suspension the mail tells of. business_suspended is
     skipped unless the business is suspended since exactly then (its reason is read from the
-    business, never the payload); business_reactivated is skipped while it is suspended again.
+    business, never the payload); business_reactivated is skipped while it is suspended again. The
+    BILLING_NOTICES carry stamp (ISO) instead, and are skipped once the business moved past it.
 
     The address and language come from users, inside the job's tenant: someone who isn't a member of
     that tenant (any more) gets nothing. A template may name the business ($business) and its
@@ -599,6 +616,11 @@ def send(job: Job) -> None:
             template == "business_suspended"
             and tenant.suspended_at != datetime.fromisoformat(payload["suspended_at"])
         ) or (template == "business_reactivated" and tenant.suspended_at is not None):
+            logger.info("email skipped", extra={"template": template, "reason": "moved_on"})
+            return
+        # ZIF-78: likewise a trial's or the people limit's notice, once the business has a new
+        # trial end or stamp, or (a trial's) subscribed or was given a plan since it was queued.
+        if template in BILLING_NOTICES and _billing_moved_on(session, template, payload["stamp"]):
             logger.info("email skipped", extra={"template": template, "reason": "moved_on"})
             return
         app_url = MailSettings().app_url.rstrip("/")

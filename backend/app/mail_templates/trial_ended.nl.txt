@@ -1,0 +1,8 @@
+Je proefperiode op ziftbook is afgelopen
+# Je proefperiode is afgelopen
+
+De gratis proefperiode van “$business” op ziftbook is afgelopen, en het bedrijf zit nu op het gratis abonnement. Wat daar niet in zit, is uitgeschakeld. Heeft je team meer mensen dan het gratis abonnement toestaat? Dan kan iedereen nog 30 dagen inloggen, en we mailen je voordat die tijd om is.
+
+Wil je alles terug? Kies dan een abonnement in Instellingen.
+
+[Kies een abonnement]($link)

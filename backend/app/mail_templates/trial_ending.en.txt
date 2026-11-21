@@ -1,0 +1,8 @@
+Your ziftbook trial ends in 3 days
+# Your trial ends in 3 days
+
+The free trial of “$business” on ziftbook ends in 3 days. After that the business moves to the free plan, and the features it doesn't include switch off. If your team has more people than the free plan allows, everyone can still sign in for 30 days after that.
+
+To keep everything as it is, choose a plan in Settings.
+
+[Choose a plan]($link)

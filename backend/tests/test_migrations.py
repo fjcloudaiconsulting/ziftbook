@@ -3440,3 +3440,39 @@ def test_downgrading_0099_restores_0045s_account_by_email(
         command.upgrade(cfg, "head")
     assert installed() != expected
     assert "suspended_at" in installed()
+
+
+ACCOUNT_BY_EMAIL_STATE = text("""
+SELECT pg_get_functiondef(p.oid), p.proowner::regrole::text, p.prosecdef, p.proconfig,
+       has_function_privilege('public', p.oid, 'EXECUTE'), p.proacl::text
+FROM pg_proc p WHERE p.oid = to_regprocedure('account_by_email(text)')
+""")
+
+
+# ZIF-78 FENCE. Wrong impl: a 0105 that rebuilds account_by_email from a copy of its body, or whose
+# downgrade gives back anything but the definition it found, or that changes its owner, grants or
+# settings; an anchor that no longer matches 0099's text (the upgrade would refuse).
+def test_0105_round_trips_account_by_email(
+    migrate_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = lock_timeout_config(monkeypatch)
+    m = migration("0105_paused_members_sign_in_elsewhere.py")
+    assert m.EDIT[0] in migration("0099_business_suspension.py").NEW_OLDEST
+    with migrate_engine.connect() as conn:
+        at_head = conn.execute(ACCOUNT_BY_EMAIL_STATE).one()
+    assert at_head[0].count(m.EDIT[1]) == 1
+    try:
+        command.downgrade(cfg, m.down_revision)
+        with migrate_engine.connect() as conn:
+            before = conn.execute(ACCOUNT_BY_EMAIL_STATE).one()
+        assert before[0] == at_head[0].replace(m.EDIT[1], m.EDIT[0])
+        assert tuple(before)[1:] == tuple(at_head)[1:]
+    finally:
+        command.upgrade(cfg, "head")
+    with migrate_engine.connect() as conn:
+        assert tuple(conn.execute(ACCOUNT_BY_EMAIL_STATE).one()) == tuple(at_head)
+    assert tuple(at_head)[1:4] == (
+        "ziftbook_migrate",
+        True,
+        ["search_path=pg_catalog, public, pg_temp"],
+    )

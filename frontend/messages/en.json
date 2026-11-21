@@ -124,6 +124,7 @@
     "tryLater": "Too many attempts for now. Try again later, or reset your password.",
     "noBusiness": "This account isn't part of a business any more. Ask the owner to add you again.",
     "suspended": "This business is suspended, so its team can't sign in for now. Questions? Write to support@fjconsulting.io.",
+    "paused": "This business's plan doesn't include a place for you right now, so you can't sign in. Ask the owner.",
     "newHere": "New to ziftbook?",
     "createBusiness": "Create your business"
   },

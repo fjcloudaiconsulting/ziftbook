@@ -91,10 +91,11 @@ export function signInOutcome(
   status: number,
   code: string | undefined,
   hasSiteKey: boolean,
-): "ok" | "invalid" | "challenge" | "try_later" | "suspended" | "error" {
+): "ok" | "invalid" | "challenge" | "try_later" | "suspended" | "paused" | "error" {
   if (status === 200) return "ok";
   if (status === 401) return "invalid";
   if (status === 429) return code === "challenge_required" && hasSiteKey ? "challenge" : "try_later";
   if (status === 403 && code === "business_suspended") return "suspended";
+  if (status === 403 && code === "place_paused") return "paused";
   return "error";
 }

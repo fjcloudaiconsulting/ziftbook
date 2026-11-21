@@ -1,0 +1,8 @@
+Seu teste do ziftbook termina em 3 dias
+# Seu teste termina em 3 dias
+
+O teste gratuito de “$business” no ziftbook termina em 3 dias. Depois disso, o negócio passa para o plano gratuito, e os recursos que ele não inclui são desativados. Se sua equipe tiver mais pessoas do que o plano gratuito permite, todos ainda podem entrar por mais 30 dias.
+
+Para manter tudo como está, escolha um plano em Configurações.
+
+[Escolher um plano]($link)

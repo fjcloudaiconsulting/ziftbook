@@ -1,0 +1,8 @@
+Nog 7 dagen om te kiezen wie toegang houdt tot ziftbook
+# Nog 7 dagen om te kiezen wie toegang houdt
+
+“$business” heeft nog steeds meer mensen dan het abonnement op ziftbook toestaat. Over 7 dagen kunnen alleen zoveel mensen inloggen als er in het abonnement passen. De anderen houden hun afspraken en gegevens, en kunnen weer inloggen zodra er plek is.
+
+Kies op de pagina Team wie toegang houdt, of kies een groter abonnement in Instellingen.
+
+[Open Instellingen]($link)

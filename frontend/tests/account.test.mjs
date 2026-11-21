@@ -149,6 +149,11 @@ describe("sign-in outcome", () => {
     assert.equal(signInOutcome(403, "no_tenant", false), "error");
   });
 
+  // ZIF-78 fence. Kills: a member left out of the plan's places worded as "no business" or as a suspension.
+  test("a paused place is told apart from a suspension and a lost membership", () => {
+    assert.equal(signInOutcome(403, "place_paused", false), "paused");
+  });
+
   test("the other answers keep their meaning", () => {
     assert.equal(signInOutcome(200, undefined, true), "ok");
     assert.equal(signInOutcome(401, undefined, true), "invalid");

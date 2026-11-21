@@ -28,7 +28,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Request, Response
 from opentelemetry.trace import Span, SpanKind
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
-from sqlalchemy import text
+from sqlalchemy import Row, text
 
 from app import auth, limits, photo_child, storage, tracing
 from app.auth import CurrentOwner, SignedIn
@@ -129,10 +129,10 @@ def guard(tenant_id: UUID, request: Request) -> None:
         raise ApiError(429, "rate_limited")
 
 
-def owner_tenant(request: Request) -> UUID:
+def owner_tenant(row: Annotated[Row[Any], Depends(auth.resolve)]) -> UUID:
     """The signed-in owner's business, resolved in its own short transaction (as signed_in does) so
-    the check holds no pooled connection while it processes."""
-    row = auth.resolve(request)
+    the check holds no pooled connection while it processes. The session is a dependency, as
+    services.resolved_owner's, so the session-route walks (tests/test_names.py) see this route."""
     with tenant_context(row.tenant_id) as db:
         auth.owner(auth.named(SignedIn(row.user_id, row.tenant_id, row.role, db)))
     tenant_id: UUID = row.tenant_id

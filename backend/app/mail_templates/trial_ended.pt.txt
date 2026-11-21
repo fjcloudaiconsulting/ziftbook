@@ -1,0 +1,8 @@
+Seu teste do ziftbook terminou
+# Seu teste terminou
+
+O teste gratuito de “$business” no ziftbook terminou, e o negócio agora está no plano gratuito. Os recursos que ele não inclui foram desativados. Se sua equipe tiver mais pessoas do que o plano gratuito permite, todos ainda podem entrar por 30 dias, e avisaremos você por e-mail antes desse prazo acabar.
+
+Para ter tudo de volta, escolha um plano em Configurações.
+
+[Escolher um plano]($link)

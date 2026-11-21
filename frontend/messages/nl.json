@@ -124,6 +124,7 @@
     "tryLater": "Te veel pogingen. Probeer het later opnieuw, of stel je wachtwoord opnieuw in.",
     "noBusiness": "Dit account hoort niet meer bij een bedrijf. Vraag de eigenaar om je opnieuw toe te voegen.",
     "suspended": "Dit bedrijf is opgeschort, dus het team kan voorlopig niet inloggen. Vragen? Mail naar support@fjconsulting.io.",
+    "paused": "Het abonnement van dit bedrijf heeft op dit moment geen plek voor jou, dus je kunt niet inloggen. Vraag het aan de eigenaar.",
     "newHere": "Nieuw bij ziftbook?",
     "createBusiness": "Maak je bedrijf aan"
   },

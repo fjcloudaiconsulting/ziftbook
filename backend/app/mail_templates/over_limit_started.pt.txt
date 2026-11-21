@@ -1,0 +1,10 @@
+Sua equipe é maior do que seu plano do ziftbook permite
+# Sua equipe é maior do que seu plano permite
+
+“$business” tem mais pessoas do que o plano no ziftbook inclui. Nos próximos 30 dias nada muda, só não é possível convidar ninguém novo.
+
+Depois desses 30 dias, só entram tantas pessoas quanto o plano comporta. Você escolhe quem mantém o acesso na página Equipe; se não escolher, os proprietários mantêm primeiro, depois quem entrou há mais tempo. Nenhum agendamento ou dado é apagado, e quem ficar de fora volta a entrar assim que o plano tiver espaço.
+
+Para manter toda a equipe, escolha um plano maior em Configurações.
+
+[Abrir Configurações]($link)
