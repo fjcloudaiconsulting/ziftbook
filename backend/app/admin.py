@@ -47,6 +47,15 @@ Action = Literal[
     "second_factor_unlocked",
     "recovery_code_used",
     "erasure_reapplied",
+    "plan_saved",
+    "plan_archived",
+    "billing_settings_changed",
+    "override_set",
+    "override_removed",
+    "plan_offered",
+    "plan_offer_withdrawn",
+    "plan_granted",
+    "plan_grant_ended",
 ]
 # A write needs a reason: the database refuses one without (platform_audit_events.reason_on_write).
 KIND: dict[Action, Literal["auth", "read", "write"]] = {
@@ -71,6 +80,16 @@ KIND: dict[Action, Literal["auth", "read", "write"]] = {
     "recovery_code_used": "auth",
     # ZIF-58: python -m app.ledger reapply, after a restore; details hold counts only.
     "erasure_reapplied": "write",
+    # ZIF-78 (app/admin_billing.py): details hold what was set, never personal data.
+    "plan_saved": "write",
+    "plan_archived": "write",
+    "billing_settings_changed": "write",
+    "override_set": "write",
+    "override_removed": "write",
+    "plan_offered": "write",
+    "plan_offer_withdrawn": "write",
+    "plan_granted": "write",
+    "plan_grant_ended": "write",
 }
 
 
