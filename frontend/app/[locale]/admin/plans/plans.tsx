@@ -17,7 +17,7 @@ import {
   type PlansOut,
 } from "@/api-client";
 import { needsSignIn } from "@/lib/admin";
-import { type Feature, formFromValues, type PlanForm, valuesFromForm } from "@/lib/admin-plans";
+import { type Feature, formFromValues, type PlanForm, portalSynced, valuesFromForm } from "@/lib/admin-plans";
 
 import { Banner, Heading, type Outcome, problem, Screen, send } from "../../_ui/parts";
 import styles from "../../_ui/ui.module.css";
@@ -39,6 +39,7 @@ export function Plans() {
   const [reloads, setReloads] = useState(0);
   const [mode, setMode] = useState<Mode | null>(null);
   const [done, setDone] = useState<string | null>(null);
+  const [unsynced, setUnsynced] = useState(false); // the last plan write left Stripe's portal as it was
   const doneLine = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -65,13 +66,15 @@ export function Plans() {
 
   const name = (plan: Pick<PlanOut, "name">) => plan.name[locale] ?? plan.name.en;
   const byId = new Map(data?.plans.plans.map((plan) => [plan.id, plan]));
-  const finish = (text: string) => {
+  const finish = (text: string, answer?: unknown) => {
     setMode(null);
     setDone(text);
+    setUnsynced(!portalSynced(answer));
     setReloads((n) => n + 1);
   };
   const open = (next: Mode) => {
     setDone(null);
+    setUnsynced(false);
     setMode(next);
   };
 
@@ -83,12 +86,13 @@ export function Plans() {
       {done && (
         <div ref={doneLine} tabIndex={-1} className={admin.quietFocus}>
           <Banner tone="info">{done}</Banner>
+          {unsynced && <Banner tone="note">{t("plans.portalNotSynced")}</Banner>}
         </div>
       )}
       {data && (
         <>
           {mode?.form === "plan" && (
-            <PlanEditor key={mode.plan?.id ?? "new"} plan={mode.plan} title={mode.plan ? t("plans.editTitle", { name: name(mode.plan) }) : t("plans.new")} features={data.plans.features} onDone={() => finish(t("plans.saved"))} onCancel={() => setMode(null)} />
+            <PlanEditor key={mode.plan?.id ?? "new"} plan={mode.plan} title={mode.plan ? t("plans.editTitle", { name: name(mode.plan) }) : t("plans.new")} features={data.plans.features} onDone={(answer) => finish(t("plans.saved"), answer)} onCancel={() => setMode(null)} />
           )}
           {mode?.form === "archive" && (
             <WriteForm
@@ -97,7 +101,7 @@ export function Plans() {
               submit={t("plans.archive")}
               danger
               run={(reason) => send(adminArchivePlan({ path: { plan_id: mode.plan.id }, body: { reason } }))}
-              onDone={() => finish(t("plans.archived"))}
+              onDone={(answer) => finish(t("plans.archived"), answer)}
               onCancel={() => setMode(null)}
             />
           )}
@@ -163,7 +167,7 @@ export function Plans() {
 
 type Values = Record<string, boolean | number>;
 
-function PlanEditor({ plan, title, features, onDone, onCancel }: { plan?: PlanOut; title: string; features: Feature[]; onDone(): void; onCancel(): void }) {
+function PlanEditor({ plan, title, features, onDone, onCancel }: { plan?: PlanOut; title: string; features: Feature[]; onDone(answer: unknown): void; onCancel(): void }) {
   const t = useTranslations("Admin");
   const id = useId();
   const [slug, setSlug] = useState(plan?.slug ?? "");

@@ -828,7 +828,10 @@ request's session), never a plan's name or slug.
   creates the Stripe customer and the billing webhook stores it. `billing.sync_portal()` makes the portal offer
   exactly the public, unarchived plans with a Price; it updates the account's default portal configuration, which
   must have been saved once in Stripe's dashboard (in test mode too). Only active recurring Prices count: a plan
-  whose Price is archived in Stripe shows no price and drops out of the portal.
+  whose Price is archived in Stripe shows no price and drops out of the portal. An admin's plan save or archive
+  calls it once the write has committed; Stripe refusing or not set up never fails the write, which answers
+  `portal_synced: false` and the plans screen says so (saving again retries). A plan option carries its offer's
+  coupon discount (`percent_off`, `amount_off`), read from Stripe and kept in process like the Prices.
 
 ## Money
 

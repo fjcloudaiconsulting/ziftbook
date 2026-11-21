@@ -309,7 +309,7 @@ def test_price_must_be_active_recurring_eur(
     price = price_id()
     stripe.prices[price] = EUR_MONTHLY
     plan = make_plan(admin, slug, stripe_price_id=price)
-    assert stripe.calls[-1][0] == "retrieve_price"
+    assert ("retrieve_price", {"price_id": price}) in stripe.calls
     assert plan in {p["id"] for p in admin.get("/api/admin/plans").json()["plans"]}
 
     # its Price deactivated since, or Stripe down: a values edit keeping it is not held up
@@ -412,6 +412,54 @@ def test_archive_keeps_subscribers_on_it(
         assert plan not in {str(o.id) for o in offers(db)}
     # archiving again is no change and no error
     assert admin.post(f"/api/admin/plans/{plan}/archive", json={"reason": "x"}).status_code == 200
+
+
+# ZIF-79 fence. Kills: a plan saved or archived while the customer portal goes on offering the old
+# plan list; the portal synced inside the write's transaction (Stripe would read the plans before
+# they commit, and a slow Stripe would hold the plans lock); a Stripe refusal or no Stripe key
+# failing a save that has already committed, or passing unseen by the admin.
+def test_plan_writes_sync_the_portal_after_commit(
+    admin: TestClient,  # noqa: F811
+    stripe: FakeGateway,
+    migrate_engine: Engine,
+    slug: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[bool] = []
+
+    def during(op: str) -> None:
+        if op == "sync_portal_configuration":
+            with migrate_engine.connect() as conn:
+                seen.append(
+                    conn.scalar(text("SELECT public FROM plans WHERE slug = :s"), {"s": slug})
+                )
+
+    stripe.on_call = during
+    price = price_id()
+    stripe.prices[price] = EUR_MONTHLY
+    made = admin.post("/api/admin/plans", json=plan_body(slug, stripe_price_id=price, public=True))
+
+    assert made.status_code == 201, made.content
+    assert made.json()["portal_synced"] is True
+    assert seen == [True]  # committed before Stripe was asked
+    assert stripe.portal is not None and price in stripe.portal["prod_pro"]
+    plan = made.json()["id"]
+
+    stripe.fail_next("sync_portal_configuration")
+    renamed = plan_body(slug, stripe_price_id=price, public=True, values={"places": 4})
+    saved = admin.put(f"/api/admin/plans/{plan}", json=renamed)
+    assert saved.status_code == 200, saved.content
+    assert (saved.json()["values"], saved.json()["portal_synced"]) == ({"places": 4}, False)
+
+    archived = admin.post(f"/api/admin/plans/{plan}/archive", json={"reason": "retired"})
+    assert (archived.status_code, archived.json()["portal_synced"]) == (200, True)
+    assert price not in stripe.portal.get("prod_pro", [])
+
+    monkeypatch.delenv("ZIF_STRIPE_SECRET_KEY")
+    calls = len(stripe.calls)
+    again = admin.put(f"/api/admin/plans/{plan}", json=renamed)
+    assert (again.status_code, again.json()["portal_synced"]) == (200, False)
+    assert len(stripe.calls) == calls
 
 
 # ZIF-78 fence. Kills: an archived plan made the default or the trial (every new business would

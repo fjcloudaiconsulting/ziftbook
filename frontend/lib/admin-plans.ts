@@ -41,3 +41,8 @@ export function valuesFromForm(form: PlanForm, registry: Feature[]): { values: R
   }
   return { values };
 }
+
+/** ZIF-79: false when a plan write's answer says Stripe's billing portal was left as it was. */
+export function portalSynced(answer: unknown): boolean {
+  return (answer as { portal_synced?: boolean } | undefined)?.portal_synced !== false;
+}

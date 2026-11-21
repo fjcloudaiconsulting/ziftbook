@@ -12,7 +12,7 @@ from sqlalchemy import Engine, text
 
 from app import billing, entitlements
 from app.main import create_app
-from app.stripe_gateway import Failed, Gateway, PriceInfo
+from app.stripe_gateway import CouponInfo, Failed, Gateway, PriceInfo
 from tests.conftest import People, give_plan, signed_in
 from tests.stripe_fake import FakeGateway
 from tests.test_entitlements import (  # noqa: F401 (fixtures)
@@ -34,6 +34,7 @@ UNAVAILABLE = {"code": "billing_unavailable"}
 @pytest.fixture
 def app(people: People, fake_stripe: FakeGateway, monkeypatch: pytest.MonkeyPatch) -> FastAPI:
     monkeypatch.setattr(entitlements, "_prices", {})  # each test sees Stripe afresh
+    monkeypatch.setattr(entitlements, "_coupons", {})
     return create_app()
 
 
@@ -481,6 +482,51 @@ def test_plan_options_carry_their_stripe_price(
     entitlements._prices.clear()
     fake_stripe.fail_next("list_prices")
     assert option(down) == {"unit_amount": None, "currency": None, "interval": None}
+
+
+# ZIF-79 fence. Kills: an offer's discount missing from its plan option (the console can't show
+# the discounted price); a deleted, spent or other-currency coupon shown as a discount; Stripe
+# asked for coupons on every console load; the plan list failing when Stripe is down, instead of
+# answering without the discount.
+def test_plan_options_carry_their_coupon_discount(
+    people: People, owner: TestClient, fake_stripe: FakeGateway, plan: Plan, migrate_engine: Engine
+) -> None:
+    coupons = {
+        "HALF": CouponInfo(True, 12.5, None, "forever", None, None),
+        "FIVE": CouponInfo(True, None, 500, "once", None, "eur"),
+        "DOLLARS": CouponInfo(True, None, 500, "once", None, "usd"),
+        "SPENT": CouponInfo(False, 50.0, None, "once", None, None),
+        "GONE": None,
+        None: None,
+    }
+    plans = {}
+    for coupon in coupons:
+        plans[coupon] = plan({}, price=True)
+        offer(migrate_engine, people.a, plans[coupon], coupon)
+        fake_stripe.prices[price_of(migrate_engine, plans[coupon])] = info("prod_a")
+    fake_stripe.coupons.update({k: v for k, v in coupons.items() if k and v})
+
+    def discounts() -> dict[str | None, tuple[Any, Any]]:
+        body = owner.get("/api/entitlements").json()
+        by_id = {o["id"]: (o["percent_off"], o["amount_off"]) for o in body["offers"]}
+        return {coupon: by_id[str(plan_id)] for coupon, plan_id in plans.items()}
+
+    assert discounts() == {
+        "HALF": (12.5, None),
+        "FIVE": (None, 500),
+        "DOLLARS": (None, None),
+        "SPENT": (None, None),
+        "GONE": (None, None),
+        None: (None, None),
+    }
+    calls = fake_stripe.count("retrieve_coupon")
+    assert calls == 5  # each coupon once
+    assert discounts()["HALF"] == (12.5, None)
+    assert fake_stripe.count("retrieve_coupon") == calls  # cached
+
+    entitlements._coupons.clear()
+    fake_stripe.fail_next("retrieve_coupon", times=5)
+    assert set(discounts().values()) == {(None, None)}
 
 
 # ZIF-79 fence. Kills: one Stripe call per plan on every cold console load (one listing serves

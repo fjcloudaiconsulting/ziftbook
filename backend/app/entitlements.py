@@ -197,7 +197,8 @@ router = APIRouter(prefix="/api", tags=["billing"])
 
 class PlanOption(BaseModel):
     """A plan this business can subscribe to. The price is Stripe's (ZIF-79), before any coupon;
-    all three price fields are None while Stripe can't be asked."""
+    all three price fields are None while Stripe can't be asked. The coupon's discount is None
+    while Stripe can't be asked, once it no longer applies, and with no coupon."""
 
     id: UUID
     slug: str
@@ -208,6 +209,8 @@ class PlanOption(BaseModel):
     unit_amount: int | None  # minor units of currency
     currency: str | None  # lower case, as Stripe has it
     interval: str | None  # month, year
+    percent_off: float | None  # the coupon's, as Stripe has it (12.5 is 12.5%)
+    amount_off: int | None  # the coupon's, in minor units of the price's currency
 
 
 class EntitlementsOut(BaseModel):
@@ -268,12 +271,50 @@ def prices(ids: list[str]) -> dict[str, stripe_gateway.PriceInfo]:
     return {i: info for i, info in kept.items() if info is not None}
 
 
+# Stripe's coupons by id, kept as the Prices are: a coupon's discount never changes, and Stripe
+# reads coupons one at a time. A deleted one is kept as unknown for as long as a found one.
+_coupons: dict[str, tuple[float, stripe_gateway.CouponInfo | None]] = {}
+_refreshing_coupons = threading.Lock()
+
+
+def coupons(ids: list[str]) -> dict[str, stripe_gateway.CouponInfo]:
+    """The coupons of these ids Stripe still applies, from the cache or Stripe. Never raises: a
+    coupon Stripe can't give is missing from the answer. Call it with no transaction open."""
+    now = time.monotonic()
+    stale = [i for i in dict.fromkeys(ids) if _coupons.get(i, (0.0, None))[0] <= now]
+    if stale and _refreshing_coupons.acquire(blocking=False):
+        try:
+            for coupon_id in stale:
+                try:
+                    got = stripe_gateway.gateway.retrieve_coupon(coupon_id)
+                except stripe_gateway.Failed as failure:
+                    if failure.kind == "invalid":  # deleted
+                        _coupons[coupon_id] = (now + PRICE_TTL, None)
+                    else:  # what was known stays, asked again a minute on
+                        known = _coupons.get(coupon_id, (0.0, None))[1]
+                        _coupons[coupon_id] = (now + FAILED_TTL, known)
+                else:
+                    _coupons[coupon_id] = (now + PRICE_TTL, got)
+        finally:
+            _refreshing_coupons.release()
+    kept = {i: _coupons.get(i, (0.0, None))[1] for i in ids}
+    return {i: info for i, info in kept.items() if info is not None and info.valid}
+
+
 def plan_options(rows: list[Row[Any]]) -> list[PlanOption]:
     known = prices([row.stripe_price_id for row in rows])
+    discounts = coupons([row.stripe_coupon_id for row in rows if row.stripe_coupon_id])
     options = []
     for row in rows:
         values = {key: f.default for key, f in FEATURES.items()} | _stored(row.values)
         price = known.get(row.stripe_price_id)
+        coupon = discounts.get(row.stripe_coupon_id) if row.stripe_coupon_id else None
+        # An amount off counts only in the price's currency: Checkout refuses it on another.
+        same_currency = (
+            coupon is not None
+            and price is not None
+            and (coupon.currency or "").lower() == price.currency.lower()
+        )
         options.append(
             PlanOption(
                 id=row.id,
@@ -285,6 +326,8 @@ def plan_options(rows: list[Row[Any]]) -> list[PlanOption]:
                 unit_amount=price.unit_amount if price else None,
                 currency=price.currency if price else None,
                 interval=price.interval if price else None,
+                percent_off=coupon.percent_off if coupon else None,
+                amount_off=coupon.amount_off if coupon and same_currency else None,
             )
         )
     return options

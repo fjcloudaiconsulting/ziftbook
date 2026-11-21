@@ -211,13 +211,13 @@ def portal(row: Owner, response: Response) -> UrlOut:
         return UrlOut(url=url)
 
 
-def sync_portal() -> None:
+def sync_portal() -> bool:
     """The customer portal offers exactly the public, unarchived plans with a Price; called after a
-    plan is saved, published or archived. Does nothing where Stripe is not set up; raises
+    plan is saved, published or archived. False, asking nothing, where Stripe is not set up; raises
     stripe_gateway.Failed when Stripe refuses (the plan is saved either way: saving again
     retries)."""
     if not StripeSettings().secret_ready():
-        return
+        return False
     with SessionLocal.begin() as db:
         ids = list(db.scalars(PORTAL_PLANS))
     gateway = stripe_gateway.gateway
@@ -229,6 +229,7 @@ def sync_portal() -> None:
         else:
             logger.warning("billing price unknown to stripe", extra={"price": price_id})
     gateway.sync_portal_configuration(products)
+    return True
 
 
 def _accept(event: stripe_gateway.BillingEvent) -> None:

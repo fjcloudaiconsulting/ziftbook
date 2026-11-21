@@ -432,6 +432,8 @@ def test_get_entitlements_shape_and_no_store(
             "unit_amount": None,
             "currency": None,
             "interval": None,
+            "percent_off": None,
+            "amount_off": None,
         },
         str(offered): {
             "id": str(offered),
@@ -443,6 +445,8 @@ def test_get_entitlements_shape_and_no_store(
             "unit_amount": None,
             "currency": None,
             "interval": None,
+            "percent_off": None,
+            "amount_off": None,
         },
     }
     assert len([o for o in body["offers"] if o["id"] == str(public)]) == 1

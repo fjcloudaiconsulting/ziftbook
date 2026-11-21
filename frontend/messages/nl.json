@@ -291,6 +291,7 @@
       "save": "Abonnement opslaan",
       "saved": "Abonnement opgeslagen.",
       "archived": "Abonnement gearchiveerd.",
+      "portalNotSynced": "Het facturatieportaal van Stripe is niet bijgewerkt, dus eigenaren zien daar misschien nog de oude lijst met abonnementen. Sla een abonnement opnieuw op om het nog eens te proberen.",
       "archiveTitle": "{name} archiveren",
       "archiveBody": "Bedrijven die het hebben, houden het. Het kan niet meer worden gekozen of aangeboden. Het standaard- en het proefabonnement kunnen niet worden gearchiveerd.",
       "language": {

@@ -7070,7 +7070,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PlanOut"
+                  "$ref": "#/components/schemas/SavedPlanOut"
                 }
               }
             }
@@ -7654,7 +7654,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PlanOut"
+                  "$ref": "#/components/schemas/SavedPlanOut"
                 }
               }
             }
@@ -7778,7 +7778,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PlanOut"
+                  "$ref": "#/components/schemas/SavedPlanOut"
                 }
               }
             }
@@ -13552,6 +13552,28 @@
               }
             ],
             "title": "Interval"
+          },
+          "percent_off": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Percent Off"
+          },
+          "amount_off": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amount Off"
           }
         },
         "type": "object",
@@ -13564,10 +13586,12 @@
           "coupon_id",
           "unit_amount",
           "currency",
-          "interval"
+          "interval",
+          "percent_off",
+          "amount_off"
         ],
         "title": "PlanOption",
-        "description": "A plan this business can subscribe to. The price is Stripe's (ZIF-79), before any coupon;\nall three price fields are None while Stripe can't be asked."
+        "description": "A plan this business can subscribe to. The price is Stripe's (ZIF-79), before any coupon;\nall three price fields are None while Stripe can't be asked. The coupon's discount is None\nwhile Stripe can't be asked, once it no longer applies, and with no coupon."
       },
       "PlanOut": {
         "properties": {
@@ -13927,6 +13951,95 @@
           "role"
         ],
         "title": "RoleChange"
+      },
+      "SavedPlanOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "slug": {
+            "type": "string",
+            "title": "Slug"
+          },
+          "name": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Name"
+          },
+          "stripe_price_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stripe Price Id"
+          },
+          "values": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "object",
+            "title": "Values"
+          },
+          "public": {
+            "type": "boolean",
+            "title": "Public"
+          },
+          "archived_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archived At"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          },
+          "portal_synced": {
+            "type": "boolean",
+            "title": "Portal Synced"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "slug",
+          "name",
+          "stripe_price_id",
+          "values",
+          "public",
+          "archived_at",
+          "created_at",
+          "updated_at",
+          "portal_synced"
+        ],
+        "title": "SavedPlanOut"
       },
       "ServiceChange": {
         "properties": {

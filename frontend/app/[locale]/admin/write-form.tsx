@@ -38,7 +38,8 @@ export function WriteForm({
   /** The server refused a feature's value (invalid_values): the caller marks and focuses it. */
   onInvalid?(key: string): void;
   run(reason: string): Promise<Outcome<unknown>>;
-  onDone(): void;
+  /** The write succeeded; data is its answer. */
+  onDone(data: unknown): void;
   onCancel(): void;
 }) {
   const t = useTranslations("Admin");
@@ -61,7 +62,7 @@ export function WriteForm({
     },
     onStep(step, outcome) {
       const code = known(outcome.code);
-      if (outcome.status >= 200 && outcome.status < 300) onDone();
+      if (outcome.status >= 200 && outcome.status < 300) onDone(outcome.data);
       else if (code) {
         setMessage({ tone: outcome.status === 503 ? "note" : "error", text: t(`billing.errors.${code}`, { key: outcome.key ?? "" }) });
         if (code === "invalid_values" && outcome.key) onInvalid?.(outcome.key);

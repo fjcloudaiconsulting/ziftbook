@@ -291,6 +291,7 @@
       "save": "Save plan",
       "saved": "Plan saved.",
       "archived": "Plan archived.",
+      "portalNotSynced": "Stripe's billing portal was not updated, so owners may still see the old list of plans there. Save a plan again to retry.",
       "archiveTitle": "Archive {name}",
       "archiveBody": "Businesses on it keep it. It can no longer be chosen or offered. The default and trial plans can't be archived.",
       "language": {
