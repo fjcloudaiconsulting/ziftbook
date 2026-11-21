@@ -26,7 +26,12 @@ from tests.test_admin_second_factor import verified_client
 NAME = {"en": "Pro", "nl": "Pro", "pt": "Pro"}
 LATER = datetime.now(UTC) + timedelta(days=30)
 EUR_MONTHLY = PriceInfo(
-    active=True, recurring=True, currency="eur", unit_amount=1900, interval="month"
+    active=True,
+    recurring=True,
+    currency="eur",
+    unit_amount=1900,
+    interval="month",
+    product="prod_pro",
 )
 
 
@@ -287,9 +292,9 @@ def test_price_must_be_active_recurring_eur(
     slug: str,
 ) -> None:
     bad = {
-        price_id(): PriceInfo(False, True, "eur", 1900, "month"),
-        price_id(): PriceInfo(True, False, "eur", 1900, None),
-        price_id(): PriceInfo(True, True, "usd", 1900, "month"),
+        price_id(): PriceInfo(False, True, "eur", 1900, "month", "prod_pro"),
+        price_id(): PriceInfo(True, False, "eur", 1900, None, "prod_pro"),
+        price_id(): PriceInfo(True, True, "usd", 1900, "month", "prod_pro"),
     }
     stripe.prices.update(bad)
     for price in (*bad, price_id()):  # the last one Stripe doesn't know
@@ -308,7 +313,7 @@ def test_price_must_be_active_recurring_eur(
     assert plan in {p["id"] for p in admin.get("/api/admin/plans").json()["plans"]}
 
     # its Price deactivated since, or Stripe down: a values edit keeping it is not held up
-    stripe.prices[price] = PriceInfo(False, True, "eur", 1900, "month")
+    stripe.prices[price] = PriceInfo(False, True, "eur", 1900, "month", "prod_pro")
     stripe.fail_next("retrieve_price")
     asked = stripe.count("retrieve_price")
     edited = admin.put(
@@ -537,7 +542,7 @@ def test_offer_with_coupon_validates_coupon(
 
     assert done.status_code == 204, done.content
     with tenant_context(people.a) as db:
-        assert {str(o.id): o.coupon_id for o in offers(db)}[plan] == "half"
+        assert {str(o.id): o.stripe_coupon_id for o in offers(db)}[plan] == "half"
     with tenant_context(people.b) as db:
         assert plan not in {str(o.id) for o in offers(db)}
     shown = admin.get(f"/api/admin/businesses/{people.a}/billing").json()

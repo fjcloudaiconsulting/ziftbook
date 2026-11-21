@@ -13,6 +13,8 @@ import stripe
 from opentelemetry.trace import SpanKind
 from stripe import RequestOptions
 from stripe.params import PaymentIntentCreateParams, RefundCreateParams
+from stripe.params.billing_portal import ConfigurationUpdateParamsFeatures
+from stripe.params.checkout import SessionCreateParams
 from stripe.params.v2.core import AccountCreateParams
 
 from app import tracing
@@ -95,13 +97,15 @@ class RefundState:
 
 @dataclass(frozen=True)
 class PriceInfo:
-    """A Price on the platform account, as the plan editor checks it."""
+    """A Price on the platform account: the plan editor checks it (ZIF-78), the billing page shows
+    it and the portal lists it by product (ZIF-79)."""
 
     active: bool
     recurring: bool  # retrieve_price: recurring at a fixed quantity (licensed), not metered
-    currency: str
-    unit_amount: int | None
+    currency: str  # lower case, as Stripe sends it
+    unit_amount: int | None  # minor units; None for a Price Stripe computes (tiers, custom)
     interval: str | None  # month, year...; None for a one-off Price
+    product: str
 
 
 @dataclass(frozen=True)
@@ -456,6 +460,7 @@ class Gateway:
         def call(client: stripe.StripeClient) -> PriceInfo:
             got = client.v1.prices.retrieve(price_id)
             recurring = got.recurring
+            product = got.product
             return PriceInfo(
                 got.active,
                 # Metered is billed on reported usage, which Checkout's quantity of 1 never sells.
@@ -463,6 +468,7 @@ class Gateway:
                 got.currency,
                 got.unit_amount,
                 recurring.interval if recurring is not None else None,
+                product if isinstance(product, str) else product.id,
             )
 
         return self._call("retrieve_price", call)
@@ -506,6 +512,111 @@ class Gateway:
         ):
             raise BadSignature
         return made
+
+    # ZIF-79: the platform's own billing, on the platform account (no stripe_account option).
+
+    def create_checkout(
+        self,
+        *,
+        customer: str | None,
+        price: str,
+        coupon: str | None,
+        tenant_id: str,
+        trial_end: int | None,
+        success_url: str,
+        cancel_url: str,
+        locale: str,
+        idempotency_key: str,
+    ) -> str:
+        """A Checkout Session subscribing the business to price; its URL. Stripe creates the
+        customer when there is none; the tenant rides on the session and the subscription, so the
+        billing webhook ties both back to the business. The same key gets the same session."""
+
+        def call(client: stripe.StripeClient) -> str:
+            params: SessionCreateParams = {
+                "mode": "subscription",
+                "line_items": [{"price": price, "quantity": 1}],
+                "client_reference_id": tenant_id,
+                "subscription_data": {"metadata": {"tenant_id": tenant_id}},
+                "success_url": success_url,
+                "cancel_url": cancel_url,
+                "locale": locale,
+            }
+            if customer is not None:
+                params["customer"] = customer
+            if coupon is not None:
+                params["discounts"] = [{"coupon": coupon}]
+            if trial_end is not None:
+                params["subscription_data"]["trial_end"] = trial_end
+            made = client.v1.checkout.sessions.create(params, {"idempotency_key": idempotency_key})
+            if not made.url:
+                raise Failed("invalid", None)
+            return made.url
+
+        return self._call("create_checkout", call)
+
+    def create_portal(self, customer: str, return_url: str, locale: str) -> str:
+        """A customer-portal session for customer; its URL."""
+        return self._call(
+            "create_portal",
+            lambda client: (
+                client.v1.billing_portal.sessions.create(
+                    {"customer": customer, "return_url": return_url, "locale": locale}
+                ).url
+            ),
+        )
+
+    def sync_portal_configuration(self, prices: dict[str, list[str]]) -> None:
+        """The default portal configuration offers exactly these Prices, by product, with
+        cancellation at period end, card updates and invoices. Failed("invalid") when the account
+        has no default configuration (its portal was never saved in the dashboard)."""
+
+        def call(client: stripe.StripeClient) -> None:
+            found = client.v1.billing_portal.configurations.list(
+                {"is_default": True, "limit": 1}
+            ).data
+            if not found:
+                logger.warning("billing portal has no default configuration")
+                raise Failed("invalid", None)
+            features: ConfigurationUpdateParamsFeatures = {
+                "subscription_update": {"enabled": bool(prices)},
+                "subscription_cancel": {"enabled": True, "mode": "at_period_end"},
+                "payment_method_update": {"enabled": True},
+                "invoice_history": {"enabled": True},
+            }
+            if prices:
+                features["subscription_update"] |= {
+                    "products": [{"product": k, "prices": v} for k, v in prices.items()],
+                    "default_allowed_updates": ["price"],
+                    "proration_behavior": "create_prorations",
+                }
+            client.v1.billing_portal.configurations.update(found[0].id, {"features": features})
+
+        self._call("sync_portal_configuration", call)
+
+    def list_prices(self, ids: list[str]) -> dict[str, PriceInfo]:
+        """The active recurring Prices of these ids; any other is left out. One listing, paged,
+        filtered here: Stripe lists Prices by no id."""
+        wanted = set(ids)
+
+        def call(client: stripe.StripeClient) -> dict[str, PriceInfo]:
+            got = {}
+            listed = client.v1.prices.list({"active": True, "type": "recurring", "limit": 100})
+            for price in listed.auto_paging_iter():
+                if price.id not in wanted:
+                    continue
+                product = price.product
+                got[price.id] = PriceInfo(
+                    True,  # the listing asks for active, recurring Prices only
+                    True,
+                    price.currency,
+                    price.unit_amount,
+                    price.recurring.interval if price.recurring else None,
+                    product if isinstance(product, str) else product.id,
+                )
+            return got
+
+        return self._call("list_prices", call)
 
 
 def _processing_fee(charge: stripe.Charge) -> int | None:

@@ -82,6 +82,10 @@ class FakeGateway(Gateway):
         # The platform account's Prices and coupons, by id: an id not here is Stripe's 404.
         self.prices: dict[str, PriceInfo] = {}
         self.coupons: dict[str, CouponInfo] = {}
+        # ZIF-79: the portal's plan list as last synced.
+        self.portal: dict[str, list[str]] | None = None
+        self.checkout_sessions: dict[str, str] = {}
+        self.checkout_params: dict[str, tuple[Any, ...]] = {}
 
     @contextmanager
     def _keyed(self, key: str) -> Iterator[None]:
@@ -401,6 +405,55 @@ class FakeGateway(Gateway):
     def latest(self, booking_id: str) -> str:
         """The newest intent made for the booking."""
         return [i for i, got in self.intents.items() if got["booking_id"] == str(booking_id)][-1]
+
+    # ZIF-79: the platform's own billing.
+
+    def create_checkout(
+        self,
+        *,
+        customer: str | None,
+        price: str,
+        coupon: str | None,
+        tenant_id: str,
+        trial_end: int | None,
+        success_url: str,
+        cancel_url: str,
+        locale: str,
+        idempotency_key: str,
+    ) -> str:
+        self._enter(
+            "create_checkout",
+            customer=customer,
+            price=price,
+            coupon=coupon,
+            tenant_id=tenant_id,
+            trial_end=trial_end,
+            success_url=success_url,
+            cancel_url=cancel_url,
+            locale=locale,
+            key=idempotency_key,
+        )
+        # Same key, same session, as Stripe answers within its idempotency window; the same key
+        # with other params is refused.
+        params = (customer, price, coupon, tenant_id, trial_end, success_url, cancel_url, locale)
+        if self.checkout_params.setdefault(idempotency_key, params) != params:
+            raise Failed("invalid", "req_fake")
+        return self.checkout_sessions.setdefault(
+            idempotency_key, f"https://checkout.stripe.test/c/{uuid.uuid4().hex}"
+        )
+
+    def create_portal(self, customer: str, return_url: str, locale: str) -> str:
+        self._enter("create_portal", customer=customer, return_url=return_url, locale=locale)
+        return f"https://billing.stripe.test/p/{customer}"
+
+    def sync_portal_configuration(self, prices: dict[str, list[str]]) -> None:
+        self._enter("sync_portal_configuration", prices=prices)
+        self.portal = prices
+
+    def list_prices(self, ids: list[str]) -> dict[str, PriceInfo]:
+        self._enter("list_prices", ids=list(ids))
+        listed = {i: p for i, p in self.prices.items() if p.active and p.recurring}
+        return {i: listed[i] for i in ids if i in listed}
 
 
 def signed(body: bytes, secret: str = WEBHOOK_SECRET, t: int | None = None) -> dict[str, str]:

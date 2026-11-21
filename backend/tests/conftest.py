@@ -44,7 +44,18 @@ from sqlalchemy.engine import URL, make_url
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import NullPool
 
-from app import admin, auth, entitlements, logs, mail, passwords, payments, stripe_gateway, tracing
+from app import (
+    admin,
+    auth,
+    billing,
+    entitlements,
+    logs,
+    mail,
+    passwords,
+    payments,
+    stripe_gateway,
+    tracing,
+)
 from app.db import SessionLocal, tenant_context
 from app.jobs import run_once
 from app.worker import KINDS
@@ -1214,7 +1225,8 @@ def fake_stripe(monkeypatch: pytest.MonkeyPatch) -> FakeGateway:
         finally:
             fake.open_sessions -= 1
 
-    # The routes' dependencies (auth) and the payments code: where a session could be held open.
-    for module in (auth, payments):
+    # The routes' dependencies (auth), the payments and billing code: where a session could be held
+    # open.
+    for module in (auth, payments, billing, entitlements):
         monkeypatch.setattr(module, "tenant_context", counted)
     return fake

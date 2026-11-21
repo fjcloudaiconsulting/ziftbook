@@ -34,6 +34,7 @@ from app import (
     audit,
     auth,
     availability,
+    billing,
     booking_links,
     booking_page,
     bookings,
@@ -444,6 +445,7 @@ def create_app() -> FastAPI:
         csp_reports.router,
         contact_email.router,
         entitlements.router,
+        billing.router,
     ):
         for route in each.routes:
             if isinstance(route, APIRoute) and WRITE & set(route.methods or ()):

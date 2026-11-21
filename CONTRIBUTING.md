@@ -823,6 +823,12 @@ request's session), never a plan's name or slug.
   billing setting) goes through a `SECURITY DEFINER` function with its audit row; Stripe's state and the people
   limit's mark go through the worker (`billing.enforce`, `app/enforcement.py`). Never grant the app role a write on
   them: a business could give itself a plan.
+- **Billing (ZIF-79, `backend/app/billing.py`):** an owner subscribes through Stripe Checkout and manages the
+  subscription in Stripe's customer portal, both on the platform account. These routes store nothing: Checkout
+  creates the Stripe customer and the billing webhook stores it. `billing.sync_portal()` makes the portal offer
+  exactly the public, unarchived plans with a Price; it updates the account's default portal configuration, which
+  must have been saved once in Stripe's dashboard (in test mode too). Only active recurring Prices count: a plan
+  whose Price is archived in Stripe shows no price and drops out of the portal.
 
 ## Money
 

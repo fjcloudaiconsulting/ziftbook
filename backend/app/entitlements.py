@@ -8,17 +8,20 @@ ended once an operator has set the trial plan, else the default plan (Free). Its
 the registry's defaults, and the business's live overrides over both.
 """
 
+import threading
+import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
-from typing import Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Response
+from fastapi import APIRouter, Depends, Response
 from pydantic import BaseModel
-from sqlalchemy import text
+from sqlalchemy import Row, text
 from sqlalchemy.orm import Session
 
-from app.auth import CurrentSession
+from app import auth, stripe_gateway
+from app.db import tenant_context
 from app.errors import ApiError, Error
 
 Kind = Literal["flag", "count", "percent"]
@@ -193,7 +196,8 @@ router = APIRouter(prefix="/api", tags=["billing"])
 
 
 class PlanOption(BaseModel):
-    """A plan this business can subscribe to (prices come from Stripe, read elsewhere)."""
+    """A plan this business can subscribe to. The price is Stripe's (ZIF-79), before any coupon;
+    all three price fields are None while Stripe can't be asked."""
 
     id: UUID
     slug: str
@@ -201,6 +205,9 @@ class PlanOption(BaseModel):
     platform_fee_direct: int  # basis points
     platform_fee_marketplace: int  # basis points
     coupon_id: str | None  # the business's offer carries a Stripe coupon
+    unit_amount: int | None  # minor units of currency
+    currency: str | None  # lower case, as Stripe has it
+    interval: str | None  # month, year
 
 
 class EntitlementsOut(BaseModel):
@@ -222,17 +229,51 @@ class EntitlementsOut(BaseModel):
 # Public, unarchived paid plans and the plans offered to this business (plan_offers is under
 # row-level security), one row each, an offer's coupon included.
 OFFERS = text("""
-SELECT p.id, p.slug, p.name, p.values, o.stripe_coupon_id
+SELECT p.id, p.slug, p.name, p.values, p.stripe_price_id, o.stripe_coupon_id
 FROM plans p LEFT JOIN plan_offers o ON o.plan_id = p.id
 WHERE p.archived_at IS NULL AND p.stripe_price_id IS NOT NULL AND (p.public OR o.id IS NOT NULL)
 ORDER BY p.created_at, p.id
 """)
 
 
-def offers(db: Session) -> list[PlanOption]:
+def offers(db: Session) -> list[Row[Any]]:
+    """The plans on offer, read in the tenant transaction; plan_options() prices them after it."""
+    return list(db.execute(OFFERS))
+
+
+# Stripe's Prices by id, with when to ask again: in process, so a console load rarely asks Stripe.
+# A Price's amount never changes; a failure is kept a short while, so an outage neither hammers
+# Stripe nor hides prices long.
+PRICE_TTL, FAILED_TTL = 1800.0, 60.0
+_prices: dict[str, tuple[float, stripe_gateway.PriceInfo | None]] = {}
+# One refresh at a time; meanwhile other requests answer from what is kept (nothing when cold).
+_refreshing = threading.Lock()
+
+
+def prices(ids: list[str]) -> dict[str, stripe_gateway.PriceInfo]:
+    """The Prices of these ids Stripe has, from the cache or Stripe. Never raises: a Price Stripe
+    can't give is missing from the answer. Call it with no transaction open."""
+    now = time.monotonic()
+    stale = [i for i in ids if _prices.get(i, (0.0, None))[0] <= now]
+    if stale and _refreshing.acquire(blocking=False):
+        try:
+            got = stripe_gateway.gateway.list_prices(stale)
+        except stripe_gateway.Failed:  # what was known stays, asked again a minute on
+            _prices.update({i: (now + FAILED_TTL, _prices.get(i, (0.0, None))[1]) for i in stale})
+        else:
+            _prices.update({i: (now + PRICE_TTL, got.get(i)) for i in stale})
+        finally:
+            _refreshing.release()
+    kept = {i: _prices.get(i, (0.0, None))[1] for i in ids}
+    return {i: info for i, info in kept.items() if info is not None}
+
+
+def plan_options(rows: list[Row[Any]]) -> list[PlanOption]:
+    known = prices([row.stripe_price_id for row in rows])
     options = []
-    for row in db.execute(OFFERS):
+    for row in rows:
         values = {key: f.default for key, f in FEATURES.items()} | _stored(row.values)
+        price = known.get(row.stripe_price_id)
         options.append(
             PlanOption(
                 id=row.id,
@@ -241,6 +282,9 @@ def offers(db: Session) -> list[PlanOption]:
                 platform_fee_direct=int(values["platform_fee_direct"]),
                 platform_fee_marketplace=int(values["platform_fee_marketplace"]),
                 coupon_id=row.stripe_coupon_id,
+                unit_amount=price.unit_amount if price else None,
+                currency=price.currency if price else None,
+                interval=price.interval if price else None,
             )
         )
     return options
@@ -249,14 +293,22 @@ def offers(db: Session) -> list[PlanOption]:
 @router.get(
     "/entitlements", name="read_entitlements", responses={s: {"model": Error} for s in (401, 403)}
 )
-def read_entitlements(current: CurrentSession, response: Response) -> EntitlementsOut:
+def read_entitlements(
+    row: Annotated[Row[Any], Depends(auth.resolve)], response: Response
+) -> EntitlementsOut:
     """The business's plan, where it comes from, every feature's value, and the places in use."""
     response.headers["Cache-Control"] = "no-store"
-    found = entitlements(current.db)
+    # The session read here, not in a CurrentSession: the prices may call Stripe, and no
+    # transaction (so no pool connection) is held across a Stripe call.
+    with tenant_context(row.tenant_id) as db:
+        auth.named(auth.SignedIn(row.user_id, row.tenant_id, row.role, db))
+        found = entitlements(db)
+        used = db.scalar(PLACES_USED)
+        rows = offers(db) if row.role == "owner" else []
     since = found.over_limit_since
     return EntitlementsOut(
         **asdict(found),
-        members_used=current.db.scalar(PLACES_USED),
+        members_used=used,
         grace_ends_at=since + GRACE if since is not None else None,
-        offers=offers(current.db) if current.role == "owner" else [],
+        offers=plan_options(rows),
     )
