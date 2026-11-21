@@ -29,9 +29,11 @@ from app.jobs import Job, run_once
 from app.main import create_app
 from app.worker import KINDS
 from tests.conftest import (
+    ALL_FEATURES,
     People,
     closed,
     fresh_email,
+    give_plan,
     member_id,
     new_client,
     points,
@@ -736,33 +738,25 @@ def test_payment_events_are_the_system_s(
         "currency": "EUR",
         "refunded_minor": 0,
         "refund_failed": False,
+        "fees": {"stripe_fee_minor": None, "application_fee_minor": 0, "net_minor": None},
     }
 
 
-# 16b: FENCE. Kills: an application fee on an authorisation; a payment row that reads the live
-# account policy instead of its own snapshot.
-@pytest.mark.parametrize("mode", [1, 2])
+# 16b: FENCE. Kills: an application fee on an authorisation (ZIF-80: whatever the plan's fee); a
+# payment row that reads the live account policy instead of its own snapshot.
+@pytest.mark.parametrize("fee", [0, 150])
 def test_a_check_records_the_fee_policy_and_takes_no_fee(
-    mode: int,
+    fee: int,
     people: People,
     app: FastAPI,
     ready: str,
     fake_stripe: FakeGateway,
     monkeypatch: pytest.MonkeyPatch,
-    migrate_engine: Engine,
     app_engine: Engine,
 ) -> None:
     from tests.test_stripe_gateway import PAYMENT_INTENT, Recorder
 
-    if mode == 2:
-        with migrate_engine.begin() as conn:
-            conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(people.a)})
-            conn.execute(
-                text(
-                    "UPDATE payment_accounts SET fee_mode = 'business_pays_plus_fee', "
-                    "application_fee_bp = 150"
-                )
-            )
+    give_plan(people.a, {**ALL_FEATURES, "platform_fee_direct": fee})
     http = Recorder(body=PAYMENT_INTENT)
     monkeypatch.setattr(stripe_gateway, "gateway", stripe_gateway.Gateway(http_client=http))
 
@@ -772,7 +766,7 @@ def test_a_check_records_the_fee_policy_and_takes_no_fee(
     assert "application_fee" not in "".join(http.wire(i) for i in range(len(http.sent)))
     (row,) = pay_rows(people, made.json()["id"])
     assert row["application_fee_minor"] == 0
-    assert row["fee_mode"] == ("business_pays" if mode == 1 else "business_pays_plus_fee")
+    assert row["fee_mode"] == "business_pays"
     for column, value in (("fee_mode", "'platform_pays'"), ("application_fee_minor", "1")):
         sql = f"UPDATE booking_payments SET {column} = {value}"
         assert refused_as_app(app_engine, people.a, sql)[0] == "42501"
@@ -1572,54 +1566,46 @@ def test_a_failed_refund_is_shown_to_the_business(
         )
 
 
-# B3 9d: FENCE. Kills: reading the live account policy at refund or report time; a fee in mode 1.
+# B3 9d: FENCE. Kills: reading the live plan at refund or report time. ZIF-80: ziftbook's fee goes
+# back with any refund, the client's own cancellation included.
 def test_the_fee_policy_applied_is_the_payment_s(
     people: People,
     app: FastAPI,
     owner: TestClient,
     fake_stripe: FakeGateway,
-    migrate_engine: Engine,
 ) -> None:
     service_id = make_shop(people, owner, fake_stripe, price=4000)
 
-    def policy(mode: str, bp: int, fixed: int) -> None:
-        with migrate_engine.begin() as conn:
-            conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(people.a)})
-            conn.execute(
-                text(
-                    "UPDATE payment_accounts SET fee_mode = :m, application_fee_bp = :b, "
-                    "application_fee_fixed_minor = :f"
-                ),
-                {"m": mode, "b": bp, "f": fixed},
-            )
+    def policy(bp: int) -> None:
+        give_plan(people.a, {**ALL_FEATURES, "platform_fee_direct": bp})
 
     def fees() -> list[Any]:
         return [p["application_fee"] for op, p in fake_stripe.calls if op == "create_payment"]
 
-    policy("business_pays_plus_fee", 150, 25)
+    policy(150)
     client = new_client(app)
     first = place(app, people, service_id, payment="pay", client=client).json()["id"]
     second = place(
         app, people, service_id, payment="pay", starts_at=at("10:00"), client=client
     ).json()["id"]
-    assert fees() == [85, 85]
+    assert fees() == [60, 60]
     for booking_id in (first, second):
         fake_stripe.confirm(fake_stripe.latest(booking_id))
         assert sync(client, people, booking_id).json()["status"] == "pending"
 
-    policy("business_pays", 0, 0)  # the account moves on; these payments keep what applied
+    policy(0)  # the plan moves on; these payments keep what applied
     third = place(
         app, people, service_id, payment="pay", starts_at=at("11:00"), client=client
     ).json()["id"]
 
-    assert fees() == [85, 85, 0]
+    assert fees() == [60, 60, 0]
     fee_rows = {
         b: (pay_rows(people, b)[0]["fee_mode"], pay_rows(people, b)[0]["application_fee_minor"])
         for b in (first, second, third)
     }  # noqa: E501
     assert fee_rows == {
-        first: ("business_pays_plus_fee", 85),
-        second: ("business_pays_plus_fee", 85),
+        first: ("business_pays", 60),
+        second: ("business_pays", 60),
         third: ("business_pays", 0),
     }
     fake_stripe.confirm(fake_stripe.latest(third))
@@ -1636,26 +1622,11 @@ def test_the_fee_policy_applied_is_the_payment_s(
     by_intent = {
         p["intent_id"]: p["refund_application_fee"] for op, p in fake_stripe.calls if op == "refund"
     }
-    # The business ended the first (its fee goes back), the client the second (ziftbook keeps it).
+    # The business ended the first, the client the second: the fee goes back with both refunds
+    # (Stripe returns it in proportion to the amount); the third had none to send back.
     assert by_intent[fake_stripe.latest(first)] is True
-    assert by_intent[fake_stripe.latest(second)] is False
+    assert by_intent[fake_stripe.latest(second)] is True
     assert by_intent[fake_stripe.latest(third)] is None
-
-
-@pytest.mark.parametrize(
-    ("mode", "bp", "fixed", "amount", "fee"),
-    [
-        ("business_pays", 0, 0, 4000, 0),
-        ("platform_pays", 0, 0, 4000, 0),
-        ("business_pays_plus_fee", 150, 25, 4000, 85),
-        ("business_pays_plus_fee", 0, 10, 4000, 10),
-        ("business_pays_plus_fee", 10000, 25, 4000, 4000),
-    ],
-)
-def test_application_fee_is_pure_and_capped(
-    mode: str, bp: int, fixed: int, amount: int, fee: int
-) -> None:
-    assert payments.application_fee(mode, bp, fixed, amount) == fee
 
 
 # B3 10: GUARD. CHECK_WITH only picks how a check is made: paying is always a PaymentIntent.
@@ -1762,41 +1733,28 @@ def test_a_plain_resume_beaten_by_a_switch_is_busy_not_settled(
     assert fake_stripe.intents[live[0]["intent_id"]]["status"] != "canceled"
 
 
-# B3 review 5: FENCE. Kills: reading the fee mode twice (the fee sent at Stripe under one mode, the
-# row stamped with another read a moment later).
+# B3 review 5: FENCE. Kills: reading the fee policy twice (the fee sent at Stripe under one plan,
+# the row stamped with another read a moment later).
 def test_the_fee_and_the_mode_on_the_row_are_read_once(
     people: People,
     app: FastAPI,
     owner: TestClient,
     fake_stripe: FakeGateway,
-    migrate_engine: Engine,
 ) -> None:
     service_id = make_shop(people, owner, fake_stripe, price=4000)
-
-    def policy(mode: str, bp: int, fixed: int) -> None:
-        with migrate_engine.begin() as conn:
-            conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(people.a)})
-            conn.execute(
-                text(
-                    "UPDATE payment_accounts SET fee_mode = :m, application_fee_bp = :b, "
-                    "application_fee_fixed_minor = :f"
-                ),
-                {"m": mode, "b": bp, "f": fixed},
-            )
-
-    policy("business_pays_plus_fee", 150, 25)
+    give_plan(people.a, {**ALL_FEATURES, "platform_fee_direct": 150})
 
     def moves_on(op: str) -> None:
-        if op == "create_payment":  # the account changes while the intent is being made
+        if op == "create_payment":  # the plan changes while the intent is being made
             fake_stripe.on_call = None
-            policy("business_pays", 0, 0)
+            give_plan(people.a, {**ALL_FEATURES, "platform_fee_direct": 0})
 
     fake_stripe.on_call = moves_on
     made = place(app, people, service_id, payment="pay")
 
     assert made.status_code == 201, made.text
     (row,) = pay_rows(people, made.json()["id"])
-    assert (row["fee_mode"], row["application_fee_minor"]) == ("business_pays_plus_fee", 85)
+    assert (row["fee_mode"], row["application_fee_minor"]) == ("business_pays", 60)
 
 
 # B3 review 6: FENCE. Kills: a failure flag set by event order or the clock (a good refund in the

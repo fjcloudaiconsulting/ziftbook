@@ -114,6 +114,7 @@ class PaymentStep(NamedTuple):
     account: str
     rule: str  # a KINDS key: choice, deposit or prepaid
     due_minor: int
+    source: str  # ZIF-80: the booking's source, which picks the plan's platform fee
 
 
 # The kinds of payment each rule lets the client pick: a card check only while paying in full is the
@@ -334,6 +335,15 @@ class BookingRow(BaseModel):
     created_at: datetime  # "booked online 2 hours ago"
 
 
+class PaymentFees(BaseModel):
+    """ZIF-80: every fee on the charge. Stripe's is null until its balance transaction reports it,
+    and so is what the business receives (the amount less both fees, before any refund)."""
+
+    stripe_fee_minor: int | None
+    application_fee_minor: int
+    net_minor: int | None
+
+
 class PaymentFact(BaseModel):
     kind: Literal["check", "pay"]
     status: Literal["open", "checked", "paid", "canceled"]
@@ -341,6 +351,7 @@ class PaymentFact(BaseModel):
     currency: str
     refunded_minor: int
     refund_failed: bool  # Stripe could not send the refund: the business resolves it in Stripe
+    fees: PaymentFees | None  # owners only (ZIF-80): null for a worker
 
 
 class PendingOut(BookingRow):
@@ -512,7 +523,9 @@ c.erased_at IS NOT NULL AS client_erased, b.created_at
 PAYMENT_COLUMNS = """
 p.kind AS payment_kind, p.status AS payment_status, p.amount_minor AS payment_amount_minor,
 p.currency AS payment_currency, p.refunded_minor AS payment_refunded_minor,
-p.refund_failed_at IS NOT NULL AS payment_refund_failed
+p.refund_failed_at IS NOT NULL AS payment_refund_failed,
+p.stripe_fee_minor AS payment_stripe_fee_minor,
+p.application_fee_minor AS payment_application_fee_minor
 """
 
 # ponytail: limit=50 (100 max) with no cursor, so a business holding more live pendings than that
@@ -582,7 +595,8 @@ FROM bookings b
 JOIN clients c ON c.tenant_id = b.tenant_id AND c.id = b.client_id
 JOIN memberships wm ON wm.tenant_id = b.tenant_id AND wm.id = b.worker_id
 LEFT JOIN LATERAL (
-  SELECT kind, status, amount_minor, currency, refunded_minor, refund_failed_at
+  SELECT kind, status, amount_minor, currency, refunded_minor, refund_failed_at,
+         stripe_fee_minor, application_fee_minor
   FROM booking_payments
   WHERE tenant_id = b.tenant_id AND booking_id = b.id
   ORDER BY (status <> 'canceled') DESC, created_at DESC LIMIT 1) p ON true
@@ -1168,12 +1182,14 @@ def book_online(
     # open), never the client's to skip or to ask for, and the kind is one the rule offers (ZIF-62).
     from app import payments  # here: payments imports this module
 
+    source = "booking_page"
     step = payments.rule_for(
         payments.available(db, settings),
         payments.effective_rule(db, row.payment_rule),  # ZIF-78: what the booking snapshots
         row.deposit_pct,
         row.price_amount_minor,
         row.price_currency,
+        source,
     )
     if step is not None and payment is None:
         raise ApiError(422, "payment_required")
@@ -1282,7 +1298,7 @@ def book_online(
         starts_at=starts_at,
         status=status,
         expires_at=expires_at,
-        source="booking_page",
+        source=source,
         client_name=name,
         client_phone=phone,
         client_message=message,
@@ -1513,8 +1529,9 @@ def create(  # sync def: turnstile.verify's urlopen blocks, and runs in FastAPI'
 merchant_router = APIRouter(prefix="/api", tags=["booking-approvals"])
 
 
-def payment_fact(row: Row[Any]) -> PaymentFact | None:
-    """The PAYMENT_COLUMNS of a row, or None when the booking has no payment."""
+def payment_fact(row: Row[Any], owner: bool) -> PaymentFact | None:
+    """The PAYMENT_COLUMNS of a row, or None when the booking has no payment. Its fees are an
+    owner's only (ZIF-80): what the business makes on a booking is not every worker's to read."""
     if row.payment_kind is None:
         return None
     return PaymentFact(
@@ -1524,6 +1541,17 @@ def payment_fact(row: Row[Any]) -> PaymentFact | None:
         currency=row.payment_currency,
         refunded_minor=row.payment_refunded_minor,
         refund_failed=row.payment_refund_failed,
+        fees=PaymentFees(
+            stripe_fee_minor=row.payment_stripe_fee_minor,
+            application_fee_minor=row.payment_application_fee_minor,
+            net_minor=None
+            if row.payment_stripe_fee_minor is None
+            else row.payment_amount_minor
+            - row.payment_stripe_fee_minor
+            - row.payment_application_fee_minor,
+        )
+        if owner
+        else None,
     )
 
 
@@ -1545,7 +1573,10 @@ def pending(
     ).all()
     response.headers["Cache-Control"] = "no-store"
     return [
-        PendingOut.model_validate({**row._mapping, "payment": payment_fact(row)}) for row in rows
+        PendingOut.model_validate(
+            {**row._mapping, "payment": payment_fact(row, members.is_owner(current))}
+        )
+        for row in rows
     ]
 
 
@@ -1642,7 +1673,12 @@ def detail(booking_id: UUID, current: auth.CurrentSession, response: Response) -
     ]
     response.headers["Cache-Control"] = "no-store"
     return BookingDetailOut.model_validate(
-        {**row._mapping, "payment": payment_fact(row), "history": history}, from_attributes=True
+        {
+            **row._mapping,
+            "payment": payment_fact(row, members.is_owner(current)),
+            "history": history,
+        },
+        from_attributes=True,
     )
 
 

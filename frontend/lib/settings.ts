@@ -2,6 +2,8 @@
 // option lists. Pure (no React) so node --test runs it directly; bounds mirror the API's
 // `BusinessSettings` (tests/settings.test.mjs reads backend/openapi.json to catch drift).
 
+import { COUNTRIES } from "./account.ts";
+
 export type Settings = {
   timezone: string;
   language: string;
@@ -379,4 +381,15 @@ export function withoutStripe(search: string): string {
   params.set("tab", tabFromQuery(search));
   params.delete("stripe");
   return params.toString();
+}
+
+/** ZIF-80: a plan's fee (basis points) as the reader's percentage: "0%", "1.5%", "1,5%". */
+export function percentOf(bp: number, locale: string): string {
+  return new Intl.NumberFormat(locale, { style: "percent", maximumFractionDigits: 2 }).format(bp / 10000);
+}
+
+/** ZIF-80: Stripe's own pricing page for the business's country, for the countries a business can be
+ * in (COUNTRIES), never a rate copied here; Stripe's generic page for anything else. */
+export function stripePricingUrl(country: string): string {
+  return (COUNTRIES as readonly string[]).includes(country) ? `https://stripe.com/${country.toLowerCase()}/pricing` : "https://stripe.com/pricing";
 }

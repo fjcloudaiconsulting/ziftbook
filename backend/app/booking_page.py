@@ -153,6 +153,7 @@ def read(slug: str, request: Request) -> BookingPageOut:
                     row.deposit_pct,
                     row.price_amount_minor,
                     row.price_currency,
+                    "booking_page",
                 )
                 services[row.id] = PublicServiceOut(
                     id=row.id,

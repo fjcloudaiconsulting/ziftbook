@@ -5,7 +5,7 @@ import { type MouseEvent, type ReactNode, useEffect, useRef, useState } from "re
 
 import { type BookingDetailOut, bookingApprovalsRead, bookingApprovalsUpdate } from "@/api-client";
 import { Link } from "@/i18n/navigation";
-import { type Action, actionsFor, historyLabel, isPaid, isWaiting, mayDecline, paymentFact, telHref, whenParts } from "@/lib/calendar";
+import { type Action, actionsFor, feesOf, historyLabel, isPaid, isWaiting, mayDecline, paymentFact, telHref, whenParts } from "@/lib/calendar";
 import { canAnswerRequests, clientLabel, dateLocale } from "@/lib/console";
 import { formatMoney } from "@/lib/money";
 import { type Locale, type NameMap, serviceName } from "@/lib/services";
@@ -244,6 +244,25 @@ export function BookingDetail({
     );
   }
 
+  // ZIF-80: every fee on the charge, ours and Stripe's.
+  function feesLine(d: BookingDetailOut) {
+    const fees = feesOf(d.payment, locale);
+    if (!fees) return null;
+    return (
+      <>
+        <dt>{t("factFees")}</dt>
+        <dd>
+          <ul className={css.feeList}>
+            <li>{t("feeAmount", { amount: fees.amount })}</li>
+            <li>{fees.stripeFee === null ? t("feeStripePending") : t("feeStripe", { amount: fees.stripeFee })}</li>
+            <li>{t("feeZiftbook", { amount: fees.fee })}</li>
+            <li>{fees.net === null ? t("feeNetPending") : t(fees.refunded ? "feeNetBeforeRefund" : "feeNet", { amount: fees.net })}</li>
+          </ul>
+        </dd>
+      </>
+    );
+  }
+
   function expiryLine(d: BookingDetailOut) {
     if (!d.expires_at) return null;
     const { when: day, time } = expiryLabel(d.expires_at, now, tz);
@@ -428,6 +447,7 @@ export function BookingDetail({
               </>
             )}
             {paymentLine(ready)}
+            {feesLine(ready)}
           </dl>
           {actions(ready)}
           {error && <FieldError id="detail-error">{error}</FieldError>}

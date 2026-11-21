@@ -358,6 +358,36 @@ export function paymentFact(
   return { key: "paymentPaid", params: { amount }, failed: false };
 }
 
+type Fees = { amount: string; stripeFee: string | null; fee: string; net: string | null; refunded: boolean };
+
+/** ZIF-80: every fee on a charge, as the detail panel lists them. Stripe's fee and what the business
+ * receives are null ("pending") until Stripe reports its fee; the API's net is never recomputed here.
+ * `refunded`: the net is before a refund that has since gone back, so it is not read as a receipt.
+ * Null when nothing was charged (a card check, a payment still open or canceled) or the reader is no
+ * owner (the API sends no fees then). */
+export function feesOf(
+  payment: {
+    kind: string;
+    status: string;
+    amount_minor: number;
+    currency: string;
+    refunded_minor: number;
+    fees?: { stripe_fee_minor: number | null; application_fee_minor: number; net_minor: number | null } | null;
+  } | null,
+  locale: string,
+): Fees | null {
+  const fees = payment?.fees;
+  if (!payment || !fees || payment.kind !== "pay" || payment.status !== "paid") return null;
+  const money = (minor: number) => formatMoney(minor, payment.currency, locale);
+  return {
+    amount: money(payment.amount_minor),
+    stripeFee: fees.stripe_fee_minor === null ? null : money(fees.stripe_fee_minor),
+    fee: money(fees.application_fee_minor),
+    net: fees.stripe_fee_minor === null || fees.net_minor === null ? null : money(fees.net_minor),
+    refunded: payment.refunded_minor > 0,
+  };
+}
+
 /** Whether a booking's line reads "waiting for your answer since then": the `created` line of a booking
  * still live pending, whatever happened after (a consent confirmation does not answer it). */
 export function isWaiting(detail: { status: string; expired: boolean; history: { event: string }[] }, i: number): boolean {

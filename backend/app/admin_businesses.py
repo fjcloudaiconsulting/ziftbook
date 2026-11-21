@@ -243,7 +243,7 @@ def read_business(tenant_id: UUID, current: CurrentAdmin, request: Request) -> B
                 ends_at=u.ends_at,
                 service_name=u.service_name,
                 worker_display_name=u.worker_display_name,
-                payment=payment_fact(u),
+                payment=payment_fact(u, False),  # no business's fees on the admin page
             )
             for u in upcoming
         ],
