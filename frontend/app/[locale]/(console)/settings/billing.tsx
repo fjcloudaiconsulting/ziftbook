@@ -4,7 +4,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { useEffect, useRef, useState } from "react";
 
 import { billingCheckout, billingPortal, type PlanOption, type UrlOut } from "@/api-client";
-import { billingError, feeLabel, isStripeUrl, priceLabel } from "@/lib/billing";
+import { billingError, discountUnknown, feeLabel, isStripeUrl, priceLabel } from "@/lib/billing";
 import { dateLocale } from "@/lib/console";
 
 import { JSON_WRITE, SignedOutBanner, useConsole } from "../../_ui/console";
@@ -96,7 +96,7 @@ export function Billing() {
               {e && option.id === e.plan_id && <span className={styles.pill}>{t("currentBadge")}</span>}
             </span>
             <span className={styles.rowMeta}>{price ? t(per, { price }) : t("noPrice")}</span>
-            {option.coupon_id && <span className={styles.rowMeta}>{t("coupon")}</span>}
+            {discountUnknown(option) && <span className={styles.rowMeta}>{t("coupon")}</span>}
             <span className={styles.rowMeta}>{t("feeDirect", { fee: feeLabel(option.platform_fee_direct, locale) })}</span>
             <span className={styles.rowMeta}>{t("feeMarketplace", { fee: feeLabel(option.platform_fee_marketplace, locale) })}</span>
             <span className={styles.rowMeta}>{t("stripeFee")}</span>

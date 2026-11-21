@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { bannerFor, billingError, daysLeft, feeLabel, isStripeUrl, priceLabel } from "../lib/billing.ts";
+import { bannerFor, billingError, daysLeft, discountUnknown, feeLabel, isStripeUrl, priceLabel } from "../lib/billing.ts";
 
 const now = new Date("2026-11-21T12:00:00Z");
 const base = { source: "default", trial_ends_at: null, grant_ends_at: null, grace_ends_at: null };
@@ -35,7 +35,7 @@ describe("bannerFor", () => {
 });
 
 describe("priceLabel and feeLabel", () => {
-  const option = { unit_amount: 1250, currency: "EUR", coupon_id: null };
+  const option = { unit_amount: 1250, currency: "EUR", coupon_id: null, percent_off: null, amount_off: null };
   test("the price in the reader's format, empty when the plan has none", () => {
     assert.match(priceLabel(option, "en"), /12\.50/);
     assert.match(priceLabel(option, "nl"), /12,50/);
@@ -43,9 +43,22 @@ describe("priceLabel and feeLabel", () => {
     assert.equal(priceLabel({ ...option, currency: null }, "en"), "");
   });
 
-  test("fence: a coupon never changes the shown price (the API has no discount amount)", () => {
-    // Kills: a computed discounted price the checkout would not charge.
+  test("fence: a coupon known only by its id never changes the shown price, and is noted", () => {
+    // Kills: a guessed discounted price the checkout would not charge; the note lost while the discount is unknown.
     assert.equal(priceLabel({ ...option, coupon_id: "c1" }, "en"), priceLabel(option, "en"));
+    assert.equal(discountUnknown({ ...option, coupon_id: "c1" }), true);
+    assert.equal(discountUnknown(option), false);
+  });
+
+  test("fence: the coupon's discount, when the API gives it, is taken off the shown price (ZIF-79)", () => {
+    // Kills: the list price shown for an offer the owner pays less for; a percentage rounded other than Stripe's
+    // half-up minor unit; an amount off taking the price below zero; the note shown beside a known discount.
+    const half = { ...option, coupon_id: "c1", percent_off: 50 };
+    assert.match(priceLabel(half, "en"), /6\.25/);
+    assert.match(priceLabel({ ...option, percent_off: 12.5 }, "en"), /10\.94/); // 1250 - 156.25 rounded to 156
+    assert.match(priceLabel({ ...option, amount_off: 500 }, "en"), /7\.50/);
+    assert.match(priceLabel({ ...option, amount_off: 5000 }, "en"), /0\.00/);
+    assert.equal(discountUnknown(half), false);
   });
 
   test("basis points as a percentage, 0% stated", () => {

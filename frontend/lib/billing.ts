@@ -24,11 +24,20 @@ export function bannerFor(e: Dates, now: Date): { kind: "trial" | "grace" | "gra
   return { kind: null, days: 0 };
 }
 
-/** The plan's price in the reader's format, or "" when it has none. A coupon changes nothing here: the
- * API carries no discounted amount, so the screen notes the discount instead of computing one. */
-export function priceLabel(option: Pick<PlanOption, "unit_amount" | "currency" | "coupon_id">, locale: string): string {
+/** The plan's price in the reader's format, or "" when it has none: after the offer coupon's discount when the API
+ * knows it (Stripe rounds a percentage's discount to the minor unit; never below zero). With only the coupon's id
+ * known, the list price: the screen notes the discount instead of computing one. */
+export function priceLabel(option: Pick<PlanOption, "unit_amount" | "currency" | "percent_off" | "amount_off">, locale: string): string {
   if (option.unit_amount === null || !option.currency) return "";
-  return formatMoney(option.unit_amount, option.currency, locale);
+  let amount = option.unit_amount;
+  if (option.percent_off != null) amount -= Math.round((amount * option.percent_off) / 100);
+  else if (option.amount_off != null) amount = Math.max(0, amount - option.amount_off);
+  return formatMoney(amount, option.currency, locale);
+}
+
+/** Whether the screen notes "discount applied at checkout": a coupon whose discount the API couldn't give. */
+export function discountUnknown(option: Pick<PlanOption, "coupon_id" | "percent_off" | "amount_off">): boolean {
+  return !!option.coupon_id && option.percent_off == null && option.amount_off == null;
 }
 
 /** A fee held in basis points, as a percentage ("0%" stated, never left out). */
