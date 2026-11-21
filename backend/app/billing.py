@@ -51,6 +51,27 @@ LIVE = {"active", "trialing", "past_due"}
 LOCK_KEY = 79
 # How many times reconcile (or the portal sync) writes what keeps changing before it gives up.
 RECONCILE_TRIES = 3
+# Stripe retries a webhook it got no 200 for over three days; one we acknowledged is ours to retry
+# as long. A job gives up after jobs.MAX_ATTEMPTS (about a quarter of an hour), so rearm() queues
+# its subscription's reconcile again every hour until one gets through or this has passed.
+RETRY_FOR = timedelta(days=3)
+
+# The subscriptions whose event's job gave up within RETRY_FOR, with no job since that got through
+# (due after it, so it read Stripe after the event) and none still trying. A re-armed job carries
+# no event_id: one giving up re-arms nothing itself, so the event's own time bounds the retries.
+GAVE_UP = text(f"""
+SELECT DISTINCT g.payload->>'subscription_id'
+FROM jobs g
+WHERE g.kind = 'billing.event' AND g.payload->>'event_id' IS NOT NULL
+  AND g.completed_at IS NULL AND g.attempts >= {jobs.MAX_ATTEMPTS}
+  AND g.due_at > now() - CAST(:retry_for AS interval)
+  AND NOT EXISTS (
+    SELECT 1 FROM jobs d
+    WHERE d.kind = 'billing.event'
+      AND d.payload->>'subscription_id' = g.payload->>'subscription_id'
+      AND (d.completed_at IS NULL AND d.attempts < {jobs.MAX_ATTEMPTS}
+           OR d.completed_at IS NOT NULL AND NOT d.skipped AND d.due_at > g.due_at))
+""")
 
 # A double click within one window gets the same Checkout Session (Stripe's idempotency key).
 CHECKOUT_WINDOW_SECONDS = 300
@@ -221,7 +242,8 @@ def portal(row: Owner, response: Response) -> UrlOut:
 
 def sync_portal() -> bool:
     """The customer portal offers exactly the public, unarchived plans with a Price; called after a
-    plan is saved, published or archived. False, asking nothing, where Stripe is not set up; raises
+    plan is saved, published or archived. False, asking nothing, where Stripe is not set up, and
+    when the plans kept changing under it (RECONCILE_TRIES pushes); raises
     stripe_gateway.Failed when Stripe refuses (the plan is saved either way: saving again
     retries)."""
     if not StripeSettings().secret_ready():
@@ -233,9 +255,10 @@ def sync_portal() -> bool:
         _push_portal(ids)
         again = _portal_ids()
         if again == ids:
-            break
+            return True
         ids = again
-    return True
+    # Still changing: the portal may hold an older list. The admin is told; saving again retries.
+    return False
 
 
 def _portal_ids() -> list[str]:
@@ -284,6 +307,22 @@ async def webhook(request: Request) -> JSONResponse:
     else:
         logger.debug("stripe billing event ignored", extra={"event_type": event.type})
     return JSONResponse({})
+
+
+def rearm() -> int:
+    """A new reconcile for each subscription whose event's job gave up (GAVE_UP), once an hour on
+    the worker's timer: a Stripe outage longer than a job's retries still lands. Returns how
+    many."""
+    hour = datetime.now(UTC).strftime("%Y-%m-%dT%H")
+    with SessionLocal.begin() as session:
+        subs = session.scalars(GAVE_UP, {"retry_for": RETRY_FOR}).all()
+        for sub in subs:
+            # Keyed by the hour: a timer retried after a failure queues no second job.
+            key = f"billing.event:rearm:{sub}:{hour}"
+            jobs.enqueue(session, "billing.event", key, {"subscription_id": sub})
+    if subs:
+        logger.warning("billing events re-armed", extra={"subscriptions": len(subs)})
+    return len(subs)
 
 
 def _business(found: stripe_gateway.SubscriptionInfo) -> UUID | None:

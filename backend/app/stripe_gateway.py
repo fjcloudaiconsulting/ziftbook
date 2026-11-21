@@ -712,12 +712,22 @@ class Gateway:
             paid = client.v1.invoice_payments.list({"invoice": invoice_id, "status": "paid"})
             for each in paid.auto_paging_iter():
                 made = each.payment
-                target = made.payment_intent or made.charge
+                # Only the field its type names is there: a charge-backed payment has no
+                # payment_intent at all, and reading it would raise.
+                target: str | stripe.PaymentIntent | stripe.Charge | None
+                if made.type == "payment_intent":
+                    target = made.payment_intent
+                elif made.type == "charge":
+                    target = made.charge
+                else:
+                    continue
                 if target is None:
                     continue
                 target_id = target if isinstance(target, str) else target.id
                 params: RefundCreateParams = (
-                    {"payment_intent": target_id} if made.payment_intent else {"charge": target_id}
+                    {"payment_intent": target_id}
+                    if made.type == "payment_intent"
+                    else {"charge": target_id}
                 )
                 try:
                     client.v1.refunds.create(

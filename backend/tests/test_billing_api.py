@@ -451,6 +451,18 @@ def test_interleaved_portal_syncs_end_on_the_newer_plans(
     assert fake_stripe.portal == {"prod_a": [prices[kept]]}
 
 
+# ZIF-79 fence. Kills: a sync whose every re-read saw the plans change again reported as done, so
+# the admin is never told the portal may be offering an old list.
+def test_a_sync_that_never_settles_is_not_reported_done(
+    bound: None, fake_stripe: FakeGateway, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    reads = iter(range(100))
+    monkeypatch.setattr(billing, "_portal_ids", lambda: [f"price_{next(reads)}"])
+
+    assert billing.sync_portal() is False
+    assert fake_stripe.count("sync_portal_configuration") == billing.RECONCILE_TRIES
+
+
 # ZIF-79 fence. Kills: the portal left offering a plan that is no longer for sale; plan changes
 # enabled with no product (Stripe refuses); a silent sync when the account has no portal set up.
 def test_the_portal_configuration_is_the_default_one(monkeypatch: pytest.MonkeyPatch) -> None:

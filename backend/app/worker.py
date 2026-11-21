@@ -68,8 +68,9 @@ KINDS: dict[str, JobKind] = {
     # a late run is still right; a day's grace covers a worker that was down.
     "billing.enforce": JobKind(enforcement.run, timeout=30, grace=timedelta(days=1)),
     # ZIF-79. A platform subscription event: re-reads the subscription at Stripe, so a late run is
-    # still right. As stripe.event: Stripe retries for days; 50 stays under the 60 s lease.
-    "billing.event": JobKind(billing.reconcile, timeout=50, grace=timedelta(days=3)),
+    # still right. The grace is as long as Stripe would have retried (billing.rearm re-queues one
+    # that gave up for as long); 50 stays under the 60 s lease.
+    "billing.event": JobKind(billing.reconcile, timeout=50, grace=billing.RETRY_FOR),
 }
 
 
@@ -126,7 +127,7 @@ async def work(
     stopped. hold: the retention hold as configured (ZIF-235), if any."""
     swept: float | None = None  # monotonic time of the last SUCCESSFUL sweep
     retention_due: float | None = None  # when the next retention run is due; None: now
-    enforcement_due: float | None = None  # likewise, the enforcement sweep (ZIF-78)
+    enforcement_due: float | None = None  # likewise, the enforcement sweep and billing.rearm
     # The architect's ruling (ZIF-235 D6): an invalid hold value holds, and withholds the ping on
     # every iteration until someone fixes it, so the owner is alerted for as long as it lasts.
     invalid_hold = hold is not None and hold.state == "invalid"
@@ -176,15 +177,21 @@ async def work(
             except Exception:
                 logger.exception("retention sweep failed")
                 healthy = False
-        # ZIF-78. In its own try, as retention: a failure withholds the ping and retries next poll
-        # (its enforce jobs are keyed by the hour, so retries add none).
+        # ZIF-78, ZIF-79. Out of the try above, as retention, and each in its own: a failure
+        # withholds the ping and both run again next poll (their jobs are keyed by the hour, so
+        # retries add none).
         if not stop.is_set() and (enforcement_due is None or time.monotonic() >= enforcement_due):
-            try:
-                await asyncio.to_thread(enforcement.sweep)
-                enforcement_due = time.monotonic() + ENFORCEMENT_SECONDS
-            except Exception:
-                logger.exception("enforcement sweep failed")
+            hourly_failed = False
+            for name, hourly in (("enforcement", enforcement.sweep), ("billing", billing.rearm)):
+                try:
+                    await asyncio.to_thread(hourly)
+                except Exception:
+                    logger.exception("sweep failed", extra={"sweep": name})
+                    hourly_failed = True
+            if hourly_failed:
                 healthy = False
+            else:
+                enforcement_due = time.monotonic() + ENFORCEMENT_SECONDS
         if healthy and healthcheck_url:
             try:
                 await asyncio.to_thread(ping, healthcheck_url)

@@ -6,7 +6,7 @@ import json
 import time
 import uuid
 from collections.abc import Callable, Iterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -604,6 +604,47 @@ def test_two_interleaved_jobs_end_on_the_newer_state(
     assert row_of(people.a).status == "canceled"
 
 
+# ZIF-79 fence. Kills: an acknowledged event lost to a Stripe outage longer than its job's retries
+# (a purchase never granted, a cancellation never applied); a re-arm for an event older than
+# Stripe's own retries, while one is still trying, or once a later job got through; a re-armed
+# job's giving up re-arming forever instead of within the event's three days.
+def test_an_event_whose_job_gave_up_is_re_armed_for_three_days(
+    client: TestClient, people: People, stripe: FakeGateway, plan: Plan, migrate_engine: Engine
+) -> None:
+    price = price_of(migrate_engine, plan({}, price=True))
+    lost, stale = stripe.add_subscription(people.a, price), stripe.add_subscription(people.b, price)
+    for sub in (lost, stale):
+        post(client, sub_event(sub, "customer.subscription.created"))
+
+    def sql(statement: str, **params: Any) -> None:
+        with migrate_engine.begin() as conn:
+            conn.execute(text(statement), params)
+
+    def rearm() -> int:
+        with jobs_as_the_worker():
+            return billing.rearm()
+
+    gave_up = "UPDATE jobs SET attempts = 5 WHERE kind = 'billing.event' AND "
+    aged = "UPDATE jobs SET due_at = now() - :age WHERE payload->>'event_id' IS NOT NULL AND "
+    by_sub = "payload->>'subscription_id' = :s"
+    for sub in (lost, stale):  # every attempt failed while Stripe was down
+        sql(gave_up + by_sub, s=sub)
+    sql(aged + by_sub, age=billing.RETRY_FOR + timedelta(hours=1), s=stale)
+
+    assert (rearm(), rearm()) == (1, 0)  # the second while the re-armed job still tries
+    sql(gave_up + by_sub, s=lost)
+    assert rearm() == 1  # a re-armed job that gave up: again, within the event's three days
+    sql(aged + by_sub, age=billing.RETRY_FOR + timedelta(hours=1), s=lost)
+    assert rearm() == 0  # past them, the re-armed job's own giving up re-arms nothing
+
+    sql(aged + by_sub, age=timedelta(hours=1), s=lost)  # back within them
+    sql("UPDATE jobs SET attempts = 0 WHERE dedupe_key LIKE :k", k=f"billing.event:rearm:{lost}:%")
+    run_jobs()  # Stripe is back
+
+    assert (row_of(people.a).stripe_subscription_id, row_of(people.b)) == (lost, None)
+    assert rearm() == 0  # got through
+
+
 # ZIF-79 fence. Kills: an older subscription's late event replacing the business's current one
 # while Stripe still bills or settles it (unpaid, paused, incomplete), which lets a second
 # Checkout through.
@@ -785,7 +826,7 @@ def test_cancel_and_refund_a_duplicate_at_stripe(monkeypatch: pytest.MonkeyPatch
 
 # ZIF-79 fence (R20). Kills: a payment already refunded in full (an earlier run past the key's 24
 # hours, or by hand) failing every retry, so the duplicate is never cancelled; any other refusal
-# swallowed.
+# swallowed; a charge-backed payment read for a payment_intent it doesn't have.
 def test_an_already_refunded_payment_counts_as_done(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ZIF_STRIPE_SECRET_KEY", "sk_test_not_a_real_key")
     paid = {
@@ -797,7 +838,8 @@ def test_an_already_refunded_payment_counts_as_done(monkeypatch: pytest.MonkeyPa
                 "id": "inpay_1",
                 "object": "invoice_payment",
                 "status": "paid",
-                "payment": {"type": "charge", "charge": "ch_1", "payment_intent": None},
+                # As Stripe sends it: only the field its type names, no payment_intent at all.
+                "payment": {"type": "charge", "charge": "ch_1"},
             }
         ],
     }
